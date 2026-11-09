@@ -109,6 +109,20 @@ def create_journal(c, d, ref, desc, lines, user):
       [(eid,aid,float(dr),float(cr),memo) for aid,dr,cr,memo in lines])
     return eid
 
+def ensure_detail_account(c, code, name, typ, preferred_parent):
+    found=c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?",(code,)).fetchone()
+    if found:
+        if found["is_group"] or not found["active"] or found["account_type"]!=typ:
+            raise ValueError("حساب الربط موجود لكنه غير صالح للترحيل: "+code)
+        return found["id"]
+    parent=c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?",(preferred_parent,)).fetchone()
+    if not parent or not parent["is_group"] or not parent["active"] or parent["account_type"]!=typ:
+        parent=c.execute("SELECT id FROM accounts WHERE account_type=? AND is_group=1 AND active=1 ORDER BY code LIMIT 1",(typ,)).fetchone()
+    if not parent: raise ValueError("لا توجد مجموعة حسابات مناسبة لإنشاء: "+code)
+    cur=c.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group,active) VALUES(?,?,?,?,0,1)",
+                  (code,name,typ,parent["id"]))
+    return cur.lastrowid
+
 def activity_inventory_code(c):
     row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
     activity=row[0] if row else "commercial"
@@ -172,7 +186,7 @@ def new_receipt():
             if not invcode: raise ValueError("النشاط الحالي لا يملك حساب مخزون تلقائيًا؛ اضبط الربط أولًا.")
             inv=account(c,invcode,"asset")
             # GRNI must be explicitly configured as a detailed liability account.
-            grni=account(c,"2190","liability")
+            grni=ensure_detail_account(c,"2190","بضاعة مستلمة غير مفوترة GRNI","liability","2000")
             c.execute("BEGIN IMMEDIATE")
             no="GRN-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             cur=c.execute("INSERT INTO goods_receipts(receipt_no,supplier_id,warehouse_id,receipt_date,total_value,created_by) VALUES(?,?,?,?,?,?)",
@@ -221,7 +235,7 @@ def new_bill():
             if receipts and remaining!=0: raise ValueError("قيمة الفاتورة يجب أن تطابق إجمالي إيصالات GRNI المحددة.")
             if tax:
                 # No guessed tax posting: explicit input VAT account is mandatory.
-                vat=account(c,"1165","asset")
+                vat=ensure_detail_account(c,"1165","ضريبة مدخلات قابلة للخصم","asset","1100")
                 lines.append(("VAT",tax))
             no="BILL-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             cur=c.execute("INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,subtotal,tax_rate,tax_amount,total_amount,created_by) VALUES(?,?,?,?,?,?,?,?,?)",
