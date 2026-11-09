@@ -10,6 +10,7 @@
 <a href="{{ url_for('stock.reports') }}">تقارير المخزون</a>
 {% if 'journal.manage' in permissions %}<a href="{{ url_for('journal') }}">القيود اليومية</a>{% endif %}
 <a href="{{ url_for('trial_balance') }}">ميزان المراجعة</a><a href="{{ url_for('ledger') }}">دفتر الأستاذ</a>
+<a href="{{ url_for('reconciliation') }}">المطابقة والترابط</a>
 {% if 'users.manage' in permissions %}<a href="{{ url_for('company_setup') }}">إعداد الشركة والعملات</a><a href="{{ url_for('users') }}">المستخدمون والصلاحيات</a>{% endif %}
 {% if 'backup.manage' in permissions %}<a href="{{ url_for('create_backup') }}">نسخة احتياطية</a>{% endif %}
 <a href="{{ url_for('logout') }}">تسجيل الخروج</a></nav></aside>{% endif %}
