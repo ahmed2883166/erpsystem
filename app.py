@@ -13,6 +13,7 @@ from pathlib import Path
 from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for
 from chart_templates import CHARTS, ACTIVITY_LABELS
 from stock import stock_bp, initialize_stock_schema
+from purchases import purchase_bp, init_purchase_schema
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -21,10 +22,11 @@ BACKUP_DIR = DATA_DIR / "backups"
 
 app = Flask(__name__)
 app.register_blueprint(stock_bp)
+app.register_blueprint(purchase_bp)
 app.config["SECRET_KEY"] = os.environ.get("NEXUS_SECRET_KEY", "change-this-secret-before-production")
 
 PERMISSIONS = {
-    "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view"},
+    "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view"},
     "accountant": {"accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view"},
     "viewer": {"reports.view", "stock.view"},
 }
@@ -109,6 +111,7 @@ def initialize_database():
     connection.commit()
     connection.close()
     initialize_stock_schema()
+    init_purchase_schema()
 
 
 def now():
