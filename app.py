@@ -308,14 +308,17 @@ def journal():
         if len(lines) < 2 or abs(total_debit - total_credit) > 0.005 or total_debit <= 0:
             flash("يجب إدخال سطرين على الأقل وأن يتساوى إجمالي المدين والدائن.", "error")
         else:
-            cursor = connection.execute("INSERT INTO journal_entries(entry_date,reference,description,created_by,created_at) VALUES(?,?,?,?,?)",
-                                        (request.form["entry_date"], request.form.get("reference", ""), request.form["description"].strip(), session["user_id"], now()))
-            connection.executemany("INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?)",
-                                   [(cursor.lastrowid, *line) for line in lines])
-            connection.commit()
-            log("journal_posted", f"قيد #{cursor.lastrowid}")
-            flash("تم ترحيل القيد بنجاح.", "success")
-            return redirect(url_for("journal"))
+            try:
+                reference=request.form.get("reference","").strip() or "MAN-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
+                entry_id=post_journal(connection,request.form["entry_date"],reference,
+                    request.form["description"].strip(),lines,session["user_id"])
+                connection.commit()
+                log("journal_posted", f"قيد #{entry_id}")
+                flash("تم ترحيل القيد بنجاح.", "success")
+                return redirect(url_for("journal"))
+            except ValueError as exc:
+                connection.rollback()
+                flash(str(exc),"error")
     entries = connection.execute("SELECT * FROM journal_entries ORDER BY entry_date DESC, id DESC LIMIT 20").fetchall()
     connection.close()
     return render_template("journal.html", accounts=accounts_list, entries=entries, today=datetime.now().date().isoformat())
