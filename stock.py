@@ -174,13 +174,8 @@ def index():
     products=c.execute("SELECT COUNT(*) n FROM stock_products WHERE active=1").fetchone()["n"]
     warehouses=c.execute("SELECT COUNT(*) n FROM stock_warehouses WHERE active=1").fetchone()["n"]
     rows=c.execute("""SELECT p.id,p.sku,p.name_ar,p.uom,
-      COALESCE(SUM(CASE WHEN m.movement_type='receipt' THEN CAST(m.quantity AS REAL)
-        WHEN m.movement_type IN ('issue','scrap') THEN -CAST(m.quantity AS REAL)
-        WHEN m.movement_type='transfer' AND m.target_warehouse_id IS NOT NULL THEN
-          CASE WHEN m.target_warehouse_id=w.id THEN CAST(m.quantity AS REAL) ELSE 0 END
-        ELSE 0 END),0) qty
-      FROM stock_products p LEFT JOIN stock_movements m ON m.product_id=p.id
-      LEFT JOIN stock_warehouses w ON w.id=COALESCE(m.target_warehouse_id,m.source_warehouse_id)
+      COALESCE(SUM(CAST(l.qty_remaining AS REAL)),0) qty
+      FROM stock_products p LEFT JOIN stock_valuation_layers l ON l.product_id=p.id
       WHERE p.active=1 GROUP BY p.id ORDER BY p.name_ar LIMIT 10""").fetchall()
     c.close()
     return render_template("stock_dashboard.html",products=products,warehouses=warehouses,rows=rows)
@@ -238,6 +233,7 @@ def movements():
             if kind not in {"receipt","issue","transfer","scrap"}: raise ValueError("نوع الحركة غير صحيح.")
             product=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(request.form.get("product_id"),)).fetchone()
             if not product: raise ValueError("الصنف غير موجود أو غير نشط.")
+            if product["product_type"] == "service": raise ValueError("الخدمات لا تُدار كأصناف مخزنية.")
             qty=q4(dec(request.form.get("quantity"),"الكمية"))
             if qty<=0: raise ValueError("الكمية يجب أن تكون أكبر من صفر.")
             src=request.form.get("source_warehouse_id",type=int)
