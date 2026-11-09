@@ -10,6 +10,7 @@ from functools import wraps
 from pathlib import Path
 from datetime import date
 from flask import Blueprint, current_app, flash, redirect, render_template, request, session, url_for
+from accounting_core import post_journal
 
 stock_bp = Blueprint("stock", __name__, url_prefix="/stock")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
@@ -115,14 +116,10 @@ def post_scrap_journal(c, movement_id, movement_no, product, movement_date, tota
     if amount <= 0:
         c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
         return None
-    cur = c.execute(
-        "INSERT INTO journal_entries(entry_date,reference,description,status,created_by,created_at) VALUES(?,?,?,'posted',?,CURRENT_TIMESTAMP)",
-        (movement_date, movement_no, f"قيد آلي لإعدام مخزون - {product['name_ar']}", created_by))
-    entry_id = cur.lastrowid
-    c.executemany("INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?)", [
-        (entry_id, writeoff_id, float(amount), 0, "خسائر تالف مخزون"),
-        (entry_id, inventory["id"], 0, float(amount), "تخفيض قيمة المخزون"),
-    ])
+    entry_id = post_journal(c,movement_date,movement_no,
+        f"قيد آلي لإعدام مخزون - {product['name_ar']}",
+        [(writeoff_id,amount,0,"خسائر تالف مخزون"),
+         (inventory["id"],0,amount,"تخفيض قيمة المخزون")],created_by)
     c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?", (entry_id,movement_id))
     return entry_id
 
@@ -171,13 +168,10 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
     if amount <= 0:
         c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
         return None
-    cur = c.execute("INSERT INTO journal_entries(entry_date,reference,description,status,created_by,created_at) VALUES(?,?,?,'posted',?,CURRENT_TIMESTAMP)",
-                    (movement_date, movement_no, f"قيد آلي لصرف مخزون - {product['name_ar']}", created_by))
-    entry_id = cur.lastrowid
-    c.executemany("INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?)", [
-        (entry_id, expense_id, float(amount), 0, expense_name),
-        (entry_id, inventory["id"], 0, float(amount), "تخفيض المخزون بتكلفة الصرف"),
-    ])
+    entry_id = post_journal(c,movement_date,movement_no,
+        f"قيد آلي لصرف مخزون - {product['name_ar']}",
+        [(expense_id,amount,0,expense_name),
+         (inventory["id"],0,amount,"تخفيض المخزون بتكلفة الصرف")],created_by)
     c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?", (entry_id, movement_id))
     return entry_id
 
