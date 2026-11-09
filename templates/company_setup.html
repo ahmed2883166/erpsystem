@@ -17,6 +17,7 @@
       <option value="CUSTOM" {% if settings.get('tax_regime')=='CUSTOM' %}selected{% endif %}>أخرى / إعداد مخصص</option>
     </select></div>
     <div><label>الرقم الضريبي</label><input name="tax_number" value="{{ settings.get('tax_number','') }}" placeholder="اختياري"></div>
+    <div><label>معدل VAT الافتراضي (%)</label><input type="number" min="0" max="100" step="0.01" name="default_vat_rate" value="{{ settings.get('default_vat_rate','14') }}"></div>
     <div><label>النشاط</label><select name="activity" required>
       {% for key,label in activities.items() %}<option value="{{ key }}" {% if settings.get('activity','commercial')==key %}selected{% endif %}>{{ label }}</option>{% endfor %}
     </select></div>
@@ -33,7 +34,7 @@
   {% endfor %}
   </div>
   <div class="notice"><strong>دليل الحسابات:</strong> اختيار النشاط يحدد قالبًا أوليًا مختلفًا للتجاري والخدمي والطبي والمطاعم والصناعي. لن يتم حذف دليل حالي إلا عند تفعيل الاختيار أدناه، ولن يسمح باستبداله إذا كانت هناك قيود يومية.</div>
-  <label class="checkline"><input type="checkbox" name="replace_chart" value="yes"> استبدال دليل الحسابات الحالي بالقالب الخاص بالنشاط (فقط إذا لم توجد قيود يومية)</label>
+  <label class="checkline"><input type="checkbox" name="replace_chart" value="yes" {% if not has_entries %}checked{% else %}disabled{% endif %}> تحميل شجرة الحسابات المناسبة للنشاط المختار {% if has_entries %}(موقوفة لوجود قيود يومية حفاظًا على سلامة البيانات){% else %}(متاح قبل تسجيل أول قيد){% endif %}</label>
   <button type="submit">حفظ إعدادات الشركة</button>
 </form>
 {% endblock %}
