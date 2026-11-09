@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}إعداد الشركة | NEXUS ERP{% endblock %}
+{% block content %}
+<header><div><h2>إعداد الشركة والنظام</h2><p>حدد الدولة والنشاط والعملة، ثم حمّل دليل الحسابات المناسب.</p></div></header>
+<form method="post" class="panel">
+  <h3>بيانات الشركة</h3>
+  <div class="form-row">
+    <div><label>اسم الشركة</label><input name="company_name" value="{{ settings.get('company_name','') }}" placeholder="اسم الشركة" required></div>
+    <div><label>الدولة / التوطين الضريبي</label><select name="tax_country">
+      <option value="EG" {% if settings.get('tax_country','EG')=='EG' %}selected{% endif %}>مصر</option>
+      <option value="SA" {% if settings.get('tax_country')=='SA' %}selected{% endif %}>السعودية</option>
+      <option value="OTHER" {% if settings.get('tax_country')=='OTHER' %}selected{% endif %}>دولة أخرى</option>
+    </select></div>
+    <div><label>النظام الضريبي</label><select name="tax_regime">
+      <option value="EG_VAT" {% if settings.get('tax_regime','EG_VAT')=='EG_VAT' %}selected{% endif %}>مصر - ضريبة القيمة المضافة</option>
+      <option value="SA_VAT_ZAKAT" {% if settings.get('tax_regime')=='SA_VAT_ZAKAT' %}selected{% endif %}>السعودية - VAT والزكاة/ضريبة الدخل</option>
+      <option value="CUSTOM" {% if settings.get('tax_regime')=='CUSTOM' %}selected{% endif %}>أخرى / إعداد مخصص</option>
+    </select></div>
+    <div><label>الرقم الضريبي</label><input name="tax_number" value="{{ settings.get('tax_number','') }}" placeholder="اختياري"></div>
+    <div><label>النشاط</label><select name="activity" required>
+      {% for key,label in activities.items() %}<option value="{{ key }}" {% if settings.get('activity','commercial')==key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select></div>
+    <div><label>العملة الأساسية</label><select name="base_currency" required>
+      {% for c in currencies %}<option value="{{ c.code }}" {% if settings.get('base_currency','SAR')==c.code %}selected{% endif %}>{{ c.code }} - {{ c.name_ar }}</option>{% endfor %}
+    </select></div>
+  </div>
+  <h3 style="margin-top:24px">العملات المتاحة للشركة</h3>
+  <p class="muted">حدد العملات التي ستتعامل بها. العملة الأساسية سعرها 1، وأسعار الصرف هنا تعريف مبدئي قابل للتحديث.</p>
+  <div class="currency-grid">
+  {% for c in currencies %}
+    <label class="currency-item"><span><input type="checkbox" name="active_currencies" value="{{ c.code }}" {% if c.active %}checked{% endif %}> {{ c.code }} - {{ c.name_ar }}</span>
+    <input class="rate" type="number" min="0.000001" step="0.000001" name="rate_{{ c.code }}" value="{{ c.rate }}" title="سعر العملة مقابل العملة الأساسية"></label>
+  {% endfor %}
+  </div>
+  <div class="notice"><strong>دليل الحسابات:</strong> اختيار النشاط يحدد قالبًا أوليًا مختلفًا للتجاري والخدمي والطبي والمطاعم والصناعي. لن يتم حذف دليل حالي إلا عند تفعيل الاختيار أدناه، ولن يسمح باستبداله إذا كانت هناك قيود يومية.</div>
+  <label class="checkline"><input type="checkbox" name="replace_chart" value="yes"> استبدال دليل الحسابات الحالي بالقالب الخاص بالنشاط (فقط إذا لم توجد قيود يومية)</label>
+  <button type="submit">حفظ إعدادات الشركة</button>
+</form>
+{% endblock %}
