@@ -25,6 +25,13 @@
       {% for c in currencies %}<option value="{{ c.code }}" {% if settings.get('base_currency','SAR')==c.code %}selected{% endif %}>{{ c.code }} - {{ c.name_ar }}</option>{% endfor %}
     </select></div>
   </div>
+  <h3 style="margin-top:24px">تقييم المخزون</h3>
+  <label>طريقة تقييم تكلفة المخزون</label>
+  <select name="inventory_cost_method">
+    <option value="average" {% if settings.get("inventory_cost_method","average")=="average" %}selected{% endif %}>المتوسط المرجح المتحرك</option>
+    <option value="fifo" {% if settings.get("inventory_cost_method")=="fifo" %}selected{% endif %}>الوارد أولًا يصرف أولًا (FIFO)</option>
+  </select>
+  <p class="muted">لا تغيّر طريقة التقييم بعد بدء الحركات دون إقفال وتحويل موثق ومراجعة محاسبية.</p>
   <h3 style="margin-top:24px">العملات المتاحة للشركة</h3>
   <p class="muted">حدد العملات التي ستتعامل بها. العملة الأساسية سعرها 1، وأسعار الصرف هنا تعريف مبدئي قابل للتحديث.</p>
   <div class="currency-grid">
