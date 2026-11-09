@@ -116,6 +116,19 @@ def ensure_detail_account(c, code, name, typ, preferred_parent):
                   (code,name,typ,parent_id))
     return cur.lastrowid
 
+def supplier_ap_account(c):
+    row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+    activity=row["setting_value"] if row else "commercial"
+    if activity=="medical":
+        return ensure_detail_account(c,"2150","الموردون - مستلزمات طبية","liability","2100")
+    if activity=="commercial":
+        return account(c,"2110","liability")
+    if activity=="service":
+        return account(c,"2100","liability")
+    if activity in {"restaurant","industrial"}:
+        return account(c,"2100","liability")
+    raise ValueError("لا يوجد حساب موردين مضبوط للنشاط الحالي.")
+
 def activity_inventory_code(c):
     row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
     activity=row[0] if row else "commercial"
@@ -216,8 +229,7 @@ def new_bill():
             receipts=[int(x) for x in request.form.getlist("receipt_id")]
             c.execute("BEGIN IMMEDIATE")
             invcode=activity_inventory_code(c); inv=account(c,invcode,"asset")
-            apcode="2110" if c.execute("SELECT 1 FROM accounts WHERE code='2110'").fetchone() else "2100"
-            ap=account(c,apcode,"liability")
+            ap=supplier_ap_account(c)
             lines=[]; remaining=subtotal
             for rid in receipts:
                 r=c.execute("SELECT * FROM goods_receipts WHERE id=? AND supplier_id=?",(rid,supplier)).fetchone()
@@ -264,8 +276,7 @@ def new_payment():
         try:
             supplier=int(request.form["supplier_id"]); amount=money(request.form["amount"]); cash=int(request.form["cash_account_id"])
             if amount<=0: raise ValueError("قيمة السداد يجب أن تكون أكبر من صفر.")
-            apcode="2110" if c.execute("SELECT 1 FROM accounts WHERE code='2110'").fetchone() else "2100"
-            ap=account(c,apcode,"liability"); c.execute("BEGIN IMMEDIATE")
+            ap=supplier_ap_account(c); c.execute("BEGIN IMMEDIATE")
             no="PAY-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             eid=create_journal(c,request.form["payment_date"],no,"سداد مورد",[(ap,amount,0,"تخفيض مديونية المورد"),(cash,0,amount,"سداد نقدي/بنكي")],session["user_id"])
             cur=c.execute("INSERT INTO supplier_payments(payment_no,supplier_id,payment_date,amount,cash_account_id,journal_entry_id,reference,created_by) VALUES(?,?,?,?,?,?,?,?)",
