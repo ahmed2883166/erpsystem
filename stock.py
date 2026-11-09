@@ -1,0 +1,329 @@
+"""NEXUS ERP inventory foundation (v0.2).
+
+Implements product master, warehouses, stock receipts/issues/transfers/scrap,
+lot/expiry tracking, non-negative stock validation and valuation layers.
+Manufacturing orders and production conversion are intentionally excluded.
+"""
+import sqlite3
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from functools import wraps
+from pathlib import Path
+from datetime import date
+from flask import Blueprint, current_app, flash, redirect, render_template, request, session, url_for
+
+stock_bp = Blueprint("stock", __name__, url_prefix="/stock")
+DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
+D = Decimal
+QTY = D("0.0001")
+MONEY = D("0.01")
+
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH, timeout=20, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=20000")
+    return conn
+
+
+def initialize_stock_schema():
+    DB_PATH.parent.mkdir(exist_ok=True)
+    c = get_db()
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS stock_products(
+      id INTEGER PRIMARY KEY, sku TEXT NOT NULL UNIQUE, name_ar TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT '', product_type TEXT NOT NULL DEFAULT 'goods',
+      uom TEXT NOT NULL DEFAULT 'قطعة', barcode TEXT UNIQUE, track_lot INTEGER NOT NULL DEFAULT 0,
+      track_expiry INTEGER NOT NULL DEFAULT 0, min_qty TEXT NOT NULL DEFAULT '0',
+      active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS stock_warehouses(
+      id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name_ar TEXT NOT NULL,
+      branch TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE TABLE IF NOT EXISTS stock_lots(
+      id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES stock_products(id),
+      lot_number TEXT NOT NULL, production_date TEXT, expiry_date TEXT,
+      UNIQUE(product_id,lot_number)
+    );
+    CREATE TABLE IF NOT EXISTS stock_movements(
+      id INTEGER PRIMARY KEY, movement_no TEXT NOT NULL UNIQUE, movement_type TEXT NOT NULL,
+      product_id INTEGER NOT NULL REFERENCES stock_products(id),
+      source_warehouse_id INTEGER REFERENCES stock_warehouses(id),
+      target_warehouse_id INTEGER REFERENCES stock_warehouses(id),
+      lot_id INTEGER REFERENCES stock_lots(id), quantity TEXT NOT NULL,
+      unit_cost TEXT NOT NULL DEFAULT '0', total_cost TEXT NOT NULL DEFAULT '0',
+      movement_date TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '',
+      created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS stock_valuation_layers(
+      id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES stock_products(id),
+      warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
+      lot_id INTEGER REFERENCES stock_lots(id), source_movement_id INTEGER NOT NULL REFERENCES stock_movements(id),
+      qty_in TEXT NOT NULL, qty_remaining TEXT NOT NULL, unit_cost TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_stock_moves_product_date ON stock_movements(product_id,movement_date,id);
+    CREATE INDEX IF NOT EXISTS idx_stock_layers_product_wh ON stock_valuation_layers(product_id,warehouse_id,id);
+    """)
+    c.close()
+
+
+def stock_permission(view_name):
+    def deco(fn):
+        @wraps(fn)
+        def wrapped(*args, **kwargs):
+            if "user_id" not in session:
+                return redirect(url_for("login"))
+            role = session.get("role")
+            allowed = role == "admin" or (role == "accountant" and view_name in {"stock.manage","stock.view"}) or (role == "viewer" and view_name == "stock.view")
+            if not allowed:
+                flash("ليس لديك صلاحية لهذه العملية.", "error")
+                return redirect(url_for("dashboard"))
+            return fn(*args, **kwargs)
+        return wrapped
+    return deco
+
+
+def dec(value, label):
+    try:
+        n = D(str(value))
+        if not n.is_finite():
+            raise InvalidOperation()
+        return n
+    except (InvalidOperation, ValueError, TypeError):
+        raise ValueError(f"قيمة {label} غير صحيحة.")
+
+
+def q4(n):
+    return n.quantize(QTY, rounding=ROUND_HALF_UP)
+
+
+def money(n):
+    return n.quantize(MONEY, rounding=ROUND_HALF_UP)
+
+
+def current_qty(c, product_id, warehouse_id, lot_id=None):
+    sql = """SELECT COALESCE(SUM(CAST(quantity AS REAL) *
+      CASE WHEN movement_type='receipt' THEN 1 WHEN movement_type IN ('issue','scrap') THEN -1
+      WHEN movement_type='transfer' AND target_warehouse_id=? THEN 1
+      WHEN movement_type='transfer' AND source_warehouse_id=? THEN -1 ELSE 0 END),0) q
+      FROM stock_movements WHERE product_id=?"""
+    row = c.execute(sql, (warehouse_id, warehouse_id, product_id)).fetchone()
+    return D(str(row["q"] or 0))
+
+
+def available_layers(c, product_id, warehouse_id, lot_id=None):
+    sql = """SELECT * FROM stock_valuation_layers WHERE product_id=? AND warehouse_id=?
+             AND CAST(qty_remaining AS REAL)>0"""
+    args = [product_id, warehouse_id]
+    if lot_id:
+        sql += " AND lot_id=?"; args.append(lot_id)
+    return c.execute(sql + " ORDER BY id", args).fetchall()
+
+
+def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=None):
+    layers = available_layers(c, product_id, warehouse_id, lot_id)
+    available = sum((D(x["qty_remaining"]) for x in layers), D("0"))
+    if available < qty:
+        raise ValueError(f"الرصيد غير كافٍ. المتاح {q4(available)} والمطلوب {q4(qty)}.")
+    total_value = sum((D(x["qty_remaining"])*D(x["unit_cost"]) for x in layers), D("0"))
+    avg_cost = (total_value / available) if available else D("0")
+    remaining, cost_total, allocations = qty, D("0"), []
+    for layer in layers:
+        if remaining <= 0: break
+        layer_qty = D(layer["qty_remaining"])
+        take = min(layer_qty, remaining)
+        unit_cost = avg_cost if valuation_method == "average" else D(layer["unit_cost"])
+        cost = money(take * unit_cost)
+        new_remaining = layer_qty - take
+        c.execute("UPDATE stock_valuation_layers SET qty_remaining=? WHERE id=?", (str(q4(new_remaining)), layer["id"]))
+        allocations.append((layer["lot_id"], take, unit_cost, cost))
+        cost_total += cost
+        remaining -= take
+    return money(cost_total), allocations
+
+
+def make_lot(c, product, lot_number, production_date, expiry_date):
+    if not product["track_lot"] and not product["track_expiry"]:
+        return None
+    if not lot_number:
+        raise ValueError("هذا الصنف يتطلب رقم تشغيلة.")
+    if product["track_expiry"] and not expiry_date:
+        raise ValueError("تاريخ الصلاحية مطلوب لهذا الصنف.")
+    if expiry_date:
+        try:
+            exp = date.fromisoformat(expiry_date)
+            if exp < date.today():
+                raise ValueError("لا يمكن استلام تشغيلة منتهية الصلاحية.")
+        except ValueError as e:
+            if "منتهية" in str(e): raise
+            raise ValueError("تاريخ الصلاحية غير صحيح.")
+    c.execute("""INSERT OR IGNORE INTO stock_lots(product_id,lot_number,production_date,expiry_date)
+                 VALUES(?,?,?,?)""", (product["id"],lot_number,production_date or None,expiry_date or None))
+    lot = c.execute("SELECT * FROM stock_lots WHERE product_id=? AND lot_number=?", (product["id"],lot_number)).fetchone()
+    if lot["expiry_date"] != (expiry_date or None):
+        raise ValueError("رقم التشغيلة موجود بتاريخ صلاحية مختلف.")
+    return lot["id"]
+
+
+@stock_bp.route("/")
+@stock_permission("stock.view")
+def index():
+    c=get_db()
+    products=c.execute("SELECT COUNT(*) n FROM stock_products WHERE active=1").fetchone()["n"]
+    warehouses=c.execute("SELECT COUNT(*) n FROM stock_warehouses WHERE active=1").fetchone()["n"]
+    rows=c.execute("""SELECT p.id,p.sku,p.name_ar,p.uom,
+      COALESCE(SUM(CASE WHEN m.movement_type='receipt' THEN CAST(m.quantity AS REAL)
+        WHEN m.movement_type IN ('issue','scrap') THEN -CAST(m.quantity AS REAL)
+        WHEN m.movement_type='transfer' AND m.target_warehouse_id IS NOT NULL THEN
+          CASE WHEN m.target_warehouse_id=w.id THEN CAST(m.quantity AS REAL) ELSE 0 END
+        ELSE 0 END),0) qty
+      FROM stock_products p LEFT JOIN stock_movements m ON m.product_id=p.id
+      LEFT JOIN stock_warehouses w ON w.id=COALESCE(m.target_warehouse_id,m.source_warehouse_id)
+      WHERE p.active=1 GROUP BY p.id ORDER BY p.name_ar LIMIT 10""").fetchall()
+    c.close()
+    return render_template("stock_dashboard.html",products=products,warehouses=warehouses,rows=rows)
+
+
+@stock_bp.route("/products", methods=["GET","POST"])
+@stock_permission("stock.manage")
+def products():
+    c=get_db()
+    if request.method=="POST":
+        try:
+            sku=request.form.get("sku","").strip()
+            name=request.form.get("name_ar","").strip()
+            uom=request.form.get("uom","قطعة").strip()
+            if not sku or not name or not uom: raise ValueError("الكود والاسم ووحدة القياس حقول مطلوبة.")
+            c.execute("""INSERT INTO stock_products(sku,name_ar,category,product_type,uom,barcode,track_lot,track_expiry,min_qty)
+              VALUES(?,?,?,?,?,?,?,?,?)""",(sku,name,request.form.get("category","").strip(),
+              request.form.get("product_type","goods"),uom,request.form.get("barcode","").strip() or None,
+              int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),
+              str(q4(dec(request.form.get("min_qty","0"),"الحد الأدنى")))))
+            c.commit(); flash("تم حفظ الصنف.", "success")
+        except (ValueError,sqlite3.IntegrityError) as e:
+            c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود الصنف أو الباركود مستخدم بالفعل.", "error")
+        finally: c.close()
+        return redirect(url_for("stock.products"))
+    rows=c.execute("SELECT * FROM stock_products ORDER BY sku").fetchall(); c.close()
+    return render_template("stock_products.html",rows=rows)
+
+
+@stock_bp.route("/warehouses", methods=["GET","POST"])
+@stock_permission("stock.manage")
+def warehouses():
+    c=get_db()
+    if request.method=="POST":
+        try:
+            code=request.form.get("code","").strip(); name=request.form.get("name_ar","").strip()
+            if not code or not name: raise ValueError("كود واسم المخزن مطلوبان.")
+            c.execute("INSERT INTO stock_warehouses(code,name_ar,branch) VALUES(?,?,?)",(code,name,request.form.get("branch","").strip()))
+            c.commit(); flash("تم حفظ المخزن.", "success")
+        except (ValueError,sqlite3.IntegrityError) as e:
+            c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود المخزن مستخدم بالفعل.", "error")
+        finally: c.close()
+        return redirect(url_for("stock.warehouses"))
+    rows=c.execute("SELECT * FROM stock_warehouses ORDER BY code").fetchall(); c.close()
+    return render_template("stock_warehouses.html",rows=rows)
+
+
+@stock_bp.route("/movements", methods=["GET","POST"])
+@stock_permission("stock.manage")
+def movements():
+    c=get_db()
+    if request.method=="POST":
+        try:
+            kind=request.form.get("movement_type")
+            if kind not in {"receipt","issue","transfer","scrap"}: raise ValueError("نوع الحركة غير صحيح.")
+            product=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(request.form.get("product_id"),)).fetchone()
+            if not product: raise ValueError("الصنف غير موجود أو غير نشط.")
+            qty=q4(dec(request.form.get("quantity"),"الكمية"))
+            if qty<=0: raise ValueError("الكمية يجب أن تكون أكبر من صفر.")
+            src=request.form.get("source_warehouse_id",type=int)
+            dst=request.form.get("target_warehouse_id",type=int)
+            if kind=="receipt" and not dst: raise ValueError("حدد مخزن الاستلام.")
+            if kind in {"issue","scrap","transfer"} and not src: raise ValueError("حدد مخزن الصرف.")
+            if kind=="transfer" and (not dst or dst==src): raise ValueError("حدد مخزن وجهة مختلفًا عن المصدر.")
+            c.execute("BEGIN IMMEDIATE")
+            lot_id=None
+            lot_no=request.form.get("lot_number","").strip()
+            expiry=request.form.get("expiry_date","").strip()
+            if kind=="receipt":
+                lot_id=make_lot(c,product,lot_no,request.form.get("production_date"),expiry)
+                unit_cost=dec(request.form.get("unit_cost","0"),"تكلفة الوحدة")
+                if unit_cost<0: raise ValueError("التكلفة لا يمكن أن تكون سالبة.")
+                total=money(qty*unit_cost)
+            else:
+                if product["track_lot"] or product["track_expiry"]:
+                    if not lot_no: raise ValueError("أدخل رقم التشغيلة للصرف من صنف يتطلب تتبعًا.")
+                    lot=c.execute("SELECT * FROM stock_lots WHERE product_id=? AND lot_number=?",(product["id"],lot_no)).fetchone()
+                    if not lot: raise ValueError("التشغيلة غير مسجلة.")
+                    if lot["expiry_date"] and date.fromisoformat(lot["expiry_date"])<date.today(): raise ValueError("لا يمكن صرف تشغيلة منتهية الصلاحية.")
+                    lot_id=lot["id"]
+                method_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
+                method=method_row["setting_value"] if method_row else "average"
+                total,allocations=consume_layers(c,product["id"],src,qty,method,lot_id)
+                unit_cost=(total/qty).quantize(MONEY,rounding=ROUND_HALF_UP)
+            movement_no=f"STK-{date.today().strftime('%Y%m%d')}-{c.execute('SELECT COALESCE(MAX(id),0)+1 n FROM stock_movements').fetchone()['n']:06d}"
+            movement_date=request.form.get("movement_date") or date.today().isoformat()
+            if kind=="transfer":
+                # Validate and consume source layers, then recreate equivalent valuation layers in destination.
+                for allocated_lot,allocated_qty,allocated_cost,allocated_total in allocations:
+                    pass
+            cur=c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,source_warehouse_id,target_warehouse_id,
+              lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(movement_no,kind,product["id"],src,dst,lot_id,str(qty),str(unit_cost),str(total),movement_date,request.form.get("notes","").strip(),session.get("user_id")))
+            mid=cur.lastrowid
+            if kind=="receipt":
+                c.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost)
+                  VALUES(?,?,?,?,?,?,?)""",(product["id"],dst,lot_id,mid,str(qty),str(qty),str(unit_cost)))
+            elif kind=="transfer":
+                for allocated_lot,allocated_qty,allocated_cost,allocated_total in allocations:
+                    c.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost)
+                      VALUES(?,?,?,?,?,?,?)""",(product["id"],dst,allocated_lot,mid,str(allocated_qty),str(allocated_qty),str(allocated_cost)))
+            c.commit(); flash(f"تم ترحيل الحركة {movement_no}.", "success")
+        except (ValueError,InvalidOperation,sqlite3.IntegrityError) as e:
+            c.rollback(); flash(str(e), "error")
+        finally: c.close()
+        return redirect(url_for("stock.movements"))
+    products=c.execute("SELECT id,sku,name_ar,uom,track_lot,track_expiry FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
+    warehouses=c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
+    rows=c.execute("""SELECT m.*,p.sku,p.name_ar,s.name_ar source_name,t.name_ar target_name
+      FROM stock_movements m JOIN stock_products p ON p.id=m.product_id
+      LEFT JOIN stock_warehouses s ON s.id=m.source_warehouse_id LEFT JOIN stock_warehouses t ON t.id=m.target_warehouse_id
+      ORDER BY m.id DESC LIMIT 30""").fetchall()
+    c.close()
+    return render_template("stock_movements.html",products=products,warehouses=warehouses,rows=rows,today=date.today().isoformat())
+
+
+@stock_bp.route("/reports")
+@stock_permission("stock.view")
+def reports():
+    c=get_db()
+    rows=c.execute("""SELECT p.id,p.sku,p.name_ar,p.uom,
+      COALESCE(SUM(CAST(l.qty_remaining AS REAL)),0) qty,
+      COALESCE(SUM(CAST(l.qty_remaining AS REAL)*CAST(l.unit_cost AS REAL)),0) value
+      FROM stock_products p LEFT JOIN stock_valuation_layers l ON l.product_id=p.id
+      WHERE p.active=1 GROUP BY p.id ORDER BY p.sku""").fetchall()
+    lots=c.execute("""SELECT p.sku,p.name_ar,l.lot_number,l.expiry_date,
+      COALESCE(SUM(CAST(v.qty_remaining AS REAL)),0) qty
+      FROM stock_lots l JOIN stock_products p ON p.id=l.product_id
+      LEFT JOIN stock_valuation_layers v ON v.lot_id=l.id
+      WHERE l.expiry_date IS NOT NULL GROUP BY l.id ORDER BY l.expiry_date""").fetchall()
+    movements=c.execute("""SELECT m.*,p.sku,p.name_ar,w.name_ar warehouse
+      FROM stock_movements m JOIN stock_products p ON p.id=m.product_id
+      LEFT JOIN stock_warehouses w ON w.id=COALESCE(m.target_warehouse_id,m.source_warehouse_id)
+      ORDER BY m.id DESC LIMIT 100""").fetchall()
+    c.close()
+    return render_template("stock_reports.html",rows=rows,lots=lots,movements=movements)
+
+
+@stock_bp.route("/barcode")
+@stock_permission("stock.view")
+def barcode_lookup():
+    code=request.args.get("q","").strip()
+    c=get_db()
+    product=c.execute("SELECT * FROM stock_products WHERE barcode=? OR sku=?",(code,code)).fetchone() if code else None
+    c.close()
+    return render_template("stock_barcode.html",product=product,code=code)
