@@ -13,5 +13,5 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip Flask
-      - run: python -m compileall -q app.py stock.py chart_templates.py
+      - run: python -m compileall -q app.py stock.py purchases.py chart_templates.py
       - run: python -m unittest discover -s tests -v
