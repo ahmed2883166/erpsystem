@@ -24,8 +24,8 @@ app.register_blueprint(stock_bp)
 app.config["SECRET_KEY"] = os.environ.get("NEXUS_SECRET_KEY", "change-this-secret-before-production")
 
 PERMISSIONS = {
-    "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage"},
-    "accountant": {"accounts.manage", "journal.manage", "reports.view", "import_export.manage"},
+    "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view"},
+    "accountant": {"accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view"},
     "viewer": {"reports.view", "stock.view"},
 }
 
