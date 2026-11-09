@@ -263,8 +263,12 @@ def dashboard():
     revenue = connection.execute("SELECT COALESCE(SUM(jl.credit-jl.debit),0) total FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE a.account_type='revenue'").fetchone()["total"]
     expenses = connection.execute("SELECT COALESCE(SUM(jl.debit-jl.credit),0) total FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE a.account_type='expense'").fetchone()["total"]
     recent = connection.execute("SELECT * FROM journal_entries ORDER BY id DESC LIMIT 5").fetchall()
+    currency_row=connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
+    base_currency=currency_row["setting_value"] if currency_row else "EGP"
+    company_row=connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='company_name'").fetchone()
+    company_name=company_row["setting_value"] if company_row else "NEXUS ERP"
     connection.close()
-    return render_template("dashboard.html", totals=totals, balance=balance, revenue=revenue, expenses=expenses, recent=recent)
+    return render_template("dashboard.html", totals=totals, balance=balance, revenue=revenue, expenses=expenses, recent=recent, base_currency=base_currency, company_name=company_name)
 
 
 @app.route("/accounts", methods=["GET", "POST"])
