@@ -78,6 +78,9 @@ def initialize_stock_schema():
 
 def post_scrap_journal(c, movement_id, movement_no, product, movement_date, total_cost, created_by):
     """Post an approved scrap movement only when explicit chart accounts exist."""
+    existing = c.execute("SELECT journal_entry_id FROM stock_movements WHERE id=?", (movement_id,)).fetchone()
+    if existing and existing["journal_entry_id"]:
+        return existing["journal_entry_id"]
     settings = {row["setting_key"]: row["setting_value"] for row in c.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity',)") }
     activity = settings.get("activity", "commercial")
