@@ -111,9 +111,9 @@ def ensure_detail_account(c, code, name, typ, preferred_parent):
     parent=c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?",(preferred_parent,)).fetchone()
     if not parent or not parent["is_group"] or not parent["active"] or parent["account_type"]!=typ:
         parent=c.execute("SELECT id FROM accounts WHERE account_type=? AND is_group=1 AND active=1 ORDER BY code LIMIT 1",(typ,)).fetchone()
-    if not parent: raise ValueError("لا توجد مجموعة حسابات مناسبة لإنشاء: "+code)
+    parent_id=parent["id"] if parent else None
     cur=c.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group,active) VALUES(?,?,?,?,0,1)",
-                  (code,name,typ,parent["id"]))
+                  (code,name,typ,parent_id))
     return cur.lastrowid
 
 def activity_inventory_code(c):
