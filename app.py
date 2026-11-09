@@ -14,7 +14,7 @@ from flask import Flask, Response, flash, redirect, render_template, request, se
 from chart_templates import CHARTS, ACTIVITY_LABELS
 from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
-from accounting_core import reconciliation_snapshot
+from accounting_core import post_journal, reconciliation_snapshot
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
