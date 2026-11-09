@@ -12,6 +12,7 @@ from pathlib import Path
 
 from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for
 from chart_templates import CHARTS, ACTIVITY_LABELS
+from stock import stock_bp, initialize_stock_schema
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -19,12 +20,13 @@ DB_PATH = DATA_DIR / "nexus.db"
 BACKUP_DIR = DATA_DIR / "backups"
 
 app = Flask(__name__)
+app.register_blueprint(stock_bp)
 app.config["SECRET_KEY"] = os.environ.get("NEXUS_SECRET_KEY", "change-this-secret-before-production")
 
 PERMISSIONS = {
     "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage"},
     "accountant": {"accounts.manage", "journal.manage", "reports.view", "import_export.manage"},
-    "viewer": {"reports.view"},
+    "viewer": {"reports.view", "stock.view"},
 }
 
 
@@ -90,7 +92,7 @@ def initialize_database():
     ]
     connection.executemany("INSERT OR IGNORE INTO currencies(code,name_ar,symbol,active,is_base,rate_to_base) VALUES(?,?,?,0,0,0)", currency_seed)
     defaults = {"company_name":"NEXUS ERP Demo", "tax_country":"EG", "tax_regime":"EG_VAT",
-                "tax_number":"", "activity":"commercial", "base_currency":"EGP", "default_vat_rate":"14"}
+                "tax_number":"", "activity":"commercial", "base_currency":"EGP", "default_vat_rate":"14", "inventory_cost_method":"average"}
     for key, value in defaults.items():
         connection.execute("INSERT OR IGNORE INTO company_settings(setting_key,setting_value) VALUES(?,?)", (key,value))
     connection.execute("INSERT OR IGNORE INTO currencies(code,name_ar,symbol,active,is_base,rate_to_base) VALUES('EGP','جنيه مصري','ج.م',1,1,1)")
@@ -106,6 +108,7 @@ def initialize_database():
         ])
     connection.commit()
     connection.close()
+    initialize_stock_schema()
 
 
 def now():
@@ -177,7 +180,13 @@ def company_setup():
             flash("العملة الأساسية غير مدعومة في قائمة العملات الحالية.", "error")
             connection.close()
             return redirect(url_for("company_setup"))
+        inventory_cost_method = request.form.get("inventory_cost_method", "average")
+        if inventory_cost_method not in {"average", "fifo"}:
+            flash("طريقة تقييم المخزون غير صحيحة.", "error")
+            connection.close()
+            return redirect(url_for("company_setup"))
         settings_values = {
+            "inventory_cost_method": inventory_cost_method,
             "company_name": request.form.get("company_name", "").strip(),
             "tax_country": tax_country, "tax_regime": tax_regime,
             "tax_number": request.form.get("tax_number", "").strip(),
