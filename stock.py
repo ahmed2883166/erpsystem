@@ -66,7 +66,60 @@ def initialize_stock_schema():
     CREATE INDEX IF NOT EXISTS idx_stock_moves_product_date ON stock_movements(product_id,movement_date,id);
     CREATE INDEX IF NOT EXISTS idx_stock_layers_product_wh ON stock_valuation_layers(product_id,warehouse_id,id);
     """)
+    # Accounting link and state are additive migrations for existing databases.
+    movement_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_movements)")}
+    if "journal_entry_id" not in movement_columns:
+        c.execute("ALTER TABLE stock_movements ADD COLUMN journal_entry_id INTEGER REFERENCES journal_entries(id)")
+    if "accounting_status" not in movement_columns:
+        c.execute("ALTER TABLE stock_movements ADD COLUMN accounting_status TEXT NOT NULL DEFAULT 'pending'")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_movement_journal ON stock_movements(journal_entry_id) WHERE journal_entry_id IS NOT NULL")
     c.close()
+
+
+def post_scrap_journal(c, movement_id, movement_no, product, movement_date, total_cost, created_by):
+    """Post an approved scrap movement only when explicit chart accounts exist."""
+    settings = {row["setting_key"]: row["setting_value"] for row in c.execute(
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity',)") }
+    activity = settings.get("activity", "commercial")
+    inventory_codes = {
+        "commercial": "1150", "industrial": "1130", "medical": "1150",
+        "restaurant": "1140", "service": None,
+    }
+    inventory_code = inventory_codes.get(activity)
+    if not inventory_code:
+        c.execute("UPDATE stock_movements SET accounting_status='pending_setup' WHERE id=?", (movement_id,))
+        return None
+    inventory = c.execute("SELECT id,is_group,active FROM accounts WHERE code=?", (inventory_code,)).fetchone()
+    # Create a dedicated write-off expense under the activity's expense group when possible.
+    writeoff = c.execute("SELECT id,is_group,active FROM accounts WHERE code='6990'").fetchone()
+    if not writeoff:
+        parent = c.execute("SELECT id FROM accounts WHERE code='6000' AND is_group=1").fetchone()
+        if not parent:
+            parent = c.execute("SELECT id FROM accounts WHERE account_type='expense' AND is_group=1 ORDER BY code LIMIT 1").fetchone()
+        if parent:
+            cur = c.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group,active) VALUES('6990','خسائر تالف المخزون','expense',?,0,1)", (parent["id"],))
+            writeoff_id = cur.lastrowid
+        else:
+            writeoff_id = None
+    else:
+        writeoff_id = writeoff["id"] if not writeoff["is_group"] and writeoff["active"] else None
+    if not inventory or inventory["is_group"] or not inventory["active"] or not writeoff_id:
+        c.execute("UPDATE stock_movements SET accounting_status='pending_setup' WHERE id=?", (movement_id,))
+        return None
+    amount = money(D(str(total_cost)))
+    if amount <= 0:
+        c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
+        return None
+    cur = c.execute(
+        "INSERT INTO journal_entries(entry_date,reference,description,status,created_by,created_at) VALUES(?,?,?,'posted',?,CURRENT_TIMESTAMP)",
+        (movement_date, movement_no, f"قيد آلي لإعدام مخزون - {product['name_ar']}", created_by))
+    entry_id = cur.lastrowid
+    c.executemany("INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?)", [
+        (entry_id, writeoff_id, float(amount), 0, "خسائر تالف مخزون"),
+        (entry_id, inventory["id"], 0, float(amount), "تخفيض قيمة المخزون"),
+    ])
+    c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?", (entry_id,movement_id))
+    return entry_id
 
 
 def stock_permission(view_name):
@@ -278,6 +331,17 @@ def movements():
                 for allocated_lot,allocated_qty,allocated_cost,allocated_total in allocations:
                     c.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost)
                       VALUES(?,?,?,?,?,?,?)""",(product["id"],dst,allocated_lot,mid,str(allocated_qty),str(allocated_qty),str(allocated_cost)))
+            if kind=="scrap":
+                post_scrap_journal(c,mid,movement_no,product,movement_date,total,session.get("user_id"))
+            elif kind=="transfer":
+                # One consolidated inventory control account: internal transfers do not affect GL.
+                c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (mid,))
+            elif kind=="receipt":
+                # A receipt needs a supplier invoice or an explicit GRNI document before posting.
+                c.execute("UPDATE stock_movements SET accounting_status='pending_document' WHERE id=?", (mid,))
+            elif kind=="issue":
+                # Issue purpose is not yet captured (sale, internal use, production); do not guess the debit account.
+                c.execute("UPDATE stock_movements SET accounting_status='pending_purpose' WHERE id=?", (mid,))
             c.commit(); flash(f"تم ترحيل الحركة {movement_no}.", "success")
         except (ValueError,InvalidOperation,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e), "error")
