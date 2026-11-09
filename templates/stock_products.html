@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block title %}الأصناف | NEXUS ERP{% endblock %}{% block content %}<header><h2>تعريف المنتجات والأصناف</h2></header>
+<div class="grid"><section class="panel"><h3>إضافة صنف</h3><form method="post">
+<label>كود الصنف *</label><input name="sku" required>
+<label>اسم الصنف *</label><input name="name_ar" required>
+<label>التصنيف</label><input name="category">
+<label>نوع الصنف</label><select name="product_type"><option value="goods">بضاعة</option><option value="raw">خامة</option><option value="finished">منتج تام مخزني</option><option value="supplies">مستلزمات تشغيل</option><option value="spare">قطع غيار</option><option value="service">خدمة غير مخزنية</option></select>
+<label>وحدة القياس</label><input name="uom" value="قطعة" required>
+<label>الباركود</label><input name="barcode">
+<label>الحد الأدنى</label><input type="number" step="0.0001" min="0" name="min_qty" value="0">
+<label class="checkline"><input type="checkbox" name="track_lot"> تتبع رقم التشغيلة</label>
+<label class="checkline"><input type="checkbox" name="track_expiry"> تتبع الصلاحية</label>
+<button>حفظ الصنف</button></form></section><section class="panel"><h3>الأصناف المسجلة</h3><table><tr><th>الكود</th><th>الصنف</th><th>النوع</th><th>الوحدة</th><th>باركود</th><th>تتبع</th></tr>{% for p in rows %}<tr><td>{{ p.sku }}</td><td>{{ p.name_ar }}</td><td>{{ p.product_type }}</td><td>{{ p.uom }}</td><td>{{ p.barcode or '—' }}</td><td>{{ 'تشغيلة' if p.track_lot else '' }} {{ 'صلاحية' if p.track_expiry else '' }}</td></tr>{% else %}<tr><td colspan="6">لا توجد أصناف.</td></tr>{% endfor %}</table></section></div>{% endblock %}
