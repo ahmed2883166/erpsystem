@@ -7,6 +7,7 @@ from functools import wraps
 from pathlib import Path
 from datetime import date, datetime
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from accounting_core import post_journal
 
 purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
@@ -99,15 +100,7 @@ def account(c, code, typ=None):
     return row["id"]
 
 def create_journal(c, d, ref, desc, lines, user):
-    total_dr=sum((money(x[1]) for x in lines),Decimal("0"))
-    total_cr=sum((money(x[2]) for x in lines),Decimal("0"))
-    if len(lines)<2 or total_dr<=0 or total_dr!=total_cr: raise ValueError("القيد غير متوازن.")
-    cur=c.execute("INSERT INTO journal_entries(entry_date,reference,description,status,created_by,created_at) VALUES(?,?,?,'posted',?,?)",
-      (d,ref,desc,user,datetime.now().isoformat(timespec="seconds")))
-    eid=cur.lastrowid
-    c.executemany("INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?)",
-      [(eid,aid,float(dr),float(cr),memo) for aid,dr,cr,memo in lines])
-    return eid
+    return post_journal(c,d,ref,desc,lines,user)
 
 def ensure_detail_account(c, code, name, typ, preferred_parent):
     found=c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?",(code,)).fetchone()
