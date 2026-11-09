@@ -236,8 +236,9 @@ def company_setup():
         return redirect(url_for("company_setup"))
     settings = {row["setting_key"]: row["setting_value"] for row in connection.execute("SELECT * FROM company_settings")}
     currencies = connection.execute("SELECT * FROM currencies ORDER BY code").fetchall()
+    has_entries = connection.execute("SELECT 1 FROM journal_entries LIMIT 1").fetchone() is not None
     connection.close()
-    return render_template("company_setup.html", settings=settings, currencies=currencies, activities=ACTIVITY_LABELS)
+    return render_template("company_setup.html", settings=settings, currencies=currencies, activities=ACTIVITY_LABELS, has_entries=has_entries)
 
 
 @app.route("/")
