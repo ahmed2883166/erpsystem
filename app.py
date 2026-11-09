@@ -11,6 +11,7 @@ from functools import wraps
 from pathlib import Path
 
 from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for
+from chart_templates import CHARTS, ACTIVITY_LABELS
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -50,7 +51,8 @@ def initialize_database():
         );
         CREATE TABLE IF NOT EXISTS accounts (
             id INTEGER PRIMARY KEY, code TEXT UNIQUE NOT NULL, name_ar TEXT NOT NULL,
-            account_type TEXT NOT NULL, parent_id INTEGER REFERENCES accounts(id), active INTEGER NOT NULL DEFAULT 1
+            account_type TEXT NOT NULL, parent_id INTEGER REFERENCES accounts(id),
+            is_group INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS journal_entries (
             id INTEGER PRIMARY KEY, entry_date TEXT NOT NULL, reference TEXT, description TEXT NOT NULL,
@@ -65,7 +67,33 @@ def initialize_database():
             id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), action TEXT NOT NULL,
             details TEXT, created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS company_settings (
+            setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS currencies (
+            code TEXT PRIMARY KEY, name_ar TEXT NOT NULL, symbol TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 0, is_base INTEGER NOT NULL DEFAULT 0,
+            rate_to_base REAL NOT NULL DEFAULT 0, updated_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS tax_rates (
+            id INTEGER PRIMARY KEY, code TEXT UNIQUE NOT NULL, name_ar TEXT NOT NULL,
+            rate REAL NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1
+        );
     """)
+    account_columns = {row["name"] for row in connection.execute("PRAGMA table_info(accounts)")}
+    if "is_group" not in account_columns:
+        connection.execute("ALTER TABLE accounts ADD COLUMN is_group INTEGER NOT NULL DEFAULT 0")
+    currency_seed = [
+        ("SAR","ريال سعودي","ر.س"),("EGP","جنيه مصري","ج.م"),("USD","دولار أمريكي","$"),
+        ("EUR","يورو","€"),("AED","درهم إماراتي","د.إ"),("GBP","جنيه إسترليني","£"),
+        ("KWD","دينار كويتي","د.ك"),("QAR","ريال قطري","ر.ق")
+    ]
+    connection.executemany("INSERT OR IGNORE INTO currencies(code,name_ar,symbol,active,is_base,rate_to_base) VALUES(?,?,?,0,0,0)", currency_seed)
+    defaults = {"company_name":"NEXUS ERP Demo", "tax_country":"EG", "tax_regime":"EG_VAT",
+                "tax_number":"", "activity":"commercial", "base_currency":"EGP", "default_vat_rate":"14"}
+    for key, value in defaults.items():
+        connection.execute("INSERT OR IGNORE INTO company_settings(setting_key,setting_value) VALUES(?,?)", (key,value))
+    connection.execute("INSERT OR IGNORE INTO currencies(code,name_ar,symbol,active,is_base,rate_to_base) VALUES('EGP','جنيه مصري','ج.م',1,1,1)")
     if not connection.execute("SELECT 1 FROM users WHERE username = 'admin'").fetchone():
         connection.execute("INSERT INTO users(username, full_name, password_hash, role, created_at) VALUES(?,?,?,?,?)",
                            ("admin", "مدير النظام", password_hash("admin123"), "admin", now()))
@@ -132,6 +160,86 @@ def logout():
     return redirect(url_for("login"))
 
 
+@app.route("/company/setup", methods=["GET", "POST"])
+@requires("users.manage")
+def company_setup():
+    connection = db()
+    if request.method == "POST":
+        activity = request.form.get("activity", "commercial")
+        tax_country = request.form.get("tax_country", "OTHER")
+        tax_regime = request.form.get("tax_regime", "CUSTOM")
+        base_currency = request.form.get("base_currency", "").upper()
+        if activity not in CHARTS or tax_country not in {"EG", "SA", "OTHER"} or tax_regime not in {"EG_VAT", "SA_VAT_ZAKAT", "CUSTOM"}:
+            flash("اختيارات الإعدادات غير صحيحة.", "error")
+            connection.close()
+            return redirect(url_for("company_setup"))
+        if not connection.execute("SELECT 1 FROM currencies WHERE code=?", (base_currency,)).fetchone():
+            flash("العملة الأساسية غير مدعومة في قائمة العملات الحالية.", "error")
+            connection.close()
+            return redirect(url_for("company_setup"))
+        settings_values = {
+            "company_name": request.form.get("company_name", "").strip(),
+            "tax_country": tax_country, "tax_regime": tax_regime,
+            "tax_number": request.form.get("tax_number", "").strip(),
+            "activity": activity, "base_currency": base_currency,
+            "default_vat_rate": request.form.get("default_vat_rate", "0").strip()
+        }
+        try:
+            vat_rate = float(settings_values["default_vat_rate"])
+            if not 0 <= vat_rate <= 100 or not settings_values["company_name"]:
+                raise ValueError()
+        except ValueError:
+            flash("أدخل اسم شركة ومعدل ضريبة صحيحًا من 0 إلى 100.", "error")
+            connection.close()
+            return redirect(url_for("company_setup"))
+        for key, value in settings_values.items():
+            connection.execute("INSERT INTO company_settings(setting_key,setting_value) VALUES(?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value", (key, value))
+        selected = set(request.form.getlist("active_currencies"))
+        selected.add(base_currency)
+        for row in connection.execute("SELECT code FROM currencies").fetchall():
+            code = row["code"]
+            if code not in selected:
+                connection.execute("UPDATE currencies SET active=0,is_base=0 WHERE code=?", (code,))
+                continue
+            try:
+                rate = 1.0 if code == base_currency else float(request.form.get("rate_" + code, "0") or 0)
+            except ValueError:
+                rate = 0
+            if rate <= 0:
+                flash(f"أدخل سعر صرف صحيح للعملة {code}. لم يتم حفظ إعدادات العملات.", "error")
+                connection.rollback()
+                connection.close()
+                return redirect(url_for("company_setup"))
+            connection.execute("UPDATE currencies SET active=1,is_base=?,rate_to_base=?,updated_at=? WHERE code=?", (1 if code == base_currency else 0, rate, now(), code))
+        if request.form.get("replace_chart") == "yes":
+            has_entries = connection.execute("SELECT 1 FROM journal_entries LIMIT 1").fetchone()
+            if has_entries:
+                flash("لا يمكن استبدال دليل الحسابات بعد وجود قيود يومية.", "error")
+                connection.rollback()
+                connection.close()
+                return redirect(url_for("company_setup"))
+            connection.execute("DELETE FROM accounts")
+            inserted = {}
+            for code, name, account_type, parent_code, is_group in CHARTS[activity]:
+                parent_id = inserted.get(parent_code)
+                cur = connection.execute(
+                    "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
+                    (code, name, account_type, parent_id, is_group)
+                )
+                inserted[code] = cur.lastrowid
+        connection.execute("INSERT INTO tax_rates(code,name_ar,rate,active) VALUES('VAT',?,?,1) ON CONFLICT(code) DO UPDATE SET name_ar=excluded.name_ar,rate=excluded.rate,active=1",
+                           ("ضريبة القيمة المضافة", vat_rate))
+        connection.commit()
+        connection.close()
+        log("company_setup_updated", f"{activity}/{tax_country}/{base_currency}")
+        flash("تم حفظ إعدادات الشركة والعملات والنظام الضريبي.", "success")
+        return redirect(url_for("company_setup"))
+    settings = {row["setting_key"]: row["setting_value"] for row in connection.execute("SELECT * FROM company_settings")}
+    currencies = connection.execute("SELECT * FROM currencies ORDER BY code").fetchall()
+    connection.close()
+    return render_template("company_setup.html", settings=settings, currencies=currencies, activities=ACTIVITY_LABELS)
+
+
 @app.route("/")
 @requires("reports.view")
 def dashboard():
@@ -167,7 +275,7 @@ def accounts():
 @requires("journal.manage")
 def journal():
     connection = db()
-    accounts_list = connection.execute("SELECT * FROM accounts WHERE active=1 ORDER BY code").fetchall()
+    accounts_list = connection.execute("SELECT * FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
     if request.method == "POST":
         account_ids = request.form.getlist("account_id")
         debits = request.form.getlist("debit")
