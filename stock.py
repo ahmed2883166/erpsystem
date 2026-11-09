@@ -69,7 +69,7 @@ def initialize_stock_schema():
     # Accounting link and state are additive migrations for existing databases.
     movement_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_movements)")}
     if "journal_entry_id" not in movement_columns:
-        c.execute("ALTER TABLE stock_movements ADD COLUMN journal_entry_id INTEGER REFERENCES journal_entries(id)")
+        c.execute("ALTER TABLE stock_movements ADD COLUMN journal_entry_id INTEGER")
     if "accounting_status" not in movement_columns:
         c.execute("ALTER TABLE stock_movements ADD COLUMN accounting_status TEXT NOT NULL DEFAULT 'pending'")
     c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_movement_journal ON stock_movements(journal_entry_id) WHERE journal_entry_id IS NOT NULL")
