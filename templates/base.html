@@ -1,2 +1,15 @@
-<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{% block title %}NEXUS ERP{% endblock %}</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head><body>
-{% if session.user_id %}<aside><h1>NEXUS <small>ERP</small></h1><p class="user">{{ session.full_name }}<br><small>{{ session.role }}</small></p><nav><a href="{{ url_for('dashboard') }}">الرئيسية</a>{% if 'accounts.manage' in permissions %}<a href="{{ url_for('accounts') }}">دليل الحسابات</a>{% endif %}{% if 'journal.manage' in permissions %}<a href="{{ url_for('journal') }}">القيود اليومية</a>{% endif %}<a href="{{ url_for('trial_balance') }}">ميزان المراجعة</a><a href="{{ url_for('ledger') }}">دفتر الأستاذ</a>{% if 'users.manage' in permissions %}<a href="{{ url_for('company_setup') }}">إعداد الشركة والعملات</a><a href="{{ url_for('users') }}">المستخدمون والصلاحيات</a>{% endif %}{% if 'backup.manage' in permissions %}<a href="{{ url_for('create_backup') }}">نسخة احتياطية</a>{% endif %}<a href="{{ url_for('logout') }}">تسجيل الخروج</a></nav></aside>{% endif %}<main>{% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}{% block content %}{% endblock %}</main></body></html>
+<!doctype html>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{% block title %}NEXUS ERP{% endblock %}</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head><body>
+{% if session.user_id %}
+<aside><h1>NEXUS <small>ERP</small></h1><p class="user">{{ session.full_name }}<br><small>{{ session.role }}</small></p><nav>
+<a href="{{ url_for('dashboard') }}">الرئيسية</a>
+{% if 'accounts.manage' in permissions %}<a href="{{ url_for('accounts') }}">دليل الحسابات</a>{% endif %}
+<a href="{{ url_for('stock.index') }}">المخزون</a>
+{% if 'stock.manage' in permissions %}<a href="{{ url_for('stock.products') }}">تعريف الأصناف</a><a href="{{ url_for('stock.warehouses') }}">المخازن</a><a href="{{ url_for('stock.movements') }}">حركات المخزون</a>{% endif %}
+<a href="{{ url_for('stock.reports') }}">تقارير المخزون</a>
+{% if 'journal.manage' in permissions %}<a href="{{ url_for('journal') }}">القيود اليومية</a>{% endif %}
+<a href="{{ url_for('trial_balance') }}">ميزان المراجعة</a><a href="{{ url_for('ledger') }}">دفتر الأستاذ</a>
+{% if 'users.manage' in permissions %}<a href="{{ url_for('company_setup') }}">إعداد الشركة والعملات</a><a href="{{ url_for('users') }}">المستخدمون والصلاحيات</a>{% endif %}
+{% if 'backup.manage' in permissions %}<a href="{{ url_for('create_backup') }}">نسخة احتياطية</a>{% endif %}
+<a href="{{ url_for('logout') }}">تسجيل الخروج</a></nav></aside>{% endif %}
+<main>{% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}{% block content %}{% endblock %}</main></body></html>
