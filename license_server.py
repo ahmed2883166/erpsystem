@@ -37,6 +37,9 @@ def connect():
         license_type TEXT NOT NULL, expires_at TEXT NOT NULL, device_id TEXT,
         revoked INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
     )""")
+    connection.execute("""CREATE TABLE IF NOT EXISTS trial_devices(
+        machine_id TEXT PRIMARY KEY, first_seen TEXT NOT NULL, trial_ends_at TEXT NOT NULL
+    )""")
     connection.commit()
     return connection
 
@@ -92,6 +95,28 @@ def admin_authorized():
 @app.get("/health")
 def health():
     return jsonify({"service":"NEXUS ERP Licensing","status":"ok"})
+
+@app.post("/api/v1/trial")
+def trial():
+    body = request.get_json(silent=True) or {}
+    machine_id = str(body.get("machine_id", "")).strip()
+    if len(machine_id) < 16 or len(machine_id) > 256 or body.get("product") != "NEXUS_ERP":
+        return jsonify({"error":"invalid_request"}), 400
+    now = utc_now()
+    connection = connect()
+    row = connection.execute("SELECT * FROM trial_devices WHERE machine_id=?", (machine_id,)).fetchone()
+    if not row:
+        first_seen = now
+        trial_ends_at = now + timedelta(days=15)
+        connection.execute("INSERT INTO trial_devices(machine_id,first_seen,trial_ends_at) VALUES(?,?,?)",
+            (machine_id, iso(first_seen), iso(trial_ends_at)))
+        connection.commit()
+    else:
+        first_seen, trial_ends_at = parse_time(row["first_seen"]), parse_time(row["trial_ends_at"])
+    connection.close()
+    return jsonify({"first_seen":iso(first_seen),"trial_ends_at":iso(trial_ends_at),
+                    "days_remaining":max(0, int((trial_ends_at-now).total_seconds()+86399)//86400),
+                    "status":"trial" if trial_ends_at > now else "expired"})
 
 @app.post("/api/v1/activate")
 def activate():
