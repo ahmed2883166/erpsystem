@@ -209,6 +209,27 @@ def initialize_database():
             ("3000", "رأس المال", "equity"), ("4000", "إيرادات المبيعات والخدمات", "revenue"),
             ("5000", "تكلفة المبيعات", "expense"), ("6000", "المصروفات التشغيلية", "expense"),
         ])
+    # SQLite CREATE TABLE IF NOT EXISTS does not change a legacy REAL
+    # declaration. Rebuild journal_lines once with TEXT amount columns so
+    # existing installations use the same decimal-safe storage as new ones.
+    journal_columns = {row["name"]: row for row in connection.execute("PRAGMA table_info(journal_lines)")}
+    debit_type = str(journal_columns.get("debit")["type"]).upper() if "debit" in journal_columns else ""
+    credit_type = str(journal_columns.get("credit")["type"]).upper() if "credit" in journal_columns else ""
+    if debit_type != "TEXT" or credit_type != "TEXT":
+        connection.execute("""CREATE TABLE journal_lines_decimal_new(
+            id INTEGER PRIMARY KEY,
+            entry_id INTEGER NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
+            account_id INTEGER NOT NULL REFERENCES accounts(id),
+            debit TEXT NOT NULL DEFAULT '0',
+            credit TEXT NOT NULL DEFAULT '0',
+            memo TEXT
+        )""")
+        connection.execute("""INSERT INTO journal_lines_decimal_new(id,entry_id,account_id,debit,credit,memo)
+            SELECT id,entry_id,account_id,CAST(debit AS TEXT),CAST(credit AS TEXT),memo
+            FROM journal_lines ORDER BY id""")
+        connection.execute("DROP TABLE journal_lines")
+        connection.execute("ALTER TABLE journal_lines_decimal_new RENAME TO journal_lines")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_entry ON journal_lines(entry_id)")
     connection.commit()
     connection.close()
     initialize_stock_schema()
