@@ -93,11 +93,30 @@ def schedule(asset_id):
     c=db(); asset=c.execute("SELECT * FROM fixed_assets WHERE id=?",(asset_id,)).fetchone()
     if not asset: c.close(); flash("الأصل غير موجود.","error"); return redirect(url_for("assets.index"))
     rows=c.execute("SELECT * FROM asset_depreciations WHERE asset_id=? ORDER BY period",(asset_id,)).fetchall()
-    accumulated=sum((Decimal(x["amount"]) for x in rows),Decimal("0"))
+    posted={x["period"]:Decimal(x["amount"]) for x in rows}
+    accumulated=sum(posted.values(),Decimal("0"))
     c.close()
-    depreciable=Decimal(asset["cost"])-Decimal(asset["residual_value"])
-    return render_template("asset_schedule.html",asset=asset,rows=rows,accumulated=accumulated,
-      net=max(Decimal(asset["cost"])-accumulated,Decimal(asset["residual_value"])),depreciable=depreciable)
+    cost,residual=Decimal(asset["cost"]),Decimal(asset["residual_value"])
+    depreciable=cost-residual
+    opening=cost
+    ready=date.fromisoformat(asset["ready_date"])
+    schedule_rows=[]
+    for offset in range(int(asset["useful_life_months"])):
+        month_index=ready.month-1+offset
+        year=ready.year+month_index//12
+        month=month_index%12+1
+        period=f"{year:04d}-{month:02d}"
+        remaining=max(opening-residual,Decimal("0"))
+        if remaining<=0: break
+        if asset["depreciation_method"]=="straight_line":
+            planned=depreciable/Decimal(asset["useful_life_months"])
+        else:
+            planned=opening*Decimal(asset["annual_rate"])/Decimal("1200")
+        planned=min(planned.quantize(M,rounding=ROUND_HALF_UP),remaining)
+        schedule_rows.append({"period":period,"planned":planned,"actual":posted.get(period),"posted":period in posted})
+        opening-=planned
+    return render_template("asset_schedule.html",asset=asset,rows=rows,schedule_rows=schedule_rows,accumulated=accumulated,
+      net=max(cost-accumulated,residual),depreciable=depreciable)
 
 @assets_bp.route("/<int:asset_id>/depreciate",methods=["POST"])
 @require(write=True)
