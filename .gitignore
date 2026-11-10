@@ -4,3 +4,7 @@ __pycache__/
 data/*.db
 data/backups/
 instance/
+# Never commit license authority database or signing keys
+nexus-licenses.sqlite3
+*.pem
+.env
