@@ -102,7 +102,9 @@ def schedule(asset_id):
     opening=cost
     ready=date.fromisoformat(asset["ready_date"])
     schedule_rows=[]
-    for offset in range(int(asset["useful_life_months"])):
+    life_months=int(asset["useful_life_months"])
+    period_count=life_months+(1 if ready.day>1 else 0)
+    for offset in range(period_count):
         month_index=ready.month-1+offset
         year=ready.year+month_index//12
         month=month_index%12+1
@@ -136,6 +138,10 @@ def depreciate(asset_id):
         asset=c.execute("SELECT * FROM fixed_assets WHERE id=? AND status='active'",(asset_id,)).fetchone()
         if not asset: raise ValueError("الأصل غير موجود أو غير نشط.")
         if period < asset["ready_date"][:7]: raise ValueError("لا يجوز بدء الإهلاك قبل جاهزية الأصل للاستخدام.")
+        ready_date=date.fromisoformat(asset["ready_date"])
+        period_offset=(int(period[:4])-ready_date.year)*12+int(period[5:7])-ready_date.month
+        if period_offset>int(asset["useful_life_months"]) or (period_offset==int(asset["useful_life_months"]) and ready_date.day==1):
+            raise ValueError("انتهى العمر الإنتاجي المحدد للأصل.")
         if c.execute("SELECT 1 FROM asset_depreciations WHERE asset_id=? AND period=?",(asset_id,period)).fetchone(): raise ValueError("تم تسجيل إهلاك هذا الأصل عن هذه الفترة بالفعل.")
         cost,residual=Decimal(asset["cost"]),Decimal(asset["residual_value"])
         accumulated= sum((Decimal(x["amount"]) for x in c.execute("SELECT amount FROM asset_depreciations WHERE asset_id=?",(asset_id,)).fetchall()),Decimal("0"))
