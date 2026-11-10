@@ -330,6 +330,71 @@ def warehouses():
     return render_template("stock_warehouses.html",rows=rows)
 
 
+@stock_bp.route("/products/<int:product_id>/edit", methods=["GET","POST"])
+@stock_permission("stock.manage")
+def edit_product(product_id):
+    c=get_db(); product=c.execute("SELECT * FROM stock_products WHERE id=?",(product_id,)).fetchone()
+    if not product:
+        c.close(); flash("الصنف غير موجود.","error"); return redirect(url_for("stock.products"))
+    used=c.execute("SELECT 1 FROM stock_movements WHERE product_id=? LIMIT 1",(product_id,)).fetchone() is not None
+    if request.method=="POST":
+        try:
+            sku=request.form.get("sku","").strip(); name=request.form.get("name_ar","").strip(); uom=request.form.get("uom","").strip()
+            if not sku or not name or not uom: raise ValueError("الكود والاسم والوحدة مطلوبة.")
+            c.execute("""UPDATE stock_products SET sku=?,name_ar=?,category=?,product_type=?,uom=?,barcode=?,track_lot=?,track_expiry=?,min_qty=? WHERE id=?""",
+              (sku,name,request.form.get("category","").strip(),request.form.get("product_type","goods"),uom,request.form.get("barcode","").strip() or None,int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),str(q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))),product_id))
+            c.commit(); c.close(); flash("تم تعديل الصنف.","success"); return redirect(url_for("stock.products"))
+        except (ValueError,sqlite3.IntegrityError) as e:
+            c.rollback(); flash(str(e) if isinstance(e,ValueError) else "الكود أو الباركود مستخدم بالفعل.","error")
+    c.close(); return render_template("stock_product_edit.html",product=product,used=used)
+
+
+@stock_bp.route("/products/<int:product_id>/delete",methods=["POST"])
+@stock_permission("stock.manage")
+def delete_product(product_id):
+    c=get_db(); product=c.execute("SELECT * FROM stock_products WHERE id=?",(product_id,)).fetchone()
+    if not product: flash("الصنف غير موجود.","error")
+    else:
+        refs=[("stock_movements","حركات المخزون"),("stock_lots","التشغيلات"),("stock_valuation_layers","طبقات التقييم"),("purchase_order_lines","أوامر الشراء"),("goods_receipt_lines","استلامات المشتريات"),("sales_invoice_lines","فواتير البيع")]
+        used=next((label for table,label in refs if c.execute(f"SELECT 1 FROM {table} WHERE product_id=? LIMIT 1",(product_id,)).fetchone()),None)
+        if used: flash("لا يمكن حذف الصنف لوجود ارتباط في "+used+".","error")
+        else:
+            try: c.execute("DELETE FROM stock_products WHERE id=?",(product_id,)); c.commit(); flash("تم حذف الصنف لعدم وجود حركات مرتبطة.","success")
+            except sqlite3.IntegrityError: c.rollback(); flash("لا يمكن حذف الصنف لوجود مستند مرتبط به.","error")
+    c.close(); return redirect(url_for("stock.products"))
+
+
+@stock_bp.route("/warehouses/<int:warehouse_id>/edit",methods=["GET","POST"])
+@stock_permission("stock.manage")
+def edit_warehouse(warehouse_id):
+    c=get_db(); warehouse=c.execute("SELECT * FROM stock_warehouses WHERE id=?",(warehouse_id,)).fetchone()
+    if not warehouse:
+        c.close(); flash("المخزن غير موجود.","error"); return redirect(url_for("stock.warehouses"))
+    if request.method=="POST":
+        try:
+            code=request.form.get("code","").strip(); name=request.form.get("name_ar","").strip()
+            if not code or not name: raise ValueError("كود واسم المخزن مطلوبان.")
+            c.execute("UPDATE stock_warehouses SET code=?,name_ar=?,branch=? WHERE id=?",(code,name,request.form.get("branch","").strip(),warehouse_id))
+            c.commit(); c.close(); flash("تم تعديل المخزن.","success"); return redirect(url_for("stock.warehouses"))
+        except (ValueError,sqlite3.IntegrityError) as e: c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود المخزن مستخدم بالفعل.","error")
+    c.close(); return render_template("stock_warehouse_edit.html",warehouse=warehouse)
+
+
+@stock_bp.route("/warehouses/<int:warehouse_id>/delete",methods=["POST"])
+@stock_permission("stock.manage")
+def delete_warehouse(warehouse_id):
+    c=get_db(); warehouse=c.execute("SELECT * FROM stock_warehouses WHERE id=?",(warehouse_id,)).fetchone()
+    if not warehouse: flash("المخزن غير موجود.","error")
+    else:
+        refs=[("stock_movements","حركات المخزون"),("stock_valuation_layers","طبقات تقييم المخزون"),("goods_receipts","استلامات المشتريات"),("sales_invoices","فواتير البيع")]
+        used=next((label for table,label in refs if c.execute(f"SELECT 1 FROM {table} WHERE warehouse_id=? OR source_warehouse_id=? OR target_warehouse_id=? LIMIT 1",(warehouse_id,warehouse_id,warehouse_id)).fetchone()),None)
+        if used: flash("لا يمكن حذف المخزن لوجود "+used+" مرتبطة به.","error")
+        else:
+            try: c.execute("DELETE FROM stock_warehouses WHERE id=?",(warehouse_id,)); c.commit(); flash("تم حذف المخزن.","success")
+            except sqlite3.IntegrityError: c.rollback(); flash("لا يمكن حذف المخزن لوجود مستند مرتبط به.","error")
+    c.close(); return redirect(url_for("stock.warehouses"))
+
+
 @stock_bp.route("/movements", methods=["GET","POST"])
 @stock_permission("stock.manage")
 def movements():
