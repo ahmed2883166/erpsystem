@@ -2,8 +2,9 @@
 {% block title %}المطابقة المحاسبية | NEXUS ERP{% endblock %}
 {% block content %}
 <header>
-  <h2>مركز المطابقة والترابط</h2>
-  <p>{{ settings.get('company_name','NEXUS ERP') }} — العملة الأساسية {{ settings.get('base_currency','') }}</p>
+  <div><h2>مركز المطابقة والترابط</h2>
+  <p>{{ settings.get('company_name','NEXUS ERP') }} — العملة الأساسية {{ settings.get('base_currency','') }}</p></div>
+  <div class="table-actions no-print"><button type="button" class="secondary" onclick="window.print()">طباعة / حفظ PDF</button></div>
 </header>
 
 <section class="cards">
