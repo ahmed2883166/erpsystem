@@ -319,6 +319,38 @@ def customer_list():
     return render_template("sales_customers.html", rows=rows)
 
 
+@sales_bp.route("/customers/<int:customer_id>/edit",methods=["GET","POST"])
+@require("sales.manage")
+def edit_customer(customer_id):
+    c=db(); customer=c.execute("SELECT * FROM customers WHERE id=?",(customer_id,)).fetchone()
+    if not customer:
+        c.close(); flash("العميل غير موجود.","error"); return redirect(url_for("sales.customer_list"))
+    used=c.execute("SELECT 1 FROM sales_invoices WHERE customer_id=? LIMIT 1",(customer_id,)).fetchone() is not None
+    if request.method=="POST":
+        try:
+            limit=Decimal(request.form.get("credit_limit","0") or "0")
+            if not limit.is_finite() or limit<0: raise ValueError("الحد الائتماني يجب أن يكون صفرًا أو أكبر.")
+            c.execute("""UPDATE customers SET code=?,name=?,tax_number=?,phone=?,email=?,address=?,credit_limit=? WHERE id=?""",
+              (request.form["code"].strip(),request.form["name"].strip(),request.form.get("tax_number","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("address","").strip(),str(limit),customer_id))
+            c.commit(); c.close(); flash("تم تعديل بيانات العميل.","success"); return redirect(url_for("sales.customer_list"))
+        except (ValueError,InvalidOperation,sqlite3.IntegrityError) as e:
+            c.rollback(); flash(str(e) if isinstance(e,(ValueError,InvalidOperation)) else "كود العميل مستخدم بالفعل.","error")
+    c.close(); return render_template("sales_customer_edit.html",customer=customer,used=used)
+
+
+@sales_bp.route("/customers/<int:customer_id>/delete",methods=["POST"])
+@require("sales.manage")
+def delete_customer(customer_id):
+    c=db(); customer=c.execute("SELECT * FROM customers WHERE id=?",(customer_id,)).fetchone()
+    if not customer: flash("العميل غير موجود.","error")
+    elif c.execute("SELECT 1 FROM sales_invoices WHERE customer_id=? LIMIT 1",(customer_id,)).fetchone():
+        flash("لا يمكن حذف العميل لوجود فواتير أو عمليات بيع مرتبطة به. يمكنك تعديل بياناته بدل الحذف.","error")
+    else:
+        try: c.execute("DELETE FROM customers WHERE id=?",(customer_id,)); c.commit(); flash("تم حذف العميل.","success")
+        except sqlite3.IntegrityError: c.rollback(); flash("لا يمكن حذف العميل لوجود مستند مرتبط به.","error")
+    c.close(); return redirect(url_for("sales.customer_list"))
+
+
 @sales_bp.route("/invoices/new", methods=["GET", "POST"])
 @require("sales.manage")
 def new_invoice():
