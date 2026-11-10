@@ -93,21 +93,38 @@ def tax_report():
     # Group by the original line tax treatment so mixed-treatment invoices remain classified correctly.
     sales_credits = []
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sales_credit_notes'").fetchone():
-        sales_credits = conn.execute("""
+        credit_rows = conn.execute("""
             SELECT cn.id, cn.credit_note_no document_no, cn.credit_date document_date,
-                   c.name party_name, SUM(CAST(cl.line_total AS NUMERIC)) taxable_base,
-                   SUM(CAST(cl.tax_amount AS NUMERIC)) tax_amount,
-                   SUM(CAST(cl.line_total AS NUMERIC)+CAST(cl.tax_amount AS NUMERIC)) total_amount,
-                   COALESCE(cl.tax_treatment,'standard') tax_treatment,
-                   '' tax_reference, cn.reason tax_notes
+                   c.name party_name, cl.line_total taxable_base, cl.tax_amount,
+                   cl.tax_treatment, cn.reason tax_notes
             FROM sales_credit_notes cn
             JOIN sales_invoices i ON i.id=cn.invoice_id
             JOIN customers c ON c.id=i.customer_id
             JOIN sales_credit_note_lines cl ON cl.credit_note_id=cn.id
             WHERE cn.status='posted' AND cn.credit_date>=? AND cn.credit_date<?
-            GROUP BY cn.id, COALESCE(cl.tax_treatment,'standard')
-            ORDER BY cn.credit_date,cn.id
+            ORDER BY cn.credit_date,cn.id,cl.id
         """, (start.isoformat(), end.isoformat())).fetchall()
+        grouped = {}
+        for row in credit_rows:
+            key = (row["id"], row["document_no"], row["document_date"],
+                   row["party_name"], row["tax_treatment"] or "standard", row["tax_notes"])
+            item = grouped.setdefault(key, {"taxable_base": Decimal("0"),
+                                             "tax_amount": Decimal("0")})
+            item["taxable_base"] += Decimal(row["taxable_base"] or "0")
+            item["tax_amount"] += Decimal(row["tax_amount"] or "0")
+        for key, amounts in grouped.items():
+            credit_id, doc_no, doc_date, party_name, treatment, notes = key
+            base, tax_value = amounts["taxable_base"], amounts["tax_amount"]
+            sales_credits.append({
+                "id": credit_id, "document_no": doc_no, "document_date": doc_date,
+                "party_name": party_name, "taxable_base": -base,
+                "tax_amount": -tax_value,
+                "tax_rate": (tax_value * Decimal("100") / base).quantize(Decimal("0.01"))
+                            if base else Decimal("0"),
+                "total_amount": -(base + tax_value), "tax_treatment": treatment,
+                "tax_reference": "", "tax_notes": notes,
+                "document_type": "إشعار دائن",
+            })
     purchases = conn.execute("""
         SELECT b.id, b.bill_no document_no, b.bill_date document_date, s.name party_name,
                b.subtotal taxable_base, b.tax_rate tax_rate,
@@ -128,16 +145,6 @@ def tax_report():
         ).quantize(Decimal("0.01")) if Decimal(r["taxable_base"] or "0") else Decimal("0"),
         "total_amount": Decimal(r["total_amount"] or "0")
     } for r in sales]
-    sales_credits = [{
-        **dict(r),
-        "taxable_base": -Decimal(r["taxable_base"] or "0"),
-        "tax_amount": -Decimal(r["tax_amount"] or "0"),
-        "tax_rate": (Decimal(r["tax_amount"] or "0") * Decimal("100") /
-                     Decimal(r["taxable_base"])).quantize(Decimal("0.01"))
-                    if Decimal(r["taxable_base"] or "0") else Decimal("0"),
-        "total_amount": -Decimal(r["total_amount"] or "0"),
-        "document_type": "إشعار دائن",
-    } for r in sales_credits]
     sales = [{**r, "document_type": "فاتورة بيع"} for r in sales] + sales_credits
     purchases = [{**dict(r), "taxable_base": Decimal(r["taxable_base"] or "0"),
                       "tax_rate": Decimal(r["tax_rate"] or "0"), "tax_amount": Decimal(r["tax_amount"] or "0"),
