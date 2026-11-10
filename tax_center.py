@@ -100,9 +100,15 @@ def tax_report():
         WHERE b.status='posted' AND b.bill_date>=? AND b.bill_date<?
         ORDER BY b.bill_date,b.id
     """, (start.isoformat(), end.isoformat())).fetchall()
-    sales = [{**dict(r), "taxable_base": Decimal(r["taxable_base"] or "0"),
-                  "tax_rate": Decimal(r["tax_rate"] or "0"), "tax_amount": Decimal(r["tax_amount"] or "0"),
-                  "total_amount": Decimal(r["total_amount"] or "0")} for r in sales]
+    sales = [{
+        **dict(r),
+        "taxable_base": Decimal(r["taxable_base"] or "0"),
+        "tax_amount": Decimal(r["tax_amount"] or "0"),
+        "tax_rate": (
+            Decimal(r["tax_amount"] or "0") * Decimal("100") / Decimal(r["taxable_base"])
+        ).quantize(Decimal("0.01")) if Decimal(r["taxable_base"] or "0") else Decimal("0"),
+        "total_amount": Decimal(r["total_amount"] or "0")
+    } for r in sales]
     purchases = [{**dict(r), "taxable_base": Decimal(r["taxable_base"] or "0"),
                       "tax_rate": Decimal(r["tax_rate"] or "0"), "tax_amount": Decimal(r["tax_amount"] or "0"),
                       "total_amount": Decimal(r["total_amount"] or "0"),
@@ -177,10 +183,4 @@ def classify_document(kind, document_id):
     # Freeze them after posting until a dedicated tax-adjustment workflow exists.
     conn.close()
     flash("لا يمكن تعديل التصنيف أو نسبة خصم الضريبة بعد ترحيل المستند. أنشئ مستند تسوية ضريبية معتمدًا حتى تظل الدفاتر والإقرار متطابقين.", "error")
-    return redirect(url_for("tax.tax_report", period=request.form.get("period", "")))
-    conn.execute("INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
-                 (session.get("user_id"), "tax_classification", kind + ":" + str(document_id) + " => " + treatment + "; ref=" + reference))
-    conn.commit()
-    conn.close()
-    flash("تم حفظ التصنيف الضريبي. راجع اتساق نسبة الضريبة والمبلغ قبل الاعتماد.", "success")
     return redirect(url_for("tax.tax_report", period=request.form.get("period", "")))
