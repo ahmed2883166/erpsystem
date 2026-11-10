@@ -305,7 +305,10 @@ def login():
         attempts = connection.execute("""SELECT COUNT(*) FROM login_attempts
             WHERE username=? AND remote_addr=? AND attempted_at>=?""",
             (username, remote_addr, cutoff_text)).fetchone()[0]
-        if attempts >= 5:
+        ip_attempts = connection.execute("""SELECT COUNT(*) FROM login_attempts
+            WHERE remote_addr=? AND attempted_at>=?""",
+            (remote_addr, cutoff_text)).fetchone()[0]
+        if attempts >= 5 or ip_attempts >= 20:
             connection.close()
             flash("تم إيقاف محاولات الدخول مؤقتًا بسبب تكرار المحاولات الفاشلة. حاول بعد 15 دقيقة.", "error")
             return render_template("login.html"), 429
@@ -854,6 +857,26 @@ def reverse_journal(entry_id):
         connection.close()
         flash("لا يمكن عكس قيد غير موجود أو غير مرحّل.", "error")
         return redirect(url_for("trial_balance"))
+    # A journal linked from an operational document must be reversed through
+    # that document's own workflow (credit note, stock return, payment reversal, etc.).
+    linked_source = None
+    table_names = [r[0] for r in connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+    for table_name in table_names:
+        if table_name in {"journal_entries", "journal_lines"}:
+            continue
+        columns = {r[1] for r in connection.execute('PRAGMA table_info("' + table_name.replace('"','""') + '")')}
+        if "journal_entry_id" not in columns:
+            continue
+        exists = connection.execute('SELECT 1 FROM "' + table_name.replace('"','""') + '" WHERE journal_entry_id=? LIMIT 1',
+                                   (entry_id,)).fetchone()
+        if exists:
+            linked_source = table_name
+            break
+    if linked_source:
+        connection.close()
+        flash(f"لا يمكن عكس هذا القيد من دفتر اليومية لأنه مرتبط بمستند في {linked_source}. استخدم إجراء الإلغاء أو الإشعار الخاص بالمستند.", "error")
+        return redirect(url_for("journal_detail", entry_id=entry_id))
     reference = f"REV-{entry_id}"
     existing = connection.execute("SELECT id FROM journal_entries WHERE reference=? AND status='posted'", (reference,)).fetchone()
     if existing:
