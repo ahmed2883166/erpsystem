@@ -149,6 +149,8 @@ def _allowed_vat_rates(conn):
 def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate, created_by=None, allow_credit_override=False):
     """Create invoice, stock issues and balanced GL entries inside caller transaction."""
     rate = Decimal(str(tax_rate)).quantize(CENT, rounding=ROUND_HALF_UP)
+    if not rate.is_finite() or rate < 0 or rate > 100:
+        raise ValueError("نسبة الضريبة الافتراضية يجب أن تكون بين صفر و100.")
     # Header rate is only a default for standard-tax lines; each line is validated
     # independently. Exempt/zero-rated invoices must not fail on an unused header rate.
     allowed_rates = _allowed_vat_rates(conn)
@@ -163,7 +165,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     codes = _sales_account_codes(activity)
     ar = _account(conn, codes["ar"], "asset")
     revenue = _account(conn, codes["revenue"], "revenue")
-    vat = _account(conn, codes["vat"], "liability") if rate else None
+    vat = None
     inventory = _account(conn, codes["inventory"], "asset") if codes["inventory"] else None
     cogs = _account(conn, codes["cogs"], "expense") if codes["cogs"] else None
     if activity != "service" and not warehouse_id:
