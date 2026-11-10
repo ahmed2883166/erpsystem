@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}مراجعة سلامة المشتريات | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <h2>مراجعة سلامة المشتريات</h2>
+  <p>تعرض الشاشة حالات التكرار القديمة التي اكتشفها النظام قبل إنشاء الفهارس الفريدة. لا يتم حذف أو تعديل أي فاتورة أو إيصال تلقائيًا.</p>
+</header>
+<section class="panel">
+  <div class="section-heading"><h3>المشكلات المفتوحة</h3><span class="muted">عدد الحالات: {{ issues|length }}</span></div>
+  {% for item in issues %}
+    <article class="panel integrity-issue">
+      <h3>{{ item.summary }}</h3>
+      <p><strong>رقم الحالة:</strong> {{ item.issue.id }} · <strong>تاريخ الاكتشاف:</strong> {{ item.issue.detected_at }}</p>
+      {% if item.kind == 'duplicate_supplier_invoice' %}
+        <p><strong>المورد:</strong> {{ item.rows[0].supplier_name }} · <strong>رقم فاتورة المورد:</strong> {{ item.rows[0].supplier_invoice_no }}</p>
+        <table>
+          <thead><tr><th>رقم مستند NEXUS</th><th>تاريخ الفاتورة</th><th>الإجمالي</th></tr></thead>
+          <tbody>{% for row in item.rows %}<tr><td>{{ row.bill_no }} (ID: {{ row.id }})</td><td>{{ row.bill_date }}</td><td>{{ row.total_amount }}</td></tr>{% endfor %}</tbody>
+        </table>
+      {% else %}
+        <p><strong>إيصال الاستلام:</strong> {{ item.rows[0].receipt_no }} (ID: {{ item.rows[0].receipt_id }})</p>
+        <table>
+          <thead><tr><th>المورد</th><th>فاتورة المورد</th><th>القيمة المطابقة</th></tr></thead>
+          <tbody>{% for row in item.rows %}<tr><td>{{ row.supplier_name }}</td><td>{{ row.supplier_invoice_no }} — {{ row.bill_no }} (ID: {{ row.bill_id }})</td><td>{{ row.matched_amount }}</td></tr>{% endfor %}</tbody>
+        </table>
+      {% endif %}
+      <p class="warning">الإجراء المطلوب: راجع أصل الفواتير وإيصالات الاستلام والمستندات الضريبية، وحدد المستند الصحيح وأي مستند يحتاج إلى تسوية محاسبية معتمدة. لا تحذف سجلات أو روابط مباشرة من قاعدة البيانات.</p>
+    </article>
+  {% else %}
+    <p>لا توجد حالات تكرار مفتوحة مسجلة حاليًا.</p>
+  {% endfor %}
+</section>
+{% endblock %}
