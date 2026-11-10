@@ -92,6 +92,23 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual([(x["tax_treatment"], Decimal(x["tax_amount"])) for x in rows],
                          [("standard", Decimal("14.00")), ("exempt", Decimal("0.00"))])
 
+    def test_fully_exempt_invoice_ignores_unapproved_header_rate(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        result = sales.post_invoice(self.db, self.customer_id, "2026-11-10", self.warehouse_id, [
+            {"product_id": self.product_id, "quantity": "1", "unit_price": "100",
+             "tax_rate": "0", "tax_treatment": "exempt"},
+        ], "7", 1)
+        self.db.commit()
+        self.assertEqual(result["tax_amount"], Decimal("0.00"))
+        self.assertEqual(result["total_amount"], Decimal("100.00"))
+        stored = self.db.execute(
+            "SELECT tax_rate FROM sales_invoices WHERE id=?", (result["invoice_id"],)
+        ).fetchone()["tax_rate"]
+        self.assertEqual(Decimal(stored), Decimal("0.00"))
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM journal_lines WHERE account_id=(SELECT id FROM accounts WHERE code='2130')"
+        ).fetchone()[0], 0)
+
     def test_unapproved_line_tax_rate_is_rejected(self):
         self.db.execute("BEGIN IMMEDIATE")
         with self.assertRaisesRegex(ValueError, "غير معتمدة"):
