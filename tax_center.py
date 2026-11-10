@@ -81,8 +81,8 @@ def tax_report():
     conn = _db()
     sales = conn.execute("""
         SELECT i.id, i.invoice_no document_no, i.invoice_date document_date, c.name party_name,
-               CAST(i.subtotal AS REAL) taxable_base, CAST(i.tax_rate AS REAL) tax_rate,
-               CAST(i.tax_amount AS REAL) tax_amount, CAST(i.total_amount AS REAL) total_amount,
+               i.subtotal taxable_base, i.tax_rate tax_rate,
+               i.tax_amount tax_amount, i.total_amount total_amount,
                COALESCE(i.tax_treatment,'standard') tax_treatment,
                COALESCE(i.tax_reference,'') tax_reference, COALESCE(i.tax_notes,'') tax_notes
         FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
@@ -91,15 +91,22 @@ def tax_report():
     """, (start.isoformat(), end.isoformat())).fetchall()
     purchases = conn.execute("""
         SELECT b.id, b.bill_no document_no, b.bill_date document_date, s.name party_name,
-               CAST(b.subtotal AS REAL) taxable_base, CAST(b.tax_rate AS REAL) tax_rate,
-               CAST(b.tax_amount AS REAL) tax_amount, CAST(b.total_amount AS REAL) total_amount,
+               b.subtotal taxable_base, b.tax_rate tax_rate,
+               b.tax_amount tax_amount, b.total_amount total_amount,
                COALESCE(b.tax_treatment,'standard') tax_treatment,
                COALESCE(b.tax_reference,'') tax_reference, COALESCE(b.tax_notes,'') tax_notes,
-               CAST(COALESCE(b.input_vat_deductible_percent,'100') AS REAL) deductible_percent
+               COALESCE(b.input_vat_deductible_percent,'100') deductible_percent
         FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
         WHERE b.status='posted' AND b.bill_date>=? AND b.bill_date<?
         ORDER BY b.bill_date,b.id
     """, (start.isoformat(), end.isoformat())).fetchall()
+    sales = [dict(r, taxable_base=Decimal(r["taxable_base"] or "0"),
+                  tax_rate=Decimal(r["tax_rate"] or "0"), tax_amount=Decimal(r["tax_amount"] or "0"),
+                  total_amount=Decimal(r["total_amount"] or "0")) for r in sales]
+    purchases = [dict(r, taxable_base=Decimal(r["taxable_base"] or "0"),
+                      tax_rate=Decimal(r["tax_rate"] or "0"), tax_amount=Decimal(r["tax_amount"] or "0"),
+                      total_amount=Decimal(r["total_amount"] or "0"),
+                      deductible_percent=Decimal(r["deductible_percent"] or "100")) for r in purchases]
     settings = {r["setting_key"]: r["setting_value"] for r in conn.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
         "('company_name','tax_country','tax_regime','tax_number','base_currency')")}
