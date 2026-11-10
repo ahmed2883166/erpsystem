@@ -1,6 +1,7 @@
 """Customer and supplier receivables/payables aging reports."""
 import sqlite3
 from datetime import date
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from flask import Blueprint, render_template, request, session, redirect, url_for, flash
 from functools import wraps
@@ -21,36 +22,59 @@ def initialize_aging_schema():
  c.commit(); c.close()
 
 def auth(fn):
+ @wraps(fn)
  def wrapped(*a,**kw):
   if not session.get("user_id"): return redirect(url_for("login"))
   return fn(*a,**kw)
  return wrapped
+
+def _amount(value):
+ try:
+  amount=Decimal(str(value or "0"))
+ except (InvalidOperation,ValueError,TypeError):
+  raise ValueError("يوجد مبلغ غير صالح في مستندات الأعمار.")
+ if not amount.is_finite():
+  raise ValueError("يوجد مبلغ غير محدود في مستندات الأعمار.")
+ return amount
 
 @aging_bp.route("/")
 @auth
 def index():
  kind=request.args.get("kind","customers")
  if kind not in {"customers","suppliers"}: kind="customers"
- as_of=request.args.get("as_of") or date.today().isoformat()
+ try:
+  as_of=request.args.get("as_of") or date.today().isoformat()
+  today=date.fromisoformat(as_of)
+  as_of=today.isoformat()
+ except ValueError:
+  flash("تاريخ التقرير غير صحيح.","error")
+  today=date.today(); as_of=today.isoformat()
  c=db()
  if kind=="customers":
   rows=c.execute("""SELECT i.invoice_no doc_no,cu.code party_code,cu.name party_name,i.invoice_date doc_date,
-    COALESCE(i.due_date,i.invoice_date) due_date,CAST(i.total_amount AS REAL)-CAST(i.paid_amount AS REAL) balance
+    COALESCE(i.due_date,i.invoice_date) due_date,i.total_amount total_amount,i.paid_amount paid_amount
     FROM sales_invoices i JOIN customers cu ON cu.id=i.customer_id
-    WHERE i.status='posted' AND CAST(i.total_amount AS REAL)>CAST(i.paid_amount AS REAL) AND i.invoice_date<=?
+    WHERE i.status='posted' AND i.invoice_date<=?
     ORDER BY due_date,cu.name""",(as_of,)).fetchall()
  else:
   rows=c.execute("""SELECT b.bill_no doc_no,s.code party_code,s.name party_name,b.bill_date doc_date,
-    COALESCE(b.due_date,b.bill_date) due_date,CAST(b.total_amount AS REAL)-CAST(b.paid_amount AS REAL) balance
+    COALESCE(b.due_date,b.bill_date) due_date,b.total_amount total_amount,b.paid_amount paid_amount
     FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
-    WHERE b.status='posted' AND CAST(b.total_amount AS REAL)>CAST(b.paid_amount AS REAL) AND b.bill_date<=?
+    WHERE b.status='posted' AND b.bill_date<=?
     ORDER BY due_date,s.name""",(as_of,)).fetchall()
- c.close(); today=date.fromisoformat(as_of); result=[]; totals=[0.0]*5
+ c.close()
+ result=[]; totals=[Decimal("0.00") for _ in range(5)]
  for r in rows:
-  days=(today-date.fromisoformat(r["due_date"])).days
+  balance=_amount(r["total_amount"])-_amount(r["paid_amount"])
+  if balance<=0:
+   continue
+  try:
+   due_date=date.fromisoformat(r["due_date"])
+  except (TypeError,ValueError):
+   due_date=today
+  days=(today-due_date).days
   bucket=0 if days<=0 else 1 if days<=30 else 2 if days<=60 else 3 if days<=90 else 4
-  vals=[0.0]*5; vals[bucket]=float(r["balance"])
+  vals=[Decimal("0.00") for _ in range(5)]; vals[bucket]=balance
   for i,v in enumerate(vals): totals[i]+=v
-  result.append({**dict(r),"days":max(days,0),"buckets":vals})
+  result.append({**dict(r),"balance":balance,"days":max(days,0),"buckets":vals})
  return render_template("aging_report.html",kind=kind,as_of=as_of,rows=result,totals=totals)
-
