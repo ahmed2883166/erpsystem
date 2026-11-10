@@ -115,6 +115,19 @@ def register_report_exports(app, db_path, permissions):
                 data = [[r["sku"], r["name_ar"], r["uom"], r["qty"], r["value"]] for r in rows]
                 filename = "nexus-stock-valuation.xlsx"
                 title = "تقييم وأرصدة المخزون"
+            elif report == "fixed-assets":
+                rows = conn.execute("""SELECT f.asset_code,f.asset_name,f.category,f.purchase_date,f.ready_date,
+                  f.cost,f.residual_value,f.useful_life_months,f.depreciation_method,
+                  COALESCE(SUM(CAST(d.amount AS REAL)),0) accumulated
+                  FROM fixed_assets f LEFT JOIN asset_depreciations d ON d.asset_id=f.id
+                  GROUP BY f.id ORDER BY f.asset_code""").fetchall()
+                headers = ["كود الأصل","اسم الأصل","الفئة","تاريخ الشراء","تاريخ الجاهزية",
+                           "التكلفة","القيمة التخريدية","العمر بالشهور","طريقة الإهلاك","مجمع الإهلاك","صافي القيمة الدفترية"]
+                data = [[r["asset_code"],r["asset_name"],r["category"],r["purchase_date"],r["ready_date"],
+                         float(r["cost"]),float(r["residual_value"]),r["useful_life_months"],r["depreciation_method"],
+                         r["accumulated"],max(float(r["cost"])-r["accumulated"],float(r["residual_value"]))] for r in rows]
+                filename = "nexus-fixed-assets.xlsx"
+                title = "سجل الأصول الثابتة"
             elif report == "aging":
                 kind = request.args.get("kind", "customers")
                 as_of = request.args.get("as_of", datetime.now().date().isoformat())

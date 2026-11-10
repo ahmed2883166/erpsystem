@@ -1,5 +1,5 @@
 {% extends 'base.html' %}{% block title %}سجل الأصول الثابتة | NEXUS ERP{% endblock %}{% block content %}
-<header><div><h2>سجل الأصول الثابتة</h2><p class="muted">بيانات الأصل والإهلاك وفق IAS 16. تسجيل الأصل هنا لا يكرر قيد الشراء.</p></div><button class="secondary" onclick="window.print()">طباعة / PDF</button></header>
+<header><div><h2>سجل الأصول الثابتة</h2><p class="muted">بيانات الأصل والإهلاك وفق IAS 16. تسجيل الأصل هنا لا يكرر قيد الشراء.</p></div><div class="table-actions"><button class="secondary" onclick="window.print()">طباعة / PDF</button><a class="btn secondary" href="{{url_for('report_exports.export_report_excel',report='fixed-assets')}}">تصدير Excel</a></div></header>
 <section class="panel"><h3>إضافة أصل ثابت</h3><form method="post"><div class="form-grid">
 <label>كود الأصل<input name="asset_code" required></label><label>اسم الأصل<input name="asset_name" required></label><label>الفئة<input name="category"></label>
 <label>تاريخ الشراء<input type="date" name="purchase_date" required></label><label>تاريخ الجاهزية للاستخدام<input type="date" name="ready_date" required></label>

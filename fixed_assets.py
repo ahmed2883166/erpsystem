@@ -1,5 +1,6 @@
 """NEXUS ERP fixed assets register and IAS 16 depreciation posting."""
 import sqlite3
+import calendar
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import date
 from pathlib import Path
@@ -70,7 +71,7 @@ def index():
             account_types=[c.execute("SELECT account_type FROM accounts WHERE id=?",(aid,)).fetchone()["account_type"] for aid in ids]
             if account_types[0]!="asset" or account_types[1]!="asset" or account_types[2]!="expense":
                 raise ValueError("حساب الأصل ومجمع الإهلاك يجب أن يكونا من الأصول، ومصروف الإهلاك من المصروفات.")
-            if method=="declining_balance" and Decimal(request.form.get("annual_rate","0"))<=0: raise ValueError("أدخل معدل الإهلاك السنوي للطريقة المتناقصة.")
+            if method=="declining_balance" and not (Decimal("0") < Decimal(request.form.get("annual_rate","0")) <= Decimal("100")): raise ValueError("معدل الإهلاك السنوي يجب أن يكون أكبر من صفر ولا يتجاوز 100%.")
             c.execute("""INSERT INTO fixed_assets(asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,useful_life_months,depreciation_method,annual_rate,total_units,asset_account_id,accum_account_id,expense_account_id,notes,created_by)
               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (request.form["asset_code"].strip(),request.form["asset_name"].strip(),request.form.get("category","").strip(),
@@ -112,6 +113,13 @@ def schedule(asset_id):
             planned=depreciable/Decimal(asset["useful_life_months"])
         else:
             planned=opening*Decimal(asset["annual_rate"])/Decimal("1200")
+        days_in_month=calendar.monthrange(year,month)[1]
+        if offset==0 and ready.day>1:
+            planned*=Decimal(days_in_month-ready.day+1)/Decimal(days_in_month)
+        elif offset==life_months and ready.day>1:
+            planned*=Decimal(ready.day-1)/Decimal(days_in_month)
+        if offset==life_months and asset["depreciation_method"]=="declining_balance":
+            planned=remaining
         planned=min(planned.quantize(M,rounding=ROUND_HALF_UP),remaining)
         schedule_rows.append({"period":period,"planned":planned,"actual":posted.get(period),"posted":period in posted})
         opening-=planned
@@ -139,6 +147,11 @@ def depreciate(asset_id):
             amount=(cost-accumulated)*rate/Decimal("12")
         else:
             raise ValueError("طريقة الإهلاك غير مدعومة.")
+        days_in_month=calendar.monthrange(int(period[:4]),int(period[5:7]))[1]
+        if period_offset==0 and ready_date.day>1:
+            amount*=Decimal(days_in_month-ready_date.day+1)/Decimal(days_in_month)
+        elif period_offset==int(asset["useful_life_months"]) and ready_date.day>1:
+            amount=remaining
         amount=min(amount.quantize(M,rounding=ROUND_HALF_UP),remaining)
         if amount<=0: raise ValueError("لا توجد قيمة قابلة للإهلاك في هذه الفترة.")
         c.execute("BEGIN IMMEDIATE")
