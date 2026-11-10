@@ -69,6 +69,8 @@ def party_statement():
     selected = next((p for p in parties if p["id"] == party_id), None)
     opening = Decimal("0")
     rows = []
+    total_debit = Decimal("0")
+    total_credit = Decimal("0")
     closing = Decimal("0")
     if selected:
         events = _events(c, kind, party_id)
@@ -82,6 +84,8 @@ def party_statement():
             if date_to and event_date > date_to:
                 continue
             rows.append(event)
+            total_debit += Decimal(str(event["debit"]))
+            total_credit += Decimal(str(event["credit"]))
         balance = opening
         for row in rows:
             balance += (Decimal(str(row["debit"])) - Decimal(str(row["credit"]))) * sign
@@ -90,4 +94,4 @@ def party_statement():
     c.close()
     return render_template("party_statement.html", kind=kind, parties=parties, selected=selected,
         rows=rows, opening=opening.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
-        closing=closing, date_from=date_from, date_to=date_to)
+        closing=closing, total_debit=total_debit.quantize(Decimal("0.01")), total_credit=total_credit.quantize(Decimal("0.01")), date_from=date_from, date_to=date_to)
