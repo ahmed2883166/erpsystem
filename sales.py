@@ -508,7 +508,7 @@ def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_i
     invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=? AND status='posted'", (invoice_id,)).fetchone()
     if not invoice:
         raise ValueError("فاتورة العميل غير موجودة أو غير مرحلة.")
-    outstanding = Decimal(invoice["total_amount"]) - Decimal(invoice["paid_amount"])
+    outstanding = Decimal(invoice["total_amount"]) - Decimal(invoice["paid_amount"]) - Decimal(invoice["credited_amount"] or "0")
     if amount > outstanding:
         raise ValueError("قيمة التحصيل أكبر من الرصيد المستحق على الفاتورة.")
     cash = conn.execute("SELECT id,is_group,active,account_type FROM accounts WHERE id=?", (cash_account_id,)).fetchone()
@@ -712,7 +712,9 @@ def new_credit_note():
         """SELECT i.id,i.invoice_no,i.invoice_date,i.total_amount,i.paid_amount,
                   COALESCE(i.credited_amount,'0') credited_amount,cu.name customer_name
            FROM sales_invoices i JOIN customers cu ON cu.id=i.customer_id
-           WHERE i.status='posted' ORDER BY i.id DESC"""
+           WHERE i.status='posted'
+             AND CAST(i.total_amount AS REAL)>CAST(i.paid_amount AS REAL)+CAST(COALESCE(i.credited_amount,'0') AS REAL)
+           ORDER BY i.id DESC"""
     ).fetchall()
     c.close()
     return render_template(
