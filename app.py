@@ -613,26 +613,45 @@ def journal():
         debits = request.form.getlist("debit")
         credits = request.form.getlist("credit")
         memos = request.form.getlist("memo")
-        lines = []
-        for account_id, debit, credit, memo in zip(account_ids, debits, credits, memos):
-            debit, credit = float(debit or 0), float(credit or 0)
-            if debit or credit:
-                lines.append((int(account_id), debit, credit, memo.strip()))
-        total_debit, total_credit = sum(x[1] for x in lines), sum(x[2] for x in lines)
-        if len(lines) < 2 or abs(total_debit - total_credit) > 0.005 or total_debit <= 0:
-            flash("يجب إدخال سطرين على الأقل وأن يتساوى إجمالي المدين والدائن.", "error")
-        else:
-            try:
-                reference=request.form.get("reference","").strip() or "MAN-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
-                entry_id=post_journal(connection,request.form["entry_date"],reference,
-                    request.form["description"].strip(),lines,session["user_id"])
-                connection.commit()
-                log("journal_posted", f"قيد #{entry_id}")
-                flash("تم ترحيل القيد بنجاح.", "success")
-                return redirect(url_for("journal"))
-            except ValueError as exc:
-                connection.rollback()
-                flash(str(exc),"error")
+        try:
+            from decimal import Decimal, InvalidOperation
+            entry_date = datetime.fromisoformat(request.form.get("entry_date", "").strip()).date().isoformat()
+            description = request.form.get("description", "").strip()
+            if not description or len(description) > 500:
+                raise ValueError("أدخل بيانًا صحيحًا للقيد (حتى 500 حرف).")
+            if not (len(account_ids) == len(debits) == len(credits) == len(memos)):
+                raise ValueError("بيانات سطور القيد غير مكتملة.")
+            lines = []
+            for account_id, debit_text, credit_text, memo in zip(account_ids, debits, credits, memos):
+                if not account_id:
+                    raise ValueError("اختر حسابًا لكل سطر.")
+                try:
+                    aid = int(account_id)
+                    debit = Decimal((debit_text or "0").strip())
+                    credit = Decimal((credit_text or "0").strip())
+                except (ValueError, InvalidOperation):
+                    raise ValueError("أدخل مبالغ رقمية صحيحة واختر حسابًا صالحًا.")
+                if not debit.is_finite() or not credit.is_finite() or debit < 0 or credit < 0:
+                    raise ValueError("المبالغ يجب أن تكون أرقامًا موجبة أو صفرًا.")
+                if debit > 0 and credit > 0:
+                    raise ValueError("لا يجوز أن يجمع السطر الواحد بين المدين والدائن.")
+                if debit or credit:
+                    lines.append((aid, debit, credit, (memo or "").strip()))
+            total_debit = sum((x[1] for x in lines), Decimal("0"))
+            total_credit = sum((x[2] for x in lines), Decimal("0"))
+            if len(lines) < 2 or total_debit <= 0 or total_debit != total_credit:
+                raise ValueError("يجب إدخال سطرين على الأقل وأن يتساوى إجمالي المدين والدائن.")
+            reference = request.form.get("reference", "").strip() or "MAN-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+            if len(reference) > 100:
+                raise ValueError("المرجع لا يجب أن يتجاوز 100 حرف.")
+            entry_id = post_journal(connection, entry_date, reference, description, lines, session["user_id"])
+            connection.commit()
+            log("journal_posted", f"قيد #{entry_id}")
+            flash("تم ترحيل القيد بنجاح.", "success")
+            return redirect(url_for("journal"))
+        except (ValueError, TypeError, OverflowError) as exc:
+            connection.rollback()
+            flash(str(exc) or "بيانات القيد غير صحيحة.", "error")
     entries = connection.execute("SELECT * FROM journal_entries ORDER BY entry_date DESC, id DESC LIMIT 20").fetchall()
     connection.close()
     return render_template("journal.html", accounts=accounts_list, entries=entries, today=datetime.now().date().isoformat())
@@ -827,9 +846,15 @@ def export_data(format):
     connection = db()
     accounts_data = [dict(row) for row in connection.execute("SELECT code,name_ar,account_type,active FROM accounts ORDER BY code")]
     entries_data = [dict(row) for row in connection.execute("SELECT * FROM journal_entries ORDER BY id")]
+    lines_data = [dict(row) for row in connection.execute("""
+        SELECT jl.id,jl.entry_id,a.code account_code,jl.debit,jl.credit,jl.memo
+        FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id ORDER BY jl.entry_id,jl.id
+    """)]
     connection.close()
     if format == "json":
-        return Response(json.dumps({"accounts": accounts_data, "journal_entries": entries_data}, ensure_ascii=False, indent=2), mimetype="application/json", headers={"Content-Disposition": "attachment; filename=nexus-export.json"})
+        return Response(json.dumps({"accounts": accounts_data, "journal_entries": entries_data,
+            "journal_lines": lines_data}, ensure_ascii=False, indent=2), mimetype="application/json",
+            headers={"Content-Disposition": "attachment; filename=nexus-export.json"})
     if format == "csv":
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=["code", "name_ar", "account_type", "active"])
@@ -844,14 +869,40 @@ def import_accounts():
     upload = request.files.get("file")
     if not upload or not upload.filename.lower().endswith(".csv"):
         flash("اختر ملف CSV للحسابات.", "error"); return redirect(url_for("accounts"))
-    reader = csv.DictReader(io.StringIO(upload.stream.read().decode("utf-8-sig")))
-    connection, count = db(), 0
-    for row in reader:
-        if row.get("code") and row.get("name_ar") and row.get("account_type"):
-            connection.execute("INSERT OR IGNORE INTO accounts(code,name_ar,account_type) VALUES(?,?,?)", (row["code"].strip(), row["name_ar"].strip(), row["account_type"].strip()))
-            count += 1
-    connection.commit(); connection.close()
-    log("accounts_imported", str(count)); flash(f"تمت معالجة {count} صفًا.", "success")
+    raw = upload.stream.read()
+    try:
+        decoded = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            decoded = raw.decode("cp1256")
+        except UnicodeDecodeError:
+            flash("ترميز ملف CSV غير مدعوم. احفظه بصيغة UTF-8 أو Windows-1256.", "error")
+            return redirect(url_for("accounts"))
+    reader = csv.DictReader(io.StringIO(decoded))
+    allowed_types = {"asset", "liability", "equity", "revenue", "expense"}
+    connection, inserted, skipped = db(), 0, 0
+    try:
+        for row in reader:
+            code = (row.get("code") or "").strip()
+            name = (row.get("name_ar") or "").strip()
+            account_type = (row.get("account_type") or "").strip().lower()
+            if not code or not name or account_type not in allowed_types:
+                skipped += 1
+                continue
+            try:
+                connection.execute("INSERT INTO accounts(code,name_ar,account_type) VALUES(?,?,?)",
+                                   (code, name, account_type))
+                inserted += 1
+            except sqlite3.IntegrityError:
+                skipped += 1
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+    log("accounts_imported", f"inserted={inserted}; skipped={skipped}")
+    flash(f"تم استيراد {inserted} حسابًا، وتخطي {skipped} صفًا غير صالح أو مكرر.", "success" if skipped == 0 else "warning")
     return redirect(url_for("accounts"))
 
 
@@ -860,9 +911,18 @@ def import_accounts():
 def create_backup():
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     filename = BACKUP_DIR / f"nexus-backup-{stamp}.zip"
+    snapshot_path = BACKUP_DIR / f".snapshot-{stamp}.db"
+    source = db()
+    destination = sqlite3.connect(snapshot_path)
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
     with zipfile.ZipFile(filename, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.write(DB_PATH, "nexus.db")
+        archive.write(snapshot_path, "nexus.db")
         archive.writestr("manifest.json", json.dumps({"application": "NEXUS ERP", "created_at": now()}, ensure_ascii=False))
+    snapshot_path.unlink(missing_ok=True)
     log("backup_created", filename.name)
     return send_file(filename, as_attachment=True, download_name=filename.name)
 
@@ -871,20 +931,42 @@ def create_backup():
 @requires("backup.manage")
 def restore_backup():
     upload = request.files.get("backup")
-    if not upload or not upload.filename.endswith(".zip"):
+    if not upload or not upload.filename.lower().endswith(".zip"):
         flash("اختر ملف نسخة احتياطية بصيغة ZIP.", "error"); return redirect(url_for("dashboard"))
-    temp = BACKUP_DIR / "restore-temp.zip"; upload.save(temp)
+    temp = BACKUP_DIR / "restore-temp.zip"
+    candidate = BACKUP_DIR / "restore-candidate.db"
+    upload.save(temp)
     try:
         with zipfile.ZipFile(temp) as archive:
-            if "nexus.db" not in archive.namelist(): raise ValueError("ملف غير صالح")
-            safety_copy = BACKUP_DIR / f"before-restore-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
-            shutil.copy2(DB_PATH, safety_copy)
-            with archive.open("nexus.db") as source, open(DB_PATH, "wb") as target: shutil.copyfileobj(source, target)
-        log("backup_restored", upload.filename); flash("تمت الاستعادة مع حفظ نسخة أمان من قاعدة البيانات السابقة.", "success")
-    except (zipfile.BadZipFile, ValueError):
-        flash("ملف النسخة الاحتياطية غير صالح.", "error")
+            if "nexus.db" not in archive.namelist():
+                raise ValueError("ملف النسخة لا يحتوي على قاعدة بيانات NEXUS.")
+            with archive.open("nexus.db") as source, open(candidate, "wb") as target:
+                shutil.copyfileobj(source, target)
+        check = sqlite3.connect(candidate)
+        try:
+            integrity = check.execute("PRAGMA integrity_check").fetchone()[0]
+            tables = {r[0] for r in check.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            required = {"users", "accounts", "journal_entries", "journal_lines"}
+            if integrity != "ok" or not required.issubset(tables):
+                raise ValueError("قاعدة البيانات غير سليمة أو لا تطابق هيكل NEXUS ERP.")
+        finally:
+            check.close()
+        safety_copy = BACKUP_DIR / f"before-restore-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
+        live = db()
+        safety = sqlite3.connect(safety_copy)
+        try:
+            live.backup(safety)
+        finally:
+            safety.close()
+            live.close()
+        os.replace(candidate, DB_PATH)
+        log("backup_restored", upload.filename)
+        flash("تمت الاستعادة بعد التحقق من سلامة قاعدة البيانات، مع حفظ نسخة أمان.", "success")
+    except (zipfile.BadZipFile, ValueError, sqlite3.DatabaseError, OSError) as exc:
+        flash(f"تعذرت الاستعادة: {exc}", "error")
     finally:
         temp.unlink(missing_ok=True)
+        candidate.unlink(missing_ok=True)
     return redirect(url_for("dashboard"))
 
 
