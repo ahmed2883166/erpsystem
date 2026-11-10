@@ -391,6 +391,13 @@ def new_payment():
         try:
             supplier=int(request.form["supplier_id"]); amount=money(request.form["amount"]); cash=int(request.form["cash_account_id"])
             if amount<=0: raise ValueError("قيمة السداد يجب أن تكون أكبر من صفر.")
+            cash_row=c.execute("SELECT code,name_ar,account_type,is_group,active FROM accounts WHERE id=?",(cash,)).fetchone()
+            cash_name=(cash_row["name_ar"] or "").lower() if cash_row else ""
+            cash_codes={"1000","1110","1120","1121","1122"}
+            cash_words=("صندوق","بنك","بنوك","مصرف","نقد","cash","bank")
+            if (not cash_row or cash_row["account_type"]!="asset" or cash_row["is_group"] or not cash_row["active"]
+                or (cash_row["code"] not in cash_codes and not any(word in cash_name for word in cash_words))):
+                raise ValueError("حساب السداد يجب أن يكون حساب صندوق أو بنك تفصيليًا ونشطًا، وليس حساب إيراد أو مصروف أو أصل آخر.")
             ap=supplier_ap_account(c); c.execute("BEGIN IMMEDIATE")
             no="PAY-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             eid=create_journal(c,request.form["payment_date"],no,"سداد مورد",[(ap,amount,0,"تخفيض مديونية المورد"),(cash,0,amount,"سداد نقدي/بنكي")],session["user_id"])
