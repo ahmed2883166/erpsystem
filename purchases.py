@@ -218,6 +218,46 @@ def new_order():
     products=c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     c.close(); return render_template("purchase_order_new.html",suppliers=su,products=products,today=date.today().isoformat())
 
+
+@purchase_bp.route("/orders/<int:order_id>/edit",methods=["GET","POST"])
+@require("purchases.manage")
+def edit_order(order_id):
+    c=db(); order=c.execute("""SELECT p.*,l.id line_id,l.product_id,l.quantity,l.unit_price
+      FROM purchase_orders p LEFT JOIN purchase_order_lines l ON l.po_id=p.id WHERE p.id=?""",(order_id,)).fetchone()
+    if not order:
+        c.close(); flash("أمر الشراء غير موجود.","error"); return redirect(url_for("purchase.index"))
+    received=c.execute("SELECT 1 FROM goods_receipts WHERE po_id=? LIMIT 1",(order_id,)).fetchone() is not None
+    if received or order["status"]!="draft":
+        c.close(); flash("لا يمكن تعديل أمر شراء تم استلامه أو اعتماده.","error"); return redirect(url_for("purchase.index"))
+    if request.method=="POST":
+        try:
+            supplier=int(request.form["supplier_id"]); product=int(request.form["product_id"])
+            qty=Decimal(request.form["quantity"]); price=money(request.form["unit_price"])
+            if qty<=0 or price<0: raise ValueError("الكمية والسعر غير صحيحين.")
+            c.execute("UPDATE purchase_orders SET supplier_id=?,order_date=?,expected_date=?,notes=? WHERE id=?",
+              (supplier,request.form["order_date"],request.form.get("expected_date") or None,request.form.get("notes",""),order_id))
+            c.execute("UPDATE purchase_order_lines SET product_id=?,quantity=?,unit_price=? WHERE po_id=?",
+              (product,str(qty),str(price),order_id))
+            c.commit(); c.close(); flash("تم تعديل أمر الشراء.","success"); return redirect(url_for("purchase.index"))
+        except (ValueError,InvalidOperation,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
+    suppliers=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
+    products=c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
+    c.close(); return render_template("purchase_order_edit.html",order=order,suppliers=suppliers,products=products)
+
+
+@purchase_bp.route("/orders/<int:order_id>/delete",methods=["POST"])
+@require("purchases.manage")
+def delete_order(order_id):
+    c=db(); order=c.execute("SELECT * FROM purchase_orders WHERE id=?",(order_id,)).fetchone()
+    if not order: flash("أمر الشراء غير موجود.","error")
+    elif order["status"]!="draft": flash("لا يمكن حذف أمر شراء معتمد.","error")
+    elif c.execute("SELECT 1 FROM goods_receipts WHERE po_id=? LIMIT 1",(order_id,)).fetchone():
+        flash("لا يمكن حذف أمر الشراء لوجود استلام مرتبط به.","error")
+    else:
+        try: c.execute("DELETE FROM purchase_orders WHERE id=?",(order_id,)); c.commit(); flash("تم حذف أمر الشراء غير المستلم.","success")
+        except sqlite3.IntegrityError: c.rollback(); flash("لا يمكن حذف أمر الشراء لوجود مستند مرتبط به.","error")
+    c.close(); return redirect(url_for("purchase.index"))
+
 @purchase_bp.route("/receipts/new",methods=["GET","POST"])
 @require("purchases.manage")
 def new_receipt():
