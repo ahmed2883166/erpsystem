@@ -71,6 +71,27 @@ def init_sales_schema():
     }.items():
         if name not in line_columns:
             c.execute(f"ALTER TABLE sales_invoice_lines ADD COLUMN {name} {definition}")
+    c.execute("""CREATE TABLE IF NOT EXISTS sales_credit_notes(
+      id INTEGER PRIMARY KEY, credit_note_no TEXT NOT NULL UNIQUE,
+      invoice_id INTEGER NOT NULL REFERENCES sales_invoices(id),
+      credit_date TEXT NOT NULL, reason TEXT NOT NULL,
+      subtotal TEXT NOT NULL, tax_amount TEXT NOT NULL, total_amount TEXT NOT NULL,
+      journal_entry_id INTEGER UNIQUE, cogs_journal_entry_id INTEGER UNIQUE,
+      status TEXT NOT NULL DEFAULT 'posted', created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS sales_credit_note_lines(
+      id INTEGER PRIMARY KEY, credit_note_id INTEGER NOT NULL REFERENCES sales_credit_notes(id),
+      invoice_line_id INTEGER NOT NULL REFERENCES sales_invoice_lines(id),
+      product_id INTEGER REFERENCES stock_products(id), description TEXT NOT NULL,
+      quantity TEXT NOT NULL, unit_price TEXT NOT NULL, line_total TEXT NOT NULL,
+      tax_rate TEXT NOT NULL, tax_treatment TEXT NOT NULL, tax_amount TEXT NOT NULL,
+      cost_total TEXT NOT NULL DEFAULT '0', stock_movement_id INTEGER REFERENCES stock_movements(id)
+    )""")
+    invoice_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoices)")}
+    if "credited_amount" not in invoice_columns:
+        c.execute("ALTER TABLE sales_invoices ADD COLUMN credited_amount TEXT NOT NULL DEFAULT '0'")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_sales_credit_invoice ON sales_credit_notes(invoice_id,credit_date,id)")
     customer_columns = {row["name"] for row in c.execute("PRAGMA table_info(customers)")}
     if "credit_limit" not in customer_columns:
         c.execute("ALTER TABLE customers ADD COLUMN credit_limit TEXT NOT NULL DEFAULT '0'")
@@ -297,6 +318,184 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             "current_exposure": current_exposure, "new_exposure": current_exposure + total_amount}
 
 
+def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=None):
+    """Post a sales credit note against an unpaid invoice and restore returned stock."""
+    invoice = conn.execute(
+        "SELECT * FROM sales_invoices WHERE id=? AND status='posted'", (invoice_id,)
+    ).fetchone()
+    if not invoice:
+        raise ValueError("فاتورة البيع غير موجودة أو غير مرحلة.")
+    reason = str(reason or "").strip()
+    if not reason or len(reason) > 500:
+        raise ValueError("سبب الإشعار الدائن مطلوب وبحد أقصى 500 حرف.")
+    try:
+        date.fromisoformat(credit_date)
+    except (TypeError, ValueError):
+        raise ValueError("تاريخ الإشعار الدائن غير صحيح.")
+    if not lines:
+        raise ValueError("حدد بندًا واحدًا على الأقل للإشعار الدائن.")
+
+    credited = Decimal(invoice["credited_amount"] or "0")
+    paid = Decimal(invoice["paid_amount"] or "0")
+    invoice_total = Decimal(invoice["total_amount"])
+    remaining_invoice = invoice_total - paid - credited
+    if remaining_invoice <= 0:
+        raise ValueError("لا يوجد رصيد غير محصل يمكن تخفيضه بإشعار دائن. رد المبالغ المحصلة يحتاج إجراء رد نقدي مستقل.")
+
+    activity = _activity(conn)
+    codes = _sales_account_codes(activity)
+    ar = _account(conn, codes["ar"], "asset")
+    revenue = _account(conn, codes["revenue"], "revenue")
+    vat_account = None
+    inventory = _account(conn, codes["inventory"], "asset") if codes["inventory"] else None
+    cogs = _account(conn, codes["cogs"], "expense") if codes["cogs"] else None
+
+    normalized = []
+    subtotal = Decimal("0.00")
+    tax_total = Decimal("0.00")
+    cost_total = Decimal("0.00")
+    for item in lines:
+        line_id = int(item["invoice_line_id"])
+        original = conn.execute(
+            "SELECT * FROM sales_invoice_lines WHERE id=? AND invoice_id=?",
+            (line_id, invoice_id),
+        ).fetchone()
+        if not original:
+            raise ValueError("أحد بنود الإشعار لا ينتمي إلى فاتورة البيع المحددة.")
+        qty = Decimal(str(item["quantity"]))
+        sold_qty = Decimal(original["quantity"])
+        if not qty.is_finite() or qty <= 0:
+            raise ValueError("كمية الإشعار يجب أن تكون أكبر من صفر.")
+        already_credited = conn.execute(
+            """SELECT COALESCE(SUM(CAST(cl.quantity AS REAL)),0)
+               FROM sales_credit_note_lines cl
+               JOIN sales_credit_notes cn ON cn.id=cl.credit_note_id
+               WHERE cl.invoice_line_id=? AND cn.status='posted'""",
+            (line_id,),
+        ).fetchone()[0]
+        available_qty = sold_qty - Decimal(str(already_credited or 0))
+        if qty > available_qty:
+            raise ValueError(
+                f"الكمية المطلوبة للإشعار أكبر من الكمية المتبقية من البند. المتاح {available_qty}."
+            )
+        unit_price = Decimal(original["unit_price"])
+        line_value = (qty * unit_price).quantize(CENT, rounding=ROUND_HALF_UP)
+        tax_rate = Decimal(original["tax_rate"] or "0")
+        treatment = original["tax_treatment"] or "standard"
+        line_tax = (line_value * tax_rate / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
+        original_qty = sold_qty
+        line_cost = (Decimal(original["cost_total"] or "0") * qty / original_qty).quantize(CENT, rounding=ROUND_HALF_UP)
+        subtotal += line_value
+        tax_total += line_tax
+        cost_total += line_cost
+        normalized.append({
+            "original": original, "quantity": qty, "unit_price": unit_price,
+            "line_total": line_value, "tax_rate": tax_rate,
+            "tax_treatment": treatment, "tax_amount": line_tax,
+            "cost_total": line_cost,
+        })
+
+    subtotal = subtotal.quantize(CENT, rounding=ROUND_HALF_UP)
+    tax_total = tax_total.quantize(CENT, rounding=ROUND_HALF_UP)
+    total = subtotal + tax_total
+    if total <= 0:
+        raise ValueError("قيمة الإشعار الدائن يجب أن تكون أكبر من صفر.")
+    if total > remaining_invoice:
+        raise ValueError(
+            f"قيمة الإشعار ({total}) تتجاوز الرصيد غير المحصل من الفاتورة ({remaining_invoice}). "
+            "رد المبالغ المحصلة يحتاج إجراء رد نقدي مستقل."
+        )
+    if tax_total > 0:
+        vat_account = _account(conn, codes["vat"], "liability")
+
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    credit_no = "SCN-" + stamp
+    cur = conn.execute(
+        """INSERT INTO sales_credit_notes(credit_note_no,invoice_id,credit_date,reason,
+           subtotal,tax_amount,total_amount,created_by)
+           VALUES(?,?,?,?,?,?,?,?)""",
+        (credit_no, invoice_id, credit_date, reason, str(subtotal), str(tax_total), str(total), created_by),
+    )
+    credit_id = cur.lastrowid
+    journal_lines = [(revenue, subtotal, 0, "عكس إيراد بموجب إشعار دائن " + credit_no)]
+    if tax_total:
+        journal_lines.append((vat_account, tax_total, 0, "عكس ضريبة مخرجات بموجب " + credit_no))
+    journal_lines.append((ar, 0, total, "تخفيض ذمم العميل بموجب " + credit_no))
+    journal_id = post_journal(
+        conn, credit_date, credit_no, "إشعار دائن لفاتورة " + invoice["invoice_no"],
+        journal_lines, created_by,
+    )
+    conn.execute("UPDATE sales_credit_notes SET journal_entry_id=? WHERE id=?", (journal_id, credit_id))
+
+    cogs_journal_id = None
+    stock_index = 0
+    for item in normalized:
+        original = item["original"]
+        movement_id = None
+        product_id = original["product_id"]
+        if product_id:
+            warehouse_id = invoice["warehouse_id"]
+            if not warehouse_id:
+                raise ValueError("فاتورة الصنف المخزني لا تحتوي على مخزن صرف صالح.")
+            stock_index += 1
+            movement_no = credit_no + "-" + str(stock_index)
+            unit_cost = (item["cost_total"] / item["quantity"]).quantize(CENT, rounding=ROUND_HALF_UP)
+            movement = conn.execute(
+                """INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,
+                   quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,issue_purpose)
+                   VALUES(?,'receipt',?,?,?,?,?,?,?,?, 'pending','sales_return')""",
+                (movement_no, product_id, warehouse_id, str(item["quantity"]), str(unit_cost),
+                 str(item["cost_total"]), credit_date,
+                 "مرتجع مبيعات بموجب " + credit_no, created_by),
+            )
+            movement_id = movement.lastrowid
+            conn.execute(
+                """INSERT INTO stock_valuation_layers(product_id,warehouse_id,source_movement_id,
+                   qty_in,qty_remaining,unit_cost) VALUES(?,?,?,?,?,?)""",
+                (product_id, warehouse_id, movement_id, str(item["quantity"]),
+                 str(item["quantity"]), str(unit_cost)),
+            )
+        conn.execute(
+            """INSERT INTO sales_credit_note_lines(credit_note_id,invoice_line_id,product_id,
+               description,quantity,unit_price,line_total,tax_rate,tax_treatment,tax_amount,
+               cost_total,stock_movement_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (credit_id, original["id"], product_id, original["description"], str(item["quantity"]),
+             str(item["unit_price"]), str(item["line_total"]), str(item["tax_rate"]),
+             item["tax_treatment"], str(item["tax_amount"]), str(item["cost_total"]), movement_id),
+        )
+
+    if cost_total > 0:
+        cogs_journal_id = post_journal(
+            conn, credit_date, credit_no + "-COGS", "عكس تكلفة المبيعات " + credit_no,
+            [(inventory, cost_total, 0, "إعادة تكلفة البضاعة المرتجعة للمخزون"),
+             (cogs, 0, cost_total, "عكس تكلفة البضاعة المباعة")], created_by,
+        )
+        conn.execute(
+            "UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE movement_no LIKE ?",
+            (cogs_journal_id, credit_no + "-%"),
+        )
+    else:
+        conn.execute(
+            "UPDATE stock_movements SET accounting_status='not_required' WHERE movement_no LIKE ?",
+            (credit_no + "-%",),
+        )
+
+    conn.execute(
+        "UPDATE sales_credit_notes SET cogs_journal_entry_id=? WHERE id=?",
+        (cogs_journal_id, credit_id),
+    )
+    conn.execute(
+        "UPDATE sales_invoices SET credited_amount=? WHERE id=?",
+        (str(credited + total), invoice_id),
+    )
+    return {
+        "credit_note_id": credit_id, "credit_note_no": credit_no,
+        "journal_entry_id": journal_id, "cogs_journal_entry_id": cogs_journal_id,
+        "subtotal": subtotal, "tax_amount": tax_total, "total_amount": total,
+        "total_cost": cost_total,
+    }
+
+
 def _inventory_method(conn):
     row = conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
     return row["setting_value"] if row else "average"
@@ -368,7 +567,7 @@ def customer_list():
             c.rollback()
             flash(str(exc), "error")
     rows = c.execute("""SELECT cu.*,
-        COALESCE((SELECT SUM(CAST(i.total_amount AS REAL)-CAST(i.paid_amount AS REAL))
+        COALESCE((SELECT SUM(CAST(i.total_amount AS REAL)-CAST(i.paid_amount AS REAL)-CAST(COALESCE(i.credited_amount,'0') AS REAL))
                   FROM sales_invoices i WHERE i.customer_id=cu.id AND i.status='posted'),0) outstanding
         FROM customers cu ORDER BY cu.name""").fetchall()
     c.close()
@@ -463,6 +662,60 @@ def new_invoice():
                            warehouses=warehouses, settings=settings, today=date.today().isoformat())
 
 
+@sales_bp.route("/credit-notes/new", methods=["GET", "POST"])
+@require("sales.manage")
+def new_credit_note():
+    c = db()
+    invoice_id = request.values.get("invoice_id", type=int)
+    invoice = None
+    lines = []
+    if invoice_id:
+        invoice = c.execute(
+            """SELECT i.*,cu.name customer_name FROM sales_invoices i
+               JOIN customers cu ON cu.id=i.customer_id WHERE i.id=? AND i.status='posted'""",
+            (invoice_id,),
+        ).fetchone()
+        if invoice:
+            lines = c.execute(
+                """SELECT l.*,
+                   COALESCE((SELECT SUM(CAST(cl.quantity AS REAL))
+                     FROM sales_credit_note_lines cl JOIN sales_credit_notes cn ON cn.id=cl.credit_note_id
+                     WHERE cl.invoice_line_id=l.id AND cn.status='posted'),0) credited_qty
+                   FROM sales_invoice_lines l WHERE l.invoice_id=? ORDER BY l.id""",
+                (invoice_id,),
+            ).fetchall()
+    if request.method == "POST":
+        try:
+            if not invoice:
+                raise ValueError("فاتورة البيع غير موجودة.")
+            selected = []
+            for line_id, qty in zip(request.form.getlist("invoice_line_id"), request.form.getlist("return_quantity")):
+                if qty and Decimal(qty) > 0:
+                    selected.append({"invoice_line_id": int(line_id), "quantity": qty})
+            c.execute("BEGIN IMMEDIATE")
+            result = post_credit_note(
+                c, invoice_id, request.form["credit_date"], request.form.get("reason", ""),
+                selected, session["user_id"],
+            )
+            c.commit()
+            flash("تم ترحيل الإشعار الدائن " + result["credit_note_no"], "success")
+            return redirect(url_for("sales.index"))
+        except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
+            c.rollback()
+            flash(str(exc), "error")
+    invoices = c.execute(
+        """SELECT i.id,i.invoice_no,i.invoice_date,i.total_amount,i.paid_amount,
+                  COALESCE(i.credited_amount,'0') credited_amount,cu.name customer_name
+           FROM sales_invoices i JOIN customers cu ON cu.id=i.customer_id
+           WHERE i.status='posted' ORDER BY i.id DESC"""
+    ).fetchall()
+    c.close()
+    return render_template(
+        "sales_credit_note_new.html", invoices=invoices, invoice=invoice, lines=lines,
+        today=date.today().isoformat(),
+    )
+
+
 @sales_bp.route("/receipts/new", methods=["GET", "POST"])
 @require("sales.manage")
 def new_receipt():
@@ -481,7 +734,7 @@ def new_receipt():
             flash(str(exc), "error")
     invoices = c.execute("""SELECT i.id,i.invoice_no,i.total_amount,i.paid_amount,c.name customer_name
         FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
-        WHERE CAST(i.total_amount AS REAL)>CAST(i.paid_amount AS REAL) ORDER BY i.invoice_date,i.id""").fetchall()
+        WHERE CAST(i.total_amount AS REAL)>CAST(i.paid_amount AS REAL)+CAST(COALESCE(i.credited_amount,'0') AS REAL) ORDER BY i.invoice_date,i.id""").fetchall()
     cash_accounts = c.execute("""SELECT id,code,name_ar FROM accounts
         WHERE account_type='asset' AND is_group=0 AND active=1 ORDER BY code""").fetchall()
     c.close()
