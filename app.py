@@ -246,8 +246,14 @@ def company_setup():
     if request.method == "POST":
         activity = request.form.get("activity", "commercial")
         tax_country = request.form.get("tax_country", "OTHER")
-        tax_regime = request.form.get("tax_regime", "CUSTOM")
-        base_currency = request.form.get("base_currency", "").upper()
+        # Country localization is deterministic: Egypt and Saudi Arabia get their standard VAT defaults.
+        if tax_country == "EG":
+            tax_regime, base_currency, automatic_vat = "EG_VAT", "EGP", "14"
+        elif tax_country == "SA":
+            tax_regime, base_currency, automatic_vat = "SA_VAT_ZAKAT", "SAR", "15"
+        else:
+            tax_regime, automatic_vat = "CUSTOM", request.form.get("default_vat_rate", "0").strip()
+            base_currency = request.form.get("base_currency", "").upper()
         if activity not in CHARTS or tax_country not in {"EG", "SA", "OTHER"} or tax_regime not in {"EG_VAT", "SA_VAT_ZAKAT", "CUSTOM"}:
             flash("اختيارات الإعدادات غير صحيحة.", "error")
             connection.close()
@@ -267,7 +273,7 @@ def company_setup():
             "tax_country": tax_country, "tax_regime": tax_regime,
             "tax_number": request.form.get("tax_number", "").strip(),
             "activity": activity, "base_currency": base_currency,
-            "default_vat_rate": request.form.get("default_vat_rate", "0").strip()
+            "default_vat_rate": automatic_vat
         }
         try:
             vat_rate = float(settings_values["default_vat_rate"])
@@ -296,13 +302,16 @@ def company_setup():
                 connection.close()
                 return redirect(url_for("company_setup"))
             connection.execute("UPDATE currencies SET active=1,is_base=?,rate_to_base=?,updated_at=? WHERE code=?", (1 if code == base_currency else 0, rate, now(), code))
-        if request.form.get("replace_chart") == "yes":
-            has_entries = connection.execute("SELECT 1 FROM journal_entries LIMIT 1").fetchone()
-            if has_entries:
-                flash("لا يمكن استبدال دليل الحسابات بعد وجود قيود يومية.", "error")
-                connection.rollback()
-                connection.close()
-                return redirect(url_for("company_setup"))
+        previous_activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+        previous_activity = previous_activity_row["setting_value"] if previous_activity_row else None
+        has_entries = connection.execute("SELECT 1 FROM journal_entries LIMIT 1").fetchone()
+        if has_entries and previous_activity and previous_activity != activity:
+            flash("لا يمكن تغيير النشاط بعد ترحيل قيود؛ لأن ذلك قد يغيّر دلالات وربط الحسابات. أنشئ شركة جديدة أو نفّذ تحويلًا محاسبيًا معتمدًا.", "error")
+            connection.rollback()
+            connection.close()
+            return redirect(url_for("company_setup"))
+        should_load_chart = not has_entries and (request.form.get("replace_chart") == "yes" or previous_activity != activity)
+        if should_load_chart:
             connection.execute("DELETE FROM accounts")
             inserted = {}
             for code, name, account_type, parent_code, is_group in CHARTS[activity]:
