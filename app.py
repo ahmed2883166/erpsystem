@@ -1,5 +1,6 @@
 import csv
 import hashlib
+import hmac
 import io
 import json
 import os
@@ -11,6 +12,11 @@ from functools import wraps
 from pathlib import Path
 
 from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for
+from chart_templates import CHARTS, ACTIVITY_LABELS
+from stock import stock_bp, initialize_stock_schema
+from purchases import purchase_bp, init_purchase_schema
+from sales import sales_bp, init_sales_schema
+from accounting_core import post_journal, reconciliation_snapshot
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -18,12 +24,15 @@ DB_PATH = DATA_DIR / "nexus.db"
 BACKUP_DIR = DATA_DIR / "backups"
 
 app = Flask(__name__)
+app.register_blueprint(stock_bp)
+app.register_blueprint(purchase_bp)
+app.register_blueprint(sales_bp)
 app.config["SECRET_KEY"] = os.environ.get("NEXUS_SECRET_KEY", "change-this-secret-before-production")
 
 PERMISSIONS = {
-    "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage"},
-    "accountant": {"accounts.manage", "journal.manage", "reports.view", "import_export.manage"},
-    "viewer": {"reports.view"},
+    "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view"},
+    "accountant": {"accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view"},
+    "viewer": {"reports.view", "stock.view", "purchases.view", "sales.view"},
 }
 
 
@@ -34,8 +43,38 @@ def db():
     return connection
 
 
-def password_hash(password):
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+def password_hash(password, salt=None, iterations=310000):
+    """Create a salted PBKDF2-SHA256 password hash for new and changed passwords."""
+    salt = salt or os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return "pbkdf2_sha256$" + str(iterations) + "$" + salt.hex() + "$" + digest.hex()
+
+
+def verify_password(password, stored_hash):
+    """Verify current PBKDF2 hashes and legacy SHA-256 hashes during migration."""
+    if not stored_hash:
+        return False
+    if stored_hash.startswith("pbkdf2_sha256$"):
+        try:
+            algorithm, rounds, salt_hex, expected_hex = stored_hash.split("$", 3)
+            if algorithm != "pbkdf2_sha256":
+                return False
+            rounds = int(rounds)
+            if rounds < 100000 or rounds > 2000000:
+                return False
+            salt = bytes.fromhex(salt_hex)
+            expected = bytes.fromhex(expected_hex)
+            actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds)
+            return hmac.compare_digest(actual, expected)
+        except (ValueError, TypeError):
+            return False
+    # Compatibility only: successful legacy logins are upgraded immediately.
+    legacy = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(legacy, stored_hash)
+
+
+def password_hash_needs_upgrade(stored_hash):
+    return not (stored_hash or "").startswith("pbkdf2_sha256$")
 
 
 def initialize_database():
@@ -50,7 +89,8 @@ def initialize_database():
         );
         CREATE TABLE IF NOT EXISTS accounts (
             id INTEGER PRIMARY KEY, code TEXT UNIQUE NOT NULL, name_ar TEXT NOT NULL,
-            account_type TEXT NOT NULL, parent_id INTEGER REFERENCES accounts(id), active INTEGER NOT NULL DEFAULT 1
+            account_type TEXT NOT NULL, parent_id INTEGER REFERENCES accounts(id),
+            is_group INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS journal_entries (
             id INTEGER PRIMARY KEY, entry_date TEXT NOT NULL, reference TEXT, description TEXT NOT NULL,
@@ -65,7 +105,33 @@ def initialize_database():
             id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), action TEXT NOT NULL,
             details TEXT, created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS company_settings (
+            setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS currencies (
+            code TEXT PRIMARY KEY, name_ar TEXT NOT NULL, symbol TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 0, is_base INTEGER NOT NULL DEFAULT 0,
+            rate_to_base REAL NOT NULL DEFAULT 0, updated_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS tax_rates (
+            id INTEGER PRIMARY KEY, code TEXT UNIQUE NOT NULL, name_ar TEXT NOT NULL,
+            rate REAL NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1
+        );
     """)
+    account_columns = {row["name"] for row in connection.execute("PRAGMA table_info(accounts)")}
+    if "is_group" not in account_columns:
+        connection.execute("ALTER TABLE accounts ADD COLUMN is_group INTEGER NOT NULL DEFAULT 0")
+    currency_seed = [
+        ("SAR","ريال سعودي","ر.س"),("EGP","جنيه مصري","ج.م"),("USD","دولار أمريكي","$"),
+        ("EUR","يورو","€"),("AED","درهم إماراتي","د.إ"),("GBP","جنيه إسترليني","£"),
+        ("KWD","دينار كويتي","د.ك"),("QAR","ريال قطري","ر.ق")
+    ]
+    connection.executemany("INSERT OR IGNORE INTO currencies(code,name_ar,symbol,active,is_base,rate_to_base) VALUES(?,?,?,0,0,0)", currency_seed)
+    defaults = {"company_name":"NEXUS ERP Demo", "tax_country":"EG", "tax_regime":"EG_VAT",
+                "tax_number":"", "activity":"commercial", "base_currency":"EGP", "default_vat_rate":"14", "inventory_cost_method":"average"}
+    for key, value in defaults.items():
+        connection.execute("INSERT OR IGNORE INTO company_settings(setting_key,setting_value) VALUES(?,?)", (key,value))
+    connection.execute("INSERT OR IGNORE INTO currencies(code,name_ar,symbol,active,is_base,rate_to_base) VALUES('EGP','جنيه مصري','ج.م',1,1,1)")
     if not connection.execute("SELECT 1 FROM users WHERE username = 'admin'").fetchone():
         connection.execute("INSERT INTO users(username, full_name, password_hash, role, created_at) VALUES(?,?,?,?,?)",
                            ("admin", "مدير النظام", password_hash("admin123"), "admin", now()))
@@ -78,6 +144,9 @@ def initialize_database():
         ])
     connection.commit()
     connection.close()
+    initialize_stock_schema()
+    init_purchase_schema()
+    init_sales_schema()
 
 
 def now():
@@ -116,8 +185,13 @@ def login():
     if request.method == "POST":
         connection = db()
         user = connection.execute("SELECT * FROM users WHERE username=? AND active=1", (request.form["username"],)).fetchone()
+        valid = bool(user and verify_password(request.form["password"], user["password_hash"]))
+        if valid and password_hash_needs_upgrade(user["password_hash"]):
+            connection.execute("UPDATE users SET password_hash=? WHERE id=?",
+                               (password_hash(request.form["password"]), user["id"]))
+            connection.commit()
         connection.close()
-        if user and user["password_hash"] == password_hash(request.form["password"]):
+        if valid:
             session.clear()
             session.update(user_id=user["id"], username=user["username"], full_name=user["full_name"], role=user["role"])
             log("login", "تسجيل دخول")
@@ -132,6 +206,93 @@ def logout():
     return redirect(url_for("login"))
 
 
+@app.route("/company/setup", methods=["GET", "POST"])
+@requires("users.manage")
+def company_setup():
+    connection = db()
+    if request.method == "POST":
+        activity = request.form.get("activity", "commercial")
+        tax_country = request.form.get("tax_country", "OTHER")
+        tax_regime = request.form.get("tax_regime", "CUSTOM")
+        base_currency = request.form.get("base_currency", "").upper()
+        if activity not in CHARTS or tax_country not in {"EG", "SA", "OTHER"} or tax_regime not in {"EG_VAT", "SA_VAT_ZAKAT", "CUSTOM"}:
+            flash("اختيارات الإعدادات غير صحيحة.", "error")
+            connection.close()
+            return redirect(url_for("company_setup"))
+        if not connection.execute("SELECT 1 FROM currencies WHERE code=?", (base_currency,)).fetchone():
+            flash("العملة الأساسية غير مدعومة في قائمة العملات الحالية.", "error")
+            connection.close()
+            return redirect(url_for("company_setup"))
+        inventory_cost_method = request.form.get("inventory_cost_method", "average")
+        if inventory_cost_method not in {"average", "fifo"}:
+            flash("طريقة تقييم المخزون غير صحيحة.", "error")
+            connection.close()
+            return redirect(url_for("company_setup"))
+        settings_values = {
+            "inventory_cost_method": inventory_cost_method,
+            "company_name": request.form.get("company_name", "").strip(),
+            "tax_country": tax_country, "tax_regime": tax_regime,
+            "tax_number": request.form.get("tax_number", "").strip(),
+            "activity": activity, "base_currency": base_currency,
+            "default_vat_rate": request.form.get("default_vat_rate", "0").strip()
+        }
+        try:
+            vat_rate = float(settings_values["default_vat_rate"])
+            if not 0 <= vat_rate <= 100 or not settings_values["company_name"]:
+                raise ValueError()
+        except ValueError:
+            flash("أدخل اسم شركة ومعدل ضريبة صحيحًا من 0 إلى 100.", "error")
+            connection.close()
+            return redirect(url_for("company_setup"))
+        for key, value in settings_values.items():
+            connection.execute("INSERT INTO company_settings(setting_key,setting_value) VALUES(?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value", (key, value))
+        selected = set(request.form.getlist("active_currencies"))
+        selected.add(base_currency)
+        for row in connection.execute("SELECT code FROM currencies").fetchall():
+            code = row["code"]
+            if code not in selected:
+                connection.execute("UPDATE currencies SET active=0,is_base=0 WHERE code=?", (code,))
+                continue
+            try:
+                rate = 1.0 if code == base_currency else float(request.form.get("rate_" + code, "0") or 0)
+            except ValueError:
+                rate = 0
+            if rate <= 0:
+                flash(f"أدخل سعر صرف صحيح للعملة {code}. لم يتم حفظ إعدادات العملات.", "error")
+                connection.rollback()
+                connection.close()
+                return redirect(url_for("company_setup"))
+            connection.execute("UPDATE currencies SET active=1,is_base=?,rate_to_base=?,updated_at=? WHERE code=?", (1 if code == base_currency else 0, rate, now(), code))
+        if request.form.get("replace_chart") == "yes":
+            has_entries = connection.execute("SELECT 1 FROM journal_entries LIMIT 1").fetchone()
+            if has_entries:
+                flash("لا يمكن استبدال دليل الحسابات بعد وجود قيود يومية.", "error")
+                connection.rollback()
+                connection.close()
+                return redirect(url_for("company_setup"))
+            connection.execute("DELETE FROM accounts")
+            inserted = {}
+            for code, name, account_type, parent_code, is_group in CHARTS[activity]:
+                parent_id = inserted.get(parent_code)
+                cur = connection.execute(
+                    "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
+                    (code, name, account_type, parent_id, is_group)
+                )
+                inserted[code] = cur.lastrowid
+        connection.execute("INSERT INTO tax_rates(code,name_ar,rate,active) VALUES('VAT',?,?,1) ON CONFLICT(code) DO UPDATE SET name_ar=excluded.name_ar,rate=excluded.rate,active=1",
+                           ("ضريبة القيمة المضافة", vat_rate))
+        connection.commit()
+        connection.close()
+        log("company_setup_updated", f"{activity}/{tax_country}/{base_currency}")
+        flash("تم حفظ إعدادات الشركة والعملات والنظام الضريبي.", "success")
+        return redirect(url_for("company_setup"))
+    settings = {row["setting_key"]: row["setting_value"] for row in connection.execute("SELECT * FROM company_settings")}
+    currencies = connection.execute("SELECT * FROM currencies ORDER BY code").fetchall()
+    has_entries = connection.execute("SELECT 1 FROM journal_entries LIMIT 1").fetchone() is not None
+    connection.close()
+    return render_template("company_setup.html", settings=settings, currencies=currencies, activities=ACTIVITY_LABELS, has_entries=has_entries)
+
+
 @app.route("/")
 @requires("reports.view")
 def dashboard():
@@ -141,8 +302,12 @@ def dashboard():
     revenue = connection.execute("SELECT COALESCE(SUM(jl.credit-jl.debit),0) total FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE a.account_type='revenue'").fetchone()["total"]
     expenses = connection.execute("SELECT COALESCE(SUM(jl.debit-jl.credit),0) total FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE a.account_type='expense'").fetchone()["total"]
     recent = connection.execute("SELECT * FROM journal_entries ORDER BY id DESC LIMIT 5").fetchall()
+    currency_row=connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
+    base_currency=currency_row["setting_value"] if currency_row else "EGP"
+    company_row=connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='company_name'").fetchone()
+    company_name=company_row["setting_value"] if company_row else "NEXUS ERP"
     connection.close()
-    return render_template("dashboard.html", totals=totals, balance=balance, revenue=revenue, expenses=expenses, recent=recent)
+    return render_template("dashboard.html", totals=totals, balance=balance, revenue=revenue, expenses=expenses, recent=recent, base_currency=base_currency, company_name=company_name)
 
 
 @app.route("/accounts", methods=["GET", "POST"])
@@ -167,7 +332,7 @@ def accounts():
 @requires("journal.manage")
 def journal():
     connection = db()
-    accounts_list = connection.execute("SELECT * FROM accounts WHERE active=1 ORDER BY code").fetchall()
+    accounts_list = connection.execute("SELECT * FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
     if request.method == "POST":
         account_ids = request.form.getlist("account_id")
         debits = request.form.getlist("debit")
@@ -182,14 +347,17 @@ def journal():
         if len(lines) < 2 or abs(total_debit - total_credit) > 0.005 or total_debit <= 0:
             flash("يجب إدخال سطرين على الأقل وأن يتساوى إجمالي المدين والدائن.", "error")
         else:
-            cursor = connection.execute("INSERT INTO journal_entries(entry_date,reference,description,created_by,created_at) VALUES(?,?,?,?,?)",
-                                        (request.form["entry_date"], request.form.get("reference", ""), request.form["description"].strip(), session["user_id"], now()))
-            connection.executemany("INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?)",
-                                   [(cursor.lastrowid, *line) for line in lines])
-            connection.commit()
-            log("journal_posted", f"قيد #{cursor.lastrowid}")
-            flash("تم ترحيل القيد بنجاح.", "success")
-            return redirect(url_for("journal"))
+            try:
+                reference=request.form.get("reference","").strip() or "MAN-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
+                entry_id=post_journal(connection,request.form["entry_date"],reference,
+                    request.form["description"].strip(),lines,session["user_id"])
+                connection.commit()
+                log("journal_posted", f"قيد #{entry_id}")
+                flash("تم ترحيل القيد بنجاح.", "success")
+                return redirect(url_for("journal"))
+            except ValueError as exc:
+                connection.rollback()
+                flash(str(exc),"error")
     entries = connection.execute("SELECT * FROM journal_entries ORDER BY entry_date DESC, id DESC LIMIT 20").fetchall()
     connection.close()
     return render_template("journal.html", accounts=accounts_list, entries=entries, today=datetime.now().date().isoformat())
@@ -221,6 +389,17 @@ def ledger():
     connection.close()
     return render_template("ledger.html", accounts=accounts_list, selected=selected, rows=rows)
 
+
+@app.route("/reports/reconciliation")
+@requires("reports.view")
+def reconciliation():
+    connection=db()
+    snapshot=reconciliation_snapshot(connection)
+    snapshot["grni"]=connection.execute("SELECT COALESCE(SUM(CAST(r.total_value AS REAL)),0) total FROM goods_receipts r WHERE r.status='posted' AND NOT EXISTS(SELECT 1 FROM supplier_bill_receipts x WHERE x.receipt_id=r.id)").fetchone()["total"]
+    snapshot["open_ap"]=connection.execute("SELECT COALESCE(SUM(CAST(total_amount AS REAL)-CAST(paid_amount AS REAL)),0) total FROM supplier_bills WHERE status='posted'").fetchone()["total"]
+    settings={r["setting_key"]:r["setting_value"] for r in connection.execute("SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('company_name','base_currency')")}
+    connection.close()
+    return render_template("reconciliation.html",snapshot=snapshot,settings=settings)
 
 @app.route("/users", methods=["GET", "POST"])
 @requires("users.manage")
