@@ -156,7 +156,10 @@ def suppliers():
               (request.form["code"].strip(),request.form["name"].strip(),request.form.get("tax_number","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("address","").strip()))
             c.commit(); flash("تم حفظ المورد.","success")
         except sqlite3.IntegrityError: c.rollback(); flash("كود المورد مستخدم بالفعل.","error")
-    rows=c.execute("SELECT * FROM suppliers ORDER BY name").fetchall(); c.close()
+    rows=c.execute("""SELECT s.*,
+        COALESCE((SELECT SUM(CAST(b.total_amount AS REAL)-CAST(b.paid_amount AS REAL))
+                  FROM supplier_bills b WHERE b.supplier_id=s.id AND b.status='posted'),0) outstanding
+        FROM suppliers s ORDER BY s.name""").fetchall(); c.close()
     return render_template("purchase_suppliers.html",rows=rows)
 
 
