@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from flask import Flask
+from flask_wtf.csrf import CSRFProtect
 
 import purchases
 import stock
@@ -54,6 +55,7 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         self.app.secret_key = "test-secret"
         self.app.register_blueprint(purchases.purchase_bp)
         self.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+        CSRFProtect(self.app)
         self.client = self.app.test_client()
 
     def tearDown(self):
