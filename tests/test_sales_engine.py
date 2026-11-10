@@ -30,6 +30,8 @@ class SalesIntegrationTests(unittest.TestCase):
           debit REAL DEFAULT 0, credit REAL DEFAULT 0, memo TEXT
         );
         CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL);
+        CREATE TABLE tax_rates(id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT, rate REAL, active INTEGER DEFAULT 1);
+        INSERT INTO tax_rates(code,name_ar,rate,active) VALUES('VAT','ضريبة القيمة المضافة',14,1);
         INSERT INTO company_settings VALUES('activity','commercial');
         INSERT INTO company_settings VALUES('inventory_cost_method','average');
         """)
@@ -89,6 +91,27 @@ class SalesIntegrationTests(unittest.TestCase):
         ).fetchall()
         self.assertEqual([(x["tax_treatment"], Decimal(x["tax_amount"])) for x in rows],
                          [("standard", Decimal("14.00")), ("exempt", Decimal("0.00"))])
+
+    def test_unapproved_line_tax_rate_is_rejected(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        with self.assertRaisesRegex(ValueError, "غير معتمدة"):
+            sales.post_invoice(self.db, self.customer_id, "2026-11-10", self.warehouse_id, [
+                {"product_id": self.product_id, "quantity": "1", "unit_price": "100",
+                 "tax_rate": "7", "tax_treatment": "standard"},
+            ], "14", 1)
+        self.db.rollback()
+
+    def test_header_rate_stores_effective_rate_for_mixed_lines(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        result = sales.post_invoice(self.db, self.customer_id, "2026-11-10", self.warehouse_id, [
+            {"product_id": self.product_id, "quantity": "1", "unit_price": "100",
+             "tax_rate": "14", "tax_treatment": "standard"},
+            {"product_id": self.product_id, "quantity": "1", "unit_price": "100",
+             "tax_rate": "0", "tax_treatment": "zero_rated"},
+        ], "14", 1)
+        self.db.commit()
+        stored = self.db.execute("SELECT tax_rate FROM sales_invoices WHERE id=?", (result["invoice_id"],)).fetchone()["tax_rate"]
+        self.assertEqual(Decimal(stored), Decimal("7.00"))
 
     def test_credit_limit_is_enforced_by_posting_engine(self):
         self.db.execute("UPDATE customers SET credit_limit='10' WHERE id=?", (self.customer_id,))
