@@ -106,12 +106,18 @@ def init_purchase_schema():
     duplicate_bills=c.execute("""SELECT supplier_id,lower(trim(supplier_invoice_no)) k,COUNT(*) n
       FROM supplier_bills GROUP BY supplier_id,k HAVING COUNT(*)>1""").fetchall()
     for row in duplicate_bills:
-        c.execute("INSERT OR IGNORE INTO purchase_integrity_issues(issue_type,issue_key) VALUES('duplicate_supplier_invoice',?)",
+        c.execute("""INSERT INTO purchase_integrity_issues(issue_type,issue_key)
+                     VALUES('duplicate_supplier_invoice',?)
+                     ON CONFLICT(issue_type,issue_key) DO UPDATE SET
+                       resolved=0,resolved_by=NULL,resolved_at=NULL""",
                   (str(row["supplier_id"])+":"+row["k"],))
     duplicate_receipts=c.execute("""SELECT receipt_id,COUNT(*) n FROM supplier_bill_receipts
       GROUP BY receipt_id HAVING COUNT(*)>1""").fetchall()
     for row in duplicate_receipts:
-        c.execute("INSERT OR IGNORE INTO purchase_integrity_issues(issue_type,issue_key) VALUES('duplicate_receipt_link',?)",
+        c.execute("""INSERT INTO purchase_integrity_issues(issue_type,issue_key)
+                     VALUES('duplicate_receipt_link',?)
+                     ON CONFLICT(issue_type,issue_key) DO UPDATE SET
+                       resolved=0,resolved_by=NULL,resolved_at=NULL""",
                   (str(row["receipt_id"]),))
     if not duplicate_bills:
         c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bill_invoice_no
@@ -211,7 +217,6 @@ def integrity_issues():
             if len(rows)>1:
                 details.append({"issue":issue,"kind":"duplicate_receipt_link","rows":rows,
                     "summary":"إيصال استلام مربوط بأكثر من فاتورة"})
-    c.close()
     indexes = {
         row["name"] for row in c.execute(
             "SELECT name FROM sqlite_master WHERE type='index'"
