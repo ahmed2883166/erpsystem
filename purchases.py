@@ -95,8 +95,14 @@ def init_purchase_schema():
     c.execute("""CREATE TABLE IF NOT EXISTS purchase_integrity_issues(
       id INTEGER PRIMARY KEY, issue_type TEXT NOT NULL, issue_key TEXT NOT NULL,
       detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, resolved INTEGER NOT NULL DEFAULT 0,
+      resolved_by INTEGER, resolved_at TEXT,
       UNIQUE(issue_type,issue_key)
     )""")
+    integrity_columns = {row["name"] for row in c.execute("PRAGMA table_info(purchase_integrity_issues)")}
+    if "resolved_by" not in integrity_columns:
+        c.execute("ALTER TABLE purchase_integrity_issues ADD COLUMN resolved_by INTEGER")
+    if "resolved_at" not in integrity_columns:
+        c.execute("ALTER TABLE purchase_integrity_issues ADD COLUMN resolved_at TEXT")
     duplicate_bills=c.execute("""SELECT supplier_id,lower(trim(supplier_invoice_no)) k,COUNT(*) n
       FROM supplier_bills GROUP BY supplier_id,k HAVING COUNT(*)>1""").fetchall()
     for row in duplicate_bills:
@@ -206,7 +212,68 @@ def integrity_issues():
                 details.append({"issue":issue,"kind":"duplicate_receipt_link","rows":rows,
                     "summary":"إيصال استلام مربوط بأكثر من فاتورة"})
     c.close()
-    return render_template("purchase_integrity.html",issues=details)
+    indexes = {
+        row["name"] for row in c.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'"
+        ).fetchall()
+    }
+    index_status = {
+        "supplier_invoice": "uq_supplier_bill_invoice_no" in indexes,
+        "receipt_link": "uq_supplier_bill_receipt_once" in indexes,
+    }
+    c.close()
+    return render_template(
+        "purchase_integrity.html", issues=details, index_status=index_status
+    )
+
+
+@purchase_bp.route("/integrity/<int:issue_id>/resolve", methods=["POST"])
+@require("purchases.manage")
+def resolve_integrity_issue(issue_id):
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        issue = c.execute(
+            "SELECT * FROM purchase_integrity_issues WHERE id=? AND resolved=0",
+            (issue_id,),
+        ).fetchone()
+        if not issue:
+            raise ValueError("حالة المراجعة غير موجودة أو تم إغلاقها بالفعل.")
+
+        key = issue["issue_key"]
+        if issue["issue_type"] == "duplicate_supplier_invoice":
+            supplier_text, invoice_key = key.split(":", 1)
+            remaining = c.execute(
+                """SELECT COUNT(*) FROM supplier_bills
+                   WHERE supplier_id=? AND lower(trim(supplier_invoice_no))=?""",
+                (int(supplier_text), invoice_key),
+            ).fetchone()[0]
+        elif issue["issue_type"] == "duplicate_receipt_link":
+            remaining = c.execute(
+                "SELECT COUNT(*) FROM supplier_bill_receipts WHERE receipt_id=?",
+                (int(key),),
+            ).fetchone()[0]
+        else:
+            raise ValueError("نوع حالة المراجعة غير معروف.")
+        if remaining > 1:
+            raise ValueError(
+                "لا يمكن إغلاق الحالة: التكرار ما زال موجودًا. صحح المستندات أولًا ثم أعد المحاولة."
+            )
+
+        c.execute(
+            """UPDATE purchase_integrity_issues
+               SET resolved=1,resolved_by=?,resolved_at=CURRENT_TIMESTAMP
+               WHERE id=? AND resolved=0""",
+            (session["user_id"], issue_id),
+        )
+        c.commit()
+        flash("تم إغلاق حالة المراجعة وتسجيل المستخدم وتاريخ الحل.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc), "error")
+    finally:
+        c.close()
+    return redirect(url_for("purchase.integrity_issues"))
 
 
 @purchase_bp.route("/suppliers",methods=["GET","POST"])
