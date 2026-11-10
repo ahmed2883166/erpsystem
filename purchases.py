@@ -174,6 +174,41 @@ def index():
     c.close()
     return render_template("purchases.html",suppliers=suppliers,orders=orders,receipts=receipts,bills=bills,payments=payments,today=date.today().isoformat())
 
+@purchase_bp.route("/integrity")
+@require("purchases.view")
+def integrity_issues():
+    c=db()
+    issues=c.execute("""SELECT * FROM purchase_integrity_issues
+        WHERE resolved=0 ORDER BY detected_at,id""").fetchall()
+    details=[]
+    for issue in issues:
+        key=issue["issue_key"]
+        if issue["issue_type"]=="duplicate_supplier_invoice":
+            supplier_text, invoice_key = key.split(":",1)
+            rows=c.execute("""SELECT b.id,b.bill_no,b.supplier_invoice_no,b.bill_date,b.total_amount,
+                s.name supplier_name
+                FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
+                WHERE b.supplier_id=? AND lower(trim(b.supplier_invoice_no))=?
+                ORDER BY b.id""",(int(supplier_text),invoice_key)).fetchall()
+            if len(rows)>1:
+                details.append({"issue":issue,"kind":"duplicate_supplier_invoice","rows":rows,
+                    "summary":"رقم فاتورة مورد مكرر لدى نفس المورد"})
+        elif issue["issue_type"]=="duplicate_receipt_link":
+            receipt_id=int(key)
+            rows=c.execute("""SELECT r.id receipt_id,r.receipt_no,b.id bill_id,b.bill_no,
+                b.supplier_invoice_no,s.name supplier_name,x.matched_amount
+                FROM supplier_bill_receipts x
+                JOIN goods_receipts r ON r.id=x.receipt_id
+                JOIN supplier_bills b ON b.id=x.bill_id
+                JOIN suppliers s ON s.id=b.supplier_id
+                WHERE x.receipt_id=? ORDER BY b.id""",(receipt_id,)).fetchall()
+            if len(rows)>1:
+                details.append({"issue":issue,"kind":"duplicate_receipt_link","rows":rows,
+                    "summary":"إيصال استلام مربوط بأكثر من فاتورة"})
+    c.close()
+    return render_template("purchase_integrity.html",issues=details)
+
+
 @purchase_bp.route("/suppliers",methods=["GET","POST"])
 @require("purchases.manage")
 def suppliers():
