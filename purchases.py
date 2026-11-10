@@ -272,8 +272,21 @@ def new_receipt():
     if request.method=="POST":
         try:
             supplier=int(request.form["supplier_id"]); product=int(request.form["product_id"]); wh=int(request.form["warehouse_id"])
+            po_id=int(request.form["po_id"]) if request.form.get("po_id") else None
             qty=Decimal(request.form["quantity"]); unit=money(request.form["unit_cost"]); total=money(qty*unit)
             if qty<=0 or unit<0: raise ValueError("الكمية أو التكلفة غير صحيحة.")
+            po_line_id=None
+            if po_id:
+                po=c.execute("SELECT * FROM purchase_orders WHERE id=? AND supplier_id=? AND status IN ('draft','partially_received')",
+                             (po_id,supplier)).fetchone()
+                if not po: raise ValueError("أمر الشراء غير موجود أو لا يتبع المورد أو مغلق.")
+                po_lines=c.execute("SELECT * FROM purchase_order_lines WHERE po_id=? AND product_id=? ORDER BY id",
+                                   (po_id,product)).fetchall()
+                if len(po_lines)!=1: raise ValueError("الصنف يجب أن يقابل سطرًا واحدًا فقط في أمر الشراء.")
+                po_line=po_lines[0]
+                outstanding=Decimal(po_line["quantity"])-Decimal(po_line["received_qty"])
+                if qty>outstanding: raise ValueError("كمية الاستلام أكبر من الكمية المتبقية في أمر الشراء.")
+                po_line_id=po_line["id"]
             invcode=activity_inventory_code(c)
             if not invcode: raise ValueError("النشاط الحالي لا يملك حساب مخزون تلقائيًا؛ اضبط الربط أولًا.")
             inv=account(c,invcode,"asset")
@@ -281,10 +294,16 @@ def new_receipt():
             grni=ensure_detail_account(c,"2190","بضاعة مستلمة غير مفوترة GRNI","liability","2000")
             c.execute("BEGIN IMMEDIATE")
             no="GRN-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
-            cur=c.execute("INSERT INTO goods_receipts(receipt_no,supplier_id,warehouse_id,receipt_date,total_value,created_by) VALUES(?,?,?,?,?,?)",
-              (no,supplier,wh,request.form["receipt_date"],str(total),session["user_id"]))
+            cur=c.execute("INSERT INTO goods_receipts(receipt_no,po_id,supplier_id,warehouse_id,receipt_date,total_value,created_by) VALUES(?,?,?,?,?,?,?)",
+              (no,po_id,supplier,wh,request.form["receipt_date"],str(total),session["user_id"]))
             rid=cur.lastrowid
-            c.execute("INSERT INTO goods_receipt_lines(receipt_id,product_id,quantity,unit_cost,total_cost) VALUES(?,?,?,?,?)",(rid,product,str(qty),str(unit),str(total)))
+            c.execute("INSERT INTO goods_receipt_lines(receipt_id,po_line_id,product_id,quantity,unit_cost,total_cost) VALUES(?,?,?,?,?,?)",
+                      (rid,po_line_id,product,str(qty),str(unit),str(total)))
+            if po_id:
+                received_total=Decimal(po_line["received_qty"])+qty
+                new_status="received" if received_total==Decimal(po_line["quantity"]) else "partially_received"
+                c.execute("UPDATE purchase_order_lines SET received_qty=? WHERE id=?",(str(received_total),po_line_id))
+                c.execute("UPDATE purchase_orders SET status=? WHERE id=?",(new_status,po_id))
             # Stock ledger + valuation layer are updated in the same DB transaction.
             move_no="PUR-"+no
             movement=c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status)
@@ -301,7 +320,8 @@ def new_receipt():
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     wh=c.execute("SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     pr=c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
-    c.close(); return render_template("purchase_receipt_new.html",suppliers=su,warehouses=wh,products=pr,today=date.today().isoformat())
+    orders=c.execute("SELECT id,po_no,supplier_id,status FROM purchase_orders WHERE status IN ('draft','partially_received') ORDER BY id DESC").fetchall()
+    c.close(); return render_template("purchase_receipt_new.html",suppliers=su,warehouses=wh,products=pr,orders=orders,today=date.today().isoformat())
 
 @purchase_bp.route("/bills/new",methods=["GET","POST"])
 @require("purchases.manage")
