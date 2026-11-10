@@ -150,8 +150,8 @@ def initialize_database():
         );
         CREATE TABLE IF NOT EXISTS journal_lines (
             id INTEGER PRIMARY KEY, entry_id INTEGER NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
-            account_id INTEGER NOT NULL REFERENCES accounts(id), debit REAL NOT NULL DEFAULT 0,
-            credit REAL NOT NULL DEFAULT 0, memo TEXT
+            account_id INTEGER NOT NULL REFERENCES accounts(id), debit TEXT NOT NULL DEFAULT '0',
+            credit TEXT NOT NULL DEFAULT '0', memo TEXT
         );
         CREATE TABLE IF NOT EXISTS audit_log (
             id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), action TEXT NOT NULL,
