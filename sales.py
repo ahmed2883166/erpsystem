@@ -114,7 +114,7 @@ def _sales_account_codes(activity):
     return mapping[activity]
 
 
-def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate, created_by=None):
+def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate, created_by=None, allow_credit_override=False):
     """Create invoice, stock issues and balanced GL entries inside caller transaction."""
     rate = Decimal(str(tax_rate)).quantize(CENT, rounding=ROUND_HALF_UP)
     if rate < 0 or rate > 100:
@@ -183,6 +183,12 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
         FROM sales_invoices WHERE customer_id=? AND status='posted'""", (customer_id,)).fetchone()
     current_exposure = Decimal(str(outstanding_row["balance"] or 0)).quantize(CENT, rounding=ROUND_HALF_UP)
     credit_warning = bool(credit_limit > 0 and current_exposure + total_amount > credit_limit)
+    if credit_warning and not allow_credit_override:
+        raise ValueError(
+            f"تم إيقاف الفاتورة لتجاوز الحد الائتماني. الحد: {credit_limit}، "
+            f"المديونية الحالية: {current_exposure}، وبعد الفاتورة: {current_exposure + total_amount}. "
+            "يلزم اعتماد مدير النظام لإتمامها."
+        )
 
     stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
     invoice_no = "SINV-" + stamp
@@ -377,7 +383,8 @@ def new_invoice():
             c.execute("BEGIN IMMEDIATE")
             result = post_invoice(c, int(request.form["customer_id"]), request.form["invoice_date"],
                                   request.form.get("warehouse_id", type=int), items,
-                                  request.form.get("tax_rate", "0"), session["user_id"])
+                                  request.form.get("tax_rate", "0"), session["user_id"],
+                                  allow_credit_override=(session.get("role") == "admin" and request.form.get("credit_override") == "1"))
             due_date = request.form.get("due_date") or request.form["invoice_date"]
             if due_date < request.form["invoice_date"]:
                 raise ValueError("تاريخ الاستحقاق لا يمكن أن يسبق تاريخ الفاتورة.")
