@@ -204,7 +204,8 @@ def settle(transaction_id):
         settle_date = date.fromisoformat(request.form["settlement_date"]).isoformat()
         rate = _rate(c,t["currency_code"],settle_date,request.form.get("rate"))
         cash = M(amount*rate)
-        carrying = M(D(t["balance_base"])*amount/D(t["balance_foreign"]))
+        full_settlement = amount == D(t["balance_foreign"])
+        carrying = D(t["balance_base"]) if full_settlement else M(D(t["balance_base"])*amount/D(t["balance_foreign"]))
         diff = M(cash-carrying) if t["party_type"]=="receivable" else M(carrying-cash)
         cash_account = _account(c,int(request.form["cash_account_id"]))
         gain_account = _account(c,int(request.form["fx_gain_account_id"]))
@@ -222,7 +223,7 @@ def settle(transaction_id):
         ref = "FX-SETTLE-" + str(transaction_id) + "-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
         jid = post_journal(c,settle_date,ref,"تسوية معاملة عملة أجنبية "+t["reference"],lines,session["user_id"])
         remaining_foreign = D(t["balance_foreign"])-amount
-        remaining_base = M(D(t["balance_base"])-carrying)
+        remaining_base = Decimal("0.00") if full_settlement else M(D(t["balance_base"])-carrying)
         c.execute("""INSERT INTO fx_settlements(transaction_id,settlement_date,foreign_amount,rate,base_amount,
             carrying_amount,fx_difference,journal_entry_id,created_by) VALUES(?,?,?,?,?,?,?,?,?)""",
             (transaction_id,settle_date,str(amount),str(rate),str(cash),str(carrying),str(diff),jid,session["user_id"]))
