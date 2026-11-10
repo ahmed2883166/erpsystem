@@ -88,7 +88,7 @@ def post_scrap_journal(c, movement_id, movement_no, product, movement_date, tota
     if existing and existing["journal_entry_id"]:
         return existing["journal_entry_id"]
     settings = {row["setting_key"]: row["setting_value"] for row in c.execute(
-        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity',)") }
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='activity'") }
     activity = settings.get("activity", "commercial")
     inventory_codes = {
         "commercial": "1150", "industrial": "1130", "medical": "1150",
@@ -432,6 +432,8 @@ def movements():
             lot_no=request.form.get("lot_number","").strip()
             expiry=request.form.get("expiry_date","").strip()
             if kind=="receipt":
+                raise ValueError("استلام المخزون يجب أن يتم من شاشة استلام المشتريات حتى يُسجل قيد GRNI ويرتبط بالمورد. لا تستخدم حركة استلام عامة.")
+            if kind=="receipt":
                 lot_id=make_lot(c,product,lot_no,request.form.get("production_date"),expiry)
                 unit_cost=dec(request.form.get("unit_cost","0"),"تكلفة الوحدة")
                 if unit_cost<0: raise ValueError("التكلفة لا يمكن أن تكون سالبة.")
@@ -447,7 +449,7 @@ def movements():
                 method=method_row["setting_value"] if method_row else "average"
                 total,allocations=consume_layers(c,product["id"],src,qty,method,lot_id)
                 unit_cost=(total/qty).quantize(MONEY,rounding=ROUND_HALF_UP)
-            movement_no=f"STK-{date.today().strftime('%Y%m%d')}-{c.execute('SELECT COALESCE(MAX(id),0)+1 n FROM stock_movements').fetchone()['n']:06d}"
+            movement_no=f"STK-{date.today().strftime('%Y%m%d')}-{__import__('uuid').uuid4().hex[:12].upper()}"
             movement_date=request.form.get("movement_date") or date.today().isoformat()
             if kind=="transfer":
                 # Validate and consume source layers, then recreate equivalent valuation layers in destination.
