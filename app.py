@@ -23,6 +23,7 @@ from receivables import aging_bp, initialize_aging_schema
 from quotations import quotes_bp, initialize_quotes_schema
 from tax_center import tax_bp, initialize_tax_schema
 from workforce import workforce_bp, initialize_workforce_schema
+from currency_center import currency_bp, initialize_currency_schema
 from report_exports import register_report_exports
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -40,6 +41,7 @@ app.register_blueprint(aging_bp)
 app.register_blueprint(quotes_bp)
 app.register_blueprint(tax_bp)
 app.register_blueprint(workforce_bp)
+app.register_blueprint(currency_bp)
 app.config["SECRET_KEY"] = os.environ.get("NEXUS_SECRET_KEY", "change-this-secret-before-production")
 
 PERMISSIONS = {
@@ -168,6 +170,7 @@ def initialize_database():
     initialize_quotes_schema()
     initialize_tax_schema()
     initialize_workforce_schema()
+    initialize_currency_schema()
 
 
 def now():
