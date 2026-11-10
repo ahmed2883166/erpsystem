@@ -386,9 +386,10 @@ def new_invoice():
     if request.method == "POST":
         try:
             items = []
-            for pid, qty, price, desc in zip(request.form.getlist("product_id"),
+            for pid, qty, price, desc, line_rate, treatment in zip(request.form.getlist("product_id"),
                     request.form.getlist("quantity"), request.form.getlist("unit_price"),
-                    request.form.getlist("description")):
+                    request.form.getlist("description"), request.form.getlist("line_tax_rate"),
+                    request.form.getlist("line_tax_treatment")):
                 if pid or desc.strip():
                     selected_price = price
                     if pid:
@@ -401,7 +402,7 @@ def new_invoice():
                         if rule:
                             selected_price = rule["unit_price"]
                     items.append({"product_id": int(pid) if pid else None, "quantity": qty,
-                                  "unit_price": selected_price, "description": desc})
+                                  "unit_price": selected_price, "description": desc, "tax_rate": line_rate, "tax_treatment": treatment})
             c.execute("BEGIN IMMEDIATE")
             result = post_invoice(c, int(request.form["customer_id"]), request.form["invoice_date"],
                                   request.form.get("warehouse_id", type=int), items,
