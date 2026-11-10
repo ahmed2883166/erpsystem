@@ -212,6 +212,26 @@ class SalesIntegrationTests(unittest.TestCase):
             )
         self.db.rollback()
 
+    def test_credit_note_reduces_amount_available_for_customer_receipt(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}], "0", 1
+        )
+        line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?", (invoice["invoice_id"],)
+        ).fetchone()["id"]
+        sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-11", "تخفيض قبل التحصيل",
+            [{"invoice_line_id": line_id, "quantity": "0.5"}], 1
+        )
+        cash_id = self.db.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
+        with self.assertRaisesRegex(ValueError, "أكبر من الرصيد المستحق"):
+            sales.post_customer_receipt(
+                self.db, invoice["invoice_id"], "2026-11-12", "75", cash_id, 1
+            )
+        self.db.rollback()
+
     def test_insufficient_stock_rolls_back_invoice(self):
         self.db.execute("BEGIN IMMEDIATE")
         with self.assertRaisesRegex(ValueError, "الرصيد غير كافٍ"):
