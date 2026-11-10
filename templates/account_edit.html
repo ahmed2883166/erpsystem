@@ -1,0 +1,10 @@
+{% extends 'base.html' %}{% block title %}تعديل حساب | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>تعديل الحساب {{ account.code }}</h2><a class="btn secondary" href="{{ url_for('accounts') }}">رجوع إلى شجرة الحسابات</a></header>
+<section class="panel"><form method="post">
+<label>كود الحساب<input name="code" value="{{ account.code }}" required></label>
+<label>اسم الحساب<input name="name_ar" value="{{ account.name_ar }}" required></label>
+<label>نوع الحساب<select name="account_type">{% for k,v in {'asset':'أصل','liability':'التزام','equity':'حقوق ملكية','revenue':'إيراد','expense':'مصروف'}.items() %}<option value="{{ k }}" {% if account.account_type==k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
+<label>الحساب الأب<select name="parent_id"><option value="">حساب رئيسي</option>{% for g in groups %}<option value="{{ g.id }}" {% if account.parent_id==g.id %}selected{% endif %}>{{ g.code }} - {{ g.name_ar }}</option>{% endfor %}</select></label>
+<label class="checkline"><input type="checkbox" name="is_group" value="yes" {% if account.is_group %}checked{% endif %}> حساب مجموعة</label>
+{% if used %}<p class="notice">الحساب مستخدم في قيود سابقة؛ يمكنك تعديل الكود والاسم فقط. نوع الحساب والتبعية والتصنيف محمية.</p>{% endif %}
+<div class="actions"><button>حفظ التعديلات</button><a class="btn secondary" href="{{ url_for('accounts') }}">إلغاء</a></div></form></section>{% endblock %}
