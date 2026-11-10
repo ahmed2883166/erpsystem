@@ -200,6 +200,36 @@ def login():
     return render_template("login.html")
 
 
+@app.route("/profile/password", methods=["GET", "POST"])
+def change_password():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    if request.method == "POST":
+        current = request.form.get("current_password", "")
+        new = request.form.get("new_password", "")
+        confirm = request.form.get("confirm_password", "")
+        if len(new) < 12:
+            flash("كلمة المرور الجديدة يجب ألا تقل عن 12 حرفًا.", "error")
+        elif new != confirm:
+            flash("تأكيد كلمة المرور غير مطابق.", "error")
+        else:
+            connection = db()
+            user = connection.execute("SELECT password_hash FROM users WHERE id=? AND active=1",
+                                      (session["user_id"],)).fetchone()
+            if not user or not verify_password(current, user["password_hash"]):
+                flash("كلمة المرور الحالية غير صحيحة.", "error")
+            else:
+                connection.execute("UPDATE users SET password_hash=? WHERE id=?",
+                                   (password_hash(new), session["user_id"]))
+                connection.commit()
+                connection.close()
+                log("password_changed", "تغيير كلمة مرور المستخدم الحالي")
+                flash("تم تغيير كلمة المرور بنجاح.", "success")
+                return redirect(url_for("dashboard"))
+            connection.close()
+    return render_template("change_password.html")
+
+
 @app.route("/logout")
 def logout():
     session.clear()
