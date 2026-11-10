@@ -33,6 +33,7 @@ def init_sales_schema():
       id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
       tax_number TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '',
       email TEXT NOT NULL DEFAULT '', address TEXT NOT NULL DEFAULT '',
+      credit_limit TEXT NOT NULL DEFAULT '0',
       active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS sales_invoices(
@@ -62,6 +63,9 @@ def init_sales_schema():
     CREATE INDEX IF NOT EXISTS idx_sales_invoice_customer ON sales_invoices(customer_id,invoice_date);
     CREATE INDEX IF NOT EXISTS idx_sales_receipts_invoice ON customer_receipts(invoice_id,receipt_date);
     """)
+    customer_columns = {row["name"] for row in c.execute("PRAGMA table_info(customers)")}
+    if "credit_limit" not in customer_columns:
+        c.execute("ALTER TABLE customers ADD COLUMN credit_limit TEXT NOT NULL DEFAULT '0'")
     c.close()
 
 
@@ -174,6 +178,11 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     total_amount = subtotal + tax_amount
     if subtotal <= 0:
         raise ValueError("إجمالي الفاتورة يجب أن يكون أكبر من صفر.")
+    credit_limit = Decimal(customer["credit_limit"] or "0")
+    outstanding_row = conn.execute("""SELECT COALESCE(SUM(CAST(total_amount AS REAL)-CAST(paid_amount AS REAL)),0) balance
+        FROM sales_invoices WHERE customer_id=? AND status='posted'""", (customer_id,)).fetchone()
+    current_exposure = Decimal(str(outstanding_row["balance"] or 0)).quantize(CENT, rounding=ROUND_HALF_UP)
+    credit_warning = bool(credit_limit > 0 and current_exposure + total_amount > credit_limit)
 
     stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
     invoice_no = "SINV-" + stamp
@@ -227,7 +236,9 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
                      (cogs_journal_id, "posted" if cogs_journal_id else "not_required", row["id"]))
     return {"invoice_id": invoice_id, "invoice_no": invoice_no, "journal_entry_id": journal_id,
             "cogs_journal_entry_id": cogs_journal_id, "subtotal": subtotal,
-            "tax_amount": tax_amount, "total_amount": total_amount, "total_cost": total_cost}
+            "tax_amount": tax_amount, "total_amount": total_amount, "total_cost": total_cost,
+            "credit_warning": credit_warning, "credit_limit": credit_limit,
+            "current_exposure": current_exposure, "new_exposure": current_exposure + total_amount}
 
 
 def _inventory_method(conn):
@@ -286,16 +297,24 @@ def customer_list():
     c = db()
     if request.method == "POST":
         try:
-            c.execute("INSERT INTO customers(code,name,tax_number,phone,email,address) VALUES(?,?,?,?,?,?)",
+            credit_limit = Decimal(request.form.get("credit_limit", "0") or "0")
+            if not credit_limit.is_finite() or credit_limit < 0: raise ValueError("الحد الائتماني يجب أن يكون صفرًا أو أكبر.")
+            c.execute("INSERT INTO customers(code,name,tax_number,phone,email,address,credit_limit) VALUES(?,?,?,?,?,?,?)",
                       (request.form["code"].strip(), request.form["name"].strip(),
                        request.form.get("tax_number", "").strip(), request.form.get("phone", "").strip(),
-                       request.form.get("email", "").strip(), request.form.get("address", "").strip()))
+                       request.form.get("email", "").strip(), request.form.get("address", "").strip(), str(credit_limit)))
             c.commit()
             flash("تم حفظ العميل.", "success")
         except sqlite3.IntegrityError:
             c.rollback()
             flash("كود العميل مستخدم بالفعل.", "error")
-    rows = c.execute("SELECT * FROM customers ORDER BY name").fetchall()
+        except (ValueError, InvalidOperation) as exc:
+            c.rollback()
+            flash(str(exc), "error")
+    rows = c.execute("""SELECT cu.*,
+        COALESCE((SELECT SUM(CAST(i.total_amount AS REAL)-CAST(i.paid_amount AS REAL))
+                  FROM sales_invoices i WHERE i.customer_id=cu.id AND i.status='posted'),0) outstanding
+        FROM customers cu ORDER BY cu.name""").fetchall()
     c.close()
     return render_template("sales_customers.html", rows=rows)
 
@@ -319,11 +338,18 @@ def new_invoice():
                                   request.form.get("tax_rate", "0"), session["user_id"])
             c.commit()
             flash("تم ترحيل فاتورة البيع " + result["invoice_no"], "success")
+            if result.get("credit_warning"):
+                flash("تنبيه ائتماني: تجاوز العميل الحد المسموح. الحد: " + str(result["credit_limit"]) +
+                      " | المديونية السابقة: " + str(result["current_exposure"]) +
+                      " | المديونية بعد الفاتورة: " + str(result["new_exposure"]), "warning")
             return redirect(url_for("sales.index"))
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
             c.rollback()
             flash(str(exc), "error")
-    customers = c.execute("SELECT * FROM customers WHERE active=1 ORDER BY name").fetchall()
+    customers = c.execute("""SELECT cu.*,
+        COALESCE((SELECT SUM(CAST(i.total_amount AS REAL)-CAST(i.paid_amount AS REAL))
+                  FROM sales_invoices i WHERE i.customer_id=cu.id AND i.status='posted'),0) outstanding
+        FROM customers cu WHERE cu.active=1 ORDER BY cu.name""").fetchall()
     products = c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     warehouses = c.execute("SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
