@@ -34,6 +34,37 @@ DB_PATH = DATA_DIR / "nexus.db"
 BACKUP_DIR = DATA_DIR / "backups"
 
 app = Flask(__name__)
+
+def _load_secret_key():
+    configured = os.environ.get("NEXUS_SECRET_KEY", "").strip()
+    if configured:
+        if len(configured) < 32:
+            raise RuntimeError("NEXUS_SECRET_KEY must contain at least 32 characters.")
+        return configured
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    key_file = DATA_DIR / ".nexus_secret_key"
+    try:
+        with key_file.open("x", encoding="ascii") as handle:
+            import secrets
+            handle.write(secrets.token_urlsafe(48))
+    except FileExistsError:
+        pass
+    try:
+        os.chmod(key_file, 0o600)
+    except OSError:
+        pass
+    return key_file.read_text(encoding="ascii").strip()
+
+app.config.update(
+    SECRET_KEY=_load_secret_key(),
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("NEXUS_COOKIE_SECURE", "0") == "1",
+    PERMANENT_SESSION_LIFETIME=1800,
+)
+from flask_wtf.csrf import CSRFProtect
+csrf = CSRFProtect(app)
+
 app.register_blueprint(stock_bp)
 app.register_blueprint(purchase_bp)
 app.register_blueprint(sales_bp)
@@ -45,7 +76,7 @@ app.register_blueprint(tax_bp)
 app.register_blueprint(workforce_bp)
 app.register_blueprint(currency_bp)
 app.register_blueprint(party_bp)
-app.config["SECRET_KEY"] = os.environ.get("NEXUS_SECRET_KEY", "change-this-secret-before-production")
+# SECRET_KEY and session/CSRF settings are initialized above.
 
 PERMISSIONS = {
     "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view"},
@@ -105,7 +136,8 @@ def initialize_database():
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, full_name TEXT NOT NULL,
             password_hash TEXT NOT NULL, role TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            must_change_password INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS accounts (
             id INTEGER PRIMARY KEY, code TEXT UNIQUE NOT NULL, name_ar TEXT NOT NULL,
@@ -138,6 +170,9 @@ def initialize_database():
             rate REAL NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1
         );
     """)
+    user_columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
+    if "must_change_password" not in user_columns:
+        connection.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
     account_columns = {row["name"] for row in connection.execute("PRAGMA table_info(accounts)")}
     if "is_group" not in account_columns:
         connection.execute("ALTER TABLE accounts ADD COLUMN is_group INTEGER NOT NULL DEFAULT 0")
@@ -153,8 +188,12 @@ def initialize_database():
         connection.execute("INSERT OR IGNORE INTO company_settings(setting_key,setting_value) VALUES(?,?)", (key,value))
     connection.execute("INSERT OR IGNORE INTO currencies(code,name_ar,symbol,active,is_base,rate_to_base) VALUES('EGP','جنيه مصري','ج.م',1,1,1)")
     if not connection.execute("SELECT 1 FROM users WHERE username = 'admin'").fetchone():
-        connection.execute("INSERT INTO users(username, full_name, password_hash, role, created_at) VALUES(?,?,?,?,?)",
-                           ("admin", "مدير النظام", password_hash("admin123"), "admin", now()))
+        connection.execute("INSERT INTO users(username, full_name, password_hash, role, created_at, must_change_password) VALUES(?,?,?,?,?,1)",
+                           ("admin", "مدير النظام", password_hash("admin123"), "admin", now(), 1))
+    else:
+        admin = connection.execute("SELECT id,password_hash FROM users WHERE username='admin'").fetchone()
+        if admin and verify_password("admin123", admin["password_hash"]):
+            connection.execute("UPDATE users SET must_change_password=1 WHERE id=?", (admin["id"],))
     if not connection.execute("SELECT 1 FROM accounts LIMIT 1").fetchone():
         connection.executemany("INSERT INTO accounts(code, name_ar, account_type) VALUES(?,?,?)", [
             ("1000", "الصندوق والبنوك", "asset"), ("1100", "العملاء", "asset"),
@@ -200,6 +239,14 @@ def requires(permission):
             return view(*args, **kwargs)
         return wrapped
     return decorator
+
+
+@app.before_request
+def enforce_forced_password_change():
+    if session.get("must_change_password"):
+        allowed_endpoints = {"change_password", "logout", "static"}
+        if (request.endpoint or "") not in allowed_endpoints:
+            return redirect(url_for("change_password"))
 
 
 @app.before_request
@@ -251,8 +298,13 @@ def login():
         connection.close()
         if valid:
             session.clear()
-            session.update(user_id=user["id"], username=user["username"], full_name=user["full_name"], role=user["role"])
+            session.permanent = True
+            session.update(user_id=user["id"], username=user["username"], full_name=user["full_name"],
+                           role=user["role"], must_change_password=bool(user["must_change_password"]))
             log("login", "تسجيل دخول")
+            if user["must_change_password"]:
+                flash("يجب تغيير كلمة مرور المدير الافتراضية قبل استخدام النظام.", "warning")
+                return redirect(url_for("change_password"))
             return redirect(url_for("dashboard"))
         flash("بيانات الدخول غير صحيحة.", "error")
     return render_template("login.html")
@@ -277,10 +329,11 @@ def change_password():
             if not user or not verify_password(current, user["password_hash"]):
                 flash("كلمة المرور الحالية غير صحيحة.", "error")
             else:
-                connection.execute("UPDATE users SET password_hash=? WHERE id=?",
+                connection.execute("UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?",
                                    (password_hash(new), session["user_id"]))
                 connection.commit()
                 connection.close()
+                session["must_change_password"] = False
                 log("password_changed", "تغيير كلمة مرور المستخدم الحالي")
                 flash("تم تغيير كلمة المرور بنجاح.", "success")
                 return redirect(url_for("dashboard"))
@@ -835,6 +888,8 @@ def restore_backup():
     return redirect(url_for("dashboard"))
 
 
+# Initialize schema for every WSGI entry point (flask run, gunicorn, and direct execution).
+initialize_database()
+
 if __name__ == "__main__":
-    initialize_database()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
+    app.run(host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 5000)), debug=False)
