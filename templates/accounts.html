@@ -1,5 +1,5 @@
 {% extends 'base.html' %}{% block title %}دليل الحسابات | NEXUS ERP{% endblock %}{% block content %}
-<header><div><h2>دليل الحسابات الهرمي</h2><p>حسابات رئيسية (مجموعات) وحسابات فرعية تفصيلية. لا يمكن الترحيل على حساب المجموعة.</p></div><div><a class="button secondary" href="{{ url_for('export_data', format='csv') }}">تصدير CSV</a> <a class="button secondary" href="{{ url_for('export_data', format='json') }}">تصدير JSON</a></div></header>
+<header><div><h2>دليل الحسابات الهرمي</h2><p>حسابات رئيسية (مجموعات) وحسابات فرعية تفصيلية. لا يمكن الترحيل على حساب المجموعة.</p></div><div><a class="btn secondary" href="{{ url_for('export_data', format='csv') }}">تصدير CSV</a> <a class="btn secondary" href="{{ url_for('export_data', format='json') }}">تصدير JSON</a></div></header>
 <div class="grid"><section class="panel"><h3>إضافة حساب</h3><form method="post">
 <label>رمز الحساب<input name="code" required></label><label>اسم الحساب<input name="name_ar" required></label>
 <label>نوع الحساب<select name="account_type" id="accountType"><option value="asset">أصل</option><option value="liability">التزام</option><option value="equity">حقوق ملكية</option><option value="revenue">إيراد</option><option value="expense">مصروف</option></select></label>
