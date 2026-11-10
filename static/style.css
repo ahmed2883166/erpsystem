@@ -64,3 +64,9 @@
 .account-legend span{font-size:14px}
 .table-actions button,.table-actions .btn{min-height:44px;padding:10px 18px;font-size:14px}
 @media(max-width:850px){.accounts-tree{min-width:760px}.accounts-layout{grid-template-columns:1fr}}
+
+.global-report-actions{position:fixed;left:22px;top:18px;z-index:9}
+.global-report-actions button{min-height:44px;padding:9px 17px;border:1px solid var(--line);box-shadow:var(--shadow);background:var(--surface);color:var(--text)}
+.global-report-actions button:hover{background:var(--surface2)}
+@media(max-width:850px){.global-report-actions{position:static;margin:0 0 14px;text-align:left}}
+@media print{.global-report-actions{display:none!important}}
