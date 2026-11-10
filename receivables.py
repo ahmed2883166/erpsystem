@@ -23,7 +23,6 @@ def initialize_aging_schema():
 def auth(fn):
  def wrapped(*a,**kw):
   if not session.get("user_id"): return redirect(url_for("login"))
-  if "reports.view" not in {"reports.view"}: return redirect(url_for("dashboard"))
   return fn(*a,**kw)
  return wrapped
 
