@@ -109,10 +109,18 @@ def tax_report():
     exempt_sales = [r for r in sales if r["tax_treatment"] == "exempt"]
     outside_sales = [r for r in sales if r["tax_treatment"] == "out_of_scope"]
     standard_sales = [r for r in sales if r["tax_treatment"] == "standard"]
-    inconsistent_sales = [r for r in zero_sales if Decimal(str(r["tax_rate"])) != 0 or Decimal(str(r["tax_amount"])) != 0]
-    deductible_input = sum((Decimal(str(r["tax_amount"])) * Decimal(str(r["deductible_percent"])) / Decimal("100") for r in purchases), Decimal("0"))
-    non_deductible_input = sum((Decimal(str(r["tax_amount"])) * (Decimal("100")-Decimal(str(r["deductible_percent"]))) / Decimal("100") for r in purchases), Decimal("0"))
-    output_vat = sum((Decimal(str(r["tax_amount"])) for r in standard_sales), Decimal("0"))
+    inconsistent_sales = [r for r in sales if r["tax_treatment"] != "standard" and
+                          (Decimal(str(r["tax_rate"])) != 0 or Decimal(str(r["tax_amount"])) != 0)]
+    inconsistent_purchases = [r for r in purchases if r["tax_treatment"] != "standard" and
+                               Decimal(str(r["tax_amount"])) != 0]
+    deductible_input = sum((Decimal(str(r["tax_amount"])) * Decimal(str(r["deductible_percent"])) / Decimal("100")
+                            for r in purchases if r["tax_treatment"] == "standard"), Decimal("0"))
+    non_deductible_input = sum((
+        Decimal(str(r["tax_amount"])) if r["tax_treatment"] != "standard" else
+        Decimal(str(r["tax_amount"])) * (Decimal("100")-Decimal(str(r["deductible_percent"]))) / Decimal("100")
+        for r in purchases), Decimal("0"))
+    # Keep the posted tax in the report; classification mismatches must be corrected by accounting documents.
+    output_vat = sum((Decimal(str(r["tax_amount"])) for r in sales), Decimal("0"))
     input_vat = deductible_input
     summary = {
         "sales_standard": sum((Decimal(str(r["taxable_base"])) for r in standard_sales), Decimal("0")),
@@ -125,7 +133,7 @@ def tax_report():
     }
     return render_template("tax_report.html", period=period, settings=settings, sales=sales,
         purchases=purchases, summary=summary, inconsistent_sales=inconsistent_sales,
-        treatments=TREATMENTS)
+        inconsistent_purchases=inconsistent_purchases, treatments=TREATMENTS)
 
 
 @tax_bp.route("/reports/tax/classify/<kind>/<int:document_id>", methods=["POST"])
