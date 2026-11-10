@@ -77,12 +77,38 @@ def init_purchase_schema():
       amount TEXT NOT NULL, PRIMARY KEY(payment_id,bill_id)
     );
     CREATE INDEX IF NOT EXISTS idx_purchase_bills_supplier ON supplier_bills(supplier_id,bill_date);
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bill_invoice_no
-      ON supplier_bills(supplier_id, lower(trim(supplier_invoice_no)));
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bill_receipt_once
+    CREATE INDEX IF NOT EXISTS idx_supplier_bill_invoice_lookup
+      ON supplier_bills(supplier_id, supplier_invoice_no);
+    CREATE INDEX IF NOT EXISTS idx_supplier_bill_receipt_lookup
       ON supplier_bill_receipts(receipt_id);
     CREATE INDEX IF NOT EXISTS idx_purchase_receipts_supplier ON goods_receipts(supplier_id,receipt_date);
     """)
+    # Legacy-safe integrity migration: never fail application startup because
+    # old posted documents contain duplicates. Keep every financial document,
+    # report the duplicates, and rely on BEGIN IMMEDIATE + application guards
+    # until an accountant resolves the legacy records and UNIQUE indexes can be added.
+    c.execute("""CREATE TABLE IF NOT EXISTS purchase_integrity_issues(
+      id INTEGER PRIMARY KEY, issue_type TEXT NOT NULL, issue_key TEXT NOT NULL,
+      detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, resolved INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(issue_type,issue_key)
+    )""")
+    duplicate_bills=c.execute("""SELECT supplier_id,lower(trim(supplier_invoice_no)) k,COUNT(*) n
+      FROM supplier_bills GROUP BY supplier_id,k HAVING COUNT(*)>1""").fetchall()
+    for row in duplicate_bills:
+        c.execute("INSERT OR IGNORE INTO purchase_integrity_issues(issue_type,issue_key) VALUES('duplicate_supplier_invoice',?)",
+                  (str(row["supplier_id"])+":"+row["k"],))
+    duplicate_receipts=c.execute("""SELECT receipt_id,COUNT(*) n FROM supplier_bill_receipts
+      GROUP BY receipt_id HAVING COUNT(*)>1""").fetchall()
+    for row in duplicate_receipts:
+        c.execute("INSERT OR IGNORE INTO purchase_integrity_issues(issue_type,issue_key) VALUES('duplicate_receipt_link',?)",
+                  (str(row["receipt_id"]),))
+    if not duplicate_bills:
+        c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bill_invoice_no
+          ON supplier_bills(supplier_id, lower(trim(supplier_invoice_no)))""")
+    if not duplicate_receipts:
+        c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bill_receipt_once
+          ON supplier_bill_receipts(receipt_id)""")
+    c.commit()
     c.close()
 
 def require(permission):
