@@ -59,6 +59,26 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_integrity_screen_displays_legacy_duplicate_supplier_invoices(self):
+        conn = purchases.db()
+        conn.execute("DROP INDEX IF EXISTS uq_supplier_bill_invoice_no")
+        for bill_no in ("LEGACY-1", "LEGACY-2"):
+            conn.execute("""INSERT INTO supplier_bills(
+                bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,
+                subtotal,tax_rate,tax_amount,total_amount
+            ) VALUES(?,?,?, ?,?,'100','0','0','100')""",
+                (bill_no, self.supplier_id, "2026-11-10", "2026-11-30", "DUP-OLD"))
+        conn.commit()
+        conn.close()
+        purchases.init_purchase_schema()
+        with self.client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "accountant"
+        response = self.client.get("/purchases/integrity")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("LEGACY-1", response.get_data(as_text=True))
+        self.assertIn("LEGACY-2", response.get_data(as_text=True))
+
     def test_expense_supplier_bill_posts_to_expense_and_payable(self):
         with self.client.session_transaction() as session:
             session["user_id"] = 1
