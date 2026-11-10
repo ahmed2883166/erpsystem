@@ -38,6 +38,14 @@ class LicenseServerTests(unittest.TestCase):
         denied=self.client.post("/api/v1/activate",json={"activation_code":code,"machine_id":"device-2","product":"NEXUS_ERP"})
         self.assertEqual(denied.status_code,409)
 
+    def test_trial_is_persisted_per_device(self):
+        first=self.client.post("/api/v1/trial",json={"machine_id":"device-machine-0001","product":"NEXUS_ERP"})
+        again=self.client.post("/api/v1/trial",json={"machine_id":"device-machine-0001","product":"NEXUS_ERP"})
+        other=self.client.post("/api/v1/trial",json={"machine_id":"device-machine-0002","product":"NEXUS_ERP"})
+        self.assertEqual(first.status_code,200)
+        self.assertEqual(first.json["first_seen"],again.json["first_seen"])
+        self.assertNotEqual(first.json["first_seen"],other.json["first_seen"])
+
     def test_admin_requires_secret(self):
         response=self.client.post("/admin/licenses",json={})
         self.assertEqual(response.status_code,401)
