@@ -197,7 +197,7 @@ def initialize_database():
     connection.execute("INSERT OR IGNORE INTO currencies(code,name_ar,symbol,active,is_base,rate_to_base) VALUES('EGP','جنيه مصري','ج.م',1,1,1)")
     if not connection.execute("SELECT 1 FROM users WHERE username = 'admin'").fetchone():
         connection.execute("INSERT INTO users(username, full_name, password_hash, role, created_at, must_change_password) VALUES(?,?,?,?,?,1)",
-                           ("admin", "مدير النظام", password_hash("admin123"), "admin", now(), 1))
+                           ("admin", "مدير النظام", password_hash("admin123"), "admin", now()))
     else:
         admin = connection.execute("SELECT id,password_hash FROM users WHERE username='admin'").fetchone()
         if admin and verify_password("admin123", admin["password_hash"]):
