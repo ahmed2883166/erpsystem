@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from flask import Flask
@@ -76,7 +77,9 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             session["user_id"] = 1
             session["role"] = "accountant"
-        response = self.client.get("/purchases/integrity")
+        with patch("purchases.render_template", side_effect=lambda _template, **ctx:
+                   " ".join(row["bill_no"] for item in ctx["issues"] for row in item["rows"])):
+            response = self.client.get("/purchases/integrity")
         self.assertEqual(response.status_code, 200)
         self.assertIn("LEGACY-1", response.get_data(as_text=True))
         self.assertIn("LEGACY-2", response.get_data(as_text=True))
