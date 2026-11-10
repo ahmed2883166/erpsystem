@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block title %}الفترات المحاسبية | NEXUS ERP{% endblock %}
+{% block content %}
+<header><h2>إدارة الفترات المحاسبية</h2></header>
+<section class="panel">
+  <h3>إنشاء فترة جديدة</h3>
+  <form method="post" class="form-grid">
+    <label>اسم الفترة<input name="period_name" maxlength="100" required placeholder="مثال: السنة المالية 2027"></label>
+    <label>من تاريخ<input type="date" name="start_date" required></label>
+    <label>إلى تاريخ<input type="date" name="end_date" required></label>
+    <div class="actions"><button type="submit">إنشاء فترة مفتوحة</button></div>
+  </form>
+</section>
+<section class="panel">
+  <h3>الفترات المسجلة</h3>
+  <div class="table-wrap"><table><thead><tr><th>الفترة</th><th>من</th><th>إلى</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>
+  {% for p in periods %}
+    <tr><td>{{ p.period_name }}</td><td>{{ p.start_date }}</td><td>{{ p.end_date }}</td>
+    <td><span class="pill">{{ 'مغلقة' if p.locked else 'مفتوحة' }}</span></td>
+    <td><form method="post" action="{{ url_for('accounting_period_state',period_id=p.id) }}">
+      <input type="hidden" name="locked" value="{{ 0 if p.locked else 1 }}">
+      <button type="submit" class="{{ 'secondary' if p.locked else 'danger' }}">{{ 'فتح الفترة' if p.locked else 'إقفال الفترة' }}</button>
+    </form></td></tr>
+  {% else %}<tr><td colspan="5">لا توجد فترات مسجلة.</td></tr>{% endfor %}
+  </tbody></table></div>
+  <p class="muted">إقفال الفترة يمنع ترحيل أي قيد جديد بتاريخ يقع داخلها. لا يحذف أو يعدّل القيود السابقة.</p>
+</section>
+{% endblock %}
