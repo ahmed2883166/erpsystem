@@ -1,6 +1,6 @@
 """Shared NEXUS ERP posting, integrity checks, and operational reconciliation."""
-from decimal import Decimal, ROUND_HALF_UP
-from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
+from datetime import datetime, date
 
 CENT = Decimal("0.01")
 
@@ -11,9 +11,26 @@ def amt(value):
 
 def post_journal(conn, entry_date, reference, description, lines, created_by=None):
     """Idempotently post a balanced journal inside the caller's DB transaction."""
+    try:
+        normalized_date = date.fromisoformat(str(entry_date)).isoformat()
+    except (TypeError, ValueError):
+        raise ValueError("تاريخ القيد غير صحيح؛ استخدم YYYY-MM-DD.")
+    if normalized_date != str(entry_date):
+        raise ValueError("تاريخ القيد غير صحيح؛ استخدم YYYY-MM-DD.")
+    if _table_exists(conn, "accounting_periods"):
+        locked = conn.execute("""SELECT period_name FROM accounting_periods
+            WHERE locked=1 AND start_date<=? AND end_date>=? LIMIT 1""",
+            (normalized_date, normalized_date)).fetchone()
+        if locked:
+            raise ValueError(f"الفترة المحاسبية مغلقة: {locked['period_name']}.")
     normalized = []
     for account_id, debit, credit, memo in lines:
-        dr, cr = amt(debit), amt(credit)
+        try:
+            dr, cr = amt(debit), amt(credit)
+        except (InvalidOperation, ValueError, TypeError):
+            raise ValueError("قيمة المدين أو الدائن غير رقمية.")
+        if not dr.is_finite() or not cr.is_finite():
+            raise ValueError("يجب أن تكون المبالغ أرقامًا محدودة وصحيحة.")
         if dr < 0 or cr < 0 or (dr and cr):
             raise ValueError("كل سطر يجب أن يكون مدينًا أو دائنًا فقط وبقيمة غير سالبة.")
         if dr or cr:
