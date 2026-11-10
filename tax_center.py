@@ -155,32 +155,17 @@ def classify_document(kind, document_id):
     if kind not in {"sale", "purchase"}:
         flash("نوع المستند غير صحيح.", "error")
         return redirect(url_for("tax.tax_report"))
-    treatment = request.form.get("tax_treatment", "standard")
-    if treatment not in TREATMENTS:
-        flash("التصنيف الضريبي غير صحيح.", "error")
-        return redirect(url_for("tax.tax_report"))
-    reference = request.form.get("tax_reference", "").strip()[:120]
-    notes = request.form.get("tax_notes", "").strip()[:500]
     table = "sales_invoices" if kind == "sale" else "supplier_bills"
-    date_col = "invoice_date" if kind == "sale" else "bill_date"
-    deductible = "100"
-    if kind == "purchase":
-        try:
-            deductible_value = Decimal(request.form.get("deductible_percent", "100"))
-            if not Decimal("0") <= deductible_value <= Decimal("100"):
-                raise ValueError()
-            deductible = str(deductible_value)
-        except Exception:
-            flash("نسبة خصم ضريبة المدخلات يجب أن تكون بين صفر و100.", "error")
-            return redirect(url_for("tax.tax_report", period=request.form.get("period", "")))
     conn = _db()
-    row = conn.execute("SELECT id, tax_treatment, tax_reference, tax_notes FROM " + table + " WHERE id=? AND status='posted'", (document_id,)).fetchone()
+    row = conn.execute(
+        "SELECT id FROM " + table + " WHERE id=? AND status='posted'",
+        (document_id,)
+    ).fetchone()
+    conn.close()
     if not row:
-        conn.close()
         flash("المستند غير موجود أو غير مرحل.", "error")
         return redirect(url_for("tax.tax_report", period=request.form.get("period", "")))
-    # Posted tax classifications affect the return but do not create a GL adjustment.
-    # Freeze them after posting until a dedicated tax-adjustment workflow exists.
-    conn.close()
+    # Posted tax classifications are immutable until an auditable tax-adjustment
+    # document can update both the GL and the tax return together.
     flash("لا يمكن تعديل التصنيف أو نسبة خصم الضريبة بعد ترحيل المستند. أنشئ مستند تسوية ضريبية معتمدًا حتى تظل الدفاتر والإقرار متطابقين.", "error")
     return redirect(url_for("tax.tax_report", period=request.form.get("period", "")))
