@@ -115,6 +115,24 @@ def register_report_exports(app, db_path, permissions):
                 data = [[r["sku"], r["name_ar"], r["uom"], r["qty"], r["value"]] for r in rows]
                 filename = "nexus-stock-valuation.xlsx"
                 title = "تقييم وأرصدة المخزون"
+            elif report == "reconciliation":
+                from accounting_core import reconciliation_snapshot
+                snapshot = reconciliation_snapshot(conn)
+                headers = ["القسم", "البند", "القيمة"]
+                data = [
+                    ["القيود", "إجمالي المدين", snapshot["journal_totals"]["debit"]],
+                    ["القيود", "إجمالي الدائن", snapshot["journal_totals"]["credit"]],
+                    ["القيود", "عدد القيود غير المتوازنة", len(snapshot["unbalanced"])],
+                    ["المخزون", "قيمة طبقات المخزون", snapshot["stock_value"]],
+                    ["المخزون", "رصيد حسابات المخزون بالأستاذ", snapshot["gl_stock"] if snapshot["gl_stock"] is not None else "غير محدد"],
+                    ["المخزون", "فرق المطابقة", snapshot["stock_difference"] if snapshot["stock_difference"] is not None else "غير محدد"],
+                    ["المشتريات", "بضاعة مستلمة غير مفوترة GRNI", snapshot["grni"]],
+                    ["الموردون", "صافي الذمم المفتوحة", snapshot["open_ap"]],
+                    ["الترابط", "عدد مجموعات المستندات غير المرتبطة", len(snapshot["unlinked_documents"])],
+                    ["المخزون", "عدد الحركات المحاسبية المعلقة", snapshot["pending_stock"]],
+                ]
+                filename = "nexus-reconciliation.xlsx"
+                title = "تقرير المطابقة والترابط"
             else:
                 abort(404)
         finally:
