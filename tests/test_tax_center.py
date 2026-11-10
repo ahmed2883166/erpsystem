@@ -38,7 +38,7 @@ class TaxCenterTests(unittest.TestCase):
         template_dir = Path(self.temp.name) / "templates"
         template_dir.mkdir()
         (template_dir / "tax_report.html").write_text(
-            "{{ summary.output_vat }}|{{ summary.input_vat }}|{{ summary.sales_zero }}",
+            "{{ '%.2f'|format(summary.output_vat) }}|{{ '%.2f'|format(summary.input_vat) }}|مبيعات بسعر صفر",
             encoding="utf-8"
         )
         self.app = Flask(__name__, template_folder=str(template_dir))
