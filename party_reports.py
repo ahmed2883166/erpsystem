@@ -1,0 +1,93 @@
+"""Customer and supplier subledger statements with opening and running balances."""
+import sqlite3
+from datetime import date
+from decimal import Decimal, ROUND_HALF_UP
+from functools import wraps
+from pathlib import Path
+
+from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+
+party_bp = Blueprint("party_reports", __name__)
+DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
+
+
+def _db():
+    c = sqlite3.connect(DB_PATH, timeout=20)
+    c.row_factory = sqlite3.Row
+    return c
+
+
+def _authorized(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        if "user_id" not in session:
+            return redirect(url_for("login"))
+        if session.get("role") not in {"admin", "accountant", "viewer"}:
+            flash("لا تملك صلاحية عرض كشوف الحساب.", "error")
+            return redirect(url_for("dashboard"))
+        return fn(*args, **kwargs)
+    return wrapped
+
+
+def _events(c, kind, party_id):
+    events = []
+    if kind == "customer":
+        for r in c.execute("""SELECT invoice_date event_date,invoice_no reference,
+            'فاتورة مبيعات' description,CAST(total_amount AS REAL) debit,0 credit,0 priority
+            FROM sales_invoices WHERE customer_id=? AND status='posted'""", (party_id,)):
+            events.append(dict(r))
+        for r in c.execute("""SELECT cr.receipt_date event_date,cr.receipt_no reference,
+            'مقبوضات عميل ' || COALESCE(cr.reference,'') description,0 debit,
+            CAST(cr.amount AS REAL) credit,1 priority
+            FROM customer_receipts cr JOIN sales_invoices i ON i.id=cr.invoice_id
+            WHERE i.customer_id=?""", (party_id,)):
+            events.append(dict(r))
+    else:
+        for r in c.execute("""SELECT bill_date event_date,bill_no reference,
+            'فاتورة مشتريات' description,0 debit,CAST(total_amount AS REAL) credit,0 priority
+            FROM supplier_bills WHERE supplier_id=? AND status='posted'""", (party_id,)):
+            events.append(dict(r))
+        for r in c.execute("""SELECT payment_date event_date,payment_no reference,
+            'مدفوعات مورد ' || COALESCE(reference,'') description,CAST(amount AS REAL) debit,0 credit,1 priority
+            FROM supplier_payments WHERE supplier_id=?""", (party_id,)):
+            events.append(dict(r))
+    return sorted(events, key=lambda x: (x["event_date"], x["priority"], x["reference"] or ""))
+
+
+@party_bp.route("/reports/party-statement")
+@_authorized
+def party_statement():
+    kind = request.args.get("kind", "customer")
+    if kind not in {"customer", "supplier"}:
+        kind = "customer"
+    party_id = request.args.get("party_id", type=int)
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    c = _db()
+    parties = c.execute("SELECT id,code,name FROM customers WHERE active=1 ORDER BY code").fetchall() if kind == "customer" else c.execute(
+        "SELECT id,code,name FROM suppliers WHERE active=1 ORDER BY code").fetchall()
+    selected = next((p for p in parties if p["id"] == party_id), None)
+    opening = Decimal("0")
+    rows = []
+    closing = Decimal("0")
+    if selected:
+        events = _events(c, kind, party_id)
+        sign = Decimal("1") if kind == "customer" else Decimal("-1")
+        for event in events:
+            event_date = event["event_date"]
+            amount = (Decimal(str(event["debit"])) - Decimal(str(event["credit"]))) * sign
+            if date_from and event_date < date_from:
+                opening += amount
+                continue
+            if date_to and event_date > date_to:
+                continue
+            rows.append(event)
+        balance = opening
+        for row in rows:
+            balance += (Decimal(str(row["debit"])) - Decimal(str(row["credit"]))) * sign
+            row["running_balance"] = balance.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        closing = balance.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    c.close()
+    return render_template("party_statement.html", kind=kind, parties=parties, selected=selected,
+        rows=rows, opening=opening.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+        closing=closing, date_from=date_from, date_to=date_to)
