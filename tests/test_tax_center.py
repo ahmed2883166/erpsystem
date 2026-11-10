@@ -21,6 +21,12 @@ class TaxCenterTests(unittest.TestCase):
           CREATE TABLE sales_invoices(
             id INTEGER PRIMARY KEY, invoice_no TEXT, customer_id INTEGER, invoice_date TEXT,
             subtotal TEXT, tax_rate TEXT, tax_amount TEXT, total_amount TEXT, status TEXT);
+          CREATE TABLE sales_credit_notes(
+            id INTEGER PRIMARY KEY, credit_note_no TEXT, invoice_id INTEGER, credit_date TEXT,
+            reason TEXT, total_amount TEXT, status TEXT);
+          CREATE TABLE sales_credit_note_lines(
+            id INTEGER PRIMARY KEY, credit_note_id INTEGER, line_total TEXT, tax_amount TEXT,
+            tax_treatment TEXT);
           CREATE TABLE supplier_bills(
             id INTEGER PRIMARY KEY, bill_no TEXT, supplier_id INTEGER, bill_date TEXT,
             subtotal TEXT, tax_rate TEXT, tax_amount TEXT, total_amount TEXT, status TEXT);
@@ -30,6 +36,8 @@ class TaxCenterTests(unittest.TestCase):
           INSERT INTO company_settings VALUES('tax_country','EG');
           INSERT INTO sales_invoices VALUES(1,'SI-1',1,'2026-11-05','1000','14','140','1140','posted');
           INSERT INTO sales_invoices VALUES(2,'SI-2',1,'2026-11-06','500','0','0','500','posted');
+          INSERT INTO sales_credit_notes VALUES(1,'SCN-1',1,'2026-11-20','Return','22.80','posted');
+          INSERT INTO sales_credit_note_lines VALUES(1,1,'20.00','2.80','standard');
           INSERT INTO supplier_bills VALUES(1,'PB-1',1,'2026-11-07','400','14','56','456','posted');
         """)
         conn.commit()
@@ -69,6 +77,8 @@ class TaxCenterTests(unittest.TestCase):
         response = self.client.get("/reports/tax?period=2026-11")
         self.assertEqual(response.status_code, 200)
         body = response.get_data(as_text=True)
+        self.assertIn("117.20", body)
+        self.assertIn("-2.80", body)
         self.assertIn("140.00", body)
         self.assertIn("56.00", body)
         self.assertIn("مبيعات بسعر صفر", body)
