@@ -72,6 +72,38 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 2)
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'").fetchone()[0], 1)
 
+    def test_mixed_line_tax_treatments(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        result = sales.post_invoice(self.db, self.customer_id, "2026-11-10", self.warehouse_id, [
+            {"product_id": self.product_id, "quantity": "1", "unit_price": "100",
+             "tax_rate": "14", "tax_treatment": "standard"},
+            {"product_id": self.product_id, "quantity": "1", "unit_price": "100",
+             "tax_rate": "14", "tax_treatment": "exempt"},
+        ], "14", 1)
+        self.db.commit()
+        self.assertEqual(result["subtotal"], Decimal("200.00"))
+        self.assertEqual(result["tax_amount"], Decimal("14.00"))
+        rows = self.db.execute(
+            "SELECT tax_rate,tax_treatment,tax_amount FROM sales_invoice_lines WHERE invoice_id=? ORDER BY id",
+            (result["invoice_id"],)
+        ).fetchall()
+        self.assertEqual([(x["tax_treatment"], Decimal(x["tax_amount"])) for x in rows],
+                         [("standard", Decimal("14.00")), ("exempt", Decimal("0.00"))])
+
+    def test_credit_limit_is_enforced_by_posting_engine(self):
+        self.db.execute("UPDATE customers SET credit_limit='10' WHERE id=?", (self.customer_id,))
+        self.db.execute("BEGIN IMMEDIATE")
+        with self.assertRaisesRegex(ValueError, "تم إيقاف الفاتورة"):
+            sales.post_invoice(self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+                [{"product_id": self.product_id, "quantity": "1", "unit_price": "20"}], "0", 1)
+        self.db.rollback()
+        self.db.execute("BEGIN IMMEDIATE")
+        result = sales.post_invoice(self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "20"}], "0", 1,
+            allow_credit_override=True)
+        self.db.commit()
+        self.assertTrue(result["credit_warning"])
+
     def test_customer_receipt_reduces_open_invoice_balance(self):
         self.db.execute("BEGIN IMMEDIATE")
         invoice = sales.post_invoice(self.db, self.customer_id, "2026-11-10", self.warehouse_id,
