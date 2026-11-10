@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block title %}عهد الموظفين | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>عهد الموظفين</h2><p>صرف العهدة بقيد آلي، تسجيل المصروفات، ثم تسوية كاملة وإرجاع المتبقي.</p></header>
+<section class="panel"><h3>صرف عهدة جديدة</h3><form method="post" class="form-grid">
+<label>الموظف<select name="employee_id" required>{% for e in employees %}<option value="{{e.id}}">{{e.employee_code}} - {{e.full_name}}</option>{% endfor %}</select></label>
+<label>التاريخ<input type="date" name="issue_date" value="{{today}}" required></label><label>المبلغ<input type="number" name="amount" min="0.01" step="0.01" required></label>
+<label>حساب العهدة (مدين)<select name="custody_account_id" required>{% for a in accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<label>الصندوق / البنك (دائن)<select name="cash_account_id" required>{% for a in accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<label>الغرض<input name="description" required></label><button type="submit">صرف العهدة وترحيل القيد</button></form></section>
+<section class="panel"><h3>العهد المفتوحة والسابقة</h3>{% for r in rows %}<article class="panel"><h4>{{r.custody_no}} — {{r.employee_code}} {{r.full_name}}</h4><p>تاريخ {{r.issue_date}} | القيمة {{r.amount}} | الحالة {{r.status}} | المتبقي {{r.remaining_amount}} | {{r.description}}</p>
+{% if r.status=='open' %}
+<form method="post" action="{{url_for('workforce.custody_expense',custody_id=r.id)}}" class="form-grid"><strong>إضافة مصروف</strong>
+<label>التاريخ<input type="date" name="expense_date" value="{{today}}" required></label><label>الحساب المصروف<select name="expense_account_id" required>{% for a in accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<label>المبلغ<input type="number" name="amount" min="0.01" step="0.01" required></label><label>البيان<input name="description" required></label><label>مرجع الفاتورة<input name="receipt_reference"></label><button type="submit">تسجيل المصروف</button></form>
+<form method="post" action="{{url_for('workforce.settle_custody',custody_id=r.id)}}" class="form-grid"><label>المبلغ المرتد للصندوق/البنك<input type="number" min="0" step="0.01" name="returned_amount" value="0" required></label><label>تاريخ التسوية<input type="date" name="settlement_date" value="{{today}}" required></label><button type="submit">تسوية العهدة وإقفالها</button></form>
+{% endif %}</article>{% else %}<p>لا توجد عهد.</p>{% endfor %}</section>
+{% endblock %}
