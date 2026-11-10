@@ -29,6 +29,8 @@ class SharedAccountingCoreTests(unittest.TestCase):
         INSERT INTO accounts VALUES(6,'1140','تحت التشغيل','asset',NULL,0,1);
         INSERT INTO accounts VALUES(7,'1150','إنتاج تام','asset',NULL,0,1);
         INSERT INTO accounts VALUES(8,'1160','قطع غيار','asset',NULL,0,1);
+        INSERT INTO accounts VALUES(9,'2190','GRNI','liability',NULL,0,1);
+        INSERT INTO accounts VALUES(10,'2110','الموردون','liability',NULL,0,1);
         INSERT INTO company_settings VALUES('activity','industrial');
         INSERT INTO stock_valuation_layers VALUES(1,'2','10');
         INSERT INTO stock_valuation_layers VALUES(2,'3','20');
@@ -42,11 +44,16 @@ class SharedAccountingCoreTests(unittest.TestCase):
         INSERT INTO stock_movements VALUES(1,'pending_document');
         INSERT INTO journal_entries VALUES(10,'2026-11-10','GR-1','استلام','posted',1,'now');
         INSERT INTO journal_lines VALUES(1,10,5,50,0,'مخزون');
+        INSERT INTO journal_lines VALUES(2,10,9,0,50,'GRNI');
         INSERT INTO journal_entries VALUES(11,'2026-11-10','BILL-1','فاتورة','posted',1,'now');
-        INSERT INTO journal_lines VALUES(2,11,5,0,50,'مورد');
+        INSERT INTO journal_lines VALUES(3,11,9,50,0,'تسوية GRNI');
+        INSERT INTO journal_lines VALUES(4,11,10,0,50,'مورد');
         INSERT INTO journal_entries VALUES(12,'2026-11-10','PAY-1','سداد','posted',1,'now');
-        INSERT INTO journal_lines VALUES(3,12,5,20,0,'مدين');
-        INSERT INTO journal_lines VALUES(4,12,2,0,20,'دائن');
+        INSERT INTO journal_lines VALUES(5,12,7,20,0,'مخزون إنتاج تام');
+        INSERT INTO journal_lines VALUES(6,12,2,0,20,'حساب مقابل');
+        INSERT INTO journal_entries VALUES(13,'2026-11-10','SALE-1','بيع','posted',1,'now');
+        INSERT INTO journal_entries VALUES(14,'2026-11-10','REC-1','تحصيل','posted',1,'now');
+        INSERT INTO journal_entries VALUES(15,'2026-11-10','BANK-1','بنك','posted',1,'now');
         """)
 
     def tearDown(self):
@@ -88,6 +95,7 @@ class SharedAccountingCoreTests(unittest.TestCase):
         # GL = 50 debit on 1130 + 20 debit on 1150; other control accounts included as zero.
         self.assertEqual(snapshot["gl_stock"], 70.0)
         self.assertEqual(snapshot["stock_difference"], -10.0)
+        self.assertEqual(len(snapshot["unbalanced"]), 0)
         self.assertEqual(snapshot["inventory_account_codes"], ["1130", "1140", "1150", "1160"])
 
     def test_partial_receipt_match_keeps_unmatched_grni(self):
@@ -98,6 +106,11 @@ class SharedAccountingCoreTests(unittest.TestCase):
         snapshot = reconciliation_snapshot(self.db)
         self.assertEqual(snapshot["unlinked_documents"], [])
         self.assertEqual(snapshot["pending_stock"], 1)
+
+    def test_linkage_report_flags_documents_without_journal(self):
+        self.db.execute("INSERT INTO bank_transactions VALUES(2,NULL)")
+        snapshot = reconciliation_snapshot(self.db)
+        self.assertEqual(snapshot["unlinked_documents"], [{"label": "الحركات البنكية", "count": 1}])
 
     def test_snapshot_handles_optional_tables_missing(self):
         self.db.execute("DROP TABLE bank_transactions")
