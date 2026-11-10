@@ -451,10 +451,6 @@ def movements():
                 unit_cost=(total/qty).quantize(MONEY,rounding=ROUND_HALF_UP)
             movement_no=f"STK-{date.today().strftime('%Y%m%d')}-{__import__('uuid').uuid4().hex[:12].upper()}"
             movement_date=request.form.get("movement_date") or date.today().isoformat()
-            if kind=="transfer":
-                # Validate and consume source layers, then recreate equivalent valuation layers in destination.
-                for allocated_lot,allocated_qty,allocated_cost,allocated_total in allocations:
-                    pass
             issue_purpose=request.form.get("issue_purpose") if kind=="issue" else None
             if kind=="issue" and issue_purpose not in {"sale","internal"}:
                 raise ValueError("حدد غرض الصرف: تكلفة مبيعات أو استخدام داخلي.")
