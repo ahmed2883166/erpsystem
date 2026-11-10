@@ -78,6 +78,23 @@ class CurrencyCenterTests(unittest.TestCase):
         self.assertEqual(difference, "1000.00")
         self.assertAlmostEqual(debit, credit, places=2)
 
+    def test_full_settlement_clears_base_currency_residual(self):
+        self.client.post("/currencies/transactions", data={
+            "party_type": "receivable", "reference": "INV-USD-FULL", "party_name": "Customer",
+            "currency_code": "USD", "transaction_date": "2026-11-01",
+            "foreign_amount": "100", "rate": "50.01", "party_account_id": "2",
+            "counterpart_account_id": "3"
+        })
+        response = self.client.post("/currencies/1/settle", data={
+            "settlement_date": "2026-11-05", "foreign_amount": "100", "rate": "50.02",
+            "cash_account_id": "1", "fx_gain_account_id": "4", "fx_loss_account_id": "5"
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        state = conn.execute("SELECT balance_foreign,balance_base,status FROM fx_transactions WHERE id=1").fetchone()
+        conn.close()
+        self.assertEqual(state, ("0", "0.00", "settled"))
+
     def test_duplicate_revaluation_is_rejected(self):
         self.client.post("/currencies/transactions", data={
             "party_type": "receivable", "reference": "INV-USD-2", "party_name": "Customer",
