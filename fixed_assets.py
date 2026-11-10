@@ -1,6 +1,6 @@
 """NEXUS ERP fixed assets register and IAS 16 depreciation posting."""
 import sqlite3
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import date
 from pathlib import Path
 from functools import wraps
@@ -60,14 +60,17 @@ def index():
             cost=Decimal(request.form["cost"]); residual=Decimal(request.form.get("residual_value","0"))
             life=int(request.form["useful_life_months"])
             if cost<=0 or residual<0 or residual>=cost or life<=0: raise ValueError("تحقق من التكلفة والقيمة التخريدية والعمر الإنتاجي.")
+            if request.form["ready_date"] < request.form["purchase_date"]: raise ValueError("تاريخ الجاهزية لا يمكن أن يسبق تاريخ الشراء.")
             method=request.form["depreciation_method"]
-            if method not in {"straight_line","declining_balance","units"}: raise ValueError("طريقة الإهلاك غير صحيحة.")
+            if method not in {"straight_line","declining_balance"}: raise ValueError("طريقة الإهلاك غير صحيحة.")
             ids=[int(request.form[k]) for k in ("asset_account_id","accum_account_id","expense_account_id")]
             for aid in ids:
                 row=c.execute("SELECT is_group,active,account_type FROM accounts WHERE id=?",(aid,)).fetchone()
                 if not row or row["is_group"] or not row["active"]: raise ValueError("اختر حسابات تفصيلية نشطة.")
+            account_types=[c.execute("SELECT account_type FROM accounts WHERE id=?",(aid,)).fetchone()["account_type"] for aid in ids]
+            if account_types[0]!="asset" or account_types[1]!="asset" or account_types[2]!="expense":
+                raise ValueError("حساب الأصل ومجمع الإهلاك يجب أن يكونا من الأصول، ومصروف الإهلاك من المصروفات.")
             if method=="declining_balance" and Decimal(request.form.get("annual_rate","0"))<=0: raise ValueError("أدخل معدل الإهلاك السنوي للطريقة المتناقصة.")
-            if method=="units" and Decimal(request.form.get("total_units","0"))<=0: raise ValueError("أدخل إجمالي وحدات الإنتاج المتوقعة.")
             c.execute("""INSERT INTO fixed_assets(asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,useful_life_months,depreciation_method,annual_rate,total_units,asset_account_id,accum_account_id,expense_account_id,notes,created_by)
               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (request.form["asset_code"].strip(),request.form["asset_name"].strip(),request.form.get("category","").strip(),
@@ -75,7 +78,7 @@ def index():
                request.form.get("annual_rate","0"),request.form.get("total_units","0"),*ids,request.form.get("notes",""),session["user_id"]))
             c.commit(); flash("تم تسجيل الأصل. تأكد من أن قيد الشراء الأصلي مسجل قبل بدء الإهلاك.","success")
             return redirect(url_for("assets.index"))
-        except (ValueError,KeyError,sqlite3.IntegrityError) as e:
+        except (ValueError,InvalidOperation,KeyError,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود الأصل مستخدم أو توجد بيانات غير صحيحة.","error")
     assets=c.execute("""SELECT f.*,a.code asset_code_gl,a.name_ar asset_account_name,
       COALESCE((SELECT SUM(CAST(d.amount AS REAL)) FROM asset_depreciations d WHERE d.asset_id=f.id),0) accumulated
@@ -116,7 +119,7 @@ def depreciate(asset_id):
             rate=Decimal(asset["annual_rate"])/Decimal("100")
             amount=(cost-accumulated)*rate/Decimal("12")
         else:
-            raise ValueError("طريقة وحدات الإنتاج تتطلب إدخال إنتاج الفترة؛ سيتم تفعيلها في شاشة مستقلة قبل استخدامها.")
+            raise ValueError("طريقة الإهلاك غير مدعومة.")
         amount=min(amount.quantize(M,rounding=ROUND_HALF_UP),remaining)
         if amount<=0: raise ValueError("لا توجد قيمة قابلة للإهلاك في هذه الفترة.")
         c.execute("BEGIN IMMEDIATE")

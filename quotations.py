@@ -61,6 +61,12 @@ def index():
     if not pid and not desc.strip(): continue
     q=Decimal(qty); p=Decimal(price)
     if q<=0 or p<0: raise ValueError("الكمية والسعر غير صحيحين.")
+    if pid:
+     rule=c.execute("""SELECT unit_price FROM customer_price_rules WHERE customer_id=? AND product_id=?
+       AND active=1 AND valid_from<=? AND (valid_to IS NULL OR valid_to>=?)
+       AND CAST(min_qty AS REAL)<=CAST(? AS REAL) ORDER BY valid_from DESC,id DESC LIMIT 1""",
+       (customer,int(pid),qdate,qdate,qty)).fetchone()
+     if rule: p=Decimal(rule["unit_price"])
     total=(q*p).quantize(M,rounding=ROUND_HALF_UP); subtotal+=total
     lines.append((int(pid) if pid else None,desc.strip() or "خدمة",str(q),str(p),str(total)))
    if not lines: raise ValueError("أضف بندًا واحدًا على الأقل.")
@@ -84,7 +90,8 @@ def view(quote_id):
  c=db(); q=c.execute("SELECT q.*,cu.name customer_name,cu.code customer_code FROM quotations q JOIN customers cu ON cu.id=q.customer_id WHERE q.id=?",(quote_id,)).fetchone()
  if not q: c.close(); flash("عرض السعر غير موجود.","error"); return redirect(url_for("quotes.index"))
  lines=c.execute("SELECT l.*,p.sku FROM quotation_lines l LEFT JOIN stock_products p ON p.id=l.product_id WHERE l.quotation_id=?",(quote_id,)).fetchall()
- c.close(); return render_template("quotation_view.html",q=q,lines=lines,today=date.today().isoformat())
+ warehouses=c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
+ c.close(); return render_template("quotation_view.html",q=q,lines=lines,warehouses=warehouses,today=date.today().isoformat())
 
 @quotes_bp.route("/<int:quote_id>/status",methods=["POST"])
 @require(write=True)
@@ -110,8 +117,10 @@ def convert(quote_id):
   if q["valid_until"]<date.today().isoformat(): raise ValueError("انتهت صلاحية عرض السعر.")
   lines=c.execute("SELECT * FROM quotation_lines WHERE quotation_id=?",(quote_id,)).fetchall()
   items=[{"product_id":x["product_id"],"description":x["description"],"quantity":x["quantity"],"unit_price":x["unit_price"]} for x in lines]
+  warehouse_id=request.form.get("warehouse_id",type=int)
   c.execute("BEGIN IMMEDIATE")
-  result=post_invoice(c,q["customer_id"],date.today().isoformat(),None,items,q["tax_rate"],session["user_id"])
+  result=post_invoice(c,q["customer_id"],date.today().isoformat(),warehouse_id,items,q["tax_rate"],session["user_id"])
+  c.execute("UPDATE sales_invoices SET due_date=? WHERE id=?",(date.today().isoformat(),result["invoice_id"]))
   c.execute("UPDATE quotations SET status='converted',sales_invoice_id=? WHERE id=?",(result["invoice_id"],quote_id))
   c.commit(); flash("تم تحويل العرض إلى فاتورة بيع "+result["invoice_no"],"success")
  except (ValueError,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")

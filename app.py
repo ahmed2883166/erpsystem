@@ -40,7 +40,7 @@ app.config["SECRET_KEY"] = os.environ.get("NEXUS_SECRET_KEY", "change-this-secre
 
 PERMISSIONS = {
     "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view"},
-    "accountant": {"accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view"},
+    "accountant": {"accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view"},
     "viewer": {"reports.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view"},
 }
 
