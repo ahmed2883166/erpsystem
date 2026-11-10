@@ -75,7 +75,10 @@ def initialize_stock_schema():
         c.execute("ALTER TABLE stock_movements ADD COLUMN accounting_status TEXT NOT NULL DEFAULT 'pending'")
     if "issue_purpose" not in movement_columns:
         c.execute("ALTER TABLE stock_movements ADD COLUMN issue_purpose TEXT")
-    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_movement_journal ON stock_movements(journal_entry_id) WHERE journal_entry_id IS NOT NULL")
+    # One summarized COGS journal may cover multiple stock issue movements.
+    # The journal link is therefore intentionally non-unique.
+    c.execute("DROP INDEX IF EXISTS idx_stock_movement_journal")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_stock_movement_journal ON stock_movements(journal_entry_id) WHERE journal_entry_id IS NOT NULL")
     c.close()
 
 
