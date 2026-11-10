@@ -56,7 +56,7 @@ def init_purchase_schema():
     );
     CREATE TABLE IF NOT EXISTS supplier_bills(
       id INTEGER PRIMARY KEY, bill_no TEXT NOT NULL UNIQUE, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
-      bill_date TEXT NOT NULL, supplier_invoice_no TEXT NOT NULL, subtotal TEXT NOT NULL,
+      bill_date TEXT NOT NULL, due_date TEXT, supplier_invoice_no TEXT NOT NULL, subtotal TEXT NOT NULL,
       tax_rate TEXT NOT NULL DEFAULT '0', tax_amount TEXT NOT NULL DEFAULT '0',
       total_amount TEXT NOT NULL, paid_amount TEXT NOT NULL DEFAULT '0',
       status TEXT NOT NULL DEFAULT 'posted', journal_entry_id INTEGER UNIQUE,
@@ -83,6 +83,11 @@ def init_purchase_schema():
       ON supplier_bill_receipts(receipt_id);
     CREATE INDEX IF NOT EXISTS idx_purchase_receipts_supplier ON goods_receipts(supplier_id,receipt_date);
     """)
+    bill_columns = {row["name"] for row in c.execute("PRAGMA table_info(supplier_bills)")}
+    if "due_date" not in bill_columns:
+        c.execute("ALTER TABLE supplier_bills ADD COLUMN due_date TEXT")
+        c.execute("UPDATE supplier_bills SET due_date=bill_date WHERE due_date IS NULL")
+
     # Legacy-safe integrity migration: never fail application startup because
     # old posted documents contain duplicates. Keep every financial document,
     # report the duplicates, and rely on BEGIN IMMEDIATE + application guards
