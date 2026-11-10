@@ -97,6 +97,12 @@ def _role(*roles):
     return deco
 
 
+def _audit(c, action, details):
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='audit_log'").fetchone():
+        c.execute("INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
+                  (session.get("user_id"), action, details))
+
+
 def _accounts(c):
     return c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
 
@@ -115,6 +121,7 @@ def employees():
                 (request.form["employee_code"].strip(), request.form["full_name"].strip(),
                  request.form.get("job_title","").strip(), request.form.get("department","").strip(),
                  request.form.get("hire_date") or date.today().isoformat(), str(salary), str(hours)))
+            _audit(c, "employee_created", request.form["employee_code"].strip())
             c.commit()
             flash("تم إضافة الموظف.", "success")
         except (ValueError, KeyError, sqlite3.IntegrityError) as e:
@@ -140,6 +147,7 @@ def add_pay_item():
         c = _db()
         c.execute("INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount) VALUES(?,?,?,?)",
                   (int(request.form["employee_id"]), request.form["item_name"].strip(), item_type, str(amount)))
+        _audit(c, "employee_pay_item_created", request.form.get("item_name","").strip())
         c.commit()
         c.close()
         flash("تم حفظ البدل/الخصم الثابت.", "success")
@@ -187,6 +195,7 @@ def payroll():
                     (run_id,e["id"],e["basic_salary"],str(M(allowances)),str(overtime_hours),str(overtime_amount),
                      str(absent_hours),str(absence),str(M(other_deductions)),str(tax),str(emp_ins),
                      str(employer_ins),str(gross),str(net)))
+            _audit(c, "payroll_draft_created", period)
             c.commit()
             flash("تم إنشاء مسير الرواتب كمسودة. راجع البنود ثم رحّله.", "success")
             return redirect(url_for("workforce.payroll_run", run_id=run_id))
@@ -247,6 +256,7 @@ def post_payroll(run_id):
         journal_id = post_journal(c, run["period"] + "-01", "PAYROLL-" + run["period"],
                                   "مسير مرتبات شهر " + run["period"], lines, session["user_id"])
         c.execute("UPDATE payroll_runs SET status='posted',journal_entry_id=? WHERE id=?", (journal_id, run_id))
+        _audit(c, "payroll_posted", run["period"] + " journal=" + str(journal_id))
         c.commit()
         flash("تم ترحيل مسير المرتبات وإنشاء القيد المحاسبي.", "success")
     except (ValueError, KeyError, sqlite3.Error) as e:
@@ -278,6 +288,7 @@ def custody():
                 VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (no,employee_id,request.form.get("issue_date") or date.today().isoformat(),str(amount),str(amount),
                  request.form.get("description","").strip(),custody_id,cash_id,journal_id,session["user_id"]))
+            _audit(c, "employee_custody_issued", no + " amount=" + str(amount))
             c.commit()
             flash("تم صرف العهدة وترحيل قيدها.", "success")
         except (ValueError, KeyError, sqlite3.Error) as e:
@@ -308,6 +319,7 @@ def custody_expense(custody_id):
         c.execute("INSERT INTO custody_expenses(custody_id,expense_date,expense_account_id,amount,description,receipt_reference,created_by) VALUES(?,?,?,?,?,?,?)",
             (custody_id,request.form.get("expense_date") or date.today().isoformat(),int(request.form["expense_account_id"]),
              str(amount),request.form.get("description","").strip(),request.form.get("receipt_reference","").strip(),session["user_id"]))
+        _audit(c, "employee_custody_expense_added", str(custody_id) + " amount=" + str(amount))
         c.commit()
         flash("تم تسجيل مصروف العهدة بانتظار التسوية والاعتماد.", "success")
     except (ValueError, KeyError, sqlite3.Error) as e:
@@ -339,6 +351,7 @@ def settle_custody(custody_id):
         journal_id = post_journal(c, request.form.get("settlement_date") or date.today().isoformat(),
             "CUST-SETTLE-" + row["custody_no"], "تسوية عهدة " + row["custody_no"], lines, session["user_id"])
         c.execute("UPDATE employee_custodies SET remaining_amount='0',status='settled' WHERE id=?", (custody_id,))
+        _audit(c, "employee_custody_settled", row["custody_no"] + " journal=" + str(journal_id))
         c.commit()
         flash("تمت تسوية العهدة بالكامل وترحيل القيد.", "success")
     except (ValueError, KeyError, sqlite3.Error) as e:
