@@ -53,10 +53,14 @@ def initialize_assets_schema():
     c.close()
 
 @assets_bp.route("/", methods=["GET","POST"])
-@require(write=True)
+@require()
 def index():
     c=db()
     if request.method=="POST":
+        if session.get("role") not in {"admin","accountant"}:
+            c.close()
+            flash("لا تملك صلاحية إدارة الأصول الثابتة.","error")
+            return redirect(url_for("assets.index"))
         try:
             cost=Decimal(request.form["cost"]); residual=Decimal(request.form.get("residual_value","0"))
             life=int(request.form["useful_life_months"])
