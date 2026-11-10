@@ -85,6 +85,69 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         self.assertIn("LEGACY-1", response.get_data(as_text=True))
         self.assertIn("LEGACY-2", response.get_data(as_text=True))
 
+    def test_integrity_issue_cannot_be_closed_while_duplicate_remains(self):
+        conn = purchases.db()
+        conn.execute("DROP INDEX IF EXISTS uq_supplier_bill_invoice_no")
+        for bill_no in ("DUP-A", "DUP-B"):
+            conn.execute("""INSERT INTO supplier_bills(
+                bill_no,supplier_id,bill_date,supplier_invoice_no,
+                subtotal,tax_rate,tax_amount,total_amount
+            ) VALUES(?,?,?,'DUP-RESOLVE','100','0','0','100')""",
+                (bill_no, self.supplier_id, "2026-11-10"))
+        conn.commit()
+        conn.close()
+        purchases.init_purchase_schema()
+        with self.client.session_transaction() as session:
+            session["user_id"] = 7
+            session["role"] = "accountant"
+        conn = purchases.db()
+        issue_id = conn.execute(
+            "SELECT id FROM purchase_integrity_issues WHERE issue_type='duplicate_supplier_invoice'"
+        ).fetchone()["id"]
+        conn.close()
+        response = self.client.post(f"/purchases/integrity/{issue_id}/resolve")
+        self.assertEqual(response.status_code, 302)
+        conn = purchases.db()
+        issue = conn.execute(
+            "SELECT resolved FROM purchase_integrity_issues WHERE id=?", (issue_id,)
+        ).fetchone()
+        self.assertEqual(issue["resolved"], 0)
+        conn.close()
+
+    def test_integrity_issue_records_user_and_time_after_duplicate_is_fixed(self):
+        conn = purchases.db()
+        conn.execute("DROP INDEX IF EXISTS uq_supplier_bill_invoice_no")
+        for bill_no in ("FIX-A", "FIX-B"):
+            conn.execute("""INSERT INTO supplier_bills(
+                bill_no,supplier_id,bill_date,supplier_invoice_no,
+                subtotal,tax_rate,tax_amount,total_amount
+            ) VALUES(?,?,?,'DUP-FIX','100','0','0','100')""",
+                (bill_no, self.supplier_id, "2026-11-10"))
+        conn.commit()
+        conn.close()
+        purchases.init_purchase_schema()
+        with self.client.session_transaction() as session:
+            session["user_id"] = 9
+            session["role"] = "accountant"
+        conn = purchases.db()
+        issue_id = conn.execute(
+            "SELECT id FROM purchase_integrity_issues WHERE issue_type='duplicate_supplier_invoice'"
+        ).fetchone()["id"]
+        conn.execute("DELETE FROM supplier_bills WHERE bill_no='FIX-B'")
+        conn.commit()
+        conn.close()
+        response = self.client.post(f"/purchases/integrity/{issue_id}/resolve")
+        self.assertEqual(response.status_code, 302)
+        conn = purchases.db()
+        issue = conn.execute(
+            "SELECT resolved,resolved_by,resolved_at FROM purchase_integrity_issues WHERE id=?",
+            (issue_id,),
+        ).fetchone()
+        self.assertEqual(issue["resolved"], 1)
+        self.assertEqual(issue["resolved_by"], 9)
+        self.assertTrue(issue["resolved_at"])
+        conn.close()
+
     def test_expense_supplier_bill_posts_to_expense_and_payable(self):
         with self.client.session_transaction() as session:
             session["user_id"] = 1
