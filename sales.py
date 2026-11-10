@@ -366,14 +366,14 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         sold_qty = Decimal(original["quantity"])
         if not qty.is_finite() or qty <= 0:
             raise ValueError("كمية الإشعار يجب أن تكون أكبر من صفر.")
-        already_credited = conn.execute(
-            """SELECT COALESCE(SUM(CAST(cl.quantity AS REAL)),0)
-               FROM sales_credit_note_lines cl
+        prior_credit_rows = conn.execute(
+            """SELECT cl.quantity FROM sales_credit_note_lines cl
                JOIN sales_credit_notes cn ON cn.id=cl.credit_note_id
                WHERE cl.invoice_line_id=? AND cn.status='posted'""",
             (line_id,),
-        ).fetchone()[0]
-        available_qty = sold_qty - Decimal(str(already_credited or 0))
+        ).fetchall()
+        already_credited = sum((Decimal(row["quantity"]) for row in prior_credit_rows), Decimal("0"))
+        available_qty = sold_qty - already_credited
         if qty > available_qty:
             raise ValueError(
                 f"الكمية المطلوبة للإشعار أكبر من الكمية المتبقية من البند. المتاح {available_qty}."
@@ -439,7 +439,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
                 raise ValueError("فاتورة الصنف المخزني لا تحتوي على مخزن صرف صالح.")
             stock_index += 1
             movement_no = credit_no + "-" + str(stock_index)
-            unit_cost = (item["cost_total"] / item["quantity"]).quantize(CENT, rounding=ROUND_HALF_UP)
+            unit_cost = (item["cost_total"] / item["quantity"]).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
             movement = conn.execute(
                 """INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,
                    quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,issue_purpose)
@@ -682,13 +682,25 @@ def new_credit_note():
         ).fetchone()
         if invoice:
             lines = c.execute(
-                """SELECT l.*,
-                   COALESCE((SELECT SUM(CAST(cl.quantity AS REAL))
-                     FROM sales_credit_note_lines cl JOIN sales_credit_notes cn ON cn.id=cl.credit_note_id
-                     WHERE cl.invoice_line_id=l.id AND cn.status='posted'),0) credited_qty
-                   FROM sales_invoice_lines l WHERE l.invoice_id=? ORDER BY l.id""",
+                "SELECT * FROM sales_invoice_lines WHERE invoice_id=? ORDER BY id",
                 (invoice_id,),
             ).fetchall()
+            prior_by_line = {}
+            for prior in c.execute(
+                """SELECT cl.invoice_line_id,cl.quantity FROM sales_credit_note_lines cl
+                   JOIN sales_credit_notes cn ON cn.id=cl.credit_note_id
+                   JOIN sales_invoice_lines il ON il.id=cl.invoice_line_id
+                   WHERE il.invoice_id=? AND cn.status='posted'""",
+                (invoice_id,),
+            ).fetchall():
+                prior_by_line[prior["invoice_line_id"]] = (
+                    prior_by_line.get(prior["invoice_line_id"], Decimal("0"))
+                    + Decimal(prior["quantity"])
+                )
+            lines = [
+                dict(line) | {"credited_qty": str(prior_by_line.get(line["id"], Decimal("0")))}
+                for line in lines
+            ]
     if request.method == "POST":
         try:
             if not invoice:
