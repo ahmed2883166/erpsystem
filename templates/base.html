@@ -6,6 +6,7 @@
 {% if 'accounts.manage' in permissions %}<a href="{{ url_for('accounts') }}">دليل الحسابات</a>{% endif %}
 <a href="{{ url_for('stock.index') }}">المخزون</a>
 {% if 'purchases.view' in permissions %}<a href="{{ url_for('purchase.index') }}">المشتريات والموردون</a>{% endif %}
+{% if 'sales.view' in permissions %}<a href="{{ url_for('sales.index') }}">المبيعات والعملاء</a>{% endif %}
 {% if 'stock.manage' in permissions %}<a href="{{ url_for('stock.products') }}">تعريف الأصناف</a><a href="{{ url_for('stock.warehouses') }}">المخازن</a><a href="{{ url_for('stock.movements') }}">حركات المخزون</a>{% endif %}
 <a href="{{ url_for('stock.reports') }}">تقارير المخزون</a>
 {% if 'journal.manage' in permissions %}<a href="{{ url_for('journal') }}">القيود اليومية</a>{% endif %}
