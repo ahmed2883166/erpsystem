@@ -93,6 +93,7 @@ class SalesIntegrationTests(unittest.TestCase):
                          [("standard", Decimal("14.00")), ("exempt", Decimal("0.00"))])
 
     def test_fully_exempt_invoice_ignores_unapproved_header_rate(self):
+        self.db.execute("DELETE FROM accounts WHERE code='2130'")
         self.db.execute("BEGIN IMMEDIATE")
         result = sales.post_invoice(self.db, self.customer_id, "2026-11-10", self.warehouse_id, [
             {"product_id": self.product_id, "quantity": "1", "unit_price": "100",
