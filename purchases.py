@@ -359,7 +359,17 @@ def new_bill():
             if c.execute("SELECT 1 FROM supplier_bills WHERE supplier_id=? AND lower(trim(supplier_invoice_no))=lower(trim(?)) LIMIT 1",
                          (supplier,supplier_invoice_no)).fetchone():
                 raise ValueError("رقم فاتورة المورد مسجل بالفعل لهذا المورد.")
-            invcode=activity_inventory_code(c); inv=account(c,invcode,"asset")
+            bill_kind=request.form.get("bill_kind","inventory").strip()
+            if bill_kind not in {"inventory","expense"}:
+                raise ValueError("نوع فاتورة المورد غير صحيح.")
+            expense_account_id=None
+            if bill_kind=="expense":
+                expense_account_id=int(request.form.get("expense_account_id","0"))
+                expense_row=c.execute("SELECT account_type,is_group,active FROM accounts WHERE id=?",(expense_account_id,)).fetchone()
+                if not expense_row or expense_row["account_type"]!="expense" or expense_row["is_group"] or not expense_row["active"]:
+                    raise ValueError("اختر حساب مصروف تفصيليًا ونشطًا.")
+                if receipts:
+                    raise ValueError("فاتورة المصروف لا تُربط بإيصالات استلام مخزني.")
             ap=supplier_ap_account(c)
             lines=[]; remaining=subtotal
             for rid in receipts:
@@ -383,24 +393,29 @@ def new_bill():
             if due_date < request.form["bill_date"]: raise ValueError("تاريخ استحقاق المورد لا يمكن أن يسبق تاريخ الفاتورة.")
             c.execute("UPDATE supplier_bills SET due_date=? WHERE id=?",(due_date,bid))
             jlines=[]
-            if receipts:
+            if bill_kind=="inventory":
+                if not receipts:
+                    raise ValueError("فاتورة الأصناف المخزنية تتطلب إيصال استلام. لفاتورة خدمة أو مصروف اختر نوع (مصروف) وحدد حساب المصروف.")
                 for rid,amt in lines:
                     if rid=="VAT": continue
                     grni=account(c,"2190","liability")
                     jlines.extend([(grni,amt,0,"تسوية GRNI"),(ap,0,amt,"إثبات المورد")])
                     c.execute("INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",(bid,rid,str(amt)))
-                if tax: jlines.append((vat,tax,0,"ضريبة مدخلات حسب الفاتورة"))
-                jlines.append((ap,0,tax,"ضريبة ضمن إجمالي المورد"))
             else:
-                raise ValueError("لا يمكن ترحيل فاتورة مشتريات مخزنية دون إيصال استلام. سجّل الاستلام أولًا من شاشة استلام المشتريات ثم اربطه بالفاتورة.")
+                jlines.append((expense_account_id,subtotal,0,"مصروف فاتورة المورد"))
+                jlines.append((ap,0,subtotal,"إثبات المورد"))
+            if tax:
+                jlines.append((vat,tax,0,"ضريبة مدخلات حسب الفاتورة"))
+            jlines.append((ap,0,tax,"ضريبة ضمن إجمالي المورد"))
             eid=create_journal(c,request.form["bill_date"],no,"فاتورة مورد "+request.form["supplier_invoice_no"],jlines,session["user_id"])
             c.execute("UPDATE supplier_bills SET journal_entry_id=? WHERE id=?",(eid,bid))
             c.commit(); flash(f"تم ترحيل فاتورة المورد {no}.","success"); return redirect(url_for("purchase.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
+    expense_accounts=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code").fetchall()
     receipts=c.execute("""SELECT r.*,s.name supplier_name FROM goods_receipts r JOIN suppliers s ON s.id=r.supplier_id
       WHERE r.status='posted' AND NOT EXISTS(SELECT 1 FROM supplier_bill_receipts x WHERE x.receipt_id=r.id) ORDER BY r.id""").fetchall()
-    c.close(); return render_template("purchase_bill_new.html",suppliers=su,receipts=receipts,today=date.today().isoformat())
+    c.close(); return render_template("purchase_bill_new.html",suppliers=su,receipts=receipts,expense_accounts=expense_accounts,today=date.today().isoformat())
 
 @purchase_bp.route("/payments/new",methods=["GET","POST"])
 @require("purchases.manage")
