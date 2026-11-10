@@ -1,0 +1,156 @@
+"""Excel exports for NEXUS ERP reports. PDF output uses the browser's print-to-PDF engine for Arabic support."""
+import io
+import sqlite3
+from datetime import datetime
+from functools import wraps
+
+from flask import Blueprint, Response, abort, request, send_file, session
+
+
+def register_report_exports(app, db_path, permissions):
+    bp = Blueprint("report_exports", __name__)
+
+    def require(permission):
+        def decorator(view):
+            @wraps(view)
+            def wrapped(*args, **kwargs):
+                role = session.get("role")
+                if not session.get("user_id"):
+                    abort(401)
+                if permission not in permissions.get(role, set()):
+                    abort(403)
+                return view(*args, **kwargs)
+            return wrapped
+        return decorator
+
+    def connect():
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    @bp.get("/reports/export/<report>/excel")
+    @require("reports.view")
+    def export_report_excel(report):
+        conn = connect()
+        try:
+            if report == "accounts":
+                rows = conn.execute("""
+                    SELECT a.code, a.name_ar, a.account_type, a.parent_id, p.code parent_code,
+                           p.name_ar parent_name, a.is_group, a.active
+                    FROM accounts a LEFT JOIN accounts p ON p.id=a.parent_id
+                    ORDER BY a.code
+                """).fetchall()
+                headers = ["كود الحساب", "اسم الحساب", "نوع الحساب", "كود الحساب الأب",
+                           "اسم الحساب الأب", "التصنيف", "الحالة"]
+                data = [[r["code"], r["name_ar"], r["account_type"], r["parent_code"] or "",
+                         r["parent_name"] or "", "رئيسي / مجموعة" if r["is_group"] else "فرعي / تفصيلي",
+                         "نشط" if r["active"] else "موقوف"] for r in rows]
+                filename = "nexus-chart-of-accounts.xlsx"
+                title = "دليل الحسابات"
+            elif report == "trial-balance":
+                date_from = request.args.get("date_from", "").strip()
+                date_to = request.args.get("date_to", "").strip()
+                account_type = request.args.get("account_type", "").strip()
+                q = request.args.get("q", "").strip()
+                conditions, params = ["1=1"], []
+                if date_from:
+                    conditions.append("je.entry_date >= ?"); params.append(date_from)
+                if date_to:
+                    conditions.append("je.entry_date <= ?"); params.append(date_to)
+                if account_type in {"asset", "liability", "equity", "revenue", "expense"}:
+                    conditions.append("a.account_type = ?"); params.append(account_type)
+                if q:
+                    conditions.append("(a.code LIKE ? OR a.name_ar LIKE ?)")
+                    params.extend([f"%{q}%", f"%{q}%"])
+                rows = conn.execute(f"""
+                    SELECT a.code,a.name_ar,a.account_type,
+                           COALESCE(SUM(CASE WHEN je.status='posted' THEN jl.debit ELSE 0 END),0) debit,
+                           COALESCE(SUM(CASE WHEN je.status='posted' THEN jl.credit ELSE 0 END),0) credit
+                    FROM accounts a
+                    LEFT JOIN journal_lines jl ON jl.account_id=a.id
+                    LEFT JOIN journal_entries je ON je.id=jl.entry_id
+                    WHERE {' AND '.join(conditions)}
+                    GROUP BY a.id ORDER BY a.code
+                """, params).fetchall()
+                headers = ["كود الحساب", "اسم الحساب", "نوع الحساب", "مدين", "دائن", "صافي الرصيد"]
+                data = [[r["code"], r["name_ar"], r["account_type"], r["debit"], r["credit"],
+                         r["debit"] - r["credit"]] for r in rows]
+                filename = "nexus-trial-balance.xlsx"
+                title = "ميزان المراجعة"
+            elif report == "ledger":
+                account_id = request.args.get("account_id", type=int)
+                date_from = request.args.get("date_from", "").strip()
+                date_to = request.args.get("date_to", "").strip()
+                if not account_id:
+                    abort(400)
+                account = conn.execute("SELECT code,name_ar FROM accounts WHERE id=? AND is_group=0",
+                                       (account_id,)).fetchone()
+                if not account:
+                    abort(404)
+                conditions = ["jl.account_id=?", "je.status='posted'"]
+                params = [account_id]
+                if date_from:
+                    conditions.append("je.entry_date >= ?"); params.append(date_from)
+                if date_to:
+                    conditions.append("je.entry_date <= ?"); params.append(date_to)
+                rows = conn.execute(f"""
+                    SELECT je.entry_date,je.reference,je.description,jl.debit,jl.credit,jl.memo
+                    FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                    WHERE {' AND '.join(conditions)} ORDER BY je.entry_date,jl.id
+                """, params).fetchall()
+                headers = ["التاريخ", "المرجع", "البيان", "مدين", "دائن", "ملاحظة"]
+                data = [[r["entry_date"], r["reference"], r["description"], r["debit"],
+                         r["credit"], r["memo"] or ""] for r in rows]
+                filename = f"nexus-ledger-{account['code']}.xlsx"
+                title = f"دفتر الأستاذ - {account['code']} {account['name_ar']}"
+            else:
+                abort(404)
+        finally:
+            conn.close()
+
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            return Response("مكتبة openpyxl غير مثبتة. نفّذ: python -m pip install -r requirements.txt",
+                            status=500, mimetype="text/plain; charset=utf-8")
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "NEXUS ERP"
+        sheet.sheet_view.rightToLeft = True
+        sheet.append([title])
+        sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+        sheet["A1"].font = Font(name="Arial", size=16, bold=True, color="FFFFFF")
+        sheet["A1"].fill = PatternFill("solid", fgColor="17365D")
+        sheet["A1"].alignment = Alignment(horizontal="center")
+        sheet.append(headers)
+        for cell in sheet[2]:
+            cell.font = Font(name="Arial", bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="167D8D")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        for row in data:
+            sheet.append(row)
+        for row in sheet.iter_rows(min_row=3):
+            for cell in row:
+                cell.font = Font(name="Arial", size=11)
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+                if cell.column >= 4 and isinstance(cell.value, (int, float)):
+                    cell.number_format = '#,##0.00;[Red]-#,##0.00'
+        for column in sheet.columns:
+            letter = get_column_letter(column[0].column)
+            width = min(max(max(len(str(c.value or "")) for c in column) + 3, 14), 42)
+            sheet.column_dimensions[letter].width = width
+        sheet.freeze_panes = "A3"
+        sheet.auto_filter.ref = sheet.dimensions
+        sheet.sheet_properties.pageSetUpPr.fitToPage = True
+        sheet.page_setup.fitToWidth = 1
+        sheet.page_setup.fitToHeight = 0
+        output = io.BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        return send_file(output, as_attachment=True, download_name=filename,
+                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    app.register_blueprint(bp)
