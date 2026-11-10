@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{% block title %}NEXUS ERP{% endblock %}</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head><body>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="csrf-token" content="{{ csrf_token() }}"><title>{% block title %}NEXUS ERP{% endblock %}</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head><body>
 {% if session.user_id %}
 <aside><h1>NEXUS <small>ERP</small></h1><p class="user">{{ session.full_name }}<br><small>{{ session.role }}</small></p><nav>
 <a href="{{ url_for('dashboard') }}">الرئيسية</a>
@@ -27,5 +27,11 @@
 {% endif %}
 <button class="theme-toggle secondary" type="button" id="themeToggle">◐ المظهر</button>
 <script>
+(function(){
+ const token=document.querySelector('meta[name="csrf-token"]')?.content;
+ if(token){document.querySelectorAll('form[method="post" i],form:not([method])').forEach(form=>{
+   if(!form.querySelector('input[name="csrf_token"]')){const input=document.createElement('input');input.type='hidden';input.name='csrf_token';input.value=token;form.appendChild(input);}
+ });}
+})();
 (function(){const root=document.documentElement;const saved=localStorage.getItem('nexus-theme')||'dark';root.dataset.theme=saved;const btn=document.getElementById('themeToggle');if(btn){btn.addEventListener('click',()=>{const next=root.dataset.theme==='dark'?'light':'dark';root.dataset.theme=next;localStorage.setItem('nexus-theme',next);btn.textContent=next==='dark'?'◐ المظهر الداكن':'☀ المظهر الفاتح';});btn.textContent=saved==='dark'?'◐ المظهر الداكن':'☀ المظهر الفاتح';}})();
 </script>{% block scripts %}{% endblock %}</body></html>
