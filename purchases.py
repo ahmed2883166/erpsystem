@@ -107,18 +107,11 @@ def create_journal(c, d, ref, desc, lines, user):
     return post_journal(c,d,ref,desc,lines,user)
 
 def ensure_detail_account(c, code, name, typ, preferred_parent):
+    # Account mappings must be configured in the chart of accounts; posting never creates GL accounts.
     found=c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?",(code,)).fetchone()
-    if found:
-        if found["is_group"] or not found["active"] or found["account_type"]!=typ:
-            raise ValueError("حساب الربط موجود لكنه غير صالح للترحيل: "+code)
-        return found["id"]
-    parent=c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?",(preferred_parent,)).fetchone()
-    if not parent or not parent["is_group"] or not parent["active"] or parent["account_type"]!=typ:
-        parent=c.execute("SELECT id FROM accounts WHERE account_type=? AND is_group=1 AND active=1 ORDER BY code LIMIT 1",(typ,)).fetchone()
-    parent_id=parent["id"] if parent else None
-    cur=c.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group,active) VALUES(?,?,?,?,0,1)",
-                  (code,name,typ,parent_id))
-    return cur.lastrowid
+    if not found or found["is_group"] or not found["active"] or found["account_type"]!=typ:
+        raise ValueError("حساب الربط المطلوب "+code+" ("+name+") غير مضبوط. أضفه كحساب تفصيلي نشط بالنوع "+typ+" قبل الترحيل.")
+    return found["id"]
 
 def supplier_ap_account(c):
     row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
