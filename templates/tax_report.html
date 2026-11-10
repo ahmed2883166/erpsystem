@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}مركز الضرائب الشهري | NEXUS ERP{% endblock %}
+{% block content %}
+<section class="page-header"><div><h2>مركز الضرائب – التقرير الشهري</h2><p>ملخص رقابي لضريبة المخرجات والمدخلات من المستندات المرحلة.</p></div></section>
+<form method="get" class="card filters"><label>الشهر <input type="month" name="period" value="{{ period }}"></label><button type="submit">عرض التقرير</button></form>
+<section class="card"><h3>بيانات الشركة</h3><p><strong>{{ settings.get('company_name','NEXUS ERP') }}</strong> — الدولة: {{ 'مصر' if settings.get('tax_country')=='EG' else ('السعودية' if settings.get('tax_country')=='SA' else 'أخرى') }} — النظام: {{ settings.get('tax_regime','غير محدد') }} — الرقم الضريبي: {{ settings.get('tax_number','') or 'غير مسجل' }}</p><p>العملة الوظيفية: {{ settings.get('base_currency','EGP') }}</p></section>
+<div class="stats-grid">
+<div class="card"><small>مبيعات الفترة قبل الضريبة</small><h3>{{ '%.2f'|format(sales_base) }}</h3></div>
+<div class="card"><small>ضريبة المخرجات</small><h3>{{ '%.2f'|format(output_vat) }}</h3></div>
+<div class="card"><small>مشتريات الفترة قبل الضريبة</small><h3>{{ '%.2f'|format(purchase_base) }}</h3></div>
+<div class="card"><small>ضريبة المدخلات المسجلة</small><h3>{{ '%.2f'|format(input_vat) }}</h3></div>
+<div class="card"><small>صافي الضريبة الرقابي</small><h3>{{ '%.2f'|format(net_vat) }}</h3></div>
+</div>
+<section class="card"><h3>مراجعة قبل الإقرار</h3>
+{% if zero_sales or zero_purchases %}<p class="flash warning">يوجد مستندات بنسبة ضريبة صفر. النظام الحالي لا يميز بعد بين التصدير بسعر صفر، والإعفاء، وغير الخاضع؛ لذلك لا تعتمد هذه الأرقام كتصنيف قانوني قبل استكمال بيانات المعاملة ومستنداتها.</p>
+{% else %}<p>لا توجد مستندات بنسبة ضريبة صفر في الفترة المختارة.</p>{% endif %}
+<p>ضريبة المدخلات المعروضة هي الضريبة المسجلة على فواتير الموردين. يلزم مراجعة قابلية الخصم والمستندات قبل تقديم الإقرار.</p>
+<p>هذا تقرير رقابي تمهيدي وليس إقرارًا إلكترونيًا معتمدًا أو بديلًا عن مراجعة متطلبات مصلحة الضرائب.</p></section>
+<section class="card"><h3>فواتير المبيعات – ضريبة المخرجات</h3><table><thead><tr><th>رقم المستند</th><th>التاريخ</th><th>العميل</th><th>الأساس</th><th>النسبة %</th><th>الضريبة</th><th>الإجمالي</th></tr></thead><tbody>
+{% for r in sales %}<tr><td>{{ r.document_no }}</td><td>{{ r.document_date }}</td><td>{{ r.party_name }}</td><td>{{ '%.2f'|format(r.taxable_base) }}</td><td>{{ '%.2f'|format(r.tax_rate) }}</td><td>{{ '%.2f'|format(r.tax_amount) }}</td><td>{{ '%.2f'|format(r.total_amount) }}</td></tr>{% else %}<tr><td colspan="7">لا توجد فواتير مبيعات مرحلة خلال الشهر.</td></tr>{% endfor %}
+</tbody></table></section>
+<section class="card"><h3>فواتير المشتريات – ضريبة المدخلات</h3><table><thead><tr><th>رقم المستند</th><th>التاريخ</th><th>المورد</th><th>الأساس</th><th>النسبة %</th><th>الضريبة</th><th>الإجمالي</th></tr></thead><tbody>
+{% for r in purchases %}<tr><td>{{ r.document_no }}</td><td>{{ r.document_date }}</td><td>{{ r.party_name }}</td><td>{{ '%.2f'|format(r.taxable_base) }}</td><td>{{ '%.2f'|format(r.tax_rate) }}</td><td>{{ '%.2f'|format(r.tax_amount) }}</td><td>{{ '%.2f'|format(r.total_amount) }}</td></tr>{% else %}<tr><td colspan="7">لا توجد فواتير مشتريات مرحلة خلال الشهر.</td></tr>{% endfor %}
+</tbody></table></section>
+{% endblock %}
