@@ -396,28 +396,61 @@ def journal():
 @app.route("/reports/trial-balance")
 @requires("reports.view")
 def trial_balance():
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    account_type = request.args.get("account_type", "").strip()
+    q = request.args.get("q", "").strip()
+    allowed_types = {"asset", "liability", "equity", "revenue", "expense"}
+    if account_type not in allowed_types:
+        account_type = ""
+    conditions, params = ["1=1"], []
+    if date_from:
+        conditions.append("je.entry_date >= ?"); params.append(date_from)
+    if date_to:
+        conditions.append("je.entry_date <= ?"); params.append(date_to)
+    if account_type:
+        conditions.append("a.account_type = ?"); params.append(account_type)
+    if q:
+        conditions.append("(a.code LIKE ? OR a.name_ar LIKE ?)"); params.extend([f"%{q}%", f"%{q}%"])
     connection = db()
-    rows = connection.execute("""SELECT a.code, a.name_ar, a.account_type,
+    rows = connection.execute(f"""SELECT a.code, a.name_ar, a.account_type,
         COALESCE(SUM(jl.debit),0) debit, COALESCE(SUM(jl.credit),0) credit
         FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
-        GROUP BY a.id ORDER BY a.code""").fetchall()
+        LEFT JOIN journal_entries je ON je.id=jl.entry_id AND je.status='posted'
+        WHERE {' AND '.join(conditions)}
+        GROUP BY a.id ORDER BY a.code""", params).fetchall()
+    settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency')")}
     connection.close()
-    return render_template("trial_balance.html", rows=rows)
+    types = {"asset":"أصول","liability":"التزامات","equity":"حقوق ملكية","revenue":"إيرادات","expense":"مصروفات"}
+    return render_template("trial_balance.html", rows=rows, date_from=date_from, date_to=date_to,
+        account_type=account_type, q=q, types=types, base_currency=settings.get("base_currency",""))
 
 
 @app.route("/reports/ledger")
 @requires("reports.view")
 def ledger():
     account_id = request.args.get("account_id", type=int)
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
     connection = db()
-    accounts_list = connection.execute("SELECT * FROM accounts ORDER BY code").fetchall()
+    accounts_list = connection.execute("SELECT * FROM accounts WHERE active=1 ORDER BY code").fetchall()
     rows, selected = [], None
     if account_id:
-        selected = connection.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
-        rows = connection.execute("""SELECT je.entry_date, je.reference, je.description, jl.debit, jl.credit, jl.memo
-            FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id WHERE jl.account_id=? ORDER BY je.entry_date, jl.id""", (account_id,)).fetchall()
+        selected = connection.execute("SELECT * FROM accounts WHERE id=? AND is_group=0", (account_id,)).fetchone()
+        if selected:
+            conditions = ["jl.account_id=?", "je.status='posted'"]
+            params = [account_id]
+            if date_from:
+                conditions.append("je.entry_date >= ?"); params.append(date_from)
+            if date_to:
+                conditions.append("je.entry_date <= ?"); params.append(date_to)
+            rows = connection.execute(f"""SELECT je.entry_date, je.reference, je.description, jl.debit, jl.credit, jl.memo
+                FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                WHERE {' AND '.join(conditions)} ORDER BY je.entry_date, jl.id""", params).fetchall()
     connection.close()
-    return render_template("ledger.html", accounts=accounts_list, selected=selected, rows=rows)
+    return render_template("ledger.html", accounts=accounts_list, selected=selected, rows=rows,
+        date_from=date_from, date_to=date_to)
 
 
 @app.route("/reports/reconciliation")
