@@ -47,10 +47,27 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
     if debit <= 0 or debit != credit:
         raise ValueError(f"القيد غير متوازن: مدين {debit} مقابل دائن {credit}.")
     existing = conn.execute(
-        "SELECT id FROM journal_entries WHERE reference=? AND status='posted' ORDER BY id LIMIT 1",
+        "SELECT id,entry_date,description FROM journal_entries WHERE reference=? AND status='posted' ORDER BY id LIMIT 1",
         (reference,),
     ).fetchone()
     if existing:
+        existing_lines = conn.execute(
+            "SELECT account_id,debit,credit,memo FROM journal_lines WHERE entry_id=? ORDER BY id",
+            (existing["id"],),
+        ).fetchall()
+        expected_lines = sorted(
+            [(aid, format(dr, "f"), format(cr, "f"), memo) for aid, dr, cr, memo in normalized],
+            key=lambda item: (item[0], item[1], item[2], item[3]),
+        )
+        actual_lines = sorted(
+            [(int(row["account_id"]), format(amt(row["debit"]), "f"),
+              format(amt(row["credit"]), "f"), str(row["memo"] or "")) for row in existing_lines],
+            key=lambda item: (item[0], item[1], item[2], item[3]),
+        )
+        if (existing["entry_date"] != normalized_date or
+                str(existing["description"] or "") != str(description or "") or
+                actual_lines != expected_lines):
+            raise ValueError("رقم مرجع القيد مستخدم بالفعل في قيد مختلف. راجع المستند ورقم المرجع قبل الترحيل.")
         return existing["id"]
     cur = conn.execute(
         "INSERT INTO journal_entries(entry_date,reference,description,status,created_by,created_at) "
