@@ -495,7 +495,10 @@ def reports():
     c=get_db()
     rows=c.execute("""SELECT p.id,p.sku,p.name_ar,p.uom,
       COALESCE(SUM(CAST(l.qty_remaining AS REAL)),0) qty,
-      COALESCE(SUM(CAST(l.qty_remaining AS REAL)*CAST(l.unit_cost AS REAL)),0) value
+      COALESCE(SUM(CAST(l.qty_remaining AS REAL)*CAST(l.unit_cost AS REAL)),0) value,
+      CASE WHEN COALESCE(SUM(CAST(l.qty_remaining AS REAL)),0)=0 THEN 0
+           ELSE COALESCE(SUM(CAST(l.qty_remaining AS REAL)*CAST(l.unit_cost AS REAL)),0) /
+                SUM(CAST(l.qty_remaining AS REAL)) END unit_cost
       FROM stock_products p LEFT JOIN stock_valuation_layers l ON l.product_id=p.id
       WHERE p.active=1 GROUP BY p.id ORDER BY p.sku""").fetchall()
     lots=c.execute("""SELECT p.sku,p.name_ar,l.lot_number,l.expiry_date,
@@ -505,7 +508,10 @@ def reports():
       WHERE l.expiry_date IS NOT NULL GROUP BY l.id ORDER BY l.expiry_date""").fetchall()
     warehouse_rows=c.execute("""SELECT p.sku,p.name_ar,p.uom,w.code warehouse_code,w.name_ar warehouse_name,
       COALESCE(SUM(CAST(v.qty_remaining AS REAL)),0) qty,
-      COALESCE(SUM(CAST(v.qty_remaining AS REAL)*CAST(v.unit_cost AS REAL)),0) value
+      COALESCE(SUM(CAST(v.qty_remaining AS REAL)*CAST(v.unit_cost AS REAL)),0) value,
+      CASE WHEN COALESCE(SUM(CAST(v.qty_remaining AS REAL)),0)=0 THEN 0
+           ELSE COALESCE(SUM(CAST(v.qty_remaining AS REAL)*CAST(v.unit_cost AS REAL)),0) /
+                SUM(CAST(v.qty_remaining AS REAL)) END unit_cost
       FROM stock_products p LEFT JOIN stock_valuation_layers v ON v.product_id=p.id
       LEFT JOIN stock_warehouses w ON w.id=v.warehouse_id
       WHERE p.active=1 GROUP BY p.id,w.id ORDER BY p.sku,w.code""").fetchall()
