@@ -587,6 +587,53 @@ def users():
     return render_template("users.html", users=rows, role_permissions=PERMISSIONS)
 
 
+@app.route("/users/<int:user_id>/edit",methods=["GET","POST"])
+@requires("users.manage")
+def edit_user(user_id):
+    connection=db(); user=connection.execute("SELECT id,username,full_name,role,active FROM users WHERE id=?",(user_id,)).fetchone()
+    if not user:
+        connection.close(); flash("المستخدم غير موجود.","error"); return redirect(url_for("users"))
+    if request.method=="POST":
+        role=request.form.get("role")
+        if role not in PERMISSIONS:
+            flash("الدور المحدد غير صحيح.","error")
+        else:
+            try:
+                connection.execute("UPDATE users SET username=?,full_name=?,role=?,active=? WHERE id=?",
+                  (request.form["username"].strip(),request.form["full_name"].strip(),role,1 if request.form.get("active")=="yes" else 0,user_id))
+                connection.commit(); connection.close(); log("user_updated",request.form["username"].strip())
+                flash("تم تعديل المستخدم.","success"); return redirect(url_for("users"))
+            except sqlite3.IntegrityError:
+                connection.rollback(); flash("اسم المستخدم مستخدم بالفعل.","error")
+    connection.close(); return render_template("user_edit.html",user=user,roles=PERMISSIONS)
+
+
+@app.route("/users/<int:user_id>/delete",methods=["POST"])
+@requires("users.manage")
+def delete_user(user_id):
+    connection=db(); user=connection.execute("SELECT * FROM users WHERE id=?",(user_id,)).fetchone()
+    if not user:
+        flash("المستخدم غير موجود.","error")
+    elif user_id==session.get("user_id"):
+        flash("لا يمكنك حذف المستخدم الذي سجلت الدخول به.","error")
+    else:
+        checks=[
+          ("SELECT 1 FROM audit_log WHERE user_id=? LIMIT 1","سجل المراجعة والتدقيق"),
+          ("SELECT 1 FROM journal_entries WHERE created_by=? LIMIT 1","قيود اليومية"),
+          ("SELECT 1 FROM stock_movements WHERE created_by=? LIMIT 1","حركات المخزون"),
+          ("SELECT 1 FROM sales_invoices WHERE created_by=? LIMIT 1","فواتير البيع"),
+          ("SELECT 1 FROM purchase_orders WHERE created_by=? LIMIT 1","أوامر الشراء"),
+          ("SELECT 1 FROM goods_receipts WHERE created_by=? LIMIT 1","استلامات المشتريات"),
+          ("SELECT 1 FROM supplier_payments WHERE created_by=? LIMIT 1","مدفوعات الموردين"),
+          ("SELECT 1 FROM bank_transactions WHERE created_by=? LIMIT 1","الحركات البنكية")]
+        used=next((label for q,label in checks if connection.execute(q,(user_id,)).fetchone()),None)
+        if used: flash("لا يمكن حذف المستخدم لوجود نشاط مسجل في "+used+". يمكنك إيقافه بدل الحذف.","error")
+        else:
+            try: connection.execute("DELETE FROM users WHERE id=?",(user_id,)); connection.commit(); flash("تم حذف المستخدم.","success")
+            except sqlite3.IntegrityError: connection.rollback(); flash("لا يمكن حذف المستخدم لوجود سجلات مرتبطة به.","error")
+    connection.close(); return redirect(url_for("users"))
+
+
 @app.route("/data/export/<format>")
 @requires("import_export.manage")
 def export_data(format):
