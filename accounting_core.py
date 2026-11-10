@@ -35,7 +35,7 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
             raise ValueError("كل سطر يجب أن يكون مدينًا أو دائنًا فقط وبقيمة غير سالبة.")
         if dr or cr:
             account = conn.execute(
-                "SELECT id,is_group,active FROM accounts WHERE id=?", (account_id,)
+                "SELECT id,is_group,active,account_type FROM accounts WHERE id=?", (account_id,)
             ).fetchone()
             if not account or account["is_group"] or not account["active"]:
                 raise ValueError("لا يمكن الترحيل إلى حساب غير موجود أو غير نشط أو حساب تجميعي.")
@@ -60,7 +60,7 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
     entry_id = cur.lastrowid
     conn.executemany(
         "INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?)",
-        [(entry_id, aid, float(dr), float(cr), memo) for aid, dr, cr, memo in normalized],
+        [(entry_id, aid, format(dr, 'f'), format(cr, 'f'), memo) for aid, dr, cr, memo in normalized],
     )
     return entry_id
 
