@@ -4,6 +4,15 @@
 <header>
   <h2>مراجعة سلامة المشتريات</h2>
   <p>تعرض الشاشة حالات التكرار القديمة التي اكتشفها النظام قبل إنشاء الفهارس الفريدة. لا يتم حذف أو تعديل أي فاتورة أو إيصال تلقائيًا.</p>
+  {% if not index_status.supplier_invoice or not index_status.receipt_link %}
+    <p class="warning"><strong>تنبيه: حماية التكرار غير مكتملة.</strong>
+      {% if not index_status.supplier_invoice %}فهرس منع تكرار رقم فاتورة المورد غير مفعل. {% endif %}
+      {% if not index_status.receipt_link %}فهرس منع ربط إيصال الاستلام بأكثر من فاتورة غير مفعل. {% endif %}
+      لا تعتمد على الحماية البرمجية وحدها؛ يجب معالجة السجلات المكررة ثم إعادة تهيئة مخطط المشتريات لإنشاء الفهارس.
+    </p>
+  {% else %}
+    <p class="success">فهارس منع التكرار مفعلة على قاعدة البيانات.</p>
+  {% endif %}
 </header>
 <section class="panel">
   <div class="section-heading"><h3>المشكلات المفتوحة</h3><span class="muted">عدد الحالات: {{ issues|length }}</span></div>
@@ -25,6 +34,11 @@
         </table>
       {% endif %}
       <p class="warning">الإجراء المطلوب: راجع أصل الفواتير وإيصالات الاستلام والمستندات الضريبية، وحدد المستند الصحيح وأي مستند يحتاج إلى تسوية محاسبية معتمدة. لا تحذف سجلات أو روابط مباشرة من قاعدة البيانات.</p>
+      <form method="post" action="{{ url_for('purchase.resolve_integrity_issue', issue_id=item.issue.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit">تم الحل وإغلاق الحالة</button>
+        <small>لن تُغلق الحالة إلا بعد أن يتحقق النظام من زوال التكرار فعليًا.</small>
+      </form>
     </article>
   {% else %}
     <p>لا توجد حالات تكرار مفتوحة مسجلة حاليًا.</p>
