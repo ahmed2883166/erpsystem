@@ -159,6 +159,45 @@ def suppliers():
     rows=c.execute("SELECT * FROM suppliers ORDER BY name").fetchall(); c.close()
     return render_template("purchase_suppliers.html",rows=rows)
 
+
+@purchase_bp.route("/suppliers/<int:supplier_id>/edit",methods=["GET","POST"])
+@require("purchases.manage")
+def edit_supplier(supplier_id):
+    c=db(); supplier=c.execute("SELECT * FROM suppliers WHERE id=?",(supplier_id,)).fetchone()
+    if not supplier:
+        c.close(); flash("المورد غير موجود.","error"); return redirect(url_for("purchase.suppliers"))
+    used=any(c.execute(q,(supplier_id,)).fetchone() for q in [
+      "SELECT 1 FROM purchase_orders WHERE supplier_id=? LIMIT 1",
+      "SELECT 1 FROM goods_receipts WHERE supplier_id=? LIMIT 1",
+      "SELECT 1 FROM supplier_bills WHERE supplier_id=? LIMIT 1",
+      "SELECT 1 FROM supplier_payments WHERE supplier_id=? LIMIT 1"])
+    if request.method=="POST":
+        try:
+            c.execute("UPDATE suppliers SET code=?,name=?,tax_number=?,phone=?,email=?,address=? WHERE id=?",
+              (request.form["code"].strip(),request.form["name"].strip(),request.form.get("tax_number","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("address","").strip(),supplier_id))
+            c.commit(); c.close(); flash("تم تعديل بيانات المورد.","success"); return redirect(url_for("purchase.suppliers"))
+        except sqlite3.IntegrityError: c.rollback(); flash("كود المورد مستخدم بالفعل.","error")
+    c.close(); return render_template("purchase_supplier_edit.html",supplier=supplier,used=used)
+
+
+@purchase_bp.route("/suppliers/<int:supplier_id>/delete",methods=["POST"])
+@require("purchases.manage")
+def delete_supplier(supplier_id):
+    c=db(); supplier=c.execute("SELECT * FROM suppliers WHERE id=?",(supplier_id,)).fetchone()
+    if not supplier: flash("المورد غير موجود.","error")
+    else:
+        checks=[
+          ("SELECT 1 FROM purchase_orders WHERE supplier_id=? LIMIT 1","أوامر الشراء"),
+          ("SELECT 1 FROM goods_receipts WHERE supplier_id=? LIMIT 1","استلامات المشتريات"),
+          ("SELECT 1 FROM supplier_bills WHERE supplier_id=? LIMIT 1","فواتير الموردين"),
+          ("SELECT 1 FROM supplier_payments WHERE supplier_id=? LIMIT 1","مدفوعات الموردين")]
+        used=next((label for q,label in checks if c.execute(q,(supplier_id,)).fetchone()),None)
+        if used: flash("لا يمكن حذف المورد لوجود "+used+" مرتبطة به.","error")
+        else:
+            try: c.execute("DELETE FROM suppliers WHERE id=?",(supplier_id,)); c.commit(); flash("تم حذف المورد.","success")
+            except sqlite3.IntegrityError: c.rollback(); flash("لا يمكن حذف المورد لوجود مستند مرتبط به.","error")
+    c.close(); return redirect(url_for("purchase.suppliers"))
+
 @purchase_bp.route("/orders/new",methods=["GET","POST"])
 @require("purchases.manage")
 def new_order():
