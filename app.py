@@ -358,16 +358,44 @@ def accounts():
     connection = db()
     if request.method == "POST":
         try:
-            connection.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id) VALUES(?,?,?,?)",
-                               (request.form["code"].strip(), request.form["name_ar"].strip(), request.form["account_type"], request.form.get("parent_id") or None))
+            code = request.form["code"].strip()
+            name = request.form["name_ar"].strip()
+            account_type = request.form["account_type"]
+            parent_id = request.form.get("parent_id") or None
+            is_group = 1 if request.form.get("is_group") == "yes" else 0
+            if account_type not in {"asset","liability","equity","revenue","expense"} or not code or not name:
+                raise ValueError("بيانات الحساب غير صحيحة.")
+            if parent_id:
+                parent = connection.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (parent_id,)).fetchone()
+                if not parent or not parent["active"] or not parent["is_group"] or parent["account_type"] != account_type:
+                    raise ValueError("الحساب الأب يجب أن يكون مجموعة نشطة ومن نفس نوع الحساب.")
+            connection.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
+                               (code, name, account_type, parent_id, is_group))
             connection.commit()
-            log("account_created", request.form["code"])
+            log("account_created", code)
             flash("تمت إضافة الحساب.", "success")
         except sqlite3.IntegrityError:
+            connection.rollback()
             flash("رمز الحساب مستخدم بالفعل.", "error")
-    rows = connection.execute("SELECT * FROM accounts ORDER BY code").fetchall()
+        except ValueError as exc:
+            connection.rollback()
+            flash(str(exc), "error")
+    raw_rows = connection.execute("SELECT * FROM accounts ORDER BY code").fetchall()
+    by_id = {row["id"]: dict(row) for row in raw_rows}
+    def account_depth(row, seen=None):
+        seen = seen or set()
+        parent_id = row.get("parent_id")
+        if not parent_id or parent_id not in by_id or parent_id in seen:
+            return 0
+        return 1 + account_depth(by_id[parent_id], seen | {parent_id})
+    rows = []
+    for row in raw_rows:
+        item = dict(row)
+        item["depth"] = account_depth(item, {item["id"]})
+        rows.append(item)
+    groups = [row for row in raw_rows if row["is_group"] and row["active"]]
     connection.close()
-    return render_template("accounts.html", accounts=rows)
+    return render_template("accounts.html", accounts=rows, groups=groups)
 
 
 @app.route("/journal", methods=["GET", "POST"])
