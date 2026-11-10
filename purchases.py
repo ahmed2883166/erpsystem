@@ -77,6 +77,10 @@ def init_purchase_schema():
       amount TEXT NOT NULL, PRIMARY KEY(payment_id,bill_id)
     );
     CREATE INDEX IF NOT EXISTS idx_purchase_bills_supplier ON supplier_bills(supplier_id,bill_date);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bill_invoice_no
+      ON supplier_bills(supplier_id, lower(trim(supplier_invoice_no)));
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bill_receipt_once
+      ON supplier_bill_receipts(receipt_id);
     CREATE INDEX IF NOT EXISTS idx_purchase_receipts_supplier ON goods_receipts(supplier_id,receipt_date);
     """)
     c.close()
@@ -216,7 +220,7 @@ def new_order():
               (no,supplier,request.form["order_date"],request.form.get("expected_date") or None,request.form.get("notes",""),session["user_id"]))
             c.execute("INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price) VALUES(?,?,?,?)",(cur.lastrowid,product,str(qty),str(price)))
             c.commit(); flash(f"تم إنشاء أمر الشراء {no}.","success"); return redirect(url_for("purchase.index"))
-        except (ValueError,KeyError,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
+        except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     products=c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     c.close(); return render_template("purchase_order_new.html",suppliers=su,products=products,today=date.today().isoformat())
@@ -239,8 +243,8 @@ def edit_order(order_id):
             if qty<=0 or price<0: raise ValueError("الكمية والسعر غير صحيحين.")
             c.execute("UPDATE purchase_orders SET supplier_id=?,order_date=?,expected_date=?,notes=? WHERE id=?",
               (supplier,request.form["order_date"],request.form.get("expected_date") or None,request.form.get("notes",""),order_id))
-            c.execute("UPDATE purchase_order_lines SET product_id=?,quantity=?,unit_price=? WHERE po_id=?",
-              (product,str(qty),str(price),order_id))
+            c.execute("UPDATE purchase_order_lines SET product_id=?,quantity=?,unit_price=? WHERE id=?",
+              (product,str(qty),str(price),order["line_id"]))
             c.commit(); c.close(); flash("تم تعديل أمر الشراء.","success"); return redirect(url_for("purchase.index"))
         except (ValueError,InvalidOperation,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
     suppliers=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
@@ -309,13 +313,21 @@ def new_bill():
             if subtotal<=0 or rate<0 or rate>100: raise ValueError("قيمة الفاتورة أو الضريبة غير صحيحة.")
             tax=money(subtotal*rate/Decimal("100")); total=subtotal+tax
             receipts=[int(x) for x in request.form.getlist("receipt_id")]
+            supplier_invoice_no=request.form["supplier_invoice_no"].strip()
+            if not supplier_invoice_no:
+                raise ValueError("رقم فاتورة المورد مطلوب.")
             c.execute("BEGIN IMMEDIATE")
+            if c.execute("SELECT 1 FROM supplier_bills WHERE supplier_id=? AND lower(trim(supplier_invoice_no))=lower(trim(?)) LIMIT 1",
+                         (supplier,supplier_invoice_no)).fetchone():
+                raise ValueError("رقم فاتورة المورد مسجل بالفعل لهذا المورد.")
             invcode=activity_inventory_code(c); inv=account(c,invcode,"asset")
             ap=supplier_ap_account(c)
             lines=[]; remaining=subtotal
             for rid in receipts:
                 r=c.execute("SELECT * FROM goods_receipts WHERE id=? AND supplier_id=?",(rid,supplier)).fetchone()
                 if not r: raise ValueError("إيصال الاستلام غير تابع لهذا المورد.")
+                if c.execute("SELECT 1 FROM supplier_bill_receipts WHERE receipt_id=? LIMIT 1",(rid,)).fetchone():
+                    raise ValueError("إيصال الاستلام مرتبط بفاتورة مورد أخرى بالفعل.")
                 allocated=money(r["total_value"])
                 if allocated>remaining: raise ValueError("إجمالي إيصالات الاستلام أكبر من قيمة الفاتورة.")
                 lines.append((rid,allocated)); remaining-=allocated
@@ -326,7 +338,7 @@ def new_bill():
                 lines.append(("VAT",tax))
             no="BILL-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             cur=c.execute("INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,subtotal,tax_rate,tax_amount,total_amount,created_by) VALUES(?,?,?,?,?,?,?,?,?)",
-              (no,supplier,request.form["bill_date"],request.form["supplier_invoice_no"].strip(),str(subtotal),str(rate),str(tax),str(total),session["user_id"]))
+              (no,supplier,request.form["bill_date"],supplier_invoice_no,str(subtotal),str(rate),str(tax),str(total),session["user_id"]))
             bid=cur.lastrowid
             due_date=request.form.get("due_date") or request.form["bill_date"]
             if due_date < request.form["bill_date"]: raise ValueError("تاريخ استحقاق المورد لا يمكن أن يسبق تاريخ الفاتورة.")
@@ -341,9 +353,7 @@ def new_bill():
                 if tax: jlines.append((vat,tax,0,"ضريبة مدخلات حسب الفاتورة"))
                 jlines.append((ap,0,tax,"ضريبة ضمن إجمالي المورد"))
             else:
-                jlines.append((inv,subtotal,0,"مشتريات حسب فاتورة المورد"))
-                if tax: jlines.append((vat,tax,0,"ضريبة مدخلات حسب الفاتورة"))
-                jlines.append((ap,0,total,"إجمالي المورد"))
+                raise ValueError("لا يمكن ترحيل فاتورة مشتريات مخزنية دون إيصال استلام. سجّل الاستلام أولًا من شاشة استلام المشتريات ثم اربطه بالفاتورة.")
             eid=create_journal(c,request.form["bill_date"],no,"فاتورة مورد "+request.form["supplier_invoice_no"],jlines,session["user_id"])
             c.execute("UPDATE supplier_bills SET journal_entry_id=? WHERE id=?",(eid,bid))
             c.commit(); flash(f"تم ترحيل فاتورة المورد {no}.","success"); return redirect(url_for("purchase.index"))
