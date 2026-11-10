@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}مسير الرواتب | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>مسير الرواتب</h2><p>حساب أساسي وبدلات وساعات إضافية وغياب وخصومات وضريبة وتأمينات.</p></header>
+<section class="panel"><h3>إنشاء مسير شهري</h3><p>ضريبة المرتبات والتأمينات تُدخل حسب القواعد القانونية السارية بعد مراجعتها؛ لا يطبق النظام نسبة قانونية ثابتة قد تصبح قديمة.</p>
+<form method="post"><label>الشهر <input type="month" name="period" value="{{today}}" required></label>
+<table><tr><th>الموظف</th><th>إضافي (ساعة)</th><th>غياب (ساعة)</th><th>ضريبة مرتبات</th><th>تأمينات الموظف</th><th>تأمينات الشركة</th></tr>
+{% for e in employees %}<tr><td>{{e.employee_code}} - {{e.full_name}}<br><small>أساسي {{e.basic_salary}}</small></td>
+<td><input type="number" min="0" step="0.01" name="overtime_{{e.id}}" value="0"></td>
+<td><input type="number" min="0" step="0.01" name="absent_{{e.id}}" value="0"></td>
+<td><input type="number" min="0" step="0.01" name="tax_{{e.id}}" value="0"></td>
+<td><input type="number" min="0" step="0.01" name="employee_ins_{{e.id}}" value="0"></td>
+<td><input type="number" min="0" step="0.01" name="employer_ins_{{e.id}}" value="0"></td></tr>{% endfor %}</table><button type="submit">احتساب المسير كمسودة</button></form></section>
+<section class="panel"><h3>المسيرات السابقة</h3><table><tr><th>الشهر</th><th>الحالة</th><th>القيد</th><th>التفاصيل</th></tr>{% for r in runs %}<tr><td>{{r.period}}</td><td>{{'مرحّل' if r.status=='posted' else 'مسودة'}}</td><td>{{r.journal_entry_id or '-'}}</td><td><a href="{{url_for('workforce.payroll_run',run_id=r.id)}}">فتح المسير</a></td></tr>{% else %}<tr><td colspan="4">لا توجد مسيرات.</td></tr>{% endfor %}</table></section>
+{% endblock %}
