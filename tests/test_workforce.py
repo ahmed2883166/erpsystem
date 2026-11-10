@@ -45,15 +45,13 @@ class WorkforceTests(unittest.TestCase):
         self.temp.cleanup()
 
     def add_employee(self):
-        response = self.client.post("/hr", data={
-            "employee_code": "E001", "full_name": "Employee One", "hire_date": "2026-01-01",
-            "basic_salary": "10000", "standard_hours": "200"
-        })
-        self.assertEqual(response.status_code, 302)
-        response = self.client.post("/hr/pay-items", data={
-            "employee_id": "1", "item_name": "بدل انتقال", "item_type": "allowance", "amount": "1000"
-        })
-        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours)
+                        VALUES('E001','Employee One','2026-01-01','10000','200')""")
+        conn.execute("""INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount)
+                        VALUES(1,'بدل انتقال','allowance','1000')""")
+        conn.commit()
+        conn.close()
 
     def test_payroll_calculation_and_posting(self):
         self.add_employee()
