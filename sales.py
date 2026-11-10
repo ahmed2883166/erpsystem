@@ -149,9 +149,9 @@ def _allowed_vat_rates(conn):
 def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate, created_by=None, allow_credit_override=False):
     """Create invoice, stock issues and balanced GL entries inside caller transaction."""
     rate = Decimal(str(tax_rate)).quantize(CENT, rounding=ROUND_HALF_UP)
+    # Header rate is only a default for standard-tax lines; each line is validated
+    # independently. Exempt/zero-rated invoices must not fail on an unused header rate.
     allowed_rates = _allowed_vat_rates(conn)
-    if rate not in allowed_rates:
-        raise ValueError("نسبة الضريبة على الفاتورة ليست ضمن النسب المعتمدة في إعدادات الدولة.")
 
     customer = conn.execute("SELECT * FROM customers WHERE id=? AND active=1", (customer_id,)).fetchone()
     if not customer:
@@ -166,8 +166,6 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     vat = _account(conn, codes["vat"], "liability") if rate else None
     inventory = _account(conn, codes["inventory"], "asset") if codes["inventory"] else None
     cogs = _account(conn, codes["cogs"], "expense") if codes["cogs"] else None
-    if rate and not vat:
-        raise ValueError("يجب ضبط حساب ضريبة المخرجات أولًا.")
     if activity != "service" and not warehouse_id:
         raise ValueError("حدد مخزن الصرف قبل ترحيل فاتورة البيع.")
 
@@ -250,7 +248,6 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
          str(tax_amount), str(total_amount), created_by)
     )
     invoice_id = cur.lastrowid
-    cogs_lines = []
     for index, item in enumerate(normalized, 1):
         movement_id = None
         if item["product_id"]:
@@ -272,8 +269,6 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
              str(item["unit_price"]), str(item["line_total"]), str(item["cost_total"]), movement_id,
              str(item["tax_rate"]), item["tax_treatment"], str(item["tax_amount"]))
         )
-        if item["product_id"] and item["cost_total"] > 0:
-            cogs_lines.append(item["cost_total"])
 
     invoice_lines = [(ar, total_amount, 0, "ذمم العميل - " + customer["name"]),
                      (revenue, 0, subtotal, "إيراد فاتورة " + invoice_no)]
