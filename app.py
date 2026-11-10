@@ -634,9 +634,12 @@ def ledger():
     else:
         opening_balance = 0.0
         closing_balance = 0.0
+    total_debit = round(sum(float(x["debit"] or 0) for x in rows), 2)
+    total_credit = round(sum(float(x["credit"] or 0) for x in rows), 2)
     connection.close()
     return render_template("ledger.html", accounts=accounts_list, selected=selected, rows=rows,
-        date_from=date_from, date_to=date_to, opening_balance=opening_balance, closing_balance=closing_balance)
+        date_from=date_from, date_to=date_to, opening_balance=opening_balance, closing_balance=closing_balance,
+        total_debit=total_debit, total_credit=total_credit)
 
 
 @app.route("/journal/<int:entry_id>")
