@@ -411,11 +411,6 @@ def movements():
             expiry=request.form.get("expiry_date","").strip()
             if kind=="receipt":
                 raise ValueError("استلام المخزون يجب أن يتم من شاشة استلام المشتريات حتى يُسجل قيد GRNI ويرتبط بالمورد. لا تستخدم حركة استلام عامة.")
-            if kind=="receipt":
-                lot_id=make_lot(c,product,lot_no,request.form.get("production_date"),expiry)
-                unit_cost=dec(request.form.get("unit_cost","0"),"تكلفة الوحدة")
-                if unit_cost<0: raise ValueError("التكلفة لا يمكن أن تكون سالبة.")
-                total=money(qty*unit_cost)
             else:
                 if product["track_lot"] or product["track_expiry"]:
                     if not lot_no: raise ValueError("أدخل رقم التشغيلة للصرف من صنف يتطلب تتبعًا.")
