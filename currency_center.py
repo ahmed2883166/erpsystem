@@ -238,6 +238,9 @@ def revalue(transaction_id):
         if not t:
             raise ValueError("لا يوجد رصيد مفتوح لإعادة تقييمه.")
         revalue_date = date.fromisoformat(request.form["revaluation_date"]).isoformat()
+        if c.execute("SELECT 1 FROM fx_revaluations WHERE transaction_id=? AND revaluation_date=?",
+                     (transaction_id,revalue_date)).fetchone():
+            raise ValueError("تمت إعادة تقييم هذه المعاملة في هذا التاريخ بالفعل.")
         rate = _rate(c,t["currency_code"],revalue_date,request.form.get("rate"))
         new_base = M(D(t["balance_foreign"])*rate)
         old_base = M(t["balance_base"])
