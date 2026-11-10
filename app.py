@@ -989,7 +989,7 @@ def export_data(format):
         # a formula marker (including markers hidden behind whitespace/control chars).
         def safe_csv_cell(value):
             text = "" if value is None else str(value)
-            probe = text.lstrip(" \\t\\r\\n")
+            probe = text.lstrip(" \t\r\n")
             if probe.startswith(("=", "+", "-", "@")):
                 return "'" + text
             return text
