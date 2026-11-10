@@ -93,13 +93,13 @@ class PurchasingAccountingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             purchases.account(self.db, "2000", "liability")
 
-    def test_detail_account_setup_uses_liability_parent(self):
-        account_id = purchases.ensure_detail_account(
-            self.db, "2191", "GRNI فرعي", "liability", "2000")
-        row = self.db.execute("SELECT parent_id,is_group FROM accounts WHERE id=?", (account_id,)).fetchone()
-        parent = self.db.execute("SELECT code FROM accounts WHERE id=?", (row["parent_id"],)).fetchone()
-        self.assertEqual(parent["code"], "2000")
-        self.assertEqual(row["is_group"], 0)
+    def test_detail_account_setup_rejects_automatic_account_creation(self):
+        before = self.db.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
+        with self.assertRaisesRegex(ValueError, "غير مضبوط"):
+            purchases.ensure_detail_account(
+                self.db, "2191", "GRNI فرعي", "liability", "2000")
+        after = self.db.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
+        self.assertEqual(after, before)
 
 
 if __name__ == "__main__":
