@@ -123,17 +123,23 @@ def _sales_account_codes(activity):
 
 
 def _allowed_vat_rates(conn):
-    settings = {r["setting_key"]: r["setting_value"] for r in conn.execute(
-        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('tax_country','default_vat_rate','allowed_vat_rates')")}
-    configured = str(settings.get("allowed_vat_rates", "")).strip()
-    if configured:
-        values = configured.split(",")
-    elif settings.get("tax_country") == "EG":
-        values = ["0", "14"]
-    elif settings.get("tax_country") == "SA":
-        values = ["0", "15"]
-    else:
-        values = ["0", settings.get("default_vat_rate", "0")]
+    # The company tax setup controls the standard VAT rate. Zero is always
+    # accepted for zero-rated/exempt/out-of-scope treatments.
+    values = ["0"]
+    try:
+        configured = conn.execute("SELECT rate FROM tax_rates WHERE active=1 ORDER BY id").fetchall()
+        values.extend(str(row["rate"]) for row in configured)
+    except sqlite3.Error:
+        pass
+    if len(values) == 1:
+        settings = {r["setting_key"]: r["setting_value"] for r in conn.execute(
+            "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('tax_country','default_vat_rate')")}
+        if settings.get("tax_country") == "EG":
+            values.append("14")
+        elif settings.get("tax_country") == "SA":
+            values.append("15")
+        else:
+            values.append(settings.get("default_vat_rate", "0"))
     try:
         return {Decimal(str(value).strip()).quantize(CENT, rounding=ROUND_HALF_UP) for value in values}
     except (InvalidOperation, ValueError):
