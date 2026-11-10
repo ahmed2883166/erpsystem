@@ -181,6 +181,8 @@ def payroll():
                 emp_ins = M(request.form.get("employee_ins_" + str(e["id"]), "0"))
                 employer_ins = M(request.form.get("employer_ins_" + str(e["id"]), "0"))
                 standard = D(e["standard_hours"])
+                if standard <= 0:
+                    raise ValueError("ساعات العمل القياسية للموظف " + e["employee_code"] + " يجب أن تكون أكبر من صفر.")
                 hourly = D(e["basic_salary"]) / standard
                 overtime_amount = M(overtime_hours * hourly * D("1.5"))
                 absence = M(absent_hours * hourly)
