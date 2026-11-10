@@ -453,7 +453,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
                 """INSERT INTO stock_valuation_layers(product_id,warehouse_id,source_movement_id,
                    qty_in,qty_remaining,unit_cost,value_remaining) VALUES(?,?,?,?,?,?,?)""",
                 (product_id, warehouse_id, movement_id, str(item["quantity"]),
-                 str(item["quantity"]), str(unit_cost)),
+                 str(item["quantity"]), str(unit_cost), str(item["cost_total"])),
             )
         conn.execute(
             """INSERT INTO sales_credit_note_lines(credit_note_id,invoice_line_id,product_id,
