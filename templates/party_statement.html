@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}كشوف حساب العملاء والموردين | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>كشوف حساب العملاء والموردين</h2><div class="table-actions no-print"><button type="button" class="secondary" onclick="window.print()">طباعة / PDF</button></div></header>
+<section class="panel no-print"><form method="get" class="report-filter">
+<label>نوع الكشف<select name="kind"><option value="customer" {% if kind=='customer' %}selected{% endif %}>عميل</option><option value="supplier" {% if kind=='supplier' %}selected{% endif %}>مورد</option></select></label>
+<label>الطرف<select name="party_id" required><option value="">اختر الطرف</option>{% for p in parties %}<option value="{{p.id}}" {% if selected and selected.id==p.id %}selected{% endif %}>{{p.code}} - {{p.name}}</option>{% endfor %}</select></label>
+<label>من تاريخ<input type="date" name="date_from" value="{{date_from}}"></label><label>إلى تاريخ<input type="date" name="date_to" value="{{date_to}}"></label><button type="submit">عرض الكشف</button></form></section>
+{% if selected %}<section class="panel print-area"><h3>{{'كشف حساب عميل' if kind=='customer' else 'كشف حساب مورد'}}: {{selected.code}} - {{selected.name}}</h3>
+<p>الفترة: {{date_from or 'من بداية التعامل'}} إلى {{date_to or 'حتى الآن'}}</p>
+<p><strong>الرصيد الافتتاحي: {{'%.2f'|format(opening)}}</strong></p>
+<table><thead><tr><th>التاريخ</th><th>المرجع</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد الجاري</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{r.event_date}}</td><td>{{r.reference}}</td><td>{{r.description}}</td><td>{{'%.2f'|format(r.debit)}}</td><td>{{'%.2f'|format(r.credit)}}</td><td>{{'%.2f'|format(r.running_balance)}}</td></tr>{% else %}<tr><td colspan="6">لا توجد حركة خلال الفترة.</td></tr>{% endfor %}
+<tr><th colspan="5">الرصيد الختامي</th><th>{{'%.2f'|format(closing)}}</th></tr></tbody></table></section>{% endif %}
+{% endblock %}
