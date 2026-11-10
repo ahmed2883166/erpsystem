@@ -275,6 +275,7 @@ def new_receipt():
             po_id=int(request.form["po_id"]) if request.form.get("po_id") else None
             qty=Decimal(request.form["quantity"]); unit=money(request.form["unit_cost"]); total=money(qty*unit)
             if qty<=0 or unit<0: raise ValueError("الكمية أو التكلفة غير صحيحة.")
+            c.execute("BEGIN IMMEDIATE")
             po_line_id=None
             if po_id:
                 po=c.execute("SELECT * FROM purchase_orders WHERE id=? AND supplier_id=? AND status IN ('draft','partially_received')",
@@ -292,7 +293,6 @@ def new_receipt():
             inv=account(c,invcode,"asset")
             # GRNI must be explicitly configured as a detailed liability account.
             grni=ensure_detail_account(c,"2190","بضاعة مستلمة غير مفوترة GRNI","liability","2000")
-            c.execute("BEGIN IMMEDIATE")
             no="GRN-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             cur=c.execute("INSERT INTO goods_receipts(receipt_no,po_id,supplier_id,warehouse_id,receipt_date,total_value,created_by) VALUES(?,?,?,?,?,?,?)",
               (no,po_id,supplier,wh,request.form["receipt_date"],str(total),session["user_id"]))
