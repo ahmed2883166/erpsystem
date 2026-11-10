@@ -86,7 +86,7 @@ def index():
             return redirect(url_for("bank.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
             c.rollback(); flash(str(e),"error")
-    accounts=c.execute("""SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=0 AND active=1 ORDER BY code""").fetchall()
+    accounts=c.execute("""SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=0 AND active=1 AND (lower(name_ar) LIKE '%بنك%' OR lower(name_ar) LIKE '%بنوك%' OR lower(name_ar) LIKE '%مصرف%' OR code IN ('1110','1120','1121','1122')) ORDER BY code""").fetchall()
     all_accounts=c.execute("""SELECT id,code,name_ar FROM accounts WHERE is_group=0 AND active=1 ORDER BY code""").fetchall()
     rows=c.execute("""SELECT t.*,a.code bank_code,a.name_ar bank_name FROM bank_transactions t JOIN accounts a ON a.id=t.bank_account_id ORDER BY t.transaction_date DESC,t.id DESC LIMIT 250""").fetchall()
     bank_balances=c.execute("""SELECT a.id,a.code,a.name_ar,
@@ -94,7 +94,7 @@ def index():
         FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
         LEFT JOIN journal_entries je ON je.id=jl.entry_id
         WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
-          AND (lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%مصرف%' OR a.code IN ('1120','1121','1122'))
+          AND (lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%' OR a.code IN ('1110','1120','1121','1122'))
         GROUP BY a.id ORDER BY a.code""").fetchall()
     c.close()
     return render_template("bank.html",bank_accounts=accounts,accounts=all_accounts,rows=rows,bank_balances=bank_balances,today=date.today().isoformat())
