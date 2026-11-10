@@ -639,6 +639,24 @@ def ledger():
         date_from=date_from, date_to=date_to, opening_balance=opening_balance, closing_balance=closing_balance)
 
 
+@app.route("/journal/<int:entry_id>")
+@requires("reports.view")
+def journal_detail(entry_id):
+    connection = db()
+    entry = connection.execute("SELECT * FROM journal_entries WHERE id=?", (entry_id,)).fetchone()
+    if not entry:
+        connection.close()
+        flash("القيد المحاسبي غير موجود.", "error")
+        return redirect(url_for("trial_balance"))
+    lines = connection.execute("""SELECT jl.*,a.code account_code,a.name_ar account_name
+        FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+        WHERE jl.entry_id=? ORDER BY jl.id""", (entry_id,)).fetchall()
+    totals = connection.execute("""SELECT COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit
+        FROM journal_lines WHERE entry_id=?""", (entry_id,)).fetchone()
+    connection.close()
+    return render_template("journal_detail.html", entry=entry, lines=lines, totals=totals)
+
+
 @app.route("/reports/reconciliation")
 @requires("reports.view")
 def reconciliation():
