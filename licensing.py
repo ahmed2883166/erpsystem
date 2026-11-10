@@ -158,6 +158,22 @@ def get_license_status(data_dir=None, current_time=None, machine_id=None, public
                 return {"status":"online_required","message":"انتهت فترة العمل دون اتصال؛ اتصل بالإنترنت لتجديد التحقق.","machine_id":machine_id}
             return {"status":"licensed","customer":payload.get("customer",""),"license_type":payload.get("license_type","licensed"),"expires_at":payload.get("expires_at"),"machine_id":machine_id}
         return {"status":"license_invalid","message":"الرخصة غير صالحة أو منتهية.","machine_id":machine_id}
+    trial_url = os.environ.get("NEXUS_LICENSE_TRIAL_URL", "").strip()
+    if trial_url:
+        try:
+            remote = _post_json(trial_url, {"machine_id": machine_id, "product": "NEXUS_ERP"})
+            remote_first = _parse_time(remote.get("first_seen"))
+            remote_end = _parse_time(remote.get("trial_ends_at"))
+            if not remote_first or not remote_end:
+                raise RuntimeError("استجابة خادم التجربة غير صالحة.")
+            state["first_seen"] = _iso(remote_first)
+            _write_state(state, data_dir)
+            if remote_end <= current_time:
+                return {"status":"expired","days_remaining":0,"machine_id":machine_id}
+            return {"status":"trial","days_remaining":max(1,int((remote_end-current_time).total_seconds()+86399)//86400),
+                    "trial_ends_at":_iso(remote_end),"machine_id":machine_id,"trial_authority":"server"}
+        except RuntimeError:
+            return {"status":"online_required","message":"تعذر التحقق من فترة التجربة عبر خادم التراخيص.","machine_id":machine_id}
     remaining = (first_seen + timedelta(days=TRIAL_DAYS) - current_time).total_seconds()
     if remaining <= 0: return {"status":"expired","days_remaining":0,"machine_id":machine_id}
     return {"status":"trial","days_remaining":max(1,int((remaining+86399)//86400)),"trial_ends_at":_iso(first_seen+timedelta(days=TRIAL_DAYS)),"machine_id":machine_id}
