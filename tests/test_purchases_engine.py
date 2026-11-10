@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -48,6 +49,33 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.assertIn("supplier_bills", names)
         self.assertIn("supplier_payments", names)
         self.assertIn("supplier_payment_allocations", names)
+
+    def test_supplier_invoice_number_and_receipt_can_only_be_used_once(self):
+        purchases.init_purchase_schema()
+        self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-1','مورد اختبار')")
+        supplier_id = self.db.execute("SELECT id FROM suppliers WHERE code='SUP-1'").fetchone()["id"]
+        self.db.execute("INSERT INTO stock_warehouses(code,name_ar) VALUES('W1','مخزن')")
+        warehouse_id = self.db.execute("SELECT id FROM stock_warehouses WHERE code='W1'").fetchone()["id"]
+        self.db.execute("""INSERT INTO goods_receipts(receipt_no,supplier_id,warehouse_id,receipt_date,total_value)
+                           VALUES('GR-1',?,?, '2026-11-10','100')""", (supplier_id, warehouse_id))
+        receipt_id = self.db.execute("SELECT id FROM goods_receipts WHERE receipt_no='GR-1'").fetchone()["id"]
+        self.db.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,
+                           subtotal,tax_rate,tax_amount,total_amount)
+                           VALUES('BILL-1',?,'2026-11-10','DUP','100','0','0','100')""", (supplier_id,))
+        bill_id = self.db.execute("SELECT id FROM supplier_bills WHERE bill_no='BILL-1'").fetchone()["id"]
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,
+                               subtotal,tax_rate,tax_amount,total_amount)
+                               VALUES('BILL-2',?,'2026-11-10',' dup ','100','0','0','100')""", (supplier_id,))
+        self.db.execute("INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
+                        (bill_id, receipt_id, "100"))
+        self.db.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,
+                           subtotal,tax_rate,tax_amount,total_amount)
+                           VALUES('BILL-3',?,'2026-11-10','UNIQUE-2','100','0','0','100')""", (supplier_id,))
+        other_bill = self.db.execute("SELECT id FROM supplier_bills WHERE bill_no='BILL-3'").fetchone()["id"]
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
+                            (other_bill, receipt_id, "100"))
 
     def test_journal_posting_is_balanced(self):
         dr = purchases.account(self.db, "5000", "expense")
