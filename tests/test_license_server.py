@@ -44,7 +44,10 @@ class LicenseServerTests(unittest.TestCase):
         other=self.client.post("/api/v1/trial",json={"machine_id":"device-machine-0002","product":"NEXUS_ERP"})
         self.assertEqual(first.status_code,200)
         self.assertEqual(first.json["first_seen"],again.json["first_seen"])
-        self.assertNotEqual(first.json["first_seen"],other.json["first_seen"])
+        self.assertEqual(other.status_code,200)
+        connection=license_server.connect()
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM trial_devices").fetchone()[0],2)
+        connection.close()
 
     def test_admin_requires_secret(self):
         response=self.client.post("/admin/licenses",json={})
