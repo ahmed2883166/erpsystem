@@ -573,7 +573,7 @@ def trial_balance():
     if q:
         conditions.append("(a.code LIKE ? OR a.name_ar LIKE ?)"); params.extend([f"%{q}%", f"%{q}%"])
     connection = db()
-    rows = connection.execute(f"""SELECT a.code, a.name_ar, a.account_type,
+    rows = connection.execute(f"""SELECT a.id, a.code, a.name_ar, a.account_type,
         COALESCE(SUM(jl.debit),0) debit, COALESCE(SUM(jl.credit),0) credit
         FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
         LEFT JOIN journal_entries je ON je.id=jl.entry_id AND je.status='posted'
@@ -613,7 +613,11 @@ def ledger():
                 opening_balance = float(opening_row["balance"] or 0)
             else:
                 opening_balance = 0.0
-            raw_rows = connection.execute(f"""SELECT je.entry_date, je.reference, je.description, jl.debit, jl.credit, jl.memo
+            raw_rows = connection.execute(f"""SELECT je.id entry_id, je.entry_date, je.reference, je.description,
+                jl.debit, jl.credit, jl.memo,
+                (SELECT GROUP_CONCAT(a2.code || ' - ' || a2.name_ar, '، ')
+                   FROM journal_lines jl2 JOIN accounts a2 ON a2.id=jl2.account_id
+                  WHERE jl2.entry_id=je.id AND jl2.account_id<>jl.account_id) counterpart_accounts
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                 WHERE {' AND '.join(conditions)} ORDER BY je.entry_date, jl.id""", params).fetchall()
             running_balance = opening_balance
