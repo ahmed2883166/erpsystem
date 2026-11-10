@@ -99,22 +99,11 @@ def post_scrap_journal(c, movement_id, movement_no, product, movement_date, tota
         c.execute("UPDATE stock_movements SET accounting_status='pending_setup' WHERE id=?", (movement_id,))
         return None
     inventory = c.execute("SELECT id,is_group,active FROM accounts WHERE code=?", (inventory_code,)).fetchone()
-    # Create a dedicated write-off expense under the activity's expense group when possible.
-    writeoff = c.execute("SELECT id,is_group,active FROM accounts WHERE code='6990'").fetchone()
-    if not writeoff:
-        parent = c.execute("SELECT id FROM accounts WHERE code='6000' AND is_group=1").fetchone()
-        if not parent:
-            parent = c.execute("SELECT id FROM accounts WHERE account_type='expense' AND is_group=1 ORDER BY code LIMIT 1").fetchone()
-        if parent:
-            cur = c.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group,active) VALUES('6990','خسائر تالف المخزون','expense',?,0,1)", (parent["id"],))
-            writeoff_id = cur.lastrowid
-        else:
-            writeoff_id = None
-    else:
-        writeoff_id = writeoff["id"] if not writeoff["is_group"] and writeoff["active"] else None
+    # Require explicit chart mappings; never create accounts during posting.
+    writeoff = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code='6990'").fetchone()
+    writeoff_id = writeoff["id"] if writeoff and not writeoff["is_group"] and writeoff["active"] and writeoff["account_type"]=="expense" else None
     if not inventory or inventory["is_group"] or not inventory["active"] or not writeoff_id:
-        c.execute("UPDATE stock_movements SET accounting_status='pending_setup' WHERE id=?", (movement_id,))
-        return None
+        raise ValueError("لا يمكن ترحيل الإعدام قبل ضبط حساب المخزون وحساب خسائر التالف 6990 كحساب مصروف تفصيلي نشط.")
     amount = money(D(str(total_cost)))
     if amount <= 0:
         c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
@@ -142,19 +131,8 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
     elif purpose == "internal":
         expense_code = "6991"
         expense_name = "مصروف استخدام داخلي من المخزون"
-        existing_expense = c.execute("SELECT id,is_group,active FROM accounts WHERE code=?", (expense_code,)).fetchone()
-        if not existing_expense:
-            parent = c.execute("SELECT id FROM accounts WHERE code='6000' AND is_group=1").fetchone()
-            if not parent:
-                parent = c.execute("SELECT id FROM accounts WHERE account_type='expense' AND is_group=1 ORDER BY code LIMIT 1").fetchone()
-            if parent:
-                cur = c.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group,active) VALUES(?,?,?,?,0,1)",
-                                (expense_code, expense_name, "expense", parent["id"]))
-                expense_id = cur.lastrowid
-            else:
-                expense_id = None
-        else:
-            expense_id = existing_expense["id"] if not existing_expense["is_group"] and existing_expense["active"] else None
+        existing_expense = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (expense_code,)).fetchone()
+        expense_id = existing_expense["id"] if existing_expense and not existing_expense["is_group"] and existing_expense["active"] and existing_expense["account_type"]=="expense" else None
     else:
         c.execute("UPDATE stock_movements SET accounting_status='pending_purpose' WHERE id=?", (movement_id,))
         return None
@@ -165,8 +143,7 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
     inventory_code = inventory_codes.get(activity)
     inventory = c.execute("SELECT id,is_group,active FROM accounts WHERE code=?", (inventory_code,)).fetchone() if inventory_code else None
     if not expense_id or not inventory or inventory["is_group"] or not inventory["active"]:
-        c.execute("UPDATE stock_movements SET accounting_status='pending_setup' WHERE id=?", (movement_id,))
-        return None
+        raise ValueError("لا يمكن ترحيل حركة الصرف قبل ضبط حساب المصروف وحساب المخزون كحسابين تفصيليين نشطين بالنوع الصحيح.")
     amount = money(D(str(total_cost)))
     if amount <= 0:
         c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
