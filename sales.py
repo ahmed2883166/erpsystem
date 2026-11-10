@@ -198,6 +198,8 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     total_amount = subtotal + tax_amount
     if subtotal <= 0:
         raise ValueError("إجمالي الفاتورة يجب أن يكون أكبر من صفر.")
+    if tax_amount > 0 and vat is None:
+        vat = _account(conn, codes["vat"], "liability")
     credit_limit = Decimal(customer["credit_limit"] or "0")
     outstanding_row = conn.execute("""SELECT COALESCE(SUM(CAST(total_amount AS REAL)-CAST(paid_amount AS REAL)),0) balance
         FROM sales_invoices WHERE customer_id=? AND status='posted'""", (customer_id,)).fetchone()
