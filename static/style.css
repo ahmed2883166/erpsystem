@@ -93,3 +93,9 @@
 .compact-cards b{font-size:19px;overflow-wrap:anywhere}
 @media(max-width:850px){.compact-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:480px){.compact-cards{grid-template-columns:1fr}}
+
+.status-legend .legend-item.status-paid{background:#dcfce7;color:#166534;border-color:#86efac}
+.status-legend .legend-item.status-partial{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+.status-legend .legend-item.status-unpaid{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+.status-legend .legend-item.status-cancelled{background:#e2e8f0;color:#475569;border-color:#cbd5e1}
+.status-legend .legend-item.status-transfer{background:#ede9fe;color:#5b21b6;border-color:#c4b5fd}
