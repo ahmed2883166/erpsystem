@@ -100,13 +100,13 @@ def tax_report():
         WHERE b.status='posted' AND b.bill_date>=? AND b.bill_date<?
         ORDER BY b.bill_date,b.id
     """, (start.isoformat(), end.isoformat())).fetchall()
-    sales = [dict(r, taxable_base=Decimal(r["taxable_base"] or "0"),
-                  tax_rate=Decimal(r["tax_rate"] or "0"), tax_amount=Decimal(r["tax_amount"] or "0"),
-                  total_amount=Decimal(r["total_amount"] or "0")) for r in sales]
-    purchases = [dict(r, taxable_base=Decimal(r["taxable_base"] or "0"),
-                      tax_rate=Decimal(r["tax_rate"] or "0"), tax_amount=Decimal(r["tax_amount"] or "0"),
-                      total_amount=Decimal(r["total_amount"] or "0"),
-                      deductible_percent=Decimal(r["deductible_percent"] or "100")) for r in purchases]
+    sales = [{**dict(r), "taxable_base": Decimal(r["taxable_base"] or "0"),
+                  "tax_rate": Decimal(r["tax_rate"] or "0"), "tax_amount": Decimal(r["tax_amount"] or "0"),
+                  "total_amount": Decimal(r["total_amount"] or "0")} for r in sales]
+    purchases = [{**dict(r), "taxable_base": Decimal(r["taxable_base"] or "0"),
+                      "tax_rate": Decimal(r["tax_rate"] or "0"), "tax_amount": Decimal(r["tax_amount"] or "0"),
+                      "total_amount": Decimal(r["total_amount"] or "0"),
+                      "deductible_percent": Decimal(r["deductible_percent"] or "100")} for r in purchases]
     settings = {r["setting_key"]: r["setting_value"] for r in conn.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
         "('company_name','tax_country','tax_regime','tax_number','base_currency')")}
