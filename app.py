@@ -984,7 +984,18 @@ def export_data(format):
     if format == "csv":
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=["code", "name_ar", "account_type", "active"])
-        writer.writeheader(); writer.writerows(accounts_data)
+        writer.writeheader()
+        # Prevent spreadsheet formula execution when a text cell starts with
+        # a formula marker (including markers hidden behind whitespace/control chars).
+        def safe_csv_cell(value):
+            text = "" if value is None else str(value)
+            probe = text.lstrip(" \\t\\r\\n")
+            if probe.startswith(("=", "+", "-", "@")):
+                return "'" + text
+            return text
+        for account_row in accounts_data:
+            writer.writerow({key: safe_csv_cell(value) if key in {"code", "name_ar"} else value
+                             for key, value in account_row.items()})
         return Response(output.getvalue().encode("utf-8-sig"), mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=chart-of-accounts.csv"})
     return "Unsupported format", 400
 
