@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block title %}حول NEXUS ERP{% endblock %}
+{% block content %}
+<section class="panel"><h1>NEXUS ERP</h1><h2>النظام المالي والإداري</h2>
+<dl><dt>اسم البرنامج</dt><dd>NEXUS ERP</dd><dt>التصميم والتطوير</dt><dd><strong>أحمد الشاعر – Ahmed El Shaer</strong></dd>
+<dt>حقوق الملكية</dt><dd>Copyright © {{ year }} Ahmed El Shaer. All rights reserved.</dd><dt>الإصدار</dt><dd>1.0 – Development</dd>
+<dt>نوع النسخة</dt><dd>{{ license_info.license_type or ('Trial' if license_info.status == 'trial' else 'Licensed') }}</dd>
+<dt>حالة الترخيص</dt><dd>{{ {'trial':'تجريبية','licensed':'مفعّلة','expired':'منتهية','online_required':'تحتاج تحققًا عبر الإنترنت','clock_rollback':'اشتباه في تغيير الساعة','device_changed':'الجهاز غير مطابق','license_invalid':'رخصة غير صالحة'}.get(license_info.status, license_info.status) }}</dd>
+{% if license_info.days_remaining is defined %}<dt>الأيام المتبقية</dt><dd>{{ license_info.days_remaining }} يومًا</dd>{% endif %}
+{% if license_info.expires_at %}<dt>تاريخ انتهاء الرخصة</dt><dd>{{ license_info.expires_at }}</dd>{% endif %}</dl>
+<p>Designed &amp; Developed by Ahmed El Shaer</p><a href="{{ url_for('license_page') }}">إدارة الترخيص</a></section>
+{% endblock %}

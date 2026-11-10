@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block title %}ترخيص NEXUS ERP{% endblock %}
+{% block content %}
+<section class="panel">
+<h1>ترخيص NEXUS ERP</h1>
+{% if license_info.status == 'trial' %}<div class="flash success">النسخة التجريبية متاحة. متبقي {{ license_info.days_remaining }} يومًا من أصل 15 يومًا.</div>
+{% elif license_info.status == 'licensed' %}<div class="flash success">البرنامج مفعل بنجاح{% if license_info.customer %} باسم {{ license_info.customer }}{% endif %}.</div>
+{% else %}<div class="flash error">{{ license_info.message or 'انتهت صلاحية النسخة التجريبية. أدخل كود التفعيل للمتابعة.' }}</div>{% endif %}
+<p><strong>معرّف الجهاز:</strong> <code dir="ltr">{{ license_info.machine_id }}</code></p>
+<p>يعمل البرنامج محليًا بعد التفعيل، ويحتاج اتصالًا دوريًا بخادم التراخيص بعد انتهاء فترة السماح المحددة في الرخصة.</p>
+<form method="post"><label>كود التفعيل<input name="activation_code" required minlength="8" maxlength="160" autocomplete="off" placeholder="أدخل كود التفعيل المرسل من NEXUS"></label><button type="submit">تفعيل البرنامج</button></form>
+<p>لن يتم حذف قاعدة البيانات أو القيود عند انتهاء التجربة أو الرخصة.</p><p><a href="{{ url_for('about') }}">حول البرنامج وحقوق الملكية</a></p>
+</section>
+{% endblock %}
