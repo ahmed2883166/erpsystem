@@ -18,6 +18,7 @@ from purchases import purchase_bp, init_purchase_schema
 from sales import sales_bp, init_sales_schema
 from accounting_core import post_journal, reconciliation_snapshot
 from banking import bank_bp, init_bank_schema
+from report_exports import register_report_exports
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -36,6 +37,8 @@ PERMISSIONS = {
     "accountant": {"accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view"},
     "viewer": {"reports.view", "stock.view", "purchases.view", "sales.view"},
 }
+
+register_report_exports(app, DB_PATH, PERMISSIONS)
 
 
 def db():
@@ -388,11 +391,30 @@ def accounts():
         if not parent_id or parent_id not in by_id or parent_id in seen:
             return 0
         return 1 + account_depth(by_id[parent_id], seen | {parent_id})
-    rows = []
+    children_by_parent = {}
     for row in raw_rows:
-        item = dict(row)
-        item["depth"] = account_depth(item, {item["id"]})
-        rows.append(item)
+        children_by_parent.setdefault(row["parent_id"], []).append(dict(row))
+    rows = []
+    def append_branch(parent_id, depth=0, ancestors=None):
+        ancestors = ancestors or set()
+        for item in sorted(children_by_parent.get(parent_id, []), key=lambda x: x["code"]):
+            if item["id"] in ancestors:
+                continue
+            item["depth"] = depth
+            item["has_children"] = bool(children_by_parent.get(item["id"]))
+            item["parent_code"] = by_id.get(item["parent_id"], {}).get("code", "")
+            rows.append(item)
+            append_branch(item["id"], depth + 1, ancestors | {item["id"]})
+    append_branch(None)
+    # Keep any orphaned/cyclic records visible rather than silently hiding them.
+    visible_ids = {item["id"] for item in rows}
+    for raw in raw_rows:
+        if raw["id"] not in visible_ids:
+            item = dict(raw)
+            item["depth"] = account_depth(item, {item["id"]})
+            item["has_children"] = bool(children_by_parent.get(item["id"]))
+            item["parent_code"] = by_id.get(item["parent_id"], {}).get("code", "")
+            rows.append(item)
     groups = [row for row in raw_rows if row["is_group"] and row["active"]]
     connection.close()
     return render_template("accounts.html", accounts=rows, groups=groups)
