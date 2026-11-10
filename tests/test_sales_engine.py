@@ -189,6 +189,11 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(Decimal(movement["quantity"]), Decimal("1"))
         self.assertEqual(Decimal(movement["total_cost"]), Decimal("10.00"))
         self.assertEqual(movement["accounting_status"], "posted")
+        returned_layer = self.db.execute(
+            "SELECT value_remaining FROM stock_valuation_layers WHERE source_movement_id=("
+            "SELECT id FROM stock_movements WHERE movement_no LIKE 'SCN-%')"
+        ).fetchone()
+        self.assertEqual(Decimal(returned_layer["value_remaining"]), Decimal("10.00"))
 
         inventory_qty = self.db.execute(
             "SELECT SUM(CAST(qty_remaining AS REAL)) FROM stock_valuation_layers"
