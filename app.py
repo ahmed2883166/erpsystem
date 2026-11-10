@@ -18,6 +18,9 @@ from purchases import purchase_bp, init_purchase_schema
 from sales import sales_bp, init_sales_schema
 from accounting_core import post_journal, reconciliation_snapshot
 from banking import bank_bp, init_bank_schema
+from fixed_assets import assets_bp, initialize_assets_schema
+from receivables import aging_bp, initialize_aging_schema
+from quotations import quotes_bp, initialize_quotes_schema
 from report_exports import register_report_exports
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -30,12 +33,15 @@ app.register_blueprint(stock_bp)
 app.register_blueprint(purchase_bp)
 app.register_blueprint(sales_bp)
 app.register_blueprint(bank_bp)
+app.register_blueprint(assets_bp)
+app.register_blueprint(aging_bp)
+app.register_blueprint(quotes_bp)
 app.config["SECRET_KEY"] = os.environ.get("NEXUS_SECRET_KEY", "change-this-secret-before-production")
 
 PERMISSIONS = {
-    "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view"},
+    "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view"},
     "accountant": {"accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view"},
-    "viewer": {"reports.view", "stock.view", "purchases.view", "sales.view"},
+    "viewer": {"reports.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view"},
 }
 
 register_report_exports(app, DB_PATH, PERMISSIONS)
@@ -153,6 +159,9 @@ def initialize_database():
     init_purchase_schema()
     init_sales_schema()
     init_bank_schema()
+    initialize_assets_schema()
+    initialize_aging_schema()
+    initialize_quotes_schema()
 
 
 def now():

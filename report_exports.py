@@ -115,6 +115,37 @@ def register_report_exports(app, db_path, permissions):
                 data = [[r["sku"], r["name_ar"], r["uom"], r["qty"], r["value"]] for r in rows]
                 filename = "nexus-stock-valuation.xlsx"
                 title = "تقييم وأرصدة المخزون"
+            elif report == "aging":
+                kind = request.args.get("kind", "customers")
+                as_of = request.args.get("as_of", datetime.now().date().isoformat())
+                if kind == "customers":
+                    rows = conn.execute("""SELECT i.invoice_no doc_no,cu.code party_code,cu.name party_name,
+                      i.invoice_date doc_date,COALESCE(i.due_date,i.invoice_date) due_date,
+                      CAST(i.total_amount AS REAL)-CAST(i.paid_amount AS REAL) balance
+                      FROM sales_invoices i JOIN customers cu ON cu.id=i.customer_id
+                      WHERE i.status='posted' AND CAST(i.total_amount AS REAL)>CAST(i.paid_amount AS REAL)
+                        AND i.invoice_date<=? ORDER BY due_date,cu.name""",(as_of,)).fetchall()
+                elif kind == "suppliers":
+                    rows = conn.execute("""SELECT b.bill_no doc_no,s.code party_code,s.name party_name,
+                      b.bill_date doc_date,COALESCE(b.due_date,b.bill_date) due_date,
+                      CAST(b.total_amount AS REAL)-CAST(b.paid_amount AS REAL) balance
+                      FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
+                      WHERE b.status='posted' AND CAST(b.total_amount AS REAL)>CAST(b.paid_amount AS REAL)
+                        AND b.bill_date<=? ORDER BY due_date,s.name""",(as_of,)).fetchall()
+                else:
+                    abort(400)
+                from datetime import date as date_type
+                report_date = date_type.fromisoformat(as_of)
+                headers = ["كود الطرف","اسم الطرف","رقم المستند","تاريخ المستند","تاريخ الاستحقاق",
+                           "أيام التأخير","غير مستحق","0-30","31-60","61-90","أكثر من 90"]
+                data = []
+                for r in rows:
+                    days=(report_date-date_type.fromisoformat(r["due_date"])).days
+                    buckets=[0,0,0,0,0]
+                    buckets[0 if days<=0 else 1 if days<=30 else 2 if days<=60 else 3 if days<=90 else 4]=float(r["balance"])
+                    data.append([r["party_code"],r["party_name"],r["doc_no"],r["doc_date"],r["due_date"],
+                                 max(days,0),*buckets])
+                filename = "nexus-aging-"+kind+".xlsx"
             elif report == "reconciliation":
                 from accounting_core import reconciliation_snapshot
                 snapshot = reconciliation_snapshot(conn)

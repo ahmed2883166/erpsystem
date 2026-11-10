@@ -325,6 +325,9 @@ def new_bill():
             cur=c.execute("INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,subtotal,tax_rate,tax_amount,total_amount,created_by) VALUES(?,?,?,?,?,?,?,?,?)",
               (no,supplier,request.form["bill_date"],request.form["supplier_invoice_no"].strip(),str(subtotal),str(rate),str(tax),str(total),session["user_id"]))
             bid=cur.lastrowid
+            due_date=request.form.get("due_date") or request.form["bill_date"]
+            if due_date < request.form["bill_date"]: raise ValueError("تاريخ استحقاق المورد لا يمكن أن يسبق تاريخ الفاتورة.")
+            c.execute("UPDATE supplier_bills SET due_date=? WHERE id=?",(due_date,bid))
             jlines=[]
             if receipts:
                 for rid,amt in lines:

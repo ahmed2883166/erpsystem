@@ -362,12 +362,26 @@ def new_invoice():
                     request.form.getlist("quantity"), request.form.getlist("unit_price"),
                     request.form.getlist("description")):
                 if pid or desc.strip():
+                    selected_price = price
+                    if pid:
+                        rule = c.execute("""SELECT unit_price FROM customer_price_rules
+                          WHERE customer_id=? AND product_id=? AND active=1 AND valid_from<=?
+                            AND (valid_to IS NULL OR valid_to>=?) AND CAST(min_qty AS REAL)<=CAST(? AS REAL)
+                          ORDER BY valid_from DESC,id DESC LIMIT 1""",
+                          (int(request.form["customer_id"]), int(pid), request.form["invoice_date"],
+                           request.form["invoice_date"], qty)).fetchone()
+                        if rule:
+                            selected_price = rule["unit_price"]
                     items.append({"product_id": int(pid) if pid else None, "quantity": qty,
-                                  "unit_price": price, "description": desc})
+                                  "unit_price": selected_price, "description": desc})
             c.execute("BEGIN IMMEDIATE")
             result = post_invoice(c, int(request.form["customer_id"]), request.form["invoice_date"],
                                   request.form.get("warehouse_id", type=int), items,
                                   request.form.get("tax_rate", "0"), session["user_id"])
+            due_date = request.form.get("due_date") or request.form["invoice_date"]
+            if due_date < request.form["invoice_date"]:
+                raise ValueError("تاريخ الاستحقاق لا يمكن أن يسبق تاريخ الفاتورة.")
+            c.execute("UPDATE sales_invoices SET due_date=? WHERE id=?", (due_date, result["invoice_id"]))
             c.commit()
             flash("تم ترحيل فاتورة البيع " + result["invoice_no"], "success")
             if result.get("credit_warning"):
