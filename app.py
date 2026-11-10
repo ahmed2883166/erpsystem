@@ -1,5 +1,6 @@
 import csv
 import hashlib
+import hmac
 import io
 import json
 import os
@@ -40,8 +41,38 @@ def db():
     return connection
 
 
-def password_hash(password):
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+def password_hash(password, salt=None, iterations=310000):
+    """Create a salted PBKDF2-SHA256 password hash for new and changed passwords."""
+    salt = salt or os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return "pbkdf2_sha256$" + str(iterations) + "$" + salt.hex() + "$" + digest.hex()
+
+
+def verify_password(password, stored_hash):
+    """Verify current PBKDF2 hashes and legacy SHA-256 hashes during migration."""
+    if not stored_hash:
+        return False
+    if stored_hash.startswith("pbkdf2_sha256$"):
+        try:
+            algorithm, rounds, salt_hex, expected_hex = stored_hash.split("$", 3)
+            if algorithm != "pbkdf2_sha256":
+                return False
+            rounds = int(rounds)
+            if rounds < 100000 or rounds > 2000000:
+                return False
+            salt = bytes.fromhex(salt_hex)
+            expected = bytes.fromhex(expected_hex)
+            actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds)
+            return hmac.compare_digest(actual, expected)
+        except (ValueError, TypeError):
+            return False
+    # Compatibility only: successful legacy logins are upgraded immediately.
+    legacy = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(legacy, stored_hash)
+
+
+def password_hash_needs_upgrade(stored_hash):
+    return not (stored_hash or "").startswith("pbkdf2_sha256$")
 
 
 def initialize_database():
@@ -151,8 +182,13 @@ def login():
     if request.method == "POST":
         connection = db()
         user = connection.execute("SELECT * FROM users WHERE username=? AND active=1", (request.form["username"],)).fetchone()
+        valid = bool(user and verify_password(request.form["password"], user["password_hash"]))
+        if valid and password_hash_needs_upgrade(user["password_hash"]):
+            connection.execute("UPDATE users SET password_hash=? WHERE id=?",
+                               (password_hash(request.form["password"]), user["id"]))
+            connection.commit()
         connection.close()
-        if user and user["password_hash"] == password_hash(request.form["password"]):
+        if valid:
             session.clear()
             session.update(user_id=user["id"], username=user["username"], full_name=user["full_name"], role=user["role"])
             log("login", "تسجيل دخول")
