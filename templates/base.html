@@ -5,7 +5,7 @@
 <a href="{{ url_for('dashboard') }}">الرئيسية</a>
 {% if 'accounts.manage' in permissions %}<a href="{{ url_for('accounts') }}">دليل الحسابات</a>{% endif %}
 <a href="{{ url_for('stock.index') }}">المخزون</a>
-{% if 'purchases.view' in permissions %}<a href="{{ url_for('purchase.index') }}">المشتريات والموردون</a>{% endif %}
+{% if 'purchases.view' in permissions %}<a href="{{ url_for('purchase.index') }}">المشتريات والموردون</a><a href="{{ url_for('purchase.integrity_issues') }}">مراجعة سلامة المشتريات</a>{% endif %}
 {% if 'sales.view' in permissions %}<a href="{{ url_for('sales.index') }}">المبيعات والعملاء</a>
 {% if 'quotes.view' in permissions %}<a href="{{ url_for('quotes.index') }}">عروض الأسعار والتسعير</a>{% endif %}
 {% if 'assets.view' in permissions %}<a href="{{ url_for('assets.index') }}">سجل الأصول الثابتة</a>{% endif %}
