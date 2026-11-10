@@ -35,7 +35,13 @@ class TaxCenterTests(unittest.TestCase):
         conn.commit()
         conn.close()
         tax_center.initialize_tax_schema()
-        self.app = Flask(__name__, template_folder=str(Path(__file__).resolve().parents[1] / "templates"))
+        template_dir = Path(self.temp.name) / "templates"
+        template_dir.mkdir()
+        (template_dir / "tax_report.html").write_text(
+            "{{ summary.output_vat }}|{{ summary.input_vat }}|{{ summary.sales_zero }}",
+            encoding="utf-8"
+        )
+        self.app = Flask(__name__, template_folder=str(template_dir))
         self.app.secret_key = "test"
         self.app.register_blueprint(tax_center.tax_bp)
         self.client = self.app.test_client()
