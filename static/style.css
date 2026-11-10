@@ -82,3 +82,14 @@
 .status-transfer td{background:color-mix(in srgb,#8b5cf6 8%,var(--surface))}
 .status-issued td{background:color-mix(in srgb,#d97706 7%,var(--surface))}
 .drill-hint{font-size:11px;color:var(--accent);font-weight:700}
+
+/* Accessible status legend and compact balance cards */
+.status-legend{display:flex;gap:9px;flex-wrap:wrap;margin:0 0 14px;align-items:center}
+.legend-item{display:inline-flex;align-items:center;padding:4px 11px;border-radius:20px;border:1px solid var(--line);font-size:12px;font-weight:700;color:var(--text)}
+.state-pill{display:inline-flex;align-items:center;padding:3px 10px;border-radius:18px;font-size:12px;font-weight:800;white-space:nowrap}
+.state-paid{background:#dcfce7;color:#166534}.state-partial{background:#fef3c7;color:#92400e}.state-unpaid{background:#fee2e2;color:#991b1b}.state-cancelled{background:#e2e8f0;color:#475569}
+.compact-cards{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:12px 0 18px}
+.compact-cards article{padding:13px 16px;margin:0}
+.compact-cards b{font-size:19px;overflow-wrap:anywhere}
+@media(max-width:850px){.compact-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:480px){.compact-cards{grid-template-columns:1fr}}
