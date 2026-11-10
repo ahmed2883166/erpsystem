@@ -71,10 +71,17 @@ class SharedAccountingCoreTests(unittest.TestCase):
     def test_same_reference_is_idempotent(self):
         one = post_journal(self.db, "2026-11-09", "INV-2", "بيع",
                            [(1, 50, 0, "نقدية"), (2, 0, 50, "إيراد")], 7)
-        two = post_journal(self.db, "2026-11-09", "INV-2", "تكرار",
+        two = post_journal(self.db, "2026-11-09", "INV-2", "بيع",
                            [(1, 50, 0, "نقدية"), (2, 0, 50, "إيراد")], 7)
         self.assertEqual(one, two)
         self.assertEqual(self.db.execute("SELECT COUNT(*) n FROM journal_entries WHERE reference='INV-2'").fetchone()["n"], 1)
+
+    def test_reused_reference_with_different_payload_is_rejected(self):
+        post_journal(self.db, "2026-11-09", "INV-DUP", "بيع",
+                     [(1, 50, 0, "نقدية"), (2, 0, 50, "إيراد")], 7)
+        with self.assertRaisesRegex(ValueError, "مرجع القيد مستخدم بالفعل"):
+            post_journal(self.db, "2026-11-09", "INV-DUP", "فاتورة أخرى",
+                         [(1, 75, 0, "نقدية"), (2, 0, 75, "إيراد")], 7)
 
     def test_unbalanced_journal_rejected(self):
         with self.assertRaisesRegex(ValueError, "غير متوازن"):
