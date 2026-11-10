@@ -386,8 +386,17 @@ def delete_warehouse(warehouse_id):
     c=get_db(); warehouse=c.execute("SELECT * FROM stock_warehouses WHERE id=?",(warehouse_id,)).fetchone()
     if not warehouse: flash("المخزن غير موجود.","error")
     else:
-        refs=[("stock_movements","حركات المخزون"),("stock_valuation_layers","طبقات تقييم المخزون"),("goods_receipts","استلامات المشتريات"),("sales_invoices","فواتير البيع")]
-        used=next((label for table,label in refs if c.execute(f"SELECT 1 FROM {table} WHERE warehouse_id=? OR source_warehouse_id=? OR target_warehouse_id=? LIMIT 1",(warehouse_id,warehouse_id,warehouse_id)).fetchone()),None)
+        used = None
+        checks = [
+            ("SELECT 1 FROM stock_movements WHERE source_warehouse_id=? OR target_warehouse_id=? LIMIT 1",(warehouse_id,warehouse_id),"حركات المخزون"),
+            ("SELECT 1 FROM stock_valuation_layers WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"طبقات تقييم المخزون"),
+            ("SELECT 1 FROM goods_receipts WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"استلامات المشتريات"),
+            ("SELECT 1 FROM sales_invoices WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"فواتير البيع")
+        ]
+        for query, params, label in checks:
+            if c.execute(query,params).fetchone():
+                used=label
+                break
         if used: flash("لا يمكن حذف المخزن لوجود "+used+" مرتبطة به.","error")
         else:
             try: c.execute("DELETE FROM stock_warehouses WHERE id=?",(warehouse_id,)); c.commit(); flash("تم حذف المخزن.","success")
