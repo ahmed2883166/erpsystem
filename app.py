@@ -15,6 +15,7 @@ from flask import Flask, Response, flash, redirect, render_template, request, se
 from chart_templates import CHARTS, ACTIVITY_LABELS
 from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
+from sales import sales_bp, init_sales_schema
 from accounting_core import post_journal, reconciliation_snapshot
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -25,12 +26,13 @@ BACKUP_DIR = DATA_DIR / "backups"
 app = Flask(__name__)
 app.register_blueprint(stock_bp)
 app.register_blueprint(purchase_bp)
+app.register_blueprint(sales_bp)
 app.config["SECRET_KEY"] = os.environ.get("NEXUS_SECRET_KEY", "change-this-secret-before-production")
 
 PERMISSIONS = {
-    "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view"},
+    "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view"},
     "accountant": {"accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view"},
-    "viewer": {"reports.view", "stock.view", "purchases.view"},
+    "viewer": {"reports.view", "stock.view", "purchases.view", "sales.view"},
 }
 
 
@@ -144,6 +146,7 @@ def initialize_database():
     connection.close()
     initialize_stock_schema()
     init_purchase_schema()
+    init_sales_schema()
 
 
 def now():
