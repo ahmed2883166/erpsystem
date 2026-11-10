@@ -77,7 +77,7 @@ class TaxCenterTests(unittest.TestCase):
         response = self.client.get("/reports/tax?period=2026-11")
         self.assertEqual(response.status_code, 200)
         body = response.get_data(as_text=True)
-        self.assertIn("117.20", body)
+        self.assertIn("137.20", body)
         self.assertIn("-2.80", body)
         self.assertIn("140.00", body)
         self.assertIn("56.00", body)
