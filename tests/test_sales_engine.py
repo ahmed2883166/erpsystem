@@ -157,6 +157,61 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(Decimal(paid), Decimal("40.00"))
         self.assertTrue(receipt["journal_entry_id"])
 
+    def test_partial_credit_note_reverses_revenue_tax_cogs_and_restores_stock(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "2", "unit_price": "20",
+              "tax_rate": "14", "tax_treatment": "standard"}], "14", 1
+        )
+        line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?", (invoice["invoice_id"],)
+        ).fetchone()["id"]
+        credit = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-11", "مرتجع جزئي",
+            [{"invoice_line_id": line_id, "quantity": "1"}], 1
+        )
+        self.db.commit()
+
+        self.assertEqual(credit["subtotal"], Decimal("20.00"))
+        self.assertEqual(credit["tax_amount"], Decimal("2.80"))
+        self.assertEqual(credit["total_amount"], Decimal("22.80"))
+        self.assertEqual(credit["total_cost"], Decimal("10.00"))
+        invoice_row = self.db.execute(
+            "SELECT credited_amount FROM sales_invoices WHERE id=?", (invoice["invoice_id"],)
+        ).fetchone()
+        self.assertEqual(Decimal(invoice_row["credited_amount"]), Decimal("22.80"))
+
+        movement = self.db.execute(
+            "SELECT movement_type,quantity,total_cost,accounting_status FROM stock_movements WHERE movement_no LIKE 'SCN-%'"
+        ).fetchone()
+        self.assertEqual(movement["movement_type"], "receipt")
+        self.assertEqual(Decimal(movement["quantity"]), Decimal("1"))
+        self.assertEqual(Decimal(movement["total_cost"]), Decimal("10.00"))
+        self.assertEqual(movement["accounting_status"], "posted")
+
+        inventory_qty = self.db.execute(
+            "SELECT SUM(CAST(qty_remaining AS REAL)) FROM stock_valuation_layers"
+        ).fetchone()[0]
+        self.assertEqual(Decimal(str(inventory_qty)), Decimal("4.0"))
+        credit_lines = self.db.execute(
+            """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
+               JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=? ORDER BY a.code""",
+            (credit["journal_entry_id"],),
+        ).fetchall()
+        amounts = {row["code"]: (Decimal(row["debit"]), Decimal(row["credit"])) for row in credit_lines}
+        self.assertEqual(amounts["4100"], (Decimal("20.00"), Decimal("0")))
+        self.assertEqual(amounts["2130"], (Decimal("2.80"), Decimal("0")))
+        self.assertEqual(amounts["1130"], (Decimal("0"), Decimal("22.80")))
+
+        with self.assertRaisesRegex(ValueError, "الكمية المطلوبة"):
+            self.db.execute("BEGIN IMMEDIATE")
+            sales.post_credit_note(
+                self.db, invoice["invoice_id"], "2026-11-12", "محاولة تكرار المرتجع",
+                [{"invoice_line_id": line_id, "quantity": "2"}], 1
+            )
+        self.db.rollback()
+
     def test_insufficient_stock_rolls_back_invoice(self):
         self.db.execute("BEGIN IMMEDIATE")
         with self.assertRaisesRegex(ValueError, "الرصيد غير كافٍ"):
