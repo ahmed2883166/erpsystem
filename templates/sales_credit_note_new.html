@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}إشعار دائن / مرتجع بيع | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <h2>إشعار دائن / مرتجع بيع</h2>
+  <p>الإشعار مرتبط بفاتورة أصلية، ويعكس الإيراد والضريبة والذمم، ويعيد الكميات وتكلفتها إلى مخزن الصرف الأصلي.</p>
+</header>
+<section class="panel">
+  {% if not invoice %}
+    <h3>اختيار الفاتورة الأصلية</h3>
+    <form method="get">
+      <label>فاتورة البيع
+        <select name="invoice_id" required>
+          <option value="">اختر فاتورة</option>
+          {% for x in invoices %}
+            <option value="{{ x.id }}">{{ x.invoice_no }} — {{ x.customer_name }} — {{ x.total_amount }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit">عرض بنود الفاتورة</button>
+    </form>
+  {% else %}
+    <h3>الفاتورة {{ invoice.invoice_no }}</h3>
+    <p>العميل: {{ invoice.customer_name }} · تاريخ الفاتورة: {{ invoice.invoice_date }}</p>
+    <p>إجمالي الفاتورة: {{ invoice.total_amount }} · المحصل: {{ invoice.paid_amount }} · الإشعارات السابقة: {{ invoice.credited_amount or '0' }}</p>
+    <p class="warning">الإصدار الحالي يسمح بتخفيض الرصيد غير المحصل فقط. إذا كانت هناك مبالغ محصلة مطلوب ردها، يلزم إجراء رد نقدي مستقل قبل إصدار إشعار يتجاوز الرصيد المفتوح.</p>
+    <form method="post">
+      <input type="hidden" name="invoice_id" value="{{ invoice.id }}">
+      <div class="form-grid">
+        <label>تاريخ الإشعار <input type="date" name="credit_date" value="{{ today }}" required></label>
+        <label>سبب الإشعار <input name="reason" maxlength="500" required placeholder="مرتجع / خصم بعد البيع / تصحيح فاتورة"></label>
+      </div>
+      <h3>بنود المرتجع</h3>
+      <table>
+        <thead><tr><th>الصنف / الخدمة</th><th>الكمية المباعة</th><th>مرتجع سابق</th><th>المتاح للإرجاع</th><th>سعر الوحدة</th><th>كمية المرتجع الآن</th><th>الضريبة</th></tr></thead>
+        <tbody>
+          {% for line in lines %}
+            <tr>
+              <td>{{ line.description }}</td>
+              <td>{{ line.quantity }}</td>
+              <td>{{ line.credited_qty }}</td>
+              <td>{{ (line.quantity|float)-(line.credited_qty|float) }}</td>
+              <td>{{ line.unit_price }}</td>
+              <td>
+                <input type="hidden" name="invoice_line_id" value="{{ line.id }}">
+                <input type="number" name="return_quantity" min="0" max="{{ (line.quantity|float)-(line.credited_qty|float) }}" step="0.0001" value="0">
+              </td>
+              <td>{{ line.tax_treatment }} / {{ line.tax_rate }}%</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <button type="submit">ترحيل الإشعار الدائن</button>
+      <a class="button secondary" href="{{ url_for('sales.index') }}">رجوع</a>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}
