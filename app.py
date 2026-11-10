@@ -169,6 +169,14 @@ def initialize_database():
             id INTEGER PRIMARY KEY, code TEXT UNIQUE NOT NULL, name_ar TEXT NOT NULL,
             rate REAL NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1
         );
+        CREATE TABLE IF NOT EXISTS login_attempts (
+            id INTEGER PRIMARY KEY, username TEXT NOT NULL, remote_addr TEXT NOT NULL,
+            attempted_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS accounting_periods (
+            id INTEGER PRIMARY KEY, period_name TEXT NOT NULL, start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL, locked INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+        );
     """)
     user_columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
     if "must_change_password" not in user_columns:
@@ -288,13 +296,31 @@ def about():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
+        username = request.form.get("username", "").strip()[:150]
+        remote_addr = request.remote_addr or "unknown"
         connection = db()
-        user = connection.execute("SELECT * FROM users WHERE username=? AND active=1", (request.form["username"],)).fetchone()
-        valid = bool(user and verify_password(request.form["password"], user["password_hash"]))
+        cutoff = datetime.now().timestamp() - 900
+        cutoff_text = datetime.fromtimestamp(cutoff).isoformat(timespec="seconds")
+        connection.execute("DELETE FROM login_attempts WHERE attempted_at < ?", (cutoff_text,))
+        attempts = connection.execute("""SELECT COUNT(*) FROM login_attempts
+            WHERE username=? AND remote_addr=? AND attempted_at>=?""",
+            (username, remote_addr, cutoff_text)).fetchone()[0]
+        if attempts >= 5:
+            connection.close()
+            flash("تم إيقاف محاولات الدخول مؤقتًا بسبب تكرار المحاولات الفاشلة. حاول بعد 15 دقيقة.", "error")
+            return render_template("login.html"), 429
+        user = connection.execute("SELECT * FROM users WHERE username=? AND active=1", (username,)).fetchone()
+        valid = bool(user and verify_password(request.form.get("password", ""), user["password_hash"]))
         if valid and password_hash_needs_upgrade(user["password_hash"]):
             connection.execute("UPDATE users SET password_hash=? WHERE id=?",
                                (password_hash(request.form["password"]), user["id"]))
             connection.commit()
+        if valid:
+            connection.execute("DELETE FROM login_attempts WHERE username=? AND remote_addr=?", (username, remote_addr))
+        else:
+            connection.execute("INSERT INTO login_attempts(username,remote_addr,attempted_at) VALUES(?,?,?)",
+                               (username, remote_addr, now()))
+        connection.commit()
         connection.close()
         if valid:
             session.clear()
@@ -762,6 +788,44 @@ def journal_detail(entry_id):
         FROM journal_lines WHERE entry_id=?""", (entry_id,)).fetchone()
     connection.close()
     return render_template("journal_detail.html", entry=entry, lines=lines, totals=totals)
+
+
+@app.route("/journal/<int:entry_id>/reverse", methods=["POST"])
+@requires("journal.manage")
+def reverse_journal(entry_id):
+    connection = db()
+    original = connection.execute("SELECT * FROM journal_entries WHERE id=? AND status='posted'", (entry_id,)).fetchone()
+    if not original:
+        connection.close()
+        flash("لا يمكن عكس قيد غير موجود أو غير مرحّل.", "error")
+        return redirect(url_for("trial_balance"))
+    reference = f"REV-{entry_id}"
+    existing = connection.execute("SELECT id FROM journal_entries WHERE reference=? AND status='posted'", (reference,)).fetchone()
+    if existing:
+        connection.close()
+        flash(f"تم إنشاء القيد العكسي مسبقًا: رقم {existing['id']}.", "warning")
+        return redirect(url_for("journal_detail", entry_id=entry_id))
+    original_lines = connection.execute("SELECT account_id,debit,credit,memo FROM journal_lines WHERE entry_id=? ORDER BY id",
+                                        (entry_id,)).fetchall()
+    if len(original_lines) < 2:
+        connection.close()
+        flash("القيد الأصلي لا يحتوي على سطور كافية للعكس.", "error")
+        return redirect(url_for("journal_detail", entry_id=entry_id))
+    reverse_lines = [(r["account_id"], r["credit"], r["debit"], f"عكس: {r['memo'] or ''}") for r in original_lines]
+    reversal_date = datetime.now().date().isoformat()
+    try:
+        reversal_id = post_journal(connection, reversal_date, reference,
+            f"قيد عكسي للقيد رقم {entry_id}: {original['description']}", reverse_lines, session["user_id"])
+        connection.commit()
+        log("journal_reversed", f"القيد الأصلي #{entry_id}؛ القيد العكسي #{reversal_id}")
+        flash(f"تم إنشاء القيد العكسي رقم {reversal_id}. القيد الأصلي محفوظ دون تعديل.", "success")
+        return redirect(url_for("journal_detail", entry_id=reversal_id))
+    except (ValueError, TypeError) as exc:
+        connection.rollback()
+        flash(f"تعذر عكس القيد: {exc}", "error")
+        return redirect(url_for("journal_detail", entry_id=entry_id))
+    finally:
+        connection.close()
 
 
 @app.route("/reports/reconciliation")
