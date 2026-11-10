@@ -439,7 +439,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
                 raise ValueError("فاتورة الصنف المخزني لا تحتوي على مخزن صرف صالح.")
             stock_index += 1
             movement_no = credit_no + "-" + str(stock_index)
-            unit_cost = (item["cost_total"] / item["quantity"]).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+            unit_cost = item["cost_total"] / item["quantity"]
             movement = conn.execute(
                 """INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,
                    quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,issue_purpose)
@@ -451,7 +451,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
             movement_id = movement.lastrowid
             conn.execute(
                 """INSERT INTO stock_valuation_layers(product_id,warehouse_id,source_movement_id,
-                   qty_in,qty_remaining,unit_cost) VALUES(?,?,?,?,?,?)""",
+                   qty_in,qty_remaining,unit_cost,value_remaining) VALUES(?,?,?,?,?,?,?)""",
                 (product_id, warehouse_id, movement_id, str(item["quantity"]),
                  str(item["quantity"]), str(unit_cost)),
             )
