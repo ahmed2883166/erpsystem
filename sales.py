@@ -63,6 +63,14 @@ def init_sales_schema():
     CREATE INDEX IF NOT EXISTS idx_sales_invoice_customer ON sales_invoices(customer_id,invoice_date);
     CREATE INDEX IF NOT EXISTS idx_sales_receipts_invoice ON customer_receipts(invoice_id,receipt_date);
     """)
+    line_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoice_lines)")}
+    for name, definition in {
+        "tax_rate": "TEXT NOT NULL DEFAULT '0'",
+        "tax_treatment": "TEXT NOT NULL DEFAULT 'standard'",
+        "tax_amount": "TEXT NOT NULL DEFAULT '0'",
+    }.items():
+        if name not in line_columns:
+            c.execute(f"ALTER TABLE sales_invoice_lines ADD COLUMN {name} {definition}")
     customer_columns = {row["name"] for row in c.execute("PRAGMA table_info(customers)")}
     if "credit_limit" not in customer_columns:
         c.execute("ALTER TABLE customers ADD COLUMN credit_limit TEXT NOT NULL DEFAULT '0'")
@@ -140,6 +148,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     normalized = []
     subtotal = Decimal("0.00")
     total_cost = Decimal("0.00")
+    tax_amount = Decimal("0.00")
     for item in lines:
         qty = Decimal(str(item.get("quantity", "1")))
         unit_price = Decimal(str(item.get("unit_price", "0"))).quantize(CENT, rounding=ROUND_HALF_UP)
@@ -165,16 +174,27 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             if not description:
                 raise ValueError("اكتب وصف الخدمة.")
         line_total = (qty * unit_price).quantize(CENT, rounding=ROUND_HALF_UP)
+        treatment = str(item.get("tax_treatment") or "standard").strip().lower()
+        if treatment not in {"standard", "zero_rated", "exempt", "out_of_scope"}:
+            raise ValueError("المعاملة الضريبية للبند غير صحيحة.")
+        line_rate = Decimal(str(item.get("tax_rate", rate if treatment == "standard" else "0"))).quantize(CENT, rounding=ROUND_HALF_UP)
+        if not line_rate.is_finite() or line_rate < 0 or line_rate > 100:
+            raise ValueError("نسبة ضريبة البند يجب أن تكون بين صفر و100.")
+        if treatment != "standard":
+            line_rate = Decimal("0.00")
+        line_tax = (line_total * line_rate / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
         subtotal += line_total
+        tax_amount += line_tax
         total_cost += cost
         normalized.append({
             "product_id": int(product_id) if product_id else None,
             "description": description, "quantity": qty, "unit_price": unit_price,
             "line_total": line_total, "cost_total": cost,
+            "tax_rate": line_rate, "tax_treatment": treatment, "tax_amount": line_tax,
         })
 
     subtotal = subtotal.quantize(CENT, rounding=ROUND_HALF_UP)
-    tax_amount = (subtotal * rate / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
+    tax_amount = tax_amount.quantize(CENT, rounding=ROUND_HALF_UP)
     total_amount = subtotal + tax_amount
     if subtotal <= 0:
         raise ValueError("إجمالي الفاتورة يجب أن يكون أكبر من صفر.")
@@ -215,9 +235,11 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             movement_id = move.lastrowid
         conn.execute(
             """INSERT INTO sales_invoice_lines(invoice_id,product_id,description,quantity,unit_price,
-               line_total,cost_total,stock_movement_id) VALUES(?,?,?,?,?,?,?,?)""",
+               line_total,cost_total,stock_movement_id,tax_rate,tax_treatment,tax_amount)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (invoice_id, item["product_id"], item["description"], str(item["quantity"]),
-             str(item["unit_price"]), str(item["line_total"]), str(item["cost_total"]), movement_id)
+             str(item["unit_price"]), str(item["line_total"]), str(item["cost_total"]), movement_id,
+             str(item["tax_rate"]), item["tax_treatment"], str(item["tax_amount"]))
         )
         if item["product_id"] and item["cost_total"] > 0:
             cogs_lines.append(item["cost_total"])
