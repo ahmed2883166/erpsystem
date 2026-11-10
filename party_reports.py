@@ -42,6 +42,12 @@ def _events(c, kind, party_id):
             FROM customer_receipts cr JOIN sales_invoices i ON i.id=cr.invoice_id
             WHERE i.customer_id=?""", (party_id,)):
             events.append(dict(r))
+        for r in c.execute("""SELECT cn.credit_date event_date,cn.credit_note_no reference,
+            'إشعار دائن / مرتجع بيع: ' || cn.reason description,0 debit,
+            CAST(cn.total_amount AS REAL) credit,2 priority
+            FROM sales_credit_notes cn JOIN sales_invoices i ON i.id=cn.invoice_id
+            WHERE i.customer_id=? AND cn.status='posted'""", (party_id,)):
+            events.append(dict(r))
     else:
         for r in c.execute("""SELECT bill_date event_date,bill_no reference,
             'فاتورة مشتريات' description,0 debit,CAST(total_amount AS REAL) credit,0 priority
