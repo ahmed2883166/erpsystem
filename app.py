@@ -41,7 +41,7 @@ app.config["SECRET_KEY"] = os.environ.get("NEXUS_SECRET_KEY", "change-this-secre
 PERMISSIONS = {
     "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view"},
     "accountant": {"accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view"},
-    "viewer": {"reports.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view"},
+    "viewer": {"reports.view", "stock.view", "purchases.view", "sales.view"},
 }
 
 register_report_exports(app, DB_PATH, PERMISSIONS)
@@ -381,6 +381,8 @@ def accounts():
                 parent = connection.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (parent_id,)).fetchone()
                 if not parent or not parent["active"] or not parent["is_group"] or parent["account_type"] != account_type:
                     raise ValueError("الحساب الأب يجب أن يكون مجموعة نشطة ومن نفس نوع الحساب.")
+            elif not is_group:
+                raise ValueError("الحساب الفرعي يجب أن يرتبط بحساب رئيسي. لإنشاء مستوى أول اختر حسابًا رئيسيًا تجميعيًا.")
             connection.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
                                (code, name, account_type, parent_id, is_group))
             connection.commit()
