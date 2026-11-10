@@ -398,6 +398,71 @@ def accounts():
     return render_template("accounts.html", accounts=rows, groups=groups)
 
 
+@app.route("/accounts/<int:account_id>/delete", methods=["POST"])
+@requires("accounts.manage")
+def delete_account(account_id):
+    connection = db()
+    account = connection.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
+    if not account:
+        flash("الحساب غير موجود.", "error")
+    else:
+        child = connection.execute("SELECT 1 FROM accounts WHERE parent_id=? LIMIT 1", (account_id,)).fetchone()
+        used = connection.execute("SELECT 1 FROM journal_lines WHERE account_id=? LIMIT 1", (account_id,)).fetchone()
+        if child:
+            flash("لا يمكن حذف الحساب: يوجد حساب فرعي مرتبط به. احذف/انقل الحسابات الفرعية أولًا.", "error")
+        elif used:
+            flash("لا يمكن حذف الحساب: سبق استخدامه في قيد يومية. احتفظ به أو عطّله بدل الحذف.", "error")
+        else:
+            try:
+                connection.execute("DELETE FROM accounts WHERE id=?", (account_id,))
+                connection.commit()
+                log("account_deleted", account["code"])
+                flash("تم حذف الحساب لعدم وجود حسابات فرعية أو حركات مرتبطة.", "success")
+            except sqlite3.IntegrityError:
+                connection.rollback()
+                flash("لا يمكن حذف الحساب لأنه مرتبط بمستند أو سجل آخر.", "error")
+    connection.close()
+    return redirect(url_for("accounts"))
+
+
+@app.route("/accounts/<int:account_id>/edit", methods=["GET", "POST"])
+@requires("accounts.manage")
+def edit_account(account_id):
+    connection = db()
+    account = connection.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
+    if not account:
+        connection.close()
+        flash("الحساب غير موجود.", "error")
+        return redirect(url_for("accounts"))
+    used = connection.execute("SELECT 1 FROM journal_lines WHERE account_id=? LIMIT 1", (account_id,)).fetchone() is not None
+    if request.method == "POST":
+        code, name = request.form.get("code", "").strip(), request.form.get("name_ar", "").strip()
+        if not code or not name:
+            flash("كود واسم الحساب مطلوبان.", "error")
+        elif used and (request.form.get("account_type") != account["account_type"] or (request.form.get("parent_id") or None) != account["parent_id"] or (1 if request.form.get("is_group") == "yes" else 0) != account["is_group"]):
+            flash("الحساب مستخدم في قيود سابقة؛ يسمح بتعديل الكود والاسم فقط حفاظًا على سلامة التقارير.", "error")
+        else:
+            parent_id = request.form.get("parent_id") or None
+            parent = connection.execute("SELECT * FROM accounts WHERE id=?", (parent_id,)).fetchone() if parent_id else None
+            if parent_id and (not parent or not parent["is_group"] or not parent["active"] or parent["account_type"] != request.form.get("account_type") or int(parent_id) == account_id):
+                flash("الحساب الأب غير صالح.", "error")
+            else:
+                try:
+                    connection.execute("UPDATE accounts SET code=?,name_ar=?,account_type=?,parent_id=?,is_group=? WHERE id=?",
+                        (code,name,request.form.get("account_type"),parent_id,1 if request.form.get("is_group")=="yes" else 0,account_id))
+                    connection.commit()
+                    log("account_updated", code)
+                    connection.close()
+                    flash("تم تعديل الحساب.", "success")
+                    return redirect(url_for("accounts"))
+                except sqlite3.IntegrityError:
+                    connection.rollback()
+                    flash("كود الحساب مستخدم بالفعل.", "error")
+    groups = connection.execute("SELECT * FROM accounts WHERE is_group=1 AND active=1 AND id<>? ORDER BY code", (account_id,)).fetchall()
+    connection.close()
+    return render_template("account_edit.html", account=account, groups=groups, used=used)
+
+
 @app.route("/journal", methods=["GET", "POST"])
 @requires("journal.manage")
 def journal():
