@@ -120,6 +120,8 @@ def employees():
         except (ValueError, KeyError, sqlite3.IntegrityError) as e:
             c.rollback()
             flash(str(e) if str(e) else "كود الموظف مستخدم بالفعل.", "error")
+        c.close()
+        return redirect(url_for("workforce.employees"))
     rows = c.execute("SELECT * FROM employees ORDER BY employee_code").fetchall()
     items = c.execute("""SELECT p.*,e.employee_code,e.full_name FROM employee_pay_items p
                          JOIN employees e ON e.id=p.employee_id ORDER BY e.employee_code,p.id DESC""").fetchall()
@@ -281,6 +283,8 @@ def custody():
         except (ValueError, KeyError, sqlite3.Error) as e:
             c.rollback()
             flash(str(e), "error")
+        c.close()
+        return redirect(url_for("workforce.custody"))
     rows = c.execute("""SELECT x.*,e.employee_code,e.full_name FROM employee_custodies x
                         JOIN employees e ON e.id=x.employee_id ORDER BY x.id DESC LIMIT 100""").fetchall()
     employees = c.execute("SELECT id,employee_code,full_name FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
