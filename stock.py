@@ -341,6 +341,8 @@ def edit_product(product_id):
         try:
             sku=request.form.get("sku","").strip(); name=request.form.get("name_ar","").strip(); uom=request.form.get("uom","").strip()
             if not sku or not name or not uom: raise ValueError("الكود والاسم والوحدة مطلوبة.")
+            if used and (request.form.get("product_type") != product["product_type"] or uom != product["uom"] or int(request.form.get("track_lot")=="on") != product["track_lot"] or int(request.form.get("track_expiry")=="on") != product["track_expiry"]):
+                raise ValueError("الصنف له حركات سابقة؛ لا يمكن تغيير نوعه أو وحدة قياسه أو إعدادات تتبع التشغيلة/الصلاحية.")
             c.execute("""UPDATE stock_products SET sku=?,name_ar=?,category=?,product_type=?,uom=?,barcode=?,track_lot=?,track_expiry=?,min_qty=? WHERE id=?""",
               (sku,name,request.form.get("category","").strip(),request.form.get("product_type","goods"),uom,request.form.get("barcode","").strip() or None,int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),str(q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))),product_id))
             c.commit(); c.close(); flash("تم تعديل الصنف.","success"); return redirect(url_for("stock.products"))
