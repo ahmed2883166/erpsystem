@@ -439,7 +439,7 @@ def edit_account(account_id):
         code, name = request.form.get("code", "").strip(), request.form.get("name_ar", "").strip()
         if not code or not name:
             flash("كود واسم الحساب مطلوبان.", "error")
-        elif used and (request.form.get("account_type") != account["account_type"] or (request.form.get("parent_id") or None) != account["parent_id"] or (1 if request.form.get("is_group") == "yes" else 0) != account["is_group"]):
+        elif used and (request.form.get("account_type") != account["account_type"] or (int(request.form["parent_id"]) if request.form.get("parent_id") else None) != account["parent_id"] or (1 if request.form.get("is_group") == "yes" else 0) != account["is_group"]):
             flash("الحساب مستخدم في قيود سابقة؛ يسمح بتعديل الكود والاسم فقط حفاظًا على سلامة التقارير.", "error")
         else:
             parent_id = request.form.get("parent_id") or None
