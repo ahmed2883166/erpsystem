@@ -1,25 +1,27 @@
 {% extends "base.html" %}
 {% block title %}مركز الضرائب الشهري | NEXUS ERP{% endblock %}
 {% block content %}
-<section class="page-header"><div><h2>مركز الضرائب – التقرير الشهري</h2><p>ملخص رقابي لضريبة المخرجات والمدخلات من المستندات المرحلة.</p></div></section>
-<form method="get" class="card filters"><label>الشهر <input type="month" name="period" value="{{ period }}"></label><button type="submit">عرض التقرير</button></form>
-<section class="card"><h3>بيانات الشركة</h3><p><strong>{{ settings.get('company_name','NEXUS ERP') }}</strong> — الدولة: {{ 'مصر' if settings.get('tax_country')=='EG' else ('السعودية' if settings.get('tax_country')=='SA' else 'أخرى') }} — النظام: {{ settings.get('tax_regime','غير محدد') }} — الرقم الضريبي: {{ settings.get('tax_number','') or 'غير مسجل' }}</p><p>العملة الوظيفية: {{ settings.get('base_currency','EGP') }}</p></section>
+<header><h2>مركز الضرائب – التقرير الشهري</h2><p>مراجعة ضريبة المخرجات والمدخلات للمستندات المرحلة، مع تصنيف كل مستند.</p></header>
+<form method="get" class="panel"><label>الشهر <input type="month" name="period" value="{{ period }}"></label><button type="submit">عرض التقرير</button></form>
+<section class="panel"><h3>بيانات الشركة</h3><p>{{ settings.get('company_name','NEXUS ERP') }} | الدولة: {{ settings.get('tax_country','غير محدد') }} | النظام: {{ settings.get('tax_regime','غير محدد') }} | الرقم الضريبي: {{ settings.get('tax_number','غير مسجل') }}</p></section>
 <div class="stats-grid">
-<div class="card"><small>مبيعات الفترة قبل الضريبة</small><h3>{{ '%.2f'|format(sales_base) }}</h3></div>
-<div class="card"><small>ضريبة المخرجات</small><h3>{{ '%.2f'|format(output_vat) }}</h3></div>
-<div class="card"><small>مشتريات الفترة قبل الضريبة</small><h3>{{ '%.2f'|format(purchase_base) }}</h3></div>
-<div class="card"><small>ضريبة المدخلات المسجلة</small><h3>{{ '%.2f'|format(input_vat) }}</h3></div>
-<div class="card"><small>صافي الضريبة الرقابي</small><h3>{{ '%.2f'|format(net_vat) }}</h3></div>
+<div class="stat-card"><small>مبيعات خاضعة</small><strong>{{ '%.2f'|format(summary.sales_standard) }}</strong></div>
+<div class="stat-card"><small>مبيعات بسعر صفر</small><strong>{{ '%.2f'|format(summary.sales_zero) }}</strong></div>
+<div class="stat-card"><small>مبيعات معفاة</small><strong>{{ '%.2f'|format(summary.sales_exempt) }}</strong></div>
+<div class="stat-card"><small>مبيعات خارج النطاق</small><strong>{{ '%.2f'|format(summary.sales_outside) }}</strong></div>
+<div class="stat-card"><small>ضريبة المخرجات</small><strong>{{ '%.2f'|format(summary.output_vat) }}</strong></div>
+<div class="stat-card"><small>ضريبة مدخلات قابلة للخصم</small><strong>{{ '%.2f'|format(summary.input_vat) }}</strong></div>
+<div class="stat-card"><small>مدخلات غير قابلة للخصم</small><strong>{{ '%.2f'|format(summary.non_deductible_input) }}</strong></div>
+<div class="stat-card"><small>صافي الضريبة الرقابي</small><strong>{{ '%.2f'|format(summary.net_vat) }}</strong></div>
 </div>
-<section class="card"><h3>مراجعة قبل الإقرار</h3>
-{% if zero_sales or zero_purchases %}<p class="flash warning">يوجد مستندات بنسبة ضريبة صفر. النظام الحالي لا يميز بعد بين التصدير بسعر صفر، والإعفاء، وغير الخاضع؛ لذلك لا تعتمد هذه الأرقام كتصنيف قانوني قبل استكمال بيانات المعاملة ومستنداتها.</p>
-{% else %}<p>لا توجد مستندات بنسبة ضريبة صفر في الفترة المختارة.</p>{% endif %}
-<p>ضريبة المدخلات المعروضة هي الضريبة المسجلة على فواتير الموردين. يلزم مراجعة قابلية الخصم والمستندات قبل تقديم الإقرار.</p>
-<p>هذا تقرير رقابي تمهيدي وليس إقرارًا إلكترونيًا معتمدًا أو بديلًا عن مراجعة متطلبات مصلحة الضرائب.</p></section>
-<section class="card"><h3>فواتير المبيعات – ضريبة المخرجات</h3><table><thead><tr><th>رقم المستند</th><th>التاريخ</th><th>العميل</th><th>الأساس</th><th>النسبة %</th><th>الضريبة</th><th>الإجمالي</th></tr></thead><tbody>
-{% for r in sales %}<tr><td>{{ r.document_no }}</td><td>{{ r.document_date }}</td><td>{{ r.party_name }}</td><td>{{ '%.2f'|format(r.taxable_base) }}</td><td>{{ '%.2f'|format(r.tax_rate) }}</td><td>{{ '%.2f'|format(r.tax_amount) }}</td><td>{{ '%.2f'|format(r.total_amount) }}</td></tr>{% else %}<tr><td colspan="7">لا توجد فواتير مبيعات مرحلة خلال الشهر.</td></tr>{% endfor %}
+{% if inconsistent_sales %}<section class="panel flash error"><strong>تنبيه: تصنيف غير متسق</strong><p>بعض فواتير البيع مصنفة بسعر صفر لكن نسبة الضريبة أو مبلغها غير صفر. يجب تصحيح المستند محاسبيًا من خلال إشعار دائن/فاتورة صحيحة، ولا يقوم هذا التقرير بتغيير القيد المرحل.</p></section>{% endif %}
+<section class="panel"><h3>مبيعات الفترة – تصنيف ضريبي</h3><table><thead><tr><th>رقم/تاريخ</th><th>العميل</th><th>الأساس</th><th>النسبة</th><th>الضريبة</th><th>التصنيف والمستند</th><th>إجراء</th></tr></thead><tbody>
+{% for r in sales %}<tr><td>{{ r.document_no }}<br>{{ r.document_date }}</td><td>{{ r.party_name }}</td><td>{{ '%.2f'|format(r.taxable_base) }}</td><td>{{ '%.2f'|format(r.tax_rate) }}%</td><td>{{ '%.2f'|format(r.tax_amount) }}</td><td>{{ {'standard':'خاضع','zero_rated':'صفر','exempt':'معفى','out_of_scope':'خارج النطاق'}.get(r.tax_treatment,r.tax_treatment) }}<br>{{ r.tax_reference }}</td><td>
+{% if session.role in ['admin','accountant'] %}<form method="post" action="{{ url_for('tax.classify_document',kind='sale',document_id=r.id) }}"><input type="hidden" name="period" value="{{ period }}"><select name="tax_treatment"><option value="standard" {% if r.tax_treatment=='standard' %}selected{% endif %}>خاضع</option><option value="zero_rated" {% if r.tax_treatment=='zero_rated' %}selected{% endif %}>صفر</option><option value="exempt" {% if r.tax_treatment=='exempt' %}selected{% endif %}>معفى</option><option value="out_of_scope" {% if r.tax_treatment=='out_of_scope' %}selected{% endif %}>خارج النطاق</option></select><input name="tax_reference" placeholder="مرجع جمركي/مستند" value="{{ r.tax_reference }}"><input name="tax_notes" placeholder="ملاحظات" value="{{ r.tax_notes }}"><button type="submit">حفظ التصنيف</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="7">لا توجد فواتير مبيعات مرحلة.</td></tr>{% endfor %}
 </tbody></table></section>
-<section class="card"><h3>فواتير المشتريات – ضريبة المدخلات</h3><table><thead><tr><th>رقم المستند</th><th>التاريخ</th><th>المورد</th><th>الأساس</th><th>النسبة %</th><th>الضريبة</th><th>الإجمالي</th></tr></thead><tbody>
-{% for r in purchases %}<tr><td>{{ r.document_no }}</td><td>{{ r.document_date }}</td><td>{{ r.party_name }}</td><td>{{ '%.2f'|format(r.taxable_base) }}</td><td>{{ '%.2f'|format(r.tax_rate) }}</td><td>{{ '%.2f'|format(r.tax_amount) }}</td><td>{{ '%.2f'|format(r.total_amount) }}</td></tr>{% else %}<tr><td colspan="7">لا توجد فواتير مشتريات مرحلة خلال الشهر.</td></tr>{% endfor %}
+<section class="panel"><h3>مشتريات الفترة – قابلية خصم ضريبة المدخلات</h3><table><thead><tr><th>رقم/تاريخ</th><th>المورد</th><th>الأساس</th><th>الضريبة</th><th>نسبة الخصم</th><th>المبلغ القابل للخصم</th><th>التصنيف</th><th>إجراء</th></tr></thead><tbody>
+{% for r in purchases %}<tr><td>{{ r.document_no }}<br>{{ r.document_date }}</td><td>{{ r.party_name }}</td><td>{{ '%.2f'|format(r.taxable_base) }}</td><td>{{ '%.2f'|format(r.tax_amount) }}</td><td>{{ '%.2f'|format(r.deductible_percent) }}%</td><td>{{ '%.2f'|format(r.tax_amount*r.deductible_percent/100) }}</td><td>{{ {'standard':'خاضع','zero_rated':'صفر','exempt':'معفى','out_of_scope':'خارج النطاق'}.get(r.tax_treatment,r.tax_treatment) }}</td><td>
+{% if session.role in ['admin','accountant'] %}<form method="post" action="{{ url_for('tax.classify_document',kind='purchase',document_id=r.id) }}"><input type="hidden" name="period" value="{{ period }}"><select name="tax_treatment"><option value="standard" {% if r.tax_treatment=='standard' %}selected{% endif %}>خاضع</option><option value="zero_rated" {% if r.tax_treatment=='zero_rated' %}selected{% endif %}>صفر</option><option value="exempt" {% if r.tax_treatment=='exempt' %}selected{% endif %}>معفى</option><option value="out_of_scope" {% if r.tax_treatment=='out_of_scope' %}selected{% endif %}>خارج النطاق</option></select><input type="number" min="0" max="100" step="0.01" name="deductible_percent" value="{{ r.deductible_percent }}"><input name="tax_reference" placeholder="مرجع الفاتورة" value="{{ r.tax_reference }}"><input name="tax_notes" placeholder="ملاحظات" value="{{ r.tax_notes }}"><button type="submit">حفظ التصنيف</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="8">لا توجد فواتير مشتريات مرحلة.</td></tr>{% endfor %}
 </tbody></table></section>
+<section class="panel"><h3>ضوابط مهمة</h3><ul><li>تغيير التصنيف هنا لا يغير مبلغ الفاتورة أو القيد المرحل.</li><li>الصادرات بسعر صفر يجب أن تكون النسبة والمبلغ صفرًا فعليًا، مع الاحتفاظ بالمستندات المؤيدة.</li><li>قابلية خصم ضريبة المدخلات تخضع للقانون والمستندات؛ النسبة الافتراضية 100% ليست اعتمادًا تلقائيًا للخصم.</li><li>هذا تقرير رقابي مساعد، وليس إقرارًا إلكترونيًا معتمدًا.</li></ul></section>
 {% endblock %}
