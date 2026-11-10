@@ -878,7 +878,14 @@ def reverse_journal(entry_id):
     linked_source = linked_operational_source(connection, entry_id)
     if linked_source:
         connection.close()
-        flash(f"لا يمكن عكس هذا القيد من دفتر اليومية لأنه مرتبط بمستند في {linked_source}. استخدم إجراء الإلغاء أو الإشعار الخاص بالمستند.", "error")
+        flash(
+            f"تم منع عكس القيد المرتبط بمستند في {linked_source} لحماية ترابط الحسابات والمخزون. "
+            "تنبيه: إجراء الإلغاء/الإشعار غير متاح حاليًا لهذا النوع داخل NEXUS. "
+            "لا تعكس القيد يدويًا ولا تحذف المستند. صحح المستند بمستند تسوية معتمد خارج النظام "
+            "وسجل أثره في NEXUS وفق صلاحيات وإجراءات الشركة، أو اطلب من مسؤول النظام تنفيذ التصحيح "
+            "بعد توفير مسار تصحيح خاص بالموديول.",
+            "error",
+        )
         return redirect(url_for("journal_detail", entry_id=entry_id))
     reference = f"REV-{entry_id}"
     existing = connection.execute("SELECT id FROM journal_entries WHERE reference=? AND status='posted'", (reference,)).fetchone()
