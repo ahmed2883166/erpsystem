@@ -603,12 +603,34 @@ def ledger():
                 conditions.append("je.entry_date >= ?"); params.append(date_from)
             if date_to:
                 conditions.append("je.entry_date <= ?"); params.append(date_to)
-            rows = connection.execute(f"""SELECT je.entry_date, je.reference, je.description, jl.debit, jl.credit, jl.memo
+            if date_from:
+                opening_row = connection.execute("""SELECT COALESCE(SUM(jl.debit-jl.credit),0) balance
+                    FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                    WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<?""",
+                    (account_id, date_from)).fetchone()
+                opening_balance = float(opening_row["balance"] or 0)
+            else:
+                opening_balance = 0.0
+            raw_rows = connection.execute(f"""SELECT je.entry_date, je.reference, je.description, jl.debit, jl.credit, jl.memo
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                 WHERE {' AND '.join(conditions)} ORDER BY je.entry_date, jl.id""", params).fetchall()
+            running_balance = opening_balance
+            rows = []
+            for row in raw_rows:
+                item = dict(row)
+                running_balance += float(item["debit"] or 0) - float(item["credit"] or 0)
+                item["running_balance"] = round(running_balance, 2)
+                rows.append(item)
+            closing_balance = round(running_balance, 2)
+        else:
+            opening_balance = 0.0
+            closing_balance = 0.0
+    else:
+        opening_balance = 0.0
+        closing_balance = 0.0
     connection.close()
     return render_template("ledger.html", accounts=accounts_list, selected=selected, rows=rows,
-        date_from=date_from, date_to=date_to)
+        date_from=date_from, date_to=date_to, opening_balance=opening_balance, closing_balance=closing_balance)
 
 
 @app.route("/reports/reconciliation")
