@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from decimal import Decimal
 from unittest.mock import patch
 from pathlib import Path
 
@@ -111,8 +112,14 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
             (bill["journal_entry_id"],),
         ).fetchall()
         self.assertEqual(
-            [(row["code"], row["debit"], row["credit"]) for row in lines],
-            [("5000", "100.00", "0"), ("2110", "0", "100.00")],
+            [
+                (row["code"], Decimal(row["debit"]), Decimal(row["credit"]))
+                for row in lines
+            ],
+            [
+                ("5000", Decimal("100.00"), Decimal("0.00")),
+                ("2110", Decimal("0.00"), Decimal("100.00")),
+            ],
         )
         conn.close()
 
