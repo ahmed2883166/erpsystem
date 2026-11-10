@@ -867,12 +867,19 @@ def reverse_journal(entry_id):
         flash("القيد الأصلي لا يحتوي على سطور كافية للعكس.", "error")
         return redirect(url_for("journal_detail", entry_id=entry_id))
     reverse_lines = [(r["account_id"], r["credit"], r["debit"], f"عكس: {r['memo'] or ''}") for r in original_lines]
-    reversal_date = datetime.now().date().isoformat()
+    reversal_date_text = request.form.get("reversal_date", "").strip()
+    reversal_reason = request.form.get("reversal_reason", "").strip()
     try:
+        reversal_date = datetime.strptime(reversal_date_text, "%Y-%m-%d").date().isoformat()
+        if reversal_date != reversal_date_text:
+            raise ValueError("تاريخ القيد العكسي غير صحيح.")
+        if not reversal_reason or len(reversal_reason) > 500:
+            raise ValueError("اكتب سببًا للقيد العكسي (بحد أقصى 500 حرف).")
         reversal_id = post_journal(connection, reversal_date, reference,
-            f"قيد عكسي للقيد رقم {entry_id}: {original['description']}", reverse_lines, session["user_id"])
+            f"قيد عكسي للقيد رقم {entry_id}: {original['description']} — السبب: {reversal_reason}",
+            reverse_lines, session["user_id"])
         connection.commit()
-        log("journal_reversed", f"القيد الأصلي #{entry_id}؛ القيد العكسي #{reversal_id}")
+        log("journal_reversed", f"الأصلي #{entry_id}؛ العكسي #{reversal_id}؛ التاريخ {reversal_date}؛ السبب: {reversal_reason}")
         flash(f"تم إنشاء القيد العكسي رقم {reversal_id}. القيد الأصلي محفوظ دون تعديل.", "success")
         return redirect(url_for("journal_detail", entry_id=reversal_id))
     except (ValueError, TypeError) as exc:
