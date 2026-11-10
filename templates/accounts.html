@@ -1,19 +1,68 @@
-{% extends 'base.html' %}{% block title %}دليل الحسابات | NEXUS ERP{% endblock %}{% block content %}
-<header><div><h2>دليل الحسابات الهرمي</h2><p>حسابات رئيسية (مجموعات) وحسابات فرعية تفصيلية. لا يمكن الترحيل على حساب المجموعة.</p></div><div><a class="btn secondary" href="{{ url_for('export_data', format='csv') }}">تصدير CSV</a> <a class="btn secondary" href="{{ url_for('export_data', format='json') }}">تصدير JSON</a></div></header>
-<div class="grid"><section class="panel"><h3>إضافة حساب</h3><form method="post">
-<label>رمز الحساب<input name="code" required></label><label>اسم الحساب<input name="name_ar" required></label>
-<label>نوع الحساب<select name="account_type" id="accountType"><option value="asset">أصل</option><option value="liability">التزام</option><option value="equity">حقوق ملكية</option><option value="revenue">إيراد</option><option value="expense">مصروف</option></select></label>
-<label>الحساب الأب (اختياري)<select name="parent_id" id="parentAccount"><option value="">حساب رئيسي</option>{% for a in groups %}<option value="{{ a.id }}" data-type="{{ a.account_type }}">{{ a.code }} - {{ a.name_ar }}</option>{% endfor %}</select></label>
-<label class="checkline"><input type="checkbox" name="is_group" value="yes"> هذا الحساب مجموعة / أب (لا يقبل قيودًا مباشرة)</label><button>حفظ الحساب</button></form>
-<hr><h3>استيراد حسابات CSV</h3><form action="{{ url_for('import_accounts') }}" method="post" enctype="multipart/form-data"><input type="file" name="file" accept=".csv" required><button>استيراد</button></form></section>
-<section class="panel"><h3>شجرة الحسابات</h3><div class="table-scroll"><table><thead><tr><th>الرمز</th><th>الحساب</th><th>النوع</th><th>التصنيف</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody>{% for a in accounts %}<tr class="account-row" data-id="{{ a.id }}" data-parent="{{ a.parent_id or '' }}" data-group="{{ a.is_group }}" {% if a.depth > 0 %}hidden{% endif %}><td>{{ a.code }}</td><td><span style="display:inline-flex;align-items:center;gap:6px;padding-right:{{ a.depth * 22 }}px">{% if a.is_group %}<button type="button" class="tree-toggle secondary" data-id="{{ a.id }}" aria-expanded="false">+</button>{% else %}↳{% endif %} {{ a.name_ar }}</span></td><td>{{ {'asset':'أصل','liability':'التزام','equity':'حقوق ملكية','revenue':'إيراد','expense':'مصروف'}.get(a.account_type,a.account_type) }}</td><td>{{ 'مجموعة رئيسية' if a.is_group else 'حساب تفصيلي' }}</td><td>{{ 'نشط' if a.active else 'موقوف' }}</td><td><div class="actions"><a class="btn secondary" href="{{ url_for('edit_account',account_id=a.id) }}">تعديل</a><form method="post" action="{{ url_for('delete_account',account_id=a.id) }}" onsubmit="return confirm('هل أنت متأكد من حذف الحساب؟ لن يتم الحذف إذا كان له حسابات فرعية أو حركات.');"><button class="danger">حذف</button></form></div></td></tr>{% else %}<tr><td colspan="6">لا توجد حسابات.</td></tr>{% endfor %}</tbody></table></div></section></div>
-{% endblock %}{% block scripts %}<script>
-const type=document.getElementById('accountType'),parent=document.getElementById('parentAccount');
-function filterParents(){for(const o of parent.options){if(o.value)o.hidden=o.dataset.type!==type.value;if(o.selected&&o.hidden)parent.value='';}}
-type.addEventListener('change',filterParents);filterParents();
-</script>
+{% extends 'base.html' %}
+{% block title %}دليل الحسابات | NEXUS ERP{% endblock %}
+{% block content %}
+<header class="no-print">
+  <div><h2>دليل الحسابات الهرمي</h2><p class="muted">عرض متدرج يوضح الحسابات الرئيسية والفروع التابعة لها.</p></div>
+  <div class="table-actions">
+    <button type="button" class="secondary" onclick="window.print()">طباعة / حفظ PDF</button>
+    <a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='accounts') }}">تصدير Excel</a>
+    <a class="btn secondary" href="{{ url_for('export_data', format='csv') }}">تصدير CSV</a>
+  </div>
+</header>
+<div class="account-legend no-print">
+  <span><i class="legend-dot group-dot"></i> حساب رئيسي / مجموعة</span>
+  <span><i class="legend-dot detail-dot"></i> حساب فرعي تفصيلي</span>
+  <span class="muted">الحساب الرئيسي لا يستقبل قيودًا مباشرة.</span>
+</div>
+<div class="grid accounts-layout">
+  <section class="panel no-print">
+    <h3>إضافة حساب</h3>
+    <form method="post">
+      <label>رمز الحساب<input name="code" required></label>
+      <label>اسم الحساب<input name="name_ar" required></label>
+      <label>نوع الحساب<select name="account_type" id="accountType"><option value="asset">أصل</option><option value="liability">التزام</option><option value="equity">حقوق ملكية</option><option value="revenue">إيراد</option><option value="expense">مصروف</option></select></label>
+      <label>الحساب الأب (اختياري)<select name="parent_id" id="parentAccount"><option value="">حساب رئيسي مستقل</option>{% for a in groups %}<option value="{{ a.id }}" data-type="{{ a.account_type }}">{{ a.code }} - {{ a.name_ar }}</option>{% endfor %}</select></label>
+      <label class="checkline"><input type="checkbox" name="is_group" value="yes"> هذا الحساب مجموعة / أب (لا يقبل قيودًا مباشرة)</label>
+      <button>حفظ الحساب</button>
+    </form>
+    <hr><h3>استيراد حسابات CSV</h3>
+    <form action="{{ url_for('import_accounts') }}" method="post" enctype="multipart/form-data"><input type="file" name="file" accept=".csv" required><button>استيراد</button></form>
+  </section>
+  <section class="panel print-area">
+    <div class="section-heading"><div><h3>شجرة الحسابات</h3><p class="muted">عدد الحسابات: {{ accounts|length }}</p></div><span class="pill">NEXUS ERP</span></div>
+    <div class="table-wrap">
+      <table class="accounts-tree">
+        <thead><tr><th>كود الحساب</th><th>اسم الحساب ومستواه</th><th>النوع</th><th>التصنيف</th><th>الحالة</th><th class="no-print">الإجراءات</th></tr></thead>
+        <tbody>
+        {% for a in accounts %}
+          <tr class="account-row {% if a.is_group %}account-group{% else %}account-detail{% endif %}" data-id="{{ a.id }}" data-parent="{{ a.parent_id or '' }}" data-group="{{ a.is_group }}" data-depth="{{ a.depth }}" {% if a.depth > 0 %}hidden{% endif %}>
+            <td><span class="account-code">{{ a.code }}</span></td>
+            <td>
+              <div class="account-name" style="padding-right:{{ a.depth * 26 }}px">
+                {% if a.has_children %}<button type="button" class="tree-toggle secondary" data-id="{{ a.id }}" aria-expanded="false" title="فتح وإغلاق الفروع">+</button>
+                {% elif a.is_group %}<span class="tree-spacer"></span>{% else %}<span class="branch-mark">└</span>{% endif %}
+                <span>{{ a.name_ar }}</span>
+                {% if a.depth == 0 %}<span class="level-tag">رئيسي</span>{% else %}<span class="level-tag">مستوى {{ a.depth + 1 }}</span>{% endif %}
+              </div>
+            </td>
+            <td>{{ {'asset':'أصول','liability':'التزامات','equity':'حقوق ملكية','revenue':'إيرادات','expense':'مصروفات'}.get(a.account_type,a.account_type) }}</td>
+            <td>{% if a.is_group %}<span class="account-type-badge group-badge">مجموعة رئيسية</span>{% else %}<span class="account-type-badge detail-badge">تفصيلي</span>{% endif %}</td>
+            <td>{{ 'نشط' if a.active else 'موقوف' }}</td>
+            <td class="no-print"><div class="actions"><a class="btn secondary" href="{{ url_for('edit_account',account_id=a.id) }}">تعديل</a><form method="post" action="{{ url_for('delete_account',account_id=a.id) }}" onsubmit="return confirm('هل أنت متأكد من حذف الحساب؟');"><button class="danger">حذف</button></form></div></td>
+          </tr>
+        {% else %}<tr><td colspan="6">لا توجد حسابات.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
 <script>
+const type=document.getElementById('accountType'),parent=document.getElementById('parentAccount');
+if(type&&parent){function filterParents(){for(const o of parent.options){if(o.value)o.hidden=o.dataset.type!==type.value;if(o.selected&&o.hidden)parent.value='';}}type.addEventListener('change',filterParents);filterParents();}
 const accountRows=[...document.querySelectorAll('.account-row')];
 function descendants(id){const children=accountRows.filter(r=>r.dataset.parent===String(id));for(const child of children){child.hidden=true;const b=child.querySelector('.tree-toggle');if(b){b.textContent='+';b.setAttribute('aria-expanded','false');}descendants(child.dataset.id);}}
 document.querySelectorAll('.tree-toggle').forEach(btn=>btn.addEventListener('click',()=>{const id=btn.dataset.id,open=btn.getAttribute('aria-expanded')==='true';if(open){descendants(id);btn.textContent='+';btn.setAttribute('aria-expanded','false');}else{accountRows.filter(r=>r.dataset.parent===id).forEach(r=>r.hidden=false);btn.textContent='−';btn.setAttribute('aria-expanded','true');}}));
-</script>{% endblock %}
+</script>
+{% endblock %}
