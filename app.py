@@ -17,6 +17,7 @@ from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
 from sales import sales_bp, init_sales_schema
 from accounting_core import post_journal, reconciliation_snapshot
+from banking import bank_bp, init_bank_schema
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -27,6 +28,7 @@ app = Flask(__name__)
 app.register_blueprint(stock_bp)
 app.register_blueprint(purchase_bp)
 app.register_blueprint(sales_bp)
+app.register_blueprint(bank_bp)
 app.config["SECRET_KEY"] = os.environ.get("NEXUS_SECRET_KEY", "change-this-secret-before-production")
 
 PERMISSIONS = {
@@ -147,6 +149,7 @@ def initialize_database():
     initialize_stock_schema()
     init_purchase_schema()
     init_sales_schema()
+    init_bank_schema()
 
 
 def now():
