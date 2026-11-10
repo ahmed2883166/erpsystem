@@ -78,6 +78,14 @@ def initialize_stock_schema():
         c.execute("ALTER TABLE stock_movements ADD COLUMN issue_purpose TEXT")
     # One summarized COGS journal may cover multiple stock issue movements.
     # The journal link is therefore intentionally non-unique.
+    layer_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_valuation_layers)")}
+    if "value_remaining" not in layer_columns:
+        c.execute("ALTER TABLE stock_valuation_layers ADD COLUMN value_remaining TEXT NOT NULL DEFAULT ''")
+        # Backfill legacy layers using Decimal in Python, avoiding SQLite REAL arithmetic.
+        for layer in c.execute("SELECT id,qty_remaining,unit_cost FROM stock_valuation_layers").fetchall():
+            value = D(str(layer["qty_remaining"])) * D(str(layer["unit_cost"]))
+            c.execute("UPDATE stock_valuation_layers SET value_remaining=? WHERE id=?",
+                      (format(value, "f"), layer["id"]))
     c.execute("DROP INDEX IF EXISTS idx_stock_movement_journal")
     c.execute("CREATE INDEX IF NOT EXISTS idx_stock_movement_journal ON stock_movements(journal_entry_id) WHERE journal_entry_id IS NOT NULL")
     c.close()
@@ -215,17 +223,29 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
     available = sum((D(x["qty_remaining"]) for x in layers), D("0"))
     if available < qty:
         raise ValueError(f"الرصيد غير كافٍ. المتاح {q4(available)} والمطلوب {q4(qty)}.")
-    total_value = sum((D(x["qty_remaining"])*D(x["unit_cost"]) for x in layers), D("0"))
-    avg_cost = q4(total_value / available) if available else D("0")
+    total_value = sum((
+        D(x["value_remaining"]) if x["value_remaining"] not in (None, "") else
+        D(x["qty_remaining"]) * D(x["unit_cost"]) for x in layers
+    ), D("0"))
+    avg_cost = total_value / available if available else D("0")
     remaining, cost_total, allocations = qty, D("0"), []
     for layer in layers:
         if remaining <= 0: break
         layer_qty = D(layer["qty_remaining"])
         take = min(layer_qty, remaining)
-        unit_cost = avg_cost if valuation_method == "average" else D(layer["unit_cost"])
-        cost = money(take * unit_cost)
+        layer_value = (D(layer["value_remaining"]) if layer["value_remaining"] not in (None, "")
+                       else layer_qty * D(layer["unit_cost"]))
+        if take == layer_qty:
+            cost = layer_value
+        elif valuation_method == "average":
+            cost = money(take * avg_cost)
+        else:
+            cost = money(layer_value * take / layer_qty)
+        unit_cost = cost / take if take else D("0")
         new_remaining = layer_qty - take
-        c.execute("UPDATE stock_valuation_layers SET qty_remaining=? WHERE id=?", (str(q4(new_remaining)), layer["id"]))
+        new_value = layer_value - cost
+        c.execute("UPDATE stock_valuation_layers SET qty_remaining=?,value_remaining=? WHERE id=?",
+                  (str(q4(new_remaining)), format(new_value, "f"), layer["id"]))
         allocations.append((layer["lot_id"], take, unit_cost, cost))
         cost_total += cost
         remaining -= take
