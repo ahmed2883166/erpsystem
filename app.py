@@ -1079,6 +1079,7 @@ def restore_backup():
             safety.close()
             live.close()
         os.replace(candidate, DB_PATH)
+        initialize_database()
         log("backup_restored", upload.filename)
         flash("تمت الاستعادة بعد التحقق من سلامة قاعدة البيانات، مع حفظ نسخة أمان.", "success")
     except (zipfile.BadZipFile, ValueError, sqlite3.DatabaseError, OSError) as exc:
