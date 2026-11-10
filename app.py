@@ -443,13 +443,24 @@ def edit_account(account_id):
             flash("الحساب مستخدم في قيود سابقة؛ يسمح بتعديل الكود والاسم فقط حفاظًا على سلامة التقارير.", "error")
         else:
             parent_id = request.form.get("parent_id") or None
+            new_type = request.form.get("account_type")
+            new_group = 1 if request.form.get("is_group")=="yes" else 0
             parent = connection.execute("SELECT * FROM accounts WHERE id=?", (parent_id,)).fetchone() if parent_id else None
-            if parent_id and (not parent or not parent["is_group"] or not parent["active"] or parent["account_type"] != request.form.get("account_type") or int(parent_id) == account_id):
-                flash("الحساب الأب غير صالح.", "error")
+            descendants = connection.execute("""WITH RECURSIVE tree(id) AS (
+                SELECT id FROM accounts WHERE parent_id=?
+                UNION ALL SELECT a.id FROM accounts a JOIN tree t ON a.parent_id=t.id
+            ) SELECT id FROM tree""", (account_id,)).fetchall()
+            descendant_ids = {row["id"] for row in descendants}
+            if new_type not in {"asset","liability","equity","revenue","expense"}:
+                flash("نوع الحساب غير صحيح.", "error")
+            elif new_group == 0 and connection.execute("SELECT 1 FROM accounts WHERE parent_id=? LIMIT 1",(account_id,)).fetchone():
+                flash("لا يمكن تحويل حساب أب له حسابات فرعية إلى حساب تفصيلي.", "error")
+            elif parent_id and (not parent or not parent["is_group"] or not parent["active"] or parent["account_type"] != new_type or int(parent_id)==account_id or int(parent_id) in descendant_ids):
+                flash("الحساب الأب غير صالح أو يؤدي إلى تكوين دورة في الشجرة.", "error")
             else:
                 try:
                     connection.execute("UPDATE accounts SET code=?,name_ar=?,account_type=?,parent_id=?,is_group=? WHERE id=?",
-                        (code,name,request.form.get("account_type"),parent_id,1 if request.form.get("is_group")=="yes" else 0,account_id))
+                        (code,name,new_type,parent_id,new_group,account_id))
                     connection.commit()
                     log("account_updated", code)
                     connection.close()
