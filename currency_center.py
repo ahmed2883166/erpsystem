@@ -83,6 +83,12 @@ def _role(fn):
     return wrapped
 
 
+def _audit(c, action, details):
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='audit_log'").fetchone():
+        c.execute("INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
+                  (session.get("user_id"), action, details))
+
+
 def _account(c, account_id):
     row = c.execute("SELECT id,is_group,active FROM accounts WHERE id=?", (account_id,)).fetchone()
     if not row or row["is_group"] or not row["active"]:
@@ -124,6 +130,7 @@ def index():
                          VALUES(?,?,?,?) ON CONFLICT(currency_code,rate_date)
                          DO UPDATE SET rate_to_base=excluded.rate_to_base,source='manual',created_by=excluded.created_by""",
                       (currency,rate_date,str(rate),session["user_id"]))
+            _audit(c, "fx_rate_updated", currency + " " + rate_date + " " + str(rate))
             c.commit()
             flash("تم حفظ سعر الصرف بتاريخ السريان المحدد.", "success")
         except (ValueError, KeyError, sqlite3.Error) as e:
@@ -173,6 +180,7 @@ def create_transaction():
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (reference,kind,request.form["party_name"].strip(),currency,trans_date,str(foreign),str(foreign),
              str(rate),str(base_amount),str(base_amount),party_account,counterpart,journal_id,session["user_id"]))
+        _audit(c, "fx_transaction_created", reference + " " + currency + " " + str(foreign))
         c.commit()
         flash("تم تسجيل المعاملة الأجنبية وترحيل قيدها بسعر تاريخ العملية.", "success")
     except (ValueError, KeyError, sqlite3.Error) as e:
@@ -220,6 +228,7 @@ def settle(transaction_id):
             (transaction_id,settle_date,str(amount),str(rate),str(cash),str(carrying),str(diff),jid,session["user_id"]))
         c.execute("UPDATE fx_transactions SET balance_foreign=?,balance_base=?,status=? WHERE id=?",
                   (str(remaining_foreign),str(remaining_base),"settled" if remaining_foreign==0 else "open",transaction_id))
+        _audit(c, "fx_transaction_settled", t["reference"] + " foreign=" + str(amount) + " diff=" + str(diff))
         c.commit()
         flash("تم تسجيل التحصيل/السداد وإثبات فرق العملة المحقق.", "success")
     except (ValueError, KeyError, sqlite3.Error, ZeroDivisionError) as e:
@@ -264,6 +273,7 @@ def revalue(transaction_id):
             journal_entry_id,created_by) VALUES(?,?,?,?,?,?,?,?)""",
             (transaction_id,revalue_date,str(rate),str(old_base),str(new_base),str(delta),jid,session["user_id"]))
         c.execute("UPDATE fx_transactions SET balance_base=? WHERE id=?", (str(new_base),transaction_id))
+        _audit(c, "fx_revalued", t["reference"] + " date=" + revalue_date + " diff=" + str(delta))
         c.commit()
         flash("تمت إعادة تقييم الرصيد وإثبات الفرق غير المحقق.", "success")
     except (ValueError, KeyError, sqlite3.Error) as e:
