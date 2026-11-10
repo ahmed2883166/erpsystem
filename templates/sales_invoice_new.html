@@ -2,6 +2,14 @@
 const customerSelect=document.querySelector('[name="customer_id"]'),creditAlert=document.getElementById('creditAlert');
 function checkCredit(){const o=customerSelect.options[customerSelect.selectedIndex];if(!o||!o.value){creditAlert.hidden=true;return;}const limit=Number(o.dataset.limit||0),due=Number(o.dataset.outstanding||0);if(limit>0&&due>limit){creditAlert.hidden=false;creditAlert.textContent='تنبيه: العميل تجاوز الحد الائتماني بالفعل. الحد '+limit+'، الرصيد المستحق '+due+'.';}else if(limit>0){creditAlert.hidden=false;creditAlert.textContent='الحد الائتماني '+limit+' — المديونية الحالية '+due+'. سيتم إعادة الفحص عند ترحيل الفاتورة.';}else{creditAlert.hidden=true;}}
 customerSelect.addEventListener('change',checkCredit);checkCredit();
+document.querySelector('form').addEventListener('submit',function(ev){
+ const o=customerSelect.options[customerSelect.selectedIndex],limit=Number(o?.dataset.limit||0),due=Number(o?.dataset.outstanding||0);
+ if(limit<=0)return;
+ let subtotal=0;
+ document.querySelectorAll('input[name="quantity"]').forEach((q,i)=>{const p=document.querySelectorAll('input[name="unit_price"]')[i];subtotal+=Number(q.value||0)*Number(p?.value||0);});
+ const rate=Number(document.querySelector('[name="tax_rate"]').value||0),expected=due+subtotal*(1+rate/100);
+ if(expected>limit&&!confirm('تحذير: هذه الفاتورة ستجعل مديونية العميل '+expected.toFixed(2)+' وتتجاوز الحد الائتماني '+limit+'. هل تريد المتابعة؟'))ev.preventDefault();
+});
 </script>{% endblock %}{% block content %}
 <header><h2>فاتورة بيع جديدة</h2><p>يتم ترحيل الفاتورة وقيد الإيراد والضريبة وتكلفة المخزون في معاملة واحدة.</p></header>
 <section class="panel"><form method="post"><div class="form-grid"><label>العميل<select name="customer_id" required><option value="">اختر العميل</option>{% for x in customers %}<option value="{{ x.id }}" data-limit="{{ x.credit_limit }}" data-outstanding="{{ x.outstanding }}">{{ x.code }} - {{ x.name }}</option>{% endfor %}</select></label><label>تاريخ الفاتورة<input type="date" name="invoice_date" value="{{ today }}" required></label><label>مخزن الصرف<select name="warehouse_id"><option value="">اختر المخزن</option>{% for x in warehouses %}<option value="{{ x.id }}">{{ x.code }} - {{ x.name_ar }}</option>{% endfor %}</select></label><label>نسبة الضريبة %<input type="number" name="tax_rate" min="0" max="100" step="0.01" value="{{ settings.get('default_vat_rate','0') }}" required></label></div>
