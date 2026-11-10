@@ -73,7 +73,7 @@ class TaxCenterTests(unittest.TestCase):
         self.assertIn("56.00", body)
         self.assertIn("مبيعات بسعر صفر", body)
 
-    def test_purchase_input_vat_deductibility(self):
+    def test_posted_purchase_tax_classification_is_locked(self):
         self.login()
         response = self.client.post("/reports/tax/classify/purchase/1", data={
             "period": "2026-11", "tax_treatment": "standard",
@@ -84,8 +84,9 @@ class TaxCenterTests(unittest.TestCase):
         value = conn.execute("SELECT input_vat_deductible_percent FROM supplier_bills WHERE id=1").fetchone()[0]
         audit_count = conn.execute("SELECT COUNT(*) FROM audit_log WHERE action='tax_classification'").fetchone()[0]
         conn.close()
-        self.assertEqual(value, "75")
-        self.assertEqual(audit_count, 1)
+        self.assertEqual(value, "100")
+        self.assertEqual(audit_count, 0)
+        self.assertIn("لا يمكن تعديل التصنيف", response.get_data(as_text=True))
 
     def test_viewer_cannot_change_tax_classification(self):
         self.login("viewer")
