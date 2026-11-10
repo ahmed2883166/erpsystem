@@ -283,6 +283,9 @@ def company_setup():
             flash("أدخل اسم شركة ومعدل ضريبة صحيحًا من 0 إلى 100.", "error")
             connection.close()
             return redirect(url_for("company_setup"))
+        previous_activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+        previous_activity = previous_activity_row["setting_value"] if previous_activity_row else None
+        has_entries = connection.execute("SELECT 1 FROM journal_entries LIMIT 1").fetchone()
         for key, value in settings_values.items():
             connection.execute("INSERT INTO company_settings(setting_key,setting_value) VALUES(?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value", (key, value))
         selected = set(request.form.getlist("active_currencies"))
@@ -302,9 +305,6 @@ def company_setup():
                 connection.close()
                 return redirect(url_for("company_setup"))
             connection.execute("UPDATE currencies SET active=1,is_base=?,rate_to_base=?,updated_at=? WHERE code=?", (1 if code == base_currency else 0, rate, now(), code))
-        previous_activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
-        previous_activity = previous_activity_row["setting_value"] if previous_activity_row else None
-        has_entries = connection.execute("SELECT 1 FROM journal_entries LIMIT 1").fetchone()
         if has_entries and previous_activity and previous_activity != activity:
             flash("لا يمكن تغيير النشاط بعد ترحيل قيود؛ لأن ذلك قد يغيّر دلالات وربط الحسابات. أنشئ شركة جديدة أو نفّذ تحويلًا محاسبيًا معتمدًا.", "error")
             connection.rollback()
