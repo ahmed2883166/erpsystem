@@ -5,6 +5,7 @@ lot/expiry tracking, non-negative stock validation and valuation layers.
 Manufacturing orders and production conversion are intentionally excluded.
 """
 import sqlite3
+import uuid
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from pathlib import Path
@@ -215,7 +216,7 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
     if available < qty:
         raise ValueError(f"الرصيد غير كافٍ. المتاح {q4(available)} والمطلوب {q4(qty)}.")
     total_value = sum((D(x["qty_remaining"])*D(x["unit_cost"]) for x in layers), D("0"))
-    avg_cost = (total_value / available) if available else D("0")
+    avg_cost = q4(total_value / available) if available else D("0")
     remaining, cost_total, allocations = qty, D("0"), []
     for layer in layers:
         if remaining <= 0: break
@@ -426,7 +427,7 @@ def movements():
                 method=method_row["setting_value"] if method_row else "average"
                 total,allocations=consume_layers(c,product["id"],src,qty,method,lot_id)
                 unit_cost=(total/qty).quantize(MONEY,rounding=ROUND_HALF_UP)
-            movement_no=f"STK-{date.today().strftime('%Y%m%d')}-{__import__('uuid').uuid4().hex[:12].upper()}"
+            movement_no=f"STK-{date.today().strftime('%Y%m%d')}-{uuid.uuid4().hex[:12].upper()}"
             movement_date=request.form.get("movement_date") or date.today().isoformat()
             issue_purpose=request.form.get("issue_purpose") if kind=="issue" else None
             if kind=="issue" and issue_purpose not in {"sale","internal"}:
