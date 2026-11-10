@@ -790,6 +790,61 @@ def journal_detail(entry_id):
     return render_template("journal_detail.html", entry=entry, lines=lines, totals=totals)
 
 
+@app.route("/accounting/periods", methods=["GET", "POST"])
+@requires("users.manage")
+def accounting_periods():
+    connection = db()
+    if request.method == "POST":
+        name = request.form.get("period_name", "").strip()
+        start_text = request.form.get("start_date", "").strip()
+        end_text = request.form.get("end_date", "").strip()
+        try:
+            start_date = datetime.fromisoformat(start_text).date().isoformat()
+            end_date = datetime.fromisoformat(end_text).date().isoformat()
+            if not name or len(name) > 100 or start_date > end_date:
+                raise ValueError()
+            overlap = connection.execute("""SELECT 1 FROM accounting_periods
+                WHERE NOT(end_date < ? OR start_date > ?) LIMIT 1""",
+                (start_date, end_date)).fetchone()
+            if overlap:
+                raise ValueError("توجد فترة محاسبية أخرى تتداخل مع هذا النطاق.")
+            connection.execute("""INSERT INTO accounting_periods(period_name,start_date,end_date,locked,created_at)
+                VALUES(?,?,?,0,?)""", (name, start_date, end_date, now()))
+            connection.commit()
+            log("accounting_period_created", f"{name}: {start_date} - {end_date}")
+            flash("تم إنشاء الفترة المحاسبية بحالة مفتوحة.", "success")
+        except (ValueError, TypeError):
+            connection.rollback()
+            flash("أدخل اسمًا وتاريخي بداية ونهاية صحيحين، وتأكد من عدم تداخل الفترات.", "error")
+        finally:
+            connection.close()
+        return redirect(url_for("accounting_periods"))
+    rows = connection.execute("SELECT * FROM accounting_periods ORDER BY start_date DESC").fetchall()
+    connection.close()
+    return render_template("periods.html", periods=rows)
+
+
+@app.route("/accounting/periods/<int:period_id>/state", methods=["POST"])
+@requires("users.manage")
+def accounting_period_state(period_id):
+    state = request.form.get("locked", "")
+    if state not in {"0", "1"}:
+        flash("حالة الفترة غير صحيحة.", "error")
+        return redirect(url_for("accounting_periods"))
+    connection = db()
+    row = connection.execute("SELECT period_name FROM accounting_periods WHERE id=?", (period_id,)).fetchone()
+    if not row:
+        connection.close()
+        flash("الفترة المحاسبية غير موجودة.", "error")
+        return redirect(url_for("accounting_periods"))
+    connection.execute("UPDATE accounting_periods SET locked=? WHERE id=?", (int(state), period_id))
+    connection.commit()
+    connection.close()
+    log("accounting_period_locked" if state == "1" else "accounting_period_unlocked", row["period_name"])
+    flash("تم إقفال الفترة؛ لن تقبل قيودًا جديدة." if state == "1" else "تم فتح الفترة المحاسبية.", "success")
+    return redirect(url_for("accounting_periods"))
+
+
 @app.route("/journal/<int:entry_id>/reverse", methods=["POST"])
 @requires("journal.manage")
 def reverse_journal(entry_id):
