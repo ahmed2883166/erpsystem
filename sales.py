@@ -122,11 +122,31 @@ def _sales_account_codes(activity):
     return mapping[activity]
 
 
+def _allowed_vat_rates(conn):
+    settings = {r["setting_key"]: r["setting_value"] for r in conn.execute(
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('tax_country','default_vat_rate','allowed_vat_rates')")}
+    configured = str(settings.get("allowed_vat_rates", "")).strip()
+    if configured:
+        values = configured.split(",")
+    elif settings.get("tax_country") == "EG":
+        values = ["0", "14"]
+    elif settings.get("tax_country") == "SA":
+        values = ["0", "15"]
+    else:
+        values = ["0", settings.get("default_vat_rate", "0")]
+    try:
+        return {Decimal(str(value).strip()).quantize(CENT, rounding=ROUND_HALF_UP) for value in values}
+    except (InvalidOperation, ValueError):
+        raise ValueError("قائمة نسب الضريبة المعتمدة في إعدادات الشركة غير صحيحة.")
+
+
 def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate, created_by=None, allow_credit_override=False):
     """Create invoice, stock issues and balanced GL entries inside caller transaction."""
     rate = Decimal(str(tax_rate)).quantize(CENT, rounding=ROUND_HALF_UP)
-    if rate < 0 or rate > 100:
-        raise ValueError("نسبة الضريبة يجب أن تكون بين صفر و100.")
+    allowed_rates = _allowed_vat_rates(conn)
+    if rate not in allowed_rates:
+        raise ValueError("نسبة الضريبة على الفاتورة ليست ضمن النسب المعتمدة في إعدادات الدولة.")
+
     customer = conn.execute("SELECT * FROM customers WHERE id=? AND active=1", (customer_id,)).fetchone()
     if not customer:
         raise ValueError("العميل غير موجود أو غير نشط.")
@@ -182,6 +202,8 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             raise ValueError("نسبة ضريبة البند يجب أن تكون بين صفر و100.")
         if treatment != "standard":
             line_rate = Decimal("0.00")
+        elif line_rate not in allowed_rates:
+            raise ValueError("نسبة ضريبة البند غير معتمدة للدولة المحددة. راجع قائمة نسب الضريبة في إعدادات الشركة.")
         line_tax = (line_total * line_rate / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
         subtotal += line_total
         tax_amount += line_tax
@@ -214,10 +236,11 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
 
     stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
     invoice_no = "SINV-" + stamp
+    effective_rate = (tax_amount * Decimal("100") / subtotal).quantize(CENT, rounding=ROUND_HALF_UP)
     cur = conn.execute(
         """INSERT INTO sales_invoices(invoice_no,customer_id,invoice_date,warehouse_id,subtotal,
            tax_rate,tax_amount,total_amount,created_by) VALUES(?,?,?,?,?,?,?,?,?)""",
-        (invoice_no, customer_id, invoice_date, warehouse_id, str(subtotal), str(rate),
+        (invoice_no, customer_id, invoice_date, warehouse_id, str(subtotal), str(effective_rate),
          str(tax_amount), str(total_amount), created_by)
     )
     invoice_id = cur.lastrowid
