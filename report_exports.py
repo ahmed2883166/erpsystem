@@ -105,14 +105,16 @@ def register_report_exports(app, db_path, permissions):
                 title = f"دفتر الأستاذ - {account['code']} {account['name_ar']}"
             elif report == "stock":
                 rows = conn.execute("""
-                    SELECT p.sku,p.name_ar,p.uom,
+                    SELECT p.sku,p.name_ar,p.uom,w.code warehouse_code,w.name_ar warehouse_name,
                            COALESCE(SUM(CAST(l.qty_remaining AS REAL)),0) qty,
                            COALESCE(SUM(CAST(l.qty_remaining AS REAL)*CAST(l.unit_cost AS REAL)),0) value
                     FROM stock_products p LEFT JOIN stock_valuation_layers l ON l.product_id=p.id
-                    WHERE p.active=1 GROUP BY p.id ORDER BY p.sku
+                    LEFT JOIN stock_warehouses w ON w.id=l.warehouse_id
+                    WHERE p.active=1 GROUP BY p.id,w.id ORDER BY p.sku,w.code
                 """).fetchall()
-                headers = ["كود الصنف", "اسم الصنف", "وحدة القياس", "الرصيد", "قيمة المخزون"]
-                data = [[r["sku"], r["name_ar"], r["uom"], r["qty"], r["value"]] for r in rows]
+                headers = ["كود الصنف", "اسم الصنف", "وحدة القياس", "كود المخزن", "اسم المخزن", "الرصيد", "قيمة المخزون"]
+                data = [[r["sku"], r["name_ar"], r["uom"], r["warehouse_code"] or "", r["warehouse_name"] or "",
+                         r["qty"], r["value"]] for r in rows]
                 filename = "nexus-stock-valuation.xlsx"
                 title = "تقييم وأرصدة المخزون"
             elif report == "fixed-assets":

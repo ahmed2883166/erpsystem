@@ -503,12 +503,18 @@ def reports():
       FROM stock_lots l JOIN stock_products p ON p.id=l.product_id
       LEFT JOIN stock_valuation_layers v ON v.lot_id=l.id
       WHERE l.expiry_date IS NOT NULL GROUP BY l.id ORDER BY l.expiry_date""").fetchall()
+    warehouse_rows=c.execute("""SELECT p.sku,p.name_ar,p.uom,w.code warehouse_code,w.name_ar warehouse_name,
+      COALESCE(SUM(CAST(v.qty_remaining AS REAL)),0) qty,
+      COALESCE(SUM(CAST(v.qty_remaining AS REAL)*CAST(v.unit_cost AS REAL)),0) value
+      FROM stock_products p LEFT JOIN stock_valuation_layers v ON v.product_id=p.id
+      LEFT JOIN stock_warehouses w ON w.id=v.warehouse_id
+      WHERE p.active=1 GROUP BY p.id,w.id ORDER BY p.sku,w.code""").fetchall()
     movements=c.execute("""SELECT m.*,p.sku,p.name_ar,w.name_ar warehouse
       FROM stock_movements m JOIN stock_products p ON p.id=m.product_id
       LEFT JOIN stock_warehouses w ON w.id=COALESCE(m.target_warehouse_id,m.source_warehouse_id)
       ORDER BY m.id DESC LIMIT 100""").fetchall()
     c.close()
-    return render_template("stock_reports.html",rows=rows,lots=lots,movements=movements)
+    return render_template("stock_reports.html",rows=rows,lots=lots,movements=movements,warehouse_rows=warehouse_rows)
 
 
 @stock_bp.route("/barcode")
