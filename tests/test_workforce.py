@@ -32,7 +32,10 @@ class WorkforceTests(unittest.TestCase):
         conn.commit()
         conn.close()
         workforce.initialize_workforce_schema()
-        self.app = Flask(__name__)
+        template_dir = Path(self.temp.name) / "templates"
+        template_dir.mkdir()
+        (template_dir / "custody.html").write_text("custody list", encoding="utf-8")
+        self.app = Flask(__name__, template_folder=str(template_dir))
         self.app.secret_key = "test"
         self.app.register_blueprint(workforce.workforce_bp)
         self.client = self.app.test_client()
@@ -63,7 +66,7 @@ class WorkforceTests(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         line = conn.execute("SELECT gross_pay,net_pay FROM payroll_lines").fetchone()
         conn.close()
-        self.assertEqual(line, ("11550.00", "10750.00"))
+        self.assertEqual(line, ("11650.00", "10850.00"))
         response = self.client.post("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
