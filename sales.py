@@ -542,8 +542,13 @@ def index():
     receipts = c.execute("""SELECT r.*,i.invoice_no,c.name customer_name FROM customer_receipts r
                             JOIN sales_invoices i ON i.id=r.invoice_id JOIN customers c ON c.id=i.customer_id
                             ORDER BY r.id DESC LIMIT 20""").fetchall()
+    credit_notes = c.execute("""SELECT n.*,i.invoice_no,c.name customer_name
+                                FROM sales_credit_notes n JOIN sales_invoices i ON i.id=n.invoice_id
+                                JOIN customers c ON c.id=i.customer_id
+                                ORDER BY n.id DESC LIMIT 20""").fetchall()
     c.close()
-    return render_template("sales.html", customers=customers, invoices=invoices, receipts=receipts)
+    return render_template("sales.html", customers=customers, invoices=invoices,
+                           receipts=receipts, credit_notes=credit_notes)
 
 
 @sales_bp.route("/customers", methods=["GET", "POST"])
