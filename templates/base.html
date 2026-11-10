@@ -17,6 +17,11 @@
 <a href="{{ url_for('change_password') }}">تغيير كلمة المرور</a><a href="{{ url_for('logout') }}">تسجيل الخروج</a></nav></aside>
 {% endif %}
 <main>{% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}{% block content %}{% endblock %}</main>
+{% if session.user_id %}
+<div class="global-report-actions no-print">
+  <button type="button" class="secondary" onclick="window.print()" title="طباعة الشاشة أو حفظها PDF">▤ طباعة / PDF</button>
+</div>
+{% endif %}
 <button class="theme-toggle secondary" type="button" id="themeToggle">◐ المظهر</button>
 <script>
 (function(){const root=document.documentElement;const saved=localStorage.getItem('nexus-theme')||'dark';root.dataset.theme=saved;const btn=document.getElementById('themeToggle');if(btn){btn.addEventListener('click',()=>{const next=root.dataset.theme==='dark'?'light':'dark';root.dataset.theme=next;localStorage.setItem('nexus-theme',next);btn.textContent=next==='dark'?'◐ المظهر الداكن':'☀ المظهر الفاتح';});btn.textContent=saved==='dark'?'◐ المظهر الداكن':'☀ المظهر الفاتح';}})();
