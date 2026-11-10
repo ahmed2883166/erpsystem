@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% block title %}تفاصيل مسير الرواتب | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>مسير الرواتب {{run.period}}</h2><p>الحالة: {{'مرحّل' if run.status=='posted' else 'مسودة'}} | رقم القيد: {{run.journal_entry_id or '-'}}</p></header>
+<section class="panel"><table><tr><th>الموظف</th><th>أساسي</th><th>بدلات</th><th>إضافي</th><th>خصم غياب</th><th>خصومات ثابتة</th><th>ضريبة</th><th>تأمين موظف</th><th>تأمين شركة</th><th>إجمالي خاضع للصرف</th><th>صافي</th></tr>
+{% for r in rows %}<tr><td>{{r.employee_code}} - {{r.full_name}}</td><td>{{r.basic_salary}}</td><td>{{r.allowances}}</td><td>{{r.overtime_amount}}</td><td>{{r.absence_deduction}}</td><td>{{r.other_deductions}}</td><td>{{r.taxable_income_tax}}</td><td>{{r.employee_insurance}}</td><td>{{r.employer_insurance}}</td><td>{{r.gross_pay}}</td><td>{{r.net_pay}}</td></tr>{% endfor %}</table></section>
+{% if run.status=='draft' and session.role in ['admin','accountant'] %}<section class="panel"><h3>ترحيل القيد المحاسبي</h3><p>اختر الحسابات التفصيلية المناسبة من دليل الحسابات قبل الترحيل.</p><form method="post" action="{{url_for('workforce.post_payroll',run_id=run.id)}}" class="form-grid">
+{% for field,label in [('salary_expense_account','مصروف الأجور والمرتبات'),('employer_ins_expense_account','مصروف حصة الشركة بالتأمينات'),('salaries_payable_account','رواتب مستحقة للموظفين'),('tax_payable_account','ضريبة مرتبات مستحقة'),('insurance_payable_account','تأمينات اجتماعية مستحقة')] %}
+<label>{{label}}<select name="{{field}}" required>{% for a in accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}} ({{a.account_type}})</option>{% endfor %}</select></label>{% endfor %}
+<button type="submit">اعتماد وترحيل المسير</button></form></section>{% endif %}
+{% endblock %}
