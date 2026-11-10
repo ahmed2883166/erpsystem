@@ -697,10 +697,12 @@ def new_credit_note():
                     prior_by_line.get(prior["invoice_line_id"], Decimal("0"))
                     + Decimal(prior["quantity"])
                 )
-            lines = [
-                dict(line) | {"credited_qty": str(prior_by_line.get(line["id"], Decimal("0")))}
-                for line in lines
-            ]
+            enriched_lines = []
+            for line in lines:
+                item = dict(line)
+                item["credited_qty"] = str(prior_by_line.get(line["id"], Decimal("0")))
+                enriched_lines.append(item)
+            lines = enriched_lines
     if request.method == "POST":
         try:
             if not invoice:
