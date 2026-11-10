@@ -70,3 +70,15 @@
 .global-report-actions button:hover{background:var(--surface2)}
 @media(max-width:850px){.global-report-actions{position:static;margin:0 0 14px;text-align:left}}
 @media print{.global-report-actions{display:none!important}}
+
+/* NEXUS ERP visual document states and account drill-down */
+.status-row td{transition:background .15s ease}
+.status-paid td{background:color-mix(in srgb,#16a34a 8%,var(--surface))}
+.status-partial td{background:color-mix(in srgb,#d97706 10%,var(--surface))}
+.status-unpaid td{background:color-mix(in srgb,#dc2626 7%,var(--surface))}
+.status-cancelled td{background:color-mix(in srgb,#64748b 12%,var(--surface));color:var(--muted);text-decoration:line-through}
+.status-draft td{background:color-mix(in srgb,#0ea5e9 7%,var(--surface))}
+.status-approved td,.status-received td{background:color-mix(in srgb,#16a34a 7%,var(--surface))}
+.status-transfer td{background:color-mix(in srgb,#8b5cf6 8%,var(--surface))}
+.status-issued td{background:color-mix(in srgb,#d97706 7%,var(--surface))}
+.drill-hint{font-size:11px;color:var(--accent);font-weight:700}
