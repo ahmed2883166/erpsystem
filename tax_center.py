@@ -166,12 +166,11 @@ def classify_document(kind, document_id):
         conn.close()
         flash("المستند غير موجود أو غير مرحل.", "error")
         return redirect(url_for("tax.tax_report", period=request.form.get("period", "")))
-    if kind == "purchase":
-        conn.execute("UPDATE supplier_bills SET tax_treatment=?,tax_reference=?,tax_notes=?,input_vat_deductible_percent=? WHERE id=?",
-                     (treatment, reference, notes, deductible, document_id))
-    else:
-        conn.execute("UPDATE sales_invoices SET tax_treatment=?,tax_reference=?,tax_notes=? WHERE id=?",
-                     (treatment, reference, notes, document_id))
+    # Posted tax classifications affect the return but do not create a GL adjustment.
+    # Freeze them after posting until a dedicated tax-adjustment workflow exists.
+    conn.close()
+    flash("لا يمكن تعديل التصنيف أو نسبة خصم الضريبة بعد ترحيل المستند. أنشئ مستند تسوية ضريبية معتمدًا حتى تظل الدفاتر والإقرار متطابقين.", "error")
+    return redirect(url_for("tax.tax_report", period=request.form.get("period", "")))
     conn.execute("INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
                  (session.get("user_id"), "tax_classification", kind + ":" + str(document_id) + " => " + treatment + "; ref=" + reference))
     conn.commit()
