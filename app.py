@@ -21,7 +21,7 @@ from banking import bank_bp, init_bank_schema
 from fixed_assets import assets_bp, initialize_assets_schema
 from receivables import aging_bp, initialize_aging_schema
 from quotations import quotes_bp, initialize_quotes_schema
-from tax_center import tax_bp
+from tax_center import tax_bp, initialize_tax_schema
 from report_exports import register_report_exports
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -164,6 +164,7 @@ def initialize_database():
     initialize_assets_schema()
     initialize_aging_schema()
     initialize_quotes_schema()
+    initialize_tax_schema()
 
 
 def now():
