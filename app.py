@@ -787,7 +787,7 @@ def journal_detail(entry_id):
     totals = connection.execute("""SELECT COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit
         FROM journal_lines WHERE entry_id=?""", (entry_id,)).fetchone()
     connection.close()
-    return render_template("journal_detail.html", entry=entry, lines=lines, totals=totals)
+    return render_template("journal_detail.html", entry=entry, lines=lines, totals=totals, today=datetime.now().date().isoformat())
 
 
 @app.route("/accounting/periods", methods=["GET", "POST"])
