@@ -1,1 +1,74 @@
-{% extends "base.html" %}{% block title %}المطابقة المحاسبية | NEXUS ERP{% endblock %}{% block content %}<header><h2>مركز الترابط والمطابقة</h2><p>{{ settings.get('company_name','NEXUS ERP') }} — العملة الأساسية {{ settings.get('base_currency','') }}</p></header><section class="cards"><article><b>{{ '%.2f'|format(snapshot.journal_totals.debit) }}</b><span>إجمالي المدين</span></article><article><b>{{ '%.2f'|format(snapshot.journal_totals.credit) }}</b><span>إجمالي الدائن</span></article><article><b>{{ '%.2f'|format(snapshot.stock_value) }}</b><span>قيمة طبقات المخزون</span></article><article><b>{{ '%.2f'|format(snapshot.open_ap) }}</b><span>ذمم الموردين المفتوحة</span></article></section><section class="panel"><h3>سلامة دفتر الأستاذ</h3>{% if snapshot.unbalanced|length == 0 %}<p class="flash success">كل القيود المرحلة متوازنة على مستوى المدين والدائن.</p>{% else %}<p class="flash error">يوجد {{ snapshot.unbalanced|length }} قيد غير متوازن.</p><table><tr><th>رقم القيد</th><th>المرجع</th><th>مدين</th><th>دائن</th></tr>{% for x in snapshot.unbalanced %}<tr><td>{{ x.id }}</td><td>{{ x.reference }}</td><td>{{ x.debit }}</td><td>{{ x.credit }}</td></tr>{% endfor %}</table>{% endif %}</section><section class="panel"><h3>مطابقة المخزون مع الأستاذ العام</h3>{% if snapshot.gl_stock is none %}<p>حساب المخزون غير مضبوط للنشاط الحالي. راجع إعدادات دليل الحسابات.</p>{% else %}<p>رصيد حساب المخزون: <b>{{ '%.2f'|format(snapshot.gl_stock) }}</b></p><p>قيمة طبقات المخزون: <b>{{ '%.2f'|format(snapshot.stock_value) }}</b></p><p>الفرق: <b>{{ '%.2f'|format(snapshot.stock_difference) }}</b></p>{% if snapshot.stock_difference|abs < 0.01 %}<p class="flash success">المخزون متطابق مع حساب الأستاذ.</p>{% else %}<p class="flash error">يوجد فرق يحتاج إلى تحليل قبل التسوية.</p>{% endif %}{% endif %}</section><section class="panel"><h3>الأرصدة التشغيلية</h3><p>بضاعة مستلمة غير مفوترة (GRNI) حسب إيصالات الاستلام غير المطابقة لفواتير: <b>{{ '%.2f'|format(snapshot.grni) }}</b></p><p>صافي ذمم الموردين حسب الفواتير: <b>{{ '%.2f'|format(snapshot.open_ap) }}</b></p><p class="muted">هذا تقرير رقابي أولي؛ لا يستبدل كشف حساب المورد أو مطابقة تفصيلية لكل مستند.</p></section>{% endblock %}
+{% extends "base.html" %}
+{% block title %}المطابقة المحاسبية | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <h2>مركز المطابقة والترابط</h2>
+  <p>{{ settings.get('company_name','NEXUS ERP') }} — العملة الأساسية {{ settings.get('base_currency','') }}</p>
+</header>
+
+<section class="cards">
+  <article><b>{{ '%.2f'|format(snapshot.journal_totals.debit or 0) }}</b><span>إجمالي المدين للقيود المرحلة</span></article>
+  <article><b>{{ '%.2f'|format(snapshot.journal_totals.credit or 0) }}</b><span>إجمالي الدائن للقيود المرحلة</span></article>
+  <article><b>{{ '%.2f'|format(snapshot.stock_value) }}</b><span>قيمة المخزون حسب طبقات التقييم</span></article>
+  <article><b>{{ '%.2f'|format(snapshot.open_ap) }}</b><span>صافي ذمم الموردين المفتوحة</span></article>
+</section>
+
+<section class="panel">
+  <h3>1. سلامة القيود المحاسبية</h3>
+  {% if snapshot.unbalanced|length == 0 %}
+    <p class="flash success">كل القيود المرحلة متوازنة على مستوى المدين والدائن.</p>
+  {% else %}
+    <p class="flash error">يوجد {{ snapshot.unbalanced|length }} قيد غير متوازن.</p>
+    <table><thead><tr><th>رقم القيد</th><th>المرجع</th><th>مدين</th><th>دائن</th><th>الفرق</th></tr></thead><tbody>
+    {% for x in snapshot.unbalanced %}
+      <tr><td>{{ x.id }}</td><td>{{ x.reference or '-' }}</td><td>{{ '%.2f'|format(x.debit) }}</td><td>{{ '%.2f'|format(x.credit) }}</td><td>{{ '%.2f'|format(x.debit-x.credit) }}</td></tr>
+    {% endfor %}
+    </tbody></table>
+  {% endif %}
+  <p class="muted">إجمالي الفرق بين مدين ودائن القيود المرحلة: {{ '%.2f'|format((snapshot.journal_totals.debit or 0)-(snapshot.journal_totals.credit or 0)) }}</p>
+</section>
+
+<section class="panel">
+  <h3>2. مطابقة المخزون مع الأستاذ العام</h3>
+  {% if snapshot.gl_stock is none %}
+    <p class="flash error">تعذر تحديد حساب/حسابات مراقبة المخزون للنشاط الحالي. راجع دليل الحسابات وإعداد النشاط.</p>
+  {% else %}
+    <p>حسابات المخزون المستخدمة في المطابقة: <b>{{ snapshot.inventory_account_codes|join('، ') }}</b></p>
+    {% if snapshot.missing_inventory_codes %}
+      <p class="flash error">حسابات مخزون غير موجودة أو غير نشطة: {{ snapshot.missing_inventory_codes|join('، ') }}</p>
+    {% endif %}
+    <p>رصيد حسابات المخزون في الأستاذ: <b>{{ '%.2f'|format(snapshot.gl_stock) }}</b></p>
+    <p>قيمة طبقات المخزون: <b>{{ '%.2f'|format(snapshot.stock_value) }}</b></p>
+    <p>الفرق (الأستاذ − طبقات التقييم): <b>{{ '%.2f'|format(snapshot.stock_difference) }}</b></p>
+    {% if snapshot.stock_difference|abs < 0.01 %}
+      <p class="flash success">قيمة المخزون متطابقة مع حسابات الأستاذ المحددة.</p>
+    {% else %}
+      <p class="flash error">يوجد فرق يحتاج إلى تحليل قبل إجراء أي قيد تسوية.</p>
+    {% endif %}
+  {% endif %}
+  <p class="muted">المقارنة تشمل كل حسابات المخزون المحددة لنشاط الشركة، وليس حسابًا واحدًا فقط.</p>
+</section>
+
+<section class="panel">
+  <h3>3. مطابقة الاستلامات وذمم الموردين</h3>
+  <p>بضاعة مستلمة غير مفوترة (GRNI) بعد خصم المطابقات الجزئية: <b>{{ '%.2f'|format(snapshot.grni) }}</b></p>
+  <p>صافي ذمم الموردين حسب الفواتير المرحلة: <b>{{ '%.2f'|format(snapshot.open_ap) }}</b></p>
+  <p class="muted">يتم احتساب المتبقي لكل إذن استلام؛ ربط جزء من الإذن بفاتورة لا يخفي الرصيد غير المفوتر المتبقي.</p>
+</section>
+
+<section class="panel">
+  <h3>4. ترابط المستندات مع القيود</h3>
+  {% if snapshot.unlinked_documents|length == 0 %}
+    <p class="flash success">لا توجد مستندات مالية يتطلب نوعها قيدًا محاسبيًا وتفتقد رابط القيد.</p>
+  {% else %}
+    <p class="flash error">يوجد مستندات تحتاج مراجعة الربط المحاسبي:</p>
+    <table><thead><tr><th>نوع المستند</th><th>عدد المستندات غير المرتبطة</th></tr></thead><tbody>
+    {% for item in snapshot.unlinked_documents %}
+      <tr><td>{{ item.label }}</td><td>{{ item.count }}</td></tr>
+    {% endfor %}
+    </tbody></table>
+  {% endif %}
+  <p>حركات المخزون ذات حالة محاسبية معلقة: <b>{{ snapshot.pending_stock }}</b></p>
+  <p class="muted">حركات التحويل الداخلي لا تتطلب قيدًا عند استخدام حساب مخزون موحد، وحركات الاستلام قد تظل معلقة حتى استكمال مستند الاستلام/الفاتورة. التقرير يكشف الحالات ولا ينشئ قيود تسوية تلقائيًا.</p>
+</section>
+{% endblock %}

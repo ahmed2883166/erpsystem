@@ -572,13 +572,13 @@ def ledger():
 @app.route("/reports/reconciliation")
 @requires("reports.view")
 def reconciliation():
-    connection=db()
-    snapshot=reconciliation_snapshot(connection)
-    snapshot["grni"]=connection.execute("SELECT COALESCE(SUM(CAST(r.total_value AS REAL)),0) total FROM goods_receipts r WHERE r.status='posted' AND NOT EXISTS(SELECT 1 FROM supplier_bill_receipts x WHERE x.receipt_id=r.id)").fetchone()["total"]
-    snapshot["open_ap"]=connection.execute("SELECT COALESCE(SUM(CAST(total_amount AS REAL)-CAST(paid_amount AS REAL)),0) total FROM supplier_bills WHERE status='posted'").fetchone()["total"]
-    settings={r["setting_key"]:r["setting_value"] for r in connection.execute("SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('company_name','base_currency')")}
-    connection.close()
-    return render_template("reconciliation.html",snapshot=snapshot,settings=settings)
+    connection = db()
+    try:
+        snapshot = reconciliation_snapshot(connection)
+    finally:
+        connection.close()
+    settings = snapshot.get("settings", {})
+    return render_template("reconciliation.html", snapshot=snapshot, settings=settings)
 
 @app.route("/users", methods=["GET", "POST"])
 @requires("users.manage")
