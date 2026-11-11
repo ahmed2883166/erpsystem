@@ -1,8 +1,8 @@
 __pycache__/
 *.py[cod]
 .venv/
-data/*.db
-data/backups/
+data/
+**/.nexus_secret_key
 instance/
 # Never commit license authority database or signing keys
 nexus-licenses.sqlite3
