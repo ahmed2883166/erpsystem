@@ -204,5 +204,29 @@ class WorkforceTests(unittest.TestCase):
         self.assertIn((4, 22650, 0), totals_by_account)
         self.assertIn((5, 0, 21200), totals_by_account)
 
+    def test_optional_automatic_statutory_calculation_snapshots_rules(self):
+        self.add_employee()
+        response = self.client.post("/hr/payroll", data={
+            "period": "2026-11", "auto_calculate_statutory": "1",
+            "basic_1": "12000", "allowances_1": "1000",
+            "overtime_hours_1": "0", "overtime_amount_1": "0",
+            "absent_hours_1": "0", "absence_deduction_1": "0",
+            "other_deductions_1": "0", "tax_1": "0",
+            "employee_ins_1": "0", "employer_ins_1": "0"
+        })
+        self.assertEqual(response.status_code, 302, response.get_data(as_text=True))
+        conn = sqlite3.connect(self.db_path)
+        row = conn.execute(
+            "SELECT taxable_income_tax,employee_insurance,employer_insurance,rule_set_id,taxable_annual,insured_wage "
+            "FROM payroll_lines WHERE run_id=1"
+        ).fetchone()
+        conn.close()
+        self.assertIsNotNone(row[3])
+        self.assertGreater(float(row[0]), 0)
+        self.assertGreater(float(row[1]), 0)
+        self.assertGreater(float(row[2]), 0)
+        self.assertGreater(float(row[4]), 0)
+        self.assertGreater(float(row[5]), 0)
+
 if __name__ == "__main__":
     unittest.main()
