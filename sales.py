@@ -983,8 +983,16 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
 def index():
     c = db()
     customers = c.execute("SELECT * FROM customers ORDER BY name").fetchall()
+    invoice_page = max(1, request.args.get("invoice_page", 1, type=int) or 1)
+    invoice_per_page = request.args.get("invoice_per_page", 50, type=int) or 50
+    if invoice_per_page not in (50, 100):
+        invoice_per_page = 50
+    invoice_total = c.execute("SELECT COUNT(*) FROM sales_invoices").fetchone()[0]
+    invoice_pages = max(1, (invoice_total + invoice_per_page - 1) // invoice_per_page)
+    invoice_page = min(invoice_page, invoice_pages)
     invoices = c.execute("""SELECT i.*,c.name customer_name FROM sales_invoices i
-                            JOIN customers c ON c.id=i.customer_id ORDER BY i.id DESC LIMIT 30""").fetchall()
+        JOIN customers c ON c.id=i.customer_id ORDER BY i.id DESC LIMIT ? OFFSET ?""",
+        (invoice_per_page, (invoice_page - 1) * invoice_per_page)).fetchall()
     enriched_invoices = []
     for invoice in invoices:
         item = dict(invoice)
@@ -1027,7 +1035,10 @@ def index():
         enriched_notes.append(item)
     c.close()
     return render_template("sales.html", customers=customers, invoices=enriched_invoices,
-                           receipts=receipts, batch_receipts=batch_receipts, credit_notes=enriched_notes, refunds=refunds, today=date.today().isoformat())
+                           receipts=receipts, batch_receipts=batch_receipts, credit_notes=enriched_notes, refunds=refunds,
+                           invoice_page=invoice_page, invoice_pages=invoice_pages,
+                           invoice_per_page=invoice_per_page, invoice_total=invoice_total,
+                           today=date.today().isoformat())
 
 
 def _customer_discount_input(form):
