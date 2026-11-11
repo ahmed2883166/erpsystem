@@ -55,6 +55,7 @@ class CashFlowReportTests(unittest.TestCase):
         self.app = Flask(__name__, template_folder=str(templates))
         self.app.secret_key = "test"
         self.app.jinja_env.globals["csrf_token"] = lambda: "test-token"
+        self.app.jinja_env.filters["money"] = lambda value: f"{float(value or 0):,.2f}"
         self.app.context_processor(lambda: {
             "permissions": {"cashflow.view"},
             "license_info": {"status": "demo"},
