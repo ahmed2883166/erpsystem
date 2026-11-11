@@ -32,9 +32,19 @@ class ReceivablesAgingTests(unittest.TestCase):
         """)
         conn.commit()
         conn.close()
-        self.app = Flask(__name__)
+        # Use a minimal base layout: the real base.html links to app-only endpoints that this test app does not register.
+        templates_dir = Path(self.temp.name) / "templates"
+        templates_dir.mkdir()
+        (templates_dir / "base.html").write_text("{% block content %}{% endblock %}", encoding="utf-8")
+        real_report = Path(__file__).resolve().parents[1] / "templates" / "aging_report.html"
+        (templates_dir / "aging_report.html").write_text(real_report.read_text(encoding="utf-8"), encoding="utf-8")
+        self.app = Flask(__name__, template_folder=str(templates_dir))
         self.app.secret_key = "test"
+        self.app.jinja_env.globals["csrf_token"] = lambda: "test-token"
         self.app.register_blueprint(receivables.aging_bp)
+        # The aging page links to the Excel export endpoint; register a stub so url_for can build the link.
+        self.app.add_url_rule("/stub-export", endpoint="report_exports.export_report_excel",
+                              view_func=lambda: "")
         self.client = self.app.test_client()
         with self.client.session_transaction() as session:
             session["user_id"] = 1
