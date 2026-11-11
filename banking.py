@@ -98,6 +98,7 @@ def index():
         WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
           AND (lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%' OR a.code IN ('1110','1120','1121','1122'))
         GROUP BY a.id ORDER BY a.code""").fetchall()
+    bank_balances=[dict(row,balance=Decimal(str(row["balance"] or "0"))) for row in bank_balances]
     c.close()
     return render_template("bank.html",bank_accounts=accounts,accounts=all_accounts,rows=rows,bank_balances=bank_balances,today=date.today().isoformat())
 
