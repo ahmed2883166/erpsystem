@@ -109,6 +109,7 @@ class PurchasingAccountingTests(unittest.TestCase):
           INSERT INTO supplier_bills VALUES(2,1,' inv-100 ');
         """)
         app = Flask(__name__)
+        app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
         app.secret_key = "test"
         app.register_blueprint(purchases.purchase_bp)
         client = app.test_client()
