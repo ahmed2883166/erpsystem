@@ -962,7 +962,8 @@ def new_invoice():
                 raise ValueError("تاريخ الاستحقاق لا يمكن أن يسبق تاريخ الفاتورة.")
             c.execute("UPDATE sales_invoices SET due_date=? WHERE id=?", (due_date, result["invoice_id"]))
             c.commit()
-            flash("تم ترحيل فاتورة البيع " + result["invoice_no"], "success")
+            c.close()
+            flash("تم حفظ وترحيل فاتورة البيع " + result["invoice_no"], "success")
             if result.get("credit_warning"):
                 flash("تنبيه ائتماني: تجاوز العميل الحد المسموح. الحد: " + str(result["credit_limit"]) +
                       " | المديونية السابقة: " + str(result["current_exposure"]) +
