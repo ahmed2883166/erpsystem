@@ -193,19 +193,24 @@ def register_report_exports(app, db_path, permissions):
                 run = conn.execute("SELECT period,status FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
                 if not run:
                     abort(404)
-                rows = conn.execute("""SELECT e.employee_code,e.full_name,l.basic_salary,l.allowances,
-                    l.incentives,l.overtime_amount,l.employer_insurance,l.employee_insurance,
-                    l.taxable_income_tax,l.advance_deduction,l.other_deductions,l.absence_deduction,
+                rows = conn.execute("""SELECT e.employee_code,e.full_name,l.basic_salary,l.salary_raise,l.allowances,
+                    l.incentives,l.incentive_name,l.incentive_method,l.incentive_days,
+                    l.overtime_hours,l.overtime_rate_percent,l.overtime_amount,
+                    l.employer_insurance,l.employee_insurance,l.taxable_income_tax,
+                    l.advance_deduction,l.other_deductions,l.absence_deduction,
                     l.total_entitlements,l.total_deductions,l.net_pay
                     FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
                     WHERE l.run_id=? ORDER BY e.employee_code""", (run_id,)).fetchall()
-                headers = ["كود الموظف","اسم الموظف","الأساسي","البدلات","الحوافز","الإضافي",
-                    "حصة صاحب العمل","حصة العامل","ضريبة المرتبات","السلف","خصومات أخرى",
-                    "خصم الغياب","إجمالي الاستحقاق","إجمالي الاستقطاع","صافي المستحق"]
+                headers = ["كود الموظف","اسم الموظف","الأساسي بعد العلاوة","قيمة العلاوة","البدلات",
+                    "قيمة الحافز","اسم الحافز","طريقة حساب الحافز","أيام الحافز",
+                    "ساعات الإضافي","نسبة الإضافي %","قيمة الإضافي","حصة صاحب العمل",
+                    "حصة العامل","ضريبة المرتبات","السلف","خصومات أخرى","خصم الغياب",
+                    "إجمالي الاستحقاق","إجمالي الاستقطاع","صافي المستحق"]
                 data = [[r["employee_code"],r["full_name"],*[Decimal(str(r[k] or "0")) for k in
-                    ("basic_salary","allowances","incentives","overtime_amount","employer_insurance",
-                     "employee_insurance","taxable_income_tax","advance_deduction","other_deductions",
-                     "absence_deduction","total_entitlements","total_deductions","net_pay")]] for r in rows]
+                    ("basic_salary","salary_raise","allowances","incentives","incentive_name","incentive_method",
+                     "incentive_days","overtime_hours","overtime_rate_percent","overtime_amount",
+                     "employer_insurance","employee_insurance","taxable_income_tax","advance_deduction",
+                     "other_deductions","absence_deduction","total_entitlements","total_deductions","net_pay")]] for r in rows]
                 filename = "nexus-payroll-" + run["period"] + ".xlsx"
                 title = "مسير الرواتب - " + run["period"]
             elif report == "reconciliation":
