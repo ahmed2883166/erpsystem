@@ -52,7 +52,7 @@ def register_decimal_aggregates(conn):
     conn.create_aggregate("DECIMAL_LAYER_VALUE_SUM", 3, _DecimalLayerValueSum)
 
 
-def post_journal(conn, entry_date, reference, description, lines, created_by=None):
+def post_journal(conn, entry_date, reference, description, lines, created_by=None, dimensions=None):
     """Idempotently post a balanced journal inside the caller's DB transaction."""
     try:
         normalized_date = date.fromisoformat(str(entry_date)).isoformat()
@@ -66,6 +66,13 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
             (normalized_date, normalized_date)).fetchone()
         if locked:
             raise ValueError(f"الفترة المحاسبية مغلقة: {locked['period_name']}.")
+    dimensions = dimensions or {}
+    dimension_values = (
+        dimensions.get("branch_id"), dimensions.get("cost_center_id"), dimensions.get("project_id")
+    )
+    dimension_columns = {"branch_id", "cost_center_id", "project_id"} & _columns(conn, "journal_lines")
+    if any(value is not None for value in dimension_values) and len(dimension_columns) != 3:
+        raise ValueError("يجب تحديث مخطط الأبعاد التحليلية قبل ترحيل القيد.")
     normalized = []
     for account_id, debit, credit, memo in lines:
         try:
@@ -82,7 +89,7 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
             ).fetchone()
             if not account or account["is_group"] or not account["active"]:
                 raise ValueError("لا يمكن الترحيل إلى حساب غير موجود أو غير نشط أو حساب تجميعي.")
-            normalized.append((int(account_id), dr, cr, str(memo or "")))
+            normalized.append((int(account_id), dr, cr, str(memo or ""), *dimension_values))
     if len(normalized) < 2:
         raise ValueError("القيد يحتاج إلى سطرين على الأقل.")
     debit = sum((x[1] for x in normalized), Decimal("0"))
@@ -99,7 +106,7 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
             (existing["id"],),
         ).fetchall()
         expected_lines = sorted(
-            [(aid, format(dr, "f"), format(cr, "f"), memo) for aid, dr, cr, memo in normalized],
+            [(aid, format(dr, "f"), format(cr, "f"), memo) for aid, dr, cr, memo, *_dims in normalized],
             key=lambda item: (item[0], item[1], item[2], item[3]),
         )
         actual_lines = sorted(
@@ -118,10 +125,18 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
         (entry_date, reference, description, created_by, datetime.now().isoformat(timespec="seconds")),
     )
     entry_id = cur.lastrowid
-    conn.executemany(
-        "INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?)",
-        [(entry_id, aid, format(dr, 'f'), format(cr, 'f'), memo) for aid, dr, cr, memo in normalized],
-    )
+    if dimension_columns == {"branch_id", "cost_center_id", "project_id"}:
+        conn.executemany(
+            """INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo,branch_id,cost_center_id,project_id)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            [(entry_id, aid, format(dr, 'f'), format(cr, 'f'), memo, branch_id, cost_center_id, project_id)
+             for aid, dr, cr, memo, branch_id, cost_center_id, project_id in normalized],
+        )
+    else:
+        conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?)",
+            [(entry_id, aid, format(dr, 'f'), format(cr, 'f'), memo) for aid, dr, cr, memo, *_dims in normalized],
+        )
     return entry_id
 
 
