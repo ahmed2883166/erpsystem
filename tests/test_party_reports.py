@@ -21,6 +21,10 @@ class PartyStatementTests(unittest.TestCase):
             invoice_date TEXT, total_amount TEXT, status TEXT);
           CREATE TABLE sales_credit_notes(id INTEGER PRIMARY KEY, invoice_id INTEGER, credit_note_no TEXT,
             credit_date TEXT, reason TEXT, total_amount TEXT, status TEXT);
+          CREATE TABLE sales_credit_notes(id INTEGER PRIMARY KEY, invoice_id INTEGER, credit_note_no TEXT,
+            credit_date TEXT, reason TEXT, total_amount TEXT, status TEXT);
+          CREATE TABLE customer_refunds(id INTEGER PRIMARY KEY, credit_note_id INTEGER, refund_no TEXT,
+            refund_date TEXT, amount TEXT);
           CREATE TABLE customer_receipts(id INTEGER PRIMARY KEY, invoice_id INTEGER, receipt_no TEXT,
             receipt_date TEXT, amount TEXT, reference TEXT);
           CREATE TABLE supplier_bills(id INTEGER PRIMARY KEY, supplier_id INTEGER, bill_no TEXT,
@@ -61,6 +65,22 @@ class PartyStatementTests(unittest.TestCase):
         response = self.client.get("/reports/party-statement?kind=customer&party_id=1&date_from=2026-11-01&date_to=2026-11-30")
         self.assertEqual(response.status_code, 200)
         self.assertIn("customer|800.00|1200.00|2", response.get_data(as_text=True))
+
+    def test_customer_statement_includes_credit_notes_and_cash_refunds(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO sales_credit_notes VALUES(1,2,'SCN-1','2026-11-21','مرتجع','20.00','posted')"
+        )
+        conn.execute(
+            "INSERT INTO customer_refunds VALUES(1,1,'SREF-1','2026-11-22','5.00')"
+        )
+        conn.commit()
+        conn.close()
+        response = self.client.get(
+            "/reports/party-statement?kind=customer&party_id=1&date_from=2026-11-01&date_to=2026-11-30"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("customer|800.00|1185.00|4", response.get_data(as_text=True))
 
     def test_supplier_statement_opening_and_running_balance(self):
         response = self.client.get("/reports/party-statement?kind=supplier&party_id=1&date_from=2026-11-01&date_to=2026-11-30")
