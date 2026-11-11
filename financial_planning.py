@@ -228,7 +228,8 @@ def cash_flow():
     try:
         role_rows=conn.execute("SELECT account_id FROM management_account_roles WHERE role='cash'").fetchall()
         cash_ids={r["account_id"] for r in role_rows}
-        if not cash_ids:
+        custom_mapping=conn.execute("SELECT meta_value FROM management_dashboard_meta WHERE meta_key='roles_customized'").fetchone()
+        if not cash_ids and not (custom_mapping and custom_mapping["meta_value"]=="1"):
             cash_ids={r["id"] for r in conn.execute(
               "SELECT id FROM accounts WHERE is_group=0 AND (code IN ('1110','1120') OR name_ar LIKE '%صندوق%' OR name_ar LIKE '%بنك%')")}
         if not cash_ids:
