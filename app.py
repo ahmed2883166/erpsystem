@@ -27,6 +27,7 @@ from workforce import workforce_bp, initialize_workforce_schema
 from currency_center import currency_bp, initialize_currency_schema
 from party_reports import party_bp
 from management_dashboard import build_management_snapshot, initialize_management_dashboard_schema
+from analytic_dimensions import initialize_analytic_dimensions_schema, active_dimension_options
 from financial_planning import planning_bp, initialize_planning_schema
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
@@ -323,6 +324,7 @@ def initialize_database():
     dashboard_connection = db()
     activity_row = dashboard_connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
     initialize_management_dashboard_schema(dashboard_connection, activity_row["setting_value"] if activity_row else "commercial")
+    initialize_analytic_dimensions_schema(dashboard_connection)
     initialize_planning_schema(dashboard_connection)
     dashboard_connection.close()
 
@@ -802,14 +804,26 @@ def management_dashboard():
         flash("الفترة غير صحيحة، تم عرض الشهر الحالي.", "error")
         start, end = default_start, default_end
 
+    dimensions = {}
+    for key in ("branch_id", "cost_center_id", "project_id"):
+        raw = request.args.get(key, "").strip()
+        if raw:
+            try:
+                dimensions[key] = int(raw)
+            except ValueError:
+                flash("أحد فلاتر الأبعاد التحليلية غير صحيح.", "error")
+                dimensions = {}
+                break
     connection = db()
     try:
-        snapshot = build_management_snapshot(connection, start, end)
+        snapshot = build_management_snapshot(connection, start, end, dimensions)
+        dimension_options = active_dimension_options(connection)
     finally:
         connection.close()
     return render_template(
         "management_dashboard.html", s=snapshot,
         date_from=start.isoformat(), date_to=end.isoformat(),
+        dimension_options=dimension_options, selected_dimensions=dimensions,
     )
 
 
