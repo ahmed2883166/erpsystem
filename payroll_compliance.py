@@ -448,7 +448,7 @@ def payments():
                 "SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (liability_id,)
             ).fetchone()
             cash = conn.execute(
-                "SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (cash_id,)
+                "SELECT id,code,name_ar,account_type,is_group,active FROM accounts WHERE id=?", (cash_id,)
             ).fetchone()
             if not liability or liability["account_type"] != "liability" or liability["is_group"] or not liability["active"]:
                 raise ValueError("اختر حساب التزام تفصيليًا ونشطًا للضريبة أو التأمينات.")
