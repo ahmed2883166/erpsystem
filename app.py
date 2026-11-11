@@ -91,12 +91,13 @@ app.register_blueprint(party_bp)
 # SECRET_KEY and session/CSRF settings are initialized above.
 
 PERMISSIONS = {
-    "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.manage", "party.view"},
-    "accountant": {"accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.manage", "party.view"},
-    "viewer": {"reports.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view", "bank.view", "tax.view", "workforce.view", "party.view"},
+    "admin": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view"},
+    "accountant": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.manage", "party.view"},
+    "viewer": {"accounts.view", "currency.view", "reports.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view", "bank.view", "tax.view", "workforce.view", "party.view"},
 }
 PERMISSION_LABELS = {
-    "accounts.manage": "إدارة شجرة الحسابات",
+    "accounts.view": "عرض شجرة الحسابات",
+    "accounts.manage": "إضافة وتعديل الحسابات",
     "journal.manage": "إنشاء وترحيل القيود اليومية",
     "reports.view": "عرض التقارير ولوحة الإدارة",
     "users.manage": "إدارة المستخدمين والصلاحيات",
@@ -118,6 +119,7 @@ PERMISSION_LABELS = {
     "tax.manage": "إدارة مركز الضرائب",
     "workforce.view": "عرض الموظفين والرواتب",
     "workforce.manage": "إدارة الموظفين والرواتب",
+    "currency.view": "عرض أسعار العملات وفروق الصرف",
     "currency.manage": "إدارة العملات وفروق الصرف",
     "party.view": "عرض كشوف العملاء والموردين",
 }
@@ -560,8 +562,14 @@ def dashboard():
 
 
 @app.route("/accounts", methods=["GET", "POST"])
-@requires("accounts.manage")
 def accounts():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    effective_permissions = set(session.get("permissions", PERMISSIONS.get(session.get("role"), set())))
+    required_permission = "accounts.manage" if request.method == "POST" else "accounts.view"
+    if required_permission not in effective_permissions and not (request.method == "GET" and "accounts.manage" in effective_permissions):
+        flash("لا تملك صلاحية عرض أو إدارة شجرة الحسابات.","error")
+        return redirect(url_for("dashboard"))
     connection = db()
     if request.method == "POST":
         try:
