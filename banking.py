@@ -1,15 +1,14 @@
+from app_paths import DB_PATH
 from database import connect_database, fetch_page
 """Bank register and reconciliation support for NEXUS ERP."""
 import sqlite3
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
-from pathlib import Path
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
 
 bank_bp = Blueprint("bank", __name__, url_prefix="/bank")
-DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
 
 def db():
     return connect_database(DB_PATH, isolation_level=None)
