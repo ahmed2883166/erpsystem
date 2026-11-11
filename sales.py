@@ -412,6 +412,10 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
     ).fetchone()
     if not invoice:
         raise ValueError("فاتورة البيع غير موجودة أو غير مرحلة.")
+    dimensions = validate_journal_dimensions(conn, {
+        "branch_id": invoice["branch_id"], "cost_center_id": invoice["cost_center_id"],
+        "project_id": invoice["project_id"],
+    })
     reason = str(reason or "").strip()
     if not reason or len(reason) > 500:
         raise ValueError("سبب الإشعار الدائن مطلوب وبحد أقصى 500 حرف.")
@@ -561,7 +565,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
     journal_lines.append((ar, 0, total, "تخفيض ذمم العميل بموجب " + credit_no))
     journal_id = post_journal(
         conn, credit_date, credit_no, "إشعار دائن لفاتورة " + invoice["invoice_no"],
-        journal_lines, created_by,
+        journal_lines, created_by, dimensions=dimensions,
     )
     conn.execute("UPDATE sales_credit_notes SET journal_entry_id=? WHERE id=?", (journal_id, credit_id))
 
@@ -617,7 +621,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         cogs_journal_id = post_journal(
             conn, credit_date, credit_no + "-COGS", "عكس تكلفة المبيعات " + credit_no,
             [(inventory, cost_total, 0, "إعادة تكلفة البضاعة المرتجعة للمخزون"),
-             (cogs, 0, cost_total, "عكس تكلفة البضاعة المباعة")], created_by,
+             (cogs, 0, cost_total, "عكس تكلفة البضاعة المباعة")], created_by, dimensions=dimensions,
         )
         conn.execute(
             "UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE movement_no LIKE ?",
@@ -647,7 +651,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
 
 def _reverse_posted_journal(conn, entry_id, reversal_date, reference, description, created_by):
     rows = conn.execute(
-        "SELECT account_id,debit,credit,memo FROM journal_lines WHERE entry_id=? ORDER BY id",
+        "SELECT account_id,debit,credit,memo,branch_id,cost_center_id,project_id FROM journal_lines WHERE entry_id=? ORDER BY id",
         (entry_id,),
     ).fetchall()
     if not rows:
@@ -657,7 +661,9 @@ def _reverse_posted_journal(conn, entry_id, reversal_date, reference, descriptio
          Decimal(str(row["debit"] or "0")), "عكس: " + str(row["memo"] or ""))
         for row in rows
     ]
-    return post_journal(conn, reversal_date, reference, description, reversed_lines, created_by)
+    dimensions = {key: rows[0][key] for key in ("branch_id", "cost_center_id", "project_id")}
+    return post_journal(conn, reversal_date, reference, description, reversed_lines, created_by,
+                        dimensions=dimensions)
 
 
 def post_customer_refund(conn, credit_note_id, refund_date, amount, cash_account_id,
@@ -693,10 +699,14 @@ def post_customer_refund(conn, credit_note_id, refund_date, amount, cash_account
     invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=?", (note["invoice_id"],)).fetchone()
     ar = _account(conn, _sales_account_codes(_activity(conn))["ar"], "asset")
     refund_no = "SREF-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    dimensions = validate_journal_dimensions(conn, {
+        "branch_id": invoice["branch_id"], "cost_center_id": invoice["cost_center_id"],
+        "project_id": invoice["project_id"],
+    })
     journal_id = post_journal(
         conn, refund_date, refund_no, "رد مبلغ للعميل عن إشعار " + note["credit_note_no"],
         [(ar, amount, 0, "تسوية الرصيد الدائن للعميل"),
-         (cash_account_id, 0, amount, "رد نقدي/بنكي للعميل")], created_by,
+         (cash_account_id, 0, amount, "رد نقدي/بنكي للعميل")], created_by, dimensions=dimensions,
     )
     conn.execute(
         """INSERT INTO customer_refunds(refund_no,credit_note_id,refund_date,amount,cash_account_id,
@@ -812,10 +822,14 @@ def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_i
     activity = _activity(conn)
     ar = _account(conn, _sales_account_codes(activity)["ar"], "asset")
     receipt_no = "RCPT-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    dimensions = validate_journal_dimensions(conn, {
+        "branch_id": invoice["branch_id"], "cost_center_id": invoice["cost_center_id"],
+        "project_id": invoice["project_id"],
+    })
     journal_id = post_journal(
         conn, receipt_date, receipt_no, "تحصيل من عميل " + invoice["invoice_no"],
         [(cash_account_id, amount, 0, "تحصيل نقدي/بنكي"),
-         (ar, 0, amount, "تخفيض ذمم العميل")], created_by
+         (ar, 0, amount, "تخفيض ذمم العميل")], created_by, dimensions=dimensions
     )
     conn.execute(
         """INSERT INTO customer_receipts(receipt_no,invoice_id,receipt_date,amount,cash_account_id,
@@ -966,7 +980,8 @@ def new_invoice():
             result = post_invoice(c, int(request.form["customer_id"]), request.form["invoice_date"],
                                   request.form.get("warehouse_id", type=int), items,
                                   request.form.get("tax_rate", "0"), session["user_id"],
-                                  allow_credit_override=(session.get("role") == "admin" and request.form.get("credit_override") == "1"))
+                                  allow_credit_override=(session.get("role") == "admin" and request.form.get("credit_override") == "1"),
+                                  dimensions=request.form)
             due_date = request.form.get("due_date") or request.form["invoice_date"]
             if due_date < request.form["invoice_date"]:
                 raise ValueError("تاريخ الاستحقاق لا يمكن أن يسبق تاريخ الفاتورة.")
@@ -995,9 +1010,11 @@ def new_invoice():
     warehouses = c.execute("SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','default_vat_rate')")}
+    dimension_options = active_dimension_options(c)
     c.close()
     return render_template("sales_invoice_new.html", customers=customers, products=products,
-                           warehouses=warehouses, settings=settings, today=date.today().isoformat())
+                           warehouses=warehouses, settings=settings, dimension_options=dimension_options,
+                           today=date.today().isoformat())
 
 
 
