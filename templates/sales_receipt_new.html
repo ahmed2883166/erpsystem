@@ -1,2 +1,26 @@
 {% extends "base.html" %}{% block title %}تحصيل عميل | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>تحصيل من عميل</h2></header><section class="panel"><form method="post"><div class="form-grid"><label>الفاتورة<select name="invoice_id" required><option value="">اختر الفاتورة</option>{% for x in invoices %}<option value="{{ x.id }}">{{ x.invoice_no }} — {{ x.customer_name }} — متبقي {{ '%.2f'|format((x.total_amount|float)-(x.paid_amount|float)) }}</option>{% endfor %}</select></label><label>التاريخ<input type="date" name="receipt_date" value="{{ today }}" required></label><label>قيمة التحصيل<input type="number" name="amount" min="0.01" step="0.01" required></label><label>الصندوق / البنك<select name="cash_account_id" required><option value="">اختر الحساب</option>{% for x in cash_accounts %}<option value="{{ x.id }}">{{ x.code }} - {{ x.name_ar }}</option>{% endfor %}</select></label><label>مرجع التحصيل<input name="reference"></label></div><button>تسجيل التحصيل وترحيل القيد</button></form></section>{% endblock %}
+<header><h2>تحصيل مجمع من عميل</h2><p>اختر العميل، ثم حدد فاتورة واحدة أو عدة فواتير ووزّع مبلغ التحصيل على كل فاتورة.</p></header>
+<section class="panel"><form method="post" id="batchReceiptForm">
+<div class="form-grid">
+<label>العميل<select name="customer_id" id="receiptCustomer" required><option value="">اختر العميل</option>{% for x in customers %}<option value="{{x.id}}">{{x.code}} - {{x.name}}</option>{% endfor %}</select></label>
+<label>تاريخ التحصيل<input type="date" name="receipt_date" value="{{today}}" required></label>
+<label>الصندوق / البنك<select name="cash_account_id" required><option value="">اختر الحساب</option>{% for x in cash_accounts %}<option value="{{x.id}}">{{x.code}} - {{x.name_ar}}</option>{% endfor %}</select></label>
+<label>مرجع التحصيل<input name="reference" maxlength="120"></label>
+</div>
+<h3>الفواتير المفتوحة</h3><p class="muted">يمكنك اختيار فواتير متعددة لنفس العميل. اترك الفاتورة غير المحددة دون اختيار. المبلغ المقترح هو كامل المتبقي ويمكنك تعديله للتحصيل الجزئي.</p>
+<div style="overflow-x:auto"><table id="openInvoices"><tr><th>اختيار</th><th>رقم الفاتورة</th><th>التاريخ</th><th>العميل</th><th>الإجمالي</th><th>المحصل</th><th>المتبقي</th><th>المبلغ المحصل الآن</th></tr>
+{% for x in invoices %}<tr class="receipt-invoice-row" data-customer="{{x.customer_id}}"><td><input type="checkbox" name="invoice_ids" value="{{x.id}}" class="invoice-check"></td><td>{{x.invoice_no}}</td><td>{{x.invoice_date}}</td><td>{{x.customer_name}}</td><td>{{'%.2f'|format(x.total_amount|float)}}</td><td>{{'%.2f'|format(x.paid_amount|float)}}</td><td class="remaining">{{'%.2f'|format(x.remaining_amount)}}</td><td><input type="number" class="allocation-amount" name="allocation_amount_{{x.id}}" min="0.01" max="{{'%.2f'|format(x.remaining_amount)}}" step="0.01" placeholder="{{'%.2f'|format(x.remaining_amount)}}" disabled></td></tr>{% else %}<tr><td colspan="8">لا توجد فواتير مفتوحة.</td></tr>{% endfor %}
+</table></div>
+<div class="form-grid"><div class="notice"><strong>إجمالي الإيصال: <span id="receiptTotal">0.00</span></strong></div></div>
+<button type="submit">تسجيل إيصال واحد وتوزيعه على الفواتير المحددة</button>
+</form></section>
+<script>
+(function(){
+ const customer=document.getElementById('receiptCustomer'), rows=[...document.querySelectorAll('.receipt-invoice-row')], total=document.getElementById('receiptTotal');
+ function calc(){let sum=0;rows.forEach(r=>{const cb=r.querySelector('.invoice-check'),input=r.querySelector('.allocation-amount');if(cb.checked)sum+=Number(input.value||0);});total.textContent=sum.toFixed(2);}
+ function filter(){rows.forEach(r=>{const show=!!customer.value&&r.dataset.customer===customer.value;r.hidden=!show;if(!show){const cb=r.querySelector('.invoice-check'),input=r.querySelector('.allocation-amount');cb.checked=false;input.disabled=true;input.value='';}});calc();}
+ rows.forEach(r=>{const cb=r.querySelector('.invoice-check'),input=r.querySelector('.allocation-amount');cb.addEventListener('change',()=>{input.disabled=!cb.checked;if(cb.checked&&!input.value)input.value=input.placeholder;calc();});input.addEventListener('input',calc);});
+ customer.addEventListener('change',filter);filter();
+ document.getElementById('batchReceiptForm').addEventListener('submit',function(e){const selected=rows.filter(r=>r.querySelector('.invoice-check').checked);if(!selected.length){e.preventDefault();alert('حدد فاتورة واحدة على الأقل.');return;}for(const r of selected){const v=Number(r.querySelector('.allocation-amount').value||0),max=Number(r.querySelector('.allocation-amount').max);if(v<=0||v>max){e.preventDefault();alert('راجع مبلغ التحصيل؛ يجب أن يكون أكبر من صفر ولا يتجاوز المتبقي.');return;}}});
+})();
+</script>{% endblock %}
