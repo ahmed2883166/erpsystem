@@ -222,6 +222,10 @@ class WorkforceTests(unittest.TestCase):
         ).fetchone()
         conn.execute("""INSERT INTO payroll_incentive_rules(name,calculation_method,calculation_value)
                         VALUES('حافز مناسبة','percentage_basic','5')""")
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,work_status)
+                        VALUES('E005','Employee Five','2026-01-01','8000','200','permanent')""")
+        conn.execute("""INSERT INTO payroll_incentive_rules(name,calculation_method,calculation_value)
+                        VALUES('حافز أيام','per_day','100')""")
         conn.commit()
         conn.close()
         self.assertEqual(employee, ("Tanta","12345678901234","INS-3","permanent","percentage","10.00","basic"))
@@ -230,16 +234,25 @@ class WorkforceTests(unittest.TestCase):
             "overtime_hours_1": "10", "overtime_rate_percent_1": "150", "overtime_amount_1": "",
             "incentive_rule_1": "1", "incentive_days_1": "0", "incentives_1": "0",
             "absence_deduction_1": "0", "other_deductions_1": "0", "advance_1": "0",
-            "tax_1": "0", "employee_ins_1": "0", "employer_ins_1": "0"
+            "tax_1": "0", "employee_ins_1": "0", "employer_ins_1": "0",
+            "basic_2": "8000", "allowances_2": "0", "overtime_hours_2": "0",
+            "overtime_rate_percent_2": "150", "overtime_amount_2": "",
+            "incentive_rule_2": "2", "incentive_days_2": "3", "incentives_2": "0",
+            "absence_deduction_2": "0", "other_deductions_2": "0", "advance_2": "0",
+            "tax_2": "0", "employee_ins_2": "0", "employer_ins_2": "0"
         })
         self.assertEqual(response.status_code, 302)
         conn = sqlite3.connect(self.db_path)
         line = conn.execute(
             "SELECT basic_salary,salary_raise,overtime_amount,incentives,gross_pay,incentive_name "
-            "FROM payroll_lines WHERE run_id=1"
+            "FROM payroll_lines WHERE run_id=1 AND employee_id=1"
+        ).fetchone()
+        per_day = conn.execute(
+            "SELECT incentives,gross_pay,incentive_days FROM payroll_lines WHERE run_id=1 AND employee_id=2"
         ).fetchone()
         conn.close()
         self.assertEqual(line, ("11000.00","1000.00","825.00","550.00","12875.00","حافز مناسبة"))
+        self.assertEqual(per_day, ("300.00","8300.00","3"))
 
     def test_payroll_excludes_unpaid_leave_resigned_and_retired_employees(self):
         conn = sqlite3.connect(self.db_path)
