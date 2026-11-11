@@ -29,32 +29,57 @@ def _authorized(fn):
     return wrapped
 
 
+def _table_exists(c, name):
+    return c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+
+
+def _columns(c, name):
+    return {row["name"] for row in c.execute(f'PRAGMA table_info("{name}")')} if _table_exists(c, name) else set()
+
+
 def _events(c, kind, party_id):
     events = []
     if kind == "customer":
         for r in c.execute("""SELECT invoice_date event_date,invoice_no reference,
-            'فاتورة مبيعات' description,CAST(total_amount AS REAL) debit,0 credit,0 priority
+            'فاتورة مبيعات' description,total_amount debit,0 credit,0 priority
             FROM sales_invoices WHERE customer_id=? AND status='posted'""", (party_id,)):
             events.append(dict(r))
         for r in c.execute("""SELECT cr.receipt_date event_date,cr.receipt_no reference,
             'مقبوضات عميل ' || COALESCE(cr.reference,'') description,0 debit,
-            CAST(cr.amount AS REAL) credit,1 priority
+            cr.amount credit,1 priority
             FROM customer_receipts cr JOIN sales_invoices i ON i.id=cr.invoice_id
             WHERE i.customer_id=?""", (party_id,)):
             events.append(dict(r))
         for r in c.execute("""SELECT cn.credit_date event_date,cn.credit_note_no reference,
             'إشعار دائن / مرتجع بيع: ' || cn.reason description,0 debit,
-            CAST(cn.total_amount AS REAL) credit,2 priority
+            cn.total_amount credit,2 priority
             FROM sales_credit_notes cn JOIN sales_invoices i ON i.id=cn.invoice_id
             WHERE i.customer_id=? AND cn.status='posted'""", (party_id,)):
             events.append(dict(r))
+        if _table_exists(c, "customer_refunds"):
+            for r in c.execute("""SELECT rf.refund_date event_date,rf.refund_no reference,
+                'رد مبلغ للعميل عن إشعار دائن' description,rf.amount debit,0 credit,3 priority
+                FROM customer_refunds rf
+                JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id
+                JOIN sales_invoices i ON i.id=cn.invoice_id
+                WHERE i.customer_id=?""", (party_id,)):
+                events.append(dict(r))
+        if "cancel_journal_entry_id" in _columns(c, "sales_credit_notes"):
+            for r in c.execute("""SELECT je.entry_date event_date,cn.credit_note_no || '-CANCEL' reference,
+                'إلغاء إشعار دائن: ' || cn.cancellation_reason description,
+                cn.total_amount debit,0 credit,4 priority
+                FROM sales_credit_notes cn
+                JOIN sales_invoices i ON i.id=cn.invoice_id
+                JOIN journal_entries je ON je.id=cn.cancel_journal_entry_id
+                WHERE i.customer_id=? AND cn.status='cancelled'""", (party_id,)):
+                events.append(dict(r))
     else:
         for r in c.execute("""SELECT bill_date event_date,bill_no reference,
-            'فاتورة مشتريات' description,0 debit,CAST(total_amount AS REAL) credit,0 priority
+            'فاتورة مشتريات' description,0 debit,total_amount credit,0 priority
             FROM supplier_bills WHERE supplier_id=? AND status='posted'""", (party_id,)):
             events.append(dict(r))
         for r in c.execute("""SELECT payment_date event_date,payment_no reference,
-            'مدفوعات مورد ' || COALESCE(reference,'') description,CAST(amount AS REAL) debit,0 credit,1 priority
+            'مدفوعات مورد ' || COALESCE(reference,'') description,amount debit,0 credit,1 priority
             FROM supplier_payments WHERE supplier_id=?""", (party_id,)):
             events.append(dict(r))
     return sorted(events, key=lambda x: (x["event_date"], x["priority"], x["reference"] or ""))
