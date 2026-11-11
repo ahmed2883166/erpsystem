@@ -36,6 +36,7 @@
     <label>الفرع<select name="branch_id"><option value="">كل الفروع</option>{% for x in dimension_options.branches %}<option value="{{ x.id }}" {% if selected_dimensions.get('branch_id') == x.id %}selected{% endif %}>{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
     <label>مركز التكلفة<select name="cost_center_id"><option value="">كل المراكز</option>{% for x in dimension_options.cost_centers %}<option value="{{ x.id }}" {% if selected_dimensions.get('cost_center_id') == x.id %}selected{% endif %}>{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
     <label>المشروع<select name="project_id"><option value="">كل المشروعات</option>{% for x in dimension_options.projects %}<option value="{{ x.id }}" {% if selected_dimensions.get('project_id') == x.id %}selected{% endif %}>{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
+    <label>العميل<select name="customer_id"><option value="">كل العملاء</option>{% for x in dimension_options.customers %}<option value="{{ x.id }}" {% if selected_dimensions.get('customer_id') == x.id %}selected{% endif %}>{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
     <button type="submit">تطبيق الفلاتر</button>
   </form>
 </section>
