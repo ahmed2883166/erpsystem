@@ -23,6 +23,13 @@ class CustomerPriceRuleTests(unittest.TestCase):
         rules = [{'id': 1, 'min_qty': '10', 'unit_price': '80', 'valid_from': '2026-10-01'}]
         self.assertIsNone(_select_customer_price_rule(rules, '9.99'))
 
+    def test_invalid_quantity_raises_user_facing_validation_error(self):
+        rules = [{'id': 1, 'min_qty': '1', 'unit_price': '100', 'valid_from': '2026-11-01'}]
+        for quantity in ('abc', '', '0', '-2', 'NaN', 'Infinity'):
+            with self.subTest(quantity=quantity):
+                with self.assertRaisesRegex(ValueError, 'كمية الصنف غير صحيحة'):
+                    _select_customer_price_rule(rules, quantity)
+
 
 if __name__ == '__main__':
     unittest.main()
