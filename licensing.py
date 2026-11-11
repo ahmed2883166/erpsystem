@@ -157,6 +157,10 @@ def get_license_status(data_dir=None, current_time=None, machine_id=None, public
     if state.get("token"):
         payload = verify_license_token(state["token"],machine_id,public_key,current_time)
         if payload:
+            if payload.get("license_type") == "trial":
+                expiry = _parse_time(payload.get("expires_at"))
+                return {"status":"trial","license_type":"trial","days_remaining":max(0, int((expiry-current_time).total_seconds()+86399)//86400),
+                        "trial_ends_at":_iso(expiry),"machine_id":machine_id,"trial_authority":"signed_server"}
             if current_time > _parse_time(payload["offline_until"]):
                 if _refresh_license(state,machine_id,data_dir,current_time):
                     payload = verify_license_token(state["token"],machine_id,public_key,current_time)
@@ -169,15 +173,21 @@ def get_license_status(data_dir=None, current_time=None, machine_id=None, public
         try:
             remote = _post_json(trial_url, {"machine_id": machine_id, "product": "NEXUS_ERP"})
             remote_first = _parse_time(remote.get("first_seen"))
-            remote_end = _parse_time(remote.get("trial_ends_at"))
-            if not remote_first or not remote_end:
-                raise RuntimeError("استجابة خادم التجربة غير صالحة.")
-            state["first_seen"] = _iso(remote_first)
+            token = remote.get("token", "")
+            payload = verify_license_token(token, machine_id, public_key, current_time)
+            if not remote_first or not payload or payload.get("license_type") != "trial":
+                raise RuntimeError("استجابة خادم التجربة أو توقيعها غير صالح.")
+            remote_end = _parse_time(payload.get("expires_at"))
+            if not remote_end or payload.get("trial_ends_at") != payload.get("expires_at"):
+                raise RuntimeError("مدة التجربة الموقعة غير صالحة.")
+            state.update({"machine_id":machine_id,"token":token,"first_seen":_iso(remote_first),
+                          "last_seen":_iso(current_time),"license_type":"trial"})
             _write_state(state, data_dir)
             if remote_end <= current_time:
                 return {"status":"expired","days_remaining":0,"machine_id":machine_id}
-            return {"status":"trial","days_remaining":max(1,int((remote_end-current_time).total_seconds()+86399)//86400),
-                    "trial_ends_at":_iso(remote_end),"machine_id":machine_id,"trial_authority":"server"}
+            return {"status":"trial","license_type":"trial",
+                    "days_remaining":max(1,int((remote_end-current_time).total_seconds()+86399)//86400),
+                    "trial_ends_at":_iso(remote_end),"machine_id":machine_id,"trial_authority":"signed_server"}
         except RuntimeError:
             return {"status":"online_required","message":"تعذر التحقق من فترة التجربة عبر خادم التراخيص.","machine_id":machine_id}
     # Never grant a trial from a client-side clock or local file.
