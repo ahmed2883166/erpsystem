@@ -77,7 +77,8 @@ def _role(fn):
         if "user_id" not in session:
             return redirect(url_for("login"))
         required = "currency.manage" if request.method == "POST" else "currency.view"
-        if (required not in set(session["permissions"])) if "permissions" in session else (session.get("role") not in {"admin", "accountant"}):
+        effective=set(session["permissions"]) if "permissions" in session else ({"currency.view","currency.manage"} if session.get("role") in {"admin","accountant"} else set())
+        if required not in effective and not (request.method != "POST" and "currency.manage" in effective):
             flash("إدارة العملات وفروق الصرف متاحة للمحاسب ومدير النظام فقط.", "error")
             return redirect(url_for("dashboard"))
         return fn(*args, **kwargs)
