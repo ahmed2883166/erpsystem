@@ -1,4 +1,4 @@
-from database import connect_database
+from database import connect_database, fetch_page
 """Employee master, payroll preparation and employee custody workflows."""
 import sqlite3
 from datetime import date, datetime
@@ -531,12 +531,17 @@ def custody():
             flash(str(e), "error")
         c.close()
         return redirect(url_for("workforce.custody"))
-    rows = c.execute("""SELECT x.*,e.employee_code,e.full_name FROM employee_custodies x
-                        JOIN employees e ON e.id=x.employee_id ORDER BY x.id DESC LIMIT 100""").fetchall()
+    custody_page = fetch_page(c,
+        """SELECT x.*,e.employee_code,e.full_name FROM employee_custodies x
+           JOIN employees e ON e.id=x.employee_id ORDER BY x.id DESC""",
+        "SELECT COUNT(*) FROM employee_custodies",
+        page=request.args.get("custody_page",1,type=int),
+        per_page=request.args.get("custody_per_page",50,type=int))
+    rows = custody_page["rows"]
     employees = c.execute("SELECT id,employee_code,full_name FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
     accounts = _accounts(c)
     c.close()
-    return render_template("custody.html", rows=rows, employees=employees, accounts=accounts, today=date.today().isoformat())
+    return render_template("custody.html", rows=rows, custody_page=custody_page, employees=employees, accounts=accounts, today=date.today().isoformat())
 
 
 @workforce_bp.route("/hr/custody/<int:custody_id>/expense", methods=["POST"])
