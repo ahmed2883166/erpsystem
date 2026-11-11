@@ -60,6 +60,8 @@ def initialize_workforce_schema():
       absent_hours TEXT NOT NULL, absence_deduction TEXT NOT NULL, other_deductions TEXT NOT NULL,
       taxable_income_tax TEXT NOT NULL, employee_insurance TEXT NOT NULL,
       employer_insurance TEXT NOT NULL, gross_pay TEXT NOT NULL, net_pay TEXT NOT NULL,
+      incentives TEXT NOT NULL DEFAULT '0', advance_deduction TEXT NOT NULL DEFAULT '0',
+      total_entitlements TEXT NOT NULL DEFAULT '0', total_deductions TEXT NOT NULL DEFAULT '0',
       UNIQUE(run_id,employee_id)
     );
     CREATE TABLE IF NOT EXISTS employee_custodies(
@@ -80,6 +82,15 @@ def initialize_workforce_schema():
     CREATE INDEX IF NOT EXISTS idx_payroll_period ON payroll_runs(period);
     CREATE INDEX IF NOT EXISTS idx_custody_employee ON employee_custodies(employee_id,status);
     """)
+    payroll_cols = {r["name"] for r in c.execute("PRAGMA table_info(payroll_lines)")}
+    for name, definition in {
+        "incentives": "TEXT NOT NULL DEFAULT '0'",
+        "advance_deduction": "TEXT NOT NULL DEFAULT '0'",
+        "total_entitlements": "TEXT NOT NULL DEFAULT '0'",
+        "total_deductions": "TEXT NOT NULL DEFAULT '0'",
+    }.items():
+        if name not in payroll_cols:
+            c.execute("ALTER TABLE payroll_lines ADD COLUMN " + name + " " + definition)
     c.close()
 
 
@@ -192,11 +203,14 @@ def payroll():
                 overtime_amount = M(request.form.get("overtime_amount_" + str(e["id"]), "0"))
                 absent_hours = D(request.form.get("absent_hours_" + str(e["id"]), "0"))
                 absence = M(request.form.get("absence_deduction_" + str(e["id"]), "0"))
+                incentives = M(request.form.get("incentives_" + str(e["id"]), "0"))
+                advance_deduction = M(request.form.get("advance_" + str(e["id"]), "0"))
                 other_deductions = M(request.form.get("other_deductions_" + str(e["id"]), "0"))
                 tax = M(request.form.get("tax_" + str(e["id"]), "0"))
                 emp_ins = M(request.form.get("employee_ins_" + str(e["id"]), "0"))
                 employer_ins = M(request.form.get("employer_ins_" + str(e["id"]), "0"))
-                gross = M(basic_salary + allowances + overtime_amount - absence)
+                # Absence is a deduction, not part of gross wage.
+                gross = M(basic_salary + allowances + overtime_amount + incentives)
                 rule_set_id = None
                 taxable_annual = Decimal("0")
                 insured_wage = Decimal("0")
@@ -211,18 +225,23 @@ def payroll():
                     rule_set_id = automatic["rule_set_id"]
                     taxable_annual = automatic["taxable_annual"]
                     insured_wage = automatic["insured_wage"]
-                net = M(gross - other_deductions - tax - emp_ins)
+                total_entitlements = M(gross + employer_ins)
+                total_deductions = M(employer_ins + emp_ins + tax + advance_deduction + other_deductions + absence)
+                net = M(total_entitlements - total_deductions)
                 if min(basic_salary, allowances, overtime_hours, overtime_amount, absent_hours,
-                       absence, other_deductions, tax, emp_ins, employer_ins, gross, net) < 0:
+                       absence, incentives, advance_deduction, other_deductions, tax, emp_ins,
+                       employer_ins, gross, total_entitlements, total_deductions, net) < 0:
                     raise ValueError("لا يمكن أن تكون الأجور أو الساعات أو الاستقطاعات أو صافي المرتب سالبة.")
                 c.execute("""INSERT INTO payroll_lines(run_id,employee_id,basic_salary,allowances,overtime_hours,
                     overtime_amount,absent_hours,absence_deduction,other_deductions,taxable_income_tax,
-                    employee_insurance,employer_insurance,gross_pay,net_pay,rule_set_id,taxable_annual,insured_wage)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    employee_insurance,employer_insurance,gross_pay,net_pay,rule_set_id,taxable_annual,insured_wage,
+                    incentives,advance_deduction,total_entitlements,total_deductions)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (run_id,e["id"],str(basic_salary),str(allowances),str(overtime_hours),str(overtime_amount),
                      str(absent_hours),str(absence),str(other_deductions),str(tax),str(emp_ins),
                      str(employer_ins),str(gross),str(net),
-                     rule_set_id, str(taxable_annual), str(insured_wage)))
+                     rule_set_id, str(taxable_annual), str(insured_wage),
+                     str(incentives),str(advance_deduction),str(total_entitlements),str(total_deductions)))
             _audit(c, "payroll_draft_created", period)
             c.commit()
             flash("تم إنشاء مسير الرواتب كمسودة. راجع البنود ثم رحّله.", "success")
@@ -255,6 +274,10 @@ def payroll_run(run_id):
         "overtime_amount": M(sum((D(x["overtime_amount"]) for x in rows), Decimal("0"))),
         "absence_deduction": M(sum((D(x["absence_deduction"]) for x in rows), Decimal("0"))),
         "gross_pay": M(sum((D(x["gross_pay"]) for x in rows), Decimal("0"))),
+        "incentives": M(sum((D(x["incentives"]) for x in rows), Decimal("0"))),
+        "advance_deduction": M(sum((D(x["advance_deduction"]) for x in rows), Decimal("0"))),
+        "total_entitlements": M(sum((D(x["total_entitlements"]) for x in rows), Decimal("0"))),
+        "total_deductions": M(sum((D(x["total_deductions"]) for x in rows), Decimal("0"))),
         "other_deductions": M(sum((D(x["other_deductions"]) for x in rows), Decimal("0"))),
         "tax": M(sum((D(x["taxable_income_tax"]) for x in rows), Decimal("0"))),
         "employee_insurance": M(sum((D(x["employee_insurance"]) for x in rows), Decimal("0"))),
@@ -287,11 +310,16 @@ def post_payroll(run_id):
         emp_ins = sum((D(x["employee_insurance"]) for x in rows), Decimal("0"))
         employer_ins = sum((D(x["employer_insurance"]) for x in rows), Decimal("0"))
         other_deductions = sum((D(x["other_deductions"]) for x in rows), Decimal("0"))
+        advance_deduction = sum((D(x["advance_deduction"]) for x in rows), Decimal("0"))
+        absence_deduction = sum((D(x["absence_deduction"]) for x in rows), Decimal("0"))
         other_deductions_account = int(request.form["other_deductions_account"])
+        advances_account = int(request.form["advances_account"])
         lines = [
-            (salary_expense, M(gross), 0, "مصروف الأجور والمرتبات قبل الخصومات"),
+            (salary_expense, M(gross), 0, "مصروف الأجور والمرتبات قبل الاستقطاعات"),
+            (salary_expense, 0, M(absence_deduction), "تخفيض مصروف الأجور بخصم الغياب"),
             (employer_ins_expense, M(employer_ins), 0, "مصروف حصة الشركة في التأمينات"),
             (salaries_payable, 0, M(net), "صافي مستحقات الموظفين"),
+            (advances_account, 0, M(advance_deduction), "استرداد سلف العاملين"),
             (other_deductions_account, 0, M(other_deductions), "الحساب المقابل للخصومات الأخرى"),
             (tax_payable, 0, M(tax), "ضريبة مرتبات مستحقة"),
             (insurance_payable, 0, M(emp_ins + employer_ins), "تأمينات اجتماعية مستحقة"),
