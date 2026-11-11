@@ -112,8 +112,26 @@ def calculate_payroll_deductions(conn, employee, gross_monthly, period):
     if not rule:
         return None
     gross = _m(gross_monthly)
+    insured_wage = _d(employee["insured_wage"])
+    if insured_wage <= 0:
+        insured_wage = gross
+    floor = _d(rule["insurance_floor"])
+    ceiling = _d(rule["insurance_ceiling"])
+    if ceiling > 0 and ceiling < floor:
+        raise ValueError("الحد الأقصى لأجر التأمين أقل من الحد الأدنى في إعدادات القواعد.")
+    insured_wage = max(insured_wage, floor)
+    if ceiling > 0:
+        insured_wage = min(insured_wage, ceiling)
+    employee_rate = _d(rule["employee_insurance_rate"])
+    employer_rate = _d(rule["employer_insurance_rate"])
+    if min(employee_rate, employer_rate) < 0 or max(employee_rate, employer_rate) > 100:
+        raise ValueError("نسبة التأمينات يجب أن تكون بين صفر و100.")
+    employee_insurance = _m(insured_wage * employee_rate / Decimal("100"))
+    employer_insurance = _m(insured_wage * employer_rate / Decimal("100"))
     exemption = _d(rule["personal_exemption_annual"])
-    annual_taxable = max(Decimal("0"), gross * Decimal("12") - exemption)
+    # Employee social insurance is deductible from the annual salary-tax base.
+    annual_taxable = max(Decimal("0"), gross * Decimal("12") -
+                         employee_insurance * Decimal("12") - exemption)
     brackets = conn.execute("""
         SELECT lower_bound,upper_bound,rate FROM payroll_tax_brackets
         WHERE rule_set_id=? ORDER BY CAST(lower_bound AS NUMERIC),id
@@ -138,25 +156,11 @@ def calculate_payroll_deductions(conn, employee, gross_monthly, period):
             expected_lower = upper
         if annual_taxable > expected_lower and (not brackets or brackets[-1]["upper_bound"] not in (None, "")):
             raise ValueError("شرائح ضريبة المرتبات لا تغطي كامل الدخل السنوي الخاضع للضريبة.")
-    insured_wage = _d(employee["insured_wage"])
-    if insured_wage <= 0:
-        insured_wage = gross
-    floor = _d(rule["insurance_floor"])
-    ceiling = _d(rule["insurance_ceiling"])
-    if ceiling > 0 and ceiling < floor:
-        raise ValueError("الحد الأقصى لأجر التأمين أقل من الحد الأدنى في إعدادات القواعد.")
-    insured_wage = max(insured_wage, floor)
-    if ceiling > 0:
-        insured_wage = min(insured_wage, ceiling)
-    employee_rate = _d(rule["employee_insurance_rate"])
-    employer_rate = _d(rule["employer_insurance_rate"])
-    if min(employee_rate, employer_rate) < 0 or max(employee_rate, employer_rate) > 100:
-        raise ValueError("نسبة التأمينات يجب أن تكون بين صفر و100.")
     return {
         "rule_set_id": rule["id"],
         "tax": _m(annual_tax / Decimal("12")),
-        "employee_insurance": _m(insured_wage * employee_rate / Decimal("100")),
-        "employer_insurance": _m(insured_wage * employer_rate / Decimal("100")),
+        "employee_insurance": employee_insurance,
+        "employer_insurance": employer_insurance,
         "taxable_annual": _m(annual_taxable),
         "insured_wage": _m(insured_wage),
         "country_code": country,
