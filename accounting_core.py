@@ -133,7 +133,7 @@ def reconciliation_snapshot(conn):
         credit = _decimal_sum(row["credit"] for row in lines)
         all_debit += debit
         all_credit += credit
-        if abs(debit - credit) > CENT:
+        if debit != credit:
             unbalanced.append({"id": entry["id"], "reference": entry["reference"],
                                "debit": _money(debit), "credit": _money(credit)})
 
