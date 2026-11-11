@@ -6,7 +6,7 @@
 <header><div><h2>{{ settings.get('company_name','NEXUS ERP') }}</h2><h3>فاتورة بيع</h3></div><div><strong>{{ invoice.invoice_no }}</strong><p>{{ invoice.invoice_date }}</p></div></header>
 <div class="form-row"><div><b>العميل:</b> {{ invoice.customer_name }} ({{ invoice.customer_code }})</div><div><b>الرقم الضريبي:</b> {{ invoice.customer_tax_number or '—' }}</div><div><b>تاريخ الاستحقاق:</b> {{ invoice.due_date or invoice.invoice_date }}</div></div>
 <div class="table-wrap"><table><thead><tr><th>الصنف / الوصف</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead><tbody>{% for x in lines %}<tr><td>{{ x.sku or '' }} {{ x.product_name or x.description }}</td><td>{{ x.quantity }}</td><td>{{ x.unit_price }}</td><td>{{ x.line_total }}</td></tr>{% endfor %}</tbody></table></div>
-<div class="invoice-totals"><p>الصافي قبل الضريبة: <b>{{ invoice.subtotal }}</b></p><p>الضريبة: <b>{{ invoice.tax_amount }}</b></p><h3>الإجمالي: {{ invoice.total_amount }} {{ settings.get('base_currency','') }}</h3><p>المحصل: {{ invoice.paid_amount }}</p><p>الإشعارات الدائنة: {{ invoice.credited_amount or '0' }}</p></div>
+<div class="invoice-totals"><p>الصافي قبل الضريبة: <b>{{ invoice.subtotal|money }}</b></p><p>الضريبة: <b>{{ invoice.tax_amount|money }}</b></p><h3>الإجمالي: {{ invoice.total_amount|money }} {{ settings.get('base_currency','') }}</h3><p>المحصل: {{ invoice.paid_amount|money }}</p><p>الإشعارات الدائنة: {{ invoice.credited_amount or '0' }}</p></div>
 <p class="muted">رقم القيد: {{ invoice.journal_entry_id }} · حالة المستند: {{ invoice.status }}</p>
 </section>
 {% endblock %}
