@@ -5,7 +5,6 @@ import re
 import sqlite3
 from decimal import Decimal
 from datetime import datetime
-from accounting_core import register_decimal_aggregates
 from functools import wraps
 
 from flask import Blueprint, Response, abort, request, send_file, session
