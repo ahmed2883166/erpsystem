@@ -763,6 +763,7 @@ def management_account_mapping():
                 selections[role] = set(ids)
             connection.execute("BEGIN IMMEDIATE")
             connection.execute("DELETE FROM management_account_roles")
+            connection.execute("""INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_customized','1') ON CONFLICT(meta_key) DO UPDATE SET meta_value='1'""")
             for role, ids in selections.items():
                 connection.executemany(
                     "INSERT INTO management_account_roles(account_id,role) VALUES(?,?)",
