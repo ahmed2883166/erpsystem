@@ -228,7 +228,10 @@ def payroll():
                 insured_wage = Decimal("0")
                 if request.form.get("auto_calculate_statutory") == "1":
                     from payroll_compliance import calculate_payroll_deductions
-                    automatic = calculate_payroll_deductions(c, e, M(max(Decimal("0"), gross - absence)), period)
+                    automatic = calculate_payroll_deductions(
+                        c, e, gross, period,
+                        taxable_gross_monthly=M(max(Decimal("0"), gross - absence))
+                    )
                     if automatic is None:
                         raise ValueError("لا توجد قواعد ضريبية وتأمينية سارية للموظف " + e["full_name"] + ". راجع إعدادات قواعد الرواتب أو ألغِ خيار الحساب التلقائي.")
                     tax = automatic["tax"]
