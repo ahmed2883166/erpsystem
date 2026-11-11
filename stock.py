@@ -98,6 +98,13 @@ def initialize_stock_schema():
     for name in ("purchase_price", "sale_price"):
         if name not in product_columns:
             c.execute(f"ALTER TABLE stock_products ADD COLUMN {name} TEXT NOT NULL DEFAULT '0'")
+    # Convert legacy free-text categories into selectable product groups without losing labels.
+    legacy_categories = c.execute("SELECT DISTINCT TRIM(category) value FROM stock_products WHERE TRIM(COALESCE(category,''))<>'' AND category_id IS NULL ORDER BY 1").fetchall()
+    for index, legacy in enumerate(legacy_categories, 1):
+        label = legacy["value"]
+        code = f"LEGACY-{index:04d}"
+        c.execute("INSERT OR IGNORE INTO stock_categories(code,name_ar) VALUES(?,?)", (code, label))
+        c.execute("UPDATE stock_products SET category_id=(SELECT id FROM stock_categories WHERE name_ar=?) WHERE TRIM(category)=? AND category_id IS NULL", (label, label))
     movement_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_movements)")}
     if "journal_entry_id" not in movement_columns:
         c.execute("ALTER TABLE stock_movements ADD COLUMN journal_entry_id INTEGER")
