@@ -70,7 +70,7 @@ class WorkforceTests(unittest.TestCase):
     def test_payroll_calculation_and_posting(self):
         self.add_employee()
         response = self.client.post("/hr/payroll", data={
-            "period": "2026-11", "basic_1": "10000", "allowances_1": "1000",
+            "period": "2026-11", "basic_1": "12000", "allowances_1": "1500",
             "overtime_hours_1": "10", "overtime_amount_1": "750",
             "absent_hours_1": "2", "absence_deduction_1": "100",
             "other_deductions_1": "200", "tax_1": "500",
@@ -80,16 +80,16 @@ class WorkforceTests(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         line = conn.execute("SELECT gross_pay,net_pay FROM payroll_lines").fetchone()
         conn.close()
-        self.assertEqual(line, ("11650.00", "10650.00"))
+        self.assertEqual(line, ("14150.00", "13150.00"))
         conn = sqlite3.connect(self.db_path)
         manual_values = conn.execute(
-            "SELECT taxable_income_tax,employee_insurance,employer_insurance,rule_set_id "
+            "SELECT basic_salary,allowances,taxable_income_tax,employee_insurance,employer_insurance,rule_set_id "
             "FROM payroll_lines WHERE run_id=1"
         ).fetchone()
         conn.close()
         # Even though the test setup seeded Egypt's automatic rule set, manual
         # amounts must remain unchanged and no statutory rule is snapshotted.
-        self.assertEqual(manual_values, ("500.00", "300.00", "400.00", None))
+        self.assertEqual(manual_values, ("12000.00", "1500.00", "500.00", "300.00", "400.00", None))
         response = self.client.post("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
@@ -108,8 +108,8 @@ class WorkforceTests(unittest.TestCase):
             "JOIN accounts a ON a.id=jl.account_id ORDER BY jl.id"
         ).fetchall()
         conn.close()
-        self.assertEqual(sum(float(x[1] or 0) for x in posted), 12050.0)
-        self.assertEqual(sum(float(x[2] or 0) for x in posted), 12050.0)
+        self.assertEqual(sum(float(x[1] or 0) for x in posted), 14550.0)
+        self.assertEqual(sum(float(x[2] or 0) for x in posted), 14550.0)
         self.assertTrue(any(x[0] == "1300" and x[2] == "200.00" for x in posted))
 
     def test_custody_issue_expense_and_full_settlement(self):
