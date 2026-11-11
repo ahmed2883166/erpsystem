@@ -54,6 +54,7 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         self.conn.close()
 
         self.app = Flask(__name__)
+        self.app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
         self.app.secret_key = "test-secret"
         self.app.register_blueprint(purchases.purchase_bp)
         self.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
