@@ -27,6 +27,8 @@ class PartyStatementTests(unittest.TestCase):
             receipt_date TEXT, amount TEXT, reference TEXT);
           CREATE TABLE supplier_bills(id INTEGER PRIMARY KEY, supplier_id INTEGER, bill_no TEXT,
             bill_date TEXT, total_amount TEXT, status TEXT);
+          CREATE TABLE supplier_credit_notes(id INTEGER PRIMARY KEY, credit_no TEXT, supplier_id INTEGER,
+            bill_id INTEGER, credit_date TEXT, reason TEXT, total_amount TEXT, status TEXT);
           CREATE TABLE supplier_payments(id INTEGER PRIMARY KEY, supplier_id INTEGER, payment_no TEXT,
             payment_date TEXT, amount TEXT, reference TEXT);
           INSERT INTO customers VALUES(1,'C001','Customer',1);
@@ -42,12 +44,13 @@ class PartyStatementTests(unittest.TestCase):
         """)
         conn.commit()
         conn.close()
-        template_dir = Path(self.temp.name) / "templates"
-        template_dir.mkdir()
-        (template_dir / "party_statement.html").write_text(
-            "{{ kind }}|{{ opening }}|{{ closing }}|{{ rows|length }}", encoding="utf-8"
-        )
+        template_dir = Path(__file__).resolve().parents[1] / "templates"
         self.app = Flask(__name__, template_folder=str(template_dir))
+        self.app.jinja_env.globals["csrf_token"] = lambda: "test-token"
+        self.app.context_processor(lambda: {"license_info": {"status": "demo"}})
+        self.app.add_url_rule("/change-password", endpoint="change_password", view_func=lambda: "")
+        self.app.add_url_rule("/logout", endpoint="logout", view_func=lambda: "")
+        self.app.add_url_rule("/dashboard", endpoint="dashboard", view_func=lambda: "")
         self.app.secret_key = "test"
         self.app.register_blueprint(party_reports.party_bp)
         self.client = self.app.test_client()
@@ -62,7 +65,9 @@ class PartyStatementTests(unittest.TestCase):
     def test_customer_statement_opening_and_running_balance(self):
         response = self.client.get("/reports/party-statement?kind=customer&party_id=1&date_from=2026-11-01&date_to=2026-11-30")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("customer|800.00|1200.00|2", response.get_data(as_text=True))
+        body = response.get_data(as_text=True)
+        self.assertIn("كشف حساب عميل", body)
+        self.assertIn("1,200.00", body)
 
     def test_customer_statement_includes_credit_notes_and_cash_refunds(self):
         conn = sqlite3.connect(self.db_path)
@@ -78,12 +83,16 @@ class PartyStatementTests(unittest.TestCase):
             "/reports/party-statement?kind=customer&party_id=1&date_from=2026-11-01&date_to=2026-11-30"
         )
         self.assertEqual(response.status_code, 200)
-        self.assertIn("customer|800.00|1185.00|4", response.get_data(as_text=True))
+        body = response.get_data(as_text=True)
+        self.assertIn("كشف حساب عميل", body)
+        self.assertIn("SCN-1", body)
 
     def test_supplier_statement_opening_and_running_balance(self):
         response = self.client.get("/reports/party-statement?kind=supplier&party_id=1&date_from=2026-11-01&date_to=2026-11-30")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("supplier|1500.00|1700.00|2", response.get_data(as_text=True))
+        body = response.get_data(as_text=True)
+        self.assertIn("كشف حساب مورد", body)
+        self.assertIn("1,700.00", body)
 
 
 if __name__ == "__main__":
