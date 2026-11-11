@@ -436,6 +436,14 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
             (line_id,),
         ).fetchall()
         if not original_allocations:
+            product_tracking = conn.execute(
+                "SELECT track_lot,track_expiry FROM stock_products WHERE id=?", (original["product_id"],)
+            ).fetchone() if original["product_id"] else None
+            if product_tracking and (product_tracking["track_lot"] or product_tracking["track_expiry"]):
+                raise ValueError(
+                    "الفاتورة قديمة ولا تحتوي على سجل التشغيلة الأصلية. لا يمكن إرجاعها إلى مخزون عام؛ "
+                    "راجع حركة الصرف وحدد التشغيلة قبل إصدار المرتجع."
+                )
             original_allocations = [{"lot_id": None, "quantity": original["quantity"],
                                      "cost_total": original["cost_total"] or "0"}]
         returned_rows = conn.execute(
