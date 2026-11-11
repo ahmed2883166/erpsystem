@@ -5,6 +5,7 @@ from pathlib import Path
 
 from flask import Flask
 import party_reports
+from support.schema import initialize_party_reporting_schema
 
 
 class PartyStatementTests(unittest.TestCase):
@@ -14,34 +15,25 @@ class PartyStatementTests(unittest.TestCase):
         self.original_path = party_reports.DB_PATH
         party_reports.DB_PATH = self.db_path
         conn = sqlite3.connect(self.db_path)
-        conn.executescript("""
-          CREATE TABLE customers(id INTEGER PRIMARY KEY, code TEXT, name TEXT, active INTEGER DEFAULT 1);
-          CREATE TABLE suppliers(id INTEGER PRIMARY KEY, code TEXT, name TEXT, active INTEGER DEFAULT 1);
-          CREATE TABLE sales_invoices(id INTEGER PRIMARY KEY, customer_id INTEGER, invoice_no TEXT,
-            invoice_date TEXT, total_amount TEXT, status TEXT);
-          CREATE TABLE sales_credit_notes(id INTEGER PRIMARY KEY, invoice_id INTEGER, credit_note_no TEXT,
-            credit_date TEXT, reason TEXT, total_amount TEXT, status TEXT);
-          CREATE TABLE customer_refunds(id INTEGER PRIMARY KEY, credit_note_id INTEGER, refund_no TEXT,
-            refund_date TEXT, amount TEXT);
-          CREATE TABLE customer_receipts(id INTEGER PRIMARY KEY, invoice_id INTEGER, receipt_no TEXT,
-            receipt_date TEXT, amount TEXT, reference TEXT);
-          CREATE TABLE supplier_bills(id INTEGER PRIMARY KEY, supplier_id INTEGER, bill_no TEXT,
-            bill_date TEXT, total_amount TEXT, status TEXT);
-          CREATE TABLE supplier_credit_notes(id INTEGER PRIMARY KEY, credit_no TEXT, supplier_id INTEGER,
-            bill_id INTEGER, credit_date TEXT, reason TEXT, total_amount TEXT, status TEXT);
-          CREATE TABLE supplier_payments(id INTEGER PRIMARY KEY, supplier_id INTEGER, payment_no TEXT,
-            payment_date TEXT, amount TEXT, reference TEXT);
-          INSERT INTO customers VALUES(1,'C001','Customer',1);
-          INSERT INTO suppliers VALUES(1,'S001','Supplier',1);
-          INSERT INTO sales_invoices VALUES(1,1,'SI-OLD','2026-10-10','1000','posted');
-          INSERT INTO sales_invoices VALUES(2,1,'SI-NOW','2026-11-10','500','posted');
-          INSERT INTO customer_receipts VALUES(1,1,'CR-OLD','2026-10-20','200','');
-          INSERT INTO customer_receipts VALUES(2,2,'CR-NOW','2026-11-20','100','');
-          INSERT INTO supplier_bills VALUES(1,1,'PB-OLD','2026-10-10','2000','posted');
-          INSERT INTO supplier_bills VALUES(2,1,'PB-NOW','2026-11-10','400','posted');
-          INSERT INTO supplier_payments VALUES(1,1,'SP-OLD','2026-10-20','500','');
-          INSERT INTO supplier_payments VALUES(2,1,'SP-NOW','2026-11-20','200','');
-        """)
+        initialize_party_reporting_schema(conn)
+        conn.executemany("INSERT INTO customers(id,code,name,active) VALUES(?,?,?,?)", [(1,"C001","Customer",1)])
+        conn.executemany("INSERT INTO suppliers(id,code,name,active) VALUES(?,?,?,?)", [(1,"S001","Supplier",1)])
+        conn.executemany("""INSERT INTO sales_invoices
+            (id,customer_id,invoice_no,invoice_date,due_date,total_amount,paid_amount,credited_amount,status)
+            VALUES(?,?,?,?,?,?,?,?,?)""", [
+            (1,1,"SI-OLD","2026-10-10","2026-10-10","1000","0","0","posted"),
+            (2,1,"SI-NOW","2026-11-10","2026-11-10","500","0","0","posted")])
+        conn.executemany("""INSERT INTO customer_receipts
+            (id,invoice_id,receipt_no,receipt_date,amount,reference) VALUES(?,?,?,?,?,?)""", [
+            (1,1,"CR-OLD","2026-10-20","200",""),(2,2,"CR-NOW","2026-11-20","100","")])
+        conn.executemany("""INSERT INTO supplier_bills
+            (id,supplier_id,bill_no,bill_date,due_date,total_amount,paid_amount,credited_amount,status)
+            VALUES(?,?,?,?,?,?,?,?,?)""", [
+            (1,1,"PB-OLD","2026-10-10","2026-10-10","2000","0","0","posted"),
+            (2,1,"PB-NOW","2026-11-10","2026-11-10","400","0","0","posted")])
+        conn.executemany("""INSERT INTO supplier_payments
+            (id,supplier_id,payment_no,payment_date,amount,reference) VALUES(?,?,?,?,?,?)""", [
+            (1,1,"SP-OLD","2026-10-20","500",""),(2,1,"SP-NOW","2026-11-20","200","")])
         conn.commit()
         conn.close()
         template_dir = Path(__file__).resolve().parents[1] / "templates"
@@ -72,10 +64,10 @@ class PartyStatementTests(unittest.TestCase):
     def test_customer_statement_includes_credit_notes_and_cash_refunds(self):
         conn = sqlite3.connect(self.db_path)
         conn.execute(
-            "INSERT INTO sales_credit_notes VALUES(1,2,'SCN-1','2026-11-21','مرتجع','20.00','posted')"
+            "INSERT INTO sales_credit_notes(id,invoice_id,credit_note_no,credit_date,reason,total_amount,status) VALUES(1,2,'SCN-1','2026-11-21','مرتجع','20.00','posted')"
         )
         conn.execute(
-            "INSERT INTO customer_refunds VALUES(1,1,'SREF-1','2026-11-22','5.00')"
+            "INSERT INTO customer_refunds(id,credit_note_id,refund_no,refund_date,amount) VALUES(1,1,'SREF-1','2026-11-22','5.00')"
         )
         conn.commit()
         conn.close()
