@@ -179,32 +179,29 @@ def payroll():
             run_id = cur.lastrowid
             employees = c.execute("SELECT * FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
             for e in employees:
-                items = c.execute("SELECT item_type,amount FROM employee_pay_items WHERE employee_id=? AND active=1", (e["id"],)).fetchall()
-                allowances = sum((D(x["amount"]) for x in items if x["item_type"] == "allowance"), Decimal("0"))
-                other_deductions = sum((D(x["amount"]) for x in items if x["item_type"] == "deduction"), Decimal("0"))
-                overtime_hours = D(request.form.get("overtime_" + str(e["id"]), "0"))
-                absent_hours = D(request.form.get("absent_" + str(e["id"]), "0"))
+                # Every payroll amount is entered on the monthly form. Employee master
+                # data and fixed pay items are not used to calculate this payroll.
+                basic_salary = M(request.form.get("basic_" + str(e["id"]), "0"))
+                allowances = M(request.form.get("allowances_" + str(e["id"]), "0"))
+                overtime_hours = D(request.form.get("overtime_hours_" + str(e["id"]), "0"))
+                overtime_amount = M(request.form.get("overtime_amount_" + str(e["id"]), "0"))
+                absent_hours = D(request.form.get("absent_hours_" + str(e["id"]), "0"))
+                absence = M(request.form.get("absence_deduction_" + str(e["id"]), "0"))
+                other_deductions = M(request.form.get("other_deductions_" + str(e["id"]), "0"))
                 tax = M(request.form.get("tax_" + str(e["id"]), "0"))
                 emp_ins = M(request.form.get("employee_ins_" + str(e["id"]), "0"))
                 employer_ins = M(request.form.get("employer_ins_" + str(e["id"]), "0"))
-                standard = D(e["standard_hours"])
-                if standard <= 0:
-                    raise ValueError("ساعات العمل القياسية للموظف " + e["employee_code"] + " يجب أن تكون أكبر من صفر.")
-                hourly = D(e["basic_salary"]) / standard
-                overtime_amount = M(overtime_hours * hourly * D("1.5"))
-                absence = M(absent_hours * hourly)
-                gross = M(D(e["basic_salary"]) + allowances + overtime_amount - absence - other_deductions)
-                # Fully manual payroll mode: statutory deductions are entered by
-                # the accountant and are never replaced by configured country rules.
-                net = M(gross - tax - emp_ins)
-                if min(overtime_hours, absent_hours, tax, emp_ins, employer_ins, gross, net) < 0:
-                    raise ValueError("لا يمكن أن تكون الساعات أو الاستقطاعات أو صافي المرتب سالبة.")
+                gross = M(basic_salary + allowances + overtime_amount - absence)
+                net = M(gross - other_deductions - tax - emp_ins)
+                if min(basic_salary, allowances, overtime_hours, overtime_amount, absent_hours,
+                       absence, other_deductions, tax, emp_ins, employer_ins, gross, net) < 0:
+                    raise ValueError("لا يمكن أن تكون الأجور أو الساعات أو الاستقطاعات أو صافي المرتب سالبة.")
                 c.execute("""INSERT INTO payroll_lines(run_id,employee_id,basic_salary,allowances,overtime_hours,
                     overtime_amount,absent_hours,absence_deduction,other_deductions,taxable_income_tax,
                     employee_insurance,employer_insurance,gross_pay,net_pay,rule_set_id,taxable_annual,insured_wage)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (run_id,e["id"],e["basic_salary"],str(M(allowances)),str(overtime_hours),str(overtime_amount),
-                     str(absent_hours),str(absence),str(M(other_deductions)),str(tax),str(emp_ins),
+                    (run_id,e["id"],str(basic_salary),str(allowances),str(overtime_hours),str(overtime_amount),
+                     str(absent_hours),str(absence),str(other_deductions),str(tax),str(emp_ins),
                      str(employer_ins),str(gross),str(net),
                      None, "0", "0"))
             _audit(c, "payroll_draft_created", period)
@@ -233,8 +230,20 @@ def payroll_run(run_id):
     rows = c.execute("""SELECT l.*,e.employee_code,e.full_name,e.department FROM payroll_lines l
                         JOIN employees e ON e.id=l.employee_id WHERE l.run_id=? ORDER BY e.employee_code""", (run_id,)).fetchall()
     accounts = _accounts(c)
+    totals = {
+        "basic_salary": M(sum((D(x["basic_salary"]) for x in rows), Decimal("0"))),
+        "allowances": M(sum((D(x["allowances"]) for x in rows), Decimal("0"))),
+        "overtime_amount": M(sum((D(x["overtime_amount"]) for x in rows), Decimal("0"))),
+        "absence_deduction": M(sum((D(x["absence_deduction"]) for x in rows), Decimal("0"))),
+        "gross_pay": M(sum((D(x["gross_pay"]) for x in rows), Decimal("0"))),
+        "other_deductions": M(sum((D(x["other_deductions"]) for x in rows), Decimal("0"))),
+        "tax": M(sum((D(x["taxable_income_tax"]) for x in rows), Decimal("0"))),
+        "employee_insurance": M(sum((D(x["employee_insurance"]) for x in rows), Decimal("0"))),
+        "employer_insurance": M(sum((D(x["employer_insurance"]) for x in rows), Decimal("0"))),
+        "net_pay": M(sum((D(x["net_pay"]) for x in rows), Decimal("0"))),
+    }
     c.close()
-    return render_template("payroll_run.html", run=run, rows=rows, accounts=accounts)
+    return render_template("payroll_run.html", run=run, rows=rows, accounts=accounts, totals=totals)
 
 
 @workforce_bp.route("/hr/payroll/<int:run_id>/post", methods=["POST"])
@@ -258,10 +267,13 @@ def post_payroll(run_id):
         tax = sum((D(x["taxable_income_tax"]) for x in rows), Decimal("0"))
         emp_ins = sum((D(x["employee_insurance"]) for x in rows), Decimal("0"))
         employer_ins = sum((D(x["employer_insurance"]) for x in rows), Decimal("0"))
+        other_deductions = sum((D(x["other_deductions"]) for x in rows), Decimal("0"))
+        other_deductions_account = int(request.form["other_deductions_account"])
         lines = [
-            (salary_expense, M(gross), 0, "مصروف الأجور والمرتبات"),
-            (employer_ins_expense, M(employer_ins), 0, "حصة الشركة في التأمينات"),
+            (salary_expense, M(gross), 0, "مصروف الأجور والمرتبات قبل الخصومات"),
+            (employer_ins_expense, M(employer_ins), 0, "مصروف حصة الشركة في التأمينات"),
             (salaries_payable, 0, M(net), "صافي مستحقات الموظفين"),
+            (other_deductions_account, 0, M(other_deductions), "الحساب المقابل للخصومات الأخرى"),
             (tax_payable, 0, M(tax), "ضريبة مرتبات مستحقة"),
             (insurance_payable, 0, M(emp_ins + employer_ins), "تأمينات اجتماعية مستحقة"),
         ]
