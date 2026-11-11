@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from flask import Flask
+import payroll_compliance
 import workforce
 
 
@@ -12,7 +13,9 @@ class WorkforceTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp.name) / "nexus.db"
         self.original_path = workforce.DB_PATH
+        self.original_compliance_path = payroll_compliance.DB_PATH
         workforce.DB_PATH = self.db_path
+        payroll_compliance.DB_PATH = self.db_path
         conn = sqlite3.connect(self.db_path)
         conn.executescript("""
           CREATE TABLE accounts(id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT, account_type TEXT,
@@ -20,7 +23,7 @@ class WorkforceTests(unittest.TestCase):
           CREATE TABLE journal_entries(id INTEGER PRIMARY KEY, entry_date TEXT, reference TEXT,
             description TEXT, status TEXT, created_by INTEGER, created_at TEXT);
           CREATE TABLE journal_lines(id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
-            debit REAL, credit REAL, memo TEXT);
+            debit TEXT DEFAULT '0', credit TEXT DEFAULT '0', memo TEXT);
           INSERT INTO accounts VALUES(1,'1000','الصندوق','asset',0,1);
           INSERT INTO accounts VALUES(2,'1300','عهد الموظفين','asset',0,1);
           INSERT INTO accounts VALUES(3,'6000','مصروفات','expense',0,1);
@@ -28,10 +31,14 @@ class WorkforceTests(unittest.TestCase):
           INSERT INTO accounts VALUES(5,'2100','رواتب مستحقة','liability',0,1);
           INSERT INTO accounts VALUES(6,'2110','ضريبة مرتبات','liability',0,1);
           INSERT INTO accounts VALUES(7,'2120','تأمينات مستحقة','liability',0,1);
+          CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL);
+          INSERT INTO company_settings VALUES('tax_country','EG');
         """)
         conn.commit()
         conn.close()
         workforce.initialize_workforce_schema()
+        payroll_compliance.initialize_payroll_compliance_schema()
+        payroll_compliance.ensure_default_payroll_rules(payroll_compliance._db())
         template_dir = Path(self.temp.name) / "templates"
         template_dir.mkdir()
         (template_dir / "custody.html").write_text("custody list", encoding="utf-8")
@@ -45,6 +52,7 @@ class WorkforceTests(unittest.TestCase):
 
     def tearDown(self):
         workforce.DB_PATH = self.original_path
+        payroll_compliance.DB_PATH = self.original_compliance_path
         self.temp.cleanup()
 
     def add_employee(self):
