@@ -245,17 +245,19 @@ def current_qty(c, product_id, warehouse_id, lot_id=None):
     return D(str(row["q"] or 0))
 
 
-def available_layers(c, product_id, warehouse_id, lot_id=None):
+def available_layers(c, product_id, warehouse_id, lot_id=None, location_id=None):
     sql = """SELECT * FROM stock_valuation_layers WHERE product_id=? AND warehouse_id=?
              AND CAST(qty_remaining AS REAL)>0"""
     args = [product_id, warehouse_id]
     if lot_id:
         sql += " AND lot_id=?"; args.append(lot_id)
+    if location_id:
+        sql += " AND location_id=?"; args.append(location_id)
     return c.execute(sql + " ORDER BY id", args).fetchall()
 
 
-def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=None):
-    layers = available_layers(c, product_id, warehouse_id, lot_id)
+def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=None, location_id=None):
+    layers = available_layers(c, product_id, warehouse_id, lot_id, location_id)
     available = sum((D(x["qty_remaining"]) for x in layers), D("0"))
     if available < qty:
         raise ValueError(f"الرصيد غير كافٍ. المتاح {q4(available)} والمطلوب {q4(qty)}.")
@@ -549,7 +551,7 @@ def movements():
     if request.method=="POST":
         try:
             kind=request.form.get("movement_type")
-            if kind not in {"receipt","issue","transfer","scrap"}: raise ValueError("نوع الحركة غير صحيح.")
+            if kind not in {"receipt","issue","transfer","relocate","scrap"}: raise ValueError("نوع الحركة غير صحيح.")
             product=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(request.form.get("product_id"),)).fetchone()
             if not product: raise ValueError("الصنف غير موجود أو غير نشط.")
             if product["product_type"] == "service": raise ValueError("الخدمات لا تُدار كأصناف مخزنية.")
@@ -558,8 +560,24 @@ def movements():
             src=request.form.get("source_warehouse_id",type=int)
             dst=request.form.get("target_warehouse_id",type=int)
             if kind=="receipt" and not dst: raise ValueError("حدد مخزن الاستلام.")
-            if kind in {"issue","scrap","transfer"} and not src: raise ValueError("حدد مخزن الصرف.")
+            if kind in {"issue","scrap","transfer","relocate"} and not src: raise ValueError("حدد مخزن الصرف.")
             if kind=="transfer" and (not dst or dst==src): raise ValueError("حدد مخزن وجهة مختلفًا عن المصدر.")
+            source_location_id=request.form.get("source_location_id",type=int)
+            target_location_id=request.form.get("target_location_id",type=int)
+            if kind=="relocate":
+                if not source_location_id or not target_location_id or source_location_id==target_location_id:
+                    raise ValueError("حدد موقع المصدر وموقع الوجهة المختلفين.")
+                if not c.execute("SELECT 1 FROM stock_locations WHERE id=? AND warehouse_id=? AND active=1",(source_location_id,src)).fetchone():
+                    raise ValueError("موقع المصدر لا يتبع المخزن المحدد.")
+                if not c.execute("SELECT 1 FROM stock_locations WHERE id=? AND warehouse_id=? AND active=1",(target_location_id,src)).fetchone():
+                    raise ValueError("موقع الوجهة لا يتبع نفس المخزن.")
+                dst=src
+            if kind=="transfer" and dst:
+                if not target_location_id:
+                    default_location=c.execute("SELECT location_id FROM stock_product_locations WHERE product_id=? AND warehouse_id=?",(product["id"],dst)).fetchone()
+                    target_location_id=default_location["location_id"] if default_location else None
+                if target_location_id and not c.execute("SELECT 1 FROM stock_locations WHERE id=? AND warehouse_id=? AND active=1",(target_location_id,dst)).fetchone():
+                    raise ValueError("موقع الوجهة لا يتبع مخزن الوجهة.")
             c.execute("BEGIN IMMEDIATE")
             lot_id=None
             lot_no=request.form.get("lot_number","").strip()
@@ -574,7 +592,9 @@ def movements():
                     lot_id=lot["id"]
                 method_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
                 method=method_row["setting_value"] if method_row else "average"
-                total,allocations=consume_layers(c,product["id"],src,qty,method,lot_id)
+                if kind in {"issue","scrap","relocate","transfer"} and source_location_id and not c.execute("SELECT 1 FROM stock_locations WHERE id=? AND warehouse_id=? AND active=1",(source_location_id,src)).fetchone():
+                    raise ValueError("موقع المصدر لا يتبع المخزن المحدد.")
+                total,allocations=consume_layers(c,product["id"],src,qty,method,lot_id,source_location_id)
                 unit_cost=(total/qty).quantize(MONEY,rounding=ROUND_HALF_UP)
             movement_no=f"STK-{date.today().strftime('%Y%m%d')}-{uuid.uuid4().hex[:12].upper()}"
             movement_date=request.form.get("movement_date") or date.today().isoformat()
@@ -582,20 +602,20 @@ def movements():
             if kind=="issue" and issue_purpose not in {"sale","internal"}:
                 raise ValueError("حدد غرض الصرف: تكلفة مبيعات أو استخدام داخلي.")
             cur=c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,source_warehouse_id,target_warehouse_id,
-              lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,issue_purpose)
-              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",(movement_no,kind,product["id"],src,dst,lot_id,str(qty),str(unit_cost),str(total),movement_date,request.form.get("notes","").strip(),session.get("user_id"),issue_purpose))
+              source_location_id,target_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,issue_purpose)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(movement_no,kind,product["id"],src,dst,source_location_id,target_location_id,lot_id,str(qty),str(unit_cost),str(total),movement_date,request.form.get("notes","").strip(),session.get("user_id"),issue_purpose))
             mid=cur.lastrowid
             if kind=="receipt":
                 c.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost)
                   VALUES(?,?,?,?,?,?,?)""",(product["id"],dst,lot_id,mid,str(qty),str(qty),str(unit_cost)))
-            elif kind=="transfer":
+            elif kind in {"transfer","relocate"}:
                 for allocated_lot,allocated_qty,allocated_cost,allocated_total in allocations:
-                    c.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost)
-                      VALUES(?,?,?,?,?,?,?)""",(product["id"],dst,allocated_lot,mid,str(allocated_qty),str(allocated_qty),str(allocated_cost)))
+                    c.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost,value_remaining)
+                      VALUES(?,?,?,?,?,?,?,?,?)""",(product["id"],dst,target_location_id,allocated_lot,mid,str(allocated_qty),str(allocated_qty),str(allocated_cost),str(allocated_total)))
             if kind=="scrap":
                 post_scrap_journal(c,mid,movement_no,product,movement_date,total,session.get("user_id"))
-            elif kind=="transfer":
-                # One consolidated inventory control account: internal transfers do not affect GL.
+            elif kind in {"transfer","relocate"}:
+                # Internal warehouse/bin transfers do not affect the consolidated inventory GL.
                 c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (mid,))
             elif kind=="receipt":
                 # A receipt needs a supplier invoice or an explicit GRNI document before posting.
@@ -609,12 +629,13 @@ def movements():
         return redirect(url_for("stock.movements"))
     products=c.execute("SELECT id,sku,name_ar,uom,track_lot,track_expiry FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     warehouses=c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
+    locations=c.execute("SELECT id,warehouse_id,code,name_ar,location_type FROM stock_locations WHERE active=1 ORDER BY warehouse_id,code").fetchall()
     rows=c.execute("""SELECT m.*,p.sku,p.name_ar,s.name_ar source_name,t.name_ar target_name
       FROM stock_movements m JOIN stock_products p ON p.id=m.product_id
       LEFT JOIN stock_warehouses s ON s.id=m.source_warehouse_id LEFT JOIN stock_warehouses t ON t.id=m.target_warehouse_id
       ORDER BY m.id DESC LIMIT 30""").fetchall()
     c.close()
-    return render_template("stock_movements.html",products=products,warehouses=warehouses,rows=rows,today=date.today().isoformat())
+    return render_template("stock_movements.html",products=products,warehouses=warehouses,locations=locations,rows=rows,today=date.today().isoformat())
 
 
 @stock_bp.route("/reports")
