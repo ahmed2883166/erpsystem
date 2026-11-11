@@ -283,6 +283,76 @@ class SalesIntegrationTests(unittest.TestCase):
             )
         self.db.rollback()
 
+    def test_fully_paid_invoice_credit_note_can_be_refunded(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}], "0", 1
+        )
+        cash_id = self.db.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
+        sales.post_customer_receipt(
+            self.db, invoice["invoice_id"], "2026-11-10", "100", cash_id, 1
+        )
+        line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?", (invoice["invoice_id"],)
+        ).fetchone()["id"]
+        credit = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-11", "مرتجع بعد التحصيل الكامل",
+            [{"invoice_line_id": line_id, "quantity": "0.5"}], 1
+        )
+        self.assertEqual(credit["total_amount"], Decimal("50.00"))
+        note_id = credit["credit_note_id"]
+        note = self.db.execute("SELECT refundable_amount FROM sales_credit_notes WHERE id=?", (note_id,)).fetchone()
+        self.assertEqual(Decimal(note["refundable_amount"]), Decimal("50.00"))
+        refund = sales.post_customer_refund(
+            self.db, note_id, "2026-11-12", "50", cash_id, 1, "BANK-REF-1"
+        )
+        self.db.commit()
+        self.assertEqual(refund["amount"], Decimal("50.00"))
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM customer_refunds WHERE credit_note_id=?", (note_id,)
+        ).fetchone()[0], 1)
+        refund_lines = self.db.execute(
+            "SELECT debit,credit FROM journal_lines WHERE entry_id=?", (refund["journal_entry_id"],)
+        ).fetchall()
+        self.assertEqual(sum((Decimal(x["debit"]) for x in refund_lines), Decimal("0")), Decimal("50.00"))
+        self.assertEqual(sum((Decimal(x["credit"]) for x in refund_lines), Decimal("0")), Decimal("50.00"))
+
+    def test_credit_note_cancellation_posts_reversals_and_removes_returned_stock(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "2", "unit_price": "20"}], "0", 1
+        )
+        line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?", (invoice["invoice_id"],)
+        ).fetchone()["id"]
+        credit = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-11", "مرتجع سيتم إلغاؤه",
+            [{"invoice_line_id": line_id, "quantity": "1"}], 1
+        )
+        cancelled = sales.cancel_credit_note(
+            self.db, credit["credit_note_id"], "2026-11-12", "إدخال المرتجع بالخطأ", 1
+        )
+        self.db.commit()
+        note = self.db.execute(
+            "SELECT status,cancel_journal_entry_id FROM sales_credit_notes WHERE id=?",
+            (credit["credit_note_id"],)
+        ).fetchone()
+        self.assertEqual(note["status"], "cancelled")
+        self.assertEqual(note["cancel_journal_entry_id"], cancelled["reversal_journal_id"])
+        invoice_state = self.db.execute(
+            "SELECT credited_amount FROM sales_invoices WHERE id=?", (invoice["invoice_id"],)
+        ).fetchone()
+        self.assertEqual(Decimal(invoice_state["credited_amount"]), Decimal("0"))
+        layer = self.db.execute(
+            "SELECT qty_remaining,value_remaining FROM stock_valuation_layers WHERE source_movement_id=("
+            "SELECT stock_movement_id FROM sales_credit_note_lines WHERE credit_note_id=?)",
+            (credit["credit_note_id"],)
+        ).fetchone()
+        self.assertEqual(Decimal(layer["qty_remaining"]), Decimal("0"))
+        self.assertEqual(Decimal(layer["value_remaining"]), Decimal("0"))
+
     def test_insufficient_stock_rolls_back_invoice(self):
         self.db.execute("BEGIN IMMEDIATE")
         with self.assertRaisesRegex(ValueError, "الرصيد غير كافٍ"):
