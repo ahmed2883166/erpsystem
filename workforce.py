@@ -308,6 +308,8 @@ def payroll():
             run_id = cur.lastrowid
             employees = c.execute("""SELECT * FROM employees WHERE active=1
                 AND work_status IN ('comprehensive_bonus','permanent') ORDER BY employee_code""").fetchall()
+            if not employees:
+                raise ValueError("لا يوجد موظفون مستحقون للراتب في هذا الشهر حسب الموقف الوظيفي.")
             for e in employees:
                 # Every payroll amount is entered on the monthly form. Employee master
                 # data and fixed pay items are not used to calculate this payroll.
