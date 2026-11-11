@@ -25,6 +25,12 @@ def auth(fn):
  @wraps(fn)
  def wrapped(*a,**kw):
   if not session.get("user_id"): return redirect(url_for("login"))
+  kind=request.args.get("kind","customers")
+  permission="purchases.view" if kind=="suppliers" else "sales.view"
+  allowed=(permission in set(session["permissions"])) if "permissions" in session else (session.get("role") in {"admin","accountant","viewer"})
+  if not allowed:
+   flash("لا تملك صلاحية عرض تقرير أعمار الديون.","error")
+   return redirect(url_for("dashboard"))
   return fn(*a,**kw)
  return wrapped
 
@@ -59,7 +65,8 @@ def index():
     ORDER BY due_date,cu.name""",(as_of,)).fetchall()
  else:
   rows=c.execute("""SELECT b.bill_no doc_no,s.code party_code,s.name party_name,b.bill_date doc_date,
-    COALESCE(b.due_date,b.bill_date) due_date,b.total_amount total_amount,b.paid_amount paid_amount
+    COALESCE(b.due_date,b.bill_date) due_date,b.total_amount total_amount,b.paid_amount paid_amount,
+    COALESCE(b.credited_amount,'0') credited_amount
     FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
     WHERE b.status='posted' AND b.bill_date<=?
     ORDER BY due_date,s.name""",(as_of,)).fetchall()
