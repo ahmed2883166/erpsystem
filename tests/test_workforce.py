@@ -154,5 +154,55 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(state, "open")
 
 
+    def test_payroll_rejects_empty_or_zero_basic_salary(self):
+        self.add_employee()
+        for value in ("", "0", "0.00"):
+            response = self.client.post("/hr/payroll", data={
+                "period": "2026-11", "basic_1": value
+            }, follow_redirects=True)
+            self.assertIn("الراتب الأساسي", response.get_data(as_text=True))
+        conn = sqlite3.connect(self.db_path)
+        count = conn.execute("SELECT COUNT(*) FROM payroll_runs").fetchone()[0]
+        conn.close()
+        self.assertEqual(count, 0)
+
+    def test_multi_employee_payroll_totals_and_posted_journal(self):
+        self.add_employee()
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours)
+                        VALUES('E002','Employee Two','2026-01-01','8000','200')""")
+        conn.commit()
+        conn.close()
+        response = self.client.post("/hr/payroll", data={
+            "period": "2026-11",
+            "basic_1": "12000", "allowances_1": "1500", "overtime_amount_1": "750",
+            "absence_deduction_1": "100", "other_deductions_1": "200",
+            "tax_1": "500", "employee_ins_1": "300", "employer_ins_1": "400",
+            "basic_2": "8000", "allowances_2": "500", "overtime_amount_2": "0",
+            "absence_deduction_2": "0", "other_deductions_2": "100",
+            "tax_2": "200", "employee_ins_2": "150", "employer_ins_2": "250"
+        })
+        self.assertEqual(response.status_code, 302, response.get_data(as_text=True))
+        conn = sqlite3.connect(self.db_path)
+        totals = conn.execute("SELECT SUM(CAST(gross_pay AS NUMERIC)),SUM(CAST(net_pay AS NUMERIC)) FROM payroll_lines").fetchone()
+        conn.close()
+        self.assertEqual(totals, (22650, 21200))
+        response = self.client.post("/hr/payroll/1/post", data={
+            "salary_expense_account": "4", "employer_ins_expense_account": "3",
+            "salaries_payable_account": "5", "tax_payable_account": "6",
+            "insurance_payable_account": "7", "other_deductions_account": "2"
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        debit, credit = conn.execute("SELECT SUM(CAST(debit AS NUMERIC)),SUM(CAST(credit AS NUMERIC)) FROM journal_lines").fetchone()
+        totals_by_account = conn.execute(
+            "SELECT account_id,SUM(CAST(debit AS NUMERIC)),SUM(CAST(credit AS NUMERIC)) FROM journal_lines GROUP BY account_id"
+        ).fetchall()
+        conn.close()
+        self.assertEqual(debit, credit)
+        self.assertEqual(debit, 23300)
+        self.assertIn((4, 22650, 0), totals_by_account)
+        self.assertIn((5, 0, 21200), totals_by_account)
+
 if __name__ == "__main__":
     unittest.main()
