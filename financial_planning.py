@@ -179,7 +179,7 @@ def cash_flow():
                     code=item["code"]; name=item["name_ar"]
                     if item["account_type"]=="asset" and not (code.startswith(("11","21")) or "عميل" in name or "مخزون" in name or "مقدم" in name):
                         category="investing"
-                    elif item["account_type"] in {"liability","equity"} and not (code.startswith(("21","22")) or any(x in name for x in ("مورد","مستحق","ضريبة","رواتب"))):
+                    elif item["account_type"] == "equity" or (item["account_type"] == "liability" and (code.startswith("22") or "قرض" in name)):
                         category="financing"
                     else:
                         category="operating"
