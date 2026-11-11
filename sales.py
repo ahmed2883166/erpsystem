@@ -816,10 +816,15 @@ def customer_list():
         except (ValueError, InvalidOperation) as exc:
             c.rollback()
             flash(str(exc), "error")
-    rows = c.execute("""SELECT cu.*,
-        COALESCE((SELECT SUM(CAST(i.total_amount AS REAL)-CAST(i.paid_amount AS REAL)-CAST(COALESCE(i.credited_amount,'0') AS REAL))
-                  FROM sales_invoices i WHERE i.customer_id=cu.id AND i.status='posted'),0) outstanding
-        FROM customers cu ORDER BY cu.name""").fetchall()
+    rows = c.execute("SELECT * FROM customers ORDER BY name").fetchall()
+    invoices_by_customer = {}
+    for invoice_row in c.execute(
+        "SELECT customer_id,total_amount,paid_amount,COALESCE(credited_amount,'0') credited_amount "
+        "FROM sales_invoices WHERE status='posted'"
+    ).fetchall():
+        balance = Decimal(invoice_row["total_amount"]) - Decimal(invoice_row["paid_amount"] or "0") - Decimal(invoice_row["credited_amount"] or "0")
+        invoices_by_customer[invoice_row["customer_id"]] = invoices_by_customer.get(invoice_row["customer_id"], Decimal("0")) + balance
+    rows = [dict(row, outstanding=invoices_by_customer.get(row["id"], Decimal("0"))) for row in rows]
     c.close()
     return render_template("sales_customers.html", rows=rows)
 
@@ -899,10 +904,15 @@ def new_invoice():
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
             c.rollback()
             flash(str(exc), "error")
-    customers = c.execute("""SELECT cu.*,
-        COALESCE((SELECT SUM(CAST(i.total_amount AS REAL)-CAST(i.paid_amount AS REAL))
-                  FROM sales_invoices i WHERE i.customer_id=cu.id AND i.status='posted'),0) outstanding
-        FROM customers cu WHERE cu.active=1 ORDER BY cu.name""").fetchall()
+    customers = c.execute("SELECT * FROM customers WHERE active=1 ORDER BY name").fetchall()
+    exposure_by_customer = {}
+    for invoice_row in c.execute(
+        "SELECT customer_id,total_amount,paid_amount,COALESCE(credited_amount,'0') credited_amount "
+        "FROM sales_invoices WHERE status='posted'"
+    ).fetchall():
+        balance = Decimal(invoice_row["total_amount"]) - Decimal(invoice_row["paid_amount"] or "0") - Decimal(invoice_row["credited_amount"] or "0")
+        exposure_by_customer[invoice_row["customer_id"]] = exposure_by_customer.get(invoice_row["customer_id"], Decimal("0")) + balance
+    customers = [dict(row, outstanding=exposure_by_customer.get(row["id"], Decimal("0"))) for row in customers]
     products = c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     warehouses = c.execute("SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
@@ -971,10 +981,10 @@ def new_credit_note():
         """SELECT i.id,i.invoice_no,i.invoice_date,i.total_amount,i.paid_amount,
                   COALESCE(i.credited_amount,'0') credited_amount,cu.name customer_name
            FROM sales_invoices i JOIN customers cu ON cu.id=i.customer_id
-           WHERE i.status='posted'
-             AND CAST(i.total_amount AS REAL)>CAST(i.paid_amount AS REAL)+CAST(COALESCE(i.credited_amount,'0') AS REAL)
-           ORDER BY i.id DESC"""
+           WHERE i.status='posted' ORDER BY i.id DESC"""
     ).fetchall()
+    invoices = [row for row in invoices
+                if Decimal(row["total_amount"]) > Decimal(row["credited_amount"] or "0")]
     c.close()
     return render_template(
         "sales_credit_note_new.html", invoices=invoices, invoice=invoice, lines=lines,
@@ -998,9 +1008,13 @@ def new_receipt():
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
             c.rollback()
             flash(str(exc), "error")
-    invoices = c.execute("""SELECT i.id,i.invoice_no,i.total_amount,i.paid_amount,c.name customer_name
+    invoices = c.execute("""SELECT i.id,i.invoice_no,i.total_amount,i.paid_amount,
+        COALESCE(i.credited_amount,'0') credited_amount,c.name customer_name
         FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
-        WHERE CAST(i.total_amount AS REAL)>CAST(i.paid_amount AS REAL)+CAST(COALESCE(i.credited_amount,'0') AS REAL) ORDER BY i.invoice_date,i.id""").fetchall()
+        WHERE i.status='posted' ORDER BY i.invoice_date,i.id""").fetchall()
+    invoices = [row for row in invoices if
+                Decimal(row["total_amount"]) - Decimal(row["paid_amount"] or "0") -
+                Decimal(row["credited_amount"] or "0") > 0]
     cash_accounts = c.execute("""SELECT id,code,name_ar FROM accounts
         WHERE account_type='asset' AND is_group=0 AND active=1 ORDER BY code""").fetchall()
     c.close()
