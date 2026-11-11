@@ -1,5 +1,5 @@
 """Decimal-safe management dashboard built from posted general-ledger entries."""
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from accounting_core import register_decimal_aggregates
 
