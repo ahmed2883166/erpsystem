@@ -89,7 +89,8 @@ def _role(*roles):
         def wrapped(*args, **kwargs):
             if "user_id" not in session:
                 return redirect(url_for("login"))
-            if session.get("role") not in roles:
+            required = "workforce.manage" if request.method == "POST" else "workforce.view"
+            if (required not in set(session["permissions"])) if "permissions" in session else (session.get("role") not in roles):
                 flash("لا تملك صلاحية تنفيذ هذه العملية.", "error")
                 return redirect(url_for("dashboard"))
             return fn(*args, **kwargs)
