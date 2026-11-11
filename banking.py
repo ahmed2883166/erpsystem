@@ -41,7 +41,8 @@ def require(permission="manage"):
         @wraps(fn)
         def wrapped(*args, **kwargs):
             if "user_id" not in session: return redirect(url_for("login"))
-            if session.get("role") not in {"admin","accountant"}:
+            required = "bank.manage" if request.method == "POST" else "bank.view"
+            if (required not in set(session["permissions"])) if "permissions" in session else (session.get("role") not in {"admin","accountant"}):
                 flash("لا تملك الصلاحية المطلوبة.","error")
                 return redirect(url_for("dashboard"))
             return fn(*args, **kwargs)
