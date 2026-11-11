@@ -10,7 +10,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from pathlib import Path
 from datetime import date
-from flask import Blueprint, current_app, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
 
 stock_bp = Blueprint("stock", __name__, url_prefix="/stock")
@@ -436,7 +436,6 @@ def movements():
             c.execute("BEGIN IMMEDIATE")
             lot_id=None
             lot_no=request.form.get("lot_number","").strip()
-            expiry=request.form.get("expiry_date","").strip()
             if kind=="receipt":
                 raise ValueError("استلام المخزون يجب أن يتم من شاشة استلام المشتريات حتى يُسجل قيد GRNI ويرتبط بالمورد. لا تستخدم حركة استلام عامة.")
             else:
