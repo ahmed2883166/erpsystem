@@ -1,3 +1,4 @@
+from database import connect_database
 """Customer and supplier subledger statements with opening and running balances."""
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
@@ -11,9 +12,7 @@ DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
 
 
 def _db():
-    c = sqlite3.connect(DB_PATH, timeout=20)
-    c.row_factory = sqlite3.Row
-    return c
+    return connect_database(DB_PATH)
 
 
 def _authorized(fn):
