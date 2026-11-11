@@ -34,6 +34,7 @@ class CurrencyCenterTests(unittest.TestCase):
         conn.close()
         currency_center.initialize_currency_schema()
         self.app = Flask(__name__)
+        self.app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
         self.app.secret_key = "test"
         self.app.register_blueprint(currency_center.currency_bp)
         self.client = self.app.test_client()
