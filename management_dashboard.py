@@ -1,9 +1,19 @@
 """Decimal-safe management dashboard built from posted general-ledger entries."""
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
+from collections import OrderedDict
+from copy import deepcopy
+from threading import RLock
 from accounting_core import register_decimal_aggregates
 
 CENT = Decimal("0.01")
+
+# Small per-process cache. Database triggers increment the version whenever a
+# journal or dashboard mapping/settings row changes, so cached values cannot
+# survive a financial mutation. A bounded cache prevents unbounded growth.
+_SNAPSHOT_CACHE = OrderedDict()
+_SNAPSHOT_CACHE_LOCK = RLock()
+_SNAPSHOT_CACHE_LIMIT = 64
 
 # Account-code mappings come from the activity chart templates. Keep them here
 # as activity mappings, not as one universal chart assumption.
@@ -144,6 +154,17 @@ def initialize_management_dashboard_schema(conn, activity):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_status_date ON journal_entries(status,entry_date,id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_account ON journal_lines(entry_id,account_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry ON journal_lines(account_id,entry_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_entry_date ON journal_entries(entry_date,id)")
+    conn.execute("""CREATE TABLE IF NOT EXISTS management_dashboard_data_version(
+        id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL DEFAULT 0)""")
+    conn.execute("INSERT OR IGNORE INTO management_dashboard_data_version(id,version) VALUES(1,0)")
+    for table, event in (
+        ("journal_entries","INSERT"),("journal_entries","UPDATE"),("journal_entries","DELETE"),
+        ("journal_lines","INSERT"),("journal_lines","UPDATE"),("journal_lines","DELETE"),
+    ):
+        trigger = "trg_dashboard_version_" + table + "_" + event.lower()
+        conn.execute(f"""CREATE TRIGGER IF NOT EXISTS {trigger} AFTER {event} ON {table}
+            BEGIN UPDATE management_dashboard_data_version SET version=version+1 WHERE id=1; END""")
     roles_table_existed = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='management_account_roles'").fetchone() is not None
     conn.execute("""CREATE TABLE IF NOT EXISTS management_account_roles(
         account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -206,6 +227,55 @@ def _top_accounts(balances, account_type, value_key):
     for row in rows:
         row["width"] = float((abs(row["value"]) * Decimal("100") / maximum).quantize(Decimal("0.1"))) if maximum else 0
     return rows
+
+
+def cached_management_snapshot(conn, start, end, dimensions=None):
+    """Return a cached Decimal-safe snapshot, invalidated by DB-level triggers."""
+    dimensions = dimensions or {}
+    started_transaction = not conn.in_transaction
+    if started_transaction:
+        conn.execute("BEGIN")
+    try:
+        version_row = conn.execute(
+            "SELECT version FROM management_dashboard_data_version WHERE id=1"
+        ).fetchone()
+        version = int(version_row["version"]) if version_row else 0
+        role_fingerprint = tuple(
+            (role, tuple(sorted(ids)))
+            for role, ids in sorted(load_management_account_roles(conn).items())
+        )
+        settings_fingerprint = tuple(
+            (row["setting_key"], row["setting_value"])
+            for row in conn.execute("""SELECT setting_key,setting_value FROM company_settings
+                WHERE setting_key IN ('activity','base_currency','company_name') ORDER BY setting_key""")
+        ) if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
+        ).fetchone() else ()
+        key = (
+            version, start.isoformat(), end.isoformat(),
+            tuple(sorted((str(k), str(v)) for k, v in dimensions.items())),
+            role_fingerprint, settings_fingerprint,
+        )
+        with _SNAPSHOT_CACHE_LOCK:
+            cached = _SNAPSHOT_CACHE.get(key)
+            if cached is not None:
+                _SNAPSHOT_CACHE.move_to_end(key)
+                if started_transaction:
+                    conn.commit()
+                return deepcopy(cached)
+        snapshot = build_management_snapshot(conn, start, end, dimensions)
+        if started_transaction:
+            conn.commit()
+        with _SNAPSHOT_CACHE_LOCK:
+            _SNAPSHOT_CACHE[key] = deepcopy(snapshot)
+            _SNAPSHOT_CACHE.move_to_end(key)
+            while len(_SNAPSHOT_CACHE) > _SNAPSHOT_CACHE_LIMIT:
+                _SNAPSHOT_CACHE.popitem(last=False)
+        return snapshot
+    except Exception:
+        if started_transaction:
+            conn.rollback()
+        raise
 
 
 def build_management_snapshot(conn, start, end, dimensions=None):
