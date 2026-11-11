@@ -551,7 +551,7 @@ def new_bill():
             jlines.append((ap,0,tax,"ضريبة ضمن إجمالي المورد"))
             eid=create_journal(c,request.form["bill_date"],no,"فاتورة مورد "+request.form["supplier_invoice_no"],jlines,session["user_id"])
             c.execute("UPDATE supplier_bills SET journal_entry_id=? WHERE id=?",(eid,bid))
-            c.commit(); flash(f"تم حفظ وترحيل فاتورة المورد {no}.","success"); return redirect(url_for("purchase.bill_print", bill_id=bid))
+            c.commit(); c.close(); flash(f"تم حفظ وترحيل فاتورة المورد {no}.","success"); return redirect(url_for("purchase.bill_print", bill_id=bid))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     expense_accounts=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code").fetchall()
