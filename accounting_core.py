@@ -28,10 +28,23 @@ class _DecimalNet:
         return format(self.total, "f")
 
 
+class _DecimalLayerValueSum:
+    def __init__(self):
+        self.total = Decimal("0")
+    def step(self, value_remaining, quantity, unit_cost):
+        if value_remaining not in (None, ""):
+            self.total += Decimal(str(value_remaining))
+        else:
+            self.total += Decimal(str(quantity or "0")) * Decimal(str(unit_cost or "0"))
+    def finalize(self):
+        return format(self.total, "f")
+
+
 def register_decimal_aggregates(conn):
     """Register exact SQLite aggregate functions for TEXT monetary columns."""
     conn.create_aggregate("DECIMAL_SUM", 1, _DecimalSum)
     conn.create_aggregate("DECIMAL_NET", 2, _DecimalNet)
+    conn.create_aggregate("DECIMAL_LAYER_VALUE_SUM", 3, _DecimalLayerValueSum)
 
 
 def post_journal(conn, entry_date, reference, description, lines, created_by=None):
