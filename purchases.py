@@ -9,7 +9,7 @@ from pathlib import Path
 from datetime import date, datetime
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal, register_decimal_aggregates
-from stock import consume_layers, q4
+from stock import consume_layers, q4, make_lot
 
 purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
@@ -437,6 +437,10 @@ def new_receipt():
             qty=Decimal(request.form["quantity"]); unit=money(request.form["unit_cost"]); total=money(qty*unit)
             if qty<=0 or unit<0: raise ValueError("الكمية أو التكلفة غير صحيحة.")
             c.execute("BEGIN IMMEDIATE")
+            product_row=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(product,)).fetchone()
+            if not product_row or product_row["product_type"]=="service": raise ValueError("اختر صنفًا مخزنيًا نشطًا.")
+            lot_id=make_lot(c,product_row,request.form.get("lot_number","").strip(),
+                request.form.get("production_date",""),request.form.get("expiry_date",""),request.form["receipt_date"])
             po_line_id=None
             if po_id:
                 po=c.execute("SELECT * FROM purchase_orders WHERE id=? AND supplier_id=? AND status IN ('draft','partially_received')",
@@ -467,12 +471,12 @@ def new_receipt():
                 c.execute("UPDATE purchase_orders SET status=? WHERE id=?",(new_status,po_id))
             # Stock ledger + valuation layer are updated in the same DB transaction.
             move_no="PUR-"+no
-            movement=c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status)
-              VALUES(?,'receipt',?,?,?,?,?,?,?,?, 'pending_document')""",
-              (move_no,product,wh,str(qty),str(unit),str(total),request.form["receipt_date"],"استلام مشتريات "+no,session["user_id"]))
+            movement=c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status)
+              VALUES(?,'receipt',?,?,?,?,?,?,?,?,?, 'pending_document')""",
+              (move_no,product,wh,lot_id,str(qty),str(unit),str(total),request.form["receipt_date"],"استلام مشتريات "+no,session["user_id"]))
             mid=movement.lastrowid
-            c.execute("INSERT INTO stock_valuation_layers(product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost) VALUES(?,?,?,?,?,?)",
-              (product,wh,mid,str(qty),str(qty),str(unit)))
+            c.execute("INSERT INTO stock_valuation_layers(product_id,warehouse_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost) VALUES(?,?,?,?,?,?,?)",
+              (product,wh,lot_id,mid,str(qty),str(qty),str(unit)))
             eid=create_journal(c,request.form["receipt_date"],no,"استلام مشتريات غير مفوتر "+no,[(inv,total,0,"إثبات مخزون مستلم"),(grni,0,total,"بضاعة مستلمة غير مفوترة")],session["user_id"])
             c.execute("UPDATE goods_receipts SET journal_entry_id=? WHERE id=?",(eid,rid))
             c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?",(eid,mid))
