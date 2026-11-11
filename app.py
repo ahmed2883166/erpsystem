@@ -538,8 +538,11 @@ def company_setup():
 
 
 @app.route("/")
-@requires("reports.view")
 def dashboard():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    if "reports.view" not in set(session.get("permissions", PERMISSIONS.get(session.get("role"), set()))):
+        return render_template("limited_home.html")
     connection = db()
     totals = connection.execute("SELECT COUNT(*) accounts, (SELECT COUNT(*) FROM journal_entries) entries, (SELECT COUNT(*) FROM users WHERE active=1) users FROM accounts").fetchone()
     balance_row = connection.execute("SELECT COALESCE(DECIMAL_SUM(debit),0) debit, COALESCE(DECIMAL_SUM(credit),0) credit FROM journal_lines").fetchone()
