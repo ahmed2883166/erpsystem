@@ -68,7 +68,9 @@ def account_balances(conn, date_from=None, date_to=None, dimensions=None):
     available_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")}
     for key in ("branch_id", "cost_center_id", "project_id"):
         value = dimensions.get(key)
-        if value not in (None, "") and key in available_columns:
+        if value not in (None, ""):
+            if key not in available_columns:
+                raise ValueError("مخطط الأبعاد التحليلية غير محدث. أعد تشغيل البرنامج لإكمال التحديث.")
             conditions.append(f"jl.{key}=?")
             params.append(int(value))
     # Aggregate monetary TEXT values inside SQLite with exact Decimal aggregates.
