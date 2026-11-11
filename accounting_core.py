@@ -101,19 +101,35 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
         (reference,),
     ).fetchone()
     if existing:
+        has_dimensions = dimension_columns == {"branch_id", "cost_center_id", "project_id"}
+        selected = "account_id,debit,credit,memo,branch_id,cost_center_id,project_id" if has_dimensions else "account_id,debit,credit,memo"
         existing_lines = conn.execute(
-            "SELECT account_id,debit,credit,memo FROM journal_lines WHERE entry_id=? ORDER BY id",
+            f"SELECT {selected} FROM journal_lines WHERE entry_id=? ORDER BY id",
             (existing["id"],),
         ).fetchall()
-        expected_lines = sorted(
-            [(aid, format(dr, "f"), format(cr, "f"), memo) for aid, dr, cr, memo, *_dims in normalized],
-            key=lambda item: (item[0], item[1], item[2], item[3]),
-        )
-        actual_lines = sorted(
-            [(int(row["account_id"]), format(amt(row["debit"]), "f"),
-              format(amt(row["credit"]), "f"), str(row["memo"] or "")) for row in existing_lines],
-            key=lambda item: (item[0], item[1], item[2], item[3]),
-        )
+        if has_dimensions:
+            expected_lines = sorted(
+                [(aid, format(dr, "f"), format(cr, "f"), memo, *dims)
+                 for aid, dr, cr, memo, *dims in normalized],
+                key=lambda item: tuple(str(x) for x in item),
+            )
+            actual_lines = sorted(
+                [(int(row["account_id"]), format(amt(row["debit"]), "f"),
+                  format(amt(row["credit"]), "f"), str(row["memo"] or ""),
+                  row["branch_id"], row["cost_center_id"], row["project_id"]) for row in existing_lines],
+                key=lambda item: tuple(str(x) for x in item),
+            )
+        else:
+            expected_lines = sorted(
+                [(aid, format(dr, "f"), format(cr, "f"), memo)
+                 for aid, dr, cr, memo, *_dims in normalized],
+                key=lambda item: tuple(str(x) for x in item),
+            )
+            actual_lines = sorted(
+                [(int(row["account_id"]), format(amt(row["debit"]), "f"),
+                  format(amt(row["credit"]), "f"), str(row["memo"] or "")) for row in existing_lines],
+                key=lambda item: tuple(str(x) for x in item),
+            )
         if (existing["entry_date"] != normalized_date or
                 str(existing["description"] or "") != str(description or "") or
                 actual_lines != expected_lines):
