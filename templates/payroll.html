@@ -1,20 +1,22 @@
 {% extends "base.html" %}{% block title %}مسير الرواتب | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>مسير الرواتب</h2><p>إدخال يدوي كامل للأجور والبدلات والإضافي والغياب والخصومات والضريبة والتأمينات.</p></header>
+<header><h2>مسير الرواتب</h2><p>إدخال الأجور والبدلات والحوافز والسلف والخصومات، مع حساب التأمينات من القواعد السنوية.</p></header>
 <section class="panel"><h3>إنشاء مسير شهري</h3>
 <div class="flash success">وضع الرواتب: إدخال يدوي بالكامل. القواعد الضريبية والتأمينية المحفوظة لا تُطبّق تلقائيًا ولا تستبدل القيم التي تدخلها هنا. المحاسب مسؤول عن إدخال المبالغ المعتمدة ومراجعتها قبل ترحيل المسير.</div>
 <p><a href="{{url_for('payroll_compliance.report')}}">تقرير الضرائب والتأمينات</a> · <a href="{{url_for('payroll_compliance.payments')}}">سداد الالتزامات</a>.</p>
 <form method="post"><label>الشهر <input type="month" name="period" value="{{today}}" required></label>
-<p class="muted">كل المبالغ تُدخل يدويًا افتراضيًا. الراتب الظاهر في ملف الموظف مرجع فقط ولا يُنسخ تلقائيًا إلى المسير. ساعات الإضافي والغياب بيانات توضيحية؛ أدخل قيمة الإضافي وخصم الغياب يدويًا.</p>
+<p class="muted">الراتب الأساسي والبدلات والحوافز والإضافي تُدخل للمسير. عند تفعيل الحساب التلقائي تُحسب حصتا التأمينات من أجر الاشتراك بعد تطبيق الحد الأدنى والأقصى الساريين على شهر المسير. خصم الغياب والسلف والخصومات الأخرى تدخل منفصلة.</p>
 <label class="inline-check"><input type="checkbox" name="auto_calculate_statutory" value="1"> احسب تلقائيًا ضريبة المرتبات وتأمين الموظف وتأمين الشركة وفق قواعد الدولة وفئة كل موظف السارية على شهر المسير</label>
 <p class="muted">عند تفعيل الخيار، يجب أن تكون القواعد والشرائح الضريبية والتأمينية مكتملة ومراجعة. عند عدم تفعيله تظل القيم اليدوية هي المعتمدة.</p>
-<div style="overflow-x:auto"><table><tr><th>الموظف</th><th>الراتب الأساسي</th><th>البدلات</th><th>ساعات إضافي</th><th>قيمة الإضافي</th><th>ساعات غياب</th><th>خصم الغياب</th><th>خصومات أخرى</th><th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th></tr>
+<div style="overflow-x:auto"><table><tr><th>الموظف</th><th>الراتب الأساسي</th><th>البدلات</th><th>الحوافز</th><th>ساعات إضافي</th><th>قيمة الإضافي</th><th>ساعات غياب</th><th>خصم الغياب</th><th>السلف</th><th>خصومات أخرى</th><th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th></tr>
 {% for e in employees %}<tr><td>{{e.employee_code}} - {{e.full_name}}<br><small>مرجع ملف الموظف: {{e.basic_salary}}</small></td>
 <td><input type="number" min="0.01" step="0.01" name="basic_{{e.id}}" value="" required></td>
 <td><input type="number" min="0" step="0.01" name="allowances_{{e.id}}" value="0" required></td>
+<td><input type="number" min="0" step="0.01" name="incentives_{{e.id}}" value="0" required></td>
 <td><input type="number" min="0" step="0.01" name="overtime_hours_{{e.id}}" value="0"></td>
 <td><input type="number" min="0" step="0.01" name="overtime_amount_{{e.id}}" value="0" required></td>
 <td><input type="number" min="0" step="0.01" name="absent_hours_{{e.id}}" value="0"></td>
 <td><input type="number" min="0" step="0.01" name="absence_deduction_{{e.id}}" value="0" required></td>
+<td><input type="number" min="0" step="0.01" name="advance_{{e.id}}" value="0" required></td>
 <td><input type="number" min="0" step="0.01" name="other_deductions_{{e.id}}" value="0" required></td>
 <td><input type="number" min="0" step="0.01" name="tax_{{e.id}}" value="0" required></td>
 <td><input type="number" min="0" step="0.01" name="employee_ins_{{e.id}}" value="0" required></td>
