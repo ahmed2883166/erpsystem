@@ -58,8 +58,8 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(s["gross_margin"],Decimal("40.00"))
         self.assertEqual(s["cash"],Decimal("1350"))
         self.assertEqual(s["receivables"],Decimal("200"))
-        # In the industrial chart 1130 is raw-material stock, so the 200 posted to 1130 counts as inventory.
-        self.assertEqual(s["inventory"],Decimal("380"))
+        # Commercial chart: 1150 is inventory (500 - 120 - 300 + 100 = 180).
+        self.assertEqual(s["inventory"],Decimal("180"))
         self.assertEqual(s["payables"],Decimal("100"))
         self.assertEqual(s["current_ratio"],Decimal("17.30"))
         self.assertEqual(s["quick_ratio"],Decimal("15.50"))
@@ -69,7 +69,8 @@ class ManagementDashboardTests(unittest.TestCase):
     def test_activity_mapping_changes_inventory_accounts(self):
         self.conn.execute("UPDATE company_settings SET setting_value='industrial' WHERE setting_key='activity'")
         s=build_management_snapshot(self.conn,date(2026,11,1),date(2026,11,30))
-        self.assertEqual(s["inventory"],Decimal("180"))
+        # Industrial chart: 1130 is raw-material inventory, so the 200 debit is stock.
+        self.assertEqual(s["inventory"],Decimal("380"))
         self.assertEqual(s["receivables"],Decimal("0"))
 
     def test_reversed_dates_rejected(self):
