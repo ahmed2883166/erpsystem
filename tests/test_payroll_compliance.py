@@ -2,7 +2,7 @@ import sqlite3
 import unittest
 from decimal import Decimal
 
-from payroll_compliance import calculate_payroll_deductions, seed_egypt_2026
+from payroll_compliance import calculate_payroll_deductions, seed_egypt_2026, _payroll_obligations
 
 
 class PayrollComplianceTests(unittest.TestCase):
@@ -75,6 +75,23 @@ class PayrollComplianceTests(unittest.TestCase):
         self.assertEqual(result["employee_insurance"], Decimal("0.00"))
         self.assertEqual(result["employer_insurance"], Decimal("0.00"))
         self.assertEqual(result["taxable_annual"], Decimal("96000.00"))
+
+
+    def test_payroll_obligations_subtract_recorded_payments(self):
+        self.conn.executescript("""
+            CREATE TABLE payroll_runs(id INTEGER PRIMARY KEY,period TEXT,status TEXT);
+            CREATE TABLE payroll_lines(run_id INTEGER,taxable_income_tax TEXT,
+                employee_insurance TEXT,employer_insurance TEXT);
+            CREATE TABLE payroll_statutory_payments(period TEXT,payment_type TEXT,amount TEXT);
+            INSERT INTO payroll_runs VALUES(1,'2026-11','posted');
+            INSERT INTO payroll_lines VALUES(1,'500','1100','1875');
+            INSERT INTO payroll_statutory_payments VALUES('2026-11','salary_tax','200');
+            INSERT INTO payroll_statutory_payments VALUES('2026-11','social_insurance','1000');
+        """)
+        result = _payroll_obligations(self.conn, "2026-11")
+        self.assertEqual(result["salary_tax"]["remaining"], Decimal("300.00"))
+        self.assertEqual(result["social_insurance"]["due"], Decimal("2975.00"))
+        self.assertEqual(result["social_insurance"]["remaining"], Decimal("1975.00"))
 
     def test_enabled_rule_without_tax_brackets_is_blocked(self):
         self.add_rule(with_brackets=False)
