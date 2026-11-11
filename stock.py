@@ -86,6 +86,14 @@ def initialize_stock_schema():
             value = D(str(layer["qty_remaining"])) * D(str(layer["unit_cost"]))
             c.execute("UPDATE stock_valuation_layers SET value_remaining=? WHERE id=?",
                       (format(value, "f"), layer["id"]))
+    # For untouched layers, the originating movement's exact total is authoritative.
+    # This also repairs legacy return layers whose unit_cost had been rounded to four places.
+    for layer in c.execute("""SELECT l.id,l.qty_in,l.qty_remaining,m.total_cost
+        FROM stock_valuation_layers l JOIN stock_movements m ON m.id=l.source_movement_id
+        WHERE l.qty_in=l.qty_remaining""").fetchall():
+        if layer["total_cost"] not in (None, ""):
+            c.execute("UPDATE stock_valuation_layers SET value_remaining=? WHERE id=?",
+                      (str(D(str(layer["total_cost"]))), layer["id"]))
     c.execute("DROP INDEX IF EXISTS idx_stock_movement_journal")
     c.execute("CREATE INDEX IF NOT EXISTS idx_stock_movement_journal ON stock_movements(journal_entry_id) WHERE journal_entry_id IS NOT NULL")
     c.close()
