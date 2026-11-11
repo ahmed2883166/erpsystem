@@ -40,7 +40,8 @@ def require(write=False):
   @wraps(fn)
   def wrapped(*a,**kw):
    if not session.get("user_id"): return redirect(url_for("login"))
-   if write and session.get("role") not in {"admin","accountant"}:
+   required = "quotes.manage" if write or request.method == "POST" else "quotes.view"
+   if (required not in set(session["permissions"])) if "permissions" in session else (write and session.get("role") not in {"admin","accountant"}):
     flash("لا تملك صلاحية إنشاء أو تعديل عروض الأسعار.","error"); return redirect(url_for("quotes.index"))
    return fn(*a,**kw)
   return wrapped
