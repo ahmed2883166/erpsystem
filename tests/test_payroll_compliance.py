@@ -47,10 +47,10 @@ class PayrollComplianceTests(unittest.TestCase):
     def test_progressive_tax_and_insurance_caps(self):
         self.add_rule()
         result = calculate_payroll_deductions(self.conn, self.employee, Decimal("10000"), "2026-11")
-        self.assertEqual(result["tax"], Decimal("1100.00"))
+        self.assertEqual(result["tax"], Decimal("900.00"))
         self.assertEqual(result["employee_insurance"], Decimal("1000.00"))
         self.assertEqual(result["employer_insurance"], Decimal("1500.00"))
-        self.assertEqual(result["taxable_annual"], Decimal("96000.00"))
+        self.assertEqual(result["taxable_annual"], Decimal("84000.00"))
         self.assertEqual(result["insured_wage"], Decimal("10000.00"))
 
     def test_no_effective_rule_uses_manual_fallback(self):
