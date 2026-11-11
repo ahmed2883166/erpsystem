@@ -71,7 +71,8 @@ def index():
  c.close()
  result=[]; totals=[Decimal("0.00") for _ in range(5)]
  for r in rows:
-  balance=_amount(r["total_amount"])-_amount(r["paid_amount"])-_amount(r["credited_amount"] if "credited_amount" in r.keys() else "0")+refunds_by_invoice.get(r["invoice_id"],Decimal("0"))
+  refund_amount = refunds_by_invoice.get(r["invoice_id"], Decimal("0")) if kind=="customers" else Decimal("0")
+  balance=_amount(r["total_amount"])-_amount(r["paid_amount"])-_amount(r["credited_amount"] if "credited_amount" in r.keys() else "0")+refund_amount
   if balance<=0:
    continue
   try:
