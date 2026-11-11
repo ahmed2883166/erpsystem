@@ -86,6 +86,21 @@ class PartyStatementTests(unittest.TestCase):
         self.assertIn("كشف حساب مورد", body)
         self.assertIn("1700.00", body)
 
+    def test_supplier_statement_includes_supplier_credit_notes(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO supplier_credit_notes
+            (id,credit_no,supplier_id,bill_id,credit_date,reason,total_amount,status)
+            VALUES(1,'SCN-1',1,2,'2026-11-25','مرتجع مورد','30.00','posted')""")
+        conn.commit()
+        conn.close()
+        response = self.client.get(
+            "/reports/party-statement?kind=supplier&party_id=1&date_from=2026-11-01&date_to=2026-11-30"
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("SCN-1", body)
+        self.assertIn("1670.00", body)
+
 
 if __name__ == "__main__":
     unittest.main()
