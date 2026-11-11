@@ -10,7 +10,7 @@ from datetime import date, datetime
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal, register_decimal_aggregates, money
 from stock import consume_layers, q4, make_lot
-from analytic_dimensions import validate_journal_dimensions, active_dimension_options
+from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 
 purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
@@ -24,6 +24,7 @@ def db():
 
 def init_purchase_schema():
     c=db()
+    initialize_analytic_dimensions_schema(c)
     c.executescript("""
     CREATE TABLE IF NOT EXISTS suppliers(
       id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
