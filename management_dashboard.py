@@ -143,11 +143,9 @@ def initialize_management_dashboard_schema(conn, activity):
         trigger = "trg_dashboard_version_" + table + "_" + event.lower()
         conn.execute(f"""CREATE TRIGGER IF NOT EXISTS {trigger} AFTER {event} ON {table}
             BEGIN UPDATE management_dashboard_data_version SET version=version+1 WHERE id=1; END""")
-    roles_table_existed = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='management_account_roles'").fetchone() is not None
     conn.execute("""CREATE TABLE IF NOT EXISTS management_account_roles(
         account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
         role TEXT NOT NULL, PRIMARY KEY(account_id,role))""")
-    existing_role_count = conn.execute("SELECT COUNT(*) FROM management_account_roles").fetchone()[0]
     conn.execute("""CREATE TABLE IF NOT EXISTS management_dashboard_meta(
         meta_key TEXT PRIMARY KEY, meta_value TEXT NOT NULL)""")
     meta = {row["meta_key"]: row["meta_value"] for row in conn.execute("SELECT meta_key,meta_value FROM management_dashboard_meta")}
