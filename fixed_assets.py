@@ -1,16 +1,16 @@
+from app_paths import DB_PATH
 from database import connect_database
 """NEXUS ERP fixed assets register and IAS 16 depreciation posting."""
 import sqlite3
 import calendar
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import date
-from pathlib import Path
 from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
 
 assets_bp = Blueprint("assets", __name__, url_prefix="/assets")
-DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
+
 M = Decimal("0.01")
 
 def db():
