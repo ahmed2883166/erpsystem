@@ -5,8 +5,8 @@
   <div><h2>دليل الحسابات الهرمي</h2><p class="muted">عرض متدرج يوضح الحسابات الرئيسية والفروع التابعة لها.</p></div>
   <div class="table-actions">
     <button type="button" class="secondary" onclick="window.print()">طباعة / حفظ PDF</button>
-    <a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='accounts') }}">تصدير Excel</a>
-    <a class="btn secondary" href="{{ url_for('export_data', format='csv') }}">تصدير CSV</a>
+    {% if 'reports.view' in permissions %}<a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='accounts') }}">تصدير Excel</a>{% endif %}
+    {% if 'import_export.manage' in permissions %}<a class="btn secondary" href="{{ url_for('export_data', format='csv') }}">تصدير CSV</a>{% endif %}
   </div>
 </header>
 <div class="account-legend no-print">
@@ -15,7 +15,7 @@
   <span class="muted">الحساب الرئيسي لا يستقبل قيودًا مباشرة.</span>
 </div>
 <div class="grid accounts-layout">
-  <section class="panel no-print">
+  {% if 'accounts.manage' in permissions %}<section class="panel no-print">
     <h3>إضافة حساب</h3>
     <form method="post">
       <label>رمز الحساب<input name="code" required></label>
@@ -27,12 +27,12 @@
     </form>
     <hr><h3>استيراد حسابات CSV</h3>
     <form action="{{ url_for('import_accounts') }}" method="post" enctype="multipart/form-data"><input type="file" name="file" accept=".csv" required><button>استيراد</button></form>
-  </section>
+  </section>{% endif %}
   <section class="panel print-area">
     <div class="section-heading"><div><h3>شجرة الحسابات</h3><p class="muted">عدد الحسابات: {{ accounts|length }}</p></div><span class="pill">NEXUS ERP</span></div>
     <div class="table-wrap">
       <table class="accounts-tree">
-        <thead><tr><th>كود الحساب</th><th>اسم الحساب ومستواه</th><th>النوع</th><th>التصنيف</th><th>الحالة</th><th class="no-print">الإجراءات</th></tr></thead>
+        <thead><tr><th>كود الحساب</th><th>اسم الحساب ومستواه</th><th>النوع</th><th>التصنيف</th><th>الحالة</th>{% if 'accounts.manage' in permissions %}<th class="no-print">الإجراءات</th>{% endif %}</tr></thead>
         <tbody>
         {% for a in accounts %}
           <tr class="account-row {% if a.is_group %}account-group{% else %}account-detail{% endif %}" data-id="{{ a.id }}" data-parent="{{ a.parent_id or '' }}" data-group="{{ a.is_group }}" data-depth="{{ a.depth }}" {% if a.depth > 0 %}hidden{% endif %}>
@@ -48,9 +48,9 @@
             <td>{{ {'asset':'أصول','liability':'التزامات','equity':'حقوق ملكية','revenue':'إيرادات','expense':'مصروفات'}.get(a.account_type,a.account_type) }}</td>
             <td>{% if a.is_group %}<span class="account-type-badge group-badge">مجموعة رئيسية</span>{% else %}<span class="account-type-badge detail-badge">تفصيلي</span>{% endif %}</td>
             <td>{{ 'نشط' if a.active else 'موقوف' }}</td>
-            <td class="no-print"><div class="actions"><a class="btn secondary" href="{{ url_for('edit_account',account_id=a.id) }}">تعديل</a><form method="post" action="{{ url_for('delete_account',account_id=a.id) }}" onsubmit="return confirm('هل أنت متأكد من حذف الحساب؟');"><button class="danger">حذف</button></form></div></td>
+            {% if 'accounts.manage' in permissions %}<td class="no-print"><div class="actions"><a class="btn secondary" href="{{ url_for('edit_account',account_id=a.id) }}">تعديل</a><form method="post" action="{{ url_for('delete_account',account_id=a.id) }}" onsubmit="return confirm('هل أنت متأكد من حذف الحساب؟');"><button class="danger">حذف</button></form></div></td>{% endif %}
           </tr>
-        {% else %}<tr><td colspan="6">لا توجد حسابات.</td></tr>{% endfor %}
+        {% else %}<tr><td colspan="{{ 6 if 'accounts.manage' in permissions else 5 }}">لا توجد حسابات.</td></tr>{% endfor %}
         </tbody>
       </table>
     </div>
