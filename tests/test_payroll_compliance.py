@@ -2,7 +2,7 @@ import sqlite3
 import unittest
 from decimal import Decimal
 
-from payroll_compliance import calculate_payroll_deductions
+from payroll_compliance import calculate_payroll_deductions, seed_egypt_2026
 
 
 class PayrollComplianceTests(unittest.TestCase):
@@ -53,6 +53,15 @@ class PayrollComplianceTests(unittest.TestCase):
         self.assertEqual(result["employer_insurance"], Decimal("1500.00"))
         self.assertEqual(result["taxable_annual"], Decimal("84000.00"))
         self.assertEqual(result["insured_wage"], Decimal("10000.00"))
+
+
+    def test_egypt_2026_preset_is_loaded_and_calculates(self):
+        seed_egypt_2026(self.conn)
+        result = calculate_payroll_deductions(self.conn, self.employee, 10000, "2026-11")
+        self.assertEqual(result["employee_insurance"], Decimal("1100.00"))
+        self.assertEqual(result["employer_insurance"], Decimal("1875.00"))
+        self.assertEqual(result["taxable_annual"], Decimal("86800.00"))
+        self.assertEqual(result["tax"], Decimal("592.50"))
 
     def test_no_effective_rule_uses_manual_fallback(self):
         self.add_rule()
