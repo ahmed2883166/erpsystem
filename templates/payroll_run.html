@@ -1,9 +1,20 @@
 {% extends "base.html" %}{% block title %}تفاصيل مسير الرواتب | NEXUS ERP{% endblock %}{% block content %}
 <header><h2>مسير الرواتب {{run.period}}</h2><p>الحالة: {{'مرحّل' if run.status=='posted' else 'مسودة'}} | رقم القيد: {{run.journal_entry_id or '-'}}</p></header>
-<section class="panel"><table><tr><th>الموظف</th><th>أساسي</th><th>بدلات</th><th>إضافي</th><th>خصم غياب</th><th>خصومات ثابتة</th><th>ضريبة</th><th>تأمين موظف</th><th>تأمين شركة</th><th>إجمالي خاضع للصرف</th><th>صافي</th></tr>
-{% for r in rows %}<tr><td>{{r.employee_code}} - {{r.full_name}}</td><td>{{r.basic_salary}}</td><td>{{r.allowances}}</td><td>{{r.overtime_amount}}</td><td>{{r.absence_deduction}}</td><td>{{r.other_deductions}}</td><td>{{r.taxable_income_tax}}</td><td>{{r.employee_insurance}}</td><td>{{r.employer_insurance}}</td><td>{{r.gross_pay}}</td><td>{{r.net_pay}}</td></tr>{% endfor %}</table></section>
-{% if run.status=='draft' and session.role in ['admin','accountant'] %}<section class="panel"><h3>ترحيل القيد المحاسبي</h3><p>اختر الحسابات التفصيلية المناسبة من دليل الحسابات قبل الترحيل.</p><form method="post" action="{{url_for('workforce.post_payroll',run_id=run.id)}}" class="form-grid">
-{% for field,label in [('salary_expense_account','مصروف الأجور والمرتبات'),('employer_ins_expense_account','مصروف حصة الشركة بالتأمينات'),('salaries_payable_account','رواتب مستحقة للموظفين'),('tax_payable_account','ضريبة مرتبات مستحقة'),('insurance_payable_account','تأمينات اجتماعية مستحقة')] %}
+<section class="panel"><h3>تفاصيل مستحقات وخصومات الموظفين</h3><div style="overflow-x:auto"><table><tr><th>الموظف</th><th>أساسي</th><th>بدلات</th><th>إضافي</th><th>خصم غياب</th><th>إجمالي الاستحقاقات</th><th>خصومات أخرى</th><th>ضريبة</th><th>تأمين موظف</th><th>تأمين شركة</th><th>صافي المستحق</th></tr>
+{% for r in rows %}<tr><td>{{r.employee_code}} - {{r.full_name}}</td><td>{{r.basic_salary}}</td><td>{{r.allowances}}</td><td>{{r.overtime_amount}}</td><td>{{r.absence_deduction}}</td><td>{{r.gross_pay}}</td><td>{{r.other_deductions}}</td><td>{{r.taxable_income_tax}}</td><td>{{r.employee_insurance}}</td><td>{{r.employer_insurance}}</td><td><strong>{{r.net_pay}}</strong></td></tr>{% endfor %}
+<tr><th>الإجمالي</th><th>{{totals.basic_salary}}</th><th>{{totals.allowances}}</th><th>{{totals.overtime_amount}}</th><th>{{totals.absence_deduction}}</th><th>{{totals.gross_pay}}</th><th>{{totals.other_deductions}}</th><th>{{totals.tax}}</th><th>{{totals.employee_insurance}}</th><th>{{totals.employer_insurance}}</th><th>{{totals.net_pay}}</th></tr></table></div>
+<h3>ملخص المراجعة</h3><p>إجمالي الاستحقاقات: <strong>{{totals.gross_pay}}</strong> − خصومات أخرى: <strong>{{totals.other_deductions}}</strong> − ضريبة: <strong>{{totals.tax}}</strong> − تأمين موظفين: <strong>{{totals.employee_insurance}}</strong> = صافي المستحق: <strong>{{totals.net_pay}}</strong>.</p>
+<p>مصروف حصة الشركة بالتأمينات منفصل عن صافي الموظفين: <strong>{{totals.employer_insurance}}</strong>.</p></section>
+{% if run.status=='draft' and session.role in ['admin','accountant'] %}<section class="panel"><h3>ترحيل القيد المحاسبي</h3><p>اختر الحسابات التفصيلية المناسبة من دليل الحسابات. اختر حسابًا مناسبًا لطبيعة الخصومات الأخرى؛ مثل حساب سلف الموظفين عند استرداد سلفة.</p>
+<h4>معاينة القيد قبل الترحيل</h4><table><tr><th>البيان</th><th>مدين</th><th>دائن</th></tr>
+<tr><td>مصروف الأجور والمرتبات</td><td>{{totals.gross_pay}}</td><td>0.00</td></tr>
+<tr><td>مصروف حصة الشركة بالتأمينات</td><td>{{totals.employer_insurance}}</td><td>0.00</td></tr>
+<tr><td>صافي رواتب مستحقة</td><td>0.00</td><td>{{totals.net_pay}}</td></tr>
+<tr><td>الحساب المقابل للخصومات الأخرى</td><td>0.00</td><td>{{totals.other_deductions}}</td></tr>
+<tr><td>ضريبة مرتبات مستحقة</td><td>0.00</td><td>{{totals.tax}}</td></tr>
+<tr><td>تأمينات اجتماعية مستحقة</td><td>0.00</td><td>{{totals.employee_insurance + totals.employer_insurance}}</td></tr>
+<tr><th>الإجمالي</th><th>{{totals.gross_pay + totals.employer_insurance}}</th><th>{{totals.net_pay + totals.other_deductions + totals.tax + totals.employee_insurance + totals.employer_insurance}}</th></tr></table><form method="post" action="{{url_for('workforce.post_payroll',run_id=run.id)}}" class="form-grid">
+{% for field,label in [('salary_expense_account','مصروف الأجور والمرتبات'),('employer_ins_expense_account','مصروف حصة الشركة بالتأمينات'),('salaries_payable_account','رواتب مستحقة للموظفين'),('tax_payable_account','ضريبة مرتبات مستحقة'),('insurance_payable_account','تأمينات اجتماعية مستحقة'),('other_deductions_account','الحساب المقابل للخصومات الأخرى (سلف/جزاءات/تسويات)')] %}
 <label>{{label}}<select name="{{field}}" required>{% for a in accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}} ({{a.account_type}})</option>{% endfor %}</select></label>{% endfor %}
 <button type="submit">اعتماد وترحيل المسير</button></form></section>{% endif %}
 {% endblock %}
