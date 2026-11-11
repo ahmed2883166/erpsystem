@@ -367,16 +367,6 @@ def register_report_exports(app, db_path, permissions):
             for row in rows[1:]:
                 if not isinstance(row, list):
                     continue
-                for value in row[:80]:
-                    text_value = "" if value is None else str(value).strip()
-                    numeric = text_value.replace(",", "")
-                    if re.fullmatch(r"-?\\d+(?:\\.\\d+)?", numeric):
-                        cell_value = Decimal(numeric)
-                    elif text_value.startswith(("=", "+", "@")):
-                        cell_value = "'" + text_value
-                    else:
-                        cell_value = text_value
-                    sheet.cell(row=sheet.max_row + 1, column=len(row[:80]) if False else 1).value = None
                 # Append a complete row after converting values.
                 converted = []
                 for value in row[:80]:
