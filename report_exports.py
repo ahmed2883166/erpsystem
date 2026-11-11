@@ -76,7 +76,8 @@ def register_report_exports(app, db_path, permissions):
                     GROUP BY a.id ORDER BY a.code
                 """, params).fetchall()
                 headers = ["كود الحساب", "اسم الحساب", "نوع الحساب", "مدين", "دائن", "صافي الرصيد"]
-                data = [[r["code"], r["name_ar"], r["account_type"], r["debit"], r["credit"],
+                data = [[r["code"], r["name_ar"], r["account_type"],
+                         Decimal(str(r["debit"] or "0")), Decimal(str(r["credit"] or "0")),
                          Decimal(str(r["debit"] or "0")) - Decimal(str(r["credit"] or "0"))] for r in rows]
                 filename = "nexus-trial-balance.xlsx"
                 title = "ميزان المراجعة"
@@ -102,8 +103,8 @@ def register_report_exports(app, db_path, permissions):
                     WHERE {' AND '.join(conditions)} ORDER BY je.entry_date,jl.id
                 """, params).fetchall()
                 headers = ["التاريخ", "المرجع", "البيان", "مدين", "دائن", "ملاحظة"]
-                data = [[r["entry_date"], r["reference"], r["description"], r["debit"],
-                         r["credit"], r["memo"] or ""] for r in rows]
+                data = [[r["entry_date"], r["reference"], r["description"],
+                         Decimal(str(r["debit"] or "0")), Decimal(str(r["credit"] or "0")), r["memo"] or ""] for r in rows]
                 filename = f"nexus-ledger-{account['code']}.xlsx"
                 title = f"دفتر الأستاذ - {account['code']} {account['name_ar']}"
             elif report == "stock":
