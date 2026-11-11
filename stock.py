@@ -154,12 +154,37 @@ def initialize_stock_schema():
     CREATE TABLE IF NOT EXISTS stocktake_lines(
       id INTEGER PRIMARY KEY, stocktake_id INTEGER NOT NULL REFERENCES stocktakes(id) ON DELETE CASCADE,
       product_id INTEGER NOT NULL REFERENCES stock_products(id),
+      location_id INTEGER REFERENCES stock_locations(id),
+      lot_id INTEGER REFERENCES stock_lots(id),
       snapshot_qty TEXT NOT NULL, counted_qty TEXT, variance_qty TEXT,
       counted_unit_cost TEXT NOT NULL DEFAULT '0', variance_value TEXT NOT NULL DEFAULT '0',
-      notes TEXT NOT NULL DEFAULT '', UNIQUE(stocktake_id,product_id)
+      notes TEXT NOT NULL DEFAULT ''
     );
-    CREATE INDEX IF NOT EXISTS idx_stocktake_lines_header ON stocktake_lines(stocktake_id,product_id);
     """)
+    # Upgrade legacy one-line-per-product counts to location/lot-aware lines.
+    line_columns = {row["name"] for row in c.execute("PRAGMA table_info(stocktake_lines)")}
+    if "location_id" not in line_columns or "lot_id" not in line_columns:
+        c.execute("DROP INDEX IF EXISTS idx_stocktake_lines_header")
+        c.execute("ALTER TABLE stocktake_lines RENAME TO stocktake_lines_legacy")
+        c.executescript("""
+        CREATE TABLE stocktake_lines(
+          id INTEGER PRIMARY KEY, stocktake_id INTEGER NOT NULL REFERENCES stocktakes(id) ON DELETE CASCADE,
+          product_id INTEGER NOT NULL REFERENCES stock_products(id),
+          location_id INTEGER REFERENCES stock_locations(id),
+          lot_id INTEGER REFERENCES stock_lots(id),
+          snapshot_qty TEXT NOT NULL, counted_qty TEXT, variance_qty TEXT,
+          counted_unit_cost TEXT NOT NULL DEFAULT '0', variance_value TEXT NOT NULL DEFAULT '0',
+          notes TEXT NOT NULL DEFAULT ''
+        );
+        INSERT INTO stocktake_lines(id,stocktake_id,product_id,snapshot_qty,counted_qty,variance_qty,
+          counted_unit_cost,variance_value,notes)
+        SELECT id,stocktake_id,product_id,snapshot_qty,counted_qty,variance_qty,
+          counted_unit_cost,variance_value,notes FROM stocktake_lines_legacy;
+        DROP TABLE stocktake_lines_legacy;
+        """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_stocktake_lines_header ON stocktake_lines(stocktake_id,product_id,location_id,lot_id)")
+    c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_stocktake_line_scope
+        ON stocktake_lines(stocktake_id,product_id,COALESCE(location_id,0),COALESCE(lot_id,0))""")
     stocktake_columns = {row["name"] for row in c.execute("PRAGMA table_info(stocktakes)")}
     if "movement_cutoff_id" not in stocktake_columns:
         c.execute("ALTER TABLE stocktakes ADD COLUMN movement_cutoff_id INTEGER NOT NULL DEFAULT 0")
@@ -285,10 +310,16 @@ def available_layers(c, product_id, warehouse_id, lot_id=None, location_id=None)
     sql = """SELECT * FROM stock_valuation_layers WHERE product_id=? AND warehouse_id=?
              AND CAST(qty_remaining AS REAL)>0"""
     args = [product_id, warehouse_id]
-    if lot_id:
-        sql += " AND lot_id=?"; args.append(lot_id)
-    if location_id:
-        sql += " AND location_id=?"; args.append(location_id)
+    if lot_id is not None:
+        if lot_id == 0:
+            sql += " AND lot_id IS NULL"
+        else:
+            sql += " AND lot_id=?"; args.append(lot_id)
+    if location_id is not None:
+        if location_id == 0:
+            sql += " AND location_id IS NULL"
+        else:
+            sql += " AND location_id=?"; args.append(location_id)
     return c.execute(sql + " ORDER BY id", args).fetchall()
 
 
@@ -811,10 +842,18 @@ def barcode_lookup():
     return render_template("stock_barcode.html",product=product,code=code)
 
 
-def _stocktake_layer_balance(c, product_id, warehouse_id):
-    layers = c.execute("""SELECT qty_remaining,unit_cost,value_remaining
+def _stocktake_layer_balance(c, product_id, warehouse_id, location_id=None, lot_id=None):
+    sql = """SELECT qty_remaining,unit_cost,value_remaining
         FROM stock_valuation_layers WHERE product_id=? AND warehouse_id=?
-        AND CAST(qty_remaining AS REAL)>0 ORDER BY id""", (product_id, warehouse_id)).fetchall()
+        AND CAST(qty_remaining AS REAL)>0"""
+    args = [product_id, warehouse_id]
+    if location_id is not None:
+        sql += " AND location_id IS NULL" if location_id == 0 else " AND location_id=?"
+        if location_id != 0: args.append(location_id)
+    if lot_id is not None:
+        sql += " AND lot_id IS NULL" if lot_id == 0 else " AND lot_id=?"
+        if lot_id != 0: args.append(lot_id)
+    layers = c.execute(sql + " ORDER BY id", args).fetchall()
     qty = sum((D(str(row["qty_remaining"] or "0")) for row in layers), D("0"))
     value = sum((D(str(row["value_remaining"])) if row["value_remaining"] not in (None, "")
                  else D(str(row["qty_remaining"] or "0")) * D(str(row["unit_cost"] or "0"))
@@ -843,10 +882,38 @@ def counts():
                 (count_no, warehouse_id, count_date, request.form.get("notes", "").strip(),
                  session.get("user_id"), movement_cutoff))
             stocktake_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
-            for product in c.execute("SELECT id FROM stock_products WHERE active=1 ORDER BY sku").fetchall():
-                qty, _ = _stocktake_layer_balance(c, product["id"], warehouse_id)
-                c.execute("INSERT INTO stocktake_lines(stocktake_id,product_id,snapshot_qty) VALUES(?,?,?)",
-                          (stocktake_id, product["id"], str(qty)))
+            locations = [row["id"] for row in c.execute("""SELECT id FROM stock_locations
+                WHERE warehouse_id=? AND active=1 AND location_type='bin' ORDER BY id""", (warehouse_id,)).fetchall()]
+            for product in c.execute("SELECT id,track_lot FROM stock_products WHERE active=1 ORDER BY sku").fetchall():
+                existing_scopes = c.execute("""SELECT DISTINCT location_id,lot_id FROM stock_valuation_layers
+                    WHERE product_id=? AND warehouse_id=? AND CAST(qty_remaining AS REAL)>0""",
+                    (product["id"], warehouse_id)).fetchall()
+                existing_locations = {row["location_id"] for row in existing_scopes}
+                default_row = c.execute("""SELECT location_id FROM stock_product_locations
+                    WHERE product_id=? AND warehouse_id=?""", (product["id"], warehouse_id)).fetchone()
+                if locations:
+                    product_locations = set(locations) | existing_locations
+                else:
+                    product_locations = existing_locations
+                    if default_row:
+                        product_locations.add(default_row["location_id"])
+                if not product_locations:
+                    product_locations = {None}
+                if product["track_lot"]:
+                    product_lots = {row["id"] for row in c.execute(
+                        "SELECT id FROM stock_lots WHERE product_id=? ORDER BY id", (product["id"],)).fetchall()}
+                    if any(row["lot_id"] is None for row in existing_scopes):
+                        product_lots.add(None)
+                    if not product_lots:
+                        product_lots = {None}
+                else:
+                    product_lots = {None}
+                for location_id in sorted(product_locations, key=lambda x: (x is None, x or 0)):
+                    for lot_id in sorted(product_lots, key=lambda x: (x is None, x or 0)):
+                        qty, _ = _stocktake_layer_balance(c, product["id"], warehouse_id,
+                            location_id if location_id is not None else 0, lot_id if lot_id is not None else 0)
+                        c.execute("""INSERT INTO stocktake_lines(stocktake_id,product_id,location_id,lot_id,snapshot_qty)
+                            VALUES(?,?,?,?,?)""", (stocktake_id, product["id"], location_id, lot_id, str(qty)))
             c.commit()
             flash("تم إنشاء أمر الجرد وحفظ الأرصدة الدفترية وقت الإنشاء. أدخل الكميات الفعلية ثم احفظ العد.", "success")
             return redirect(url_for("stock.count_detail", stocktake_id=stocktake_id))
@@ -901,9 +968,12 @@ def count_detail(stocktake_id):
         except (ValueError, sqlite3.Error) as exc:
             c.rollback()
             flash(str(exc), "error")
-    lines = c.execute("""SELECT l.*,p.sku,p.name_ar,p.uom,p.purchase_price
+    lines = c.execute("""SELECT l.*,p.sku,p.name_ar,p.uom,p.purchase_price,
+        loc.code location_code,loc.name_ar location_name,lot.lot_number
         FROM stocktake_lines l JOIN stock_products p ON p.id=l.product_id
-        WHERE l.stocktake_id=? ORDER BY p.sku""", (stocktake_id,)).fetchall()
+        LEFT JOIN stock_locations loc ON loc.id=l.location_id
+        LEFT JOIN stock_lots lot ON lot.id=l.lot_id
+        WHERE l.stocktake_id=? ORDER BY p.sku,loc.code,lot.lot_number""", (stocktake_id,)).fetchall()
     accounts = c.execute("""SELECT id,code,name_ar,account_type FROM accounts
         WHERE active=1 AND is_group=0 AND account_type IN ('expense','revenue') ORDER BY account_type,code""").fetchall()
     c.close()
@@ -920,7 +990,7 @@ def approve_count(stocktake_id):
         if not stocktake or stocktake["status"] != "counted":
             raise ValueError("يجب حفظ العد أولًا، ولا يمكن اعتماد أمر غير جاهز للمراجعة.")
         lines = c.execute("""SELECT l.*,p.sku,p.name_ar FROM stocktake_lines l
-            JOIN stock_products p ON p.id=l.product_id WHERE l.stocktake_id=? ORDER BY p.sku""",
+            JOIN stock_products p ON p.id=l.product_id WHERE l.stocktake_id=? ORDER BY p.sku,l.location_id,l.lot_id""",
             (stocktake_id,)).fetchall()
         if not lines or any(line["counted_qty"] is None for line in lines):
             raise ValueError("بيانات العد غير مكتملة.")
@@ -944,9 +1014,12 @@ def approve_count(stocktake_id):
         journal_lines, movement_ids = [], []
         for line in lines:
             snapshot = D(str(line["snapshot_qty"]))
-            current, _ = _stocktake_layer_balance(c, line["product_id"], stocktake["warehouse_id"])
+            scope_location = line["location_id"] if line["location_id"] is not None else 0
+            scope_lot = line["lot_id"] if line["lot_id"] is not None else 0
+            current, _ = _stocktake_layer_balance(c, line["product_id"], stocktake["warehouse_id"],
+                                                  scope_location, scope_lot)
             if current != snapshot:
-                raise ValueError("تغير الرصيد الدفتري للصنف " + line["sku"] + " بعد بدء الجرد. أوقف الحركة وأنشئ أمر جرد جديد.")
+                raise ValueError("تغير الرصيد الدفتري للصنف " + line["sku"] + " في الموقع/التشغيلة المحددة بعد بدء الجرد. أنشئ أمر جرد جديد.")
             variance = D(str(line["variance_qty"] or "0"))
             if variance == 0:
                 c.execute("UPDATE stocktake_lines SET variance_value='0' WHERE id=?", (line["id"],))
@@ -957,12 +1030,13 @@ def approve_count(stocktake_id):
                 qty = -variance
                 method_row = c.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
                 method = method_row["setting_value"] if method_row else "fifo"
-                cost, _ = consume_layers(c, line["product_id"], stocktake["warehouse_id"], qty, method)
+                cost, _ = consume_layers(c, line["product_id"], stocktake["warehouse_id"], qty, method,
+                                         lot_id=scope_lot, location_id=scope_location)
                 movement_no = stocktake["count_no"] + "-" + str(line["id"]) + "-S"
                 cur = c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,
-                    source_warehouse_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status)
-                    VALUES(?,'issue',?,?,?,?,?,?,?,?, 'pending')""",
-                    (movement_no,line["product_id"],stocktake["warehouse_id"],str(qty),
+                    source_warehouse_id,source_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status)
+                    VALUES(?,'issue',?,?,?,?,?,?,?,?,?,?, 'pending')""",
+                    (movement_no,line["product_id"],stocktake["warehouse_id"],line["location_id"],line["lot_id"],str(qty),
                      str(cost / qty),str(cost),stocktake["count_date"],"عجز جرد فعلي",session.get("user_id")))
                 movement_ids.append(cur.lastrowid)
                 if cost > 0:
@@ -976,20 +1050,17 @@ def approve_count(stocktake_id):
                 if unit_cost <= 0:
                     raise ValueError("أدخل تكلفة الوحدة للصنف " + line["sku"] + " ذي الزيادة قبل الاعتماد.")
                 cost = money(variance * unit_cost)
-                default_location = c.execute("SELECT location_id FROM stock_product_locations WHERE product_id=? AND warehouse_id=?",
-                                             (line["product_id"],stocktake["warehouse_id"])).fetchone()
                 movement_no = stocktake["count_no"] + "-" + str(line["id"]) + "-P"
                 cur = c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,
-                    target_warehouse_id,target_location_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status)
-                    VALUES(?,'receipt',?,?,?,?,?,?,?,?,?, 'pending')""",
-                    (movement_no,line["product_id"],stocktake["warehouse_id"],
-                     default_location["location_id"] if default_location else None,str(variance),
-                     str(unit_cost),str(cost),stocktake["count_date"],"زيادة جرد فعلي",session.get("user_id")))
+                    target_warehouse_id,target_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status)
+                    VALUES(?,'receipt',?,?,?,?,?,?,?,?,?, ?, 'pending')""",
+                    (movement_no,line["product_id"],stocktake["warehouse_id"],line["location_id"],line["lot_id"],
+                     str(variance),str(unit_cost),str(cost),stocktake["count_date"],"زيادة جرد فعلي",session.get("user_id")))
                 movement_id = cur.lastrowid
                 c.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,
                     source_movement_id,qty_in,qty_remaining,unit_cost,value_remaining)
                     VALUES(?,?,?,?,?,?,?,?)""",
-                    (line["product_id"],stocktake["warehouse_id"],default_location["location_id"] if default_location else None,
+                    (line["product_id"],stocktake["warehouse_id"],line["location_id"],
                      movement_id,str(variance),str(variance),str(unit_cost),str(cost)))
                 movement_ids.append(movement_id)
                 journal_lines.extend([(inventory["id"],cost,0,"زيادة مخزون - " + line["name_ar"]),
