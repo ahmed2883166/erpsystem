@@ -1127,7 +1127,7 @@ def edit_user(user_id):
             flash("الدور المحدد غير صحيح.","error")
         else:
             try:
-                selected = sorted(set(request.form.getlist("permissions")) & set(ALL_PERMISSIONS))
+                selected = normalize_user_permissions(request.form.getlist("permissions"))
                 connection.execute("UPDATE users SET username=?,full_name=?,role=?,active=?,permissions_json=? WHERE id=?",
                   (request.form["username"].strip(),request.form["full_name"].strip(),role,1 if request.form.get("active")=="yes" else 0,json.dumps(selected, ensure_ascii=False),user_id))
                 connection.commit(); connection.close(); log("user_updated",request.form["username"].strip())
