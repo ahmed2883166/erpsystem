@@ -4,7 +4,6 @@ import sqlite3
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
-from accounting_core import register_decimal_aggregates
 
 planning_bp = Blueprint("planning", __name__)
 CENT = Decimal("0.01")
