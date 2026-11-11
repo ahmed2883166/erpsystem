@@ -1,3 +1,4 @@
+from database import connect_database
 """Foreign currency transaction subledger, settlement and period-end revaluation."""
 import sqlite3
 from datetime import date, datetime
@@ -28,11 +29,7 @@ def M(v):
 
 
 def _db():
-    c = sqlite3.connect(DB_PATH, timeout=20, isolation_level=None)
-    c.row_factory = sqlite3.Row
-    c.execute("PRAGMA foreign_keys=ON")
-    c.execute("PRAGMA busy_timeout=20000")
-    return c
+    return connect_database(DB_PATH, isolation_level=None)
 
 
 def initialize_currency_schema():
