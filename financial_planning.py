@@ -288,7 +288,8 @@ def cash_flow():
     return render_template("cash_flow.html",date_from=start.isoformat(),date_to=end.isoformat(),
         opening=opening,closing=closing,sections=sections,total_in=total_in,total_out=total_out,
         net_change=net_change,reconciliation_difference=reconciliation_difference,
-        cash_reconciles=(reconciliation_difference==0))
+        cash_mapping_available=bool(cash_ids),
+        cash_reconciles=(bool(cash_ids) and reconciliation_difference==0))
 
 
 __all__=["planning_bp","initialize_planning_schema"]
