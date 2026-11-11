@@ -110,6 +110,9 @@ def init_purchase_schema():
     for name, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"), ("project_id", "projects")):
         if name not in bill_columns:
             c.execute("ALTER TABLE supplier_bills ADD COLUMN " + name + " INTEGER REFERENCES " + table + "(id)")
+    receipt_line_columns = {row["name"] for row in c.execute("PRAGMA table_info(goods_receipt_lines)")}
+    if "location_id" not in receipt_line_columns:
+        c.execute("ALTER TABLE goods_receipt_lines ADD COLUMN location_id INTEGER REFERENCES stock_locations(id)")
     receipt_columns = {row["name"] for row in c.execute("PRAGMA table_info(goods_receipts)")}
     for name, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"), ("project_id", "projects")):
         if name not in receipt_columns:
