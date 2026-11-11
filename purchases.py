@@ -2,6 +2,7 @@
 All posting is transactional and idempotent. Tax is posted only when an explicit input-tax account exists.
 """
 import sqlite3
+import uuid
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from pathlib import Path
