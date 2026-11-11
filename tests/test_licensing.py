@@ -1,7 +1,9 @@
-import base64, json, tempfile, unittest
+import base64, json, tempfile, unittest, os
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
+import licensing
 from licensing import get_license_status, verify_license_token
 
 class LicensingTests(unittest.TestCase):
@@ -16,6 +18,38 @@ class LicensingTests(unittest.TestCase):
         finally:
             if old is not None:
                 os.environ["NEXUS_LICENSE_TRIAL_URL"] = old
+
+    def test_trial_requires_a_valid_server_signature(self):
+        private=Ed25519PrivateKey.generate()
+        public=private.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw)
+        public_text=base64.b64encode(public).decode()
+        now=datetime(2026,11,10,tzinfo=timezone.utc)
+        expiry=now+timedelta(days=15)
+        payload={"machine_id":"device-a","license_type":"trial","expires_at":expiry.isoformat(),
+                 "offline_until":expiry.isoformat(),"trial_ends_at":expiry.isoformat()}
+        encoded=base64.urlsafe_b64encode(json.dumps(payload,separators=(",",":")).encode()).decode().rstrip("=")
+        token=encoded+"."+base64.urlsafe_b64encode(private.sign(encoded.encode("ascii"))).decode().rstrip("=")
+        old_url=os.environ.get("NEXUS_LICENSE_TRIAL_URL")
+        old_key=os.environ.get("NEXUS_LICENSE_PUBLIC_KEY")
+        os.environ["NEXUS_LICENSE_TRIAL_URL"]="https://licenses.example.test/api/v1/trial"
+        os.environ["NEXUS_LICENSE_PUBLIC_KEY"]=public_text
+        try:
+            with tempfile.TemporaryDirectory() as folder, patch.object(
+                licensing, "_post_json", return_value={"first_seen":now.isoformat(),"token":token}
+            ):
+                status=get_license_status(folder,now,machine_id="device-a")
+                self.assertEqual(status["status"],"trial")
+                self.assertEqual(status["trial_authority"],"signed_server")
+            with tempfile.TemporaryDirectory() as folder, patch.object(
+                licensing, "_post_json", return_value={"first_seen":now.isoformat(),"token":token+"x"}
+            ):
+                status=get_license_status(folder,now,machine_id="device-a")
+                self.assertEqual(status["status"],"online_required")
+        finally:
+            if old_url is None: os.environ.pop("NEXUS_LICENSE_TRIAL_URL",None)
+            else: os.environ["NEXUS_LICENSE_TRIAL_URL"]=old_url
+            if old_key is None: os.environ.pop("NEXUS_LICENSE_PUBLIC_KEY",None)
+            else: os.environ["NEXUS_LICENSE_PUBLIC_KEY"]=old_key
 
     def test_clock_rollback_is_detected(self):
         with tempfile.TemporaryDirectory() as folder:
