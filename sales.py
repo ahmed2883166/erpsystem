@@ -1213,28 +1213,49 @@ def new_receipt():
     if request.method == "POST":
         try:
             c.execute("BEGIN IMMEDIATE")
-            result = post_customer_receipt(c, int(request.form["invoice_id"]), request.form["receipt_date"],
-                request.form["amount"], int(request.form["cash_account_id"]), session["user_id"],
-                request.form.get("reference", "").strip())
-            c.commit()
-            flash("تم تسجيل التحصيل " + result["receipt_no"], "success")
+            selected_ids = request.form.getlist("invoice_ids")
+            if selected_ids:
+                customer_id = int(request.form["customer_id"])
+                allocations = []
+                for raw_id in selected_ids:
+                    invoice_id = int(raw_id)
+                    amount = request.form.get("allocation_amount_" + raw_id, "").strip()
+                    allocations.append((invoice_id, amount))
+                result = post_customer_receipt_batch(
+                    c, customer_id, request.form["receipt_date"], allocations,
+                    int(request.form["cash_account_id"]), session["user_id"],
+                    request.form.get("reference", "").strip()
+                )
+                c.commit()
+                flash("تم تسجيل إيصال التحصيل المجمع " + result["receipt_no"] +
+                      " وتوزيع " + str(result["total_amount"]) + " على " +
+                      str(result["invoice_count"]) + " فاتورة.", "success")
+            else:
+                raise ValueError("حدد الفواتير التي تريد تحصيلها.")
             return redirect(url_for("sales.index"))
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
             c.rollback()
             flash(str(exc), "error")
-    invoices = c.execute("""SELECT i.id,i.invoice_no,i.total_amount,i.paid_amount,
-        COALESCE(i.credited_amount,'0') credited_amount,c.name customer_name
+    customers = c.execute("SELECT id,code,name FROM customers WHERE active=1 ORDER BY name").fetchall()
+    raw_invoices = c.execute("""SELECT i.id,i.invoice_no,i.customer_id,i.invoice_date,i.due_date,
+        i.total_amount,i.paid_amount,COALESCE(i.credited_amount,'0') credited_amount,c.name customer_name
         FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
-        WHERE i.status='posted' ORDER BY i.invoice_date,i.id""").fetchall()
-    invoices = [row for row in invoices if
-                Decimal(row["total_amount"]) - Decimal(row["paid_amount"] or "0") -
-                Decimal(row["credited_amount"] or "0") +
-                _refund_total(c, row["id"]) > 0]
+        WHERE i.status='posted' ORDER BY c.name,i.invoice_date,i.id""").fetchall()
+    invoices = []
+    for row in raw_invoices:
+        outstanding = (Decimal(row["total_amount"]) - Decimal(row["paid_amount"] or "0")
+                       - Decimal(row["credited_amount"] or "0") + _refund_total(c, row["id"]))
+        if outstanding > 0:
+            item = dict(row)
+            item["remaining_amount"] = outstanding
+            invoices.append(item)
     cash_accounts = c.execute("""SELECT id,code,name_ar FROM accounts
         WHERE account_type='asset' AND is_group=0 AND active=1 ORDER BY code""").fetchall()
     c.close()
-    return render_template("sales_receipt_new.html", invoices=invoices, cash_accounts=cash_accounts,
-                           today=date.today().isoformat())
+    return render_template("sales_receipt_new.html", invoices=invoices, customers=customers,
+                           cash_accounts=cash_accounts, today=date.today().isoformat())
+
+
 
 
 if __name__ == "__main__":
