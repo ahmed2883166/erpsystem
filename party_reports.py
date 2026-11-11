@@ -49,6 +49,11 @@ def _events(c, kind, party_id):
             FROM customer_receipts cr JOIN sales_invoices i ON i.id=cr.invoice_id
             WHERE i.customer_id=?""", (party_id,)):
             events.append(dict(r))
+        if _table_exists(c, "customer_receipt_batches"):
+            for r in c.execute("""SELECT receipt_date event_date,receipt_no reference,
+                'تحصيل مجمع من العميل' description,0 debit,total_amount credit,1 priority
+                FROM customer_receipt_batches WHERE customer_id=?""", (party_id,)):
+                events.append(dict(r))
         for r in c.execute("""SELECT cn.credit_date event_date,cn.credit_note_no reference,
             'إشعار دائن / مرتجع بيع: ' || cn.reason description,0 debit,
             cn.total_amount credit,2 priority
