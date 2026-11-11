@@ -40,6 +40,11 @@ def initialize_stock_schema():
       purchase_price TEXT NOT NULL DEFAULT '0', sale_price TEXT NOT NULL DEFAULT '0',
       active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS stock_categories(
+      id INTEGER PRIMARY KEY, name_ar TEXT NOT NULL UNIQUE, code TEXT NOT NULL UNIQUE,
+      description TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS stock_warehouses(
       id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name_ar TEXT NOT NULL,
       branch TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1
@@ -88,6 +93,8 @@ def initialize_stock_schema():
     """)
     # Additive migrations preserve all existing stock and product data.
     product_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_products)")}
+    if "category_id" not in product_columns:
+        c.execute("ALTER TABLE stock_products ADD COLUMN category_id INTEGER REFERENCES stock_categories(id)")
     for name in ("purchase_price", "sale_price"):
         if name not in product_columns:
             c.execute(f"ALTER TABLE stock_products ADD COLUMN {name} TEXT NOT NULL DEFAULT '0'")
@@ -341,18 +348,21 @@ def index():
 @stock_permission("stock.manage")
 def products():
     c=get_db()
+    categories=c.execute("SELECT id,code,name_ar FROM stock_categories WHERE active=1 ORDER BY name_ar").fetchall()
     if request.method=="POST":
         try:
             sku=request.form.get("sku","").strip()
             name=request.form.get("name_ar","").strip()
             uom=request.form.get("uom","قطعة").strip()
+            category_id=request.form.get("category_id",type=int)
+            category=c.execute("SELECT name_ar FROM stock_categories WHERE id=? AND active=1",(category_id,)).fetchone() if category_id else None
             if not sku or not name or not uom: raise ValueError("الكود والاسم ووحدة القياس حقول مطلوبة.")
-            purchase_price = money(dec(request.form.get("purchase_price", "0"), "سعر الشراء"))
-            sale_price = money(dec(request.form.get("sale_price", "0"), "سعر البيع"))
-            if purchase_price < 0 or sale_price < 0:
-                raise ValueError("أسعار الشراء والبيع لا يمكن أن تكون سالبة.")
-            c.execute("""INSERT INTO stock_products(sku,name_ar,category,product_type,uom,barcode,track_lot,track_expiry,min_qty,purchase_price,sale_price)
-              VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(sku,name,request.form.get("category","").strip(),
+            if category_id and not category: raise ValueError("مجموعة الصنف غير صحيحة.")
+            purchase_price=money(dec(request.form.get("purchase_price","0"),"سعر الشراء"))
+            sale_price=money(dec(request.form.get("sale_price","0"),"سعر البيع"))
+            if purchase_price<0 or sale_price<0: raise ValueError("أسعار الشراء والبيع لا يمكن أن تكون سالبة.")
+            c.execute("""INSERT INTO stock_products(sku,name_ar,category,category_id,product_type,uom,barcode,track_lot,track_expiry,min_qty,purchase_price,sale_price)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(sku,name,category["name_ar"] if category else "",category_id,
               request.form.get("product_type","goods"),uom,request.form.get("barcode","").strip() or None,
               int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),
               str(q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))),str(purchase_price),str(sale_price)))
@@ -361,9 +371,56 @@ def products():
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود الصنف أو الباركود مستخدم بالفعل.", "error")
         finally: c.close()
         return redirect(url_for("stock.products"))
-    rows=c.execute("SELECT * FROM stock_products ORDER BY sku").fetchall(); c.close()
-    return render_template("stock_products.html",rows=rows)
+    q=request.args.get("q","").strip()
+    category_filter=request.args.get("category_id","").strip()
+    sql="SELECT p.*,sc.name_ar category_name FROM stock_products p LEFT JOIN stock_categories sc ON sc.id=p.category_id WHERE 1=1"
+    args=[]
+    if q:
+        sql+=" AND (p.sku LIKE ? OR p.name_ar LIKE ? OR p.barcode LIKE ?)"
+        args.extend([f"%{q}%"]*3)
+    if category_filter.isdigit():
+        sql+=" AND p.category_id=?";args.append(int(category_filter))
+    rows=c.execute(sql+" ORDER BY p.sku",args).fetchall(); c.close()
+    return render_template("stock_products.html",rows=rows,categories=categories,search=q,category_filter=category_filter)
 
+
+@stock_bp.route("/categories", methods=["GET","POST"])
+@stock_permission("stock.manage")
+def categories():
+    c=get_db()
+    if request.method=="POST":
+        try:
+            category_id=request.form.get("category_id",type=int)
+            name=request.form.get("name_ar","").strip()
+            code=request.form.get("code","").strip().upper()
+            description=request.form.get("description","").strip()
+            if not name or not code: raise ValueError("كود واسم المجموعة مطلوبان.")
+            if category_id:
+                c.execute("UPDATE stock_categories SET code=?,name_ar=?,description=? WHERE id=?",(code,name,description,category_id))
+            else:
+                c.execute("INSERT INTO stock_categories(code,name_ar,description) VALUES(?,?,?)",(code,name,description))
+            c.commit();flash("تم حفظ مجموعة المنتجات.","success")
+        except (ValueError,sqlite3.IntegrityError) as e:
+            c.rollback();flash(str(e) if isinstance(e,ValueError) else "كود المجموعة أو اسمها مستخدم بالفعل.","error")
+        finally:c.close()
+        return redirect(url_for("stock.categories"))
+    rows=c.execute("""SELECT sc.*,COUNT(p.id) product_count FROM stock_categories sc
+        LEFT JOIN stock_products p ON p.category_id=sc.id GROUP BY sc.id ORDER BY sc.name_ar""").fetchall()
+    c.close();return render_template("stock_categories.html",rows=rows)
+
+
+@stock_bp.route("/categories/<int:category_id>/delete",methods=["POST"])
+@stock_permission("stock.manage")
+def delete_category(category_id):
+    c=get_db()
+    try:
+        used=c.execute("SELECT COUNT(*) n FROM stock_products WHERE category_id=?",(category_id,)).fetchone()["n"]
+        if used: raise ValueError("لا يمكن حذف المجموعة لوجود أصناف مرتبطة بها؛ انقل الأصناف أولًا.")
+        c.execute("DELETE FROM stock_categories WHERE id=?",(category_id,));c.commit();flash("تم حذف المجموعة.","success")
+    except (ValueError,sqlite3.IntegrityError) as e:
+        c.rollback();flash(str(e),"error")
+    finally:c.close()
+    return redirect(url_for("stock.categories"))
 
 @stock_bp.route("/warehouses", methods=["GET","POST"])
 @stock_permission("stock.manage")
@@ -475,7 +532,7 @@ def product_locations():
 @stock_bp.route("/products/<int:product_id>/edit", methods=["GET","POST"])
 @stock_permission("stock.manage")
 def edit_product(product_id):
-    c=get_db(); product=c.execute("SELECT * FROM stock_products WHERE id=?",(product_id,)).fetchone()
+    c=get_db(); categories=c.execute("SELECT id,code,name_ar FROM stock_categories WHERE active=1 ORDER BY name_ar").fetchall(); product=c.execute("SELECT * FROM stock_products WHERE id=?",(product_id,)).fetchone()
     if not product:
         c.close(); flash("الصنف غير موجود.","error"); return redirect(url_for("stock.products"))
     used=c.execute("SELECT 1 FROM stock_movements WHERE product_id=? LIMIT 1",(product_id,)).fetchone() is not None
@@ -485,16 +542,19 @@ def edit_product(product_id):
             if not sku or not name or not uom: raise ValueError("الكود والاسم والوحدة مطلوبة.")
             if used and (request.form.get("product_type") != product["product_type"] or uom != product["uom"] or int(request.form.get("track_lot")=="on") != product["track_lot"] or int(request.form.get("track_expiry")=="on") != product["track_expiry"]):
                 raise ValueError("الصنف له حركات سابقة؛ لا يمكن تغيير نوعه أو وحدة قياسه أو إعدادات تتبع التشغيلة/الصلاحية.")
+            category_id=request.form.get("category_id",type=int)
+            category=c.execute("SELECT name_ar FROM stock_categories WHERE id=? AND active=1",(category_id,)).fetchone() if category_id else None
+            if category_id and not category: raise ValueError("مجموعة الصنف غير صحيحة.")
             purchase_price = money(dec(request.form.get("purchase_price", product["purchase_price"] or "0"), "سعر الشراء"))
             sale_price = money(dec(request.form.get("sale_price", product["sale_price"] or "0"), "سعر البيع"))
             if purchase_price < 0 or sale_price < 0:
                 raise ValueError("أسعار الشراء والبيع لا يمكن أن تكون سالبة.")
-            c.execute("""UPDATE stock_products SET sku=?,name_ar=?,category=?,product_type=?,uom=?,barcode=?,track_lot=?,track_expiry=?,min_qty=?,purchase_price=?,sale_price=? WHERE id=?""",
-              (sku,name,request.form.get("category","").strip(),request.form.get("product_type","goods"),uom,request.form.get("barcode","").strip() or None,int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),str(q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))),str(purchase_price),str(sale_price),product_id))
+            c.execute("""UPDATE stock_products SET sku=?,name_ar=?,category=?,category_id=?,product_type=?,uom=?,barcode=?,track_lot=?,track_expiry=?,min_qty=?,purchase_price=?,sale_price=? WHERE id=?""",
+              (sku,name,category["name_ar"] if category else "",category_id,request.form.get("product_type","goods"),uom,request.form.get("barcode","").strip() or None,int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),str(q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))),str(purchase_price),str(sale_price),product_id))
             c.commit(); c.close(); flash("تم تعديل الصنف.","success"); return redirect(url_for("stock.products"))
         except (ValueError,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "الكود أو الباركود مستخدم بالفعل.","error")
-    c.close(); return render_template("stock_product_edit.html",product=product,used=used)
+    c.close(); return render_template("stock_product_edit.html",product=product,used=used,categories=categories)
 
 
 @stock_bp.route("/products/<int:product_id>/delete",methods=["POST"])
