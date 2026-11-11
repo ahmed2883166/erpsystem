@@ -1,4 +1,5 @@
 import sqlite3
+from decimal import Decimal
 import unittest
 from accounting_core import post_journal, reconciliation_snapshot
 
@@ -108,6 +109,18 @@ class SharedAccountingCoreTests(unittest.TestCase):
         self.assertEqual(snapshot["stock_difference"], -10.0)
         self.assertEqual(len(snapshot["unbalanced"]), 0)
         self.assertEqual(snapshot["inventory_account_codes"], ["1130", "1140", "1150", "1160"])
+
+    def test_reconciliation_sums_text_money_exactly(self):
+        self.db.execute(
+            "INSERT INTO journal_entries VALUES(16,'2026-11-11','DECIMAL-1','دقة عشرية','posted',1,'now')"
+        )
+        self.db.execute("INSERT INTO journal_lines VALUES(7,16,1,'0.10','0','مدين')")
+        self.db.execute("INSERT INTO journal_lines VALUES(8,16,1,'0.20','0','مدين')")
+        self.db.execute("INSERT INTO journal_lines VALUES(9,16,2,'0','0.30','دائن')")
+        snapshot = reconciliation_snapshot(self.db)
+        self.assertEqual(snapshot["journal_totals"]["debit"], Decimal("70.30"))
+        self.assertEqual(snapshot["journal_totals"]["credit"], Decimal("70.30"))
+        self.assertFalse(any(row["reference"] == "DECIMAL-1" for row in snapshot["unbalanced"]))
 
     def test_partial_receipt_match_keeps_unmatched_grni(self):
         snapshot = reconciliation_snapshot(self.db)
