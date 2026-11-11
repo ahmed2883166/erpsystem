@@ -737,6 +737,51 @@ def edit_account(account_id):
     return render_template("account_edit.html", account=account, groups=groups, used=used)
 
 
+
+@app.route("/search")
+def global_search():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    q=request.args.get("q","").strip()[:120]
+    results=[]
+    if q:
+        conn=db()
+        def exists(table):
+            return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone() is not None
+        def columns(table):
+            return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")} if exists(table) else set()
+        like=f"%{q}%"
+        if exists("journal_entries"):
+            cols=columns("journal_entries")
+            predicates=[];args=[]
+            for col in ("reference","description","entry_date"):
+                if col in cols: predicates.append(f"CAST(j.{col} AS TEXT) LIKE ?");args.append(like)
+            if q.isdigit(): predicates.append("j.id=?");args.append(int(q))
+            if predicates:
+                for r in conn.execute("SELECT j.id,j.entry_date,j.reference,j.description FROM journal_entries j WHERE "+" OR ".join(predicates)+" ORDER BY j.id DESC LIMIT 30",args):
+                    results.append({"kind":"قيد يومية","title":f"قيد رقم {r['id']} — {r['reference'] or ''}","detail":f"{r['entry_date']} | {r['description']}","url":url_for("journal_detail",entry_id=r["id"])})
+        if exists("sales_invoices") and exists("customers"):
+            for r in conn.execute("""SELECT i.id,i.invoice_no,i.invoice_date,i.total_amount,c.name party
+                FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
+                WHERE i.invoice_no LIKE ? OR c.name LIKE ? OR c.code LIKE ? ORDER BY i.id DESC LIMIT 30""",(like,like,like)):
+                results.append({"kind":"فاتورة بيع","title":r["invoice_no"],"detail":f"{r['party']} | {r['invoice_date']} | {r['total_amount']}","url":url_for("sales.invoice_print",invoice_id=r["id"])})
+        if exists("supplier_bills") and exists("suppliers"):
+            for r in conn.execute("""SELECT b.id,b.bill_no,b.supplier_invoice_no,b.bill_date,b.total_amount,s.name party
+                FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
+                WHERE b.bill_no LIKE ? OR b.supplier_invoice_no LIKE ? OR s.name LIKE ? OR s.code LIKE ?
+                ORDER BY b.id DESC LIMIT 30""",(like,like,like,like)):
+                results.append({"kind":"فاتورة مورد","title":r["bill_no"],"detail":f"{r['party']} | فاتورة المورد {r['supplier_invoice_no']} | {r['bill_date']} | {r['total_amount']}","url":url_for("purchase.bill_print",bill_id=r["id"])})
+        if exists("stock_products"):
+            for r in conn.execute("""SELECT id,sku,name_ar,barcode,purchase_price,sale_price FROM stock_products
+                WHERE sku LIKE ? OR name_ar LIKE ? OR barcode LIKE ? ORDER BY name_ar LIMIT 30""",(like,like,like)):
+                results.append({"kind":"منتج / مخزون","title":f"{r['sku']} — {r['name_ar']}","detail":f"شراء: {r['purchase_price']} | بيع: {r['sale_price']} | باركود: {r['barcode'] or '—'}","url":url_for("stock.edit_product",product_id=r["id"])})
+        if exists("company_settings"):
+            for r in conn.execute("SELECT setting_key,setting_value FROM company_settings WHERE setting_value LIKE ? LIMIT 20",(like,)):
+                if "company" in r["setting_key"].lower() or "name" in r["setting_key"].lower():
+                    results.append({"kind":"إعداد شركة","title":r["setting_key"],"detail":r["setting_value"],"url":url_for("company_setup")})
+        conn.close()
+    return render_template("global_search.html",q=q,results=results)
+
 @app.route("/journal", methods=["GET", "POST"])
 @requires("journal.manage")
 def journal():
