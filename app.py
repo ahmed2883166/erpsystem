@@ -32,7 +32,7 @@ from analytic_dimensions import initialize_analytic_dimensions_schema, active_di
 from financial_planning import planning_bp, initialize_planning_schema
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
-from database import connect_database, enable_wal
+from database import connect_database, enable_wal, fetch_page
 
 # Development/demo builds run locally without a licensing server. Set NEXUS_DEMO_MODE=0
 # explicitly in a commercial deployment to enforce the signed remote licensing flow.
@@ -1187,6 +1187,11 @@ def ledger():
     connection = db()
     accounts_list = connection.execute("SELECT * FROM accounts WHERE active=1 ORDER BY code").fetchall()
     rows, selected = [], None
+    opening_balance = Decimal("0")
+    closing_balance = Decimal("0")
+    total_debit = Decimal("0")
+    total_credit = Decimal("0")
+    ledger_page = {"rows": [], "total": 0, "page": 1, "pages": 1, "per_page": 50}
     if account_id:
         selected = connection.execute("SELECT * FROM accounts WHERE id=? AND is_group=0", (account_id,)).fetchone()
         if selected:
@@ -1196,23 +1201,45 @@ def ledger():
                 conditions.append("je.entry_date >= ?"); params.append(date_from)
             if date_to:
                 conditions.append("je.entry_date <= ?"); params.append(date_to)
+            base_opening = Decimal("0")
             if date_from:
                 opening_row = connection.execute("""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) balance
                     FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                     WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<?""",
                     (account_id, date_from)).fetchone()
-                opening_balance = Decimal(str(opening_row["balance"] or "0"))
-            else:
-                opening_balance = Decimal("0")
-            raw_rows = connection.execute(f"""SELECT je.id entry_id, je.entry_date, je.reference, je.description,
-                jl.debit, jl.credit, jl.memo,
+                base_opening = Decimal(str(opening_row["balance"] or "0"))
+            query = f"""SELECT je.id entry_id, je.entry_date, je.reference, je.description,
+                jl.id line_id, jl.debit, jl.credit, jl.memo,
                 (SELECT GROUP_CONCAT(a2.code || ' - ' || a2.name_ar, '، ')
                    FROM journal_lines jl2 JOIN accounts a2 ON a2.id=jl2.account_id
                   WHERE jl2.entry_id=je.id AND jl2.account_id<>jl.account_id) counterpart_accounts
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
-                WHERE {' AND '.join(conditions)} ORDER BY je.entry_date, jl.id""", params).fetchall()
+                WHERE {' AND '.join(conditions)} ORDER BY je.entry_date, jl.id"""
+            count_query = f"""SELECT COUNT(*) FROM journal_lines jl
+                JOIN journal_entries je ON je.id=jl.entry_id WHERE {' AND '.join(conditions)}"""
+            ledger_page = fetch_page(connection, query, count_query, params,
+                page=request.args.get("ledger_page",1,type=int),
+                per_page=request.args.get("ledger_per_page",50,type=int))
+            raw_rows = ledger_page["rows"]
+            opening_balance = base_opening
+            if raw_rows:
+                first = raw_rows[0]
+                prior = connection.execute(f"""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) balance
+                    FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                    WHERE {' AND '.join(conditions)}
+                      AND (je.entry_date < ? OR (je.entry_date=? AND jl.id < ?))""",
+                    tuple(params) + (first["entry_date"], first["entry_date"], first["line_id"])).fetchone()
+                opening_balance += Decimal(str(prior["balance"] or "0"))
+            totals_row = connection.execute(f"""SELECT
+                COALESCE(DECIMAL_SUM(jl.debit),0) debit,
+                COALESCE(DECIMAL_SUM(jl.credit),0) credit,
+                COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) net
+                FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                WHERE {' AND '.join(conditions)}""", params).fetchone()
+            total_debit = Decimal(str(totals_row["debit"] or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            total_credit = Decimal(str(totals_row["credit"] or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            closing_balance = (base_opening + Decimal(str(totals_row["net"] or "0"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             running_balance = opening_balance
-            rows = []
             for row in raw_rows:
                 item = dict(row)
                 item["debit"] = Decimal(str(item["debit"] or "0"))
@@ -1220,19 +1247,10 @@ def ledger():
                 running_balance += item["debit"] - item["credit"]
                 item["running_balance"] = running_balance.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 rows.append(item)
-            closing_balance = running_balance.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        else:
-            opening_balance = Decimal("0")
-            closing_balance = Decimal("0")
-    else:
-        opening_balance = Decimal("0")
-        closing_balance = Decimal("0")
-    total_debit = sum((Decimal(str(x["debit"] or "0")) for x in rows), Decimal("0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    total_credit = sum((Decimal(str(x["credit"] or "0")) for x in rows), Decimal("0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     connection.close()
     return render_template("ledger.html", accounts=accounts_list, selected=selected, rows=rows,
         date_from=date_from, date_to=date_to, opening_balance=opening_balance, closing_balance=closing_balance,
-        total_debit=total_debit, total_credit=total_credit)
+        total_debit=total_debit, total_credit=total_credit, ledger_page=ledger_page)
 
 
 @app.route("/journal/<int:entry_id>")
