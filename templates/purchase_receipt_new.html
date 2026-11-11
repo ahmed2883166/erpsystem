@@ -1,12 +1,24 @@
-{% extends "base.html" %}{% block title %}استلام مشتريات | NEXUS ERP<script>
-(function(){
- const product=document.getElementById('receiptProduct'), price=document.getElementById('receiptUnitCost');
- const warehouse=document.querySelector('[name="warehouse_id"]'), location=document.getElementById('receiptLocation');
- function updatePrice(){const opt=product.options[product.selectedIndex];if(opt && price.value==='') price.value=opt.dataset.purchasePrice||'0';}
- function filterLocations(){const wid=warehouse.value;for(const opt of location.options){if(!opt.value)continue;opt.hidden=opt.dataset.warehouse!==wid;if(opt.hidden&&opt.selected)location.value='';}}
- product.addEventListener('change',updatePrice);warehouse.addEventListener('change',filterLocations);filterLocations();
-})();
-</script>{% endblock %}{% block content %}<header><h2>استلام بضاعة غير مفوترة (GRNI)</h2><p>يرحل النظام المخزون مدينًا وGRNI دائنًا، ولا يسجل ضريبة من إذن الاستلام.</p></header><section class="panel"><form method="post"><div class="form-row"><div><label>المورد</label><select name="supplier_id" required>{% for s in suppliers %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select></div><div><label>أمر الشراء (اختياري)</label><select name="po_id"><option value="">استلام بدون أمر شراء</option>{% for o in orders %}<option value="{{ o.id }}">{{ o.po_no }} — {{ o.status }}</option>{% endfor %}</select></div><div><label>المخزن</label><select name="warehouse_id" required>{% for w in warehouses %}<option value="{{ w.id }}">{{ w.code }} - {{ w.name_ar }}</option>{% endfor %}</select></div><div><label>الصنف</label><select name="product_id" id="receiptProduct" required>{% for p in products %}<option value="{{ p.id }}" data-purchase-price="{{ p.purchase_price or '0' }}">{{ p.sku }} - {{ p.name_ar }}</option>{% endfor %}</select></div><div><label>الدور / موقع التخزين</label><select name="location_id" id="receiptLocation"><option value="">الموقع الافتراضي للصنف</option>{% for l in locations %}<option value="{{l.id}}" data-warehouse="{{l.warehouse_id}}">{{l.code}} - {{l.name_ar}} ({{l.location_type}})</option>{% endfor %}</select></div><div><label>الكمية</label><input name="quantity" type="number" min="0.0001" step="0.0001" required></div><div><label>تكلفة الوحدة</label><input name="unit_cost" id="receiptUnitCost" type="number" min="0" step="0.01" required></div><div><label>رقم التشغيلة (إلزامي للصنف المتتبع)</label><input name="lot_number" maxlength="100"></div><div><label>تاريخ الإنتاج</label><input name="production_date" type="date"></div><div><label>تاريخ الصلاحية (إلزامي للصنف المتتبع للصلاحية)</label><input name="expiry_date" type="date"></div><div><label>تاريخ الاستلام</label><input name="receipt_date" type="date" value="{{ today }}" required></div>
+{% extends "base.html" %}{% block title %}استلام مشتريات | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>استلام بضاعة غير مفوترة (GRNI)</h2><p>يرحل النظام المخزون مدينًا وGRNI دائنًا، ولا يسجل ضريبة من إذن الاستلام.</p></header>
+<section class="panel"><form method="post"><div class="form-row">
+<div><label>المورد</label><select name="supplier_id" required>{% for s in suppliers %}<option value="{{s.id}}">{{s.name}}</option>{% endfor %}</select></div>
+<div><label>أمر الشراء (اختياري)</label><select name="po_id"><option value="">استلام بدون أمر شراء</option>{% for o in orders %}<option value="{{o.id}}">{{o.po_no}} — {{o.status}}</option>{% endfor %}</select></div>
+<div><label>المخزن</label><select name="warehouse_id" required>{% for w in warehouses %}<option value="{{w.id}}">{{w.code}} - {{w.name_ar}}</option>{% endfor %}</select></div>
+<div><label>الصنف</label><select name="product_id" id="receiptProduct" required>{% for p in products %}<option value="{{p.id}}" data-purchase-price="{{p.purchase_price or '0'}}">{{p.sku}} - {{p.name_ar}}</option>{% endfor %}</select></div>
+<div><label>الدور / موقع التخزين</label><select name="location_id" id="receiptLocation"><option value="">الموقع الافتراضي للصنف</option>{% for l in locations %}<option value="{{l.id}}" data-warehouse="{{l.warehouse_id}}">{{l.code}} - {{l.name_ar}} ({{l.location_type}})</option>{% endfor %}</select></div>
+<div><label>الكمية</label><input name="quantity" type="number" min="0.0001" step="0.0001" required></div>
+<div><label>تكلفة الوحدة</label><input name="unit_cost" id="receiptUnitCost" type="number" min="0" step="0.01" required></div>
+<div><label>رقم التشغيلة (إلزامي للصنف المتتبع)</label><input name="lot_number" maxlength="100"></div>
+<div><label>تاريخ الإنتاج</label><input name="production_date" type="date"></div>
+<div><label>تاريخ الصلاحية (إلزامي للصنف المتتبع للصلاحية)</label><input name="expiry_date" type="date"></div>
+<div><label>تاريخ الاستلام</label><input name="receipt_date" type="date" value="{{today}}" required></div>
 <div><label>الفرع التحليلي</label><select name="branch_id"><option value="">بدون تحديد</option>{% for x in dimension_options.branches %}<option value="{{x.id}}">{{x.code}} - {{x.name_ar}}</option>{% endfor %}</select></div>
 <div><label>مركز التكلفة</label><select name="cost_center_id"><option value="">بدون تحديد</option>{% for x in dimension_options.cost_centers %}<option value="{{x.id}}">{{x.code}} - {{x.name_ar}}</option>{% endfor %}</select></div>
-<div><label>المشروع</label><select name="project_id"><option value="">بدون تحديد</option>{% for x in dimension_options.projects %}<option value="{{x.id}}">{{x.code}} - {{x.name_ar}}</option>{% endfor %}</select></div></div><button>ترحيل الاستلام والقيد</button></form></section>{% endblock %}
+<div><label>المشروع</label><select name="project_id"><option value="">بدون تحديد</option>{% for x in dimension_options.projects %}<option value="{{x.id}}">{{x.code}} - {{x.name_ar}}</option>{% endfor %}</select></div>
+</div><button>ترحيل الاستلام والقيد</button></form></section>
+<script>
+(function(){const product=document.getElementById('receiptProduct'),price=document.getElementById('receiptUnitCost'),warehouse=document.querySelector('[name="warehouse_id"]'),location=document.getElementById('receiptLocation');
+function updatePrice(){const opt=product.options[product.selectedIndex];if(opt&&price.dataset.manual!=='1')price.value=opt.dataset.purchasePrice||'0';}
+function filterLocations(){const wid=warehouse.value;for(const opt of location.options){if(!opt.value)continue;opt.hidden=opt.dataset.warehouse!==wid;if(opt.hidden&&opt.selected)location.value='';}}
+product.addEventListener('change',updatePrice);price.addEventListener('input',()=>price.dataset.manual='1');warehouse.addEventListener('change',filterLocations);updatePrice();filterLocations();})();
+</script>{% endblock %}
