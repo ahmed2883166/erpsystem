@@ -620,6 +620,10 @@ def new_credit_note():
             bill=c.execute("SELECT * FROM supplier_bills WHERE id=? AND supplier_id=? AND status='posted'",(bill_id,supplier)).fetchone()
             if not bill:
                 raise ValueError("فاتورة المورد غير موجودة أو لا تتبع المورد المحدد.")
+            dimensions = validate_journal_dimensions(c, {
+                "branch_id": bill["branch_id"], "cost_center_id": bill["cost_center_id"],
+                "project_id": bill["project_id"],
+            })
             if request.form["credit_date"] < bill["bill_date"]:
                 raise ValueError("تاريخ إشعار الدائن لا يمكن أن يسبق تاريخ فاتورة المورد.")
             if not c.execute("SELECT 1 FROM supplier_bill_receipts WHERE bill_id=? LIMIT 1",(bill_id,)).fetchone():
@@ -689,7 +693,7 @@ def new_credit_note():
                 vat_id=account(c,"1165","asset")
                 journal_lines.append((vat_id,0,tax,"عكس ضريبة المدخلات حسب إشعار المورد"))
             entry_id=create_journal(c,request.form["credit_date"],credit_no,
-                "إشعار دائن مشتريات — "+supplier_credit_no,journal_lines,session["user_id"])
+                "إشعار دائن مشتريات — "+supplier_credit_no,journal_lines,session["user_id"],dimensions=dimensions)
             c.execute("UPDATE supplier_credit_notes SET journal_entry_id=? WHERE id=?",(entry_id,note_id))
             c.execute("UPDATE supplier_bills SET credited_amount=? WHERE id=?",
                       (str(money(already_credited+total)),bill_id))
