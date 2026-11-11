@@ -1019,6 +1019,9 @@ def management_dashboard():
     connection = db()
     try:
         snapshot = build_management_snapshot(connection, start, end, dimensions)
+        from management_dashboard import cash_forecast, unusual_journal_entries
+        snapshot["cash_forecast"] = cash_forecast(connection, date.today(), 8)
+        snapshot["unusual_entries"] = unusual_journal_entries(connection, start, end)
         dimension_options = active_dimension_options(connection)
     finally:
         connection.close()
@@ -1027,6 +1030,29 @@ def management_dashboard():
         date_from=start.isoformat(), date_to=end.isoformat(),
         dimension_options=dimension_options, selected_dimensions=dimensions,
     )
+
+
+
+@app.route("/dashboard/management/minimum-cash", methods=["POST"])
+@requires("accounts.manage")
+def management_minimum_cash():
+    raw = request.form.get("minimum_cash_balance", "").strip()
+    try:
+        value = Decimal(raw or "0")
+        if not value.is_finite() or value < 0:
+            raise ValueError()
+        connection = db()
+        connection.execute("""INSERT INTO company_settings(setting_key,setting_value)
+            VALUES('minimum_cash_balance',?) ON CONFLICT(setting_key)
+            DO UPDATE SET setting_value=excluded.setting_value""",
+            (str(value.quantize(Decimal("0.01"))),))
+        connection.commit()
+        connection.close()
+        log("minimum_cash_balance_updated", str(value))
+        flash("تم حفظ الحد الأدنى للنقدية.", "success")
+    except (InvalidOperation, ValueError, sqlite3.Error):
+        flash("أدخل حدًا أدنى صحيحًا لا يقل عن صفر.", "error")
+    return redirect(url_for("management_dashboard"))
 
 
 @app.route("/settings/analytic-dimensions", methods=["GET", "POST"])
