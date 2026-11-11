@@ -24,6 +24,7 @@ from receivables import aging_bp, initialize_aging_schema
 from quotations import quotes_bp, initialize_quotes_schema
 from tax_center import tax_bp, initialize_tax_schema
 from workforce import workforce_bp, initialize_workforce_schema
+from payroll_compliance import payroll_compliance_bp, initialize_payroll_compliance_schema
 from currency_center import currency_bp, initialize_currency_schema
 from party_reports import party_bp
 from management_dashboard import build_management_snapshot, initialize_management_dashboard_schema
@@ -96,6 +97,7 @@ app.register_blueprint(aging_bp)
 app.register_blueprint(quotes_bp)
 app.register_blueprint(tax_bp)
 app.register_blueprint(workforce_bp)
+app.register_blueprint(payroll_compliance_bp)
 app.register_blueprint(currency_bp)
 app.register_blueprint(party_bp)
 app.register_blueprint(planning_bp)
@@ -320,6 +322,7 @@ def initialize_database():
     initialize_quotes_schema()
     initialize_tax_schema()
     initialize_workforce_schema()
+    initialize_payroll_compliance_schema()
     initialize_currency_schema()
     dashboard_connection = db()
     activity_row = dashboard_connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
