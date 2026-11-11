@@ -125,8 +125,11 @@
   const rows=()=> (values[metric]||[]).map((v,i)=>({value:Number(v)||0,code:(labels[metric]||[])[i]||'',name:(names[metric]||[])[i]||'',id:(links[metric]||[])[i]||''})).filter(x=>x.value!==0).sort((a,b)=>b.value-a.value);
   function render(){
     const data=rows(), total=data.reduce((s,x)=>s+x.value,0);
-    table.innerHTML=data.length?data.map(x=>'<tr><td>'+x.code+' — '+x.name+'</td><td>'+format(x.value)+'</td><td>'+ (total?((x.value/total)*100).toFixed(1):'0.0')+'%</td><td><a href="/ledger?account_id='+encodeURIComponent(x.id)+'">كشف الحساب</a></td></tr>').join(''):'<tr><td colspan="4">لا توجد بيانات مرحلة لهذا المؤشر في الفترة.</td></tr>';
-    document.getElementById('managementChartLegend').innerHTML=data.slice(0,8).map(x=>'<div class="chart-legend-row"><span>'+x.code+' — '+x.name+'</span><b>'+format(x.value)+'</b></div>').join('');
+    table.replaceChildren();
+    if(!data.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=4;td.textContent='لا توجد بيانات مرحلة لهذا المؤشر في الفترة.';tr.append(td);table.append(tr);}
+    data.forEach(x=>{const tr=document.createElement('tr');[x.code+' — '+x.name,format(x.value),(total?((x.value/total)*100).toFixed(1):'0.0')+'%'].forEach(value=>{const td=document.createElement('td');td.textContent=value;tr.append(td);});const td=document.createElement('td'),a=document.createElement('a');a.href='/ledger?account_id='+encodeURIComponent(x.id);a.textContent='كشف الحساب';td.append(a);tr.append(td);table.append(tr);});
+    const legend=document.getElementById('managementChartLegend');legend.replaceChildren();
+    data.slice(0,8).forEach(x=>{const row=document.createElement('div'),label=document.createElement('span'),amount=document.createElement('b');row.className='chart-legend-row';label.textContent=x.code+' — '+x.name;amount.textContent=format(x.value);row.append(label,amount);legend.append(row);});
     if(!window.Chart){canvas.replaceWith(Object.assign(document.createElement('p'),{className:'muted',textContent:'تعذر تحميل مكتبة الرسم البياني. يمكنك مراجعة جدول البيانات التفصيلي أسفل الرسم.'}));return;}
     if(chart) chart.destroy();
     const kind=document.getElementById('chartKind').value;
