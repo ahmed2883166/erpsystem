@@ -48,6 +48,14 @@ BACKUP_DIR = DATA_DIR / "backups"
 
 app = Flask(__name__)
 
+@app.template_filter("money")
+def format_money(value):
+    try:
+        amount = Decimal(str(value or "0"))
+        return f"{amount:,.2f}"
+    except (InvalidOperation, ValueError, TypeError):
+        return "0.00"
+
 def _load_secret_key():
     configured = os.environ.get("NEXUS_SECRET_KEY", "").strip()
     if configured:
@@ -735,7 +743,7 @@ def journal():
         credits = request.form.getlist("credit")
         memos = request.form.getlist("memo")
         try:
-            from decimal import Decimal, InvalidOperation
+            from decimal import Decimal
             entry_date = datetime.fromisoformat(request.form.get("entry_date", "").strip()).date().isoformat()
             description = request.form.get("description", "").strip()
             if not description or len(description) > 500:
@@ -811,8 +819,6 @@ def management_dashboard():
 def management_account_mapping():
     connection = db()
     from management_dashboard import MANAGEMENT_ROLES, load_management_account_roles
-    activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
-    activity = activity_row["setting_value"] if activity_row else "commercial"
     load_management_account_roles(connection)
     if request.method == "POST":
         try:
@@ -1128,12 +1134,19 @@ def edit_user(user_id):
         else:
             try:
                 selected = normalize_user_permissions(request.form.getlist("permissions"))
+                if user_id == session.get("user_id"):
+                    current_permissions = stored_user_permissions(user["permissions_json"], user["role"])
+                    requested_active = 1 if request.form.get("active") == "yes" else 0
+                    if role != user["role"] or selected != current_permissions or requested_active != user["active"]:
+                        raise ValueError("لا يمكنك تغيير دورك أو صلاحياتك أو حالة حسابك من الجلسة الحالية.")
                 connection.execute("UPDATE users SET username=?,full_name=?,role=?,active=?,permissions_json=? WHERE id=?",
                   (request.form["username"].strip(),request.form["full_name"].strip(),role,1 if request.form.get("active")=="yes" else 0,json.dumps(selected, ensure_ascii=False),user_id))
                 connection.commit(); connection.close(); log("user_updated",request.form["username"].strip())
                 flash("تم تعديل المستخدم.","success"); return redirect(url_for("users"))
             except sqlite3.IntegrityError:
                 connection.rollback(); flash("اسم المستخدم مستخدم بالفعل.","error")
+            except ValueError as exc:
+                connection.rollback(); flash(str(exc),"error")
     selected_permissions = set(stored_user_permissions(user["permissions_json"] if "permissions_json" in user.keys() else None, user["role"]))
     connection.close(); return render_template("user_edit.html",user=user,roles=PERMISSIONS,all_permissions=ALL_PERMISSIONS,permission_labels=PERMISSION_LABELS,selected_permissions=selected_permissions)
 
