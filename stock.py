@@ -196,8 +196,7 @@ def post_scrap_journal(c, movement_id, movement_no, product, movement_date, tota
     settings = {row["setting_key"]: row["setting_value"] for row in c.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='activity'") }
     activity = settings.get("activity", "commercial")
-    from chart_templates import ACTIVITY_POSTING_ACCOUNTS
-    inventory_code = ACTIVITY_POSTING_ACCOUNTS.get(activity, {}).get("inventory")
+    inventory_code = posting_accounts.get("inventory")
     if not inventory_code:
         c.execute("UPDATE stock_movements SET accounting_status='pending_setup' WHERE id=?", (movement_id,))
         return None
@@ -227,9 +226,10 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
     settings = {row["setting_key"]: row["setting_value"] for row in c.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='activity'")}
     activity = settings.get("activity", "commercial")
-    cogs_codes = {"commercial":"5100", "medical":"5300", "restaurant":"5100", "industrial":"5400"}
+    from chart_templates import ACTIVITY_POSTING_ACCOUNTS
+    posting_accounts = ACTIVITY_POSTING_ACCOUNTS.get(activity, {})
     if purpose == "sale":
-        expense_code = cogs_codes.get(activity)
+        expense_code = posting_accounts.get("cogs")
         expense_name = "تكلفة المبيعات / تكلفة الخدمات المصروفة"
     elif purpose == "internal":
         expense_code = "6991"
