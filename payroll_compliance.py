@@ -4,17 +4,17 @@ Rates are deliberately data-driven: the application does not embed statutory
 rates that may become obsolete. Rule sets are effective-dated and snapshotted
 onto payroll lines when a run is created.
 """
+from app_paths import DB_PATH
 import sqlite3
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
-from pathlib import Path
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
 
 payroll_compliance_bp = Blueprint("payroll_compliance", __name__)
-DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
+
 CENT = Decimal("0.01")
 
 
