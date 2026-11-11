@@ -652,7 +652,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
 
 def _reverse_posted_journal(conn, entry_id, reversal_date, reference, description, created_by):
     rows = conn.execute(
-        "SELECT account_id,debit,credit,memo,branch_id,cost_center_id,project_id FROM journal_lines WHERE entry_id=? ORDER BY id",
+        "SELECT account_id,debit,credit,memo,branch_id,cost_center_id,project_id,customer_id FROM journal_lines WHERE entry_id=? ORDER BY id",
         (entry_id,),
     ).fetchall()
     if not rows:
@@ -662,7 +662,7 @@ def _reverse_posted_journal(conn, entry_id, reversal_date, reference, descriptio
          Decimal(str(row["debit"] or "0")), "عكس: " + str(row["memo"] or ""))
         for row in rows
     ]
-    dimensions = {key: rows[0][key] for key in ("branch_id", "cost_center_id", "project_id")}
+    dimensions = {key: rows[0][key] for key in ("branch_id", "cost_center_id", "project_id", "customer_id")}
     return post_journal(conn, reversal_date, reference, description, reversed_lines, created_by,
                         dimensions=dimensions)
 
