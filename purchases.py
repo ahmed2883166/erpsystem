@@ -3,7 +3,7 @@ All posting is transactional and idempotent. Tax is posted only when an explicit
 """
 import sqlite3
 import uuid
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation
 from functools import wraps
 from pathlib import Path
 from datetime import date, datetime
