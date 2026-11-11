@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}قائمة المركز المالي | NEXUS ERP{% endblock %}
+{% block content %}
+<header><h2>قائمة المركز المالي (الميزانية العمومية)</h2><p class="muted">أرصدة الحسابات المرحلة حتى التاريخ المحدد، مع إظهار نتيجة النشاط ضمن حقوق الملكية.</p></header>
+<section class="panel no-print"><form method="get" class="report-filter"><label>كما في تاريخ<input type="date" name="as_of" value="{{ s.as_of }}" required></label><button>عرض الميزانية</button></form></section>
+<section class="stat-grid"><article class="stat-card"><small>إجمالي الأصول</small><strong>{{ '%.2f'|format(s.total_assets) }}</strong></article><article class="stat-card"><small>إجمالي الالتزامات</small><strong>{{ '%.2f'|format(s.total_liabilities) }}</strong></article><article class="stat-card"><small>حقوق الملكية بعد نتيجة النشاط</small><strong>{{ '%.2f'|format(s.total_equity) }}</strong></article><article class="stat-card"><small>نتيجة النشاط المتراكمة</small><strong>{{ '%.2f'|format(s.net_profit) }}</strong></article></section>
+{% for kind,title,total in [('asset','الأصول',s.total_assets),('liability','الالتزامات',s.total_liabilities),('equity','حقوق الملكية',s.equity_before_profit)] %}
+<section class="panel"><h3>{{ title }}</h3><div class="table-wrap"><table><thead><tr><th>كود الحساب</th><th>الحساب</th><th>الرصيد</th></tr></thead><tbody>{% for a in s.sections[kind] %}<tr class="{% if a.is_group %}account-group{% endif %}"><td>{{ a.code }}</td><td><span style="padding-right:{{ a.depth*22 }}px">{{ a.name_ar }}{% if a.is_group %} — إجمالي مجموعة{% endif %}</span></td><td>{{ '%.2f'|format(a.display_balance) }}</td></tr>{% else %}<tr><td colspan="3">لا توجد حسابات.</td></tr>{% endfor %}<tr class="total"><td colspan="2">إجمالي {{ title }}</td><td>{{ '%.2f'|format(total) }}</td></tr></tbody></table></div>
+{% if kind=='equity' %}<p>يضاف صافي ربح / (خسارة) النشاط المتراكم: <b>{{ '%.2f'|format(s.net_profit) }}</b></p><p><b>إجمالي حقوق الملكية بعد نتيجة النشاط: {{ '%.2f'|format(s.total_equity) }}</b></p>{% endif %}
+</section>
+{% endfor %}
+<section class="panel"><h3>فحص المعادلة المحاسبية</h3><p>الأصول = الالتزامات + حقوق الملكية + نتيجة النشاط</p><h2>{% if s.balanced %}<span class="success">متوازنة ✓</span>{% else %}<span class="danger">يوجد فرق: {{ '%.2f'|format(s.balance_difference) }}</span>{% endif %}</h2><p class="muted">التقرير يعرض أرصدة دفتر الأستاذ فقط. يجب مراجعة الحسابات الختامية، التسويات، الاستحقاقات والتصنيفات قبل اعتماد القوائم الرسمية.</p></section>
+{% endblock %}
