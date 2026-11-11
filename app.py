@@ -746,7 +746,7 @@ def management_account_mapping():
     from management_dashboard import MANAGEMENT_ROLES, load_management_account_roles
     activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
     activity = activity_row["setting_value"] if activity_row else "commercial"
-    load_management_account_roles(connection, activity)
+    load_management_account_roles(connection)
     if request.method == "POST":
         try:
             selections = {}
@@ -775,7 +775,7 @@ def management_account_mapping():
         except (ValueError, sqlite3.Error) as exc:
             connection.rollback()
             flash(str(exc) or "تعذر حفظ ربط الحسابات.", "error")
-    roles = load_management_account_roles(connection, activity)
+    roles = load_management_account_roles(connection)
     accounts = connection.execute(
         "SELECT id,code,name_ar,account_type FROM accounts WHERE is_group=0 AND active=1 ORDER BY code"
     ).fetchall()
