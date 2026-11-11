@@ -647,10 +647,14 @@ def post_customer_refund(conn, credit_note_id, refund_date, amount, cash_account
     if amount > refundable:
         raise ValueError(f"قيمة الرد تتجاوز المبلغ القابل للاسترداد. المتاح {max(refundable, Decimal('0'))}.")
     cash = conn.execute(
-        "SELECT id,is_group,active,account_type FROM accounts WHERE id=?", (cash_account_id,)
+        "SELECT id,code,name_ar,is_group,active,account_type FROM accounts WHERE id=?", (cash_account_id,)
     ).fetchone()
-    if not cash or cash["is_group"] or not cash["active"] or cash["account_type"] != "asset":
-        raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
+    cash_name = (cash["name_ar"] or "").lower() if cash else ""
+    cash_codes = {"1000","1110","1120","1121","1122"}
+    cash_words = ("صندوق","بنك","بنوك","مصرف","نقد","cash","bank")
+    if (not cash or cash["is_group"] or not cash["active"] or cash["account_type"] != "asset"
+        or (cash["code"] not in cash_codes and not any(word in cash_name for word in cash_words))):
+        raise ValueError("حساب رد المبلغ يجب أن يكون حساب صندوق أو بنك تفصيليًا ونشطًا.")
     invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=?", (note["invoice_id"],)).fetchone()
     ar = _account(conn, _sales_account_codes(_activity(conn))["ar"], "asset")
     refund_no = "SREF-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
