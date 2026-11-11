@@ -78,7 +78,7 @@ class ManagementDashboardTests(unittest.TestCase):
     def test_custom_account_mapping_works_without_standard_account_codes(self):
         self.conn.execute("INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) VALUES(10,'9999','خزينة فرع','asset',0,1)")
         self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(1,10,'77.25','0')")
-        load_management_account_roles(self.conn, "commercial")
+        load_management_account_roles(self.conn)
         self.conn.execute("DELETE FROM management_account_roles WHERE role='cash'")
         self.conn.execute("INSERT INTO management_account_roles(account_id,role) VALUES(10,'cash')")
         snapshot = build_management_snapshot(self.conn,date(2026,11,1),date(2026,11,30))
@@ -88,7 +88,7 @@ class ManagementDashboardTests(unittest.TestCase):
         self.conn.execute("DELETE FROM management_account_roles")
         self.conn.execute("INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_customized','1')")
         initialize_management_dashboard_schema(self.conn, 'commercial')
-        roles = load_management_account_roles(self.conn, 'commercial')
+        roles = load_management_account_roles(self.conn)
         self.assertTrue(all(not ids for ids in roles.values()))
 
     def test_reversed_dates_rejected(self):
