@@ -14,7 +14,7 @@
     <p class="muted">يمكنك تحديد ما يستطيع المستخدم عرضه أو تعديله. الاختيارات هنا تتجاوز الصلاحيات الافتراضية للدور. صلاحية الإدارة تشمل العرض تلقائيًا.</p>
     <div class="permission-grid" id="newUserPermissions">
       {% for permission in all_permissions %}
-      <label class="permission-option"><input type="checkbox" name="permissions" value="{{ permission }}" {% if permission in role_permissions['admin'] %}checked{% endif %}><span>{{ permission_labels[permission] }}</span></label>
+      <label class="permission-option"><input type="checkbox" name="permissions" value="{{ permission }}" {% if permission in default_permissions %}checked{% endif %}><span>{{ permission_labels[permission] }}</span></label>
       {% endfor %}
     </div>
     <button type="submit">حفظ المستخدم والصلاحيات</button>
