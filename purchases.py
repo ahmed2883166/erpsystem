@@ -10,6 +10,7 @@ from datetime import date, datetime
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal, register_decimal_aggregates, money
 from stock import consume_layers, q4, make_lot
+from analytic_dimensions import validate_journal_dimensions, active_dimension_options
 
 purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
@@ -106,6 +107,13 @@ def init_purchase_schema():
     if "due_date" not in bill_columns:
         c.execute("ALTER TABLE supplier_bills ADD COLUMN due_date TEXT")
         c.execute("UPDATE supplier_bills SET due_date=bill_date WHERE due_date IS NULL")
+    for name, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"), ("project_id", "projects")):
+        if name not in bill_columns:
+            c.execute("ALTER TABLE supplier_bills ADD COLUMN " + name + " INTEGER REFERENCES " + table + "(id)")
+    receipt_columns = {row["name"] for row in c.execute("PRAGMA table_info(goods_receipts)")}
+    for name, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"), ("project_id", "projects")):
+        if name not in receipt_columns:
+            c.execute("ALTER TABLE goods_receipts ADD COLUMN " + name + " INTEGER REFERENCES " + table + "(id)")
 
     # Legacy-safe integrity migration: never fail application startup because
     # old posted documents contain duplicates. Keep every financial document,
@@ -165,8 +173,8 @@ def account(c, code, typ=None):
         raise ValueError(f"حساب الربط {code} غير موجود أو غير نشط/تفصيلي. راجع دليل الحسابات.")
     return row["id"]
 
-def create_journal(c, d, ref, desc, lines, user):
-    return post_journal(c,d,ref,desc,lines,user)
+def create_journal(c, d, ref, desc, lines, user, dimensions=None):
+    return post_journal(c,d,ref,desc,lines,user,dimensions=dimensions)
 
 def ensure_detail_account(c, code, name, typ, preferred_parent):
     # Account mappings must be configured in the chart of accounts; posting never creates GL accounts.
@@ -432,6 +440,7 @@ def new_receipt():
             qty=Decimal(request.form["quantity"]); unit=money(request.form["unit_cost"]); total=money(qty*unit)
             if qty<=0 or unit<0: raise ValueError("الكمية أو التكلفة غير صحيحة.")
             c.execute("BEGIN IMMEDIATE")
+            dimensions = validate_journal_dimensions(c, request.form)
             product_row=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(product,)).fetchone()
             if not product_row or product_row["product_type"]=="service": raise ValueError("اختر صنفًا مخزنيًا نشطًا.")
             lot_id=make_lot(c,product_row,request.form.get("lot_number","").strip(),
@@ -454,8 +463,10 @@ def new_receipt():
             # GRNI must be explicitly configured as a detailed liability account.
             grni=ensure_detail_account(c,"2190","بضاعة مستلمة غير مفوترة GRNI","liability","2000")
             no="GRN-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
-            cur=c.execute("INSERT INTO goods_receipts(receipt_no,po_id,supplier_id,warehouse_id,receipt_date,total_value,created_by) VALUES(?,?,?,?,?,?,?)",
-              (no,po_id,supplier,wh,request.form["receipt_date"],str(total),session["user_id"]))
+            cur=c.execute("""INSERT INTO goods_receipts(receipt_no,po_id,supplier_id,warehouse_id,receipt_date,total_value,created_by,
+              branch_id,cost_center_id,project_id) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+              (no,po_id,supplier,wh,request.form["receipt_date"],str(total),session["user_id"],
+               dimensions["branch_id"],dimensions["cost_center_id"],dimensions["project_id"]))
             rid=cur.lastrowid
             c.execute("INSERT INTO goods_receipt_lines(receipt_id,po_line_id,product_id,quantity,unit_cost,total_cost) VALUES(?,?,?,?,?,?)",
                       (rid,po_line_id,product,str(qty),str(unit),str(total)))
@@ -472,7 +483,7 @@ def new_receipt():
             mid=movement.lastrowid
             c.execute("INSERT INTO stock_valuation_layers(product_id,warehouse_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost) VALUES(?,?,?,?,?,?,?)",
               (product,wh,lot_id,mid,str(qty),str(qty),str(unit)))
-            eid=create_journal(c,request.form["receipt_date"],no,"استلام مشتريات غير مفوتر "+no,[(inv,total,0,"إثبات مخزون مستلم"),(grni,0,total,"بضاعة مستلمة غير مفوترة")],session["user_id"])
+            eid=create_journal(c,request.form["receipt_date"],no,"استلام مشتريات غير مفوتر "+no,[(inv,total,0,"إثبات مخزون مستلم"),(grni,0,total,"بضاعة مستلمة غير مفوترة")],session["user_id"],dimensions=dimensions)
             c.execute("UPDATE goods_receipts SET journal_entry_id=? WHERE id=?",(eid,rid))
             c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?",(eid,mid))
             c.commit(); flash(f"تم الاستلام وترحيل قيد GRNI رقم {no}.","success"); return redirect(url_for("purchase.index"))
@@ -481,7 +492,8 @@ def new_receipt():
     wh=c.execute("SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     pr=c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     orders=c.execute("SELECT id,po_no,supplier_id,status FROM purchase_orders WHERE status IN ('draft','partially_received') ORDER BY id DESC").fetchall()
-    c.close(); return render_template("purchase_receipt_new.html",suppliers=su,warehouses=wh,products=pr,orders=orders,today=date.today().isoformat())
+    dimension_options=active_dimension_options(c)
+    c.close(); return render_template("purchase_receipt_new.html",suppliers=su,warehouses=wh,products=pr,orders=orders,dimension_options=dimension_options,today=date.today().isoformat())
 
 @purchase_bp.route("/bills/new",methods=["GET","POST"])
 @require("purchases.manage")
@@ -497,6 +509,7 @@ def new_bill():
             if not supplier_invoice_no:
                 raise ValueError("رقم فاتورة المورد مطلوب.")
             c.execute("BEGIN IMMEDIATE")
+            dimensions = validate_journal_dimensions(c, request.form)
             if c.execute("SELECT 1 FROM supplier_bills WHERE supplier_id=? AND lower(trim(supplier_invoice_no))=lower(trim(?)) LIMIT 1",
                          (supplier,supplier_invoice_no)).fetchone():
                 raise ValueError("رقم فاتورة المورد مسجل بالفعل لهذا المورد.")
@@ -527,8 +540,10 @@ def new_bill():
                 vat=ensure_detail_account(c,"1165","ضريبة مدخلات قابلة للخصم","asset","1100")
                 lines.append(("VAT",tax))
             no="BILL-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
-            cur=c.execute("INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,subtotal,tax_rate,tax_amount,total_amount,created_by) VALUES(?,?,?,?,?,?,?,?,?)",
-              (no,supplier,request.form["bill_date"],supplier_invoice_no,str(subtotal),str(rate),str(tax),str(total),session["user_id"]))
+            cur=c.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,subtotal,tax_rate,tax_amount,total_amount,created_by,
+              branch_id,cost_center_id,project_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+              (no,supplier,request.form["bill_date"],supplier_invoice_no,str(subtotal),str(rate),str(tax),str(total),session["user_id"],
+               dimensions["branch_id"],dimensions["cost_center_id"],dimensions["project_id"]))
             bid=cur.lastrowid
             due_date=request.form.get("due_date") or request.form["bill_date"]
             if due_date < request.form["bill_date"]: raise ValueError("تاريخ استحقاق المورد لا يمكن أن يسبق تاريخ الفاتورة.")
@@ -548,7 +563,7 @@ def new_bill():
             if tax:
                 jlines.append((vat,tax,0,"ضريبة مدخلات حسب الفاتورة"))
             jlines.append((ap,0,tax,"ضريبة ضمن إجمالي المورد"))
-            eid=create_journal(c,request.form["bill_date"],no,"فاتورة مورد "+request.form["supplier_invoice_no"],jlines,session["user_id"])
+            eid=create_journal(c,request.form["bill_date"],no,"فاتورة مورد "+request.form["supplier_invoice_no"],jlines,session["user_id"],dimensions=dimensions)
             c.execute("UPDATE supplier_bills SET journal_entry_id=? WHERE id=?",(eid,bid))
             c.commit(); c.close(); flash(f"تم حفظ وترحيل فاتورة المورد {no}.","success"); return redirect(url_for("purchase.bill_print", bill_id=bid))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
@@ -556,7 +571,8 @@ def new_bill():
     expense_accounts=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code").fetchall()
     receipts=c.execute("""SELECT r.*,s.name supplier_name FROM goods_receipts r JOIN suppliers s ON s.id=r.supplier_id
       WHERE r.status='posted' AND NOT EXISTS(SELECT 1 FROM supplier_bill_receipts x WHERE x.receipt_id=r.id) ORDER BY r.id""").fetchall()
-    c.close(); return render_template("purchase_bill_new.html",suppliers=su,receipts=receipts,expense_accounts=expense_accounts,today=date.today().isoformat())
+    dimension_options=active_dimension_options(c)
+    c.close(); return render_template("purchase_bill_new.html",suppliers=su,receipts=receipts,expense_accounts=expense_accounts,dimension_options=dimension_options,today=date.today().isoformat())
 
 
 
