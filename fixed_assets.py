@@ -25,7 +25,8 @@ def require(write=False):
         @wraps(fn)
         def wrapped(*a,**kw):
             if not session.get("user_id"): return redirect(url_for("login"))
-            if write and session.get("role") not in {"admin","accountant"}:
+            required = "assets.manage" if write or request.method == "POST" else "assets.view"
+            if (required not in set(session["permissions"])) if "permissions" in session else (write and session.get("role") not in {"admin","accountant"}):
                 flash("لا تملك صلاحية إدارة الأصول الثابتة.","error"); return redirect(url_for("assets.index"))
             return fn(*a,**kw)
         return wrapped
@@ -58,7 +59,7 @@ def initialize_assets_schema():
 def index():
     c=db()
     if request.method=="POST":
-        if session.get("role") not in {"admin","accountant"}:
+        if ("assets.manage" not in set(session.get("permissions", []))) if "permissions" in session else (session.get("role") not in {"admin","accountant"}):
             c.close()
             flash("لا تملك صلاحية إدارة الأصول الثابتة.","error")
             return redirect(url_for("assets.index"))
