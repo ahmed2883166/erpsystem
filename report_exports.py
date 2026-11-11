@@ -1,7 +1,9 @@
 """Excel exports for NEXUS ERP reports. PDF output uses the browser's print-to-PDF engine for Arabic support."""
 import io
 import sqlite3
+from decimal import Decimal
 from datetime import datetime
+from accounting_core import register_decimal_aggregates
 from functools import wraps
 
 from flask import Blueprint, Response, abort, request, send_file, session
@@ -26,6 +28,7 @@ def register_report_exports(app, db_path, permissions):
     def connect():
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
+        register_decimal_aggregates(conn)
         return conn
 
     @bp.get("/reports/export/<report>/excel")
@@ -64,8 +67,8 @@ def register_report_exports(app, db_path, permissions):
                     params.extend([f"%{q}%", f"%{q}%"])
                 rows = conn.execute(f"""
                     SELECT a.code,a.name_ar,a.account_type,
-                           COALESCE(SUM(CASE WHEN je.status='posted' THEN jl.debit ELSE 0 END),0) debit,
-                           COALESCE(SUM(CASE WHEN je.status='posted' THEN jl.credit ELSE 0 END),0) credit
+                           COALESCE(DECIMAL_SUM(CASE WHEN je.status='posted' THEN jl.debit ELSE '0' END),0) debit,
+                           COALESCE(DECIMAL_SUM(CASE WHEN je.status='posted' THEN jl.credit ELSE '0' END),0) credit
                     FROM accounts a
                     LEFT JOIN journal_lines jl ON jl.account_id=a.id
                     LEFT JOIN journal_entries je ON je.id=jl.entry_id
@@ -74,7 +77,7 @@ def register_report_exports(app, db_path, permissions):
                 """, params).fetchall()
                 headers = ["كود الحساب", "اسم الحساب", "نوع الحساب", "مدين", "دائن", "صافي الرصيد"]
                 data = [[r["code"], r["name_ar"], r["account_type"], r["debit"], r["credit"],
-                         r["debit"] - r["credit"]] for r in rows]
+                         Decimal(str(r["debit"] or "0")) - Decimal(str(r["credit"] or "0"))] for r in rows]
                 filename = "nexus-trial-balance.xlsx"
                 title = "ميزان المراجعة"
             elif report == "ledger":
@@ -107,7 +110,7 @@ def register_report_exports(app, db_path, permissions):
                 rows = conn.execute("""
                     SELECT p.sku,p.name_ar,p.uom,w.code warehouse_code,w.name_ar warehouse_name,
                            COALESCE(SUM(CAST(l.qty_remaining AS REAL)),0) qty,
-                           COALESCE(SUM(CAST(l.qty_remaining AS REAL)*CAST(l.unit_cost AS REAL)),0) value
+                           COALESCE(DECIMAL_LAYER_VALUE_SUM(l.value_remaining,l.qty_remaining,l.unit_cost),0) value
                     FROM stock_products p LEFT JOIN stock_valuation_layers l ON l.product_id=p.id
                     LEFT JOIN stock_warehouses w ON w.id=l.warehouse_id
                     WHERE p.active=1 GROUP BY p.id,w.id ORDER BY p.sku,w.code
@@ -120,33 +123,49 @@ def register_report_exports(app, db_path, permissions):
             elif report == "fixed-assets":
                 rows = conn.execute("""SELECT f.asset_code,f.asset_name,f.category,f.purchase_date,f.ready_date,
                   f.cost,f.residual_value,f.useful_life_months,f.depreciation_method,
-                  COALESCE(SUM(CAST(d.amount AS REAL)),0) accumulated
+                  COALESCE(DECIMAL_SUM(d.amount),0) accumulated
                   FROM fixed_assets f LEFT JOIN asset_depreciations d ON d.asset_id=f.id
                   GROUP BY f.id ORDER BY f.asset_code""").fetchall()
                 headers = ["كود الأصل","اسم الأصل","الفئة","تاريخ الشراء","تاريخ الجاهزية",
                            "التكلفة","القيمة التخريدية","العمر بالشهور","طريقة الإهلاك","مجمع الإهلاك","صافي القيمة الدفترية"]
                 data = [[r["asset_code"],r["asset_name"],r["category"],r["purchase_date"],r["ready_date"],
-                         float(r["cost"]),float(r["residual_value"]),r["useful_life_months"],r["depreciation_method"],
-                         r["accumulated"],max(float(r["cost"])-r["accumulated"],float(r["residual_value"]))] for r in rows]
+                         Decimal(str(r["cost"])),Decimal(str(r["residual_value"])),r["useful_life_months"],r["depreciation_method"],
+                         Decimal(str(r["accumulated"] or "0")),max(Decimal(str(r["cost"]))-Decimal(str(r["accumulated"] or "0")),Decimal(str(r["residual_value"])))] for r in rows]
                 filename = "nexus-fixed-assets.xlsx"
                 title = "سجل الأصول الثابتة"
             elif report == "aging":
                 kind = request.args.get("kind", "customers")
                 as_of = request.args.get("as_of", datetime.now().date().isoformat())
                 if kind == "customers":
-                    rows = conn.execute("""SELECT i.invoice_no doc_no,cu.code party_code,cu.name party_name,
+                    invoice_rows = conn.execute("""SELECT i.id invoice_id,i.invoice_no doc_no,cu.code party_code,cu.name party_name,
                       i.invoice_date doc_date,COALESCE(i.due_date,i.invoice_date) due_date,
-                      CAST(i.total_amount AS REAL)-CAST(i.paid_amount AS REAL) balance
+                      i.total_amount,i.paid_amount,COALESCE(i.credited_amount,'0') credited_amount
                       FROM sales_invoices i JOIN customers cu ON cu.id=i.customer_id
-                      WHERE i.status='posted' AND CAST(i.total_amount AS REAL)>CAST(i.paid_amount AS REAL)
-                        AND i.invoice_date<=? ORDER BY due_date,cu.name""",(as_of,)).fetchall()
+                      WHERE i.status='posted' AND i.invoice_date<=? ORDER BY due_date,cu.name""",(as_of,)).fetchall()
+                    refund_rows = conn.execute("""SELECT cn.invoice_id,rf.amount FROM customer_refunds rf
+                      JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id
+                      WHERE cn.status='posted' AND rf.refund_date<=?""",(as_of,)).fetchall()
+                    refunds_by_invoice = {}
+                    for refund in refund_rows:
+                        refunds_by_invoice[refund["invoice_id"]] = refunds_by_invoice.get(refund["invoice_id"],Decimal("0")) + Decimal(refund["amount"])
+                    rows = []
+                    for invoice in invoice_rows:
+                        balance = (Decimal(invoice["total_amount"])-Decimal(invoice["paid_amount"] or "0")
+                                   -Decimal(invoice["credited_amount"] or "0")
+                                   +refunds_by_invoice.get(invoice["invoice_id"],Decimal("0")))
+                        if balance > 0:
+                            rows.append({**dict(invoice),"balance":balance})
                 elif kind == "suppliers":
-                    rows = conn.execute("""SELECT b.bill_no doc_no,s.code party_code,s.name party_name,
+                    bill_rows = conn.execute("""SELECT b.bill_no doc_no,s.code party_code,s.name party_name,
                       b.bill_date doc_date,COALESCE(b.due_date,b.bill_date) due_date,
-                      CAST(b.total_amount AS REAL)-CAST(b.paid_amount AS REAL) balance
+                      b.total_amount,b.paid_amount
                       FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
-                      WHERE b.status='posted' AND CAST(b.total_amount AS REAL)>CAST(b.paid_amount AS REAL)
-                        AND b.bill_date<=? ORDER BY due_date,s.name""",(as_of,)).fetchall()
+                      WHERE b.status='posted' AND b.bill_date<=? ORDER BY due_date,s.name""",(as_of,)).fetchall()
+                    rows = []
+                    for bill in bill_rows:
+                        balance = Decimal(bill["total_amount"])-Decimal(bill["paid_amount"] or "0")
+                        if balance > 0:
+                            rows.append({**dict(bill),"balance":balance})
                 else:
                     abort(400)
                 from datetime import date as date_type
@@ -156,8 +175,8 @@ def register_report_exports(app, db_path, permissions):
                 data = []
                 for r in rows:
                     days=(report_date-date_type.fromisoformat(r["due_date"])).days
-                    buckets=[0,0,0,0,0]
-                    buckets[0 if days<=0 else 1 if days<=30 else 2 if days<=60 else 3 if days<=90 else 4]=float(r["balance"])
+                    buckets=[Decimal("0") for _ in range(5)]
+                    buckets[0 if days<=0 else 1 if days<=30 else 2 if days<=60 else 3 if days<=90 else 4]=Decimal(r["balance"])
                     data.append([r["party_code"],r["party_name"],r["doc_no"],r["doc_date"],r["due_date"],
                                  max(days,0),*buckets])
                 filename = "nexus-aging-"+kind+".xlsx"
