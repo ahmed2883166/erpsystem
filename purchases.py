@@ -1,3 +1,4 @@
+from database import connect_database
 """NEXUS ERP purchasing v1: suppliers, purchase orders, GRNI receipts, bills and payments.
 All posting is transactional and idempotent. Tax is posted only when an explicit input-tax account exists.
 """
@@ -15,12 +16,7 @@ from analytic_dimensions import initialize_analytic_dimensions_schema, validate_
 purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
 def db():
-    c=sqlite3.connect(DB_PATH, timeout=20, isolation_level=None)
-    c.row_factory=sqlite3.Row
-    c.execute("PRAGMA foreign_keys=ON")
-    c.execute("PRAGMA busy_timeout=20000")
-    register_decimal_aggregates(c)
-    return c
+    return connect_database(DB_PATH, isolation_level=None)
 
 def init_purchase_schema():
     c=db()
