@@ -7,7 +7,7 @@ from functools import wraps
 from pathlib import Path
 from datetime import date, datetime
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
-from accounting_core import post_journal
+from accounting_core import post_journal, register_decimal_aggregates
 
 purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
@@ -18,6 +18,7 @@ def db():
     c.row_factory=sqlite3.Row
     c.execute("PRAGMA foreign_keys=ON")
     c.execute("PRAGMA busy_timeout=20000")
+    register_decimal_aggregates(c)
     return c
 
 def money(v):
@@ -291,10 +292,13 @@ def suppliers():
               (request.form["code"].strip(),request.form["name"].strip(),request.form.get("tax_number","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("address","").strip()))
             c.commit(); flash("تم حفظ المورد.","success")
         except sqlite3.IntegrityError: c.rollback(); flash("كود المورد مستخدم بالفعل.","error")
-    rows=c.execute("""SELECT s.*,
-        COALESCE((SELECT SUM(CAST(b.total_amount AS REAL)-CAST(b.paid_amount AS REAL))
-                  FROM supplier_bills b WHERE b.supplier_id=s.id AND b.status='posted'),0) outstanding
-        FROM suppliers s ORDER BY s.name""").fetchall(); c.close()
+    suppliers_rows=c.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
+    outstanding_by_supplier={}
+    for bill in c.execute("SELECT supplier_id,total_amount,paid_amount FROM supplier_bills WHERE status='posted'").fetchall():
+        balance=Decimal(bill["total_amount"])-Decimal(bill["paid_amount"] or "0")
+        outstanding_by_supplier[bill["supplier_id"]]=outstanding_by_supplier.get(bill["supplier_id"],Decimal("0"))+balance
+    rows=[dict(row,outstanding=outstanding_by_supplier.get(row["id"],Decimal("0"))) for row in suppliers_rows]
+    c.close()
     return render_template("purchase_suppliers.html",rows=rows)
 
 
@@ -550,7 +554,8 @@ def new_payment():
             cur=c.execute("INSERT INTO supplier_payments(payment_no,supplier_id,payment_date,amount,cash_account_id,journal_entry_id,reference,created_by) VALUES(?,?,?,?,?,?,?,?)",
               (no,supplier,request.form["payment_date"],str(amount),cash,eid,request.form.get("reference",""),session["user_id"]))
             payment_id=cur.lastrowid; remaining=amount
-            bills=c.execute("""SELECT * FROM supplier_bills WHERE supplier_id=? AND status='posted' AND CAST(total_amount AS REAL)>CAST(paid_amount AS REAL) ORDER BY bill_date,id""",(supplier,)).fetchall()
+            bills=c.execute("""SELECT * FROM supplier_bills WHERE supplier_id=? AND status='posted' ORDER BY bill_date,id""",(supplier,)).fetchall()
+            bills=[b for b in bills if Decimal(b["total_amount"])>Decimal(b["paid_amount"] or "0")]
             for b in bills:
                 due=money(Decimal(b["total_amount"])-Decimal(b["paid_amount"])); alloc=min(due,remaining)
                 if alloc>0:
