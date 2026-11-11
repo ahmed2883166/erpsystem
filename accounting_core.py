@@ -9,6 +9,31 @@ def amt(value):
     return Decimal(str(value or 0)).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
+class _DecimalSum:
+    def __init__(self):
+        self.total = Decimal("0")
+    def step(self, value):
+        if value is not None:
+            self.total += Decimal(str(value))
+    def finalize(self):
+        return format(self.total, "f")
+
+
+class _DecimalNet:
+    def __init__(self):
+        self.total = Decimal("0")
+    def step(self, debit, credit):
+        self.total += Decimal(str(debit or "0")) - Decimal(str(credit or "0"))
+    def finalize(self):
+        return format(self.total, "f")
+
+
+def register_decimal_aggregates(conn):
+    """Register exact SQLite aggregate functions for TEXT monetary columns."""
+    conn.create_aggregate("DECIMAL_SUM", 1, _DecimalSum)
+    conn.create_aggregate("DECIMAL_NET", 2, _DecimalNet)
+
+
 def post_journal(conn, entry_date, reference, description, lines, created_by=None):
     """Idempotently post a balanced journal inside the caller's DB transaction."""
     try:
