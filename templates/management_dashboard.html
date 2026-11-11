@@ -1,5 +1,12 @@
 {% extends 'base.html' %}
-{% block title %}لوحة الإدارة | NEXUS ERP{% endblock %}
+{% block title %}لوحة الإدارة | NEXUS ERP<style>
+.chart-row{display:flex;justify-content:space-between;gap:12px;margin:10px 0 4px;font-size:.92rem}
+.chart-row a{text-decoration:none}
+.chart-track{height:9px;background:var(--panel-border,#ddd);border-radius:8px;overflow:hidden;margin-bottom:12px}
+.chart-fill{display:block;height:100%;border-radius:8px}
+.revenue-fill{background:#16a34a}.expense-fill{background:#d97706}
+</style>
+{% endblock %}
 {% block content %}
 {% macro delta(value, good_when_up=True) -%}
   {%- if value is none -%}<span class="muted">—</span>
@@ -51,6 +58,40 @@
 </section>
 
 <section class="panel">
+  <h3>تحليل الإيرادات والمصروفات</h3>
+  <div class="form-grid">
+    <div>
+      <h4>الإيرادات حسب الحساب</h4>
+      {% for item in s.revenue_accounts %}
+        <div class="chart-row"><a href="{{ url_for('ledger', account_id=item.id) }}">{{ item.code }} — {{ item.name }}</a><strong>{{ money(item.value) }}</strong></div>
+        <div class="chart-track"><span class="chart-fill revenue-fill" style="width:{{ item.width }}%"></span></div>
+      {% else %}<p class="muted">لا توجد إيرادات مرحلة في الفترة.</p>{% endfor %}
+    </div>
+    <div>
+      <h4>المصروفات حسب الحساب</h4>
+      {% for item in s.expense_accounts %}
+        <div class="chart-row"><a href="{{ url_for('ledger', account_id=item.id) }}">{{ item.code }} — {{ item.name }}</a><strong>{{ money(item.value) }}</strong></div>
+        <div class="chart-track"><span class="chart-fill expense-fill" style="width:{{ item.width }}%"></span></div>
+      {% else %}<p class="muted">لا توجد مصروفات مرحلة في الفترة.</p>{% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <h3>تفاصيل الحسابات — اضغط لفتح دفتر الأستاذ</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>التصنيف</th><th>الحساب</th><th>الرصيد</th><th>التفاصيل</th></tr></thead>
+    <tbody>
+    {% for item in s.account_details %}
+      <tr><td>{{ {'cash':'نقدية وبنوك','receivables':'عملاء ومدينون','payables':'موردون ودائنون','inventory':'مخزون'}.get(item.role,item.role) }}</td>
+        <td>{{ item.code }} — {{ item.name }}</td><td>{{ money(item.balance) }}</td>
+        <td><a href="{{ url_for('ledger', account_id=item.id, date_to=date_to) }}">كشف الحساب</a></td></tr>
+    {% else %}<tr><td colspan="4">لا توجد حسابات مرتبطة. راجع إعدادات الربط.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+<section class="panel">
   <h3>المركز المالي حتى {{ date_to }}</h3>
   <div class="stat-grid">
     <div class="stat-card"><small>النقدية والبنوك</small><strong>{{ money(s.cash) }}</strong></div>
@@ -65,6 +106,6 @@
     <div class="stat-card"><small>نسبة السيولة السريعة</small><strong>{{ ratio(s.quick_ratio) }}</strong></div>
     <div class="stat-card"><small>فحص المعادلة المحاسبية</small><strong>{% if s.balance_ok %}<span class="success">متوازنة ✓</span>{% else %}<span class="danger">تحتاج مراجعة</span>{% endif %}</strong></div>
   </div>
-  <p class="muted">تُحدد حسابات النقدية والعملاء والموردين والمخزون وفق نشاط الشركة وشجرة الحسابات القياسية الخاصة به. الحسابات المخصصة التي أُضيفت يدويًا قد تحتاج إلى ربطها بتصنيف لوحة الإدارة.</p>
+  <p class="muted">يتم تحديد الحسابات من شاشة «ربط حسابات لوحة الإدارة»، ويمكنك اختيار الحسابات التفصيلية الفعلية حتى لو كانت أكواد شجرة الحسابات مختلفة.</p>
 </section>
 {% endblock %}
