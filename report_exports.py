@@ -118,7 +118,7 @@ def register_report_exports(app, db_path, permissions):
                 """).fetchall()
                 headers = ["كود الصنف", "اسم الصنف", "وحدة القياس", "كود المخزن", "اسم المخزن", "الرصيد", "قيمة المخزون"]
                 data = [[r["sku"], r["name_ar"], r["uom"], r["warehouse_code"] or "", r["warehouse_name"] or "",
-                         r["qty"], r["value"]] for r in rows]
+                         r["qty"], Decimal(str(r["value"] or "0"))] for r in rows]
                 filename = "nexus-stock-valuation.xlsx"
                 title = "تقييم وأرصدة المخزون"
             elif report == "fixed-assets":
