@@ -985,9 +985,21 @@ def journal():
         except (ValueError, TypeError, OverflowError) as exc:
             connection.rollback()
             flash(str(exc) or "بيانات القيد غير صحيحة.", "error")
-    entries = connection.execute("SELECT * FROM journal_entries ORDER BY entry_date DESC, id DESC LIMIT 20").fetchall()
+    journal_page = max(1, request.args.get("journal_page", 1, type=int) or 1)
+    journal_per_page = request.args.get("journal_per_page", 50, type=int) or 50
+    if journal_per_page not in (50, 100):
+        journal_per_page = 50
+    journal_total = connection.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
+    journal_pages = max(1, (journal_total + journal_per_page - 1) // journal_per_page)
+    journal_page = min(journal_page, journal_pages)
+    entries = connection.execute("""SELECT * FROM journal_entries
+        ORDER BY entry_date DESC, id DESC LIMIT ? OFFSET ?""",
+        (journal_per_page, (journal_page - 1) * journal_per_page)).fetchall()
     connection.close()
-    return render_template("journal.html", accounts=accounts_list, entries=entries, today=datetime.now().date().isoformat(), dimension_options=dimension_options)
+    return render_template("journal.html", accounts=accounts_list, entries=entries,
+        today=datetime.now().date().isoformat(), dimension_options=dimension_options,
+        journal_page=journal_page, journal_pages=journal_pages,
+        journal_per_page=journal_per_page, journal_total=journal_total)
 
 
 
