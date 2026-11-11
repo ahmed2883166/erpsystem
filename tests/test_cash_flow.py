@@ -53,6 +53,7 @@ class CashFlowReportTests(unittest.TestCase):
 
         templates = Path(__file__).resolve().parents[1] / "templates"
         self.app = Flask(__name__, template_folder=str(templates))
+        self.app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
         self.app.secret_key = "test"
         self.app.jinja_env.globals["csrf_token"] = lambda: "test-token"
         self.app.jinja_env.filters["money"] = lambda value: f"{float(value or 0):,.2f}"
