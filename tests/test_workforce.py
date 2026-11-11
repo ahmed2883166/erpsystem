@@ -75,6 +75,15 @@ class WorkforceTests(unittest.TestCase):
         line = conn.execute("SELECT gross_pay,net_pay FROM payroll_lines").fetchone()
         conn.close()
         self.assertEqual(line, ("11650.00", "10850.00"))
+        conn = sqlite3.connect(self.db_path)
+        manual_values = conn.execute(
+            "SELECT taxable_income_tax,employee_insurance,employer_insurance,rule_set_id "
+            "FROM payroll_lines WHERE run_id=1"
+        ).fetchone()
+        conn.close()
+        # Even though the test setup seeded Egypt's automatic rule set, manual
+        # amounts must remain unchanged and no statutory rule is snapshotted.
+        self.assertEqual(manual_values, ("500.00", "300.00", "400.00", None))
         response = self.client.post("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
