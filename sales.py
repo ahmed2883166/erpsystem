@@ -797,7 +797,15 @@ def index():
     enriched_invoices = []
     for invoice in invoices:
         item = dict(invoice)
-        item["remaining_amount"] = Decimal(invoice["total_amount"]) - Decimal(invoice["paid_amount"] or "0") - Decimal(invoice["credited_amount"] or "0")
+        refunded = c.execute(
+            """SELECT COALESCE(SUM(rf.amount),'0') FROM customer_refunds rf
+               JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id WHERE cn.invoice_id=?""",
+            (invoice["id"],),
+        ).fetchone()[0]
+        item["remaining_amount"] = (Decimal(invoice["total_amount"]) - Decimal(invoice["paid_amount"] or "0")
+                                    - Decimal(invoice["credited_amount"] or "0") + Decimal(refunded or "0"))
+        item["paid_positive"] = Decimal(invoice["paid_amount"] or "0") > 0
+        item["creditable"] = Decimal(invoice["total_amount"]) > Decimal(invoice["credited_amount"] or "0")
         item["closed_by_credit"] = item["remaining_amount"] <= 0 and Decimal(invoice["credited_amount"] or "0") > 0 and Decimal(invoice["paid_amount"] or "0") < Decimal(invoice["total_amount"])
         enriched_invoices.append(item)
     receipts = c.execute("""SELECT r.*,i.invoice_no,c.name customer_name FROM customer_receipts r
