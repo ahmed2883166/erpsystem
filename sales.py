@@ -146,12 +146,28 @@ def require(permission):
 
 def _select_customer_price_rule(price_rules, quantity):
     """Choose the highest applicable quantity tier; newest effective rule breaks ties."""
-    quantity = Decimal(str(quantity))
-    eligible = [rule for rule in price_rules if quantity >= Decimal(str(rule["min_qty"] or "0"))]
-    if not eligible:
-        return None
-    eligible.sort(key=lambda rule: (Decimal(str(rule["min_qty"] or "0")), str(rule["valid_from"] or ""), int(rule["id"])), reverse=True)
+    try:
+        quantity = Decimal(str(quantity).strip())
+        if not quantity.is_finite() or quantity <= 0:
+            raise ValueError
+        eligible = [
+            rule for rule in price_rules
+            if quantity >= Decimal(str(rule["min_qty"] or "0"))
+        ]
+        if not eligible:
+            return None
+        eligible.sort(
+            key=lambda rule: (
+                Decimal(str(rule["min_qty"] or "0")),
+                str(rule["valid_from"] or ""),
+                int(rule["id"]),
+            ),
+            reverse=True,
+        )
+    except (InvalidOperation, TypeError, ValueError, KeyError) as exc:
+        raise ValueError("كمية الصنف غير صحيحة. أدخل كمية رقمية أكبر من صفر.") from exc
     return eligible[0]["unit_price"]
+
 
 def _account(conn, code, expected_type):
     row = conn.execute(
