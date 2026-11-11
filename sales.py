@@ -84,6 +84,25 @@ def init_sales_schema():
       status TEXT NOT NULL DEFAULT 'posted', created_by INTEGER,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )""")
+    credit_note_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_credit_notes)")}
+    for name, definition in {
+        "refundable_amount": "TEXT NOT NULL DEFAULT '0'",
+        "cancel_journal_entry_id": "INTEGER",
+        "cancel_cogs_journal_entry_id": "INTEGER",
+        "cancelled_by": "INTEGER",
+        "cancelled_at": "TEXT",
+        "cancellation_reason": "TEXT",
+    }.items():
+        if name not in credit_note_columns:
+            c.execute(f"ALTER TABLE sales_credit_notes ADD COLUMN {name} {definition}")
+    c.execute("""CREATE TABLE IF NOT EXISTS customer_refunds(
+      id INTEGER PRIMARY KEY, refund_no TEXT NOT NULL UNIQUE,
+      credit_note_id INTEGER NOT NULL REFERENCES sales_credit_notes(id),
+      refund_date TEXT NOT NULL, amount TEXT NOT NULL,
+      cash_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      journal_entry_id INTEGER NOT NULL UNIQUE, reference TEXT NOT NULL DEFAULT '',
+      created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""")
     c.execute("""CREATE TABLE IF NOT EXISTS sales_credit_note_lines(
       id INTEGER PRIMARY KEY, credit_note_id INTEGER NOT NULL REFERENCES sales_credit_notes(id),
       invoice_line_id INTEGER NOT NULL REFERENCES sales_invoice_lines(id),
@@ -362,8 +381,9 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
     paid = Decimal(invoice["paid_amount"] or "0")
     invoice_total = Decimal(invoice["total_amount"])
     remaining_invoice = invoice_total - paid - credited
-    if remaining_invoice <= 0:
-        raise ValueError("لا يوجد رصيد غير محصل يمكن تخفيضه بإشعار دائن. رد المبالغ المحصلة يحتاج إجراء رد نقدي مستقل.")
+    maximum_credit = invoice_total - credited
+    if maximum_credit <= 0:
+        raise ValueError("تم إصدار إشعارات دائنة بكامل قيمة الفاتورة بالفعل.")
 
     activity = _activity(conn)
     codes = _sales_account_codes(activity)
@@ -464,11 +484,11 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
     total = subtotal + tax_total
     if total <= 0:
         raise ValueError("قيمة الإشعار الدائن يجب أن تكون أكبر من صفر.")
-    if total > remaining_invoice:
+    if total > maximum_credit:
         raise ValueError(
-            f"قيمة الإشعار ({total}) تتجاوز الرصيد غير المحصل من الفاتورة ({remaining_invoice}). "
-            "رد المبالغ المحصلة يحتاج إجراء رد نقدي مستقل."
+            f"قيمة الإشعار ({total}) تتجاوز القيمة المتبقية من الفاتورة بعد الإشعارات السابقة ({maximum_credit})."
         )
+    refundable_amount = max(Decimal("0"), total - max(Decimal("0"), remaining_invoice))
     if tax_total > 0:
         vat_account = _account(conn, codes["vat"], "liability")
 
@@ -476,9 +496,10 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
     credit_no = "SCN-" + stamp
     cur = conn.execute(
         """INSERT INTO sales_credit_notes(credit_note_no,invoice_id,credit_date,reason,
-           subtotal,tax_amount,total_amount,created_by)
-           VALUES(?,?,?,?,?,?,?,?)""",
-        (credit_no, invoice_id, credit_date, reason, str(subtotal), str(tax_total), str(total), created_by),
+           subtotal,tax_amount,total_amount,refundable_amount,created_by)
+           VALUES(?,?,?,?,?,?,?,?,?)""",
+        (credit_no, invoice_id, credit_date, reason, str(subtotal), str(tax_total), str(total),
+         str(refundable_amount), created_by),
     )
     credit_id = cur.lastrowid
     journal_lines = [(revenue, subtotal, 0, "عكس إيراد بموجب إشعار دائن " + credit_no)]
@@ -569,6 +590,147 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         "subtotal": subtotal, "tax_amount": tax_total, "total_amount": total,
         "total_cost": cost_total,
     }
+
+
+def _reverse_posted_journal(conn, entry_id, reversal_date, reference, description, created_by):
+    rows = conn.execute(
+        "SELECT account_id,debit,credit,memo FROM journal_lines WHERE entry_id=? ORDER BY id",
+        (entry_id,),
+    ).fetchall()
+    if not rows:
+        raise ValueError("لا يمكن عكس قيد غير موجود أو بلا تفاصيل.")
+    reversed_lines = [
+        (row["account_id"], Decimal(str(row["credit"] or "0")),
+         Decimal(str(row["debit"] or "0")), "عكس: " + str(row["memo"] or ""))
+        for row in rows
+    ]
+    return post_journal(conn, reversal_date, reference, description, reversed_lines, created_by)
+
+
+def post_customer_refund(conn, credit_note_id, refund_date, amount, cash_account_id,
+                         created_by=None, reference=""):
+    try:
+        date.fromisoformat(refund_date)
+    except (TypeError, ValueError):
+        raise ValueError("تاريخ رد المبلغ غير صحيح.")
+    amount = Decimal(str(amount)).quantize(CENT, rounding=ROUND_HALF_UP)
+    if not amount.is_finite() or amount <= 0:
+        raise ValueError("قيمة رد المبلغ يجب أن تكون أكبر من صفر.")
+    note = conn.execute(
+        "SELECT * FROM sales_credit_notes WHERE id=? AND status='posted'", (credit_note_id,)
+    ).fetchone()
+    if not note:
+        raise ValueError("الإشعار الدائن غير موجود أو غير مرحل.")
+    refunded_rows = conn.execute(
+        "SELECT amount FROM customer_refunds WHERE credit_note_id=?", (credit_note_id,)
+    ).fetchall()
+    already_refunded = sum((Decimal(row["amount"]) for row in refunded_rows), Decimal("0"))
+    refundable = Decimal(note["refundable_amount"] or "0") - already_refunded
+    if amount > refundable:
+        raise ValueError(f"قيمة الرد تتجاوز المبلغ القابل للاسترداد. المتاح {max(refundable, Decimal('0'))}.")
+    cash = conn.execute(
+        "SELECT id,is_group,active,account_type FROM accounts WHERE id=?", (cash_account_id,)
+    ).fetchone()
+    if not cash or cash["is_group"] or not cash["active"] or cash["account_type"] != "asset":
+        raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
+    invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=?", (note["invoice_id"],)).fetchone()
+    ar = _account(conn, _sales_account_codes(_activity(conn))["ar"], "asset")
+    refund_no = "SREF-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    journal_id = post_journal(
+        conn, refund_date, refund_no, "رد مبلغ للعميل عن إشعار " + note["credit_note_no"],
+        [(ar, amount, 0, "تسوية الرصيد الدائن للعميل"),
+         (cash_account_id, 0, amount, "رد نقدي/بنكي للعميل")], created_by,
+    )
+    conn.execute(
+        """INSERT INTO customer_refunds(refund_no,credit_note_id,refund_date,amount,cash_account_id,
+           journal_entry_id,reference,created_by) VALUES(?,?,?,?,?,?,?,?)""",
+        (refund_no, credit_note_id, refund_date, str(amount), cash_account_id, journal_id,
+         reference, created_by),
+    )
+    return {"refund_no": refund_no, "journal_entry_id": journal_id, "amount": amount,
+            "invoice_id": invoice["id"]}
+
+
+def cancel_credit_note(conn, credit_note_id, cancellation_date, reason, created_by=None):
+    try:
+        date.fromisoformat(cancellation_date)
+    except (TypeError, ValueError):
+        raise ValueError("تاريخ الإلغاء غير صحيح.")
+    reason = str(reason or "").strip()
+    if not reason or len(reason) > 500:
+        raise ValueError("سبب إلغاء الإشعار مطلوب وبحد أقصى 500 حرف.")
+    note = conn.execute(
+        "SELECT * FROM sales_credit_notes WHERE id=? AND status='posted'", (credit_note_id,)
+    ).fetchone()
+    if not note:
+        raise ValueError("الإشعار الدائن غير موجود أو تم إلغاؤه بالفعل.")
+    if conn.execute("SELECT 1 FROM customer_refunds WHERE credit_note_id=? LIMIT 1",
+                    (credit_note_id,)).fetchone():
+        raise ValueError("لا يمكن إلغاء الإشعار بعد رد مبالغ منه. اعكس عملية الرد أولًا.")
+    movements = conn.execute(
+        """SELECT DISTINCT m.id,m.movement_no,l.id layer_id,l.qty_in,l.qty_remaining,
+                  l.value_remaining
+           FROM sales_credit_note_line_lots x
+           JOIN stock_movements m ON m.id=x.stock_movement_id
+           JOIN stock_valuation_layers l ON l.source_movement_id=m.id
+           WHERE x.credit_note_line_id IN
+             (SELECT id FROM sales_credit_note_lines WHERE credit_note_id=?)""",
+        (credit_note_id,),
+    ).fetchall()
+    for movement in movements:
+        if Decimal(movement["qty_remaining"]) != Decimal(movement["qty_in"]):
+            raise ValueError(
+                "لا يمكن إلغاء الإشعار لأن كمية المرتجع من التشغيلة استُخدمت أو نُقلت بعد إعادتها للمخزون."
+            )
+    reversal_id = _reverse_posted_journal(
+        conn, note["journal_entry_id"], cancellation_date,
+        "CANCEL-" + note["credit_note_no"], "إلغاء إشعار دائن " + note["credit_note_no"], created_by,
+    )
+    cogs_reversal_id = None
+    if note["cogs_journal_entry_id"]:
+        cogs_reversal_id = _reverse_posted_journal(
+            conn, note["cogs_journal_entry_id"], cancellation_date,
+            "CANCEL-" + note["credit_note_no"] + "-COGS",
+            "إلغاء عكس تكلفة المبيعات " + note["credit_note_no"], created_by,
+        )
+    for movement in movements:
+        conn.execute("UPDATE stock_valuation_layers SET qty_remaining='0',value_remaining='0' WHERE id=?",
+                     (movement["layer_id"],))
+        conn.execute("UPDATE stock_movements SET movement_type='cancelled_receipt',accounting_status='reversed' WHERE id=?",
+                     (movement["id"],))
+    # Backward compatibility for older credit notes that did not store lot allocation rows.
+    legacy = conn.execute(
+        """SELECT stock_movement_id FROM sales_credit_note_lines
+           WHERE credit_note_id=? AND stock_movement_id IS NOT NULL""", (credit_note_id,)
+    ).fetchall()
+    for row in legacy:
+        if not conn.execute("SELECT 1 FROM sales_credit_note_line_lots WHERE stock_movement_id=?",
+                            (row["stock_movement_id"],)).fetchone():
+            layer = conn.execute(
+                "SELECT id,qty_in,qty_remaining FROM stock_valuation_layers WHERE source_movement_id=?",
+                (row["stock_movement_id"],),
+            ).fetchone()
+            if layer:
+                if Decimal(layer["qty_remaining"]) != Decimal(layer["qty_in"]):
+                    raise ValueError("لا يمكن إلغاء الإشعار لأن مخزون المرتجع القديم تم استخدامه.")
+                conn.execute("UPDATE stock_valuation_layers SET qty_remaining='0',value_remaining='0' WHERE id=?",
+                             (layer["id"],))
+            conn.execute("UPDATE stock_movements SET movement_type='cancelled_receipt',accounting_status='reversed' WHERE id=?",
+                         (row["stock_movement_id"],))
+    conn.execute(
+        """UPDATE sales_credit_notes SET status='cancelled',cancel_journal_entry_id=?,
+           cancel_cogs_journal_entry_id=?,cancelled_by=?,cancelled_at=CURRENT_TIMESTAMP,
+           cancellation_reason=? WHERE id=?""",
+        (reversal_id, cogs_reversal_id, created_by, reason, credit_note_id),
+    )
+    invoice = conn.execute("SELECT credited_amount FROM sales_invoices WHERE id=?",
+                           (note["invoice_id"],)).fetchone()
+    new_credited = Decimal(invoice["credited_amount"] or "0") - Decimal(note["total_amount"])
+    if new_credited < 0:
+        raise ValueError("رصيد الإشعارات الدائنة على الفاتورة غير متسق؛ راجع سلامة البيانات.")
+    conn.execute("UPDATE sales_invoices SET credited_amount=? WHERE id=?",
+                 (str(new_credited), note["invoice_id"]))
+    return {"reversal_journal_id": reversal_id, "cogs_reversal_journal_id": cogs_reversal_id}
 
 
 def _inventory_method(conn):
