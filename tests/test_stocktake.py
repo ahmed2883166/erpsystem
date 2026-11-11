@@ -55,6 +55,8 @@ class StocktakeRouteTests(unittest.TestCase):
         line = conn.execute("SELECT * FROM stocktake_lines").fetchone()
         self.assertEqual(header["status"], "draft")
         self.assertEqual(line["snapshot_qty"], "10.0000")
+        detail_response = self.client.get("/stock/counts/" + str(header["id"]))
+        self.assertEqual(detail_response.status_code, 200)
         response = self.client.post("/stock/counts/" + str(header["id"]), data={
             "counted_" + str(line["id"]): "8", "cost_" + str(line["id"]): "5",
         })
@@ -63,6 +65,29 @@ class StocktakeRouteTests(unittest.TestCase):
         status = conn.execute("SELECT status FROM stocktakes WHERE id=?", (header["id"],)).fetchone()["status"]
         self.assertEqual(updated["counted_qty"], "8.0000")
         self.assertEqual(updated["variance_qty"], "-2.0000")
+        self.assertEqual(status, "counted")
+        conn.close()
+
+
+    def test_approval_is_blocked_if_stock_moved_after_count_started(self):
+        self._login()
+        self.client.post("/stock/counts", data={
+            "warehouse_id": str(self.warehouse_id), "count_date": "2026-11-11",
+        })
+        conn = stock.get_db()
+        header = conn.execute("SELECT * FROM stocktakes").fetchone()
+        line = conn.execute("SELECT * FROM stocktake_lines").fetchone()
+        self.client.post("/stock/counts/" + str(header["id"]), data={
+            "counted_" + str(line["id"]): "10", "cost_" + str(line["id"]): "5",
+        })
+        conn.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,
+            target_warehouse_id,quantity,unit_cost,total_cost,movement_date)
+            VALUES('AFTER-COUNT','receipt',?,?, '1','5','5','2026-11-11')""",
+            (self.product_id,self.warehouse_id))
+        conn.commit()
+        response = self.client.post("/stock/counts/" + str(header["id"]) + "/approve")
+        self.assertEqual(response.status_code, 302)
+        status = conn.execute("SELECT status FROM stocktakes WHERE id=?", (header["id"],)).fetchone()["status"]
         self.assertEqual(status, "counted")
         conn.close()
 
