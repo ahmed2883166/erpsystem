@@ -1,0 +1,18 @@
+{% extends "base.html" %}{% block title %}سداد ضرائب وتأمينات الموظفين | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>سداد ضريبة المرتبات والتأمينات الاجتماعية</h2><p>سجل سداد الالتزامات الناتجة عن مسيرات الرواتب المرحلة، مع قيد محاسبي تلقائي.</p></header>
+<section class="panel"><form method="get" class="form-grid"><label>فترة المسير<input type="month" name="period" value="{{period}}" required></label><button type="submit">عرض الفترة</button></form></section>
+<section class="panel"><h3>الالتزامات عن {{period}}</h3><table><tr><th>نوع الالتزام</th><th>المستحق</th><th>المسدد</th><th>المتبقي</th></tr>
+<tr><td>ضريبة المرتبات</td><td>{{obligations.salary_tax.due|money}}</td><td>{{obligations.salary_tax.paid|money}}</td><td>{{obligations.salary_tax.remaining|money}}</td></tr>
+<tr><td>التأمينات الاجتماعية (حصة الموظف والشركة)</td><td>{{obligations.social_insurance.due|money}}</td><td>{{obligations.social_insurance.paid|money}}</td><td>{{obligations.social_insurance.remaining|money}}</td></tr></table></section>
+<section class="panel"><h3>تسجيل سداد</h3><form method="post" class="form-grid">
+<input type="hidden" name="period" value="{{period}}">
+<label>نوع السداد<select name="payment_type" required><option value="salary_tax">ضريبة المرتبات</option><option value="social_insurance">التأمينات الاجتماعية</option></select></label>
+<label>تاريخ السداد<input type="date" name="payment_date" value="{{today}}" required></label>
+<label>المبلغ<input type="number" name="amount" min="0.01" step="0.01" required></label>
+<label>حساب الالتزام<select name="liability_account_id" required>{% for a in accounts if a.account_type=='liability' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<label>حساب الصندوق / البنك<select name="cash_account_id" required>{% for a in accounts if a.account_type=='asset' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<label>مرجع التحويل / الإيصال<input name="reference" placeholder="اختياري"></label>
+<button type="submit">تسجيل السداد وترحيل القيد</button></form></section>
+<section class="panel"><h3>سجل السداد</h3><table><tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>حساب الالتزام</th><th>حساب السداد</th><th>مرجع</th><th>القيد</th></tr>
+{% for p in payments %}<tr><td>{{p.payment_date}}</td><td>{{'ضريبة مرتبات' if p.payment_type=='salary_tax' else 'تأمينات اجتماعية'}}</td><td>{{p.amount|money}}</td><td>{{p.liability_code}} - {{p.liability_name}}</td><td>{{p.cash_code}} - {{p.cash_name}}</td><td>{{p.reference}}</td><td>{{p.journal_entry_id}}</td></tr>{% else %}<tr><td colspan="7">لا توجد عمليات سداد لهذه الفترة.</td></tr>{% endfor %}</table></section>
+{% endblock %}
