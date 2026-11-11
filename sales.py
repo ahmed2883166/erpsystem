@@ -783,9 +783,17 @@ def index():
                                 FROM sales_credit_notes n JOIN sales_invoices i ON i.id=n.invoice_id
                                 JOIN customers c ON c.id=i.customer_id
                                 ORDER BY n.id DESC LIMIT 20""").fetchall()
+    enriched_notes = []
+    for note in credit_notes:
+        refunds = c.execute("SELECT amount FROM customer_refunds WHERE credit_note_id=?", (note["id"],)).fetchall()
+        refunded = sum((Decimal(row["amount"]) for row in refunds), Decimal("0"))
+        item = dict(note)
+        item["refunded_amount"] = refunded
+        item["refundable_remaining"] = max(Decimal("0"), Decimal(note["refundable_amount"] or "0") - refunded)
+        enriched_notes.append(item)
     c.close()
     return render_template("sales.html", customers=customers, invoices=invoices,
-                           receipts=receipts, credit_notes=credit_notes)
+                           receipts=receipts, credit_notes=enriched_notes)
 
 
 @sales_bp.route("/customers", methods=["GET", "POST"])
@@ -1002,3 +1010,61 @@ def new_receipt():
 
 if __name__ == "__main__":
     init_sales_schema()
+
+
+
+@sales_bp.route("/credit-notes/<int:credit_note_id>/refund", methods=["GET", "POST"])
+@require("sales.manage")
+def refund_credit_note(credit_note_id):
+    c = db()
+    note = c.execute(
+        """SELECT n.*,i.invoice_no,cu.name customer_name FROM sales_credit_notes n
+           JOIN sales_invoices i ON i.id=n.invoice_id JOIN customers cu ON cu.id=i.customer_id
+           WHERE n.id=? AND n.status='posted'""", (credit_note_id,)
+    ).fetchone()
+    if not note:
+        c.close()
+        flash("الإشعار الدائن غير موجود أو غير مرحل.", "error")
+        return redirect(url_for("sales.index"))
+    refunds = c.execute("SELECT amount FROM customer_refunds WHERE credit_note_id=?", (credit_note_id,)).fetchall()
+    already_refunded = sum((Decimal(row["amount"]) for row in refunds), Decimal("0"))
+    remaining_refundable = max(Decimal("0"), Decimal(note["refundable_amount"] or "0") - already_refunded)
+    if request.method == "POST":
+        try:
+            c.execute("BEGIN IMMEDIATE")
+            result = post_customer_refund(
+                c, credit_note_id, request.form["refund_date"], request.form["amount"],
+                int(request.form["cash_account_id"]), session["user_id"], request.form.get("reference", "")
+            )
+            c.commit()
+            flash("تم تسجيل رد المبلغ " + result["refund_no"], "success")
+            return redirect(url_for("sales.index"))
+        except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
+            c.rollback()
+            flash(str(exc), "error")
+    cash_accounts = c.execute(
+        "SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=0 AND active=1 ORDER BY code"
+    ).fetchall()
+    c.close()
+    return render_template("sales_refund_new.html", note=note, remaining_refundable=remaining_refundable,
+                           cash_accounts=cash_accounts, today=date.today().isoformat())
+
+
+@sales_bp.route("/credit-notes/<int:credit_note_id>/cancel", methods=["POST"])
+@require("sales.manage")
+def cancel_credit_note_route(credit_note_id):
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        result = cancel_credit_note(
+            c, credit_note_id, request.form.get("cancellation_date") or date.today().isoformat(),
+            request.form.get("reason", ""), session["user_id"]
+        )
+        c.commit()
+        flash("تم إلغاء الإشعار الدائن بقيد عكسي رقم " + str(result["reversal_journal_id"]), "success")
+    except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc), "error")
+    finally:
+        c.close()
+    return redirect(url_for("sales.index"))
