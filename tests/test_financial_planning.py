@@ -3,7 +3,8 @@ import unittest
 from decimal import Decimal
 
 from chart_templates import CHARTS, seed_activity_chart, ensure_activity_chart_accounts
-from financial_planning import initialize_planning_schema, _money
+from financial_planning import initialize_planning_schema, build_balance_sheet_snapshot, _money
+from accounting_core import register_decimal_aggregates
 
 
 class FinancialPlanningTests(unittest.TestCase):
@@ -14,6 +15,11 @@ class FinancialPlanningTests(unittest.TestCase):
             id INTEGER PRIMARY KEY, code TEXT UNIQUE, name_ar TEXT,
             account_type TEXT, parent_id INTEGER, is_group INTEGER DEFAULT 0,
             active INTEGER DEFAULT 1)""")
+        self.conn.executescript("""
+            CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT);
+            CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit TEXT,credit TEXT);
+        """)
+        register_decimal_aggregates(self.conn)
 
     def tearDown(self):
         self.conn.close()
@@ -29,6 +35,29 @@ class FinancialPlanningTests(unittest.TestCase):
             _money("-1")
         with self.assertRaises(Exception):
             _money("NaN")
+
+
+    def test_balance_sheet_includes_profit_and_excludes_drafts(self):
+        self.conn.executemany("INSERT INTO accounts(id,code,name_ar,account_type,is_group) VALUES(?,?,?,?,0)", [
+            (1,"1110","الصندوق","asset"),(2,"3100","رأس المال","equity"),
+            (3,"4100","الإيرادات","revenue"),(4,"6100","المصروفات","expense")])
+        entries=[
+            (1,"2026-01-01","posted",[(1,"1000","0"),(2,"0","1000")]),
+            (2,"2026-01-02","posted",[(1,"200","0"),(3,"0","200")]),
+            (3,"2026-01-03","posted",[(4,"50","0"),(1,"0","50")]),
+            (4,"2026-01-04","draft",[(1,"999","0"),(3,"0","999")]),
+        ]
+        for entry_id,entry_date,status,lines in entries:
+            self.conn.execute("INSERT INTO journal_entries VALUES(?,?,?)",(entry_id,entry_date,status))
+            for account_id,debit,credit in lines:
+                self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(?,?,?,?)",
+                                  (entry_id,account_id,debit,credit))
+        s=build_balance_sheet_snapshot(self.conn,"2026-01-31")
+        self.assertEqual(s["total_assets"],Decimal("1150"))
+        self.assertEqual(s["total_liabilities"],Decimal("0"))
+        self.assertEqual(s["net_profit"],Decimal("150"))
+        self.assertEqual(s["total_equity"],Decimal("1150"))
+        self.assertTrue(s["balanced"])
 
     def test_each_activity_chart_has_unique_account_codes(self):
         for activity, rows in CHARTS.items():
