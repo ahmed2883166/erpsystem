@@ -9,6 +9,11 @@ def amt(value):
     return Decimal(str(value or 0)).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
+def money(value):
+    """Shared two-decimal money quantizer used by inventory and purchasing."""
+    return Decimal(str(value or 0)).quantize(CENT, rounding=ROUND_HALF_UP)
+
+
 class _DecimalSum:
     def __init__(self):
         self.total = Decimal("0")
