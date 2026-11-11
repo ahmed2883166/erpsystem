@@ -58,7 +58,8 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(s["gross_margin"],Decimal("40.00"))
         self.assertEqual(s["cash"],Decimal("1350"))
         self.assertEqual(s["receivables"],Decimal("200"))
-        self.assertEqual(s["inventory"],Decimal("180"))
+        # In the industrial chart 1130 is raw-material stock, so the 200 posted to 1130 counts as inventory.
+        self.assertEqual(s["inventory"],Decimal("380"))
         self.assertEqual(s["payables"],Decimal("100"))
         self.assertEqual(s["current_ratio"],Decimal("17.30"))
         self.assertEqual(s["quick_ratio"],Decimal("15.50"))
