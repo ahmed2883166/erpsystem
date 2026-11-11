@@ -124,6 +124,20 @@ PERMISSION_LABELS = {
     "party.view": "عرض كشوف العملاء والموردين",
 }
 ALL_PERMISSIONS = tuple(PERMISSION_LABELS)
+_PERMISSION_IMPLICATIONS = {
+    "accounts.manage": "accounts.view", "stock.manage": "stock.view",
+    "purchases.manage": "purchases.view", "sales.manage": "sales.view",
+    "assets.manage": "assets.view", "quotes.manage": "quotes.view",
+    "bank.manage": "bank.view", "tax.manage": "tax.view",
+    "workforce.manage": "workforce.view", "currency.manage": "currency.view",
+}
+
+def normalize_user_permissions(values):
+    selected = set(values or ()) & set(ALL_PERMISSIONS)
+    for manage, view in _PERMISSION_IMPLICATIONS.items():
+        if manage in selected:
+            selected.add(view)
+    return sorted(selected)
 
 register_report_exports(app, DB_PATH, PERMISSIONS)
 
@@ -396,7 +410,7 @@ def login():
             session.permanent = True
             session.update(user_id=user["id"], username=user["username"], full_name=user["full_name"],
                            role=user["role"], must_change_password=bool(user["must_change_password"]),
-                           permissions=(json.loads(user["permissions_json"]) if user["permissions_json"] else sorted(PERMISSIONS.get(user["role"], set()))))
+                           permissions=normalize_user_permissions(json.loads(user["permissions_json"]) if user["permissions_json"] else PERMISSIONS.get(user["role"], set())))
             log("login", "تسجيل دخول")
             if user["must_change_password"]:
                 flash("يجب تغيير كلمة مرور المدير الافتراضية قبل استخدام النظام.", "warning")
@@ -1086,7 +1100,7 @@ def users():
             role = request.form["role"]
             if role not in PERMISSIONS:
                 raise ValueError("الدور المحدد غير صحيح.")
-            selected = sorted(set(request.form.getlist("permissions")) & set(ALL_PERMISSIONS))
+            selected = normalize_user_permissions(request.form.getlist("permissions"))
             connection.execute("INSERT INTO users(username,full_name,password_hash,role,created_at,permissions_json) VALUES(?,?,?,?,?,?)",
                                (request.form["username"].strip(), request.form["full_name"].strip(), password_hash(request.form["password"]), role, now(), json.dumps(selected, ensure_ascii=False)))
             connection.commit()
@@ -1120,7 +1134,7 @@ def edit_user(user_id):
                 flash("تم تعديل المستخدم.","success"); return redirect(url_for("users"))
             except sqlite3.IntegrityError:
                 connection.rollback(); flash("اسم المستخدم مستخدم بالفعل.","error")
-    selected_permissions = set(json.loads(user["permissions_json"])) if "permissions_json" in user.keys() and user["permissions_json"] else set(PERMISSIONS.get(user["role"], set()))
+    selected_permissions = set(normalize_user_permissions(json.loads(user["permissions_json"]) if "permissions_json" in user.keys() and user["permissions_json"] else PERMISSIONS.get(user["role"], set())))
     connection.close(); return render_template("user_edit.html",user=user,roles=PERMISSIONS,all_permissions=ALL_PERMISSIONS,permission_labels=PERMISSION_LABELS,selected_permissions=selected_permissions)
 
 
