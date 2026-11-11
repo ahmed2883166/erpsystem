@@ -7,10 +7,6 @@ from pathlib import Path
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
-from payroll_compliance import (
-    calculate_payroll_deductions, ensure_default_payroll_rules,
-    missing_payroll_rule_categories, current_tax_country,
-)
 
 workforce_bp = Blueprint("workforce", __name__)
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
@@ -171,7 +167,6 @@ def add_pay_item():
 @_role("admin", "accountant")
 def payroll():
     c = _db()
-    ensure_default_payroll_rules(c)
     if request.method == "POST":
         period = request.form.get("period", "")
         try:
@@ -199,14 +194,8 @@ def payroll():
                 overtime_amount = M(overtime_hours * hourly * D("1.5"))
                 absence = M(absent_hours * hourly)
                 gross = M(D(e["basic_salary"]) + allowances + overtime_amount - absence - other_deductions)
-                # Unpaid absence reduces taxable salary; fixed deductions are not
-                # automatically treated as tax-deductible without a statutory basis.
-                taxable_pay = M(D(e["basic_salary"]) + allowances + overtime_amount - absence)
-                automatic = calculate_payroll_deductions(c, e, taxable_pay, period)
-                if automatic:
-                    tax = automatic["tax"]
-                    emp_ins = automatic["employee_insurance"]
-                    employer_ins = automatic["employer_insurance"]
+                # Fully manual payroll mode: statutory deductions are entered by
+                # the accountant and are never replaced by configured country rules.
                 net = M(gross - tax - emp_ins)
                 if min(overtime_hours, absent_hours, tax, emp_ins, employer_ins, gross, net) < 0:
                     raise ValueError("لا يمكن أن تكون الساعات أو الاستقطاعات أو صافي المرتب سالبة.")
@@ -217,9 +206,7 @@ def payroll():
                     (run_id,e["id"],e["basic_salary"],str(M(allowances)),str(overtime_hours),str(overtime_amount),
                      str(absent_hours),str(absence),str(M(other_deductions)),str(tax),str(emp_ins),
                      str(employer_ins),str(gross),str(net),
-                     automatic["rule_set_id"] if automatic else None,
-                     str(automatic["taxable_annual"]) if automatic else "0",
-                     str(automatic["insured_wage"]) if automatic else "0"))
+                     None, "0", "0"))
             _audit(c, "payroll_draft_created", period)
             c.commit()
             flash("تم إنشاء مسير الرواتب كمسودة. راجع البنود ثم رحّله.", "success")
@@ -229,12 +216,9 @@ def payroll():
             flash(str(e) or "تعذر إنشاء مسير الرواتب.", "error")
     employees = c.execute("SELECT * FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
     today_period = date.today().strftime("%Y-%m")
-    missing_rule_categories = missing_payroll_rule_categories(c, employees, today_period)
-    tax_country = current_tax_country(c)
     runs = c.execute("SELECT * FROM payroll_runs ORDER BY period DESC LIMIT 24").fetchall()
     c.close()
-    return render_template("payroll.html", employees=employees, runs=runs, today=today_period,
-                           tax_country=tax_country, missing_rule_categories=missing_rule_categories)
+    return render_template("payroll.html", employees=employees, runs=runs, today=today_period)
 
 
 @workforce_bp.route("/hr/payroll/<int:run_id>", methods=["GET"])
