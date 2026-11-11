@@ -1063,10 +1063,10 @@ def approve_count(stocktake_id):
                     (movement_no,line["product_id"],stocktake["warehouse_id"],line["location_id"],line["lot_id"],
                      str(variance),str(unit_cost),str(cost),stocktake["count_date"],"زيادة جرد فعلي",session.get("user_id")))
                 movement_id = cur.lastrowid
-                c.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,
+                c.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,lot_id,
                     source_movement_id,qty_in,qty_remaining,unit_cost,value_remaining)
-                    VALUES(?,?,?,?,?,?,?,?)""",
-                    (line["product_id"],stocktake["warehouse_id"],line["location_id"],
+                    VALUES(?,?,?,?,?,?,?,?,?)""",
+                    (line["product_id"],stocktake["warehouse_id"],line["location_id"],line["lot_id"],
                      movement_id,str(variance),str(variance),str(unit_cost),str(cost)))
                 movement_ids.append(movement_id)
                 journal_lines.extend([(inventory["id"],cost,0,"زيادة مخزون - " + line["name_ar"]),
