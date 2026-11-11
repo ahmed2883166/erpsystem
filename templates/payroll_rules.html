@@ -12,6 +12,7 @@
 <label>فئة الموظف<input name="category_code" value="local" placeholder="local / expat / saudi / non_saudi" required></label>
 <label>تاريخ السريان<input type="date" name="effective_from" value="{{today}}" required></label>
 <label>الإعفاء الشخصي السنوي<input type="number" min="0" step="0.01" name="personal_exemption_annual" value="0" required></label>
+<label>وحدة تقريب الدخل السنوي الخاضع (1 = بدون تقريب)<input type="number" min="0.01" step="0.01" name="taxable_rounding_unit" value="1" required></label>
 <label>الحد الأدنى لأجر التأمين<input type="number" min="0" step="0.01" name="insurance_floor" value="0" required></label>
 <label>الحد الأقصى لأجر التأمين (صفر = بلا حد)<input type="number" min="0" step="0.01" name="insurance_ceiling" value="0" required></label>
 <label>نسبة الموظف %<input type="number" min="0" max="100" step="0.0001" name="employee_insurance_rate" value="0" required></label>
@@ -25,5 +26,5 @@
 <label>من دخل سنوي خاضع<input type="number" min="0" step="0.01" name="lower_bound" required></label>
 <label>إلى دخل سنوي (فارغ للأخيرة)<input type="number" min="0" step="0.01" name="upper_bound"></label>
 <label>النسبة %<input type="number" min="0" max="100" step="0.0001" name="rate" required></label><button type="submit">إضافة الشريحة</button></form>
-<table><tr><th>الدولة</th><th>الفئة</th><th>من</th><th>إلى</th><th>النسبة</th></tr>{% for b in brackets %}<tr><td>{{b.country_code}}</td><td>{{b.category_code}}</td><td>{{b.lower_bound}}</td><td>{{b.upper_bound or 'مفتوحة'}}</td><td>{{b.rate}}%</td></tr>{% else %}<tr><td colspan="5">لا توجد شرائح ضريبية.</td></tr>{% endfor %}</table></section>
+<table><tr><th>الدولة</th><th>الفئة</th><th>مستوى الدخل السنوي الكلي</th><th>من الوعاء</th><th>إلى الوعاء</th><th>النسبة</th></tr>{% for b in brackets %}<tr><td>{{b.country_code}}</td><td>{{b.category_code}}</td><td>{% if b.bracket_kind=='tier' %}حتى {{b.income_max or 'أعلى من كل الحدود'}}{% else %}كل المستويات{% endif %}</td><td>{{b.lower_bound}}</td><td>{{b.upper_bound or 'مفتوحة'}}</td><td>{{b.rate}}%</td></tr>{% else %}<tr><td colspan="6">لا توجد شرائح ضريبية.</td></tr>{% endfor %}</table></section>
 {% endblock %}
