@@ -113,6 +113,15 @@ def initialize_payroll_compliance_schema():
     }.items():
         if name not in line_cols:
             conn.execute("ALTER TABLE payroll_lines ADD COLUMN " + name + " " + definition)
+    # Seed the Egypt baseline once on existing and new installations. Never
+    # overwrite a rule set that an accountant has already reviewed or edited.
+    if current_tax_country(conn) == "EG":
+        existing_egypt = conn.execute(
+            "SELECT 1 FROM payroll_rule_sets WHERE country_code='EG' "
+            "AND category_code='local' AND effective_from='2026-01-01' LIMIT 1"
+        ).fetchone()
+        if not existing_egypt:
+            seed_egypt_2026(conn)
     conn.commit()
     conn.close()
 
@@ -131,6 +140,35 @@ def _active_rule(conn, country_code, category_code, period):
         WHERE country_code=? AND category_code=? AND enabled=1 AND effective_from<=?
         ORDER BY effective_from DESC,id DESC LIMIT 1
     """, (country_code, category_code, period_date)).fetchone()
+
+
+def ensure_default_payroll_rules(conn):
+    """Ensure the built-in Egypt baseline exists without overwriting user edits."""
+    country = current_tax_country(conn)
+    if country == "EG":
+        exists = conn.execute(
+            "SELECT 1 FROM payroll_rule_sets WHERE country_code='EG' "
+            "AND category_code='local' AND effective_from='2026-01-01' LIMIT 1"
+        ).fetchone()
+        if not exists:
+            seed_egypt_2026(conn)
+    return country
+
+
+def missing_payroll_rule_categories(conn, employees, period):
+    country = current_tax_country(conn)
+    missing = set()
+    period_start = date.fromisoformat(period + "-01").isoformat()
+    for employee in employees:
+        category = (employee["legal_category"] or "local").strip().lower()
+        rule = conn.execute("""
+            SELECT 1 FROM payroll_rule_sets
+            WHERE country_code=? AND category_code=? AND enabled=1 AND effective_from<=?
+            ORDER BY effective_from DESC,id DESC LIMIT 1
+        """, (country, category, period_start)).fetchone()
+        if not rule:
+            missing.add(category)
+    return sorted(missing)
 
 
 def calculate_payroll_deductions(conn, employee, gross_monthly, period):
