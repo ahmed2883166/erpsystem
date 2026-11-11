@@ -230,7 +230,7 @@ def build_management_snapshot(conn, start, end, dimensions=None):
     assets = _leaf_sum(as_of, "asset")
     liabilities = _leaf_sum(as_of, "liability")
     equity = _leaf_sum(as_of, "equity")
-    balance_ok = assets == liabilities + equity + cumulative["net_profit"]
+    balance_ok = (assets == liabilities + equity + cumulative["net_profit"]) if not any(dimensions.values()) else None
     current_assets = _leaf_sum(as_of, "asset", account_ids=roles["current_assets"])
     current_liabilities = _leaf_sum(as_of, "liability", account_ids=roles["current_liabilities"])
     gross_profit = current["revenue"] - current["cogs"]
