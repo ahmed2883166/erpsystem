@@ -204,6 +204,56 @@ class WorkforceTests(unittest.TestCase):
         self.assertIn((4, 22650, 0), totals_by_account)
         self.assertIn((5, 0, 21200), totals_by_account)
 
+    def test_employee_profile_fields_and_salary_raise_overtime_and_event_bonus(self):
+        response = self.client.post("/hr", data={
+            "employee_code": "E003", "full_name": "Employee Three", "national_id": "12345678901234",
+            "insurance_number": "INS-3", "address": "Tanta", "job_title": "Accountant",
+            "department": "Finance", "hire_date": "2026-01-01", "basic_salary": "10000",
+            "standard_hours": "200", "legal_category": "local", "insured_wage": "0",
+            "insurance_enabled": "1", "work_status": "permanent", "raise_type": "percentage",
+            "raise_value": "10", "raise_mode": "basic", "raise_effective_date": "2026-11-01",
+            "overtime_rate_percent": "150"
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        employee = conn.execute(
+            "SELECT address,national_id,insurance_number,work_status,raise_type,raise_value,raise_mode "
+            "FROM employees WHERE employee_code='E003'"
+        ).fetchone()
+        conn.execute("""INSERT INTO payroll_incentive_rules(name,calculation_method,calculation_value)
+                        VALUES('حافز مناسبة','percentage_basic','5')""")
+        conn.commit()
+        conn.close()
+        self.assertEqual(employee, ("Tanta","12345678901234","INS-3","permanent","percentage","10.00","basic"))
+        response = self.client.post("/hr/payroll", data={
+            "period": "2026-11", "basic_1": "10000", "allowances_1": "500",
+            "overtime_hours_1": "10", "overtime_rate_percent_1": "150", "overtime_amount_1": "",
+            "incentive_rule_1": "1", "incentive_days_1": "0", "incentives_1": "0",
+            "absence_deduction_1": "0", "other_deductions_1": "0", "advance_1": "0",
+            "tax_1": "0", "employee_ins_1": "0", "employer_ins_1": "0"
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        line = conn.execute(
+            "SELECT basic_salary,salary_raise,overtime_amount,incentives,gross_pay,incentive_name "
+            "FROM payroll_lines WHERE run_id=1"
+        ).fetchone()
+        conn.close()
+        self.assertEqual(line, ("11000.00","1000.00","825.00","550.00","12875.00","حافز مناسبة"))
+
+    def test_payroll_excludes_unpaid_leave_resigned_and_retired_employees(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,work_status)
+                        VALUES('E004','On Leave','2026-01-01','5000','200','unpaid_leave')""")
+        conn.commit()
+        conn.close()
+        response = self.client.post("/hr/payroll", data={"period":"2026-11"})
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        count = conn.execute("SELECT COUNT(*) FROM payroll_lines").fetchone()[0]
+        conn.close()
+        self.assertEqual(count, 0)
+
     def test_optional_automatic_statutory_calculation_snapshots_rules(self):
         self.add_employee()
         response = self.client.post("/hr/payroll", data={
