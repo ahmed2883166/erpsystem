@@ -39,6 +39,10 @@ def initialize_analytic_dimensions_schema(conn):
         if "customer_id" not in columns:
             conn.execute("ALTER TABLE journal_lines ADD COLUMN customer_id INTEGER REFERENCES customers(id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_customer ON journal_lines(customer_id,entry_id)")
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='salespersons'").fetchone():
+        if "salesperson_id" not in columns:
+            conn.execute("ALTER TABLE journal_lines ADD COLUMN salesperson_id INTEGER REFERENCES salespersons(id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_salesperson ON journal_lines(salesperson_id,entry_id)")
     conn.commit()
 
 
@@ -49,6 +53,8 @@ def active_dimension_options(conn):
         "projects": conn.execute("SELECT id,code,name_ar FROM projects WHERE active=1 ORDER BY code").fetchall(),
         "customers": conn.execute("SELECT id,code,name AS name_ar FROM customers WHERE active=1 ORDER BY code").fetchall()
             if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customers'").fetchone() else [],
+        "salespersons": conn.execute("SELECT id,code,name AS name_ar FROM salespersons WHERE active=1 ORDER BY code").fetchall()
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='salespersons'").fetchone() else [],
     }
 
 
@@ -57,7 +63,7 @@ def validate_journal_dimensions(conn, dimensions):
     dimensions = dimensions or {}
     result = {}
     for key, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"),
-                       ("project_id", "projects"), ("customer_id", "customers")):
+                       ("project_id", "projects"), ("customer_id", "customers"), ("salesperson_id", "salespersons")):
         raw = dimensions.get(key)
         if raw in (None, ""):
             result[key] = None
