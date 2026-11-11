@@ -1,6 +1,5 @@
 """Customer and supplier subledger statements with opening and running balances."""
 import sqlite3
-from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from functools import wraps
 from pathlib import Path
