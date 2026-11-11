@@ -735,6 +735,50 @@ def management_dashboard():
     )
 
 
+@app.route("/management-dashboard/account-mapping", methods=["GET", "POST"])
+@requires("accounts.manage")
+def management_account_mapping():
+    connection = db()
+    from management_dashboard import MANAGEMENT_ROLES, load_management_account_roles
+    activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+    activity = activity_row["setting_value"] if activity_row else "commercial"
+    load_management_account_roles(connection, activity)
+    if request.method == "POST":
+        try:
+            selections = {}
+            for role, (_, allowed_types) in MANAGEMENT_ROLES.items():
+                ids = []
+                for raw_id in request.form.getlist("role_" + role):
+                    account_id = int(raw_id)
+                    account = connection.execute(
+                        "SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (account_id,)
+                    ).fetchone()
+                    if not account or account["is_group"] or not account["active"] or account["account_type"] not in allowed_types:
+                        raise ValueError("يوجد حساب غير تفصيلي أو غير نشط أو من نوع غير مناسب في الربط.")
+                    ids.append(account_id)
+                selections[role] = set(ids)
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("DELETE FROM management_account_roles")
+            for role, ids in selections.items():
+                connection.executemany(
+                    "INSERT INTO management_account_roles(account_id,role) VALUES(?,?)",
+                    [(account_id, role) for account_id in sorted(ids)]
+                )
+            connection.commit()
+            flash("تم حفظ ربط حسابات لوحة الإدارة بشجرة الحسابات الحالية.", "success")
+            return redirect(url_for("management_account_mapping"))
+        except (ValueError, sqlite3.Error) as exc:
+            connection.rollback()
+            flash(str(exc) or "تعذر حفظ ربط الحسابات.", "error")
+    roles = load_management_account_roles(connection, activity)
+    accounts = connection.execute(
+        "SELECT id,code,name_ar,account_type FROM accounts WHERE is_group=0 AND active=1 ORDER BY code"
+    ).fetchall()
+    connection.close()
+    return render_template("management_account_mapping.html", roles=MANAGEMENT_ROLES,
+                           selected=roles, accounts=accounts)
+
+
 @app.route("/reports/trial-balance")
 @requires("reports.view")
 def trial_balance():
