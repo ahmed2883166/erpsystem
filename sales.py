@@ -39,7 +39,7 @@ def init_sales_schema():
     CREATE TABLE IF NOT EXISTS sales_invoices(
       id INTEGER PRIMARY KEY, invoice_no TEXT NOT NULL UNIQUE,
       customer_id INTEGER NOT NULL REFERENCES customers(id),
-      invoice_date TEXT NOT NULL, warehouse_id INTEGER REFERENCES stock_warehouses(id),
+      invoice_date TEXT NOT NULL, due_date TEXT, warehouse_id INTEGER REFERENCES stock_warehouses(id),
       subtotal TEXT NOT NULL, tax_rate TEXT NOT NULL, tax_amount TEXT NOT NULL,
       total_amount TEXT NOT NULL, paid_amount TEXT NOT NULL DEFAULT '0',
       status TEXT NOT NULL DEFAULT 'posted', journal_entry_id INTEGER UNIQUE,
@@ -117,6 +117,9 @@ def init_sales_schema():
       stock_movement_id INTEGER REFERENCES stock_movements(id)
     )""")
     invoice_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoices)")}
+    if "due_date" not in invoice_columns:
+        c.execute("ALTER TABLE sales_invoices ADD COLUMN due_date TEXT")
+        c.execute("UPDATE sales_invoices SET due_date=invoice_date WHERE due_date IS NULL")
     if "credited_amount" not in invoice_columns:
         c.execute("ALTER TABLE sales_invoices ADD COLUMN credited_amount TEXT NOT NULL DEFAULT '0'")
     c.execute("CREATE INDEX IF NOT EXISTS idx_sales_credit_invoice ON sales_credit_notes(invoice_id,credit_date,id)")
