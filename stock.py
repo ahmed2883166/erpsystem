@@ -381,6 +381,87 @@ def warehouses():
     return render_template("stock_warehouses.html",rows=rows)
 
 
+@stock_bp.route("/locations", methods=["GET", "POST"])
+@stock_permission("stock.manage")
+def locations():
+    c = get_db()
+    if request.method == "POST":
+        try:
+            warehouse_id = request.form.get("warehouse_id", type=int)
+            parent_id = request.form.get("parent_id", type=int)
+            code = request.form.get("code", "").strip().upper()
+            name = request.form.get("name_ar", "").strip()
+            location_type = request.form.get("location_type", "")
+            expected_parent = {"floor": None, "zone": "floor", "rack": "zone", "bin": "rack"}
+            if location_type not in expected_parent or not code or not name:
+                raise ValueError("أدخل كود واسم الموقع وحدد نوعه.")
+            if not c.execute("SELECT 1 FROM stock_warehouses WHERE id=? AND active=1", (warehouse_id,)).fetchone():
+                raise ValueError("اختر مخزنًا نشطًا.")
+            if expected_parent[location_type] is None:
+                if parent_id:
+                    raise ValueError("الدور يجب أن يكون مستوى رئيسيًا داخل المخزن.")
+            else:
+                parent = c.execute("SELECT location_type,warehouse_id,active FROM stock_locations WHERE id=?", (parent_id,)).fetchone() if parent_id else None
+                if not parent or not parent["active"] or parent["warehouse_id"] != warehouse_id or parent["location_type"] != expected_parent[location_type]:
+                    raise ValueError("الموقع الأب غير صحيح أو لا يتبع نفس المخزن.")
+            c.execute("INSERT INTO stock_locations(warehouse_id,parent_id,code,name_ar,location_type) VALUES(?,?,?,?,?)",
+                      (warehouse_id, parent_id, code, name, location_type))
+            c.commit()
+            flash("تم إنشاء موقع التخزين.", "success")
+        except (ValueError, sqlite3.IntegrityError) as exc:
+            c.rollback()
+            flash(str(exc) if isinstance(exc, ValueError) else "كود الموقع مستخدم في نفس المستوى.", "error")
+        finally:
+            c.close()
+        return redirect(url_for("stock.locations"))
+    warehouses = c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
+    parents = c.execute("SELECT id,warehouse_id,code,name_ar,location_type FROM stock_locations WHERE active=1 ORDER BY warehouse_id,location_type,code").fetchall()
+    rows = c.execute("""SELECT l.*,w.code warehouse_code,w.name_ar warehouse_name,p.code parent_code,p.name_ar parent_name
+        FROM stock_locations l JOIN stock_warehouses w ON w.id=l.warehouse_id
+        LEFT JOIN stock_locations p ON p.id=l.parent_id ORDER BY w.code,l.location_type,l.code""").fetchall()
+    c.close()
+    return render_template("stock_locations.html", warehouses=warehouses, parents=parents, rows=rows)
+
+
+@stock_bp.route("/product-locations", methods=["GET", "POST"])
+@stock_permission("stock.manage")
+def product_locations():
+    c = get_db()
+    if request.method == "POST":
+        try:
+            product_id = request.form.get("product_id", type=int)
+            warehouse_id = request.form.get("warehouse_id", type=int)
+            location_id = request.form.get("location_id", type=int)
+            valid = c.execute("""SELECT 1 FROM stock_locations WHERE id=? AND warehouse_id=? AND active=1""",
+                              (location_id, warehouse_id)).fetchone()
+            if not c.execute("SELECT 1 FROM stock_products WHERE id=? AND active=1", (product_id,)).fetchone() or not valid:
+                raise ValueError("الصنف أو موقع التخزين غير صحيح.")
+            c.execute("""INSERT INTO stock_product_locations(product_id,warehouse_id,location_id,is_default)
+                VALUES(?,?,?,1) ON CONFLICT(product_id,warehouse_id)
+                DO UPDATE SET location_id=excluded.location_id,is_default=1""",
+                (product_id, warehouse_id, location_id))
+            c.commit()
+            flash("تم تحديد الموقع الافتراضي للصنف داخل المخزن.", "success")
+        except (ValueError, sqlite3.Error) as exc:
+            c.rollback()
+            flash(str(exc), "error")
+        finally:
+            c.close()
+        return redirect(url_for("stock.product_locations"))
+    products = c.execute("SELECT id,sku,name_ar FROM stock_products WHERE active=1 ORDER BY sku").fetchall()
+    warehouses = c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
+    locations = c.execute("""SELECT l.id,l.warehouse_id,l.code,l.name_ar,l.location_type,w.code warehouse_code
+        FROM stock_locations l JOIN stock_warehouses w ON w.id=l.warehouse_id
+        WHERE l.active=1 ORDER BY w.code,l.code""").fetchall()
+    rows = c.execute("""SELECT m.*,p.sku,p.name_ar product_name,w.code warehouse_code,l.code location_code,l.name_ar location_name
+        FROM stock_product_locations m JOIN stock_products p ON p.id=m.product_id
+        JOIN stock_warehouses w ON w.id=m.warehouse_id JOIN stock_locations l ON l.id=m.location_id
+        ORDER BY w.code,p.sku""").fetchall()
+    c.close()
+    return render_template("stock_product_locations.html", products=products, warehouses=warehouses,
+                           locations=locations, rows=rows)
+
+
 @stock_bp.route("/products/<int:product_id>/edit", methods=["GET","POST"])
 @stock_permission("stock.manage")
 def edit_product(product_id):
