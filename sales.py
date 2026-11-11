@@ -1097,7 +1097,11 @@ def customer_list():
         except (ValueError, InvalidOperation) as exc:
             c.rollback()
             flash(str(exc), "error")
-    rows = c.execute("SELECT * FROM customers ORDER BY name").fetchall()
+    customers_page = fetch_page(c,"SELECT * FROM customers ORDER BY name",
+        "SELECT COUNT(*) FROM customers",
+        page=request.args.get("customers_page",1,type=int),
+        per_page=request.args.get("customers_per_page",50,type=int))
+    rows = customers_page["rows"]
     invoices_by_customer = {}
     for invoice_row in c.execute(
         """SELECT i.id,i.customer_id,i.total_amount,i.paid_amount,COALESCE(i.credited_amount,'0') credited_amount
@@ -1107,7 +1111,7 @@ def customer_list():
         invoices_by_customer[invoice_row["customer_id"]] = invoices_by_customer.get(invoice_row["customer_id"], Decimal("0")) + balance
     rows = [dict(row, outstanding=invoices_by_customer.get(row["id"], Decimal("0"))) for row in rows]
     c.close()
-    return render_template("sales_customers.html", rows=rows)
+    return render_template("sales_customers.html", rows=rows, customers_page=customers_page)
 
 
 @sales_bp.route("/customers/<int:customer_id>/edit",methods=["GET","POST"])
