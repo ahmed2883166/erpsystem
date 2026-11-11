@@ -795,18 +795,18 @@ def ledger():
             rows = []
             for row in raw_rows:
                 item = dict(row)
-                running_balance += float(item["debit"] or 0) - float(item["credit"] or 0)
-                item["running_balance"] = round(running_balance, 2)
+                running_balance += Decimal(str(item["debit"] or "0")) - Decimal(str(item["credit"] or "0"))
+                item["running_balance"] = running_balance.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 rows.append(item)
             closing_balance = round(running_balance, 2)
         else:
-            opening_balance = 0.0
-            closing_balance = 0.0
+            opening_balance = Decimal("0")
+            closing_balance = Decimal("0")
     else:
-        opening_balance = 0.0
-        closing_balance = 0.0
-    total_debit = round(sum(float(x["debit"] or 0) for x in rows), 2)
-    total_credit = round(sum(float(x["credit"] or 0) for x in rows), 2)
+        opening_balance = Decimal("0")
+        closing_balance = Decimal("0")
+    total_debit = sum((Decimal(str(x["debit"] or "0")) for x in rows), Decimal("0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    total_credit = sum((Decimal(str(x["credit"] or "0")) for x in rows), Decimal("0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     connection.close()
     return render_template("ledger.html", accounts=accounts_list, selected=selected, rows=rows,
         date_from=date_from, date_to=date_to, opening_balance=opening_balance, closing_balance=closing_balance,
