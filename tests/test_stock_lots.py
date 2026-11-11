@@ -41,7 +41,7 @@ class StockLotExpiryTests(unittest.TestCase):
     def test_existing_lot_cannot_change_expiry_date(self):
         make_lot(self.conn, self.product, "LOT-005",
                  "2026-01-01", "2027-01-01", "2026-11-11")
-        with self.assertRaisesRegex(ValueError, "موجود بتاريخ صلاحية مختلف"):
+        with self.assertRaisesRegex(ValueError, "بتواريخ إنتاج أو صلاحية مختلفة"):
             make_lot(self.conn, self.product, "LOT-005",
                      "2026-01-01", "2027-02-01", "2026-11-11")
 
