@@ -209,7 +209,7 @@ def build_management_snapshot(conn, start, end):
             "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','base_currency','company_name')"
         )}
     activity = settings.get("activity", "commercial")
-    roles = load_management_account_roles(conn, activity)
+    roles = load_management_account_roles(conn)
     period_days = (end - start).days
     previous_end = start - timedelta(days=1)
     previous_start = previous_end - timedelta(days=period_days)
