@@ -443,6 +443,14 @@ def new_receipt():
             dimensions = validate_journal_dimensions(c, request.form)
             product_row=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(product,)).fetchone()
             if not product_row or product_row["product_type"]=="service": raise ValueError("اختر صنفًا مخزنيًا نشطًا.")
+            location_id=request.form.get("location_id",type=int)
+            if not location_id:
+                default_location=c.execute("SELECT location_id FROM stock_product_locations WHERE product_id=? AND warehouse_id=?",(product,wh)).fetchone()
+                location_id=default_location["location_id"] if default_location else None
+            if location_id and not c.execute("SELECT 1 FROM stock_locations WHERE id=? AND warehouse_id=? AND active=1",(location_id,wh)).fetchone():
+                raise ValueError("موقع التخزين لا يتبع المخزن المحدد.")
+            if c.execute("SELECT 1 FROM stock_locations WHERE warehouse_id=? AND active=1 LIMIT 1",(wh,)).fetchone() and not location_id:
+                raise ValueError("حدد الدور/الموقع الذي ستُخزن فيه الكمية.")
             lot_id=make_lot(c,product_row,request.form.get("lot_number","").strip(),
                 request.form.get("production_date",""),request.form.get("expiry_date",""),request.form["receipt_date"])
             po_line_id=None
@@ -468,8 +476,8 @@ def new_receipt():
               (no,po_id,supplier,wh,request.form["receipt_date"],str(total),session["user_id"],
                dimensions["branch_id"],dimensions["cost_center_id"],dimensions["project_id"]))
             rid=cur.lastrowid
-            c.execute("INSERT INTO goods_receipt_lines(receipt_id,po_line_id,product_id,quantity,unit_cost,total_cost) VALUES(?,?,?,?,?,?)",
-                      (rid,po_line_id,product,str(qty),str(unit),str(total)))
+            c.execute("INSERT INTO goods_receipt_lines(receipt_id,po_line_id,product_id,quantity,unit_cost,total_cost,location_id) VALUES(?,?,?,?,?,?,?)",
+                      (rid,po_line_id,product,str(qty),str(unit),str(total),location_id))
             if po_id:
                 received_total=Decimal(po_line["received_qty"])+qty
                 new_status="received" if received_total==Decimal(po_line["quantity"]) else "partially_received"
@@ -477,12 +485,12 @@ def new_receipt():
                 c.execute("UPDATE purchase_orders SET status=? WHERE id=?",(new_status,po_id))
             # Stock ledger + valuation layer are updated in the same DB transaction.
             move_no="PUR-"+no
-            movement=c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status)
-              VALUES(?,'receipt',?,?,?,?,?,?,?,?,?, 'pending_document')""",
-              (move_no,product,wh,lot_id,str(qty),str(unit),str(total),request.form["receipt_date"],"استلام مشتريات "+no,session["user_id"]))
+            movement=c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,target_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status)
+              VALUES(?,'receipt',?,?,?,?,?,?,?,?,?,?, 'pending_document')""",
+              (move_no,product,wh,location_id,lot_id,str(qty),str(unit),str(total),request.form["receipt_date"],"استلام مشتريات "+no,session["user_id"]))
             mid=movement.lastrowid
-            c.execute("INSERT INTO stock_valuation_layers(product_id,warehouse_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost) VALUES(?,?,?,?,?,?,?)",
-              (product,wh,lot_id,mid,str(qty),str(qty),str(unit)))
+            c.execute("INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost) VALUES(?,?,?,?,?,?,?,?)",
+              (product,wh,location_id,lot_id,mid,str(qty),str(qty),str(unit)))
             eid=create_journal(c,request.form["receipt_date"],no,"استلام مشتريات غير مفوتر "+no,[(inv,total,0,"إثبات مخزون مستلم"),(grni,0,total,"بضاعة مستلمة غير مفوترة")],session["user_id"],dimensions=dimensions)
             c.execute("UPDATE goods_receipts SET journal_entry_id=? WHERE id=?",(eid,rid))
             c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?",(eid,mid))
@@ -492,8 +500,9 @@ def new_receipt():
     wh=c.execute("SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     pr=c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     orders=c.execute("SELECT id,po_no,supplier_id,status FROM purchase_orders WHERE status IN ('draft','partially_received') ORDER BY id DESC").fetchall()
+    locations=c.execute("SELECT id,warehouse_id,code,name_ar,location_type FROM stock_locations WHERE active=1 ORDER BY warehouse_id,code").fetchall()
     dimension_options=active_dimension_options(c)
-    c.close(); return render_template("purchase_receipt_new.html",suppliers=su,warehouses=wh,products=pr,orders=orders,dimension_options=dimension_options,today=date.today().isoformat())
+    c.close(); return render_template("purchase_receipt_new.html",suppliers=su,warehouses=wh,products=pr,orders=orders,locations=locations,dimension_options=dimension_options,today=date.today().isoformat())
 
 @purchase_bp.route("/bills/new",methods=["GET","POST"])
 @require("purchases.manage")
