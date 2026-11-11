@@ -73,6 +73,7 @@ def initialize_payroll_compliance_schema():
         "legal_category": "TEXT NOT NULL DEFAULT 'local'",
         "insurance_number": "TEXT NOT NULL DEFAULT ''",
         "insured_wage": "TEXT NOT NULL DEFAULT '0'",
+        "insurance_enabled": "INTEGER NOT NULL DEFAULT 1",
     }.items():
         if name not in employee_cols:
             conn.execute("ALTER TABLE employees ADD COLUMN " + name + " " + definition)
@@ -112,8 +113,9 @@ def calculate_payroll_deductions(conn, employee, gross_monthly, period):
     if not rule:
         return None
     gross = _m(gross_monthly)
-    insured_wage = _d(employee["insured_wage"])
-    if insured_wage <= 0:
+    insurance_enabled = int(employee["insurance_enabled"]) if "insurance_enabled" in employee.keys() else 1
+    insured_wage = _d(employee["insured_wage"]) if insurance_enabled else Decimal("0")
+    if insured_wage <= 0 and insurance_enabled:
         insured_wage = gross
     floor = _d(rule["insurance_floor"])
     ceiling = _d(rule["insurance_ceiling"])
