@@ -42,6 +42,15 @@
  const hasUnsavedEntry=[...document.querySelectorAll('form[method="post" i],form:not([method])')].some(form=>
    !form.classList.contains('no-print') && [...form.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]),select,textarea')].some(el=>!el.disabled)
  );
- if(hasUnsavedEntry) printAction.hidden=true;
+ if(hasUnsavedEntry){
+   printAction.hidden=true;
+   document.querySelectorAll('[onclick*="window.print"]').forEach(el=>el.hidden=true);
+   document.addEventListener('keydown',event=>{
+     if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='p'){
+       event.preventDefault();
+       alert('احفظ المستند أو رحّله أولًا، ثم اطبع النسخة المحفوظة.');
+     }
+   });
+ }
 })();
 </script>{% block scripts %}{% endblock %}</body></html>
