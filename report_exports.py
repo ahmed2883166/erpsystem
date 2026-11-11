@@ -35,6 +35,10 @@ def register_report_exports(app, db_path, permissions):
     @require("reports.view")
     def export_report_excel(report):
         conn = connect()
+        company_row = conn.execute(
+            "SELECT setting_value FROM company_settings WHERE setting_key='company_name'"
+        ).fetchone()
+        company_name = company_row["setting_value"] if company_row else "NEXUS ERP"
         try:
             if report == "accounts":
                 rows = conn.execute("""
@@ -238,33 +242,45 @@ def register_report_exports(app, db_path, permissions):
         sheet = workbook.active
         sheet.title = "NEXUS ERP"
         sheet.sheet_view.rightToLeft = True
-        sheet.append([title])
+        sheet.append([company_name])
         sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
-        sheet["A1"].font = Font(name="Arial", size=16, bold=True, color="FFFFFF")
+        sheet["A1"].font = Font(name="Arial", size=12, bold=True, color="FFFFFF")
         sheet["A1"].fill = PatternFill("solid", fgColor="17365D")
         sheet["A1"].alignment = Alignment(horizontal="center")
+        sheet.append([title])
+        sheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(headers))
+        sheet["A2"].font = Font(name="Arial", size=16, bold=True, color="FFFFFF")
+        sheet["A2"].fill = PatternFill("solid", fgColor="17365D")
+        sheet["A2"].alignment = Alignment(horizontal="center")
+        sheet.append(["تاريخ إعداد التقرير: " + datetime.now().strftime("%Y-%m-%d %H:%M")])
+        sheet.merge_cells(start_row=3, start_column=1, end_row=3, end_column=len(headers))
+        sheet["A3"].font = Font(name="Arial", italic=True, color="666666")
+        sheet["A3"].alignment = Alignment(horizontal="right")
         sheet.append(headers)
-        for cell in sheet[2]:
+        for cell in sheet[4]:
             cell.font = Font(name="Arial", bold=True, color="FFFFFF")
             cell.fill = PatternFill("solid", fgColor="167D8D")
             cell.alignment = Alignment(horizontal="center", vertical="center")
         for row in data:
             sheet.append(row)
-        for row in sheet.iter_rows(min_row=3):
+        for row in sheet.iter_rows(min_row=5):
             for cell in row:
                 cell.font = Font(name="Arial", size=11)
                 cell.alignment = Alignment(horizontal="right", vertical="center")
-                if cell.column >= 4 and isinstance(cell.value, (int, float)):
+                if isinstance(cell.value, (int, float, Decimal)):
                     cell.number_format = '#,##0.00;[Red]-#,##0.00'
         for column in sheet.columns:
             letter = get_column_letter(column[0].column)
             width = min(max(max(len(str(c.value or "")) for c in column) + 3, 14), 42)
             sheet.column_dimensions[letter].width = width
-        sheet.freeze_panes = "A3"
-        sheet.auto_filter.ref = sheet.dimensions
+        sheet.freeze_panes = "A5"
+        sheet.auto_filter.ref = f"A4:{get_column_letter(len(headers))}{sheet.max_row}"
+        sheet.print_title_rows = "1:4"
+        sheet.oddFooter.center.text = "صفحة &[Page] من &[Pages]"
         sheet.sheet_properties.pageSetUpPr.fitToPage = True
         sheet.page_setup.fitToWidth = 1
         sheet.page_setup.fitToHeight = 0
+        sheet.page_setup.orientation = "landscape" if len(headers) > 6 else "portrait"
         output = io.BytesIO()
         workbook.save(output)
         output.seek(0)
