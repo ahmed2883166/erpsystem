@@ -51,11 +51,9 @@ def index():
   today=date.today(); as_of=today.isoformat()
  c=db()
  if kind=="customers":
-  rows=c.execute("""SELECT i.invoice_no doc_no,cu.code party_code,cu.name party_name,i.invoice_date doc_date,
+  rows=c.execute("""SELECT i.id invoice_id,i.invoice_no doc_no,cu.code party_code,cu.name party_name,i.invoice_date doc_date,
     COALESCE(i.due_date,i.invoice_date) due_date,i.total_amount total_amount,i.paid_amount paid_amount,
-    COALESCE(i.credited_amount,'0') credited_amount,
-    COALESCE((SELECT SUM(rf.amount) FROM customer_refunds rf
-      JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id WHERE cn.invoice_id=i.id),'0') refunded_amount
+    COALESCE(i.credited_amount,'0') credited_amount
     FROM sales_invoices i JOIN customers cu ON cu.id=i.customer_id
     WHERE i.status='posted' AND i.invoice_date<=?
     ORDER BY due_date,cu.name""",(as_of,)).fetchall()
@@ -65,10 +63,15 @@ def index():
     FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
     WHERE b.status='posted' AND b.bill_date<=?
     ORDER BY due_date,s.name""",(as_of,)).fetchall()
+ refunds_by_invoice={}
+ if kind=="customers" and c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_refunds'").fetchone():
+  for refund in c.execute("""SELECT cn.invoice_id,rf.amount FROM customer_refunds rf
+      JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id""").fetchall():
+   refunds_by_invoice[refund["invoice_id"]]=refunds_by_invoice.get(refund["invoice_id"],Decimal("0"))+_amount(refund["amount"])
  c.close()
  result=[]; totals=[Decimal("0.00") for _ in range(5)]
  for r in rows:
-  balance=_amount(r["total_amount"])-_amount(r["paid_amount"])-_amount(r["credited_amount"] if "credited_amount" in r.keys() else "0")+_amount(r["refunded_amount"] if "refunded_amount" in r.keys() else "0")
+  balance=_amount(r["total_amount"])-_amount(r["paid_amount"])-_amount(r["credited_amount"] if "credited_amount" in r.keys() else "0")+refunds_by_invoice.get(r["invoice_id"],Decimal("0"))
   if balance<=0:
    continue
   try:
