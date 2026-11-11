@@ -117,8 +117,10 @@ def employees():
         try:
             salary = M(request.form.get("basic_salary"))
             hours = D(request.form.get("standard_hours", "208"))
-            if salary < 0 or hours <= 0:
-                raise ValueError("الراتب وساعات العمل القياسية يجب أن تكون قيمًا موجبة.")
+            insured_wage = M(request.form.get("insured_wage","0"))
+            legal_category = request.form.get("legal_category","local").strip().lower()
+            if salary < 0 or hours <= 0 or insured_wage < 0 or not legal_category:
+                raise ValueError("الراتب وساعات العمل وأجر الاشتراك يجب أن تكون صحيحة، وفئة الموظف مطلوبة.")
             c.execute("""INSERT INTO employees(employee_code,full_name,job_title,department,hire_date,basic_salary,standard_hours,
                 legal_category,insurance_number,insured_wage) VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (request.form["employee_code"].strip(), request.form["full_name"].strip(),
@@ -126,7 +128,7 @@ def employees():
                  request.form.get("hire_date") or date.today().isoformat(), str(salary), str(hours),
                  request.form.get("legal_category","local").strip().lower(),
                  request.form.get("insurance_number","").strip(),
-                 str(M(request.form.get("insured_wage","0")))))
+                 str(insured_wage)))
             _audit(c, "employee_created", request.form["employee_code"].strip())
             c.commit()
             flash("تم إضافة الموظف.", "success")
@@ -193,7 +195,8 @@ def payroll():
                 overtime_amount = M(overtime_hours * hourly * D("1.5"))
                 absence = M(absent_hours * hourly)
                 gross = M(D(e["basic_salary"]) + allowances + overtime_amount - absence - other_deductions)
-                automatic = calculate_payroll_deductions(c, e, gross, period)
+                taxable_pay = M(D(e["basic_salary"]) + allowances + overtime_amount)
+                automatic = calculate_payroll_deductions(c, e, taxable_pay, period)
                 if automatic:
                     tax = automatic["tax"]
                     emp_ins = automatic["employee_insurance"]
