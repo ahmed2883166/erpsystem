@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% block title %}ربط حسابات لوحة الإدارة | NEXUS ERP{% endblock %}
+{% block content %}
+<header><h2>ربط حسابات لوحة الإدارة</h2>
+<p class="muted">اربط التصنيفات بالحسابات التفصيلية الفعلية. لا يشترط استخدام أكواد الشجرة الافتراضية.</p></header>
+<section class="panel">
+<form method="post">
+<div class="form-grid">
+{% for role, meta in roles.items() %}
+<label>{{ meta[0] }}
+<select name="role_{{ role }}" multiple size="7" style="min-height:130px">
+{% for account in accounts %}
+{% if account.account_type in meta[1] %}
+<option value="{{ account.id }}" {% if account.id in selected[role] %}selected{% endif %}>{{ account.code }} — {{ account.name_ar }}</option>
+{% endif %}
+{% endfor %}
+</select>
+<small class="muted">يمكن اختيار أكثر من حساب باستخدام Ctrl.</small>
+</label>
+{% endfor %}
+</div>
+<button type="submit">حفظ ربط الحسابات</button>
+<a class="button secondary" href="{{ url_for('management_dashboard') }}">رجوع للوحة الإدارة</a>
+</form>
+</section>
+{% endblock %}
