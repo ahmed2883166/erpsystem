@@ -196,7 +196,8 @@ def post_scrap_journal(c, movement_id, movement_no, product, movement_date, tota
     settings = {row["setting_key"]: row["setting_value"] for row in c.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='activity'") }
     activity = settings.get("activity", "commercial")
-    inventory_code = posting_accounts.get("inventory")
+    from chart_templates import ACTIVITY_POSTING_ACCOUNTS
+    inventory_code = ACTIVITY_POSTING_ACCOUNTS.get(activity, {}).get("inventory")
     if not inventory_code:
         c.execute("UPDATE stock_movements SET accounting_status='pending_setup' WHERE id=?", (movement_id,))
         return None
@@ -242,8 +243,7 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
     if purpose == "sale":
         expense = c.execute("SELECT id,is_group,active FROM accounts WHERE code=?", (expense_code,)).fetchone() if expense_code else None
         expense_id = expense["id"] if expense and not expense["is_group"] and expense["active"] else None
-    from chart_templates import ACTIVITY_POSTING_ACCOUNTS
-    inventory_code = ACTIVITY_POSTING_ACCOUNTS.get(activity, {}).get("inventory")
+    inventory_code = posting_accounts.get("inventory")
     inventory = c.execute("SELECT id,is_group,active FROM accounts WHERE code=?", (inventory_code,)).fetchone() if inventory_code else None
     if not expense_id or not inventory or inventory["is_group"] or not inventory["active"]:
         raise ValueError("لا يمكن ترحيل حركة الصرف قبل ضبط حساب المصروف وحساب المخزون كحسابين تفصيليين نشطين بالنوع الصحيح.")
