@@ -122,13 +122,13 @@ def employees():
             if salary < 0 or hours <= 0 or insured_wage < 0 or not legal_category:
                 raise ValueError("الراتب وساعات العمل وأجر الاشتراك يجب أن تكون صحيحة، وفئة الموظف مطلوبة.")
             c.execute("""INSERT INTO employees(employee_code,full_name,job_title,department,hire_date,basic_salary,standard_hours,
-                legal_category,insurance_number,insured_wage) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                legal_category,insurance_number,insured_wage,insurance_enabled) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                 (request.form["employee_code"].strip(), request.form["full_name"].strip(),
                  request.form.get("job_title","").strip(), request.form.get("department","").strip(),
                  request.form.get("hire_date") or date.today().isoformat(), str(salary), str(hours),
                  request.form.get("legal_category","local").strip().lower(),
                  request.form.get("insurance_number","").strip(),
-                 str(insured_wage)))
+                 str(insured_wage), int(request.form.get("insurance_enabled","1") == "1")))
             _audit(c, "employee_created", request.form["employee_code"].strip())
             c.commit()
             flash("تم إضافة الموظف.", "success")
