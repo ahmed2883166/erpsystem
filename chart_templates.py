@@ -131,3 +131,22 @@ def ensure_common_activity_accounts(conn):
         )
         existing[code] = {"id": cur.lastrowid, "code": code,
                           "account_type": account_type, "is_group": int(is_group)}
+
+
+def ensure_activity_chart_accounts(conn, activity):
+    """Append missing accounts from the selected chart without altering legacy accounts."""
+    chart = CHARTS.get(activity, CHARTS["commercial"])
+    existing = {row["code"]: row for row in conn.execute(
+        "SELECT id,code,account_type,is_group FROM accounts"
+    )}
+    for code, name, account_type, parent_code, is_group in chart:
+        if code in existing:
+            continue
+        parent = existing.get(parent_code) if parent_code else None
+        parent_id = parent["id"] if parent and parent["is_group"] and parent["account_type"] == account_type else None
+        cur = conn.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
+            (code, name, account_type, parent_id, int(is_group)),
+        )
+        existing[code] = {"id": cur.lastrowid, "code": code,
+                          "account_type": account_type, "is_group": int(is_group)}
