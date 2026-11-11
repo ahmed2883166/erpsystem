@@ -27,7 +27,7 @@ from workforce import workforce_bp, initialize_workforce_schema
 from payroll_compliance import payroll_compliance_bp, initialize_payroll_compliance_schema
 from currency_center import currency_bp, initialize_currency_schema
 from party_reports import party_bp
-from management_dashboard import build_management_snapshot, initialize_management_dashboard_schema
+from management_dashboard import cached_management_snapshot, initialize_management_dashboard_schema
 from analytic_dimensions import initialize_analytic_dimensions_schema, active_dimension_options, validate_journal_dimensions
 from financial_planning import planning_bp, initialize_planning_schema
 from report_exports import register_report_exports
@@ -1019,7 +1019,7 @@ def management_dashboard():
                 break
     connection = db()
     try:
-        snapshot = build_management_snapshot(connection, start, end, dimensions)
+        snapshot = cached_management_snapshot(connection, start, end, dimensions)
         from management_dashboard import cash_forecast, unusual_journal_entries
         snapshot["cash_forecast"] = cash_forecast(connection, date.today(), 8)
         snapshot["unusual_entries"] = unusual_journal_entries(connection, start, end)
