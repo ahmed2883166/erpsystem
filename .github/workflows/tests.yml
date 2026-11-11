@@ -26,6 +26,6 @@ jobs:
       - name: Compile Python files
         run: python -m compileall -q .
       - name: Static analysis (unused imports and variables)
-        run: ruff check app.py accounting_core.py stock.py sales.py purchases.py party_reports.py financial_planning.py tests --select F401,F841 --output-format=github
+        run: ruff check app.py accounting_core.py stock.py sales.py purchases.py party_reports.py report_exports.py license_server.py financial_planning.py tests --select F401,F841 --output-format=github
       - name: Run unit and integration tests
         run: python run_tests.py
