@@ -356,9 +356,14 @@ def suppliers():
         per_page=request.args.get("suppliers_per_page",50,type=int))
     suppliers_rows=suppliers_page["rows"]
     outstanding_by_supplier={}
-    for bill in c.execute("SELECT supplier_id,total_amount,paid_amount,credited_amount FROM supplier_bills WHERE status='posted'").fetchall():
-        balance=Decimal(bill["total_amount"])-Decimal(bill["paid_amount"] or "0")-Decimal(bill["credited_amount"] or "0")
-        outstanding_by_supplier[bill["supplier_id"]]=outstanding_by_supplier.get(bill["supplier_id"],Decimal("0"))+balance
+    for bill in c.execute("""SELECT supplier_id,
+        COALESCE(DECIMAL_SUM(total_amount),'0') total_amount,
+        COALESCE(DECIMAL_SUM(paid_amount),'0') paid_amount,
+        COALESCE(DECIMAL_SUM(credited_amount),'0') credited_amount
+        FROM supplier_bills WHERE status='posted' GROUP BY supplier_id"""):
+        outstanding_by_supplier[bill["supplier_id"]] = (
+            Decimal(bill["total_amount"]) - Decimal(bill["paid_amount"]) - Decimal(bill["credited_amount"])
+        )
     rows=[dict(row,outstanding=outstanding_by_supplier.get(row["id"],Decimal("0"))) for row in suppliers_rows]
     c.close()
     return render_template("purchase_suppliers.html",rows=rows,suppliers_page=suppliers_page)
