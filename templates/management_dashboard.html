@@ -58,6 +58,8 @@
     <div class="stat-card"><small>أرصدة الموردين</small><strong>{{ money(s.payables) }}</strong></div>
     <div class="stat-card"><small>قيمة المخزون</small><strong>{{ money(s.inventory) }}</strong></div>
     <div class="stat-card"><small>إجمالي الأصول</small><strong>{{ money(s.total_assets) }}</strong></div>
+    <div class="stat-card"><small>إجمالي الالتزامات</small><strong>{{ money(s.total_liabilities) }}</strong></div>
+    <div class="stat-card"><small>حقوق الملكية</small><strong>{{ money(s.total_equity) }}</strong></div>
     <div class="stat-card"><small>رأس المال العامل</small><strong>{{ money(s.working_capital) }}</strong></div>
     <div class="stat-card"><small>نسبة السيولة الجارية</small><strong>{{ ratio(s.current_ratio) }}</strong></div>
     <div class="stat-card"><small>نسبة السيولة السريعة</small><strong>{{ ratio(s.quick_ratio) }}</strong></div>
