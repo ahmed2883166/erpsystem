@@ -21,14 +21,16 @@ class ReceivablesAgingTests(unittest.TestCase):
           CREATE TABLE sales_credit_notes(id INTEGER PRIMARY KEY,invoice_id INTEGER,status TEXT);
           CREATE TABLE customer_refunds(id INTEGER PRIMARY KEY,credit_note_id INTEGER,refund_date TEXT,amount TEXT);
           CREATE TABLE supplier_bills(id INTEGER PRIMARY KEY,supplier_id INTEGER,bill_no TEXT,
-            bill_date TEXT,due_date TEXT,total_amount TEXT,paid_amount TEXT,status TEXT);
+            bill_date TEXT,due_date TEXT,total_amount TEXT,paid_amount TEXT,credited_amount TEXT DEFAULT '0',status TEXT);
+          CREATE TABLE supplier_credit_notes(id INTEGER PRIMARY KEY, supplier_id INTEGER, bill_id INTEGER,
+            credit_date TEXT, total_amount TEXT, status TEXT);
           INSERT INTO customers VALUES(1,'C1','عميل',1);
           INSERT INTO suppliers VALUES(1,'S1','مورد',1);
           INSERT INTO sales_invoices VALUES(1,1,'SI-1','2026-11-01','2026-11-10','100','50','20','posted');
           INSERT INTO sales_credit_notes VALUES(1,1,'posted');
           INSERT INTO customer_refunds VALUES(1,1,'2026-11-20','10');
           INSERT INTO customer_refunds VALUES(2,1,'2026-12-01','5');
-          INSERT INTO supplier_bills VALUES(1,1,'PB-1','2026-11-01','2026-11-10','200','50','posted');
+          INSERT INTO supplier_bills VALUES(1,1,'PB-1','2026-11-01','2026-11-10','200','50','0','posted');
         """)
         conn.commit()
         conn.close()
