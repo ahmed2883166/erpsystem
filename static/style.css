@@ -137,3 +137,7 @@ main{overscroll-behavior-y:auto;min-width:0}
 .financial-group>summary{cursor:pointer;padding:13px 16px;background:var(--surface2);font-weight:800}
 .financial-group .table-wrap{padding:0 12px 12px}
 @media print{body{background:#fff!important;color:#111!important}aside,.theme-toggle,.global-report-actions,.no-print{display:none!important}main{margin:0!important;padding:0!important}.print-document{box-shadow:none!important;border:0!important;max-width:none!important}.panel{break-inside:avoid}}
+
+.account-section-row td{background:var(--surface2);color:var(--accent);font-weight:900;font-size:14px;border-top:2px solid var(--line);padding:12px 16px}
+.account-row.account-group td{background:color-mix(in srgb,var(--accent) 6%,var(--surface));font-weight:700}
+.account-row.account-detail td{font-weight:400}
