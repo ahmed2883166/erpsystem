@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import date, datetime
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal, register_decimal_aggregates
+from stock import consume_layers, q4
 
 purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
@@ -60,12 +61,31 @@ def init_purchase_schema():
       bill_date TEXT NOT NULL, due_date TEXT, supplier_invoice_no TEXT NOT NULL, subtotal TEXT NOT NULL,
       tax_rate TEXT NOT NULL DEFAULT '0', tax_amount TEXT NOT NULL DEFAULT '0',
       total_amount TEXT NOT NULL, paid_amount TEXT NOT NULL DEFAULT '0',
+      credited_amount TEXT NOT NULL DEFAULT '0',
       status TEXT NOT NULL DEFAULT 'posted', journal_entry_id INTEGER UNIQUE,
       created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS supplier_bill_receipts(
       bill_id INTEGER NOT NULL REFERENCES supplier_bills(id), receipt_id INTEGER NOT NULL REFERENCES goods_receipts(id),
       matched_amount TEXT NOT NULL, PRIMARY KEY(bill_id,receipt_id)
+    );
+    CREATE TABLE IF NOT EXISTS supplier_credit_notes(
+      id INTEGER PRIMARY KEY, credit_no TEXT NOT NULL UNIQUE,
+      supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+      bill_id INTEGER NOT NULL REFERENCES supplier_bills(id),
+      credit_date TEXT NOT NULL, supplier_credit_no TEXT NOT NULL,
+      reason TEXT NOT NULL, subtotal TEXT NOT NULL, tax_rate TEXT NOT NULL,
+      tax_amount TEXT NOT NULL, total_amount TEXT NOT NULL,
+      journal_entry_id INTEGER UNIQUE, status TEXT NOT NULL DEFAULT 'posted',
+      created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(supplier_id,supplier_credit_no)
+    );
+    CREATE TABLE IF NOT EXISTS supplier_credit_note_lines(
+      id INTEGER PRIMARY KEY,
+      credit_note_id INTEGER NOT NULL REFERENCES supplier_credit_notes(id) ON DELETE CASCADE,
+      product_id INTEGER NOT NULL REFERENCES stock_products(id),
+      warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
+      quantity TEXT NOT NULL, unit_cost TEXT NOT NULL, total_cost TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS supplier_payments(
       id INTEGER PRIMARY KEY, payment_no TEXT NOT NULL UNIQUE, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
@@ -85,6 +105,8 @@ def init_purchase_schema():
     CREATE INDEX IF NOT EXISTS idx_purchase_receipts_supplier ON goods_receipts(supplier_id,receipt_date);
     """)
     bill_columns = {row["name"] for row in c.execute("PRAGMA table_info(supplier_bills)")}
+    if "credited_amount" not in bill_columns:
+        c.execute("ALTER TABLE supplier_bills ADD COLUMN credited_amount TEXT NOT NULL DEFAULT '0'")
     if "due_date" not in bill_columns:
         c.execute("ALTER TABLE supplier_bills ADD COLUMN due_date TEXT")
         c.execute("UPDATE supplier_bills SET due_date=bill_date WHERE due_date IS NULL")
@@ -184,8 +206,11 @@ def index():
     receipts=c.execute("""SELECT r.*,s.name supplier_name FROM goods_receipts r JOIN suppliers s ON s.id=r.supplier_id ORDER BY r.id DESC LIMIT 20""").fetchall()
     bills=c.execute("""SELECT b.*,s.name supplier_name FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id ORDER BY b.id DESC LIMIT 20""").fetchall()
     payments=c.execute("""SELECT p.*,s.name supplier_name FROM supplier_payments p JOIN suppliers s ON s.id=p.supplier_id ORDER BY p.id DESC LIMIT 20""").fetchall()
+    credit_notes=c.execute("""SELECT n.*,s.name supplier_name,b.bill_no FROM supplier_credit_notes n
+      JOIN suppliers s ON s.id=n.supplier_id JOIN supplier_bills b ON b.id=n.bill_id
+      ORDER BY n.id DESC LIMIT 20""").fetchall()
     c.close()
-    return render_template("purchases.html",suppliers=suppliers,orders=orders,receipts=receipts,bills=bills,payments=payments,today=date.today().isoformat())
+    return render_template("purchases.html",suppliers=suppliers,orders=orders,receipts=receipts,bills=bills,payments=payments,credit_notes=credit_notes,today=date.today().isoformat())
 
 @purchase_bp.route("/integrity")
 @require("purchases.view")
@@ -294,8 +319,8 @@ def suppliers():
         except sqlite3.IntegrityError: c.rollback(); flash("كود المورد مستخدم بالفعل.","error")
     suppliers_rows=c.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
     outstanding_by_supplier={}
-    for bill in c.execute("SELECT supplier_id,total_amount,paid_amount FROM supplier_bills WHERE status='posted'").fetchall():
-        balance=Decimal(bill["total_amount"])-Decimal(bill["paid_amount"] or "0")
+    for bill in c.execute("SELECT supplier_id,total_amount,paid_amount,credited_amount FROM supplier_bills WHERE status='posted'").fetchall():
+        balance=Decimal(bill["total_amount"])-Decimal(bill["paid_amount"] or "0")-Decimal(bill["credited_amount"] or "0")
         outstanding_by_supplier[bill["supplier_id"]]=outstanding_by_supplier.get(bill["supplier_id"],Decimal("0"))+balance
     rows=[dict(row,outstanding=outstanding_by_supplier.get(row["id"],Decimal("0"))) for row in suppliers_rows]
     c.close()
@@ -533,6 +558,108 @@ def new_bill():
       WHERE r.status='posted' AND NOT EXISTS(SELECT 1 FROM supplier_bill_receipts x WHERE x.receipt_id=r.id) ORDER BY r.id""").fetchall()
     c.close(); return render_template("purchase_bill_new.html",suppliers=su,receipts=receipts,expense_accounts=expense_accounts,today=date.today().isoformat())
 
+
+@purchase_bp.route("/credit-notes/new", methods=["GET","POST"])
+@require("purchases.manage")
+def new_credit_note():
+    c=db()
+    if request.method=="POST":
+        try:
+            supplier=int(request.form["supplier_id"])
+            bill_id=int(request.form["bill_id"])
+            supplier_credit_no=request.form.get("supplier_credit_no","").strip()
+            reason=request.form.get("reason","").strip()
+            if not supplier_credit_no or not reason:
+                raise ValueError("رقم إشعار المورد وسبب المرتجع مطلوبان.")
+            product_ids=request.form.getlist("product_id")
+            warehouse_ids=request.form.getlist("warehouse_id")
+            quantities=request.form.getlist("quantity")
+            if not product_ids or not (len(product_ids)==len(warehouse_ids)==len(quantities)):
+                raise ValueError("أضف صنفًا واحدًا على الأقل وحدد المخزن والكمية لكل صنف.")
+            c.execute("BEGIN IMMEDIATE")
+            bill=c.execute("SELECT * FROM supplier_bills WHERE id=? AND supplier_id=? AND status='posted'",(bill_id,supplier)).fetchone()
+            if not bill:
+                raise ValueError("فاتورة المورد غير موجودة أو لا تتبع المورد المحدد.")
+            if c.execute("SELECT 1 FROM supplier_credit_notes WHERE supplier_id=? AND lower(trim(supplier_credit_no))=lower(trim(?))",(supplier,supplier_credit_no)).fetchone():
+                raise ValueError("رقم إشعار الدائن مسجل بالفعل لهذا المورد.")
+            activity_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+            activity=activity_row["setting_value"] if activity_row else "commercial"
+            inventory_code={"commercial":"1150","industrial":"1130","medical":"1150","restaurant":"1140"}.get(activity)
+            if not inventory_code:
+                raise ValueError("النشاط الحالي لا يملك حساب مخزون معرفًا.")
+            inventory_id=account(c,inventory_code,"asset")
+            ap_id=supplier_ap_account(c)
+            tax_rate=Decimal(bill["tax_rate"] or "0")
+            method_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
+            method=method_row["setting_value"] if method_row else "average"
+            line_data=[]; movement_ids=[]; subtotal=Decimal("0")
+            for raw_pid,raw_wh,raw_qty in zip(product_ids,warehouse_ids,quantities):
+                product_id=int(raw_pid); warehouse_id=int(raw_wh)
+                qty=q4(Decimal(raw_qty))
+                if qty<=0: raise ValueError("كمية المرتجع يجب أن تكون أكبر من صفر.")
+                product=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(product_id,)).fetchone()
+                warehouse=c.execute("SELECT id FROM stock_warehouses WHERE id=? AND active=1",(warehouse_id,)).fetchone()
+                if not product or product["product_type"]=="service" or not warehouse:
+                    raise ValueError("اختر صنفًا مخزنيًا ومخزنًا نشطًا.")
+                cost,allocations=consume_layers(c,product_id,warehouse_id,qty,method)
+                subtotal+=cost
+                line_data.append((product_id,warehouse_id,qty,cost))
+                for lot_id,allocated_qty,unit_cost,allocated_total in allocations:
+                    movement_no="SUPRET-"+datetime.now().strftime("%Y%m%d%H%M%S%f")+"-"+uuid.uuid4().hex[:5].upper()
+                    cur=c.execute("""INSERT INTO stock_movements(
+                      movement_no,movement_type,product_id,source_warehouse_id,lot_id,quantity,unit_cost,total_cost,
+                      movement_date,notes,created_by,issue_purpose,accounting_status)
+                      VALUES(?,'issue',?,?,?,?,?,?,?,?,?,'supplier_return','pending_document')""",
+                      (movement_no,product_id,warehouse_id,lot_id,str(allocated_qty),str(unit_cost),str(allocated_total),
+                       request.form["credit_date"],"مرتجع مورد — "+supplier_credit_no,session["user_id"]))
+                    movement_ids.append(cur.lastrowid)
+            subtotal=money(subtotal)
+            if subtotal<=0: raise ValueError("قيمة المرتجع يجب أن تكون أكبر من صفر.")
+            tax=money(subtotal*tax_rate/Decimal("100"))
+            total=subtotal+tax
+            already_credited=Decimal(bill["credited_amount"] or "0")
+            bill_remaining=Decimal(bill["total_amount"])-already_credited
+            if total>bill_remaining:
+                raise ValueError("قيمة إشعار الدائن تتجاوز المتبقي من قيمة فاتورة المورد بعد الإشعارات السابقة.")
+            credit_no="SCN-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
+            cur=c.execute("""INSERT INTO supplier_credit_notes(
+              credit_no,supplier_id,bill_id,credit_date,supplier_credit_no,reason,subtotal,tax_rate,tax_amount,total_amount,created_by)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+              (credit_no,supplier,bill_id,request.form["credit_date"],supplier_credit_no,reason,
+               str(subtotal),str(tax_rate),str(tax),str(total),session["user_id"]))
+            note_id=cur.lastrowid
+            for product_id,warehouse_id,qty,cost in line_data:
+                c.execute("""INSERT INTO supplier_credit_note_lines(
+                  credit_note_id,product_id,warehouse_id,quantity,unit_cost,total_cost) VALUES(?,?,?,?,?,?)""",
+                  (note_id,product_id,warehouse_id,str(qty),str(money(cost/qty)),str(cost)))
+            journal_lines=[(ap_id,total,0,"تخفيض مديونية المورد بإشعار دائن"),
+                           (inventory_id,0,subtotal,"إخراج مخزون مرتجع للمورد")]
+            if tax:
+                vat_id=account(c,"1165","asset")
+                journal_lines.append((vat_id,0,tax,"عكس ضريبة المدخلات حسب إشعار المورد"))
+            entry_id=create_journal(c,request.form["credit_date"],credit_no,
+                "إشعار دائن مشتريات — "+supplier_credit_no,journal_lines,session["user_id"])
+            c.execute("UPDATE supplier_credit_notes SET journal_entry_id=? WHERE id=?",(entry_id,note_id))
+            c.execute("UPDATE supplier_bills SET credited_amount=? WHERE id=?",
+                      (str(money(already_credited+total)),bill_id))
+            for movement_id in movement_ids:
+                c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?",(entry_id,movement_id))
+            c.commit()
+            flash(f"تم ترحيل إشعار الدائن {credit_no} وربطه بالمخزون وفاتورة المورد.","success")
+            return redirect(url_for("purchase.index"))
+        except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
+            c.rollback()
+            flash(str(e),"error")
+    suppliers=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
+    bills=c.execute("""SELECT b.id,b.bill_no,b.supplier_id,b.bill_date,b.total_amount,b.credited_amount,s.name supplier_name
+      FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
+      WHERE b.status='posted' AND CAST(b.total_amount AS NUMERIC)>CAST(COALESCE(b.credited_amount,'0') AS NUMERIC)
+      ORDER BY b.bill_date DESC,b.id DESC""").fetchall()
+    products=c.execute("SELECT id,sku,name_ar,uom FROM stock_products WHERE active=1 AND product_type!='service' ORDER BY name_ar").fetchall()
+    warehouses=c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
+    c.close()
+    return render_template("purchase_credit_note_new.html",suppliers=suppliers,bills=bills,products=products,warehouses=warehouses,today=date.today().isoformat())
+
 @purchase_bp.route("/payments/new",methods=["GET","POST"])
 @require("purchases.manage")
 def new_payment():
@@ -555,9 +682,9 @@ def new_payment():
               (no,supplier,request.form["payment_date"],str(amount),cash,eid,request.form.get("reference",""),session["user_id"]))
             payment_id=cur.lastrowid; remaining=amount
             bills=c.execute("""SELECT * FROM supplier_bills WHERE supplier_id=? AND status='posted' ORDER BY bill_date,id""",(supplier,)).fetchall()
-            bills=[b for b in bills if Decimal(b["total_amount"])>Decimal(b["paid_amount"] or "0")]
+            bills=[b for b in bills if Decimal(b["total_amount"])>Decimal(b["paid_amount"] or "0")+Decimal(b["credited_amount"] or "0")]
             for b in bills:
-                due=money(Decimal(b["total_amount"])-Decimal(b["paid_amount"])); alloc=min(due,remaining)
+                due=money(Decimal(b["total_amount"])-Decimal(b["paid_amount"] or "0")-Decimal(b["credited_amount"] or "0")); alloc=min(due,remaining)
                 if alloc>0:
                     c.execute("INSERT INTO supplier_payment_allocations(payment_id,bill_id,amount) VALUES(?,?,?)",(payment_id,b["id"],str(alloc)))
                     c.execute("UPDATE supplier_bills SET paid_amount=? WHERE id=?",(str(money(Decimal(b["paid_amount"])+alloc)),b["id"]))
