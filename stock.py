@@ -777,7 +777,7 @@ def movements():
 @stock_permission("stock.view")
 def reports():
     c=get_db()
-    products=c.execute("SELECT id,sku,name_ar,uom FROM stock_products WHERE active=1 ORDER BY sku").fetchall()
+    products=c.execute("SELECT id,sku,name_ar,uom,min_qty,reorder_point,reorder_qty FROM stock_products WHERE active=1 ORDER BY sku").fetchall()
     layers=c.execute("SELECT * FROM stock_valuation_layers WHERE CAST(qty_remaining AS REAL)>0 ORDER BY id").fetchall()
     product_totals={}
     warehouse_totals={}
