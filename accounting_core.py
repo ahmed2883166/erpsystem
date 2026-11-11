@@ -176,14 +176,9 @@ def _scalar(conn, sql, params=()):
 
 
 def _inventory_codes(activity):
-    # Include every inventory control account used by each activity's chart.
-    return {
-        "commercial": ("1150",),
-        "industrial": ("1130", "1140", "1150", "1160"),
-        "medical": ("1150", "1160"),
-        "restaurant": ("1140", "1150", "1160"),
-        "service": (),
-    }.get(activity, ("1150",))
+    """Return inventory control accounts from the selected activity chart."""
+    from chart_templates import ACTIVITY_ACCOUNT_ROLES
+    return ACTIVITY_ACCOUNT_ROLES.get(activity, ACTIVITY_ACCOUNT_ROLES["commercial"])["inventory"]
 
 
 def _decimal_sum(values):
