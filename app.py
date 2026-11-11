@@ -1093,7 +1093,7 @@ def users():
 @app.route("/users/<int:user_id>/edit",methods=["GET","POST"])
 @requires("users.manage")
 def edit_user(user_id):
-    connection=db(); user=connection.execute("SELECT id,username,full_name,role,active FROM users WHERE id=?",(user_id,)).fetchone()
+    connection=db(); user=connection.execute("SELECT id,username,full_name,role,active,permissions_json FROM users WHERE id=?",(user_id,)).fetchone()
     if not user:
         connection.close(); flash("المستخدم غير موجود.","error"); return redirect(url_for("users"))
     if request.method=="POST":
