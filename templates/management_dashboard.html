@@ -74,7 +74,7 @@
     <table><thead><tr><th>الحساب</th><th>القيمة</th><th>النسبة من الإجمالي</th><th>فتح الحساب</th></tr></thead>
     <tbody id="managementChartRows"><tr><td colspan="4">جارٍ تجهيز البيانات…</td></tr></tbody></table>
   </div>
-  <script id="managementChartData" type="application/json">{{ {'revenue': s.revenue_accounts|map(attribute='value')|list, 'expense': s.expense_accounts|map(attribute='value')|list}|tojson }}</script>
+  <script id="managementChartData" type="application/json">{{ {'revenue': s.revenue_accounts|map(attribute='value')|map('float')|list, 'expense': s.expense_accounts|map(attribute='value')|map('float')|list}|tojson }}</script>
   <script id="managementChartLabels" type="application/json">{{ {'revenue': s.revenue_accounts|map(attribute='code')|list, 'expense': s.expense_accounts|map(attribute='code')|list}|tojson }}</script>
   <script id="managementChartNames" type="application/json">{{ {'revenue': s.revenue_accounts|map(attribute='name')|list, 'expense': s.expense_accounts|map(attribute='name')|list}|tojson }}</script>
   <script id="managementChartLinks" type="application/json">{{ {'revenue': s.revenue_accounts|map(attribute='id')|map('string')|list, 'expense': s.expense_accounts|map(attribute='id')|map('string')|list}|tojson }}</script>
