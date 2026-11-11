@@ -2,7 +2,7 @@ import sqlite3
 import unittest
 from decimal import Decimal
 
-from payroll_compliance import calculate_payroll_deductions, seed_egypt_2026, _payroll_obligations
+from payroll_compliance import (calculate_payroll_deductions, seed_egypt_2026, _payroll_obligations, ensure_default_payroll_rules)
 
 
 class PayrollComplianceTests(unittest.TestCase):
@@ -69,6 +69,17 @@ class PayrollComplianceTests(unittest.TestCase):
         self.assertEqual(result["taxable_annual"], Decimal("86800.00"))
         self.assertEqual(result["tax"], Decimal("592.50"))
 
+
+    def test_default_egypt_rules_are_seeded_once_without_overwriting_edits(self):
+        ensure_default_payroll_rules(self.conn)
+        self.conn.execute(
+            "UPDATE payroll_rule_sets SET employee_insurance_rate='10' WHERE country_code='EG'"
+        )
+        ensure_default_payroll_rules(self.conn)
+        rate = self.conn.execute(
+            "SELECT employee_insurance_rate FROM payroll_rule_sets WHERE country_code='EG'"
+        ).fetchone()[0]
+        self.assertEqual(rate, "10")
 
     def test_egypt_income_over_600k_uses_correct_tax_tier(self):
         seed_egypt_2026(self.conn)
