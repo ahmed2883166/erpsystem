@@ -5,12 +5,17 @@ from cryptography.hazmat.primitives import serialization
 from licensing import get_license_status, verify_license_token
 
 class LicensingTests(unittest.TestCase):
-    def test_trial_expires_after_15_days(self):
-        with tempfile.TemporaryDirectory() as folder:
-            start=datetime(2026,11,10,tzinfo=timezone.utc)
-            self.assertEqual(get_license_status(folder,start,machine_id="device-a")["days_remaining"],15)
-            self.assertEqual(get_license_status(folder,start+timedelta(days=14),machine_id="device-a")["status"],"trial")
-            self.assertEqual(get_license_status(folder,start+timedelta(days=15),machine_id="device-a")["status"],"expired")
+    def test_missing_remote_trial_authority_fails_closed(self):
+        import os
+        old = os.environ.pop("NEXUS_LICENSE_TRIAL_URL", None)
+        try:
+            with tempfile.TemporaryDirectory() as folder:
+                start=datetime(2026,11,10,tzinfo=timezone.utc)
+                status = get_license_status(folder,start,machine_id="device-a")
+                self.assertEqual(status["status"],"online_required")
+        finally:
+            if old is not None:
+                os.environ["NEXUS_LICENSE_TRIAL_URL"] = old
 
     def test_clock_rollback_is_detected(self):
         with tempfile.TemporaryDirectory() as folder:
