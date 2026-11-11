@@ -144,6 +144,15 @@ def normalize_user_permissions(values):
             selected.add(view)
     return sorted(selected)
 
+def stored_user_permissions(raw, role):
+    try:
+        values = json.loads(raw) if raw else PERMISSIONS.get(role, set())
+    except (TypeError, ValueError, json.JSONDecodeError):
+        values = PERMISSIONS.get(role, set())
+    if not isinstance(values, (list, tuple, set)):
+        values = PERMISSIONS.get(role, set())
+    return normalize_user_permissions(values)
+
 register_report_exports(app, DB_PATH, PERMISSIONS)
 
 
@@ -413,7 +422,7 @@ def login():
             session.permanent = True
             session.update(user_id=user["id"], username=user["username"], full_name=user["full_name"],
                            role=user["role"], must_change_password=bool(user["must_change_password"]),
-                           permissions=normalize_user_permissions(json.loads(user["permissions_json"]) if user["permissions_json"] else PERMISSIONS.get(user["role"], set())))
+                           permissions=stored_user_permissions(user["permissions_json"], user["role"]))
             log("login", "تسجيل دخول")
             if user["must_change_password"]:
                 flash("يجب تغيير كلمة مرور المدير الافتراضية قبل استخدام النظام.", "warning")
@@ -1124,7 +1133,7 @@ def edit_user(user_id):
                 flash("تم تعديل المستخدم.","success"); return redirect(url_for("users"))
             except sqlite3.IntegrityError:
                 connection.rollback(); flash("اسم المستخدم مستخدم بالفعل.","error")
-    selected_permissions = set(normalize_user_permissions(json.loads(user["permissions_json"]) if "permissions_json" in user.keys() and user["permissions_json"] else PERMISSIONS.get(user["role"], set())))
+    selected_permissions = set(stored_user_permissions(user["permissions_json"] if "permissions_json" in user.keys() else None, user["role"]))
     connection.close(); return render_template("user_edit.html",user=user,roles=PERMISSIONS,all_permissions=ALL_PERMISSIONS,permission_labels=PERMISSION_LABELS,selected_permissions=selected_permissions)
 
 
