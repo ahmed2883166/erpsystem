@@ -563,6 +563,9 @@ def new_bill():
 @purchase_bp.route("/credit-notes/new", methods=["GET","POST"])
 @require("purchases.manage")
 def new_credit_note():
+    if "permissions" in session and "stock.manage" not in set(session["permissions"]):
+        flash("يلزم امتلاك صلاحية إدارة المشتريات وإدارة المخزون معًا لترحيل مرتجع المورد.","error")
+        return redirect(url_for("purchase.index"))
     c=db()
     if request.method=="POST":
         try:
