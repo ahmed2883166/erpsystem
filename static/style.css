@@ -116,3 +116,8 @@ main{overscroll-behavior-y:auto;min-width:0}
 .chart-switch.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 .chart-data-table{margin-top:18px}
 @media(max-width:900px){.dashboard-chart-layout{grid-template-columns:1fr}.dashboard-chart-legend{max-height:210px}.dashboard-chart-canvas{height:320px}}
+
+.button-link,.stock-shortcuts a{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:10px 18px;border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line));border-radius:10px;background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 12%,var(--surface)),var(--surface2));color:var(--text);font-weight:800;text-decoration:none;box-shadow:0 3px 9px rgba(15,23,42,.06);transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease}
+.button-link:hover,.stock-shortcuts a:hover{transform:translateY(-2px);border-color:var(--accent);box-shadow:0 7px 16px rgba(15,23,42,.1);color:var(--accent)}
+.stock-shortcuts{padding:12px 0 4px}
+.stock-shortcuts a{min-width:140px}
