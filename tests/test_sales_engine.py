@@ -27,7 +27,7 @@ class SalesIntegrationTests(unittest.TestCase):
         );
         CREATE TABLE journal_lines(
           id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
-          debit REAL DEFAULT 0, credit REAL DEFAULT 0, memo TEXT
+          debit TEXT DEFAULT 0, credit TEXT DEFAULT 0, memo TEXT
         );
         CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL);
         CREATE TABLE tax_rates(id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT, rate REAL, active INTEGER DEFAULT 1);
