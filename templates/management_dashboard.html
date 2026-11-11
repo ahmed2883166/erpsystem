@@ -33,7 +33,10 @@
   <form method="get" class="report-filter">
     <label>من تاريخ<input type="date" name="date_from" value="{{ date_from }}" required></label>
     <label>إلى تاريخ<input type="date" name="date_to" value="{{ date_to }}" required></label>
-    <button type="submit">عرض الفترة</button>
+    <label>الفرع<select name="branch_id"><option value="">كل الفروع</option>{% for x in dimension_options.branches %}<option value="{{ x.id }}" {% if selected_dimensions.get('branch_id') == x.id %}selected{% endif %}>{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
+    <label>مركز التكلفة<select name="cost_center_id"><option value="">كل المراكز</option>{% for x in dimension_options.cost_centers %}<option value="{{ x.id }}" {% if selected_dimensions.get('cost_center_id') == x.id %}selected{% endif %}>{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
+    <label>المشروع<select name="project_id"><option value="">كل المشروعات</option>{% for x in dimension_options.projects %}<option value="{{ x.id }}" {% if selected_dimensions.get('project_id') == x.id %}selected{% endif %}>{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
+    <button type="submit">تطبيق الفلاتر</button>
   </form>
 </section>
 
