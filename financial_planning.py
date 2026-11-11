@@ -135,8 +135,8 @@ def budget_detail(budget_id):
 
 def build_balance_sheet_snapshot(conn, as_of):
     rows = conn.execute("""SELECT a.id,a.code,a.name_ar,a.account_type,a.parent_id,a.is_group,
-        COALESCE(DECIMAL_SUM(jl.debit),0) debit,
-        COALESCE(DECIMAL_SUM(jl.credit),0) credit
+        COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
+        COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
       FROM accounts a
       LEFT JOIN journal_lines jl ON jl.account_id=a.id
       LEFT JOIN journal_entries je ON je.id=jl.entry_id AND je.status='posted' AND je.entry_date<=?
