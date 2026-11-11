@@ -31,5 +31,9 @@
 <form method="post" action="{{url_for('currency_center.revalue',transaction_id=t.id)}}" class="form-grid"><strong>إعادة تقييم في نهاية الفترة</strong>
 <label>تاريخ التقييم<input type="date" name="revaluation_date" value="{{today}}" required></label><label>سعر الإقفال<input type="number" name="rate" min="0.000001" step="0.000001" required></label>
 <label>حساب أرباح فروق العملة<select name="fx_gain_account_id">{% for a in accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
-<label>حساب خسائر فروق العملة<select name="fx_loss_account_id">{% for a in accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label><button type="submit">إعادة التقييم وترحيل القيد</button></form>{% endif %}</article>{% else %}<p>لا توجد معاملات عملة أجنبية.</p>{% endfor %}</section>
+<label>حساب خسائر فروق العملة<select name="fx_loss_account_id">{% for a in accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label><button type="submit">إعادة التقييم وترحيل القيد</button></form>{% endif %}</article>{% else %}<p>لا توجد معاملات عملة أجنبية.</p>{% endfor %}
+<div class="actions pagination"><span class="muted">إجمالي معاملات العملات: {{ transactions_page.total }} — الصفحة {{ transactions_page.page }} من {{ transactions_page.pages }}</span>
+<form method="get" class="inline-form"><label>عدد السطور <select name="transactions_per_page" onchange="this.form.submit()"><option value="50" {% if transactions_page.per_page==50 %}selected{% endif %}>50</option><option value="100" {% if transactions_page.per_page==100 %}selected{% endif %}>100</option></select></label></form>
+{% if transactions_page.page>1 %}<a class="button secondary" href="{{ url_for('currency_center.index',transactions_page=transactions_page.page-1,transactions_per_page=transactions_page.per_page) }}">السابق</a>{% endif %}
+{% if transactions_page.page<transactions_page.pages %}<a class="button" href="{{ url_for('currency_center.index',transactions_page=transactions_page.page+1,transactions_per_page=transactions_page.per_page) }}">التالي</a>{% endif %}</div></section>
 {% endblock %}
