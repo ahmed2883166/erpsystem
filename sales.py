@@ -164,6 +164,8 @@ def init_sales_schema():
     }.items():
         if name not in invoice_columns:
             c.execute(f"ALTER TABLE sales_invoices ADD COLUMN {name} {definition}")
+    # Re-run after creating customers and salespersons so their journal dimensions exist.
+    initialize_analytic_dimensions_schema(c)
     c.close()
 
 
