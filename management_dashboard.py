@@ -273,3 +273,90 @@ def build_management_snapshot(conn, start, end, dimensions=None):
         "account_details": details,
         "account_roles": roles,
     }
+
+
+def cash_forecast(conn, today=None, weeks=8):
+    today = today or date.today()
+    roles = load_management_account_roles(conn)
+    balances = account_balances(conn, date_to=today.isoformat())
+    opening = _leaf_sum(balances, "asset", account_ids=roles["cash"])
+    inflows = [Decimal("0") for _ in range(weeks)]
+    outflows = [Decimal("0") for _ in range(weeks)]
+    periods = []
+    for index in range(weeks):
+        start = today + timedelta(days=index * 7)
+        end = start + timedelta(days=6)
+        periods.append({"label": start.strftime("%d/%m") + " - " + end.strftime("%d/%m")})
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sales_invoices'").fetchone():
+        rows = conn.execute("""SELECT total_amount,paid_amount,COALESCE(credited_amount,'0') credited,
+            COALESCE(due_date,invoice_date) due_date FROM sales_invoices WHERE status='posted' AND invoice_date<=?""",
+            (today.isoformat(),)).fetchall()
+        for row in rows:
+            amount = max(Decimal("0"), _decimal(row["total_amount"])-_decimal(row["paid_amount"])-_decimal(row["credited"]))
+            if amount:
+                try: due = date.fromisoformat(row["due_date"])
+                except (TypeError,ValueError): due = today
+                idx = max(0,(due-today).days//7)
+                if idx < weeks: inflows[idx] += amount
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='supplier_bills'").fetchone():
+        rows = conn.execute("""SELECT total_amount,paid_amount,COALESCE(credited_amount,'0') credited,
+            COALESCE(due_date,bill_date) due_date FROM supplier_bills WHERE status='posted' AND bill_date<=?""",
+            (today.isoformat(),)).fetchall()
+        for row in rows:
+            amount = max(Decimal("0"), _decimal(row["total_amount"])-_decimal(row["paid_amount"])-_decimal(row["credited"]))
+            if amount:
+                try: due = date.fromisoformat(row["due_date"])
+                except (TypeError,ValueError): due = today
+                idx = max(0,(due-today).days//7)
+                if idx < weeks: outflows[idx] += amount
+    payroll_due = Decimal("0")
+    for row in conn.execute("SELECT id,name_ar FROM accounts WHERE account_type='liability' AND is_group=0 AND active=1"):
+        if any(x in (row["name_ar"] or "").lower() for x in ("مرتبات","رواتب","salary","payroll")):
+            payroll_due += max(Decimal("0"),_leaf_sum(balances,"liability",account_ids={row["id"]}))
+    outflows[0] += payroll_due
+    running = opening
+    result = []
+    for i, period in enumerate(periods):
+        net = inflows[i]-outflows[i]
+        start_balance = running
+        running += net
+        result.append({**period,"opening":_rounded(start_balance),"receipts":_rounded(inflows[i]),
+            "payments":_rounded(outflows[i]),"net":_rounded(net),"closing":_rounded(running)})
+    threshold_row = conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='minimum_cash_balance'").fetchone()
+    threshold = _decimal(threshold_row["setting_value"]) if threshold_row else Decimal("0")
+    return {"opening":_rounded(opening),"weeks":result,"minimum":threshold,
+        "warning":any(x["closing"]<threshold for x in result) if threshold>0 else False,
+        "payroll_due":_rounded(payroll_due)}
+
+
+def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("3")):
+    columns = {x["name"] for x in conn.execute("PRAGMA table_info(journal_entries)")}
+    ref_expr = "je.reference" if "reference" in columns else "''"
+    desc_expr = "je.description" if "description" in columns else "''"
+    entries = conn.execute(f"""SELECT je.id,je.entry_date,{ref_expr} reference,{desc_expr} description,
+        SUM(CAST(jl.debit AS NUMERIC)) debit,SUM(CAST(jl.credit AS NUMERIC)) credit
+        FROM journal_entries je JOIN journal_lines jl ON jl.entry_id=je.id
+        WHERE je.status='posted' AND je.entry_date BETWEEN ? AND ?
+        GROUP BY je.id ORDER BY je.entry_date DESC,je.id DESC""",
+        (period_start.isoformat(),period_end.isoformat())).fetchall()
+    result=[]
+    for entry in entries:
+        reasons=[]
+        if date.fromisoformat(entry["entry_date"]) >= period_end-timedelta(days=1):
+            reasons.append("قيد في آخر يومين من الفترة")
+        lines=conn.execute("""SELECT jl.account_id,MAX(CAST(jl.debit AS NUMERIC),CAST(jl.credit AS NUMERIC)) amount,
+            a.code,a.name_ar FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=?""",
+            (entry["id"],)).fetchall()
+        for line in lines:
+            avg=conn.execute("""SELECT AVG(MAX(CAST(h.debit AS NUMERIC),CAST(h.credit AS NUMERIC)))
+                FROM journal_lines h JOIN journal_entries e ON e.id=h.entry_id
+                WHERE h.account_id=? AND e.status='posted' AND e.entry_date>=date(?,'-90 day')
+                AND e.entry_date<? AND h.entry_id<>?""",
+                (line["account_id"],entry["entry_date"],entry["entry_date"],entry["id"])).fetchone()[0]
+            if avg is not None and float(avg)>0 and float(line["amount"])>=float(avg)*float(multiplier):
+                reasons.append("مبلغ مرتفع عن متوسط حساب "+line["code"]+" — "+line["name_ar"])
+        if reasons:
+            result.append({"id":entry["id"],"date":entry["entry_date"],"reference":entry["reference"] or "",
+                "description":entry["description"] or "","debit":_decimal(entry["debit"]),
+                "credit":_decimal(entry["credit"]),"reasons":reasons})
+    return result
