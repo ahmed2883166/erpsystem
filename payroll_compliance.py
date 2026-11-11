@@ -346,3 +346,110 @@ def report():
     }
     conn.close()
     return render_template("payroll_compliance_report.html", period=period, rows=rows, totals=totals)
+
+
+def _payroll_obligations(conn, period):
+    rows = conn.execute("""
+        SELECT l.taxable_income_tax,l.employee_insurance,l.employer_insurance
+        FROM payroll_lines l JOIN payroll_runs r ON r.id=l.run_id
+        WHERE r.period=? AND r.status='posted'
+    """, (period,)).fetchall()
+    due = {
+        "salary_tax": sum((_d(row["taxable_income_tax"]) for row in rows), Decimal("0")),
+        "social_insurance": sum((_d(row["employee_insurance"]) + _d(row["employer_insurance"])
+                                for row in rows), Decimal("0")),
+    }
+    paid_rows = conn.execute("""
+        SELECT payment_type,amount FROM payroll_statutory_payments WHERE period=?
+    """, (period,)).fetchall()
+    paid = {"salary_tax": Decimal("0"), "social_insurance": Decimal("0")}
+    for row in paid_rows:
+        paid[row["payment_type"]] += _d(row["amount"])
+    return {
+        key: {"due": _m(value), "paid": _m(paid[key]), "remaining": _m(value - paid[key])}
+        for key, value in due.items()
+    }
+
+
+@payroll_compliance_bp.route("/hr/payroll-compliance/payments", methods=["GET", "POST"])
+@_authorized
+def payments():
+    period = request.values.get("period", date.today().strftime("%Y-%m"))
+    try:
+        date.fromisoformat(period + "-01")
+    except ValueError:
+        period = date.today().strftime("%Y-%m")
+    conn = _db()
+    if request.method == "POST":
+        try:
+            period = request.form.get("period", period)
+            date.fromisoformat(period + "-01")
+            payment_type = request.form.get("payment_type", "")
+            if payment_type not in {"salary_tax", "social_insurance"}:
+                raise ValueError("نوع السداد يجب أن يكون ضريبة مرتبات أو تأمينات اجتماعية.")
+            payment_date = date.fromisoformat(request.form.get("payment_date", "")).isoformat()
+            amount = _m(request.form.get("amount"))
+            liability_id = int(request.form.get("liability_account_id"))
+            cash_id = int(request.form.get("cash_account_id"))
+            if amount <= 0:
+                raise ValueError("قيمة السداد يجب أن تكون أكبر من صفر.")
+            liability = conn.execute(
+                "SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (liability_id,)
+            ).fetchone()
+            cash = conn.execute(
+                "SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (cash_id,)
+            ).fetchone()
+            if not liability or liability["account_type"] != "liability" or liability["is_group"] or not liability["active"]:
+                raise ValueError("اختر حساب التزام تفصيليًا ونشطًا للضريبة أو التأمينات.")
+            if not cash or cash["account_type"] != "asset" or cash["is_group"] or not cash["active"]:
+                raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
+            conn.execute("BEGIN IMMEDIATE")
+            obligation = _payroll_obligations(conn, period)[payment_type]
+            if amount > obligation["remaining"]:
+                raise ValueError("قيمة السداد تتجاوز الرصيد المستحق للمسير. المتبقي: " + str(obligation["remaining"]))
+            stamp = date.today().strftime("%Y%m%d") + "-" + str(datetime_now_stamp())
+            prefix = "PAYTAX-" if payment_type == "salary_tax" else "PAYINS-"
+            reference = (request.form.get("reference", "").strip() or prefix + period + "-" + stamp)
+            if conn.execute("SELECT 1 FROM payroll_statutory_payments WHERE reference=?", (reference,)).fetchone():
+                raise ValueError("مرجع السداد مستخدم بالفعل.")
+            description = "سداد ضريبة مرتبات عن " + period if payment_type == "salary_tax" else "سداد تأمينات اجتماعية عن " + period
+            journal_id = post_journal(
+                conn, payment_date, reference, description,
+                [(liability_id, amount, 0, "تسوية الالتزام المستحق"),
+                 (cash_id, 0, amount, "سداد نقدي/بنكي للجهة المختصة")],
+                session.get("user_id"),
+            )
+            conn.execute("""
+                INSERT INTO payroll_statutory_payments(period,payment_type,payment_date,amount,
+                    liability_account_id,cash_account_id,journal_entry_id,reference,created_by)
+                VALUES(?,?,?,?,?,?,?,?,?)
+            """, (period,payment_type,payment_date,str(amount),liability_id,cash_id,journal_id,
+                  reference,session.get("user_id")))
+            _audit(conn, "payroll_statutory_payment", reference + " amount=" + str(amount))
+            conn.commit()
+            flash("تم تسجيل السداد وترحيل قيده المحاسبي.", "success")
+        except (ValueError, KeyError, TypeError, sqlite3.Error) as exc:
+            conn.rollback()
+            flash(str(exc) or "تعذر تسجيل السداد.", "error")
+    obligations = _payroll_obligations(conn, period)
+    accounts = conn.execute("""
+        SELECT id,code,name_ar,account_type FROM accounts
+        WHERE active=1 AND is_group=0 AND account_type IN ('asset','liability')
+        ORDER BY code
+    """).fetchall()
+    payment_rows = conn.execute("""
+        SELECT p.*,a.code liability_code,a.name_ar liability_name,c.code cash_code,c.name_ar cash_name
+        FROM payroll_statutory_payments p
+        JOIN accounts a ON a.id=p.liability_account_id
+        JOIN accounts c ON c.id=p.cash_account_id
+        WHERE p.period=? ORDER BY p.id DESC
+    """, (period,)).fetchall()
+    conn.close()
+    return render_template("payroll_statutory_payments.html", period=period,
+                           obligations=obligations, accounts=accounts, payments=payment_rows,
+                           today=date.today().isoformat())
+
+
+def datetime_now_stamp():
+    from datetime import datetime
+    return datetime.now().strftime("%H%M%S%f")
