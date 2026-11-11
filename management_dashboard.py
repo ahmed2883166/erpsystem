@@ -15,31 +15,8 @@ _SNAPSHOT_CACHE = OrderedDict()
 _SNAPSHOT_CACHE_LOCK = RLock()
 _SNAPSHOT_CACHE_LIMIT = 64
 
-# Account-code mappings come from the activity chart templates. Keep them here
-# as activity mappings, not as one universal chart assumption.
-ACTIVITY_ACCOUNTS = {
-    "commercial": {
-        "cash": ("1110", "1120"), "receivables": ("1130",), "payables": ("2110",),
-        "inventory": ("1150",), "quick_assets": ("1110", "1120", "1130", "1140"), "direct_cost": ("5100",),
-    },
-    "service": {
-        "cash": ("1110",), "receivables": ("1120", "1130"), "payables": ("2100",),
-        "inventory": (), "quick_assets": ("1110", "1120", "1130"), "direct_cost": ("5100", "5200", "5300"),
-    },
-    "medical": {
-        "cash": ("1110", "1120"), "receivables": ("1130", "1140"), "payables": ("2100",),
-        "inventory": ("1150", "1160"), "quick_assets": ("1110", "1120", "1130", "1140"), "direct_cost": ("5100", "5200", "5300"),
-    },
-    "restaurant": {
-        "cash": ("1110", "1120"), "receivables": ("1130",), "payables": ("2100",),
-        "inventory": ("1140", "1150", "1160"), "quick_assets": ("1110", "1120", "1130"), "direct_cost": ("5100", "5200", "5300", "5400"),
-    },
-    "industrial": {
-        "cash": ("1110",), "receivables": ("1120",), "payables": ("2100",),
-        "inventory": ("1130", "1140", "1150", "1160"),
-        "quick_assets": ("1110", "1120"), "direct_cost": ("5400",),
-    },
-}
+# Account roles are defined beside the activity-specific chart templates.
+from chart_templates import ACTIVITY_ACCOUNT_ROLES as ACTIVITY_ACCOUNTS
 
 
 def _decimal(value):
@@ -188,17 +165,10 @@ def initialize_management_dashboard_schema(conn, activity):
     if needs_seed or (activity_changed and not customized):
         conn.execute("DELETE FROM management_account_roles")
         defaults = ACTIVITY_ACCOUNTS.get(activity, ACTIVITY_ACCOUNTS["commercial"])
-        for role in ("cash", "receivables", "payables", "inventory", "quick_assets", "direct_cost"):
-            for code in defaults.get(role, ()):
+        for role, codes in defaults.items():
+            for code in codes:
                 conn.execute("""INSERT OR IGNORE INTO management_account_roles(account_id,role)
                     SELECT id,? FROM accounts WHERE code=? AND is_group=0 AND active=1""", (role, code))
-        current_asset_codes = tuple(dict.fromkeys(defaults.get("cash", ()) + defaults.get("receivables", ()) + defaults.get("inventory", ())))
-        for code in current_asset_codes:
-            conn.execute("""INSERT OR IGNORE INTO management_account_roles(account_id,role)
-                SELECT id,'current_assets' FROM accounts WHERE code=? AND is_group=0 AND active=1""", (code,))
-        for code in defaults.get("payables", ()):
-            conn.execute("""INSERT OR IGNORE INTO management_account_roles(account_id,role)
-                SELECT id,'current_liabilities' FROM accounts WHERE code=? AND is_group=0 AND active=1""", (code,))
         conn.execute("""INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_initialized','1')
             ON CONFLICT(meta_key) DO UPDATE SET meta_value='1'""")
         conn.execute("""INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('seed_activity',?)
