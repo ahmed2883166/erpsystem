@@ -350,14 +350,18 @@ def suppliers():
               (request.form["code"].strip(),request.form["name"].strip(),request.form.get("tax_number","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("address","").strip()))
             c.commit(); flash("تم حفظ المورد.","success")
         except sqlite3.IntegrityError: c.rollback(); flash("كود المورد مستخدم بالفعل.","error")
-    suppliers_rows=c.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
+    suppliers_page = fetch_page(c,"SELECT * FROM suppliers ORDER BY name",
+        "SELECT COUNT(*) FROM suppliers",
+        page=request.args.get("suppliers_page",1,type=int),
+        per_page=request.args.get("suppliers_per_page",50,type=int))
+    suppliers_rows=suppliers_page["rows"]
     outstanding_by_supplier={}
     for bill in c.execute("SELECT supplier_id,total_amount,paid_amount,credited_amount FROM supplier_bills WHERE status='posted'").fetchall():
         balance=Decimal(bill["total_amount"])-Decimal(bill["paid_amount"] or "0")-Decimal(bill["credited_amount"] or "0")
         outstanding_by_supplier[bill["supplier_id"]]=outstanding_by_supplier.get(bill["supplier_id"],Decimal("0"))+balance
     rows=[dict(row,outstanding=outstanding_by_supplier.get(row["id"],Decimal("0"))) for row in suppliers_rows]
     c.close()
-    return render_template("purchase_suppliers.html",rows=rows)
+    return render_template("purchase_suppliers.html",rows=rows,suppliers_page=suppliers_page)
 
 
 @purchase_bp.route("/suppliers/<int:supplier_id>/edit",methods=["GET","POST"])
