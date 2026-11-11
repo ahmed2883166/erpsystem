@@ -141,6 +141,24 @@ def initialize_stock_schema():
                       (str(D(str(layer["total_cost"]))), layer["id"]))
     c.execute("DROP INDEX IF EXISTS idx_stock_movement_journal")
     c.execute("CREATE INDEX IF NOT EXISTS idx_stock_movement_journal ON stock_movements(journal_entry_id) WHERE journal_entry_id IS NOT NULL")
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS stocktakes(
+      id INTEGER PRIMARY KEY, count_no TEXT NOT NULL UNIQUE,
+      warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
+      count_date TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft',
+      notes TEXT NOT NULL DEFAULT '', created_by INTEGER,
+      approved_by INTEGER, approved_at TEXT, journal_entry_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS stocktake_lines(
+      id INTEGER PRIMARY KEY, stocktake_id INTEGER NOT NULL REFERENCES stocktakes(id) ON DELETE CASCADE,
+      product_id INTEGER NOT NULL REFERENCES stock_products(id),
+      snapshot_qty TEXT NOT NULL, counted_qty TEXT, variance_qty TEXT,
+      counted_unit_cost TEXT NOT NULL DEFAULT '0', variance_value TEXT NOT NULL DEFAULT '0',
+      notes TEXT NOT NULL DEFAULT '', UNIQUE(stocktake_id,product_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_stocktake_lines_header ON stocktake_lines(stocktake_id,product_id);
+    """)
     c.close()
 
 
@@ -787,3 +805,196 @@ def barcode_lookup():
     product=c.execute("SELECT * FROM stock_products WHERE barcode=? OR sku=?",(code,code)).fetchone() if code else None
     c.close()
     return render_template("stock_barcode.html",product=product,code=code)
+
+
+def _stocktake_layer_balance(c, product_id, warehouse_id):
+    layers = c.execute("""SELECT qty_remaining,unit_cost,value_remaining
+        FROM stock_valuation_layers WHERE product_id=? AND warehouse_id=?
+        AND CAST(qty_remaining AS REAL)>0 ORDER BY id""", (product_id, warehouse_id)).fetchall()
+    qty = sum((D(str(row["qty_remaining"] or "0")) for row in layers), D("0"))
+    value = sum((D(str(row["value_remaining"])) if row["value_remaining"] not in (None, "")
+                 else D(str(row["qty_remaining"] or "0")) * D(str(row["unit_cost"] or "0"))
+                 for row in layers), D("0"))
+    return q4(qty), value
+
+
+@stock_bp.route("/counts", methods=["GET", "POST"])
+@stock_permission("stock.manage")
+def counts():
+    c = get_db()
+    if request.method == "POST":
+        try:
+            warehouse_id = request.form.get("warehouse_id", type=int)
+            count_date = request.form.get("count_date", "").strip()
+            date.fromisoformat(count_date)
+            if not c.execute("SELECT 1 FROM stock_warehouses WHERE id=? AND active=1", (warehouse_id,)).fetchone():
+                raise ValueError("اختر مخزنًا نشطًا.")
+            c.execute("BEGIN IMMEDIATE")
+            count_no = "STK-" + date.fromisoformat(count_date).strftime("%Y%m%d") + "-" + uuid.uuid4().hex[:6].upper()
+            c.execute("INSERT INTO stocktakes(count_no,warehouse_id,count_date,notes,created_by) VALUES(?,?,?,?,?)",
+                (count_no, warehouse_id, count_date, request.form.get("notes", "").strip(), session.get("user_id")))
+            stocktake_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+            for product in c.execute("SELECT id FROM stock_products WHERE active=1 ORDER BY sku").fetchall():
+                qty, _ = _stocktake_layer_balance(c, product["id"], warehouse_id)
+                c.execute("INSERT INTO stocktake_lines(stocktake_id,product_id,snapshot_qty) VALUES(?,?,?)",
+                          (stocktake_id, product["id"], str(qty)))
+            c.commit()
+            flash("تم إنشاء أمر الجرد وحفظ الأرصدة الدفترية وقت الإنشاء. أدخل الكميات الفعلية ثم احفظ العد.", "success")
+            return redirect(url_for("stock.count_detail", stocktake_id=stocktake_id))
+        except (ValueError, sqlite3.IntegrityError) as exc:
+            c.rollback()
+            flash(str(exc) if isinstance(exc, ValueError) else "تعذر إنشاء أمر الجرد.", "error")
+        finally:
+            c.close()
+        return redirect(url_for("stock.counts"))
+    warehouses = c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
+    rows = c.execute("""SELECT s.*,w.code warehouse_code,w.name_ar warehouse_name,
+        (SELECT COUNT(*) FROM stocktake_lines l WHERE l.stocktake_id=s.id) line_count
+        FROM stocktakes s JOIN stock_warehouses w ON w.id=s.warehouse_id ORDER BY s.id DESC LIMIT 100""").fetchall()
+    c.close()
+    return render_template("stock_counts.html", warehouses=warehouses, rows=rows, today=date.today().isoformat())
+
+
+@stock_bp.route("/counts/<int:stocktake_id>", methods=["GET", "POST"])
+@stock_permission("stock.manage")
+def count_detail(stocktake_id):
+    c = get_db()
+    stocktake = c.execute("""SELECT s.*,w.code warehouse_code,w.name_ar warehouse_name
+        FROM stocktakes s JOIN stock_warehouses w ON w.id=s.warehouse_id WHERE s.id=?""", (stocktake_id,)).fetchone()
+    if not stocktake:
+        c.close()
+        flash("أمر الجرد غير موجود.", "error")
+        return redirect(url_for("stock.counts"))
+    if request.method == "POST":
+        try:
+            if stocktake["status"] not in ("draft", "counted"):
+                raise ValueError("لا يمكن تعديل جرد تم اعتماده.")
+            lines = c.execute("SELECT id,snapshot_qty FROM stocktake_lines WHERE stocktake_id=?", (stocktake_id,)).fetchall()
+            c.execute("BEGIN IMMEDIATE")
+            for line in lines:
+                raw = request.form.get("counted_" + str(line["id"]), "").strip()
+                if raw == "":
+                    raise ValueError("يجب إدخال الكمية الفعلية لكل صنف، حتى لو كانت صفرًا.")
+                counted = dec(raw, "الكمية الفعلية")
+                unit_cost = dec(request.form.get("cost_" + str(line["id"]), "0"), "تكلفة الوحدة")
+                if counted < 0 or unit_cost < 0:
+                    raise ValueError("الكميات والتكاليف لا يمكن أن تكون سالبة.")
+                variance = q4(counted - D(str(line["snapshot_qty"])))
+                estimated_value = money(abs(variance) * unit_cost)
+                c.execute("""UPDATE stocktake_lines SET counted_qty=?,variance_qty=?,counted_unit_cost=?,
+                    variance_value=?,notes=? WHERE id=?""",
+                    (str(q4(counted)), str(variance), str(money(unit_cost)), str(estimated_value),
+                     request.form.get("notes_" + str(line["id"]), "").strip(), line["id"]))
+            c.execute("UPDATE stocktakes SET status='counted' WHERE id=?", (stocktake_id,))
+            c.commit()
+            flash("تم حفظ العد الفعلي وحساب فروق الجرد. راجع التقرير قبل الاعتماد والترحيل.", "success")
+            return redirect(url_for("stock.count_detail", stocktake_id=stocktake_id))
+        except (ValueError, sqlite3.Error) as exc:
+            c.rollback()
+            flash(str(exc), "error")
+    lines = c.execute("""SELECT l.*,p.sku,p.name_ar,p.uom,p.purchase_price
+        FROM stocktake_lines l JOIN stock_products p ON p.id=l.product_id
+        WHERE l.stocktake_id=? ORDER BY p.sku""", (stocktake_id,)).fetchall()
+    accounts = c.execute("""SELECT id,code,name_ar,account_type FROM accounts
+        WHERE active=1 AND is_group=0 AND account_type IN ('expense','revenue') ORDER BY account_type,code""").fetchall()
+    c.close()
+    return render_template("stock_count_detail.html", stocktake=stocktake, lines=lines, accounts=accounts)
+
+
+@stock_bp.route("/counts/<int:stocktake_id>/approve", methods=["POST"])
+@stock_permission("stock.manage")
+def approve_count(stocktake_id):
+    c = get_db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        stocktake = c.execute("SELECT * FROM stocktakes WHERE id=?", (stocktake_id,)).fetchone()
+        if not stocktake or stocktake["status"] != "counted":
+            raise ValueError("يجب حفظ العد أولًا، ولا يمكن اعتماد أمر غير جاهز للمراجعة.")
+        lines = c.execute("""SELECT l.*,p.sku,p.name_ar FROM stocktake_lines l
+            JOIN stock_products p ON p.id=l.product_id WHERE l.stocktake_id=? ORDER BY p.sku""",
+            (stocktake_id,)).fetchall()
+        if not lines or any(line["counted_qty"] is None for line in lines):
+            raise ValueError("بيانات العد غير مكتملة.")
+        activity_row = c.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+        activity = activity_row["setting_value"] if activity_row else "commercial"
+        inventory_code = {"commercial":"1150", "industrial":"1130", "medical":"1150",
+                          "restaurant":"1140", "service":None}.get(activity)
+        inventory = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?",
+                              (inventory_code,)).fetchone() if inventory_code else None
+        if not inventory or inventory["is_group"] or not inventory["active"] or inventory["account_type"] != "asset":
+            raise ValueError("اضبط حساب المخزون كحساب أصول تفصيلي نشط قبل اعتماد الجرد.")
+        shortage_id = request.form.get("shortage_account_id", type=int)
+        surplus_id = request.form.get("surplus_account_id", type=int)
+        shortage_account = c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (shortage_id,)).fetchone() if shortage_id else None
+        surplus_account = c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (surplus_id,)).fetchone() if surplus_id else None
+        journal_lines, movement_ids = [], []
+        for line in lines:
+            snapshot = D(str(line["snapshot_qty"]))
+            current, _ = _stocktake_layer_balance(c, line["product_id"], stocktake["warehouse_id"])
+            if current != snapshot:
+                raise ValueError("تغير الرصيد الدفتري للصنف " + line["sku"] + " بعد بدء الجرد. أوقف الحركة وأنشئ أمر جرد جديد.")
+            variance = D(str(line["variance_qty"] or "0"))
+            if variance == 0:
+                c.execute("UPDATE stocktake_lines SET variance_value='0' WHERE id=?", (line["id"],))
+                continue
+            if variance < 0:
+                if not shortage_account or shortage_account["account_type"] != "expense" or shortage_account["is_group"] or not shortage_account["active"]:
+                    raise ValueError("اختر حساب مصروف تفصيلي نشط لعجز المخزون.")
+                qty = -variance
+                method_row = c.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
+                method = method_row["setting_value"] if method_row else "fifo"
+                cost, _ = consume_layers(c, line["product_id"], stocktake["warehouse_id"], qty, method)
+                movement_no = stocktake["count_no"] + "-" + str(line["id"]) + "-S"
+                cur = c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,
+                    source_warehouse_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status)
+                    VALUES(?,'issue',?,?,?,?,?,?,?,?, 'pending')""",
+                    (movement_no,line["product_id"],stocktake["warehouse_id"],str(qty),
+                     str(cost / qty),str(cost),stocktake["count_date"],"عجز جرد فعلي",session.get("user_id")))
+                movement_ids.append(cur.lastrowid)
+                journal_lines.extend([(shortage_account["id"],cost,0,"عجز جرد - " + line["name_ar"]),
+                                      (inventory["id"],0,cost,"تخفيض مخزون - " + line["name_ar"])])
+                c.execute("UPDATE stocktake_lines SET variance_value=? WHERE id=?", (str(-cost),line["id"]))
+            else:
+                if not surplus_account or surplus_account["account_type"] != "revenue" or surplus_account["is_group"] or not surplus_account["active"]:
+                    raise ValueError("اختر حساب إيراد/أرباح أخرى تفصيلي نشط لزيادة المخزون.")
+                unit_cost = D(str(line["counted_unit_cost"] or "0"))
+                if unit_cost <= 0:
+                    raise ValueError("أدخل تكلفة الوحدة للصنف " + line["sku"] + " ذي الزيادة قبل الاعتماد.")
+                cost = money(variance * unit_cost)
+                default_location = c.execute("SELECT location_id FROM stock_product_locations WHERE product_id=? AND warehouse_id=?",
+                                             (line["product_id"],stocktake["warehouse_id"])).fetchone()
+                movement_no = stocktake["count_no"] + "-" + str(line["id"]) + "-P"
+                cur = c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,
+                    target_warehouse_id,target_location_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status)
+                    VALUES(?,'receipt',?,?,?,?,?,?,?,?,?, 'pending')""",
+                    (movement_no,line["product_id"],stocktake["warehouse_id"],
+                     default_location["location_id"] if default_location else None,str(variance),
+                     str(unit_cost),str(cost),stocktake["count_date"],"زيادة جرد فعلي",session.get("user_id")))
+                movement_id = cur.lastrowid
+                c.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,
+                    source_movement_id,qty_in,qty_remaining,unit_cost,value_remaining)
+                    VALUES(?,?,?,?,?,?,?,?)""",
+                    (line["product_id"],stocktake["warehouse_id"],default_location["location_id"] if default_location else None,
+                     movement_id,str(variance),str(variance),str(unit_cost),str(cost)))
+                movement_ids.append(movement_id)
+                journal_lines.extend([(inventory["id"],cost,0,"زيادة مخزون - " + line["name_ar"]),
+                                      (surplus_account["id"],0,cost,"أرباح/فروق جرد - " + line["name_ar"])])
+                c.execute("UPDATE stocktake_lines SET variance_value=? WHERE id=?", (str(cost),line["id"]))
+        journal_id = None
+        if journal_lines:
+            journal_id = post_journal(c,stocktake["count_date"],stocktake["count_no"],
+                "تسوية فروق الجرد - " + stocktake["count_no"],journal_lines,session.get("user_id"))
+        for movement_id in movement_ids:
+            c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?",
+                      (journal_id,movement_id))
+        c.execute("""UPDATE stocktakes SET status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP,
+            journal_entry_id=? WHERE id=?""", (session.get("user_id"),journal_id,stocktake_id))
+        c.commit()
+        flash("تم اعتماد الجرد وتحديث طبقات المخزون وترحيل قيد التسوية." if journal_id
+              else "تم اعتماد الجرد؛ لا توجد فروق تستلزم قيدًا محاسبيًا.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc), "error")
+    finally:
+        c.close()
+    return redirect(url_for("stock.count_detail", stocktake_id=stocktake_id))

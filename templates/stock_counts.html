@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block title %}الجرد الفعلي | NEXUS ERP{% endblock %}
+{% block content %}
+<header><div><h2>الجرد الفعلي ومطابقة المخزون</h2><p class="muted">أنشئ أمر جرد، أدخل الكميات الفعلية، ثم راجع الفروق واعتمد التسوية.</p></div></header>
+<section class="panel"><h3>إنشاء أمر جرد جديد</h3>
+<form method="post" class="form-row">
+<label>المخزن<select name="warehouse_id" required><option value="">اختر المخزن</option>{% for w in warehouses %}<option value="{{ w.id }}">{{ w.code }} - {{ w.name_ar }}</option>{% endfor %}</select></label>
+<label>تاريخ الجرد<input type="date" name="count_date" value="{{ today }}" required></label>
+<label class="form-span">ملاحظات<input name="notes" placeholder="سبب الجرد أو اللجنة المسؤولة"></label><div><button type="submit">إنشاء أمر الجرد وحفظ الرصيد الدفتري</button></div></form>
+<p class="notice">أوقف حركات المخزن أثناء العد. عند الاعتماد، سيتحقق النظام من أن الرصيد الدفتري لم يتغير منذ إنشاء أمر الجرد.</p></section>
+<section class="panel"><h3>أوامر الجرد السابقة</h3><div class="table-wrap"><table><thead><tr><th>رقم الجرد</th><th>المخزن</th><th>التاريخ</th><th>عدد الأصناف</th><th>الحالة</th><th>التفاصيل</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.count_no }}</td><td>{{ r.warehouse_code }} - {{ r.warehouse_name }}</td><td>{{ r.count_date }}</td><td>{{ r.line_count }}</td><td><span class="state-pill {{ 'state-paid' if r.status=='approved' else 'state-partial' if r.status=='counted' else 'state-unpaid' }}">{{ {'draft':'بانتظار العد','counted':'بانتظار الاعتماد','approved':'معتمد ومرحل'}.get(r.status,r.status) }}</span></td><td><a class="btn secondary" href="{{ url_for('stock.count_detail',stocktake_id=r.id) }}">فتح الجرد</a></td></tr>
+{% else %}<tr><td colspan="6">لا توجد أوامر جرد حتى الآن.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

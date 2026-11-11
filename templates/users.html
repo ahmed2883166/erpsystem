@@ -1,10 +1,10 @@
 {% extends 'base.html' %}
 {% block title %}المستخدمون والصلاحيات | NEXUS ERP{% endblock %}
 {% block content %}
-<header><h2>المستخدمون والصلاحيات</h2></header>
+<header><div><h2>المستخدمون والصلاحيات</h2><p class="muted">إضافة المستخدمين وتعديل بياناتهم وصلاحياتهم أو إيقافهم.</p></div><a class="btn" href="#createUser">＋ إضافة مستخدم</a></header>
 <div class="grid">
-<section class="panel">
-  <h3>إنشاء مستخدم جديد</h3>
+<section class="panel" id="createUser">
+  <h3>إضافة مستخدم جديد</h3>
   <form method="post">
     <label>اسم المستخدم<input name="username" required></label>
     <label>الاسم الكامل<input name="full_name" required></label>
@@ -23,7 +23,7 @@
 <section class="panel">
   <h3>المستخدمون المسجلون</h3>
   <div class="table-wrap"><table><thead><tr><th>المستخدم</th><th>الاسم</th><th>الدور</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody>
-  {% for u in users %}<tr><td>{{ u.username }}</td><td>{{ u.full_name }}</td><td>{{ u.role }}</td><td>{{ 'نشط' if u.active else 'موقوف' }}</td><td><div class="table-actions"><a class="btn secondary" href="{{ url_for('edit_user',user_id=u.id) }}">تعديل</a><form method="post" action="{{ url_for('delete_user',user_id=u.id) }}" onsubmit="return confirm('حذف المستخدم؟ لن يحذف إذا كان له نشاط أو عمليات مسجلة.');"><button class="danger">حذف</button></form></div></td></tr>{% else %}<tr><td colspan="5">لا يوجد مستخدمون.</td></tr>{% endfor %}
+  {% for u in users %}<tr><td>{{ u.username }}</td><td>{{ u.full_name }}</td><td>{{ u.role }}</td><td>{{ 'نشط' if u.active else 'موقوف' }}</td><td><div class="table-actions"><a class="btn secondary" href="{{ url_for('edit_user',user_id=u.id) }}">✎ تعديل</a>{% if u.id != session.user_id %}<form method="post" action="{{ url_for('delete_user',user_id=u.id) }}" onsubmit="return confirm('حذف المستخدم؟ لن يحذف إذا كان له نشاط أو عمليات مسجلة.');"><button class="danger">حذف</button></form>{% else %}<span class="muted">حسابك الحالي</span>{% endif %}</div></td></tr>{% else %}<tr><td colspan="5">لا يوجد مستخدمون.</td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 </div>

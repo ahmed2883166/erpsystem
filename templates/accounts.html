@@ -29,7 +29,7 @@
     <form action="{{ url_for('import_accounts') }}" method="post" enctype="multipart/form-data"><input type="file" name="file" accept=".csv" required><button>استيراد</button></form>
   </section>{% endif %}
   <section class="panel print-area">
-    <div class="section-heading"><div><h3>شجرة الحسابات</h3><p class="muted">عدد الحسابات: {{ accounts|length }}</p></div><span class="pill">NEXUS ERP</span></div>
+    <div class="section-heading account-tree-toolbar"><div><h3>شجرة الحسابات</h3><p class="muted">عدد الحسابات: {{ accounts|length }} · افتح أي مستوى لرؤية الفروع التابعة له.</p></div><div class="table-actions no-print"><input id="accountTreeSearch" type="search" placeholder="ابحث بالكود أو اسم الحساب" aria-label="بحث في شجرة الحسابات"><button type="button" class="secondary" id="expandAccountTree">فتح الكل</button><button type="button" class="secondary" id="collapseAccountTree">إغلاق الكل</button><span class="pill">NEXUS ERP</span></div></div>
     <div class="table-wrap">
       <table class="accounts-tree">
         <thead><tr><th>كود الحساب</th><th>اسم الحساب ومستواه</th><th>النوع</th><th>التصنيف</th><th>الحالة</th>{% if 'accounts.manage' in permissions %}<th class="no-print">الإجراءات</th>{% endif %}</tr></thead>
@@ -68,6 +68,18 @@ const type=document.getElementById('accountType'),parent=document.getElementById
 if(type&&parent){function filterParents(){for(const o of parent.options){if(o.value)o.hidden=o.dataset.type!==type.value;if(o.selected&&o.hidden)parent.value='';}}type.addEventListener('change',filterParents);filterParents();}
 const accountRows=[...document.querySelectorAll('.account-row')];
 function descendants(id){const children=accountRows.filter(r=>r.dataset.parent===String(id));for(const child of children){child.hidden=true;const b=child.querySelector('.tree-toggle');if(b){b.textContent='+';b.setAttribute('aria-expanded','false');}descendants(child.dataset.id);}}
+function openAll(){accountRows.forEach(r=>r.hidden=false);document.querySelectorAll('.tree-toggle').forEach(b=>{b.textContent='−';b.setAttribute('aria-expanded','true');});}
+function closeAll(){accountRows.filter(r=>Number(r.dataset.depth)>0).forEach(r=>r.hidden=true);document.querySelectorAll('.tree-toggle').forEach(b=>{b.textContent='+';b.setAttribute('aria-expanded','false');});}
 document.querySelectorAll('.tree-toggle').forEach(btn=>btn.addEventListener('click',()=>{const id=btn.dataset.id,open=btn.getAttribute('aria-expanded')==='true';if(open){descendants(id);btn.textContent='+';btn.setAttribute('aria-expanded','false');}else{accountRows.filter(r=>r.dataset.parent===id).forEach(r=>r.hidden=false);btn.textContent='−';btn.setAttribute('aria-expanded','true');}}));
+document.getElementById('expandAccountTree')?.addEventListener('click',openAll);
+document.getElementById('collapseAccountTree')?.addEventListener('click',closeAll);
+document.getElementById('accountTreeSearch')?.addEventListener('input',event=>{
+ const q=event.target.value.trim().toLocaleLowerCase('ar');if(!q){closeAll();return;}
+ accountRows.forEach(r=>r.hidden=true);const byId=new Map(accountRows.map(r=>[r.dataset.id,r]));
+ accountRows.filter(r=>(r.textContent||'').toLocaleLowerCase('ar').includes(q)).forEach(r=>{
+  r.hidden=false;let parent=byId.get(r.dataset.parent);
+  while(parent){parent.hidden=false;const b=parent.querySelector('.tree-toggle');if(b){b.textContent='−';b.setAttribute('aria-expanded','true');}parent=byId.get(parent.dataset.parent);}
+ });
+});
 </script>
 {% endblock %}
