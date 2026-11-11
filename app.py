@@ -829,6 +829,37 @@ def management_dashboard():
     )
 
 
+@app.route("/settings/analytic-dimensions", methods=["GET", "POST"])
+@requires("accounts.manage")
+def analytic_dimensions_settings():
+    connection = db()
+    if request.method == "POST":
+        try:
+            kind = request.form.get("dimension_type", "").strip()
+            config = {
+                "branch": ("branches", "الفرع"),
+                "cost_center": ("cost_centers", "مركز التكلفة"),
+                "project": ("projects", "المشروع"),
+            }
+            if kind not in config:
+                raise ValueError("نوع البُعد التحليلي غير صحيح.")
+            table, label = config[kind]
+            code = request.form.get("code", "").strip().upper()
+            name = request.form.get("name_ar", "").strip()
+            if not code or len(code) > 30 or not name or len(name) > 120:
+                raise ValueError("أدخل كودًا واسمًا صحيحين للبُعد.")
+            connection.execute(f"INSERT INTO {table}(code,name_ar) VALUES(?,?)", (code, name))
+            connection.commit()
+            flash("تمت إضافة " + label + " بنجاح.", "success")
+            return redirect(url_for("analytic_dimensions_settings"))
+        except (ValueError, sqlite3.IntegrityError) as exc:
+            connection.rollback()
+            flash(str(exc) or "تعذر إضافة البُعد. تأكد من عدم تكرار الكود.", "error")
+    options = active_dimension_options(connection)
+    connection.close()
+    return render_template("analytic_dimensions.html", options=options)
+
+
 @app.route("/management-dashboard/account-mapping", methods=["GET", "POST"])
 @requires("accounts.manage")
 def management_account_mapping():
