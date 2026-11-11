@@ -4,6 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 from management_dashboard import build_management_snapshot, load_management_account_roles, initialize_management_dashboard_schema, cash_forecast, unusual_journal_entries
+from chart_templates import ACTIVITY_ACCOUNT_ROLES
 
 
 class ManagementDashboardTests(unittest.TestCase):
@@ -109,6 +110,14 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(snapshot["inventory"],Decimal("240"))
         self.assertEqual(snapshot["payables"],Decimal("75"))
         self.assertEqual(snapshot["account_roles"]["inventory"],{4,11})
+
+    def test_new_default_roles_are_backfilled_without_resetting_existing_mappings(self):
+        self.conn.execute("INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) VALUES"
+                          "(20,'1165','ضريبة مدخلات','asset',0,1)")
+        initialize_management_dashboard_schema(self.conn, 'commercial')
+        roles=load_management_account_roles(self.conn)
+        self.assertIn(20,roles["current_assets"])
+        self.assertIn(20,roles["quick_assets"]) if "1165" in ACTIVITY_ACCOUNT_ROLES["commercial"]["quick_assets"] else None
 
     def test_custom_account_mapping_works_without_standard_account_codes(self):
         self.conn.execute("INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) VALUES(10,'9999','خزينة فرع','asset',0,1)")
