@@ -78,8 +78,13 @@ def _events(c, kind, party_id):
             'فاتورة مشتريات' description,0 debit,total_amount credit,0 priority
             FROM supplier_bills WHERE supplier_id=? AND status='posted'""", (party_id,)):
             events.append(dict(r))
+        for r in c.execute("""SELECT cn.credit_date event_date,cn.credit_no reference,
+            'إشعار دائن مشتريات / مرتجع مورد: ' || cn.reason description,
+            cn.total_amount debit,0 credit,1 priority
+            FROM supplier_credit_notes cn WHERE cn.supplier_id=? AND cn.status='posted'""", (party_id,)):
+            events.append(dict(r))
         for r in c.execute("""SELECT payment_date event_date,payment_no reference,
-            'مدفوعات مورد ' || COALESCE(reference,'') description,amount debit,0 credit,1 priority
+            'مدفوعات مورد ' || COALESCE(reference,'') description,amount debit,0 credit,2 priority
             FROM supplier_payments WHERE supplier_id=?""", (party_id,)):
             events.append(dict(r))
     return sorted(events, key=lambda x: (x["event_date"], x["priority"], x["reference"] or ""))
