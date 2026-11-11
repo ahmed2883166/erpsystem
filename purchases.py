@@ -208,13 +208,24 @@ def index():
     suppliers=c.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
     orders=c.execute("""SELECT p.*,s.name supplier_name FROM purchase_orders p JOIN suppliers s ON s.id=p.supplier_id ORDER BY p.id DESC LIMIT 20""").fetchall()
     receipts=c.execute("""SELECT r.*,s.name supplier_name FROM goods_receipts r JOIN suppliers s ON s.id=r.supplier_id ORDER BY r.id DESC LIMIT 20""").fetchall()
-    bills=c.execute("""SELECT b.*,s.name supplier_name FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id ORDER BY b.id DESC LIMIT 20""").fetchall()
+    bill_page = max(1, request.args.get("bill_page", 1, type=int) or 1)
+    bill_per_page = request.args.get("bill_per_page", 50, type=int) or 50
+    if bill_per_page not in (50, 100):
+        bill_per_page = 50
+    bill_total = c.execute("SELECT COUNT(*) FROM supplier_bills").fetchone()[0]
+    bill_pages = max(1, (bill_total + bill_per_page - 1) // bill_per_page)
+    bill_page = min(bill_page, bill_pages)
+    bills=c.execute("""SELECT b.*,s.name supplier_name FROM supplier_bills b
+        JOIN suppliers s ON s.id=b.supplier_id ORDER BY b.id DESC LIMIT ? OFFSET ?""",
+        (bill_per_page, (bill_page - 1) * bill_per_page)).fetchall()
     payments=c.execute("""SELECT p.*,s.name supplier_name FROM supplier_payments p JOIN suppliers s ON s.id=p.supplier_id ORDER BY p.id DESC LIMIT 20""").fetchall()
     credit_notes=c.execute("""SELECT n.*,s.name supplier_name,b.bill_no FROM supplier_credit_notes n
       JOIN suppliers s ON s.id=n.supplier_id JOIN supplier_bills b ON b.id=n.bill_id
       ORDER BY n.id DESC LIMIT 20""").fetchall()
     c.close()
-    return render_template("purchases.html",suppliers=suppliers,orders=orders,receipts=receipts,bills=bills,payments=payments,credit_notes=credit_notes,today=date.today().isoformat())
+    return render_template("purchases.html",suppliers=suppliers,orders=orders,receipts=receipts,bills=bills,
+        payments=payments,credit_notes=credit_notes,bill_page=bill_page,bill_pages=bill_pages,
+        bill_per_page=bill_per_page,bill_total=bill_total,today=date.today().isoformat())
 
 @purchase_bp.route("/integrity")
 @require("purchases.view")
