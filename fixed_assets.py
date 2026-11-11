@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
-from accounting_core import post_journal
+from accounting_core import post_journal, register_decimal_aggregates
 
 assets_bp = Blueprint("assets", __name__, url_prefix="/assets")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
@@ -17,6 +17,7 @@ def db():
     c.row_factory=sqlite3.Row
     c.execute("PRAGMA foreign_keys=ON")
     c.execute("PRAGMA busy_timeout=20000")
+    register_decimal_aggregates(c)
     return c
 
 def require(write=False):
@@ -86,7 +87,7 @@ def index():
         except (ValueError,InvalidOperation,KeyError,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود الأصل مستخدم أو توجد بيانات غير صحيحة.","error")
     assets=c.execute("""SELECT f.*,a.code asset_code_gl,a.name_ar asset_account_name,
-      COALESCE((SELECT SUM(CAST(d.amount AS REAL)) FROM asset_depreciations d WHERE d.asset_id=f.id),0) accumulated
+      COALESCE((SELECT DECIMAL_SUM(d.amount) FROM asset_depreciations d WHERE d.asset_id=f.id),0) accumulated
       FROM fixed_assets f JOIN accounts a ON a.id=f.asset_account_id ORDER BY f.asset_code""").fetchall()
     accounts=c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
     c.close()
