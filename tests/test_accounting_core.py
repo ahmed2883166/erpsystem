@@ -118,8 +118,8 @@ class SharedAccountingCoreTests(unittest.TestCase):
         self.db.execute("INSERT INTO journal_lines VALUES(8,16,1,'0.20','0','مدين')")
         self.db.execute("INSERT INTO journal_lines VALUES(9,16,2,'0','0.30','دائن')")
         snapshot = reconciliation_snapshot(self.db)
-        self.assertEqual(snapshot["journal_totals"]["debit"], Decimal("70.30"))
-        self.assertEqual(snapshot["journal_totals"]["credit"], Decimal("70.30"))
+        self.assertEqual(snapshot["journal_totals"]["debit"], Decimal("120.30"))
+        self.assertEqual(snapshot["journal_totals"]["credit"], Decimal("120.30"))
         self.assertFalse(any(row["reference"] == "DECIMAL-1" for row in snapshot["unbalanced"]))
 
     def test_partial_receipt_match_keeps_unmatched_grni(self):
