@@ -3,11 +3,11 @@
 Sales invoices are posted atomically with stock valuation and the shared journal engine.
 Quotations, separate delivery orders, returns and credit notes remain future work.
 """
+from app_paths import DB_PATH
 import sqlite3
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
-from pathlib import Path
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
@@ -16,7 +16,7 @@ from stock import consume_layers
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 
 sales_bp = Blueprint("sales", __name__, url_prefix="/sales")
-DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
+
 CENT = Decimal("0.01")
 
 
