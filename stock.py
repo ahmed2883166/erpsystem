@@ -487,28 +487,44 @@ def movements():
 @stock_permission("stock.view")
 def reports():
     c=get_db()
-    rows=c.execute("""SELECT p.id,p.sku,p.name_ar,p.uom,
-      COALESCE(SUM(CAST(l.qty_remaining AS REAL)),0) qty,
-      COALESCE(SUM(CAST(CASE WHEN l.value_remaining IS NOT NULL AND l.value_remaining<>'' THEN l.value_remaining ELSE CAST(l.qty_remaining AS REAL)*CAST(l.unit_cost AS REAL) END AS REAL)),0) value,
-      CASE WHEN COALESCE(SUM(CAST(l.qty_remaining AS REAL)),0)=0 THEN 0
-           ELSE COALESCE(SUM(CAST(l.qty_remaining AS REAL)*CAST(l.unit_cost AS REAL)),0) /
-                SUM(CAST(l.qty_remaining AS REAL)) END unit_cost
-      FROM stock_products p LEFT JOIN stock_valuation_layers l ON l.product_id=p.id
-      WHERE p.active=1 GROUP BY p.id ORDER BY p.sku""").fetchall()
-    lots=c.execute("""SELECT p.sku,p.name_ar,l.lot_number,l.expiry_date,
-      COALESCE(SUM(CAST(v.qty_remaining AS REAL)),0) qty
-      FROM stock_lots l JOIN stock_products p ON p.id=l.product_id
-      LEFT JOIN stock_valuation_layers v ON v.lot_id=l.id
-      WHERE l.expiry_date IS NOT NULL GROUP BY l.id ORDER BY l.expiry_date""").fetchall()
-    warehouse_rows=c.execute("""SELECT p.sku,p.name_ar,p.uom,w.code warehouse_code,w.name_ar warehouse_name,
-      COALESCE(SUM(CAST(v.qty_remaining AS REAL)),0) qty,
-      COALESCE(SUM(CAST(CASE WHEN v.value_remaining IS NOT NULL AND v.value_remaining<>'' THEN v.value_remaining ELSE CAST(v.qty_remaining AS REAL)*CAST(v.unit_cost AS REAL) END AS REAL)),0) value,
-      CASE WHEN COALESCE(SUM(CAST(v.qty_remaining AS REAL)),0)=0 THEN 0
-           ELSE COALESCE(SUM(CAST(v.qty_remaining AS REAL)*CAST(v.unit_cost AS REAL)),0) /
-                SUM(CAST(v.qty_remaining AS REAL)) END unit_cost
-      FROM stock_products p LEFT JOIN stock_valuation_layers v ON v.product_id=p.id
-      LEFT JOIN stock_warehouses w ON w.id=v.warehouse_id
-      WHERE p.active=1 GROUP BY p.id,w.id ORDER BY p.sku,w.code""").fetchall()
+    products=c.execute("SELECT id,sku,name_ar,uom FROM stock_products WHERE active=1 ORDER BY sku").fetchall()
+    layers=c.execute("SELECT * FROM stock_valuation_layers WHERE CAST(qty_remaining AS REAL)>0 ORDER BY id").fetchall()
+    product_totals={}
+    warehouse_totals={}
+    for layer in layers:
+        qty=Decimal(str(layer["qty_remaining"] or "0"))
+        if qty<=0: continue
+        value=(Decimal(str(layer["value_remaining"])) if "value_remaining" in layer.keys()
+               and layer["value_remaining"] not in (None,"") else qty*Decimal(str(layer["unit_cost"] or "0")))
+        product_id=layer["product_id"]
+        total=product_totals.setdefault(product_id,{"qty":Decimal("0"),"value":Decimal("0")})
+        total["qty"]+=qty; total["value"]+=value
+        key=(product_id,layer["warehouse_id"])
+        warehouse=warehouse_totals.setdefault(key,{"qty":Decimal("0"),"value":Decimal("0")})
+        warehouse["qty"]+=qty; warehouse["value"]+=value
+    rows=[]
+    for product in products:
+        total=product_totals.get(product["id"],{"qty":Decimal("0"),"value":Decimal("0")})
+        rows.append({"id":product["id"],"sku":product["sku"],"name_ar":product["name_ar"],
+                     "uom":product["uom"],"qty":total["qty"],"value":total["value"],
+                     "unit_cost":total["value"]/total["qty"] if total["qty"] else Decimal("0")})
+    lots=[]
+    for lot in c.execute("""SELECT l.id,l.lot_number,l.expiry_date,p.sku,p.name_ar
+        FROM stock_lots l JOIN stock_products p ON p.id=l.product_id
+        WHERE l.expiry_date IS NOT NULL ORDER BY l.expiry_date""").fetchall():
+        lot_qty=sum((Decimal(str(x["qty_remaining"] or "0")) for x in layers if x["lot_id"]==lot["id"]),Decimal("0"))
+        lots.append({"sku":lot["sku"],"name_ar":lot["name_ar"],"lot_number":lot["lot_number"],
+                     "expiry_date":lot["expiry_date"],"qty":lot_qty})
+    warehouse_lookup={row["id"]:row for row in c.execute("SELECT id,code,name_ar FROM stock_warehouses").fetchall()}
+    product_lookup={row["id"]:row for row in products}
+    warehouse_rows=[]
+    for (product_id,warehouse_id),total in warehouse_totals.items():
+        product=product_lookup[product_id]; warehouse=warehouse_lookup.get(warehouse_id)
+        warehouse_rows.append({"sku":product["sku"],"name_ar":product["name_ar"],"uom":product["uom"],
+            "warehouse_code":warehouse["code"] if warehouse else "",
+            "warehouse_name":warehouse["name_ar"] if warehouse else "",
+            "qty":total["qty"],"value":total["value"],
+            "unit_cost":total["value"]/total["qty"] if total["qty"] else Decimal("0")})
     movements=c.execute("""SELECT m.*,p.sku,p.name_ar,w.name_ar warehouse
       FROM stock_movements m JOIN stock_products p ON p.id=m.product_id
       LEFT JOIN stock_warehouses w ON w.id=COALESCE(m.target_warehouse_id,m.source_warehouse_id)
