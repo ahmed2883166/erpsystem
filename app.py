@@ -27,7 +27,7 @@ from workforce import workforce_bp, initialize_workforce_schema
 from currency_center import currency_bp, initialize_currency_schema
 from party_reports import party_bp
 from management_dashboard import build_management_snapshot, initialize_management_dashboard_schema
-from analytic_dimensions import initialize_analytic_dimensions_schema, active_dimension_options
+from analytic_dimensions import initialize_analytic_dimensions_schema, active_dimension_options, validate_journal_dimensions
 from financial_planning import planning_bp, initialize_planning_schema
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
@@ -739,6 +739,7 @@ def edit_account(account_id):
 def journal():
     connection = db()
     accounts_list = connection.execute("SELECT * FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
+    dimension_options = active_dimension_options(connection)
     if request.method == "POST":
         account_ids = request.form.getlist("account_id")
         debits = request.form.getlist("debit")
@@ -774,7 +775,8 @@ def journal():
             reference = request.form.get("reference", "").strip() or "MAN-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
             if len(reference) > 100:
                 raise ValueError("المرجع لا يجب أن يتجاوز 100 حرف.")
-            entry_id = post_journal(connection, entry_date, reference, description, lines, session["user_id"])
+            dimensions = validate_journal_dimensions(connection, {key: request.form.get(key) for key in ("branch_id", "cost_center_id", "project_id")})
+            entry_id = post_journal(connection, entry_date, reference, description, lines, session["user_id"], dimensions)
             connection.commit()
             log("journal_posted", f"قيد #{entry_id}")
             flash("تم ترحيل القيد بنجاح.", "success")
@@ -784,7 +786,7 @@ def journal():
             flash(str(exc) or "بيانات القيد غير صحيحة.", "error")
     entries = connection.execute("SELECT * FROM journal_entries ORDER BY entry_date DESC, id DESC LIMIT 20").fetchall()
     connection.close()
-    return render_template("journal.html", accounts=accounts_list, entries=entries, today=datetime.now().date().isoformat())
+    return render_template("journal.html", accounts=accounts_list, entries=entries, today=datetime.now().date().isoformat(), dimension_options=dimension_options)
 
 
 
