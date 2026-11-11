@@ -756,6 +756,21 @@ def global_search():
             predicates=[];args=[]
             for col in ("reference","description","entry_date"):
                 if col in cols: predicates.append(f"CAST(j.{col} AS TEXT) LIKE ?");args.append(like)
+            if exists("journal_lines"):
+                predicates.append("EXISTS(SELECT 1 FROM journal_lines jl WHERE jl.entry_id=j.id AND jl.memo LIKE ?)")
+                args.append(like)
+            if exists("sales_invoices") and exists("customers"):
+                predicates.append("EXISTS(SELECT 1 FROM sales_invoices si JOIN customers sc ON sc.id=si.customer_id WHERE si.journal_entry_id=j.id AND (si.invoice_no LIKE ? OR sc.name LIKE ? OR sc.code LIKE ?))")
+                args.extend([like,like,like])
+            if exists("customers"):
+            for r in conn.execute("SELECT id,code,name,phone FROM customers WHERE name LIKE ? OR code LIKE ? OR phone LIKE ? ORDER BY name LIMIT 20",(like,like,like)):
+                results.append({"kind":"عميل","title":f"{r['code']} — {r['name']}","detail":f"هاتف: {r['phone'] or '—'}","url":url_for("sales.edit_customer",customer_id=r["id"])})
+        if exists("suppliers"):
+            for r in conn.execute("SELECT id,code,name,phone FROM suppliers WHERE name LIKE ? OR code LIKE ? OR phone LIKE ? ORDER BY name LIMIT 20",(like,like,like)):
+                results.append({"kind":"مورد","title":f"{r['code']} — {r['name']}","detail":f"هاتف: {r['phone'] or '—'}","url":url_for("purchase.edit_supplier",supplier_id=r["id"])})
+        if exists("supplier_bills") and exists("suppliers"):
+                predicates.append("EXISTS(SELECT 1 FROM supplier_bills sb JOIN suppliers ss ON ss.id=sb.supplier_id WHERE sb.journal_entry_id=j.id AND (sb.bill_no LIKE ? OR sb.supplier_invoice_no LIKE ? OR ss.name LIKE ? OR ss.code LIKE ?))")
+                args.extend([like,like,like,like])
             if q.isdigit(): predicates.append("j.id=?");args.append(int(q))
             if predicates:
                 for r in conn.execute("SELECT j.id,j.entry_date,j.reference,j.description FROM journal_entries j WHERE "+" OR ".join(predicates)+" ORDER BY j.id DESC LIMIT 30",args):
@@ -775,6 +790,9 @@ def global_search():
             for r in conn.execute("""SELECT id,sku,name_ar,barcode,purchase_price,sale_price FROM stock_products
                 WHERE sku LIKE ? OR name_ar LIKE ? OR barcode LIKE ? ORDER BY name_ar LIMIT 30""",(like,like,like)):
                 results.append({"kind":"منتج / مخزون","title":f"{r['sku']} — {r['name_ar']}","detail":f"شراء: {r['purchase_price']} | بيع: {r['sale_price']} | باركود: {r['barcode'] or '—'}","url":url_for("stock.edit_product",product_id=r["id"])})
+        if exists("accounts"):
+            for r in conn.execute("SELECT id,code,name_ar FROM accounts WHERE code LIKE ? OR name_ar LIKE ? ORDER BY code LIMIT 20",(like,like)):
+                results.append({"kind":"حساب","title":f"{r['code']} — {r['name_ar']}","detail":"دليل الحسابات","url":url_for("accounts")})
         if exists("company_settings"):
             for r in conn.execute("SELECT setting_key,setting_value FROM company_settings WHERE setting_value LIKE ? LIMIT 20",(like,)):
                 if "company" in r["setting_key"].lower() or "name" in r["setting_key"].lower():
