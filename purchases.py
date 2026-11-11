@@ -8,13 +8,11 @@ from functools import wraps
 from pathlib import Path
 from datetime import date, datetime
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
-from accounting_core import post_journal, register_decimal_aggregates
+from accounting_core import post_journal, register_decimal_aggregates, money
 from stock import consume_layers, q4, make_lot
 
 purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
-M = Decimal("0.01")
-
 def db():
     c=sqlite3.connect(DB_PATH, timeout=20, isolation_level=None)
     c.row_factory=sqlite3.Row
@@ -22,9 +20,6 @@ def db():
     c.execute("PRAGMA busy_timeout=20000")
     register_decimal_aggregates(c)
     return c
-
-def money(v):
-    return Decimal(str(v)).quantize(M, rounding=ROUND_HALF_UP)
 
 def init_purchase_schema():
     c=db()
