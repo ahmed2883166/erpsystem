@@ -12,5 +12,9 @@
 <label>التاريخ<input type="date" name="expense_date" value="{{today}}" required></label><label>الحساب المصروف<select name="expense_account_id" required>{% for a in accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
 <label>المبلغ<input type="number" name="amount" min="0.01" step="0.01" required></label><label>البيان<input name="description" required></label><label>مرجع الفاتورة<input name="receipt_reference"></label><button type="submit">تسجيل المصروف</button></form>
 <form method="post" action="{{url_for('workforce.settle_custody',custody_id=r.id)}}" class="form-grid"><label>المبلغ المرتد للصندوق/البنك<input type="number" min="0" step="0.01" name="returned_amount" value="0" required></label><label>تاريخ التسوية<input type="date" name="settlement_date" value="{{today}}" required></label><button type="submit">تسوية العهدة وإقفالها</button></form>
-{% endif %}</article>{% else %}<p>لا توجد عهد.</p>{% endfor %}</section>
+{% endif %}</article>{% else %}<p>لا توجد عهد.</p>{% endfor %}
+<div class="actions pagination"><span class="muted">إجمالي العهد: {{ custody_page.total }} — الصفحة {{ custody_page.page }} من {{ custody_page.pages }}</span>
+<form method="get" class="inline-form"><label>عدد السطور <select name="custody_per_page" onchange="this.form.submit()"><option value="50" {% if custody_page.per_page==50 %}selected{% endif %}>50</option><option value="100" {% if custody_page.per_page==100 %}selected{% endif %}>100</option></select></label></form>
+{% if custody_page.page>1 %}<a class="button secondary" href="{{ url_for('workforce.custody',custody_page=custody_page.page-1,custody_per_page=custody_page.per_page) }}">السابق</a>{% endif %}
+{% if custody_page.page<custody_page.pages %}<a class="button" href="{{ url_for('workforce.custody',custody_page=custody_page.page+1,custody_per_page=custody_page.per_page) }}">التالي</a>{% endif %}</div></section>
 {% endblock %}
