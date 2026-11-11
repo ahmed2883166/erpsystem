@@ -57,24 +57,27 @@
   <p class="muted">الأرقام من القيود المرحلة فقط. لا تشمل القيود المسودة. التغير يقارن بفترة سابقة مساوية في عدد الأيام.</p>
 </section>
 
-<section class="panel">
-  <h3>تحليل الإيرادات والمصروفات</h3>
-  <div class="form-grid">
-    <div>
-      <h4>الإيرادات حسب الحساب</h4>
-      {% for item in s.revenue_accounts %}
-        <div class="chart-row"><a href="{{ url_for('ledger', account_id=item.id) }}">{{ item.code }} — {{ item.name }}</a><strong>{{ money(item.value) }}</strong></div>
-        <div class="chart-track"><span class="chart-fill revenue-fill" style="width:{{ item.width }}%"></span></div>
-      {% else %}<p class="muted">لا توجد إيرادات مرحلة في الفترة.</p>{% endfor %}
-    </div>
-    <div>
-      <h4>المصروفات حسب الحساب</h4>
-      {% for item in s.expense_accounts %}
-        <div class="chart-row"><a href="{{ url_for('ledger', account_id=item.id) }}">{{ item.code }} — {{ item.name }}</a><strong>{{ money(item.value) }}</strong></div>
-        <div class="chart-track"><span class="chart-fill expense-fill" style="width:{{ item.width }}%"></span></div>
-      {% else %}<p class="muted">لا توجد مصروفات مرحلة في الفترة.</p>{% endfor %}
+<section class="panel dashboard-visual-panel">
+  <div class="section-heading">
+    <div><h3>التحليل البصري للأداء</h3><p class="muted">اختر المؤشر ونوع الرسم، واضغط على أي بند لفتح دفتر الأستاذ المرتبط به.</p></div>
+    <div class="chart-controls no-print">
+      <button type="button" class="secondary chart-switch active" data-metric="revenue">الإيرادات</button>
+      <button type="button" class="secondary chart-switch" data-metric="expense">المصروفات</button>
+      <select id="chartKind" aria-label="نوع الرسم"><option value="bar">أعمدة</option><option value="doughnut">دائري</option></select>
     </div>
   </div>
+  <div class="dashboard-chart-layout">
+    <div class="dashboard-chart-canvas"><canvas id="managementChart" role="img" aria-label="رسم بياني للإيرادات والمصروفات حسب الحساب"></canvas></div>
+    <div class="dashboard-chart-legend" id="managementChartLegend"></div>
+  </div>
+  <div class="table-wrap chart-data-table">
+    <table><thead><tr><th>الحساب</th><th>القيمة</th><th>النسبة من الإجمالي</th><th>فتح الحساب</th></tr></thead>
+    <tbody id="managementChartRows"><tr><td colspan="4">جارٍ تجهيز البيانات…</td></tr></tbody></table>
+  </div>
+  <script id="managementChartData" type="application/json">{{ {'revenue': s.revenue_accounts|map(attribute='value')|list, 'expense': s.expense_accounts|map(attribute='value')|list}|tojson }}</script>
+  <script id="managementChartLabels" type="application/json">{{ {'revenue': s.revenue_accounts|map(attribute='code')|list, 'expense': s.expense_accounts|map(attribute='code')|list}|tojson }}</script>
+  <script id="managementChartNames" type="application/json">{{ {'revenue': s.revenue_accounts|map(attribute='name')|list, 'expense': s.expense_accounts|map(attribute='name')|list}|tojson }}</script>
+  <script id="managementChartLinks" type="application/json">{{ {'revenue': s.revenue_accounts|map(attribute='id')|map('string')|list, 'expense': s.expense_accounts|map(attribute='id')|map('string')|list}|tojson }}</script>
 </section>
 
 <section class="panel">
@@ -108,4 +111,31 @@
   </div>
   <p class="muted">يتم تحديد الحسابات من شاشة «ربط حسابات لوحة الإدارة»، ويمكنك اختيار الحسابات التفصيلية الفعلية حتى لو كانت أكواد شجرة الحسابات مختلفة.</p>
 </section>
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+<script>
+(() => {
+  const read = id => { try { return JSON.parse(document.getElementById(id)?.textContent || '{}'); } catch (_) { return {}; } };
+  const values=read('managementChartData'), labels=read('managementChartLabels'), names=read('managementChartNames'), links=read('managementChartLinks');
+  const canvas=document.getElementById('managementChart'), table=document.getElementById('managementChartRows');
+  if(!canvas || !table) return;
+  let metric='revenue', chart=null;
+  const currency={{ s.base_currency|tojson }};
+  const format=n=>new Intl.NumberFormat('ar-EG',{maximumFractionDigits:2}).format(Number(n)||0)+' '+currency;
+  const rows=()=> (values[metric]||[]).map((v,i)=>({value:Number(v)||0,code:(labels[metric]||[])[i]||'',name:(names[metric]||[])[i]||'',id:(links[metric]||[])[i]||''})).filter(x=>x.value!==0).sort((a,b)=>b.value-a.value);
+  function render(){
+    const data=rows(), total=data.reduce((s,x)=>s+x.value,0);
+    table.innerHTML=data.length?data.map(x=>'<tr><td>'+x.code+' — '+x.name+'</td><td>'+format(x.value)+'</td><td>'+ (total?((x.value/total)*100).toFixed(1):'0.0')+'%</td><td><a href="/ledger?account_id='+encodeURIComponent(x.id)+'">كشف الحساب</a></td></tr>').join(''):'<tr><td colspan="4">لا توجد بيانات مرحلة لهذا المؤشر في الفترة.</td></tr>';
+    document.getElementById('managementChartLegend').innerHTML=data.slice(0,8).map(x=>'<div class="chart-legend-row"><span>'+x.code+' — '+x.name+'</span><b>'+format(x.value)+'</b></div>').join('');
+    if(!window.Chart){canvas.replaceWith(Object.assign(document.createElement('p'),{className:'muted',textContent:'تعذر تحميل مكتبة الرسم البياني. يمكنك مراجعة جدول البيانات التفصيلي أسفل الرسم.'}));return;}
+    if(chart) chart.destroy();
+    const kind=document.getElementById('chartKind').value;
+    chart=new Chart(canvas,{type:kind,data:{labels:data.map(x=>x.code+' — '+x.name),datasets:[{label:metric==='revenue'?'الإيرادات':'المصروفات',data:data.map(x=>x.value),backgroundColor:kind==='doughnut'?data.map((_,i)=>'hsl('+(165+i*37)%360+' 58% '+(48+(i%3)*7)+'%)'):'rgba(15,155,142,.72)',borderColor:'rgba(15,155,142,1)',borderWidth:1,borderRadius:kind==='bar'?7:0}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:kind==='doughnut',position:'bottom'},tooltip:{callbacks:{label:c=>format(c.raw)}}},scales:kind==='bar'?{x:{beginAtZero:true,grid:{color:'rgba(130,145,165,.14)'},ticks:{callback:v=>new Intl.NumberFormat('ar-EG',{notation:'compact'}).format(v)}},y:{grid:{display:false}}}:{}}});
+  }
+  document.querySelectorAll('.chart-switch').forEach(b=>b.addEventListener('click',()=>{metric=b.dataset.metric;document.querySelectorAll('.chart-switch').forEach(x=>x.classList.toggle('active',x===b));render();}));
+  document.getElementById('chartKind').addEventListener('change',render);
+  render();
+})();
+</script>
+{% endblock %}
 {% endblock %}
