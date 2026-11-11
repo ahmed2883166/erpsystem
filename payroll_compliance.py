@@ -173,6 +173,36 @@ def calculate_payroll_deductions(conn, employee, gross_monthly, period):
     }
 
 
+def seed_egypt_2026(conn):
+    """Insert a reviewable Egypt 2026 baseline; callers must explicitly request it."""
+    conn.execute("""
+        INSERT OR IGNORE INTO payroll_rule_sets(country_code,category_code,effective_from,
+          personal_exemption_annual,insurance_floor,insurance_ceiling,
+          employee_insurance_rate,employer_insurance_rate,notes)
+        VALUES('EG','local','2026-01-01','20000','2700','16700','11','18.75',
+          'إعداد مبدئي لمصر 2026؛ راجع المعاملة القانونية قبل الاعتماد')
+    """)
+    rule = conn.execute("""
+        SELECT id FROM payroll_rule_sets
+        WHERE country_code='EG' AND category_code='local' AND effective_from='2026-01-01'
+    """).fetchone()
+    if not rule:
+        raise ValueError("تعذر إنشاء مجموعة قواعد مصر 2026.")
+    conn.executemany("""
+        INSERT OR IGNORE INTO payroll_tax_brackets(rule_set_id,lower_bound,upper_bound,rate)
+        VALUES(?,?,?,?)
+    """, [
+        (rule["id"],"0","40000","0"),
+        (rule["id"],"40000","55000","10"),
+        (rule["id"],"55000","70000","15"),
+        (rule["id"],"70000","200000","20"),
+        (rule["id"],"200000","400000","22.5"),
+        (rule["id"],"400000","1200000","25"),
+        (rule["id"],"1200000",None,"27.5"),
+    ])
+    return rule["id"]
+
+
 def _authorized(fn):
     @wraps(fn)
     def wrapped(*args, **kwargs):
@@ -195,7 +225,12 @@ def rules():
     try:
         if request.method == "POST":
             action = request.form.get("action")
-            if action == "create_rule":
+            if action == "seed_egypt_2026":
+                rule_id = seed_egypt_2026(conn)
+                _audit(conn, "payroll_rule_preset_loaded", "EG/local/2026-01-01 id=" + str(rule_id))
+                conn.commit()
+                flash("تم تحميل إعداد مصر 2026 للفئة local. راجع القواعد والشرائح قبل تشغيل أول مسير.", "success")
+            elif action == "create_rule":
                 country = request.form.get("country_code", "").strip().upper()
                 category = request.form.get("category_code", "").strip().lower()
                 effective = date.fromisoformat(request.form.get("effective_from", "")).isoformat()
