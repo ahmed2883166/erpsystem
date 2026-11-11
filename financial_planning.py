@@ -153,7 +153,7 @@ def cash_flow():
               "SELECT id FROM accounts WHERE is_group=0 AND (code IN ('1110','1120') OR name_ar LIKE '%صندوق%' OR name_ar LIKE '%بنك%')")}
         if not cash_ids:
             flash("حدد حسابات الصندوق والبنوك من شاشة ربط حسابات لوحة الإدارة أولًا.","warning")
-            opening=closing=Decimal("0"); sections={k:{"in":Decimal("0"),"out":Decimal("0)} for k in ("operating","investing","financing")}
+            opening=closing=Decimal("0"); sections={k:{"in":Decimal("0"),"out":Decimal("0")} for k in ("operating","investing","financing")}
         else:
             marks=",".join("?" for _ in cash_ids)
             ids=tuple(sorted(cash_ids))
