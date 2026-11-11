@@ -1,13 +1,14 @@
 {% extends 'base.html' %}
-{% block title %}لوحة الإدارة | NEXUS ERP<style>
+{% block title %}لوحة الإدارة | NEXUS ERP
+{% endblock %}
+{% block content %}
+<style>
 .chart-row{display:flex;justify-content:space-between;gap:12px;margin:10px 0 4px;font-size:.92rem}
 .chart-row a{text-decoration:none}
 .chart-track{height:9px;background:var(--panel-border,#ddd);border-radius:8px;overflow:hidden;margin-bottom:12px}
 .chart-fill{display:block;height:100%;border-radius:8px}
 .revenue-fill{background:#16a34a}.expense-fill{background:#d97706}
 </style>
-{% endblock %}
-{% block content %}
 {% macro delta(value, good_when_up=True) -%}
   {%- if value is none -%}<span class="muted">—</span>
   {%- else -%}
@@ -24,6 +25,7 @@
     <h2>لوحة الإدارة</h2>
     <p class="muted">{{ s.company_name }} · النشاط: {{ {'commercial':'تجاري','service':'خدمي','medical':'طبي','restaurant':'مطاعم','industrial':'صناعي'}.get(s.activity,s.activity) }} · العملة الأساسية: {{ s.base_currency }}</p>
     <p class="muted">الفترة {{ date_from }} — {{ date_to }} · مقارنة بالفترة {{ s.prev_start.isoformat() }} — {{ s.prev_end.isoformat() }}</p>
+    <div class="actions no-print">{% if 'budget.view' in permissions %}<a class="button-link" href="{{ url_for('planning.budget_index') }}">الموازنات</a>{% endif %}{% if 'cashflow.view' in permissions %}<a class="button-link" href="{{ url_for('planning.cash_flow') }}">التدفقات النقدية</a>{% endif %}{% if 'accounts.manage' in permissions %}<a class="button-link" href="{{ url_for('management_account_mapping') }}">ربط الحسابات</a>{% endif %}</div>
   </div>
 </header>
 
