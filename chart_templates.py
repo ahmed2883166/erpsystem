@@ -74,7 +74,7 @@ ACTIVITY_ACCOUNT_ROLES = {
         "cash": ("1110", "1120"), "receivables": ("1130",),
         "payables": ("2110",), "inventory": ("1150",),
         "quick_assets": ("1110", "1120", "1130", "1140"),
-        "current_assets": ("1110", "1120", "1130", "1140", "1150", "1160"),
+        "current_assets": ("1110", "1120", "1130", "1140", "1150", "1160", "1165"),
         "current_liabilities": ("2110", "2120", "2130", "2140"),
         "direct_cost": ("5100",),
     },
@@ -82,7 +82,7 @@ ACTIVITY_ACCOUNT_ROLES = {
         "cash": ("1110",), "receivables": ("1120", "1130"),
         "payables": ("2100",), "inventory": (),
         "quick_assets": ("1110", "1120", "1130"),
-        "current_assets": ("1110", "1120", "1130", "1140"),
+        "current_assets": ("1110", "1120", "1130", "1140", "1165"),
         "current_liabilities": ("2100", "2110", "2120", "2130"),
         "direct_cost": ("5100", "5200", "5300"),
     },
@@ -115,17 +115,18 @@ ACTIVITY_ACCOUNT_ROLES = {
 # Posting accounts follow each chart. Industrial purchases and sales both use
 # 1130 in v1 because manufacturing/finished-goods conversion is not implemented.
 ACTIVITY_POSTING_ACCOUNTS = {
-    "commercial": {"ar": "1130", "revenue": "4100", "vat": "2130", "inventory": "1150", "cogs": "5100", "purchase_inventory": "1150"},
-    "service": {"ar": "1120", "revenue": "4100", "vat": "2130", "inventory": None, "cogs": None, "purchase_inventory": None},
-    "medical": {"ar": "1130", "revenue": "4100", "vat": "2120", "inventory": "1150", "cogs": "5300", "purchase_inventory": "1150"},
-    "restaurant": {"ar": "1130", "revenue": "4100", "vat": "2120", "inventory": "1140", "cogs": "5100", "purchase_inventory": "1140"},
-    "industrial": {"ar": "1120", "revenue": "4100", "vat": "2120", "inventory": "1130", "cogs": "5400", "purchase_inventory": "1130"},
+    "commercial": {"ar": "1130", "revenue": "4100", "vat": "2130", "inventory": "1150", "cogs": "5100", "purchase_inventory": "1150", "supplier_ap": "2110", "input_vat": "1165"},
+    "service": {"ar": "1120", "revenue": "4100", "vat": "2130", "inventory": None, "cogs": None, "purchase_inventory": None, "supplier_ap": "2100", "input_vat": "1165"},
+    "medical": {"ar": "1130", "revenue": "4100", "vat": "2120", "inventory": "1150", "cogs": "5300", "purchase_inventory": "1150", "supplier_ap": "2100", "input_vat": "1165"},
+    "restaurant": {"ar": "1130", "revenue": "4100", "vat": "2120", "inventory": "1140", "cogs": "5100", "purchase_inventory": "1140", "supplier_ap": "2100", "input_vat": "1165"},
+    "industrial": {"ar": "1120", "revenue": "4100", "vat": "2120", "inventory": "1130", "cogs": "5400", "purchase_inventory": "1130", "supplier_ap": "2100", "input_vat": "1165"},
 }
 
 
 # Common support branches available in every activity. Existing account codes and
 # posted ledgers are never rewritten; these rows affect only newly generated charts.
 _COMMON_ACTIVITY_ACCOUNTS = [
+    ("1165", "ضريبة قيمة مضافة مدخلات قابلة للخصم", "asset", "1100", 0),
     ("1240", "أصول ثابتة إضافية", "asset", "1200", 1),
     ("1241", "مباني وتحسينات", "asset", "1240", 0),
     ("1242", "أثاث وتجهيزات", "asset", "1240", 0),
