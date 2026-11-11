@@ -19,7 +19,7 @@ def register_report_exports(app, db_path, permissions):
                 role = session.get("role")
                 if not session.get("user_id"):
                     abort(401)
-                if permission not in permissions.get(role, set()):
+                if permission not in set(session.get("permissions", permissions.get(role, set()))):
                     abort(403)
                 return view(*args, **kwargs)
             return wrapped
