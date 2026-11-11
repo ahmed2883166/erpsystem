@@ -63,6 +63,14 @@ class PayrollComplianceTests(unittest.TestCase):
         self.assertEqual(result["taxable_annual"], Decimal("86800.00"))
         self.assertEqual(result["tax"], Decimal("592.50"))
 
+
+    def test_egypt_income_over_600k_uses_correct_tax_tier(self):
+        seed_egypt_2026(self.conn)
+        result = calculate_payroll_deductions(self.conn, self.employee, 60000, "2026-11")
+        self.assertEqual(result["taxable_annual"], Decimal("677950.00"))
+        self.assertEqual(result["tax"], Decimal("12353.13"))
+        self.assertEqual(result["insured_wage"], Decimal("16700.00"))
+
     def test_no_effective_rule_uses_manual_fallback(self):
         self.add_rule()
         self.assertIsNone(calculate_payroll_deductions(self.conn, self.employee, 10000, "2025-12"))
