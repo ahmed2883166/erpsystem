@@ -13,7 +13,7 @@ from functools import wraps
 from pathlib import Path
 
 from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for
-from chart_templates import CHARTS, ACTIVITY_LABELS
+from chart_templates import CHARTS, ACTIVITY_LABELS, seed_activity_chart, ensure_common_activity_accounts
 from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
 from sales import sales_bp, init_sales_schema
@@ -266,12 +266,9 @@ def initialize_database():
         if admin and verify_password("admin123", admin["password_hash"]):
             connection.execute("UPDATE users SET must_change_password=1 WHERE id=?", (admin["id"],))
     if not connection.execute("SELECT 1 FROM accounts LIMIT 1").fetchone():
-        connection.executemany("INSERT INTO accounts(code, name_ar, account_type) VALUES(?,?,?)", [
-            ("1000", "الصندوق والبنوك", "asset"), ("1100", "العملاء", "asset"),
-            ("1200", "المخزون", "asset"), ("2000", "الموردون", "liability"),
-            ("3000", "رأس المال", "equity"), ("4000", "إيرادات المبيعات والخدمات", "revenue"),
-            ("5000", "تكلفة المبيعات", "expense"), ("6000", "المصروفات التشغيلية", "expense"),
-        ])
+        activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+        seed_activity_chart(connection, activity_row["setting_value"] if activity_row else "commercial")
+    ensure_common_activity_accounts(connection)
     # SQLite CREATE TABLE IF NOT EXISTS does not change a legacy REAL
     # declaration. Rebuild journal_lines once with TEXT amount columns so
     # existing installations use the same decimal-safe storage as new ones.
@@ -566,20 +563,6 @@ def dashboard():
     if "reports.view" not in set(session.get("permissions", PERMISSIONS.get(session.get("role"), set()))):
         return render_template("limited_home.html")
     return redirect(url_for("management_dashboard"))
-    connection = db()
-    totals = connection.execute("SELECT COUNT(*) accounts, (SELECT COUNT(*) FROM journal_entries) entries, (SELECT COUNT(*) FROM users WHERE active=1) users FROM accounts").fetchone()
-    balance_row = connection.execute("SELECT COALESCE(DECIMAL_SUM(debit),0) debit, COALESCE(DECIMAL_SUM(credit),0) credit FROM journal_lines").fetchone()
-    balance = {"debit":Decimal(str(balance_row["debit"] or "0")),
-               "credit":Decimal(str(balance_row["credit"] or "0"))}
-    revenue = Decimal(str(connection.execute("SELECT COALESCE(DECIMAL_NET(jl.credit,jl.debit),0) total FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE a.account_type='revenue'").fetchone()["total"] or "0"))
-    expenses = Decimal(str(connection.execute("SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) total FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE a.account_type='expense'").fetchone()["total"] or "0"))
-    recent = connection.execute("SELECT * FROM journal_entries ORDER BY id DESC LIMIT 5").fetchall()
-    currency_row=connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
-    base_currency=currency_row["setting_value"] if currency_row else "EGP"
-    company_row=connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='company_name'").fetchone()
-    company_name=company_row["setting_value"] if company_row else "NEXUS ERP"
-    connection.close()
-    return render_template("dashboard.html", totals=totals, balance=balance, revenue=revenue, expenses=expenses, recent=recent, base_currency=base_currency, company_name=company_name)
 
 
 @app.route("/accounts", methods=["GET", "POST"])
