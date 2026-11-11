@@ -810,7 +810,7 @@ def management_dashboard():
         start, end = default_start, default_end
 
     dimensions = {}
-    for key in ("branch_id", "cost_center_id", "project_id"):
+    for key in ("branch_id", "cost_center_id", "project_id", "customer_id"):
         raw = request.args.get(key, "").strip()
         if raw:
             try:
