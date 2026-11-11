@@ -29,6 +29,15 @@ from party_reports import party_bp
 from management_dashboard import build_management_snapshot, initialize_management_dashboard_schema
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
+
+# Development/demo builds run locally without a licensing server. Set NEXUS_DEMO_MODE=0
+# explicitly in a commercial deployment to enforce the signed remote licensing flow.
+NEXUS_DEMO_MODE = os.environ.get("NEXUS_DEMO_MODE", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+def current_license_status():
+    if NEXUS_DEMO_MODE:
+        return {"status": "demo", "license_type": "demo", "message": "نسخة تجريبية محلية — لا تحتاج إلى خادم تراخيص."}
+    return get_license_status()
 from security_controls import login_attempts_exceeded, linked_operational_source
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -288,11 +297,13 @@ def enforce_forced_password_change():
 
 @app.before_request
 def enforce_license():
+    if NEXUS_DEMO_MODE:
+        return None
     endpoint = request.endpoint or ""
     allowed = {"static", "login", "logout", "license_page", "about", "create_backup", "export_data", "change_password"}
     if endpoint in allowed:
         return None
-    status = get_license_status()
+    status = current_license_status()
     if status["status"] not in {"trial", "licensed"}:
         if request.path.startswith("/api/") or request.is_json:
             return {"error":"license_required","message":status.get("message","انتهت صلاحية الترخيص.")}, 402
@@ -302,7 +313,7 @@ def enforce_license():
 
 @app.context_processor
 def shared_context():
-    return {"permissions":PERMISSIONS.get(session.get("role"),set()),"year":datetime.now().year,"license_info":get_license_status()}
+    return {"permissions":PERMISSIONS.get(session.get("role"),set()),"year":datetime.now().year,"license_info":current_license_status()}
 
 
 @app.route("/license", methods=["GET", "POST"])
@@ -314,12 +325,12 @@ def license_page():
             return redirect(url_for("about"))
         except RuntimeError as exc:
             flash(str(exc),"error")
-    return render_template("license.html",license_info=get_license_status())
+    return render_template("license.html",license_info=current_license_status())
 
 
 @app.route("/about")
 def about():
-    return render_template("about.html",license_info=get_license_status())
+    return render_template("about.html",license_info=current_license_status())
 
 
 @app.route("/login", methods=["GET", "POST"])
