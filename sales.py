@@ -11,7 +11,7 @@ from pathlib import Path
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
-from database import connect_database
+from database import connect_database, fetch_page
 from stock import consume_layers
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 
@@ -1003,28 +1003,42 @@ def index():
         item["creditable"] = Decimal(invoice["total_amount"]) > Decimal(invoice["credited_amount"] or "0")
         item["closed_by_credit"] = item["remaining_amount"] <= 0 and Decimal(invoice["credited_amount"] or "0") > 0 and Decimal(invoice["paid_amount"] or "0") < Decimal(invoice["total_amount"])
         enriched_invoices.append(item)
-    receipts = c.execute("""SELECT r.*,i.invoice_no,c.name customer_name FROM customer_receipts r
-                            JOIN sales_invoices i ON i.id=r.invoice_id JOIN customers c ON c.id=i.customer_id
-                            ORDER BY r.id DESC LIMIT 20""").fetchall()
-    batch_receipts = c.execute("""SELECT b.*,cu.name customer_name,COUNT(a.id) invoice_count,
-          GROUP_CONCAT(i.invoice_no || ' (' || a.amount || ')', ', ') invoice_numbers
-        FROM customer_receipt_batches b JOIN customers cu ON cu.id=b.customer_id
-        LEFT JOIN customer_receipt_allocations a ON a.batch_id=b.id
-        LEFT JOIN sales_invoices i ON i.id=a.invoice_id
-        GROUP BY b.id ORDER BY b.id DESC LIMIT 20""").fetchall()
-    credit_notes = c.execute("""SELECT n.*,i.invoice_no,c.name customer_name
-                                FROM sales_credit_notes n JOIN sales_invoices i ON i.id=n.invoice_id
-                                JOIN customers c ON c.id=i.customer_id
-                                ORDER BY n.id DESC LIMIT 20""").fetchall()
-    refunds = c.execute(
+    receipts_page = fetch_page(c,
+        """SELECT r.*,i.invoice_no,c.name customer_name FROM customer_receipts r
+           JOIN sales_invoices i ON i.id=r.invoice_id JOIN customers c ON c.id=i.customer_id
+           ORDER BY r.id DESC""",
+        "SELECT COUNT(*) FROM customer_receipts",
+        page=request.args.get("receipts_page",1,type=int),
+        per_page=request.args.get("receipts_per_page",50,type=int))
+    batch_receipts_page = fetch_page(c,
+        """SELECT b.*,cu.name customer_name,COUNT(a.id) invoice_count,
+              GROUP_CONCAT(i.invoice_no || ' (' || a.amount || ')', ', ') invoice_numbers
+           FROM customer_receipt_batches b JOIN customers cu ON cu.id=b.customer_id
+           LEFT JOIN customer_receipt_allocations a ON a.batch_id=b.id
+           LEFT JOIN sales_invoices i ON i.id=a.invoice_id
+           GROUP BY b.id ORDER BY b.id DESC""",
+        "SELECT COUNT(*) FROM customer_receipt_batches",
+        page=request.args.get("batch_receipts_page",1,type=int),
+        per_page=request.args.get("batch_receipts_per_page",50,type=int))
+    credit_notes_page = fetch_page(c,
+        """SELECT n.*,i.invoice_no,c.name customer_name FROM sales_credit_notes n
+           JOIN sales_invoices i ON i.id=n.invoice_id JOIN customers c ON c.id=i.customer_id
+           ORDER BY n.id DESC""",
+        "SELECT COUNT(*) FROM sales_credit_notes",
+        page=request.args.get("credit_notes_page",1,type=int),
+        per_page=request.args.get("credit_notes_per_page",50,type=int))
+    refunds_page = fetch_page(c,
         """SELECT rf.*,cn.credit_note_no,i.invoice_no,cu.name customer_name,a.code cash_account_code
-           FROM customer_refunds rf
-           JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id
-           JOIN sales_invoices i ON i.id=cn.invoice_id
-           JOIN customers cu ON cu.id=i.customer_id
-           JOIN accounts a ON a.id=rf.cash_account_id
-           ORDER BY rf.id DESC LIMIT 20"""
-    ).fetchall()
+           FROM customer_refunds rf JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id
+           JOIN sales_invoices i ON i.id=cn.invoice_id JOIN customers cu ON cu.id=i.customer_id
+           JOIN accounts a ON a.id=rf.cash_account_id ORDER BY rf.id DESC""",
+        "SELECT COUNT(*) FROM customer_refunds",
+        page=request.args.get("refunds_page",1,type=int),
+        per_page=request.args.get("refunds_per_page",50,type=int))
+    receipts = receipts_page["rows"]
+    batch_receipts = batch_receipts_page["rows"]
+    credit_notes = credit_notes_page["rows"]
+    refunds = refunds_page["rows"]
     enriched_notes = []
     for note in credit_notes:
         note_refunds = c.execute("SELECT amount FROM customer_refunds WHERE credit_note_id=?", (note["id"],)).fetchall()
@@ -1038,6 +1052,8 @@ def index():
                            receipts=receipts, batch_receipts=batch_receipts, credit_notes=enriched_notes, refunds=refunds,
                            invoice_page=invoice_page, invoice_pages=invoice_pages,
                            invoice_per_page=invoice_per_page, invoice_total=invoice_total,
+                           receipts_page=receipts_page,batch_receipts_page=batch_receipts_page,
+                           credit_notes_page=credit_notes_page,refunds_page=refunds_page,
                            today=date.today().isoformat())
 
 
