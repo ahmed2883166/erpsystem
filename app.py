@@ -13,7 +13,7 @@ from functools import wraps
 from pathlib import Path
 
 from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for
-from chart_templates import CHARTS, ACTIVITY_LABELS, seed_activity_chart, ensure_common_activity_accounts
+from chart_templates import CHARTS, ACTIVITY_LABELS, seed_activity_chart, ensure_activity_chart_accounts
 from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
 from sales import sales_bp, init_sales_schema
@@ -277,7 +277,8 @@ def initialize_database():
     if not connection.execute("SELECT 1 FROM accounts LIMIT 1").fetchone():
         activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
         seed_activity_chart(connection, activity_row["setting_value"] if activity_row else "commercial")
-    ensure_common_activity_accounts(connection)
+    activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+    ensure_activity_chart_accounts(connection, activity_row["setting_value"] if activity_row else "commercial")
     # SQLite CREATE TABLE IF NOT EXISTS does not change a legacy REAL
     # declaration. Rebuild journal_lines once with TEXT amount columns so
     # existing installations use the same decimal-safe storage as new ones.
