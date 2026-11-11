@@ -417,10 +417,14 @@ def payroll():
         AND work_status IN ('comprehensive_bonus','permanent') ORDER BY employee_code""").fetchall()
     incentive_rules = c.execute("SELECT * FROM payroll_incentive_rules WHERE active=1 ORDER BY name").fetchall()
     today_period = date.today().strftime("%Y-%m")
-    runs = c.execute("SELECT * FROM payroll_runs ORDER BY period DESC LIMIT 24").fetchall()
+    runs_page = fetch_page(c,"SELECT * FROM payroll_runs ORDER BY period DESC,id DESC",
+        "SELECT COUNT(*) FROM payroll_runs",
+        page=request.args.get("runs_page",1,type=int),
+        per_page=request.args.get("runs_per_page",50,type=int))
+    runs = runs_page["rows"]
     c.close()
-    return render_template("payroll.html", employees=employees, runs=runs, today=today_period,
-                           incentive_rules=incentive_rules)
+    return render_template("payroll.html", employees=employees, runs=runs, runs_page=runs_page,
+                           today=today_period, incentive_rules=incentive_rules)
 
 
 @workforce_bp.route("/hr/payroll/<int:run_id>", methods=["GET"])
