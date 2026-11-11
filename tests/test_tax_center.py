@@ -50,6 +50,7 @@ class TaxCenterTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.app = Flask(__name__, template_folder=str(template_dir))
+        self.app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
         self.app.secret_key = "test"
         self.app.register_blueprint(tax_center.tax_bp)
         self.client = self.app.test_client()
