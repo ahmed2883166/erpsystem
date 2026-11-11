@@ -44,6 +44,8 @@ class LicenseServerTests(unittest.TestCase):
         other=self.client.post("/api/v1/trial",json={"machine_id":"device-machine-0002","product":"NEXUS_ERP"})
         self.assertEqual(first.status_code,200)
         self.assertEqual(first.json["first_seen"],again.json["first_seen"])
+        self.assertTrue(first.json["token"])
+        self.assertEqual(first.json["token"], again.json["token"])
         self.assertEqual(other.status_code,200)
         connection=license_server.connect()
         self.assertEqual(connection.execute("SELECT COUNT(*) FROM trial_devices").fetchone()[0],2)
