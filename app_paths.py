@@ -10,4 +10,4 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("NEXUS_DATA_DIR", str(BASE_DIR / "data"))).expanduser().resolve()
 DB_PATH = DATA_DIR / "nexus.db"
-BACKUP_DIR = DATA_DIR / "backups"
+BACKUP_DIR = Path(os.environ.get("NEXUS_BACKUP_DIR", str(Path.home() / "NEXUS ERP" / "Backups"))).expanduser().resolve()
