@@ -11,7 +11,7 @@ from functools import wraps
 from pathlib import Path
 from datetime import date
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
-from accounting_core import post_journal
+from accounting_core import post_journal, money
 
 stock_bp = Blueprint("stock", __name__, url_prefix="/stock")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
@@ -202,9 +202,6 @@ def dec(value, label):
 def q4(n):
     return n.quantize(QTY, rounding=ROUND_HALF_UP)
 
-
-def money(n):
-    return n.quantize(MONEY, rounding=ROUND_HALF_UP)
 
 
 def current_qty(c, product_id, warehouse_id, lot_id=None):
