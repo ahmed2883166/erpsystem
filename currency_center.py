@@ -1,4 +1,4 @@
-from database import connect_database
+from database import connect_database, fetch_page
 """Foreign currency transaction subledger, settlement and period-end revaluation."""
 import sqlite3
 from datetime import date, datetime
@@ -135,14 +135,23 @@ def index():
         except (ValueError, KeyError, sqlite3.Error) as e:
             c.rollback()
             flash(str(e), "error")
-    rates = c.execute("SELECT * FROM fx_exchange_rates ORDER BY rate_date DESC,currency_code LIMIT 100").fetchall()
+    rates_page = fetch_page(c,
+        "SELECT * FROM fx_exchange_rates ORDER BY rate_date DESC,currency_code",
+        "SELECT COUNT(*) FROM fx_exchange_rates",
+        page=request.args.get("rates_page",1,type=int),
+        per_page=request.args.get("rates_per_page",50,type=int))
     currencies = c.execute("SELECT code,name_ar FROM currencies WHERE active=1 AND is_base=0 ORDER BY code").fetchall()
-    rows = c.execute("""SELECT t.*,a.code party_code,a.name_ar party_account FROM fx_transactions t
-                        JOIN accounts a ON a.id=t.party_account_id ORDER BY t.id DESC LIMIT 100""").fetchall()
+    transactions_page = fetch_page(c,
+        """SELECT t.*,a.code party_code,a.name_ar party_account FROM fx_transactions t
+           JOIN accounts a ON a.id=t.party_account_id ORDER BY t.id DESC""",
+        "SELECT COUNT(*) FROM fx_transactions",
+        page=request.args.get("transactions_page",1,type=int),
+        per_page=request.args.get("transactions_per_page",50,type=int))
+    rates, rows = rates_page["rows"], transactions_page["rows"]
     accounts = c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE is_group=0 AND active=1 ORDER BY code").fetchall()
     c.close()
-    return render_template("currencies.html", rates=rates, currencies=currencies, transactions=rows,
-                           accounts=accounts, today=date.today().isoformat())
+    return render_template("currencies.html", rates=rates, rates_page=rates_page, currencies=currencies, transactions=rows,
+                           transactions_page=transactions_page, accounts=accounts, today=date.today().isoformat())
 
 
 @currency_bp.route("/currencies/transactions", methods=["POST"])
