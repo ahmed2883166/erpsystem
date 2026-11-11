@@ -671,7 +671,23 @@ def reports():
         lots.append({"sku":lot["sku"],"name_ar":lot["name_ar"],"lot_number":lot["lot_number"],
                      "expiry_date":lot["expiry_date"],"qty":lot_qty})
     warehouse_lookup={row["id"]:row for row in c.execute("SELECT id,code,name_ar FROM stock_warehouses").fetchall()}
+    location_lookup={row["id"]:row for row in c.execute("SELECT id,code,name_ar,location_type FROM stock_locations").fetchall()}
     product_lookup={row["id"]:row for row in products}
+    location_totals={}
+    for layer in layers:
+        qty=Decimal(str(layer["qty_remaining"] or "0"))
+        if qty<=0: continue
+        key=(layer["product_id"],layer["warehouse_id"],layer["location_id"])
+        total=location_totals.setdefault(key,{"qty":Decimal("0"),"value":Decimal("0")})
+        total["qty"]+=qty
+        total["value"]+=(Decimal(str(layer["value_remaining"])) if "value_remaining" in layer.keys() and layer["value_remaining"] not in (None,"") else qty*Decimal(str(layer["unit_cost"] or "0")))
+    location_rows=[]
+    for (product_id,warehouse_id,location_id),total in location_totals.items():
+        product=product_lookup[product_id]; warehouse=warehouse_lookup.get(warehouse_id); location=location_lookup.get(location_id)
+        location_rows.append({"sku":product["sku"],"name_ar":product["name_ar"],"uom":product["uom"],
+            "warehouse_code":warehouse["code"] if warehouse else "", "warehouse_name":warehouse["name_ar"] if warehouse else "",
+            "location_code":location["code"] if location else "غير محدد", "location_name":location["name_ar"] if location else "غير محدد",
+            "qty":total["qty"],"value":total["value"]})
     warehouse_rows=[]
     for (product_id,warehouse_id),total in warehouse_totals.items():
         product=product_lookup[product_id]; warehouse=warehouse_lookup.get(warehouse_id)
@@ -685,7 +701,7 @@ def reports():
       LEFT JOIN stock_warehouses w ON w.id=COALESCE(m.target_warehouse_id,m.source_warehouse_id)
       ORDER BY m.id DESC LIMIT 100""").fetchall()
     c.close()
-    return render_template("stock_reports.html",rows=rows,lots=lots,movements=movements,warehouse_rows=warehouse_rows)
+    return render_template("stock_reports.html",rows=rows,lots=lots,movements=movements,warehouse_rows=warehouse_rows,location_rows=location_rows)
 
 
 @stock_bp.route("/barcode")
