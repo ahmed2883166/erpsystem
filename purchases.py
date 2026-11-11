@@ -1,3 +1,4 @@
+from app_paths import DB_PATH
 from database import connect_database, fetch_page
 """NEXUS ERP purchasing v1: suppliers, purchase orders, GRNI receipts, bills and payments.
 All posting is transactional and idempotent. Tax is posted only when an explicit input-tax account exists.
@@ -6,7 +7,6 @@ import sqlite3
 import uuid
 from decimal import Decimal, InvalidOperation
 from functools import wraps
-from pathlib import Path
 from datetime import date, datetime
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal, money
@@ -14,7 +14,7 @@ from stock import consume_layers, q4, make_lot
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 
 purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
-DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
+
 def db():
     return connect_database(DB_PATH, isolation_level=None)
 
