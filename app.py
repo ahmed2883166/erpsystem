@@ -10,7 +10,6 @@ import zipfile
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
-from pathlib import Path
 
 from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for
 from chart_templates import CHARTS, ACTIVITY_LABELS, seed_activity_chart, ensure_activity_chart_accounts
@@ -33,6 +32,7 @@ from financial_planning import planning_bp, initialize_planning_schema
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
+from app_paths import BASE_DIR, DATA_DIR, DB_PATH, BACKUP_DIR
 
 # Development/demo builds run locally without a licensing server. Set NEXUS_DEMO_MODE=0
 # explicitly in a commercial deployment to enforce the signed remote licensing flow.
@@ -44,10 +44,6 @@ def current_license_status():
     return get_license_status()
 from security_controls import login_attempts_exceeded, linked_operational_source
 
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-DB_PATH = DATA_DIR / "nexus.db"
-BACKUP_DIR = DATA_DIR / "backups"
 
 app = Flask(__name__)
 
