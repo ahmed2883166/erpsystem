@@ -1,3 +1,4 @@
+from database import connect_database
 """Customer price lists and quotation workflow."""
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
@@ -12,8 +13,7 @@ DB_PATH=Path(__file__).resolve().parent/"data"/"nexus.db"
 M=Decimal("0.01")
 
 def db():
- c=sqlite3.connect(DB_PATH,timeout=20,isolation_level=None); c.row_factory=sqlite3.Row
- c.execute("PRAGMA foreign_keys=ON"); c.execute("PRAGMA busy_timeout=20000"); return c
+ return connect_database(DB_PATH, isolation_level=None)
 
 def initialize_quotes_schema():
  c=db(); c.executescript("""
