@@ -135,7 +135,7 @@ def require(permission):
         def wrapped(*a,**kw):
             if "user_id" not in session: return redirect(url_for("login"))
             allowed={"purchases.manage":{"admin","accountant"},"purchases.view":{"admin","accountant","viewer"}}
-            if session.get("role") not in allowed.get(permission,set()):
+            if (permission not in set(session["permissions"])) if "permissions" in session else (session.get("role") not in allowed.get(permission,set())):
                 flash("لا تملك الصلاحية المطلوبة.","error"); return redirect(url_for("dashboard"))
             return fn(*a,**kw)
         return wrapped
