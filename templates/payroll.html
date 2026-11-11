@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block title %}مسير الرواتب | NEXUS ERP{% endblock %}{% block content %}
 <header><h2>مسير الرواتب</h2><p>حساب أساسي وبدلات وساعات إضافية وغياب وخصومات وضريبة وتأمينات.</p></header>
-<section class="panel"><h3>إنشاء مسير شهري</h3><p>ضريبة المرتبات والتأمينات تُدخل حسب القواعد القانونية السارية بعد مراجعتها؛ لا يطبق النظام نسبة قانونية ثابتة قد تصبح قديمة.</p>
+<section class="panel"><h3>إنشاء مسير شهري</h3><p>إذا كانت هناك مجموعة قواعد مفعّلة للدولة الحالية وفئة الموظف، سيحسب النظام الضريبة والتأمينات تلقائيًا. وإلا تُستخدم القيم اليدوية أدناه كحل مؤقت. <a href="{{url_for('payroll_compliance.rules')}}">إعداد قواعد الضريبة والتأمينات</a>.</p>
 <form method="post"><label>الشهر <input type="month" name="period" value="{{today}}" required></label>
 <table><tr><th>الموظف</th><th>إضافي (ساعة)</th><th>غياب (ساعة)</th><th>ضريبة مرتبات</th><th>تأمينات الموظف</th><th>تأمينات الشركة</th></tr>
 {% for e in employees %}<tr><td>{{e.employee_code}} - {{e.full_name}}<br><small>أساسي {{e.basic_salary}}</small></td>
