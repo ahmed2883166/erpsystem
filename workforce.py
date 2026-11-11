@@ -181,7 +181,12 @@ def payroll():
             for e in employees:
                 # Every payroll amount is entered on the monthly form. Employee master
                 # data and fixed pay items are not used to calculate this payroll.
-                basic_salary = M(request.form.get("basic_" + str(e["id"]), "0"))
+                basic_raw = request.form.get("basic_" + str(e["id"]), "")
+                if basic_raw is None or not str(basic_raw).strip():
+                    raise ValueError("الراتب الأساسي للموظف " + e["full_name"] + " مطلوب ولا يجوز تركه فارغًا.")
+                basic_salary = M(basic_raw)
+                if basic_salary <= 0:
+                    raise ValueError("الراتب الأساسي للموظف " + e["full_name"] + " يجب أن يكون أكبر من صفر.")
                 allowances = M(request.form.get("allowances_" + str(e["id"]), "0"))
                 overtime_hours = D(request.form.get("overtime_hours_" + str(e["id"]), "0"))
                 overtime_amount = M(request.form.get("overtime_amount_" + str(e["id"]), "0"))
@@ -192,6 +197,20 @@ def payroll():
                 emp_ins = M(request.form.get("employee_ins_" + str(e["id"]), "0"))
                 employer_ins = M(request.form.get("employer_ins_" + str(e["id"]), "0"))
                 gross = M(basic_salary + allowances + overtime_amount - absence)
+                rule_set_id = None
+                taxable_annual = Decimal("0")
+                insured_wage = Decimal("0")
+                if request.form.get("auto_calculate_statutory") == "1":
+                    from payroll_compliance import calculate_payroll_deductions
+                    automatic = calculate_payroll_deductions(c, e, gross, period)
+                    if automatic is None:
+                        raise ValueError("لا توجد قواعد ضريبية وتأمينية سارية للموظف " + e["full_name"] + ". راجع إعدادات قواعد الرواتب أو ألغِ خيار الحساب التلقائي.")
+                    tax = automatic["tax"]
+                    emp_ins = automatic["employee_insurance"]
+                    employer_ins = automatic["employer_insurance"]
+                    rule_set_id = automatic["rule_set_id"]
+                    taxable_annual = automatic["taxable_annual"]
+                    insured_wage = automatic["insured_wage"]
                 net = M(gross - other_deductions - tax - emp_ins)
                 if min(basic_salary, allowances, overtime_hours, overtime_amount, absent_hours,
                        absence, other_deductions, tax, emp_ins, employer_ins, gross, net) < 0:
@@ -203,7 +222,7 @@ def payroll():
                     (run_id,e["id"],str(basic_salary),str(allowances),str(overtime_hours),str(overtime_amount),
                      str(absent_hours),str(absence),str(other_deductions),str(tax),str(emp_ins),
                      str(employer_ins),str(gross),str(net),
-                     None, "0", "0"))
+                     rule_set_id, str(taxable_annual), str(insured_wage)))
             _audit(c, "payroll_draft_created", period)
             c.commit()
             flash("تم إنشاء مسير الرواتب كمسودة. راجع البنود ثم رحّله.", "success")
