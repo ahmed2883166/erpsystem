@@ -250,9 +250,16 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     if tax_amount > 0 and vat is None:
         vat = _account(conn, codes["vat"], "liability")
     credit_limit = Decimal(customer["credit_limit"] or "0")
-    outstanding_row = conn.execute("""SELECT COALESCE(SUM(CAST(total_amount AS REAL)-CAST(paid_amount AS REAL)),0) balance
-        FROM sales_invoices WHERE customer_id=? AND status='posted'""", (customer_id,)).fetchone()
-    current_exposure = Decimal(str(outstanding_row["balance"] or 0)).quantize(CENT, rounding=ROUND_HALF_UP)
+    outstanding_rows = conn.execute(
+        "SELECT total_amount,paid_amount,COALESCE(credited_amount,'0') credited_amount "
+        "FROM sales_invoices WHERE customer_id=? AND status='posted'", (customer_id,)
+    ).fetchall()
+    current_exposure = sum((
+        Decimal(str(row["total_amount"] or "0")) -
+        Decimal(str(row["paid_amount"] or "0")) -
+        Decimal(str(row["credited_amount"] or "0"))
+        for row in outstanding_rows
+    ), Decimal("0")).quantize(CENT, rounding=ROUND_HALF_UP)
     credit_warning = bool(credit_limit > 0 and current_exposure + total_amount > credit_limit)
     if credit_warning and not allow_credit_override:
         raise ValueError(
