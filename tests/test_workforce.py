@@ -67,14 +67,17 @@ class WorkforceTests(unittest.TestCase):
     def test_payroll_calculation_and_posting(self):
         self.add_employee()
         response = self.client.post("/hr/payroll", data={
-            "period": "2026-11", "overtime_1": "10", "absent_1": "2",
-            "tax_1": "500", "employee_ins_1": "300", "employer_ins_1": "400"
+            "period": "2026-11", "basic_1": "10000", "allowances_1": "1000",
+            "overtime_hours_1": "10", "overtime_amount_1": "750",
+            "absent_hours_1": "2", "absence_deduction_1": "100",
+            "other_deductions_1": "200", "tax_1": "500",
+            "employee_ins_1": "300", "employer_ins_1": "400"
         })
         self.assertEqual(response.status_code, 302)
         conn = sqlite3.connect(self.db_path)
         line = conn.execute("SELECT gross_pay,net_pay FROM payroll_lines").fetchone()
         conn.close()
-        self.assertEqual(line, ("11650.00", "10850.00"))
+        self.assertEqual(line, ("11650.00", "10650.00"))
         conn = sqlite3.connect(self.db_path)
         manual_values = conn.execute(
             "SELECT taxable_income_tax,employee_insurance,employer_insurance,rule_set_id "
@@ -87,7 +90,7 @@ class WorkforceTests(unittest.TestCase):
         response = self.client.post("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
-            "insurance_payable_account": "7"
+            "insurance_payable_account": "7", "other_deductions_account": "2"
         })
         self.assertEqual(response.status_code, 302)
         conn = sqlite3.connect(self.db_path)
@@ -96,6 +99,15 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         self.assertEqual(status, "posted")
         self.assertEqual(journal_count, 1)
+        conn = sqlite3.connect(self.db_path)
+        posted = conn.execute(
+            "SELECT a.code,jl.debit,jl.credit,jl.memo FROM journal_lines jl "
+            "JOIN accounts a ON a.id=jl.account_id ORDER BY jl.id"
+        ).fetchall()
+        conn.close()
+        self.assertEqual(sum(float(x[1] or 0) for x in posted), 12050.0)
+        self.assertEqual(sum(float(x[2] or 0) for x in posted), 12050.0)
+        self.assertTrue(any(x[0] == "1300" and x[2] == "200.00" for x in posted))
 
     def test_custody_issue_expense_and_full_settlement(self):
         self.add_employee()
