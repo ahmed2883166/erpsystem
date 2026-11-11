@@ -7,6 +7,7 @@ from flask import Flask
 
 import sales
 import purchases
+import receivables
 
 
 class InvoicePrintRouteTests(unittest.TestCase):
@@ -69,6 +70,7 @@ class InvoicePrintRouteTests(unittest.TestCase):
         self.app.add_url_rule("/logout", endpoint="logout", view_func=lambda: "")
         self.app.register_blueprint(sales.sales_bp)
         self.app.register_blueprint(purchases.purchase_bp)
+        self.app.register_blueprint(receivables.aging_bp)
         self.client = self.app.test_client()
         with self.client.session_transaction() as session:
             session.update(user_id=1, username="tester", full_name="اختبار",
