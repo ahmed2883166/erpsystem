@@ -21,8 +21,6 @@ class PartyStatementTests(unittest.TestCase):
             invoice_date TEXT, total_amount TEXT, status TEXT);
           CREATE TABLE sales_credit_notes(id INTEGER PRIMARY KEY, invoice_id INTEGER, credit_note_no TEXT,
             credit_date TEXT, reason TEXT, total_amount TEXT, status TEXT);
-          CREATE TABLE sales_credit_notes(id INTEGER PRIMARY KEY, invoice_id INTEGER, credit_note_no TEXT,
-            credit_date TEXT, reason TEXT, total_amount TEXT, status TEXT);
           CREATE TABLE customer_refunds(id INTEGER PRIMARY KEY, credit_note_id INTEGER, refund_no TEXT,
             refund_date TEXT, amount TEXT);
           CREATE TABLE customer_receipts(id INTEGER PRIMARY KEY, invoice_id INTEGER, receipt_no TEXT,
