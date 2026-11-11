@@ -66,3 +66,36 @@ ACTIVITY_LABELS = {
     "commercial": "تجاري", "service": "خدمي", "medical": "طبي",
     "restaurant": "مطاعم", "industrial": "صناعي"
 }
+
+
+# Common support branches available in every activity. Existing account codes and
+# posted ledgers are never rewritten; these rows affect only newly generated charts.
+_COMMON_ACTIVITY_ACCOUNTS = [
+    ("1240", "أصول ثابتة إضافية", "asset", "1200", 1),
+    ("1241", "مباني وتحسينات", "asset", "1240", 0),
+    ("1242", "أثاث وتجهيزات", "asset", "1240", 0),
+    ("1243", "سيارات ووسائل نقل", "asset", "1240", 0),
+    ("1244", "آلات ومعدات", "asset", "1240", 0),
+    ("1245", "أجهزة حاسب وشبكات", "asset", "1240", 0),
+    ("1246", "أدوات ومعدات صغيرة", "asset", "1240", 0),
+    ("1249", "مجمع إهلاك الأصول الثابتة الإضافية", "asset", "1240", 0),
+    ("6600", "الأجور والمرتبات ومزايا العاملين", "expense", "6000", 1),
+    ("6610", "الأجور والمرتبات الأساسية", "expense", "6600", 0),
+    ("6620", "حصة الشركة في التأمينات الاجتماعية", "expense", "6600", 0),
+    ("6630", "بدلات ومزايا العاملين", "expense", "6600", 0),
+    ("6640", "مصروف مخصص مكافأة نهاية الخدمة", "expense", "6600", 0),
+    ("6700", "التسويق والمبيعات", "expense", "6000", 1),
+    ("6710", "إعلانات وحملات تسويقية", "expense", "6700", 0),
+    ("6720", "عمولات البيع والتسويق", "expense", "6700", 0),
+    ("6730", "ضيافة وعروض ترويجية", "expense", "6700", 0),
+]
+
+for _activity, _chart in CHARTS.items():
+    _existing = {row[0] for row in _chart}
+    _available = set(_existing)
+    for _row in _COMMON_ACTIVITY_ACCOUNTS:
+        _code, _name, _type, _parent, _is_group = _row
+        if _code in _existing or _parent not in _available:
+            continue
+        _chart.append(_row)
+        _available.add(_code)
