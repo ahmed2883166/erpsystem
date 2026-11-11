@@ -4,7 +4,11 @@
 <label>العملة<select name="currency_code" required>{% for x in currencies %}<option value="{{x.code}}">{{x.code}} - {{x.name_ar}}</option>{% endfor %}</select></label>
 <label>تاريخ السريان<input type="date" name="rate_date" value="{{today}}" required></label>
 <label>سعر العملة مقابل العملة الأساسية<input type="number" name="rate_to_base" min="0.000001" step="0.000001" required></label><button type="submit">حفظ سعر الصرف</button></form>
-<table><tr><th>العملة</th><th>التاريخ</th><th>السعر</th><th>المصدر</th></tr>{% for r in rates %}<tr><td>{{r.currency_code}}</td><td>{{r.rate_date}}</td><td>{{r.rate_to_base}}</td><td>{{r.source}}</td></tr>{% else %}<tr><td colspan="4">لا توجد أسعار مسجلة.</td></tr>{% endfor %}</table></section>
+<table><tr><th>العملة</th><th>التاريخ</th><th>السعر</th><th>المصدر</th></tr>{% for r in rates %}<tr><td>{{r.currency_code}}</td><td>{{r.rate_date}}</td><td>{{r.rate_to_base}}</td><td>{{r.source}}</td></tr>{% else %}<tr><td colspan="4">لا توجد أسعار مسجلة.</td></tr>{% endfor %}</table>
+<div class="actions pagination"><span class="muted">إجمالي أسعار الصرف: {{ rates_page.total }} — الصفحة {{ rates_page.page }} من {{ rates_page.pages }}</span>
+<form method="get" class="inline-form"><label>عدد السطور <select name="rates_per_page" onchange="this.form.submit()"><option value="50" {% if rates_page.per_page==50 %}selected{% endif %}>50</option><option value="100" {% if rates_page.per_page==100 %}selected{% endif %}>100</option></select></label></form>
+{% if rates_page.page>1 %}<a class="button secondary" href="{{ url_for('currency_center.index',rates_page=rates_page.page-1,rates_per_page=rates_page.per_page) }}">السابق</a>{% endif %}
+{% if rates_page.page<rates_page.pages %}<a class="button" href="{{ url_for('currency_center.index',rates_page=rates_page.page+1,rates_per_page=rates_page.per_page) }}">التالي</a>{% endif %}</div></section>
 <section class="panel"><h3>إثبات معاملة بعملة أجنبية</h3><p>هذه الشاشة تنشئ سجلًا فرعيًا مستقلًا للذمم الأجنبية. لا تستبدل فاتورة المبيعات/المشتريات المحلية ولا تضيف ضريبة تلقائيًا؛ يلزم ربطها لاحقًا بمستندات البيع والشراء قبل استخدامها كدورة فوترة ضريبية متكاملة.</p>
 <form method="post" action="{{url_for('currency_center.create_transaction')}}" class="form-grid">
 <label>نوع الذمة<select name="party_type"><option value="receivable">عميل – ذمم مدينة</option><option value="payable">مورد – ذمم دائنة</option></select></label>
