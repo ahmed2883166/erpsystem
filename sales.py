@@ -807,6 +807,15 @@ def index():
                                 FROM sales_credit_notes n JOIN sales_invoices i ON i.id=n.invoice_id
                                 JOIN customers c ON c.id=i.customer_id
                                 ORDER BY n.id DESC LIMIT 20""").fetchall()
+    refunds = c.execute(
+        """SELECT rf.*,cn.credit_note_no,i.invoice_no,cu.name customer_name,a.code cash_account_code
+           FROM customer_refunds rf
+           JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id
+           JOIN sales_invoices i ON i.id=cn.invoice_id
+           JOIN customers cu ON cu.id=i.customer_id
+           JOIN accounts a ON a.id=rf.cash_account_id
+           ORDER BY rf.id DESC LIMIT 20"""
+    ).fetchall()
     enriched_notes = []
     for note in credit_notes:
         refunds = c.execute("SELECT amount FROM customer_refunds WHERE credit_note_id=?", (note["id"],)).fetchall()
@@ -817,7 +826,7 @@ def index():
         enriched_notes.append(item)
     c.close()
     return render_template("sales.html", customers=customers, invoices=enriched_invoices,
-                           receipts=receipts, credit_notes=enriched_notes, today=date.today().isoformat())
+                           receipts=receipts, credit_notes=enriched_notes, refunds=refunds, today=date.today().isoformat())
 
 
 @sales_bp.route("/customers", methods=["GET", "POST"])
