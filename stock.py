@@ -260,21 +260,31 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
     return money(cost_total), allocations
 
 
-def make_lot(c, product, lot_number, production_date, expiry_date):
+def make_lot(c, product, lot_number, production_date, expiry_date, as_of=None):
     if not product["track_lot"] and not product["track_expiry"]:
         return None
     if not lot_number:
         raise ValueError("هذا الصنف يتطلب رقم تشغيلة.")
     if product["track_expiry"] and not expiry_date:
         raise ValueError("تاريخ الصلاحية مطلوب لهذا الصنف.")
+    reference_date = date.fromisoformat(as_of) if as_of else date.today()
+    production = None
+    if production_date:
+        try:
+            production = date.fromisoformat(production_date)
+        except ValueError:
+            raise ValueError("تاريخ الإنتاج غير صحيح.")
+        if production > reference_date:
+            raise ValueError("تاريخ الإنتاج لا يمكن أن يكون بعد تاريخ الاستلام.")
     if expiry_date:
         try:
             exp = date.fromisoformat(expiry_date)
-            if exp < date.today():
-                raise ValueError("لا يمكن استلام تشغيلة منتهية الصلاحية.")
-        except ValueError as e:
-            if "منتهية" in str(e): raise
+        except ValueError:
             raise ValueError("تاريخ الصلاحية غير صحيح.")
+        if exp < reference_date:
+            raise ValueError("لا يمكن استلام تشغيلة منتهية الصلاحية.")
+        if production and exp < production:
+            raise ValueError("تاريخ الصلاحية لا يمكن أن يسبق تاريخ الإنتاج.")
     c.execute("""INSERT OR IGNORE INTO stock_lots(product_id,lot_number,production_date,expiry_date)
                  VALUES(?,?,?,?)""", (product["id"],lot_number,production_date or None,expiry_date or None))
     lot = c.execute("SELECT * FROM stock_lots WHERE product_id=? AND lot_number=?", (product["id"],lot_number)).fetchone()
