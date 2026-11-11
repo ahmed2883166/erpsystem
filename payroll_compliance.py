@@ -171,7 +171,7 @@ def missing_payroll_rule_categories(conn, employees, period):
     return sorted(missing)
 
 
-def calculate_payroll_deductions(conn, employee, gross_monthly, period):
+def calculate_payroll_deductions(conn, employee, gross_monthly, period, taxable_gross_monthly=None):
     """Return automatic monthly deductions, or None when no effective rule is configured."""
     country = current_tax_country(conn)
     category = (employee["legal_category"] or "local").strip().lower()
@@ -179,6 +179,7 @@ def calculate_payroll_deductions(conn, employee, gross_monthly, period):
     if not rule:
         return None
     gross = _m(gross_monthly)
+    taxable_gross = _m(gross_monthly if taxable_gross_monthly is None else taxable_gross_monthly)
     insurance_enabled = int(employee["insurance_enabled"]) if "insurance_enabled" in employee.keys() else 1
     floor = _d(rule["insurance_floor"])
     ceiling = _d(rule["insurance_ceiling"])
@@ -201,7 +202,7 @@ def calculate_payroll_deductions(conn, employee, gross_monthly, period):
     employer_insurance = _m(insured_wage * employer_rate / Decimal("100"))
     exemption = _d(rule["personal_exemption_annual"])
     # Employee social insurance is deductible from the annual salary-tax base.
-    annual_taxable = max(Decimal("0"), gross * Decimal("12") -
+    annual_taxable = max(Decimal("0"), taxable_gross * Decimal("12") -
                          employee_insurance * Decimal("12") - exemption)
     rounding_unit = _d(rule["taxable_rounding_unit"] if "taxable_rounding_unit" in rule.keys() else "1")
     if rounding_unit > 0:
