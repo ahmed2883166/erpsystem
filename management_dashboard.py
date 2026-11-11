@@ -130,26 +130,44 @@ MANAGEMENT_ROLES = {
 }
 
 
-def load_management_account_roles(conn, activity):
-    """Load user-configurable account roles; seed activity defaults only once."""
+def initialize_management_dashboard_schema(conn, activity):
+    """Create dashboard support schema and seed defaults once during app initialization."""
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_status_date ON journal_entries(status,entry_date,id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_account ON journal_lines(entry_id,account_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry ON journal_lines(account_id,entry_id)")
     conn.execute("""CREATE TABLE IF NOT EXISTS management_account_roles(
         account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
         role TEXT NOT NULL, PRIMARY KEY(account_id,role))""")
-    configured = conn.execute("SELECT COUNT(*) FROM management_account_roles").fetchone()[0]
-    if not configured:
+    conn.execute("""CREATE TABLE IF NOT EXISTS management_dashboard_meta(
+        meta_key TEXT PRIMARY KEY, meta_value TEXT NOT NULL)""")
+    meta = {row["meta_key"]: row["meta_value"] for row in conn.execute("SELECT meta_key,meta_value FROM management_dashboard_meta")}
+    customized = meta.get("roles_customized") == "1"
+    previous_activity = meta.get("seed_activity")
+    needs_seed = meta.get("roles_initialized") != "1"
+    activity_changed = previous_activity != activity
+    if needs_seed or (activity_changed and not customized):
+        conn.execute("DELETE FROM management_account_roles")
         defaults = ACTIVITY_ACCOUNTS.get(activity, ACTIVITY_ACCOUNTS["commercial"])
         for role in ("cash", "receivables", "payables", "inventory", "quick_assets", "direct_cost"):
-            for code in defaults.get(role, ()):
+            for code in defaults.get(role, ()): 
                 conn.execute("""INSERT OR IGNORE INTO management_account_roles(account_id,role)
-                    SELECT id,? FROM accounts WHERE code=? AND is_group=0""", (role, code))
-        conn.execute("""INSERT OR IGNORE INTO management_account_roles(account_id,role)
-            SELECT id,'current_assets' FROM accounts WHERE is_group=0 AND account_type='asset' AND code LIKE '11%'""")
-        conn.execute("""INSERT OR IGNORE INTO management_account_roles(account_id,role)
-            SELECT id,'current_liabilities' FROM accounts WHERE is_group=0 AND account_type='liability' AND code LIKE '21%'""")
-        conn.commit()
+                    SELECT id,? FROM accounts WHERE code=? AND is_group=0 AND active=1""", (role, code))
+        current_asset_codes = tuple(dict.fromkeys(defaults.get("cash", ()) + defaults.get("receivables", ()) + defaults.get("inventory", ())))
+        for code in current_asset_codes:
+            conn.execute("""INSERT OR IGNORE INTO management_account_roles(account_id,role)
+                SELECT id,'current_assets' FROM accounts WHERE code=? AND is_group=0 AND active=1""", (code,))
+        for code in defaults.get("payables", ()): 
+            conn.execute("""INSERT OR IGNORE INTO management_account_roles(account_id,role)
+                SELECT id,'current_liabilities' FROM accounts WHERE code=? AND is_group=0 AND active=1""", (code,))
+        conn.execute("""INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_initialized','1')
+            ON CONFLICT(meta_key) DO UPDATE SET meta_value='1'""")
+        conn.execute("""INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('seed_activity',?)
+            ON CONFLICT(meta_key) DO UPDATE SET meta_value=excluded.meta_value""", (activity,))
+    conn.commit()
+
+
+def load_management_account_roles(conn, activity=None):
+    """Read configured account-role mappings only; never create schema or seed data."""
     result = {role: set() for role in MANAGEMENT_ROLES}
     for row in conn.execute("SELECT account_id,role FROM management_account_roles"):
         if row["role"] in result:
@@ -157,7 +175,7 @@ def load_management_account_roles(conn, activity):
     return result
 
 
-def _top_accounts(balances, account_type, value_key, limit=8):
+def _top_accounts(balances, account_type, value_key):
     rows = []
     for account_id, item in balances.items():
         if item["is_group"] or item["type"] != account_type:
@@ -166,7 +184,6 @@ def _top_accounts(balances, account_type, value_key, limit=8):
         if value:
             rows.append({"id": account_id, "code": item["code"], "name": item["name"], "value": value})
     rows.sort(key=lambda x: abs(x["value"]), reverse=True)
-    rows = rows[:limit]
     maximum = max((abs(x["value"]) for x in rows), default=Decimal("0"))
     for row in rows:
         row["width"] = float((abs(row["value"]) * Decimal("100") / maximum).quantize(Decimal("0.1"))) if maximum else 0
