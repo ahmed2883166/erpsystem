@@ -1,12 +1,10 @@
 {% extends "base.html" %}{% block title %}مسير الرواتب | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>مسير الرواتب</h2><p>حساب أساسي وبدلات وساعات إضافية وغياب وخصومات وضريبة وتأمينات.</p></header>
+<header><h2>مسير الرواتب</h2><p>إدخال يدوي كامل للأجور والبدلات والإضافي والغياب والخصومات والضريبة والتأمينات.</p></header>
 <section class="panel"><h3>إنشاء مسير شهري</h3>
-<p>الدولة الضريبية: <strong>{{tax_country}}</strong>. عند وجود قاعدة سارية تطبق الضريبة والتأمينات تلقائيًا حسب فئة الموظف، ولا تُستخدم القيم اليدوية لهؤلاء الموظفين.</p>
-{% if missing_rule_categories %}<div class="flash error">لا توجد قواعد سارية للفئات التالية: <strong>{{missing_rule_categories|join('، ')}}</strong>. لن تُحتسب لها الضريبة والتأمينات تلقائيًا؛ افتح إعداد القواعد وأضف الفئة بنفس الرمز الموجود في ملف الموظف قبل اعتماد المسير.</div>{% else %}<div class="flash success">توجد قواعد سارية لجميع فئات الموظفين النشطين لهذا الشهر.</div>{% endif %}
-<p><a href="{{url_for('payroll_compliance.rules')}}">إعداد قواعد الضريبة والتأمينات</a> · <a href="{{url_for('payroll_compliance.report')}}">تقرير الضرائب والتأمينات</a> · <a href="{{url_for('payroll_compliance.payments')}}">سداد الالتزامات</a>.</p>
-<p class="muted">مصر: يتم تحميل قواعد 2026 تلقائيًا لفئة local عند عدم وجودها. الحساب الشهري الحالي تقديري على أساس الراتب الخاضع الحالي مضروبًا في 12؛ التسوية التراكمية السنوية وتغير الراتب/التعيين خلال السنة والمعالجات الخاصة تحتاج استكمالًا ومراجعة محاسب ضرائب.</p>
+<div class="flash success">وضع الرواتب: إدخال يدوي بالكامل. القواعد الضريبية والتأمينية المحفوظة لا تُطبّق تلقائيًا ولا تستبدل القيم التي تدخلها هنا. المحاسب مسؤول عن إدخال المبالغ المعتمدة ومراجعتها قبل ترحيل المسير.</div>
+<p><a href="{{url_for('payroll_compliance.report')}}">تقرير الضرائب والتأمينات</a> · <a href="{{url_for('payroll_compliance.payments')}}">سداد الالتزامات</a>.</p>
 <form method="post"><label>الشهر <input type="month" name="period" value="{{today}}" required></label>
-<table><tr><th>الموظف</th><th>إضافي (ساعة)</th><th>غياب (ساعة)</th><th>ضريبة المرتبات (يدوي عند غياب القاعدة فقط)</th><th>تأمين الموظف (يدوي عند غياب القاعدة فقط)</th><th>تأمين الشركة (يدوي عند غياب القاعدة فقط)</th></tr>
+<table><tr><th>الموظف</th><th>إضافي (ساعة)</th><th>غياب (ساعة)</th><th>ضريبة المرتبات (يدوي)</th><th>تأمين الموظف (يدوي)</th><th>تأمين الشركة (يدوي)</th></tr>
 {% for e in employees %}<tr><td>{{e.employee_code}} - {{e.full_name}}<br><small>أساسي {{e.basic_salary}}</small></td>
 <td><input type="number" min="0" step="0.01" name="overtime_{{e.id}}" value="0"></td>
 <td><input type="number" min="0" step="0.01" name="absent_{{e.id}}" value="0"></td>
