@@ -363,6 +363,35 @@ class SalesIntegrationTests(unittest.TestCase):
         self.db.rollback()
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM sales_invoices").fetchone()[0], 0)
 
+    def test_customer_percentage_discount_reduces_taxable_sales_before_vat(self):
+        self.db.execute("UPDATE customers SET discount_type='percent',discount_value='10' WHERE id=?", (self.customer_id,))
+        self.db.execute("BEGIN IMMEDIATE")
+        result = sales.post_invoice(self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}], "14", 1)
+        self.db.commit()
+        self.assertEqual(result["gross_subtotal"], Decimal("100.00"))
+        self.assertEqual(result["discount_amount"], Decimal("10.00"))
+        self.assertEqual(result["subtotal"], Decimal("90.00"))
+        self.assertEqual(result["tax_amount"], Decimal("12.60"))
+        self.assertEqual(result["total_amount"], Decimal("102.60"))
+        line = self.db.execute("SELECT line_total,tax_amount FROM sales_invoice_lines WHERE invoice_id=?",
+                               (result["invoice_id"],)).fetchone()
+        self.assertEqual(Decimal(line["line_total"]), Decimal("90.00"))
+        self.assertEqual(Decimal(line["tax_amount"]), Decimal("12.60"))
+
+    def test_customer_fixed_discount_is_applied_and_snapshotted(self):
+        self.db.execute("UPDATE customers SET discount_type='fixed',discount_value='15' WHERE id=?", (self.customer_id,))
+        self.db.execute("BEGIN IMMEDIATE")
+        result = sales.post_invoice(self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}], "0", 1)
+        self.db.commit()
+        self.assertEqual(result["discount_amount"], Decimal("15.00"))
+        self.assertEqual(result["subtotal"], Decimal("85.00"))
+        saved = self.db.execute("SELECT discount_type,discount_value,discount_amount FROM sales_invoices WHERE id=?",
+                                (result["invoice_id"],)).fetchone()
+        self.assertEqual((saved["discount_type"], saved["discount_value"], Decimal(saved["discount_amount"])),
+                         ("fixed", "15.00", Decimal("15.00")))
+
 
 if __name__ == "__main__":
     unittest.main()
