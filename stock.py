@@ -180,7 +180,7 @@ def stock_permission(view_name):
             if "user_id" not in session:
                 return redirect(url_for("login"))
             role = session.get("role")
-            allowed = role == "admin" or (role == "accountant" and view_name in {"stock.manage","stock.view"}) or (role == "viewer" and view_name == "stock.view")
+            allowed = (view_name in set(session["permissions"])) if "permissions" in session else (role == "admin" or (role == "accountant" and view_name in {"stock.manage","stock.view"}) or (role == "viewer" and view_name == "stock.view"))
             if not allowed:
                 flash("ليس لديك صلاحية لهذه العملية.", "error")
                 return redirect(url_for("dashboard"))
