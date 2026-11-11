@@ -580,6 +580,10 @@ def new_credit_note():
             bill=c.execute("SELECT * FROM supplier_bills WHERE id=? AND supplier_id=? AND status='posted'",(bill_id,supplier)).fetchone()
             if not bill:
                 raise ValueError("فاتورة المورد غير موجودة أو لا تتبع المورد المحدد.")
+            if request.form["credit_date"] < bill["bill_date"]:
+                raise ValueError("تاريخ إشعار الدائن لا يمكن أن يسبق تاريخ فاتورة المورد.")
+            if not c.execute("SELECT 1 FROM supplier_bill_receipts WHERE bill_id=? LIMIT 1",(bill_id,)).fetchone():
+                raise ValueError("إشعار الدائن المخزني متاح فقط لفواتير الأصناف المرتبطة باستلام مشتريات، وليس فواتير المصروفات والخدمات.")
             if c.execute("SELECT 1 FROM supplier_credit_notes WHERE supplier_id=? AND lower(trim(supplier_credit_no))=lower(trim(?))",(supplier,supplier_credit_no)).fetchone():
                 raise ValueError("رقم إشعار الدائن مسجل بالفعل لهذا المورد.")
             activity_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
@@ -601,6 +605,13 @@ def new_credit_note():
                 warehouse=c.execute("SELECT id FROM stock_warehouses WHERE id=? AND active=1",(warehouse_id,)).fetchone()
                 if not product or product["product_type"]=="service" or not warehouse:
                     raise ValueError("اختر صنفًا مخزنيًا ومخزنًا نشطًا.")
+                belongs_to_bill=c.execute("""SELECT 1 FROM supplier_bill_receipts sb
+                  JOIN goods_receipts gr ON gr.id=sb.receipt_id
+                  JOIN goods_receipt_lines gl ON gl.receipt_id=gr.id
+                  WHERE sb.bill_id=? AND gl.product_id=? AND gr.warehouse_id=? LIMIT 1""",
+                  (bill_id,product_id,warehouse_id)).fetchone()
+                if not belongs_to_bill:
+                    raise ValueError("الصنف والمخزن المحددان غير موجودين ضمن استلامات فاتورة المورد الأصلية.")
                 cost,allocations=consume_layers(c,product_id,warehouse_id,qty,method)
                 subtotal+=cost
                 line_data.append((product_id,warehouse_id,qty,cost))
@@ -653,7 +664,8 @@ def new_credit_note():
     suppliers=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     bills=c.execute("""SELECT b.id,b.bill_no,b.supplier_id,b.bill_date,b.total_amount,b.credited_amount,s.name supplier_name
       FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
-      WHERE b.status='posted' AND CAST(b.total_amount AS NUMERIC)>CAST(COALESCE(b.credited_amount,'0') AS NUMERIC)
+      WHERE b.status='posted' AND EXISTS(SELECT 1 FROM supplier_bill_receipts sb WHERE sb.bill_id=b.id)
+        AND CAST(b.total_amount AS NUMERIC)>CAST(COALESCE(b.credited_amount,'0') AS NUMERIC)
       ORDER BY b.bill_date DESC,b.id DESC""").fetchall()
     products=c.execute("SELECT id,sku,name_ar,uom FROM stock_products WHERE active=1 AND product_type!='service' ORDER BY name_ar").fetchall()
     warehouses=c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
