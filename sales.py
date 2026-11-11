@@ -960,6 +960,27 @@ def delete_customer(customer_id):
     c.close(); return redirect(url_for("sales.customer_list"))
 
 
+@sales_bp.route("/salespersons", methods=["GET", "POST"])
+@require("sales.manage")
+def salesperson_list():
+    c = db()
+    if request.method == "POST":
+        try:
+            code = request.form.get("code", "").strip().upper()
+            name = request.form.get("name", "").strip()
+            if not code or len(code) > 30 or not name or len(name) > 120:
+                raise ValueError("أدخل كودًا واسمًا صحيحين لمندوب المبيعات.")
+            c.execute("INSERT INTO salespersons(code,name) VALUES(?,?)", (code, name))
+            c.commit()
+            flash("تم إضافة مندوب المبيعات.", "success")
+        except (ValueError, sqlite3.IntegrityError) as exc:
+            c.rollback()
+            flash(str(exc) or "كود مندوب المبيعات مستخدم بالفعل.", "error")
+    rows = c.execute("SELECT * FROM salespersons ORDER BY code").fetchall()
+    c.close()
+    return render_template("sales_salespersons.html", rows=rows)
+
+
 @sales_bp.route("/invoices/new", methods=["GET", "POST"])
 @require("sales.manage")
 def new_invoice():
