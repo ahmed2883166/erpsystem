@@ -779,12 +779,22 @@ def movements():
     products=c.execute("SELECT id,sku,name_ar,uom,track_lot,track_expiry FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     warehouses=c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     locations=c.execute("SELECT id,warehouse_id,code,name_ar,location_type FROM stock_locations WHERE active=1 ORDER BY warehouse_id,code").fetchall()
+    movement_page = max(1, request.args.get("movement_page", 1, type=int) or 1)
+    movement_per_page = request.args.get("movement_per_page", 50, type=int) or 50
+    if movement_per_page not in (50, 100):
+        movement_per_page = 50
+    movement_total = c.execute("SELECT COUNT(*) FROM stock_movements").fetchone()[0]
+    movement_pages = max(1, (movement_total + movement_per_page - 1) // movement_per_page)
+    movement_page = min(movement_page, movement_pages)
     rows=c.execute("""SELECT m.*,p.sku,p.name_ar,s.name_ar source_name,t.name_ar target_name
       FROM stock_movements m JOIN stock_products p ON p.id=m.product_id
       LEFT JOIN stock_warehouses s ON s.id=m.source_warehouse_id LEFT JOIN stock_warehouses t ON t.id=m.target_warehouse_id
-      ORDER BY m.id DESC LIMIT 30""").fetchall()
+      ORDER BY m.id DESC LIMIT ? OFFSET ?""",
+      (movement_per_page, (movement_page - 1) * movement_per_page)).fetchall()
     c.close()
-    return render_template("stock_movements.html",products=products,warehouses=warehouses,locations=locations,rows=rows,today=date.today().isoformat())
+    return render_template("stock_movements.html",products=products,warehouses=warehouses,locations=locations,rows=rows,
+        movement_page=movement_page,movement_pages=movement_pages,movement_per_page=movement_per_page,
+        movement_total=movement_total,today=date.today().isoformat())
 
 
 @stock_bp.route("/reports")
