@@ -281,10 +281,14 @@ def cash_flow():
             closing=opening+movement
     finally:
         conn.close()
+    total_in=sum((x["in"] for x in sections.values()),Decimal("0"))
+    total_out=sum((x["out"] for x in sections.values()),Decimal("0"))
+    net_change=closing-opening
+    reconciliation_difference=net_change-(total_in-total_out)
     return render_template("cash_flow.html",date_from=start.isoformat(),date_to=end.isoformat(),
-        opening=opening,closing=closing,sections=sections,
-        total_in=sum((x["in"] for x in sections.values()),Decimal("0")),
-        total_out=sum((x["out"] for x in sections.values()),Decimal("0")))
+        opening=opening,closing=closing,sections=sections,total_in=total_in,total_out=total_out,
+        net_change=net_change,reconciliation_difference=reconciliation_difference,
+        cash_reconciles=(reconciliation_difference==0))
 
 
 __all__=["planning_bp","initialize_planning_schema"]
