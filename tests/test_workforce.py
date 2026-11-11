@@ -93,7 +93,8 @@ class WorkforceTests(unittest.TestCase):
         response = self.client.post("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
-            "insurance_payable_account": "7", "other_deductions_account": "2"
+            "insurance_payable_account": "7", "advances_account": "2",
+            "other_deductions_account": "2"
         })
         self.assertEqual(response.status_code, 302)
         conn = sqlite3.connect(self.db_path)
@@ -190,7 +191,8 @@ class WorkforceTests(unittest.TestCase):
         response = self.client.post("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
-            "insurance_payable_account": "7", "other_deductions_account": "2"
+            "insurance_payable_account": "7", "advances_account": "2",
+            "other_deductions_account": "2"
         })
         self.assertEqual(response.status_code, 302)
         conn = sqlite3.connect(self.db_path)
@@ -201,7 +203,7 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         self.assertEqual(debit, credit)
         self.assertEqual(debit, 23400)
-        self.assertIn((4, 22750, 0), totals_by_account)
+        self.assertIn((4, 22750, 100), totals_by_account)
         self.assertIn((5, 0, 21200), totals_by_account)
 
     def test_employee_profile_fields_and_salary_raise_overtime_and_event_bonus(self):
@@ -261,7 +263,8 @@ class WorkforceTests(unittest.TestCase):
         conn.commit()
         conn.close()
         response = self.client.post("/hr/payroll", data={"period":"2026-11"})
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("لا يوجد موظفون مستحقون", response.get_data(as_text=True))
         conn = sqlite3.connect(self.db_path)
         count = conn.execute("SELECT COUNT(*) FROM payroll_lines").fetchone()[0]
         run_count = conn.execute("SELECT COUNT(*) FROM payroll_runs").fetchone()[0]
