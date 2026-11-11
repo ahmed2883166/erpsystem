@@ -126,3 +126,14 @@ main{overscroll-behavior-y:auto;min-width:0}
 .permission-option{display:flex;align-items:center;gap:9px;margin:0;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface2);font-size:13px;font-weight:600}
 .permission-option input{width:17px;height:17px;min-height:17px;flex:0 0 auto;accent-color:var(--accent)}
 @media(max-width:620px){.permission-grid{grid-template-columns:1fr}}
+
+
+/* Financial planning, printable invoices and clearer chart groups */
+.print-document{max-width:1100px;margin:24px auto;padding:clamp(18px,3vw,36px)}
+.print-document header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid var(--line);padding-bottom:16px;margin-bottom:20px}
+.invoice-totals{max-width:360px;margin:20px 0 20px auto;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--surface2)}
+.invoice-totals h3{border-top:1px solid var(--line);padding-top:12px}
+.financial-group{margin:14px 0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.financial-group>summary{cursor:pointer;padding:13px 16px;background:var(--surface2);font-weight:800}
+.financial-group .table-wrap{padding:0 12px 12px}
+@media print{body{background:#fff!important;color:#111!important}aside,.theme-toggle,.global-report-actions,.no-print{display:none!important}main{margin:0!important;padding:0!important}.print-document{box-shadow:none!important;border:0!important;max-width:none!important}.panel{break-inside:avoid}}
