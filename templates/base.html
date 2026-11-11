@@ -2,27 +2,81 @@
 <html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="csrf-token" content="{{ csrf_token() }}"><title>{% block title %}NEXUS ERP{% endblock %}</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head><body>
 {% if session.user_id %}
 <aside><h1>NEXUS <small>ERP</small></h1><p class="user">{{ session.full_name }}<br><small>{{ session.role }}</small></p><nav>
-{% if 'reports.view' in permissions %}<a href="{{ url_for('dashboard') }}">الرئيسية</a>{% endif %}
-{% if 'accounts.view' in permissions or 'accounts.manage' in permissions %}<a href="{{ url_for('accounts') }}">دليل الحسابات</a>{% endif %}
-{% if 'stock.view' in permissions %}<a href="{{ url_for('stock.index') }}">المخزون</a>{% endif %}
-{% if 'purchases.view' in permissions %}<a href="{{ url_for('purchase.index') }}">المشتريات والموردون</a><a href="{{ url_for('purchase.integrity_issues') }}">مراجعة سلامة المشتريات</a>{% endif %}
-{% if 'sales.view' in permissions %}<a href="{{ url_for('sales.index') }}">المبيعات والعملاء</a>{% endif %}
-{% if 'sales.view' in permissions or 'purchases.view' in permissions %}<a href="{{ url_for('aging.index', kind='customers' if 'sales.view' in permissions else 'suppliers') }}">أعمار الديون</a>{% endif %}
+{% if 'reports.view' in permissions %}<a class="nav-home" href="{{ url_for('dashboard') }}">⌂ الرئيسية</a>{% endif %}
+
+{% if 'stock.view' in permissions or 'stock.manage' in permissions %}
+<details class="nav-group" open>
+<summary><span>📦 المخازن والمخزون</span><small>إدارة الأصناف والأماكن والحركة</small></summary>
+<div class="nav-links">
+{% if 'stock.view' in permissions %}<a href="{{ url_for('stock.index') }}">لوحة المخزون</a>{% endif %}
+{% if 'stock.manage' in permissions %}<a href="{{ url_for('stock.products') }}">تعريف الأصناف وأسعارها</a><a href="{{ url_for('stock.warehouses') }}">تعريف المخازن</a><a href="{{ url_for('stock.locations') }}">الأدوار ومواقع التخزين</a><a href="{{ url_for('stock.product_locations') }}">توزيع الأصناف داخل المخازن</a><a href="{{ url_for('stock.movements') }}">حركات وتحويلات المخزون</a>{% endif %}
+{% if 'stock.view' in permissions %}<a href="{{ url_for('stock.reports') }}">تقارير وأرصدة المخزون</a>{% endif %}
+</div></details>
+{% endif %}
+
+{% if 'purchases.view' in permissions %}
+<details class="nav-group" open>
+<summary><span>🚚 الموردون والمشتريات</span><small>الموردون والفواتير والاستلامات</small></summary>
+<div class="nav-links">
+<a href="{{ url_for('purchase.index') }}">المشتريات وفواتير الموردين</a>
+<a href="{{ url_for('purchase.integrity_issues') }}">مراجعة سلامة المشتريات</a>
+{% if 'party.view' in permissions %}<a href="{{ url_for('party_reports.party_statement') }}">كشف حساب الموردين والعملاء</a>{% endif %}
+{% if 'aging.view' in permissions or 'purchases.view' in permissions %}<a href="{{ url_for('aging.index', kind='suppliers') }}">أعمار ديون الموردين</a>{% endif %}
+</div></details>
+{% endif %}
+
+{% if 'sales.view' in permissions %}
+<details class="nav-group" open>
+<summary><span>👥 العملاء والمبيعات</span><small>العملاء والعروض والفواتير والتحصيل</small></summary>
+<div class="nav-links">
+<a href="{{ url_for('sales.index') }}">المبيعات وفواتير العملاء</a>
 {% if 'quotes.view' in permissions %}<a href="{{ url_for('quotes.index') }}">عروض الأسعار والتسعير</a>{% endif %}
-{% if 'assets.view' in permissions %}<a href="{{ url_for('assets.index') }}">سجل الأصول الثابتة</a>{% endif %}
-{% if 'bank.view' in permissions %}<a href="{{ url_for('bank.index') }}">حسابات البنوك والمطابقة</a>{% endif %}
-{% if 'stock.manage' in permissions %}<a href="{{ url_for('stock.products') }}">تعريف الأصناف</a><a href="{{ url_for('stock.warehouses') }}">المخازن</a><a href="{{ url_for('stock.movements') }}">حركات المخزون</a>{% endif %}
-{% if 'stock.view' in permissions %}<a href="{{ url_for('stock.reports') }}">تقارير المخزون</a>{% endif %}
+<a href="{{ url_for('aging.index', kind='customers') }}">أعمار ديون العملاء</a>
+{% if 'party.view' in permissions %}<a href="{{ url_for('party_reports.party_statement') }}">كشوف حساب العملاء</a>{% endif %}
+</div></details>
+{% endif %}
+
+{% if 'workforce.view' in permissions %}
+<details class="nav-group">
+<summary><span>🧑‍💼 الموظفون والرواتب</span><small>شؤون العاملين والاستحقاقات</small></summary>
+<div class="nav-links">
+<a href="{{ url_for('workforce.employees') }}">ملفات الموظفين والبدلات</a><a href="{{ url_for('workforce.payroll') }}">مسير الرواتب</a>
+<a href="{{ url_for('payroll_compliance.rules') }}">قواعد الضرائب والتأمينات</a><a href="{{ url_for('payroll_compliance.report') }}">تقرير الضرائب والتأمينات</a><a href="{{ url_for('payroll_compliance.payments') }}">سداد الالتزامات</a><a href="{{ url_for('workforce.custody') }}">عهد الموظفين</a>
+</div></details>
+{% endif %}
+
+<details class="nav-group">
+<summary><span>💳 الحسابات والخزينة والبنوك</span><small>القيود والعملات والأصول</small></summary>
+<div class="nav-links">
+{% if 'accounts.view' in permissions or 'accounts.manage' in permissions %}<a href="{{ url_for('accounts') }}">دليل الحسابات</a>{% endif %}
 {% if 'journal.manage' in permissions %}<a href="{{ url_for('journal') }}">القيود اليومية</a>{% endif %}
-{% if 'tax.view' in permissions %}<a href="{{ url_for('tax.tax_report') }}">مركز الضرائب والإقرار الشهري</a>{% endif %}{% if 'workforce.view' in permissions %}<a href="{{ url_for('workforce.employees') }}">الموظفون والبدلات</a><a href="{{ url_for('workforce.payroll') }}">مسير الرواتب</a><a href="{{ url_for('payroll_compliance.rules') }}">قواعد الضرائب والتأمينات للرواتب</a><a href="{{ url_for('payroll_compliance.report') }}">تقرير ضرائب وتأمينات الموظفين</a><a href="{{ url_for('payroll_compliance.payments') }}">سداد ضرائب وتأمينات الموظفين</a><a href="{{ url_for('workforce.custody') }}">عهد الموظفين</a>{% endif %}{% if 'currency.view' in permissions or 'currency.manage' in permissions %}<a href="{{ url_for('currency_center.index') }}">العملات وفروق الصرف</a>{% endif %}{% if 'party.view' in permissions %}<a href="{{ url_for('party_reports.party_statement') }}">كشوف حساب العملاء والموردين</a>{% endif %}{% if 'reports.view' in permissions %}<a href="{{ url_for('management_dashboard') }}">لوحة الإدارة</a>{% endif %}
-{% if 'budget.view' in permissions %}<a href="{{ url_for('planning.budget_index') }}">الموازنات التقديرية</a>{% endif %}
-{% if 'reports.view' in permissions %}<a href="{{ url_for('planning.balance_sheet') }}">قائمة المركز المالي / الميزانية</a>{% endif %}
+{% if 'bank.view' in permissions %}<a href="{{ url_for('bank.index') }}">حسابات البنوك والمطابقة</a>{% endif %}
+{% if 'currency.view' in permissions or 'currency.manage' in permissions %}<a href="{{ url_for('currency_center.index') }}">العملات وفروق الصرف</a>{% endif %}
+{% if 'assets.view' in permissions %}<a href="{{ url_for('assets.index') }}">الأصول الثابتة</a>{% endif %}
+{% if 'tax.view' in permissions %}<a href="{{ url_for('tax.tax_report') }}">مركز الضرائب والإقرار الشهري</a>{% endif %}
+</div></details>
+
+{% if 'reports.view' in permissions or 'budget.view' in permissions or 'cashflow.view' in permissions %}
+<details class="nav-group">
+<summary><span>📊 التقارير والتحليل المالي</span><small>القوائم المالية والرقابة</small></summary>
+<div class="nav-links">
+{% if 'reports.view' in permissions %}<a href="{{ url_for('management_dashboard') }}">لوحة الإدارة</a><a href="{{ url_for('planning.balance_sheet') }}">قائمة المركز المالي</a><a href="{{ url_for('trial_balance') }}">ميزان المراجعة</a><a href="{{ url_for('ledger') }}">دفتر الأستاذ</a><a href="{{ url_for('reconciliation') }}">المطابقة والترابط</a>{% endif %}
 {% if 'cashflow.view' in permissions or 'reports.view' in permissions %}<a href="{{ url_for('planning.cash_flow') }}">قائمة التدفقات النقدية</a>{% endif %}
-{% if 'accounts.manage' in permissions %}<a href="{{ url_for('management_account_mapping') }}">ربط حسابات لوحة الإدارة</a>{% endif %}{% if 'reports.view' in permissions %}<a href="{{ url_for('trial_balance') }}">ميزان المراجعة</a><a href="{{ url_for('ledger') }}">دفتر الأستاذ</a><a href="{{ url_for('reconciliation') }}">المطابقة والترابط</a>{% endif %}
-{% if 'users.manage' in permissions %}<a href="{{ url_for('accounting_periods') }}">إقفال الفترات المحاسبية</a>{% endif %}
-{% if 'users.manage' in permissions %}<a href="{{ url_for('company_setup') }}">إعداد الشركة والعملات</a><a href="{{ url_for('users') }}">المستخدمون والصلاحيات</a>{% endif %}
+{% if 'budget.view' in permissions %}<a href="{{ url_for('planning.budget_index') }}">الموازنات التقديرية</a>{% endif %}
+</div></details>
+{% endif %}
+
+{% if 'users.manage' in permissions or 'backup.manage' in permissions %}
+<details class="nav-group">
+<summary><span>⚙️ الإعدادات والإدارة</span><small>إعداد الشركة والمستخدمين</small></summary>
+<div class="nav-links">
+{% if 'accounts.manage' in permissions %}<a href="{{ url_for('management_account_mapping') }}">ربط حسابات لوحة الإدارة</a>{% endif %}
+{% if 'users.manage' in permissions %}<a href="{{ url_for('accounting_periods') }}">إقفال الفترات المحاسبية</a><a href="{{ url_for('company_setup') }}">إعداد الشركة والعملات</a><a href="{{ url_for('users') }}">المستخدمون والصلاحيات</a>{% endif %}
 {% if 'backup.manage' in permissions %}<a href="{{ url_for('create_backup') }}">نسخة احتياطية</a>{% endif %}
-<a href="{{ url_for('change_password') }}">تغيير كلمة المرور</a><a href="{{ url_for('logout') }}">تسجيل الخروج</a></nav></aside>
+</div></details>
+{% endif %}
+<a href="{{ url_for('change_password') }}">تغيير كلمة المرور</a><a href="{{ url_for('logout') }}">تسجيل الخروج</a>
+</nav>/aside>
 {% endif %}
 <main>{% if session.user_id and license_info.status in ['trial','licensed'] %}<div class="license-strip">{% if license_info.status == 'trial' %}نسخة تجريبية: متبقي {{ license_info.days_remaining }} يومًا{% else %}نسخة مفعّلة{% endif %} · <a href="{{ url_for('about') }}">حول البرنامج</a> · <a href="{{ url_for('license_page') }}">الترخيص</a></div>{% endif %}{% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}{% block content %}{% endblock %}</main>
 {% if session.user_id %}
