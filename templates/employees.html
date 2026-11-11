@@ -1,19 +1,43 @@
-{% extends "base.html" %}{% block title %}الموظفون | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>شؤون الموظفين</h2><p>ملف الموظف والراتب الأساسي والبدلات والخصومات الثابتة.</p></header>
-<section class="panel"><h3>إضافة موظف</h3><form method="post" class="form-grid">
+{% extends "base.html" %}{% block title %}شؤون الموظفين | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>شؤون الموظفين</h2><p>ملف وظيفي متكامل يشمل الهوية والتأمينات والحالة الوظيفية ومكونات الأجر والعلاوات.</p></header>
+<section class="panel"><h3>إضافة موظف جديد</h3><form method="post" class="form-grid">
 <label>كود الموظف<input name="employee_code" required></label><label>اسم الموظف<input name="full_name" required></label>
-<label>الوظيفة<input name="job_title"></label><label>الإدارة / مركز التكلفة<input name="department"></label>
-<label>تاريخ التعيين<input type="date" name="hire_date" required></label><label>الراتب الأساسي<input type="number" step="0.01" min="0" name="basic_salary" required></label>
+<label>الرقم القومي<input name="national_id" maxlength="20"></label><label>رقم التأمين الاجتماعي<input name="insurance_number"></label>
+<label>العنوان<input name="address"></label><label>الوظيفة<input name="job_title"></label>
+<label>الإدارة / مركز التكلفة<input name="department"></label><label>تاريخ التعيين<input type="date" name="hire_date" required></label>
+<label>الموقف من العمل<select name="work_status"><option value="permanent">مثبت</option><option value="comprehensive_bonus">مكافأة شاملة</option><option value="unpaid_leave">إجازة بدون مرتب</option><option value="resigned">استقالة</option><option value="retired">معاش</option></select></label>
+<label>الراتب الأساسي<input type="number" step="0.01" min="0" name="basic_salary" required></label>
 <label>ساعات العمل القياسية شهريًا<input type="number" step="0.01" min="1" name="standard_hours" value="208" required></label>
-<label>الفئة القانونية للموظف<input name="legal_category" value="local" placeholder="مثال: local / expat أو saudi / non_saudi" required></label>
-<label>رقم التأمين الاجتماعي<input name="insurance_number"></label>
-<label>أجر الاشتراك التأميني (اتركه صفرًا لاستخدام إجمالي الراتب)<input type="number" step="0.01" min="0" name="insured_wage" value="0"></label>
+<label>الفئة القانونية للموظف<input name="legal_category" value="local" required></label>
+<label>أجر الاشتراك التأميني (صفر = إجمالي الراتب)<input type="number" step="0.01" min="0" name="insured_wage" value="0"></label>
 <label>خاضع للتأمينات الاجتماعية<select name="insurance_enabled"><option value="1" selected>نعم</option><option value="0">لا</option></select></label>
+<div class="panel" style="grid-column:1/-1"><h4>العلاوة الدورية / الشخصية</h4>
+<label>نوع العلاوة<select name="raise_type"><option value="fixed">مبلغ مقطوع</option><option value="percentage">نسبة من الأساسي</option></select></label>
+<label>قيمة العلاوة أو نسبتها<input type="number" min="0" step="0.01" name="raise_value" value="0"></label>
+<label>طريقة إضافة العلاوة<select name="raise_mode"><option value="basic">تضاف إلى الراتب الأساسي</option><option value="allowance">تظهر كبند مستقل ضمن البدلات</option></select></label>
+<label>تاريخ سريان العلاوة<input type="date" name="raise_effective_date"></label>
+<p class="muted">تُطبق العلاوة تلقائيًا على المسير إذا كان تاريخ سريانها في أول الشهر أو قبله. اختيار «ضمن البدلات» لا يغيّر الأساسي.</p></div>
+<label>نسبة الإضافي الافتراضية %<input type="number" min="0" max="500" step="0.01" name="overtime_rate_percent" value="150"></label>
 <button type="submit">حفظ الموظف</button></form></section>
-<section class="panel"><h3>سجل الموظفين</h3><table><tr><th>الكود</th><th>الاسم</th><th>الوظيفة</th><th>الإدارة</th><th>الأساسي</th><th>ساعات العمل</th><th>الحالة</th></tr>{% for e in employees %}<tr><td>{{e.employee_code}}</td><td>{{e.full_name}}</td><td>{{e.job_title}}</td><td>{{e.department}}</td><td>{{e.basic_salary}}</td><td>{{e.standard_hours}}</td><td>{{'نشط' if e.active else 'غير نشط'}}</td></tr>{% else %}<tr><td colspan="7">لا يوجد موظفون.</td></tr>{% endfor %}</table></section>
-<section class="panel"><h3>إضافة بدل أو خصم شهري ثابت</h3><form method="post" action="{{url_for('workforce.add_pay_item')}}" class="form-grid">
+<section class="panel"><h3>سجل الموظفين</h3><div style="overflow-x:auto"><table><tr><th>الكود</th><th>الاسم</th><th>الرقم القومي</th><th>رقم التأمين</th><th>العنوان</th><th>الموقف</th><th>الوظيفة</th><th>الإدارة</th><th>الأساسي</th><th>العلاوة</th><th>الإضافي %</th><th>إجراء</th></tr>
+{% for e in employees %}<tr><td>{{e.employee_code}}</td><td>{{e.full_name}}</td><td>{{e.national_id or '-'}}</td><td>{{e.insurance_number or '-'}}</td><td>{{e.address or '-'}}</td>
+<td>{{{'comprehensive_bonus':'مكافأة شاملة','permanent':'مثبت','unpaid_leave':'إجازة بدون مرتب','resigned':'استقالة','retired':'معاش'}.get(e.work_status,'مثبت')}}</td>
+<td>{{e.job_title}}</td><td>{{e.department}}</td><td>{{e.basic_salary}}</td>
+<td>{{e.raise_value}} {{'%' if e.raise_type=='percentage' else 'جنيه'}} / {{'أساسي' if e.raise_mode=='basic' else 'بدلات'}}</td>
+<td>{{e.overtime_rate_percent}}%</td><td><a href="{{url_for('workforce.edit_employee',employee_id=e.id)}}">تعديل الملف</a></td></tr>
+{% else %}<tr><td colspan="12">لا يوجد موظفون.</td></tr>{% endfor %}</table></div>
+<p class="muted">الموظف في إجازة بدون مرتب أو مستقيل أو على المعاش لا يظهر تلقائيًا ضمن المسير الشهري. يمكن تعديل حالته من ملفه الوظيفي.</p></section>
+<section class="panel"><h3>إعداد أنواع الحوافز والمكافآت</h3><p>أنشئ حافزًا لمناسبة أو إنجاز أو مكافأة، ثم اختره للموظف عند إعداد المسير.</p>
+<form method="post" action="{{url_for('workforce.add_incentive_rule')}}" class="form-grid">
+<label>اسم الحافز<input name="name" placeholder="حافز رمضان / مكافأة إنجاز / حافز إنتاج" required></label>
+<label>طريقة الحساب<select name="calculation_method"><option value="fixed">مبلغ مقطوع لكل موظف</option><option value="percentage_basic">نسبة من الراتب الأساسي</option><option value="per_day">قيمة يومية × عدد الأيام</option></select></label>
+<label>القيمة أو النسبة<input type="number" name="calculation_value" min="0.01" step="0.01" required></label>
+<button type="submit">حفظ نوع الحافز</button></form>
+<table><tr><th>الحافز</th><th>طريقة الحساب</th><th>القيمة</th><th>الحالة</th></tr>
+{% for r in incentive_rules %}<tr><td>{{r.name}}</td><td>{{{'fixed':'مبلغ مقطوع','percentage_basic':'نسبة من الأساسي','per_day':'قيمة يومية × أيام'}.get(r.calculation_method,r.calculation_method)}}</td><td>{{r.calculation_value}}</td><td>{{'نشط' if r.active else 'غير نشط'}}</td></tr>{% else %}<tr><td colspan="4">لم تُضف أنواع حوافز بعد.</td></tr>{% endfor %}</table></section>
+<section class="panel"><h3>البدلات والخصومات الثابتة للموظفين</h3><form method="post" action="{{url_for('workforce.add_pay_item')}}" class="form-grid">
 <label>الموظف<select name="employee_id" required>{% for e in employees %}<option value="{{e.id}}">{{e.employee_code}} - {{e.full_name}}</option>{% endfor %}</select></label>
-<label>اسم البند<input name="item_name" placeholder="بدل انتقال / خصم سلفة" required></label>
+<label>اسم البند<input name="item_name" placeholder="بدل انتقال / خصم ثابت" required></label>
 <label>النوع<select name="item_type"><option value="allowance">بدل / استحقاق</option><option value="deduction">خصم</option></select></label>
 <label>المبلغ<input name="amount" type="number" min="0" step="0.01" required></label><button type="submit">إضافة البند</button></form>
 <table><tr><th>الموظف</th><th>البند</th><th>النوع</th><th>القيمة</th></tr>{% for p in items %}<tr><td>{{p.employee_code}} - {{p.full_name}}</td><td>{{p.item_name}}</td><td>{{'بدل' if p.item_type=='allowance' else 'خصم'}}</td><td>{{p.amount}}</td></tr>{% else %}<tr><td colspan="4">لا توجد بنود ثابتة.</td></tr>{% endfor %}</table></section>
