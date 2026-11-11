@@ -36,4 +36,12 @@
  });}
 })();
 (function(){const root=document.documentElement;const saved=localStorage.getItem('nexus-theme')||'dark';root.dataset.theme=saved;const btn=document.getElementById('themeToggle');if(btn){btn.addEventListener('click',()=>{const next=root.dataset.theme==='dark'?'light':'dark';root.dataset.theme=next;localStorage.setItem('nexus-theme',next);btn.textContent=next==='dark'?'◐ المظهر الداكن':'☀ المظهر الفاتح';});btn.textContent=saved==='dark'?'◐ المظهر الداكن':'☀ المظهر الفاتح';}})();
+(function(){
+ const printAction=document.querySelector('.global-report-actions');
+ if(!printAction)return;
+ const hasUnsavedEntry=[...document.querySelectorAll('form[method="post" i],form:not([method])')].some(form=>
+   !form.classList.contains('no-print') && [...form.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]),select,textarea')].some(el=>!el.disabled)
+ );
+ if(hasUnsavedEntry) printAction.hidden=true;
+})();
 </script>{% block scripts %}{% endblock %}</body></html>
