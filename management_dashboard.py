@@ -54,7 +54,7 @@ def _change(current, previous):
     return _rounded((current - previous) * Decimal("100") / abs(previous))
 
 
-def account_balances(conn, date_from=None, date_to=None):
+def account_balances(conn, date_from=None, date_to=None, dimensions=None):
     """Return exact posted debit/credit totals by account for an optional period."""
     conditions = ["je.status='posted'"]
     params = []
@@ -64,6 +64,13 @@ def account_balances(conn, date_from=None, date_to=None):
     if date_to:
         conditions.append("je.entry_date<=?")
         params.append(date_to)
+    dimensions = dimensions or {}
+    available_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")}
+    for key in ("branch_id", "cost_center_id", "project_id"):
+        value = dimensions.get(key)
+        if value not in (None, "") and key in available_columns:
+            conditions.append(f"jl.{key}=?")
+            params.append(int(value))
     # Aggregate monetary TEXT values inside SQLite with exact Decimal aggregates.
     # This avoids transferring every journal line to Python as the ledger grows.
     register_decimal_aggregates(conn)
@@ -199,10 +206,11 @@ def _top_accounts(balances, account_type, value_key):
     return rows
 
 
-def build_management_snapshot(conn, start, end):
+def build_management_snapshot(conn, start, end, dimensions=None):
     """Build a Decimal-safe management snapshot for inclusive dates."""
     if end < start:
         raise ValueError("تاريخ النهاية لازم يكون بعد تاريخ البداية.")
+    dimensions = dimensions or {}
     settings = {}
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'").fetchone():
         settings = {row["setting_key"]: row["setting_value"] for row in conn.execute(
@@ -213,9 +221,9 @@ def build_management_snapshot(conn, start, end):
     period_days = (end - start).days
     previous_end = start - timedelta(days=1)
     previous_start = previous_end - timedelta(days=period_days)
-    current_balances = account_balances(conn, start.isoformat(), end.isoformat())
-    previous_balances = account_balances(conn, previous_start.isoformat(), previous_end.isoformat())
-    as_of = account_balances(conn, date_to=end.isoformat())
+    current_balances = account_balances(conn, start.isoformat(), end.isoformat(), dimensions)
+    previous_balances = account_balances(conn, previous_start.isoformat(), previous_end.isoformat(), dimensions)
+    as_of = account_balances(conn, date_to=end.isoformat(), dimensions=dimensions)
     current = income_figures(current_balances, direct_cost_ids=roles["direct_cost"])
     previous = income_figures(previous_balances, direct_cost_ids=roles["direct_cost"])
     cumulative = income_figures(as_of, direct_cost_ids=roles["direct_cost"])
@@ -236,6 +244,7 @@ def build_management_snapshot(conn, start, end):
             details.append({"role": role, "id": account_id, "code": item["code"], "name": item["name"], "balance": value})
     return {
         "activity": activity,
+        "selected_dimensions": dimensions,
         "company_name": settings.get("company_name", "NEXUS ERP"),
         "base_currency": settings.get("base_currency", "EGP"),
         "start": start, "end": end, "prev_start": previous_start, "prev_end": previous_end,
