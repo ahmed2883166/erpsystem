@@ -3,7 +3,7 @@ import unittest
 from datetime import date
 from decimal import Decimal
 
-from management_dashboard import build_management_snapshot
+from management_dashboard import build_management_snapshot, load_management_account_roles
 
 
 class ManagementDashboardTests(unittest.TestCase):
@@ -72,6 +72,15 @@ class ManagementDashboardTests(unittest.TestCase):
         # Industrial chart: 1130 is raw-material inventory, so the 200 debit is stock.
         self.assertEqual(s["inventory"],Decimal("380"))
         self.assertEqual(s["receivables"],Decimal("0"))
+
+    def test_custom_account_mapping_works_without_standard_account_codes(self):
+        self.conn.execute("INSERT INTO accounts VALUES(10,'9999','خزينة فرع','asset',0)")
+        self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(1,10,'77.25','0')")
+        load_management_account_roles(self.conn, "commercial")
+        self.conn.execute("DELETE FROM management_account_roles WHERE role='cash'")
+        self.conn.execute("INSERT INTO management_account_roles(account_id,role) VALUES(10,'cash')")
+        snapshot = build_management_snapshot(self.conn,date(2026,11,1),date(2026,11,30))
+        self.assertEqual(snapshot["cash"], Decimal("77.25"))
 
     def test_reversed_dates_rejected(self):
         with self.assertRaises(ValueError):
