@@ -53,7 +53,9 @@ def index():
  if kind=="customers":
   rows=c.execute("""SELECT i.invoice_no doc_no,cu.code party_code,cu.name party_name,i.invoice_date doc_date,
     COALESCE(i.due_date,i.invoice_date) due_date,i.total_amount total_amount,i.paid_amount paid_amount,
-    COALESCE(i.credited_amount,'0') credited_amount
+    COALESCE(i.credited_amount,'0') credited_amount,
+    COALESCE((SELECT SUM(rf.amount) FROM customer_refunds rf
+      JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id WHERE cn.invoice_id=i.id),'0') refunded_amount
     FROM sales_invoices i JOIN customers cu ON cu.id=i.customer_id
     WHERE i.status='posted' AND i.invoice_date<=?
     ORDER BY due_date,cu.name""",(as_of,)).fetchall()
@@ -66,7 +68,7 @@ def index():
  c.close()
  result=[]; totals=[Decimal("0.00") for _ in range(5)]
  for r in rows:
-  balance=_amount(r["total_amount"])-_amount(r["paid_amount"])-_amount(r["credited_amount"] if "credited_amount" in r.keys() else "0")
+  balance=_amount(r["total_amount"])-_amount(r["paid_amount"])-_amount(r["credited_amount"] if "credited_amount" in r.keys() else "0")+_amount(r["refunded_amount"] if "refunded_amount" in r.keys() else "0")
   if balance<=0:
    continue
   try:
