@@ -4,7 +4,11 @@
 <label>كود الموظف<input name="employee_code" required></label><label>اسم الموظف<input name="full_name" required></label>
 <label>الوظيفة<input name="job_title"></label><label>الإدارة / مركز التكلفة<input name="department"></label>
 <label>تاريخ التعيين<input type="date" name="hire_date" required></label><label>الراتب الأساسي<input type="number" step="0.01" min="0" name="basic_salary" required></label>
-<label>ساعات العمل القياسية شهريًا<input type="number" step="0.01" min="1" name="standard_hours" value="208" required></label><button type="submit">حفظ الموظف</button></form></section>
+<label>ساعات العمل القياسية شهريًا<input type="number" step="0.01" min="1" name="standard_hours" value="208" required></label>
+<label>الفئة القانونية للموظف<input name="legal_category" value="local" placeholder="مثال: local / expat أو saudi / non_saudi" required></label>
+<label>رقم التأمين الاجتماعي<input name="insurance_number"></label>
+<label>أجر الاشتراك التأميني (اتركه صفرًا لاستخدام إجمالي الراتب)<input type="number" step="0.01" min="0" name="insured_wage" value="0"></label>
+<button type="submit">حفظ الموظف</button></form></section>
 <section class="panel"><h3>سجل الموظفين</h3><table><tr><th>الكود</th><th>الاسم</th><th>الوظيفة</th><th>الإدارة</th><th>الأساسي</th><th>ساعات العمل</th><th>الحالة</th></tr>{% for e in employees %}<tr><td>{{e.employee_code}}</td><td>{{e.full_name}}</td><td>{{e.job_title}}</td><td>{{e.department}}</td><td>{{e.basic_salary}}</td><td>{{e.standard_hours}}</td><td>{{'نشط' if e.active else 'غير نشط'}}</td></tr>{% else %}<tr><td colspan="7">لا يوجد موظفون.</td></tr>{% endfor %}</table></section>
 <section class="panel"><h3>إضافة بدل أو خصم شهري ثابت</h3><form method="post" action="{{url_for('workforce.add_pay_item')}}" class="form-grid">
 <label>الموظف<select name="employee_id" required>{% for e in employees %}<option value="{{e.id}}">{{e.employee_code}} - {{e.full_name}}</option>{% endfor %}</select></label>
