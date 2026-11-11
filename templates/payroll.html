@@ -25,5 +25,9 @@
 <td><input type="number" min="0" step="0.01" name="employee_ins_{{e.id}}" value="0" required></td>
 <td><input type="number" min="0" step="0.01" name="employer_ins_{{e.id}}" value="0" required></td></tr>{% endfor %}</table></div>
 <button type="submit">حفظ المسير كمسودة للمراجعة</button></form></section>
-<section class="panel"><h3>المسيرات السابقة</h3><table><tr><th>الشهر</th><th>الحالة</th><th>القيد</th><th>التفاصيل</th></tr>{% for r in runs %}<tr><td>{{r.period}}</td><td>{{'مرحّل' if r.status=='posted' else 'مسودة'}}</td><td>{{r.journal_entry_id or '-'}}</td><td><a href="{{url_for('workforce.payroll_run',run_id=r.id)}}">فتح المسير</a></td></tr>{% else %}<tr><td colspan="4">لا توجد مسيرات.</td></tr>{% endfor %}</table></section>
+<section class="panel"><h3>المسيرات السابقة</h3><table><tr><th>الشهر</th><th>الحالة</th><th>القيد</th><th>التفاصيل</th></tr>{% for r in runs %}<tr><td>{{r.period}}</td><td>{{'مرحّل' if r.status=='posted' else 'مسودة'}}</td><td>{{r.journal_entry_id or '-'}}</td><td><a href="{{url_for('workforce.payroll_run',run_id=r.id)}}">فتح المسير</a></td></tr>{% else %}<tr><td colspan="4">لا توجد مسيرات.</td></tr>{% endfor %}</table>
+<div class="actions pagination"><span class="muted">إجمالي المسيرات: {{ runs_page.total }} — الصفحة {{ runs_page.page }} من {{ runs_page.pages }}</span>
+<form method="get" class="inline-form"><label>عدد السطور <select name="runs_per_page" onchange="this.form.submit()"><option value="50" {% if runs_page.per_page==50 %}selected{% endif %}>50</option><option value="100" {% if runs_page.per_page==100 %}selected{% endif %}>100</option></select></label></form>
+{% if runs_page.page>1 %}<a class="button secondary" href="{{ url_for('workforce.payroll',runs_page=runs_page.page-1,runs_per_page=runs_page.per_page) }}">السابق</a>{% endif %}
+{% if runs_page.page<runs_page.pages %}<a class="button" href="{{ url_for('workforce.payroll',runs_page=runs_page.page+1,runs_per_page=runs_page.per_page) }}">التالي</a>{% endif %}</div></section>
 {% endblock %}
