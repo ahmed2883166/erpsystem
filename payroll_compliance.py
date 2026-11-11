@@ -114,16 +114,19 @@ def calculate_payroll_deductions(conn, employee, gross_monthly, period):
         return None
     gross = _m(gross_monthly)
     insurance_enabled = int(employee["insurance_enabled"]) if "insurance_enabled" in employee.keys() else 1
-    insured_wage = _d(employee["insured_wage"]) if insurance_enabled else Decimal("0")
-    if insured_wage <= 0 and insurance_enabled:
-        insured_wage = gross
     floor = _d(rule["insurance_floor"])
     ceiling = _d(rule["insurance_ceiling"])
     if ceiling > 0 and ceiling < floor:
         raise ValueError("الحد الأقصى لأجر التأمين أقل من الحد الأدنى في إعدادات القواعد.")
-    insured_wage = max(insured_wage, floor)
-    if ceiling > 0:
-        insured_wage = min(insured_wage, ceiling)
+    if insurance_enabled:
+        insured_wage = _d(employee["insured_wage"])
+        if insured_wage <= 0:
+            insured_wage = gross
+        insured_wage = max(insured_wage, floor)
+        if ceiling > 0:
+            insured_wage = min(insured_wage, ceiling)
+    else:
+        insured_wage = Decimal("0")
     employee_rate = _d(rule["employee_insurance_rate"])
     employer_rate = _d(rule["employer_insurance_rate"])
     if min(employee_rate, employer_rate) < 0 or max(employee_rate, employer_rate) > 100:
