@@ -66,7 +66,7 @@ def account_balances(conn, date_from=None, date_to=None, dimensions=None):
         params.append(date_to)
     dimensions = dimensions or {}
     available_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")}
-    for key in ("branch_id", "cost_center_id", "project_id", "customer_id"):
+    for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id"):
         value = dimensions.get(key)
         if value not in (None, ""):
             if key not in available_columns:
