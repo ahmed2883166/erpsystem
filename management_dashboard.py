@@ -135,9 +135,11 @@ def initialize_management_dashboard_schema(conn, activity):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_status_date ON journal_entries(status,entry_date,id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_account ON journal_lines(entry_id,account_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry ON journal_lines(account_id,entry_id)")
+    roles_table_existed = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='management_account_roles'").fetchone() is not None
     conn.execute("""CREATE TABLE IF NOT EXISTS management_account_roles(
         account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
         role TEXT NOT NULL, PRIMARY KEY(account_id,role))""")
+    existing_role_count = conn.execute("SELECT COUNT(*) FROM management_account_roles").fetchone()[0]
     conn.execute("""CREATE TABLE IF NOT EXISTS management_dashboard_meta(
         meta_key TEXT PRIMARY KEY, meta_value TEXT NOT NULL)""")
     meta = {row["meta_key"]: row["meta_value"] for row in conn.execute("SELECT meta_key,meta_value FROM management_dashboard_meta")}
@@ -145,6 +147,13 @@ def initialize_management_dashboard_schema(conn, activity):
     previous_activity = meta.get("seed_activity")
     needs_seed = meta.get("roles_initialized") != "1"
     activity_changed = previous_activity != activity
+    # Preserve mappings from installations upgraded from the earlier dashboard.
+    if needs_seed and roles_table_existed and existing_role_count:
+        customized = True
+        needs_seed = False
+        conn.execute("INSERT OR REPLACE INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_customized','1')")
+        conn.execute("INSERT OR REPLACE INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_initialized','1')")
+        conn.execute("INSERT OR REPLACE INTO management_dashboard_meta(meta_key,meta_value) VALUES('seed_activity',?)", (activity,))
     if needs_seed or (activity_changed and not customized):
         conn.execute("DELETE FROM management_account_roles")
         defaults = ACTIVITY_ACCOUNTS.get(activity, ACTIVITY_ACCOUNTS["commercial"])
