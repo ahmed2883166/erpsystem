@@ -1,15 +1,15 @@
+from app_paths import DB_PATH
 from database import connect_database
 """Tax center: auditable VAT classification and monthly control report."""
 import sqlite3
 from datetime import date
 from decimal import Decimal
 from functools import wraps
-from pathlib import Path
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 
 tax_bp = Blueprint("tax", __name__)
-DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
+
 TREATMENTS = {"standard", "zero_rated", "exempt", "out_of_scope"}
 
 
