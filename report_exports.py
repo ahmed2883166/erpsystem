@@ -206,11 +206,15 @@ def register_report_exports(app, db_path, permissions):
                     "ساعات الإضافي","نسبة الإضافي %","قيمة الإضافي","حصة صاحب العمل",
                     "حصة العامل","ضريبة المرتبات","السلف","خصومات أخرى","خصم الغياب",
                     "إجمالي الاستحقاق","إجمالي الاستقطاع","صافي المستحق"]
-                data = [[r["employee_code"],r["full_name"],*[Decimal(str(r[k] or "0")) for k in
-                    ("basic_salary","salary_raise","allowances","incentives","incentive_name","incentive_method",
-                     "incentive_days","overtime_hours","overtime_rate_percent","overtime_amount",
-                     "employer_insurance","employee_insurance","taxable_income_tax","advance_deduction",
-                     "other_deductions","absence_deduction","total_entitlements","total_deductions","net_pay")]] for r in rows]
+                data = [[
+                    r["employee_code"], r["full_name"],
+                    *[Decimal(str(r[k] or "0")) for k in ("basic_salary","salary_raise","allowances","incentives")],
+                    r["incentive_name"], r["incentive_method"],
+                    *[Decimal(str(r[k] or "0")) for k in
+                      ("incentive_days","overtime_hours","overtime_rate_percent","overtime_amount",
+                       "employer_insurance","employee_insurance","taxable_income_tax","advance_deduction",
+                       "other_deductions","absence_deduction","total_entitlements","total_deductions","net_pay")]
+                ] for r in rows]
                 filename = "nexus-payroll-" + run["period"] + ".xlsx"
                 title = "مسير الرواتب - " + run["period"]
             elif report == "reconciliation":
