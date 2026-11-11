@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from pathlib import Path
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
-from accounting_core import post_journal, register_decimal_aggregates
+from accounting_core import post_journal
 
 bank_bp = Blueprint("bank", __name__, url_prefix="/bank")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
