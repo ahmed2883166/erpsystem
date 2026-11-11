@@ -249,6 +249,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     if not customer:
         raise ValueError("العميل غير موجود أو غير نشط.")
     dimensions = validate_journal_dimensions(conn, dimensions or {})
+    dimensions["customer_id"] = int(customer_id)
     if not lines:
         raise ValueError("أضف صنفًا أو خدمة واحدة على الأقل.")
 
@@ -414,7 +415,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         raise ValueError("فاتورة البيع غير موجودة أو غير مرحلة.")
     dimensions = validate_journal_dimensions(conn, {
         "branch_id": invoice["branch_id"], "cost_center_id": invoice["cost_center_id"],
-        "project_id": invoice["project_id"],
+        "project_id": invoice["project_id"], "customer_id": invoice["customer_id"],
     })
     reason = str(reason or "").strip()
     if not reason or len(reason) > 500:
