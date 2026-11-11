@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}تقرير ضرائب وتأمينات الموظفين | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>تقرير ضرائب وتأمينات الموظفين</h2><p>يعرض المسيرات المرحلة فقط، ولا يضم المسودات.</p></header>
+<section class="panel"><form method="get" class="form-grid"><label>الشهر<input type="month" name="period" value="{{period}}" required></label><button type="submit">عرض التقرير</button></form></section>
+<section class="panel"><h3>ملخص الشهر {{period}}</h3><div class="kpi-grid">
+<div class="kpi"><span>إجمالي الأجور</span><strong>{{totals.gross|money}}</strong></div>
+<div class="kpi"><span>صافي الرواتب</span><strong>{{totals.net|money}}</strong></div>
+<div class="kpi"><span>ضريبة المرتبات</span><strong>{{totals.tax|money}}</strong></div>
+<div class="kpi"><span>تأمينات الموظفين</span><strong>{{totals.employee_insurance|money}}</strong></div>
+<div class="kpi"><span>تأمينات الشركة</span><strong>{{totals.employer_insurance|money}}</strong></div>
+</div></section>
+<section class="panel"><h3>تفاصيل الموظفين</h3><table><tr><th>الكود</th><th>الموظف</th><th>الفئة</th><th>الأجر</th><th>الدخل السنوي الخاضع</th><th>أجر التأمين</th><th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th><th>الصافي</th></tr>
+{% for r in rows %}<tr><td>{{r.employee_code}}</td><td>{{r.full_name}}</td><td>{{r.legal_category}}</td><td>{{r.gross_pay}}</td><td>{{r.taxable_annual}}</td><td>{{r.insured_wage}}</td><td>{{r.taxable_income_tax}}</td><td>{{r.employee_insurance}}</td><td>{{r.employer_insurance}}</td><td>{{r.net_pay}}</td></tr>{% else %}<tr><td colspan="10">لا توجد مسيرات مرحلة لهذا الشهر.</td></tr>{% endfor %}</table></section>
+{% endblock %}
