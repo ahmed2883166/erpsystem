@@ -173,6 +173,14 @@ def initialize_management_dashboard_schema(conn, activity):
             ON CONFLICT(meta_key) DO UPDATE SET meta_value='1'""")
         conn.execute("""INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('seed_activity',?)
             ON CONFLICT(meta_key) DO UPDATE SET meta_value=excluded.meta_value""", (activity,))
+    # Add newly introduced chart roles for untouched default mappings without
+    # overwriting user-customized role assignments on existing installations.
+    if not customized:
+        defaults = ACTIVITY_ACCOUNTS.get(activity, ACTIVITY_ACCOUNTS["commercial"])
+        for role, codes in defaults.items():
+            for code in codes:
+                conn.execute("""INSERT OR IGNORE INTO management_account_roles(account_id,role)
+                    SELECT id,? FROM accounts WHERE code=? AND is_group=0 AND active=1""", (role, code))
     conn.commit()
 
 
