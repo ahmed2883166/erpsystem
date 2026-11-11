@@ -26,7 +26,7 @@ from tax_center import tax_bp, initialize_tax_schema
 from workforce import workforce_bp, initialize_workforce_schema
 from currency_center import currency_bp, initialize_currency_schema
 from party_reports import party_bp
-from management_dashboard import build_management_snapshot
+from management_dashboard import build_management_snapshot, initialize_management_dashboard_schema
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from security_controls import login_attempts_exceeded, linked_operational_source
@@ -246,6 +246,10 @@ def initialize_database():
     initialize_tax_schema()
     initialize_workforce_schema()
     initialize_currency_schema()
+    dashboard_connection = db()
+    activity_row = dashboard_connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+    initialize_management_dashboard_schema(dashboard_connection, activity_row["setting_value"] if activity_row else "commercial")
+    dashboard_connection.close()
 
 
 def now():
