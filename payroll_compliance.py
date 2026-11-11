@@ -226,12 +226,12 @@ def calculate_payroll_deductions(conn, employee, gross_monthly, period):
 
 
 def seed_egypt_2026(conn):
-    """Insert a reviewable Egypt 2026 baseline; callers must explicitly request it."""
+    """Insert a reviewable Egypt 2026 baseline with the statutory income-tier table."""
     conn.execute("""
         INSERT OR IGNORE INTO payroll_rule_sets(country_code,category_code,effective_from,
-          personal_exemption_annual,insurance_floor,insurance_ceiling,
+          personal_exemption_annual,taxable_rounding_unit,insurance_floor,insurance_ceiling,
           employee_insurance_rate,employer_insurance_rate,notes)
-        VALUES('EG','local','2026-01-01','20000','2700','16700','11','18.75',
+        VALUES('EG','local','2026-01-01','20000','10','2700','16700','11','18.75',
           'إعداد مبدئي لمصر 2026؛ راجع المعاملة القانونية قبل الاعتماد')
     """)
     rule = conn.execute("""
@@ -240,19 +240,26 @@ def seed_egypt_2026(conn):
     """).fetchone()
     if not rule:
         raise ValueError("تعذر إنشاء مجموعة قواعد مصر 2026.")
+    rule_id = rule["id"]
+    conn.execute("DELETE FROM payroll_tax_brackets WHERE rule_set_id=?", (rule_id,))
+    conn.execute("DELETE FROM payroll_tax_tier_brackets WHERE rule_set_id=?", (rule_id,))
+    tiers = [
+        ("600000", [("0","40000","0"),("40000","55000","10"),("55000","70000","15"),
+                    ("70000","200000","20"),("200000","400000","22.5"),("400000",None,"25")]),
+        ("700000", [("0","55000","10"),("55000","70000","15"),("70000","200000","20"),
+                    ("200000","400000","22.5"),("400000",None,"25")]),
+        ("800000", [("0","70000","15"),("70000","200000","20"),("200000","400000","22.5"),
+                    ("400000",None,"25")]),
+        ("900000", [("0","200000","20"),("200000","400000","22.5"),("400000",None,"25")]),
+        ("1200000", [("0","400000","22.5"),("400000",None,"25")]),
+        (None, [("0",None,"27.5")]),
+    ]
     conn.executemany("""
-        INSERT OR IGNORE INTO payroll_tax_brackets(rule_set_id,lower_bound,upper_bound,rate)
-        VALUES(?,?,?,?)
-    """, [
-        (rule["id"],"0","40000","0"),
-        (rule["id"],"40000","55000","10"),
-        (rule["id"],"55000","70000","15"),
-        (rule["id"],"70000","200000","20"),
-        (rule["id"],"200000","400000","22.5"),
-        (rule["id"],"400000","1200000","25"),
-        (rule["id"],"1200000",None,"27.5"),
-    ])
-    return rule["id"]
+        INSERT INTO payroll_tax_tier_brackets(rule_set_id,income_max,lower_bound,upper_bound,rate)
+        VALUES(?,?,?,?,?)
+    """, [(rule_id, income_max, lower, upper, rate)
+          for income_max, bands in tiers for lower, upper, rate in bands])
+    return rule_id
 
 
 def _authorized(fn):
