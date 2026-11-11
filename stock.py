@@ -951,8 +951,9 @@ def approve_count(stocktake_id):
                     (movement_no,line["product_id"],stocktake["warehouse_id"],str(qty),
                      str(cost / qty),str(cost),stocktake["count_date"],"عجز جرد فعلي",session.get("user_id")))
                 movement_ids.append(cur.lastrowid)
-                journal_lines.extend([(shortage_account["id"],cost,0,"عجز جرد - " + line["name_ar"]),
-                                      (inventory["id"],0,cost,"تخفيض مخزون - " + line["name_ar"])])
+                if cost > 0:
+                    journal_lines.extend([(shortage_account["id"],cost,0,"عجز جرد - " + line["name_ar"]),
+                                          (inventory["id"],0,cost,"تخفيض مخزون - " + line["name_ar"])])
                 c.execute("UPDATE stocktake_lines SET variance_value=? WHERE id=?", (str(-cost),line["id"]))
             else:
                 if not surplus_account or surplus_account["account_type"] != "revenue" or surplus_account["is_group"] or not surplus_account["active"]:
