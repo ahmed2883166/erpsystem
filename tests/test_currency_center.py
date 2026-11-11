@@ -22,7 +22,7 @@ class CurrencyCenterTests(unittest.TestCase):
           CREATE TABLE journal_entries(id INTEGER PRIMARY KEY, entry_date TEXT, reference TEXT,
             description TEXT, status TEXT, created_by INTEGER, created_at TEXT);
           CREATE TABLE journal_lines(id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
-            debit REAL, credit REAL, memo TEXT);
+            debit TEXT, credit TEXT, memo TEXT);
           INSERT INTO currencies VALUES('USD','دولار',1,0);
           INSERT INTO accounts VALUES(1,'1000','البنك','asset',0,1);
           INSERT INTO accounts VALUES(2,'1100','العملاء','asset',0,1);
@@ -72,11 +72,14 @@ class CurrencyCenterTests(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         balance = conn.execute("SELECT balance_base FROM fx_transactions WHERE id=1").fetchone()[0]
         difference = conn.execute("SELECT difference FROM fx_revaluations WHERE transaction_id=1").fetchone()[0]
-        debit, credit = conn.execute("SELECT SUM(debit),SUM(credit) FROM journal_lines").fetchone()
+        rows = conn.execute("SELECT debit,credit FROM journal_lines").fetchall()
+        from decimal import Decimal
+        debit = sum((Decimal(row[0]) for row in rows), Decimal("0"))
+        credit = sum((Decimal(row[1]) for row in rows), Decimal("0"))
         conn.close()
         self.assertEqual(balance, "26000.00")
         self.assertEqual(difference, "1000.00")
-        self.assertAlmostEqual(debit, credit, places=2)
+        self.assertEqual(debit, credit)
 
     def test_full_settlement_clears_base_currency_residual(self):
         self.client.post("/currencies/transactions", data={
