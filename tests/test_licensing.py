@@ -35,16 +35,48 @@ class LicensingTests(unittest.TestCase):
         os.environ["NEXUS_LICENSE_PUBLIC_KEY"]=public_text
         try:
             with tempfile.TemporaryDirectory() as folder, patch.object(
-                licensing, "_post_json", return_value={"first_seen":now.isoformat(),"token":token}
+                licensing, "_post_json", return_value={"first_seen":now.isoformat(),"trial_ends_at":expiry.isoformat(),"status":"trial","token":token}
             ):
                 status=get_license_status(folder,now,machine_id="device-a")
                 self.assertEqual(status["status"],"trial")
                 self.assertEqual(status["trial_authority"],"signed_server")
             with tempfile.TemporaryDirectory() as folder, patch.object(
-                licensing, "_post_json", return_value={"first_seen":now.isoformat(),"token":token+"x"}
+                licensing, "_post_json", return_value={"first_seen":now.isoformat(),"trial_ends_at":expiry.isoformat(),"status":"trial","token":token+"x"}
             ):
                 status=get_license_status(folder,now,machine_id="device-a")
                 self.assertEqual(status["status"],"online_required")
+        finally:
+            if old_url is None: os.environ.pop("NEXUS_LICENSE_TRIAL_URL",None)
+            else: os.environ["NEXUS_LICENSE_TRIAL_URL"]=old_url
+            if old_key is None: os.environ.pop("NEXUS_LICENSE_PUBLIC_KEY",None)
+            else: os.environ["NEXUS_LICENSE_PUBLIC_KEY"]=old_key
+
+    def test_cached_trial_requires_server_and_server_expiry_wins_over_rolled_back_clock(self):
+        private=Ed25519PrivateKey.generate()
+        public=private.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw)
+        public_text=base64.b64encode(public).decode()
+        now=datetime(2026,11,10,tzinfo=timezone.utc)
+        expiry=now+timedelta(days=15)
+        payload={"machine_id":"device-a","license_type":"trial","expires_at":expiry.isoformat(),
+                 "offline_until":expiry.isoformat(),"trial_ends_at":expiry.isoformat()}
+        encoded=base64.urlsafe_b64encode(json.dumps(payload,separators=(",",":")).encode()).decode().rstrip("=")
+        token=encoded+"."+base64.urlsafe_b64encode(private.sign(encoded.encode("ascii"))).decode().rstrip("=")
+        old_url=os.environ.get("NEXUS_LICENSE_TRIAL_URL")
+        old_key=os.environ.get("NEXUS_LICENSE_PUBLIC_KEY")
+        os.environ["NEXUS_LICENSE_TRIAL_URL"]="https://licenses.example.test/api/v1/trial"
+        os.environ["NEXUS_LICENSE_PUBLIC_KEY"]=public_text
+        try:
+            with tempfile.TemporaryDirectory() as folder:
+                with patch.object(licensing,"_post_json",return_value={
+                    "first_seen":now.isoformat(),"trial_ends_at":expiry.isoformat(),"status":"trial","token":token
+                }):
+                    self.assertEqual(get_license_status(folder,now,machine_id="device-a")["status"],"trial")
+                with patch.object(licensing,"_post_json",side_effect=RuntimeError("offline")):
+                    self.assertEqual(get_license_status(folder,now+timedelta(days=1),machine_id="device-a")["status"],"online_required")
+                with patch.object(licensing,"_post_json",return_value={
+                    "first_seen":now.isoformat(),"trial_ends_at":expiry.isoformat(),"status":"expired","token":token
+                }):
+                    self.assertEqual(get_license_status(folder,now+timedelta(days=1),machine_id="device-a")["status"],"expired")
         finally:
             if old_url is None: os.environ.pop("NEXUS_LICENSE_TRIAL_URL",None)
             else: os.environ["NEXUS_LICENSE_TRIAL_URL"]=old_url
