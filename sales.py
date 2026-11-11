@@ -280,13 +280,17 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
         vat = _account(conn, codes["vat"], "liability")
     credit_limit = Decimal(customer["credit_limit"] or "0")
     outstanding_rows = conn.execute(
-        "SELECT total_amount,paid_amount,COALESCE(credited_amount,'0') credited_amount "
-        "FROM sales_invoices WHERE customer_id=? AND status='posted'", (customer_id,)
+        """SELECT i.total_amount,i.paid_amount,COALESCE(i.credited_amount,'0') credited_amount,
+                  COALESCE((SELECT SUM(rf.amount) FROM customer_refunds rf
+                    JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id
+                    WHERE cn.invoice_id=i.id),'0') refunded_amount
+           FROM sales_invoices i WHERE i.customer_id=? AND i.status='posted'""", (customer_id,)
     ).fetchall()
     current_exposure = sum((
         Decimal(str(row["total_amount"] or "0")) -
         Decimal(str(row["paid_amount"] or "0")) -
-        Decimal(str(row["credited_amount"] or "0"))
+        Decimal(str(row["credited_amount"] or "0")) +
+        Decimal(str(row["refunded_amount"] or "0"))
         for row in outstanding_rows
     ), Decimal("0")).quantize(CENT, rounding=ROUND_HALF_UP)
     credit_warning = bool(credit_limit > 0 and current_exposure + total_amount > credit_limit)
@@ -753,7 +757,13 @@ def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_i
     invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=? AND status='posted'", (invoice_id,)).fetchone()
     if not invoice:
         raise ValueError("فاتورة العميل غير موجودة أو غير مرحلة.")
-    outstanding = Decimal(invoice["total_amount"]) - Decimal(invoice["paid_amount"]) - Decimal(invoice["credited_amount"] or "0")
+    refunded_row = conn.execute(
+        """SELECT COALESCE(SUM(rf.amount),'0') refunded FROM customer_refunds rf
+           JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id WHERE cn.invoice_id=?""",
+        (invoice_id,),
+    ).fetchone()
+    outstanding = (Decimal(invoice["total_amount"]) - Decimal(invoice["paid_amount"]) -
+                   Decimal(invoice["credited_amount"] or "0") + Decimal(refunded_row["refunded"] or "0"))
     if amount > outstanding:
         raise ValueError("قيمة التحصيل أكبر من الرصيد المستحق على الفاتورة.")
     cash = conn.execute("SELECT id,is_group,active,account_type FROM accounts WHERE id=?", (cash_account_id,)).fetchone()
@@ -833,10 +843,12 @@ def customer_list():
     rows = c.execute("SELECT * FROM customers ORDER BY name").fetchall()
     invoices_by_customer = {}
     for invoice_row in c.execute(
-        "SELECT customer_id,total_amount,paid_amount,COALESCE(credited_amount,'0') credited_amount "
-        "FROM sales_invoices WHERE status='posted'"
+        """SELECT i.customer_id,i.total_amount,i.paid_amount,COALESCE(i.credited_amount,'0') credited_amount,
+               COALESCE((SELECT SUM(rf.amount) FROM customer_refunds rf
+                 JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id WHERE cn.invoice_id=i.id),'0') refunded_amount
+        FROM sales_invoices i WHERE i.status='posted'"""
     ).fetchall():
-        balance = Decimal(invoice_row["total_amount"]) - Decimal(invoice_row["paid_amount"] or "0") - Decimal(invoice_row["credited_amount"] or "0")
+        balance = Decimal(invoice_row["total_amount"]) - Decimal(invoice_row["paid_amount"] or "0") - Decimal(invoice_row["credited_amount"] or "0") + Decimal(invoice_row["refunded_amount"] or "0")
         invoices_by_customer[invoice_row["customer_id"]] = invoices_by_customer.get(invoice_row["customer_id"], Decimal("0")) + balance
     rows = [dict(row, outstanding=invoices_by_customer.get(row["id"], Decimal("0"))) for row in rows]
     c.close()
@@ -1028,7 +1040,10 @@ def new_receipt():
         WHERE i.status='posted' ORDER BY i.invoice_date,i.id""").fetchall()
     invoices = [row for row in invoices if
                 Decimal(row["total_amount"]) - Decimal(row["paid_amount"] or "0") -
-                Decimal(row["credited_amount"] or "0") > 0]
+                Decimal(row["credited_amount"] or "0") +
+                Decimal(c.execute("""SELECT COALESCE(SUM(rf.amount),'0') FROM customer_refunds rf
+                    JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id WHERE cn.invoice_id=?""",
+                    (row["id"],)).fetchone()[0] or "0") > 0]
     cash_accounts = c.execute("""SELECT id,code,name_ar FROM accounts
         WHERE account_type='asset' AND is_group=0 AND active=1 ORDER BY code""").fetchall()
     c.close()
