@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% block title %}الأبعاد التحليلية | NEXUS ERP{% endblock %}
+{% block content %}
+<header><h2>إدارة الأبعاد التحليلية</h2><p class="muted">أضف الفروع ومراكز التكلفة والمشروعات دون إنشاء حسابات إضافية في شجرة الحسابات.</p></header>
+<section class="panel">
+<form method="post" class="form-row">
+<label>نوع البُعد<select name="dimension_type" required><option value="branch">فرع</option><option value="cost_center">مركز تكلفة</option><option value="project">مشروع</option></select></label>
+<label>الكود<input name="code" required maxlength="30"></label>
+<label>الاسم<input name="name_ar" required maxlength="120"></label>
+<button type="submit">إضافة</button>
+</form>
+</section>
+{% for key,title,rows in [('branches','الفروع',options.branches),('cost_centers','مراكز التكلفة',options.cost_centers),('projects','المشروعات',options.projects)] %}
+<section class="panel"><h3>{{ title }}</h3><div class="table-wrap"><table><thead><tr><th>الكود</th><th>الاسم</th><th>الحالة</th></tr></thead><tbody>{% for x in rows %}<tr><td>{{ x.code }}</td><td>{{ x.name_ar }}</td><td class="success">نشط</td></tr>{% else %}<tr><td colspan="3">لا توجد عناصر مضافة.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endfor %}
+{% endblock %}
