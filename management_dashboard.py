@@ -1,6 +1,7 @@
 """Decimal-safe management dashboard built from posted general-ledger entries."""
 from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
+from accounting_core import register_decimal_aggregates
 
 CENT = Decimal("0.01")
 
@@ -63,22 +64,27 @@ def account_balances(conn, date_from=None, date_to=None):
     if date_to:
         conditions.append("je.entry_date<=?")
         params.append(date_to)
+    # Aggregate monetary TEXT values inside SQLite with exact Decimal aggregates.
+    # This avoids transferring every journal line to Python as the ledger grows.
+    register_decimal_aggregates(conn)
     rows = conn.execute(f"""
-        SELECT a.id,a.code,a.name_ar,a.account_type,a.is_group,jl.debit,jl.credit
+        SELECT a.id,a.code,a.name_ar,a.account_type,a.is_group,
+               COALESCE(DECIMAL_SUM(jl.debit),0) debit,
+               COALESCE(DECIMAL_SUM(jl.credit),0) credit
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
         WHERE {' AND '.join(conditions)}
+        GROUP BY a.id,a.code,a.name_ar,a.account_type,a.is_group
     """, params).fetchall()
-    balances = {}
-    for row in rows:
-        item = balances.setdefault(row["id"], {
+    return {
+        row["id"]: {
             "code": row["code"], "name": row["name_ar"], "type": row["account_type"],
-            "is_group": bool(row["is_group"]), "debit": Decimal("0"), "credit": Decimal("0"),
-        })
-        item["debit"] += _decimal(row["debit"])
-        item["credit"] += _decimal(row["credit"])
-    return balances
+            "is_group": bool(row["is_group"]), "debit": _decimal(row["debit"]),
+            "credit": _decimal(row["credit"]),
+        }
+        for row in rows
+    }
 
 
 def income_figures(balances, direct_cost_codes):
