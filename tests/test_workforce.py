@@ -251,8 +251,10 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         conn = sqlite3.connect(self.db_path)
         count = conn.execute("SELECT COUNT(*) FROM payroll_lines").fetchone()[0]
+        run_count = conn.execute("SELECT COUNT(*) FROM payroll_runs").fetchone()[0]
         conn.close()
         self.assertEqual(count, 0)
+        self.assertEqual(run_count, 0)
 
     def test_optional_automatic_statutory_calculation_snapshots_rules(self):
         self.add_employee()
