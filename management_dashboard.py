@@ -161,6 +161,7 @@ def initialize_management_dashboard_schema(conn, activity):
     for table, event in (
         ("journal_entries","INSERT"),("journal_entries","UPDATE"),("journal_entries","DELETE"),
         ("journal_lines","INSERT"),("journal_lines","UPDATE"),("journal_lines","DELETE"),
+        ("accounts","INSERT"),("accounts","UPDATE"),("accounts","DELETE"),
     ):
         trigger = "trg_dashboard_version_" + table + "_" + event.lower()
         conn.execute(f"""CREATE TRIGGER IF NOT EXISTS {trigger} AFTER {event} ON {table}
