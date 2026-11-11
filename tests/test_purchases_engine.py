@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from flask import Flask
 
 import purchases
 import stock
@@ -91,6 +92,42 @@ class PurchasingAccountingTests(unittest.TestCase):
         debit = sum((Decimal(row["debit"]) for row in rows), Decimal("0"))
         credit = sum((Decimal(row["credit"]) for row in rows), Decimal("0"))
         self.assertEqual(debit, credit)
+
+    def test_integrity_resolve_button_only_closes_after_duplicate_is_removed(self):
+        self.db.executescript("""
+          CREATE TABLE purchase_integrity_issues(
+            id INTEGER PRIMARY KEY, issue_type TEXT, issue_key TEXT,
+            detected_at TEXT DEFAULT CURRENT_TIMESTAMP, resolved INTEGER DEFAULT 0,
+            resolved_by INTEGER, resolved_at TEXT
+          );
+          CREATE TABLE supplier_bills(
+            id INTEGER PRIMARY KEY, supplier_id INTEGER, supplier_invoice_no TEXT
+          );
+          INSERT INTO purchase_integrity_issues(id,issue_type,issue_key)
+            VALUES(1,'duplicate_supplier_invoice','1:inv-100');
+          INSERT INTO supplier_bills VALUES(1,1,'INV-100');
+          INSERT INTO supplier_bills VALUES(2,1,' inv-100 ');
+        """)
+        app = Flask(__name__)
+        app.secret_key = "test"
+        app.register_blueprint(purchases.purchase_bp)
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "admin"
+        response = client.post("/purchases/integrity/1/resolve")
+        self.assertEqual(response.status_code, 302)
+        state = self.db.execute("SELECT resolved FROM purchase_integrity_issues WHERE id=1").fetchone()[0]
+        self.assertEqual(state, 0)
+        self.db.execute("DELETE FROM supplier_bills WHERE id=2")
+        response = client.post("/purchases/integrity/1/resolve")
+        self.assertEqual(response.status_code, 302)
+        issue = self.db.execute(
+            "SELECT resolved,resolved_by,resolved_at FROM purchase_integrity_issues WHERE id=1"
+        ).fetchone()
+        self.assertEqual(issue["resolved"], 1)
+        self.assertEqual(issue["resolved_by"], 1)
+        self.assertTrue(issue["resolved_at"])
 
     def test_group_account_cannot_be_posted(self):
         with self.assertRaises(ValueError):
