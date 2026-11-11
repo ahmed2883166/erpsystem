@@ -3,6 +3,7 @@ import base64, hashlib, json, os, platform, uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.request import Request, urlopen
+from urllib.parse import urlparse
 from urllib.error import URLError, HTTPError
 
 TRIAL_DAYS = 15
@@ -99,6 +100,11 @@ def verify_license_token(token, expected_machine=None, public_key=None, current_
 
 def _post_json(url, payload):
     if not url: raise RuntimeError("خادم التراخيص غير مضبوط بعد.")
+    parsed = urlparse(url)
+    if parsed.scheme != "https" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        raise RuntimeError("اتصال خادم التراخيص يجب أن يستخدم HTTPS.")
+    if parsed.username or parsed.password or not parsed.hostname:
+        raise RuntimeError("عنوان خادم التراخيص غير صالح.")
     request = Request(url, data=json.dumps(payload).encode(), headers={"Content-Type":"application/json","Accept":"application/json"}, method="POST")
     try:
         with urlopen(request, timeout=NETWORK_TIMEOUT_SECONDS) as response:
