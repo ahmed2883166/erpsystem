@@ -330,11 +330,15 @@ def cash_forecast(conn, today=None, weeks=8):
 
 
 def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("3")):
+    # Use the same exact TEXT-to-Decimal aggregates as the rest of the GL.
+    # This report is diagnostic, but its displayed debit/credit totals must
+    # still reconcile to the ledger without SQLite floating-point rounding.
+    register_decimal_aggregates(conn)
     columns = {x["name"] for x in conn.execute("PRAGMA table_info(journal_entries)")}
     ref_expr = "je.reference" if "reference" in columns else "''"
     desc_expr = "je.description" if "description" in columns else "''"
     entries = conn.execute(f"""SELECT je.id,je.entry_date,{ref_expr} reference,{desc_expr} description,
-        SUM(CAST(jl.debit AS NUMERIC)) debit,SUM(CAST(jl.credit AS NUMERIC)) credit
+        COALESCE(DECIMAL_SUM(jl.debit),'0') debit,COALESCE(DECIMAL_SUM(jl.credit),'0') credit
         FROM journal_entries je JOIN journal_lines jl ON jl.entry_id=je.id
         WHERE je.status='posted' AND je.entry_date BETWEEN ? AND ?
         GROUP BY je.id ORDER BY je.entry_date DESC,je.id DESC""",
