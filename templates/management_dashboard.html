@@ -112,7 +112,7 @@
     <div class="stat-card"><small>رأس المال العامل</small><strong>{{ money(s.working_capital) }}</strong></div>
     <div class="stat-card"><small>نسبة السيولة الجارية</small><strong>{{ ratio(s.current_ratio) }}</strong></div>
     <div class="stat-card"><small>نسبة السيولة السريعة</small><strong>{{ ratio(s.quick_ratio) }}</strong></div>
-    <div class="stat-card"><small>فحص المعادلة المحاسبية</small><strong>{% if s.balance_ok %}<span class="success">متوازنة ✓</span>{% else %}<span class="danger">تحتاج مراجعة</span>{% endif %}</strong></div>
+    <div class="stat-card"><small>فحص المعادلة المحاسبية</small><strong>{% if s.balance_ok is none %}<span class="muted">غير متاح مع فلتر تحليلي جزئي</span>{% elif s.balance_ok %}<span class="success">متوازنة ✓</span>{% else %}<span class="danger">تحتاج مراجعة</span>{% endif %}</strong></div>
   </div>
   <p class="muted">يتم تحديد الحسابات من شاشة «ربط حسابات لوحة الإدارة»، ويمكنك اختيار الحسابات التفصيلية الفعلية حتى لو كانت أكواد شجرة الحسابات مختلفة.</p>
 </section>
