@@ -233,16 +233,10 @@ def _activity(conn):
 
 
 def _sales_account_codes(activity):
-    mapping = {
-        "commercial": {"ar": "1130", "revenue": "4100", "vat": "2130", "inventory": "1150", "cogs": "5100"},
-        "service": {"ar": "1120", "revenue": "4100", "vat": "2130", "inventory": None, "cogs": None},
-        "medical": {"ar": "1130", "revenue": "4100", "vat": "2120", "inventory": "1150", "cogs": "5300"},
-        "restaurant": {"ar": "1130", "revenue": "4100", "vat": "2120", "inventory": "1140", "cogs": "5100"},
-        "industrial": {"ar": "1120", "revenue": "4100", "vat": "2120", "inventory": "1150", "cogs": "5400"},
-    }
-    if activity not in mapping:
+    from chart_templates import ACTIVITY_POSTING_ACCOUNTS
+    if activity not in ACTIVITY_POSTING_ACCOUNTS:
         raise ValueError("نشاط الشركة غير مدعوم في دورة المبيعات.")
-    return mapping[activity]
+    return ACTIVITY_POSTING_ACCOUNTS[activity]
 
 
 def _allowed_vat_rates(conn):
