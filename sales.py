@@ -848,7 +848,8 @@ def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_i
     receipt_no = "RCPT-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
     dimensions = validate_journal_dimensions(conn, {
         "branch_id": invoice["branch_id"], "cost_center_id": invoice["cost_center_id"],
-        "project_id": invoice["project_id"],
+        "project_id": invoice["project_id"], "customer_id": invoice["customer_id"],
+        "salesperson_id": invoice["salesperson_id"] if "salesperson_id" in invoice.keys() else None,
     })
     journal_id = post_journal(
         conn, receipt_date, receipt_no, "تحصيل من عميل " + invoice["invoice_no"],
@@ -904,10 +905,11 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
         raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
     ar = _account(conn, _sales_account_codes(_activity(conn))["ar"], "asset")
     receipt_no = "RCPTB-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    dimensions = validate_journal_dimensions(conn, {"customer_id": customer_id})
     journal_id = post_journal(
         conn, receipt_date, receipt_no, "تحصيل مجمع من العميل " + customer["name"],
         [(cash_account_id, total, 0, "إجمالي التحصيل المجمع"),
-         (ar, 0, total, "تخفيض ذمم العميل عن عدة فواتير")], created_by
+         (ar, 0, total, "تخفيض ذمم العميل عن عدة فواتير")], created_by, dimensions=dimensions
     )
     cursor = conn.execute("""INSERT INTO customer_receipt_batches
         (receipt_no,customer_id,receipt_date,total_amount,cash_account_id,journal_entry_id,reference,created_by)
