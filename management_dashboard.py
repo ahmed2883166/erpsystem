@@ -9,19 +9,19 @@ CENT = Decimal("0.01")
 ACTIVITY_ACCOUNTS = {
     "commercial": {
         "cash": ("1110", "1120"), "receivables": ("1130",), "payables": ("2110",),
-        "inventory": ("1150",), "direct_cost": ("5100",),
+        "inventory": ("1150",), "quick_assets": ("1110", "1120", "1130", "1140"), "direct_cost": ("5100",),
     },
     "service": {
         "cash": ("1110",), "receivables": ("1120", "1130"), "payables": ("2100",),
-        "inventory": (), "direct_cost": ("5100", "5200", "5300"),
+        "inventory": (), "quick_assets": ("1110", "1120", "1130"), "direct_cost": ("5100", "5200", "5300"),
     },
     "medical": {
         "cash": ("1110", "1120"), "receivables": ("1130", "1140"), "payables": ("2100",),
-        "inventory": ("1150", "1160"), "direct_cost": ("5100", "5200", "5300"),
+        "inventory": ("1150", "1160"), "quick_assets": ("1110", "1120", "1130", "1140"), "direct_cost": ("5100", "5200", "5300"),
     },
     "restaurant": {
         "cash": ("1110", "1120"), "receivables": ("1130",), "payables": ("2100",),
-        "inventory": ("1140", "1150", "1160"), "direct_cost": ("5100", "5200", "5300", "5400"),
+        "inventory": ("1140", "1150", "1160"), "quick_assets": ("1110", "1120", "1130"), "quick_assets": ("1110", "1120", "1120"), "direct_cost": ("5400",),
     },
     "industrial": {
         "cash": ("1110",), "receivables": ("1120",), "payables": ("2100",),
@@ -158,7 +158,7 @@ def build_management_snapshot(conn, start, end):
         "inventory": _leaf_sum(as_of, "asset", codes=mapping["inventory"]),
         "working_capital": current_assets - current_liabilities,
         "current_ratio": _ratio(current_assets, current_liabilities),
-        "quick_ratio": _ratio(current_assets - _leaf_sum(as_of, "asset", codes=mapping["inventory"]), current_liabilities),
+        "quick_ratio": _ratio(_leaf_sum(as_of, "asset", codes=mapping["quick_assets"]), current_liabilities),
         "balance_ok": balance_ok,
         "total_assets": assets,
         "total_liabilities": liabilities,
