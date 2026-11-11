@@ -1,3 +1,4 @@
+from database import connect_database
 """NEXUS ERP inventory foundation (v0.2).
 
 Implements product master, warehouses, stock receipts/issues/transfers/scrap,
@@ -21,11 +22,7 @@ MONEY = D("0.01")
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=20, isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=20000")
-    return conn
+    return connect_database(DB_PATH, isolation_level=None)
 
 
 def initialize_stock_schema():
