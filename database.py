@@ -45,3 +45,26 @@ def enable_wal(path, *, timeout=DEFAULT_TIMEOUT_SECONDS):
         return str(mode).lower()
     finally:
         connection.close()
+
+
+def fetch_page(connection, query, count_query, params=(), count_params=None, page=1, per_page=50):
+    """Execute a bounded, stable SQL page and return pagination metadata."""
+    try:
+        page = max(1, int(page or 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = int(per_page or 50)
+    except (TypeError, ValueError):
+        per_page = 50
+    if per_page not in (50, 100):
+        per_page = 50
+    count_params = params if count_params is None else count_params
+    total = int(connection.execute(count_query, count_params).fetchone()[0] or 0)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = min(page, pages)
+    rows = connection.execute(
+        query.rstrip().rstrip(";") + " LIMIT ? OFFSET ?",
+        tuple(params) + (per_page, (page - 1) * per_page),
+    ).fetchall()
+    return {"rows": rows, "total": total, "page": page, "pages": pages, "per_page": per_page}
