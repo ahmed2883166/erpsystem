@@ -742,63 +742,197 @@ def edit_account(account_id):
 def global_search():
     if "user_id" not in session:
         return redirect(url_for("login"))
-    q=request.args.get("q","").strip()[:120]
-    results=[]
+    q = request.args.get("q", "").strip()[:120]
+    results = []
     if q:
-        conn=db()
+        conn = db()
+
         def exists(table):
-            return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone() is not None
+            return conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone() is not None
+
         def columns(table):
-            return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")} if exists(table) else set()
-        like=f"%{q}%"
+            if not exists(table):
+                return set()
+            return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+        like = f"%{q}%"
+
+        # Search journal entries, including their linked sales/purchase documents.
         if exists("journal_entries"):
-            cols=columns("journal_entries")
-            predicates=[];args=[]
-            for col in ("reference","description","entry_date"):
-                if col in cols: predicates.append(f"CAST(j.{col} AS TEXT) LIKE ?");args.append(like)
+            journal_columns = columns("journal_entries")
+            predicates = []
+            args = []
+            for column in ("reference", "description", "entry_date"):
+                if column in journal_columns:
+                    predicates.append(f"CAST(j.{column} AS TEXT) LIKE ?")
+                    args.append(like)
+
             if exists("journal_lines"):
-                predicates.append("EXISTS(SELECT 1 FROM journal_lines jl WHERE jl.entry_id=j.id AND jl.memo LIKE ?)")
+                predicates.append(
+                    "EXISTS(SELECT 1 FROM journal_lines jl "
+                    "WHERE jl.entry_id=j.id AND jl.memo LIKE ?)"
+                )
                 args.append(like)
+
             if exists("sales_invoices") and exists("customers"):
-                predicates.append("EXISTS(SELECT 1 FROM sales_invoices si JOIN customers sc ON sc.id=si.customer_id WHERE si.journal_entry_id=j.id AND (si.invoice_no LIKE ? OR sc.name LIKE ? OR sc.code LIKE ?))")
-                args.extend([like,like,like])
-            if exists("customers"):
-            for r in conn.execute("SELECT id,code,name,phone FROM customers WHERE name LIKE ? OR code LIKE ? OR phone LIKE ? ORDER BY name LIMIT 20",(like,like,like)):
-                results.append({"kind":"عميل","title":f"{r['code']} — {r['name']}","detail":f"هاتف: {r['phone'] or '—'}","url":url_for("sales.edit_customer",customer_id=r["id"])})
-        if exists("suppliers"):
-            for r in conn.execute("SELECT id,code,name,phone FROM suppliers WHERE name LIKE ? OR code LIKE ? OR phone LIKE ? ORDER BY name LIMIT 20",(like,like,like)):
-                results.append({"kind":"مورد","title":f"{r['code']} — {r['name']}","detail":f"هاتف: {r['phone'] or '—'}","url":url_for("purchase.edit_supplier",supplier_id=r["id"])})
-        if exists("supplier_bills") and exists("suppliers"):
-                predicates.append("EXISTS(SELECT 1 FROM supplier_bills sb JOIN suppliers ss ON ss.id=sb.supplier_id WHERE sb.journal_entry_id=j.id AND (sb.bill_no LIKE ? OR sb.supplier_invoice_no LIKE ? OR ss.name LIKE ? OR ss.code LIKE ?))")
-                args.extend([like,like,like,like])
-            if q.isdigit(): predicates.append("j.id=?");args.append(int(q))
+                sales_invoice_columns = columns("sales_invoices")
+                if "journal_entry_id" in sales_invoice_columns:
+                    predicates.append(
+                        "EXISTS(SELECT 1 FROM sales_invoices si "
+                        "JOIN customers sc ON sc.id=si.customer_id "
+                        "WHERE si.journal_entry_id=j.id "
+                        "AND (si.invoice_no LIKE ? OR sc.name LIKE ? OR sc.code LIKE ?))"
+                    )
+                    args.extend([like, like, like])
+
+            if exists("supplier_bills") and exists("suppliers"):
+                supplier_bill_columns = columns("supplier_bills")
+                if "journal_entry_id" in supplier_bill_columns:
+                    predicates.append(
+                        "EXISTS(SELECT 1 FROM supplier_bills sb "
+                        "JOIN suppliers ss ON ss.id=sb.supplier_id "
+                        "WHERE sb.journal_entry_id=j.id "
+                        "AND (sb.bill_no LIKE ? OR sb.supplier_invoice_no LIKE ? "
+                        "OR ss.name LIKE ? OR ss.code LIKE ?))"
+                    )
+                    args.extend([like, like, like, like])
+
+            if q.isdigit():
+                predicates.append("j.id=?")
+                args.append(int(q))
+
             if predicates:
-                for r in conn.execute("SELECT j.id,j.entry_date,j.reference,j.description FROM journal_entries j WHERE "+" OR ".join(predicates)+" ORDER BY j.id DESC LIMIT 30",args):
-                    results.append({"kind":"قيد يومية","title":f"قيد رقم {r['id']} — {r['reference'] or ''}","detail":f"{r['entry_date']} | {r['description']}","url":url_for("journal_detail",entry_id=r["id"])})
+                for row in conn.execute(
+                    "SELECT j.id,j.entry_date,j.reference,j.description "
+                    "FROM journal_entries j WHERE "
+                    + " OR ".join(predicates)
+                    + " ORDER BY j.id DESC LIMIT 30",
+                    args,
+                ):
+                    results.append({
+                        "kind": "قيد يومية",
+                        "title": f"قيد رقم {row['id']} — {row['reference'] or ''}",
+                        "detail": f"{row['entry_date']} | {row['description']}",
+                        "url": url_for("journal_detail", entry_id=row["id"]),
+                    })
+
+        # Search customers and suppliers independently from journal search.
+        if exists("customers"):
+            customer_columns = columns("customers")
+            searchable = [column for column in ("name", "code", "phone") if column in customer_columns]
+            if searchable:
+                where = " OR ".join(f"{column} LIKE ?" for column in searchable)
+                for row in conn.execute(
+                    f"SELECT * FROM customers WHERE {where} ORDER BY name LIMIT 20",
+                    [like] * len(searchable),
+                ):
+                    results.append({
+                        "kind": "عميل",
+                        "title": f"{row['code']} — {row['name']}",
+                        "detail": f"هاتف: {row['phone'] or '—'}",
+                        "url": url_for("sales.edit_customer", customer_id=row["id"]),
+                    })
+
+        if exists("suppliers"):
+            supplier_columns = columns("suppliers")
+            searchable = [column for column in ("name", "code", "phone") if column in supplier_columns]
+            if searchable:
+                where = " OR ".join(f"{column} LIKE ?" for column in searchable)
+                for row in conn.execute(
+                    f"SELECT * FROM suppliers WHERE {where} ORDER BY name LIMIT 20",
+                    [like] * len(searchable),
+                ):
+                    results.append({
+                        "kind": "مورد",
+                        "title": f"{row['code']} — {row['name']}",
+                        "detail": f"هاتف: {row['phone'] or '—'}",
+                        "url": url_for("purchase.edit_supplier", supplier_id=row["id"]),
+                    })
+
         if exists("sales_invoices") and exists("customers"):
-            for r in conn.execute("""SELECT i.id,i.invoice_no,i.invoice_date,i.total_amount,c.name party
-                FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
-                WHERE i.invoice_no LIKE ? OR c.name LIKE ? OR c.code LIKE ? ORDER BY i.id DESC LIMIT 30""",(like,like,like)):
-                results.append({"kind":"فاتورة بيع","title":r["invoice_no"],"detail":f"{r['party']} | {r['invoice_date']} | {r['total_amount']}","url":url_for("sales.invoice_print",invoice_id=r["id"])})
+            for row in conn.execute(
+                """SELECT i.id,i.invoice_no,i.invoice_date,i.total_amount,c.name party
+                   FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
+                   WHERE i.invoice_no LIKE ? OR c.name LIKE ? OR c.code LIKE ?
+                   ORDER BY i.id DESC LIMIT 30""",
+                (like, like, like),
+            ):
+                results.append({
+                    "kind": "فاتورة بيع",
+                    "title": row["invoice_no"],
+                    "detail": f"{row['party']} | {row['invoice_date']} | {row['total_amount']}",
+                    "url": url_for("sales.invoice_print", invoice_id=row["id"]),
+                })
+
         if exists("supplier_bills") and exists("suppliers"):
-            for r in conn.execute("""SELECT b.id,b.bill_no,b.supplier_invoice_no,b.bill_date,b.total_amount,s.name party
-                FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
-                WHERE b.bill_no LIKE ? OR b.supplier_invoice_no LIKE ? OR s.name LIKE ? OR s.code LIKE ?
-                ORDER BY b.id DESC LIMIT 30""",(like,like,like,like)):
-                results.append({"kind":"فاتورة مورد","title":r["bill_no"],"detail":f"{r['party']} | فاتورة المورد {r['supplier_invoice_no']} | {r['bill_date']} | {r['total_amount']}","url":url_for("purchase.bill_print",bill_id=r["id"])})
+            for row in conn.execute(
+                """SELECT b.id,b.bill_no,b.supplier_invoice_no,b.bill_date,b.total_amount,s.name party
+                   FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
+                   WHERE b.bill_no LIKE ? OR b.supplier_invoice_no LIKE ?
+                      OR s.name LIKE ? OR s.code LIKE ?
+                   ORDER BY b.id DESC LIMIT 30""",
+                (like, like, like, like),
+            ):
+                results.append({
+                    "kind": "فاتورة مورد",
+                    "title": row["bill_no"],
+                    "detail": (
+                        f"{row['party']} | فاتورة المورد {row['supplier_invoice_no']} "
+                        f"| {row['bill_date']} | {row['total_amount']}"
+                    ),
+                    "url": url_for("purchase.bill_print", bill_id=row["id"]),
+                })
+
         if exists("stock_products"):
-            for r in conn.execute("""SELECT id,sku,name_ar,barcode,purchase_price,sale_price FROM stock_products
-                WHERE sku LIKE ? OR name_ar LIKE ? OR barcode LIKE ? ORDER BY name_ar LIMIT 30""",(like,like,like)):
-                results.append({"kind":"منتج / مخزون","title":f"{r['sku']} — {r['name_ar']}","detail":f"شراء: {r['purchase_price']} | بيع: {r['sale_price']} | باركود: {r['barcode'] or '—'}","url":url_for("stock.edit_product",product_id=r["id"])})
+            for row in conn.execute(
+                """SELECT id,sku,name_ar,barcode,purchase_price,sale_price
+                   FROM stock_products
+                   WHERE sku LIKE ? OR name_ar LIKE ? OR barcode LIKE ?
+                   ORDER BY name_ar LIMIT 30""",
+                (like, like, like),
+            ):
+                results.append({
+                    "kind": "منتج / مخزون",
+                    "title": f"{row['sku']} — {row['name_ar']}",
+                    "detail": (
+                        f"شراء: {row['purchase_price']} | بيع: {row['sale_price']} "
+                        f"| باركود: {row['barcode'] or '—'}"
+                    ),
+                    "url": url_for("stock.edit_product", product_id=row["id"]),
+                })
+
         if exists("accounts"):
-            for r in conn.execute("SELECT id,code,name_ar FROM accounts WHERE code LIKE ? OR name_ar LIKE ? ORDER BY code LIMIT 20",(like,like)):
-                results.append({"kind":"حساب","title":f"{r['code']} — {r['name_ar']}","detail":"دليل الحسابات","url":url_for("accounts")})
+            for row in conn.execute(
+                "SELECT id,code,name_ar FROM accounts "
+                "WHERE code LIKE ? OR name_ar LIKE ? ORDER BY code LIMIT 20",
+                (like, like),
+            ):
+                results.append({
+                    "kind": "حساب",
+                    "title": f"{row['code']} — {row['name_ar']}",
+                    "detail": "دليل الحسابات",
+                    "url": url_for("accounts"),
+                })
+
         if exists("company_settings"):
-            for r in conn.execute("SELECT setting_key,setting_value FROM company_settings WHERE setting_value LIKE ? LIMIT 20",(like,)):
-                if "company" in r["setting_key"].lower() or "name" in r["setting_key"].lower():
-                    results.append({"kind":"إعداد شركة","title":r["setting_key"],"detail":r["setting_value"],"url":url_for("company_setup")})
+            for row in conn.execute(
+                "SELECT setting_key,setting_value FROM company_settings "
+                "WHERE setting_value LIKE ? LIMIT 20",
+                (like,),
+            ):
+                if "company" in row["setting_key"].lower() or "name" in row["setting_key"].lower():
+                    results.append({
+                        "kind": "إعداد شركة",
+                        "title": row["setting_key"],
+                        "detail": row["setting_value"],
+                        "url": url_for("company_setup"),
+                    })
+
         conn.close()
-    return render_template("global_search.html",q=q,results=results)
+
+    return render_template("global_search.html", q=q, results=results)
 
 @app.route("/journal", methods=["GET", "POST"])
 @requires("journal.manage")
