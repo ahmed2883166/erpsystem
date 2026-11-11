@@ -155,14 +155,10 @@ def initialize_management_dashboard_schema(conn, activity):
     previous_activity = meta.get("seed_activity")
     needs_seed = meta.get("roles_initialized") != "1"
     activity_changed = previous_activity != activity
-    # Preserve mappings from installations upgraded from the earlier dashboard.
-    if needs_seed and roles_table_existed and existing_role_count:
-        customized = True
-        needs_seed = False
-        conn.execute("INSERT OR REPLACE INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_customized','1')")
-        conn.execute("INSERT OR REPLACE INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_initialized','1')")
-        conn.execute("INSERT OR REPLACE INTO management_dashboard_meta(meta_key,meta_value) VALUES('seed_activity',?)", (activity,))
-    if needs_seed or (activity_changed and not customized):
+    # Only an explicit customization marker protects role assignments.
+    # Legacy auto-seeded rows without metadata must be rebuilt for the current
+    # activity; otherwise a commercial mapping can misclassify industrial 1120/1130.
+    if (needs_seed or activity_changed) and not customized:
         conn.execute("DELETE FROM management_account_roles")
         defaults = ACTIVITY_ACCOUNTS.get(activity, ACTIVITY_ACCOUNTS["commercial"])
         for role, codes in defaults.items():
