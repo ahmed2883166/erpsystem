@@ -12,6 +12,7 @@ from pathlib import Path
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
 from stock import consume_layers
+from analytic_dimensions import validate_journal_dimensions, active_dimension_options
 
 sales_bp = Blueprint("sales", __name__, url_prefix="/sales")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
@@ -122,6 +123,9 @@ def init_sales_schema():
         c.execute("UPDATE sales_invoices SET due_date=invoice_date WHERE due_date IS NULL")
     if "credited_amount" not in invoice_columns:
         c.execute("ALTER TABLE sales_invoices ADD COLUMN credited_amount TEXT NOT NULL DEFAULT '0'")
+    for name, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"), ("project_id", "projects")):
+        if name not in invoice_columns:
+            c.execute("ALTER TABLE sales_invoices ADD COLUMN " + name + " INTEGER REFERENCES " + table + "(id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_sales_credit_invoice ON sales_credit_notes(invoice_id,credit_date,id)")
     customer_columns = {row["name"] for row in c.execute("PRAGMA table_info(customers)")}
     if "credit_limit" not in customer_columns:
@@ -232,7 +236,7 @@ def _allowed_vat_rates(conn):
         raise ValueError("قائمة نسب الضريبة المعتمدة في إعدادات الشركة غير صحيحة.")
 
 
-def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate, created_by=None, allow_credit_override=False):
+def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate, created_by=None, allow_credit_override=False, dimensions=None):
     """Create invoice, stock issues and balanced GL entries inside caller transaction."""
     rate = Decimal(str(tax_rate)).quantize(CENT, rounding=ROUND_HALF_UP)
     if not rate.is_finite() or rate < 0 or rate > 100:
@@ -244,6 +248,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     customer = conn.execute("SELECT * FROM customers WHERE id=? AND active=1", (customer_id,)).fetchone()
     if not customer:
         raise ValueError("العميل غير موجود أو غير نشط.")
+    dimensions = validate_journal_dimensions(conn, dimensions or {})
     if not lines:
         raise ValueError("أضف صنفًا أو خدمة واحدة على الأقل.")
 
@@ -340,9 +345,11 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     effective_rate = (tax_amount * Decimal("100") / subtotal).quantize(CENT, rounding=ROUND_HALF_UP)
     cur = conn.execute(
         """INSERT INTO sales_invoices(invoice_no,customer_id,invoice_date,warehouse_id,subtotal,
-           tax_rate,tax_amount,total_amount,created_by) VALUES(?,?,?,?,?,?,?,?,?)""",
+           tax_rate,tax_amount,total_amount,created_by,branch_id,cost_center_id,project_id)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
         (invoice_no, customer_id, invoice_date, warehouse_id, str(subtotal), str(effective_rate),
-         str(tax_amount), str(total_amount), created_by)
+         str(tax_amount), str(total_amount), created_by, dimensions["branch_id"],
+         dimensions["cost_center_id"], dimensions["project_id"])
     )
     invoice_id = cur.lastrowid
     for index, item in enumerate(normalized, 1):
@@ -378,7 +385,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     if tax_amount:
         invoice_lines.append((vat, 0, tax_amount, "ضريبة مخرجات"))
     journal_id = post_journal(conn, invoice_date, invoice_no, "فاتورة مبيعات " + invoice_no,
-                              invoice_lines, created_by)
+                              invoice_lines, created_by, dimensions=dimensions)
     conn.execute("UPDATE sales_invoices SET journal_entry_id=? WHERE id=?", (journal_id, invoice_id))
 
     cogs_journal_id = None
@@ -386,7 +393,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
         cogs_journal_id = post_journal(
             conn, invoice_date, invoice_no + "-COGS", "تكلفة مبيعات " + invoice_no,
             [(cogs, total_cost, 0, "تكلفة البضاعة المباعة"),
-             (inventory, 0, total_cost, "تخفيض المخزون")], created_by
+             (inventory, 0, total_cost, "تخفيض المخزون")], created_by, dimensions=dimensions
         )
     for row in conn.execute("SELECT id FROM stock_movements WHERE movement_no LIKE ?", (invoice_no + "-%",)).fetchall():
         conn.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status=? WHERE id=?",
