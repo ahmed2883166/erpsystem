@@ -3,7 +3,7 @@ import unittest
 from datetime import date
 from decimal import Decimal
 
-from management_dashboard import build_management_snapshot, load_management_account_roles
+from management_dashboard import build_management_snapshot, load_management_account_roles, initialize_management_dashboard_schema
 
 
 class ManagementDashboardTests(unittest.TestCase):
@@ -11,7 +11,7 @@ class ManagementDashboardTests(unittest.TestCase):
         self.conn = sqlite3.connect(":memory:")
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript("""
-            CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,account_type TEXT,is_group INTEGER DEFAULT 0);
+            CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,account_type TEXT,is_group INTEGER DEFAULT 0,active INTEGER DEFAULT 1);
             CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT);
             CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit TEXT,credit TEXT);
             CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT);
@@ -24,6 +24,7 @@ class ManagementDashboardTests(unittest.TestCase):
                 (7,'4100','المبيعات','revenue',0),(8,'5100','تكلفة المبيعات','expense',0),
                 (9,'6400','مصروفات إدارية','expense',0);
         """)
+        initialize_management_dashboard_schema(self.conn, 'commercial')
         entries = [
             ("2026-10-01","posted",[(1,"1000","0"),(4,"500","0"),(6,"0","1500")]),
             ("2026-10-15","posted",[(3,"200","0"),(7,"0","200")]),
@@ -68,6 +69,7 @@ class ManagementDashboardTests(unittest.TestCase):
 
     def test_activity_mapping_changes_inventory_accounts(self):
         self.conn.execute("UPDATE company_settings SET setting_value='industrial' WHERE setting_key='activity'")
+        initialize_management_dashboard_schema(self.conn, 'industrial')
         s=build_management_snapshot(self.conn,date(2026,11,1),date(2026,11,30))
         # Industrial chart: 1130 is raw-material inventory, so the 200 debit is stock.
         self.assertEqual(s["inventory"],Decimal("380"))
@@ -82,6 +84,12 @@ class ManagementDashboardTests(unittest.TestCase):
         snapshot = build_management_snapshot(self.conn,date(2026,11,1),date(2026,11,30))
         self.assertEqual(snapshot["cash"], Decimal("77.25"))
 
+    def test_clearing_all_role_mappings_does_not_restore_defaults(self):
+        self.conn.execute("DELETE FROM management_account_roles")
+        self.conn.execute("INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_customized','1')")
+        initialize_management_dashboard_schema(self.conn, 'commercial')
+        roles = load_management_account_roles(self.conn, 'commercial')
+        self.assertTrue(all(not ids for ids in roles.values()))
     def test_reversed_dates_rejected(self):
         with self.assertRaises(ValueError):
             build_management_snapshot(self.conn,date(2026,11,30),date(2026,11,1))
