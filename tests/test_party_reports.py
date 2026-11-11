@@ -39,6 +39,7 @@ class PartyStatementTests(unittest.TestCase):
         template_dir = Path(__file__).resolve().parents[1] / "templates"
         self.app = Flask(__name__, template_folder=str(template_dir))
         self.app.jinja_env.globals["csrf_token"] = lambda: "test-token"
+        self.app.jinja_env.filters["money"] = lambda value: f"{float(value or 0):,.2f}"
         self.app.context_processor(lambda: {"license_info": {"status": "demo"}, "permissions": set()})
         self.app.add_url_rule("/change-password", endpoint="change_password", view_func=lambda: "")
         self.app.add_url_rule("/logout", endpoint="logout", view_func=lambda: "")
