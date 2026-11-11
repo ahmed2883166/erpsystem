@@ -1,3 +1,4 @@
+from database import connect_database
 """Tax center: auditable VAT classification and monthly control report."""
 import sqlite3
 from datetime import date
@@ -13,10 +14,7 @@ TREATMENTS = {"standard", "zero_rated", "exempt", "out_of_scope"}
 
 
 def _db():
-    conn = sqlite3.connect(DB_PATH, timeout=20)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+    return connect_database(DB_PATH)
 
 
 def initialize_tax_schema():
