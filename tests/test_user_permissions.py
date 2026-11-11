@@ -34,6 +34,15 @@ class UserPermissionRouteTests(unittest.TestCase):
         nexus.DB_PATH = self.original_db_path
         self.temp.cleanup()
 
+    def test_user_management_route_renders_real_users_page(self):
+        with self.client.session_transaction() as session:
+            session.update(user_id=1, username="admin", full_name="مدير",
+                           role="admin", permissions=["users.manage"])
+        response = self.client.get("/users")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("المستخدمون والصلاحيات", response.get_data(as_text=True))
+        self.assertIn("admin", response.get_data(as_text=True))
+
     def test_viewer_cannot_open_or_post_user_permission_edit(self):
         with self.client.session_transaction() as session:
             session.update(user_id=1, username="admin", full_name="مدير",
