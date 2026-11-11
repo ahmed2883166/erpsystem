@@ -940,6 +940,10 @@ def index():
     receipts = c.execute("""SELECT r.*,i.invoice_no,c.name customer_name FROM customer_receipts r
                             JOIN sales_invoices i ON i.id=r.invoice_id JOIN customers c ON c.id=i.customer_id
                             ORDER BY r.id DESC LIMIT 20""").fetchall()
+    batch_receipts = c.execute("""SELECT b.*,cu.name customer_name,COUNT(a.id) invoice_count
+        FROM customer_receipt_batches b JOIN customers cu ON cu.id=b.customer_id
+        LEFT JOIN customer_receipt_allocations a ON a.batch_id=b.id
+        GROUP BY b.id ORDER BY b.id DESC LIMIT 20""").fetchall()
     credit_notes = c.execute("""SELECT n.*,i.invoice_no,c.name customer_name
                                 FROM sales_credit_notes n JOIN sales_invoices i ON i.id=n.invoice_id
                                 JOIN customers c ON c.id=i.customer_id
@@ -955,15 +959,15 @@ def index():
     ).fetchall()
     enriched_notes = []
     for note in credit_notes:
-        refunds = c.execute("SELECT amount FROM customer_refunds WHERE credit_note_id=?", (note["id"],)).fetchall()
-        refunded = sum((Decimal(row["amount"]) for row in refunds), Decimal("0"))
+        note_refunds = c.execute("SELECT amount FROM customer_refunds WHERE credit_note_id=?", (note["id"],)).fetchall()
+        refunded = sum((Decimal(row["amount"]) for row in note_refunds), Decimal("0"))
         item = dict(note)
         item["refunded_amount"] = refunded
         item["refundable_remaining"] = max(Decimal("0"), Decimal(note["refundable_amount"] or "0") - refunded)
         enriched_notes.append(item)
     c.close()
     return render_template("sales.html", customers=customers, invoices=enriched_invoices,
-                           receipts=receipts, credit_notes=enriched_notes, refunds=refunds, today=date.today().isoformat())
+                           receipts=receipts, batch_receipts=batch_receipts, credit_notes=enriched_notes, refunds=refunds, today=date.today().isoformat())
 
 
 @sales_bp.route("/customers", methods=["GET", "POST"])
