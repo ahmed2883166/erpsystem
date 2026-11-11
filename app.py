@@ -17,7 +17,7 @@ from chart_templates import CHARTS, ACTIVITY_LABELS
 from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
 from sales import sales_bp, init_sales_schema
-from accounting_core import post_journal, reconciliation_snapshot
+from accounting_core import post_journal, reconciliation_snapshot, register_decimal_aggregates
 from banking import bank_bp, init_bank_schema
 from fixed_assets import assets_bp, initialize_assets_schema
 from receivables import aging_bp, initialize_aging_schema
@@ -89,31 +89,11 @@ PERMISSIONS = {
 register_report_exports(app, DB_PATH, PERMISSIONS)
 
 
-class _DecimalSum:
-    def __init__(self):
-        self.total = Decimal("0")
-    def step(self, value):
-        if value is not None:
-            self.total += Decimal(str(value))
-    def finalize(self):
-        return format(self.total, "f")
-
-
-class _DecimalNet:
-    def __init__(self):
-        self.total = Decimal("0")
-    def step(self, debit, credit):
-        self.total += Decimal(str(debit or "0")) - Decimal(str(credit or "0"))
-    def finalize(self):
-        return format(self.total, "f")
-
-
 def db():
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
-    connection.create_aggregate("DECIMAL_SUM", 1, _DecimalSum)
-    connection.create_aggregate("DECIMAL_NET", 2, _DecimalNet)
+    register_decimal_aggregates(connection)
     return connection
 
 
