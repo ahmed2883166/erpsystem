@@ -399,6 +399,9 @@ def locations():
                 raise ValueError("أدخل كود واسم الموقع وحدد نوعه.")
             if not c.execute("SELECT 1 FROM stock_warehouses WHERE id=? AND active=1", (warehouse_id,)).fetchone():
                 raise ValueError("اختر مخزنًا نشطًا.")
+            if c.execute("""SELECT 1 FROM stock_locations WHERE warehouse_id=? AND parent_id IS ? AND lower(code)=lower(?)""",
+                          (warehouse_id, parent_id, code)).fetchone():
+                raise ValueError("كود الموقع مستخدم بالفعل في نفس المستوى.")
             if expected_parent[location_type] is None:
                 if parent_id:
                     raise ValueError("الدور يجب أن يكون مستوى رئيسيًا داخل المخزن.")
