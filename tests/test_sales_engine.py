@@ -217,6 +217,52 @@ class SalesIntegrationTests(unittest.TestCase):
             )
         self.db.rollback()
 
+    def test_sales_return_restores_original_lot_and_expiry(self):
+        self.db.execute(
+            "INSERT INTO stock_products(sku,name_ar,track_lot,track_expiry) VALUES('LOT-1','صنف بتشغيلة',1,1)"
+        )
+        product_id = self.db.execute("SELECT id FROM stock_products WHERE sku='LOT-1'").fetchone()["id"]
+        lot_id = stock.make_lot(
+            self.db, self.db.execute("SELECT * FROM stock_products WHERE id=?", (product_id,)).fetchone(),
+            "BATCH-2026-01", "2026-01-01", "2027-12-31"
+        )
+        self.db.execute(
+            """INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,
+               lot_id,quantity,unit_cost,total_cost,movement_date)
+               VALUES('LOT-OPEN','receipt',?,?,?,?,?,'20','2026-11-10')""",
+            (product_id, self.warehouse_id, lot_id, "2", "10")
+        )
+        move_id = self.db.execute("SELECT id FROM stock_movements WHERE movement_no='LOT-OPEN'").fetchone()["id"]
+        self.db.execute(
+            """INSERT INTO stock_valuation_layers(product_id,warehouse_id,lot_id,source_movement_id,
+               qty_in,qty_remaining,unit_cost,value_remaining) VALUES(?,?,?,?,?,?,?,?)""",
+            (product_id, self.warehouse_id, lot_id, move_id, "2", "2", "10", "20")
+        )
+        self.db.commit()
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": product_id, "quantity": "2", "unit_price": "30"}], "0", 1
+        )
+        invoice_line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?", (invoice["invoice_id"],)
+        ).fetchone()["id"]
+        self.assertEqual(self.db.execute(
+            "SELECT lot_id FROM sales_invoice_line_lots WHERE invoice_line_id=?", (invoice_line_id,)
+        ).fetchone()["lot_id"], lot_id)
+        sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-11", "مرتجع من نفس التشغيلة",
+            [{"invoice_line_id": invoice_line_id, "quantity": "1"}], 1
+        )
+        self.db.commit()
+        returned = self.db.execute(
+            """SELECT m.lot_id,l.expiry_date,m.quantity FROM stock_movements m
+               JOIN stock_lots l ON l.id=m.lot_id WHERE m.issue_purpose='sales_return'"""
+        ).fetchone()
+        self.assertEqual(returned["lot_id"], lot_id)
+        self.assertEqual(returned["expiry_date"], "2027-12-31")
+        self.assertEqual(Decimal(returned["quantity"]), Decimal("1"))
+
     def test_credit_note_reduces_amount_available_for_customer_receipt(self):
         self.db.execute("BEGIN IMMEDIATE")
         invoice = sales.post_invoice(
