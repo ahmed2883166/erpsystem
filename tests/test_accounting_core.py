@@ -10,7 +10,7 @@ class SharedAccountingCoreTests(unittest.TestCase):
         self.db.executescript("""
         CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,account_type TEXT,parent_id INTEGER,is_group INTEGER,active INTEGER);
         CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,reference TEXT,description TEXT,status TEXT,created_by INTEGER,created_at TEXT);
-        CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit REAL,credit REAL,memo TEXT);
+        CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit TEXT,credit TEXT,memo TEXT);
         CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT);
         CREATE TABLE stock_valuation_layers(id INTEGER PRIMARY KEY,qty_remaining TEXT,unit_cost TEXT);
         CREATE TABLE goods_receipts(id INTEGER PRIMARY KEY,total_value TEXT,status TEXT,journal_entry_id INTEGER);
@@ -65,8 +65,12 @@ class SharedAccountingCoreTests(unittest.TestCase):
         totals = self.db.execute(
             "SELECT SUM(debit) d,SUM(credit) c FROM journal_lines WHERE entry_id=?", (eid,)
         ).fetchone()
-        self.assertEqual(totals["d"], totals["c"])
-        self.assertEqual(totals["d"], 100)
+        from decimal import Decimal
+        lines = self.db.execute("SELECT debit,credit FROM journal_lines WHERE entry_id=?", (eid,)).fetchall()
+        debit = sum((Decimal(row["debit"]) for row in lines), Decimal("0"))
+        credit = sum((Decimal(row["credit"]) for row in lines), Decimal("0"))
+        self.assertEqual(debit, credit)
+        self.assertEqual(debit, Decimal("100.00"))
 
     def test_same_reference_is_idempotent(self):
         one = post_journal(self.db, "2026-11-09", "INV-2", "بيع",
