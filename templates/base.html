@@ -3,7 +3,7 @@
 {% if session.user_id %}
 <aside><h1>NEXUS <small>ERP</small></h1><p class="user">{{ session.full_name }}<br><small>{{ session.role }}</small></p><nav>
 {% if 'reports.view' in permissions %}<a href="{{ url_for('dashboard') }}">الرئيسية</a>{% endif %}
-{% if 'accounts.manage' in permissions %}<a href="{{ url_for('accounts') }}">دليل الحسابات</a>{% endif %}
+{% if 'accounts.view' in permissions or 'accounts.manage' in permissions %}<a href="{{ url_for('accounts') }}">دليل الحسابات</a>{% endif %}
 {% if 'stock.view' in permissions %}<a href="{{ url_for('stock.index') }}">المخزون</a>{% endif %}
 {% if 'purchases.view' in permissions %}<a href="{{ url_for('purchase.index') }}">المشتريات والموردون</a><a href="{{ url_for('purchase.integrity_issues') }}">مراجعة سلامة المشتريات</a>{% endif %}
 {% if 'sales.view' in permissions %}<a href="{{ url_for('sales.index') }}">المبيعات والعملاء</a>{% endif %}
@@ -14,7 +14,7 @@
 {% if 'stock.manage' in permissions %}<a href="{{ url_for('stock.products') }}">تعريف الأصناف</a><a href="{{ url_for('stock.warehouses') }}">المخازن</a><a href="{{ url_for('stock.movements') }}">حركات المخزون</a>{% endif %}
 {% if 'stock.view' in permissions %}<a href="{{ url_for('stock.reports') }}">تقارير المخزون</a>{% endif %}
 {% if 'journal.manage' in permissions %}<a href="{{ url_for('journal') }}">القيود اليومية</a>{% endif %}
-{% if 'tax.view' in permissions %}<a href="{{ url_for('tax.tax_report') }}">مركز الضرائب والإقرار الشهري</a>{% endif %}{% if 'workforce.view' in permissions %}<a href="{{ url_for('workforce.employees') }}">الموظفون والبدلات</a><a href="{{ url_for('workforce.payroll') }}">مسير الرواتب</a><a href="{{ url_for('workforce.custody') }}">عهد الموظفين</a>{% endif %}{% if 'currency.manage' in permissions %}<a href="{{ url_for('currency_center.index') }}">العملات وفروق الصرف</a>{% endif %}{% if 'party.view' in permissions %}<a href="{{ url_for('party_reports.party_statement') }}">كشوف حساب العملاء والموردين</a>{% endif %}{% if 'reports.view' in permissions %}<a href="{{ url_for('management_dashboard') }}">لوحة الإدارة</a>{% endif %}
+{% if 'tax.view' in permissions %}<a href="{{ url_for('tax.tax_report') }}">مركز الضرائب والإقرار الشهري</a>{% endif %}{% if 'workforce.view' in permissions %}<a href="{{ url_for('workforce.employees') }}">الموظفون والبدلات</a><a href="{{ url_for('workforce.payroll') }}">مسير الرواتب</a><a href="{{ url_for('workforce.custody') }}">عهد الموظفين</a>{% endif %}{% if 'currency.view' in permissions or 'currency.manage' in permissions %}<a href="{{ url_for('currency_center.index') }}">العملات وفروق الصرف</a>{% endif %}{% if 'party.view' in permissions %}<a href="{{ url_for('party_reports.party_statement') }}">كشوف حساب العملاء والموردين</a>{% endif %}{% if 'reports.view' in permissions %}<a href="{{ url_for('management_dashboard') }}">لوحة الإدارة</a>{% endif %}
 {% if 'accounts.manage' in permissions %}<a href="{{ url_for('management_account_mapping') }}">ربط حسابات لوحة الإدارة</a>{% endif %}{% if 'reports.view' in permissions %}<a href="{{ url_for('trial_balance') }}">ميزان المراجعة</a><a href="{{ url_for('ledger') }}">دفتر الأستاذ</a><a href="{{ url_for('reconciliation') }}">المطابقة والترابط</a>{% endif %}
 {% if 'users.manage' in permissions %}<a href="{{ url_for('accounting_periods') }}">إقفال الفترات المحاسبية</a>{% endif %}
 {% if 'users.manage' in permissions %}<a href="{{ url_for('company_setup') }}">إعداد الشركة والعملات</a><a href="{{ url_for('users') }}">المستخدمون والصلاحيات</a>{% endif %}
@@ -39,8 +39,15 @@
 (function(){
  const printAction=document.querySelector('.global-report-actions');
  if(!printAction)return;
+ const isDirty=el=>{
+   if(el.disabled)return false;
+   if(el.type==='file')return !!(el.files&&el.files.length);
+   if(el.type==='checkbox'||el.type==='radio')return el.checked!==el.defaultChecked;
+   if(el.tagName==='SELECT')return [...el.options].some(o=>o.selected!==o.defaultSelected);
+   return el.value!==el.defaultValue;
+ };
  const hasUnsavedEntry=[...document.querySelectorAll('form[method="post" i],form:not([method])')].some(form=>
-   !form.classList.contains('no-print') && [...form.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]),select,textarea')].some(el=>!el.disabled)
+   !form.classList.contains('no-print') && [...form.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]),select,textarea')].some(isDirty)
  );
  if(hasUnsavedEntry){
    printAction.hidden=true;
