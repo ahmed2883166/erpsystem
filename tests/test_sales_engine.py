@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from decimal import Decimal
 
+import analytic_dimensions
 import sales
 import stock
 
@@ -55,6 +56,7 @@ class SalesIntegrationTests(unittest.TestCase):
             qty_in,qty_remaining,unit_cost) VALUES(?,?,?,'5','5','10')""",
             (self.product_id,self.warehouse_id,opening_move))
         self.db.commit()
+        analytic_dimensions.initialize_analytic_dimensions_schema(self.db)
 
     def tearDown(self):
         self.db.close()
