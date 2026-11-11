@@ -39,6 +39,7 @@ class ReceivablesAgingTests(unittest.TestCase):
         real_report = Path(__file__).resolve().parents[1] / "templates" / "aging_report.html"
         (templates_dir / "aging_report.html").write_text(real_report.read_text(encoding="utf-8"), encoding="utf-8")
         self.app = Flask(__name__, template_folder=str(templates_dir))
+        self.app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
         self.app.secret_key = "test"
         self.app.jinja_env.globals["csrf_token"] = lambda: "test-token"
         self.app.register_blueprint(receivables.aging_bp)
