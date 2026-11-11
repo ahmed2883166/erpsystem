@@ -11,7 +11,7 @@ from pathlib import Path
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
-from stock import consume_layers, D, money
+from stock import consume_layers
 
 sales_bp = Blueprint("sales", __name__, url_prefix="/sales")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
