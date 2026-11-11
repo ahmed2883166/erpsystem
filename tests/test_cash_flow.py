@@ -72,6 +72,15 @@ class CashFlowReportTests(unittest.TestCase):
         financial_planning._connect = self.original_connect
         self.temp.cleanup()
 
+    def test_existing_report_viewer_can_open_cash_flow_without_new_permission_flag(self):
+        with self.client.session_transaction() as session:
+            session["permissions"] = ["reports.view"]
+        response = self.client.get(
+            "/reports/cash-flow?date_from=2026-11-01&date_to=2026-11-30"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("قائمة التدفقات النقدية", response.get_data(as_text=True))
+
     def test_cash_flow_reconciles_opening_movements_and_closing_cash(self):
         response = self.client.get(
             "/reports/cash-flow?date_from=2026-11-01&date_to=2026-11-30"
