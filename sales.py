@@ -776,6 +776,12 @@ def index():
     customers = c.execute("SELECT * FROM customers ORDER BY name").fetchall()
     invoices = c.execute("""SELECT i.*,c.name customer_name FROM sales_invoices i
                             JOIN customers c ON c.id=i.customer_id ORDER BY i.id DESC LIMIT 30""").fetchall()
+    enriched_invoices = []
+    for invoice in invoices:
+        item = dict(invoice)
+        item["remaining_amount"] = Decimal(invoice["total_amount"]) - Decimal(invoice["paid_amount"] or "0") - Decimal(invoice["credited_amount"] or "0")
+        item["closed_by_credit"] = item["remaining_amount"] <= 0 and Decimal(invoice["credited_amount"] or "0") > 0 and Decimal(invoice["paid_amount"] or "0") < Decimal(invoice["total_amount"])
+        enriched_invoices.append(item)
     receipts = c.execute("""SELECT r.*,i.invoice_no,c.name customer_name FROM customer_receipts r
                             JOIN sales_invoices i ON i.id=r.invoice_id JOIN customers c ON c.id=i.customer_id
                             ORDER BY r.id DESC LIMIT 20""").fetchall()
@@ -792,8 +798,8 @@ def index():
         item["refundable_remaining"] = max(Decimal("0"), Decimal(note["refundable_amount"] or "0") - refunded)
         enriched_notes.append(item)
     c.close()
-    return render_template("sales.html", customers=customers, invoices=invoices,
-                           receipts=receipts, credit_notes=enriched_notes)
+    return render_template("sales.html", customers=customers, invoices=enriched_invoices,
+                           receipts=receipts, credit_notes=enriched_notes, today=date.today().isoformat())
 
 
 @sales_bp.route("/customers", methods=["GET", "POST"])
