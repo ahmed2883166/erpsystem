@@ -72,6 +72,8 @@ def validate_journal_dimensions(conn, dimensions):
             value = int(raw)
         except (TypeError, ValueError):
             raise ValueError("قيمة أحد الأبعاد التحليلية غير صحيحة.")
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+            raise ValueError("جدول أحد الأبعاد التحليلية غير مهيأ. أعد تشغيل البرنامج لإكمال التحديث.")
         if not conn.execute(f"SELECT 1 FROM {table} WHERE id=? AND active=1", (value,)).fetchone():
             raise ValueError("اختر بُعدًا تحليليًا موجودًا ونشطًا.")
         result[key] = value
