@@ -49,6 +49,7 @@ def initialize_payroll_compliance_schema():
       category_code TEXT NOT NULL,
       effective_from TEXT NOT NULL,
       personal_exemption_annual TEXT NOT NULL DEFAULT '0',
+      taxable_rounding_unit TEXT NOT NULL DEFAULT '1',
       insurance_floor TEXT NOT NULL DEFAULT '0',
       insurance_ceiling TEXT NOT NULL DEFAULT '0',
       employee_insurance_rate TEXT NOT NULL DEFAULT '0',
@@ -65,6 +66,14 @@ def initialize_payroll_compliance_schema():
       upper_bound TEXT,
       rate TEXT NOT NULL,
       UNIQUE(rule_set_id,lower_bound)
+    );
+    CREATE TABLE IF NOT EXISTS payroll_tax_tier_brackets(
+      id INTEGER PRIMARY KEY,
+      rule_set_id INTEGER NOT NULL REFERENCES payroll_rule_sets(id) ON DELETE CASCADE,
+      income_max TEXT,
+      lower_bound TEXT NOT NULL,
+      upper_bound TEXT,
+      rate TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_payroll_rules_effective
       ON payroll_rule_sets(country_code,category_code,effective_from,enabled);
@@ -84,6 +93,9 @@ def initialize_payroll_compliance_schema():
     CREATE INDEX IF NOT EXISTS idx_payroll_statutory_payment_period
       ON payroll_statutory_payments(period,payment_type);
     """)
+    rule_cols = {r["name"] for r in conn.execute("PRAGMA table_info(payroll_rule_sets)")}
+    if "taxable_rounding_unit" not in rule_cols:
+        conn.execute("ALTER TABLE payroll_rule_sets ADD COLUMN taxable_rounding_unit TEXT NOT NULL DEFAULT '1'")
     employee_cols = {r["name"] for r in conn.execute("PRAGMA table_info(employees)")}
     for name, definition in {
         "legal_category": "TEXT NOT NULL DEFAULT 'local'",
@@ -153,10 +165,34 @@ def calculate_payroll_deductions(conn, employee, gross_monthly, period):
     # Employee social insurance is deductible from the annual salary-tax base.
     annual_taxable = max(Decimal("0"), gross * Decimal("12") -
                          employee_insurance * Decimal("12") - exemption)
-    brackets = conn.execute("""
-        SELECT lower_bound,upper_bound,rate FROM payroll_tax_brackets
-        WHERE rule_set_id=? ORDER BY CAST(lower_bound AS NUMERIC),id
+    rounding_unit = _d(rule["taxable_rounding_unit"] if "taxable_rounding_unit" in rule.keys() else "1")
+    if rounding_unit > 0:
+        annual_taxable = (annual_taxable // rounding_unit) * rounding_unit
+    tier_rows = conn.execute("""
+        SELECT income_max,lower_bound,upper_bound,rate FROM payroll_tax_tier_brackets
+        WHERE rule_set_id=? ORDER BY CASE WHEN income_max IS NULL THEN 1 ELSE 0 END,
+          CAST(income_max AS NUMERIC),CAST(lower_bound AS NUMERIC),id
     """, (rule["id"],)).fetchall()
+    brackets = []
+    if tier_rows:
+        tiers = {}
+        for row in tier_rows:
+            tiers.setdefault(row["income_max"], []).append(row)
+        chosen_max = None
+        for tier_max in sorted((x for x in tiers if x is not None), key=lambda x: _d(x)):
+            if annual_taxable <= _d(tier_max):
+                chosen_max = tier_max
+                break
+        if chosen_max is None:
+            if None not in tiers:
+                raise ValueError("شرائح الضريبة لا تغطي مستوى الدخل السنوي.")
+            chosen_max = None
+        brackets = tiers[chosen_max]
+    else:
+        brackets = conn.execute("""
+            SELECT lower_bound,upper_bound,rate FROM payroll_tax_brackets
+            WHERE rule_set_id=? ORDER BY CAST(lower_bound AS NUMERIC),id
+        """, (rule["id"],)).fetchall()
     annual_tax = Decimal("0")
     if not brackets:
         raise ValueError("مجموعة قواعد الرواتب مفعّلة لكن لا توجد شرائح ضريبية. أضف الشرائح قبل إنشاء المسير.")
