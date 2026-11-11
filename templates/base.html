@@ -40,6 +40,24 @@
 })();
 (function(){const root=document.documentElement;const saved=localStorage.getItem('nexus-theme')||'dark';root.dataset.theme=saved;const btn=document.getElementById('themeToggle');if(btn){btn.addEventListener('click',()=>{const next=root.dataset.theme==='dark'?'light':'dark';root.dataset.theme=next;localStorage.setItem('nexus-theme',next);btn.textContent=next==='dark'?'◐ المظهر الداكن':'☀ المظهر الفاتح';});btn.textContent=saved==='dark'?'◐ المظهر الداكن':'☀ المظهر الفاتح';}})();
 (function(){
+ const canScroll=(el,axis,delta)=>{
+   if(!el||!delta)return false;
+   if(axis==='y')return delta<0?el.scrollTop>0:el.scrollTop+el.clientHeight<el.scrollHeight-1;
+   return delta<0?el.scrollLeft>0:el.scrollLeft+el.clientWidth<el.scrollWidth-1;
+ };
+ document.addEventListener('wheel',event=>{
+   const table=event.target.closest('.table-wrap');
+   const sidebar=event.target.closest('aside');
+   let target=null;
+   if(table&&(canScroll(table,'y',event.deltaY)||canScroll(table,'x',event.deltaX)))target=table;
+   else if(sidebar&&canScroll(sidebar,'y',event.deltaY))target=sidebar;
+   if(!target)return;
+   event.preventDefault();
+   if(event.deltaY)target.scrollTop+=event.deltaY;
+   if(event.deltaX)target.scrollLeft+=event.deltaX;
+ },{passive:false});
+})();
+(function(){
  const printAction=document.querySelector('.global-report-actions');
  const forms=[...document.querySelectorAll('form[method="post" i],form:not([method])')].filter(form=>!form.classList.contains('no-print'));
  const printButtons=[...document.querySelectorAll('[onclick*="window.print"]')];
