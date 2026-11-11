@@ -181,6 +181,28 @@ def register_report_exports(app, db_path, permissions):
                     data.append([r["party_code"],r["party_name"],r["doc_no"],r["doc_date"],r["due_date"],
                                  max(days,0),*buckets])
                 filename = "nexus-aging-"+kind+".xlsx"
+            elif report == "payroll":
+                run_id = request.args.get("run_id", type=int)
+                if not run_id:
+                    abort(400)
+                run = conn.execute("SELECT period,status FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+                if not run:
+                    abort(404)
+                rows = conn.execute("""SELECT e.employee_code,e.full_name,l.basic_salary,l.allowances,
+                    l.incentives,l.overtime_amount,l.employer_insurance,l.employee_insurance,
+                    l.taxable_income_tax,l.advance_deduction,l.other_deductions,l.absence_deduction,
+                    l.total_entitlements,l.total_deductions,l.net_pay
+                    FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
+                    WHERE l.run_id=? ORDER BY e.employee_code""", (run_id,)).fetchall()
+                headers = ["كود الموظف","اسم الموظف","الأساسي","البدلات","الحوافز","الإضافي",
+                    "حصة صاحب العمل","حصة العامل","ضريبة المرتبات","السلف","خصومات أخرى",
+                    "خصم الغياب","إجمالي الاستحقاق","إجمالي الاستقطاع","صافي المستحق"]
+                data = [[r["employee_code"],r["full_name"],*[Decimal(str(r[k] or "0")) for k in
+                    ("basic_salary","allowances","incentives","overtime_amount","employer_insurance",
+                     "employee_insurance","taxable_income_tax","advance_deduction","other_deductions",
+                     "absence_deduction","total_entitlements","total_deductions","net_pay")]] for r in rows]
+                filename = "nexus-payroll-" + run["period"] + ".xlsx"
+                title = "مسير الرواتب - " + run["period"]
             elif report == "reconciliation":
                 from accounting_core import reconciliation_snapshot
                 snapshot = reconciliation_snapshot(conn)
