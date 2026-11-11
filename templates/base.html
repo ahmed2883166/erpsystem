@@ -6,10 +6,9 @@
 {% if 'accounts.manage' in permissions %}<a href="{{ url_for('accounts') }}">دليل الحسابات</a>{% endif %}
 {% if 'stock.view' in permissions %}<a href="{{ url_for('stock.index') }}">المخزون</a>{% endif %}
 {% if 'purchases.view' in permissions %}<a href="{{ url_for('purchase.index') }}">المشتريات والموردون</a><a href="{{ url_for('purchase.integrity_issues') }}">مراجعة سلامة المشتريات</a>{% endif %}
-{% if 'sales.view' in permissions %}<a href="{{ url_for('sales.index') }}">المبيعات والعملاء</a>
+{% if 'sales.view' in permissions %}<a href="{{ url_for('sales.index') }}">المبيعات والعملاء</a><a href="{{ url_for('aging.index') }}">أعمار الديون</a>{% endif %}
 {% if 'quotes.view' in permissions %}<a href="{{ url_for('quotes.index') }}">عروض الأسعار والتسعير</a>{% endif %}
 {% if 'assets.view' in permissions %}<a href="{{ url_for('assets.index') }}">سجل الأصول الثابتة</a>{% endif %}
-<a href="{{ url_for('aging.index') }}">أعمار الديون</a>{% endif %}
 {% if 'bank.view' in permissions %}<a href="{{ url_for('bank.index') }}">حسابات البنوك والمطابقة</a>{% endif %}
 {% if 'stock.manage' in permissions %}<a href="{{ url_for('stock.products') }}">تعريف الأصناف</a><a href="{{ url_for('stock.warehouses') }}">المخازن</a><a href="{{ url_for('stock.movements') }}">حركات المخزون</a>{% endif %}
 {% if 'stock.view' in permissions %}<a href="{{ url_for('stock.reports') }}">تقارير المخزون</a>{% endif %}
