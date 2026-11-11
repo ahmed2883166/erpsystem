@@ -46,7 +46,7 @@ class TaxCenterTests(unittest.TestCase):
         template_dir = Path(self.temp.name) / "templates"
         template_dir.mkdir()
         (template_dir / "tax_report.html").write_text(
-            "{{ '%.2f'|format(summary.output_vat) }}|{{ '%.2f'|format(summary.input_vat) }}|مبيعات بسعر صفر",
+            "{{ '%.2f'|format(summary.output_vat) }}|{{ '%.2f'|format(summary.input_vat) }}|{% for row in sales %}{{ '%.2f'|format(row.tax_amount) }}|{{ '%.2f'|format(row.taxable_base) }}|{% endfor %}مبيعات بسعر صفر",
             encoding="utf-8"
         )
         self.app = Flask(__name__, template_folder=str(template_dir))
