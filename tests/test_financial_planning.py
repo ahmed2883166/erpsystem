@@ -2,7 +2,7 @@ import sqlite3
 import unittest
 from decimal import Decimal
 
-from chart_templates import CHARTS, seed_activity_chart, ensure_common_activity_accounts
+from chart_templates import CHARTS, seed_activity_chart, ensure_activity_chart_accounts
 from financial_planning import initialize_planning_schema, _money
 
 
@@ -49,11 +49,15 @@ class FinancialPlanningTests(unittest.TestCase):
     def test_legacy_chart_gets_common_branches_without_rewriting_accounts(self):
         self.conn.execute("INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1000','أصل قديم','asset',0)")
         original = self.conn.execute("SELECT id,name_ar FROM accounts WHERE code='1000'").fetchone()
-        ensure_common_activity_accounts(self.conn)
+        ensure_activity_chart_accounts(self.conn, "commercial")
         after = self.conn.execute("SELECT id,name_ar FROM accounts WHERE code='1000'").fetchone()
         self.assertEqual(tuple(original), tuple(after))
         self.assertIsNotNone(self.conn.execute("SELECT 1 FROM accounts WHERE code='1240' AND is_group=1").fetchone())
         self.assertIsNotNone(self.conn.execute("SELECT 1 FROM accounts WHERE code='6610'").fetchone())
+        self.assertIsNotNone(self.conn.execute("SELECT 1 FROM accounts WHERE code='1210' AND is_group=1").fetchone())
+        fixed_child = self.conn.execute("SELECT parent_id FROM accounts WHERE code='1211'").fetchone()
+        fixed_group = self.conn.execute("SELECT id FROM accounts WHERE code='1210'").fetchone()
+        self.assertEqual(fixed_child["parent_id"], fixed_group["id"])
 
 
 if __name__ == "__main__":
