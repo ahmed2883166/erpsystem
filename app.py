@@ -743,7 +743,6 @@ def journal():
         credits = request.form.getlist("credit")
         memos = request.form.getlist("memo")
         try:
-            from decimal import Decimal
             entry_date = datetime.fromisoformat(request.form.get("entry_date", "").strip()).date().isoformat()
             description = request.form.get("description", "").strip()
             if not description or len(description) > 500:
@@ -1320,8 +1319,10 @@ def restore_backup():
     return redirect(url_for("dashboard"))
 
 
-# Initialize schema for every WSGI entry point (flask run, gunicorn, and direct execution).
-initialize_database()
+# Initialize schema for every WSGI entry point. The explicit skip switch is only
+# intended for isolated route tests that provide their own temporary database.
+if os.environ.get("NEXUS_SKIP_DB_INIT", "0").strip() != "1":
+    initialize_database()
 
 if __name__ == "__main__":
     from waitress import serve
