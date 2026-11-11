@@ -3,7 +3,7 @@ import unittest
 from datetime import date
 from decimal import Decimal
 
-from management_dashboard import build_management_snapshot, load_management_account_roles, initialize_management_dashboard_schema
+from management_dashboard import build_management_snapshot, load_management_account_roles, initialize_management_dashboard_schema, cash_forecast, unusual_journal_entries
 
 
 class ManagementDashboardTests(unittest.TestCase):
@@ -90,6 +90,23 @@ class ManagementDashboardTests(unittest.TestCase):
         initialize_management_dashboard_schema(self.conn, 'commercial')
         roles = load_management_account_roles(self.conn)
         self.assertTrue(all(not ids for ids in roles.values()))
+
+
+    def test_cash_forecast_returns_eight_weeks_and_minimum_threshold(self):
+        self.conn.execute("INSERT INTO company_settings VALUES('minimum_cash_balance','1400')")
+        forecast = cash_forecast(self.conn, date(2026, 11, 11), 8)
+        self.assertEqual(forecast["opening"], Decimal("1350"))
+        self.assertEqual(len(forecast["weeks"]), 8)
+        self.assertTrue(forecast["warning"])
+        self.assertEqual(forecast["minimum"], Decimal("1400"))
+
+    def test_unusual_journal_flags_entries_in_last_two_days(self):
+        self.conn.execute("INSERT INTO journal_entries VALUES(20,'2026-11-29','posted')")
+        self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(20,9,'25','0')")
+        self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(20,1,'0','25')")
+        flagged = unusual_journal_entries(self.conn, date(2026, 11, 1), date(2026, 11, 30))
+        target = next(x for x in flagged if x["id"] == 20)
+        self.assertIn("قيد في آخر يومين من الفترة", target["reasons"])
 
     def test_reversed_dates_rejected(self):
         with self.assertRaises(ValueError):
