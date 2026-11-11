@@ -17,7 +17,7 @@ from chart_templates import CHARTS, ACTIVITY_LABELS, seed_activity_chart, ensure
 from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
 from sales import sales_bp, init_sales_schema
-from accounting_core import post_journal, reconciliation_snapshot, register_decimal_aggregates
+from accounting_core import post_journal, reconciliation_snapshot
 from banking import bank_bp, init_bank_schema
 from fixed_assets import assets_bp, initialize_assets_schema
 from receivables import aging_bp, initialize_aging_schema
