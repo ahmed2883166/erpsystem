@@ -91,10 +91,37 @@ app.register_blueprint(party_bp)
 # SECRET_KEY and session/CSRF settings are initialized above.
 
 PERMISSIONS = {
-    "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view"},
-    "accountant": {"accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view"},
-    "viewer": {"reports.view", "stock.view", "purchases.view", "sales.view"},
+    "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.manage", "party.view"},
+    "accountant": {"accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.manage", "party.view"},
+    "viewer": {"reports.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view", "bank.view", "tax.view", "workforce.view", "party.view"},
 }
+PERMISSION_LABELS = {
+    "accounts.manage": "إدارة شجرة الحسابات",
+    "journal.manage": "إنشاء وترحيل القيود اليومية",
+    "reports.view": "عرض التقارير ولوحة الإدارة",
+    "users.manage": "إدارة المستخدمين والصلاحيات",
+    "backup.manage": "النسخ الاحتياطي والاستعادة",
+    "import_export.manage": "استيراد وتصدير البيانات",
+    "stock.view": "عرض المخزون والتقارير",
+    "stock.manage": "إضافة وتعديل حركات المخزون",
+    "purchases.view": "عرض المشتريات والموردين",
+    "purchases.manage": "إدارة المشتريات وإشعارات المورد",
+    "sales.view": "عرض المبيعات والعملاء",
+    "sales.manage": "إدارة المبيعات",
+    "assets.view": "عرض الأصول الثابتة",
+    "assets.manage": "إدارة الأصول الثابتة",
+    "quotes.view": "عرض عروض الأسعار",
+    "quotes.manage": "إدارة عروض الأسعار",
+    "bank.view": "عرض البنوك والمطابقات",
+    "bank.manage": "إدارة البنوك والمطابقات",
+    "tax.view": "عرض مركز الضرائب",
+    "tax.manage": "إدارة مركز الضرائب",
+    "workforce.view": "عرض الموظفين والرواتب",
+    "workforce.manage": "إدارة الموظفين والرواتب",
+    "currency.manage": "إدارة العملات وفروق الصرف",
+    "party.view": "عرض كشوف العملاء والموردين",
+}
+ALL_PERMISSIONS = tuple(PERMISSION_LABELS)
 
 register_report_exports(app, DB_PATH, PERMISSIONS)
 
@@ -194,6 +221,8 @@ def initialize_database():
     user_columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
     if "must_change_password" not in user_columns:
         connection.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
+    if "permissions_json" not in user_columns:
+        connection.execute("ALTER TABLE users ADD COLUMN permissions_json TEXT")
     account_columns = {row["name"] for row in connection.execute("PRAGMA table_info(accounts)")}
     if "is_group" not in account_columns:
         connection.execute("ALTER TABLE accounts ADD COLUMN is_group INTEGER NOT NULL DEFAULT 0")
@@ -279,7 +308,8 @@ def requires(permission):
         def wrapped(*args, **kwargs):
             if "user_id" not in session:
                 return redirect(url_for("login"))
-            if permission not in PERMISSIONS.get(session.get("role"), set()):
+            effective = set(session.get("permissions", PERMISSIONS.get(session.get("role"), set())))
+            if permission not in effective:
                 flash("لا تملك الصلاحية المطلوبة.", "error")
                 return redirect(url_for("dashboard"))
             return view(*args, **kwargs)
@@ -313,7 +343,7 @@ def enforce_license():
 
 @app.context_processor
 def shared_context():
-    return {"permissions":PERMISSIONS.get(session.get("role"),set()),"year":datetime.now().year,"license_info":current_license_status()}
+    return {"permissions":set(session.get("permissions", PERMISSIONS.get(session.get("role"),set()))),"year":datetime.now().year,"license_info":current_license_status()}
 
 
 @app.route("/license", methods=["GET", "POST"])
@@ -363,7 +393,8 @@ def login():
             session.clear()
             session.permanent = True
             session.update(user_id=user["id"], username=user["username"], full_name=user["full_name"],
-                           role=user["role"], must_change_password=bool(user["must_change_password"]))
+                           role=user["role"], must_change_password=bool(user["must_change_password"]),
+                           permissions=(json.loads(user["permissions_json"]) if user["permissions_json"] else sorted(PERMISSIONS.get(user["role"], set()))))
             log("login", "تسجيل دخول")
             if user["must_change_password"]:
                 flash("يجب تغيير كلمة مرور المدير الافتراضية قبل استخدام النظام.", "warning")
@@ -1041,16 +1072,22 @@ def users():
     connection = db()
     if request.method == "POST":
         try:
-            connection.execute("INSERT INTO users(username,full_name,password_hash,role,created_at) VALUES(?,?,?,?,?)",
-                               (request.form["username"].strip(), request.form["full_name"].strip(), password_hash(request.form["password"]), request.form["role"], now()))
+            role = request.form["role"]
+            if role not in PERMISSIONS:
+                raise ValueError("الدور المحدد غير صحيح.")
+            selected = sorted(set(request.form.getlist("permissions")) & set(ALL_PERMISSIONS))
+            connection.execute("INSERT INTO users(username,full_name,password_hash,role,created_at,permissions_json) VALUES(?,?,?,?,?,?)",
+                               (request.form["username"].strip(), request.form["full_name"].strip(), password_hash(request.form["password"]), role, now(), json.dumps(selected, ensure_ascii=False)))
             connection.commit()
             log("user_created", request.form["username"])
             flash("تم إنشاء المستخدم.", "success")
         except sqlite3.IntegrityError:
             flash("اسم المستخدم مستخدم بالفعل.", "error")
-    rows = connection.execute("SELECT id,username,full_name,role,active,created_at FROM users ORDER BY id").fetchall()
+        except ValueError as exc:
+            flash(str(exc), "error")
+    rows = connection.execute("SELECT id,username,full_name,role,active,created_at,permissions_json FROM users ORDER BY id").fetchall()
     connection.close()
-    return render_template("users.html", users=rows, role_permissions=PERMISSIONS)
+    return render_template("users.html", users=rows, role_permissions=PERMISSIONS, all_permissions=ALL_PERMISSIONS, permission_labels=PERMISSION_LABELS)
 
 
 @app.route("/users/<int:user_id>/edit",methods=["GET","POST"])
@@ -1065,13 +1102,15 @@ def edit_user(user_id):
             flash("الدور المحدد غير صحيح.","error")
         else:
             try:
-                connection.execute("UPDATE users SET username=?,full_name=?,role=?,active=? WHERE id=?",
-                  (request.form["username"].strip(),request.form["full_name"].strip(),role,1 if request.form.get("active")=="yes" else 0,user_id))
+                selected = sorted(set(request.form.getlist("permissions")) & set(ALL_PERMISSIONS))
+                connection.execute("UPDATE users SET username=?,full_name=?,role=?,active=?,permissions_json=? WHERE id=?",
+                  (request.form["username"].strip(),request.form["full_name"].strip(),role,1 if request.form.get("active")=="yes" else 0,json.dumps(selected, ensure_ascii=False),user_id))
                 connection.commit(); connection.close(); log("user_updated",request.form["username"].strip())
                 flash("تم تعديل المستخدم.","success"); return redirect(url_for("users"))
             except sqlite3.IntegrityError:
                 connection.rollback(); flash("اسم المستخدم مستخدم بالفعل.","error")
-    connection.close(); return render_template("user_edit.html",user=user,roles=PERMISSIONS)
+    selected_permissions = set(json.loads(user["permissions_json"])) if "permissions_json" in user.keys() and user["permissions_json"] else set(PERMISSIONS.get(user["role"], set()))
+    connection.close(); return render_template("user_edit.html",user=user,roles=PERMISSIONS,all_permissions=ALL_PERMISSIONS,permission_labels=PERMISSION_LABELS,selected_permissions=selected_permissions)
 
 
 @app.route("/users/<int:user_id>/delete",methods=["POST"])
