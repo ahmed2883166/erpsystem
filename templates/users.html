@@ -11,7 +11,7 @@
     <label>كلمة المرور<input name="password" type="password" required minlength="8"></label>
     <label>الدور الأساسي<select name="role" id="newUserRole">{% for role in role_permissions %}<option value="{{ role }}">{{ role }}</option>{% endfor %}</select></label>
     <h4>الصلاحيات الفعلية للمستخدم</h4>
-    <p class="muted">يمكنك تحديد ما يستطيع المستخدم عرضه أو تعديله. الاختيارات هنا تتجاوز الصلاحيات الافتراضية للدور.</p>
+    <p class="muted">يمكنك تحديد ما يستطيع المستخدم عرضه أو تعديله. الاختيارات هنا تتجاوز الصلاحيات الافتراضية للدور. صلاحية الإدارة تشمل العرض تلقائيًا.</p>
     <div class="permission-grid" id="newUserPermissions">
       {% for permission in all_permissions %}
       <label class="permission-option"><input type="checkbox" name="permissions" value="{{ permission }}" {% if permission in role_permissions['admin'] %}checked{% endif %}><span>{{ permission_labels[permission] }}</span></label>
