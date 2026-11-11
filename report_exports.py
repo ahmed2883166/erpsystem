@@ -372,7 +372,7 @@ def register_report_exports(app, db_path, permissions):
                 for value in row[:80]:
                     text_value = "" if value is None else str(value).strip()
                     numeric = text_value.replace(",", "")
-                    if re.fullmatch(r"-?\\d+(?:\\.\\d+)?", numeric):
+                    if re.fullmatch(r"-?\d+(?:\.\d+)?", numeric):
                         converted.append(Decimal(numeric))
                     elif text_value.startswith(("=", "+", "@")):
                         converted.append("'" + text_value)
