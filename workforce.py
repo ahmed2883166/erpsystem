@@ -437,6 +437,7 @@ def payroll_run(run_id):
         "overtime_amount": M(sum((D(x["overtime_amount"]) for x in rows), Decimal("0"))),
         "absence_deduction": M(sum((D(x["absence_deduction"]) for x in rows), Decimal("0"))),
         "gross_pay": M(sum((D(x["gross_pay"]) for x in rows), Decimal("0"))),
+        "salary_raise": M(sum((D(x["salary_raise"]) for x in rows), Decimal("0"))),
         "incentives": M(sum((D(x["incentives"]) for x in rows), Decimal("0"))),
         "advance_deduction": M(sum((D(x["advance_deduction"]) for x in rows), Decimal("0"))),
         "total_entitlements": M(sum((D(x["total_entitlements"]) for x in rows), Decimal("0"))),
