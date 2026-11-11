@@ -76,7 +76,7 @@ def _role(fn):
     def wrapped(*args, **kwargs):
         if "user_id" not in session:
             return redirect(url_for("login"))
-        if session.get("role") not in {"admin", "accountant"}:
+        if ("currency.manage" not in set(session["permissions"])) if "permissions" in session else (session.get("role") not in {"admin", "accountant"}):
             flash("إدارة العملات وفروق الصرف متاحة للمحاسب ومدير النظام فقط.", "error")
             return redirect(url_for("dashboard"))
         return fn(*args, **kwargs)
