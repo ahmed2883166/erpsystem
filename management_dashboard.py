@@ -79,7 +79,7 @@ def account_balances(conn, date_from=None, date_to=None):
     """, params).fetchall()
     return {
         row["id"]: {
-            "code": row["code"], "name": row["name_ar"], "type": row["account_type"],
+            "id": row["id"], "code": row["code"], "name": row["name_ar"], "type": row["account_type"],
             "is_group": bool(row["is_group"]), "debit": _decimal(row["debit"]),
             "credit": _decimal(row["credit"]),
         }
@@ -132,6 +132,9 @@ MANAGEMENT_ROLES = {
 
 def load_management_account_roles(conn, activity):
     """Load user-configurable account roles; seed activity defaults only once."""
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_status_date ON journal_entries(status,entry_date,id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_account ON journal_lines(entry_id,account_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry ON journal_lines(account_id,entry_id)")
     conn.execute("""CREATE TABLE IF NOT EXISTS management_account_roles(
         account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
         role TEXT NOT NULL, PRIMARY KEY(account_id,role))""")
