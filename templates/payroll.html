@@ -5,7 +5,7 @@
 <p><a href="{{url_for('payroll_compliance.report')}}">تقرير الضرائب والتأمينات</a> · <a href="{{url_for('payroll_compliance.payments')}}">سداد الالتزامات</a>.</p>
 <form method="post"><label>الشهر <input type="month" name="period" value="{{today}}" required></label>
 <p class="muted">الراتب الأساسي والبدلات والحوافز والإضافي تُدخل للمسير. عند تفعيل الحساب التلقائي تُحسب حصتا التأمينات من أجر الاشتراك بعد تطبيق الحد الأدنى والأقصى الساريين على شهر المسير. خصم الغياب والسلف والخصومات الأخرى تدخل منفصلة.</p>
-<label class="inline-check"><input type="checkbox" name="auto_calculate_statutory" value="1"> احسب تلقائيًا ضريبة المرتبات وتأمين الموظف وتأمين الشركة وفق قواعد الدولة وفئة كل موظف السارية على شهر المسير</label>
+<label class="inline-check"><input type="checkbox" name="auto_calculate_statutory" value="1" checked> احسب تلقائيًا ضريبة المرتبات وتأمين الموظف وتأمين الشركة وفق قواعد الدولة وفئة كل موظف السارية على شهر المسير</label>
 <p class="muted">عند تفعيل الخيار، يجب أن تكون القواعد والشرائح الضريبية والتأمينية مكتملة ومراجعة. عند عدم تفعيله تظل القيم اليدوية هي المعتمدة.</p>
 <div style="overflow-x:auto"><table><tr><th>الموظف</th><th>الراتب الأساسي</th><th>البدلات</th><th>الحوافز</th><th>ساعات إضافي</th><th>قيمة الإضافي</th><th>ساعات غياب</th><th>خصم الغياب</th><th>السلف</th><th>خصومات أخرى</th><th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th></tr>
 {% for e in employees %}<tr><td>{{e.employee_code}} - {{e.full_name}}<br><small>مرجع ملف الموظف: {{e.basic_salary}}</small></td>
