@@ -247,8 +247,7 @@ def cached_management_snapshot(conn, start, end, dimensions=None):
         )
         settings_fingerprint = tuple(
             (row["setting_key"], row["setting_value"])
-            for row in conn.execute("""SELECT setting_key,setting_value FROM company_settings
-                WHERE setting_key IN ('activity','base_currency','company_name') ORDER BY setting_key""")
+            for row in conn.execute("SELECT setting_key,setting_value FROM company_settings ORDER BY setting_key")
         ) if conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
         ).fetchone() else ()
