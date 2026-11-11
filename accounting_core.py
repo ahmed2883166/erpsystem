@@ -67,12 +67,13 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
         if locked:
             raise ValueError(f"الفترة المحاسبية مغلقة: {locked['period_name']}.")
     dimensions = dimensions or {}
-    dimension_values = (
-        dimensions.get("branch_id"), dimensions.get("cost_center_id"), dimensions.get("project_id")
-    )
-    dimension_columns = {"branch_id", "cost_center_id", "project_id"} & _columns(conn, "journal_lines")
-    if any(value is not None for value in dimension_values) and len(dimension_columns) != 3:
+    dimension_keys = ("branch_id", "cost_center_id", "project_id", "customer_id")
+    available_dimension_keys = tuple(key for key in dimension_keys if key in _columns(conn, "journal_lines"))
+    missing_dimensions = [key for key, value in dimensions.items()
+                          if key in dimension_keys and value not in (None, "") and key not in available_dimension_keys]
+    if missing_dimensions:
         raise ValueError("يجب تحديث مخطط الأبعاد التحليلية قبل ترحيل القيد.")
+    dimension_values = tuple(dimensions.get(key) for key in available_dimension_keys)
     normalized = []
     for account_id, debit, credit, memo in lines:
         try:
@@ -101,8 +102,8 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
         (reference,),
     ).fetchone()
     if existing:
-        has_dimensions = dimension_columns == {"branch_id", "cost_center_id", "project_id"}
-        selected = "account_id,debit,credit,memo,branch_id,cost_center_id,project_id" if has_dimensions else "account_id,debit,credit,memo"
+        has_dimensions = bool(available_dimension_keys)
+        selected = "account_id,debit,credit,memo" + ("," + ",".join(available_dimension_keys) if has_dimensions else "")
         existing_lines = conn.execute(
             f"SELECT {selected} FROM journal_lines WHERE entry_id=? ORDER BY id",
             (existing["id"],),
@@ -116,7 +117,7 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
             actual_lines = sorted(
                 [(int(row["account_id"]), format(amt(row["debit"]), "f"),
                   format(amt(row["credit"]), "f"), str(row["memo"] or ""),
-                  row["branch_id"], row["cost_center_id"], row["project_id"]) for row in existing_lines],
+                  *(row[key] for key in available_dimension_keys)) for row in existing_lines],
                 key=lambda item: tuple(str(x) for x in item),
             )
         else:
@@ -141,12 +142,13 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
         (entry_date, reference, description, created_by, datetime.now().isoformat(timespec="seconds")),
     )
     entry_id = cur.lastrowid
-    if dimension_columns == {"branch_id", "cost_center_id", "project_id"}:
+    if available_dimension_keys:
+        columns = ("entry_id", "account_id", "debit", "credit", "memo", *available_dimension_keys)
+        placeholders = ",".join("?" for _ in columns)
         conn.executemany(
-            """INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo,branch_id,cost_center_id,project_id)
-               VALUES(?,?,?,?,?,?,?,?)""",
-            [(entry_id, aid, format(dr, 'f'), format(cr, 'f'), memo, branch_id, cost_center_id, project_id)
-             for aid, dr, cr, memo, branch_id, cost_center_id, project_id in normalized],
+            "INSERT INTO journal_lines(" + ",".join(columns) + ") VALUES(" + placeholders + ")",
+            [(entry_id, aid, format(dr, 'f'), format(cr, 'f'), memo, *dims)
+             for aid, dr, cr, memo, *dims in normalized],
         )
     else:
         conn.executemany(
