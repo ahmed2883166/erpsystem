@@ -442,8 +442,13 @@ def product_locations():
                 VALUES(?,?,?,1) ON CONFLICT(product_id,warehouse_id)
                 DO UPDATE SET location_id=excluded.location_id,is_default=1""",
                 (product_id, warehouse_id, location_id))
+            # Existing stock without a recorded bin is assigned to the location
+            # explicitly chosen by the user as this product's default location.
+            c.execute("""UPDATE stock_valuation_layers SET location_id=?
+                WHERE product_id=? AND warehouse_id=? AND location_id IS NULL
+                  AND CAST(qty_remaining AS REAL)>0""", (location_id, product_id, warehouse_id))
             c.commit()
-            flash("تم تحديد الموقع الافتراضي للصنف داخل المخزن.", "success")
+            flash("تم تحديد الموقع الافتراضي وإسناد الأرصدة القديمة غير المحددة إليه.", "success")
         except (ValueError, sqlite3.Error) as exc:
             c.rollback()
             flash(str(exc), "error")
