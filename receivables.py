@@ -1,3 +1,4 @@
+from database import connect_database
 """Customer and supplier receivables/payables aging reports."""
 import sqlite3
 from datetime import date
@@ -10,7 +11,7 @@ aging_bp=Blueprint("aging",__name__,url_prefix="/reports/aging")
 DB_PATH=Path(__file__).resolve().parent/"data"/"nexus.db"
 
 def db():
- c=sqlite3.connect(DB_PATH,timeout=20); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON"); return c
+ return connect_database(DB_PATH)
 
 def initialize_aging_schema():
  c=db()
