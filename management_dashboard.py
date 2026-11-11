@@ -158,14 +158,14 @@ def initialize_management_dashboard_schema(conn, activity):
         conn.execute("DELETE FROM management_account_roles")
         defaults = ACTIVITY_ACCOUNTS.get(activity, ACTIVITY_ACCOUNTS["commercial"])
         for role in ("cash", "receivables", "payables", "inventory", "quick_assets", "direct_cost"):
-            for code in defaults.get(role, ()): 
+            for code in defaults.get(role, ()):
                 conn.execute("""INSERT OR IGNORE INTO management_account_roles(account_id,role)
                     SELECT id,? FROM accounts WHERE code=? AND is_group=0 AND active=1""", (role, code))
         current_asset_codes = tuple(dict.fromkeys(defaults.get("cash", ()) + defaults.get("receivables", ()) + defaults.get("inventory", ())))
         for code in current_asset_codes:
             conn.execute("""INSERT OR IGNORE INTO management_account_roles(account_id,role)
                 SELECT id,'current_assets' FROM accounts WHERE code=? AND is_group=0 AND active=1""", (code,))
-        for code in defaults.get("payables", ()): 
+        for code in defaults.get("payables", ()):
             conn.execute("""INSERT OR IGNORE INTO management_account_roles(account_id,role)
                 SELECT id,'current_liabilities' FROM accounts WHERE code=? AND is_group=0 AND active=1""", (code,))
         conn.execute("""INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_initialized','1')
@@ -175,7 +175,7 @@ def initialize_management_dashboard_schema(conn, activity):
     conn.commit()
 
 
-def load_management_account_roles(conn, activity=None):
+def load_management_account_roles(conn):
     """Read configured account-role mappings only; never create schema or seed data."""
     result = {role: set() for role in MANAGEMENT_ROLES}
     for row in conn.execute("SELECT account_id,role FROM management_account_roles"):
