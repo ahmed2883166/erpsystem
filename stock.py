@@ -95,7 +95,7 @@ def initialize_stock_schema():
     product_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_products)")}
     if "category_id" not in product_columns:
         c.execute("ALTER TABLE stock_products ADD COLUMN category_id INTEGER REFERENCES stock_categories(id)")
-    for name in ("purchase_price", "sale_price"):
+    for name in ("purchase_price", "sale_price", "reorder_point", "reorder_qty"):
         if name not in product_columns:
             c.execute(f"ALTER TABLE stock_products ADD COLUMN {name} TEXT NOT NULL DEFAULT '0'")
     # Convert legacy free-text categories into selectable product groups without losing labels.
@@ -420,12 +420,16 @@ def products():
             if category_id and not category: raise ValueError("مجموعة الصنف غير صحيحة.")
             purchase_price=money(dec(request.form.get("purchase_price","0"),"سعر الشراء"))
             sale_price=money(dec(request.form.get("sale_price","0"),"سعر البيع"))
-            if purchase_price<0 or sale_price<0: raise ValueError("أسعار الشراء والبيع لا يمكن أن تكون سالبة.")
-            c.execute("""INSERT INTO stock_products(sku,name_ar,category,category_id,product_type,uom,barcode,track_lot,track_expiry,min_qty,purchase_price,sale_price)
-              VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(sku,name,category["name_ar"] if category else "",category_id,
+            reorder_point=q4(dec(request.form.get("reorder_point","0"),"نقطة إعادة الطلب"))
+            reorder_qty=q4(dec(request.form.get("reorder_qty","0"),"كمية إعادة الطلب"))
+            min_qty=q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))
+            if purchase_price<0 or sale_price<0 or min(reorder_point,reorder_qty,min_qty)<0:
+                raise ValueError("الأسعار والكميات لا يمكن أن تكون سالبة.")
+            c.execute("""INSERT INTO stock_products(sku,name_ar,category,category_id,product_type,uom,barcode,track_lot,track_expiry,min_qty,purchase_price,sale_price,reorder_point,reorder_qty)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(sku,name,category["name_ar"] if category else "",category_id,
               request.form.get("product_type","goods"),uom,request.form.get("barcode","").strip() or None,
               int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),
-              str(q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))),str(purchase_price),str(sale_price)))
+              str(min_qty),str(purchase_price),str(sale_price),str(reorder_point),str(reorder_qty)))
             c.commit(); flash("تم حفظ الصنف.", "success")
         except (ValueError,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود الصنف أو الباركود مستخدم بالفعل.", "error")
@@ -607,10 +611,13 @@ def edit_product(product_id):
             if category_id and not category: raise ValueError("مجموعة الصنف غير صحيحة.")
             purchase_price = money(dec(request.form.get("purchase_price", product["purchase_price"] or "0"), "سعر الشراء"))
             sale_price = money(dec(request.form.get("sale_price", product["sale_price"] or "0"), "سعر البيع"))
-            if purchase_price < 0 or sale_price < 0:
-                raise ValueError("أسعار الشراء والبيع لا يمكن أن تكون سالبة.")
-            c.execute("""UPDATE stock_products SET sku=?,name_ar=?,category=?,category_id=?,product_type=?,uom=?,barcode=?,track_lot=?,track_expiry=?,min_qty=?,purchase_price=?,sale_price=? WHERE id=?""",
-              (sku,name,category["name_ar"] if category else "",category_id,request.form.get("product_type","goods"),uom,request.form.get("barcode","").strip() or None,int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),str(q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))),str(purchase_price),str(sale_price),product_id))
+            min_qty=q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))
+            reorder_point=q4(dec(request.form.get("reorder_point","0"),"نقطة إعادة الطلب"))
+            reorder_qty=q4(dec(request.form.get("reorder_qty","0"),"كمية إعادة الطلب"))
+            if purchase_price < 0 or sale_price < 0 or min(min_qty,reorder_point,reorder_qty)<0:
+                raise ValueError("الأسعار والكميات لا يمكن أن تكون سالبة.")
+            c.execute("""UPDATE stock_products SET sku=?,name_ar=?,category=?,category_id=?,product_type=?,uom=?,barcode=?,track_lot=?,track_expiry=?,min_qty=?,purchase_price=?,sale_price=?,reorder_point=?,reorder_qty=? WHERE id=?""",
+              (sku,name,category["name_ar"] if category else "",category_id,request.form.get("product_type","goods"),uom,request.form.get("barcode","").strip() or None,int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),str(min_qty),str(purchase_price),str(sale_price),str(reorder_point),str(reorder_qty),product_id))
             c.commit(); c.close(); flash("تم تعديل الصنف.","success"); return redirect(url_for("stock.products"))
         except (ValueError,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "الكود أو الباركود مستخدم بالفعل.","error")
@@ -828,8 +835,78 @@ def reports():
       FROM stock_movements m JOIN stock_products p ON p.id=m.product_id
       LEFT JOIN stock_warehouses w ON w.id=COALESCE(m.target_warehouse_id,m.source_warehouse_id)
       ORDER BY m.id DESC LIMIT 100""").fetchall()
+    # Reorder alerts compare total available stock across all warehouses with each
+    # product's configured reorder point; no stock or accounting records are changed.
+    reorder_alerts=[]
+    for product in products:
+        current=product_totals.get(product["id"],{"qty":Decimal("0"),"value":Decimal("0")})["qty"]
+        point=Decimal(str(product["reorder_point"] or "0")) if "reorder_point" in product.keys() else Decimal("0")
+        minimum=Decimal(str(c.execute("SELECT min_qty FROM stock_products WHERE id=?",(product["id"],)).fetchone()["min_qty"] or "0"))
+        if point>0 and current<=point:
+            suggested=Decimal(str(c.execute("SELECT reorder_qty FROM stock_products WHERE id=?",(product["id"],)).fetchone()["reorder_qty"] or "0"))
+            if suggested<=0: suggested=max(minimum,point-current)
+            reorder_alerts.append({"sku":product["sku"],"name_ar":product["name_ar"],"uom":product["uom"],
+                "qty":current,"point":point,"suggested":suggested})
+    # 90-day turnover is cost of goods issued for sale divided by average inventory
+    # value. Average stock is reconstructed from today's valuation and net stock movements.
+    today=date.today()
+    period_start=today-date.resolution*89
+    movement_rows=c.execute("""SELECT product_id,movement_type,issue_purpose,quantity,total_cost,movement_date
+        FROM stock_movements WHERE movement_date>=? AND movement_date<=?""",
+        (period_start.isoformat(),today.isoformat())).fetchall()
+    turnover={}
+    for product in products:
+        pid=product["id"]
+        current_value=product_totals.get(pid,{"value":Decimal("0")})["value"]
+        inbound=Decimal("0"); outbound=Decimal("0"); sold_cost=Decimal("0"); sold_qty=Decimal("0")
+        last_sale=None
+        for movement in movement_rows:
+            if movement["product_id"]!=pid: continue
+            value=Decimal(str(movement["total_cost"] or "0"))
+            qty=Decimal(str(movement["quantity"] or "0"))
+            if movement["movement_type"]=="receipt": inbound+=value
+            elif movement["movement_type"] in {"issue","scrap"}:
+                outbound+=value
+                if movement["movement_type"]=="issue" and movement["issue_purpose"]=="sale":
+                    sold_cost+=value; sold_qty+=qty
+                    if last_sale is None or movement["movement_date"]>last_sale: last_sale=movement["movement_date"]
+        opening_value=max(Decimal("0"),current_value-inbound+outbound)
+        average_value=(opening_value+current_value)/Decimal("2")
+        rate=(sold_cost/average_value) if average_value>0 else Decimal("0")
+        days=(Decimal("90")/rate) if rate>0 else None
+        turnover[pid]={"sold_qty":sold_qty,"sold_cost":sold_cost,"average_value":average_value,
+            "rate":rate,"days":days,"last_sale":last_sale}
+    slow_rows=[]
+    for product in products:
+        stats=turnover[product["id"]]
+        if stats["sold_qty"]==0 or (stats["days"] is not None and stats["days"]>90):
+            slow_rows.append({"sku":product["sku"],"name_ar":product["name_ar"],"uom":product["uom"],
+                "qty":product_totals.get(product["id"],{"qty":Decimal("0")})["qty"],
+                "value":product_totals.get(product["id"],{"value":Decimal("0")})["value"],**stats})
+    # Expiry alerts are lot- and valuation-layer-specific so warehouse, bin and quantity
+    # remain visible. The default alert window is 30 days, including already expired lots.
+    expiry_alerts=[]
+    expiry_window=30
+    for lot in c.execute("""SELECT l.id,l.lot_number,l.expiry_date,p.sku,p.name_ar,p.uom
+        FROM stock_lots l JOIN stock_products p ON p.id=l.product_id
+        WHERE l.expiry_date IS NOT NULL AND p.track_expiry=1 ORDER BY l.expiry_date""").fetchall():
+        days_left=(date.fromisoformat(lot["expiry_date"])-today).days
+        if days_left>expiry_window: continue
+        for layer in c.execute("""SELECT vl.qty_remaining,vl.warehouse_id,vl.location_id,w.code warehouse_code,w.name_ar warehouse_name,
+            sl.code location_code,sl.name_ar location_name
+            FROM stock_valuation_layers vl LEFT JOIN stock_warehouses w ON w.id=vl.warehouse_id
+            LEFT JOIN stock_locations sl ON sl.id=vl.location_id
+            WHERE vl.lot_id=? AND CAST(vl.qty_remaining AS REAL)>0""",(lot["id"],)).fetchall():
+            qty=Decimal(str(layer["qty_remaining"] or "0"))
+            if qty<=0: continue
+            expiry_alerts.append({"sku":lot["sku"],"name_ar":lot["name_ar"],"uom":lot["uom"],
+                "lot_number":lot["lot_number"],"expiry_date":lot["expiry_date"],"days_left":days_left,"qty":qty,
+                "warehouse":layer["warehouse_code"]+" - "+layer["warehouse_name"],
+                "location":(layer["location_code"]+" - "+layer["location_name"]) if layer["location_code"] else "غير محدد"})
     c.close()
-    return render_template("stock_reports.html",rows=rows,lots=lots,movements=movements,warehouse_rows=warehouse_rows,location_rows=location_rows)
+    return render_template("stock_reports.html",rows=rows,lots=lots,movements=movements,
+        warehouse_rows=warehouse_rows,location_rows=location_rows,reorder_alerts=reorder_alerts,
+        slow_rows=slow_rows,expiry_alerts=expiry_alerts,turnover_days=90)
 
 
 @stock_bp.route("/barcode")
