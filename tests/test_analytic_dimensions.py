@@ -13,6 +13,8 @@ class AnalyticDimensionsTests(unittest.TestCase):
         self.conn.executescript("""
             CREATE TABLE accounts(id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT,
                 account_type TEXT, is_group INTEGER DEFAULT 0, active INTEGER DEFAULT 1);
+            CREATE TABLE customers(id INTEGER PRIMARY KEY,code TEXT,name TEXT,active INTEGER DEFAULT 1);
+            INSERT INTO customers(id,code,name) VALUES(1,'C001','عميل تجريبي'),(2,'C002','عميل آخر');
             CREATE TABLE journal_entries(id INTEGER PRIMARY KEY, entry_date TEXT NOT NULL,
                 reference TEXT, description TEXT NOT NULL, status TEXT DEFAULT 'posted',
                 created_by INTEGER, created_at TEXT NOT NULL);
@@ -62,6 +64,20 @@ class AnalyticDimensionsTests(unittest.TestCase):
         )
         self.assertEqual(all_rows[1]["debit"], 150)
         self.assertEqual(branch_rows[1]["debit"], 100)
+
+
+    def test_customer_dimension_filters_sales_journal(self):
+        customer_id = 1
+        dimensions = validate_journal_dimensions(self.conn, {"customer_id": str(customer_id)})
+        entry_id = post_journal(
+            self.conn, "2026-11-03", "DIM-CUST-001", "قيد عميل",
+            [(1, "75", "0", "مدين"), (2, "0", "75", "دائن")],
+            1, dimensions,
+        )
+        rows = self.conn.execute("SELECT customer_id FROM journal_lines WHERE entry_id=?", (entry_id,)).fetchall()
+        self.assertTrue(all(row["customer_id"] == customer_id for row in rows))
+        filtered = account_balances(self.conn, "2026-11-01", "2026-11-30", {"customer_id": customer_id})
+        self.assertEqual(filtered[1]["debit"], 75)
 
     def test_invalid_or_inactive_dimension_is_rejected(self):
         with self.assertRaises(ValueError):
