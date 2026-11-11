@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}رد مبلغ للعميل | NEXUS ERP{% endblock %}
+{% block content %}
+<header><h2>رد مبلغ للعميل</h2><p>يتم رد الجزء الذي نتج عن إشعار دائن تجاوز الرصيد غير المحصل، مع قيد عكسي على ذمم العميل والصندوق/البنك.</p></header>
+<section class="panel">
+  <p><strong>الإشعار:</strong> {{ note.credit_note_no }} | <strong>الفاتورة:</strong> {{ note.invoice_no }}</p>
+  <p><strong>العميل:</strong> {{ note.customer_name }} | <strong>القابل للرد المتبقي:</strong> {{ '%.2f'|format(remaining_refundable) }}</p>
+  {% if remaining_refundable > 0 %}
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>تاريخ الرد <input type="date" name="refund_date" value="{{ today }}" required></label>
+    <label>المبلغ <input type="number" name="amount" min="0.01" max="{{ remaining_refundable }}" step="0.01" value="{{ remaining_refundable }}" required></label>
+    <label>حساب الصندوق / البنك
+      <select name="cash_account_id" required><option value="">اختر الحساب</option>
+      {% for account in cash_accounts %}<option value="{{ account.id }}">{{ account.code }} - {{ account.name_ar }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>مرجع التحويل أو إيصال الصرف <input name="reference" maxlength="200"></label>
+    <button type="submit">تأكيد رد المبلغ وترحيل القيد</button>
+  </form>
+  {% else %}
+  <p>لا يوجد مبلغ قابل للاسترداد لهذا الإشعار. إذا كان الإشعار خفّض مديونية قائمة، فقد تمت تسويته على حساب العميل.</p>
+  {% endif %}
+  <a href="{{ url_for('sales.index') }}">العودة للمبيعات</a>
+</section>
+{% endblock %}
