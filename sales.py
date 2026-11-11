@@ -371,14 +371,13 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     remaining_discount = discount_amount
     for index, item in enumerate(normalized):
         if index == len(normalized) - 1:
-            line_discount = remaining_discount
+            line_discount = min(max(remaining_discount, Decimal("0.00")), item["gross_line_total"])
         elif gross_subtotal:
             line_discount = (discount_amount * item["gross_line_total"] / gross_subtotal).quantize(CENT, rounding=ROUND_HALF_UP)
+            line_discount = min(max(line_discount, Decimal("0.00")), remaining_discount, item["gross_line_total"])
             remaining_discount -= line_discount
         else:
             line_discount = Decimal("0.00")
-        if line_discount > item["gross_line_total"]:
-            line_discount = item["gross_line_total"]
         item["discount_amount"] = line_discount
         item["line_total"] = (item["gross_line_total"] - line_discount).quantize(CENT, rounding=ROUND_HALF_UP)
         item["tax_amount"] = (item["line_total"] * item["tax_rate"] / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
