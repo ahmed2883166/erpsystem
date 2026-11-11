@@ -1,0 +1,72 @@
+import sqlite3
+import unittest
+
+from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions
+from accounting_core import post_journal
+from management_dashboard import account_balances
+
+
+class AnalyticDimensionsTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        self.conn.executescript("""
+            CREATE TABLE accounts(id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT,
+                account_type TEXT, is_group INTEGER DEFAULT 0, active INTEGER DEFAULT 1);
+            CREATE TABLE journal_entries(id INTEGER PRIMARY KEY, entry_date TEXT NOT NULL,
+                reference TEXT, description TEXT NOT NULL, status TEXT DEFAULT 'posted',
+                created_by INTEGER, created_at TEXT NOT NULL);
+            CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,
+                entry_id INTEGER REFERENCES journal_entries(id), account_id INTEGER,
+                debit TEXT NOT NULL DEFAULT '0', credit TEXT NOT NULL DEFAULT '0', memo TEXT);
+            INSERT INTO accounts(id,code,name_ar,account_type) VALUES
+                (1,'1110','الصندوق','asset'),(2,'4100','المبيعات','revenue');
+        """)
+        initialize_analytic_dimensions_schema(self.conn)
+        self.conn.execute("INSERT INTO branches(code,name_ar) VALUES('CAI','فرع القاهرة')")
+        self.branch_id = self.conn.execute("SELECT id FROM branches").fetchone()["id"]
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_manual_journal_saves_selected_dimensions(self):
+        dimensions = validate_journal_dimensions(self.conn, {
+            "branch_id": str(self.branch_id), "cost_center_id": "", "project_id": ""
+        })
+        entry_id = post_journal(
+            self.conn, "2026-11-01", "DIM-001", "قيد اختبار",
+            [(1, "100", "0", "مدين"), (2, "0", "100", "دائن")],
+            1, dimensions,
+        )
+        rows = self.conn.execute(
+            "SELECT branch_id,cost_center_id,project_id FROM journal_lines WHERE entry_id=?",
+            (entry_id,),
+        ).fetchall()
+        self.assertEqual([row["branch_id"] for row in rows], [self.branch_id, self.branch_id])
+        self.assertTrue(all(row["cost_center_id"] is None and row["project_id"] is None for row in rows))
+
+    def test_dashboard_account_balances_filter_by_branch(self):
+        post_journal(
+            self.conn, "2026-11-01", "DIM-002", "قيد فرع",
+            [(1, "100", "0", "مدين"), (2, "0", "100", "دائن")],
+            1, {"branch_id": self.branch_id},
+        )
+        post_journal(
+            self.conn, "2026-11-02", "DIM-003", "قيد دون فرع",
+            [(1, "50", "0", "مدين"), (2, "0", "50", "دائن")],
+            1,
+        )
+        all_rows = account_balances(self.conn, "2026-11-01", "2026-11-30")
+        branch_rows = account_balances(
+            self.conn, "2026-11-01", "2026-11-30", {"branch_id": self.branch_id}
+        )
+        self.assertEqual(all_rows[1]["debit"], 150)
+        self.assertEqual(branch_rows[1]["debit"], 100)
+
+    def test_invalid_or_inactive_dimension_is_rejected(self):
+        with self.assertRaises(ValueError):
+            validate_journal_dimensions(self.conn, {"branch_id": "999"})
+
+
+if __name__ == "__main__":
+    unittest.main()
