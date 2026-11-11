@@ -1,4 +1,4 @@
-from database import connect_database
+from database import connect_database, fetch_page
 """NEXUS ERP inventory foundation (v0.2).
 
 Implements product master, warehouses, stock receipts/issues/transfers/scrap,
@@ -1024,11 +1024,16 @@ def counts():
             c.close()
         return redirect(url_for("stock.counts"))
     warehouses = c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
-    rows = c.execute("""SELECT s.*,w.code warehouse_code,w.name_ar warehouse_name,
-        (SELECT COUNT(*) FROM stocktake_lines l WHERE l.stocktake_id=s.id) line_count
-        FROM stocktakes s JOIN stock_warehouses w ON w.id=s.warehouse_id ORDER BY s.id DESC LIMIT 100""").fetchall()
+    counts_page = fetch_page(c,
+        """SELECT s.*,w.code warehouse_code,w.name_ar warehouse_name,
+           (SELECT COUNT(*) FROM stocktake_lines l WHERE l.stocktake_id=s.id) line_count
+           FROM stocktakes s JOIN stock_warehouses w ON w.id=s.warehouse_id ORDER BY s.id DESC""",
+        "SELECT COUNT(*) FROM stocktakes",
+        page=request.args.get("counts_page",1,type=int),
+        per_page=request.args.get("counts_per_page",50,type=int))
+    rows = counts_page["rows"]
     c.close()
-    return render_template("stock_counts.html", warehouses=warehouses, rows=rows, today=date.today().isoformat())
+    return render_template("stock_counts.html", warehouses=warehouses, rows=rows, counts_page=counts_page, today=date.today().isoformat())
 
 
 @stock_bp.route("/counts/<int:stocktake_id>", methods=["GET", "POST"])
