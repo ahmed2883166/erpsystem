@@ -8,6 +8,7 @@ import shutil
 import sqlite3
 import zipfile
 from datetime import datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from pathlib import Path
 
@@ -88,10 +89,31 @@ PERMISSIONS = {
 register_report_exports(app, DB_PATH, PERMISSIONS)
 
 
+class _DecimalSum:
+    def __init__(self):
+        self.total = Decimal("0")
+    def step(self, value):
+        if value is not None:
+            self.total += Decimal(str(value))
+    def finalize(self):
+        return format(self.total, "f")
+
+
+class _DecimalNet:
+    def __init__(self):
+        self.total = Decimal("0")
+    def step(self, debit, credit):
+        self.total += Decimal(str(debit or "0")) - Decimal(str(credit or "0"))
+    def finalize(self):
+        return format(self.total, "f")
+
+
 def db():
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
+    connection.create_aggregate("DECIMAL_SUM", 1, _DecimalSum)
+    connection.create_aggregate("DECIMAL_NET", 2, _DecimalNet)
     return connection
 
 
@@ -493,9 +515,9 @@ def company_setup():
 def dashboard():
     connection = db()
     totals = connection.execute("SELECT COUNT(*) accounts, (SELECT COUNT(*) FROM journal_entries) entries, (SELECT COUNT(*) FROM users WHERE active=1) users FROM accounts").fetchone()
-    balance = connection.execute("SELECT COALESCE(SUM(debit),0) debit, COALESCE(SUM(credit),0) credit FROM journal_lines").fetchone()
-    revenue = connection.execute("SELECT COALESCE(SUM(jl.credit-jl.debit),0) total FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE a.account_type='revenue'").fetchone()["total"]
-    expenses = connection.execute("SELECT COALESCE(SUM(jl.debit-jl.credit),0) total FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE a.account_type='expense'").fetchone()["total"]
+    balance = connection.execute("SELECT COALESCE(DECIMAL_SUM(debit),0) debit, COALESCE(DECIMAL_SUM(credit),0) credit FROM journal_lines").fetchone()
+    revenue = connection.execute("SELECT COALESCE(DECIMAL_NET(jl.credit,jl.debit),0) total FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE a.account_type='revenue'").fetchone()["total"]
+    expenses = connection.execute("SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) total FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE a.account_type='expense'").fetchone()["total"]
     recent = connection.execute("SELECT * FROM journal_entries ORDER BY id DESC LIMIT 5").fetchall()
     currency_row=connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
     base_currency=currency_row["setting_value"] if currency_row else "EGP"
@@ -723,7 +745,7 @@ def trial_balance():
         conditions.append("(a.code LIKE ? OR a.name_ar LIKE ?)"); params.extend([f"%{q}%", f"%{q}%"])
     connection = db()
     rows = connection.execute(f"""SELECT a.id, a.code, a.name_ar, a.account_type,
-        COALESCE(SUM(jl.debit),0) debit, COALESCE(SUM(jl.credit),0) credit
+        COALESCE(DECIMAL_SUM(jl.debit),0) debit, COALESCE(DECIMAL_SUM(jl.credit),0) credit
         FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
         LEFT JOIN journal_entries je ON je.id=jl.entry_id AND je.status='posted'
         WHERE {' AND '.join(conditions)}
@@ -755,13 +777,13 @@ def ledger():
             if date_to:
                 conditions.append("je.entry_date <= ?"); params.append(date_to)
             if date_from:
-                opening_row = connection.execute("""SELECT COALESCE(SUM(jl.debit-jl.credit),0) balance
+                opening_row = connection.execute("""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) balance
                     FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                     WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<?""",
                     (account_id, date_from)).fetchone()
-                opening_balance = float(opening_row["balance"] or 0)
+                opening_balance = Decimal(str(opening_row["balance"] or "0"))
             else:
-                opening_balance = 0.0
+                opening_balance = Decimal("0")
             raw_rows = connection.execute(f"""SELECT je.id entry_id, je.entry_date, je.reference, je.description,
                 jl.debit, jl.credit, jl.memo,
                 (SELECT GROUP_CONCAT(a2.code || ' - ' || a2.name_ar, '، ')
@@ -803,7 +825,7 @@ def journal_detail(entry_id):
     lines = connection.execute("""SELECT jl.*,a.code account_code,a.name_ar account_name
         FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
         WHERE jl.entry_id=? ORDER BY jl.id""", (entry_id,)).fetchall()
-    totals = connection.execute("""SELECT COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit
+    totals = connection.execute("""SELECT COALESCE(DECIMAL_SUM(debit),0) debit,COALESCE(DECIMAL_SUM(credit),0) credit
         FROM journal_lines WHERE entry_id=?""", (entry_id,)).fetchone()
     connection.close()
     return render_template("journal_detail.html", entry=entry, lines=lines, totals=totals, today=datetime.now().date().isoformat())
