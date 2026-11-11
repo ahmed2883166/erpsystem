@@ -27,6 +27,7 @@ from workforce import workforce_bp, initialize_workforce_schema
 from currency_center import currency_bp, initialize_currency_schema
 from party_reports import party_bp
 from management_dashboard import build_management_snapshot, initialize_management_dashboard_schema
+from financial_planning import planning_bp, initialize_planning_schema
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 
@@ -88,6 +89,7 @@ app.register_blueprint(tax_bp)
 app.register_blueprint(workforce_bp)
 app.register_blueprint(currency_bp)
 app.register_blueprint(party_bp)
+app.register_blueprint(planning_bp)
 # SECRET_KEY and session/CSRF settings are initialized above.
 
 PERMISSIONS = {
@@ -306,6 +308,7 @@ def initialize_database():
     dashboard_connection = db()
     activity_row = dashboard_connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
     initialize_management_dashboard_schema(dashboard_connection, activity_row["setting_value"] if activity_row else "commercial")
+    initialize_planning_schema(dashboard_connection)
     dashboard_connection.close()
 
 
