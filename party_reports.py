@@ -86,6 +86,11 @@ def _events(c, kind, party_id):
             'مدفوعات مورد ' || COALESCE(reference,'') description,amount debit,0 credit,2 priority
             FROM supplier_payments WHERE supplier_id=?""", (party_id,)):
             events.append(dict(r))
+    # Templates and running-balance calculations receive Decimal values, never
+    # SQLite TEXT amounts; this avoids Jinja's "%f" formatting TypeError.
+    for event in events:
+        event["debit"] = Decimal(str(event["debit"] or "0"))
+        event["credit"] = Decimal(str(event["credit"] or "0"))
     return sorted(events, key=lambda x: (x["event_date"], x["priority"], x["reference"] or ""))
 
 
