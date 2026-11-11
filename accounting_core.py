@@ -110,81 +110,91 @@ def _inventory_codes(activity):
     }.get(activity, ("1150",))
 
 
+def _decimal_sum(values):
+    return sum((Decimal(str(value or "0")) for value in values), Decimal("0"))
+
+
+def _money(value):
+    return Decimal(value).quantize(CENT, rounding=ROUND_HALF_UP)
+
+
 def reconciliation_snapshot(conn):
-    """Return a schema-tolerant snapshot for the reconciliation screen."""
-    unbalanced = conn.execute("""SELECT je.id, je.reference,
-        ROUND(COALESCE(SUM(jl.debit),0),2) AS debit,
-        ROUND(COALESCE(SUM(jl.credit),0),2) AS credit
-      FROM journal_entries je
-      LEFT JOIN journal_lines jl ON jl.entry_id=je.id
-      WHERE je.status='posted'
-      GROUP BY je.id
-      HAVING ABS(COALESCE(SUM(jl.debit),0)-COALESCE(SUM(jl.credit),0)) > 0.005
-      ORDER BY je.id DESC""").fetchall()
+    """Build the integrity snapshot using Decimal only for every monetary total."""
+    entries = conn.execute(
+        "SELECT id,reference FROM journal_entries WHERE status='posted' ORDER BY id DESC"
+    ).fetchall()
+    unbalanced = []
+    all_debit, all_credit = Decimal("0"), Decimal("0")
+    for entry in entries:
+        lines = conn.execute(
+            "SELECT debit,credit FROM journal_lines WHERE entry_id=?", (entry["id"],)
+        ).fetchall()
+        debit = _decimal_sum(row["debit"] for row in lines)
+        credit = _decimal_sum(row["credit"] for row in lines)
+        all_debit += debit
+        all_credit += credit
+        if abs(debit - credit) > CENT:
+            unbalanced.append({"id": entry["id"], "reference": entry["reference"],
+                               "debit": _money(debit), "credit": _money(credit)})
 
-    journal_totals = conn.execute("""SELECT
-        ROUND(COALESCE(SUM(jl.debit),0),2) AS debit,
-        ROUND(COALESCE(SUM(jl.credit),0),2) AS credit
-      FROM journal_lines jl
-      JOIN journal_entries je ON je.id=jl.entry_id
-      WHERE je.status='posted'""").fetchone()
-
+    journal_totals = {"debit": _money(all_debit), "credit": _money(all_credit)}
     settings = {r["setting_key"]: r["setting_value"] for r in conn.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','company_name','base_currency')"
     )} if _table_exists(conn, "company_settings") else {}
-    activity = settings.get("activity", "commercial")
-    codes = _inventory_codes(activity)
+    codes = _inventory_codes(settings.get("activity", "commercial"))
 
-    stock_value = 0.0
+    stock_value = Decimal("0")
     if _table_exists(conn, "stock_valuation_layers"):
-        stock_value = float(_scalar(conn, """SELECT COALESCE(SUM(
-            CAST(qty_remaining AS REAL) * CAST(unit_cost AS REAL)),0)
-            FROM stock_valuation_layers
-            WHERE CAST(qty_remaining AS REAL) > 0""") or 0)
+        layer_cols = _columns(conn, "stock_valuation_layers")
+        value_col = "value_remaining" if "value_remaining" in layer_cols else None
+        for row in conn.execute("SELECT * FROM stock_valuation_layers").fetchall():
+            qty = Decimal(str(row["qty_remaining"] or "0"))
+            if qty <= 0:
+                continue
+            if value_col and row["value_remaining"] not in (None, ""):
+                stock_value += Decimal(str(row["value_remaining"]))
+            else:
+                stock_value += qty * Decimal(str(row["unit_cost"] or "0"))
 
-    found_codes = []
-    missing_codes = []
-    gl_stock = None
+    found_codes, missing_codes, gl_stock = [], [], None
     if codes:
         placeholders = ",".join("?" for _ in codes)
         found_codes = [r["code"] for r in conn.execute(
-            f"SELECT code FROM accounts WHERE code IN ({placeholders}) AND is_group=0 AND active=1 ORDER BY code",
-            codes,
+            f"SELECT code FROM accounts WHERE code IN ({placeholders}) AND is_group=0 AND active=1 ORDER BY code", codes
         )]
         missing_codes = [code for code in codes if code not in found_codes]
         if found_codes:
             ids = [r["id"] for r in conn.execute(
                 f"SELECT id FROM accounts WHERE code IN ({','.join('?' for _ in found_codes)}) AND is_group=0 AND active=1",
-                found_codes,
+                found_codes
             )]
-            id_marks = ",".join("?" for _ in ids)
-            gl_stock = float(_scalar(conn, f"""SELECT COALESCE(SUM(jl.debit-jl.credit),0)
-                FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
-                WHERE je.status='posted' AND jl.account_id IN ({id_marks})""", ids) or 0)
+            gl_stock = Decimal("0")
+            if ids:
+                marks = ",".join("?" for _ in ids)
+                for row in conn.execute(
+                    f"""SELECT jl.debit,jl.credit FROM journal_lines jl
+                        JOIN journal_entries je ON je.id=jl.entry_id
+                        WHERE je.status='posted' AND jl.account_id IN ({marks})""", ids
+                ):
+                    gl_stock += Decimal(str(row["debit"] or "0")) - Decimal(str(row["credit"] or "0"))
 
-    # Calculate unmatched GRNI by receipt, not by whether any bill is linked.
-    # This preserves partially invoiced receipts and avoids excluding the full receipt.
-    grni = 0.0
+    grni = Decimal("0")
     if _table_exists(conn, "goods_receipts") and _table_exists(conn, "supplier_bill_receipts"):
-        grni = float(_scalar(conn, """SELECT COALESCE(SUM(
-            CASE WHEN CAST(r.total_value AS REAL)-COALESCE(m.matched,0) > 0
-                 THEN CAST(r.total_value AS REAL)-COALESCE(m.matched,0) ELSE 0 END),0)
-          FROM goods_receipts r
-          LEFT JOIN (
-            SELECT receipt_id, SUM(CAST(matched_amount AS REAL)) AS matched
-            FROM supplier_bill_receipts GROUP BY receipt_id
-          ) m ON m.receipt_id=r.id
-          WHERE r.status='posted'""") or 0)
+        matched_by_receipt = {}
+        for row in conn.execute("SELECT receipt_id,matched_amount FROM supplier_bill_receipts"):
+            matched_by_receipt[row["receipt_id"]] = matched_by_receipt.get(row["receipt_id"], Decimal("0")) + Decimal(str(row["matched_amount"] or "0"))
+        for row in conn.execute("SELECT id,total_value FROM goods_receipts WHERE status='posted'"):
+            unmatched = Decimal(str(row["total_value"] or "0")) - matched_by_receipt.get(row["id"], Decimal("0"))
+            if unmatched > 0:
+                grni += unmatched
 
-    open_ap = 0.0
+    open_ap = Decimal("0")
     if _table_exists(conn, "supplier_bills"):
-        bill_cols = _columns(conn, "supplier_bills")
-        if {"total_amount", "paid_amount", "status"}.issubset(bill_cols):
-            open_ap = float(_scalar(conn, """SELECT COALESCE(SUM(
-                CAST(total_amount AS REAL)-CAST(paid_amount AS REAL)),0)
-                FROM supplier_bills WHERE status='posted'""") or 0)
+        cols = _columns(conn, "supplier_bills")
+        if {"total_amount", "paid_amount", "status"}.issubset(cols):
+            for row in conn.execute("SELECT total_amount,paid_amount FROM supplier_bills WHERE status='posted'"):
+                open_ap += Decimal(str(row["total_amount"] or "0")) - Decimal(str(row["paid_amount"] or "0"))
 
-    # Documents that should have a journal link. Missing tables/older schemas are skipped safely.
     linkage_checks = [
         ("goods_receipts", "إيصالات الاستلام", "journal_entry_id"),
         ("supplier_bills", "فواتير الموردين", "journal_entry_id"),
@@ -204,23 +214,13 @@ def reconciliation_snapshot(conn):
         if count:
             unlinked_documents.append({"label": label, "count": count})
 
-    pending_stock = 0
-    if {"accounting_status"}.issubset(_columns(conn, "stock_movements")):
-        pending_stock = int(_scalar(conn, """SELECT COUNT(*) FROM stock_movements
-            WHERE accounting_status LIKE 'pending%'""") or 0)
-
-    stock_difference = round(gl_stock - stock_value, 2) if gl_stock is not None else None
+    pending_stock = int(_scalar(conn, """SELECT COUNT(*) FROM stock_movements
+        WHERE accounting_status LIKE 'pending%'""") or 0) if "accounting_status" in _columns(conn, "stock_movements") else 0
+    difference = _money(gl_stock - stock_value) if gl_stock is not None else None
     return {
-        "unbalanced": unbalanced,
-        "journal_totals": journal_totals,
-        "stock_value": round(stock_value, 2),
-        "gl_stock": round(gl_stock, 2) if gl_stock is not None else None,
-        "stock_difference": stock_difference,
-        "inventory_account_codes": found_codes,
-        "missing_inventory_codes": missing_codes,
-        "grni": round(grni, 2),
-        "open_ap": round(open_ap, 2),
-        "unlinked_documents": unlinked_documents,
-        "pending_stock": pending_stock,
-        "settings": settings,
+        "unbalanced": unbalanced, "journal_totals": journal_totals,
+        "stock_value": _money(stock_value), "gl_stock": _money(gl_stock) if gl_stock is not None else None,
+        "stock_difference": difference, "inventory_account_codes": found_codes,
+        "missing_inventory_codes": missing_codes, "grni": _money(grni), "open_ap": _money(open_ap),
+        "unlinked_documents": unlinked_documents, "pending_stock": pending_stock, "settings": settings,
     }
