@@ -285,8 +285,8 @@ def make_lot(c, product, lot_number, production_date, expiry_date, as_of=None):
     c.execute("""INSERT OR IGNORE INTO stock_lots(product_id,lot_number,production_date,expiry_date)
                  VALUES(?,?,?,?)""", (product["id"],lot_number,production_date or None,expiry_date or None))
     lot = c.execute("SELECT * FROM stock_lots WHERE product_id=? AND lot_number=?", (product["id"],lot_number)).fetchone()
-    if lot["expiry_date"] != (expiry_date or None):
-        raise ValueError("رقم التشغيلة موجود بتاريخ صلاحية مختلف.")
+    if lot["expiry_date"] != (expiry_date or None) or lot["production_date"] != (production_date or None):
+        raise ValueError("رقم التشغيلة موجود بتواريخ إنتاج أو صلاحية مختلفة.")
     return lot["id"]
 
 
