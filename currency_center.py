@@ -1,16 +1,16 @@
+from app_paths import DB_PATH
 from database import connect_database, fetch_page
 """Foreign currency transaction subledger, settlement and period-end revaluation."""
 import sqlite3
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
-from pathlib import Path
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
 
 currency_bp = Blueprint("currency_center", __name__)
-DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
+
 CENT = Decimal("0.01")
 
 
