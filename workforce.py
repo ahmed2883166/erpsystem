@@ -91,6 +91,18 @@ def initialize_workforce_schema():
     }.items():
         if name not in payroll_cols:
             c.execute("ALTER TABLE payroll_lines ADD COLUMN " + name + " " + definition)
+    # Backfill legacy payroll runs without changing their original net amounts.
+    legacy_rows = c.execute("""SELECT id,gross_pay,employer_insurance,employee_insurance,
+        taxable_income_tax,advance_deduction,other_deductions,absence_deduction
+        FROM payroll_lines WHERE total_entitlements='0' AND total_deductions='0'""").fetchall()
+    for row in legacy_rows:
+        employer = D(row["employer_insurance"])
+        entitlements = M(D(row["gross_pay"]) + employer)
+        deductions = M(employer + D(row["employee_insurance"]) + D(row["taxable_income_tax"])
+                       + D(row["advance_deduction"]) + D(row["other_deductions"])
+                       + D(row["absence_deduction"]))
+        c.execute("UPDATE payroll_lines SET total_entitlements=?,total_deductions=? WHERE id=?",
+                  (str(entitlements),str(deductions),row["id"]))
     c.close()
 
 
