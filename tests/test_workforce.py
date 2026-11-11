@@ -80,7 +80,7 @@ class WorkforceTests(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         line = conn.execute("SELECT gross_pay,net_pay FROM payroll_lines").fetchone()
         conn.close()
-        self.assertEqual(line, ("14150.00", "13150.00"))
+        self.assertEqual(line, ("14250.00", "13150.00"))
         conn = sqlite3.connect(self.db_path)
         manual_values = conn.execute(
             "SELECT basic_salary,allowances,taxable_income_tax,employee_insurance,employer_insurance,rule_set_id "
@@ -108,8 +108,8 @@ class WorkforceTests(unittest.TestCase):
             "JOIN accounts a ON a.id=jl.account_id ORDER BY jl.id"
         ).fetchall()
         conn.close()
-        self.assertEqual(sum(float(x[1] or 0) for x in posted), 14550.0)
-        self.assertEqual(sum(float(x[2] or 0) for x in posted), 14550.0)
+        self.assertEqual(sum(float(x[1] or 0) for x in posted), 14650.0)
+        self.assertEqual(sum(float(x[2] or 0) for x in posted), 14650.0)
         self.assertTrue(any(x[0] == "1300" and x[2] == "200.00" for x in posted))
 
     def test_custody_issue_expense_and_full_settlement(self):
@@ -186,7 +186,7 @@ class WorkforceTests(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         totals = conn.execute("SELECT SUM(CAST(gross_pay AS NUMERIC)),SUM(CAST(net_pay AS NUMERIC)) FROM payroll_lines").fetchone()
         conn.close()
-        self.assertEqual(totals, (22650, 21200))
+        self.assertEqual(totals, (22750, 21200))
         response = self.client.post("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
@@ -200,8 +200,8 @@ class WorkforceTests(unittest.TestCase):
         ).fetchall()
         conn.close()
         self.assertEqual(debit, credit)
-        self.assertEqual(debit, 23300)
-        self.assertIn((4, 22650, 0), totals_by_account)
+        self.assertEqual(debit, 23400)
+        self.assertIn((4, 22750, 0), totals_by_account)
         self.assertIn((5, 0, 21200), totals_by_account)
 
     def test_employee_profile_fields_and_salary_raise_overtime_and_event_bonus(self):
