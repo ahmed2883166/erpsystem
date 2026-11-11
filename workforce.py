@@ -7,6 +7,7 @@ from pathlib import Path
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
+from payroll_compliance import calculate_payroll_deductions
 
 workforce_bp = Blueprint("workforce", __name__)
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
@@ -118,10 +119,14 @@ def employees():
             hours = D(request.form.get("standard_hours", "208"))
             if salary < 0 or hours <= 0:
                 raise ValueError("الراتب وساعات العمل القياسية يجب أن تكون قيمًا موجبة.")
-            c.execute("INSERT INTO employees(employee_code,full_name,job_title,department,hire_date,basic_salary,standard_hours) VALUES(?,?,?,?,?,?,?)",
+            c.execute("""INSERT INTO employees(employee_code,full_name,job_title,department,hire_date,basic_salary,standard_hours,
+                legal_category,insurance_number,insured_wage) VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (request.form["employee_code"].strip(), request.form["full_name"].strip(),
                  request.form.get("job_title","").strip(), request.form.get("department","").strip(),
-                 request.form.get("hire_date") or date.today().isoformat(), str(salary), str(hours)))
+                 request.form.get("hire_date") or date.today().isoformat(), str(salary), str(hours),
+                 request.form.get("legal_category","local").strip().lower(),
+                 request.form.get("insurance_number","").strip(),
+                 str(M(request.form.get("insured_wage","0")))))
             _audit(c, "employee_created", request.form["employee_code"].strip())
             c.commit()
             flash("تم إضافة الموظف.", "success")
@@ -188,16 +193,24 @@ def payroll():
                 overtime_amount = M(overtime_hours * hourly * D("1.5"))
                 absence = M(absent_hours * hourly)
                 gross = M(D(e["basic_salary"]) + allowances + overtime_amount - absence - other_deductions)
+                automatic = calculate_payroll_deductions(c, e, gross, period)
+                if automatic:
+                    tax = automatic["tax"]
+                    emp_ins = automatic["employee_insurance"]
+                    employer_ins = automatic["employer_insurance"]
                 net = M(gross - tax - emp_ins)
                 if min(overtime_hours, absent_hours, tax, emp_ins, employer_ins, gross, net) < 0:
                     raise ValueError("لا يمكن أن تكون الساعات أو الاستقطاعات أو صافي المرتب سالبة.")
                 c.execute("""INSERT INTO payroll_lines(run_id,employee_id,basic_salary,allowances,overtime_hours,
                     overtime_amount,absent_hours,absence_deduction,other_deductions,taxable_income_tax,
-                    employee_insurance,employer_insurance,gross_pay,net_pay)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    employee_insurance,employer_insurance,gross_pay,net_pay,rule_set_id,taxable_annual,insured_wage)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (run_id,e["id"],e["basic_salary"],str(M(allowances)),str(overtime_hours),str(overtime_amount),
                      str(absent_hours),str(absence),str(M(other_deductions)),str(tax),str(emp_ins),
-                     str(employer_ins),str(gross),str(net)))
+                     str(employer_ins),str(gross),str(net),
+                     automatic["rule_set_id"] if automatic else None,
+                     str(automatic["taxable_annual"]) if automatic else "0",
+                     str(automatic["insured_wage"]) if automatic else "0"))
             _audit(c, "payroll_draft_created", period)
             c.commit()
             flash("تم إنشاء مسير الرواتب كمسودة. راجع البنود ثم رحّله.", "success")
