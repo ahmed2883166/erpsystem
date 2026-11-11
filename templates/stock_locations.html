@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% block title %}مواقع التخزين | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>تقسيم المخازن إلى أدوار ومواقع</h2><p>أنشئ التسلسل: مخزن ← دور ← منطقة ← رف ← خانة.</p></header>
+<div class="actions stock-shortcuts"><a class="button-link" href="{{ url_for('stock.warehouses') }}">المخازن</a><a class="button-link" href="{{ url_for('stock.product_locations') }}">توزيع الأصناف على المواقع</a></div>
+<div class="grid"><section class="panel"><h3>إضافة موقع تخزين</h3><form method="post">
+<label>المخزن<select name="warehouse_id" required>{% for w in warehouses %}<option value="{{w.id}}">{{w.code}} - {{w.name_ar}}</option>{% endfor %}</select></label>
+<label>نوع الموقع<select name="location_type" required><option value="floor">دور</option><option value="zone">منطقة</option><option value="rack">رف</option><option value="bin">خانة</option></select></label>
+<label>الموقع الأب (مطلوب للمنطقة والرف والخانة)<select name="parent_id"><option value="">بدون - مستوى رئيسي</option>{% for p in parents %}<option value="{{p.id}}">{{p.code}} - {{p.name_ar}} ({{p.location_type}})</option>{% endfor %}</select></label>
+<label>الكود<input name="code" maxlength="40" required></label><label>الاسم<input name="name_ar" maxlength="100" required></label><button type="submit">حفظ الموقع</button></form></section>
+<section class="panel"><h3>المواقع المسجلة</h3><table><tr><th>المخزن</th><th>النوع</th><th>الكود</th><th>الاسم</th><th>تابع لـ</th></tr>{% for x in rows %}<tr><td>{{x.warehouse_code}} - {{x.warehouse_name}}</td><td>{{{'floor':'دور','zone':'منطقة','rack':'رف','bin':'خانة'}.get(x.location_type,x.location_type)}}</td><td>{{x.code}}</td><td>{{x.name_ar}}</td><td>{{x.parent_code or '—'}}</td></tr>{% else %}<tr><td colspan="5">لم يتم إنشاء مواقع بعد.</td></tr>{% endfor %}</table></section></div>{% endblock %}
