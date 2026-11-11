@@ -17,7 +17,7 @@ class ManagementDashboardTests(unittest.TestCase):
             CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT);
             INSERT INTO company_settings VALUES('activity','commercial');
             INSERT INTO company_settings VALUES('base_currency','EGP');
-            INSERT INTO accounts VALUES
+            INSERT INTO accounts(id,code,name_ar,account_type,is_group) VALUES
                 (1,'1110','الصندوق','asset',0),(2,'1120','البنوك','asset',0),
                 (3,'1130','العملاء','asset',0),(4,'1150','المخزون','asset',0),
                 (5,'2110','الموردون','liability',0),(6,'3100','رأس المال','equity',0),
