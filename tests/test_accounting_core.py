@@ -1,7 +1,7 @@
 import sqlite3
 from decimal import Decimal
 import unittest
-from accounting_core import post_journal, reconciliation_snapshot
+from accounting_core import post_journal, reconciliation_snapshot, register_decimal_aggregates
 
 
 class SharedAccountingCoreTests(unittest.TestCase):
@@ -63,9 +63,6 @@ class SharedAccountingCoreTests(unittest.TestCase):
     def test_balanced_journal_posts(self):
         eid = post_journal(self.db, "2026-11-09", "INV-1", "بيع",
                            [(1, 100, 0, "نقدية"), (2, 0, 100, "إيراد")], 7)
-        totals = self.db.execute(
-            "SELECT SUM(debit) d,SUM(credit) c FROM journal_lines WHERE entry_id=?", (eid,)
-        ).fetchone()
         from decimal import Decimal
         lines = self.db.execute("SELECT debit,credit FROM journal_lines WHERE entry_id=?", (eid,)).fetchall()
         debit = sum((Decimal(row["debit"]) for row in lines), Decimal("0"))
@@ -109,6 +106,19 @@ class SharedAccountingCoreTests(unittest.TestCase):
         self.assertEqual(snapshot["stock_difference"], -10.0)
         self.assertEqual(len(snapshot["unbalanced"]), 0)
         self.assertEqual(snapshot["inventory_account_codes"], ["1130", "1140", "1150", "1160"])
+
+    def test_sql_decimal_aggregates_preserve_text_precision(self):
+        register_decimal_aggregates(self.db)
+        self.db.execute("CREATE TABLE decimal_values(debit TEXT,credit TEXT)")
+        self.db.executemany("INSERT INTO decimal_values VALUES(?,?)", [
+            ("0.10","0"), ("0.20","0"), ("0","0.30")
+        ])
+        totals = self.db.execute(
+            "SELECT DECIMAL_SUM(debit),DECIMAL_SUM(credit),DECIMAL_NET(debit,credit) FROM decimal_values"
+        ).fetchone()
+        self.assertEqual(totals[0], "0.30")
+        self.assertEqual(totals[1], "0.30")
+        self.assertEqual(totals[2], "0.00")
 
     def test_reconciliation_sums_text_money_exactly(self):
         self.db.execute(
