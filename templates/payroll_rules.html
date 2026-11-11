@@ -1,0 +1,24 @@
+{% extends "base.html" %}{% block title %}قواعد الضرائب والتأمينات | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>قواعد ضريبة المرتبات والتأمينات الاجتماعية</h2><p>الدولة الحالية: <strong>{{current_country}}</strong>. القواعد مؤرخة وتطبق على المسيرات التي يقع تاريخها بعد تاريخ السريان.</p></header>
+<section class="panel"><h3>إضافة مجموعة قواعد</h3><p>أدخل النسب والحدود طبقًا للقانون الرسمي الساري. النسب تُكتب كنسبة مئوية، مثل 11 وليس 0.11. رمز فئة الموظف يجب أن يطابق ملف الموظف حرفيًا بعد تحويله إلى أحرف صغيرة.</p>
+<form method="post" class="form-grid">
+<input type="hidden" name="action" value="create_rule">
+<label>رمز الدولة<input name="country_code" value="{{current_country}}" maxlength="2" required></label>
+<label>فئة الموظف<input name="category_code" value="local" placeholder="local / expat / saudi / non_saudi" required></label>
+<label>تاريخ السريان<input type="date" name="effective_from" value="{{today}}" required></label>
+<label>الإعفاء الشخصي السنوي<input type="number" min="0" step="0.01" name="personal_exemption_annual" value="0" required></label>
+<label>الحد الأدنى لأجر التأمين<input type="number" min="0" step="0.01" name="insurance_floor" value="0" required></label>
+<label>الحد الأقصى لأجر التأمين (صفر = بلا حد)<input type="number" min="0" step="0.01" name="insurance_ceiling" value="0" required></label>
+<label>نسبة الموظف %<input type="number" min="0" max="100" step="0.0001" name="employee_insurance_rate" value="0" required></label>
+<label>نسبة الشركة %<input type="number" min="0" max="100" step="0.0001" name="employer_insurance_rate" value="0" required></label>
+<label>ملاحظات / مرجع قانوني<input name="notes"></label><button type="submit">حفظ مجموعة القواعد</button></form></section>
+<section class="panel"><h3>مجموعات القواعد المسجلة</h3><table><tr><th>الدولة</th><th>الفئة</th><th>السريان</th><th>الإعفاء السنوي</th><th>حد التأمين</th><th>نسبة الموظف</th><th>نسبة الشركة</th><th>الشرائح</th></tr>
+{% for r in rule_sets %}<tr><td>{{r.country_code}}</td><td>{{r.category_code}}</td><td>{{r.effective_from}}</td><td>{{r.personal_exemption_annual}}</td><td>{{r.insurance_floor}} - {{r.insurance_ceiling}}</td><td>{{r.employee_insurance_rate}}%</td><td>{{r.employer_insurance_rate}}%</td><td>{{r.bracket_count}}</td></tr>{% else %}<tr><td colspan="8">لم تُسجل قواعد بعد.</td></tr>{% endfor %}</table></section>
+<section class="panel"><h3>إضافة شريحة ضريبة دخل سنوية</h3><p>ابدأ أول شريحة من صفر. اجعل بداية كل شريحة مساوية لنهاية السابقة. اترك الحد الأعلى فارغًا للشريحة الأخيرة المفتوحة.</p>
+<form method="post" class="form-grid"><input type="hidden" name="action" value="add_bracket">
+<label>مجموعة القواعد<select name="rule_set_id" required>{% for r in rule_sets %}<option value="{{r.id}}">{{r.country_code}} / {{r.category_code}} / {{r.effective_from}}</option>{% endfor %}</select></label>
+<label>من دخل سنوي خاضع<input type="number" min="0" step="0.01" name="lower_bound" required></label>
+<label>إلى دخل سنوي (فارغ للأخيرة)<input type="number" min="0" step="0.01" name="upper_bound"></label>
+<label>النسبة %<input type="number" min="0" max="100" step="0.0001" name="rate" required></label><button type="submit">إضافة الشريحة</button></form>
+<table><tr><th>الدولة</th><th>الفئة</th><th>من</th><th>إلى</th><th>النسبة</th></tr>{% for b in brackets %}<tr><td>{{b.country_code}}</td><td>{{b.category_code}}</td><td>{{b.lower_bound}}</td><td>{{b.upper_bound or 'مفتوحة'}}</td><td>{{b.rate}}%</td></tr>{% else %}<tr><td colspan="5">لا توجد شرائح ضريبية.</td></tr>{% endfor %}</table></section>
+{% endblock %}
