@@ -126,8 +126,10 @@ def budget_detail(budget_id):
                         "variance_pct":(variance*100/budget) if budget else None})
     conn.close()
     return render_template("budget_detail.html",plan=plan,rows=results,
-                           total_budget=sum((x["budget"] for x in results),Decimal("0")),
-                           total_actual=sum((x["actual"] for x in results),Decimal("0")))
+                           revenue_budget=sum((x["budget"] for x in results if x["account_type"]=="revenue"),Decimal("0")),
+                           revenue_actual=sum((x["actual"] for x in results if x["account_type"]=="revenue"),Decimal("0")),
+                           expense_budget=sum((x["budget"] for x in results if x["account_type"]=="expense"),Decimal("0")),
+                           expense_actual=sum((x["actual"] for x in results if x["account_type"]=="expense"),Decimal("0")))
 
 
 @planning_bp.route("/reports/cash-flow")
