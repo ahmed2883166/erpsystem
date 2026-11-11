@@ -1130,6 +1130,7 @@ def delete_user(user_id):
           ("SELECT 1 FROM purchase_orders WHERE created_by=? LIMIT 1","أوامر الشراء"),
           ("SELECT 1 FROM goods_receipts WHERE created_by=? LIMIT 1","استلامات المشتريات"),
           ("SELECT 1 FROM supplier_payments WHERE created_by=? LIMIT 1","مدفوعات الموردين"),
+          ("SELECT 1 FROM supplier_credit_notes WHERE created_by=? LIMIT 1","إشعارات دائنة المشتريات"),
           ("SELECT 1 FROM bank_transactions WHERE created_by=? LIMIT 1","الحركات البنكية")]
         used=next((label for q,label in checks if connection.execute(q,(user_id,)).fetchone()),None)
         if used: flash("لا يمكن حذف المستخدم لوجود نشاط مسجل في "+used+". يمكنك إيقافه بدل الحذف.","error")
