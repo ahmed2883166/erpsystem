@@ -1,3 +1,4 @@
+from database import connect_database
 """Budget planning and cash-flow reporting for NEXUS ERP."""
 import sqlite3
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -53,11 +54,7 @@ def _require(permission):
 
 def _connect():
     from pathlib import Path
-    conn = sqlite3.connect(Path(__file__).resolve().parent / "data" / "nexus.db")
-    conn.row_factory = sqlite3.Row
-    register_decimal_aggregates(conn)
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+    return connect_database(Path(__file__).resolve().parent / "data" / "nexus.db")
 
 
 @planning_bp.route("/budget", methods=["GET", "POST"])
