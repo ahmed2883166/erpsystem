@@ -66,7 +66,8 @@ def index():
  refunds_by_invoice={}
  if kind=="customers" and c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_refunds'").fetchone():
   for refund in c.execute("""SELECT cn.invoice_id,rf.amount FROM customer_refunds rf
-      JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id""").fetchall():
+      JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id
+      WHERE cn.status='posted' AND rf.refund_date<=?""",(as_of,)).fetchall():
    refunds_by_invoice[refund["invoice_id"]]=refunds_by_invoice.get(refund["invoice_id"],Decimal("0"))+_amount(refund["amount"])
  c.close()
  result=[]; totals=[Decimal("0.00") for _ in range(5)]
