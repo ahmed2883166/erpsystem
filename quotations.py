@@ -1,15 +1,15 @@
+from app_paths import DB_PATH
 from database import connect_database
 """Customer price lists and quotation workflow."""
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date,datetime
-from pathlib import Path
 from functools import wraps
 from flask import Blueprint,flash,redirect,render_template,request,session,url_for
 from sales import post_invoice
 
 quotes_bp=Blueprint("quotes",__name__,url_prefix="/sales/quotations")
-DB_PATH=Path(__file__).resolve().parent/"data"/"nexus.db"
+
 M=Decimal("0.01")
 
 def db():
