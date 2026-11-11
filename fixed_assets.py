@@ -89,6 +89,7 @@ def index():
     assets=c.execute("""SELECT f.*,a.code asset_code_gl,a.name_ar asset_account_name,
       COALESCE((SELECT DECIMAL_SUM(d.amount) FROM asset_depreciations d WHERE d.asset_id=f.id),0) accumulated
       FROM fixed_assets f JOIN accounts a ON a.id=f.asset_account_id ORDER BY f.asset_code""").fetchall()
+    assets=[dict(row,accumulated=Decimal(str(row["accumulated"] or "0"))) for row in assets]
     accounts=c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
     c.close()
     return render_template("fixed_assets.html",assets=assets,accounts=accounts,today=date.today().isoformat())
