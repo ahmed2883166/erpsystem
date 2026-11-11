@@ -940,9 +940,11 @@ def index():
     receipts = c.execute("""SELECT r.*,i.invoice_no,c.name customer_name FROM customer_receipts r
                             JOIN sales_invoices i ON i.id=r.invoice_id JOIN customers c ON c.id=i.customer_id
                             ORDER BY r.id DESC LIMIT 20""").fetchall()
-    batch_receipts = c.execute("""SELECT b.*,cu.name customer_name,COUNT(a.id) invoice_count
+    batch_receipts = c.execute("""SELECT b.*,cu.name customer_name,COUNT(a.id) invoice_count,
+          GROUP_CONCAT(i.invoice_no, ', ') invoice_numbers
         FROM customer_receipt_batches b JOIN customers cu ON cu.id=b.customer_id
         LEFT JOIN customer_receipt_allocations a ON a.batch_id=b.id
+        LEFT JOIN sales_invoices i ON i.id=a.invoice_id
         GROUP BY b.id ORDER BY b.id DESC LIMIT 20""").fetchall()
     credit_notes = c.execute("""SELECT n.*,i.invoice_no,c.name customer_name
                                 FROM sales_credit_notes n JOIN sales_invoices i ON i.id=n.invoice_id
