@@ -1,4 +1,4 @@
-from database import connect_database
+from database import connect_database, fetch_page
 """Bank register and reconciliation support for NEXUS ERP."""
 import sqlite3
 from datetime import date, datetime
@@ -86,7 +86,13 @@ def index():
             c.rollback(); flash(str(e),"error")
     accounts=c.execute("""SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=0 AND active=1 AND (lower(name_ar) LIKE '%بنك%' OR lower(name_ar) LIKE '%بنوك%' OR lower(name_ar) LIKE '%مصرف%' OR code IN ('1110','1120','1121','1122')) ORDER BY code""").fetchall()
     all_accounts=c.execute("""SELECT id,code,name_ar FROM accounts WHERE is_group=0 AND active=1 ORDER BY code""").fetchall()
-    rows=c.execute("""SELECT t.*,a.code bank_code,a.name_ar bank_name FROM bank_transactions t JOIN accounts a ON a.id=t.bank_account_id ORDER BY t.transaction_date DESC,t.id DESC LIMIT 250""").fetchall()
+    bank_page = fetch_page(c,
+        """SELECT t.*,a.code bank_code,a.name_ar bank_name FROM bank_transactions t
+           JOIN accounts a ON a.id=t.bank_account_id ORDER BY t.transaction_date DESC,t.id DESC""",
+        "SELECT COUNT(*) FROM bank_transactions",
+        page=request.args.get("bank_page",1,type=int),
+        per_page=request.args.get("bank_per_page",50,type=int))
+    rows=bank_page["rows"]
     bank_balances=c.execute("""SELECT a.id,a.code,a.name_ar,
         COALESCE(DECIMAL_NET(CASE WHEN je.status='posted' THEN jl.debit ELSE '0' END,
                              CASE WHEN je.status='posted' THEN jl.credit ELSE '0' END),0) balance
@@ -97,7 +103,7 @@ def index():
         GROUP BY a.id ORDER BY a.code""").fetchall()
     bank_balances=[dict(row,balance=Decimal(str(row["balance"] or "0"))) for row in bank_balances]
     c.close()
-    return render_template("bank.html",bank_accounts=accounts,accounts=all_accounts,rows=rows,bank_balances=bank_balances,today=date.today().isoformat())
+    return render_template("bank.html",bank_accounts=accounts,accounts=all_accounts,rows=rows,bank_balances=bank_balances,bank_page=bank_page,today=date.today().isoformat())
 
 @bank_bp.route("/reconcile/<int:transaction_id>",methods=["POST"])
 @require()
