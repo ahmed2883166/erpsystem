@@ -148,6 +148,7 @@ def initialize_stock_schema():
       count_date TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft',
       notes TEXT NOT NULL DEFAULT '', created_by INTEGER,
       approved_by INTEGER, approved_at TEXT, journal_entry_id INTEGER,
+      movement_cutoff_id INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS stocktake_lines(
@@ -159,6 +160,9 @@ def initialize_stock_schema():
     );
     CREATE INDEX IF NOT EXISTS idx_stocktake_lines_header ON stocktake_lines(stocktake_id,product_id);
     """)
+    stocktake_columns = {row["name"] for row in c.execute("PRAGMA table_info(stocktakes)")}
+    if "movement_cutoff_id" not in stocktake_columns:
+        c.execute("ALTER TABLE stocktakes ADD COLUMN movement_cutoff_id INTEGER NOT NULL DEFAULT 0")
     c.close()
 
 
@@ -831,8 +835,13 @@ def counts():
                 raise ValueError("اختر مخزنًا نشطًا.")
             c.execute("BEGIN IMMEDIATE")
             count_no = "STK-" + date.fromisoformat(count_date).strftime("%Y%m%d") + "-" + uuid.uuid4().hex[:6].upper()
-            c.execute("INSERT INTO stocktakes(count_no,warehouse_id,count_date,notes,created_by) VALUES(?,?,?,?,?)",
-                (count_no, warehouse_id, count_date, request.form.get("notes", "").strip(), session.get("user_id")))
+            movement_cutoff = c.execute("""SELECT COALESCE(MAX(id),0) FROM stock_movements
+                WHERE source_warehouse_id=? OR target_warehouse_id=?""",
+                (warehouse_id,warehouse_id)).fetchone()[0]
+            c.execute("""INSERT INTO stocktakes(count_no,warehouse_id,count_date,notes,created_by,movement_cutoff_id)
+                VALUES(?,?,?,?,?,?)""",
+                (count_no, warehouse_id, count_date, request.form.get("notes", "").strip(),
+                 session.get("user_id"), movement_cutoff))
             stocktake_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
             for product in c.execute("SELECT id FROM stock_products WHERE active=1 ORDER BY sku").fetchall():
                 qty, _ = _stocktake_layer_balance(c, product["id"], warehouse_id)
@@ -915,6 +924,11 @@ def approve_count(stocktake_id):
             (stocktake_id,)).fetchall()
         if not lines or any(line["counted_qty"] is None for line in lines):
             raise ValueError("بيانات العد غير مكتملة.")
+        later_movement = c.execute("""SELECT 1 FROM stock_movements
+            WHERE id>? AND (source_warehouse_id=? OR target_warehouse_id=?) LIMIT 1""",
+            (stocktake["movement_cutoff_id"],stocktake["warehouse_id"],stocktake["warehouse_id"])).fetchone()
+        if later_movement:
+            raise ValueError("تم تسجيل حركة مخزنية بعد بدء الجرد. لا يمكن اعتماد المطابقة؛ أوقف الحركة وأنشئ أمر جرد جديد.")
         activity_row = c.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
         activity = activity_row["setting_value"] if activity_row else "commercial"
         inventory_code = {"commercial":"1150", "industrial":"1130", "medical":"1150",
