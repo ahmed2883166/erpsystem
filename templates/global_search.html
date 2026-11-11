@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block title %}نتائج البحث | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>نتائج البحث</h2><p>البحث في القيود اليومية وفواتير البيع والشراء والمنتجات وإعدادات الشركة.</p></header>
+<section class="panel"><form method="get" action="{{ url_for('global_search') }}" class="form-row"><input name="q" value="{{ q }}" placeholder="اكتب رقم القيد أو الفاتورة أو اسم العميل أو المورد أو المنتج أو الشركة" required><button>بحث</button></form>
+{% if q %}<h3>نتائج البحث عن: {{ q }}</h3><p>عدد النتائج: {{ results|length }}</p><table><tr><th>النوع</th><th>النتيجة</th><th>التفاصيل</th><th></th></tr>{% for r in results %}<tr><td>{{ r.kind }}</td><td>{{ r.title }}</td><td>{{ r.detail }}</td><td><a class="btn secondary" href="{{ r.url }}">فتح</a></td></tr>{% else %}<tr><td colspan="4">لا توجد نتائج مطابقة.</td></tr>{% endfor %}</table>{% endif %}</section>{% endblock %}
