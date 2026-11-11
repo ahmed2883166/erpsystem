@@ -37,11 +37,26 @@ def initialize_stock_schema():
       category TEXT NOT NULL DEFAULT '', product_type TEXT NOT NULL DEFAULT 'goods',
       uom TEXT NOT NULL DEFAULT 'قطعة', barcode TEXT UNIQUE, track_lot INTEGER NOT NULL DEFAULT 0,
       track_expiry INTEGER NOT NULL DEFAULT 0, min_qty TEXT NOT NULL DEFAULT '0',
+      purchase_price TEXT NOT NULL DEFAULT '0', sale_price TEXT NOT NULL DEFAULT '0',
       active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS stock_warehouses(
       id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name_ar TEXT NOT NULL,
       branch TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE TABLE IF NOT EXISTS stock_locations(
+      id INTEGER PRIMARY KEY, warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
+      parent_id INTEGER REFERENCES stock_locations(id), code TEXT NOT NULL, name_ar TEXT NOT NULL,
+      location_type TEXT NOT NULL CHECK(location_type IN ('floor','zone','rack','bin')),
+      active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(warehouse_id,parent_id,code)
+    );
+    CREATE TABLE IF NOT EXISTS stock_product_locations(
+      id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES stock_products(id),
+      warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
+      location_id INTEGER NOT NULL REFERENCES stock_locations(id),
+      is_default INTEGER NOT NULL DEFAULT 1,
+      UNIQUE(product_id,warehouse_id)
     );
     CREATE TABLE IF NOT EXISTS stock_lots(
       id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES stock_products(id),
@@ -53,6 +68,8 @@ def initialize_stock_schema():
       product_id INTEGER NOT NULL REFERENCES stock_products(id),
       source_warehouse_id INTEGER REFERENCES stock_warehouses(id),
       target_warehouse_id INTEGER REFERENCES stock_warehouses(id),
+      source_location_id INTEGER REFERENCES stock_locations(id),
+      target_location_id INTEGER REFERENCES stock_locations(id),
       lot_id INTEGER REFERENCES stock_lots(id), quantity TEXT NOT NULL,
       unit_cost TEXT NOT NULL DEFAULT '0', total_cost TEXT NOT NULL DEFAULT '0',
       movement_date TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '',
@@ -61,6 +78,7 @@ def initialize_stock_schema():
     CREATE TABLE IF NOT EXISTS stock_valuation_layers(
       id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES stock_products(id),
       warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
+      location_id INTEGER REFERENCES stock_locations(id),
       lot_id INTEGER REFERENCES stock_lots(id), source_movement_id INTEGER NOT NULL REFERENCES stock_movements(id),
       qty_in TEXT NOT NULL, qty_remaining TEXT NOT NULL, unit_cost TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -68,7 +86,11 @@ def initialize_stock_schema():
     CREATE INDEX IF NOT EXISTS idx_stock_moves_product_date ON stock_movements(product_id,movement_date,id);
     CREATE INDEX IF NOT EXISTS idx_stock_layers_product_wh ON stock_valuation_layers(product_id,warehouse_id,id);
     """)
-    # Accounting link and state are additive migrations for existing databases.
+    # Additive migrations preserve all existing stock and product data.
+    product_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_products)")}
+    for name in ("purchase_price", "sale_price"):
+        if name not in product_columns:
+            c.execute(f"ALTER TABLE stock_products ADD COLUMN {name} TEXT NOT NULL DEFAULT '0'")
     movement_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_movements)")}
     if "journal_entry_id" not in movement_columns:
         c.execute("ALTER TABLE stock_movements ADD COLUMN journal_entry_id INTEGER")
@@ -76,6 +98,15 @@ def initialize_stock_schema():
         c.execute("ALTER TABLE stock_movements ADD COLUMN accounting_status TEXT NOT NULL DEFAULT 'pending'")
     if "issue_purpose" not in movement_columns:
         c.execute("ALTER TABLE stock_movements ADD COLUMN issue_purpose TEXT")
+    if "source_location_id" not in movement_columns:
+        c.execute("ALTER TABLE stock_movements ADD COLUMN source_location_id INTEGER REFERENCES stock_locations(id)")
+    if "target_location_id" not in movement_columns:
+        c.execute("ALTER TABLE stock_movements ADD COLUMN target_location_id INTEGER REFERENCES stock_locations(id)")
+    layer_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_valuation_layers)")}
+    if "location_id" not in layer_columns:
+        c.execute("ALTER TABLE stock_valuation_layers ADD COLUMN location_id INTEGER REFERENCES stock_locations(id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_stock_locations_wh_parent ON stock_locations(warehouse_id,parent_id,active)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_stock_layers_location ON stock_valuation_layers(location_id,product_id)")
     # One summarized COGS journal may cover multiple stock issue movements.
     # The journal link is therefore intentionally non-unique.
     layer_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_valuation_layers)")}
@@ -314,11 +345,15 @@ def products():
             name=request.form.get("name_ar","").strip()
             uom=request.form.get("uom","قطعة").strip()
             if not sku or not name or not uom: raise ValueError("الكود والاسم ووحدة القياس حقول مطلوبة.")
-            c.execute("""INSERT INTO stock_products(sku,name_ar,category,product_type,uom,barcode,track_lot,track_expiry,min_qty)
-              VALUES(?,?,?,?,?,?,?,?,?)""",(sku,name,request.form.get("category","").strip(),
+            purchase_price = money(dec(request.form.get("purchase_price", "0"), "سعر الشراء"))
+            sale_price = money(dec(request.form.get("sale_price", "0"), "سعر البيع"))
+            if purchase_price < 0 or sale_price < 0:
+                raise ValueError("أسعار الشراء والبيع لا يمكن أن تكون سالبة.")
+            c.execute("""INSERT INTO stock_products(sku,name_ar,category,product_type,uom,barcode,track_lot,track_expiry,min_qty,purchase_price,sale_price)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(sku,name,request.form.get("category","").strip(),
               request.form.get("product_type","goods"),uom,request.form.get("barcode","").strip() or None,
               int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),
-              str(q4(dec(request.form.get("min_qty","0"),"الحد الأدنى")))))
+              str(q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))),str(purchase_price),str(sale_price)))
             c.commit(); flash("تم حفظ الصنف.", "success")
         except (ValueError,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود الصنف أو الباركود مستخدم بالفعل.", "error")
@@ -359,8 +394,12 @@ def edit_product(product_id):
             if not sku or not name or not uom: raise ValueError("الكود والاسم والوحدة مطلوبة.")
             if used and (request.form.get("product_type") != product["product_type"] or uom != product["uom"] or int(request.form.get("track_lot")=="on") != product["track_lot"] or int(request.form.get("track_expiry")=="on") != product["track_expiry"]):
                 raise ValueError("الصنف له حركات سابقة؛ لا يمكن تغيير نوعه أو وحدة قياسه أو إعدادات تتبع التشغيلة/الصلاحية.")
-            c.execute("""UPDATE stock_products SET sku=?,name_ar=?,category=?,product_type=?,uom=?,barcode=?,track_lot=?,track_expiry=?,min_qty=? WHERE id=?""",
-              (sku,name,request.form.get("category","").strip(),request.form.get("product_type","goods"),uom,request.form.get("barcode","").strip() or None,int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),str(q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))),product_id))
+            purchase_price = money(dec(request.form.get("purchase_price", product["purchase_price"] or "0"), "سعر الشراء"))
+            sale_price = money(dec(request.form.get("sale_price", product["sale_price"] or "0"), "سعر البيع"))
+            if purchase_price < 0 or sale_price < 0:
+                raise ValueError("أسعار الشراء والبيع لا يمكن أن تكون سالبة.")
+            c.execute("""UPDATE stock_products SET sku=?,name_ar=?,category=?,product_type=?,uom=?,barcode=?,track_lot=?,track_expiry=?,min_qty=?,purchase_price=?,sale_price=? WHERE id=?""",
+              (sku,name,request.form.get("category","").strip(),request.form.get("product_type","goods"),uom,request.form.get("barcode","").strip() or None,int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),str(q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))),str(purchase_price),str(sale_price),product_id))
             c.commit(); c.close(); flash("تم تعديل الصنف.","success"); return redirect(url_for("stock.products"))
         except (ValueError,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "الكود أو الباركود مستخدم بالفعل.","error")
