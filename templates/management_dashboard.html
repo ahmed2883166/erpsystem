@@ -1,0 +1,68 @@
+{% extends 'base.html' %}
+{% block title %}لوحة الإدارة | NEXUS ERP{% endblock %}
+{% block content %}
+{% macro delta(value, good_when_up=True) -%}
+  {%- if value is none -%}<span class="muted">—</span>
+  {%- else -%}
+    {%- set up = value >= 0 -%}
+    {%- set good = (up and good_when_up) or (not up and not good_when_up) -%}
+    <span class="{{ 'success' if good else 'danger' }}">{{ '▲' if up else '▼' }} {{ '%.2f'|format(value|abs) }}%</span>
+  {%- endif -%}
+{%- endmacro %}
+{% macro money(value) -%}{{ '%.2f'|format(value) }} {{ s.base_currency }}{%- endmacro %}
+{% macro ratio(value) -%}{% if value is none %}—{% else %}{{ '%.2f'|format(value) }} مرة{% endif %}{%- endmacro %}
+
+<header>
+  <div>
+    <h2>لوحة الإدارة</h2>
+    <p class="muted">{{ s.company_name }} · النشاط: {{ {'commercial':'تجاري','service':'خدمي','medical':'طبي','restaurant':'مطاعم','industrial':'صناعي'}.get(s.activity,s.activity) }} · العملة الأساسية: {{ s.base_currency }}</p>
+    <p class="muted">الفترة {{ date_from }} — {{ date_to }} · مقارنة بالفترة {{ s.prev_start.isoformat() }} — {{ s.prev_end.isoformat() }}</p>
+  </div>
+</header>
+
+<section class="panel no-print">
+  <form method="get" class="report-filter">
+    <label>من تاريخ<input type="date" name="date_from" value="{{ date_from }}" required></label>
+    <label>إلى تاريخ<input type="date" name="date_to" value="{{ date_to }}" required></label>
+    <button type="submit">عرض الفترة</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h3>الأداء المالي خلال الفترة</h3>
+  <div class="stat-grid">
+    <div class="stat-card"><small>صافي الإيرادات</small><strong>{{ money(s.current.revenue) }}</strong><div>{{ delta(s.changes.revenue) }}</div></div>
+    <div class="stat-card"><small>إجمالي المصروفات والتكاليف</small><strong>{{ money(s.current.expenses) }}</strong><div>{{ delta(s.changes.expenses, False) }}</div></div>
+    <div class="stat-card"><small>صافي الربح / (الخسارة)</small><strong>{{ money(s.current.net_profit) }}</strong><div>{{ delta(s.changes.net_profit) }}</div></div>
+    <div class="stat-card"><small>هامش مجمل الربح</small><strong>{% if s.gross_margin is none %}—{% else %}{{ '%.2f'|format(s.gross_margin) }}%{% endif %}</strong></div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>البند</th><th>الفترة الحالية</th><th>الفترة المقارنة</th><th>التغير</th></tr></thead>
+      <tbody>
+        <tr><td>الإيرادات</td><td>{{ money(s.current.revenue) }}</td><td>{{ money(s.previous.revenue) }}</td><td>{{ delta(s.changes.revenue) }}</td></tr>
+        <tr><td>التكاليف المباشرة</td><td>{{ money(s.current.cogs) }}</td><td>{{ money(s.previous.cogs) }}</td><td>—</td></tr>
+        <tr><td>إجمالي المصروفات</td><td>{{ money(s.current.expenses) }}</td><td>{{ money(s.previous.expenses) }}</td><td>{{ delta(s.changes.expenses, False) }}</td></tr>
+        <tr class="total"><td>صافي الربح / (الخسارة)</td><td>{{ money(s.current.net_profit) }}</td><td>{{ money(s.previous.net_profit) }}</td><td>{{ delta(s.changes.net_profit) }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">الأرقام من القيود المرحلة فقط. لا تشمل القيود المسودة. التغير يقارن بفترة سابقة مساوية في عدد الأيام.</p>
+</section>
+
+<section class="panel">
+  <h3>المركز المالي حتى {{ date_to }}</h3>
+  <div class="stat-grid">
+    <div class="stat-card"><small>النقدية والبنوك</small><strong>{{ money(s.cash) }}</strong></div>
+    <div class="stat-card"><small>أرصدة العملاء / المدينين</small><strong>{{ money(s.receivables) }}</strong></div>
+    <div class="stat-card"><small>أرصدة الموردين</small><strong>{{ money(s.payables) }}</strong></div>
+    <div class="stat-card"><small>قيمة المخزون</small><strong>{{ money(s.inventory) }}</strong></div>
+    <div class="stat-card"><small>إجمالي الأصول</small><strong>{{ money(s.total_assets) }}</strong></div>
+    <div class="stat-card"><small>رأس المال العامل</small><strong>{{ money(s.working_capital) }}</strong></div>
+    <div class="stat-card"><small>نسبة السيولة الجارية</small><strong>{{ ratio(s.current_ratio) }}</strong></div>
+    <div class="stat-card"><small>نسبة السيولة السريعة</small><strong>{{ ratio(s.quick_ratio) }}</strong></div>
+    <div class="stat-card"><small>فحص المعادلة المحاسبية</small><strong>{% if s.balance_ok %}<span class="success">متوازنة ✓</span>{% else %}<span class="danger">تحتاج مراجعة</span>{% endif %}</strong></div>
+  </div>
+  <p class="muted">تُحدد حسابات النقدية والعملاء والموردين والمخزون وفق نشاط الشركة وشجرة الحسابات القياسية الخاصة به. الحسابات المخصصة التي أُضيفت يدويًا قد تحتاج إلى ربطها بتصنيف لوحة الإدارة.</p>
+</section>
+{% endblock %}
