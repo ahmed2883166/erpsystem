@@ -52,6 +52,10 @@ def init_sales_schema():
       quantity TEXT NOT NULL, unit_price TEXT NOT NULL, line_total TEXT NOT NULL,
       cost_total TEXT NOT NULL DEFAULT '0', stock_movement_id INTEGER REFERENCES stock_movements(id)
     );
+    CREATE TABLE IF NOT EXISTS sales_invoice_line_lots(
+      id INTEGER PRIMARY KEY, invoice_line_id INTEGER NOT NULL REFERENCES sales_invoice_lines(id),
+      lot_id INTEGER REFERENCES stock_lots(id), quantity TEXT NOT NULL, cost_total TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS customer_receipts(
       id INTEGER PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE,
       invoice_id INTEGER NOT NULL REFERENCES sales_invoices(id),
@@ -87,6 +91,11 @@ def init_sales_schema():
       quantity TEXT NOT NULL, unit_price TEXT NOT NULL, line_total TEXT NOT NULL,
       tax_rate TEXT NOT NULL, tax_treatment TEXT NOT NULL, tax_amount TEXT NOT NULL,
       cost_total TEXT NOT NULL DEFAULT '0', stock_movement_id INTEGER REFERENCES stock_movements(id)
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS sales_credit_note_line_lots(
+      id INTEGER PRIMARY KEY, credit_note_line_id INTEGER NOT NULL REFERENCES sales_credit_note_lines(id),
+      lot_id INTEGER REFERENCES stock_lots(id), quantity TEXT NOT NULL,
+      stock_movement_id INTEGER REFERENCES stock_movements(id)
     )""")
     invoice_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoices)")}
     if "credited_amount" not in invoice_columns:
@@ -240,6 +249,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             "description": description, "quantity": qty, "unit_price": unit_price,
             "line_total": line_total, "cost_total": cost,
             "tax_rate": line_rate, "tax_treatment": treatment, "tax_amount": line_tax,
+            "stock_allocations": _allocations if product_id else [],
         })
 
     subtotal = subtotal.quantize(CENT, rounding=ROUND_HALF_UP)
@@ -291,7 +301,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
                  invoice_date, "صرف مبيعات " + invoice_no, created_by)
             )
             movement_id = move.lastrowid
-        conn.execute(
+        line_cursor = conn.execute(
             """INSERT INTO sales_invoice_lines(invoice_id,product_id,description,quantity,unit_price,
                line_total,cost_total,stock_movement_id,tax_rate,tax_treatment,tax_amount)
                VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
@@ -299,6 +309,12 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
              str(item["unit_price"]), str(item["line_total"]), str(item["cost_total"]), movement_id,
              str(item["tax_rate"]), item["tax_treatment"], str(item["tax_amount"]))
         )
+        invoice_line_id = line_cursor.lastrowid
+        for lot_id, allocated_qty, allocated_unit_cost, allocated_cost in item.get("stock_allocations", []):
+            conn.execute(
+                "INSERT INTO sales_invoice_line_lots(invoice_line_id,lot_id,quantity,cost_total) VALUES(?,?,?,?)",
+                (invoice_line_id, lot_id, str(allocated_qty), str(allocated_cost))
+            )
 
     invoice_lines = [(ar, total_amount, 0, "ذمم العميل - " + customer["name"]),
                      (revenue, 0, subtotal, "إيراد فاتورة " + invoice_no)]
@@ -395,11 +411,52 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         subtotal += line_value
         tax_total += line_tax
         cost_total += line_cost
+        original_allocations = conn.execute(
+            "SELECT lot_id,quantity,cost_total FROM sales_invoice_line_lots WHERE invoice_line_id=? ORDER BY id",
+            (line_id,),
+        ).fetchall()
+        if not original_allocations:
+            original_allocations = [{"lot_id": None, "quantity": original["quantity"],
+                                     "cost_total": original["cost_total"] or "0"}]
+        returned_rows = conn.execute(
+            """SELECT rl.lot_id,rl.quantity FROM sales_credit_note_line_lots rl
+               JOIN sales_credit_note_lines cl ON cl.id=rl.credit_note_line_id
+               JOIN sales_credit_notes cn ON cn.id=cl.credit_note_id
+               WHERE cl.invoice_line_id=? AND cn.status='posted'""", (line_id,)
+        ).fetchall()
+        returned_by_lot = {}
+        for returned_row in returned_rows:
+            key = returned_row["lot_id"]
+            returned_by_lot[key] = returned_by_lot.get(key, Decimal("0")) + Decimal(returned_row["quantity"])
+        lot_remaining = []
+        for allocation in original_allocations:
+            allocated_qty = Decimal(allocation["quantity"])
+            available_lot_qty = allocated_qty - returned_by_lot.get(allocation["lot_id"], Decimal("0"))
+            if available_lot_qty > 0:
+                lot_remaining.append({
+                    "lot_id": allocation["lot_id"], "available": available_lot_qty,
+                    "original_qty": allocated_qty, "original_cost": Decimal(allocation["cost_total"]),
+                })
+        to_allocate = qty
+        lot_allocations = []
+        for lot in lot_remaining:
+            if to_allocate <= 0:
+                break
+            take = min(to_allocate, lot["available"])
+            lot_cost = (lot["original_cost"] * take / lot["original_qty"]).quantize(CENT, rounding=ROUND_HALF_UP)
+            lot_allocations.append({"lot_id": lot["lot_id"], "quantity": take, "cost_total": lot_cost})
+            to_allocate -= take
+        if to_allocate > 0:
+            raise ValueError("تعذر تحديد التشغيلة الأصلية للكمية المرتجعة. راجع تتبع مخزون الفاتورة.")
+        if lot_allocations:
+            lot_allocations[-1]["cost_total"] += line_cost - sum(
+                (part["cost_total"] for part in lot_allocations), Decimal("0")
+            )
         normalized.append({
             "original": original, "quantity": qty, "unit_price": unit_price,
             "line_total": line_value, "tax_rate": tax_rate,
             "tax_treatment": treatment, "tax_amount": line_tax,
-            "cost_total": line_cost,
+            "cost_total": line_cost, "lot_allocations": lot_allocations,
         })
 
     subtotal = subtotal.quantize(CENT, rounding=ROUND_HALF_UP)
@@ -440,36 +497,47 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         original = item["original"]
         movement_id = None
         product_id = original["product_id"]
+        credit_line_cursor = conn.execute(
+            """INSERT INTO sales_credit_note_lines(credit_note_id,invoice_line_id,product_id,
+               description,quantity,unit_price,line_total,tax_rate,tax_treatment,tax_amount,
+               cost_total,stock_movement_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)""",
+            (credit_id, original["id"], product_id, original["description"], str(item["quantity"]),
+             str(item["unit_price"]), str(item["line_total"]), str(item["tax_rate"]),
+             item["tax_treatment"], str(item["tax_amount"]), str(item["cost_total"])),
+        )
+        credit_line_id = credit_line_cursor.lastrowid
         if product_id:
             warehouse_id = invoice["warehouse_id"]
             if not warehouse_id:
                 raise ValueError("فاتورة الصنف المخزني لا تحتوي على مخزن صرف صالح.")
-            stock_index += 1
-            movement_no = credit_no + "-" + str(stock_index)
-            unit_cost = item["cost_total"] / item["quantity"]
-            movement = conn.execute(
-                """INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,
-                   quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,issue_purpose)
-                   VALUES(?,'receipt',?,?,?,?,?,?,?,?, 'pending','sales_return')""",
-                (movement_no, product_id, warehouse_id, str(item["quantity"]), str(unit_cost),
-                 str(item["cost_total"]), credit_date,
-                 "مرتجع مبيعات بموجب " + credit_no, created_by),
-            )
-            movement_id = movement.lastrowid
-            conn.execute(
-                """INSERT INTO stock_valuation_layers(product_id,warehouse_id,source_movement_id,
-                   qty_in,qty_remaining,unit_cost,value_remaining) VALUES(?,?,?,?,?,?,?)""",
-                (product_id, warehouse_id, movement_id, str(item["quantity"]),
-                 str(item["quantity"]), str(unit_cost), str(item["cost_total"])),
-            )
-        conn.execute(
-            """INSERT INTO sales_credit_note_lines(credit_note_id,invoice_line_id,product_id,
-               description,quantity,unit_price,line_total,tax_rate,tax_treatment,tax_amount,
-               cost_total,stock_movement_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (credit_id, original["id"], product_id, original["description"], str(item["quantity"]),
-             str(item["unit_price"]), str(item["line_total"]), str(item["tax_rate"]),
-             item["tax_treatment"], str(item["tax_amount"]), str(item["cost_total"]), movement_id),
-        )
+            for lot_part in item["lot_allocations"]:
+                stock_index += 1
+                movement_no = credit_no + "-" + str(stock_index)
+                part_qty, part_cost = lot_part["quantity"], lot_part["cost_total"]
+                unit_cost = part_cost / part_qty
+                movement = conn.execute(
+                    """INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,
+                       lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,issue_purpose)
+                       VALUES(?,'receipt',?,?,?,?,?,?,?,?,?, 'pending','sales_return')""",
+                    (movement_no, product_id, warehouse_id, lot_part["lot_id"], str(part_qty), str(unit_cost),
+                     str(part_cost), credit_date, "مرتجع مبيعات بموجب " + credit_no, created_by),
+                )
+                movement_id = movement.lastrowid
+                conn.execute(
+                    """INSERT INTO stock_valuation_layers(product_id,warehouse_id,lot_id,source_movement_id,
+                       qty_in,qty_remaining,unit_cost,value_remaining) VALUES(?,?,?,?,?,?,?,?)""",
+                    (product_id, warehouse_id, lot_part["lot_id"], movement_id, str(part_qty),
+                     str(part_qty), str(unit_cost), str(part_cost)),
+                )
+                conn.execute(
+                    """INSERT INTO sales_credit_note_line_lots(credit_note_line_id,lot_id,quantity,stock_movement_id)
+                       VALUES(?,?,?,?)""",
+                    (credit_line_id, lot_part["lot_id"], str(part_qty), movement_id),
+                )
+                if not conn.execute("SELECT stock_movement_id FROM sales_credit_note_lines WHERE id=?",
+                                    (credit_line_id,)).fetchone()["stock_movement_id"]:
+                    conn.execute("UPDATE sales_credit_note_lines SET stock_movement_id=? WHERE id=?",
+                                 (movement_id, credit_line_id))
 
     if cost_total > 0:
         cogs_journal_id = post_journal(
