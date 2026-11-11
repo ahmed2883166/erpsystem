@@ -72,11 +72,11 @@ def budget_index():
             if not name or len(name) > 120 or end < start:
                 raise ValueError("أدخل اسمًا وفترة موازنة صحيحة.")
             ids = request.form.getlist("account_id")
-            amounts = request.form.getlist("amount")
-            if not ids or len(ids) != len(amounts):
+            if not ids:
                 raise ValueError("أضف حسابًا واحدًا على الأقل وحدد موازنته.")
             lines = []
-            for account_id, raw_amount in zip(ids, amounts):
+            for account_id in ids:
+                raw_amount = request.form.get("amount_" + str(account_id), "0")
                 account = conn.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (int(account_id),)).fetchone()
                 if not account or account["is_group"] or not account["active"] or account["account_type"] not in {"revenue","expense"}:
                     raise ValueError("الموازنة تقبل حسابات الإيرادات والمصروفات التفصيلية النشطة فقط.")
@@ -171,11 +171,9 @@ def cash_flow():
             for entry in entries:
                 net=Decimal(str(entry["cash_net"] or "0"))
                 if not net: continue
-                counterpart=conn.execute(f"""SELECT a.account_type,a.code,a.name_ar,
-                    COALESCE(DECIMAL_SUM(ABS(CAST(jl.debit AS NUMERIC))+ABS(CAST(jl.credit AS NUMERIC))),0) weight
+                counterpart=conn.execute(f"""SELECT a.account_type,a.code,a.name_ar,jl.debit,jl.credit
                     FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
-                    WHERE jl.entry_id=? AND jl.account_id NOT IN ({marks})
-                    GROUP BY a.id""",(entry["id"],*ids)).fetchall()
+                    WHERE jl.entry_id=? AND jl.account_id NOT IN ({marks})""",(entry["id"],*ids)).fetchall()
                 weights={"operating":Decimal("0"),"investing":Decimal("0"),"financing":Decimal("0")}
                 for item in counterpart:
                     code=item["code"]; name=item["name_ar"]
@@ -185,7 +183,7 @@ def cash_flow():
                         category="financing"
                     else:
                         category="operating"
-                    weights[category]+=Decimal(str(item["weight"] or "0"))
+                    weights[category]+=abs(Decimal(str(item["debit"] or "0")))+abs(Decimal(str(item["credit"] or "0")))
                 total_weight=sum(weights.values(),Decimal("0"))
                 if not total_weight: weights["operating"]=Decimal("1"); total_weight=Decimal("1")
                 remaining=abs(net)
