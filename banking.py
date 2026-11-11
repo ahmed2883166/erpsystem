@@ -1,3 +1,4 @@
+from database import connect_database
 """Bank register and reconciliation support for NEXUS ERP."""
 import sqlite3
 from datetime import date, datetime
@@ -11,12 +12,7 @@ bank_bp = Blueprint("bank", __name__, url_prefix="/bank")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
 
 def db():
-    c = sqlite3.connect(DB_PATH, timeout=20, isolation_level=None)
-    c.row_factory = sqlite3.Row
-    c.execute("PRAGMA foreign_keys=ON")
-    c.execute("PRAGMA busy_timeout=20000")
-    register_decimal_aggregates(c)
-    return c
+    return connect_database(DB_PATH, isolation_level=None)
 
 def init_bank_schema():
     c = db()
