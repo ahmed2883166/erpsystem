@@ -967,7 +967,7 @@ def new_invoice():
                 flash("تنبيه ائتماني: تجاوز العميل الحد المسموح. الحد: " + str(result["credit_limit"]) +
                       " | المديونية السابقة: " + str(result["current_exposure"]) +
                       " | المديونية بعد الفاتورة: " + str(result["new_exposure"]), "warning")
-            return redirect(url_for("sales.index"))
+            return redirect(url_for("sales.invoice_print", invoice_id=result["invoice_id"]))
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
             c.rollback()
             flash(str(exc), "error")
@@ -988,6 +988,25 @@ def new_invoice():
     return render_template("sales_invoice_new.html", customers=customers, products=products,
                            warehouses=warehouses, settings=settings, today=date.today().isoformat())
 
+
+
+@sales_bp.route("/invoices/<int:invoice_id>/print")
+@require("sales.view")
+def invoice_print(invoice_id):
+    c = db()
+    invoice = c.execute("""SELECT i.*,cu.code customer_code,cu.name customer_name,
+        cu.tax_number customer_tax_number FROM sales_invoices i
+        JOIN customers cu ON cu.id=i.customer_id WHERE i.id=?""", (invoice_id,)).fetchone()
+    if not invoice:
+        c.close()
+        abort(404)
+    lines = c.execute("""SELECT l.*,p.sku,p.name_ar product_name
+        FROM sales_invoice_lines l LEFT JOIN stock_products p ON p.id=l.product_id
+        WHERE l.invoice_id=? ORDER BY l.id""", (invoice_id,)).fetchall()
+    settings = {r["setting_key"]:r["setting_value"] for r in c.execute(
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('company_name','base_currency','tax_number')")}
+    c.close()
+    return render_template("sales_invoice_print.html", invoice=invoice, lines=lines, settings=settings)
 
 @sales_bp.route("/credit-notes/new", methods=["GET", "POST"])
 @require("sales.manage")
