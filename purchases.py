@@ -1,4 +1,4 @@
-from database import connect_database
+from database import connect_database, fetch_page
 """NEXUS ERP purchasing v1: suppliers, purchase orders, GRNI receipts, bills and payments.
 All posting is transactional and idempotent. Tax is posted only when an explicit input-tax account exists.
 """
@@ -206,26 +206,44 @@ def activity_inventory_code(c):
 def index():
     c=db()
     suppliers=c.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
-    orders=c.execute("""SELECT p.*,s.name supplier_name FROM purchase_orders p JOIN suppliers s ON s.id=p.supplier_id ORDER BY p.id DESC LIMIT 20""").fetchall()
-    receipts=c.execute("""SELECT r.*,s.name supplier_name FROM goods_receipts r JOIN suppliers s ON s.id=r.supplier_id ORDER BY r.id DESC LIMIT 20""").fetchall()
-    bill_page = max(1, request.args.get("bill_page", 1, type=int) or 1)
-    bill_per_page = request.args.get("bill_per_page", 50, type=int) or 50
-    if bill_per_page not in (50, 100):
-        bill_per_page = 50
-    bill_total = c.execute("SELECT COUNT(*) FROM supplier_bills").fetchone()[0]
-    bill_pages = max(1, (bill_total + bill_per_page - 1) // bill_per_page)
-    bill_page = min(bill_page, bill_pages)
-    bills=c.execute("""SELECT b.*,s.name supplier_name FROM supplier_bills b
-        JOIN suppliers s ON s.id=b.supplier_id ORDER BY b.id DESC LIMIT ? OFFSET ?""",
-        (bill_per_page, (bill_page - 1) * bill_per_page)).fetchall()
-    payments=c.execute("""SELECT p.*,s.name supplier_name FROM supplier_payments p JOIN suppliers s ON s.id=p.supplier_id ORDER BY p.id DESC LIMIT 20""").fetchall()
-    credit_notes=c.execute("""SELECT n.*,s.name supplier_name,b.bill_no FROM supplier_credit_notes n
-      JOIN suppliers s ON s.id=n.supplier_id JOIN supplier_bills b ON b.id=n.bill_id
-      ORDER BY n.id DESC LIMIT 20""").fetchall()
+    orders_page = fetch_page(c,
+        """SELECT p.*,s.name supplier_name FROM purchase_orders p
+           JOIN suppliers s ON s.id=p.supplier_id ORDER BY p.id DESC""",
+        "SELECT COUNT(*) FROM purchase_orders",
+        page=request.args.get("orders_page",1,type=int),
+        per_page=request.args.get("orders_per_page",50,type=int))
+    receipts_page = fetch_page(c,
+        """SELECT r.*,s.name supplier_name FROM goods_receipts r
+           JOIN suppliers s ON s.id=r.supplier_id ORDER BY r.id DESC""",
+        "SELECT COUNT(*) FROM goods_receipts",
+        page=request.args.get("receipts_page",1,type=int),
+        per_page=request.args.get("receipts_per_page",50,type=int))
+    bill_page = fetch_page(c,
+        """SELECT b.*,s.name supplier_name FROM supplier_bills b
+           JOIN suppliers s ON s.id=b.supplier_id ORDER BY b.id DESC""",
+        "SELECT COUNT(*) FROM supplier_bills",
+        page=request.args.get("bill_page",1,type=int),
+        per_page=request.args.get("bill_per_page",50,type=int))
+    payments_page = fetch_page(c,
+        """SELECT p.*,s.name supplier_name FROM supplier_payments p
+           JOIN suppliers s ON s.id=p.supplier_id ORDER BY p.id DESC""",
+        "SELECT COUNT(*) FROM supplier_payments",
+        page=request.args.get("payments_page",1,type=int),
+        per_page=request.args.get("payments_per_page",50,type=int))
+    credit_notes_page = fetch_page(c,
+        """SELECT n.*,s.name supplier_name,b.bill_no FROM supplier_credit_notes n
+           JOIN suppliers s ON s.id=n.supplier_id JOIN supplier_bills b ON b.id=n.bill_id
+           ORDER BY n.id DESC""",
+        "SELECT COUNT(*) FROM supplier_credit_notes",
+        page=request.args.get("credit_notes_page",1,type=int),
+        per_page=request.args.get("credit_notes_per_page",50,type=int))
+    orders, receipts, bills = orders_page["rows"], receipts_page["rows"], bill_page["rows"]
+    payments, credit_notes = payments_page["rows"], credit_notes_page["rows"]
     c.close()
     return render_template("purchases.html",suppliers=suppliers,orders=orders,receipts=receipts,bills=bills,
-        payments=payments,credit_notes=credit_notes,bill_page=bill_page,bill_pages=bill_pages,
-        bill_per_page=bill_per_page,bill_total=bill_total,today=date.today().isoformat())
+        payments=payments,credit_notes=credit_notes,orders_page=orders_page,receipts_page=receipts_page,
+        bill_page=bill_page,payments_page=payments_page,credit_notes_page=credit_notes_page,
+        today=date.today().isoformat())
 
 @purchase_bp.route("/integrity")
 @require("purchases.view")
