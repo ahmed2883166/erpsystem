@@ -7,7 +7,7 @@ import os
 import shutil
 import sqlite3
 import zipfile
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from pathlib import Path
@@ -26,6 +26,7 @@ from tax_center import tax_bp, initialize_tax_schema
 from workforce import workforce_bp, initialize_workforce_schema
 from currency_center import currency_bp, initialize_currency_schema
 from party_reports import party_bp
+from management_dashboard import build_management_snapshot
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from security_controls import login_attempts_exceeded, linked_operational_source
@@ -704,6 +705,34 @@ def journal():
     entries = connection.execute("SELECT * FROM journal_entries ORDER BY entry_date DESC, id DESC LIMIT 20").fetchall()
     connection.close()
     return render_template("journal.html", accounts=accounts_list, entries=entries, today=datetime.now().date().isoformat())
+
+
+
+@app.route("/dashboard/management")
+@requires("reports.view")
+def management_dashboard():
+    today = date.today()
+    default_start, default_end = today.replace(day=1), today
+    raw_from = request.args.get("date_from", "").strip()
+    raw_to = request.args.get("date_to", "").strip()
+    try:
+        start = date.fromisoformat(raw_from) if raw_from else default_start
+        end = date.fromisoformat(raw_to) if raw_to else default_end
+        if end < start:
+            raise ValueError("تاريخ النهاية يجب ألا يسبق تاريخ البداية.")
+    except ValueError:
+        flash("الفترة غير صحيحة، تم عرض الشهر الحالي.", "error")
+        start, end = default_start, default_end
+
+    connection = db()
+    try:
+        snapshot = build_management_snapshot(connection, start, end)
+    finally:
+        connection.close()
+    return render_template(
+        "management_dashboard.html", s=snapshot,
+        date_from=start.isoformat(), date_to=end.isoformat(),
+    )
 
 
 @app.route("/reports/trial-balance")
