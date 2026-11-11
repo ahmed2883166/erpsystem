@@ -206,7 +206,7 @@ def register_report_exports(app, db_path, permissions):
 
         try:
             from openpyxl import Workbook
-            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.styles import Font, PatternFill, Alignment
             from openpyxl.utils import get_column_letter
         except ImportError:
             return Response("مكتبة openpyxl غير مثبتة. نفّذ: python -m pip install -r requirements.txt",
