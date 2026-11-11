@@ -1,10 +1,10 @@
 {% extends "base.html" %}{% block title %}توزيع الأصناف | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>توزيع الأصناف داخل المخازن</h2><p>حدد الموقع الافتراضي لكل صنف داخل كل مخزن، ويمكن تغييره أثناء استلام المشتريات.</p></header>
+<header><h2>توزيع الأصناف داخل المخازن</h2><p>حدد الموقع الافتراضي لكل صنف داخل كل مخزن. الأرصدة القديمة غير المرتبطة بموقع ستُنقل إلى الموقع الذي تختاره هنا، ويمكن توزيعها لاحقًا بحركة نقل داخل المخزن.</p></header>
 <div class="actions stock-shortcuts"><a class="button-link" href="{{ url_for('stock.locations') }}">إدارة الأدوار والمواقع</a><a class="button-link" href="{{ url_for('stock.warehouses') }}">المخازن</a><a class="button-link" href="{{ url_for('stock.products') }}">الأصناف</a></div>
 <div class="grid"><section class="panel"><h3>تحديد موقع افتراضي لصنف</h3><form method="post">
 <label>الصنف<select name="product_id" required>{% for p in products %}<option value="{{p.id}}">{{p.sku}} - {{p.name_ar}}</option>{% endfor %}</select></label>
 <label>المخزن<select name="warehouse_id" id="mappingWarehouse" required>{% for w in warehouses %}<option value="{{w.id}}">{{w.code}} - {{w.name_ar}}</option>{% endfor %}</select></label>
-<label>الموقع<select name="location_id" id="mappingLocation" required>{% for l in locations %}<option value="{{l.id}}" data-warehouse="{{l.warehouse_id}}">{{l.code}} - {{l.name_ar}} ({{l.location_type}})</option>{% endfor %}</select></label>
+<label>الموقع<select name="location_id" id="mappingLocation" required>{% for l in locations %}<option value="{{l.id}}" data-warehouse="{{l.warehouse_id}}">{{l.code}} - {{l.name_ar}} ({{{'floor':'دور','zone':'منطقة','rack':'رف','bin':'خانة'}.get(l.location_type,l.location_type)}})</option>{% endfor %}</select></label>
 <button type="submit">حفظ التوزيع</button></form></section>
 <section class="panel"><h3>خريطة توزيع الأصناف</h3><table><tr><th>الصنف</th><th>المخزن</th><th>الموقع الافتراضي</th></tr>{% for x in rows %}<tr><td>{{x.sku}} - {{x.product_name}}</td><td>{{x.warehouse_code}}</td><td>{{x.location_code}} - {{x.location_name}}</td></tr>{% else %}<tr><td colspan="3">لم يتم تحديد مواقع افتراضية للأصناف.</td></tr>{% endfor %}</table></section></div>
 <script>const wh=document.getElementById('mappingWarehouse'),loc=document.getElementById('mappingLocation');function filterLoc(){for(const o of loc.options){o.hidden=o.dataset.warehouse!==wh.value;if(o.hidden&&o.selected)loc.value='';}}wh.addEventListener('change',filterLoc);filterLoc();</script>{% endblock %}
