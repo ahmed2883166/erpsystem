@@ -9,7 +9,7 @@
 <p class="muted">عند تفعيل الخيار، يجب أن تكون القواعد والشرائح الضريبية والتأمينية مكتملة ومراجعة. عند عدم تفعيله تظل القيم اليدوية هي المعتمدة.</p>
 <div style="overflow-x:auto"><table><tr><th>الموظف</th><th>الراتب الأساسي</th><th>البدلات</th><th>ساعات إضافي</th><th>قيمة الإضافي</th><th>ساعات غياب</th><th>خصم الغياب</th><th>خصومات أخرى</th><th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th></tr>
 {% for e in employees %}<tr><td>{{e.employee_code}} - {{e.full_name}}<br><small>مرجع ملف الموظف: {{e.basic_salary}}</small></td>
-<td><input type="number" min="0.01" step="0.01" name="basic_{{e.id}}" value="{{e.basic_salary if e.basic_salary and e.basic_salary|float > 0 else ''}}" required></td>
+<td><input type="number" min="0.01" step="0.01" name="basic_{{e.id}}" value="" required></td>
 <td><input type="number" min="0" step="0.01" name="allowances_{{e.id}}" value="0" required></td>
 <td><input type="number" min="0" step="0.01" name="overtime_hours_{{e.id}}" value="0"></td>
 <td><input type="number" min="0" step="0.01" name="overtime_amount_{{e.id}}" value="0" required></td>
