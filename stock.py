@@ -400,8 +400,23 @@ def index():
       COALESCE(SUM(CAST(l.qty_remaining AS REAL)),0) qty
       FROM stock_products p LEFT JOIN stock_valuation_layers l ON l.product_id=p.id
       WHERE p.active=1 GROUP BY p.id ORDER BY p.name_ar LIMIT 10""").fetchall()
+    today=date.today()
+    reorder_alert_count=0
+    for product in c.execute("SELECT id,reorder_point FROM stock_products WHERE active=1").fetchall():
+        point=Decimal(str(product["reorder_point"] or "0"))
+        if point>0:
+            qty=sum((Decimal(str(x["qty_remaining"] or "0")) for x in c.execute(
+                "SELECT qty_remaining FROM stock_valuation_layers WHERE product_id=?",(product["id"],)).fetchall()),Decimal("0"))
+            if qty<=point: reorder_alert_count+=1
+    expiry_alert_count=0
+    for lot in c.execute("""SELECT id,expiry_date FROM stock_lots WHERE expiry_date IS NOT NULL""").fetchall():
+        if (date.fromisoformat(lot["expiry_date"])-today).days<=30:
+            qty=sum((Decimal(str(x["qty_remaining"] or "0")) for x in c.execute(
+                "SELECT qty_remaining FROM stock_valuation_layers WHERE lot_id=?",(lot["id"],)).fetchall()),Decimal("0"))
+            if qty>0: expiry_alert_count+=1
     c.close()
-    return render_template("stock_dashboard.html",products=products,warehouses=warehouses,rows=rows)
+    return render_template("stock_dashboard.html",products=products,warehouses=warehouses,rows=rows,
+        reorder_alert_count=reorder_alert_count,expiry_alert_count=expiry_alert_count)
 
 
 @stock_bp.route("/products", methods=["GET","POST"])
