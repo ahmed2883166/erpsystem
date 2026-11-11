@@ -917,14 +917,17 @@ def new_invoice():
                 if pid or desc.strip():
                     selected_price = price
                     if pid:
-                        rule = c.execute("""SELECT unit_price FROM customer_price_rules
+                        quantity = Decimal(str(qty))
+                        price_rules = c.execute("""SELECT unit_price,min_qty FROM customer_price_rules
                           WHERE customer_id=? AND product_id=? AND active=1 AND valid_from<=?
-                            AND (valid_to IS NULL OR valid_to>=?) AND CAST(min_qty AS REAL)<=CAST(? AS REAL)
-                          ORDER BY valid_from DESC,id DESC LIMIT 1""",
+                            AND (valid_to IS NULL OR valid_to>=?)
+                          ORDER BY valid_from DESC,id DESC""",
                           (int(request.form["customer_id"]), int(pid), request.form["invoice_date"],
-                           request.form["invoice_date"], qty)).fetchone()
-                        if rule:
-                            selected_price = rule["unit_price"]
+                           request.form["invoice_date"])).fetchall()
+                        for rule in price_rules:
+                            if quantity >= Decimal(str(rule["min_qty"] or "0")):
+                                selected_price = rule["unit_price"]
+                                break
                     items.append({"product_id": int(pid) if pid else None, "quantity": qty,
                                   "unit_price": selected_price, "description": desc, "tax_rate": line_rate, "tax_treatment": treatment})
             c.execute("BEGIN IMMEDIATE")
