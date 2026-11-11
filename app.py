@@ -32,6 +32,7 @@ from analytic_dimensions import initialize_analytic_dimensions_schema, active_di
 from financial_planning import planning_bp, initialize_planning_schema
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
+from database import connect_database, enable_wal
 
 # Development/demo builds run locally without a licensing server. Set NEXUS_DEMO_MODE=0
 # explicitly in a commercial deployment to enforce the signed remote licensing flow.
@@ -168,11 +169,7 @@ register_report_exports(app, DB_PATH, PERMISSIONS)
 
 
 def db():
-    connection = sqlite3.connect(DB_PATH)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    register_decimal_aggregates(connection)
-    return connection
+    return connect_database(DB_PATH, isolation_level="")
 
 
 def password_hash(password, salt=None, iterations=310000):
@@ -212,6 +209,7 @@ def password_hash_needs_upgrade(stored_hash):
 def initialize_database():
     DATA_DIR.mkdir(exist_ok=True)
     BACKUP_DIR.mkdir(exist_ok=True)
+    enable_wal(DB_PATH)
     connection = db()
     connection.executescript("""
         CREATE TABLE IF NOT EXISTS users (
@@ -311,6 +309,9 @@ def initialize_database():
         connection.execute("DROP TABLE journal_lines")
         connection.execute("ALTER TABLE journal_lines_decimal_new RENAME TO journal_lines")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_entry ON journal_lines(entry_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry ON journal_lines(account_id,entry_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_account ON journal_lines(entry_id,account_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_entry_date ON journal_entries(entry_date,id)")
     connection.commit()
     connection.close()
     initialize_stock_schema()
@@ -1599,4 +1600,5 @@ if os.environ.get("NEXUS_SKIP_DB_INIT", "0").strip() != "1":
 
 if __name__ == "__main__":
     from waitress import serve
-    serve(app, host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 5000)))
+    serve(app, host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 5000)),
+          threads=max(2, int(os.environ.get("NEXUS_THREADS", "8"))))
