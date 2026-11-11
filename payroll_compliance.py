@@ -452,7 +452,11 @@ def payments():
             ).fetchone()
             if not liability or liability["account_type"] != "liability" or liability["is_group"] or not liability["active"]:
                 raise ValueError("اختر حساب التزام تفصيليًا ونشطًا للضريبة أو التأمينات.")
-            if not cash or cash["account_type"] != "asset" or cash["is_group"] or not cash["active"]:
+            cash_name = (cash["name_ar"] or "").lower() if cash else ""
+            cash_codes = {"1000","1110","1120","1121","1122"}
+            cash_words = ("صندوق","بنك","بنوك","مصرف","نقد","cash","bank")
+            if (not cash or cash["account_type"] != "asset" or cash["is_group"] or not cash["active"]
+                or (cash["code"] not in cash_codes and not any(word in cash_name for word in cash_words))):
                 raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
             conn.execute("BEGIN IMMEDIATE")
             obligation = _payroll_obligations(conn, period)[payment_type]
@@ -461,6 +465,8 @@ def payments():
             stamp = date.today().strftime("%Y%m%d") + "-" + str(datetime_now_stamp())
             prefix = "PAYTAX-" if payment_type == "salary_tax" else "PAYINS-"
             reference = (request.form.get("reference", "").strip() or prefix + period + "-" + stamp)
+            if len(reference) > 100:
+                raise ValueError("مرجع السداد لا يجب أن يتجاوز 100 حرف.")
             if conn.execute("SELECT 1 FROM payroll_statutory_payments WHERE reference=?", (reference,)).fetchone():
                 raise ValueError("مرجع السداد مستخدم بالفعل.")
             description = "سداد ضريبة مرتبات عن " + period if payment_type == "salary_tax" else "سداد تأمينات اجتماعية عن " + period
