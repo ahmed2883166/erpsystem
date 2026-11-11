@@ -180,3 +180,10 @@ nav{display:flex;flex-direction:column;gap:10px}
 .nav-links a:hover{transform:none;background:var(--nav-hover);border-color:#66809e}
 @media(max-width:850px){nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}.nav-group{min-width:0}}
 @media(max-width:560px){nav{grid-template-columns:1fr}}
+
+
+/* Persistent cross-screen search */
+.global-search{display:flex;align-items:center;gap:10px;margin:0 0 18px;padding:10px 12px;border:1px solid var(--border,#d5d9df);border-radius:12px;background:var(--panel,#fff)}
+.global-search input{flex:1;min-width:0;margin:0}
+.global-search button{white-space:nowrap}
+@media(max-width:640px){.global-search{gap:6px;padding:8px}.global-search button{padding-inline:10px}}
