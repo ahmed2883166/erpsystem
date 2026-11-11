@@ -91,9 +91,9 @@ app.register_blueprint(party_bp)
 # SECRET_KEY and session/CSRF settings are initialized above.
 
 PERMISSIONS = {
-    "admin": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view"},
-    "accountant": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view"},
-    "viewer": {"accounts.view", "currency.view", "reports.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view", "bank.view", "tax.view", "workforce.view", "party.view"},
+    "admin": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view"},
+    "accountant": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view"},
+    "viewer": {"accounts.view", "currency.view", "reports.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view", "bank.view", "tax.view", "workforce.view", "party.view", "budget.view", "cashflow.view"},
 }
 PERMISSION_LABELS = {
     "accounts.view": "عرض شجرة الحسابات",
@@ -121,6 +121,9 @@ PERMISSION_LABELS = {
     "workforce.manage": "إدارة الموظفين والرواتب",
     "currency.view": "عرض أسعار العملات وفروق الصرف",
     "currency.manage": "إدارة العملات وفروق الصرف",
+    "budget.view": "عرض الموازنات ومقارنة الفعلي",
+    "budget.manage": "إنشاء وتعديل الموازنات",
+    "cashflow.view": "عرض قائمة التدفقات النقدية",
     "party.view": "عرض كشوف العملاء والموردين",
 }
 ALL_PERMISSIONS = tuple(PERMISSION_LABELS)
@@ -129,7 +132,7 @@ _PERMISSION_IMPLICATIONS = {
     "purchases.manage": "purchases.view", "sales.manage": "sales.view",
     "assets.manage": "assets.view", "quotes.manage": "quotes.view",
     "bank.manage": "bank.view", "tax.manage": "tax.view",
-    "workforce.manage": "workforce.view", "currency.manage": "currency.view",
+    "workforce.manage": "workforce.view", "currency.manage": "currency.view", "budget.manage": "budget.view",
 }
 
 def normalize_user_permissions(values):
@@ -559,6 +562,7 @@ def dashboard():
         return redirect(url_for("login"))
     if "reports.view" not in set(session.get("permissions", PERMISSIONS.get(session.get("role"), set()))):
         return render_template("limited_home.html")
+    return redirect(url_for("management_dashboard"))
     connection = db()
     totals = connection.execute("SELECT COUNT(*) accounts, (SELECT COUNT(*) FROM journal_entries) entries, (SELECT COUNT(*) FROM users WHERE active=1) users FROM accounts").fetchone()
     balance_row = connection.execute("SELECT COALESCE(DECIMAL_SUM(debit),0) debit, COALESCE(DECIMAL_SUM(credit),0) credit FROM journal_lines").fetchone()
@@ -1112,7 +1116,7 @@ def users():
             flash(str(exc), "error")
     rows = connection.execute("SELECT id,username,full_name,role,active,created_at,permissions_json FROM users ORDER BY id").fetchall()
     connection.close()
-    return render_template("users.html", users=rows, role_permissions=PERMISSIONS, all_permissions=ALL_PERMISSIONS, permission_labels=PERMISSION_LABELS)
+    return render_template("users.html", users=rows, role_permissions={role: sorted(values) for role, values in PERMISSIONS.items()}, default_permissions=sorted(PERMISSIONS.get("admin", set())), all_permissions=ALL_PERMISSIONS, permission_labels=PERMISSION_LABELS)
 
 
 @app.route("/users/<int:user_id>/edit",methods=["GET","POST"])
