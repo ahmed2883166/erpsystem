@@ -1,3 +1,4 @@
+from database import connect_database
 """NEXUS ERP fixed assets register and IAS 16 depreciation posting."""
 import sqlite3
 import calendar
@@ -13,12 +14,7 @@ DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
 M = Decimal("0.01")
 
 def db():
-    c=sqlite3.connect(DB_PATH, timeout=20, isolation_level=None)
-    c.row_factory=sqlite3.Row
-    c.execute("PRAGMA foreign_keys=ON")
-    c.execute("PRAGMA busy_timeout=20000")
-    register_decimal_aggregates(c)
-    return c
+    return connect_database(DB_PATH, isolation_level=None)
 
 def require(write=False):
     def deco(fn):
