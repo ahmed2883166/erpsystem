@@ -241,6 +241,10 @@ def seed_egypt_2026(conn):
     if not rule:
         raise ValueError("تعذر إنشاء مجموعة قواعد مصر 2026.")
     rule_id = rule["id"]
+    conn.execute("""UPDATE payroll_rule_sets SET personal_exemption_annual='20000',
+        taxable_rounding_unit='10',insurance_floor='2700',insurance_ceiling='16700',
+        employee_insurance_rate='11',employer_insurance_rate='18.75',enabled=1
+        WHERE id=?""", (rule_id,))
     conn.execute("DELETE FROM payroll_tax_brackets WHERE rule_set_id=?", (rule_id,))
     conn.execute("DELETE FROM payroll_tax_tier_brackets WHERE rule_set_id=?", (rule_id,))
     tiers = [
