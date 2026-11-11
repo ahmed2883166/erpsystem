@@ -75,6 +75,41 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(s["inventory"],Decimal("380"))
         self.assertEqual(s["receivables"],Decimal("0"))
 
+    def test_industrial_chart_roles_separate_customers_and_all_inventory_classes(self):
+        self.conn.execute("INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) VALUES"
+                          "(10,'1140','إنتاج تحت التشغيل','asset',0,1),"
+                          "(11,'1160','قطع الغيار','asset',0,1)")
+        self.conn.execute("UPDATE company_settings SET setting_value='industrial' WHERE setting_key='activity'")
+        initialize_management_dashboard_schema(self.conn, 'industrial')
+        self.conn.execute("INSERT INTO journal_entries VALUES(30,'2026-11-15','posted')")
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(30,?,?,?)",
+            [(2,"25","0"),(10,"40","0"),(11,"60","0")])
+        snapshot=build_management_snapshot(self.conn,date(2026,11,1),date(2026,11,30))
+        self.assertEqual(snapshot["cash"],Decimal("1350"))
+        self.assertEqual(snapshot["receivables"],Decimal("25"))
+        self.assertEqual(snapshot["inventory"],Decimal("480"))
+        self.assertEqual(snapshot["account_roles"]["inventory"],
+                         {3,4,10,11})
+
+    def test_medical_chart_roles_include_insurance_receivables_and_lab_stock(self):
+        self.conn.execute("INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) VALUES"
+                          "(10,'1140','مطالبات شركات التأمين','asset',0,1),"
+                          "(11,'1160','مخزون المعامل','asset',0,1),"
+                          "(12,'2100','الموردون','liability',0,1)")
+        self.conn.execute("UPDATE company_settings SET setting_value='medical' WHERE setting_key='activity'")
+        initialize_management_dashboard_schema(self.conn, 'medical')
+        self.conn.execute("INSERT INTO journal_entries VALUES(31,'2026-11-15','posted')")
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(31,?,?,?)",
+            [(10,"40","0"),(11,"60","0"),(12,"0","75")])
+        snapshot=build_management_snapshot(self.conn,date(2026,11,1),date(2026,11,30))
+        self.assertEqual(snapshot["cash"],Decimal("1350"))
+        self.assertEqual(snapshot["receivables"],Decimal("240"))
+        self.assertEqual(snapshot["inventory"],Decimal("240"))
+        self.assertEqual(snapshot["payables"],Decimal("75"))
+        self.assertEqual(snapshot["account_roles"]["inventory"],{4,11})
+
     def test_custom_account_mapping_works_without_standard_account_codes(self):
         self.conn.execute("INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) VALUES(10,'9999','خزينة فرع','asset',0,1)")
         self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(1,10,'77.25','0')")
