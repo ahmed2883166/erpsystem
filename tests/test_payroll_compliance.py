@@ -58,6 +58,15 @@ class PayrollComplianceTests(unittest.TestCase):
         self.add_rule()
         self.assertIsNone(calculate_payroll_deductions(self.conn, self.employee, 10000, "2025-12"))
 
+
+    def test_employee_not_enrolled_has_no_social_insurance_deduction(self):
+        self.add_rule()
+        self.employee["insurance_enabled"] = 0
+        result = calculate_payroll_deductions(self.conn, self.employee, 10000, "2026-11")
+        self.assertEqual(result["employee_insurance"], Decimal("0.00"))
+        self.assertEqual(result["employer_insurance"], Decimal("0.00"))
+        self.assertEqual(result["taxable_annual"], Decimal("96000.00"))
+
     def test_enabled_rule_without_tax_brackets_is_blocked(self):
         self.add_rule(with_brackets=False)
         with self.assertRaisesRegex(ValueError, "لا توجد شرائح"):
