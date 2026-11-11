@@ -287,4 +287,132 @@ def register_report_exports(app, db_path, permissions):
         return send_file(output, as_attachment=True, download_name=filename,
                          mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+    @bp.post("/reports/export/current-screen/excel")
+    def export_current_screen_excel():
+        if not session.get("user_id"):
+            abort(401)
+        allowed = {
+            "reports.view", "accounts.view", "accounts.manage", "stock.view", "stock.manage",
+            "purchases.view", "purchases.manage", "sales.view", "sales.manage",
+            "assets.view", "assets.manage", "bank.view", "bank.manage", "tax.view",
+            "workforce.view", "workforce.manage", "party.view", "budget.view",
+            "budget.manage", "cashflow.view", "quotes.view", "quotes.manage",
+        }
+        active_permissions = set(session.get("permissions", permissions.get(session.get("role"), set())))
+        if not active_permissions.intersection(allowed):
+            abort(403)
+        payload = request.get_json(silent=True) or {}
+        tables = payload.get("tables")
+        if not isinstance(tables, list) or not tables or len(tables) > 20:
+            abort(400)
+        cell_count = sum(
+            len(row) for table in tables if isinstance(table, dict)
+            for row in table.get("rows", []) if isinstance(row, list)
+        )
+        if cell_count > 20000:
+            abort(413)
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            return Response("مكتبة openpyxl غير مثبتة.", status=500, mimetype="text/plain; charset=utf-8")
+
+        conn = connect()
+        company_row = conn.execute(
+            "SELECT setting_value FROM company_settings WHERE setting_key='company_name'"
+        ).fetchone()
+        company_name = company_row["setting_value"] if company_row else "NEXUS ERP"
+        conn.close()
+
+        workbook = Workbook()
+        workbook.remove(workbook.active)
+        used_names = set()
+        for index, table in enumerate(tables, start=1):
+            if not isinstance(table, dict):
+                continue
+            rows = table.get("rows", [])
+            if not isinstance(rows, list) or not rows:
+                continue
+            raw_title = str(table.get("title") or ("تقرير " + str(index))).strip()
+            safe_title = "".join(ch for ch in raw_title if ch not in '[]:*?/\\')
+            safe_title = (safe_title or ("Report " + str(index)))[:31]
+            base_name, suffix = safe_title, 1
+            while safe_title in used_names:
+                suffix += 1
+                safe_title = (base_name[:27] + "_" + str(suffix))[:31]
+            used_names.add(safe_title)
+            sheet = workbook.create_sheet(safe_title)
+            sheet.sheet_view.rightToLeft = True
+            width = max((len(row) for row in rows if isinstance(row, list)), default=1)
+            width = max(1, min(width, 80))
+            sheet.append([company_name])
+            sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=width)
+            sheet["A1"].font = Font(name="Arial", bold=True, color="FFFFFF", size=12)
+            sheet["A1"].fill = PatternFill("solid", fgColor="17365D")
+            sheet["A1"].alignment = Alignment(horizontal="center")
+            sheet.append([raw_title])
+            sheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=width)
+            sheet["A2"].font = Font(name="Arial", bold=True, color="FFFFFF", size=15)
+            sheet["A2"].fill = PatternFill("solid", fgColor="17365D")
+            sheet["A2"].alignment = Alignment(horizontal="center")
+            sheet.append(["تاريخ إعداد التقرير: " + datetime.now().strftime("%Y-%m-%d %H:%M")])
+            sheet.merge_cells(start_row=3, start_column=1, end_row=3, end_column=width)
+            sheet["A3"].font = Font(name="Arial", italic=True, color="666666")
+            sheet.append(rows[0][:80] if isinstance(rows[0], list) else [str(rows[0])])
+            for cell in sheet[4]:
+                cell.font = Font(name="Arial", bold=True, color="FFFFFF")
+                cell.fill = PatternFill("solid", fgColor="167D8D")
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            for row in rows[1:]:
+                if not isinstance(row, list):
+                    continue
+                for value in row[:80]:
+                    text_value = "" if value is None else str(value).strip()
+                    numeric = text_value.replace(",", "")
+                    if re.fullmatch(r"-?\\d+(?:\\.\\d+)?", numeric):
+                        cell_value = Decimal(numeric)
+                    elif text_value.startswith(("=", "+", "@")):
+                        cell_value = "'" + text_value
+                    else:
+                        cell_value = text_value
+                    sheet.cell(row=sheet.max_row + 1, column=len(row[:80]) if False else 1).value = None
+                # Append a complete row after converting values.
+                converted = []
+                for value in row[:80]:
+                    text_value = "" if value is None else str(value).strip()
+                    numeric = text_value.replace(",", "")
+                    if re.fullmatch(r"-?\\d+(?:\\.\\d+)?", numeric):
+                        converted.append(Decimal(numeric))
+                    elif text_value.startswith(("=", "+", "@")):
+                        converted.append("'" + text_value)
+                    else:
+                        converted.append(text_value)
+                sheet.append(converted)
+            for row in sheet.iter_rows(min_row=5):
+                for cell in row:
+                    cell.font = Font(name="Arial", size=10)
+                    cell.alignment = Alignment(horizontal="right", vertical="center")
+                    if isinstance(cell.value, (int, float, Decimal)):
+                        cell.number_format = '#,##0.00;[Red]-#,##0.00'
+            for column in sheet.columns:
+                letter = get_column_letter(column[0].column)
+                max_width = max((len(str(cell.value or "")) for cell in column), default=10)
+                sheet.column_dimensions[letter].width = min(max(max_width + 3, 12), 42)
+            sheet.freeze_panes = "A5"
+            sheet.auto_filter.ref = f"A4:{get_column_letter(width)}{sheet.max_row}"
+            sheet.print_title_rows = "1:4"
+            sheet.oddFooter.center.text = "صفحة &[Page] من &[Pages]"
+            sheet.sheet_properties.pageSetUpPr.fitToPage = True
+            sheet.page_setup.fitToWidth = 1
+            sheet.page_setup.fitToHeight = 0
+            sheet.page_setup.orientation = "landscape" if width > 6 else "portrait"
+        if not workbook.sheetnames:
+            abort(400)
+        output = io.BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        return send_file(output, as_attachment=True, download_name="NEXUS-ERP-Report.xlsx",
+                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
     app.register_blueprint(bp)
