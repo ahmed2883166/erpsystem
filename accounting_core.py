@@ -67,7 +67,7 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
         if locked:
             raise ValueError(f"الفترة المحاسبية مغلقة: {locked['period_name']}.")
     dimensions = dimensions or {}
-    dimension_keys = ("branch_id", "cost_center_id", "project_id", "customer_id")
+    dimension_keys = ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id")
     available_dimension_keys = tuple(key for key in dimension_keys if key in _columns(conn, "journal_lines"))
     missing_dimensions = [key for key, value in dimensions.items()
                           if key in dimension_keys and value not in (None, "") and key not in available_dimension_keys]
