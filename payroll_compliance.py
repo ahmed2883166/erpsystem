@@ -11,6 +11,7 @@ from functools import wraps
 from pathlib import Path
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from accounting_core import post_journal
 
 payroll_compliance_bp = Blueprint("payroll_compliance", __name__)
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
@@ -67,6 +68,21 @@ def initialize_payroll_compliance_schema():
     );
     CREATE INDEX IF NOT EXISTS idx_payroll_rules_effective
       ON payroll_rule_sets(country_code,category_code,effective_from,enabled);
+    CREATE TABLE IF NOT EXISTS payroll_statutory_payments(
+      id INTEGER PRIMARY KEY,
+      period TEXT NOT NULL,
+      payment_type TEXT NOT NULL CHECK(payment_type IN ('salary_tax','social_insurance')),
+      payment_date TEXT NOT NULL,
+      amount TEXT NOT NULL,
+      liability_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      cash_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      journal_entry_id INTEGER NOT NULL UNIQUE,
+      reference TEXT NOT NULL DEFAULT '',
+      created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_payroll_statutory_payment_period
+      ON payroll_statutory_payments(period,payment_type);
     """)
     employee_cols = {r["name"] for r in conn.execute("PRAGMA table_info(employees)")}
     for name, definition in {
