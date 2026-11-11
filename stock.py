@@ -522,13 +522,13 @@ def product_locations():
         finally:
             c.close()
         return redirect(url_for("stock.product_locations"))
-    products = c.execute("SELECT id,sku,name_ar FROM stock_products WHERE active=1 ORDER BY sku").fetchall()
+    products = c.execute("SELECT p.id,p.sku,p.name_ar,COALESCE(sc.name_ar,p.category,'') category_name FROM stock_products p LEFT JOIN stock_categories sc ON sc.id=p.category_id WHERE p.active=1 ORDER BY sc.name_ar,p.sku").fetchall()
     warehouses = c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     locations = c.execute("""SELECT l.id,l.warehouse_id,l.code,l.name_ar,l.location_type,w.code warehouse_code
         FROM stock_locations l JOIN stock_warehouses w ON w.id=l.warehouse_id
         WHERE l.active=1 ORDER BY w.code,l.code""").fetchall()
-    rows = c.execute("""SELECT m.*,p.sku,p.name_ar product_name,w.code warehouse_code,l.code location_code,l.name_ar location_name
-        FROM stock_product_locations m JOIN stock_products p ON p.id=m.product_id
+    rows = c.execute("""SELECT m.*,p.sku,p.name_ar product_name,COALESCE(sc.name_ar,p.category,'') category_name,w.code warehouse_code,l.code location_code,l.name_ar location_name
+        FROM stock_product_locations m JOIN stock_products p ON p.id=m.product_id LEFT JOIN stock_categories sc ON sc.id=p.category_id
         JOIN stock_warehouses w ON w.id=m.warehouse_id JOIN stock_locations l ON l.id=m.location_id
         ORDER BY w.code,p.sku""").fetchall()
     c.close()
