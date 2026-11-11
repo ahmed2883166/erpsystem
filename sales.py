@@ -30,6 +30,10 @@ def db():
 def init_sales_schema():
     c = db()
     c.executescript("""
+    CREATE TABLE IF NOT EXISTS salespersons(
+      id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS customers(
       id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
       tax_number TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '',
@@ -123,7 +127,7 @@ def init_sales_schema():
         c.execute("UPDATE sales_invoices SET due_date=invoice_date WHERE due_date IS NULL")
     if "credited_amount" not in invoice_columns:
         c.execute("ALTER TABLE sales_invoices ADD COLUMN credited_amount TEXT NOT NULL DEFAULT '0'")
-    for name, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"), ("project_id", "projects")):
+    for name, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"), ("project_id", "projects"), ("salesperson_id", "salespersons")):
         if name not in invoice_columns:
             c.execute("ALTER TABLE sales_invoices ADD COLUMN " + name + " INTEGER REFERENCES " + table + "(id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_sales_credit_invoice ON sales_credit_notes(invoice_id,credit_date,id)")
@@ -250,6 +254,8 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
         raise ValueError("العميل غير موجود أو غير نشط.")
     dimensions = validate_journal_dimensions(conn, dimensions or {})
     dimensions["customer_id"] = int(customer_id)
+    if dimensions.get("salesperson_id") not in (None, ""):
+        dimensions["salesperson_id"] = int(dimensions["salesperson_id"])
     if not lines:
         raise ValueError("أضف صنفًا أو خدمة واحدة على الأقل.")
 
@@ -346,11 +352,11 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     effective_rate = (tax_amount * Decimal("100") / subtotal).quantize(CENT, rounding=ROUND_HALF_UP)
     cur = conn.execute(
         """INSERT INTO sales_invoices(invoice_no,customer_id,invoice_date,warehouse_id,subtotal,
-           tax_rate,tax_amount,total_amount,created_by,branch_id,cost_center_id,project_id)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+           tax_rate,tax_amount,total_amount,created_by,branch_id,cost_center_id,project_id,salesperson_id)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (invoice_no, customer_id, invoice_date, warehouse_id, str(subtotal), str(effective_rate),
          str(tax_amount), str(total_amount), created_by, dimensions["branch_id"],
-         dimensions["cost_center_id"], dimensions["project_id"])
+         dimensions["cost_center_id"], dimensions["project_id"], dimensions["salesperson_id"])
     )
     invoice_id = cur.lastrowid
     for index, item in enumerate(normalized, 1):
@@ -416,6 +422,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
     dimensions = validate_journal_dimensions(conn, {
         "branch_id": invoice["branch_id"], "cost_center_id": invoice["cost_center_id"],
         "project_id": invoice["project_id"], "customer_id": invoice["customer_id"],
+        "salesperson_id": invoice["salesperson_id"],
     })
     reason = str(reason or "").strip()
     if not reason or len(reason) > 500:
@@ -652,7 +659,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
 
 def _reverse_posted_journal(conn, entry_id, reversal_date, reference, description, created_by):
     rows = conn.execute(
-        "SELECT account_id,debit,credit,memo,branch_id,cost_center_id,project_id,customer_id FROM journal_lines WHERE entry_id=? ORDER BY id",
+        "SELECT account_id,debit,credit,memo,branch_id,cost_center_id,project_id,customer_id,salesperson_id FROM journal_lines WHERE entry_id=? ORDER BY id",
         (entry_id,),
     ).fetchall()
     if not rows:
@@ -662,7 +669,7 @@ def _reverse_posted_journal(conn, entry_id, reversal_date, reference, descriptio
          Decimal(str(row["debit"] or "0")), "عكس: " + str(row["memo"] or ""))
         for row in rows
     ]
-    dimensions = {key: rows[0][key] for key in ("branch_id", "cost_center_id", "project_id", "customer_id")}
+    dimensions = {key: rows[0][key] for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id")}
     return post_journal(conn, reversal_date, reference, description, reversed_lines, created_by,
                         dimensions=dimensions)
 
