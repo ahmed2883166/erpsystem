@@ -69,6 +69,50 @@ class StocktakeRouteTests(unittest.TestCase):
         conn.close()
 
 
+
+    def test_stocktake_creates_separate_lines_per_bin_and_lot(self):
+        self._login()
+        conn = stock.get_db()
+        conn.execute("UPDATE stock_products SET track_lot=1 WHERE id=?", (self.product_id,))
+        conn.execute("INSERT INTO stock_lots(product_id,lot_number) VALUES(?, 'LOT-01')", (self.product_id,))
+        lot_id = conn.execute("SELECT id FROM stock_lots WHERE product_id=?", (self.product_id,)).fetchone()["id"]
+        conn.execute("""INSERT INTO stock_locations(warehouse_id,parent_id,code,name_ar,location_type)
+            VALUES(?,NULL,'F1','الدور الأول','floor')""", (self.warehouse_id,))
+        floor_id = conn.execute("SELECT id FROM stock_locations WHERE code='F1'").fetchone()["id"]
+        conn.execute("""INSERT INTO stock_locations(warehouse_id,parent_id,code,name_ar,location_type)
+            VALUES(?,?, 'Z1','منطقة التخزين','zone')""", (self.warehouse_id,floor_id))
+        zone_id = conn.execute("SELECT id FROM stock_locations WHERE code='Z1'").fetchone()["id"]
+        conn.execute("""INSERT INTO stock_locations(warehouse_id,parent_id,code,name_ar,location_type)
+            VALUES(?,?, 'R1','الرف الأول','rack')""", (self.warehouse_id,zone_id))
+        rack_id = conn.execute("SELECT id FROM stock_locations WHERE code='R1'").fetchone()["id"]
+        for code in ("B1","B2"):
+            conn.execute("""INSERT INTO stock_locations(warehouse_id,parent_id,code,name_ar,location_type)
+                VALUES(?,?,?,?,'bin')""", (self.warehouse_id,rack_id,code,"خانة "+code))
+        bin1 = conn.execute("SELECT id FROM stock_locations WHERE code='B1'").fetchone()["id"]
+        movement_id = conn.execute("SELECT id FROM stock_movements WHERE movement_no='OPEN-1'").fetchone()["id"]
+        conn.execute("""UPDATE stock_movements SET target_location_id=?,lot_id=? WHERE id=?""",
+                     (bin1,lot_id,movement_id))
+        conn.execute("""UPDATE stock_valuation_layers SET location_id=?,lot_id=? WHERE source_movement_id=?""",
+                     (bin1,lot_id,movement_id))
+        conn.commit()
+        conn.close()
+
+        response = self.client.post("/stock/counts", data={
+            "warehouse_id": str(self.warehouse_id), "count_date": "2026-11-11",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = stock.get_db()
+        lines = conn.execute("""SELECT l.*,loc.code location_code,lot.lot_number
+            FROM stocktake_lines l LEFT JOIN stock_locations loc ON loc.id=l.location_id
+            LEFT JOIN stock_lots lot ON lot.id=l.lot_id ORDER BY loc.code""").fetchall()
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[0]["location_code"], "B1")
+        self.assertEqual(lines[0]["lot_number"], "LOT-01")
+        self.assertEqual(lines[0]["snapshot_qty"], "10.0000")
+        self.assertEqual(lines[1]["location_code"], "B2")
+        self.assertEqual(lines[1]["snapshot_qty"], "0.0000")
+        conn.close()
+
     def test_approval_is_blocked_if_stock_moved_after_count_started(self):
         self._login()
         self.client.post("/stock/counts", data={
