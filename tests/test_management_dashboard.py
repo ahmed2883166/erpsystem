@@ -113,7 +113,7 @@ class ManagementDashboardTests(unittest.TestCase):
             build_management_snapshot(self.conn,date(2026,11,30),date(2026,11,1))
 
     def test_unusual_journal_totals_preserve_decimal_precision(self):
-        self.conn.execute("INSERT INTO journal_entries VALUES(21,'2026-11-28','posted')")
+        self.conn.execute("INSERT INTO journal_entries VALUES(21,'2026-11-30','posted')")
         self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(21,9,'0.10','0')")
         self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(21,1,'0','0.10')")
         flagged = unusual_journal_entries(self.conn, date(2026,11,1), date(2026,11,30))
