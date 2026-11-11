@@ -551,13 +551,34 @@ def new_bill():
             jlines.append((ap,0,tax,"ضريبة ضمن إجمالي المورد"))
             eid=create_journal(c,request.form["bill_date"],no,"فاتورة مورد "+request.form["supplier_invoice_no"],jlines,session["user_id"])
             c.execute("UPDATE supplier_bills SET journal_entry_id=? WHERE id=?",(eid,bid))
-            c.commit(); flash(f"تم ترحيل فاتورة المورد {no}.","success"); return redirect(url_for("purchase.index"))
+            c.commit(); flash(f"تم حفظ وترحيل فاتورة المورد {no}.","success"); return redirect(url_for("purchase.bill_print", bill_id=bid))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     expense_accounts=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code").fetchall()
     receipts=c.execute("""SELECT r.*,s.name supplier_name FROM goods_receipts r JOIN suppliers s ON s.id=r.supplier_id
       WHERE r.status='posted' AND NOT EXISTS(SELECT 1 FROM supplier_bill_receipts x WHERE x.receipt_id=r.id) ORDER BY r.id""").fetchall()
     c.close(); return render_template("purchase_bill_new.html",suppliers=su,receipts=receipts,expense_accounts=expense_accounts,today=date.today().isoformat())
+
+
+
+@purchase_bp.route("/bills/<int:bill_id>/print")
+@require("purchases.view")
+def bill_print(bill_id):
+    c=db()
+    bill=c.execute("""SELECT b.*,s.code supplier_code,s.name supplier_name,s.tax_number supplier_tax_number
+      FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id WHERE b.id=?""",(bill_id,)).fetchone()
+    if not bill:
+        c.close(); from flask import abort; abort(404)
+    journal_lines=c.execute("""SELECT a.code,a.name_ar,jl.debit,jl.credit,jl.memo
+      FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+      WHERE jl.entry_id=? ORDER BY jl.id""",(bill["journal_entry_id"],)).fetchall()
+    receipts=c.execute("""SELECT r.receipt_no,r.receipt_date,r.total_value
+      FROM supplier_bill_receipts x JOIN goods_receipts r ON r.id=x.receipt_id
+      WHERE x.bill_id=? ORDER BY r.id""",(bill_id,)).fetchall()
+    settings={r["setting_key"]:r["setting_value"] for r in c.execute(
+      "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('company_name','base_currency','tax_number')")}
+    c.close()
+    return render_template("purchase_bill_print.html",bill=bill,journal_lines=journal_lines,receipts=receipts,settings=settings)
 
 
 @purchase_bp.route("/credit-notes/new", methods=["GET","POST"])
