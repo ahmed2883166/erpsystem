@@ -144,6 +144,15 @@ def require(permission):
     return deco
 
 
+def _select_customer_price_rule(price_rules, quantity):
+    """Choose the highest applicable quantity tier; newest effective rule breaks ties."""
+    quantity = Decimal(str(quantity))
+    eligible = [rule for rule in price_rules if quantity >= Decimal(str(rule["min_qty"] or "0"))]
+    if not eligible:
+        return None
+    eligible.sort(key=lambda rule: (Decimal(str(rule["min_qty"] or "0")), str(rule["valid_from"] or ""), int(rule["id"])), reverse=True)
+    return eligible[0]["unit_price"]
+
 def _account(conn, code, expected_type):
     row = conn.execute(
         "SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (code,)
@@ -917,17 +926,14 @@ def new_invoice():
                 if pid or desc.strip():
                     selected_price = price
                     if pid:
-                        quantity = Decimal(str(qty))
-                        price_rules = c.execute("""SELECT unit_price,min_qty FROM customer_price_rules
+                        price_rules = c.execute("""SELECT id,unit_price,min_qty,valid_from FROM customer_price_rules
                           WHERE customer_id=? AND product_id=? AND active=1 AND valid_from<=?
-                            AND (valid_to IS NULL OR valid_to>=?)
-                          ORDER BY valid_from DESC,id DESC""",
+                            AND (valid_to IS NULL OR valid_to>=?)""",
                           (int(request.form["customer_id"]), int(pid), request.form["invoice_date"],
                            request.form["invoice_date"])).fetchall()
-                        for rule in price_rules:
-                            if quantity >= Decimal(str(rule["min_qty"] or "0")):
-                                selected_price = rule["unit_price"]
-                                break
+                        matched_price = _select_customer_price_rule(price_rules, qty)
+                        if matched_price is not None:
+                            selected_price = matched_price
                     items.append({"product_id": int(pid) if pid else None, "quantity": qty,
                                   "unit_price": selected_price, "description": desc, "tax_rate": line_rate, "tax_treatment": treatment})
             c.execute("BEGIN IMMEDIATE")
