@@ -69,6 +69,19 @@ def init_sales_schema():
       journal_entry_id INTEGER UNIQUE, reference TEXT NOT NULL DEFAULT '',
       created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS customer_receipt_batches(
+      id INTEGER PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE,
+      customer_id INTEGER NOT NULL REFERENCES customers(id), receipt_date TEXT NOT NULL,
+      total_amount TEXT NOT NULL, cash_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      journal_entry_id INTEGER UNIQUE, reference TEXT NOT NULL DEFAULT '',
+      created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS customer_receipt_allocations(
+      id INTEGER PRIMARY KEY, batch_id INTEGER NOT NULL REFERENCES customer_receipt_batches(id) ON DELETE CASCADE,
+      invoice_id INTEGER NOT NULL REFERENCES sales_invoices(id), amount TEXT NOT NULL,
+      UNIQUE(batch_id,invoice_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_customer_receipt_alloc_invoice ON customer_receipt_allocations(invoice_id);
     CREATE INDEX IF NOT EXISTS idx_sales_invoice_customer ON sales_invoices(customer_id,invoice_date);
     CREATE INDEX IF NOT EXISTS idx_sales_receipts_invoice ON customer_receipts(invoice_id,receipt_date);
     """)
@@ -847,6 +860,64 @@ def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_i
     conn.execute("UPDATE sales_invoices SET paid_amount=? WHERE id=?",
                  (str(Decimal(invoice["paid_amount"]) + amount), invoice_id))
     return {"receipt_no": receipt_no, "journal_entry_id": journal_id}
+
+
+def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, cash_account_id,
+                                created_by=None, reference=""):
+    """Post one cash receipt allocated across multiple open invoices of one customer."""
+    try:
+        date.fromisoformat(str(receipt_date))
+    except (TypeError, ValueError):
+        raise ValueError("تاريخ التحصيل غير صحيح.")
+    customer = conn.execute("SELECT id,name FROM customers WHERE id=? AND active=1", (customer_id,)).fetchone()
+    if not customer:
+        raise ValueError("العميل غير موجود أو غير نشط.")
+    normalized = []
+    seen = set()
+    total = Decimal("0")
+    for invoice_id, raw_amount in allocations:
+        if invoice_id in seen:
+            raise ValueError("لا يمكن اختيار الفاتورة أكثر من مرة في نفس الإيصال.")
+        seen.add(invoice_id)
+        amount = Decimal(str(raw_amount)).quantize(CENT, rounding=ROUND_HALF_UP)
+        if not amount.is_finite() or amount <= 0:
+            raise ValueError("قيمة التوزيع على كل فاتورة يجب أن تكون أكبر من صفر.")
+        invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=? AND customer_id=? AND status='posted'",
+                               (invoice_id, customer_id)).fetchone()
+        if not invoice:
+            raise ValueError("إحدى الفواتير المحددة لا تتبع العميل أو غير مرحلة.")
+        outstanding = (Decimal(invoice["total_amount"]) - Decimal(invoice["paid_amount"] or "0")
+                       - Decimal(invoice["credited_amount"] or "0") + _refund_total(conn, invoice_id))
+        if outstanding <= 0:
+            raise ValueError("إحدى الفواتير المحددة لا يوجد عليها رصيد مستحق.")
+        if amount > outstanding:
+            raise ValueError(f"مبلغ التحصيل على الفاتورة {invoice['invoice_no']} أكبر من المتبقي {outstanding:.2f}.")
+        normalized.append((invoice, amount))
+        total += amount
+    if not normalized or total <= 0:
+        raise ValueError("اختر فاتورة واحدة على الأقل وأدخل مبلغ التحصيل.")
+    cash = conn.execute("SELECT id,is_group,active,account_type FROM accounts WHERE id=?", (cash_account_id,)).fetchone()
+    if not cash or cash["is_group"] or not cash["active"] or cash["account_type"] != "asset":
+        raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
+    ar = _account(conn, _sales_account_codes(_activity(conn))["ar"], "asset")
+    receipt_no = "RCPTB-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    journal_id = post_journal(
+        conn, receipt_date, receipt_no, "تحصيل مجمع من العميل " + customer["name"],
+        [(cash_account_id, total, 0, "إجمالي التحصيل المجمع"),
+         (ar, 0, total, "تخفيض ذمم العميل عن عدة فواتير")], created_by
+    )
+    cursor = conn.execute("""INSERT INTO customer_receipt_batches
+        (receipt_no,customer_id,receipt_date,total_amount,cash_account_id,journal_entry_id,reference,created_by)
+        VALUES(?,?,?,?,?,?,?,?)""",
+        (receipt_no, customer_id, receipt_date, str(total), cash_account_id, journal_id, reference, created_by))
+    batch_id = cursor.lastrowid
+    for invoice, amount in normalized:
+        conn.execute("INSERT INTO customer_receipt_allocations(batch_id,invoice_id,amount) VALUES(?,?,?)",
+                     (batch_id, invoice["id"], str(amount)))
+        conn.execute("UPDATE sales_invoices SET paid_amount=? WHERE id=?",
+                     (str(Decimal(invoice["paid_amount"] or "0") + amount), invoice["id"]))
+    return {"receipt_no": receipt_no, "journal_entry_id": journal_id, "total_amount": total,
+            "invoice_count": len(normalized)}
 
 
 @sales_bp.route("/")
