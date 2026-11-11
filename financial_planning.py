@@ -39,7 +39,12 @@ def _require(permission):
             if not session.get("user_id"):
                 return redirect(url_for("login"))
             allowed = set(session.get("permissions", ()))
-            if permission not in allowed:
+            # Existing installations may have saved permission JSON before
+            # cash-flow reporting was introduced. Treat report-view access as
+            # sufficient to discover and open this financial report.
+            if permission not in allowed and not (
+                permission == "cashflow.view" and "reports.view" in allowed
+            ):
                 abort(403)
             return fn(*args, **kwargs)
         return wrapped
