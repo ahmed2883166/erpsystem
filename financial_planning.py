@@ -132,6 +132,84 @@ def budget_detail(budget_id):
                            expense_actual=sum((x["actual"] for x in results if x["account_type"]=="expense"),Decimal("0")))
 
 
+
+def build_balance_sheet_snapshot(conn, as_of):
+    rows = conn.execute("""SELECT a.id,a.code,a.name_ar,a.account_type,a.parent_id,a.is_group,
+        COALESCE(DECIMAL_SUM(jl.debit),0) debit,
+        COALESCE(DECIMAL_SUM(jl.credit),0) credit
+      FROM accounts a
+      LEFT JOIN journal_lines jl ON jl.account_id=a.id
+      LEFT JOIN journal_entries je ON je.id=jl.entry_id AND je.status='posted' AND je.entry_date<=?
+      GROUP BY a.id ORDER BY a.code""", (as_of,)).fetchall()
+    accounts = {}
+    for row in rows:
+        debit=Decimal(str(row["debit"] or "0"))
+        credit=Decimal(str(row["credit"] or "0"))
+        kind=row["account_type"]
+        balance=debit-credit if kind=="asset" or kind=="expense" else credit-debit
+        accounts[row["id"]]={**dict(row),"balance":balance}
+    totals={"asset":Decimal("0"),"liability":Decimal("0"),"equity":Decimal("0"),
+            "revenue":Decimal("0"),"expense":Decimal("0")}
+    for item in accounts.values():
+        if item["is_group"]:
+            continue
+        totals[item["account_type"]]+=item["balance"]
+    net_profit=totals["revenue"]-totals["expense"]
+    group_totals={account_id:Decimal("0") for account_id,item in accounts.items() if item["is_group"]}
+    for account_id,item in accounts.items():
+        if item["is_group"]:
+            continue
+        parent=item["parent_id"]
+        seen=set()
+        while parent and parent in accounts and parent not in seen:
+            seen.add(parent)
+            if accounts[parent]["is_group"]:
+                group_totals[parent]+=item["balance"]
+            parent=accounts[parent]["parent_id"]
+    children={}
+    for item in accounts.values():
+        children.setdefault(item["parent_id"],[]).append(item)
+    sections={}
+    for kind in ("asset","liability","equity"):
+        flat=[]
+        def walk(parent_id,depth=0,seen=None):
+            seen=seen or set()
+            for item in sorted(children.get(parent_id,[]),key=lambda x:x["code"]):
+                if item["account_type"]!=kind or item["id"] in seen:
+                    continue
+                value=group_totals.get(item["id"],Decimal("0")) if item["is_group"] else item["balance"]
+                flat.append({**item,"display_balance":value,"depth":depth})
+                walk(item["id"],depth+1,seen|{item["id"]})
+        walk(None)
+        sections[kind]=flat
+    assets=totals["asset"]
+    liabilities=totals["liability"]
+    equity=totals["equity"]
+    total_equity=equity+net_profit
+    return {"sections":sections,"total_assets":assets,"total_liabilities":liabilities,
+            "equity_before_profit":equity,"net_profit":net_profit,"total_equity":total_equity,
+            "balance_difference":assets-liabilities-total_equity,
+            "balanced":assets==liabilities+total_equity,"as_of":as_of}
+
+
+@planning_bp.route("/reports/balance-sheet")
+@_require("reports.view")
+def balance_sheet():
+    from datetime import date
+    raw=request.args.get("as_of","").strip()
+    try:
+        as_of=date.fromisoformat(raw) if raw else date.today()
+    except ValueError:
+        flash("تاريخ قائمة المركز المالي غير صحيح.","error")
+        as_of=date.today()
+    conn=_connect()
+    try:
+        snapshot=build_balance_sheet_snapshot(conn,as_of.isoformat())
+    finally:
+        conn.close()
+    return render_template("balance_sheet.html",s=snapshot)
+
+
 @planning_bp.route("/reports/cash-flow")
 @_require("cashflow.view")
 def cash_flow():
