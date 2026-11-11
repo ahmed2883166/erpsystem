@@ -42,6 +42,9 @@ class WorkforceTests(unittest.TestCase):
         template_dir = Path(self.temp.name) / "templates"
         template_dir.mkdir()
         (template_dir / "custody.html").write_text("custody list", encoding="utf-8")
+        (template_dir / "payroll.html").write_text(
+            "{{ get_flashed_messages()|join('|') }}", encoding="utf-8"
+        )
         self.app = Flask(__name__, template_folder=str(template_dir))
         self.app.secret_key = "test"
         self.app.register_blueprint(workforce.workforce_bp)
@@ -73,7 +76,7 @@ class WorkforceTests(unittest.TestCase):
             "other_deductions_1": "200", "tax_1": "500",
             "employee_ins_1": "300", "employer_ins_1": "400"
         })
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 302, response.get_data(as_text=True))
         conn = sqlite3.connect(self.db_path)
         line = conn.execute("SELECT gross_pay,net_pay FROM payroll_lines").fetchone()
         conn.close()
