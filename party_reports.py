@@ -1,14 +1,12 @@
+from app_paths import DB_PATH
 from database import connect_database
 """Customer and supplier subledger statements with opening and running balances."""
 from decimal import Decimal, ROUND_HALF_UP
 from functools import wraps
-from pathlib import Path
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 
 party_bp = Blueprint("party_reports", __name__)
-DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
-
 
 def _db():
     return connect_database(DB_PATH)
