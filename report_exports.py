@@ -1,3 +1,4 @@
+from database import connect_database
 """Excel exports for NEXUS ERP reports. PDF output uses the browser's print-to-PDF engine for Arabic support."""
 import io
 import re
@@ -27,10 +28,7 @@ def register_report_exports(app, db_path, permissions):
         return decorator
 
     def connect():
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        register_decimal_aggregates(conn)
-        return conn
+        return connect_database(db_path)
 
     @bp.get("/reports/export/<report>/excel")
     @require("reports.view")
