@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from pathlib import Path
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
-from accounting_core import post_journal
+from accounting_core import post_journal, register_decimal_aggregates
 
 bank_bp = Blueprint("bank", __name__, url_prefix="/bank")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
@@ -15,6 +15,7 @@ def db():
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA foreign_keys=ON")
     c.execute("PRAGMA busy_timeout=20000")
+    register_decimal_aggregates(c)
     return c
 
 def init_bank_schema():
@@ -90,7 +91,8 @@ def index():
     all_accounts=c.execute("""SELECT id,code,name_ar FROM accounts WHERE is_group=0 AND active=1 ORDER BY code""").fetchall()
     rows=c.execute("""SELECT t.*,a.code bank_code,a.name_ar bank_name FROM bank_transactions t JOIN accounts a ON a.id=t.bank_account_id ORDER BY t.transaction_date DESC,t.id DESC LIMIT 250""").fetchall()
     bank_balances=c.execute("""SELECT a.id,a.code,a.name_ar,
-        COALESCE(SUM(CASE WHEN je.status='posted' THEN jl.debit-jl.credit ELSE 0 END),0) balance
+        COALESCE(DECIMAL_NET(CASE WHEN je.status='posted' THEN jl.debit ELSE '0' END,
+                             CASE WHEN je.status='posted' THEN jl.credit ELSE '0' END),0) balance
         FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
         LEFT JOIN journal_entries je ON je.id=jl.entry_id
         WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
