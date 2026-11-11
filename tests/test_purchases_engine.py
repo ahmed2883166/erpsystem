@@ -27,7 +27,7 @@ class PurchasingAccountingTests(unittest.TestCase):
         );
         CREATE TABLE journal_lines(
           id INTEGER PRIMARY KEY, entry_id INTEGER NOT NULL, account_id INTEGER NOT NULL,
-          debit REAL NOT NULL DEFAULT 0, credit REAL NOT NULL DEFAULT 0, memo TEXT
+          debit TEXT NOT NULL DEFAULT '0', credit TEXT NOT NULL DEFAULT '0', memo TEXT
         );
         CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL);
         """)
@@ -84,10 +84,13 @@ class PurchasingAccountingTests(unittest.TestCase):
             self.db, "2026-11-09", "TEST-1", "اختبار قيد",
             [(dr, purchases.money("125.50"), 0, "مدين"),
              (cr, 0, purchases.money("125.50"), "دائن")], 1)
-        totals = self.db.execute(
-            "SELECT SUM(debit) debit,SUM(credit) credit FROM journal_lines WHERE entry_id=?",
-            (entry_id,)).fetchone()
-        self.assertAlmostEqual(totals["debit"], totals["credit"], places=2)
+        from decimal import Decimal
+        rows = self.db.execute(
+            "SELECT debit,credit FROM journal_lines WHERE entry_id=?", (entry_id,)
+        ).fetchall()
+        debit = sum((Decimal(row["debit"]) for row in rows), Decimal("0"))
+        credit = sum((Decimal(row["credit"]) for row in rows), Decimal("0"))
+        self.assertEqual(debit, credit)
 
     def test_group_account_cannot_be_posted(self):
         with self.assertRaises(ValueError):
