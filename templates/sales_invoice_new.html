@@ -6,10 +6,11 @@ document.querySelectorAll('select[name="product_id"]').forEach(function(sel){
  const price=sel.closest('tr').querySelector('.invoice-unit-price');
  sel.addEventListener('change',function(){
   const opt=sel.options[sel.selectedIndex];
-  if(sel.value && price && (price.value==='0' || price.dataset.auto==='1')){
+  if(sel.value && price && price.dataset.manual!=='1'){
    price.value=opt.dataset.salePrice||'0'; price.dataset.auto='1';
   }
  });
+ if(price)price.addEventListener('input',()=>price.dataset.manual='1');
  if(sel.value) sel.dispatchEvent(new Event('change'));
 });
 </script>{% endblock %}{% block content %}
