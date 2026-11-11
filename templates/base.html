@@ -83,6 +83,7 @@
 {% if session.user_id %}
 <div class="global-report-actions no-print">
   <button type="button" class="secondary" onclick="window.print()" title="طباعة الشاشة أو حفظها PDF">▤ طباعة / PDF</button>
+  <button type="button" class="secondary" id="exportCurrentReport" hidden>تنزيل Excel</button>
 </div>
 {% endif %}
 <button class="theme-toggle secondary" type="button" id="themeToggle">◐ المظهر</button>
@@ -96,6 +97,7 @@
 (function(){const root=document.documentElement;const saved=localStorage.getItem('nexus-theme')||'dark';root.dataset.theme=saved;const btn=document.getElementById('themeToggle');if(btn){btn.addEventListener('click',()=>{const next=root.dataset.theme==='dark'?'light':'dark';root.dataset.theme=next;localStorage.setItem('nexus-theme',next);btn.textContent=next==='dark'?'◐ المظهر الداكن':'☀ المظهر الفاتح';});btn.textContent=saved==='dark'?'◐ المظهر الداكن':'☀ المظهر الفاتح';}})();
 (function(){
  const printAction=document.querySelector('.global-report-actions');
+ const exportAction=document.getElementById('exportCurrentReport');
  const forms=[...document.querySelectorAll('form[method="post" i],form:not([method])')].filter(form=>!form.classList.contains('no-print'));
  const printButtons=[...document.querySelectorAll('[onclick*="window.print"]')];
  const isDirty=el=>{
@@ -111,6 +113,7 @@
  const refresh=()=>{
    const blocked=hasUnsavedEntry();
    if(printAction)printAction.hidden=blocked;
+   if(exportAction)exportAction.hidden=blocked||!document.querySelector('main table');
    printButtons.forEach(button=>button.hidden=blocked);
    return blocked;
  };
@@ -121,6 +124,42 @@
      event.preventDefault();
      alert('احفظ المستند أو رحّله أولًا، ثم اطبع النسخة المحفوظة.');
    }
+ });
+})();
+(function(){
+ const button=document.getElementById('exportCurrentReport');
+ if(!button)return;
+ const tables=[...document.querySelectorAll('main table')].filter(table=>table.querySelectorAll('tr').length>0);
+ button.hidden=!tables.length;
+ button.addEventListener('click',async()=>{
+   const visibleRows=table=>[...table.querySelectorAll('tr')].filter(row=>row.getClientRects().length>0);
+   const payload={
+     title:document.querySelector('main h2,main h1')?.innerText||document.title||'NEXUS ERP',
+     tables:tables.map((table,index)=>({
+       title:table.closest('.panel')?.querySelector('h3,h2')?.innerText||('جدول '+(index+1)),
+       rows:visibleRows(table).map(row=>[...row.querySelectorAll('th,td')].filter(cell=>cell.getClientRects().length>0).map(cell=>{
+         const field=cell.querySelector('input:not([type=hidden]),select,textarea');
+         return field?(field.value||''):cell.innerText.trim();
+       }))
+     })).filter(table=>table.rows.length>0)
+   };
+   if(!payload.tables.length)return;
+   button.disabled=true;
+   try{
+     const response=await fetch('/reports/export/current-screen/excel',{
+       method:'POST',
+       headers:{'Content-Type':'application/json','X-CSRFToken':document.querySelector('meta[name="csrf-token"]')?.content||''},
+       body:JSON.stringify(payload)
+     });
+     if(!response.ok)throw new Error('HTTP '+response.status);
+     const blob=await response.blob();
+     const url=URL.createObjectURL(blob);
+     const link=document.createElement('a');
+     link.href=url;link.download='NEXUS-ERP-Report.xlsx';
+     document.body.appendChild(link);link.click();link.remove();
+     URL.revokeObjectURL(url);
+   }catch(error){alert('تعذر تصدير التقرير. تأكد من صلاحية العرض ثم حاول مرة أخرى.');}
+   finally{button.disabled=false;}
  });
 })();
 </script>{% block scripts %}{% endblock %}</body></html>
