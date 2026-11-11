@@ -138,6 +138,23 @@ def _refresh_license(state, machine_id, data_dir, current_time):
         return True
     except (RuntimeError, KeyError): return False
 
+def _remote_trial_lease(trial_url, machine_id, public_key, current_time):
+    remote = _post_json(trial_url, {"machine_id":machine_id,"product":"NEXUS_ERP"})
+    if remote.get("status") == "expired":
+        return None, remote, True
+    if remote.get("status") != "trial":
+        raise RuntimeError("خادم التراخيص لم يمنح فترة تجربة نشطة.")
+    token = remote.get("token", "")
+    payload = verify_license_token(token, machine_id, public_key, current_time)
+    remote_first = _parse_time(remote.get("first_seen"))
+    remote_end = _parse_time(payload.get("expires_at")) if payload else None
+    if (not remote_first or not payload or payload.get("license_type") != "trial"
+        or not remote_end or payload.get("trial_ends_at") != payload.get("expires_at")
+        or remote.get("trial_ends_at") != payload.get("expires_at")):
+        raise RuntimeError("استجابة خادم التجربة أو توقيعها غير صالح.")
+    return payload, remote, False
+
+
 def get_license_status(data_dir=None, current_time=None, machine_id=None, public_key=None):
     current_time = current_time or utc_now()
     machine_id = machine_id or machine_fingerprint()
@@ -158,9 +175,26 @@ def get_license_status(data_dir=None, current_time=None, machine_id=None, public
         payload = verify_license_token(state["token"],machine_id,public_key,current_time)
         if payload:
             if payload.get("license_type") == "trial":
-                expiry = _parse_time(payload.get("expires_at"))
-                return {"status":"trial","license_type":"trial","days_remaining":max(0, int((expiry-current_time).total_seconds()+86399)//86400),
-                        "trial_ends_at":_iso(expiry),"machine_id":machine_id,"trial_authority":"signed_server"}
+                trial_url = os.environ.get("NEXUS_LICENSE_TRIAL_URL", "").strip()
+                if not trial_url:
+                    return {"status":"online_required","message":"يلزم الاتصال بخادم التراخيص للتحقق من التجربة.","machine_id":machine_id}
+                try:
+                    remote_payload, remote, expired = _remote_trial_lease(
+                        trial_url, machine_id, public_key, current_time
+                    )
+                    if expired:
+                        return {"status":"expired","days_remaining":0,"machine_id":machine_id}
+                    stored_expiry = _parse_time(payload.get("expires_at"))
+                    remote_expiry = _parse_time(remote_payload.get("expires_at"))
+                    if not stored_expiry or remote_expiry > stored_expiry:
+                        return {"status":"license_invalid","message":"خادم التجربة أعاد مدة أطول من الرخصة المسجلة.","machine_id":machine_id}
+                    state.update({"token":remote.get("token"),"last_seen":_iso(current_time)})
+                    _write_state(state,data_dir)
+                    return {"status":"trial","license_type":"trial",
+                            "days_remaining":max(0,int((remote_expiry-current_time).total_seconds()+86399)//86400),
+                            "trial_ends_at":_iso(remote_expiry),"machine_id":machine_id,"trial_authority":"signed_server"}
+                except RuntimeError:
+                    return {"status":"online_required","message":"لا يمكن استخدام التجربة دون التحقق من خادم التراخيص.","machine_id":machine_id}
             if current_time > _parse_time(payload["offline_until"]):
                 if _refresh_license(state,machine_id,data_dir,current_time):
                     payload = verify_license_token(state["token"],machine_id,public_key,current_time)
@@ -171,15 +205,12 @@ def get_license_status(data_dir=None, current_time=None, machine_id=None, public
     trial_url = os.environ.get("NEXUS_LICENSE_TRIAL_URL", "").strip()
     if trial_url:
         try:
-            remote = _post_json(trial_url, {"machine_id": machine_id, "product": "NEXUS_ERP"})
+            payload, remote, expired = _remote_trial_lease(trial_url, machine_id, public_key, current_time)
+            if expired:
+                return {"status":"expired","days_remaining":0,"machine_id":machine_id}
             remote_first = _parse_time(remote.get("first_seen"))
             token = remote.get("token", "")
-            payload = verify_license_token(token, machine_id, public_key, current_time)
-            if not remote_first or not payload or payload.get("license_type") != "trial":
-                raise RuntimeError("استجابة خادم التجربة أو توقيعها غير صالح.")
             remote_end = _parse_time(payload.get("expires_at"))
-            if not remote_end or payload.get("trial_ends_at") != payload.get("expires_at"):
-                raise RuntimeError("مدة التجربة الموقعة غير صالحة.")
             state.update({"machine_id":machine_id,"token":token,"first_seen":_iso(remote_first),
                           "last_seen":_iso(current_time),"license_type":"trial"})
             _write_state(state, data_dir)
