@@ -183,23 +183,21 @@ def ensure_detail_account(c, code, name, typ, preferred_parent):
         raise ValueError("حساب الربط المطلوب "+code+" ("+name+") غير مضبوط. أضفه كحساب تفصيلي نشط بالنوع "+typ+" قبل الترحيل.")
     return found["id"]
 
-def supplier_ap_account(c):
+def _activity_posting_accounts(c):
+    from chart_templates import ACTIVITY_POSTING_ACCOUNTS
     row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
     activity=row["setting_value"] if row else "commercial"
-    if activity=="medical":
-        return ensure_detail_account(c,"2150","الموردون - مستلزمات طبية","liability","2100")
-    if activity=="commercial":
-        return account(c,"2110","liability")
-    if activity=="service":
-        return account(c,"2100","liability")
-    if activity in {"restaurant","industrial"}:
-        return account(c,"2100","liability")
-    raise ValueError("لا يوجد حساب موردين مضبوط للنشاط الحالي.")
+    mapping=ACTIVITY_POSTING_ACCOUNTS.get(activity)
+    if not mapping:
+        raise ValueError("لا توجد خريطة حسابات معتمدة للنشاط الحالي.")
+    return mapping
+
+def supplier_ap_account(c):
+    mapping=_activity_posting_accounts(c)
+    return account(c,mapping["supplier_ap"],"liability")
 
 def activity_inventory_code(c):
-    row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
-    activity=row[0] if row else "commercial"
-    return {"commercial":"1150","industrial":"1130","medical":"1150","restaurant":"1140"}.get(activity)
+    return _activity_posting_accounts(c)["purchase_inventory"]
 
 @purchase_bp.route("/")
 @require("purchases.view")
@@ -584,7 +582,7 @@ def new_bill():
             if receipts and remaining!=0: raise ValueError("قيمة الفاتورة يجب أن تطابق إجمالي إيصالات GRNI المحددة.")
             if tax:
                 # No guessed tax posting: explicit input VAT account is mandatory.
-                vat=ensure_detail_account(c,"1165","ضريبة مدخلات قابلة للخصم","asset","1100")
+                vat=ensure_detail_account(c,_activity_posting_accounts(c)["input_vat"],"ضريبة مدخلات قابلة للخصم","asset","1100")
                 lines.append(("VAT",tax))
             no="BILL-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             cur=c.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,subtotal,tax_rate,tax_amount,total_amount,created_by,
@@ -679,7 +677,7 @@ def new_credit_note():
                 raise ValueError("رقم إشعار الدائن مسجل بالفعل لهذا المورد.")
             activity_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
             activity=activity_row["setting_value"] if activity_row else "commercial"
-            inventory_code={"commercial":"1150","industrial":"1130","medical":"1150","restaurant":"1140"}.get(activity)
+            inventory_code=activity_inventory_code(c)
             if not inventory_code:
                 raise ValueError("النشاط الحالي لا يملك حساب مخزون معرفًا.")
             inventory_id=account(c,inventory_code,"asset")
@@ -737,7 +735,7 @@ def new_credit_note():
             journal_lines=[(ap_id,total,0,"تخفيض مديونية المورد بإشعار دائن"),
                            (inventory_id,0,subtotal,"إخراج مخزون مرتجع للمورد")]
             if tax:
-                vat_id=account(c,"1165","asset")
+                vat_id=account(c,_activity_posting_accounts(c)["input_vat"],"asset")
                 journal_lines.append((vat_id,0,tax,"عكس ضريبة المدخلات حسب إشعار المورد"))
             entry_id=create_journal(c,request.form["credit_date"],credit_no,
                 "إشعار دائن مشتريات — "+supplier_credit_no,journal_lines,session["user_id"],dimensions=dimensions)
