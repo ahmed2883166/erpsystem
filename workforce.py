@@ -210,13 +210,18 @@ def employees():
             flash(str(e) or "كود الموظف أو الرقم القومي مستخدم بالفعل.", "error")
         c.close()
         return redirect(url_for("workforce.employees"))
-    rows = c.execute("SELECT * FROM employees ORDER BY employee_code").fetchall()
+    employees_page = fetch_page(c, "SELECT * FROM employees ORDER BY employee_code",
+        "SELECT COUNT(*) FROM employees",
+        page=request.args.get("employees_page",1,type=int),
+        per_page=request.args.get("employees_per_page",50,type=int))
+    rows = employees_page["rows"]
+    employee_options = c.execute("SELECT id,employee_code,full_name FROM employees ORDER BY employee_code").fetchall()
     items = c.execute("""SELECT p.*,e.employee_code,e.full_name FROM employee_pay_items p
                          JOIN employees e ON e.id=p.employee_id ORDER BY e.employee_code,p.id DESC""").fetchall()
     incentive_rules = c.execute("SELECT * FROM payroll_incentive_rules ORDER BY active DESC,name").fetchall()
     c.close()
-    return render_template("employees.html", employees=rows, items=items,
-                           incentive_rules=incentive_rules)
+    return render_template("employees.html", employees=rows, employee_options=employee_options,
+                           employees_page=employees_page, items=items, incentive_rules=incentive_rules)
 
 
 @workforce_bp.route("/hr/<int:employee_id>/edit", methods=["GET", "POST"])
