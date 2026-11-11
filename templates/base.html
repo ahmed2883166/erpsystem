@@ -48,13 +48,17 @@
  document.addEventListener('wheel',event=>{
    const table=event.target.closest('.table-wrap');
    const sidebar=event.target.closest('aside');
-   let target=null;
-   if(table&&(canScroll(table,'y',event.deltaY)||canScroll(table,'x',event.deltaX)))target=table;
-   else if(sidebar&&canScroll(sidebar,'y',event.deltaY))target=sidebar;
+   const tableY=table&&canScroll(table,'y',event.deltaY);
+   const tableX=table&&canScroll(table,'x',event.deltaX);
+   const sideY=sidebar&&canScroll(sidebar,'y',event.deltaY);
+   const target=(tableY||tableX)?table:(sideY?sidebar:null);
    if(!target)return;
+   const consumeY=target===table?tableY:sideY;
+   const consumeX=target===table?tableX:false;
+   if(!consumeY&&!consumeX)return;
    event.preventDefault();
-   if(event.deltaY)target.scrollTop+=event.deltaY;
-   if(event.deltaX)target.scrollLeft+=event.deltaX;
+   if(consumeY)target.scrollTop+=event.deltaY;
+   if(consumeX)target.scrollLeft+=event.deltaX;
  },{passive:false});
 })();
 (function(){
