@@ -944,7 +944,7 @@ def index():
                             JOIN sales_invoices i ON i.id=r.invoice_id JOIN customers c ON c.id=i.customer_id
                             ORDER BY r.id DESC LIMIT 20""").fetchall()
     batch_receipts = c.execute("""SELECT b.*,cu.name customer_name,COUNT(a.id) invoice_count,
-          GROUP_CONCAT(i.invoice_no, ', ') invoice_numbers
+          GROUP_CONCAT(i.invoice_no || ' (' || a.amount || ')', ', ') invoice_numbers
         FROM customer_receipt_batches b JOIN customers cu ON cu.id=b.customer_id
         LEFT JOIN customer_receipt_allocations a ON a.batch_id=b.id
         LEFT JOIN sales_invoices i ON i.id=a.invoice_id
