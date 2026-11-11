@@ -121,6 +121,16 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(target["debit"], Decimal("0.10"))
         self.assertEqual(target["credit"], Decimal("0.10"))
 
+    def test_cached_snapshot_is_invalidated_by_new_journal_lines(self):
+        from management_dashboard import cached_management_snapshot
+        first = cached_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
+        self.assertEqual(first["current"]["revenue"], Decimal("500"))
+        self.conn.execute("INSERT INTO journal_entries VALUES(22,'2026-11-20','posted')")
+        self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(22,1,'0','0')")
+        self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(22,7,'0','25')")
+        second = cached_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
+        self.assertEqual(second["current"]["revenue"], Decimal("525"))
+
 
 if __name__ == "__main__":
     unittest.main()
