@@ -495,9 +495,11 @@ def company_setup():
 def dashboard():
     connection = db()
     totals = connection.execute("SELECT COUNT(*) accounts, (SELECT COUNT(*) FROM journal_entries) entries, (SELECT COUNT(*) FROM users WHERE active=1) users FROM accounts").fetchone()
-    balance = connection.execute("SELECT COALESCE(DECIMAL_SUM(debit),0) debit, COALESCE(DECIMAL_SUM(credit),0) credit FROM journal_lines").fetchone()
-    revenue = connection.execute("SELECT COALESCE(DECIMAL_NET(jl.credit,jl.debit),0) total FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE a.account_type='revenue'").fetchone()["total"]
-    expenses = connection.execute("SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) total FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE a.account_type='expense'").fetchone()["total"]
+    balance_row = connection.execute("SELECT COALESCE(DECIMAL_SUM(debit),0) debit, COALESCE(DECIMAL_SUM(credit),0) credit FROM journal_lines").fetchone()
+    balance = {"debit":Decimal(str(balance_row["debit"] or "0")),
+               "credit":Decimal(str(balance_row["credit"] or "0"))}
+    revenue = Decimal(str(connection.execute("SELECT COALESCE(DECIMAL_NET(jl.credit,jl.debit),0) total FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE a.account_type='revenue'").fetchone()["total"] or "0"))
+    expenses = Decimal(str(connection.execute("SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) total FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE a.account_type='expense'").fetchone()["total"] or "0"))
     recent = connection.execute("SELECT * FROM journal_entries ORDER BY id DESC LIMIT 5").fetchall()
     currency_row=connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
     base_currency=currency_row["setting_value"] if currency_row else "EGP"
@@ -730,6 +732,8 @@ def trial_balance():
         LEFT JOIN journal_entries je ON je.id=jl.entry_id AND je.status='posted'
         WHERE {' AND '.join(conditions)}
         GROUP BY a.id ORDER BY a.code""", params).fetchall()
+    rows = [dict(row, debit=Decimal(str(row["debit"] or "0")),
+                 credit=Decimal(str(row["credit"] or "0"))) for row in rows]
     settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency')")}
     connection.close()
@@ -775,10 +779,12 @@ def ledger():
             rows = []
             for row in raw_rows:
                 item = dict(row)
-                running_balance += Decimal(str(item["debit"] or "0")) - Decimal(str(item["credit"] or "0"))
+                item["debit"] = Decimal(str(item["debit"] or "0"))
+                item["credit"] = Decimal(str(item["credit"] or "0"))
+                running_balance += item["debit"] - item["credit"]
                 item["running_balance"] = running_balance.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 rows.append(item)
-            closing_balance = round(running_balance, 2)
+            closing_balance = running_balance.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         else:
             opening_balance = Decimal("0")
             closing_balance = Decimal("0")
@@ -805,8 +811,12 @@ def journal_detail(entry_id):
     lines = connection.execute("""SELECT jl.*,a.code account_code,a.name_ar account_name
         FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
         WHERE jl.entry_id=? ORDER BY jl.id""", (entry_id,)).fetchall()
-    totals = connection.execute("""SELECT COALESCE(DECIMAL_SUM(debit),0) debit,COALESCE(DECIMAL_SUM(credit),0) credit
+    lines = [dict(row, debit=Decimal(str(row["debit"] or "0")),
+                  credit=Decimal(str(row["credit"] or "0"))) for row in lines]
+    totals_row = connection.execute("""SELECT COALESCE(DECIMAL_SUM(debit),0) debit,COALESCE(DECIMAL_SUM(credit),0) credit
         FROM journal_lines WHERE entry_id=?""", (entry_id,)).fetchone()
+    totals = {"debit":Decimal(str(totals_row["debit"] or "0")),
+              "credit":Decimal(str(totals_row["credit"] or "0"))}
     connection.close()
     return render_template("journal_detail.html", entry=entry, lines=lines, totals=totals, today=datetime.now().date().isoformat())
 
