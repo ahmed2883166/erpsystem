@@ -118,6 +118,21 @@
   </div>
   <p class="muted">يتم تحديد الحسابات من شاشة «ربط حسابات لوحة الإدارة»، ويمكنك اختيار الحسابات التفصيلية الفعلية حتى لو كانت أكواد شجرة الحسابات مختلفة.</p>
 </section>
+
+<section class="panel">
+  <h3>توقع الرصيد النقدي — الأسابيع الثمانية القادمة</h3>
+  <p class="muted">يعتمد على النقدية والبنوك المرتبطة، والفواتير المرحلة المفتوحة حسب الاستحقاق. المتأخر يُدرج في الأسبوع الأول. رصيد الرواتب المستحق يُدرج في الأسبوع الأول إذا كان حساب الالتزام معرفًا باسم واضح للرواتب.</p>
+  {% if s.cash_forecast.warning %}<p class="danger"><strong>تحذير: الرصيد المتوقع ينخفض عن الحد الأدنى المحدد.</strong></p>{% endif %}
+  <div class="stat-grid"><div class="stat-card"><small>الرصيد الحالي</small><strong>{{ money(s.cash_forecast.opening) }}</strong></div><div class="stat-card"><small>الحد الأدنى</small><strong>{{ money(s.cash_forecast.minimum) }}</strong></div><div class="stat-card"><small>الرواتب المستحقة المدرجة</small><strong>{{ money(s.cash_forecast.payroll_due) }}</strong></div></div>
+  <form method="post" action="{{ url_for('management_minimum_cash') }}" class="report-filter no-print"><label>الحد الأدنى للنقدية<input type="number" min="0" step="0.01" name="minimum_cash_balance" value="{{ s.cash_forecast.minimum }}" required></label><button type="submit">حفظ الحد الأدنى</button></form>
+  <div class="table-wrap"><table><thead><tr><th>الأسبوع</th><th>أول الأسبوع</th><th>مقبوضات متوقعة</th><th>مدفوعات مستحقة</th><th>صافي الحركة</th><th>الرصيد المتوقع</th></tr></thead><tbody>{% for w in s.cash_forecast.weeks %}<tr><td>{{ w.label }}</td><td>{{ money(w.opening) }}</td><td>{{ money(w.receipts) }}</td><td>{{ money(w.payments) }}</td><td>{{ money(w.net) }}</td><td class="{{ 'danger' if s.cash_forecast.minimum > 0 and w.closing < s.cash_forecast.minimum else '' }}">{{ money(w.closing) }}</td></tr>{% endfor %}</tbody></table></div>
+</section>
+<section class="panel">
+  <h3>مراجعة القيود غير المعتادة</h3>
+  <p class="muted">تنبيه استرشادي عند تجاوز مبلغ سطر الحساب ثلاثة أضعاف متوسطه التاريخي خلال 90 يومًا، أو إذا وقع القيد في آخر يومين من الفترة. لا يتم تعديل القيود أو منعها تلقائيًا.</p>
+  <div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>المرجع</th><th>البيان</th><th>مدين</th><th>دائن</th><th>سبب التنبيه</th></tr></thead><tbody>{% for e in s.unusual_entries %}<tr><td>{{ e.date }}</td><td>{{ e.reference }}</td><td>{{ e.description }}</td><td>{{ money(e.debit) }}</td><td>{{ money(e.credit) }}</td><td>{{ e.reasons|join('، ') }}</td></tr>{% else %}<tr><td colspan="6">لا توجد قيود مطابقة لمعايير التنبيه في الفترة.</td></tr>{% endfor %}</tbody></table></div>
+</section>
+
 {% endblock %}
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" crossorigin="anonymous"></script>
