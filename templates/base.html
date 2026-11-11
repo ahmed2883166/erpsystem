@@ -17,7 +17,7 @@
 {% if 'tax.view' in permissions %}<a href="{{ url_for('tax.tax_report') }}">مركز الضرائب والإقرار الشهري</a>{% endif %}{% if 'workforce.view' in permissions %}<a href="{{ url_for('workforce.employees') }}">الموظفون والبدلات</a><a href="{{ url_for('workforce.payroll') }}">مسير الرواتب</a><a href="{{ url_for('workforce.custody') }}">عهد الموظفين</a>{% endif %}{% if 'currency.view' in permissions or 'currency.manage' in permissions %}<a href="{{ url_for('currency_center.index') }}">العملات وفروق الصرف</a>{% endif %}{% if 'party.view' in permissions %}<a href="{{ url_for('party_reports.party_statement') }}">كشوف حساب العملاء والموردين</a>{% endif %}{% if 'reports.view' in permissions %}<a href="{{ url_for('management_dashboard') }}">لوحة الإدارة</a>{% endif %}
 {% if 'budget.view' in permissions %}<a href="{{ url_for('planning.budget_index') }}">الموازنات التقديرية</a>{% endif %}
 {% if 'reports.view' in permissions %}<a href="{{ url_for('planning.balance_sheet') }}">قائمة المركز المالي / الميزانية</a>{% endif %}
-{% if 'cashflow.view' in permissions %}<a href="{{ url_for('planning.cash_flow') }}">قائمة التدفقات النقدية</a>{% endif %}
+{% if 'cashflow.view' in permissions or 'reports.view' in permissions %}<a href="{{ url_for('planning.cash_flow') }}">قائمة التدفقات النقدية</a>{% endif %}
 {% if 'accounts.manage' in permissions %}<a href="{{ url_for('management_account_mapping') }}">ربط حسابات لوحة الإدارة</a>{% endif %}{% if 'reports.view' in permissions %}<a href="{{ url_for('trial_balance') }}">ميزان المراجعة</a><a href="{{ url_for('ledger') }}">دفتر الأستاذ</a><a href="{{ url_for('reconciliation') }}">المطابقة والترابط</a>{% endif %}
 {% if 'users.manage' in permissions %}<a href="{{ url_for('accounting_periods') }}">إقفال الفترات المحاسبية</a>{% endif %}
 {% if 'users.manage' in permissions %}<a href="{{ url_for('company_setup') }}">إعداد الشركة والعملات</a><a href="{{ url_for('users') }}">المستخدمون والصلاحيات</a>{% endif %}
@@ -39,28 +39,6 @@
  });}
 })();
 (function(){const root=document.documentElement;const saved=localStorage.getItem('nexus-theme')||'dark';root.dataset.theme=saved;const btn=document.getElementById('themeToggle');if(btn){btn.addEventListener('click',()=>{const next=root.dataset.theme==='dark'?'light':'dark';root.dataset.theme=next;localStorage.setItem('nexus-theme',next);btn.textContent=next==='dark'?'◐ المظهر الداكن':'☀ المظهر الفاتح';});btn.textContent=saved==='dark'?'◐ المظهر الداكن':'☀ المظهر الفاتح';}})();
-(function(){
- const canScroll=(el,axis,delta)=>{
-   if(!el||!delta)return false;
-   if(axis==='y')return delta<0?el.scrollTop>0:el.scrollTop+el.clientHeight<el.scrollHeight-1;
-   return delta<0?el.scrollLeft>0:el.scrollLeft+el.clientWidth<el.scrollWidth-1;
- };
- document.addEventListener('wheel',event=>{
-   const table=event.target.closest('.table-wrap');
-   const sidebar=event.target.closest('aside');
-   const tableY=table&&canScroll(table,'y',event.deltaY);
-   const tableX=table&&canScroll(table,'x',event.deltaX);
-   const sideY=sidebar&&canScroll(sidebar,'y',event.deltaY);
-   const target=(tableY||tableX)?table:(sideY?sidebar:null);
-   if(!target)return;
-   const consumeY=target===table?tableY:sideY;
-   const consumeX=target===table?tableX:false;
-   if(!consumeY&&!consumeX)return;
-   event.preventDefault();
-   if(consumeY)target.scrollTop+=event.deltaY;
-   if(consumeX)target.scrollLeft+=event.deltaX;
- },{passive:false});
-})();
 (function(){
  const printAction=document.querySelector('.global-report-actions');
  const forms=[...document.querySelectorAll('form[method="post" i],form:not([method])')].filter(form=>!form.classList.contains('no-print'));
