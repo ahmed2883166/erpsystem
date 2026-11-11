@@ -163,3 +163,20 @@ main{min-width:0;overscroll-behavior:contain}
  aside{position:relative;right:auto;top:auto;bottom:auto;width:100%;height:auto;max-height:34dvh;overflow-x:hidden;overflow-y:auto;overscroll-behavior-y:contain}
  main{height:auto;min-height:0;overflow:visible}
 }
+
+/* Grouped ERP sidebar navigation */
+nav{display:flex;flex-direction:column;gap:10px}
+.nav-home{margin-bottom:3px}
+.nav-group{border:1px solid #344256;border-radius:12px;background:rgba(255,255,255,.035);overflow:hidden}
+.nav-group>summary{list-style:none;cursor:pointer;display:flex;flex-direction:column;gap:2px;padding:11px 12px;color:#f1f5f9;font-weight:800;user-select:none}
+.nav-group>summary::-webkit-details-marker{display:none}
+.nav-group>summary:after{content:"＋";float:left;margin-top:-25px;color:#8da4bf;font-size:13px}
+.nav-group[open]>summary:after{content:"−"}
+.nav-group>summary span{display:block;padding-left:22px}
+.nav-group>summary small{display:block;color:#9fb3c8;font-size:11px;font-weight:500}
+.nav-group>summary:hover{background:var(--nav-hover)}
+.nav-links{display:flex;flex-direction:column;gap:5px;padding:0 8px 9px}
+.nav-links a{min-height:38px;padding:7px 11px;font-size:13px;font-weight:600;background:rgba(255,255,255,.055);box-shadow:none;border-color:#2e4056}
+.nav-links a:hover{transform:none;background:var(--nav-hover);border-color:#66809e}
+@media(max-width:850px){nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}.nav-group{min-width:0}}
+@media(max-width:560px){nav{grid-template-columns:1fr}}
