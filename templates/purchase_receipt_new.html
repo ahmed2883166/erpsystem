@@ -18,7 +18,7 @@
 </div><button>ترحيل الاستلام والقيد</button></form></section>
 <script>
 (function(){const product=document.getElementById('receiptProduct'),price=document.getElementById('receiptUnitCost'),warehouse=document.querySelector('[name="warehouse_id"]'),location=document.getElementById('receiptLocation');
-function updatePrice(){const opt=product.options[product.selectedIndex];if(opt&&price.dataset.manual!=='1')price.value=opt.dataset.purchasePrice||'0';}
+function updatePrice(){const opt=product.options[product.selectedIndex];if(opt)price.value=opt.dataset.purchasePrice||'0';}
 function filterLocations(){const wid=warehouse.value;for(const opt of location.options){if(!opt.value)continue;opt.hidden=opt.dataset.warehouse!==wid;if(opt.hidden&&opt.selected)location.value='';}}
-product.addEventListener('change',updatePrice);price.addEventListener('input',()=>price.dataset.manual='1');warehouse.addEventListener('change',filterLocations);updatePrice();filterLocations();})();
+product.addEventListener('change',updatePrice);warehouse.addEventListener('change',filterLocations);updatePrice();filterLocations();})();
 </script>{% endblock %}
