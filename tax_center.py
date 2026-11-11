@@ -45,7 +45,7 @@ def _authorized(fn):
     def wrapped(*args, **kwargs):
         if "user_id" not in session:
             return redirect(url_for("login"))
-        if session.get("role") not in {"admin", "accountant", "viewer"}:
+        if ("tax.view" not in set(session["permissions"])) if "permissions" in session else (session.get("role") not in {"admin", "accountant", "viewer"}):
             flash("لا تملك صلاحية عرض مركز الضرائب.", "error")
             return redirect(url_for("dashboard"))
         return fn(*args, **kwargs)
@@ -57,7 +57,7 @@ def _editor(fn):
     def wrapped(*args, **kwargs):
         if "user_id" not in session:
             return redirect(url_for("login"))
-        if session.get("role") not in {"admin", "accountant"}:
+        if ("tax.manage" not in set(session["permissions"])) if "permissions" in session else (session.get("role") not in {"admin", "accountant"}):
             flash("تعديل التصنيف الضريبي متاح للمحاسب ومدير النظام فقط.", "error")
             return redirect(url_for("tax.tax_report"))
         return fn(*args, **kwargs)
