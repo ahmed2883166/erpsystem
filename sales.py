@@ -1103,12 +1103,22 @@ def customer_list():
         per_page=request.args.get("customers_per_page",50,type=int))
     rows = customers_page["rows"]
     invoices_by_customer = {}
-    for invoice_row in c.execute(
-        """SELECT i.id,i.customer_id,i.total_amount,i.paid_amount,COALESCE(i.credited_amount,'0') credited_amount
-        FROM sales_invoices i WHERE i.status='posted'"""
-    ).fetchall():
-        balance = Decimal(invoice_row["total_amount"]) - Decimal(invoice_row["paid_amount"] or "0") - Decimal(invoice_row["credited_amount"] or "0") + _refund_total(c, invoice_row["id"])
-        invoices_by_customer[invoice_row["customer_id"]] = invoices_by_customer.get(invoice_row["customer_id"], Decimal("0")) + balance
+    for balance_row in c.execute("""WITH refunds_by_invoice AS (
+            SELECT cn.invoice_id, COALESCE(DECIMAL_SUM(r.amount),'0') refunded
+            FROM sales_credit_notes cn JOIN customer_refunds r ON r.credit_note_id=cn.id
+            GROUP BY cn.invoice_id
+        )
+        SELECT i.customer_id,
+            COALESCE(DECIMAL_SUM(i.total_amount),'0') total_amount,
+            COALESCE(DECIMAL_SUM(i.paid_amount),'0') paid_amount,
+            COALESCE(DECIMAL_SUM(i.credited_amount),'0') credited_amount,
+            COALESCE(DECIMAL_SUM(COALESCE(r.refunded,'0')),'0') refunded_amount
+        FROM sales_invoices i LEFT JOIN refunds_by_invoice r ON r.invoice_id=i.id
+        WHERE i.status='posted' GROUP BY i.customer_id"""):
+        invoices_by_customer[balance_row["customer_id"]] = (
+            Decimal(balance_row["total_amount"]) - Decimal(balance_row["paid_amount"])
+            - Decimal(balance_row["credited_amount"]) + Decimal(balance_row["refunded_amount"])
+        )
     rows = [dict(row, outstanding=invoices_by_customer.get(row["id"], Decimal("0"))) for row in rows]
     c.close()
     return render_template("sales_customers.html", rows=rows, customers_page=customers_page)
