@@ -16,7 +16,8 @@ class PayrollComplianceTests(unittest.TestCase):
                 id INTEGER PRIMARY KEY, country_code TEXT, category_code TEXT, effective_from TEXT,
                 personal_exemption_annual TEXT, taxable_rounding_unit TEXT DEFAULT '1',
                 insurance_floor TEXT, insurance_ceiling TEXT,
-                employee_insurance_rate TEXT, employer_insurance_rate TEXT, enabled INTEGER
+                employee_insurance_rate TEXT, employer_insurance_rate TEXT,
+                enabled INTEGER DEFAULT 1, notes TEXT DEFAULT ''
             );
             CREATE TABLE payroll_tax_brackets(
                 id INTEGER PRIMARY KEY, rule_set_id INTEGER, lower_bound TEXT, upper_bound TEXT, rate TEXT
