@@ -4,12 +4,12 @@
 <div class="flash success">وضع الرواتب: إدخال يدوي بالكامل. القواعد الضريبية والتأمينية المحفوظة لا تُطبّق تلقائيًا ولا تستبدل القيم التي تدخلها هنا. المحاسب مسؤول عن إدخال المبالغ المعتمدة ومراجعتها قبل ترحيل المسير.</div>
 <p><a href="{{url_for('payroll_compliance.report')}}">تقرير الضرائب والتأمينات</a> · <a href="{{url_for('payroll_compliance.payments')}}">سداد الالتزامات</a>.</p>
 <form method="post"><label>الشهر <input type="month" name="period" value="{{today}}" required></label>
-<p class="muted">تُطبق العلاوة المسجلة في ملف الموظف تلقائيًا إذا حل تاريخ سريانها. الإضافي = ساعات الإضافي × (الأساسي ÷ ساعات العمل القياسية) × نسبة الإضافي. يمكنك ترك قيمة الإضافي فارغة ليحسبها النظام أو إدخال قيمة يدوية. الحافز المختار يُحسب كمبلغ ثابت أو كنسبة من الأساسي أو قيمة يومية × عدد الأيام.</p>
+<p class="muted">تُطبق العلاوة المسجلة في ملف الموظف تلقائيًا إذا كان تاريخ سريانها في أول الشهر أو قبله. الإضافي = ساعات الإضافي × (الأساسي ÷ ساعات العمل القياسية) × نسبة الإضافي. يمكنك ترك قيمة الإضافي فارغة ليحسبها النظام أو إدخال قيمة يدوية. الحافز المختار يُحسب كمبلغ ثابت أو كنسبة من الأساسي أو قيمة يومية × عدد الأيام.</p>
 <label class="inline-check"><input type="checkbox" name="auto_calculate_statutory" value="1" checked> احسب تلقائيًا ضريبة المرتبات وتأمين الموظف وتأمين الشركة وفق قواعد الدولة وفئة كل موظف السارية على شهر المسير</label>
 <p class="muted">عند تفعيل الخيار، يجب أن تكون القواعد والشرائح الضريبية والتأمينية مكتملة ومراجعة. عند عدم تفعيله تظل القيم اليدوية هي المعتمدة.</p>
 <div style="overflow-x:auto"><table><tr><th>الموظف</th><th>الأساسي قبل العلاوة</th><th>البدلات</th><th>نوع الحافز</th><th>أيام الحافز</th><th>حافز يدوي إضافي</th><th>ساعات إضافي</th><th>نسبة الإضافي %</th><th>قيمة الإضافي (اتركها فارغة للحساب)</th><th>ساعات غياب</th><th>خصم الغياب</th><th>السلف</th><th>خصومات أخرى</th><th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th></tr>
 {% for e in employees %}<tr><td>{{e.employee_code}} - {{e.full_name}}<br><small>الأساسي المسجل: {{e.basic_salary}} | العلاوة: {{e.raise_value}} {{'%' if e.raise_type=='percentage' else 'مبلغ'}}</small></td>
-<td><input type="number" min="0.01" step="0.01" name="basic_{{e.id}}" value="" required></td>
+<td><input type="number" min="0.01" step="0.01" name="basic_{{e.id}}" value="{{e.basic_salary}}" required></td>
 <td><input type="number" min="0" step="0.01" name="allowances_{{e.id}}" value="0" required></td>
 <td><select name="incentive_rule_{{e.id}}"><option value="">بدون حافز مناسبة</option>{% for rule in incentive_rules %}<option value="{{rule.id}}">{{rule.name}} — {{'مبلغ ثابت' if rule.calculation_method=='fixed' else 'نسبة من الأساسي' if rule.calculation_method=='percentage_basic' else 'قيمة يومية'}}</option>{% endfor %}</select></td>
 <td><input type="number" min="0" step="0.01" name="incentive_days_{{e.id}}" value="0"></td>
