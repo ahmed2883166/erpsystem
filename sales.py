@@ -1100,7 +1100,10 @@ def refund_credit_note(credit_note_id):
             c.rollback()
             flash(str(exc), "error")
     cash_accounts = c.execute(
-        "SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=0 AND active=1 ORDER BY code"
+        """SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=0 AND active=1
+           AND (code IN ('1000','1110','1120','1121','1122') OR lower(name_ar) LIKE '%بنك%'
+                OR lower(name_ar) LIKE '%مصرف%' OR lower(name_ar) LIKE '%صندوق%' OR lower(name_ar) LIKE '%نقد%')
+           ORDER BY code"""
     ).fetchall()
     c.close()
     return render_template("sales_refund_new.html", note=note, remaining_refundable=remaining_refundable,
