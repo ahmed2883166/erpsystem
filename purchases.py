@@ -660,6 +660,7 @@ def new_credit_note():
             for movement_id in movement_ids:
                 c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?",(entry_id,movement_id))
             c.commit()
+            c.close()
             flash(f"تم ترحيل إشعار الدائن {credit_no} وربطه بالمخزون وفاتورة المورد.","success")
             return redirect(url_for("purchase.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
@@ -669,8 +670,8 @@ def new_credit_note():
     bills=c.execute("""SELECT b.id,b.bill_no,b.supplier_id,b.bill_date,b.total_amount,b.credited_amount,s.name supplier_name
       FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
       WHERE b.status='posted' AND EXISTS(SELECT 1 FROM supplier_bill_receipts sb WHERE sb.bill_id=b.id)
-        AND CAST(b.total_amount AS NUMERIC)>CAST(COALESCE(b.credited_amount,'0') AS NUMERIC)
       ORDER BY b.bill_date DESC,b.id DESC""").fetchall()
+    bills=[b for b in bills if Decimal(b["total_amount"])>Decimal(b["credited_amount"] or "0")]
     products=c.execute("SELECT id,sku,name_ar,uom FROM stock_products WHERE active=1 AND product_type!='service' ORDER BY name_ar").fetchall()
     warehouses=c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     c.close()
