@@ -351,10 +351,12 @@ def rules():
         FROM payroll_rule_sets r ORDER BY country_code,category_code,effective_from DESC
     """).fetchall()
     brackets = conn.execute("""
-        SELECT b.*,r.country_code,r.category_code,NULL AS income_max,'standard' AS bracket_kind
+        SELECT b.id,b.rule_set_id,b.lower_bound,b.upper_bound,b.rate,
+               r.country_code,r.category_code,NULL AS income_max,'standard' AS bracket_kind
         FROM payroll_tax_brackets b JOIN payroll_rule_sets r ON r.id=b.rule_set_id
         UNION ALL
-        SELECT t.*,r.country_code,r.category_code,t.income_max,'tier' AS bracket_kind
+        SELECT t.id,t.rule_set_id,t.lower_bound,t.upper_bound,t.rate,
+               r.country_code,r.category_code,t.income_max,'tier' AS bracket_kind
         FROM payroll_tax_tier_brackets t JOIN payroll_rule_sets r ON r.id=t.rule_set_id
         ORDER BY country_code,category_code,bracket_kind,CAST(lower_bound AS NUMERIC)
     """).fetchall()
