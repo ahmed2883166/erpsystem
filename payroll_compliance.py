@@ -294,22 +294,23 @@ def rules():
                 category = request.form.get("category_code", "").strip().lower()
                 effective = date.fromisoformat(request.form.get("effective_from", "")).isoformat()
                 exemption = _m(request.form.get("personal_exemption_annual"))
+                rounding_unit = _m(request.form.get("taxable_rounding_unit", "1"))
                 floor = _m(request.form.get("insurance_floor"))
                 ceiling = _m(request.form.get("insurance_ceiling"))
                 employee_rate = _d(request.form.get("employee_insurance_rate"))
                 employer_rate = _d(request.form.get("employer_insurance_rate"))
-                if len(country) != 2 or not category or min(exemption, floor, ceiling) < 0:
-                    raise ValueError("أدخل رمز دولة من حرفين وفئة موظف وحدودًا غير سالبة.")
+                if len(country) != 2 or not category or min(exemption, floor, ceiling) < 0 or rounding_unit <= 0:
+                    raise ValueError("أدخل رمز دولة من حرفين وفئة موظف وحدودًا صحيحة، ووحدة تقريب أكبر من صفر.")
                 if min(employee_rate, employer_rate) < 0 or max(employee_rate, employer_rate) > 100:
                     raise ValueError("نسب التأمينات يجب أن تكون بين صفر و100.")
                 if ceiling and ceiling < floor:
                     raise ValueError("الحد الأقصى لأجر التأمين يجب ألا يقل عن الحد الأدنى.")
                 cur = conn.execute("""
                     INSERT INTO payroll_rule_sets(country_code,category_code,effective_from,
-                      personal_exemption_annual,insurance_floor,insurance_ceiling,
+                      personal_exemption_annual,taxable_rounding_unit,insurance_floor,insurance_ceiling,
                       employee_insurance_rate,employer_insurance_rate,notes)
-                    VALUES(?,?,?,?,?,?,?,?,?)
-                """, (country,category,effective,str(exemption),str(floor),str(ceiling),
+                    VALUES(?,?,?,?,?,?,?,?,?,?)
+                """, (country,category,effective,str(exemption),str(rounding_unit),str(floor),str(ceiling),
                       str(employee_rate),str(employer_rate),request.form.get("notes","").strip()))
                 rule_id = cur.lastrowid
                 _audit(conn, "payroll_rule_created", country + "/" + category + " id=" + str(rule_id))
@@ -344,13 +345,18 @@ def rules():
         flash(str(exc) or "تعذر حفظ قواعد الرواتب.", "error")
     country = current_tax_country(conn)
     rule_sets = conn.execute("""
-        SELECT r.*, (SELECT COUNT(*) FROM payroll_tax_brackets b WHERE b.rule_set_id=r.id) bracket_count
+        SELECT r.*,
+          (SELECT COUNT(*) FROM payroll_tax_brackets b WHERE b.rule_set_id=r.id) +
+          (SELECT COUNT(*) FROM payroll_tax_tier_brackets t WHERE t.rule_set_id=r.id) bracket_count
         FROM payroll_rule_sets r ORDER BY country_code,category_code,effective_from DESC
     """).fetchall()
     brackets = conn.execute("""
-        SELECT b.*,r.country_code,r.category_code FROM payroll_tax_brackets b
-        JOIN payroll_rule_sets r ON r.id=b.rule_set_id
-        ORDER BY r.id,CAST(b.lower_bound AS NUMERIC)
+        SELECT b.*,r.country_code,r.category_code,NULL AS income_max,'standard' AS bracket_kind
+        FROM payroll_tax_brackets b JOIN payroll_rule_sets r ON r.id=b.rule_set_id
+        UNION ALL
+        SELECT t.*,r.country_code,r.category_code,t.income_max,'tier' AS bracket_kind
+        FROM payroll_tax_tier_brackets t JOIN payroll_rule_sets r ON r.id=t.rule_set_id
+        ORDER BY country_code,category_code,bracket_kind,CAST(lower_bound AS NUMERIC)
     """).fetchall()
     conn.close()
     return render_template("payroll_rules.html", rule_sets=rule_sets, brackets=brackets,
