@@ -458,8 +458,17 @@ def products():
         args.extend([f"%{q}%"]*3)
     if category_filter.isdigit():
         sql+=" AND p.category_id=?";args.append(int(category_filter))
-    rows=c.execute(sql+" ORDER BY p.sku",args).fetchall(); c.close()
-    return render_template("stock_products.html",rows=rows,categories=categories,search=q,category_filter=category_filter)
+    count_sql="SELECT COUNT(*) FROM stock_products p LEFT JOIN stock_categories sc ON sc.id=p.category_id WHERE 1=1"
+    for condition in (" AND (p.sku LIKE ? OR p.name_ar LIKE ? OR p.barcode LIKE ?)",
+                      " AND p.category_id=?"):
+        if condition in sql:
+            count_sql += condition
+    products_page = fetch_page(c,sql+" ORDER BY p.sku",count_sql,args,
+        page=request.args.get("products_page",1,type=int),
+        per_page=request.args.get("products_per_page",50,type=int))
+    rows=products_page["rows"]; c.close()
+    return render_template("stock_products.html",rows=rows,categories=categories,search=q,
+        category_filter=category_filter,products_page=products_page)
 
 
 @stock_bp.route("/categories", methods=["GET","POST"])
