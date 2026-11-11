@@ -9,7 +9,7 @@ from functools import wraps
 from pathlib import Path
 from datetime import date, datetime
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
-from accounting_core import post_journal, register_decimal_aggregates, money
+from accounting_core import post_journal, money
 from stock import consume_layers, q4, make_lot
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 
