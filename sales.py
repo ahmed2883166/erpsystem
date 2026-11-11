@@ -609,23 +609,26 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
             warehouse_id = invoice["warehouse_id"]
             if not warehouse_id:
                 raise ValueError("فاتورة الصنف المخزني لا تحتوي على مخزن صرف صالح.")
+            default_location = conn.execute("SELECT location_id FROM stock_product_locations WHERE product_id=? AND warehouse_id=?",
+                                            (product_id, warehouse_id)).fetchone()
+            return_location_id = default_location["location_id"] if default_location else None
             for lot_part in item["lot_allocations"]:
                 stock_index += 1
                 movement_no = credit_no + "-" + str(stock_index)
                 part_qty, part_cost = lot_part["quantity"], lot_part["cost_total"]
                 unit_cost = part_cost / part_qty
                 movement = conn.execute(
-                    """INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,
+                    """INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,target_location_id,
                        lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,issue_purpose)
-                       VALUES(?,'receipt',?,?,?,?,?,?,?,?,?, 'pending','sales_return')""",
-                    (movement_no, product_id, warehouse_id, lot_part["lot_id"], str(part_qty), str(unit_cost),
+                       VALUES(?,'receipt',?,?,?,?,?,?,?,?,?,?, 'pending','sales_return')""",
+                    (movement_no, product_id, warehouse_id, return_location_id, lot_part["lot_id"], str(part_qty), str(unit_cost),
                      str(part_cost), credit_date, "مرتجع مبيعات بموجب " + credit_no, created_by),
                 )
                 movement_id = movement.lastrowid
                 conn.execute(
-                    """INSERT INTO stock_valuation_layers(product_id,warehouse_id,lot_id,source_movement_id,
-                       qty_in,qty_remaining,unit_cost,value_remaining) VALUES(?,?,?,?,?,?,?,?)""",
-                    (product_id, warehouse_id, lot_part["lot_id"], movement_id, str(part_qty),
+                    """INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,lot_id,source_movement_id,
+                       qty_in,qty_remaining,unit_cost,value_remaining) VALUES(?,?,?,?,?,?,?,?,?)""",
+                    (product_id, warehouse_id, return_location_id, lot_part["lot_id"], movement_id, str(part_qty),
                      str(part_qty), str(unit_cost), str(part_cost)),
                 )
                 conn.execute(
