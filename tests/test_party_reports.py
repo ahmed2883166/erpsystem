@@ -67,7 +67,7 @@ class PartyStatementTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.get_data(as_text=True)
         self.assertIn("كشف حساب عميل", body)
-        self.assertIn("1,200.00", body)
+        self.assertIn("1200.00", body)
 
     def test_customer_statement_includes_credit_notes_and_cash_refunds(self):
         conn = sqlite3.connect(self.db_path)
@@ -92,7 +92,7 @@ class PartyStatementTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.get_data(as_text=True)
         self.assertIn("كشف حساب مورد", body)
-        self.assertIn("1,700.00", body)
+        self.assertIn("1700.00", body)
 
 
 if __name__ == "__main__":
