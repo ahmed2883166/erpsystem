@@ -87,6 +87,20 @@ def make_token(license_row, machine_id):
     }
     return encode_token(payload)
 
+def make_trial_token(machine_id, first_seen, trial_ends_at):
+    payload = {
+        "license_id": "trial:" + hashlib.sha256(machine_id.encode()).hexdigest(),
+        "machine_id": machine_id,
+        "customer": "",
+        "license_type": "trial",
+        "issued_at": iso(first_seen),
+        "expires_at": iso(trial_ends_at),
+        "offline_until": iso(trial_ends_at),
+        "trial_ends_at": iso(trial_ends_at),
+    }
+    return encode_token(payload)
+
+
 def admin_authorized():
     expected = os.environ.get("NEXUS_LICENSE_ADMIN_TOKEN", "")
     supplied = request.headers.get("Authorization", "")
@@ -114,9 +128,10 @@ def trial():
     else:
         first_seen, trial_ends_at = parse_time(row["first_seen"]), parse_time(row["trial_ends_at"])
     connection.close()
+    token = make_trial_token(machine_id, first_seen, trial_ends_at)
     return jsonify({"first_seen":iso(first_seen),"trial_ends_at":iso(trial_ends_at),
                     "days_remaining":max(0, int((trial_ends_at-now).total_seconds()+86399)//86400),
-                    "status":"trial" if trial_ends_at > now else "expired"})
+                    "status":"trial" if trial_ends_at > now else "expired","token":token})
 
 @app.post("/api/v1/activate")
 def activate():
