@@ -25,7 +25,7 @@
     <h2>لوحة الإدارة</h2>
     <p class="muted">{{ s.company_name }} · النشاط: {{ {'commercial':'تجاري','service':'خدمي','medical':'طبي','restaurant':'مطاعم','industrial':'صناعي'}.get(s.activity,s.activity) }} · العملة الأساسية: {{ s.base_currency }}</p>
     <p class="muted">الفترة {{ date_from }} — {{ date_to }} · مقارنة بالفترة {{ s.prev_start.isoformat() }} — {{ s.prev_end.isoformat() }}</p>
-    <div class="actions no-print">{% if 'budget.view' in permissions %}<a class="button-link" href="{{ url_for('planning.budget_index') }}">الموازنات</a>{% endif %}<a class="button-link" href="{{ url_for('planning.balance_sheet') }}">الميزانية العمومية</a>{% if 'cashflow.view' in permissions or 'reports.view' in permissions %}<a class="button-link" href="{{ url_for('planning.cash_flow') }}">التدفقات النقدية</a>{% endif %}{% if 'accounts.manage' in permissions %}<a class="button-link" href="{{ url_for('management_account_mapping') }}">ربط الحسابات</a>{% endif %}</div>
+    <div class="actions no-print">{% if 'budget.view' in permissions %}<a class="button-link" href="{{ url_for('planning.budget_index') }}">الموازنات</a>{% endif %}<a class="button-link" href="{{ url_for('planning.balance_sheet') }}">الميزانية العمومية</a>{% if 'cashflow.view' in permissions or 'reports.view' in permissions %}<a class="button-link" href="{{ url_for('planning.cash_flow') }}">التدفقات النقدية</a>{% endif %}{% if 'accounts.manage' in permissions %}<a class="button-link" href="{{ url_for('management_account_mapping') }}">ربط الحسابات</a><a class="button-link" href="{{ url_for('analytic_dimensions_settings') }}">إدارة الأبعاد التحليلية</a>{% endif %}</div>
   </div>
 </header>
 
