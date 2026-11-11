@@ -24,6 +24,7 @@ class PayrollComplianceTests(unittest.TestCase):
         self.employee = {
             "legal_category": "local",
             "insured_wage": "0",
+            "insurance_enabled": 1,
         }
 
     def tearDown(self):
