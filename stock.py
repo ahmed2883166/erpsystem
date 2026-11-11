@@ -893,20 +893,19 @@ def counts():
                     WHERE product_id=? AND warehouse_id=?""", (product["id"], warehouse_id)).fetchone()
                 if locations:
                     product_locations = set(locations) | existing_locations
+                    if default_row:
+                        product_locations.add(default_row["location_id"])
                 else:
                     product_locations = existing_locations
                     if default_row:
                         product_locations.add(default_row["location_id"])
                 if not product_locations:
                     product_locations = {None}
+                product_lots = {row["lot_id"] for row in existing_scopes}
                 if product["track_lot"]:
-                    product_lots = {row["id"] for row in c.execute(
-                        "SELECT id FROM stock_lots WHERE product_id=? ORDER BY id", (product["id"],)).fetchall()}
-                    if any(row["lot_id"] is None for row in existing_scopes):
-                        product_lots.add(None)
-                    if not product_lots:
-                        product_lots = {None}
-                else:
+                    product_lots.update(row["id"] for row in c.execute(
+                        "SELECT id FROM stock_lots WHERE product_id=? ORDER BY id", (product["id"],)).fetchall())
+                if not product_lots:
                     product_lots = {None}
                 for location_id in sorted(product_locations, key=lambda x: (x is None, x or 0)):
                     for lot_id in sorted(product_lots, key=lambda x: (x is None, x or 0)):
@@ -968,12 +967,19 @@ def count_detail(stocktake_id):
         except (ValueError, sqlite3.Error) as exc:
             c.rollback()
             flash(str(exc), "error")
-    lines = c.execute("""SELECT l.*,p.sku,p.name_ar,p.uom,p.purchase_price,
-        loc.code location_code,loc.name_ar location_name,lot.lot_number
+    lines = c.execute("""WITH RECURSIVE location_paths(id,warehouse_id,path) AS (
+        SELECT id,warehouse_id,code || ' - ' || name_ar FROM stock_locations WHERE parent_id IS NULL
+        UNION ALL
+        SELECT child.id,child.warehouse_id,parent.path || ' / ' || child.code || ' - ' || child.name_ar
+        FROM stock_locations child JOIN location_paths parent ON child.parent_id=parent.id
+    )
+    SELECT l.*,p.sku,p.name_ar,p.uom,p.purchase_price,
+        loc.code location_code,loc.name_ar location_name,lp.path location_path,lot.lot_number
         FROM stocktake_lines l JOIN stock_products p ON p.id=l.product_id
         LEFT JOIN stock_locations loc ON loc.id=l.location_id
+        LEFT JOIN location_paths lp ON lp.id=l.location_id
         LEFT JOIN stock_lots lot ON lot.id=l.lot_id
-        WHERE l.stocktake_id=? ORDER BY p.sku,loc.code,lot.lot_number""", (stocktake_id,)).fetchall()
+        WHERE l.stocktake_id=? ORDER BY p.sku,lp.path,lot.lot_number""", (stocktake_id,)).fetchall()
     accounts = c.execute("""SELECT id,code,name_ar,account_type FROM accounts
         WHERE active=1 AND is_group=0 AND account_type IN ('expense','revenue') ORDER BY account_type,code""").fetchall()
     c.close()
