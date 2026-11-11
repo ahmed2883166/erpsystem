@@ -67,6 +67,61 @@ ACTIVITY_LABELS = {
     "restaurant": "مطاعم", "industrial": "صناعي"
 }
 
+# Canonical account-role and posting mappings, kept beside each activity chart.
+# These codes are validated against the actual CHARTS definitions in tests.
+ACTIVITY_ACCOUNT_ROLES = {
+    "commercial": {
+        "cash": ("1110", "1120"), "receivables": ("1130",),
+        "payables": ("2110",), "inventory": ("1150",),
+        "quick_assets": ("1110", "1120", "1130", "1140"),
+        "current_assets": ("1110", "1120", "1130", "1140", "1150", "1160"),
+        "current_liabilities": ("2110", "2120", "2130", "2140"),
+        "direct_cost": ("5100",),
+    },
+    "service": {
+        "cash": ("1110",), "receivables": ("1120", "1130"),
+        "payables": ("2100",), "inventory": (),
+        "quick_assets": ("1110", "1120", "1130"),
+        "current_assets": ("1110", "1120", "1130", "1140"),
+        "current_liabilities": ("2100", "2110", "2120", "2130"),
+        "direct_cost": ("5100", "5200", "5300"),
+    },
+    "medical": {
+        "cash": ("1110", "1120"), "receivables": ("1130", "1140"),
+        "payables": ("2100",), "inventory": ("1150", "1160"),
+        "quick_assets": ("1110", "1120", "1130", "1140"),
+        "current_assets": ("1110", "1120", "1130", "1140", "1150", "1160"),
+        "current_liabilities": ("2100", "2110", "2120", "2130"),
+        "direct_cost": ("5100", "5200", "5300"),
+    },
+    "restaurant": {
+        "cash": ("1110", "1120"), "receivables": ("1130",),
+        "payables": ("2100",), "inventory": ("1140", "1150", "1160"),
+        "quick_assets": ("1110", "1120", "1130"),
+        "current_assets": ("1110", "1120", "1130", "1140", "1150", "1160"),
+        "current_liabilities": ("2100", "2110", "2120", "2130"),
+        "direct_cost": ("5100", "5200", "5300", "5400"),
+    },
+    "industrial": {
+        "cash": ("1110",), "receivables": ("1120",),
+        "payables": ("2100",), "inventory": ("1130", "1140", "1150", "1160"),
+        "quick_assets": ("1110", "1120"),
+        "current_assets": ("1110", "1120", "1130", "1140", "1150", "1160"),
+        "current_liabilities": ("2100", "2110", "2120", "2130"),
+        "direct_cost": ("5400",),
+    },
+}
+
+# Posting accounts follow each chart. Industrial purchases and sales both use
+# 1130 in v1 because manufacturing/finished-goods conversion is not implemented.
+ACTIVITY_POSTING_ACCOUNTS = {
+    "commercial": {"ar": "1130", "revenue": "4100", "vat": "2130", "inventory": "1150", "cogs": "5100", "purchase_inventory": "1150"},
+    "service": {"ar": "1120", "revenue": "4100", "vat": "2130", "inventory": None, "cogs": None, "purchase_inventory": None},
+    "medical": {"ar": "1130", "revenue": "4100", "vat": "2120", "inventory": "1150", "cogs": "5300", "purchase_inventory": "1150"},
+    "restaurant": {"ar": "1130", "revenue": "4100", "vat": "2120", "inventory": "1140", "cogs": "5100", "purchase_inventory": "1140"},
+    "industrial": {"ar": "1120", "revenue": "4100", "vat": "2120", "inventory": "1130", "cogs": "5400", "purchase_inventory": "1130"},
+}
+
 
 # Common support branches available in every activity. Existing account codes and
 # posted ledgers are never rewritten; these rows affect only newly generated charts.
