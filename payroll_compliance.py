@@ -119,6 +119,8 @@ def calculate_payroll_deductions(conn, employee, gross_monthly, period):
         WHERE rule_set_id=? ORDER BY CAST(lower_bound AS NUMERIC),id
     """, (rule["id"],)).fetchall()
     annual_tax = Decimal("0")
+    if not brackets:
+        raise ValueError("مجموعة قواعد الرواتب مفعّلة لكن لا توجد شرائح ضريبية. أضف الشرائح قبل إنشاء المسير.")
     if brackets:
         expected_lower = Decimal("0")
         for band in brackets:
@@ -168,8 +170,10 @@ def _authorized(fn):
         if "user_id" not in session:
             return redirect(url_for("login"))
         permissions = set(session.get("permissions", []))
-        if "workforce.manage" not in permissions and session.get("role") not in {"admin", "accountant"}:
-            flash("لا تملك صلاحية إدارة قواعد الرواتب.", "error")
+        required = "workforce.manage" if request.method == "POST" else "workforce.view"
+        fallback = {"admin", "accountant"} if required == "workforce.manage" else {"admin", "accountant", "viewer"}
+        if required not in permissions and session.get("role") not in fallback:
+            flash("لا تملك صلاحية عرض أو إدارة قواعد الرواتب.", "error")
             return redirect(url_for("dashboard"))
         return fn(*args, **kwargs)
     return wrapped
@@ -254,3 +258,31 @@ def _audit(conn, action, details):
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='audit_log'").fetchone():
         conn.execute("INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
                      (session.get("user_id"), action, details))
+
+
+@payroll_compliance_bp.route("/hr/payroll-compliance")
+@_authorized
+def report():
+    period = request.args.get("period", date.today().strftime("%Y-%m"))
+    try:
+        date.fromisoformat(period + "-01")
+    except ValueError:
+        period = date.today().strftime("%Y-%m")
+    conn = _db()
+    rows = conn.execute("""
+        SELECT l.*,e.employee_code,e.full_name,e.legal_category,r.status
+        FROM payroll_lines l
+        JOIN payroll_runs r ON r.id=l.run_id
+        JOIN employees e ON e.id=l.employee_id
+        WHERE r.period=? AND r.status='posted'
+        ORDER BY e.employee_code
+    """, (period,)).fetchall()
+    totals = {
+        "gross": sum((_d(x["gross_pay"]) for x in rows), Decimal("0")),
+        "net": sum((_d(x["net_pay"]) for x in rows), Decimal("0")),
+        "tax": sum((_d(x["taxable_income_tax"]) for x in rows), Decimal("0")),
+        "employee_insurance": sum((_d(x["employee_insurance"]) for x in rows), Decimal("0")),
+        "employer_insurance": sum((_d(x["employer_insurance"]) for x in rows), Decimal("0")),
+    }
+    conn.close()
+    return render_template("payroll_compliance_report.html", period=period, rows=rows, totals=totals)
