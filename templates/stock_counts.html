@@ -10,5 +10,9 @@
 <p class="notice">أوقف حركات المخزن أثناء العد. عند الاعتماد، سيتحقق النظام من أن الرصيد الدفتري لم يتغير منذ إنشاء أمر الجرد.</p></section>
 <section class="panel"><h3>أوامر الجرد السابقة</h3><div class="table-wrap"><table><thead><tr><th>رقم الجرد</th><th>المخزن</th><th>التاريخ</th><th>عدد بنود الجرد (الموقع/التشغيلة)</th><th>الحالة</th><th>التفاصيل</th></tr></thead><tbody>
 {% for r in rows %}<tr><td>{{ r.count_no }}</td><td>{{ r.warehouse_code }} - {{ r.warehouse_name }}</td><td>{{ r.count_date }}</td><td>{{ r.line_count }}</td><td><span class="state-pill {{ 'state-paid' if r.status=='approved' else 'state-partial' if r.status=='counted' else 'state-unpaid' }}">{{ {'draft':'بانتظار العد','counted':'بانتظار الاعتماد','approved':'معتمد ومرحل'}.get(r.status,r.status) }}</span></td><td><a class="btn secondary" href="{{ url_for('stock.count_detail',stocktake_id=r.id) }}">فتح الجرد</a></td></tr>
-{% else %}<tr><td colspan="6">لا توجد أوامر جرد حتى الآن.</td></tr>{% endfor %}</tbody></table></div></section>
+{% else %}<tr><td colspan="6">لا توجد أوامر جرد حتى الآن.</td></tr>{% endfor %}</tbody></table></div>
+<div class="actions pagination"><span class="muted">إجمالي أوامر الجرد: {{ counts_page.total }} — الصفحة {{ counts_page.page }} من {{ counts_page.pages }}</span>
+<form method="get" class="inline-form"><label>عدد السطور <select name="counts_per_page" onchange="this.form.submit()"><option value="50" {% if counts_page.per_page==50 %}selected{% endif %}>50</option><option value="100" {% if counts_page.per_page==100 %}selected{% endif %}>100</option></select></label></form>
+{% if counts_page.page>1 %}<a class="button secondary" href="{{ url_for('stock.counts',counts_page=counts_page.page-1,counts_per_page=counts_page.per_page) }}">السابق</a>{% endif %}
+{% if counts_page.page<counts_page.pages %}<a class="button" href="{{ url_for('stock.counts',counts_page=counts_page.page+1,counts_per_page=counts_page.per_page) }}">التالي</a>{% endif %}</div></section>
 {% endblock %}
