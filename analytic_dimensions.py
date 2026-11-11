@@ -27,6 +27,10 @@ def initialize_analytic_dimensions_schema(conn):
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     """)
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='journal_lines'").fetchone():
+        # Dimension tables exist; journal columns are added once the journal table is created.
+        conn.commit()
+        return
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")}
     for name, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"),
                         ("project_id", "projects")):
