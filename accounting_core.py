@@ -277,6 +277,7 @@ def reconciliation_snapshot(conn):
         ("supplier_payments", "مدفوعات الموردين", "journal_entry_id"),
         ("sales_invoices", "فواتير البيع", "journal_entry_id"),
         ("customer_receipts", "تحصيلات العملاء", "journal_entry_id"),
+        ("customer_receipt_batches", "إيصالات التحصيل المجمعة", "journal_entry_id"),
         ("bank_transactions", "الحركات البنكية", "journal_entry_id"),
     ]
     unlinked_documents = []
