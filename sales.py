@@ -12,7 +12,7 @@ from pathlib import Path
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
 from stock import consume_layers
-from analytic_dimensions import validate_journal_dimensions, active_dimension_options
+from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 
 sales_bp = Blueprint("sales", __name__, url_prefix="/sales")
 DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
@@ -29,6 +29,7 @@ def db():
 
 def init_sales_schema():
     c = db()
+    initialize_analytic_dimensions_schema(c)
     c.executescript("""
     CREATE TABLE IF NOT EXISTS salespersons(
       id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
@@ -39,6 +40,7 @@ def init_sales_schema():
       tax_number TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '',
       email TEXT NOT NULL DEFAULT '', address TEXT NOT NULL DEFAULT '',
       credit_limit TEXT NOT NULL DEFAULT '0',
+      discount_type TEXT NOT NULL DEFAULT 'none', discount_value TEXT NOT NULL DEFAULT '0',
       active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS sales_invoices(
@@ -46,6 +48,8 @@ def init_sales_schema():
       customer_id INTEGER NOT NULL REFERENCES customers(id),
       invoice_date TEXT NOT NULL, due_date TEXT, warehouse_id INTEGER REFERENCES stock_warehouses(id),
       subtotal TEXT NOT NULL, tax_rate TEXT NOT NULL, tax_amount TEXT NOT NULL,
+      discount_type TEXT NOT NULL DEFAULT 'none', discount_value TEXT NOT NULL DEFAULT '0',
+      discount_amount TEXT NOT NULL DEFAULT '0',
       total_amount TEXT NOT NULL, paid_amount TEXT NOT NULL DEFAULT '0',
       status TEXT NOT NULL DEFAULT 'posted', journal_entry_id INTEGER UNIQUE,
       cogs_journal_entry_id INTEGER UNIQUE, created_by INTEGER,
@@ -147,6 +151,19 @@ def init_sales_schema():
     customer_columns = {row["name"] for row in c.execute("PRAGMA table_info(customers)")}
     if "credit_limit" not in customer_columns:
         c.execute("ALTER TABLE customers ADD COLUMN credit_limit TEXT NOT NULL DEFAULT '0'")
+    for name, definition in {
+        "discount_type": "TEXT NOT NULL DEFAULT 'none'",
+        "discount_value": "TEXT NOT NULL DEFAULT '0'",
+    }.items():
+        if name not in customer_columns:
+            c.execute(f"ALTER TABLE customers ADD COLUMN {name} {definition}")
+    for name, definition in {
+        "discount_type": "TEXT NOT NULL DEFAULT 'none'",
+        "discount_value": "TEXT NOT NULL DEFAULT '0'",
+        "discount_amount": "TEXT NOT NULL DEFAULT '0'",
+    }.items():
+        if name not in invoice_columns:
+            c.execute(f"ALTER TABLE sales_invoices ADD COLUMN {name} {definition}")
     c.close()
 
 
@@ -321,19 +338,53 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             line_rate = Decimal("0.00")
         elif line_rate not in allowed_rates:
             raise ValueError("نسبة ضريبة البند غير معتمدة للدولة المحددة. راجع قائمة نسب الضريبة في إعدادات الشركة.")
-        line_tax = (line_total * line_rate / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
         subtotal += line_total
-        tax_amount += line_tax
         total_cost += cost
         normalized.append({
             "product_id": int(product_id) if product_id else None,
             "description": description, "quantity": qty, "unit_price": unit_price,
-            "line_total": line_total, "cost_total": cost,
-            "tax_rate": line_rate, "tax_treatment": treatment, "tax_amount": line_tax,
+            "gross_line_total": line_total, "line_total": line_total, "cost_total": cost,
+            "tax_rate": line_rate, "tax_treatment": treatment, "tax_amount": Decimal("0.00"),
             "stock_allocations": _allocations if product_id else [],
         })
 
-    subtotal = subtotal.quantize(CENT, rounding=ROUND_HALF_UP)
+    gross_subtotal = subtotal.quantize(CENT, rounding=ROUND_HALF_UP)
+    discount_type = str(customer["discount_type"] or "none").strip().lower()
+    discount_value = Decimal(str(customer["discount_value"] or "0")).quantize(CENT, rounding=ROUND_HALF_UP)
+    if discount_type not in {"none", "percent", "fixed"}:
+        raise ValueError("نوع خصم العميل غير صحيح.")
+    if not discount_value.is_finite() or discount_value < 0:
+        raise ValueError("قيمة خصم العميل يجب أن تكون صفرًا أو أكبر.")
+    if discount_type == "percent":
+        if discount_value > 100:
+            raise ValueError("نسبة خصم العميل يجب ألا تتجاوز 100%.")
+        discount_amount = (gross_subtotal * discount_value / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
+    elif discount_type == "fixed":
+        if discount_value >= gross_subtotal and discount_value > 0:
+            raise ValueError("قيمة الخصم الثابت يجب أن تكون أقل من إجمالي البنود.")
+        discount_amount = discount_value
+    else:
+        discount_value = Decimal("0.00")
+        discount_amount = Decimal("0.00")
+    if discount_amount >= gross_subtotal and discount_amount > 0:
+        raise ValueError("الخصم لا يمكن أن يساوي أو يتجاوز إجمالي الفاتورة.")
+    remaining_discount = discount_amount
+    for index, item in enumerate(normalized):
+        if index == len(normalized) - 1:
+            line_discount = remaining_discount
+        elif gross_subtotal:
+            line_discount = (discount_amount * item["gross_line_total"] / gross_subtotal).quantize(CENT, rounding=ROUND_HALF_UP)
+            remaining_discount -= line_discount
+        else:
+            line_discount = Decimal("0.00")
+        if line_discount > item["gross_line_total"]:
+            line_discount = item["gross_line_total"]
+        item["discount_amount"] = line_discount
+        item["line_total"] = (item["gross_line_total"] - line_discount).quantize(CENT, rounding=ROUND_HALF_UP)
+        item["tax_amount"] = (item["line_total"] * item["tax_rate"] / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
+        tax_amount += item["tax_amount"]
+
+    subtotal = (gross_subtotal - discount_amount).quantize(CENT, rounding=ROUND_HALF_UP)
     tax_amount = tax_amount.quantize(CENT, rounding=ROUND_HALF_UP)
     total_amount = subtotal + tax_amount
     if subtotal <= 0:
@@ -365,11 +416,13 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     effective_rate = (tax_amount * Decimal("100") / subtotal).quantize(CENT, rounding=ROUND_HALF_UP)
     cur = conn.execute(
         """INSERT INTO sales_invoices(invoice_no,customer_id,invoice_date,warehouse_id,subtotal,
-           tax_rate,tax_amount,total_amount,created_by,branch_id,cost_center_id,project_id,salesperson_id)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           tax_rate,tax_amount,discount_type,discount_value,discount_amount,total_amount,
+           created_by,branch_id,cost_center_id,project_id,salesperson_id)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (invoice_no, customer_id, invoice_date, warehouse_id, str(subtotal), str(effective_rate),
-         str(tax_amount), str(total_amount), created_by, dimensions["branch_id"],
-         dimensions["cost_center_id"], dimensions["project_id"], dimensions["salesperson_id"])
+         str(tax_amount), discount_type, str(discount_value), str(discount_amount), str(total_amount),
+         created_by, dimensions["branch_id"], dimensions["cost_center_id"],
+         dimensions["project_id"], dimensions["salesperson_id"])
     )
     invoice_id = cur.lastrowid
     for index, item in enumerate(normalized, 1):
@@ -420,6 +473,8 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
                      (cogs_journal_id, "posted" if cogs_journal_id else "not_required", row["id"]))
     return {"invoice_id": invoice_id, "invoice_no": invoice_no, "journal_entry_id": journal_id,
             "cogs_journal_entry_id": cogs_journal_id, "subtotal": subtotal,
+            "gross_subtotal": gross_subtotal, "discount_type": discount_type,
+            "discount_value": discount_value, "discount_amount": discount_amount,
             "tax_amount": tax_amount, "total_amount": total_amount, "total_cost": total_cost,
             "credit_warning": credit_warning, "credit_limit": credit_limit,
             "current_exposure": current_exposure, "new_exposure": current_exposure + total_amount}
@@ -977,6 +1032,23 @@ def index():
                            receipts=receipts, batch_receipts=batch_receipts, credit_notes=enriched_notes, refunds=refunds, today=date.today().isoformat())
 
 
+def _customer_discount_input(form):
+    discount_type = str(form.get("discount_type", "none") or "none").strip().lower()
+    if discount_type not in {"none", "percent", "fixed"}:
+        raise ValueError("اختر نوع خصم صحيحًا.")
+    try:
+        value = Decimal(str(form.get("discount_value", "0") or "0")).quantize(CENT, rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError):
+        raise ValueError("قيمة الخصم غير صحيحة.")
+    if not value.is_finite() or value < 0:
+        raise ValueError("قيمة الخصم يجب أن تكون صفرًا أو أكبر.")
+    if discount_type == "percent" and value > 100:
+        raise ValueError("نسبة الخصم يجب ألا تتجاوز 100%.")
+    if discount_type == "none":
+        value = Decimal("0.00")
+    return discount_type, value
+
+
 @sales_bp.route("/customers", methods=["GET", "POST"])
 @require("sales.manage")
 def customer_list():
@@ -984,11 +1056,14 @@ def customer_list():
     if request.method == "POST":
         try:
             credit_limit = Decimal(request.form.get("credit_limit", "0") or "0")
+            discount_type, discount_value = _customer_discount_input(request.form)
             if not credit_limit.is_finite() or credit_limit < 0: raise ValueError("الحد الائتماني يجب أن يكون صفرًا أو أكبر.")
-            c.execute("INSERT INTO customers(code,name,tax_number,phone,email,address,credit_limit) VALUES(?,?,?,?,?,?,?)",
+            c.execute("""INSERT INTO customers(code,name,tax_number,phone,email,address,credit_limit,discount_type,discount_value)
+                         VALUES(?,?,?,?,?,?,?,?,?)""",
                       (request.form["code"].strip(), request.form["name"].strip(),
                        request.form.get("tax_number", "").strip(), request.form.get("phone", "").strip(),
-                       request.form.get("email", "").strip(), request.form.get("address", "").strip(), str(credit_limit)))
+                       request.form.get("email", "").strip(), request.form.get("address", "").strip(),
+                       str(credit_limit), discount_type, str(discount_value)))
             c.commit()
             flash("تم حفظ العميل.", "success")
         except sqlite3.IntegrityError:
@@ -1020,9 +1095,11 @@ def edit_customer(customer_id):
     if request.method=="POST":
         try:
             limit=Decimal(request.form.get("credit_limit","0") or "0")
+            discount_type, discount_value = _customer_discount_input(request.form)
             if not limit.is_finite() or limit<0: raise ValueError("الحد الائتماني يجب أن يكون صفرًا أو أكبر.")
-            c.execute("""UPDATE customers SET code=?,name=?,tax_number=?,phone=?,email=?,address=?,credit_limit=? WHERE id=?""",
-              (request.form["code"].strip(),request.form["name"].strip(),request.form.get("tax_number","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("address","").strip(),str(limit),customer_id))
+            c.execute("""UPDATE customers SET code=?,name=?,tax_number=?,phone=?,email=?,address=?,credit_limit=?,
+                         discount_type=?,discount_value=? WHERE id=?""",
+              (request.form["code"].strip(),request.form["name"].strip(),request.form.get("tax_number","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("address","").strip(),str(limit),discount_type,str(discount_value),customer_id))
             c.commit(); c.close(); flash("تم تعديل بيانات العميل.","success"); return redirect(url_for("sales.customer_list"))
         except (ValueError,InvalidOperation,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e) if isinstance(e,(ValueError,InvalidOperation)) else "كود العميل مستخدم بالفعل.","error")
