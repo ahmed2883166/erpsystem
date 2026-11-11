@@ -1,3 +1,4 @@
+from app_paths import DB_PATH
 from database import connect_database, fetch_page
 """NEXUS ERP inventory foundation (v0.2).
 
@@ -9,13 +10,12 @@ import sqlite3
 import uuid
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
-from pathlib import Path
 from datetime import date
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal, money
 
 stock_bp = Blueprint("stock", __name__, url_prefix="/stock")
-DB_PATH = Path(__file__).resolve().parent / "data" / "nexus.db"
+
 D = Decimal
 QTY = D("0.0001")
 MONEY = D("0.01")
