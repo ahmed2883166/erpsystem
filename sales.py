@@ -11,6 +11,7 @@ from pathlib import Path
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
+from database import connect_database
 from stock import consume_layers
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 
@@ -20,11 +21,7 @@ CENT = Decimal("0.01")
 
 
 def db():
-    conn = sqlite3.connect(DB_PATH, timeout=20, isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=20000")
-    return conn
+    return connect_database(DB_PATH, isolation_level=None)
 
 
 def init_sales_schema():
