@@ -26,7 +26,7 @@ ACTIVITY_ACCOUNTS = {
     "industrial": {
         "cash": ("1110",), "receivables": ("1120",), "payables": ("2100",),
         "inventory": ("1130", "1140", "1150", "1160"),
-        "direct_cost": ("5100", "5200", "5300", "5400"),
+        "quick_assets": ("1110", "1120"), "direct_cost": ("5400",),
     },
 }
 
