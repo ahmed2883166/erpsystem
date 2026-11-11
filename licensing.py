@@ -174,6 +174,8 @@ def get_license_status(data_dir=None, current_time=None, machine_id=None, public
                     "trial_ends_at":_iso(remote_end),"machine_id":machine_id,"trial_authority":"server"}
         except RuntimeError:
             return {"status":"online_required","message":"تعذر التحقق من فترة التجربة عبر خادم التراخيص.","machine_id":machine_id}
-    remaining = (first_seen + timedelta(days=TRIAL_DAYS) - current_time).total_seconds()
-    if remaining <= 0: return {"status":"expired","days_remaining":0,"machine_id":machine_id}
-    return {"status":"trial","days_remaining":max(1,int((remaining+86399)//86400)),"trial_ends_at":_iso(first_seen+timedelta(days=TRIAL_DAYS)),"machine_id":machine_id}
+    # Never grant a trial from a client-side clock or local file.
+    # A missing licensing authority must fail closed; local state is not an authority.
+    return {"status":"online_required",
+            "message":"خادم التراخيص غير مضبوط. يلزم الاتصال بخادم التراخيص للتحقق من التجربة أو التفعيل.",
+            "machine_id":machine_id}
