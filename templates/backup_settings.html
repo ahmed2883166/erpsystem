@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}النسخ الاحتياطي التلقائي | NEXUS ERP{% endblock %}
+{% block content %}
+<header><h2>النسخ الاحتياطي التلقائي</h2><p class="muted">حدد الموعد مرة واحدة، وسيُنشئ NEXUS نسخة قاعدة بيانات آمنة تلقائيًا طالما البرنامج يعمل.</p></header>
+<section class="panel">
+  <h3>إعداد الجدولة</h3>
+  <form method="post">
+    <div class="form-row">
+      <div><label for="enabled">حالة النسخ التلقائي</label><select id="enabled" name="enabled"><option value="1" {% if settings.get('backup_enabled','0') == '1' %}selected{% endif %}>مفعّل</option><option value="0" {% if settings.get('backup_enabled','0') != '1' %}selected{% endif %}>متوقف</option></select></div>
+      <div><label for="frequency">التكرار</label><select id="frequency" name="frequency">
+        <option value="daily" {% if settings.get('backup_frequency','daily') == 'daily' %}selected{% endif %}>كل يوم</option>
+        <option value="weekly" {% if settings.get('backup_frequency') == 'weekly' %}selected{% endif %}>كل أسبوع</option>
+        <option value="monthly" {% if settings.get('backup_frequency') == 'monthly' %}selected{% endif %}>كل شهر</option>
+        <option value="every_n_days" {% if settings.get('backup_frequency') == 'every_n_days' %}selected{% endif %}>كل عدد أيام أحدده</option>
+      </select></div>
+      <div><label for="backup_time">الساعة</label><input id="backup_time" name="backup_time" type="time" value="{{ settings.get('backup_time','23:00') }}" required></div>
+    </div>
+    <div class="form-row">
+      <div><label for="weekday">اليوم الأسبوعي (للجدولة الأسبوعية)</label><select id="weekday" name="weekday">
+        {% for value,label in [(0,'الإثنين'),(1,'الثلاثاء'),(2,'الأربعاء'),(3,'الخميس'),(4,'الجمعة'),(5,'السبت'),(6,'الأحد')] %}
+        <option value="{{ value }}" {% if settings.get('backup_weekday','0')|int == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select></div>
+      <div><label for="month_day">يوم الشهر (للجدولة الشهرية)</label><input id="month_day" name="month_day" type="number" min="1" max="31" value="{{ settings.get('backup_month_day','1') }}"></div>
+      <div><label for="interval_days">الفاصل بالأيام (للتكرار المخصص)</label><input id="interval_days" name="interval_days" type="number" min="1" max="365" value="{{ settings.get('backup_interval_days','1') }}"></div>
+      <div><label for="keep_count">عدد النسخ التي يحتفظ بها البرنامج</label><input id="keep_count" name="keep_count" type="number" min="1" max="365" value="{{ settings.get('backup_keep_count','30') }}"></div>
+    </div>
+    <p class="muted">إذا اخترت يوم 29 أو 30 أو 31 من الشهر، فسيتم التنفيذ في آخر يوم متاح من الشهر عند عدم وجود هذا اليوم.</p>
+    <button type="submit">حفظ إعدادات النسخ</button>
+  </form>
+</section>
+<section class="panel">
+  <h3>حالة النسخ الاحتياطي</h3>
+  <div class="table-wrap"><table><tbody>
+    <tr><th>الحالة</th><td>{% if settings.get('backup_enabled','0') == '1' %}مفعّل{% else %}متوقف{% endif %}</td></tr>
+    <tr><th>آخر تنفيذ</th><td>{{ settings.get('backup_last_run','لم يتم التنفيذ بعد') }}</td></tr>
+    <tr><th>النتيجة</th><td>{{ {'success':'نجاح','failed':'فشل','running':'جارٍ التنفيذ','scheduled':'في انتظار الموعد','disabled':'متوقف'}.get(settings.get('backup_last_status','لم يبدأ'),'لم يبدأ') }}</td></tr>
+    <tr><th>النسخة الأخيرة</th><td>{{ settings.get('backup_last_file','—') }}</td></tr>
+    <tr><th>موعد النسخة القادمة</th><td>{{ settings.get('backup_next_run','لم يتم تحديد موعد') }}</td></tr>
+    {% if settings.get('backup_last_error') %}<tr><th>تفاصيل الخطأ</th><td>{{ settings.get('backup_last_error') }}</td></tr>{% endif %}
+  </tbody></table></div>
+  <form method="post" action="{{ url_for('backup_run_now') }}" class="no-print"><button type="submit" class="secondary">إنشاء نسخة احتياطية الآن</button></form>
+</section>
+<section class="panel">
+  <h3>النسخ المحفوظة على الجهاز</h3>
+  <p class="muted">مجلد الحفظ: {{ files[0].parent if files else 'مجلد النسخ الاحتياطي الافتراضي خارج مجلد المشروع' }}</p>
+  <div class="table-wrap"><table><thead><tr><th>اسم الملف</th><th>الحجم</th><th>آخر تعديل</th></tr></thead><tbody>
+    {% for file in files %}<tr><td>{{ file.name }}</td><td>{{ (file.stat().st_size / 1024 / 1024)|round(2) }} MB</td><td>{{ file.stat().st_mtime|int }}</td></tr>
+    {% else %}<tr><td colspan="3">لا توجد نسخ محفوظة حتى الآن.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}
