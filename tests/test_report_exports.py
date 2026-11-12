@@ -115,7 +115,11 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
             INSERT INTO suppliers VALUES(1,'S001','مورد ضريبي',1);
             INSERT INTO sales_invoices VALUES
                 (1,'INV-TAX','2026-06-10',1,'100','14','14','114','standard','','','posted');
-            INSERT INTO supplier_bills VALUES
+            INSERT INTO supplier_bills(
+                id, bill_no, bill_date, supplier_id, subtotal, tax_rate, tax_amount,
+                total_amount, tax_treatment, tax_reference, tax_notes,
+                input_vat_deductible_percent, status
+            ) VALUES
                 (1,'BILL-TAX','2026-06-11',1,'50','14','7','57','standard','','','80','posted');
 
             INSERT INTO company_settings VALUES('company_name','NEXUS Test');
