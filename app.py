@@ -12,7 +12,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
 from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for
-from chart_templates import CHARTS, ACTIVITY_LABELS, seed_activity_chart, ensure_activity_chart_accounts
+from chart_templates import CHARTS, ACTIVITY_LABELS, seed_activity_chart, ensure_activity_chart_accounts, migrate_vat_accounts
 from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
 from sales import sales_bp, init_sales_schema
@@ -283,7 +283,10 @@ def initialize_database():
         activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
         seed_activity_chart(connection, activity_row["setting_value"] if activity_row else "commercial")
     activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
-    ensure_activity_chart_accounts(connection, activity_row["setting_value"] if activity_row else "commercial")
+    selected_activity = activity_row["setting_value"] if activity_row else "commercial"
+    # Move legacy non-VAT uses of 2130 without changing account IDs or posted journal links.
+    migrate_vat_accounts(connection, selected_activity)
+    ensure_activity_chart_accounts(connection, selected_activity)
     # SQLite CREATE TABLE IF NOT EXISTS does not change a legacy REAL
     # declaration. Rebuild journal_lines once with TEXT amount columns so
     # existing installations use the same decimal-safe storage as new ones.
