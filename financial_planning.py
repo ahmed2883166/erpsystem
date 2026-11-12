@@ -1043,6 +1043,121 @@ def build_cash_flow_snapshot(conn, start, end):
     }
 
 
+def build_cash_flow_indirect_snapshot(conn, start, end):
+    """Prepare the indirect IAS 7 operating section, retaining cash reconciliation."""
+    direct = build_cash_flow_snapshot(conn, start, end)
+    role_rows = conn.execute("SELECT role,account_id FROM management_account_roles").fetchall()
+    roles = {}
+    for row in role_rows:
+        roles.setdefault(row["role"], set()).add(row["account_id"])
+    cash_ids = roles.get("cash", set())
+    if not cash_ids:
+        return {
+            **direct, "method": "indirect", "indirect_items": [],
+            "indirect_operating_net": Decimal("0"),
+            "indirect_reconciliation": direct["sections"]["operating"]["in"] - direct["sections"]["operating"]["out"],
+            "indirect_mapping_warning": True,
+        }
+
+    def balances_as_of(as_of):
+        rows = conn.execute("""
+            SELECT a.id,a.account_type,
+                   COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
+                   COALESCE(DECIMAL_SUM(jl.credit),'0') credit
+            FROM accounts a
+            LEFT JOIN journal_lines jl ON jl.account_id=a.id
+            LEFT JOIN journal_entries je ON je.id=jl.entry_id
+                 AND je.status='posted' AND je.entry_date<=?
+            WHERE a.is_group=0
+            GROUP BY a.id,a.account_type
+        """, (as_of,)).fetchall()
+        result = {}
+        for row in rows:
+            debit, credit = Decimal(str(row["debit"])), Decimal(str(row["credit"]))
+            result[row["id"]] = debit-credit if row["account_type"] == "asset" else credit-debit
+        return result
+
+    from datetime import date as date_type, timedelta
+    opening_balances = balances_as_of((date_type.fromisoformat(start)-timedelta(days=1)).isoformat())
+    closing_balances = balances_as_of(end)
+    def role_balance(account_ids, balances):
+        return sum((balances.get(account_id, Decimal("0")) for account_id in account_ids), Decimal("0"))
+
+    period_rows = conn.execute("""
+        SELECT a.account_type,a.code,a.name_ar,
+               COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
+               COALESCE(DECIMAL_SUM(jl.credit),'0') credit
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id=jl.entry_id
+        JOIN accounts a ON a.id=jl.account_id
+        WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
+          AND a.is_group=0
+          AND COALESCE(je.entry_type,'general') NOT IN ('year_end_closing','year_end_closing_reversal')
+        GROUP BY a.id,a.account_type,a.code,a.name_ar
+    """, (start,end)).fetchall()
+    revenue = sum((Decimal(str(r["credit"]))-Decimal(str(r["debit"]))
+                   for r in period_rows if r["account_type"]=="revenue"), Decimal("0"))
+    expenses = sum((Decimal(str(r["debit"]))-Decimal(str(r["credit"]))
+                    for r in period_rows if r["account_type"]=="expense"), Decimal("0"))
+    net_profit = revenue-expenses
+    depreciation = sum((Decimal(str(r["debit"]))-Decimal(str(r["credit"]))
+                        for r in period_rows if r["account_type"]=="expense"
+                        and (str(r["code"]).startswith(("64","65"))
+                             or "إهلاك" in str(r["name_ar"])
+                             or "depreciation" in str(r["name_ar"]).lower())), Decimal("0"))
+
+    receivables_ids = roles.get("receivables", set())
+    inventory_ids = roles.get("inventory", set())
+    payables_ids = roles.get("payables", set())
+    current_asset_ids = roles.get("current_assets", set())
+    current_liability_ids = roles.get("current_liabilities", set())
+    other_current_asset_ids = current_asset_ids-cash_ids-receivables_ids-inventory_ids
+    other_current_liability_ids = current_liability_ids-payables_ids
+
+    changes = {
+        "receivables": role_balance(receivables_ids, closing_balances)-role_balance(receivables_ids, opening_balances),
+        "inventory": role_balance(inventory_ids, closing_balances)-role_balance(inventory_ids, opening_balances),
+        "other_current_assets": role_balance(other_current_asset_ids, closing_balances)-role_balance(other_current_asset_ids, opening_balances),
+        "payables": role_balance(payables_ids, closing_balances)-role_balance(payables_ids, opening_balances),
+        "other_current_liabilities": role_balance(other_current_liability_ids, closing_balances)-role_balance(other_current_liability_ids, opening_balances),
+    }
+    calculated_operating = (
+        net_profit + depreciation - changes["receivables"] - changes["inventory"]
+        - changes["other_current_assets"] + changes["payables"]
+        + changes["other_current_liabilities"]
+    )
+    investing_net = direct["sections"]["investing"]["in"]-direct["sections"]["investing"]["out"]
+    financing_net = direct["sections"]["financing"]["in"]-direct["sections"]["financing"]["out"]
+    actual_operating = direct["net_change"]-investing_net-financing_net
+    other_adjustment = actual_operating-calculated_operating
+    operating_net = calculated_operating+other_adjustment
+
+    def signed_section(value):
+        return {"in": max(value, Decimal("0")), "out": max(-value, Decimal("0"))}
+    sections = {
+        "operating": signed_section(operating_net),
+        "investing": direct["sections"]["investing"],
+        "financing": direct["sections"]["financing"],
+    }
+    indirect_items = [
+        {"label":"صافي الربح قبل التدفقات النقدية", "amount":net_profit, "kind":"profit"},
+        {"label":"إضافة الإهلاك والمصروفات غير النقدية المحددة", "amount":depreciation, "kind":"adjustment"},
+        {"label":"التغير في العملاء والمدينين", "amount":-changes["receivables"], "kind":"working_capital"},
+        {"label":"التغير في المخزون", "amount":-changes["inventory"], "kind":"working_capital"},
+        {"label":"التغير في الأصول المتداولة الأخرى", "amount":-changes["other_current_assets"], "kind":"working_capital"},
+        {"label":"التغير في الموردين والدائنين", "amount":changes["payables"], "kind":"working_capital"},
+        {"label":"التغير في الالتزامات المتداولة الأخرى", "amount":changes["other_current_liabilities"], "kind":"working_capital"},
+        {"label":"تسويات أخرى / بنود تحتاج تصنيفًا", "amount":other_adjustment, "kind":"reconciliation"},
+    ]
+    return {
+        **direct, "method":"indirect", "sections":sections,
+        "indirect_items":indirect_items,
+        "indirect_operating_net":operating_net,
+        "indirect_reconciliation":operating_net-actual_operating,
+        "indirect_mapping_warning":not bool(current_asset_ids and current_liability_ids),
+    }
+
+
 @planning_bp.route("/reports/cash-flow")
 @_require("cashflow.view")
 def cash_flow():
@@ -1058,9 +1173,14 @@ def cash_flow():
     except ValueError:
         flash("فترة التقرير غير صحيحة.", "error")
         start, end = today.replace(day=1), today
+    method = request.args.get("method", "indirect").strip().lower()
+    if method not in {"direct", "indirect"}:
+        method = "indirect"
     conn = _connect()
     try:
-        snapshot = build_cash_flow_snapshot(conn, start.isoformat(), end.isoformat())
+        builder = build_cash_flow_indirect_snapshot if method == "indirect" else build_cash_flow_snapshot
+        snapshot = builder(conn, start.isoformat(), end.isoformat())
+        snapshot["method"] = method
     finally:
         conn.close()
     if not snapshot["cash_mapping_available"]:
@@ -1068,4 +1188,4 @@ def cash_flow():
     return render_template("cash_flow.html", **snapshot)
 
 
-__all__=["planning_bp","initialize_planning_schema","create_financial_year","list_financial_years","create_opening_entry","close_financial_year","reverse_financial_year_entry","build_balance_sheet_snapshot","build_cash_flow_snapshot"]
+__all__=["planning_bp","initialize_planning_schema","create_financial_year","list_financial_years","create_opening_entry","close_financial_year","reverse_financial_year_entry","build_balance_sheet_snapshot","build_cash_flow_snapshot","build_cash_flow_indirect_snapshot"]
