@@ -125,7 +125,10 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
             by_period.setdefault(row[0], []).append(row)
         self.assertEqual(set(by_period), {"2025", "2026"})
         self.assertEqual(by_period["2025"][0][7], 100)
-        self.assertEqual(by_period["2026"][0][7], 275)
+        cash_2026 = next(row for row in by_period["2026"] if row[4] == "1110")
+        revenue_2026 = next(row for row in by_period["2026"] if row[4] == "4100")
+        self.assertEqual(cash_2026[7], 250)
+        self.assertEqual(revenue_2026[8], 225)
         self.assertNotIn(999, [cell for row in rows for cell in row])
 
     def test_trial_balance_export_can_exclude_closing_entries(self):
