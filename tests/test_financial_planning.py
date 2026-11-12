@@ -270,6 +270,10 @@ class FinancialYearJournalTests(unittest.TestCase):
                                  (self.year_id,)).fetchone()
         self.assertEqual(year["status"], "closed")
         self.assertEqual(year["closing_entry_id"], closing_id)
+        self.assertEqual(
+            self.conn.execute("SELECT entry_type FROM journal_entries WHERE id=?", (closing_id,)).fetchone()[0],
+            "year_end_closing",
+        )
         for account_id in (5, 6):
             row = self.conn.execute("""SELECT DECIMAL_SUM(jl.debit),DECIMAL_SUM(jl.credit)
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
