@@ -9,8 +9,9 @@
   <form method="get" class="form-row">
     <div><label for="date_from">من تاريخ</label><input id="date_from" type="date" name="date_from" value="{{ date_from }}"></div>
     <div><label for="date_to">إلى تاريخ</label><input id="date_to" type="date" name="date_to" value="{{ date_to }}"></div>
+    <div><label for="compare">المقارنة</label><select id="compare" name="compare"><option value="previous_year" {% if compare_mode=="previous_year" %}selected{% endif %}>نفس الفترة من العام السابق</option><option value="previous_period" {% if compare_mode=="previous_period" %}selected{% endif %}>الفترة السابقة مباشرة</option><option value="none" {% if compare_mode=="none" %}selected{% endif %}>بدون مقارنة</option></select></div>
     <div class="form-actions"><button type="submit">عرض القائمة</button>
-      <a class="button secondary" href="{{ url_for('report_exports.export_report_excel', report='income-statement', date_from=date_from, date_to=date_to) }}">تصدير Excel</a><a class="button secondary" href="{{ url_for('report_exports.export_report_excel', report='income-statement', date_from=date_from, date_to=date_to).replace('/excel','/pdf') }}">تحميل PDF</a>
+      <a class="button secondary" href="{{ url_for('report_exports.export_report_excel', report='income-statement', date_from=date_from, date_to=date_to, compare=compare_mode) }}">تصدير Excel</a><a class="button secondary" href="{{ url_for('report_exports.export_report_excel', report='income-statement', date_from=date_from, date_to=date_to).replace('/excel','/pdf') }}">تحميل PDF</a>
       <button type="button" class="secondary" onclick="window.print()">طباعة / PDF</button>
     </div>
   </form>
@@ -18,56 +19,58 @@
 <section class="panel">
   <div class="report-title">
     <h3>قائمة الدخل</h3>
-    <p>{{ date_from }} — {{ date_to }}</p>
+    <p>{{ date_from }} — {{ date_to }}{% if comparison %} | مقارنة مع {{ compare_date_from }} — {{ compare_date_to }}{% endif %}</p>
   </div>
 
   <h3>أولًا: الإيرادات</h3>
   <div class="table-wrap"><table>
-    <thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>صافي الإيراد</th></tr></thead>
+    <thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>صافي الإيراد</th>{% if comparison %}<th>الفترة المقارنة</th><th>الفرق</th><th>نسبة التغير</th>{% endif %}</tr></thead>
     <tbody>
     {% for row in revenue_rows %}
       {% if row.debit or row.credit %}
-      <tr><td>{{ row.code }}</td><td>{{ row.name_ar }}</td><td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.balance|money }}</td></tr>
+      <tr><td>{{ row.code }}</td><td>{{ row.name_ar }}</td><td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.balance|money }}</td>{% if comparison %}<td>{{ row.previous_balance|money }}</td><td>{{ row.variance|money }}</td><td>{% if row.variance_percent is not none %}{{ row.variance_percent|money }}%{% else %}—{% endif %}</td>{% endif %}</tr>
       {% endif %}
     {% else %}<tr><td colspan="5">لا توجد حركات إيرادات مرحلة خلال الفترة.</td></tr>{% endfor %}
     </tbody>
-    <tfoot><tr><th colspan="4">إجمالي الإيرادات</th><th>{{ revenue_total|money }} {{ base_currency }}</th></tr></tfoot>
+    <tfoot><tr><th colspan="4">إجمالي الإيرادات</th><th>{{ revenue_total|money }} {{ base_currency }}</th>{% if comparison %}<th>{{ comparison.revenue_total|money }}</th><th>{{ comparison.revenue_total_variance|money }}</th><th>{% if comparison.revenue_total_variance_percent is not none %}{{ comparison.revenue_total_variance_percent|money }}%{% else %}—{% endif %}</th>{% endif %}</tr></tfoot>
   </table></div>
 
   <h3>ثانيًا: تكلفة البضاعة المباعة / تكلفة النشاط</h3>
   <div class="table-wrap"><table>
-    <thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>صافي التكلفة</th></tr></thead>
+    <thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>صافي التكلفة</th>{% if comparison %}<th>الفترة المقارنة</th><th>الفرق</th><th>نسبة التغير</th>{% endif %}</tr></thead>
     <tbody>
     {% for row in cogs_rows %}
       {% if row.debit or row.credit %}
-      <tr><td>{{ row.code }}</td><td>{{ row.name_ar }}</td><td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.balance|money }}</td></tr>
+      <tr><td>{{ row.code }}</td><td>{{ row.name_ar }}</td><td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.balance|money }}</td>{% if comparison %}<td>{{ row.previous_balance|money }}</td><td>{{ row.variance|money }}</td><td>{% if row.variance_percent is not none %}{{ row.variance_percent|money }}%{% else %}—{% endif %}</td>{% endif %}</tr>
       {% endif %}
     {% else %}<tr><td colspan="5">لا توجد حركات تكلفة مباشرة خلال الفترة.</td></tr>{% endfor %}
     </tbody>
-    <tfoot><tr><th colspan="4">إجمالي تكلفة النشاط</th><th>{{ cogs_total|money }} {{ base_currency }}</th></tr></tfoot>
+    <tfoot><tr><th colspan="4">إجمالي تكلفة النشاط</th><th>{{ cogs_total|money }} {{ base_currency }}</th>{% if comparison %}<th>{{ comparison.cogs_total|money }}</th><th>{{ comparison.cogs_total_variance|money }}</th><th>{% if comparison.cogs_total_variance_percent is not none %}{{ comparison.cogs_total_variance_percent|money }}%{% else %}—{% endif %}</th>{% endif %}</tr></tfoot>
   </table></div>
 
   <div class="summary-card">
     <h3>مجمل الربح / (الخسارة)</h3>
     <strong>{{ gross_profit|money }} {{ base_currency }}</strong>
+    {% if comparison %}<p class="muted">الفترة المقارنة: {{ comparison.gross_profit|money }} {{ base_currency }} · الفرق: {{ comparison.gross_profit_variance|money }} · {% if comparison.gross_profit_variance_percent is not none %}{{ comparison.gross_profit_variance_percent|money }}%{% else %}—{% endif %}</p>{% endif %}
   </div>
 
   <h3>ثالثًا: المصروفات التشغيلية والإدارية</h3>
   <div class="table-wrap"><table>
-    <thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>صافي المصروف</th></tr></thead>
+    <thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>صافي المصروف</th>{% if comparison %}<th>الفترة المقارنة</th><th>الفرق</th><th>نسبة التغير</th>{% endif %}</tr></thead>
     <tbody>
     {% for row in operating_expense_rows %}
       {% if row.debit or row.credit %}
-      <tr><td>{{ row.code }}</td><td>{{ row.name_ar }}</td><td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.balance|money }}</td></tr>
+      <tr><td>{{ row.code }}</td><td>{{ row.name_ar }}</td><td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.balance|money }}</td>{% if comparison %}<td>{{ row.previous_balance|money }}</td><td>{{ row.variance|money }}</td><td>{% if row.variance_percent is not none %}{{ row.variance_percent|money }}%{% else %}—{% endif %}</td>{% endif %}</tr>
       {% endif %}
     {% else %}<tr><td colspan="5">لا توجد مصروفات تشغيلية أو إدارية خلال الفترة.</td></tr>{% endfor %}
     </tbody>
-    <tfoot><tr><th colspan="4">إجمالي المصروفات التشغيلية والإدارية</th><th>{{ operating_expense_total|money }} {{ base_currency }}</th></tr></tfoot>
+    <tfoot><tr><th colspan="4">إجمالي المصروفات التشغيلية والإدارية</th><th>{{ operating_expense_total|money }} {{ base_currency }}</th>{% if comparison %}<th>{{ comparison.operating_expense_total|money }}</th><th>{{ comparison.operating_expense_total_variance|money }}</th><th>{% if comparison.operating_expense_total_variance_percent is not none %}{{ comparison.operating_expense_total_variance_percent|money }}%{% else %}—{% endif %}</th>{% endif %}</tr></tfoot>
   </table></div>
 
   <div class="summary-card">
     <h3>{% if net_profit >= 0 %}صافي ربح الفترة{% else %}صافي خسارة الفترة{% endif %}</h3>
     <strong>{{ (net_profit if net_profit >= 0 else -net_profit)|money }} {{ base_currency }}</strong>
+    {% if comparison %}<p class="muted">الفترة المقارنة: {{ comparison.net_profit|money }} {{ base_currency }} · الفرق: {{ comparison.net_profit_variance|money }} · {% if comparison.net_profit_variance_percent is not none %}{{ comparison.net_profit_variance_percent|money }}%{% else %}—{% endif %}</p>{% endif %}
   </div>
   <p class="muted">تعتمد القائمة على القيود المرحلة فقط، وتستبعد قيود إقفال السنة وعكسها من نتائج الفترة. تم تصنيف تكلفة النشاط حسب دور الحسابات المباشرة المحدد في إعدادات لوحة الإدارة.</p>
 </section>
