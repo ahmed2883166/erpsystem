@@ -143,11 +143,10 @@ def _opening_balance_mismatches(conn, previous_year, normalized):
     """Compare submitted natural-sign balances with the previous closed year-end balances."""
     rows = conn.execute("""SELECT a.id,a.code,a.name_ar,a.account_type,jl.debit,jl.credit
         FROM accounts a
-        LEFT JOIN journal_lines jl ON jl.account_id=a.id
-        LEFT JOIN journal_entries je ON je.id=jl.entry_id AND je.status='posted'
-            AND je.entry_date<=?
+        LEFT JOIN journal_entries je ON je.status='posted' AND je.entry_date<=?
+        LEFT JOIN journal_lines jl ON jl.entry_id=je.id AND jl.account_id=a.id
         WHERE a.account_type IN ('asset','liability','equity') AND a.is_group=0
-        ORDER BY a.code,jl.id""", (previous_year["end_date"],)).fetchall()
+        ORDER BY a.code,je.id,jl.id""", (previous_year["end_date"],)).fetchall()
     previous = {}
     metadata = {}
     for row in rows:
@@ -200,8 +199,10 @@ def create_opening_entry(conn, year_id, balances, created_by=None):
         if year["opening_entry_id"]:
             raise ValueError("تم إنشاء قيد افتتاح لهذه السنة بالفعل. صححه بعكس القيد أولًا.")
         posted_before_opening = conn.execute("""SELECT COUNT(*) FROM journal_entries
-            WHERE status='posted' AND entry_date>=? AND entry_date<=?""",
-            (year["start_date"], year["end_date"])).fetchone()[0]
+            WHERE status='posted' AND entry_date>=? AND entry_date<=?
+              AND id NOT IN (SELECT entry_id FROM financial_year_journal_history
+                  WHERE financial_year_id=? AND entry_kind='opening')""",
+            (year["start_date"], year["end_date"], year_id)).fetchone()[0]
         if posted_before_opening:
             raise ValueError(
                 f"لا يمكن إنشاء قيد الافتتاح؛ توجد {posted_before_opening} قيود مرحلة داخل السنة. "
