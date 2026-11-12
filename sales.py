@@ -512,7 +512,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         raise ValueError("تم إصدار إشعارات دائنة بكامل قيمة الفاتورة بالفعل.")
 
     activity = _activity(conn)
-    codes = _sales_account_codes(activity)
+    codes = _sales_account_codes(conn, activity)
     ar = _account(conn, codes["ar"], "asset")
     revenue = _account(conn, codes["revenue"], "revenue")
     vat_account = None
@@ -900,7 +900,7 @@ def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_i
     if not cash or cash["is_group"] or not cash["active"] or cash["account_type"] != "asset":
         raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
     activity = _activity(conn)
-    ar = _account(conn, _sales_account_codes(activity)["ar"], "asset")
+    ar = _account(conn, _sales_account_codes(conn, activity)["ar"], "asset")
     receipt_no = "RCPT-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
     dimensions = validate_journal_dimensions(conn, {
         "branch_id": invoice["branch_id"], "cost_center_id": invoice["cost_center_id"],
@@ -959,7 +959,7 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
     cash = conn.execute("SELECT id,is_group,active,account_type FROM accounts WHERE id=?", (cash_account_id,)).fetchone()
     if not cash or cash["is_group"] or not cash["active"] or cash["account_type"] != "asset":
         raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
-    ar = _account(conn, _sales_account_codes(_activity(conn))["ar"], "asset")
+    ar = _account(conn, _sales_account_codes(conn, _activity(conn))["ar"], "asset")
     receipt_no = "RCPTB-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
     dimensions = validate_journal_dimensions(conn, {"customer_id": customer_id})
     journal_id = post_journal(
