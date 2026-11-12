@@ -977,6 +977,14 @@ def build_cash_flow_snapshot(conn, start, end):
         cash_ids = {r["id"] for r in conn.execute(
             "SELECT id FROM accounts WHERE is_group=0 AND (code IN ('1110','1120') OR name_ar LIKE '%صندوق%' OR name_ar LIKE '%بنك%')"
         )}
+    mapping_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_flow_account_mappings'"
+    ).fetchone()
+    cash_flow_mappings = {
+        row["account_id"]: row["category"]
+        for row in conn.execute("SELECT account_id,category FROM cash_flow_account_mappings")
+    } if mapping_exists else {}
+    unmapped_accounts = {}
     if not cash_ids:
         opening = closing = Decimal("0")
         sections = {k: {"in": Decimal("0"), "out": Decimal("0")} for k in ("operating", "investing", "financing")}
@@ -989,7 +997,6 @@ def build_cash_flow_snapshot(conn, start, end):
             (*ids, start)).fetchone()
         opening = Decimal(str(opening_row["value"] or "0"))
         sections = {k: {"in": Decimal("0"), "out": Decimal("0")} for k in ("operating", "investing", "financing")}
-        unmapped_accounts = {}
         entries = conn.execute(f"""SELECT je.id,
             COALESCE(DECIMAL_NET(CASE WHEN jl.account_id IN ({marks}) THEN jl.debit ELSE '0' END,
                                  CASE WHEN jl.account_id IN ({marks}) THEN jl.credit ELSE '0' END),0) cash_net
@@ -1008,14 +1015,9 @@ def build_cash_flow_snapshot(conn, start, end):
             weights = {"operating": Decimal("0"), "investing": Decimal("0"), "financing": Decimal("0")}
             for item in counterpart:
                 code, name = item["code"], item["name_ar"]
-                mapped = conn.execute(
-                    "SELECT category FROM cash_flow_account_mappings WHERE account_id=?",
-                    (item["account_id"],)
-                ).fetchone() if conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_flow_account_mappings'"
-                ).fetchone() else None
-                if mapped:
-                    category = mapped["category"]
+                mapped_category = cash_flow_mappings.get(item["account_id"])
+                if mapped_category:
+                    category = mapped_category
                 elif item["account_type"] == "asset" and not (
                     code.startswith(("11", "21")) or "عميل" in name or "مخزون" in name or "مقدم" in name
                 ):
@@ -1026,7 +1028,7 @@ def build_cash_flow_snapshot(conn, start, end):
                     category = "financing"
                 else:
                     category = "operating"
-                if not mapped:
+                if not mapped_category:
                     unmapped_accounts[item["account_id"]] = {"code": code, "name": name, "suggested": category}
                 weights[category] += abs(Decimal(str(item["debit"] or "0"))) + abs(Decimal(str(item["credit"] or "0")))
             total_weight = sum(weights.values(), Decimal("0"))
