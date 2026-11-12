@@ -1062,8 +1062,8 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     def balances_as_of(as_of):
         rows = conn.execute("""
             SELECT a.id,a.account_type,
-                   COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
-                   COALESCE(DECIMAL_SUM(jl.credit),'0') credit
+                   COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),'0') debit,
+                   COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),'0') credit
             FROM accounts a
             LEFT JOIN journal_lines jl ON jl.account_id=a.id
             LEFT JOIN journal_entries je ON je.id=jl.entry_id
@@ -1083,7 +1083,9 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     def role_balance(account_ids, balances):
         return sum((balances.get(account_id, Decimal("0")) for account_id in account_ids), Decimal("0"))
 
-    period_rows = conn.execute("""
+    entry_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
+    closing_filter = "AND COALESCE(je.entry_type,'general') NOT IN ('year_end_closing','year_end_closing_reversal')" if "entry_type" in entry_columns else ""
+    period_rows = conn.execute(f"""
         SELECT a.account_type,a.code,a.name_ar,
                COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
                COALESCE(DECIMAL_SUM(jl.credit),'0') credit
@@ -1091,8 +1093,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
         WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
-          AND a.is_group=0
-          AND COALESCE(je.entry_type,'general') NOT IN ('year_end_closing','year_end_closing_reversal')
+          AND a.is_group=0 {closing_filter}
         GROUP BY a.id,a.account_type,a.code,a.name_ar
     """, (start,end)).fetchall()
     revenue = sum((Decimal(str(r["credit"]))-Decimal(str(r["debit"]))
