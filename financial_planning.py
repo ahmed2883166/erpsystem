@@ -344,7 +344,6 @@ def reverse_financial_year_entry(conn, year_id, entry_kind, reversal_date, reaso
             f"قيد عكسي للقيد رقم {original_id} — {str(reason).strip()}",
             reversal_lines, created_by,
         )
-        pointer = "opening_entry_id" if entry_kind == "opening" else "closing_entry_id"
         if entry_kind == "closing":
             conn.execute("UPDATE financial_years SET closing_entry_id=NULL,status='open' WHERE id=?", (year_id,))
         else:
@@ -394,7 +393,7 @@ def financial_years():
             conn.close()
             abort(403)
         try:
-            year_id = create_financial_year(
+            create_financial_year(
                 conn,
                 request.form.get("year_name", ""),
                 request.form.get("start_date", ""),
