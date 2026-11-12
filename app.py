@@ -1755,6 +1755,7 @@ def restore_backup():
 # intended for isolated route tests that provide their own temporary database.
 if os.environ.get("NEXUS_SKIP_DB_INIT", "0").strip() != "1":
     initialize_database()
+    start_backup_scheduler(DB_PATH, BACKUP_DIR)
 
 if __name__ == "__main__":
     from waitress import serve
