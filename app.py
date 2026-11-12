@@ -1186,8 +1186,9 @@ def trial_balance():
 @app.route("/reports/income-statement")
 @requires("reports.view")
 def income_statement():
-    date_from = request.args.get("date_from", "").strip()
-    date_to = request.args.get("date_to", "").strip()
+    today = date.today()
+    date_from = request.args.get("date_from", "").strip() or today.replace(month=1, day=1).isoformat()
+    date_to = request.args.get("date_to", "").strip() or today.isoformat()
     try:
         if date_from:
             date_from = date.fromisoformat(date_from).isoformat()
