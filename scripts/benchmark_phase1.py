@@ -121,6 +121,39 @@ def main():
             conn, date(2026, 11, 30), 8
         ))
 
+        journal_query = "%Synthetic cash sale%"
+        def journal_filter_benchmark():
+            params = ("posted", "2026-11-01", "2026-11-30",
+                      journal_query, journal_query, journal_query)
+            conn.execute("""SELECT COUNT(*) FROM journal_entries
+                WHERE status=? AND entry_date>=? AND entry_date<=?
+                  AND (reference LIKE ? OR description LIKE ?)""",
+                params[:5]).fetchone()
+            return conn.execute("""SELECT id,entry_date,reference,description
+                FROM journal_entries
+                WHERE status=? AND entry_date>=? AND entry_date<=?
+                  AND (reference LIKE ? OR description LIKE ?)
+                ORDER BY entry_date DESC,id DESC LIMIT 50""",
+                params[:5]).fetchall()
+        journal_rows, journal_filter_seconds = timed(journal_filter_benchmark)
+
+        def ledger_search_benchmark():
+            like = "%Synthetic cash sale%"
+            return conn.execute("""SELECT je.id,je.entry_date,je.reference,je.description,
+                jl.id line_id,jl.debit,jl.credit,
+                (SELECT DECIMAL_NET(hist.debit,hist.credit)
+                 FROM journal_lines hist JOIN journal_entries he ON he.id=hist.entry_id
+                 WHERE hist.account_id=jl.account_id AND he.status='posted'
+                   AND (he.entry_date<je.entry_date OR (he.entry_date=je.entry_date AND hist.id<=jl.id))
+                ) running_balance
+                FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                WHERE jl.account_id=? AND je.status='posted'
+                  AND je.entry_date>=? AND je.entry_date<=?
+                  AND (je.reference LIKE ? OR je.description LIKE ? OR jl.memo LIKE ?)
+                ORDER BY je.entry_date,jl.id LIMIT 50""",
+                (1,"2026-11-01","2026-11-30",like,like,like)).fetchall()
+        ledger_rows, ledger_search_seconds = timed(ledger_search_benchmark)
+
         result = {
             "database": "temporary synthetic SQLite database",
             "journal_entries": count,
@@ -130,6 +163,8 @@ def main():
                 "reconciliation_seconds": reconciliation_seconds,
                 "unusual_journal_analysis_seconds": anomalies_seconds,
                 "cash_forecast_seconds": forecast_seconds,
+                "journal_filter_seconds": journal_filter_seconds,
+                "ledger_search_seconds": ledger_search_seconds,
             },
             "checks": {
                 "dashboard_revenue": str(snapshot["current"]["revenue"]),
@@ -139,6 +174,8 @@ def main():
                 "unbalanced_entries": len(reconciliation["unbalanced"]),
                 "flagged_entries": len(anomalies),
                 "forecast_weeks": len(forecast["weeks"]),
+                "journal_page_rows": len(journal_rows),
+                "ledger_page_rows": len(ledger_rows),
                 "balance_sheet_balanced": snapshot["balance_ok"],
             },
         }
