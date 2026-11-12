@@ -375,12 +375,12 @@ def build_financial_year_preclose_report(conn, year_id):
         "لا يوجد قيد افتتاح مرتبط؛ راجع ما إذا كانت الأرصدة الافتتاحية مطلوبة.", False)
 
     if _table_exists_financial(conn, "accounting_periods"):
-        unlocked = conn.execute("""SELECT COUNT(*) FROM accounting_periods
-            WHERE start_date<=? AND end_date>=? AND locked=0""", (end, end)).fetchone()[0]
+        locked_period = conn.execute("""SELECT period_name FROM accounting_periods
+            WHERE locked=1 AND start_date<=? AND end_date>=? LIMIT 1""", (end, end)).fetchone()
         add("year_end_period", "الفترة المحاسبية في تاريخ نهاية السنة",
-            "success" if unlocked else "warning", unlocked,
-            "توجد فترة مفتوحة تغطي نهاية السنة." if unlocked else
-            "لا توجد فترة مفتوحة تغطي تاريخ نهاية السنة؛ راجع إعداد الفترات.", False)
+            "danger" if locked_period else "success", 1 if locked_period else 0,
+            f"الفترة {locked_period['period_name']} مغلقة في تاريخ نهاية السنة." if locked_period else
+            "لا توجد فترة مقفولة تمنع إجراء الإقفال.", bool(locked_period))
 
     try:
         snapshot = reconciliation_snapshot(conn)
