@@ -1158,29 +1158,53 @@ def trial_balance():
         conditions.append("a.account_type = ?"); params.append(account_type)
     if q:
         conditions.append("(a.code LIKE ? OR a.name_ar LIKE ?)"); params.extend([f"%{q}%", f"%{q}%"])
-    # Keep date/status predicates in the JOIN so accounts with no posted
-    # movements remain visible, while draft/cancelled lines contribute zero.
-    join_conditions = ["je.id=jl.entry_id", "je.status='posted'"]
-    join_params = []
-    if date_from:
-        join_conditions.append("je.entry_date >= ?"); join_params.append(date_from)
-    if date_to:
-        join_conditions.append("je.entry_date <= ?"); join_params.append(date_to)
     connection = db()
-    rows = connection.execute(f"""SELECT a.id, a.code, a.name_ar, a.account_type,
-        COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
-        COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
-        FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
-        LEFT JOIN journal_entries je ON {' AND '.join(join_conditions)}
-        WHERE {' AND '.join(conditions)}
-        GROUP BY a.id ORDER BY a.code""", [*join_params, *params]).fetchall()
-    rows = [dict(row, debit=Decimal(str(row["debit"] or "0")),
-                 credit=Decimal(str(row["credit"] or "0"))) for row in rows]
+    years = connection.execute(
+        "SELECT id,year_name,start_date,end_date,status FROM financial_years ORDER BY start_date DESC,id DESC"
+    ).fetchall()
+    period_ranges = []
+    today = date.today().isoformat()
+    for year in years:
+        period_from = max(year["start_date"], date_from) if date_from else year["start_date"]
+        natural_end = min(year["end_date"], today) if year["status"] == "open" else year["end_date"]
+        period_to = min(natural_end, date_to) if date_to else natural_end
+        if period_from <= period_to:
+            period_ranges.append({
+                "id": year["id"], "name": year["year_name"], "status": year["status"],
+                "date_from": period_from, "date_to": period_to,
+                "label": "الفترة الحالية / مفتوحة" if year["status"] == "open" else "فترة مالية مقفولة",
+            })
+    # Legacy installations without financial-year records retain the original
+    # date-filter behavior rather than hiding their historical trial balance.
+    if not years:
+        period_ranges.append({
+            "id": None, "name": "الفترة المحددة", "status": "open",
+            "date_from": date_from, "date_to": date_to,
+            "label": "الفترة الحالية",
+        })
+    sections = []
+    for period in period_ranges:
+        join_conditions = ["je.id=jl.entry_id", "je.status='posted'"]
+        join_params = []
+        if period["date_from"]:
+            join_conditions.append("je.entry_date >= ?"); join_params.append(period["date_from"])
+        if period["date_to"]:
+            join_conditions.append("je.entry_date <= ?"); join_params.append(period["date_to"])
+        rows = connection.execute(f"""SELECT a.id, a.code, a.name_ar, a.account_type,
+            COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
+            COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
+            FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
+            LEFT JOIN journal_entries je ON {' AND '.join(join_conditions)}
+            WHERE {' AND '.join(conditions)}
+            GROUP BY a.id ORDER BY a.code""", [*join_params, *params]).fetchall()
+        period_rows = [dict(row, debit=Decimal(str(row["debit"] or "0")),
+                            credit=Decimal(str(row["credit"] or "0"))) for row in rows]
+        sections.append({**period, "rows": period_rows})
     settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency')")}
     connection.close()
     types = {"asset":"أصول","liability":"التزامات","equity":"حقوق ملكية","revenue":"إيرادات","expense":"مصروفات"}
-    return render_template("trial_balance.html", rows=rows, date_from=date_from, date_to=date_to,
+    return render_template("trial_balance.html", sections=sections, date_from=date_from, date_to=date_to,
         account_type=account_type, q=q, types=types, base_currency=settings.get("base_currency",""))
 
 
