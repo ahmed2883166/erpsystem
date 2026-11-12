@@ -4,7 +4,7 @@ from unittest.mock import patch
 from decimal import Decimal
 
 from chart_templates import CHARTS, seed_activity_chart, ensure_activity_chart_accounts
-from financial_planning import initialize_planning_schema, build_balance_sheet_snapshot, _money, _connect
+from financial_planning import initialize_planning_schema, build_balance_sheet_snapshot, _money, _connect, create_financial_year, list_financial_years
 from accounting_core import register_decimal_aggregates
 
 
@@ -30,6 +30,19 @@ class FinancialPlanningTests(unittest.TestCase):
              patch("financial_planning.connect_database", return_value="connection") as connect:
             self.assertEqual(_connect(), "connection")
             connect.assert_called_once_with("/tmp/nexus-test.db")
+
+    def test_financial_year_creation_and_overlap_protection(self):
+        initialize_planning_schema(self.conn)
+        year_id = create_financial_year(self.conn, "2026", "2026-01-01", "2026-12-31", 1)
+        self.assertGreater(year_id, 0)
+        years = list_financial_years(self.conn)
+        self.assertEqual(len(years), 1)
+        self.assertEqual(years[0]["status"], "open")
+        with self.assertRaisesRegex(ValueError, "تتداخل"):
+            create_financial_year(self.conn, "FY2026-27", "2026-12-01", "2027-11-30", 1)
+        with self.assertRaises(ValueError):
+            create_financial_year(self.conn, "Bad dates", "2027-02-01", "2027-01-01", 1)
+        self.assertEqual(len(list_financial_years(self.conn)), 1)
 
     def test_budget_schema_and_decimal_amounts(self):
         initialize_planning_schema(self.conn)
