@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}إدارة السنوات المالية | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <h2>إدارة السنوات المالية</h2>
+  <p class="muted">تعريف الفترات المالية ومتابعة حالة كل سنة. إنشاء السنة لا يرحّل قيودًا ولا يغيّر أرصدة الحسابات.</p>
+</header>
+
+{% if 'journal.manage' in permissions %}
+<section class="panel">
+  <h3>إنشاء سنة مالية جديدة</h3>
+  <form method="post">
+    <div class="form-row">
+      <div>
+        <label for="year_name">اسم السنة المالية *</label>
+        <input id="year_name" name="year_name" required maxlength="80" placeholder="مثال: السنة المالية 2027">
+      </div>
+      <div>
+        <label for="start_date">تاريخ البداية *</label>
+        <input id="start_date" type="date" name="start_date" required>
+      </div>
+      <div>
+        <label for="end_date">تاريخ النهاية *</label>
+        <input id="end_date" type="date" name="end_date" required>
+      </div>
+    </div>
+    <p class="muted">لا يسمح النظام بتداخل فترتين ماليتين، ويجب أن يكون تاريخ النهاية في نفس يوم البداية أو بعده.</p>
+    <button type="submit">حفظ السنة المالية</button>
+  </form>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h3>السنوات المالية المسجلة</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>اسم السنة</th>
+          <th>من تاريخ</th>
+          <th>إلى تاريخ</th>
+          <th>الحالة</th>
+          <th>قيد الافتتاح</th>
+          <th>قيد الإقفال</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for year in years %}
+        <tr>
+          <td>{{ year.year_name }}</td>
+          <td>{{ year.start_date }}</td>
+          <td>{{ year.end_date }}</td>
+          <td>
+            {% if year.status == 'open' %}مفتوحة
+            {% elif year.status == 'closing' %}جارٍ الإقفال
+            {% else %}مغلقة{% endif %}
+          </td>
+          <td>{{ year.opening_entry_id if year.opening_entry_id else 'لم يُنشأ' }}</td>
+          <td>{{ year.closing_entry_id if year.closing_entry_id else 'لم يُنشأ' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6">لم يتم تسجيل سنوات مالية بعد. أنشئ أول سنة من النموذج أعلاه.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <h3>تنبيه محاسبي</h3>
+  <p>هذه الشاشة مخصصة حاليًا لتعريف السنوات المالية ومراجعتها فقط. لن يتم إنشاء قيد إقفال أو قيد افتتاح أو تغيير حالة السنة إلى «مغلقة» قبل تنفيذ ومراجعة إجراءات الإقفال المحاسبي واختبارها.</p>
+</section>
+{% endblock %}
