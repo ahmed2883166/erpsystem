@@ -123,6 +123,7 @@ def register_report_exports(app, db_path, permissions):
                     data.append([""] * len(headers))
                 filename = "nexus-trial-balance.xlsx"
                 title = "ميزان المراجعة حسب الفترات المالية"
+                title += " (شامل قيود الإقفال وعكسها)" if include_closing else " (بدون قيود الإقفال وعكسها)"
             elif report == "income-statement":
                 date_from, date_to = normalize_income_statement_period(
                     request.args.get("date_from"), request.args.get("date_to")
