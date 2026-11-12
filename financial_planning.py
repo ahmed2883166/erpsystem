@@ -2,6 +2,7 @@
 from app_paths import DB_PATH
 from database import connect_database
 import sqlite3
+from accounting_core import post_journal
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
@@ -44,6 +45,18 @@ def initialize_planning_schema(conn):
     );
     CREATE INDEX IF NOT EXISTS idx_financial_year_dates
       ON financial_years(start_date,end_date,status);
+    CREATE TABLE IF NOT EXISTS financial_year_journal_history(
+      id INTEGER PRIMARY KEY,
+      financial_year_id INTEGER NOT NULL REFERENCES financial_years(id),
+      entry_kind TEXT NOT NULL CHECK(entry_kind IN ('opening','closing')),
+      action TEXT NOT NULL CHECK(action IN ('created','reversed')),
+      entry_id INTEGER NOT NULL UNIQUE REFERENCES journal_entries(id),
+      related_entry_id INTEGER REFERENCES journal_entries(id),
+      created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_financial_year_journal_history
+      ON financial_year_journal_history(financial_year_id,entry_kind,id);
     """)
 
 
@@ -86,6 +99,253 @@ def list_financial_years(conn):
     return conn.execute(
         "SELECT * FROM financial_years ORDER BY start_date DESC,id DESC"
     ).fetchall()
+
+def _start_financial_year_transaction(conn):
+    if conn.in_transaction:
+        raise ValueError("هناك عملية قاعدة بيانات مفتوحة؛ احفظها أو أغلقها قبل تنفيذ الإجراء.")
+    conn.execute("BEGIN IMMEDIATE")
+
+
+def _financial_year_or_error(conn, year_id):
+    year = conn.execute("SELECT * FROM financial_years WHERE id=?", (year_id,)).fetchone()
+    if not year:
+        raise ValueError("السنة المالية غير موجودة.")
+    return year
+
+
+def _history_sequence(conn, year_id, entry_kind, action):
+    row = conn.execute("""SELECT COUNT(*) FROM financial_year_journal_history
+        WHERE financial_year_id=? AND entry_kind=? AND action=?""",
+        (year_id, entry_kind, action)).fetchone()
+    return int(row[0]) + 1
+
+
+def create_opening_entry(conn, year_id, balances, created_by=None):
+    """Post one balanced opening journal using balance-sheet accounts only."""
+    _start_financial_year_transaction(conn)
+    try:
+        year = _financial_year_or_error(conn, year_id)
+        if year["status"] != "open":
+            raise ValueError("لا يمكن إنشاء قيد افتتاح لسنة غير مفتوحة.")
+        if year["opening_entry_id"]:
+            raise ValueError("تم إنشاء قيد افتتاح لهذه السنة بالفعل. صححه بعكس القيد أولًا.")
+        if not isinstance(balances, dict) or not balances:
+            raise ValueError("أدخل أرصدة حسابات الميزانية.")
+        normalized = {}
+        for raw_id, raw_amount in balances.items():
+            try:
+                account_id = int(raw_id)
+            except (TypeError, ValueError):
+                raise ValueError("يوجد رقم حساب غير صحيح في أرصدة الافتتاح.")
+            if account_id <= 0 or account_id in normalized:
+                raise ValueError("يوجد حساب مكرر أو غير صحيح.")
+            normalized[account_id] = _money(raw_amount)
+        marks = ",".join("?" for _ in normalized)
+        accounts = conn.execute(
+            f"SELECT id,code,name_ar,account_type,is_group,active FROM accounts WHERE id IN ({marks})",
+            tuple(normalized),
+        ).fetchall()
+        if len(accounts) != len(normalized):
+            raise ValueError("أحد حسابات الافتتاح غير موجود.")
+        totals = {"asset": Decimal("0"), "liability": Decimal("0"), "equity": Decimal("0")}
+        lines = []
+        for account in accounts:
+            kind = account["account_type"]
+            if kind not in totals or account["is_group"] or not account["active"]:
+                raise ValueError("قيد الافتتاح يقبل الحسابات التفصيلية النشطة للأصول والالتزامات وحقوق الملكية فقط.")
+            amount = normalized[account["id"]]
+            totals[kind] += amount
+            if amount:
+                if kind == "asset":
+                    lines.append((account["id"], amount, Decimal("0"), "رصيد افتتاحي"))
+                else:
+                    lines.append((account["id"], Decimal("0"), amount, "رصيد افتتاحي"))
+        if totals["asset"] != totals["liability"] + totals["equity"]:
+            raise ValueError(
+                "قيد الافتتاح غير متوازن: الأصول "
+                f"{totals['asset']}، والالتزامات وحقوق الملكية "
+                f"{totals['liability'] + totals['equity']}."
+            )
+        if not lines:
+            raise ValueError("لا يمكن ترحيل قيد افتتاح بدون أرصدة فعلية.")
+        sequence = _history_sequence(conn, year_id, "opening", "created")
+        reference = f"FY-{year_id}-OPEN-{sequence}"
+        entry_id = post_journal(
+            conn, year["start_date"], reference,
+            f"قيد الأرصدة الافتتاحية للسنة المالية {year['year_name']}",
+            lines, created_by,
+        )
+        conn.execute("UPDATE financial_years SET opening_entry_id=? WHERE id=?", (entry_id, year_id))
+        conn.execute("""INSERT INTO financial_year_journal_history
+            (financial_year_id,entry_kind,action,entry_id,created_by)
+            VALUES(?,'opening','created',?,?)""", (year_id, entry_id, created_by))
+        conn.commit()
+        return entry_id
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def close_financial_year(conn, year_id, created_by=None):
+    """Close P&L balances into retained earnings and lock the financial year."""
+    _start_financial_year_transaction(conn)
+    try:
+        year = _financial_year_or_error(conn, year_id)
+        if year["status"] != "open":
+            raise ValueError("السنة المالية ليست مفتوحة أو تم إقفالها بالفعل.")
+        if year["closing_entry_id"]:
+            raise ValueError("يوجد قيد إقفال مرتبط بهذه السنة بالفعل.")
+        drafts = conn.execute("""SELECT COUNT(*) FROM journal_entries
+            WHERE status='draft' AND entry_date>=? AND entry_date<=?""",
+            (year["start_date"], year["end_date"])).fetchone()[0]
+        if drafts:
+            raise ValueError(f"لا يمكن الإقفال؛ توجد {drafts} قيود مسودة داخل السنة المالية.")
+        if _table_exists_financial(conn, "accounting_periods"):
+            locked = conn.execute("""SELECT period_name FROM accounting_periods
+                WHERE locked=1 AND start_date<=? AND end_date>=? LIMIT 1""",
+                (year["end_date"], year["end_date"])).fetchone()
+            if locked:
+                raise ValueError(f"لا يمكن الإقفال؛ الفترة المحاسبية {locked['period_name']} مغلقة بالفعل.")
+        rows = conn.execute("""SELECT a.id,a.code,a.name_ar,a.account_type,a.is_group,a.active,
+                jl.debit,jl.credit
+            FROM journal_lines jl
+            JOIN journal_entries je ON je.id=jl.entry_id
+            JOIN accounts a ON a.id=jl.account_id
+            WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
+              AND a.account_type IN ('revenue','expense')
+            ORDER BY a.code,jl.id""", (year["start_date"], year["end_date"])).fetchall()
+        balances = {}
+        account_meta = {}
+        for row in rows:
+            account_id = row["id"]
+            account_meta[account_id] = row
+            debit, credit = Decimal(str(row["debit"] or "0")), Decimal(str(row["credit"] or "0"))
+            item = balances.setdefault(account_id, {"debit": Decimal("0"), "credit": Decimal("0")})
+            item["debit"] += debit
+            item["credit"] += credit
+        closing_lines = []
+        revenue_total = Decimal("0")
+        expense_total = Decimal("0")
+        for account_id, amounts in balances.items():
+            account = account_meta[account_id]
+            if account["is_group"] or not account["active"]:
+                raise ValueError(f"حساب قائمة الدخل {account['code']} غير تفصيلي أو غير نشط؛ لا يمكن إقفاله.")
+            if account["account_type"] == "revenue":
+                natural_balance = amounts["credit"] - amounts["debit"]
+                revenue_total += natural_balance
+                if natural_balance > 0:
+                    closing_lines.append((account_id, natural_balance, Decimal("0"), "إقفال إيرادات السنة"))
+                elif natural_balance < 0:
+                    closing_lines.append((account_id, Decimal("0"), -natural_balance, "إقفال رصيد إيراد مدين"))
+            else:
+                natural_balance = amounts["debit"] - amounts["credit"]
+                expense_total += natural_balance
+                if natural_balance > 0:
+                    closing_lines.append((account_id, Decimal("0"), natural_balance, "إقفال مصروفات السنة"))
+                elif natural_balance < 0:
+                    closing_lines.append((account_id, -natural_balance, Decimal("0"), "إقفال رصيد مصروف دائن"))
+        if not closing_lines:
+            raise ValueError("لا توجد أرصدة إيرادات أو مصروفات مرحلة داخل السنة لإقفالها.")
+        net_profit = revenue_total - expense_total
+        if net_profit:
+            retained = conn.execute("""SELECT id FROM accounts
+                WHERE code='3200' AND account_type='equity' AND is_group=0 AND active=1 LIMIT 1""").fetchone()
+            if not retained:
+                raise ValueError("حساب الأرباح المرحلة التفصيلي النشط (3200) غير موجود؛ راجع شجرة الحسابات قبل الإقفال.")
+            if net_profit > 0:
+                closing_lines.append((retained["id"], Decimal("0"), net_profit, "صافي ربح السنة إلى الأرباح المرحلة"))
+            else:
+                closing_lines.append((retained["id"], -net_profit, Decimal("0"), "صافي خسارة السنة إلى الأرباح المرحلة"))
+        sequence = _history_sequence(conn, year_id, "closing", "created")
+        reference = f"FY-{year_id}-CLOSE-{sequence}"
+        entry_id = post_journal(
+            conn, year["end_date"], reference,
+            f"قيد إقفال الإيرادات والمصروفات للسنة المالية {year['year_name']}",
+            closing_lines, created_by,
+        )
+        conn.execute("UPDATE financial_years SET closing_entry_id=?,status='closed' WHERE id=?",
+                     (entry_id, year_id))
+        conn.execute("""INSERT INTO financial_year_journal_history
+            (financial_year_id,entry_kind,action,entry_id,created_by)
+            VALUES(?,'closing','created',?,?)""", (year_id, entry_id, created_by))
+        conn.commit()
+        return entry_id
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def _table_exists_financial(conn, table_name):
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                        (table_name,)).fetchone() is not None
+
+
+def reverse_financial_year_entry(conn, year_id, entry_kind, reversal_date, reason, created_by=None):
+    """Reverse an opening or closing journal without editing the original entry."""
+    from datetime import date
+    if entry_kind not in {"opening", "closing"}:
+        raise ValueError("نوع القيد المطلوب عكسه غير صحيح.")
+    try:
+        normalized_date = date.fromisoformat(str(reversal_date)).isoformat()
+    except (TypeError, ValueError):
+        raise ValueError("تاريخ القيد العكسي غير صحيح.")
+    if not str(reason or "").strip() or len(str(reason).strip()) > 500:
+        raise ValueError("اكتب سببًا للعكس لا يزيد عن 500 حرف.")
+    _start_financial_year_transaction(conn)
+    try:
+        year = _financial_year_or_error(conn, year_id)
+        if not (year["start_date"] <= normalized_date <= year["end_date"]):
+            raise ValueError("يجب أن يكون تاريخ عكس القيد داخل السنة المالية نفسها.")
+        original_id = year["opening_entry_id"] if entry_kind == "opening" else year["closing_entry_id"]
+        if not original_id:
+            raise ValueError("لا يوجد قيد حالي مرتبط بهذه السنة لعكسه.")
+        if entry_kind == "opening":
+            if year["status"] != "open" or year["closing_entry_id"]:
+                raise ValueError("يجب عكس قيد الإقفال أولًا قبل عكس قيد الافتتاح.")
+        else:
+            if year["status"] != "closed":
+                raise ValueError("عكس قيد الإقفال متاح فقط بعد إقفال السنة.")
+            drafts = conn.execute("""SELECT COUNT(*) FROM journal_entries
+                WHERE status='draft' AND entry_date>=? AND entry_date<=?""",
+                (year["start_date"], year["end_date"])).fetchone()[0]
+            if drafts:
+                raise ValueError("لا يمكن عكس الإقفال قبل معالجة القيود المسودة داخل السنة.")
+            conn.execute("UPDATE financial_years SET status='open' WHERE id=?", (year_id,))
+        original = conn.execute("SELECT id,description,status FROM journal_entries WHERE id=?",
+                                 (original_id,)).fetchone()
+        if not original or original["status"] != "posted":
+            raise ValueError("القيد الأصلي غير موجود أو غير مرحّل.")
+        original_lines = conn.execute("""SELECT account_id,debit,credit,memo
+            FROM journal_lines WHERE entry_id=? ORDER BY id""", (original_id,)).fetchall()
+        if len(original_lines) < 2:
+            raise ValueError("القيد الأصلي لا يحتوي على سطور كافية للعكس.")
+        reversal_lines = [
+            (row["account_id"], row["credit"], row["debit"],
+             f"عكس قيد {entry_kind}: {row['memo'] or ''}")
+            for row in original_lines
+        ]
+        sequence = _history_sequence(conn, year_id, entry_kind, "reversed")
+        reference = f"FY-{year_id}-{entry_kind.upper()}-REV-{sequence}"
+        reversal_id = post_journal(
+            conn, normalized_date, reference,
+            f"قيد عكسي للقيد رقم {original_id} — {str(reason).strip()}",
+            reversal_lines, created_by,
+        )
+        pointer = "opening_entry_id" if entry_kind == "opening" else "closing_entry_id"
+        if entry_kind == "closing":
+            conn.execute("UPDATE financial_years SET closing_entry_id=NULL,status='open' WHERE id=?", (year_id,))
+        else:
+            conn.execute("UPDATE financial_years SET opening_entry_id=NULL WHERE id=?", (year_id,))
+        conn.execute("""INSERT INTO financial_year_journal_history
+            (financial_year_id,entry_kind,action,entry_id,related_entry_id,created_by)
+            VALUES(?,?,'reversed',?,?,?)""",
+            (year_id, entry_kind, reversal_id, original_id, created_by))
+        conn.commit()
+        return reversal_id
+    except Exception:
+        conn.rollback()
+        raise
+
 
 
 def _require(permission):
@@ -377,4 +637,4 @@ def cash_flow():
         cash_reconciles=(bool(cash_ids) and reconciliation_difference==0))
 
 
-__all__=["planning_bp","initialize_planning_schema","create_financial_year","list_financial_years"]
+__all__=["planning_bp","initialize_planning_schema","create_financial_year","list_financial_years","create_opening_entry","close_financial_year","reverse_financial_year_entry"]
