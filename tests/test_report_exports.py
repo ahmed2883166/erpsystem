@@ -135,7 +135,7 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
                 (2,'2026-06-01','posted','general'),
                 (3,'2026-07-01','draft','general'),
                 (4,'2026-06-15','posted','year_end_closing');
-            INSERT INTO journal_lines VALUES
+            INSERT INTO journal_lines(id,entry_id,account_id,debit,credit) VALUES
                 (1,1,1,'100','0'),
                 (2,1,2,'0','100'),
                 (3,2,1,'250','0'),
