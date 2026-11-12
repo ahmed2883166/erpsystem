@@ -4,8 +4,8 @@ from unittest.mock import patch
 from decimal import Decimal
 
 from chart_templates import CHARTS, seed_activity_chart, ensure_activity_chart_accounts
-from financial_planning import initialize_planning_schema, build_balance_sheet_snapshot, _money, _connect, create_financial_year, list_financial_years
-from accounting_core import register_decimal_aggregates
+from financial_planning import (initialize_planning_schema, build_balance_sheet_snapshot, _money, _connect, create_financial_year, list_financial_years, create_opening_entry, close_financial_year, reverse_financial_year_entry)
+from accounting_core import register_decimal_aggregates, post_journal
 
 
 class FinancialPlanningTests(unittest.TestCase):
@@ -117,6 +117,144 @@ class FinancialPlanningTests(unittest.TestCase):
         fixed_child = self.conn.execute("SELECT parent_id FROM accounts WHERE code='1211'").fetchone()
         fixed_group = self.conn.execute("SELECT id FROM accounts WHERE code='1210'").fetchone()
         self.assertEqual(fixed_child["parent_id"], fixed_group["id"])
+
+
+
+
+class FinancialYearJournalTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        register_decimal_aggregates(self.conn)
+        self.conn.executescript("""
+        CREATE TABLE accounts(
+            id INTEGER PRIMARY KEY,code TEXT UNIQUE,name_ar TEXT,account_type TEXT,
+            parent_id INTEGER,is_group INTEGER DEFAULT 0,active INTEGER DEFAULT 1);
+        CREATE TABLE journal_entries(
+            id INTEGER PRIMARY KEY,entry_date TEXT NOT NULL,reference TEXT,
+            description TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'posted',
+            created_by INTEGER,created_at TEXT NOT NULL);
+        CREATE TABLE journal_lines(
+            id INTEGER PRIMARY KEY,entry_id INTEGER NOT NULL,account_id INTEGER NOT NULL,
+            debit TEXT NOT NULL DEFAULT '0',credit TEXT NOT NULL DEFAULT '0',memo TEXT);
+        CREATE TABLE accounting_periods(
+            id INTEGER PRIMARY KEY,period_name TEXT,start_date TEXT,end_date TEXT,
+            locked INTEGER DEFAULT 0,created_at TEXT);
+        INSERT INTO accounts VALUES(1,'1110','الصندوق','asset',NULL,0,1);
+        INSERT INTO accounts VALUES(2,'2110','الموردون','liability',NULL,0,1);
+        INSERT INTO accounts VALUES(3,'3100','رأس المال','equity',NULL,0,1);
+        INSERT INTO accounts VALUES(4,'3200','الأرباح المرحلة','equity',NULL,0,1);
+        INSERT INTO accounts VALUES(5,'4100','إيرادات المبيعات','revenue',NULL,0,1);
+        INSERT INTO accounts VALUES(6,'6100','مصروفات التشغيل','expense',NULL,0,1);
+        """)
+        initialize_planning_schema(self.conn)
+        self.year_id = create_financial_year(
+            self.conn, "2026", "2026-01-01", "2026-12-31", 1
+        )
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _opening(self):
+        return create_opening_entry(self.conn, self.year_id,
+            {"1": "1000", "2": "200", "3": "800", "4": "0"}, 1)
+
+    def _activity(self):
+        post_journal(self.conn, "2026-03-01", "SALE-2026-1", "بيع",
+            [(1, "300", "0", "تحصيل نقدي"), (5, "0", "300", "إيراد")], 1)
+        self.conn.commit()
+        post_journal(self.conn, "2026-04-01", "EXP-2026-1", "مصروف",
+            [(6, "100", "0", "مصروف تشغيل"), (1, "0", "100", "سداد")], 1)
+        self.conn.commit()
+
+    def test_opening_entry_balances_and_links_once(self):
+        entry_id = self._opening()
+        self.assertEqual(self.conn.execute(
+            "SELECT opening_entry_id FROM financial_years WHERE id=?", (self.year_id,)
+        ).fetchone()[0], entry_id)
+        totals = self.conn.execute(
+            "SELECT DECIMAL_SUM(debit),DECIMAL_SUM(credit) FROM journal_lines WHERE entry_id=?",
+            (entry_id,)
+        ).fetchone()
+        self.assertEqual(Decimal(totals[0]), Decimal("1000.00"))
+        self.assertEqual(Decimal(totals[1]), Decimal("1000.00"))
+        with self.assertRaisesRegex(ValueError, "بالفعل"):
+            self._opening()
+
+    def test_unbalanced_opening_is_rejected_without_journal(self):
+        with self.assertRaisesRegex(ValueError, "غير متوازن"):
+            create_opening_entry(self.conn, self.year_id,
+                {"1": "1000", "2": "200", "3": "700"}, 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
+        self.assertIsNone(self.conn.execute(
+            "SELECT opening_entry_id FROM financial_years WHERE id=?", (self.year_id,)
+        ).fetchone()[0])
+
+    def test_close_rejects_drafts(self):
+        self.conn.execute("""INSERT INTO journal_entries
+            (entry_date,reference,description,status,created_by,created_at)
+            VALUES('2026-06-01','DRAFT-1','مسودة','draft',1,'now')""")
+        self.conn.commit()
+        with self.assertRaisesRegex(ValueError, "مسودة"):
+            close_financial_year(self.conn, self.year_id, 1)
+        year = self.conn.execute("SELECT status,closing_entry_id FROM financial_years WHERE id=?",
+                                 (self.year_id,)).fetchone()
+        self.assertEqual(year["status"], "open")
+        self.assertIsNone(year["closing_entry_id"])
+
+    def test_close_zeroes_revenue_and_expenses_and_trial_balance_balances(self):
+        self._opening()
+        self._activity()
+        closing_id = close_financial_year(self.conn, self.year_id, 1)
+        year = self.conn.execute("SELECT status,closing_entry_id FROM financial_years WHERE id=?",
+                                 (self.year_id,)).fetchone()
+        self.assertEqual(year["status"], "closed")
+        self.assertEqual(year["closing_entry_id"], closing_id)
+        for account_id in (5, 6):
+            row = self.conn.execute("""SELECT DECIMAL_NET(
+                DECIMAL_SUM(jl.debit),DECIMAL_SUM(jl.credit))
+                FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                WHERE jl.account_id=? AND je.status='posted'""", (account_id,)).fetchone()
+            self.assertEqual(Decimal(row[0] or "0"), Decimal("0.00"))
+        retained = self.conn.execute("""SELECT DECIMAL_NET(
+            DECIMAL_SUM(debit),DECIMAL_SUM(credit)) FROM journal_lines WHERE account_id=4""").fetchone()
+        self.assertEqual(Decimal(retained[0]), Decimal("-200.00"))
+        totals = self.conn.execute("""SELECT DECIMAL_SUM(jl.debit),DECIMAL_SUM(jl.credit)
+            FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+            WHERE je.status='posted'""").fetchone()
+        self.assertEqual(Decimal(totals[0]), Decimal(totals[1]))
+        snapshot = build_balance_sheet_snapshot(self.conn, "2026-12-31")
+        self.assertTrue(snapshot["balanced"])
+        with self.assertRaisesRegex(ValueError, "ليست مفتوحة|بالفعل"):
+            close_financial_year(self.conn, self.year_id, 1)
+
+    def test_locked_year_end_period_blocks_close(self):
+        self._opening()
+        self._activity()
+        self.conn.execute("""INSERT INTO accounting_periods
+            (period_name,start_date,end_date,locked,created_at)
+            VALUES('ديسمبر 2026','2026-12-01','2026-12-31',1,'now')""")
+        self.conn.commit()
+        with self.assertRaisesRegex(ValueError, "مغلقة بالفعل"):
+            close_financial_year(self.conn, self.year_id, 1)
+
+    def test_reversing_close_reopens_year_and_keeps_original(self):
+        self._opening()
+        self._activity()
+        closing_id = close_financial_year(self.conn, self.year_id, 1)
+        reversal_id = reverse_financial_year_entry(
+            self.conn, self.year_id, "closing", "2026-12-31", "تصحيح الإقفال", 1
+        )
+        year = self.conn.execute("SELECT status,closing_entry_id FROM financial_years WHERE id=?",
+                                 (self.year_id,)).fetchone()
+        self.assertEqual(year["status"], "open")
+        self.assertIsNone(year["closing_entry_id"])
+        self.assertIsNotNone(self.conn.execute(
+            "SELECT 1 FROM journal_entries WHERE id=? AND status='posted'", (closing_id,)
+        ).fetchone())
+        self.assertIsNotNone(self.conn.execute(
+            "SELECT 1 FROM journal_entries WHERE id=? AND status='posted'", (reversal_id,)
+        ).fetchone())
 
 
 if __name__ == "__main__":
