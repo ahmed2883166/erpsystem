@@ -1692,7 +1692,10 @@ def backup_settings():
     connection.close()
     files = sorted(BACKUP_DIR.glob("nexus-backup-*.zip"),
                    key=lambda item: item.stat().st_mtime, reverse=True)
-    return render_template("backup_settings.html", settings=settings, files=files[:30])
+    backup_files = [{"name": item.name, "size_mb": round(item.stat().st_size / 1024 / 1024, 2),
+                     "modified": datetime.fromtimestamp(item.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")}
+                    for item in files[:30]]
+    return render_template("backup_settings.html", settings=settings, files=backup_files)
 
 
 @app.route("/backup/run-now", methods=["POST"])
