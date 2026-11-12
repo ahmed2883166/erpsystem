@@ -271,6 +271,7 @@ def initialize_database():
         ("actor_name", "TEXT"),
         ("before_values", "TEXT"),
         ("after_values", "TEXT"),
+        ("submitted_values", "TEXT"),
         ("reason", "TEXT"),
         ("request_id", "TEXT"),
     ):
@@ -388,11 +389,26 @@ def _audit_safe_value(value, key=""):
 def _audit_json(value):
     if value is None:
         return None
-    return json.dumps(_audit_safe_value(value), ensure_ascii=False, sort_keys=True, default=str)[:12000]
+    encoded = json.dumps(_audit_safe_value(value), ensure_ascii=False, sort_keys=True, default=str)
+    if len(encoded) <= 12000:
+        return encoded
+    return json.dumps(
+        {"_truncated": True, "preview": encoded[:11000]},
+        ensure_ascii=False, sort_keys=True,
+    )
+
+
+def _audit_request_payload():
+    if not has_request_context():
+        return None
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        payload = request.form.to_dict(flat=False)
+    return _audit_safe_value(payload)
 
 
 def log(action, details="", entity_type=None, entity_id=None, outcome="success",
-        before_values=None, after_values=None, reason=None, request_id=None):
+        before_values=None, after_values=None, submitted_values=None, reason=None, request_id=None):
     connection = db()
     user_id = session.get("user_id") if has_request_context() else None
     remote_addr = request.remote_addr if has_request_context() else None
@@ -418,14 +434,14 @@ def log(action, details="", entity_type=None, entity_id=None, outcome="success",
         connection.execute(
             """INSERT INTO audit_log
                (user_id, action, details, created_at, entity_type, entity_id, remote_addr,
-                outcome, actor_name, before_values, after_values, reason, request_id)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                outcome, actor_name, before_values, after_values, submitted_values, reason, request_id)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (user_id, action, str(details or "")[:1000], timestamp,
              str(entity_type)[:100] if entity_type else None,
              str(entity_id)[:100] if entity_id is not None else None,
              remote_addr, outcome if outcome in {"success", "failure"} else "success",
              str(actor_name)[:200] if actor_name else None,
-             _audit_json(before_values), _audit_json(after_values),
+             _audit_json(before_values), _audit_json(after_values), _audit_json(submitted_values),
              str(reason)[:1000] if reason else None,
              str(request_id)[:64] if request_id else None),
         )
@@ -480,6 +496,7 @@ def audit_operational_mutations(response):
                 entity_type=module,
                 entity_id=record_id,
                 outcome="failure" if response.status_code >= 400 or error_flashes else "success",
+                submitted_values=_audit_request_payload(),
             )
         except Exception:
             app.logger.exception("Could not write operational audit event.")
@@ -1517,7 +1534,7 @@ def audit_log():
         connection,
         f"""SELECT al.id,al.action,al.details,al.created_at,al.entity_type,al.entity_id,
                    al.remote_addr,al.outcome,al.actor_name,al.before_values,al.after_values,
-                   al.reason,al.request_id,u.username,u.full_name
+                   al.submitted_values,al.reason,al.request_id,u.username,u.full_name
             FROM audit_log al LEFT JOIN users u ON u.id=al.user_id
             WHERE {where} ORDER BY al.created_at DESC,al.id DESC""",
         f"""SELECT COUNT(*) FROM audit_log al LEFT JOIN users u ON u.id=al.user_id
