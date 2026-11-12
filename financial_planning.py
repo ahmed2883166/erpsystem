@@ -541,6 +541,8 @@ def financial_year_close(year_id):
 @planning_bp.route("/financial-years/<int:year_id>/reverse/<entry_kind>", methods=["POST"])
 @_require("journal.manage")
 def financial_year_reverse(year_id, entry_kind):
+    if entry_kind == "closing" and session.get("role") != "admin":
+        abort(403)
     conn = _connect()
     try:
         reversal_id = reverse_financial_year_entry(
