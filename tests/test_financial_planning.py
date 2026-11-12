@@ -237,6 +237,33 @@ class FinancialYearJournalTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "مغلقة بالفعل"):
             close_financial_year(self.conn, self.year_id, 1)
 
+    def test_posting_into_closed_year_is_blocked(self):
+        self._opening()
+        self._activity()
+        close_financial_year(self.conn, self.year_id, 1)
+        with self.assertRaisesRegex(ValueError, "ليست مفتوحة"):
+            post_journal(self.conn, "2026-11-01", "LATE-POST", "قيد بعد الإقفال",
+                [(1, "10", "0", "مدين"), (5, "0", "10", "دائن")], 1)
+        self.conn.rollback()
+
+    def test_reversing_opening_keeps_original_and_clears_active_link(self):
+        opening_id = self._opening()
+        reversal_id = reverse_financial_year_entry(
+            self.conn, self.year_id, "opening", "2026-01-01", "تصحيح الأرصدة الافتتاحية", 1
+        )
+        year = self.conn.execute("SELECT status,opening_entry_id FROM financial_years WHERE id=?",
+                                 (self.year_id,)).fetchone()
+        self.assertEqual(year["status"], "open")
+        self.assertIsNone(year["opening_entry_id"])
+        self.assertIsNotNone(self.conn.execute(
+            "SELECT 1 FROM journal_entries WHERE id=? AND status='posted'", (opening_id,)
+        ).fetchone())
+        self.assertIsNotNone(self.conn.execute(
+            "SELECT 1 FROM journal_entries WHERE id=? AND status='posted'", (reversal_id,)
+        ).fetchone())
+        replacement_id = self._opening()
+        self.assertNotEqual(opening_id, replacement_id)
+
     def test_reversing_close_reopens_year_and_keeps_original(self):
         self._opening()
         self._activity()
