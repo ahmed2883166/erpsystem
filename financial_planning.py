@@ -907,4 +907,4 @@ def cash_flow():
     return render_template("cash_flow.html", **snapshot)
 
 
-__all__=["planning_bp","initialize_planning_schema","create_financial_year","list_financial_years","create_opening_entry","close_financial_year","reverse_financial_year_entry"]
+__all__=["planning_bp","initialize_planning_schema","create_financial_year","list_financial_years","create_opening_entry","close_financial_year","reverse_financial_year_entry","build_balance_sheet_snapshot","build_cash_flow_snapshot"]
