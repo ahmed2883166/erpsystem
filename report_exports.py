@@ -199,6 +199,7 @@ def register_report_exports(app, db_path, permissions):
                 account_id = request.args.get("account_id", type=int)
                 date_from = request.args.get("date_from", "").strip()
                 date_to = request.args.get("date_to", "").strip()
+                search_query = request.args.get("q", "").strip()[:100]
                 if not account_id:
                     abort(400)
                 account = conn.execute("SELECT code,name_ar FROM accounts WHERE id=? AND is_group=0",
@@ -211,6 +212,14 @@ def register_report_exports(app, db_path, permissions):
                     conditions.append("je.entry_date >= ?"); params.append(date_from)
                 if date_to:
                     conditions.append("je.entry_date <= ?"); params.append(date_to)
+                if search_query:
+                    like = "%" + search_query + "%"
+                    search_parts = ["je.reference LIKE ?", "je.description LIKE ?", "jl.memo LIKE ?"]
+                    params.extend([like, like, like])
+                    if search_query.isdigit():
+                        search_parts.append("CAST(je.id AS TEXT)=?")
+                        params.append(search_query)
+                    conditions.append("(" + " OR ".join(search_parts) + ")")
                 rows = conn.execute(f"""
                     SELECT je.entry_date,je.reference,je.description,jl.debit,jl.credit,jl.memo
                     FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
