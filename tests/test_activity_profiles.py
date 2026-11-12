@@ -129,6 +129,26 @@ class ActivityProfileTests(unittest.TestCase):
                 self.conn, builtin["id"], "{}", "{}", "{}"
             )
 
+    def test_sales_and_purchase_modules_resolve_custom_profile_mappings(self):
+        from sales import _sales_account_codes, _sales_output_vat_account
+        from purchases import _activity_posting_accounts, _activity_tax_roles
+        from activity_profiles import active_posting_accounts
+        seed_activity_chart(self.conn, "service")
+        self._company_settings()
+        profile_id = create_activity_profile(
+            self.conn, "logistics", "النقل والخدمات اللوجستية", "service"
+        )
+        self.conn.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity','service')"
+        )
+        self.conn.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity_profile_code','logistics')"
+        )
+        self.assertEqual(_sales_account_codes(self.conn, "service"), active_posting_accounts(self.conn))
+        self.assertEqual(_activity_posting_accounts(self.conn), active_posting_accounts(self.conn))
+        self.assertEqual(_activity_tax_roles(self.conn)["input_vat"], "1165")
+        self.assertIsInstance(_sales_output_vat_account(self.conn, "service"), int)
+
     def test_legacy_company_without_profile_tables_uses_builtin_mappings(self):
         from activity_profiles import active_posting_accounts
         self._company_settings()
