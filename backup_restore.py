@@ -27,6 +27,8 @@ def extract_validated_backup(archive_path, candidate_path,
                 manifest = json.loads(archive.read(manifests[0]).decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise ValueError("ملف Manifest غير صالح.") from exc
+            if not isinstance(manifest, dict):
+                raise ValueError("محتوى Manifest يجب أن يكون كائن JSON صالحًا.")
             if manifest.get("application") not in (None, "NEXUS ERP"):
                 raise ValueError("النسخة لا تخص نظام NEXUS ERP.")
         written = 0
