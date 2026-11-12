@@ -38,6 +38,10 @@ def register_report_exports(app, db_path, permissions):
             "SELECT setting_value FROM company_settings WHERE setting_key='company_name'"
         ).fetchone()
         company_name = company_row["setting_value"] if company_row else "NEXUS ERP"
+        currency_row = conn.execute(
+            "SELECT setting_value FROM company_settings WHERE setting_key='base_currency'"
+        ).fetchone()
+        base_currency = currency_row["setting_value"] if currency_row else ""
         try:
             if report == "accounts":
                 rows = conn.execute("""
@@ -355,6 +359,7 @@ def register_report_exports(app, db_path, permissions):
             story = [
                 Paragraph(pdf_text(company_name), heading_style),
                 Paragraph(pdf_text(locals().get("title", report)), heading_style),
+                Paragraph(pdf_text("العملة الأساسية: " + base_currency), cell_style),
                 Paragraph(pdf_text("تاريخ إعداد التقرير: " + datetime.now().strftime("%Y-%m-%d %H:%M")), cell_style),
                 Spacer(1, 5*mm),
             ]
