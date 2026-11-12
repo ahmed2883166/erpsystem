@@ -80,7 +80,8 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
             INSERT INTO company_settings VALUES('company_name','NEXUS Test');
             INSERT INTO accounts(id,code,name_ar,account_type) VALUES
                 (1,'1110','الصندوق','asset'),
-                (2,'4100','إيرادات المبيعات','revenue');
+                (2,'4100','إيرادات المبيعات','revenue'),
+                (3,'3200','الأرباح المرحلة','equity');
             INSERT INTO financial_years VALUES
                 (1,'2025','2025-01-01','2025-12-31','closed'),
                 (2,'2026','2026-01-01','2026-12-31','open');
@@ -95,8 +96,8 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
                 (3,2,1,'250','0'),
                 (4,2,2,'0','250'),
                 (5,3,1,'999','0'),
-                (6,4,1,'25','0'),
-                (7,4,2,'0','25');
+                (6,4,2,'25','0'),
+                (7,4,3,'0','25');
         """)
         conn.commit()
         conn.close()
