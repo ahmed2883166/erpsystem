@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}فحوصات ما قبل الإقفال | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <h2>فحوصات ما قبل الإقفال — {{ report.year.year_name }}</h2>
+  <p class="muted">الفترة من {{ report.year.start_date }} إلى {{ report.year.end_date }}. هذه الفحوصات للقراءة فقط ولا تنشئ أو تعدّل أي قيد.</p>
+</header>
+<section class="panel">
+  <h3>نتيجة الفحص</h3>
+  {% if report.blockers %}
+    <p class="danger-text">يوجد {{ report.blockers|length }} مانع يمنع الإقفال. عالج الموانع ثم أعد الفحص.</p>
+  {% elif report.warnings %}
+    <p class="warning-text">لا توجد موانع فنية، لكن توجد {{ report.warnings|length }} تحذيرات تحتاج مراجعة واعتمادًا إداريًا.</p>
+  {% else %}
+    <p class="success-text">اجتازت السنة الفحوصات المتاحة ولا توجد تحذيرات مسجلة.</p>
+  {% endif %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>الفحص</th><th>النتيجة</th><th>العدد</th><th>التفاصيل والإجراء</th></tr></thead>
+      <tbody>
+      {% for item in report.checks %}
+        <tr>
+          <td>{{ item.title }}</td>
+          <td>{% if item.blocking %}مانع{% elif item.severity == 'warning' %}تحذير{% else %}سليم{% endif %}</td>
+          <td>{{ item.count }}</td>
+          <td>{{ item.details }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+<section class="panel">
+  <h3>الإجراء</h3>
+  {% if report.can_close and 'journal.manage' in permissions %}
+    <form method="post" action="{{ url_for('planning.financial_year_close', year_id=report.year.id) }}">
+      {% if report.requires_approval %}
+        {% if can_approve %}
+          <label><input type="checkbox" name="approve_warnings" value="1" required> أقرّ بمراجعة التحذيرات واعتماد الإقفال رغم وجودها بصفتي مدير النظام.</label>
+          <button type="submit">اعتماد التحذيرات وتنفيذ الإقفال</button>
+        {% else %}
+          <p class="muted">يلزم اعتماد مدير النظام للتحذيرات قبل تنفيذ الإقفال.</p>
+        {% endif %}
+      {% else %}
+        <button type="submit">تنفيذ الإقفال بعد اجتياز الفحوصات</button>
+      {% endif %}
+    </form>
+  {% else %}
+    <p class="muted">لن يظهر إجراء الإقفال حتى معالجة جميع الموانع أو منح صلاحية الترحيل.</p>
+  {% endif %}
+  <a href="{{ url_for('planning.financial_years') }}">العودة لإدارة السنوات المالية</a>
+</section>
+{% endblock %}
