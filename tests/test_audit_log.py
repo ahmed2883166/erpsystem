@@ -15,6 +15,7 @@ class AuditLogTests(unittest.TestCase):
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("CREATE TABLE users(id INTEGER PRIMARY KEY, username TEXT, full_name TEXT)")
         self.connection.execute("INSERT INTO users VALUES(1,'admin','مدير النظام')")
+        self.connection.execute("INSERT INTO users VALUES(17,'tester','مستخدم اختبار')")
         self.connection.execute("""
             CREATE TABLE audit_log(
                 id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT,
