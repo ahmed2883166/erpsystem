@@ -10,7 +10,7 @@
     <div><label for="date_from">من تاريخ</label><input id="date_from" type="date" name="date_from" value="{{ date_from }}"></div>
     <div><label for="date_to">إلى تاريخ</label><input id="date_to" type="date" name="date_to" value="{{ date_to }}"></div>
     <div class="form-actions"><button type="submit">عرض القائمة</button>
-      <a class="button secondary" href="{{ url_for('report_exports.export_report_excel', report='income-statement', date_from=date_from, date_to=date_to) }}">تصدير Excel</a><a class="button secondary" href="{{ url_for('report_exports.export_report_excel', report='income-statement', date_from=date_from, date_to=date_to) }}".replace('/excel','/pdf')>تحميل PDF</a>
+      <a class="button secondary" href="{{ url_for('report_exports.export_report_excel', report='income-statement', date_from=date_from, date_to=date_to) }}">تصدير Excel</a><a class="button secondary" href="{{ url_for('report_exports.export_report_excel', report='income-statement', date_from=date_from, date_to=date_to).replace('/excel','/pdf') }}">تحميل PDF</a>
       <button type="button" class="secondary" onclick="window.print()">طباعة / PDF</button>
     </div>
   </form>
