@@ -176,6 +176,8 @@ def run_due_backup(db_path, backup_dir):
             "backup_last_error": error,
             "backup_last_file": filename,
         }
+        if status == "failed":
+            values["backup_next_run"] = (datetime.now() + timedelta(minutes=5)).isoformat(timespec="seconds")
         connection.executemany("""INSERT INTO company_settings(setting_key,setting_value)
             VALUES(?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value""",
             list(values.items()))
