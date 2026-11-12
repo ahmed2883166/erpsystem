@@ -42,6 +42,14 @@
   <form method="post" action="{{ url_for('backup_run_now') }}" class="no-print"><button type="submit" class="secondary">إنشاء نسخة احتياطية الآن</button></form>
 </section>
 <section class="panel">
+  <h3>استرجاع نسخة احتياطية</h3>
+  <p class="muted">الاسترجاع يستبدل بيانات الشركة الحالية بمحتويات النسخة المختارة. سيفحص النظام سلامة قاعدة البيانات أولًا، ويحفظ نسخة أمان من البيانات الحالية قبل الاسترجاع. لا تغلق البرنامج أثناء العملية.</p>
+  <form method="post" action="{{ url_for('restore_backup') }}" enctype="multipart/form-data" class="no-print">
+    <div><label for="backup_file">ملف النسخة الاحتياطية ZIP</label><input id="backup_file" name="backup" type="file" accept=".zip,application/zip" required></div>
+    <button type="submit" class="danger" onclick="return confirm('تحذير: سيتم استبدال بيانات الشركة الحالية بالبيانات الموجودة في النسخة الاحتياطية. هل تريد المتابعة؟')">فحص واسترجاع النسخة</button>
+  </form>
+</section>
+<section class="panel">
   <h3>النسخ المحفوظة على الجهاز</h3>
   <p class="muted">مجلد الحفظ: مجلد النسخ الاحتياطي الافتراضي خارج مجلد المشروع</p>
   <div class="table-wrap"><table><thead><tr><th>اسم الملف</th><th>الحجم</th><th>آخر تعديل</th></tr></thead><tbody>
