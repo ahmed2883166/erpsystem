@@ -24,7 +24,8 @@ class AuditLogTests(unittest.TestCase):
         self.connection.execute("""
             CREATE TABLE audit_log(
                 id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT,
-                created_at TEXT, entity_type TEXT, entity_id TEXT, remote_addr TEXT, outcome TEXT
+                created_at TEXT, entity_type TEXT, entity_id TEXT, remote_addr TEXT, outcome TEXT,
+                actor_name TEXT, before_values TEXT, after_values TEXT, reason TEXT, request_id TEXT
             )
         """)
         self.connection.commit()
@@ -130,6 +131,30 @@ class AuditLogTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.mimetype, "application/pdf")
         self.assertTrue(response.data.startswith(b"%PDF"))
+
+    def test_log_change_stores_before_after_reason_actor_and_request_id(self):
+        with nexus_app.app.test_request_context(
+            "/accounts/10/edit", method="POST", environ_base={"REMOTE_ADDR": "192.0.2.20"}
+        ):
+            nexus_app.session["user_id"] = 17
+            nexus_app.g.audit_request_id = "request-test-001"
+            with patch.object(nexus_app, "db", side_effect=lambda: sqlite3.connect(self.db_path)):
+                nexus_app.log_change(
+                    "account_updated", "account", 10,
+                    {"code": "1000", "name_ar": "الصندوق", "password": "old-secret"},
+                    {"code": "1001", "name_ar": "الصندوق الرئيسي", "password": "new-secret"},
+                    details="1001", reason="تصحيح اسم الحساب",
+                )
+        row = self.connection.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT 1").fetchone()
+        self.assertEqual(row["actor_name"], "مستخدم اختبار")
+        self.assertEqual(row["entity_id"], "10")
+        self.assertEqual(row["reason"], "تصحيح اسم الحساب")
+        self.assertEqual(row["request_id"], "request-test-001")
+        self.assertIn('"code": "1000"', row["before_values"])
+        self.assertIn('"code": "1001"', row["after_values"])
+        self.assertIn("[REDACTED]", row["before_values"])
+        self.assertNotIn("old-secret", row["before_values"])
+        self.assertEqual(row["remote_addr"], "192.0.2.20")
 
     def test_audit_view_is_a_separate_permission_and_route(self):
         self.assertIn("audit.view", nexus_app.PERMISSION_LABELS)
