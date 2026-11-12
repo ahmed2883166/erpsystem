@@ -226,6 +226,14 @@ def initialize_management_dashboard_schema(conn, activity):
         trigger = "trg_dashboard_version_" + table + "_" + event.lower()
         conn.execute(f"""CREATE TRIGGER IF NOT EXISTS {trigger} AFTER {event} ON {table}
             BEGIN UPDATE management_dashboard_data_version SET version=version+1 WHERE id=1; END""")
+    # Forecast balances depend on open sales and supplier invoices as well as the GL.
+    # These tables are initialized before this schema in app.initialize_database().
+    for table in ("sales_invoices", "supplier_bills"):
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+            for event in ("INSERT", "UPDATE", "DELETE"):
+                trigger = "trg_dashboard_version_" + table + "_" + event.lower()
+                conn.execute(f"""CREATE TRIGGER IF NOT EXISTS {trigger} AFTER {event} ON {table}
+                    BEGIN UPDATE management_dashboard_data_version SET version=version+1 WHERE id=1; END""")
     conn.execute("""CREATE TABLE IF NOT EXISTS management_account_roles(
         account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
         role TEXT NOT NULL, PRIMARY KEY(account_id,role))""")
@@ -320,8 +328,9 @@ def cached_management_snapshot(conn, start, end, dimensions=None):
         ) if conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
         ).fetchone() else ()
+        dashboard_today = date.today()
         key = (
-            version, start.isoformat(), end.isoformat(),
+            version, start.isoformat(), end.isoformat(), dashboard_today.isoformat(),
             tuple(sorted((str(k), str(v)) for k, v in dimensions.items())),
             role_fingerprint, settings_fingerprint,
         )
@@ -333,6 +342,10 @@ def cached_management_snapshot(conn, start, end, dimensions=None):
                     conn.commit()
                 return deepcopy(cached)
         snapshot = build_management_snapshot(conn, start, end, dimensions)
+        # Cache the expensive dashboard sections too, not only the headline KPIs.
+        # Data-version triggers cover GL mutations and open-invoice changes.
+        snapshot["cash_forecast"] = cash_forecast(conn, dashboard_today, 8)
+        snapshot["unusual_entries"] = unusual_journal_entries(conn, start, end)
         if started_transaction:
             conn.commit()
         with _SNAPSHOT_CACHE_LOCK:
