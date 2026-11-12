@@ -29,6 +29,14 @@ class StocktakeRouteTests(unittest.TestCase):
             qty_in,qty_remaining,unit_cost,value_remaining) VALUES(?,?,?,'10','10','5','50')""",
             (self.product_id,self.warehouse_id,movement_id))
         conn.execute("CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,account_type TEXT,is_group INTEGER,active INTEGER)")
+        conn.execute("""CREATE TABLE financial_years(
+            id INTEGER PRIMARY KEY, year_name TEXT, start_date TEXT, end_date TEXT, status TEXT
+        )""")
+        conn.execute("INSERT INTO financial_years VALUES(1,'2025','2025-01-01','2025-12-31','closed')")
+        conn.execute("INSERT INTO financial_years VALUES(2,'2026','2026-01-01','2026-12-31','open')")
+        conn.execute("""CREATE TABLE accounting_periods(
+            id INTEGER PRIMARY KEY, period_name TEXT, start_date TEXT, end_date TEXT, locked INTEGER
+        )""")
         conn.commit()
         conn.close()
         nexus.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
@@ -128,6 +136,63 @@ class StocktakeRouteTests(unittest.TestCase):
             target_warehouse_id,quantity,unit_cost,total_cost,movement_date)
             VALUES('AFTER-COUNT','receipt',?,?, '1','5','5','2026-11-11')""",
             (self.product_id,self.warehouse_id))
+        conn.commit()
+        response = self.client.post("/stock/counts/" + str(header["id"]) + "/approve")
+        self.assertEqual(response.status_code, 302)
+        status = conn.execute("SELECT status FROM stocktakes WHERE id=?", (header["id"],)).fetchone()["status"]
+        self.assertEqual(status, "counted")
+        conn.close()
+
+    def test_stocktake_creation_is_blocked_in_closed_financial_year(self):
+        self._login()
+        response = self.client.post("/stock/counts", data={
+            "warehouse_id": str(self.warehouse_id), "count_date": "2025-11-11",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = stock.get_db()
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM stocktakes").fetchone()[0], 0)
+        conn.close()
+        with self.client.session_transaction() as session:
+            flashes = session.get("_flashes", [])
+        self.assertTrue(any("السنة المالية 2025" in message for _category, message in flashes))
+
+    def test_internal_transfer_is_blocked_in_locked_accounting_period(self):
+        self._login()
+        conn = stock.get_db()
+        conn.execute("INSERT INTO stock_warehouses(code,name_ar) VALUES('W2','مخزن الوجهة')")
+        target_id = conn.execute("SELECT id FROM stock_warehouses WHERE code='W2'").fetchone()["id"]
+        conn.execute("INSERT INTO accounting_periods VALUES(1,'أكتوبر 2026','2026-10-01','2026-10-31',1)")
+        conn.commit()
+        conn.close()
+
+        response = self.client.post("/stock/movements", data={
+            "movement_type": "transfer",
+            "product_id": str(self.product_id),
+            "quantity": "1",
+            "source_warehouse_id": str(self.warehouse_id),
+            "target_warehouse_id": str(target_id),
+            "movement_date": "2026-10-15",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = stock.get_db()
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM stock_movements").fetchone()[0], 1)
+        conn.close()
+        with self.client.session_transaction() as session:
+            flashes = session.get("_flashes", [])
+        self.assertTrue(any("الفترة المحاسبية مغلقة" in message for _category, message in flashes))
+
+    def test_stocktake_approval_is_blocked_if_year_closed_after_count(self):
+        self._login()
+        self.client.post("/stock/counts", data={
+            "warehouse_id": str(self.warehouse_id), "count_date": "2026-11-11",
+        })
+        conn = stock.get_db()
+        header = conn.execute("SELECT * FROM stocktakes").fetchone()
+        line = conn.execute("SELECT * FROM stocktake_lines").fetchone()
+        self.client.post("/stock/counts/" + str(header["id"]), data={
+            "counted_" + str(line["id"]): "10", "cost_" + str(line["id"]): "5",
+        })
+        conn.execute("UPDATE financial_years SET status='closed' WHERE id=2")
         conn.commit()
         response = self.client.post("/stock/counts/" + str(header["id"]) + "/approve")
         self.assertEqual(response.status_code, 302)
