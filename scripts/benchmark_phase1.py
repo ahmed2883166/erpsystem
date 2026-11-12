@@ -139,19 +139,21 @@ def main():
 
         def ledger_search_benchmark():
             like = "%Synthetic cash sale%"
-            return conn.execute("""SELECT je.id,je.entry_date,je.reference,je.description,
-                jl.id line_id,jl.debit,jl.credit,
-                (SELECT DECIMAL_NET(hist.debit,hist.credit)
-                 FROM journal_lines hist JOIN journal_entries he ON he.id=hist.entry_id
-                 WHERE hist.account_id=jl.account_id AND he.status='posted'
-                   AND (he.entry_date<je.entry_date OR (he.entry_date=je.entry_date AND hist.id<=jl.id))
-                ) running_balance
+            return conn.execute("""WITH ledger_rows AS (
+                SELECT je.id entry_id,je.entry_date,je.reference,je.description,
+                    jl.id line_id,jl.account_id,jl.debit,jl.credit,jl.memo,
+                    DECIMAL_RUNNING_NET(jl.debit,jl.credit) OVER (
+                        ORDER BY je.entry_date,jl.id
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                    ) running_balance
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                 WHERE jl.account_id=? AND je.status='posted'
                   AND je.entry_date>=? AND je.entry_date<=?
-                  AND (je.reference LIKE ? OR je.description LIKE ? OR jl.memo LIKE ?)
-                ORDER BY je.entry_date,jl.id LIMIT 50""",
-                (1,"2026-11-01","2026-11-30",like,like,like)).fetchall()
+            )
+            SELECT * FROM ledger_rows
+            WHERE reference LIKE ? OR description LIKE ? OR memo LIKE ?
+            ORDER BY entry_date,line_id LIMIT 50""",
+            (1,"2026-11-01","2026-11-30",like,like,like)).fetchall()
         ledger_rows, ledger_search_seconds = timed(ledger_search_benchmark)
 
         result = {
