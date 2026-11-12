@@ -389,6 +389,10 @@ def build_management_snapshot(conn, start, end, dimensions=None):
         conn, start.isoformat(), end.isoformat(),
         previous_start.isoformat(), previous_end.isoformat(), dimensions
     )
+    opening_balances = account_balances(
+        conn, date_to=(start - timedelta(days=1)).isoformat(),
+        dimensions=dimensions, exclude_closing_entries=True
+    )
     current = income_figures(current_balances, direct_cost_ids=roles["direct_cost"])
     previous = income_figures(previous_balances, direct_cost_ids=roles["direct_cost"])
     cumulative = income_figures(as_of, direct_cost_ids=roles["direct_cost"])
@@ -399,6 +403,39 @@ def build_management_snapshot(conn, start, end, dimensions=None):
     current_assets = _leaf_sum(as_of, "asset", account_ids=roles["current_assets"])
     current_liabilities = _leaf_sum(as_of, "liability", account_ids=roles["current_liabilities"])
     gross_profit = current["revenue"] - current["cogs"]
+    period_days = Decimal(max(1, (end-start).days+1))
+    opening_assets = _leaf_sum(opening_balances, "asset")
+    opening_liabilities = _leaf_sum(opening_balances, "liability")
+    opening_equity = _leaf_sum(opening_balances, "equity")
+    average_assets = (opening_assets + assets) / Decimal("2")
+    average_equity = (opening_equity + equity) / Decimal("2")
+    average_inventory = (_leaf_sum(opening_balances, "asset", account_ids=roles["inventory"]) + _leaf_sum(as_of, "asset", account_ids=roles["inventory"])) / Decimal("2")
+    average_receivables = (_leaf_sum(opening_balances, "asset", account_ids=roles["receivables"]) + _leaf_sum(as_of, "asset", account_ids=roles["receivables"])) / Decimal("2")
+    average_payables = (_leaf_sum(opening_balances, "liability", account_ids=roles["payables"]) + _leaf_sum(as_of, "liability", account_ids=roles["payables"])) / Decimal("2")
+    quick_assets = _leaf_sum(as_of, "asset", account_ids=roles["quick_assets"])
+    ratios = {
+        "gross_margin": _percent(gross_profit, current["revenue"]),
+        "net_profit_margin": _percent(current["net_profit"], current["revenue"]),
+        "return_on_assets": _percent(current["net_profit"], average_assets),
+        "return_on_equity": _percent(current["net_profit"], average_equity),
+        "current_ratio": _ratio(current_assets, current_liabilities),
+        "quick_ratio": _ratio(quick_assets, current_liabilities),
+        "cash_ratio": _ratio(_leaf_sum(as_of, "asset", account_ids=roles["cash"]), current_liabilities),
+        "debt_ratio": _percent(liabilities, assets),
+        "debt_to_equity": _ratio(liabilities, equity),
+        "equity_ratio": _percent(equity, assets),
+        "asset_turnover": _ratio(current["revenue"], average_assets),
+        "inventory_turnover": _ratio(current["cogs"], average_inventory),
+        "inventory_days": _ratio(period_days, _ratio(current["cogs"], average_inventory)) if average_inventory else None,
+        "receivables_turnover": _ratio(current["revenue"], average_receivables),
+        "collection_days": _ratio(period_days, _ratio(current["revenue"], average_receivables)) if average_receivables else None,
+        "payables_turnover": _ratio(current["cogs"], average_payables),
+        "payment_days": _ratio(period_days, _ratio(current["cogs"], average_payables)) if average_payables else None,
+    }
+    ratios["cash_conversion_cycle"] = (
+        ratios["inventory_days"] + ratios["collection_days"] - ratios["payment_days"]
+        if all(ratios[key] is not None for key in ("inventory_days","collection_days","payment_days")) else None
+    )
     details = []
     for role in ("cash", "receivables", "payables", "inventory"):
         for account_id in sorted(roles[role]):
@@ -420,6 +457,7 @@ def build_management_snapshot(conn, start, end, dimensions=None):
             "net_profit": _change(current["net_profit"], previous["net_profit"]),
         },
         "gross_margin": _percent(gross_profit, current["revenue"]),
+        "ratios": ratios,
         "cash": _leaf_sum(as_of, "asset", account_ids=roles["cash"]),
         "receivables": _leaf_sum(as_of, "asset", account_ids=roles["receivables"]),
         "payables": _leaf_sum(as_of, "liability", account_ids=roles["payables"]),
