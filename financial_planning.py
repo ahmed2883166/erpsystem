@@ -376,6 +376,40 @@ def build_financial_year_preclose_report(conn, year_id):
         0 if has_opening else 1,
         "قيد الافتتاح مرتبط بالسنة." if has_opening else
         "لا يوجد قيد افتتاح مرتبط؛ راجع ما إذا كانت الأرصدة الافتتاحية مطلوبة.", False)
+    if has_opening:
+        opening = conn.execute("""SELECT je.entry_date,je.status,
+                COUNT(jl.id) line_count,
+                COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
+                COALESCE(DECIMAL_SUM(jl.credit),'0') credit,
+                COALESCE(SUM(CASE WHEN a.account_type NOT IN ('asset','liability','equity')
+                                  OR a.is_group=1 OR a.active=0 THEN 1 ELSE 0 END),0) invalid_lines
+            FROM journal_entries je
+            LEFT JOIN journal_lines jl ON jl.entry_id=je.id
+            LEFT JOIN accounts a ON a.id=jl.account_id
+            WHERE je.id=? GROUP BY je.id""", (year["opening_entry_id"],)).fetchone()
+        opening_valid = bool(
+            opening and opening["status"] == "posted"
+            and opening["entry_date"] == start
+            and int(opening["line_count"] or 0) >= 2
+            and Decimal(str(opening["debit"] or "0")) == Decimal(str(opening["credit"] or "0"))
+            and int(opening["invalid_lines"] or 0) == 0
+        )
+        add("opening_integrity", "سلامة قيد الافتتاح وتاريخه", "success" if opening_valid else "danger",
+            0 if opening_valid else 1,
+            "القيد مرحّل ومتوازن وتاريخه يطابق بداية السنة ويستخدم حسابات ميزانية تفصيلية نشطة."
+            if opening_valid else
+            "قيد الافتتاح غير موجود أو غير مرحّل أو غير متوازن أو تاريخه/حساباته غير صحيحة.",
+            not opening_valid)
+
+    invalid_account_lines = conn.execute("""SELECT COUNT(*) FROM journal_lines jl
+        JOIN journal_entries je ON je.id=jl.entry_id
+        JOIN accounts a ON a.id=jl.account_id
+        WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
+          AND (a.is_group=1 OR a.active=0)""", (start, end)).fetchone()[0]
+    add("invalid_account_lines", "حركات على حسابات تجميعية أو غير نشطة",
+        "danger" if invalid_account_lines else "success", invalid_account_lines,
+        "يجب تصحيح الحركات المرتبطة بحساب تجميعي أو غير نشط قبل الإقفال.",
+        invalid_account_lines > 0)
 
     if _table_exists_financial(conn, "accounting_periods"):
         locked_period = conn.execute("""SELECT period_name FROM accounting_periods
