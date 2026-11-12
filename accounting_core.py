@@ -66,6 +66,12 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
             (normalized_date, normalized_date)).fetchone()
         if locked:
             raise ValueError(f"الفترة المحاسبية مغلقة: {locked['period_name']}.")
+    if _table_exists(conn, "financial_years"):
+        financial_year = conn.execute("""SELECT year_name,status FROM financial_years
+            WHERE start_date<=? AND end_date>=? LIMIT 1""",
+            (normalized_date, normalized_date)).fetchone()
+        if financial_year and financial_year["status"] != "open":
+            raise ValueError(f"لا يمكن الترحيل داخل السنة المالية {financial_year['year_name']} لأنها ليست مفتوحة.")
     dimensions = dimensions or {}
     dimension_keys = ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id")
     available_dimension_keys = tuple(key for key in dimension_keys if key in _columns(conn, "journal_lines"))
