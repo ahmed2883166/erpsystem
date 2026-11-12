@@ -1,7 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database
 """Customer and supplier receivables/payables aging reports."""
-import sqlite3
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from flask import Blueprint, render_template, request, session, redirect, url_for, flash
