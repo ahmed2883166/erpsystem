@@ -398,7 +398,9 @@ def build_management_snapshot(conn, start, end, dimensions=None):
 
 
 def cash_forecast(conn, today=None, weeks=8):
+    """Forecast posted customer/supplier balances with SQL aggregation and exact Decimal values."""
     today = today or date.today()
+    weeks = max(1, min(int(weeks), 52))
     roles = load_management_account_roles(conn)
     balances = account_balances(conn, date_to=today.isoformat())
     opening = _leaf_sum(balances, "asset", account_ids=roles["cash"])
@@ -409,47 +411,77 @@ def cash_forecast(conn, today=None, weeks=8):
         start = today + timedelta(days=index * 7)
         end = start + timedelta(days=6)
         periods.append({"label": start.strftime("%d/%m") + " - " + end.strftime("%d/%m")})
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sales_invoices'").fetchone():
-        rows = conn.execute("""SELECT total_amount,paid_amount,COALESCE(credited_amount,'0') credited,
-            COALESCE(due_date,invoice_date) due_date FROM sales_invoices WHERE status='posted' AND invoice_date<=?""",
-            (today.isoformat(),)).fetchall()
-        for row in rows:
-            amount = max(Decimal("0"), _decimal(row["total_amount"])-_decimal(row["paid_amount"])-_decimal(row["credited"]))
-            if amount:
-                try: due = date.fromisoformat(row["due_date"])
-                except (TypeError,ValueError): due = today
-                idx = max(0,(due-today).days//7)
-                if idx < weeks: inflows[idx] += amount
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='supplier_bills'").fetchone():
-        rows = conn.execute("""SELECT total_amount,paid_amount,COALESCE(credited_amount,'0') credited,
-            COALESCE(due_date,bill_date) due_date FROM supplier_bills WHERE status='posted' AND bill_date<=?""",
-            (today.isoformat(),)).fetchall()
-        for row in rows:
-            amount = max(Decimal("0"), _decimal(row["total_amount"])-_decimal(row["paid_amount"])-_decimal(row["credited"]))
-            if amount:
-                try: due = date.fromisoformat(row["due_date"])
-                except (TypeError,ValueError): due = today
-                idx = max(0,(due-today).days//7)
-                if idx < weeks: outflows[idx] += amount
-    payroll_due = Decimal("0")
-    for row in conn.execute("SELECT id,name_ar FROM accounts WHERE account_type='liability' AND is_group=0 AND active=1"):
-        if any(x in (row["name_ar"] or "").lower() for x in ("مرتبات","رواتب","salary","payroll")):
-            payroll_due += max(Decimal("0"),_leaf_sum(balances,"liability",account_ids={row["id"]}))
+
+    conn.create_function(
+        "DECIMAL_OUTSTANDING", 3,
+        lambda total, paid, credited: format(
+            max(Decimal("0"), _decimal(total) - _decimal(paid) - _decimal(credited)), "f"
+        ),
+    )
+
+    def load_due_buckets(table, invoice_date_column):
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        if not exists:
+            return []
+        columns = {row["name"] for row in conn.execute(f'PRAGMA table_info("{table}")')}
+        required = {"status", invoice_date_column, "total_amount", "paid_amount"}
+        if not required.issubset(columns):
+            return []
+        credited_expr = "COALESCE(credited_amount,'0')" if "credited_amount" in columns else "'0'"
+        due_expr = f"COALESCE(due_date,{invoice_date_column})" if "due_date" in columns else invoice_date_column
+        bucket_expr = f"""CASE WHEN {due_expr} < ? THEN 0
+            ELSE CAST((julianday({due_expr})-julianday(?))/7 AS INTEGER) END"""
+        return conn.execute(f"""SELECT {bucket_expr} bucket,
+            COALESCE(DECIMAL_SUM(DECIMAL_OUTSTANDING(total_amount,paid_amount,{credited_expr})),'0') amount
+            FROM "{table}"
+            WHERE status='posted' AND {invoice_date_column}<=?
+            GROUP BY bucket HAVING bucket < ?""",
+            (today.isoformat(), today.isoformat(), today.isoformat(), weeks)).fetchall()
+
+    for row in load_due_buckets("sales_invoices", "invoice_date"):
+        bucket = int(row["bucket"] or 0)
+        if 0 <= bucket < weeks:
+            inflows[bucket] = _decimal(row["amount"])
+    for row in load_due_buckets("supplier_bills", "bill_date"):
+        bucket = int(row["bucket"] or 0)
+        if 0 <= bucket < weeks:
+            outflows[bucket] = _decimal(row["amount"])
+
+    payroll_accounts = {
+        row["id"] for row in conn.execute(
+            "SELECT id,name_ar FROM accounts WHERE account_type='liability' AND is_group=0 AND active=1"
+        )
+        if any(term in (row["name_ar"] or "").lower()
+               for term in ("مرتبات", "رواتب", "salary", "payroll"))
+    }
+    payroll_due = max(Decimal("0"), _leaf_sum(
+        balances, "liability", account_ids=payroll_accounts
+    )) if payroll_accounts else Decimal("0")
     outflows[0] += payroll_due
+
     running = opening
     result = []
-    for i, period in enumerate(periods):
-        net = inflows[i]-outflows[i]
+    for index, period in enumerate(periods):
+        net = inflows[index] - outflows[index]
         start_balance = running
         running += net
-        result.append({**period,"opening":_rounded(start_balance),"receipts":_rounded(inflows[i]),
-            "payments":_rounded(outflows[i]),"net":_rounded(net),"closing":_rounded(running)})
-    threshold_row = conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='minimum_cash_balance'").fetchone()
+        result.append({
+            **period, "opening":_rounded(start_balance), "receipts":_rounded(inflows[index]),
+            "payments":_rounded(outflows[index]), "net":_rounded(net), "closing":_rounded(running),
+        })
+    threshold_row = conn.execute(
+        "SELECT setting_value FROM company_settings WHERE setting_key='minimum_cash_balance'"
+    ).fetchone() if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
+    ).fetchone() else None
     threshold = _decimal(threshold_row["setting_value"]) if threshold_row else Decimal("0")
-    return {"opening":_rounded(opening),"weeks":result,"minimum":threshold,
-        "warning":any(x["closing"]<threshold for x in result) if threshold>0 else False,
-        "payroll_due":_rounded(payroll_due)}
-
+    return {
+        "opening":_rounded(opening), "weeks":result, "minimum":threshold,
+        "warning":any(item["closing"] < threshold for item in result) if threshold > 0 else False,
+        "payroll_due":_rounded(payroll_due),
+    }
 
 def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("3")):
     """Find unusual posted entries without per-entry or per-line SQL queries.
