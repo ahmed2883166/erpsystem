@@ -33,6 +33,7 @@ from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
 from app_paths import DATA_DIR, DB_PATH, BACKUP_DIR
+from backup_scheduler import create_backup_archive, next_backup_datetime, start_backup_scheduler
 
 # Development/demo builds run locally without a licensing server. Set NEXUS_DEMO_MODE=0
 # explicitly in a commercial deployment to enforce the signed remote licensing flow.
