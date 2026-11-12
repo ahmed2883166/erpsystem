@@ -91,7 +91,7 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
 
     def test_trial_balance_pdf_export_returns_pdf_document(self):
         response = self.client.get("/reports/export/trial-balance/pdf")
-        self.assertEqual(response.status_code, 200, response.get_data(as_text=True)[:300])
+        self.assertEqual(response.status_code, 200, response.data[:300].decode("utf-8", errors="replace"))
         self.assertEqual(response.mimetype, "application/pdf")
         self.assertTrue(response.data.startswith(b"%PDF"))
 
