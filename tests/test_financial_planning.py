@@ -211,14 +211,13 @@ class FinancialYearJournalTests(unittest.TestCase):
         self.assertEqual(year["status"], "closed")
         self.assertEqual(year["closing_entry_id"], closing_id)
         for account_id in (5, 6):
-            row = self.conn.execute("""SELECT DECIMAL_NET(
-                DECIMAL_SUM(jl.debit),DECIMAL_SUM(jl.credit))
+            row = self.conn.execute("""SELECT DECIMAL_SUM(jl.debit),DECIMAL_SUM(jl.credit)
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                 WHERE jl.account_id=? AND je.status='posted'""", (account_id,)).fetchone()
-            self.assertEqual(Decimal(row[0] or "0"), Decimal("0.00"))
-        retained = self.conn.execute("""SELECT DECIMAL_NET(
-            DECIMAL_SUM(debit),DECIMAL_SUM(credit)) FROM journal_lines WHERE account_id=4""").fetchone()
-        self.assertEqual(Decimal(retained[0]), Decimal("-200.00"))
+            self.assertEqual(Decimal(row[0] or "0") - Decimal(row[1] or "0"), Decimal("0.00"))
+        retained = self.conn.execute("""SELECT DECIMAL_SUM(debit),DECIMAL_SUM(credit)
+            FROM journal_lines WHERE account_id=4""").fetchone()
+        self.assertEqual(Decimal(retained[1]) - Decimal(retained[0]), Decimal("200.00"))
         totals = self.conn.execute("""SELECT DECIMAL_SUM(jl.debit),DECIMAL_SUM(jl.credit)
             FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
             WHERE je.status='posted'""").fetchone()
