@@ -132,6 +132,39 @@ class SharedAccountingCoreTests(unittest.TestCase):
         self.assertEqual(snapshot["journal_totals"]["credit"], Decimal("120.30"))
         self.assertFalse(any(row["reference"] == "DECIMAL-1" for row in snapshot["unbalanced"]))
 
+    def test_reconciliation_uses_one_grouped_journal_query_for_large_ledger(self):
+        for entry_id in range(100, 400):
+            self.db.execute(
+                "INSERT INTO journal_entries VALUES(?,?,?,'large-ledger','posted',1,'now')",
+                (entry_id, "2026-11-11", f"BULK-{entry_id}"),
+            )
+            self.db.execute(
+                "INSERT INTO journal_lines VALUES(?,?,1,'0.01','0','bulk debit')",
+                (entry_id * 2, entry_id),
+            )
+            self.db.execute(
+                "INSERT INTO journal_lines VALUES(?,?,2,'0','0.01','bulk credit')",
+                (entry_id * 2 + 1, entry_id),
+            )
+        statements = []
+        self.db.set_trace_callback(statements.append)
+        snapshot = reconciliation_snapshot(self.db)
+        self.db.set_trace_callback(None)
+
+        self.assertEqual(snapshot["journal_totals"]["debit"], Decimal("123.30"))
+        self.assertEqual(snapshot["journal_totals"]["credit"], Decimal("123.30"))
+        self.assertEqual(len(snapshot["unbalanced"]), 0)
+        grouped_queries = [
+            sql for sql in statements
+            if "LEFT JOIN journal_lines jl ON jl.entry_id=je.id" in sql
+        ]
+        per_entry_queries = [
+            sql for sql in statements
+            if "SELECT debit,credit FROM journal_lines WHERE entry_id=" in sql
+        ]
+        self.assertEqual(len(grouped_queries), 1)
+        self.assertEqual(per_entry_queries, [])
+
     def test_partial_receipt_match_keeps_unmatched_grni(self):
         snapshot = reconciliation_snapshot(self.db)
         self.assertEqual(snapshot["grni"], 60.0)
