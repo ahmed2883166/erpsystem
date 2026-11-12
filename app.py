@@ -1464,6 +1464,7 @@ def ledger():
                 f"""SELECT COUNT(*) FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                     WHERE {' AND '.join(display_conditions)}""",
                 [str(base_opening), *history_params, *display_params],
+                count_params=display_params,
                 page=request.args.get("ledger_page",1,type=int),
                 per_page=request.args.get("ledger_per_page",50,type=int),
             )
