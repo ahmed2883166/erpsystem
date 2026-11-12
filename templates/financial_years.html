@@ -3,7 +3,7 @@
 {% block content %}
 <header>
   <h2>إدارة السنوات المالية</h2>
-  <p class="muted">تعريف الفترات المالية ومتابعة حالة كل سنة. إنشاء السنة لا يرحّل قيودًا ولا يغيّر أرصدة الحسابات.</p>
+  <p class="muted">إدارة أرصدة الافتتاح والإقفال السنوي. القيود المرحلة لا تُعدّل؛ التصحيح يتم بقيد عكسي محفوظ.</p>
 </header>
 
 {% if 'journal.manage' in permissions %}
@@ -11,20 +11,11 @@
   <h3>إنشاء سنة مالية جديدة</h3>
   <form method="post">
     <div class="form-row">
-      <div>
-        <label for="year_name">اسم السنة المالية *</label>
-        <input id="year_name" name="year_name" required maxlength="80" placeholder="مثال: السنة المالية 2027">
-      </div>
-      <div>
-        <label for="start_date">تاريخ البداية *</label>
-        <input id="start_date" type="date" name="start_date" required>
-      </div>
-      <div>
-        <label for="end_date">تاريخ النهاية *</label>
-        <input id="end_date" type="date" name="end_date" required>
-      </div>
+      <div><label for="year_name">اسم السنة المالية *</label><input id="year_name" name="year_name" required maxlength="80" placeholder="مثال: السنة المالية 2027"></div>
+      <div><label for="start_date">تاريخ البداية *</label><input id="start_date" type="date" name="start_date" required></div>
+      <div><label for="end_date">تاريخ النهاية *</label><input id="end_date" type="date" name="end_date" required></div>
     </div>
-    <p class="muted">لا يسمح النظام بتداخل فترتين ماليتين، ويجب أن يكون تاريخ النهاية في نفس يوم البداية أو بعده.</p>
+    <p class="muted">لا يسمح النظام بتداخل فترتين ماليتين.</p>
     <button type="submit">حفظ السنة المالية</button>
   </form>
 </section>
@@ -34,40 +25,55 @@
   <h3>السنوات المالية المسجلة</h3>
   <div class="table-wrap">
     <table>
-      <thead>
-        <tr>
-          <th>اسم السنة</th>
-          <th>من تاريخ</th>
-          <th>إلى تاريخ</th>
-          <th>الحالة</th>
-          <th>قيد الافتتاح</th>
-          <th>قيد الإقفال</th>
-        </tr>
-      </thead>
+      <thead><tr><th>السنة المالية</th><th>الفترة</th><th>الحالة</th><th>قيد الافتتاح</th><th>قيد الإقفال</th><th>الإجراءات</th></tr></thead>
       <tbody>
-        {% for year in years %}
+      {% for year in years %}
         <tr>
           <td>{{ year.year_name }}</td>
-          <td>{{ year.start_date }}</td>
-          <td>{{ year.end_date }}</td>
-          <td>
-            {% if year.status == 'open' %}مفتوحة
-            {% elif year.status == 'closing' %}جارٍ الإقفال
-            {% else %}مغلقة{% endif %}
-          </td>
+          <td>{{ year.start_date }} إلى {{ year.end_date }}</td>
+          <td>{% if year.status == 'open' %}مفتوحة{% elif year.status == 'closing' %}جارٍ الإقفال{% else %}مغلقة{% endif %}</td>
           <td>{{ year.opening_entry_id if year.opening_entry_id else 'لم يُنشأ' }}</td>
           <td>{{ year.closing_entry_id if year.closing_entry_id else 'لم يُنشأ' }}</td>
+          <td>
+            {% if 'journal.manage' in permissions %}
+              {% if year.status == 'open' %}
+                {% if not year.opening_entry_id %}
+                  <a href="{{ url_for('planning.financial_year_opening', year_id=year.id) }}">إدخال أرصدة الافتتاح</a>
+                {% else %}
+                  <form method="post" action="{{ url_for('planning.financial_year_reverse', year_id=year.id, entry_kind='opening') }}">
+                    <label>تاريخ عكس الافتتاح</label><input type="date" name="reversal_date" min="{{ year.start_date }}" max="{{ year.end_date }}" required>
+                    <label>سبب العكس</label><input name="reason" maxlength="500" required>
+                    <button type="submit" class="secondary">عكس قيد الافتتاح</button>
+                  </form>
+                {% endif %}
+                <form method="post" action="{{ url_for('planning.financial_year_close', year_id=year.id) }}">
+                  <button type="submit">تنفيذ الإقفال السنوي</button>
+                </form>
+              {% elif year.status == 'closed' %}
+                <form method="post" action="{{ url_for('planning.financial_year_reverse', year_id=year.id, entry_kind='closing') }}">
+                  <label>تاريخ عكس الإقفال</label><input type="date" name="reversal_date" min="{{ year.start_date }}" max="{{ year.end_date }}" required>
+                  <label>سبب العكس</label><input name="reason" maxlength="500" required>
+                  <button type="submit" class="secondary">عكس قيد الإقفال وإعادة فتح السنة</button>
+                </form>
+              {% endif %}
+            {% endif %}
+          </td>
         </tr>
-        {% else %}
-        <tr><td colspan="6">لم يتم تسجيل سنوات مالية بعد. أنشئ أول سنة من النموذج أعلاه.</td></tr>
-        {% endfor %}
+      {% else %}
+        <tr><td colspan="6">لم يتم تسجيل سنوات مالية بعد.</td></tr>
+      {% endfor %}
       </tbody>
     </table>
   </div>
 </section>
 
 <section class="panel">
-  <h3>تنبيه محاسبي</h3>
-  <p>هذه الشاشة مخصصة حاليًا لتعريف السنوات المالية ومراجعتها فقط. لن يتم إنشاء قيد إقفال أو قيد افتتاح أو تغيير حالة السنة إلى «مغلقة» قبل تنفيذ ومراجعة إجراءات الإقفال المحاسبي واختبارها.</p>
+  <h3>ضوابط الإقفال</h3>
+  <ul>
+    <li>قيد الافتتاح يقبل الأصول والالتزامات وحقوق الملكية فقط، ويجب أن يتوازن قبل الترحيل.</li>
+    <li>قيد الإقفال يرفض وجود قيود مسودة أو فترة محاسبية مقفولة في تاريخ نهاية السنة.</li>
+    <li>الإيرادات والمصروفات تُصفّر، وصافي الربح أو الخسارة يُرحّل إلى الأرباح المرحلة.</li>
+    <li>عكس القيد ينشئ قيدًا جديدًا ولا يحذف أو يعدّل القيد الأصلي. يجب أن تكون الفترة المختارة مفتوحة.</li>
+  </ul>
 </section>
 {% endblock %}
