@@ -546,7 +546,7 @@ def register_report_exports(app, db_path, permissions):
             document.build(story)
             output.seek(0)
             return send_file(output, as_attachment=True,
-                download_name=re.sub(r"\\.xlsx$", ".pdf", filename),
+                download_name=filename[:-5] + ".pdf",
                 mimetype="application/pdf")
 
         try:
@@ -615,7 +615,7 @@ def register_report_exports(app, db_path, permissions):
             "purchases.view", "purchases.manage", "sales.view", "sales.manage",
             "assets.view", "assets.manage", "bank.view", "bank.manage", "tax.view",
             "workforce.view", "workforce.manage", "party.view", "budget.view",
-            "budget.manage", "cashflow.view", "quotes.view", "quotes.manage",
+            "budget.manage", "cashflow.view", "quotes.view", "quotes.manage", "audit.view",
         }
         active_permissions = set(session.get("permissions", permissions.get(session.get("role"), set())))
         if not active_permissions.intersection(allowed):
@@ -723,5 +723,185 @@ def register_report_exports(app, db_path, permissions):
         output.seek(0)
         return send_file(output, as_attachment=True, download_name="NEXUS-ERP-Report.xlsx",
                          mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+    @bp.post("/reports/export/current-screen/pdf")
+    def export_current_screen_pdf():
+        if not session.get("user_id"):
+            abort(401)
+        allowed = {
+            "reports.view", "accounts.view", "accounts.manage", "stock.view", "stock.manage",
+            "purchases.view", "purchases.manage", "sales.view", "sales.manage",
+            "assets.view", "assets.manage", "bank.view", "bank.manage", "tax.view",
+            "workforce.view", "workforce.manage", "party.view", "budget.view",
+            "budget.manage", "cashflow.view", "quotes.view", "quotes.manage", "audit.view",
+        }
+        active_permissions = set(session.get("permissions", permissions.get(session.get("role"), set())))
+        if not active_permissions.intersection(allowed):
+            abort(403)
+        if request.content_length and request.content_length > 2 * 1024 * 1024:
+            abort(413)
+        payload = request.get_json(silent=True) or {}
+        tables = payload.get("tables")
+        if not isinstance(tables, list) or not tables or len(tables) > 20:
+            abort(400)
+        cell_count = sum(
+            len(row) for table in tables if isinstance(table, dict)
+            for row in table.get("rows", []) if isinstance(row, list)
+        )
+        if cell_count > 20000:
+            abort(413)
+
+        try:
+            import os
+            import arabic_reshaper
+            from bidi.algorithm import get_display
+            from reportlab.lib import colors
+            from reportlab.lib.enums import TA_RIGHT, TA_CENTER
+            from reportlab.lib.pagesizes import A4, landscape
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import mm
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from xml.sax.saxutils import escape
+        except ImportError:
+            return Response(
+                "مكتبات PDF غير مثبتة. نفّذ: python -m pip install -r requirements.txt",
+                status=500, mimetype="text/plain; charset=utf-8"
+            )
+
+        font_candidates = [
+            os.path.join(os.path.dirname(__file__), "static", "fonts", "DejaVuSans.ttf"),
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+            "C:/Windows/Fonts/tahoma.ttf",
+        ]
+        font_path = next((candidate for candidate in font_candidates if os.path.isfile(candidate)), None)
+        if not font_path:
+            return Response(
+                "تعذر إنشاء PDF: لم يتم العثور على خط يدعم العربية. أضف DejaVuSans.ttf إلى static/fonts.",
+                status=503, mimetype="text/plain; charset=utf-8"
+            )
+        if "NexusArabic" not in pdfmetrics.getRegisteredFontNames():
+            pdfmetrics.registerFont(TTFont("NexusArabic", font_path))
+
+        def pdf_text(value):
+            text_value = "" if value is None else str(value)[:2000]
+            shaped = get_display(arabic_reshaper.reshape(text_value))
+            return escape(shaped).replace("\n", "<br/>")
+
+        conn = connect()
+        try:
+            company_row = conn.execute(
+                "SELECT setting_value FROM company_settings WHERE setting_key='company_name'"
+            ).fetchone()
+            company_name = company_row["setting_value"] if company_row else "NEXUS ERP"
+            currency_row = conn.execute(
+                "SELECT setting_value FROM company_settings WHERE setting_key='base_currency'"
+            ).fetchone()
+            base_currency = currency_row["setting_value"] if currency_row else ""
+        finally:
+            conn.close()
+
+        title = str(payload.get("title") or "NEXUS ERP")[:200]
+        normalized_tables = []
+        max_columns = 1
+        for index, item in enumerate(tables, start=1):
+            if not isinstance(item, dict):
+                continue
+            raw_rows = item.get("rows")
+            if not isinstance(raw_rows, list) or not raw_rows:
+                continue
+            rows = []
+            for row in raw_rows:
+                if not isinstance(row, list):
+                    continue
+                rows.append([str(value if value is not None else "")[:2000] for value in row[:80]])
+            if not rows:
+                continue
+            columns = max(1, min(80, max(len(row) for row in rows)))
+            rows = [row + [""] * (columns - len(row)) for row in rows]
+            max_columns = max(max_columns, columns)
+            normalized_tables.append((
+                str(item.get("title") or ("جدول " + str(index)))[:120],
+                rows,
+                columns,
+            ))
+        if not normalized_tables:
+            abort(400)
+
+        page_size = landscape(A4) if max_columns > 6 else A4
+        output = io.BytesIO()
+        document = SimpleDocTemplate(
+            output, pagesize=page_size, rightMargin=10*mm, leftMargin=10*mm,
+            topMargin=14*mm, bottomMargin=16*mm, title=title, author=company_name,
+        )
+        styles = getSampleStyleSheet()
+        heading_style = ParagraphStyle(
+            "NexusScreenHeading", parent=styles["Title"], fontName="NexusArabic",
+            fontSize=14, leading=19, alignment=TA_CENTER,
+        )
+        table_title_style = ParagraphStyle(
+            "NexusScreenTableTitle", parent=styles["Heading2"], fontName="NexusArabic",
+            fontSize=10, leading=14, alignment=TA_RIGHT,
+        )
+        cell_style = ParagraphStyle(
+            "NexusScreenCell", parent=styles["BodyText"], fontName="NexusArabic",
+            fontSize=6.5 if max_columns > 8 else 7.5, leading=9, alignment=TA_RIGHT,
+        )
+        header_style = ParagraphStyle(
+            "NexusScreenHeader", parent=cell_style, textColor=colors.white,
+            fontSize=7 if max_columns > 8 else 8, alignment=TA_CENTER,
+        )
+        story = [
+            Paragraph(pdf_text(company_name), heading_style),
+            Paragraph(pdf_text(title), heading_style),
+            Paragraph(pdf_text("العملة الأساسية: " + base_currency), cell_style),
+            Paragraph(pdf_text("تاريخ إعداد التقرير: " + datetime.now().strftime("%Y-%m-%d %H:%M")), cell_style),
+            Spacer(1, 4*mm),
+        ]
+        for table_title, rows, columns in normalized_tables:
+            story.append(Paragraph(pdf_text(table_title), table_title_style))
+            table_data = []
+            for row_index, row in enumerate(rows):
+                style = header_style if row_index == 0 else cell_style
+                table_data.append([Paragraph(pdf_text(value), style) for value in reversed(row)])
+            available_width = page_size[0] - 20*mm
+            table = Table(
+                table_data,
+                colWidths=[available_width / columns] * columns,
+                repeatRows=1,
+                hAlign="RIGHT",
+            )
+            table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#167D8D")),
+                ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#B7C3CC")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F3F6F8")]),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]))
+            story.extend([table, Spacer(1, 5*mm)])
+
+        def draw_page_number(canvas, doc):
+            canvas.saveState()
+            canvas.setFont("NexusArabic", 7)
+            canvas.drawRightString(
+                page_size[0] - 10*mm, 7*mm,
+                pdf_text("صفحة " + str(doc.page))
+            )
+            canvas.restoreState()
+
+        document.build(story, onFirstPage=draw_page_number, onLaterPages=draw_page_number)
+        output.seek(0)
+        return send_file(
+            output, as_attachment=True, download_name="NEXUS-ERP-Current-Screen.pdf",
+            mimetype="application/pdf",
+        )
 
     app.register_blueprint(bp)
