@@ -960,8 +960,9 @@ def balance_sheet():
 
 def build_cash_flow_snapshot(conn, start, end):
     """Build an IAS 7-oriented cash-flow snapshot for an inclusive date range."""
-    role_rows = conn.execute("SELECT account_id FROM management_account_roles WHERE role='cash'").fetchall()
-    cash_ids = {r["account_id"] for r in role_rows}
+    from management_dashboard import load_management_account_roles
+    role_mapping = load_management_account_roles(conn)
+    cash_ids = set(role_mapping.get("cash", set()))
     custom_mapping = conn.execute(
         "SELECT meta_value FROM management_dashboard_meta WHERE meta_key='roles_customized'"
     ).fetchone()
@@ -1046,10 +1047,8 @@ def build_cash_flow_snapshot(conn, start, end):
 def build_cash_flow_indirect_snapshot(conn, start, end):
     """Prepare the indirect IAS 7 operating section, retaining cash reconciliation."""
     direct = build_cash_flow_snapshot(conn, start, end)
-    role_rows = conn.execute("SELECT role,account_id FROM management_account_roles").fetchall()
-    roles = {}
-    for row in role_rows:
-        roles.setdefault(row["role"], set()).add(row["account_id"])
+    from management_dashboard import load_management_account_roles
+    roles = load_management_account_roles(conn)
     cash_ids = roles.get("cash", set())
     if not cash_ids:
         return {
