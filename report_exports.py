@@ -142,6 +142,29 @@ def register_report_exports(app, db_path, permissions):
                 ])
                 filename = "nexus-income-statement.xlsx"
                 title = f"قائمة الدخل من {date_from} إلى {date_to}"
+            elif report == "balance-sheet":
+                from financial_planning import build_balance_sheet_snapshot
+                as_of = request.args.get("as_of", "").strip() or datetime.now().date().isoformat()
+                try:
+                    datetime.strptime(as_of, "%Y-%m-%d")
+                except ValueError:
+                    abort(400)
+                snapshot = build_balance_sheet_snapshot(conn, as_of)
+                headers = ["القسم", "كود الحساب", "اسم الحساب", "الرصيد"]
+                data = []
+                for key, label in (("asset", "الأصول"), ("liability", "الالتزامات"), ("equity", "حقوق الملكية")):
+                    for row in snapshot["sections"][key]:
+                        data.append([label, row["code"], row["name_ar"], row["display_balance"]])
+                data.extend([
+                    ["الإجمالي", "", "إجمالي الأصول", snapshot["total_assets"]],
+                    ["الإجمالي", "", "إجمالي الالتزامات", snapshot["total_liabilities"]],
+                    ["الإجمالي", "", "حقوق الملكية قبل الربح", snapshot["equity_before_profit"]],
+                    ["النتيجة", "", "صافي الربح / (الخسارة)", snapshot["net_profit"]],
+                    ["الإجمالي", "", "إجمالي الالتزامات وحقوق الملكية", snapshot["total_liabilities"] + snapshot["total_equity"]],
+                    ["المطابقة", "", "فرق التوازن", snapshot["balance_difference"]],
+                ])
+                filename = "nexus-balance-sheet.xlsx"
+                title = "قائمة المركز المالي حتى " + as_of
             elif report == "ledger":
                 account_id = request.args.get("account_id", type=int)
                 date_from = request.args.get("date_from", "").strip()
