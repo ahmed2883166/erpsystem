@@ -191,9 +191,7 @@ def _opening_balance_mismatches(conn, cutoff_date, normalized):
     for row in pnl_rows:
         debit = Decimal(str(row["debit"] or "0"))
         credit = Decimal(str(row["credit"] or "0"))
-        prior_net_result += (
-            credit - debit if row["account_type"] == "revenue" else debit - credit
-        )
+        prior_net_result += credit - debit
     if prior_net_result:
         retained = _retained_earnings_account(conn)
         retained_id = retained["id"]
