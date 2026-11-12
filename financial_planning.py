@@ -400,6 +400,68 @@ def financial_years():
     return render_template("financial_years.html", years=years)
 
 
+@planning_bp.route("/financial-years/<int:year_id>/opening", methods=["GET", "POST"])
+@_require("journal.manage")
+def financial_year_opening(year_id):
+    conn = _connect()
+    try:
+        year = _financial_year_or_error(conn, year_id)
+        if year["status"] != "open":
+            flash("لا يمكن إدخال أرصدة افتتاح لسنة غير مفتوحة.", "error")
+            return redirect(url_for("planning.financial_years"))
+        if year["opening_entry_id"]:
+            flash("قيد الافتتاح موجود بالفعل؛ استخدم إجراء العكس لتصحيحه.", "warning")
+            return redirect(url_for("planning.financial_years"))
+        accounts = conn.execute("""SELECT id,code,name_ar,account_type FROM accounts
+            WHERE active=1 AND is_group=0 AND account_type IN ('asset','liability','equity')
+            ORDER BY CASE account_type WHEN 'asset' THEN 1 WHEN 'liability' THEN 2 ELSE 3 END,code""").fetchall()
+        if request.method == "POST":
+            balances = {str(account["id"]): request.form.get("balance_" + str(account["id"]), "0")
+                        for account in accounts}
+            entry_id = create_opening_entry(conn, year_id, balances, session.get("user_id"))
+            flash(f"تم ترحيل قيد الافتتاح رقم {entry_id} بتاريخ {year['start_date']}.", "success")
+            return redirect(url_for("planning.financial_years"))
+        return render_template("financial_year_opening.html", year=year, accounts=accounts)
+    except (ValueError, sqlite3.IntegrityError) as exc:
+        flash(str(exc) or "تعذر تنفيذ قيد الافتتاح.", "error")
+        return redirect(url_for("planning.financial_years"))
+    finally:
+        conn.close()
+
+
+@planning_bp.route("/financial-years/<int:year_id>/close", methods=["POST"])
+@_require("journal.manage")
+def financial_year_close(year_id):
+    conn = _connect()
+    try:
+        entry_id = close_financial_year(conn, year_id, session.get("user_id"))
+        flash(f"تم إقفال السنة المالية بقيد رقم {entry_id}.", "success")
+    except (ValueError, sqlite3.IntegrityError) as exc:
+        flash(str(exc) or "تعذر إقفال السنة المالية.", "error")
+    finally:
+        conn.close()
+    return redirect(url_for("planning.financial_years"))
+
+
+@planning_bp.route("/financial-years/<int:year_id>/reverse/<entry_kind>", methods=["POST"])
+@_require("journal.manage")
+def financial_year_reverse(year_id, entry_kind):
+    conn = _connect()
+    try:
+        reversal_id = reverse_financial_year_entry(
+            conn, year_id, entry_kind,
+            request.form.get("reversal_date", ""),
+            request.form.get("reason", ""),
+            session.get("user_id"),
+        )
+        flash(f"تم إنشاء القيد العكسي رقم {reversal_id}، مع الاحتفاظ بالقيد الأصلي.", "success")
+    except (ValueError, sqlite3.IntegrityError) as exc:
+        flash(str(exc) or "تعذر عكس القيد.", "error")
+    finally:
+        conn.close()
+    return redirect(url_for("planning.financial_years"))
+
+
 @planning_bp.route("/budget", methods=["GET", "POST"])
 @_require("budget.view")
 def budget_index():
