@@ -12,7 +12,7 @@
 <div class="actions"><button type="button" class="secondary" id="addLine">＋ إضافة سطر</button><button type="submit" id="postButton">ترحيل القيد</button></div></form></section>
 <section class="panel"><h3>سجل القيود اليومية</h3><p class="muted">استخدم البحث والتصفية للوصول إلى القيود بسرعة دون تحميل السجل بالكامل.</p>
 <form method="get" class="report-filter">
-<label>بحث في الرقم أو المرجع أو البيان<input name="q" value="{{ search_query }}" maxlength="100" placeholder="رقم القيد أو المرجع أو جزء من البيان"></label>
+<label>بحث في الرقم أو المرجع أو البيان<input name="q" value="{{ search_query }}" maxlength="100" placeholder="رقم القيد أو المرجع أو البيان أو ملاحظة السطر أو الحساب"></label>
 <label>من تاريخ<input type="date" name="date_from" value="{{ date_from }}"></label>
 <label>إلى تاريخ<input type="date" name="date_to" value="{{ date_to }}"></label>
 <label>الحالة<select name="status"><option value="">كل الحالات</option><option value="posted" {% if status_filter=='posted' %}selected{% endif %}>مرحّل</option><option value="draft" {% if status_filter=='draft' %}selected{% endif %}>مسودة</option></select></label>
