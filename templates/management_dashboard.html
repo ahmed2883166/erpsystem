@@ -130,7 +130,14 @@
 <section class="panel">
   <h3>مراجعة القيود غير المعتادة</h3>
   <p class="muted">تنبيه استرشادي عند تجاوز مبلغ سطر الحساب ثلاثة أضعاف متوسطه التاريخي خلال 90 يومًا، أو إذا وقع القيد في آخر يومين من الفترة. لا يتم تعديل القيود أو منعها تلقائيًا.</p>
+  <p class="muted">إجمالي القيود المطابقة: {{ s.unusual_total }} · عرض الصفحة {{ s.unusual_page }} من {{ s.unusual_pages }} (100 قيد كحد أقصى في الصفحة).</p>
   <div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>المرجع</th><th>البيان</th><th>مدين</th><th>دائن</th><th>سبب التنبيه</th></tr></thead><tbody>{% for e in s.unusual_entries %}<tr><td>{{ e.date }}</td><td>{{ e.reference }}</td><td>{{ e.description }}</td><td>{{ money(e.debit) }}</td><td>{{ money(e.credit) }}</td><td>{{ e.reasons|join('، ') }}</td></tr>{% else %}<tr><td colspan="6">لا توجد قيود مطابقة لمعايير التنبيه في الفترة.</td></tr>{% endfor %}</tbody></table></div>
+  {% if s.unusual_prev_url or s.unusual_next_url %}
+  <div class="actions no-print">
+    {% if s.unusual_prev_url %}<a class="button-link secondary" href="{{ s.unusual_prev_url }}">القيود الأحدث / السابق</a>{% endif %}
+    {% if s.unusual_next_url %}<a class="button-link" href="{{ s.unusual_next_url }}">المزيد من القيود / التالي</a>{% endif %}
+  </div>
+  {% endif %}
 </section>
 
 {% endblock %}
