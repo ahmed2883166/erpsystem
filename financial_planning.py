@@ -141,23 +141,24 @@ def _previous_closed_financial_year(conn, start_date):
 
 def _opening_balance_mismatches(conn, previous_year, normalized):
     """Compare submitted natural-sign balances with the previous closed year-end balances."""
-    rows = conn.execute("""SELECT a.id,a.code,a.name_ar,a.account_type,jl.debit,jl.credit
-        FROM accounts a
-        LEFT JOIN journal_entries je ON je.status='posted' AND je.entry_date<=?
-        LEFT JOIN journal_lines jl ON jl.entry_id=je.id AND jl.account_id=a.id
-        WHERE a.account_type IN ('asset','liability','equity') AND a.is_group=0
-        ORDER BY a.code,je.id,jl.id""", (previous_year["end_date"],)).fetchall()
-    previous = {}
-    metadata = {}
+    account_rows = conn.execute("""SELECT id,code,name_ar,account_type FROM accounts
+        WHERE account_type IN ('asset','liability','equity') AND is_group=0""").fetchall()
+    previous = {row["id"]: Decimal("0") for row in account_rows}
+    metadata = {row["id"]: row for row in account_rows}
+    rows = conn.execute("""SELECT jl.account_id,a.account_type,jl.debit,jl.credit
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id=jl.entry_id
+        JOIN accounts a ON a.id=jl.account_id
+        WHERE je.status='posted' AND je.entry_date<=?
+          AND a.account_type IN ('asset','liability','equity') AND a.is_group=0
+        ORDER BY jl.account_id,je.id,jl.id""", (previous_year["end_date"],)).fetchall()
     for row in rows:
-        account_id = row["id"]
-        metadata[account_id] = row
-        item = previous.setdefault(account_id, Decimal("0"))
-        # LEFT JOIN rows without a qualifying journal entry have NULL amounts.
-        debit = Decimal(str(row["debit"] or "0")) if row["debit"] is not None else Decimal("0")
-        credit = Decimal(str(row["credit"] or "0")) if row["credit"] is not None else Decimal("0")
-        if row["debit"] is not None or row["credit"] is not None:
-            previous[account_id] = item + (debit - credit if row["account_type"] == "asset" else credit - debit)
+        account_id = row["account_id"]
+        debit = Decimal(str(row["debit"] or "0"))
+        credit = Decimal(str(row["credit"] or "0"))
+        previous[account_id] += (
+            debit - credit if row["account_type"] == "asset" else credit - debit
+        )
     mismatches = []
     for account_id in set(previous) | set(normalized):
         expected = previous.get(account_id, Decimal("0")).quantize(CENT)
