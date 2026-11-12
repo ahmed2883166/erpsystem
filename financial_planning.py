@@ -71,11 +71,9 @@ def initialize_planning_schema(conn):
     CREATE INDEX IF NOT EXISTS idx_financial_year_journal_history
       ON financial_year_journal_history(financial_year_id,entry_kind,id);
     """)
-    journal_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
-    if "entry_type" not in journal_columns:
+    if "entry_type" not in {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}:
         conn.execute("ALTER TABLE journal_entries ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'general'")
-    # Backfill an explicit semantic type for historical closing journals.
-    # The history relation is authoritative; references and journal numbers are not.
+    # Migrate historical closing journals using the dedicated history table.
     conn.execute("""UPDATE journal_entries SET entry_type='year_end_closing'
         WHERE id IN (SELECT entry_id FROM financial_year_journal_history
                      WHERE entry_kind='closing' AND action='created')""")
