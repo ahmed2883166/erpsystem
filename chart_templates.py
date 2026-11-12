@@ -122,6 +122,10 @@ ACTIVITY_POSTING_ACCOUNTS = {
     "industrial": {"ar": "1120", "revenue": "4100", "vat": "2130", "inventory": "1130", "cogs": "5400", "purchase_inventory": "1130", "supplier_ap": "2100", "input_vat": "1165"},
 }
 
+# Retained earnings is resolved through the same activity account-role mapping.
+for _activity_roles in ACTIVITY_ACCOUNT_ROLES.values():
+    _activity_roles["retained_earnings"] = ("3200",)
+
 # Tax control accounts are resolved by accounting role, not by a sales-module code.
 ACTIVITY_TAX_ACCOUNT_ROLES = {
     activity: {"output_vat": "2130", "input_vat": "1165"}
