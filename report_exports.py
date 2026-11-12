@@ -248,6 +248,37 @@ def register_report_exports(app, db_path, permissions):
                          Decimal(str(r["accumulated"] or "0")),max(Decimal(str(r["cost"]))-Decimal(str(r["accumulated"] or "0")),Decimal(str(r["residual_value"])))] for r in rows]
                 filename = "nexus-fixed-assets.xlsx"
                 title = "سجل الأصول الثابتة"
+            elif report == "tax-report":
+                from tax_center import build_tax_report_snapshot
+                period = request.args.get("period", "").strip() or datetime.now().strftime("%Y-%m")
+                snapshot = build_tax_report_snapshot(conn, period)
+                headers = ["نوع المستند", "التاريخ", "رقم المستند", "الطرف", "التصنيف الضريبي",
+                           "أساس الضريبة", "النسبة %", "قيمة الضريبة", "الإجمالي", "نسبة خصم المدخلات %"]
+                data = []
+                treatment_labels = {"standard": "خاضع", "zero_rated": "صفر", "exempt": "معفى", "out_of_scope": "خارج النطاق"}
+                for row in snapshot["sales"]:
+                    data.append([row.get("document_type", "فاتورة بيع"), row["document_date"], row["document_no"],
+                                 row["party_name"], treatment_labels.get(row["tax_treatment"], row["tax_treatment"]),
+                                 row["taxable_base"], row["tax_rate"], row["tax_amount"], row["total_amount"], ""])
+                for row in snapshot["purchases"]:
+                    data.append(["فاتورة شراء", row["document_date"], row["document_no"], row["party_name"],
+                                 treatment_labels.get(row["tax_treatment"], row["tax_treatment"]),
+                                 row["taxable_base"], row["tax_rate"], row["tax_amount"], row["total_amount"],
+                                 row["deductible_percent"]])
+                summary = snapshot["summary"]
+                data.extend([
+                    ["ملخص", "", "", "مبيعات خاضعة", summary["sales_standard"], "", "", "", "", ""],
+                    ["ملخص", "", "", "مبيعات بسعر صفر", summary["sales_zero"], "", "", "", "", ""],
+                    ["ملخص", "", "", "مبيعات معفاة", summary["sales_exempt"], "", "", "", "", ""],
+                    ["ملخص", "", "", "مبيعات خارج النطاق", summary["sales_outside"], "", "", "", "", ""],
+                    ["ملخص", "", "", "أساس المشتريات", summary["purchase_base"], "", "", "", "", ""],
+                    ["ملخص", "", "", "ضريبة المخرجات", "", "", "", summary["output_vat"], "", ""],
+                    ["ملخص", "", "", "ضريبة المدخلات القابلة للخصم", "", "", "", summary["input_vat"], "", ""],
+                    ["ملخص", "", "", "مدخلات غير قابلة للخصم", "", "", "", summary["non_deductible_input"], "", ""],
+                    ["ملخص", "", "", "صافي الضريبة الرقابي", "", "", "", summary["net_vat"], "", ""],
+                ])
+                filename = "nexus-tax-report-" + snapshot["period"] + ".xlsx"
+                title = "تقرير الضرائب الشهري - " + snapshot["period"]
             elif report == "aging":
                 kind = request.args.get("kind", "customers")
                 as_of = request.args.get("as_of", datetime.now().date().isoformat())
