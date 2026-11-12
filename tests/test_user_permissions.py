@@ -28,7 +28,8 @@ class UserPermissionRouteTests(unittest.TestCase):
         conn.execute("""CREATE TABLE audit_log(
             id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT,
             created_at TEXT, entity_type TEXT, entity_id TEXT, remote_addr TEXT,
-            outcome TEXT NOT NULL DEFAULT 'success'
+            outcome TEXT NOT NULL DEFAULT 'success',
+            actor_name TEXT, before_values TEXT, after_values TEXT, reason TEXT, request_id TEXT
         )""")
         conn.commit()
         conn.close()
