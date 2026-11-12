@@ -1639,22 +1639,72 @@ def import_accounts():
 @app.route("/backup/create")
 @requires("backup.manage")
 def create_backup():
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    filename = BACKUP_DIR / f"nexus-backup-{stamp}.zip"
-    snapshot_path = BACKUP_DIR / f".snapshot-{stamp}.db"
-    source = db()
-    destination = sqlite3.connect(snapshot_path)
-    try:
-        source.backup(destination)
-    finally:
-        destination.close()
-        source.close()
-    with zipfile.ZipFile(filename, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.write(snapshot_path, "nexus.db")
-        archive.writestr("manifest.json", json.dumps({"application": "NEXUS ERP", "created_at": now()}, ensure_ascii=False))
-    snapshot_path.unlink(missing_ok=True)
+    filename = create_backup_archive(DB_PATH, BACKUP_DIR, 30)
     log("backup_created", filename.name)
     return send_file(filename, as_attachment=True, download_name=filename.name)
+
+
+@app.route("/backup/settings", methods=["GET", "POST"])
+@requires("backup.manage")
+def backup_settings():
+    connection = db()
+    if request.method == "POST":
+        try:
+            enabled = request.form.get("enabled") == "1"
+            frequency = request.form.get("frequency", "daily").strip()
+            backup_time = request.form.get("backup_time", "").strip()
+            weekday = int(request.form.get("weekday", "0"))
+            month_day = int(request.form.get("month_day", "1"))
+            interval_days = int(request.form.get("interval_days", "1"))
+            keep_count = int(request.form.get("keep_count", "30"))
+            if frequency not in {"daily", "weekly", "monthly", "every_n_days"}:
+                raise ValueError("اختر تكرارًا صحيحًا للنسخ الاحتياطي.")
+            if keep_count < 1 or keep_count > 365:
+                raise ValueError("عدد النسخ المحتفظ بها يجب أن يكون من 1 إلى 365.")
+            next_run = next_backup_datetime(frequency, backup_time, weekday=weekday,
+                month_day=month_day, interval_days=interval_days)
+            values = {
+                "backup_enabled": "1" if enabled else "0",
+                "backup_frequency": frequency, "backup_time": backup_time,
+                "backup_weekday": str(weekday), "backup_month_day": str(month_day),
+                "backup_interval_days": str(interval_days), "backup_keep_count": str(keep_count),
+                "backup_next_run": next_run.isoformat(timespec="seconds"),
+                "backup_last_status": "scheduled" if enabled else "disabled",
+                "backup_last_error": "",
+            }
+            connection.executemany("""INSERT INTO company_settings(setting_key,setting_value)
+                VALUES(?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value""",
+                list(values.items()))
+            connection.commit()
+            log("backup_schedule_updated", f"{frequency}; next={next_run.isoformat(timespec='seconds')}")
+            flash("تم حفظ إعدادات النسخ الاحتياطي التلقائي.", "success")
+            return redirect(url_for("backup_settings"))
+        except (ValueError, TypeError) as exc:
+            connection.rollback()
+            flash(str(exc) or "راجع إعدادات النسخ الاحتياطي.", "error")
+    settings = {row["setting_key"]: row["setting_value"] for row in connection.execute(
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key LIKE 'backup_%'")}
+    connection.close()
+    files = sorted(BACKUP_DIR.glob("nexus-backup-*.zip"),
+                   key=lambda item: item.stat().st_mtime, reverse=True)
+    return render_template("backup_settings.html", settings=settings, files=files[:30])
+
+
+@app.route("/backup/run-now", methods=["POST"])
+@requires("backup.manage")
+def backup_run_now():
+    filename = create_backup_archive(DB_PATH, BACKUP_DIR, 30)
+    connection = db()
+    values = {"backup_last_run": now(), "backup_last_status": "success",
+              "backup_last_error": "", "backup_last_file": filename.name}
+    connection.executemany("""INSERT INTO company_settings(setting_key,setting_value)
+        VALUES(?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value""",
+        list(values.items()))
+    connection.commit()
+    connection.close()
+    log("backup_created", filename.name)
+    flash("تم إنشاء النسخة الاحتياطية الآن بنجاح.", "success")
+    return redirect(url_for("backup_settings"))
 
 
 @app.route("/backup/restore", methods=["POST"])
