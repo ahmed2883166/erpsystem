@@ -7,6 +7,7 @@ from datetime import datetime
 from functools import wraps
 
 from flask import Blueprint, Response, abort, request, send_file, session
+from income_statement import build_income_statement, normalize_income_statement_period
 
 
 def register_report_exports(app, db_path, permissions):
@@ -83,39 +84,29 @@ def register_report_exports(app, db_path, permissions):
                 filename = "nexus-trial-balance.xlsx"
                 title = "ميزان المراجعة"
             elif report == "income-statement":
-                date_from = request.args.get("date_from", "").strip()
-                date_to = request.args.get("date_to", "").strip()
-                conditions = ["je.status='posted'", "a.account_type IN ('revenue','expense')",
-                              "a.is_group=0", "a.active=1"]
-                params = []
-                if date_from:
-                    conditions.append("je.entry_date>=?"); params.append(date_from)
-                if date_to:
-                    conditions.append("je.entry_date<=?"); params.append(date_to)
-                rows = conn.execute(f"""SELECT a.code,a.name_ar,a.account_type,
-                    COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
-                    COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
-                    FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
-                    LEFT JOIN journal_entries je ON je.id=jl.entry_id AND {' AND '.join(conditions)}
-                    WHERE a.account_type IN ('revenue','expense') AND a.is_group=0 AND a.active=1
-                    GROUP BY a.id ORDER BY a.account_type,a.code""", params).fetchall()
-                headers = ["نوع الحساب","كود الحساب","اسم الحساب","مدين","دائن","صافي الرصيد الطبيعي"]
+                date_from, date_to = normalize_income_statement_period(
+                    request.args.get("date_from"), request.args.get("date_to")
+                )
+                statement = build_income_statement(conn, date_from, date_to)
+                headers = ["القسم", "كود الحساب", "اسم الحساب", "مدين", "دائن", "صافي الرصيد"]
                 data = []
-                revenue_total, expense_total = Decimal("0"), Decimal("0")
-                for row in rows:
-                    debit, credit = Decimal(str(row["debit"] or "0")), Decimal(str(row["credit"] or "0"))
-                    balance = credit - debit if row["account_type"] == "revenue" else debit - credit
-                    revenue_total += balance if row["account_type"] == "revenue" else Decimal("0")
-                    expense_total += balance if row["account_type"] == "expense" else Decimal("0")
-                    data.append(["إيراد" if row["account_type"] == "revenue" else "مصروف",
-                                 row["code"],row["name_ar"],debit,credit,balance])
+                for label, rows in (
+                    ("الإيرادات", statement["revenue_rows"]),
+                    ("تكلفة البضاعة المباعة / تكلفة النشاط", statement["cogs_rows"]),
+                    ("المصروفات التشغيلية والإدارية", statement["operating_expense_rows"]),
+                ):
+                    for row in rows:
+                        data.append([label, row["code"], row["name_ar"],
+                                     row["debit"], row["credit"], row["balance"]])
                 data.extend([
-                    ["الإجمالي","","إجمالي الإيرادات","","",revenue_total],
-                    ["الإجمالي","","إجمالي المصروفات","","",expense_total],
-                    ["النتيجة","","صافي الربح / (الخسارة)","","",revenue_total-expense_total],
+                    ["الإجمالي", "", "إجمالي الإيرادات", "", "", statement["revenue_total"]],
+                    ["الإجمالي", "", "إجمالي تكلفة النشاط", "", "", statement["cogs_total"]],
+                    ["النتيجة", "", "مجمل الربح / (الخسارة)", "", "", statement["gross_profit"]],
+                    ["الإجمالي", "", "المصروفات التشغيلية والإدارية", "", "", statement["operating_expense_total"]],
+                    ["النتيجة", "", "صافي الربح / (الخسارة)", "", "", statement["net_profit"]],
                 ])
                 filename = "nexus-income-statement.xlsx"
-                title = "قائمة الدخل"
+                title = f"قائمة الدخل من {date_from} إلى {date_to}"
             elif report == "ledger":
                 account_id = request.args.get("account_id", type=int)
                 date_from = request.args.get("date_from", "").strip()
