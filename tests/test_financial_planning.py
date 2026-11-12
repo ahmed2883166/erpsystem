@@ -235,6 +235,21 @@ class FinancialYearJournalTests(unittest.TestCase):
             "SELECT opening_entry_id FROM financial_years WHERE id=?", (self.year_id,)
         ).fetchone()[0])
 
+    def test_close_resolves_retained_earnings_from_activity_role(self):
+        self.conn.execute("""INSERT INTO accounts
+            (id,code,name_ar,account_type,parent_id,is_group,active)
+            VALUES(7,'3990','أرباح مرحلة مخصصة','equity',NULL,0,1)""")
+        self.conn.commit()
+        self._opening()
+        self._activity()
+        with patch("financial_planning.ACTIVITY_ACCOUNT_ROLES", {
+            "commercial": {"retained_earnings": ("3990",)}
+        }):
+            closing_id = close_financial_year(self.conn, self.year_id, 1)
+        self.assertIsNotNone(self.conn.execute("""SELECT 1 FROM journal_lines
+            WHERE entry_id=? AND account_id=7 AND credit='200.00'""",
+            (closing_id,)).fetchone())
+
     def test_close_rejects_drafts(self):
         self.conn.execute("""INSERT INTO journal_entries
             (entry_date,reference,description,status,created_by,created_at)
