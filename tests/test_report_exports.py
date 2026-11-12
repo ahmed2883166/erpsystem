@@ -70,6 +70,46 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
                 payment_date TEXT, amount TEXT, reference TEXT
             );
 
+            ALTER TABLE journal_entries ADD COLUMN reference TEXT DEFAULT '';
+            ALTER TABLE journal_entries ADD COLUMN description TEXT DEFAULT '';
+            ALTER TABLE journal_lines ADD COLUMN memo TEXT DEFAULT '';
+            ALTER TABLE supplier_bills ADD COLUMN due_date TEXT;
+            ALTER TABLE supplier_bills ADD COLUMN paid_amount TEXT DEFAULT '0';
+
+            CREATE TABLE stock_products(
+                id INTEGER PRIMARY KEY, sku TEXT, name_ar TEXT, uom TEXT, active INTEGER DEFAULT 1
+            );
+            CREATE TABLE stock_warehouses(
+                id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT
+            );
+            CREATE TABLE stock_valuation_layers(
+                id INTEGER PRIMARY KEY, product_id INTEGER, warehouse_id INTEGER,
+                qty_remaining TEXT, value_remaining TEXT, unit_cost TEXT
+            );
+            CREATE TABLE fixed_assets(
+                id INTEGER PRIMARY KEY, asset_code TEXT, asset_name TEXT, category TEXT,
+                purchase_date TEXT, ready_date TEXT, cost TEXT, residual_value TEXT,
+                useful_life_months INTEGER, depreciation_method TEXT
+            );
+            CREATE TABLE asset_depreciations(
+                id INTEGER PRIMARY KEY, asset_id INTEGER, amount TEXT
+            );
+            CREATE TABLE payroll_runs(
+                id INTEGER PRIMARY KEY, period TEXT, status TEXT
+            );
+            CREATE TABLE employees(
+                id INTEGER PRIMARY KEY, employee_code TEXT, full_name TEXT
+            );
+            CREATE TABLE payroll_lines(
+                id INTEGER PRIMARY KEY, run_id INTEGER, employee_id INTEGER,
+                basic_salary TEXT, salary_raise TEXT, allowances TEXT, incentives TEXT,
+                incentive_name TEXT, incentive_method TEXT, incentive_days TEXT,
+                overtime_hours TEXT, overtime_rate_percent TEXT, overtime_amount TEXT,
+                employer_insurance TEXT, employee_insurance TEXT, taxable_income_tax TEXT,
+                advance_deduction TEXT, other_deductions TEXT, absence_deduction TEXT,
+                total_entitlements TEXT, total_deductions TEXT, net_pay TEXT
+            );
+
             INSERT INTO customers VALUES(1,'C001','عميل ضريبي',1);
             INSERT INTO suppliers VALUES(1,'S001','مورد ضريبي',1);
             INSERT INTO sales_invoices VALUES
@@ -256,6 +296,68 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+
+
+    def test_pdf_exports_cover_remaining_report_types(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.executescript("""
+            INSERT INTO accounts(id,code,name_ar,account_type) VALUES
+                (4,'1120','البنك','asset');
+            INSERT INTO journal_entries(id,entry_date,status,entry_type,reference,description)
+                VALUES(10,'2026-06-12','posted','general','REF-10','قيد اختبار');
+            INSERT INTO journal_lines(id,entry_id,account_id,debit,credit,memo)
+                VALUES(10,10,1,'25','0','حركة اختبار');
+            INSERT INTO stock_products VALUES(1,'P-01','صنف اختبار','قطعة',1);
+            INSERT INTO stock_warehouses VALUES(1,'WH-1','المخزن الرئيسي');
+            INSERT INTO stock_valuation_layers VALUES(1,1,1,'2','20','10');
+            INSERT INTO fixed_assets VALUES
+                (1,'FA-01','جهاز اختبار','أجهزة','2026-01-01','2026-01-02','1000','100',36,'straight_line');
+            INSERT INTO asset_depreciations VALUES(1,1,'25');
+            INSERT INTO supplier_bills(
+                id,bill_no,bill_date,supplier_id,total_amount,paid_amount,status,due_date
+            ) VALUES(2,'B-AGING','2026-05-01',1,'120','20','posted','2026-05-10');
+            INSERT INTO payroll_runs VALUES(1,'2026-06','posted');
+            INSERT INTO employees VALUES(1,'E-01','موظف اختبار');
+            INSERT INTO payroll_lines(
+                id,run_id,employee_id,basic_salary,salary_raise,allowances,incentives,
+                incentive_name,incentive_method,incentive_days,overtime_hours,overtime_rate_percent,
+                overtime_amount,employer_insurance,employee_insurance,taxable_income_tax,
+                advance_deduction,other_deductions,absence_deduction,total_entitlements,total_deductions,net_pay
+            ) VALUES(1,1,1,'5000','0','200','0','','fixed','0','0','0','0','0','0','0','0','0','0','5200','0','5200');
+        """)
+        conn.commit()
+        conn.close()
+
+        pdf_paths = [
+            "/reports/export/accounts/pdf",
+            "/reports/export/ledger/pdf?account_id=1",
+            "/reports/export/stock/pdf",
+            "/reports/export/fixed-assets/pdf",
+            "/reports/export/aging/pdf?kind=suppliers&as_of=2026-06-30",
+            "/reports/export/payroll/pdf?run_id=1",
+        ]
+        for path in pdf_paths:
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200,
+                                 response.data[:250].decode("utf-8", errors="replace"))
+                self.assertEqual(response.mimetype, "application/pdf")
+                self.assertTrue(response.data.startswith(b"%PDF"))
+
+    def test_reconciliation_pdf_export_returns_pdf_document(self):
+        from decimal import Decimal
+        snapshot = {
+            "journal_totals": {"debit": Decimal("100"), "credit": Decimal("100")},
+            "unbalanced": [], "stock_value": Decimal("0"), "gl_stock": Decimal("0"),
+            "stock_difference": Decimal("0"), "grni": Decimal("0"), "open_ap": Decimal("0"),
+            "unlinked_documents": [], "pending_stock": 0,
+        }
+        with patch("accounting_core.reconciliation_snapshot", return_value=snapshot):
+            response = self.client.get("/reports/export/reconciliation/pdf")
+        self.assertEqual(response.status_code, 200,
+                         response.data[:250].decode("utf-8", errors="replace"))
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertTrue(response.data.startswith(b"%PDF")
 
 if __name__ == "__main__":
     unittest.main()
