@@ -34,6 +34,26 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
                 id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
                 debit TEXT DEFAULT '0', credit TEXT DEFAULT '0'
             );
+            CREATE TABLE customers(id INTEGER PRIMARY KEY, name TEXT);
+            CREATE TABLE suppliers(id INTEGER PRIMARY KEY, name TEXT);
+            CREATE TABLE sales_invoices(
+                id INTEGER PRIMARY KEY, invoice_no TEXT, invoice_date TEXT, customer_id INTEGER,
+                subtotal TEXT, tax_rate TEXT, tax_amount TEXT, total_amount TEXT,
+                tax_treatment TEXT, tax_reference TEXT, tax_notes TEXT, status TEXT
+            );
+            CREATE TABLE supplier_bills(
+                id INTEGER PRIMARY KEY, bill_no TEXT, bill_date TEXT, supplier_id INTEGER,
+                subtotal TEXT, tax_rate TEXT, tax_amount TEXT, total_amount TEXT,
+                tax_treatment TEXT, tax_reference TEXT, tax_notes TEXT,
+                input_vat_deductible_percent TEXT, status TEXT
+            );
+            INSERT INTO customers VALUES(1,'عميل ضريبي');
+            INSERT INTO suppliers VALUES(1,'مورد ضريبي');
+            INSERT INTO sales_invoices VALUES
+                (1,'INV-TAX','2026-06-10',1,'100','14','14','114','standard','','','posted');
+            INSERT INTO supplier_bills VALUES
+                (1,'BILL-TAX','2026-06-11',1,'50','14','7','57','standard','','','80','posted');
+
             INSERT INTO company_settings VALUES('company_name','NEXUS Test');
             INSERT INTO accounts(id,code,name_ar,account_type) VALUES
                 (1,'1110','الصندوق','asset'),
@@ -124,6 +144,19 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         response = self.client.get(
             "/reports/export/cash-flow/pdf?date_from=2026-01-01&date_to=2026-12-31"
         )
+        self.assertEqual(response.status_code, 200, response.data[:200].decode("utf-8", errors="replace"))
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertTrue(response.data.startswith(b"%PDF"))
+
+    def test_monthly_tax_report_excel_export_includes_vat_summary(self):
+        response = self.client.get("/reports/export/tax-report/excel?period=2026-06")
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(io.BytesIO(response.data), data_only=True)
+        values = list(workbook.active.values)
+        self.assertTrue(any(row[3] == "ضريبة المخرجات" and row[7] == 14 for row in values if row[3]))
+
+    def test_monthly_tax_report_pdf_export_returns_pdf_document(self):
+        response = self.client.get("/reports/export/tax-report/pdf?period=2026-06")
         self.assertEqual(response.status_code, 200, response.data[:200].decode("utf-8", errors="replace"))
         self.assertEqual(response.mimetype, "application/pdf")
         self.assertTrue(response.data.startswith(b"%PDF"))
