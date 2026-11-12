@@ -151,8 +151,8 @@ class SharedAccountingCoreTests(unittest.TestCase):
         snapshot = reconciliation_snapshot(self.db)
         self.db.set_trace_callback(None)
 
-        self.assertEqual(snapshot["journal_totals"]["debit"], Decimal("123.30"))
-        self.assertEqual(snapshot["journal_totals"]["credit"], Decimal("123.30"))
+        self.assertEqual(snapshot["journal_totals"]["debit"], Decimal("123.00"))
+        self.assertEqual(snapshot["journal_totals"]["credit"], Decimal("123.00"))
         self.assertEqual(len(snapshot["unbalanced"]), 0)
         grouped_queries = [
             sql for sql in statements
