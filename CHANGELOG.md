@@ -8,6 +8,7 @@ All notable changes to NEXUS ERP are documented here. This project follows the r
 - Enterprise ERP master roadmap for multi-activity medium and large companies.
 - Versioning and release governance policy.
 - Initial module inventory and production-readiness gates.
+- First-pass source/route audit covering existing modules, known gaps, and enterprise risks.
 
 ### Notes
 - The current development baseline is not a production release.
