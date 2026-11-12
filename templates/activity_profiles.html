@@ -4,7 +4,7 @@
 <header><div><h2>ملفات الأنشطة</h2><p>إدارة إعدادات النشاط دون استبدال دليل حسابات الشركة أو المساس بأرصدة الحسابات الحالية.</p></div></header>
 <section class="panel">
   <h3>إنشاء ملف نشاط جديد</h3>
-  <p class="muted">الملف الجديد يرث أدوار الحسابات وحسابات الترحيل والضريبة من نشاط أساسي. تخصيص قواعد مستقلة لكل ملف سيكون قابلًا للتوسعة لاحقًا دون تغيير دليل الحسابات.</p>
+  <p class="muted">الملف الجديد يرث أدوار الحسابات وحسابات الترحيل والضريبة من نشاط أساسي، ثم يمكنك تخصيص خرائط الحسابات والضرائب قبل التفعيل دون تغيير دليل الحسابات.</p>
   <form method="post">
     <input type="hidden" name="action" value="create">
     <div class="form-row">
@@ -15,6 +15,23 @@
     </div>
     <button type="submit">إنشاء ملف النشاط</button>
   </form>
+</section>
+<section class="panel">
+  <h3>قوالب الأنشطة المتخصصة الجاهزة</h3>
+  <p class="muted">القالب ينشئ ملفًا متخصصًا ويرث إعدادات النشاط الأساسي الأقرب. لا ينشئ قيودًا أو يغير دليل الحسابات تلقائيًا؛ يجب مراجعة الحسابات وتخصيصها ثم تفعيل الملف.</p>
+  <div class="form-row">
+  {% for code,preset in specialized_presets.items() %}
+    <article class="panel">
+      <strong>{{ preset.name }}</strong>
+      <p class="muted">{{ preset.description }}</p>
+      <form method="post">
+        <input type="hidden" name="action" value="create_specialized">
+        <input type="hidden" name="preset_code" value="{{ code }}">
+        <button type="submit">إضافة هذا القالب</button>
+      </form>
+    </article>
+  {% endfor %}
+  </div>
 </section>
 <section class="panel">
   <h3>الملفات المسجلة</h3>
