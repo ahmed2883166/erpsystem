@@ -68,6 +68,30 @@
 </section>
 
 <section class="panel">
+  <h3>سجل قيود السنوات المالية</h3>
+  <p class="muted">السجل يحتفظ بالقيود الأصلية والقيود العكسية؛ عكس القيد لا يحذف أثره التاريخي.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>السنة</th><th>النوع</th><th>التاريخ</th><th>الحركة</th><th>رقم القيد</th><th>القيد المرتبط</th></tr></thead>
+      <tbody>
+      {% for item in history %}
+        <tr>
+          <td>{{ item.year_name }}</td>
+          <td>{{ 'افتتاح' if item.entry_kind == 'opening' else 'إقفال' }}</td>
+          <td>{{ item.entry_date }}</td>
+          <td>{{ 'قيد أصلي' if item.action == 'created' else 'قيد عكسي' }}</td>
+          <td><a href="{{ url_for('journal_detail', entry_id=item.entry_id) }}">#{{ item.entry_id }}</a></td>
+          <td>{% if item.related_entry_id %}#{{ item.related_entry_id }}{% else %}—{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6">لا توجد قيود افتتاح أو إقفال مسجلة حتى الآن.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
   <h3>ضوابط الإقفال</h3>
   <ul>
     <li>قيد الافتتاح يقبل الأصول والالتزامات وحقوق الملكية فقط، ويجب أن يتوازن قبل الترحيل.</li>
