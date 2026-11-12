@@ -1676,6 +1676,7 @@ def backup_settings():
                 VALUES(?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value""",
                 list(values.items()))
             connection.commit()
+            connection.close()
             log("backup_schedule_updated", f"{frequency}; next={next_run.isoformat(timespec='seconds')}")
             flash("تم حفظ إعدادات النسخ الاحتياطي التلقائي.", "success")
             return redirect(url_for("backup_settings"))
