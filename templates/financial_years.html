@@ -36,6 +36,7 @@
           <td>{{ year.closing_entry_id if year.closing_entry_id else 'لم يُنشأ' }}</td>
           <td>
             {% if 'journal.manage' in permissions %}
+              <a href="{{ url_for('planning.financial_year_preclose', year_id=year.id) }}">فحوصات ما قبل الإقفال</a>
               {% if year.status == 'open' %}
                 {% if not year.opening_entry_id %}
                   <a href="{{ url_for('planning.financial_year_opening', year_id=year.id) }}">إدخال أرصدة الافتتاح</a>
