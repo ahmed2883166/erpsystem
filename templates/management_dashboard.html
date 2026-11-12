@@ -19,6 +19,7 @@
 {%- endmacro %}
 {% macro money(value) -%}{{ '%.2f'|format(value) }} {{ s.base_currency }}{%- endmacro %}
 {% macro ratio(value) -%}{% if value is none %}—{% else %}{{ '%.2f'|format(value) }} مرة{% endif %}{%- endmacro %}
+{% macro percent(value) -%}{% if value is none %}—{% else %}{{ '%.2f'|format(value) }}%{% endif %}{%- endmacro %}
 
 <header>
   <div>
@@ -117,6 +118,39 @@
     <div class="stat-card"><small>فحص المعادلة المحاسبية</small><strong>{% if s.balance_ok is none %}<span class="muted">غير متاح مع فلتر تحليلي جزئي</span>{% elif s.balance_ok %}<span class="success">متوازنة ✓</span>{% else %}<span class="danger">تحتاج مراجعة</span>{% endif %}</strong></div>
   </div>
   <p class="muted">يتم تحديد الحسابات من شاشة «ربط حسابات لوحة الإدارة»، ويمكنك اختيار الحسابات التفصيلية الفعلية حتى لو كانت أكواد شجرة الحسابات مختلفة.</p>
+</section>
+
+<section class="panel">
+  <h3>النسب والمؤشرات المالية الشاملة</h3>
+  <p class="muted">تعتمد مؤشرات العائد والكفاءة على أرصدة أول وآخر الفترة، ومؤشرات السيولة والمديونية على أرصدة نهاية الفترة. الأيام محسوبة على طول الفترة المحددة.</p>
+  <h4>أولًا: نسب الربحية والعائد</h4>
+  <div class="stat-grid">
+    <div class="stat-card"><small>هامش مجمل الربح</small><strong>{{ percent(s.ratios.gross_margin) }}</strong></div>
+    <div class="stat-card"><small>هامش صافي الربح</small><strong>{{ percent(s.ratios.net_profit_margin) }}</strong></div>
+    <div class="stat-card"><small>العائد على الأصول ROA</small><strong>{{ percent(s.ratios.return_on_assets) }}</strong></div>
+    <div class="stat-card"><small>العائد على حقوق الملكية ROE</small><strong>{{ percent(s.ratios.return_on_equity) }}</strong></div>
+  </div>
+  <h4>ثانيًا: نسب السيولة والهيكل التمويلي</h4>
+  <div class="stat-grid">
+    <div class="stat-card"><small>السيولة الجارية</small><strong>{{ ratio(s.ratios.current_ratio) }}</strong></div>
+    <div class="stat-card"><small>السيولة السريعة</small><strong>{{ ratio(s.ratios.quick_ratio) }}</strong></div>
+    <div class="stat-card"><small>نسبة النقدية</small><strong>{{ ratio(s.ratios.cash_ratio) }}</strong></div>
+    <div class="stat-card"><small>إجمالي الالتزامات إلى الأصول</small><strong>{{ percent(s.ratios.debt_ratio) }}</strong></div>
+    <div class="stat-card"><small>الديون إلى حقوق الملكية</small><strong>{{ ratio(s.ratios.debt_to_equity) }}</strong></div>
+    <div class="stat-card"><small>حقوق الملكية إلى الأصول</small><strong>{{ percent(s.ratios.equity_ratio) }}</strong></div>
+  </div>
+  <h4>ثالثًا: نسب النشاط والكفاءة التشغيلية</h4>
+  <div class="stat-grid">
+    <div class="stat-card"><small>معدل دوران الأصول</small><strong>{{ ratio(s.ratios.asset_turnover) }}</strong></div>
+    <div class="stat-card"><small>معدل دوران المخزون</small><strong>{{ ratio(s.ratios.inventory_turnover) }}</strong></div>
+    <div class="stat-card"><small>أيام التخزين DIO</small><strong>{{ '%.1f يوم'|format(s.ratios.inventory_days) if s.ratios.inventory_days is not none else '—' }}</strong></div>
+    <div class="stat-card"><small>معدل دوران العملاء</small><strong>{{ ratio(s.ratios.receivables_turnover) }}</strong></div>
+    <div class="stat-card"><small>أيام التحصيل DSO</small><strong>{{ '%.1f يوم'|format(s.ratios.collection_days) if s.ratios.collection_days is not none else '—' }}</strong></div>
+    <div class="stat-card"><small>معدل دوران الموردين</small><strong>{{ ratio(s.ratios.payables_turnover) }}</strong></div>
+    <div class="stat-card"><small>أيام السداد DPO</small><strong>{{ '%.1f يوم'|format(s.ratios.payment_days) if s.ratios.payment_days is not none else '—' }}</strong></div>
+    <div class="stat-card"><small>دورة التحويل النقدي CCC</small><strong>{{ '%.1f يوم'|format(s.ratios.cash_conversion_cycle) if s.ratios.cash_conversion_cycle is not none else '—' }}</strong></div>
+  </div>
+  <p class="muted">تنبيه: دوران الموردين محسوب باستخدام تكلفة المبيعات كبديل تقريبي للمشتريات عند عدم توفر صافي المشتريات. لا تُعرض النسبة عند عدم توفر متوسط الرصيد أو المقام صفرًا.</p>
 </section>
 
 <section class="panel">
