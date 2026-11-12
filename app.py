@@ -1345,10 +1345,18 @@ def reverse_journal(entry_id):
         return redirect(url_for("trial_balance"))
     # Financial-year opening/closing journals must use their dedicated
     # reversal workflow so the year pointers and status remain consistent.
-    financial_year_link = connection.execute("""SELECT id,year_name,opening_entry_id,closing_entry_id
-        FROM financial_years WHERE opening_entry_id=? OR closing_entry_id=? LIMIT 1""",
-        (entry_id, entry_id)).fetchone() if connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_years'").fetchone() else None
+    has_financial_year_schema = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_years'").fetchone()
+    financial_year_link = None
+    if has_financial_year_schema:
+        financial_year_link = connection.execute("""SELECT id,year_name FROM financial_years
+            WHERE opening_entry_id=? OR closing_entry_id=? LIMIT 1""",
+            (entry_id, entry_id)).fetchone()
+        if not financial_year_link and connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_year_journal_history'").fetchone():
+            financial_year_link = connection.execute("""SELECT financial_year_id AS id
+                FROM financial_year_journal_history WHERE entry_id=? LIMIT 1""",
+                (entry_id,)).fetchone()
     if financial_year_link:
         connection.close()
         flash("هذا قيد افتتاح أو إقفال مرتبط بسنة مالية؛ استخدم إجراء العكس من شاشة إدارة السنوات المالية حتى تُحدّث حالة السنة والارتباطات بأمان.", "error")
