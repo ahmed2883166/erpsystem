@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import unittest
 
@@ -69,7 +70,7 @@ class ActivityProfileTests(unittest.TestCase):
     def test_active_profile_exposes_posting_and_tax_mappings_to_modules(self):
         from activity_profiles import active_posting_accounts, active_tax_roles, active_account_role_ids
         self._company_settings()
-        profile_id = create_activity_profile(
+        create_activity_profile(
             self.conn, "logistics", "النقل والخدمات اللوجستية", "service"
         )
         self.conn.execute(
@@ -98,9 +99,9 @@ class ActivityProfileTests(unittest.TestCase):
         profile = next(p for p in list_activity_profiles(self.conn) if p["id"] == profile_id)
         update_custom_activity_profile(
             self.conn, profile_id,
-            __import__("json").dumps(profile["account_roles"]),
-            __import__("json").dumps(profile["posting_accounts"]),
-            __import__("json").dumps(profile["tax_roles"]),
+            json.dumps(profile["account_roles"]),
+            json.dumps(profile["posting_accounts"]),
+            json.dumps(profile["tax_roles"]),
         )
         saved = next(p for p in list_activity_profiles(self.conn) if p["id"] == profile_id)
         self.assertEqual(saved["posting_accounts"], profile["posting_accounts"])
@@ -117,9 +118,9 @@ class ActivityProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "لا يتوافق"):
             update_custom_activity_profile(
                 self.conn, profile_id,
-                __import__("json").dumps(profile["account_roles"]),
-                __import__("json").dumps(invalid_posting),
-                __import__("json").dumps(profile["tax_roles"]),
+                json.dumps(profile["account_roles"]),
+                json.dumps(invalid_posting),
+                json.dumps(profile["tax_roles"]),
             )
 
     def test_builtin_profile_mappings_are_read_only(self):
@@ -135,7 +136,7 @@ class ActivityProfileTests(unittest.TestCase):
         from activity_profiles import active_posting_accounts
         seed_activity_chart(self.conn, "service")
         self._company_settings()
-        profile_id = create_activity_profile(
+        create_activity_profile(
             self.conn, "logistics", "النقل والخدمات اللوجستية", "service"
         )
         self.conn.execute(
@@ -156,7 +157,7 @@ class ActivityProfileTests(unittest.TestCase):
         self.conn.execute("""CREATE TABLE management_account_roles(
             account_id INTEGER NOT NULL, role TEXT NOT NULL,
             PRIMARY KEY(account_id,role))""")
-        profile_id = create_activity_profile(
+        create_activity_profile(
             self.conn, "logistics", "النقل والخدمات اللوجستية", "service"
         )
         self.conn.execute(
