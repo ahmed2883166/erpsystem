@@ -185,6 +185,15 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         self.assertEqual(cash[7], 250)
         self.assertEqual(revenue[8], 250)
 
+    def test_income_statement_pdf_export_returns_pdf_document(self):
+        response = self.client.get(
+            "/reports/export/income-statement/pdf?date_from=2026-06-01&date_to=2026-06-30&compare=previous_year"
+        )
+        self.assertEqual(response.status_code, 200,
+                         response.data[:250].decode("utf-8", errors="replace"))
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertTrue(response.data.startswith(b"%PDF"))
+
     def test_income_statement_export_includes_comparison_columns(self):
         response = self.client.get(
             "/reports/export/income-statement/excel?date_from=2026-06-01&date_to=2026-06-30&compare=previous_year"
