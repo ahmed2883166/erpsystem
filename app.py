@@ -371,6 +371,31 @@ def log(action, details="", entity_type=None, entity_id=None, outcome="success")
         connection.close()
 
 
+
+@app.after_request
+def audit_operational_mutations(response):
+    endpoint = request.endpoint or ""
+    audited_prefixes = (
+        "stock.", "purchases.", "sales.", "bank.", "assets.", "aging.",
+        "quotes.", "tax.", "workforce.", "payroll_compliance.",
+        "currency_center.", "party_reports.", "planning.",
+    )
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and session.get("user_id") and endpoint.startswith(audited_prefixes):
+        try:
+            module = endpoint.split(".", 1)[0]
+            record_id = (request.view_args or {}).get("id")
+            log(
+                "module_operation",
+                f"{request.method} {endpoint} ({response.status_code})",
+                entity_type=module,
+                entity_id=record_id,
+                outcome="success" if response.status_code < 400 else "failure",
+            )
+        except Exception:
+            app.logger.exception("Could not write operational audit event.")
+    return response
+
+
 def requires(permission):
     def decorator(view):
         @wraps(view)
@@ -1166,6 +1191,41 @@ def management_account_mapping():
     connection.close()
     return render_template("management_account_mapping.html", roles=MANAGEMENT_ROLES,
                            selected=roles, accounts=accounts)
+
+
+@app.route("/security/audit-log")
+@requires("audit.view")
+def audit_log():
+    action = request.args.get("action", "").strip()[:100]
+    user_query = request.args.get("user", "").strip()[:100]
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    conditions, params = ["1=1"], []
+    if action:
+        conditions.append("al.action LIKE ?"); params.append(f"%{action}%")
+    if user_query:
+        conditions.append("(u.username LIKE ? OR u.full_name LIKE ?)"); params.extend([f"%{user_query}%", f"%{user_query}%"])
+    if date_from:
+        conditions.append("substr(al.created_at,1,10) >= ?"); params.append(date_from)
+    if date_to:
+        conditions.append("substr(al.created_at,1,10) <= ?"); params.append(date_to)
+    where = " AND ".join(conditions)
+    connection = db()
+    page = fetch_page(
+        connection,
+        f"""SELECT al.id,al.action,al.details,al.created_at,al.entity_type,al.entity_id,
+                   al.remote_addr,al.outcome,u.username,u.full_name
+            FROM audit_log al LEFT JOIN users u ON u.id=al.user_id
+            WHERE {where} ORDER BY al.created_at DESC,al.id DESC""",
+        f"""SELECT COUNT(*) FROM audit_log al LEFT JOIN users u ON u.id=al.user_id
+            WHERE {where}""",
+        params, page=request.args.get("page", 1, type=int), per_page=50,
+    )
+    connection.close()
+    return render_template(
+        "audit_log.html", audit_page=page, action=action, user_query=user_query,
+        date_from=date_from, date_to=date_to,
+    )
 
 
 @app.route("/reports/trial-balance")
