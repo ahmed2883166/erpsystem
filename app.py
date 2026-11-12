@@ -401,14 +401,27 @@ def audit_operational_mutations(response):
         "quotes.", "tax.", "workforce.", "payroll_compliance.",
         "currency_center.", "party_reports.", "planning.",
     )
-    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and session.get("user_id") and endpoint.startswith(audited_prefixes):
+    is_mutation = request.method in {"POST", "PUT", "PATCH", "DELETE"}
+    error_flashes = any(
+        category in {"error", "danger"}
+        for category, _message in session.get("_flashes", [])
+    )
+    should_audit = endpoint.startswith(audited_prefixes) or (
+        is_mutation and session.get("user_id")
+        and (response.status_code >= 400 or error_flashes)
+    )
+    if is_mutation and session.get("user_id") and should_audit:
         try:
-            module = endpoint.split(".", 1)[0]
+            module = endpoint.split(".", 1)[0] if "." in endpoint else "core"
             view_args = request.view_args or {}
             record_id = next(
-                (view_args[key] for key in ("id", "entry_id", "invoice_id", "bill_id", "document_id",
-                                             "year_id", "run_id", "product_id", "warehouse_id")
-                 if view_args.get(key) is not None),
+                (view_args[key] for key in (
+                    "id", "entry_id", "invoice_id", "bill_id", "document_id",
+                    "year_id", "run_id", "product_id", "warehouse_id", "asset_id",
+                    "order_id", "receipt_id", "payment_id", "movement_id",
+                    "count_id", "stocktake_id", "party_id", "employee_id",
+                    "customer_id", "supplier_id", "period_id", "account_id",
+                ) if view_args.get(key) is not None),
                 None,
             )
             log(
@@ -416,7 +429,7 @@ def audit_operational_mutations(response):
                 f"{request.method} {endpoint} ({response.status_code})",
                 entity_type=module,
                 entity_id=record_id,
-                outcome="success" if response.status_code < 400 else "failure",
+                outcome="failure" if response.status_code >= 400 or error_flashes else "success",
             )
         except Exception:
             app.logger.exception("Could not write operational audit event.")
@@ -1326,6 +1339,7 @@ def analytic_dimensions_settings():
                 raise ValueError("أدخل كودًا واسمًا صحيحين للبُعد.")
             connection.execute(f"INSERT INTO {table}(code,name_ar) VALUES(?,?)", (code, name))
             connection.commit()
+            log("analytic_dimension_created", f"{kind}:{code}:{name}", entity_type=kind, entity_id=code)
             flash("تمت إضافة " + label + " بنجاح.", "success")
             return redirect(url_for("analytic_dimensions_settings"))
         except (ValueError, sqlite3.IntegrityError) as exc:
@@ -1365,6 +1379,12 @@ def management_account_mapping():
                     [(account_id, role) for account_id in sorted(ids)]
                 )
             connection.commit()
+            mapping_count = sum(len(ids) for ids in selections.values())
+            log(
+                "management_account_mapping_updated",
+                f"roles={len(selections)}; mappings={mapping_count}",
+                entity_type="settings", entity_id="management_account_roles",
+            )
             flash("تم حفظ ربط حسابات لوحة الإدارة بشجرة الحسابات الحالية.", "success")
             return redirect(url_for("management_account_mapping"))
         except (ValueError, sqlite3.Error) as exc:
