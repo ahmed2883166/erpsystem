@@ -71,11 +71,8 @@ def _period(value):
     return value, start, end
 
 
-@tax_bp.route("/reports/tax")
-@_authorized
-def tax_report():
-    period, start, end = _period(request.args.get("period", date.today().strftime("%Y-%m")))
-    conn = _db()
+def build_tax_report_snapshot(conn, period_value):
+    period, start, end = _period(period_value)
     sales = conn.execute("""
         SELECT i.id, i.invoice_no document_no, i.invoice_date document_date, c.name party_name,
                i.subtotal taxable_base, i.tax_rate tax_rate,
@@ -150,7 +147,6 @@ def tax_report():
     settings = {r["setting_key"]: r["setting_value"] for r in conn.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
         "('company_name','tax_country','tax_regime','tax_number','base_currency')")}
-    conn.close()
 
     zero_sales = [r for r in sales if r["tax_treatment"] == "zero_rated"]
     exempt_sales = [r for r in sales if r["tax_treatment"] == "exempt"]
@@ -178,9 +174,24 @@ def tax_report():
         "output_vat": output_vat, "input_vat": input_vat,
         "non_deductible_input": non_deductible_input, "net_vat": output_vat-input_vat,
     }
-    return render_template("tax_report.html", period=period, settings=settings, sales=sales, sales_credits=sales_credits,
-        purchases=purchases, summary=summary, inconsistent_sales=inconsistent_sales,
-        inconsistent_purchases=inconsistent_purchases, treatments=TREATMENTS)
+    return {
+        "period": period, "settings": settings, "sales": sales,
+        "sales_credits": sales_credits, "purchases": purchases,
+        "summary": summary, "inconsistent_sales": inconsistent_sales,
+        "inconsistent_purchases": inconsistent_purchases,
+    }
+
+
+@tax_bp.route("/reports/tax")
+@_authorized
+def tax_report():
+    period, _, _ = _period(request.args.get("period", date.today().strftime("%Y-%m")))
+    conn = _db()
+    try:
+        snapshot = build_tax_report_snapshot(conn, period)
+    finally:
+        conn.close()
+    return render_template("tax_report.html", **snapshot, treatments=TREATMENTS)
 
 
 @tax_bp.route("/reports/tax/classify/<kind>/<int:document_id>", methods=["POST"])
