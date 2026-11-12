@@ -2,7 +2,6 @@ from database import connect_database
 """Excel exports for NEXUS ERP reports. PDF output uses the browser's print-to-PDF engine for Arabic support."""
 import io
 import re
-import sqlite3
 from decimal import Decimal
 from datetime import datetime
 from functools import wraps
