@@ -1,9 +1,10 @@
 import sqlite3
 import unittest
+from unittest.mock import patch
 from decimal import Decimal
 
 from chart_templates import CHARTS, seed_activity_chart, ensure_activity_chart_accounts
-from financial_planning import initialize_planning_schema, build_balance_sheet_snapshot, _money
+from financial_planning import initialize_planning_schema, build_balance_sheet_snapshot, _money, _connect
 from accounting_core import register_decimal_aggregates
 
 
@@ -23,6 +24,12 @@ class FinancialPlanningTests(unittest.TestCase):
 
     def tearDown(self):
         self.conn.close()
+
+    def test_connect_uses_centralized_database_path(self):
+        with patch("financial_planning.DB_PATH", "/tmp/nexus-test.db"), \
+             patch("financial_planning.connect_database", return_value="connection") as connect:
+            self.assertEqual(_connect(), "connection")
+            connect.assert_called_once_with("/tmp/nexus-test.db")
 
     def test_budget_schema_and_decimal_amounts(self):
         initialize_planning_schema(self.conn)
