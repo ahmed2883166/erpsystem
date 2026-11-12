@@ -12,7 +12,10 @@ CENT = Decimal("0.01")
 
 
 def _money(value):
-    amount = Decimal(str(value or "0"))
+    try:
+        amount = Decimal(str(value or "0"))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError("أدخل مبلغًا رقميًا موجبًا أو صفرًا.")
     if not amount.is_finite() or amount < 0:
         raise ValueError("أدخل مبلغًا رقميًا موجبًا أو صفرًا.")
     return amount.quantize(CENT, rounding=ROUND_HALF_UP)
