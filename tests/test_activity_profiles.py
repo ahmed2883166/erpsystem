@@ -149,6 +149,31 @@ class ActivityProfileTests(unittest.TestCase):
         self.assertEqual(_activity_tax_roles(self.conn)["input_vat"], "1165")
         self.assertIsInstance(_sales_output_vat_account(self.conn, "service"), int)
 
+    def test_management_dashboard_uses_custom_profile_account_roles(self):
+        from management_dashboard import load_management_account_roles
+        seed_activity_chart(self.conn, "service")
+        self._company_settings()
+        self.conn.execute("""CREATE TABLE management_account_roles(
+            account_id INTEGER NOT NULL, role TEXT NOT NULL,
+            PRIMARY KEY(account_id,role))""")
+        profile_id = create_activity_profile(
+            self.conn, "logistics", "النقل والخدمات اللوجستية", "service"
+        )
+        self.conn.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity','service')"
+        )
+        self.conn.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity_profile_code','logistics')"
+        )
+        stale_cash_id = self.conn.execute("SELECT id FROM accounts WHERE code='1120'").fetchone()["id"]
+        expected_cash_id = self.conn.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
+        self.conn.execute(
+            "INSERT INTO management_account_roles(account_id,role) VALUES(?, 'cash')",
+            (stale_cash_id,),
+        )
+        roles = load_management_account_roles(self.conn)
+        self.assertEqual(roles["cash"], {expected_cash_id})
+
     def test_legacy_company_without_profile_tables_uses_builtin_mappings(self):
         from activity_profiles import active_posting_accounts
         self._company_settings()
