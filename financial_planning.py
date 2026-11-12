@@ -199,6 +199,14 @@ def create_opening_entry(conn, year_id, balances, created_by=None):
             raise ValueError("لا يمكن إنشاء قيد افتتاح لسنة غير مفتوحة.")
         if year["opening_entry_id"]:
             raise ValueError("تم إنشاء قيد افتتاح لهذه السنة بالفعل. صححه بعكس القيد أولًا.")
+        posted_before_opening = conn.execute("""SELECT COUNT(*) FROM journal_entries
+            WHERE status='posted' AND entry_date>=? AND entry_date<=?""",
+            (year["start_date"], year["end_date"])).fetchone()[0]
+        if posted_before_opening:
+            raise ValueError(
+                f"لا يمكن إنشاء قيد الافتتاح؛ توجد {posted_before_opening} قيود مرحلة داخل السنة. "
+                "يجب أن يكون قيد الافتتاح أول قيد مرحّل في السنة المالية."
+            )
         if not isinstance(balances, dict) or not balances:
             raise ValueError("أدخل أرصدة حسابات الميزانية.")
         normalized = {}
