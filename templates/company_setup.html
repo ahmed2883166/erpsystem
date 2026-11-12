@@ -53,8 +53,8 @@ applyLocalization();
     <input class="rate" type="number" min="0.000001" step="0.000001" name="rate_{{ c.code }}" value="{{ c.rate }}" title="سعر العملة مقابل العملة الأساسية"></label>
   {% endfor %}
   </div>
-  <div class="notice"><strong>دليل الحسابات:</strong> اختيار النشاط يحدد قالبًا أوليًا مختلفًا للتجاري والخدمي والطبي والمطاعم والصناعي. لن يتم حذف دليل حالي إلا عند تفعيل الاختيار أدناه، ولن يسمح باستبداله إذا كانت هناك قيود يومية.</div>
-  <label class="checkline"><input type="checkbox" name="replace_chart" value="yes" {% if not has_entries %}checked{% else %}disabled{% endif %}> تحميل شجرة الحسابات المناسبة للنشاط المختار {% if has_entries %}(موقوفة لوجود قيود يومية حفاظًا على سلامة البيانات){% else %}(متاح قبل تسجيل أول قيد){% endif %}</label>
+  <div class="notice"><strong>دليل الحسابات:</strong> اختيار النشاط يحدد قالبًا أوليًا مختلفًا للتجاري والخدمي والطبي والمطاعم والصناعي. سيتم إضافة الحسابات الناقصة فقط دون حذف أو إعادة ترميز أو تعديل الحسابات القائمة.</div>
+  <label class="checkline"><input type="checkbox" name="replace_chart" value="yes" {% if not has_entries %}checked{% else %}disabled{% endif %}> إضافة الحسابات الناقصة من قالب النشاط المختار {% if has_entries %}(موقوفة لوجود قيود يومية حفاظًا على سلامة البيانات){% else %}(متاح قبل تسجيل أول قيد){% endif %}</label>
   <button type="submit">حفظ إعدادات الشركة</button>
 </form>
 {% endblock %}
