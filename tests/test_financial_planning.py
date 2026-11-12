@@ -299,6 +299,17 @@ class FinancialYearJournalTests(unittest.TestCase):
         self.assertEqual(report["blockers"][0]["code"], "draft_entries")
         self.assertEqual(before, after)
 
+    def test_preclose_report_detects_unbalanced_posted_journal(self):
+        self.conn.execute("""INSERT INTO journal_entries
+            (entry_date,reference,description,status,created_by,created_at)
+            VALUES('2026-06-01','BAD-POST','قيد غير متوازن','posted',1,'now')""")
+        entry_id = self.conn.execute("SELECT id FROM journal_entries WHERE reference='BAD-POST'").fetchone()[0]
+        self.conn.execute("""INSERT INTO journal_lines(entry_id,account_id,debit,credit)
+            VALUES(?,?,?,?)""", (entry_id, 1, "100.00", "0"))
+        self.conn.commit()
+        report = build_financial_year_preclose_report(self.conn, self.year_id)
+        self.assertTrue(any(item["code"] == "unbalanced_entries" for item in report["blockers"]))
+
     def test_preclose_report_warns_when_opening_entry_is_missing(self):
         report = build_financial_year_preclose_report(self.conn, self.year_id)
         self.assertTrue(report["can_close"])
