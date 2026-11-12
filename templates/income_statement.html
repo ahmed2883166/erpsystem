@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}قائمة الدخل | NEXUS ERP{% endblock %}
+{% block content %}
+<header class="report-header">
+  <h2>قائمة الدخل</h2>
+  <p class="muted">{{ company_name }} · قائمة نتائج الأعمال خلال الفترة المحددة</p>
+</header>
+<section class="panel no-print">
+  <form method="get" class="form-row">
+    <div><label for="date_from">من تاريخ</label><input id="date_from" type="date" name="date_from" value="{{ date_from }}"></div>
+    <div><label for="date_to">إلى تاريخ</label><input id="date_to" type="date" name="date_to" value="{{ date_to }}"></div>
+    <div class="form-actions"><button type="submit">عرض القائمة</button>
+      <a class="button secondary" href="{{ url_for('report_exports.export_report_excel', report='income-statement', date_from=date_from, date_to=date_to) }}">تصدير Excel</a>
+    </div>
+  </form>
+</section>
+<section class="panel">
+  <div class="report-title">
+    <h3>قائمة الدخل</h3>
+    <p>{{ date_from or 'بداية الفترة المتاحة' }} — {{ date_to or 'حتى الآن' }}</p>
+  </div>
+  <h3>أولًا: الإيرادات</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>صافي الإيراد</th></tr></thead>
+    <tbody>
+    {% for row in revenue_rows %}
+      {% if row.debit or row.credit %}
+      <tr><td>{{ row.code }}</td><td>{{ row.name_ar }}</td><td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.balance|money }}</td></tr>
+      {% endif %}
+    {% else %}<tr><td colspan="5">لا توجد حركات إيرادات مرحلة خلال الفترة.</td></tr>{% endfor %}
+    </tbody>
+    <tfoot><tr><th colspan="4">إجمالي الإيرادات</th><th>{{ revenue_total|money }} {{ base_currency }}</th></tr></tfoot>
+  </table></div>
+  <h3>ثانيًا: المصروفات</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>صافي المصروف</th></tr></thead>
+    <tbody>
+    {% for row in expense_rows %}
+      {% if row.debit or row.credit %}
+      <tr><td>{{ row.code }}</td><td>{{ row.name_ar }}</td><td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.balance|money }}</td></tr>
+      {% endif %}
+    {% else %}<tr><td colspan="5">لا توجد حركات مصروفات مرحلة خلال الفترة.</td></tr>{% endfor %}
+    </tbody>
+    <tfoot><tr><th colspan="4">إجمالي المصروفات</th><th>{{ expense_total|money }} {{ base_currency }}</th></tr></tfoot>
+  </table></div>
+  <div class="summary-card">
+    <h3>{% if net_profit >= 0 %}صافي ربح الفترة{% else %}صافي خسارة الفترة{% endif %}</h3>
+    <strong>{{ (net_profit if net_profit >= 0 else -net_profit)|money }} {{ base_currency }}</strong>
+  </div>
+  <p class="muted">تعتمد القائمة على القيود المرحلة فقط، وتُحسب الإيرادات بصافي الرصيد الدائن والمصروفات بصافي الرصيد المدين. لا تشمل أرصدة أول المدة.</p>
+</section>
+{% endblock %}
