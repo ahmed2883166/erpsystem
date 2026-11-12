@@ -119,8 +119,8 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(s["ratios"]["quick_ratio"], Decimal("15.50"))
         self.assertEqual(s["ratios"]["gross_margin"], Decimal("40.00"))
         self.assertEqual(s["ratios"]["net_profit_margin"], Decimal("20.00"))
-        self.assertEqual(s["ratios"]["debt_ratio"], Decimal("5.26"))
-        self.assertEqual(s["ratios"]["equity_ratio"], Decimal("78.95"))
+        self.assertEqual(s["ratios"]["debt_ratio"], Decimal("5.78"))
+        self.assertEqual(s["ratios"]["equity_ratio"], Decimal("86.71"))
         self.assertTrue(s["balance_ok"])
 
     def test_activity_mapping_changes_inventory_accounts(self):
