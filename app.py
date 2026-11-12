@@ -463,7 +463,7 @@ def log_change(action, entity_type, entity_id, before_values, after_values, deta
 def audit_operational_mutations(response):
     endpoint = request.endpoint or ""
     audited_prefixes = (
-        "stock.", "purchases.", "sales.", "bank.", "assets.", "aging.",
+        "stock.", "purchase.", "purchases.", "sales.", "bank.", "assets.", "aging.",
         "quotes.", "tax.", "workforce.", "payroll_compliance.",
         "currency_center.", "party_reports.", "planning.",
     )
