@@ -1,7 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database
 """Tax center: auditable VAT classification and monthly control report."""
-import sqlite3
 from datetime import date
 from decimal import Decimal
 from functools import wraps
