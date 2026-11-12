@@ -120,6 +120,34 @@ class AuditLogTests(unittest.TestCase):
         self.assertEqual(rows[1]["entity_id"], "45")
         self.assertEqual(rows[1]["outcome"], "failure")
 
+
+    def test_purchase_blueprint_mutations_are_included_in_operational_audit(self):
+        def open_database():
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+
+        with nexus_app.app.test_request_context(
+            "/purchases/receipts/23", method="POST",
+            data={"supplier_id": "5", "password": "must-not-be-stored"},
+        ):
+            nexus_app.session["user_id"] = 17
+            nexus_app.request.url_rule = SimpleNamespace(endpoint="purchase.test_receipt")
+            nexus_app.request.view_args = {"receipt_id": 23}
+            with patch.object(nexus_app, "db", side_effect=open_database):
+                response = nexus_app.app.response_class("Saved", status=200)
+                nexus_app.audit_operational_mutations(response)
+
+        row = self.connection.execute(
+            "SELECT action,entity_type,entity_id,outcome,submitted_values FROM audit_log"
+        ).fetchone()
+        self.assertEqual(row["action"], "module_operation")
+        self.assertEqual(row["entity_type"], "purchase")
+        self.assertEqual(row["entity_id"], "23")
+        self.assertEqual(row["outcome"], "success")
+        self.assertIn("[REDACTED]", row["submitted_values"])
+        self.assertNotIn("must-not-be-stored", row["submitted_values"])
+
     def test_audit_only_user_can_download_current_screen_pdf(self):
         client = nexus_app.app.test_client()
         with client.session_transaction() as session:
