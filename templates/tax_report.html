@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}مركز الضرائب الشهري | NEXUS ERP{% endblock %}
 {% block content %}
-<header><h2>مركز الضرائب – التقرير الشهري</h2><p>مراجعة ضريبة المخرجات والمدخلات للمستندات المرحلة، مع تصنيف كل مستند.</p></header>
+<header><div><h2>مركز الضرائب – التقرير الشهري</h2><p>مراجعة ضريبة المخرجات والمدخلات للمستندات المرحلة، مع تصنيف كل مستند.</p></div><div class="table-actions no-print"><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='tax-report', period=period) }}">تصدير Excel</a><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='tax-report', period=period).replace('/excel','/pdf') }}">تحميل PDF</a></div></header>
 <form method="get" class="panel"><label>الشهر <input type="month" name="period" value="{{ period }}"></label><button type="submit">عرض التقرير</button></form>
 <section class="panel"><h3>بيانات الشركة</h3><p>{{ settings.get('company_name','NEXUS ERP') }} | الدولة: {{ settings.get('tax_country','غير محدد') }} | النظام: {{ settings.get('tax_regime','غير محدد') }} | الرقم الضريبي: {{ settings.get('tax_number','غير مسجل') }}</p></section>
 <div class="stats-grid">
