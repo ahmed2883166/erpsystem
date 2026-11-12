@@ -851,8 +851,14 @@ def accounts():
                 raise ValueError("الحساب الفرعي يجب أن يرتبط بحساب رئيسي. لإنشاء مستوى أول اختر حسابًا رئيسيًا تجميعيًا.")
             connection.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
                                (code, name, account_type, parent_id, is_group))
+            account_id = connection.execute("SELECT id FROM accounts WHERE code=?", (code,)).fetchone()["id"]
             connection.commit()
-            log("account_created", code)
+            log_change(
+                "account_created", "account", account_id, None,
+                {"code": code, "name_ar": name, "account_type": account_type,
+                 "parent_id": int(parent_id) if parent_id else None, "is_group": is_group, "active": 1},
+                details=code, reason=request.form.get("change_reason", "").strip(),
+            )
             flash("تمت إضافة الحساب.", "success")
         except sqlite3.IntegrityError:
             connection.rollback()
@@ -913,9 +919,13 @@ def delete_account(account_id):
             flash("لا يمكن حذف الحساب: سبق استخدامه في قيد يومية. احتفظ به أو عطّله بدل الحذف.", "error")
         else:
             try:
+                before_values = {key: account[key] for key in ("code", "name_ar", "account_type", "parent_id", "is_group", "active")}
                 connection.execute("DELETE FROM accounts WHERE id=?", (account_id,))
                 connection.commit()
-                log("account_deleted", account["code"])
+                log_change(
+                    "account_deleted", "account", account_id, before_values, None,
+                    details=account["code"], reason=request.form.get("change_reason", "").strip(),
+                )
                 flash("تم حذف الحساب لعدم وجود حسابات فرعية أو حركات مرتبطة.", "success")
             except sqlite3.IntegrityError:
                 connection.rollback()
@@ -1381,13 +1391,23 @@ def management_minimum_cash():
         if not value.is_finite() or value < 0:
             raise ValueError()
         connection = db()
+        previous_row = connection.execute(
+            "SELECT setting_value FROM company_settings WHERE setting_key='minimum_cash_balance'"
+        ).fetchone()
+        previous_value = previous_row["setting_value"] if previous_row else None
+        normalized_value = str(value.quantize(Decimal("0.01")))
         connection.execute("""INSERT INTO company_settings(setting_key,setting_value)
             VALUES('minimum_cash_balance',?) ON CONFLICT(setting_key)
-            DO UPDATE SET setting_value=excluded.setting_value""",
-            (str(value.quantize(Decimal("0.01"))),))
+            DO UPDATE SET setting_value=excluded.value""".replace("excluded.value", "excluded.setting_value"),
+            (normalized_value,))
         connection.commit()
         connection.close()
-        log("minimum_cash_balance_updated", str(value))
+        log_change(
+            "minimum_cash_balance_updated", "company_settings", "minimum_cash_balance",
+            {"minimum_cash_balance": previous_value},
+            {"minimum_cash_balance": normalized_value},
+            details=normalized_value, reason=request.form.get("change_reason", "").strip(),
+        )
         flash("تم حفظ الحد الأدنى للنقدية.", "success")
     except (InvalidOperation, ValueError, sqlite3.Error):
         flash("أدخل حدًا أدنى صحيحًا لا يقل عن صفر.", "error")
@@ -1819,8 +1839,14 @@ def accounting_periods():
                     raise ValueError("يجب أن تقع الفترة المحاسبية بالكامل داخل سنة مالية مسجلة.")
             connection.execute("""INSERT INTO accounting_periods(period_name,start_date,end_date,locked,created_at)
                 VALUES(?,?,?,0,?)""", (name, start_date, end_date, now()))
+            period_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
             connection.commit()
-            log("accounting_period_created", f"{name}: {start_date} - {end_date}")
+            log_change(
+                "accounting_period_created", "accounting_period", period_id, None,
+                {"period_name": name, "start_date": start_date, "end_date": end_date, "locked": 0},
+                details=f"{name}: {start_date} - {end_date}",
+                reason=request.form.get("change_reason", "").strip(),
+            )
             flash("تم إنشاء الفترة المحاسبية بحالة مفتوحة.", "success")
         except (ValueError, TypeError):
             connection.rollback()
@@ -1972,8 +1998,15 @@ def users():
             selected = normalize_user_permissions(request.form.getlist("permissions"))
             connection.execute("INSERT INTO users(username,full_name,password_hash,role,created_at,permissions_json) VALUES(?,?,?,?,?,?)",
                                (request.form["username"].strip(), request.form["full_name"].strip(), password_hash(request.form["password"]), role, now(), json.dumps(selected, ensure_ascii=False)))
+            created_user_id = connection.execute("SELECT id FROM users WHERE username=?", (request.form["username"].strip(),)).fetchone()["id"]
             connection.commit()
-            log("user_created", request.form["username"])
+            log_change(
+                "user_created", "user", created_user_id, None,
+                {"username": request.form["username"].strip(), "full_name": request.form["full_name"].strip(),
+                 "role": role, "active": 1, "permissions": selected},
+                details=request.form["username"].strip(),
+                reason=request.form.get("change_reason", "").strip(),
+            )
             flash("تم إنشاء المستخدم.", "success")
         except sqlite3.IntegrityError:
             flash("اسم المستخدم مستخدم بالفعل.", "error")
@@ -2052,9 +2085,17 @@ def delete_user(user_id):
         if used: flash("لا يمكن حذف المستخدم لوجود نشاط مسجل في "+used+". يمكنك إيقافه بدل الحذف.","error")
         else:
             try:
+                before_values = {
+                    "username": user["username"], "full_name": user["full_name"],
+                    "role": user["role"], "active": user["active"],
+                    "permissions": stored_user_permissions(user["permissions_json"], user["role"]),
+                }
                 connection.execute("DELETE FROM users WHERE id=?",(user_id,))
                 connection.commit()
-                log("user_deleted", user["username"], entity_type="user", entity_id=user_id)
+                log_change(
+                    "user_deleted", "user", user_id, before_values, None,
+                    details=user["username"], reason=request.form.get("change_reason", "").strip(),
+                )
                 flash("تم حذف المستخدم.","success")
             except sqlite3.IntegrityError: connection.rollback(); flash("لا يمكن حذف المستخدم لوجود سجلات مرتبطة به.","error")
     connection.close(); return redirect(url_for("users"))
