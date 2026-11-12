@@ -123,8 +123,8 @@ ACTIVITY_POSTING_ACCOUNTS = {
 }
 
 
-# Common support branches available in every activity. Existing account codes and
-# posted ledgers are never rewritten; these rows affect only newly generated charts.
+# Common support branches available in every activity. Existing account IDs and
+# posted journal links are preserved by the explicit, idempotent VAT migration below.
 _COMMON_ACTIVITY_ACCOUNTS = [
     ("1165", "ضريبة قيمة مضافة مدخلات قابلة للخصم", "asset", "1100", 0),
     ("1240", "أصول ثابتة إضافية", "asset", "1200", 1),
@@ -225,6 +225,8 @@ def migrate_vat_accounts(conn, activity):
     ).fetchone()
     moved_legacy_2130 = False
     if old_2130 and "ضريبة القيمة المضافة" not in str(old_2130["name_ar"] or ""):
+        if old_2130["account_type"] != "liability" or old_2130["is_group"]:
+            raise ValueError("الحساب 2130 القديم ليس حساب التزام تفصيليًا؛ أوقف الترحيل لمراجعته يدويًا.")
         destination = legacy_destinations.get(activity)
         if destination:
             new_code, new_name = destination
