@@ -25,7 +25,7 @@ class AuditLogTests(unittest.TestCase):
             CREATE TABLE audit_log(
                 id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT,
                 created_at TEXT, entity_type TEXT, entity_id TEXT, remote_addr TEXT, outcome TEXT,
-                actor_name TEXT, before_values TEXT, after_values TEXT, reason TEXT, request_id TEXT
+                actor_name TEXT, before_values TEXT, after_values TEXT, submitted_values TEXT, reason TEXT, request_id TEXT
             )
         """)
         self.connection.commit()
@@ -86,7 +86,10 @@ class AuditLogTests(unittest.TestCase):
             connection.row_factory = sqlite3.Row
             return connection
 
-        with nexus_app.app.test_request_context("/sales/invoices/44", method="POST"):
+        with nexus_app.app.test_request_context(
+            "/sales/invoices/44", method="POST",
+            data={"customer_name": "عميل تجريبي", "password": "do-not-store"},
+        ):
             nexus_app.session["user_id"] = 17
             nexus_app.request.url_rule = SimpleNamespace(endpoint="sales.test_mutation")
             nexus_app.request.view_args = {"invoice_id": 44}
@@ -104,13 +107,16 @@ class AuditLogTests(unittest.TestCase):
                 nexus_app.audit_operational_mutations(response)
 
         rows = self.connection.execute(
-            "SELECT action,details,entity_type,entity_id,outcome FROM audit_log ORDER BY id"
+            "SELECT action,details,entity_type,entity_id,outcome,submitted_values FROM audit_log ORDER BY id"
         ).fetchall()
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["action"], "module_operation")
         self.assertEqual(rows[0]["entity_type"], "sales")
         self.assertEqual(rows[0]["entity_id"], "44")
         self.assertEqual(rows[0]["outcome"], "success")
+        self.assertIn("عميل تجريبي", rows[0]["submitted_values"])
+        self.assertIn("[REDACTED]", rows[0]["submitted_values"])
+        self.assertNotIn("do-not-store", rows[0]["submitted_values"])
         self.assertEqual(rows[1]["entity_id"], "45")
         self.assertEqual(rows[1]["outcome"], "failure")
 
