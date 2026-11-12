@@ -1,0 +1,100 @@
+import io
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+
+from flask import Flask
+from openpyxl import load_workbook
+
+from report_exports import register_report_exports
+
+
+class TrialBalanceExcelExportTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp.name) / "reports.db"
+        conn = sqlite3.connect(self.db_path)
+        conn.executescript("""
+            CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL);
+            CREATE TABLE accounts(
+                id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT, account_type TEXT,
+                parent_id INTEGER, is_group INTEGER DEFAULT 0, active INTEGER DEFAULT 1
+            );
+            CREATE TABLE financial_years(
+                id INTEGER PRIMARY KEY, year_name TEXT, start_date TEXT, end_date TEXT, status TEXT
+            );
+            CREATE TABLE journal_entries(
+                id INTEGER PRIMARY KEY, entry_date TEXT, status TEXT
+            );
+            CREATE TABLE journal_lines(
+                id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
+                debit TEXT DEFAULT '0', credit TEXT DEFAULT '0'
+            );
+            INSERT INTO company_settings VALUES('company_name','NEXUS Test');
+            INSERT INTO accounts(id,code,name_ar,account_type) VALUES
+                (1,'1110','الصندوق','asset'),
+                (2,'4100','إيرادات المبيعات','revenue');
+            INSERT INTO financial_years VALUES
+                (1,'2025','2025-01-01','2025-12-31','closed'),
+                (2,'2026','2026-01-01','2026-12-31','open');
+            INSERT INTO journal_entries VALUES
+                (1,'2025-06-01','posted'),
+                (2,'2026-06-01','posted'),
+                (3,'2026-07-01','draft');
+            INSERT INTO journal_lines VALUES
+                (1,1,1,'100','0'),
+                (2,1,2,'0','100'),
+                (3,2,1,'250','0'),
+                (4,2,2,'0','250'),
+                (5,3,1,'999','0');
+        """)
+        conn.commit()
+        conn.close()
+
+        self.app = Flask(__name__)
+        self.app.secret_key = "test"
+        register_report_exports(self.app, self.db_path, {"admin": {"reports.view"}})
+        self.client = self.app.test_client()
+        with self.client.session_transaction() as session:
+            session.update(user_id=1, role="admin", permissions=["reports.view"])
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_trial_balance_export_separates_closed_and_open_years(self):
+        response = self.client.get("/reports/export/trial-balance/excel")
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(io.BytesIO(response.data), data_only=True)
+        sheet = workbook.active
+        values = list(sheet.values)
+        rows = [row for row in values if row and row[4] in ("1110", "4100")]
+        self.assertEqual(len(rows), 4)
+        by_period = {}
+        for row in rows:
+            by_period.setdefault(row[0], []).append(row)
+        self.assertEqual(set(by_period), {"2025", "2026"})
+        self.assertEqual(by_period["2025"][0][7], 100)
+        self.assertEqual(by_period["2026"][0][7], 250)
+        self.assertNotIn(999, [cell for row in rows for cell in row])
+
+    def test_trial_balance_export_applies_date_filter_to_each_year(self):
+        response = self.client.get(
+            "/reports/export/trial-balance/excel?date_from=2026-01-01&date_to=2026-06-30"
+        )
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(io.BytesIO(response.data), data_only=True)
+        values = list(workbook.active.values)
+        account_rows = [row for row in values if row and row[4] in ("1110", "4100")]
+        self.assertEqual(len(account_rows), 2)
+        self.assertTrue(all(row[0] == "2026" for row in account_rows))
+
+    def test_trial_balance_export_rejects_reversed_date_range(self):
+        response = self.client.get(
+            "/reports/export/trial-balance/excel?date_from=2026-12-31&date_to=2026-01-01"
+        )
+        self.assertEqual(response.status_code, 400)
+
+
+if __name__ == "__main__":
+    unittest.main()
