@@ -22,7 +22,7 @@ def normalize_income_statement_period(date_from=None, date_to=None, today=None):
     return start.isoformat(), end.isoformat()
 
 
-def _closing_filter(conn):
+def closing_entries_exclusion_sql(conn):
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
     if "entry_type" in columns:
         return "COALESCE(je.entry_type,'general') NOT IN ('year_end_closing','year_end_closing_reversal')"
@@ -43,7 +43,7 @@ def _closing_filter(conn):
 def build_income_statement(conn, date_from, date_to):
     """Calculate revenue, COGS, gross profit, operating expenses and net profit."""
     register_decimal_aggregates(conn)
-    closing_filter = _closing_filter(conn)
+    closing_filter = closing_entries_exclusion_sql(conn)
     role_table = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='management_account_roles'"
     ).fetchone()
