@@ -57,32 +57,62 @@ def register_report_exports(app, db_path, permissions):
                 date_to = request.args.get("date_to", "").strip()
                 account_type = request.args.get("account_type", "").strip()
                 q = request.args.get("q", "").strip()
-                conditions, params = ["1=1"], []
-                if date_from:
-                    conditions.append("je.entry_date >= ?"); params.append(date_from)
-                if date_to:
-                    conditions.append("je.entry_date <= ?"); params.append(date_to)
+                if date_from and date_to and date_from > date_to:
+                    abort(400)
+                account_conditions, account_params = ["1=1"], []
                 if account_type in {"asset", "liability", "equity", "revenue", "expense"}:
-                    conditions.append("a.account_type = ?"); params.append(account_type)
+                    account_conditions.append("a.account_type = ?"); account_params.append(account_type)
                 if q:
-                    conditions.append("(a.code LIKE ? OR a.name_ar LIKE ?)")
-                    params.extend([f"%{q}%", f"%{q}%"])
-                rows = conn.execute(f"""
-                    SELECT a.code,a.name_ar,a.account_type,
-                           COALESCE(DECIMAL_SUM(CASE WHEN je.status='posted' THEN jl.debit ELSE '0' END),0) debit,
-                           COALESCE(DECIMAL_SUM(CASE WHEN je.status='posted' THEN jl.credit ELSE '0' END),0) credit
-                    FROM accounts a
-                    LEFT JOIN journal_lines jl ON jl.account_id=a.id
-                    LEFT JOIN journal_entries je ON je.id=jl.entry_id
-                    WHERE {' AND '.join(conditions)}
-                    GROUP BY a.id ORDER BY a.code
-                """, params).fetchall()
-                headers = ["كود الحساب", "اسم الحساب", "نوع الحساب", "مدين", "دائن", "صافي الرصيد"]
-                data = [[r["code"], r["name_ar"], r["account_type"],
-                         Decimal(str(r["debit"] or "0")), Decimal(str(r["credit"] or "0")),
-                         Decimal(str(r["debit"] or "0")) - Decimal(str(r["credit"] or "0"))] for r in rows]
+                    account_conditions.append("(a.code LIKE ? OR a.name_ar LIKE ?)")
+                    account_params.extend([f"%{q}%", f"%{q}%"])
+                years = conn.execute(
+                    "SELECT id,year_name,start_date,end_date,status FROM financial_years ORDER BY start_date DESC,id DESC"
+                ).fetchall()
+                periods = []
+                today = datetime.now().date().isoformat()
+                for year in years:
+                    period_from = max(year["start_date"], date_from) if date_from else year["start_date"]
+                    natural_end = min(year["end_date"], today) if year["status"] == "open" else year["end_date"]
+                    period_to = min(natural_end, date_to) if date_to else natural_end
+                    if period_from <= period_to:
+                        periods.append((year["year_name"], "الفترة الحالية / مفتوحة" if year["status"] == "open" else "فترة مالية مقفولة", period_from, period_to))
+                if not years:
+                    periods.append(("الفترة المحددة", "الفترة الحالية", date_from, date_to))
+                headers = ["الفترة", "التصنيف", "من تاريخ", "إلى تاريخ", "كود الحساب", "اسم الحساب", "نوع الحساب", "مدين", "دائن", "صافي الرصيد"]
+                data = []
+                type_labels = {"asset": "أصول", "liability": "التزامات", "equity": "حقوق ملكية", "revenue": "إيرادات", "expense": "مصروفات"}
+                for period_name, period_label, period_from, period_to in periods:
+                    join_conditions = ["je.id=jl.entry_id", "je.status='posted'"]
+                    join_params = []
+                    if period_from:
+                        join_conditions.append("je.entry_date >= ?"); join_params.append(period_from)
+                    if period_to:
+                        join_conditions.append("je.entry_date <= ?"); join_params.append(period_to)
+                    rows = conn.execute(f"""
+                        SELECT a.code,a.name_ar,a.account_type,
+                               COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
+                               COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
+                        FROM accounts a
+                        LEFT JOIN journal_lines jl ON jl.account_id=a.id
+                        LEFT JOIN journal_entries je ON {' AND '.join(join_conditions)}
+                        WHERE {' AND '.join(account_conditions)}
+                        GROUP BY a.id ORDER BY a.code
+                    """, [*join_params, *account_params]).fetchall()
+                    total_debit = Decimal("0")
+                    total_credit = Decimal("0")
+                    data.append([period_name, period_label, period_from or "", period_to or "", "", "", "", "", "", ""])
+                    for row in rows:
+                        debit = Decimal(str(row["debit"] or "0"))
+                        credit = Decimal(str(row["credit"] or "0"))
+                        total_debit += debit
+                        total_credit += credit
+                        data.append([period_name, period_label, period_from or "", period_to or "",
+                                     row["code"], row["name_ar"], type_labels.get(row["account_type"], row["account_type"]),
+                                     debit, credit, debit - credit])
+                    data.append([period_name, "إجمالي الفترة", "", "", "", "", "", total_debit, total_credit, total_debit-total_credit])
+                    data.append([""] * len(headers))
                 filename = "nexus-trial-balance.xlsx"
-                title = "ميزان المراجعة"
+                title = "ميزان المراجعة حسب الفترات المالية"
             elif report == "income-statement":
                 date_from, date_to = normalize_income_statement_period(
                     request.args.get("date_from"), request.args.get("date_to")
