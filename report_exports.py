@@ -326,6 +326,47 @@ def register_report_exports(app, db_path, permissions):
                     data.append([r["party_code"],r["party_name"],r["doc_no"],r["doc_date"],r["due_date"],
                                  max(days,0),*buckets])
                 filename = "nexus-aging-"+kind+".xlsx"
+            elif report == "party-statement":
+                from party_reports import _events
+                kind = request.args.get("kind", "customer")
+                if kind not in {"customer", "supplier"}:
+                    abort(400)
+                party_id = request.args.get("party_id", type=int)
+                date_from = request.args.get("date_from", "").strip()
+                date_to = request.args.get("date_to", "").strip()
+                if date_from and date_to and date_from > date_to:
+                    abort(400)
+                table_name = "customers" if kind == "customer" else "suppliers"
+                party = conn.execute(f"SELECT id,code,name FROM {table_name} WHERE id=? AND active=1", (party_id,)).fetchone()
+                if not party:
+                    abort(404)
+                events = _events(conn, kind, party_id)
+                sign = Decimal("1") if kind == "customer" else Decimal("-1")
+                opening = Decimal("0")
+                total_debit = Decimal("0")
+                total_credit = Decimal("0")
+                filtered_events = []
+                for event in events:
+                    event_date = event["event_date"]
+                    amount = (Decimal(str(event["debit"])) - Decimal(str(event["credit"]))) * sign
+                    if date_from and event_date < date_from:
+                        opening += amount
+                        continue
+                    if date_to and event_date > date_to:
+                        continue
+                    filtered_events.append(event)
+                    total_debit += Decimal(str(event["debit"]))
+                    total_credit += Decimal(str(event["credit"]))
+                balance = opening
+                headers = ["التاريخ", "المرجع", "البيان", "مدين", "دائن", "الرصيد الجاري"]
+                data = [["", "", "الرصيد الافتتاحي", "", "", opening]]
+                for event in filtered_events:
+                    balance += (Decimal(str(event["debit"])) - Decimal(str(event["credit"]))) * sign
+                    data.append([event["event_date"], event["reference"], event["description"],
+                                 Decimal(str(event["debit"])), Decimal(str(event["credit"])), balance])
+                data.append(["", "", "الرصيد الختامي", total_debit, total_credit, balance])
+                filename = f"nexus-party-statement-{kind}-{party['code']}.xlsx"
+                title = ("كشف حساب عميل" if kind == "customer" else "كشف حساب مورد") + f" - {party['code']} {party['name']}"
             elif report == "payroll":
                 run_id = request.args.get("run_id", type=int)
                 if not run_id:
