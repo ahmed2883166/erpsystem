@@ -71,16 +71,20 @@ def initialize_planning_schema(conn):
     CREATE INDEX IF NOT EXISTS idx_financial_year_journal_history
       ON financial_year_journal_history(financial_year_id,entry_kind,id);
     """)
-    if "entry_type" not in {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}:
-        conn.execute("ALTER TABLE journal_entries ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'general'")
-    # Migrate historical closing journals using the dedicated history table.
-    conn.execute("""UPDATE journal_entries SET entry_type='year_end_closing'
-        WHERE id IN (SELECT entry_id FROM financial_year_journal_history
-                     WHERE entry_kind='closing' AND action='created')""")
-    conn.execute("""UPDATE journal_entries SET entry_type='year_end_closing_reversal'
-        WHERE id IN (SELECT entry_id FROM financial_year_journal_history
-                     WHERE entry_kind='closing' AND action='reversed')""")
-    conn.commit()
+    journal_table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='journal_entries'"
+    ).fetchone()
+    if journal_table_exists:
+        if "entry_type" not in {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}:
+            conn.execute("ALTER TABLE journal_entries ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'general'")
+        # Migrate historical closing journals using the dedicated history table.
+        conn.execute("""UPDATE journal_entries SET entry_type='year_end_closing'
+            WHERE id IN (SELECT entry_id FROM financial_year_journal_history
+                         WHERE entry_kind='closing' AND action='created')""")
+        conn.execute("""UPDATE journal_entries SET entry_type='year_end_closing_reversal'
+            WHERE id IN (SELECT entry_id FROM financial_year_journal_history
+                         WHERE entry_kind='closing' AND action='reversed')""")
+        conn.commit()
 
 
 def create_financial_year(conn, year_name, start_date, end_date, created_by=None):
