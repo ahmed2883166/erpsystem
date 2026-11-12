@@ -13,7 +13,7 @@ class ManagementDashboardTests(unittest.TestCase):
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript("""
             CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,account_type TEXT,is_group INTEGER DEFAULT 0,active INTEGER DEFAULT 1);
-            CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT);
+            CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT,entry_type TEXT NOT NULL DEFAULT 'general');
             CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit TEXT,credit TEXT);
             CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT);
             INSERT INTO company_settings VALUES('activity','commercial');
@@ -38,7 +38,7 @@ class ManagementDashboardTests(unittest.TestCase):
             ("2026-11-12","draft",[(1,"999","0"),(7,"0","999")]),
         ]
         for idx,(entry_date,status,lines) in enumerate(entries,1):
-            self.conn.execute("INSERT INTO journal_entries VALUES(?,?,?)",(idx,entry_date,status))
+            self.conn.execute("INSERT INTO journal_entries(id,entry_date,status) VALUES(?,?,?)",(idx,entry_date,status))
             for account_id,debit,credit in lines:
                 self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(?,?,?,?)",
                                   (idx,account_id,debit,credit))
@@ -54,6 +54,19 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(s["previous"]["revenue"],Decimal("200"))
         self.assertEqual(s["previous"]["net_profit"],Decimal("30"))
         self.assertEqual(s["changes"]["revenue"],Decimal("150.00"))
+
+    def test_period_results_exclude_year_end_closing_journal(self):
+        self.conn.execute(
+            "INSERT INTO journal_entries(id,entry_date,status,entry_type) VALUES(40,'2026-11-30','posted','year_end_closing')"
+        )
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(40,?,?,?)",
+            [(7,"500","0"),(8,"0","300"),(9,"0","100"),(1,"0","100")]
+        )
+        snapshot = build_management_snapshot(self.conn,date(2026,11,1),date(2026,11,30))
+        self.assertEqual(snapshot["current"]["revenue"],Decimal("500"))
+        self.assertEqual(snapshot["current"]["expenses"],Decimal("400"))
+        self.assertEqual(snapshot["current"]["net_profit"],Decimal("100"))
 
     def test_position_and_liquidity(self):
         s=build_management_snapshot(self.conn,date(2026,11,1),date(2026,11,30))
@@ -100,7 +113,7 @@ class ManagementDashboardTests(unittest.TestCase):
                           "(11,'1160','قطع الغيار','asset',0,1)")
         self.conn.execute("UPDATE company_settings SET setting_value='industrial' WHERE setting_key='activity'")
         initialize_management_dashboard_schema(self.conn, 'industrial')
-        self.conn.execute("INSERT INTO journal_entries VALUES(30,'2026-11-15','posted')")
+        self.conn.execute("INSERT INTO journal_entries(id,entry_date,status) VALUES(30,'2026-11-15','posted')")
         self.conn.executemany(
             "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(30,?,?,?)",
             [(2,"25","0"),(10,"40","0"),(11,"60","0")])
@@ -118,7 +131,7 @@ class ManagementDashboardTests(unittest.TestCase):
                           "(12,'2100','الموردون','liability',0,1)")
         self.conn.execute("UPDATE company_settings SET setting_value='medical' WHERE setting_key='activity'")
         initialize_management_dashboard_schema(self.conn, 'medical')
-        self.conn.execute("INSERT INTO journal_entries VALUES(31,'2026-11-15','posted')")
+        self.conn.execute("INSERT INTO journal_entries(id,entry_date,status) VALUES(31,'2026-11-15','posted')")
         self.conn.executemany(
             "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(31,?,?,?)",
             [(10,"40","0"),(11,"60","0"),(12,"0","75")])
@@ -163,7 +176,7 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(forecast["minimum"], Decimal("1400"))
 
     def test_unusual_journal_flags_entries_in_last_two_days(self):
-        self.conn.execute("INSERT INTO journal_entries VALUES(20,'2026-11-29','posted')")
+        self.conn.execute("INSERT INTO journal_entries(id,entry_date,status) VALUES(20,'2026-11-29','posted')")
         self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(20,9,'25','0')")
         self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(20,1,'0','25')")
         flagged = unusual_journal_entries(self.conn, date(2026, 11, 1), date(2026, 11, 30))
@@ -175,7 +188,7 @@ class ManagementDashboardTests(unittest.TestCase):
             build_management_snapshot(self.conn,date(2026,11,30),date(2026,11,1))
 
     def test_unusual_journal_totals_preserve_decimal_precision(self):
-        self.conn.execute("INSERT INTO journal_entries VALUES(21,'2026-11-30','posted')")
+        self.conn.execute("INSERT INTO journal_entries(id,entry_date,status) VALUES(21,'2026-11-30','posted')")
         self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(21,9,'0.10','0')")
         self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(21,1,'0','0.10')")
         flagged = unusual_journal_entries(self.conn, date(2026,11,1), date(2026,11,30))
@@ -187,7 +200,7 @@ class ManagementDashboardTests(unittest.TestCase):
         from management_dashboard import cached_management_snapshot
         first = cached_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
         self.assertEqual(first["current"]["revenue"], Decimal("500"))
-        self.conn.execute("INSERT INTO journal_entries VALUES(22,'2026-11-20','posted')")
+        self.conn.execute("INSERT INTO journal_entries(id,entry_date,status) VALUES(22,'2026-11-20','posted')")
         self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(22,1,'0','0')")
         self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(22,7,'0','25')")
         second = cached_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
