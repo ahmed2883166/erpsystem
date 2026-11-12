@@ -27,6 +27,9 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
             CREATE TABLE journal_entries(
                 id INTEGER PRIMARY KEY, entry_date TEXT, status TEXT
             );
+            CREATE TABLE management_account_roles(account_id INTEGER, role TEXT);
+            CREATE TABLE management_dashboard_meta(meta_key TEXT PRIMARY KEY, meta_value TEXT);
+
             CREATE TABLE journal_lines(
                 id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
                 debit TEXT DEFAULT '0', credit TEXT DEFAULT '0'
@@ -104,6 +107,23 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
 
     def test_balance_sheet_pdf_export_returns_pdf_document(self):
         response = self.client.get("/reports/export/balance-sheet/pdf?as_of=2026-06-30")
+        self.assertEqual(response.status_code, 200, response.data[:200].decode("utf-8", errors="replace"))
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertTrue(response.data.startswith(b"%PDF"))
+
+    def test_cash_flow_export_uses_cash_flow_snapshot(self):
+        response = self.client.get(
+            "/reports/export/cash-flow/excel?date_from=2026-01-01&date_to=2026-12-31"
+        )
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(io.BytesIO(response.data), data_only=True)
+        values = list(workbook.active.values)
+        self.assertTrue(any(row[0] == "الأنشطة التشغيلية" and row[1] == 250 for row in values if row[0]))
+
+    def test_cash_flow_pdf_export_returns_pdf_document(self):
+        response = self.client.get(
+            "/reports/export/cash-flow/pdf?date_from=2026-01-01&date_to=2026-12-31"
+        )
         self.assertEqual(response.status_code, 200, response.data[:200].decode("utf-8", errors="replace"))
         self.assertEqual(response.mimetype, "application/pdf")
         self.assertTrue(response.data.startswith(b"%PDF"))
