@@ -80,6 +80,7 @@ def initialize_planning_schema(conn):
     conn.execute("""UPDATE journal_entries SET entry_type='year_end_closing_reversal'
         WHERE id IN (SELECT entry_id FROM financial_year_journal_history
                      WHERE entry_kind='closing' AND action='reversed')""")
+    conn.commit()
 
 
 def create_financial_year(conn, year_name, start_date, end_date, created_by=None):
