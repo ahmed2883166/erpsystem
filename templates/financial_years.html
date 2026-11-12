@@ -47,9 +47,7 @@
                     <button type="submit" class="secondary">عكس قيد الافتتاح</button>
                   </form>
                 {% endif %}
-                <form method="post" action="{{ url_for('planning.financial_year_close', year_id=year.id) }}">
-                  <button type="submit">تنفيذ الإقفال السنوي</button>
-                </form>
+                <a href="{{ url_for('planning.financial_year_preclose', year_id=year.id) }}">مراجعة الفحوصات ثم الإقفال السنوي</a>
               {% elif year.status == 'closed' %}
                 <form method="post" action="{{ url_for('planning.financial_year_reverse', year_id=year.id, entry_kind='closing') }}">
                   <label>تاريخ عكس الإقفال</label><input type="date" name="reversal_date" min="{{ year.start_date }}" max="{{ year.end_date }}" required>
