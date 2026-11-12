@@ -61,12 +61,12 @@ class ActivityAccountMappingTests(unittest.TestCase):
 
     def test_legacy_vat_code_migration_preserves_account_ids_and_is_idempotent(self):
         legacy = {
-            "service": ("ضرائب مستحقة", "2150"),
+            "service": ("ضرائب مستحقة", None),
             "medical": ("مقدمات مرضى", "2140"),
             "restaurant": ("إكراميات مستحقة للعاملين", "2140"),
             "industrial": ("قروض", "2210"),
         }
-        for activity, (legacy_name, new_code) in legacy.items():
+        for activity, (legacy_name, displaced_code) in legacy.items():
             with self.subTest(activity=activity):
                 conn = sqlite3.connect(":memory:")
                 conn.row_factory = sqlite3.Row
@@ -77,22 +77,36 @@ class ActivityAccountMappingTests(unittest.TestCase):
                 conn.execute("INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('2000','الالتزامات','liability',1)")
                 conn.execute("INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1100','الأصول المتداولة','asset',1)")
                 conn.execute("INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('2130',?,'liability',0)", (legacy_name,))
-                legacy_id = conn.execute("SELECT id FROM accounts WHERE code='2130'").fetchone()["id"]
+                legacy_2130_id = conn.execute("SELECT id FROM accounts WHERE code='2130'").fetchone()["id"]
+                old_vat_id = None
+                if activity != "service":
+                    conn.execute("INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('2120','ضرائب مستحقة','liability',0)")
+                    old_vat_id = conn.execute("SELECT id FROM accounts WHERE code='2120'").fetchone()["id"]
                 conn.execute("CREATE TABLE journal_lines(account_id INTEGER)")
-                conn.execute("INSERT INTO journal_lines(account_id) VALUES(?)", (legacy_id,))
+                conn.execute("INSERT INTO journal_lines(account_id) VALUES(?)", (legacy_2130_id,))
+                if old_vat_id:
+                    conn.execute("INSERT INTO journal_lines(account_id) VALUES(?)", (old_vat_id,))
 
                 migrate_vat_accounts(conn, activity)
-                moved = conn.execute("SELECT id,name_ar FROM accounts WHERE code=?", (new_code,)).fetchone()
                 vat = conn.execute("SELECT id,name_ar,account_type,is_group FROM accounts WHERE code='2130'").fetchone()
                 input_vat = conn.execute("SELECT account_type,is_group FROM accounts WHERE code='1165'").fetchone()
-                self.assertEqual(moved["id"], legacy_id)
-                self.assertEqual(conn.execute("SELECT account_id FROM journal_lines").fetchone()["account_id"], legacy_id)
                 self.assertEqual(vat["name_ar"], "ضريبة القيمة المضافة - مخرجات")
                 self.assertEqual((vat["account_type"], vat["is_group"]), ("liability", 0))
                 self.assertEqual((input_vat["account_type"], input_vat["is_group"]), ("asset", 0))
+                if activity == "service":
+                    self.assertEqual(vat["id"], legacy_2130_id)
+                else:
+                    moved = conn.execute("SELECT id FROM accounts WHERE code=?", (displaced_code,)).fetchone()
+                    self.assertEqual(moved["id"], legacy_2130_id)
+                    self.assertEqual(vat["id"], old_vat_id)
+                    self.assertEqual(
+                        [r["account_id"] for r in conn.execute("SELECT account_id FROM journal_lines ORDER BY rowid")],
+                        [legacy_2130_id, old_vat_id],
+                    )
                 migrate_vat_accounts(conn, activity)
-                self.assertEqual(conn.execute("SELECT id FROM accounts WHERE code=?", (new_code,)).fetchone()["id"], legacy_id)
+                self.assertEqual(conn.execute("SELECT id FROM accounts WHERE code='2130'").fetchone()["id"], vat["id"])
                 conn.close()
+
 
 
 if __name__ == "__main__":
