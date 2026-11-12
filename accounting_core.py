@@ -197,17 +197,25 @@ def _money(value):
 
 def reconciliation_snapshot(conn):
     """Build the integrity snapshot using Decimal only for every monetary total."""
+    # Aggregate every posted journal in one grouped query. The previous
+    # implementation issued one additional SELECT per entry (N+1), which
+    # became expensive on large ledgers. DECIMAL_SUM keeps TEXT money exact.
+    register_decimal_aggregates(conn)
     entries = conn.execute(
-        "SELECT id,reference FROM journal_entries WHERE status='posted' ORDER BY id DESC"
+        """SELECT je.id,je.reference,
+                  COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
+                  COALESCE(DECIMAL_SUM(jl.credit),'0') credit
+           FROM journal_entries je
+           LEFT JOIN journal_lines jl ON jl.entry_id=je.id
+           WHERE je.status='posted'
+           GROUP BY je.id,je.reference
+           ORDER BY je.id DESC"""
     ).fetchall()
     unbalanced = []
     all_debit, all_credit = Decimal("0"), Decimal("0")
     for entry in entries:
-        lines = conn.execute(
-            "SELECT debit,credit FROM journal_lines WHERE entry_id=?", (entry["id"],)
-        ).fetchall()
-        debit = _decimal_sum(row["debit"] for row in lines)
-        credit = _decimal_sum(row["credit"] for row in lines)
+        debit = Decimal(str(entry["debit"] or "0"))
+        credit = Decimal(str(entry["credit"] or "0"))
         all_debit += debit
         all_credit += credit
         if debit != credit:
