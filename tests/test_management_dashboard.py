@@ -196,6 +196,43 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(target["debit"], Decimal("0.10"))
         self.assertEqual(target["credit"], Decimal("0.10"))
 
+    def test_unusual_journal_detection_batches_history_queries_and_keeps_decimal_math(self):
+        self.conn.execute("INSERT INTO journal_entries(id,entry_date,status) VALUES(23,'2026-11-15','posted')")
+        self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(23,9,'300.00','0')")
+        self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(23,1,'0','300.00')")
+        for entry_id in range(100, 200):
+            self.conn.execute(
+                "INSERT INTO journal_entries(id,entry_date,status) VALUES(?, '2026-11-15', 'posted')",
+                (entry_id,),
+            )
+            self.conn.execute(
+                "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(?,9,'1.00','0')",
+                (entry_id,),
+            )
+            self.conn.execute(
+                "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(?,1,'0','1.00')",
+                (entry_id,),
+            )
+
+        statements = []
+        self.conn.set_trace_callback(statements.append)
+        flagged = unusual_journal_entries(self.conn, date(2026,11,1), date(2026,11,30))
+        self.conn.set_trace_callback(None)
+
+        target = next(x for x in flagged if x["id"] == 23)
+        self.assertIn("مبلغ مرتفع عن متوسط حساب 5100", target["reasons"])
+        self.assertEqual(target["debit"], Decimal("300.00"))
+        journal_selects = [
+            sql for sql in statements
+            if sql.lstrip().upper().startswith("SELECT") and "JOURNAL_LINES" in sql.upper()
+        ]
+        per_entry_selects = [
+            sql for sql in statements
+            if "WHERE jl.entry_id=" in sql or "WHERE h.entry_id=" in sql
+        ]
+        self.assertEqual(len(journal_selects), 3)
+        self.assertEqual(per_entry_selects, [])
+
     def test_cached_snapshot_is_invalidated_by_new_journal_lines(self):
         from management_dashboard import cached_management_snapshot
         first = cached_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
