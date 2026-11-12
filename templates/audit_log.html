@@ -23,7 +23,7 @@
       {% for row in audit_page.rows %}
         <tr>
           <td>{{ row.created_at }}</td>
-          <td>{{ row.full_name or row.username or 'نظام' }}{% if row.username %}<small class="muted">({{ row.username }})</small>{% endif %}</td>
+          <td>{{ row.actor_name or row.full_name or row.username or 'نظام' }}{% if row.username %}<small class="muted">({{ row.username }})</small>{% endif %}</td>
           <td>{{ row.action }}</td>
           <td>{{ row.entity_type or '-' }}</td>
           <td>{{ row.entity_id or '-' }}</td>
