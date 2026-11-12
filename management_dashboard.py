@@ -280,6 +280,14 @@ def load_management_account_roles(conn):
     profile = get_active_activity_profile(conn)
     profile_roles = active_account_role_ids(conn)
     is_custom_profile = profile["code"] != profile["base_activity"]
+    customization_row = conn.execute(
+        "SELECT meta_value FROM management_dashboard_meta WHERE meta_key='roles_customized'"
+    ).fetchone() if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='management_dashboard_meta'"
+    ).fetchone() else None
+    management_roles_customized = bool(
+        customization_row and customization_row["meta_value"] == "1"
+    )
     for role, account_ids in profile_roles.items():
         if role not in result:
             continue
@@ -287,7 +295,9 @@ def load_management_account_roles(conn):
             # A selected custom profile owns its activity defaults. Built-in
             # profiles retain any explicit management-account configuration.
             result[role] = set(account_ids)
-        elif not result[role]:
+        elif not result[role] and not management_roles_customized:
+            # An intentionally cleared mapping is different from an unconfigured
+            # legacy installation: do not silently repopulate it from defaults.
             result[role].update(account_ids)
     return result
 
