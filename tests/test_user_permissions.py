@@ -25,6 +25,11 @@ class UserPermissionRouteTests(unittest.TestCase):
             (id,username,full_name,role,active,permissions_json,password_hash,created_at)
             VALUES(1,'admin','مدير','admin',1,?,'hash','2026-01-01')""",
             (json.dumps(["users.manage"]),))
+        conn.execute("""CREATE TABLE audit_log(
+            id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT,
+            created_at TEXT, entity_type TEXT, entity_id TEXT, remote_addr TEXT,
+            outcome TEXT NOT NULL DEFAULT 'success'
+        )""")
         conn.commit()
         conn.close()
         nexus.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
@@ -56,9 +61,16 @@ class UserPermissionRouteTests(unittest.TestCase):
         role, permissions = conn.execute(
             "SELECT role,permissions_json FROM users WHERE id=1"
         ).fetchone()
+        audit = conn.execute(
+            "SELECT action,entity_type,outcome,details FROM audit_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
         conn.close()
         self.assertEqual(role, "admin")
         self.assertEqual(permissions, '["users.manage"]')
+        self.assertEqual(audit[0], "module_operation")
+        self.assertEqual(audit[1], "core")
+        self.assertEqual(audit[2], "failure")
+        self.assertIn("edit_user", audit[3])
 
     def test_user_cannot_change_own_role_or_permissions_even_with_admin_page_access(self):
         with self.client.session_transaction() as session:
