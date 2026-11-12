@@ -121,6 +121,27 @@ class AuditLogTests(unittest.TestCase):
         self.assertEqual(rows[1]["outcome"], "failure")
 
 
+    def test_audit_captures_transaction_and_custody_route_ids(self):
+        def open_database():
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+
+        with nexus_app.app.test_request_context("/bank/reconcile/91", method="POST"):
+            nexus_app.session["user_id"] = 17
+            nexus_app.request.url_rule = SimpleNamespace(endpoint="bank.reconcile")
+            nexus_app.request.view_args = {"transaction_id": 91}
+            with patch.object(nexus_app, "db", side_effect=open_database):
+                response = nexus_app.app.response_class("Saved", status=200)
+                nexus_app.audit_operational_mutations(response)
+
+        row = self.connection.execute(
+            "SELECT entity_type,entity_id,outcome FROM audit_log"
+        ).fetchone()
+        self.assertEqual(row["entity_type"], "bank")
+        self.assertEqual(row["entity_id"], "91")
+        self.assertEqual(row["outcome"], "success")
+
     def test_purchase_blueprint_mutations_are_included_in_operational_audit(self):
         def open_database():
             connection = sqlite3.connect(self.db_path)
