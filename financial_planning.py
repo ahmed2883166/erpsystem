@@ -1008,7 +1008,7 @@ def build_cash_flow_snapshot(conn, start, end):
             net = Decimal(str(entry["cash_net"] or "0"))
             if not net:
                 continue
-            counterpart = conn.execute(f"""SELECT a.account_type,a.code,a.name_ar,jl.debit,jl.credit
+            counterpart = conn.execute(f"""SELECT jl.account_id,a.account_type,a.code,a.name_ar,jl.debit,jl.credit
                 FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
                 WHERE jl.entry_id=? AND jl.account_id NOT IN ({marks})""",
                 (entry["id"], *ids)).fetchall()
