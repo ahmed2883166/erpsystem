@@ -268,10 +268,18 @@ def load_management_account_roles(conn):
         if row["role"] in result:
             result[row["role"]].add(row["account_id"])
     # Use profile defaults only when no explicit management mapping exists.
-    from activity_profiles import active_account_role_ids
+    from activity_profiles import get_active_activity_profile, active_account_role_ids
+    profile = get_active_activity_profile(conn)
     profile_roles = active_account_role_ids(conn)
+    is_custom_profile = profile["code"] != profile["base_activity"]
     for role, account_ids in profile_roles.items():
-        if role in result and not result[role]:
+        if role not in result:
+            continue
+        if is_custom_profile:
+            # A selected custom profile owns its activity defaults. Built-in
+            # profiles retain any explicit management-account configuration.
+            result[role] = set(account_ids)
+        elif not result[role]:
             result[role].update(account_ids)
     return result
 
