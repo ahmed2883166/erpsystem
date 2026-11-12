@@ -71,6 +71,17 @@ def initialize_planning_schema(conn):
     CREATE INDEX IF NOT EXISTS idx_financial_year_journal_history
       ON financial_year_journal_history(financial_year_id,entry_kind,id);
     """)
+    journal_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
+    if "entry_type" not in journal_columns:
+        conn.execute("ALTER TABLE journal_entries ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'general'")
+    # Backfill an explicit semantic type for historical closing journals.
+    # The history relation is authoritative; references and journal numbers are not.
+    conn.execute("""UPDATE journal_entries SET entry_type='year_end_closing'
+        WHERE id IN (SELECT entry_id FROM financial_year_journal_history
+                     WHERE entry_kind='closing' AND action='created')""")
+    conn.execute("""UPDATE journal_entries SET entry_type='year_end_closing_reversal'
+        WHERE id IN (SELECT entry_id FROM financial_year_journal_history
+                     WHERE entry_kind='closing' AND action='reversed')""")
 
 
 def create_financial_year(conn, year_name, start_date, end_date, created_by=None):
@@ -354,6 +365,7 @@ def close_financial_year(conn, year_id, created_by=None):
             f"قيد إقفال الإيرادات والمصروفات للسنة المالية {year['year_name']}",
             closing_lines, created_by,
         )
+        conn.execute("UPDATE journal_entries SET entry_type='year_end_closing' WHERE id=?", (entry_id,))
         conn.execute("UPDATE financial_years SET closing_entry_id=?,status='closed' WHERE id=?",
                      (entry_id, year_id))
         conn.execute("""INSERT INTO financial_year_journal_history
@@ -422,6 +434,10 @@ def reverse_financial_year_entry(conn, year_id, entry_kind, reversal_date, reaso
             f"قيد عكسي للقيد رقم {original_id} — {str(reason).strip()}",
             reversal_lines, created_by,
         )
+        if entry_kind == "closing":
+            conn.execute("UPDATE journal_entries SET entry_type='year_end_closing_reversal' WHERE id=?", (reversal_id,))
+        else:
+            conn.execute("UPDATE journal_entries SET entry_type='opening_reversal' WHERE id=?", (reversal_id,))
         if entry_kind == "closing":
             conn.execute("UPDATE financial_years SET closing_entry_id=NULL,status='open' WHERE id=?", (year_id,))
         else:
