@@ -86,6 +86,26 @@ class CashFlowReportTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("قائمة التدفقات النقدية", response.get_data(as_text=True))
 
+    def test_indirect_method_is_available_and_shows_reconciliation_lines(self):
+        response = self.client.get(
+            "/reports/cash-flow?date_from=2026-11-01&date_to=2026-11-30"
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("الطريقة غير المباشرة", body)
+        self.assertIn("صافي الربح قبل التدفقات النقدية", body)
+        self.assertIn("التغير في العملاء والمدينين", body)
+        self.assertIn("صافي التدفق النقدي من التشغيل", body)
+
+    def test_direct_method_remains_selectable(self):
+        response = self.client.get(
+            "/reports/cash-flow?date_from=2026-11-01&date_to=2026-11-30&method=direct"
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("الطريقة المباشرة", body)
+        self.assertNotIn("صافي الربح قبل التدفقات النقدية", body)
+
     def test_cash_flow_reconciles_opening_movements_and_closing_cash(self):
         response = self.client.get(
             "/reports/cash-flow?date_from=2026-11-01&date_to=2026-11-30"
