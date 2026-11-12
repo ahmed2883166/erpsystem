@@ -149,8 +149,8 @@ def dashboard_period_balances(conn, current_start, current_end, previous_start, 
         WHERE je.status='posted' AND je.entry_date<=?
           {'AND ' + ' AND '.join(dimension_conditions) if dimension_conditions else ''}
         GROUP BY a.id,a.code,a.name_ar,a.account_type,a.is_group
-    """, (current_start,current_end,previous_start,previous_end,current_start,current_end,
-          previous_start,previous_end,current_end,*dimension_params)).fetchall()
+    """, (current_start,current_end,current_start,current_end,
+          previous_start,previous_end,previous_start,previous_end,current_end,*dimension_params)).fetchall()
 
     def make_balances(debit_key, credit_key):
         return {row["id"]: {
