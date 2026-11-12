@@ -40,6 +40,66 @@ def closing_entries_exclusion_sql(conn):
     return "1=1"
 
 
+
+def comparison_period(date_from, date_to, mode="previous_year"):
+    """Return an inclusive comparison range: prior period or same dates last year."""
+    start = date.fromisoformat(date_from)
+    end = date.fromisoformat(date_to)
+    if mode == "previous_period":
+        previous_end = start - date.resolution
+        previous_start = previous_end - (end - start)
+        return previous_start.isoformat(), previous_end.isoformat()
+    if mode == "previous_year":
+        def shift_year(value):
+            year = value.year - 1
+            next_month = value.month % 12 + 1
+            next_year = year + (1 if value.month == 12 else 0)
+            last_day = (date(next_year, next_month, 1) - date.resolution).day
+            return date(year, value.month, min(value.day, last_day))
+        return shift_year(start).isoformat(), shift_year(end).isoformat()
+    return None
+
+
+def add_income_statement_comparison(current, previous):
+    """Merge current and prior account rows and calculate variances."""
+    for section in ("revenue_rows", "cogs_rows", "operating_expense_rows"):
+        current_by_id = {row["id"]: row for row in current[section]}
+        previous_by_id = {row["id"]: row for row in previous[section]}
+        merged = []
+        for account_id in sorted(
+            set(current_by_id) | set(previous_by_id),
+            key=lambda key: (current_by_id.get(key) or previous_by_id[key])["code"],
+        ):
+            row = dict(current_by_id.get(account_id) or previous_by_id[account_id])
+            if account_id not in current_by_id:
+                row.update(debit=Decimal("0"), credit=Decimal("0"), balance=Decimal("0"))
+            prior_balance = previous_by_id.get(account_id, {}).get("balance", Decimal("0"))
+            variance = row["balance"] - prior_balance
+            row.update(
+                previous_balance=prior_balance,
+                variance=variance,
+                variance_percent=(variance / abs(prior_balance) * Decimal("100"))
+                if prior_balance else None,
+            )
+            merged.append(row)
+        current[section] = merged
+
+    comparison = {}
+    for key in (
+        "revenue_total", "cogs_total", "gross_profit",
+        "operating_expense_total", "net_profit",
+    ):
+        prior = previous[key]
+        variance = current[key] - prior
+        comparison[key] = prior
+        comparison[key + "_variance"] = variance
+        comparison[key + "_variance_percent"] = (
+            variance / abs(prior) * Decimal("100")
+        ) if prior else None
+    current["comparison"] = comparison
+    return current
+
+
 def build_income_statement(conn, date_from, date_to):
     """Calculate revenue, COGS, gross profit, operating expenses and net profit."""
     register_decimal_aggregates(conn)
