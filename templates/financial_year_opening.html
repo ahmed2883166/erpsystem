@@ -3,22 +3,22 @@
 {% block content %}
 <header>
   <h2>أرصدة افتتاح السنة المالية: {{ year.year_name }}</h2>
-  <p class="muted">تاريخ القيد سيكون {{ year.start_date }}. أدخل الرصيد الطبيعي لكل حساب؛ اترك الحسابات التي لا يوجد لها رصيد بصفر.</p>
+  <p class="muted">تاريخ القيد سيكون {{ year.start_date }}. أدخل الرصيد الطبيعي موجبًا، وإذا كان رصيد الحساب عكسيًا أدخله بالسالب؛ اترك الحسابات التي لا يوجد لها رصيد بصفر.</p>
 </header>
 <section class="panel">
   <form method="post">
     <h3>الأصول</h3>
     <div class="table-wrap"><table>
-      <thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>الرصيد المدين</th></tr></thead>
+      <thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>الرصيد (موجب مدين / سالب دائن)</th></tr></thead>
       <tbody>
       {% for account in accounts if account.account_type == 'asset' %}
-        <tr><td>{{ account.code }}</td><td>{{ account.name_ar }}</td><td><input type="number" name="balance_{{ account.id }}" min="0" step="0.01" value="0"></td></tr>
+        <tr><td>{{ account.code }}</td><td>{{ account.name_ar }}</td><td><input type="number" name="balance_{{ account.id }}" step="0.01" value="0"></td></tr>
       {% else %}<tr><td colspan="3">لا توجد حسابات أصول تفصيلية نشطة.</td></tr>{% endfor %}
       </tbody>
     </table></div>
     <h3>الالتزامات</h3>
     <div class="table-wrap"><table>
-      <thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>الرصيد الدائن</th></tr></thead>
+      <thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>الرصيد (موجب دائن / سالب مدين)</th></tr></thead>
       <tbody>
       {% for account in accounts if account.account_type == 'liability' %}
         <tr><td>{{ account.code }}</td><td>{{ account.name_ar }}</td><td><input type="number" name="balance_{{ account.id }}" min="0" step="0.01" value="0"></td></tr>
