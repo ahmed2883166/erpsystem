@@ -673,6 +673,14 @@ def activity_profiles():
                 if not profile:
                     raise ValueError("ملف النشاط غير موجود.")
                 if action == "activate":
+                    current_activity = connection.execute(
+                        "SELECT setting_value FROM company_settings WHERE setting_key='activity'"
+                    ).fetchone()
+                    has_posted_entries = connection.execute(
+                        "SELECT 1 FROM journal_entries WHERE status='posted' LIMIT 1"
+                    ).fetchone()
+                    if has_posted_entries and current_activity and current_activity["setting_value"] != profile["base_activity"]:
+                        raise ValueError("لا يمكن تغيير النشاط الأساسي بعد ترحيل قيود؛ يلزم إجراء تحويل محاسبي معتمد.")
                     errors = validate_activity_profile(connection, profile)
                     if errors:
                         raise ValueError("لا يمكن تفعيل الملف قبل معالجة الحسابات: " + "؛ ".join(errors[:5]))
