@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -61,6 +62,53 @@ class SalesIntegrationTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
         self.tmp.cleanup()
+
+    def test_custom_activity_profile_controls_invoice_account_posting(self):
+        from activity_profiles import (
+            initialize_activity_profiles_schema, create_activity_profile,
+            list_activity_profiles, update_custom_activity_profile,
+        )
+        from chart_templates import ensure_activity_chart_accounts
+        ensure_activity_chart_accounts(self.db, "commercial")
+        self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type) VALUES('1131','عملاء الخدمات','asset')"
+        )
+        self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type) VALUES('4101','إيرادات الخدمات','revenue')"
+        )
+        initialize_activity_profiles_schema(self.db)
+        profile_id = create_activity_profile(
+            self.db, "sales_custom", "ملف مبيعات مخصص", "commercial"
+        )
+        profile = next(p for p in list_activity_profiles(self.db) if p["id"] == profile_id)
+        posting = dict(profile["posting_accounts"])
+        posting["ar"] = "1131"
+        posting["revenue"] = "4101"
+        update_custom_activity_profile(
+            self.db, profile_id, json.dumps(profile["account_roles"]),
+            json.dumps(posting), json.dumps(profile["tax_roles"]),
+        )
+        self.db.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity_profile_code','sales_custom')"
+        )
+        self.db.commit()
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "20"}], "14", 1
+        )
+        self.db.commit()
+        posted_codes = {
+            row["code"] for row in self.db.execute(
+                """SELECT DISTINCT a.code FROM journal_lines jl
+                   JOIN accounts a ON a.id=jl.account_id
+                   WHERE jl.entry_id IN (?,?)""",
+                (invoice["journal_entry_id"], invoice["cogs_journal_entry_id"]),
+            )
+        }
+        self.assertIn("1131", posted_codes)
+        self.assertIn("4101", posted_codes)
+        self.assertNotIn("1130", posted_codes)
 
     def test_invoice_posts_revenue_tax_cogs_and_stock_issue(self):
         self.db.execute("BEGIN IMMEDIATE")
