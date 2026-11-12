@@ -1323,7 +1323,8 @@ def trial_balance():
     date_to = request.args.get("date_to", "").strip()
     account_type = request.args.get("account_type", "").strip()
     q = request.args.get("q", "").strip()
-    include_closing = request.args.get("include_closing", "1").strip() != "0"
+    include_closing_values = request.args.getlist("include_closing")
+    include_closing = not include_closing_values or include_closing_values[-1].strip() != "0"
     allowed_types = {"asset", "liability", "equity", "revenue", "expense"}
     if account_type not in allowed_types:
         account_type = ""
