@@ -11,8 +11,9 @@ from datetime import date, datetime
 from pathlib import Path
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
+import uuid
 
-from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for, has_request_context
+from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for, has_request_context, g
 from chart_templates import CHARTS, ACTIVITY_LABELS, seed_activity_chart, ensure_activity_chart_accounts, migrate_vat_accounts
 from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
@@ -267,11 +268,17 @@ def initialize_database():
         ("entity_id", "TEXT"),
         ("remote_addr", "TEXT"),
         ("outcome", "TEXT NOT NULL DEFAULT 'success'"),
+        ("actor_name", "TEXT"),
+        ("before_values", "TEXT"),
+        ("after_values", "TEXT"),
+        ("reason", "TEXT"),
+        ("request_id", "TEXT"),
     ):
         if column not in audit_columns:
             connection.execute(f"ALTER TABLE audit_log ADD COLUMN {column} {declaration}")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at,id)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user_action ON audit_log(user_id,action,created_at)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_request_id ON audit_log(request_id)")
     connection.executescript("""
         CREATE TRIGGER IF NOT EXISTS audit_log_block_update
         BEFORE UPDATE ON audit_log
@@ -365,31 +372,74 @@ def now():
     return datetime.now().isoformat(timespec="seconds")
 
 
-def log(action, details="", entity_type=None, entity_id=None, outcome="success"):
+def _audit_safe_value(value, key=""):
+    sensitive = ("password", "secret", "token", "csrf", "api_key", "license_key", "private_key")
+    if any(term in str(key).lower() for term in sensitive):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {str(item_key): _audit_safe_value(item_value, str(item_key)) for item_key, item_value in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_audit_safe_value(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)[:500]
+
+
+def _audit_json(value):
+    if value is None:
+        return None
+    return json.dumps(_audit_safe_value(value), ensure_ascii=False, sort_keys=True, default=str)[:12000]
+
+
+def log(action, details="", entity_type=None, entity_id=None, outcome="success",
+        before_values=None, after_values=None, reason=None, request_id=None):
     connection = db()
     user_id = session.get("user_id") if has_request_context() else None
     remote_addr = request.remote_addr if has_request_context() else None
     timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    if has_request_context():
+        request_id = request_id or getattr(g, "audit_request_id", None)
+        if not request_id:
+            request_id = uuid.uuid4().hex
+            g.audit_request_id = request_id
+        if reason is None:
+            reason = request.form.get("change_reason") or request.form.get("reason") or None
+    actor_name = None
     try:
         if user_id is not None:
             try:
-                actor_exists = connection.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone()
+                actor = connection.execute("SELECT username,full_name FROM users WHERE id=?", (user_id,)).fetchone()
             except sqlite3.Error:
-                actor_exists = None
-            if not actor_exists:
+                actor = None
+            if actor:
+                actor_name = actor["full_name"] or actor["username"]
+            else:
                 user_id = None
         connection.execute(
             """INSERT INTO audit_log
-               (user_id, action, details, created_at, entity_type, entity_id, remote_addr, outcome)
-               VALUES(?,?,?,?,?,?,?,?)""",
+               (user_id, action, details, created_at, entity_type, entity_id, remote_addr,
+                outcome, actor_name, before_values, after_values, reason, request_id)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (user_id, action, str(details or "")[:1000], timestamp,
              str(entity_type)[:100] if entity_type else None,
              str(entity_id)[:100] if entity_id is not None else None,
-             remote_addr, outcome if outcome in {"success", "failure"} else "success"),
+             remote_addr, outcome if outcome in {"success", "failure"} else "success",
+             str(actor_name)[:200] if actor_name else None,
+             _audit_json(before_values), _audit_json(after_values),
+             str(reason)[:1000] if reason else None,
+             str(request_id)[:64] if request_id else None),
         )
         connection.commit()
     finally:
         connection.close()
+
+
+def log_change(action, entity_type, entity_id, before_values, after_values, details="", reason=None):
+    log(
+        action, details, entity_type=entity_type, entity_id=entity_id,
+        outcome="success", before_values=before_values, after_values=after_values,
+        reason=reason,
+    )
 
 
 
@@ -621,6 +671,13 @@ def company_setup():
             flash("أدخل اسم شركة ومعدل ضريبة صحيحًا من 0 إلى 100.", "error")
             connection.close()
             return redirect(url_for("company_setup"))
+        previous_settings = {
+            row["setting_key"]: row["setting_value"]
+            for row in connection.execute(
+                "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
+                "('company_name','tax_country','tax_regime','activity','base_currency','default_vat_rate','inventory_cost_method')"
+            ).fetchall()
+        }
         previous_activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
         previous_activity = previous_activity_row["setting_value"] if previous_activity_row else None
         has_entries = connection.execute("SELECT 1 FROM journal_entries LIMIT 1").fetchone()
@@ -656,7 +713,13 @@ def company_setup():
                            ("ضريبة القيمة المضافة", vat_rate))
         connection.commit()
         connection.close()
-        log("company_setup_updated", f"{activity}/{tax_country}/{base_currency}")
+        log_change(
+            "company_setup_updated", "company_settings", "company",
+            previous_settings,
+            {key: value for key, value in settings_values.items() if key != "tax_number"},
+            details=f"{activity}/{tax_country}/{base_currency}",
+            reason=request.form.get("change_reason", "").strip(),
+        )
         flash("تم حفظ إعدادات الشركة والعملات والنظام الضريبي.", "success")
         return redirect(url_for("company_setup"))
     settings = {row["setting_key"]: row["setting_value"] for row in connection.execute("SELECT * FROM company_settings")}
@@ -895,10 +958,23 @@ def edit_account(account_id):
                 flash("الحساب الأب غير صالح أو يؤدي إلى تكوين دورة في الشجرة.", "error")
             else:
                 try:
+                    before_values = {
+                        "code": account["code"], "name_ar": account["name_ar"],
+                        "account_type": account["account_type"], "parent_id": account["parent_id"],
+                        "is_group": account["is_group"], "active": account["active"],
+                    }
+                    after_values = {
+                        "code": code, "name_ar": name, "account_type": new_type,
+                        "parent_id": int(parent_id) if parent_id else None,
+                        "is_group": new_group, "active": account["active"],
+                    }
                     connection.execute("UPDATE accounts SET code=?,name_ar=?,account_type=?,parent_id=?,is_group=? WHERE id=?",
                         (code,name,new_type,parent_id,new_group,account_id))
                     connection.commit()
-                    log("account_updated", code)
+                    log_change(
+                        "account_updated", "account", account_id, before_values, after_values,
+                        details=code, reason=request.form.get("change_reason", "").strip(),
+                    )
                     connection.close()
                     flash("تم تعديل الحساب.", "success")
                     return redirect(url_for("accounts"))
@@ -1420,7 +1496,8 @@ def audit_log():
     page = fetch_page(
         connection,
         f"""SELECT al.id,al.action,al.details,al.created_at,al.entity_type,al.entity_id,
-                   al.remote_addr,al.outcome,u.username,u.full_name
+                   al.remote_addr,al.outcome,al.actor_name,al.before_values,al.after_values,
+                   al.reason,al.request_id,u.username,u.full_name
             FROM audit_log al LEFT JOIN users u ON u.id=al.user_id
             WHERE {where} ORDER BY al.created_at DESC,al.id DESC""",
         f"""SELECT COUNT(*) FROM audit_log al LEFT JOIN users u ON u.id=al.user_id
@@ -1764,7 +1841,7 @@ def accounting_period_state(period_id):
         flash("حالة الفترة غير صحيحة.", "error")
         return redirect(url_for("accounting_periods"))
     connection = db()
-    row = connection.execute("SELECT period_name,start_date,end_date FROM accounting_periods WHERE id=?", (period_id,)).fetchone()
+    row = connection.execute("SELECT period_name,start_date,end_date,locked FROM accounting_periods WHERE id=?", (period_id,)).fetchone()
     if not row:
         connection.close()
         flash("الفترة المحاسبية غير موجودة.", "error")
@@ -1784,7 +1861,13 @@ def accounting_period_state(period_id):
     connection.execute("UPDATE accounting_periods SET locked=? WHERE id=?", (int(state), period_id))
     connection.commit()
     connection.close()
-    log("accounting_period_locked" if state == "1" else "accounting_period_unlocked", row["period_name"])
+    log_change(
+        "accounting_period_locked" if state == "1" else "accounting_period_unlocked",
+        "accounting_period", period_id,
+        {"period_name": row["period_name"], "start_date": row["start_date"], "end_date": row["end_date"], "locked": row["locked"]},
+        {"period_name": row["period_name"], "start_date": row["start_date"], "end_date": row["end_date"], "locked": int(state)},
+        details=row["period_name"], reason=request.form.get("change_reason", "").strip(),
+    )
     flash("تم إقفال الفترة؛ لن تقبل قيودًا جديدة." if state == "1" else "تم فتح الفترة المحاسبية.", "success")
     return redirect(url_for("accounting_periods"))
 
@@ -1919,9 +2002,24 @@ def edit_user(user_id):
                     requested_active = 1 if request.form.get("active") == "yes" else 0
                     if role != user["role"] or selected != current_permissions or requested_active != user["active"]:
                         raise ValueError("لا يمكنك تغيير دورك أو صلاحياتك أو حالة حسابك من الجلسة الحالية.")
+                before_values = {
+                    "username": user["username"], "full_name": user["full_name"],
+                    "role": user["role"], "active": user["active"],
+                    "permissions": stored_user_permissions(user["permissions_json"], user["role"]),
+                }
+                after_values = {
+                    "username": request.form["username"].strip(),
+                    "full_name": request.form["full_name"].strip(), "role": role,
+                    "active": 1 if request.form.get("active") == "yes" else 0,
+                    "permissions": selected,
+                }
                 connection.execute("UPDATE users SET username=?,full_name=?,role=?,active=?,permissions_json=? WHERE id=?",
                   (request.form["username"].strip(),request.form["full_name"].strip(),role,1 if request.form.get("active")=="yes" else 0,json.dumps(selected, ensure_ascii=False),user_id))
-                connection.commit(); connection.close(); log("user_updated",request.form["username"].strip())
+                connection.commit(); connection.close()
+                log_change(
+                    "user_updated", "user", user_id, before_values, after_values,
+                    details=after_values["username"], reason=request.form.get("change_reason", "").strip(),
+                )
                 flash("تم تعديل المستخدم.","success"); return redirect(url_for("users"))
             except sqlite3.IntegrityError:
                 connection.rollback(); flash("اسم المستخدم مستخدم بالفعل.","error")
