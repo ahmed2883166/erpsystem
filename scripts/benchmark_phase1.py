@@ -79,13 +79,25 @@ def main():
             else:
                 entry_date = date(2026, 11, 1) + timedelta(days=(entry_id % 30))
             amount = str(100 + (entry_id % 17))
+            if entry_id == 1:
+                description = "Synthetic opening capital"
+                debit_account, credit_account = 1, 6
+                debit_memo, credit_memo = "Opening cash", "Opening equity"
+            elif entry_id % 2 == 0:
+                description = "Synthetic cash sale"
+                debit_account, credit_account = 1, 7
+                debit_memo, credit_memo = "Cash sale", "Sales revenue"
+            else:
+                description = "Synthetic operating expense"
+                debit_account, credit_account = 9, 1
+                debit_memo, credit_memo = "Operating expense", "Cash payment"
             entry_rows.append((
                 entry_id, entry_date.isoformat(), f"BENCH-{entry_id:07d}",
-                "Synthetic operating expense", "posted", "general", 1, "2026-11-12 00:00:00"
+                description, "posted", "general", 1, "2026-11-12 00:00:00"
             ))
             line_id = entry_id * 2
-            line_rows.append((line_id, entry_id, 9, amount, "0", "Operating expense"))
-            line_rows.append((line_id + 1, entry_id, 1, "0", amount, "Cash payment"))
+            line_rows.append((line_id, entry_id, debit_account, amount, "0", debit_memo))
+            line_rows.append((line_id + 1, entry_id, credit_account, "0", amount, credit_memo))
         conn.executemany(
             "INSERT INTO journal_entries VALUES(?,?,?,?,?,?,?,?)", entry_rows
         )
@@ -127,6 +139,7 @@ def main():
                 "unbalanced_entries": len(reconciliation["unbalanced"]),
                 "flagged_entries": len(anomalies),
                 "forecast_weeks": len(forecast["weeks"]),
+                "balance_sheet_balanced": snapshot["balance_ok"],
             },
         }
         print(json.dumps(result, ensure_ascii=False, indent=2))
