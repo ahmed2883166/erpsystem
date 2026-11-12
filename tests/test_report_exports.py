@@ -263,7 +263,7 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
 
     def test_cash_flow_export_uses_cash_flow_snapshot(self):
         response = self.client.get(
-            "/reports/export/cash-flow/excel?date_from=2026-01-01&date_to=2026-12-31"
+            "/reports/export/cash-flow/excel?date_from=2026-01-01&date_to=2026-12-31&method=direct"
         )
         self.assertEqual(response.status_code, 200)
         workbook = load_workbook(io.BytesIO(response.data), data_only=True)
