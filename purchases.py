@@ -736,7 +736,7 @@ def new_credit_note():
             journal_lines=[(ap_id,total,0,"تخفيض مديونية المورد بإشعار دائن"),
                            (inventory_id,0,subtotal,"إخراج مخزون مرتجع للمورد")]
             if tax:
-                vat_id=account(c,_activity_posting_accounts(c)["input_vat"],"asset")
+                vat_id=account(c,_activity_tax_roles(c)["input_vat"],"asset")
                 journal_lines.append((vat_id,0,tax,"عكس ضريبة المدخلات حسب إشعار المورد"))
             entry_id=create_journal(c,request.form["credit_date"],credit_no,
                 "إشعار دائن مشتريات — "+supplier_credit_no,journal_lines,session["user_id"],dimensions=dimensions)
