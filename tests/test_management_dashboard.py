@@ -220,7 +220,7 @@ class ManagementDashboardTests(unittest.TestCase):
         self.conn.set_trace_callback(None)
 
         target = next(x for x in flagged if x["id"] == 23)
-        self.assertIn("مبلغ مرتفع عن متوسط حساب 5100", target["reasons"])
+        self.assertIn("مبلغ مرتفع عن متوسط حساب 6400", target["reasons"])
         self.assertEqual(target["debit"], Decimal("300.00"))
         journal_selects = [
             sql for sql in statements
