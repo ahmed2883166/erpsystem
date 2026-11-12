@@ -37,7 +37,7 @@ from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
 from app_paths import DATA_DIR, DB_PATH, BACKUP_DIR
 from backup_scheduler import create_backup_archive, next_backup_datetime, start_backup_scheduler
-from backup_restore import extract_validated_backup, create_database_safety_copy, restore_database_with_rollback
+from backup_restore import extract_validated_backup, restore_database_with_rollback
 from income_statement import (build_income_statement, normalize_income_statement_period,
                                comparison_period, add_income_statement_comparison,
                                closing_entries_exclusion_sql)
@@ -2016,6 +2016,18 @@ def create_backup():
     return send_file(filename, as_attachment=True, download_name=filename.name)
 
 
+@app.route("/backup/download/<filename>")
+@requires("backup.manage")
+def backup_download(filename):
+    if (Path(filename).name != filename or not filename.startswith("nexus-backup-")
+            or not filename.endswith(".zip")):
+        return "Not found", 404
+    archive_path = BACKUP_DIR / filename
+    if not archive_path.is_file():
+        return "Not found", 404
+    return send_file(archive_path, as_attachment=True, download_name=filename)
+
+
 @app.route("/backup/settings", methods=["GET", "POST"])
 @requires("backup.manage")
 def backup_settings():
@@ -2121,10 +2133,18 @@ def restore_backup():
         temp_paths.append(candidate_path)
         extract_validated_backup(archive_path, candidate_path)
 
+        settings_connection = db()
+        keep_row = settings_connection.execute(
+            "SELECT setting_value FROM company_settings WHERE setting_key='backup_keep_count'"
+        ).fetchone()
+        keep_count = int(keep_row["setting_value"]) if keep_row else 30
+        settings_connection.close()
+        safety_archive = create_backup_archive(DB_PATH, BACKUP_DIR, keep_count)
         safety_fd, safety_name = tempfile.mkstemp(prefix="before-restore-", suffix=".db", dir=BACKUP_DIR)
         os.close(safety_fd)
         safety_path = Path(safety_name)
-        create_database_safety_copy(DB_PATH, safety_path)
+        temp_paths.append(safety_path)
+        extract_validated_backup(safety_archive, safety_path)
         restore_database_with_rollback(candidate_path, DB_PATH, safety_path, initialize_database)
 
         log("backup_restored", upload.filename)
