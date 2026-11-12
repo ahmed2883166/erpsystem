@@ -1640,7 +1640,10 @@ def import_accounts():
 @app.route("/backup/create")
 @requires("backup.manage")
 def create_backup():
-    filename = create_backup_archive(DB_PATH, BACKUP_DIR, 30)
+    connection = db()
+    keep_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='backup_keep_count'").fetchone()
+    connection.close()
+    filename = create_backup_archive(DB_PATH, BACKUP_DIR, int(keep_row["setting_value"]) if keep_row else 30)
     log("backup_created", filename.name)
     return send_file(filename, as_attachment=True, download_name=filename.name)
 
