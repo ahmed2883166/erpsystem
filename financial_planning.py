@@ -340,10 +340,7 @@ def close_financial_year(conn, year_id, created_by=None):
             raise ValueError("لا توجد أرصدة إيرادات أو مصروفات مرحلة داخل السنة لإقفالها.")
         net_profit = revenue_total - expense_total
         if net_profit:
-            retained = conn.execute("""SELECT id FROM accounts
-                WHERE code='3200' AND account_type='equity' AND is_group=0 AND active=1 LIMIT 1""").fetchone()
-            if not retained:
-                raise ValueError("حساب الأرباح المرحلة التفصيلي النشط (3200) غير موجود؛ راجع شجرة الحسابات قبل الإقفال.")
+            retained = _retained_earnings_account(conn)
             if net_profit > 0:
                 closing_lines.append((retained["id"], Decimal("0"), net_profit, "صافي ربح السنة إلى الأرباح المرحلة"))
             else:
