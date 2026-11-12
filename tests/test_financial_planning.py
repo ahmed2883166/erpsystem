@@ -196,7 +196,7 @@ class FinancialYearJournalTests(unittest.TestCase):
 
     def test_opening_must_match_previous_closed_year_balances(self):
         self._create_closed_previous_year()
-        with self.assertRaisesRegex(ValueError, "لا تطابق إقفال السنة السابقة"):
+        with self.assertRaisesRegex(ValueError, "لا تطابق الأرصدة الدفترية"):
             create_opening_entry(self.conn, self.year_id,
                 {"1": "1199", "2": "200", "3": "800", "4": "199"}, 1)
         self.assertIsNone(self.conn.execute(
@@ -226,7 +226,7 @@ class FinancialYearJournalTests(unittest.TestCase):
         self.conn.commit()
         with self.assertRaisesRegex(ValueError, "لا تطابق الأرصدة الدفترية"):
             create_opening_entry(self.conn, self.year_id,
-                {"1": "1199", "2": "200", "3": "800", "4": "201"}, 1)
+                {"1": "1199", "2": "200", "3": "800", "4": "199"}, 1)
         entry_id = create_opening_entry(self.conn, self.year_id,
             {"1": "1200", "2": "200", "3": "800", "4": "200"}, 1)
         self.assertIsNotNone(entry_id)
