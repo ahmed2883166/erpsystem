@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}ملفات الأنشطة | NEXUS ERP{% endblock %}
+{% block content %}
+<header><div><h2>ملفات الأنشطة</h2><p>إدارة إعدادات النشاط دون استبدال دليل حسابات الشركة أو المساس بأرصدة الحسابات الحالية.</p></div></header>
+<section class="panel">
+  <h3>إنشاء ملف نشاط جديد</h3>
+  <p class="muted">الملف الجديد يرث أدوار الحسابات وحسابات الترحيل والضريبة من نشاط أساسي. تخصيص قواعد مستقلة لكل ملف سيكون قابلًا للتوسعة لاحقًا دون تغيير دليل الحسابات.</p>
+  <form method="post">
+    <input type="hidden" name="action" value="create">
+    <div class="form-row">
+      <div><label>رمز الملف (إنجليزي)</label><input name="code" required pattern="[a-z][a-z0-9_]{1,39}" placeholder="مثال: logistics"></div>
+      <div><label>اسم النشاط</label><input name="name" required maxlength="100" placeholder="مثال: النقل والخدمات اللوجستية"></div>
+      <div><label>النشاط الأساسي</label><select name="base_activity" required>{% for key,label in activities.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
+      <div><label>وصف مختصر</label><input name="description" maxlength="500" placeholder="وصف استخدام الملف"></div>
+    </div>
+    <button type="submit">إنشاء ملف النشاط</button>
+  </form>
+</section>
+<section class="panel">
+  <h3>الملفات المسجلة</h3>
+  {% for profile in profiles %}
+  <article class="panel">
+    <div class="form-row">
+      <div><strong>{{ profile.name }}</strong><p class="muted">{{ profile.code }} · الأساس: {{ activities.get(profile.base_activity, profile.base_activity) }}</p></div>
+      <div><span class="badge">{{ "مدمج" if profile.is_builtin else "مخصص" }}</span> {% if profile.selected %}<strong>النشاط المستخدم حاليًا</strong>{% endif %}</div>
+    </div>
+    {% if profile.description %}<p>{{ profile.description }}</p>{% endif %}
+    {% if profile.validation_errors %}
+      <p class="muted">نتيجة فحص التوافق:</p><ul>{% for error in profile.validation_errors %}<li>{{ error }}</li>{% endfor %}</ul>
+    {% else %}<p>فحص الحسابات: سليم</p>{% endif %}
+    {% if not profile.selected and profile.active %}
+    <form method="post">
+      <input type="hidden" name="action" value="activate"><input type="hidden" name="profile_id" value="{{ profile.id }}">
+      <button type="submit" {% if profile.validation_errors %}disabled{% endif %}>تفعيل الملف</button>
+    </form>
+    {% endif %}
+    {% if not profile.is_builtin and profile.active and not profile.selected %}
+    <form method="post"><input type="hidden" name="action" value="deactivate"><input type="hidden" name="profile_id" value="{{ profile.id }}"><button type="submit" class="secondary">تعطيل</button></form>
+    {% endif %}
+    {% if not profile.active %}<span>معطل</span>{% endif %}
+  </article>
+  {% else %}<p>لا توجد ملفات أنشطة.</p>{% endfor %}
+</section>
+{% endblock %}
