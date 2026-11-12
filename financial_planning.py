@@ -499,6 +499,11 @@ def close_financial_year(conn, year_id, created_by=None, allow_warnings=False):
         conn.execute("""INSERT INTO financial_year_journal_history
             (financial_year_id,entry_kind,action,entry_id,created_by)
             VALUES(?,'closing','created',?,?)""", (year_id, entry_id, created_by))
+        if preclose["warnings"] and allow_warnings and _table_exists_financial(conn, "audit_log"):
+            conn.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
+                VALUES(?,?,?,CURRENT_TIMESTAMP)""",
+                (created_by, "financial_year_warnings_approved",
+                 f"اعتماد تحذيرات الإقفال للسنة {year_id} — قيد الإقفال {entry_id}"))
         conn.commit()
         return entry_id
     except Exception:
@@ -718,12 +723,6 @@ def financial_year_close(year_id):
             abort(403)
         entry_id = close_financial_year(conn, year_id, session.get("user_id"),
                                         allow_warnings=allow_warnings)
-        if allow_warnings and _table_exists_financial(conn, "audit_log"):
-            conn.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
-                VALUES(?,?,?,CURRENT_TIMESTAMP)""",
-                (session.get("user_id"), "financial_year_warnings_approved",
-                 f"اعتماد تحذيرات الإقفال للسنة {year_id} — قيد الإقفال {entry_id}"))
-            conn.commit()
         flash(f"تم إقفال السنة المالية بقيد رقم {entry_id}.", "success")
     except (ValueError, sqlite3.IntegrityError) as exc:
         flash(str(exc) or "تعذر إقفال السنة المالية.", "error")
