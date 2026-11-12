@@ -29,7 +29,7 @@ from party_reports import party_bp
 from management_dashboard import cached_management_snapshot, initialize_management_dashboard_schema
 from analytic_dimensions import initialize_analytic_dimensions_schema, active_dimension_options, validate_journal_dimensions
 from financial_planning import planning_bp, initialize_planning_schema
-from activity_profiles import (initialize_activity_profiles_schema, list_activity_profiles, create_activity_profile, set_activity_profile_active, validate_activity_profile)
+from activity_profiles import (initialize_activity_profiles_schema, list_activity_profiles, create_activity_profile, set_activity_profile_active, validate_activity_profile, update_custom_activity_profile)
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
@@ -667,6 +667,17 @@ def activity_profiles():
                 connection.commit()
                 log("activity_profile_created", request.form.get("code", ""), "activity_profile", profile_id)
                 flash("تم إنشاء ملف النشاط. راجع توافق الحسابات قبل استخدامه.", "success")
+            elif action == "update_mappings":
+                profile_id = int(request.form.get("profile_id", "0"))
+                update_custom_activity_profile(
+                    connection, profile_id,
+                    request.form.get("account_roles_json", ""),
+                    request.form.get("posting_accounts_json", ""),
+                    request.form.get("tax_roles_json", ""),
+                )
+                connection.commit()
+                log("activity_profile_mappings_updated", str(profile_id), "activity_profile", profile_id)
+                flash("تم حفظ خرائط الحسابات والضرائب بعد التحقق من نوع كل حساب.", "success")
             elif action in {"activate", "deactivate"}:
                 profile_id = int(request.form.get("profile_id", "0"))
                 profile = next((p for p in list_activity_profiles(connection, True) if p["id"] == profile_id), None)
