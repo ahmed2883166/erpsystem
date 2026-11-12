@@ -98,6 +98,70 @@ def account_balances(conn, date_from=None, date_to=None, dimensions=None, exclud
     }
 
 
+
+def _closing_entry_condition(conn):
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
+    if "entry_type" in columns:
+        return "COALESCE(je.entry_type,'general') NOT IN ('year_end_closing','year_end_closing_reversal')"
+    history_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_year_journal_history'"
+    ).fetchone()
+    if history_exists:
+        return """je.id NOT IN (
+            SELECT entry_id FROM financial_year_journal_history WHERE entry_kind='closing'
+        ) AND je.id NOT IN (
+            SELECT related_entry_id FROM financial_year_journal_history
+            WHERE entry_kind='closing' AND action='reversed' AND related_entry_id IS NOT NULL
+        )"""
+    return "1=1"
+
+
+def dashboard_period_balances(conn, current_start, current_end, previous_start, previous_end,
+                               dimensions=None):
+    """Fetch current, previous and as-of balances in one exact grouped ledger scan."""
+    dimensions = dimensions or {}
+    available_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")}
+    dimension_conditions, dimension_params = [], []
+    for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id"):
+        value = dimensions.get(key)
+        if value not in (None, ""):
+            if key not in available_columns:
+                raise ValueError("مخطط الأبعاد التحليلية غير محدث. أعد تشغيل البرنامج لإكمال التحديث.")
+            dimension_conditions.append(f"jl.{key}=?")
+            dimension_params.append(int(value))
+    closing_filter = _closing_entry_condition(conn)
+    register_decimal_aggregates(conn)
+    rows = conn.execute(f"""
+        SELECT a.id,a.code,a.name_ar,a.account_type,a.is_group,
+          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date BETWEEN ? AND ?
+            AND ({closing_filter}) THEN jl.debit ELSE '0' END),'0') current_debit,
+          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date BETWEEN ? AND ?
+            AND ({closing_filter}) THEN jl.credit ELSE '0' END),'0') current_credit,
+          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date BETWEEN ? AND ?
+            AND ({closing_filter}) THEN jl.debit ELSE '0' END),'0') previous_debit,
+          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date BETWEEN ? AND ?
+            AND ({closing_filter}) THEN jl.credit ELSE '0' END),'0') previous_credit,
+          COALESCE(DECIMAL_SUM(jl.debit),'0') asof_debit,
+          COALESCE(DECIMAL_SUM(jl.credit),'0') asof_credit
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id=jl.entry_id
+        JOIN accounts a ON a.id=jl.account_id
+        WHERE je.status='posted' AND je.entry_date<=?
+          {'AND ' + ' AND '.join(dimension_conditions) if dimension_conditions else ''}
+        GROUP BY a.id,a.code,a.name_ar,a.account_type,a.is_group
+    """, (current_start,current_end,previous_start,previous_end,current_start,current_end,
+          previous_start,previous_end,current_end,*dimension_params)).fetchall()
+
+    def make_balances(debit_key, credit_key):
+        return {row["id"]: {
+            "id":row["id"],"code":row["code"],"name":row["name_ar"],
+            "type":row["account_type"],"is_group":bool(row["is_group"]),
+            "debit":_decimal(row[debit_key]),"credit":_decimal(row[credit_key]),
+        } for row in rows}
+    return (make_balances("current_debit","current_credit"),
+            make_balances("previous_debit","previous_credit"),
+            make_balances("asof_debit","asof_credit"))
+
 def income_figures(balances, direct_cost_codes=None, direct_cost_ids=None):
     revenue = sum((b["credit"] - b["debit"] for b in balances.values()
                    if b["type"] == "revenue" and not b["is_group"]), Decimal("0"))
@@ -280,13 +344,10 @@ def build_management_snapshot(conn, start, end, dimensions=None):
     period_days = (end - start).days
     previous_end = start - timedelta(days=1)
     previous_start = previous_end - timedelta(days=period_days)
-    current_balances = account_balances(
-        conn, start.isoformat(), end.isoformat(), dimensions, exclude_closing_entries=True
+    current_balances, previous_balances, as_of = dashboard_period_balances(
+        conn, start.isoformat(), end.isoformat(),
+        previous_start.isoformat(), previous_end.isoformat(), dimensions
     )
-    previous_balances = account_balances(
-        conn, previous_start.isoformat(), previous_end.isoformat(), dimensions, exclude_closing_entries=True
-    )
-    as_of = account_balances(conn, date_to=end.isoformat(), dimensions=dimensions)
     current = income_figures(current_balances, direct_cost_ids=roles["direct_cost"])
     previous = income_figures(previous_balances, direct_cost_ids=roles["direct_cost"])
     cumulative = income_figures(as_of, direct_cost_ids=roles["direct_cost"])
