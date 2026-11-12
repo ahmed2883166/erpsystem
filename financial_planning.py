@@ -133,6 +133,63 @@ def _history_sequence(conn, year_id, entry_kind, action):
     return int(row[0]) + 1
 
 
+def _previous_closed_financial_year(conn, start_date):
+    return conn.execute("""SELECT * FROM financial_years
+        WHERE end_date < ? ORDER BY end_date DESC,id DESC LIMIT 1""",
+        (start_date,)).fetchone()
+
+
+def _opening_balance_mismatches(conn, previous_year, normalized):
+    """Compare submitted natural-sign balances with the previous closed year-end balances."""
+    rows = conn.execute("""SELECT a.id,a.code,a.name_ar,a.account_type,jl.debit,jl.credit
+        FROM accounts a
+        LEFT JOIN journal_lines jl ON jl.account_id=a.id
+        LEFT JOIN journal_entries je ON je.id=jl.entry_id AND je.status='posted'
+            AND je.entry_date<=?
+        WHERE a.account_type IN ('asset','liability','equity') AND a.is_group=0
+        ORDER BY a.code,jl.id""", (previous_year["end_date"],)).fetchall()
+    previous = {}
+    metadata = {}
+    for row in rows:
+        account_id = row["id"]
+        metadata[account_id] = row
+        item = previous.setdefault(account_id, Decimal("0"))
+        # LEFT JOIN rows without a qualifying journal entry have NULL amounts.
+        debit = Decimal(str(row["debit"] or "0")) if row["debit"] is not None else Decimal("0")
+        credit = Decimal(str(row["credit"] or "0")) if row["credit"] is not None else Decimal("0")
+        if row["debit"] is not None or row["credit"] is not None:
+            previous[account_id] = item + (debit - credit if row["account_type"] == "asset" else credit - debit)
+    mismatches = []
+    for account_id in set(previous) | set(normalized):
+        expected = previous.get(account_id, Decimal("0")).quantize(CENT)
+        supplied = normalized.get(account_id, Decimal("0")).quantize(CENT)
+        if expected != supplied:
+            account = metadata.get(account_id)
+            code = account["code"] if account else str(account_id)
+            name = account["name_ar"] if account else ""
+            mismatches.append((code, name, expected, supplied))
+    return mismatches
+
+
+def _retained_earnings_account(conn):
+    activity = "commercial"
+    if _table_exists_financial(conn, "company_settings"):
+        row = conn.execute("""SELECT setting_value FROM company_settings
+            WHERE setting_key='activity' LIMIT 1""").fetchone()
+        if row and row["setting_value"] in ACTIVITY_ACCOUNT_ROLES:
+            activity = row["setting_value"]
+    role_codes = ACTIVITY_ACCOUNT_ROLES.get(activity, {}).get("retained_earnings", ())
+    if isinstance(role_codes, str):
+        role_codes = (role_codes,)
+    for code in role_codes:
+        account = conn.execute("""SELECT id FROM accounts
+            WHERE code=? AND account_type='equity' AND is_group=0 AND active=1 LIMIT 1""",
+            (code,)).fetchone()
+        if account:
+            return account
+    raise ValueError(f"لم يتم العثور على حساب تفصيلي نشط لدور الأرباح المحتجزة للنشاط ({activity}).")
+
+
 def create_opening_entry(conn, year_id, balances, created_by=None):
     """Post one balanced opening journal using balance-sheet accounts only."""
     _start_financial_year_transaction(conn)
