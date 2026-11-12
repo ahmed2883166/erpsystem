@@ -137,22 +137,24 @@ def validate_activity_profile(conn, profile):
 
 
 def get_active_activity_profile(conn):
-    """Resolve the company's selected profile; legacy companies safely use built-ins."""
-    selected = conn.execute(
-        "SELECT setting_value FROM company_settings WHERE setting_key='activity_profile_code'"
+    """Resolve the selected profile; legacy databases safely fall back to built-ins."""
+    settings_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
     ).fetchone()
-    activity_row = conn.execute(
-        "SELECT setting_value FROM company_settings WHERE setting_key='activity'"
+    settings = {}
+    if settings_table:
+        settings = {row["setting_key"]: row["setting_value"] for row in conn.execute(
+            "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity_profile_code','activity')"
+        )}
+    code = settings.get("activity_profile_code") or settings.get("activity") or "commercial"
+    profile_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='activity_profiles'"
     ).fetchone()
-    code = selected["setting_value"] if selected else (
-        activity_row["setting_value"] if activity_row else "commercial"
-    )
     row = conn.execute(
         "SELECT * FROM activity_profiles WHERE code=? AND active=1", (code,)
-    ).fetchone()
+    ).fetchone() if profile_table else None
     if not row:
-        # Existing databases may not yet have run profile schema initialization.
-        activity = activity_row["setting_value"] if activity_row else "commercial"
+        activity = settings.get("activity") or code
         from chart_templates import ACTIVITY_ACCOUNT_ROLES, ACTIVITY_POSTING_ACCOUNTS, ACTIVITY_TAX_ACCOUNT_ROLES
         if activity not in ACTIVITY_POSTING_ACCOUNTS:
             raise ValueError("ملف النشاط الحالي غير معروف أو غير نشط.")
