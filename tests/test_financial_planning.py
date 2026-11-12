@@ -211,6 +211,43 @@ class FinancialYearJournalTests(unittest.TestCase):
         entry_id = create_opening_entry(self.conn, self.year_id,
             {"1": "1200", "2": "200", "3": "800", "4": "200"}, 1)
         self.assertIsNotNone(entry_id)
+ 
+    def test_opening_is_reconciled_even_when_previous_year_is_not_closed(self):
+        previous_id = create_financial_year(
+            self.conn, "2025", "2025-01-01", "2025-12-31", 1
+        )
+        create_opening_entry(self.conn, previous_id,
+            {"1": "1000", "2": "200", "3": "800", "4": "0"}, 1)
+        post_journal(self.conn, "2025-03-01", "SALE-OPEN-2025", "بيع سابق",
+            [(1, "300", "0", "تحصيل"), (5, "0", "300", "إيراد")], 1)
+        self.conn.commit()
+        post_journal(self.conn, "2025-04-01", "EXP-OPEN-2025", "مصروف سابق",
+            [(6, "100", "0", "مصروف"), (1, "0", "100", "سداد")], 1)
+        self.conn.commit()
+        with self.assertRaisesRegex(ValueError, "لا تطابق الأرصدة الدفترية"):
+            create_opening_entry(self.conn, self.year_id,
+                {"1": "1199", "2": "200", "3": "800", "4": "201"}, 1)
+        entry_id = create_opening_entry(self.conn, self.year_id,
+            {"1": "1200", "2": "200", "3": "800", "4": "200"}, 1)
+        self.assertIsNotNone(entry_id)
+
+    def test_opening_reconciles_legacy_balances_without_previous_year_record(self):
+        post_journal(self.conn, "2025-01-01", "LEGACY-OPEN", "أرصدة تاريخية",
+            [(1, "1000", "0", "صندوق"), (2, "0", "200", "موردون"),
+             (3, "0", "800", "رأس مال")], 1)
+        self.conn.commit()
+        post_journal(self.conn, "2025-03-01", "LEGACY-SALE", "بيع تاريخي",
+            [(1, "300", "0", "تحصيل"), (5, "0", "300", "إيراد")], 1)
+        self.conn.commit()
+        post_journal(self.conn, "2025-04-01", "LEGACY-EXP", "مصروف تاريخي",
+            [(6, "100", "0", "مصروف"), (1, "0", "100", "سداد")], 1)
+        self.conn.commit()
+        with self.assertRaisesRegex(ValueError, "أرصدة الشركة التاريخية"):
+            create_opening_entry(self.conn, self.year_id,
+                {"1": "1100", "2": "200", "3": "800", "4": "100"}, 1)
+        entry_id = create_opening_entry(self.conn, self.year_id,
+            {"1": "1200", "2": "200", "3": "800", "4": "200"}, 1)
+        self.assertIsNotNone(entry_id)
 
     def test_opening_entry_balances_and_links_once(self):
         entry_id = self._opening()
@@ -327,6 +364,40 @@ class FinancialYearJournalTests(unittest.TestCase):
         ).fetchone())
         replacement_id = self._opening()
         self.assertNotEqual(opening_id, replacement_id)
+
+    def test_reversing_close_is_blocked_after_next_year_opening(self):
+        self._opening()
+        self._activity()
+        close_financial_year(self.conn, self.year_id, 1)
+        next_year_id = create_financial_year(
+            self.conn, "2027", "2027-01-01", "2027-12-31", 1
+        )
+        create_opening_entry(self.conn, next_year_id,
+            {"1": "1200", "2": "200", "3": "800", "4": "200"}, 1)
+        with self.assertRaisesRegex(ValueError, "السنة التالية"):
+            reverse_financial_year_entry(
+                self.conn, self.year_id, "closing", "2026-12-31", "محاولة عكس بعد افتتاح السنة التالية", 1
+            )
+        self.assertEqual(
+            self.conn.execute("SELECT status FROM financial_years WHERE id=?", (self.year_id,)).fetchone()[0],
+            "closed",
+        )
+
+    def test_reversing_close_is_blocked_by_later_journal_even_without_year_record(self):
+        self._opening()
+        self._activity()
+        close_financial_year(self.conn, self.year_id, 1)
+        post_journal(self.conn, "2027-02-01", "NEXT-YEAR-ENTRY", "قيد في السنة التالية",
+            [(1, "10", "0", "مدين"), (2, "0", "10", "دائن")], 1)
+        self.conn.commit()
+        with self.assertRaisesRegex(ValueError, "يوجد قيد رقم"):
+            reverse_financial_year_entry(
+                self.conn, self.year_id, "closing", "2026-12-31", "عكس بعد قيد لاحق", 1
+            )
+        self.assertEqual(
+            self.conn.execute("SELECT status FROM financial_years WHERE id=?", (self.year_id,)).fetchone()[0],
+            "closed",
+        )
 
     def test_reversing_close_reopens_year_and_keeps_original(self):
         self._opening()
