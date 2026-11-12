@@ -232,16 +232,17 @@ def _activity(conn):
     return row["setting_value"] if row else "commercial"
 
 
-def _sales_account_codes(activity):
-    from chart_templates import ACTIVITY_POSTING_ACCOUNTS
-    if activity not in ACTIVITY_POSTING_ACCOUNTS:
-        raise ValueError("نشاط الشركة غير مدعوم في دورة المبيعات.")
-    return ACTIVITY_POSTING_ACCOUNTS[activity]
+def _sales_account_codes(conn, activity):
+    from activity_profiles import active_posting_accounts
+    codes = active_posting_accounts(conn)
+    if not codes or not codes.get("ar") or not codes.get("revenue"):
+        raise ValueError("ملف النشاط لا يحتوي حسابات العملاء والإيرادات المطلوبة للمبيعات.")
+    return codes
 
 
 def _sales_output_vat_account(conn, activity):
-    from chart_templates import ACTIVITY_TAX_ACCOUNT_ROLES
-    role_map = ACTIVITY_TAX_ACCOUNT_ROLES.get(activity)
+    from activity_profiles import active_tax_roles
+    role_map = active_tax_roles(conn)
     if not role_map or not role_map.get("output_vat"):
         raise ValueError("لم يتم تعريف دور حساب ضريبة المخرجات لهذا النشاط.")
     return _account(conn, role_map["output_vat"], "liability")
@@ -291,7 +292,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
         raise ValueError("أضف صنفًا أو خدمة واحدة على الأقل.")
 
     activity = _activity(conn)
-    codes = _sales_account_codes(activity)
+    codes = _sales_account_codes(conn, activity)
     ar = _account(conn, codes["ar"], "asset")
     revenue = _account(conn, codes["revenue"], "revenue")
     vat = None
@@ -776,7 +777,7 @@ def post_customer_refund(conn, credit_note_id, refund_date, amount, cash_account
         or (cash["code"] not in cash_codes and not any(word in cash_name for word in cash_words))):
         raise ValueError("حساب رد المبلغ يجب أن يكون حساب صندوق أو بنك تفصيليًا ونشطًا.")
     invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=?", (note["invoice_id"],)).fetchone()
-    ar = _account(conn, _sales_account_codes(_activity(conn))["ar"], "asset")
+    ar = _account(conn, _sales_account_codes(conn, _activity(conn))["ar"], "asset")
     refund_no = "SREF-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
     dimensions = validate_journal_dimensions(conn, {
         "branch_id": invoice["branch_id"], "cost_center_id": invoice["cost_center_id"],
