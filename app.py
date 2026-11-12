@@ -1255,9 +1255,6 @@ def management_dashboard():
     connection = db()
     try:
         snapshot = cached_management_snapshot(connection, start, end, dimensions)
-        from management_dashboard import cash_forecast, unusual_journal_entries
-        snapshot["cash_forecast"] = cash_forecast(connection, date.today(), 8)
-        snapshot["unusual_entries"] = unusual_journal_entries(connection, start, end)
         dimension_options = active_dimension_options(connection)
     finally:
         connection.close()
