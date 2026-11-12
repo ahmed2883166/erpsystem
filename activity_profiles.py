@@ -132,6 +132,34 @@ def validate_activity_profile(conn, profile):
             errors.append(f"الحساب {code} غير موجود في دليل حسابات الشركة.")
         elif row["is_group"] or not row["active"]:
             errors.append(f"الحساب {code} تجميعي أو غير نشط ولا يصلح للترحيل.")
+    expected_types = {
+        "posting_accounts": {
+            "ar": "asset", "revenue": "revenue", "vat": "liability",
+            "inventory": "asset", "cogs": "expense",
+            "purchase_inventory": "asset", "supplier_ap": "liability",
+            "input_vat": "asset",
+        },
+        "tax_roles": {"output_vat": "liability", "input_vat": "asset"},
+        "account_roles": {
+            "cash": "asset", "receivables": "asset", "payables": "liability",
+            "inventory": "asset", "quick_assets": "asset", "current_assets": "asset",
+            "current_liabilities": "liability", "direct_cost": "expense",
+            "retained_earnings": "equity",
+        },
+    }
+    for mapping_name, types in expected_types.items():
+        for role, expected_type in types.items():
+            mapping = profile.get(mapping_name) or {}
+            value = mapping.get(role)
+            values = value if isinstance(value, (list, tuple)) else (value,)
+            for code in values:
+                if code in (None, ""):
+                    continue
+                row = existing.get(str(code))
+                if row and row["account_type"] != expected_type:
+                    errors.append(
+                        f"الحساب {code} نوعه {row['account_type']} ولا يتوافق مع الدور {role} ({expected_type})."
+                    )
     return errors
 
 
