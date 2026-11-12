@@ -19,6 +19,7 @@ from accounting_core import reconciliation_snapshot
 from database import connect_database
 from management_dashboard import (
     build_management_snapshot,
+    cached_management_snapshot,
     cash_forecast,
     initialize_management_dashboard_schema,
     unusual_journal_entries,
@@ -113,6 +114,12 @@ def main():
         snapshot, snapshot_seconds = timed(lambda: build_management_snapshot(
             conn, date(2026, 11, 1), date(2026, 11, 30)
         ))
+        dashboard_cold, dashboard_cold_seconds = timed(lambda: cached_management_snapshot(
+            conn, date(2026, 11, 1), date(2026, 11, 30)
+        ))
+        dashboard_warm, dashboard_warm_seconds = timed(lambda: cached_management_snapshot(
+            conn, date(2026, 11, 1), date(2026, 11, 30)
+        ))
         reconciliation, reconciliation_seconds = timed(lambda: reconciliation_snapshot(conn))
         anomalies, anomalies_seconds = timed(lambda: unusual_journal_entries(
             conn, date(2026, 11, 1), date(2026, 11, 30)
@@ -162,6 +169,8 @@ def main():
             "journal_lines": count * 2,
             "results": {
                 "management_snapshot_seconds": snapshot_seconds,
+                "management_dashboard_cold_seconds": dashboard_cold_seconds,
+                "management_dashboard_warm_seconds": dashboard_warm_seconds,
                 "reconciliation_seconds": reconciliation_seconds,
                 "unusual_journal_analysis_seconds": anomalies_seconds,
                 "cash_forecast_seconds": forecast_seconds,
@@ -170,6 +179,9 @@ def main():
             },
             "checks": {
                 "dashboard_revenue": str(snapshot["current"]["revenue"]),
+                "cached_dashboard_has_forecast": "cash_forecast" in dashboard_cold,
+                "cached_dashboard_has_anomaly_review": "unusual_entries" in dashboard_cold,
+                "cached_dashboard_warm_revenue": str(dashboard_warm["current"]["revenue"]),
                 "dashboard_net_profit": str(snapshot["current"]["net_profit"]),
                 "reconciliation_debit": str(reconciliation["journal_totals"]["debit"]),
                 "reconciliation_credit": str(reconciliation["journal_totals"]["credit"]),
