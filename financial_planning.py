@@ -68,7 +68,7 @@ def create_financial_year(conn, year_name, start_date, end_date, created_by=None
             (end, start),
         ).fetchone()
         if overlap:
-            raise ValueError(f"الفترة تتداخل مع السنة المالية: {overlap['year_name']}.")
+            raise ValueError(f"الفترة تتداخل مع السنة المالية: {overlap[0]}.")
         cur = conn.execute(
             """INSERT INTO financial_years(year_name,start_date,end_date,created_by)
                VALUES(?,?,?,?)""",
@@ -110,6 +110,34 @@ def _require(permission):
 def _connect():
     """Open the configured application database using the shared connection policy."""
     return connect_database(DB_PATH)
+
+
+@planning_bp.route("/financial-years", methods=["GET", "POST"])
+@_require("reports.view")
+def financial_years():
+    conn = _connect()
+    if request.method == "POST":
+        if "journal.manage" not in set(session.get("permissions", ())):
+            conn.close()
+            abort(403)
+        try:
+            year_id = create_financial_year(
+                conn,
+                request.form.get("year_name", ""),
+                request.form.get("start_date", ""),
+                request.form.get("end_date", ""),
+                session.get("user_id"),
+            )
+            flash("تم إنشاء السنة المالية بنجاح. لم يتم إنشاء أي قيود محاسبية.", "success")
+            return redirect(url_for("planning.financial_years"))
+        except (ValueError, sqlite3.IntegrityError) as exc:
+            flash(str(exc) or "تعذر إنشاء السنة المالية؛ تحقق من الاسم والتواريخ.", "error")
+        finally:
+            conn.close()
+        return redirect(url_for("planning.financial_years"))
+    years = list_financial_years(conn)
+    conn.close()
+    return render_template("financial_years.html", years=years)
 
 
 @planning_bp.route("/budget", methods=["GET", "POST"])
