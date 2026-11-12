@@ -18,7 +18,7 @@
   <p class="muted">عدد النتائج: {{ audit_page.total }} — الصفحة {{ audit_page.page }} من {{ audit_page.pages }}</p>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>التاريخ والوقت</th><th>المستخدم</th><th>العملية</th><th>نوع السجل</th><th>رقم السجل</th><th>عنوان IP</th><th>النتيجة</th><th>سبب التغيير</th><th>القيم قبل التعديل</th><th>القيم بعد التعديل</th><th>معرّف الطلب</th><th>التفاصيل</th></tr></thead>
+      <thead><tr><th>التاريخ والوقت</th><th>المستخدم</th><th>العملية</th><th>نوع السجل</th><th>رقم السجل</th><th>عنوان IP</th><th>النتيجة</th><th>سبب التغيير</th><th>القيم قبل التعديل</th><th>القيم بعد التعديل</th><th>البيانات المقدمة</th><th>معرّف الطلب</th><th>التفاصيل</th></tr></thead>
       <tbody>
       {% for row in audit_page.rows %}
         <tr>
@@ -32,11 +32,12 @@
           <td>{{ row.reason or '-' }}</td>
           <td><pre class="audit-json">{{ row.before_values or '-' }}</pre></td>
           <td><pre class="audit-json">{{ row.after_values or '-' }}</pre></td>
+          <td><pre class="audit-json">{{ row.submitted_values or '-' }}</pre></td>
           <td><code>{{ row.request_id or '-' }}</code></td>
           <td>{{ row.details or '-' }}</td>
         </tr>
       {% else %}
-        <tr><td colspan="12">لا توجد عمليات مطابقة للفلاتر.</td></tr>
+        <tr><td colspan="13">لا توجد عمليات مطابقة للفلاتر.</td></tr>
       {% endfor %}
       </tbody>
     </table>
