@@ -165,6 +165,36 @@ def register_report_exports(app, db_path, permissions):
                 ])
                 filename = "nexus-balance-sheet.xlsx"
                 title = "قائمة المركز المالي حتى " + as_of
+            elif report == "cash-flow":
+                from financial_planning import build_cash_flow_snapshot
+                from datetime import date as date_type
+                today = date_type.today()
+                date_from = request.args.get("date_from", "").strip() or today.replace(day=1).isoformat()
+                date_to = request.args.get("date_to", "").strip() or today.isoformat()
+                try:
+                    start = date_type.fromisoformat(date_from).isoformat()
+                    end = date_type.fromisoformat(date_to).isoformat()
+                except ValueError:
+                    abort(400)
+                if end < start:
+                    abort(400)
+                snapshot = build_cash_flow_snapshot(conn, start, end)
+                labels = {"operating": "الأنشطة التشغيلية", "investing": "الأنشطة الاستثمارية", "financing": "الأنشطة التمويلية"}
+                headers = ["البند", "التدفقات الداخلة", "التدفقات الخارجة", "صافي التدفق"]
+                data = []
+                for key in ("operating", "investing", "financing"):
+                    incoming = snapshot["sections"][key]["in"]
+                    outgoing = snapshot["sections"][key]["out"]
+                    data.append([labels[key], incoming, outgoing, incoming-outgoing])
+                data.extend([
+                    ["إجمالي المقبوضات والمدفوعات", snapshot["total_in"], snapshot["total_out"], snapshot["net_change"]],
+                    ["رصيد أول الفترة", snapshot["opening"], "", ""],
+                    ["رصيد آخر الفترة", snapshot["closing"], "", ""],
+                    ["فرق المطابقة", snapshot["reconciliation_difference"], "", ""],
+                    ["حالة ربط النقدية", "متاح" if snapshot["cash_mapping_available"] else "غير محدد", "", ""],
+                ])
+                filename = "nexus-cash-flow.xlsx"
+                title = f"قائمة التدفقات النقدية من {start} إلى {end}"
             elif report == "ledger":
                 account_id = request.args.get("account_id", type=int)
                 date_from = request.args.get("date_from", "").strip()
