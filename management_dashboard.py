@@ -391,9 +391,14 @@ def cash_forecast(conn, today=None, weeks=8):
 
 
 def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("3")):
-    # Use the same exact TEXT-to-Decimal aggregates as the rest of the GL.
-    # This report is diagnostic, but its displayed debit/credit totals must
-    # still reconcile to the ledger without SQLite floating-point rounding.
+    """Find unusual posted entries without per-entry or per-line SQL queries.
+
+    Historical averages are calculated with Decimal prefix sums in Python.
+    The database work is bounded to three data queries regardless of the
+    number of candidate entries.
+    """
+    from bisect import bisect_left
+
     register_decimal_aggregates(conn)
     columns = {x["name"] for x in conn.execute("PRAGMA table_info(journal_entries)")}
     ref_expr = "je.reference" if "reference" in columns else "''"
@@ -404,21 +409,64 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
         WHERE je.status='posted' AND je.entry_date BETWEEN ? AND ?
         GROUP BY je.id ORDER BY je.entry_date DESC,je.id DESC""",
         (period_start.isoformat(),period_end.isoformat())).fetchall()
-    result=[]
+    if not entries:
+        return []
+
+    candidate_lines = conn.execute("""SELECT jl.id line_id,jl.entry_id,jl.account_id,
+        jl.debit,jl.credit,a.code,a.name_ar
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id=jl.entry_id
+        JOIN accounts a ON a.id=jl.account_id
+        WHERE je.status='posted' AND je.entry_date BETWEEN ? AND ?
+        ORDER BY jl.entry_id,jl.id""",
+        (period_start.isoformat(),period_end.isoformat())).fetchall()
+    account_ids = sorted({row["account_id"] for row in candidate_lines})
+    history_by_account = {}
+    if account_ids:
+        placeholders = ",".join("?" for _ in account_ids)
+        history_start = (period_start - timedelta(days=90)).isoformat()
+        history_end = (period_end + timedelta(days=1)).isoformat()
+        history_rows = conn.execute(f"""SELECT h.account_id,e.entry_date,h.debit,h.credit
+            FROM journal_lines h
+            JOIN journal_entries e ON e.id=h.entry_id
+            WHERE e.status='posted' AND h.account_id IN ({placeholders})
+              AND e.entry_date>=? AND e.entry_date<?
+            ORDER BY h.account_id,e.entry_date,h.id""",
+            (*account_ids, history_start, history_end)).fetchall()
+        for row in history_rows:
+            bucket = history_by_account.setdefault(row["account_id"], {"dates": [], "prefix": [Decimal("0")]})
+            amount = max(_decimal(row["debit"]), _decimal(row["credit"]))
+            bucket["dates"].append(row["entry_date"])
+            bucket["prefix"].append(bucket["prefix"][-1] + amount)
+
+    lines_by_entry = {}
+    for line in candidate_lines:
+        lines_by_entry.setdefault(line["entry_id"], []).append(line)
+
+    threshold = Decimal(str(multiplier))
+    result = []
     for entry in entries:
-        reasons=[]
-        if date.fromisoformat(entry["entry_date"]) >= period_end-timedelta(days=1):
+        entry_date = date.fromisoformat(entry["entry_date"])
+        reasons = []
+        if entry_date >= period_end - timedelta(days=1):
             reasons.append("قيد في آخر يومين من الفترة")
-        lines=conn.execute("""SELECT jl.account_id,MAX(CAST(jl.debit AS NUMERIC),CAST(jl.credit AS NUMERIC)) amount,
-            a.code,a.name_ar FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=?""",
-            (entry["id"],)).fetchall()
-        for line in lines:
-            avg=conn.execute("""SELECT AVG(MAX(CAST(h.debit AS NUMERIC),CAST(h.credit AS NUMERIC)))
-                FROM journal_lines h JOIN journal_entries e ON e.id=h.entry_id
-                WHERE h.account_id=? AND e.status='posted' AND e.entry_date>=date(?,'-90 day')
-                AND e.entry_date<? AND h.entry_id<>?""",
-                (line["account_id"],entry["entry_date"],entry["entry_date"],entry["id"])).fetchone()[0]
-            if avg is not None and float(avg)>0 and float(line["amount"])>=float(avg)*float(multiplier):
+        lower_date = (entry_date - timedelta(days=90)).isoformat()
+        current_date = entry_date.isoformat()
+        for line in lines_by_entry.get(entry["id"], ()):
+            history = history_by_account.get(line["account_id"])
+            if not history:
+                continue
+            dates = history["dates"]
+            prefix = history["prefix"]
+            lower = bisect_left(dates, lower_date)
+            upper = bisect_left(dates, current_date)
+            count = upper - lower
+            if count <= 0:
+                continue
+            historical_total = prefix[upper] - prefix[lower]
+            average = historical_total / Decimal(count)
+            amount = max(_decimal(line["debit"]), _decimal(line["credit"]))
+            if average > 0 and amount >= average * threshold:
                 reasons.append("مبلغ مرتفع عن متوسط حساب "+line["code"]+" — "+line["name_ar"])
         if reasons:
             result.append({"id":entry["id"],"date":entry["entry_date"],"reference":entry["reference"] or "",
