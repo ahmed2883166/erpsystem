@@ -267,6 +267,12 @@ def load_management_account_roles(conn):
     for row in conn.execute("SELECT account_id,role FROM management_account_roles"):
         if row["role"] in result:
             result[row["role"]].add(row["account_id"])
+    # Use profile defaults only when no explicit management mapping exists.
+    from activity_profiles import active_account_role_ids
+    profile_roles = active_account_role_ids(conn)
+    for role, account_ids in profile_roles.items():
+        if role in result and not result[role]:
+            result[role].update(account_ids)
     return result
 
 
