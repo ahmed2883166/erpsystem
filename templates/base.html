@@ -84,6 +84,7 @@
 <div class="global-report-actions no-print">
   <button type="button" class="secondary" onclick="window.print()" title="طباعة الشاشة أو حفظها PDF">▤ طباعة / PDF</button>
   <button type="button" class="secondary" id="exportCurrentReport" hidden>تنزيل Excel</button>
+  <button type="button" class="secondary" id="exportCurrentReportPdf" hidden>تنزيل PDF للشاشة</button>
 </div>
 {% endif %}
 <button class="theme-toggle secondary" type="button" id="themeToggle">◐ المظهر</button>
@@ -98,6 +99,7 @@
 (function(){
  const printAction=document.querySelector('.global-report-actions');
  const exportAction=document.getElementById('exportCurrentReport');
+ const exportPdfAction=document.getElementById('exportCurrentReportPdf');
  const forms=[...document.querySelectorAll('form[method="post" i],form:not([method])')].filter(form=>!form.classList.contains('no-print'));
  const printButtons=[...document.querySelectorAll('[onclick*="window.print"]')];
  const isDirty=el=>{
@@ -113,7 +115,9 @@
  const refresh=()=>{
    const blocked=hasUnsavedEntry();
    if(printAction)printAction.hidden=blocked;
-   if(exportAction)exportAction.hidden=blocked||!document.querySelector('main table');
+   const hasTables=!!document.querySelector('main table');
+   if(exportAction)exportAction.hidden=blocked||!hasTables;
+   if(exportPdfAction)exportPdfAction.hidden=blocked||!hasTables;
    printButtons.forEach(button=>button.hidden=blocked);
    return blocked;
  };
@@ -127,13 +131,13 @@
  });
 })();
 (function(){
- const button=document.getElementById('exportCurrentReport');
- if(!button)return;
- const tables=[...document.querySelectorAll('main table')].filter(table=>table.querySelectorAll('tr').length>0);
- button.hidden=!tables.length;
- button.addEventListener('click',async()=>{
+ const excelButton=document.getElementById('exportCurrentReport');
+ const pdfButton=document.getElementById('exportCurrentReportPdf');
+ if(!excelButton&&!pdfButton)return;
+ const buildPayload=()=>{
+   const tables=[...document.querySelectorAll('main table')].filter(table=>table.querySelectorAll('tr').length>0);
    const visibleRows=table=>[...table.querySelectorAll('tr')].filter(row=>row.getClientRects().length>0);
-   const payload={
+   return {
      title:document.querySelector('main h2,main h1')?.innerText||document.title||'NEXUS ERP',
      tables:tables.map((table,index)=>({
        title:table.closest('.panel')?.querySelector('h3,h2')?.innerText||('جدول '+(index+1)),
@@ -143,10 +147,14 @@
        }))
      })).filter(table=>table.rows.length>0)
    };
+ };
+ const download=async(button,format)=>{
+   if(!button)return;
+   const payload=buildPayload();
    if(!payload.tables.length)return;
    button.disabled=true;
    try{
-     const response=await fetch('/reports/export/current-screen/excel',{
+     const response=await fetch('/reports/export/current-screen/'+format,{
        method:'POST',
        headers:{'Content-Type':'application/json','X-CSRFToken':document.querySelector('meta[name="csrf-token"]')?.content||''},
        body:JSON.stringify(payload)
@@ -155,11 +163,21 @@
      const blob=await response.blob();
      const url=URL.createObjectURL(blob);
      const link=document.createElement('a');
-     link.href=url;link.download='NEXUS-ERP-Report.xlsx';
+     link.href=url;
+     link.download=format==='pdf'?'NEXUS-ERP-Current-Screen.pdf':'NEXUS-ERP-Report.xlsx';
      document.body.appendChild(link);link.click();link.remove();
      URL.revokeObjectURL(url);
-   }catch(error){alert('تعذر تصدير التقرير. تأكد من صلاحية العرض ثم حاول مرة أخرى.');}
-   finally{button.disabled=false;}
- });
+   }catch(error){
+     alert(format==='pdf'?'تعذر إنشاء PDF للشاشة الحالية. تأكد من تثبيت مكتبات PDF والخط العربي وصلاحية العرض.':'تعذر تصدير Excel. تأكد من صلاحية العرض ثم حاول مرة أخرى.');
+   }finally{button.disabled=false;}
+ };
+ if(excelButton){
+   excelButton.hidden=!document.querySelector('main table');
+   excelButton.addEventListener('click',()=>download(excelButton,'excel'));
+ }
+ if(pdfButton){
+   pdfButton.hidden=!document.querySelector('main table');
+   pdfButton.addEventListener('click',()=>download(pdfButton,'pdf'));
+ }
 })();
 </script>{% block scripts %}{% endblock %}</body></html>
