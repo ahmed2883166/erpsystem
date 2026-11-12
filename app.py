@@ -1255,6 +1255,24 @@ def management_dashboard():
     try:
         snapshot = cached_management_snapshot(connection, start, end, dimensions)
         dimension_options = active_dimension_options(connection)
+        # Keep a large anomaly review from producing thousands of HTML table rows.
+        # The full result remains cached; only the current response is paginated.
+        anomaly_rows = snapshot.get("unusual_entries", [])
+        anomaly_total = len(anomaly_rows)
+        anomaly_per_page = 100
+        anomaly_pages = max(1, (anomaly_total + anomaly_per_page - 1) // anomaly_per_page)
+        anomaly_page = min(max(1, request.args.get("unusual_page", 1, type=int) or 1), anomaly_pages)
+        snapshot["unusual_total"] = anomaly_total
+        snapshot["unusual_page"] = anomaly_page
+        snapshot["unusual_pages"] = anomaly_pages
+        snapshot["unusual_entries"] = anomaly_rows[
+            (anomaly_page - 1) * anomaly_per_page:anomaly_page * anomaly_per_page
+        ]
+        anomaly_query = {"date_from": start.isoformat(), "date_to": end.isoformat(), **dimensions}
+        if anomaly_page > 1:
+            snapshot["unusual_prev_url"] = url_for("management_dashboard", **anomaly_query, unusual_page=anomaly_page - 1)
+        if anomaly_page < anomaly_pages:
+            snapshot["unusual_next_url"] = url_for("management_dashboard", **anomaly_query, unusual_page=anomaly_page + 1)
     finally:
         connection.close()
     return render_template(
