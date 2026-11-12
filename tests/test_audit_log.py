@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import app as nexus_app
@@ -77,7 +78,7 @@ class AuditLogTests(unittest.TestCase):
 
         with nexus_app.app.test_request_context("/sales/invoices/44", method="POST"):
             nexus_app.session["user_id"] = 17
-            nexus_app.request.endpoint = "sales.test_mutation"
+            nexus_app.request.url_rule = SimpleNamespace(endpoint="sales.test_mutation")
             nexus_app.request.view_args = {"invoice_id": 44}
             with patch.object(nexus_app, "db", side_effect=open_database):
                 response = nexus_app.app.response_class("Saved", status=200)
