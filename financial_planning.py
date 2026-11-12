@@ -20,6 +20,15 @@ def _money(value):
         raise ValueError("أدخل مبلغًا رقميًا موجبًا أو صفرًا.")
     return amount.quantize(CENT, rounding=ROUND_HALF_UP)
 
+def _signed_money(value):
+    try:
+        amount = Decimal(str(value or "0"))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError("أدخل رصيدًا رقميًا صحيحًا.")
+    if not amount.is_finite():
+        raise ValueError("أدخل رصيدًا رقميًا صحيحًا.")
+    return amount.quantize(CENT, rounding=ROUND_HALF_UP)
+
 
 def initialize_planning_schema(conn):
     conn.executescript("""
@@ -142,7 +151,7 @@ def create_opening_entry(conn, year_id, balances, created_by=None):
                 raise ValueError("يوجد رقم حساب غير صحيح في أرصدة الافتتاح.")
             if account_id <= 0 or account_id in normalized:
                 raise ValueError("يوجد حساب مكرر أو غير صحيح.")
-            normalized[account_id] = _money(raw_amount)
+            normalized[account_id] = _signed_money(raw_amount)
         marks = ",".join("?" for _ in normalized)
         accounts = conn.execute(
             f"SELECT id,code,name_ar,account_type,is_group,active FROM accounts WHERE id IN ({marks})",
@@ -160,9 +169,10 @@ def create_opening_entry(conn, year_id, balances, created_by=None):
             totals[kind] += amount
             if amount:
                 if kind == "asset":
-                    lines.append((account["id"], amount, Decimal("0"), "رصيد افتتاحي"))
+                    debit, credit = max(amount, Decimal("0")), max(-amount, Decimal("0"))
                 else:
-                    lines.append((account["id"], Decimal("0"), amount, "رصيد افتتاحي"))
+                    debit, credit = max(-amount, Decimal("0")), max(amount, Decimal("0"))
+                lines.append((account["id"], debit, credit, "رصيد افتتاحي"))
         if totals["asset"] != totals["liability"] + totals["equity"]:
             raise ValueError(
                 "قيد الافتتاح غير متوازن: الأصول "
