@@ -25,7 +25,7 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
                 id INTEGER PRIMARY KEY, year_name TEXT, start_date TEXT, end_date TEXT, status TEXT
             );
             CREATE TABLE journal_entries(
-                id INTEGER PRIMARY KEY, entry_date TEXT, status TEXT
+                id INTEGER PRIMARY KEY, entry_date TEXT, status TEXT, entry_type TEXT NOT NULL DEFAULT 'general'
             );
             CREATE TABLE management_account_roles(account_id INTEGER, role TEXT);
             CREATE TABLE management_dashboard_meta(meta_key TEXT PRIMARY KEY, meta_value TEXT);
@@ -87,13 +87,16 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
             INSERT INTO journal_entries VALUES
                 (1,'2025-06-01','posted'),
                 (2,'2026-06-01','posted'),
-                (3,'2026-07-01','draft');
+                (3,'2026-07-01','draft'),
+                (4,'2026-06-15','posted','year_end_closing');
             INSERT INTO journal_lines VALUES
                 (1,1,1,'100','0'),
                 (2,1,2,'0','100'),
                 (3,2,1,'250','0'),
                 (4,2,2,'0','250'),
-                (5,3,1,'999','0');
+                (5,3,1,'999','0'),
+                (6,4,1,'25','0'),
+                (7,4,2,'0','25');
         """)
         conn.commit()
         conn.close()
@@ -123,6 +126,29 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         self.assertEqual(by_period["2025"][0][7], 100)
         self.assertEqual(by_period["2026"][0][7], 250)
         self.assertNotIn(999, [cell for row in rows for cell in row])
+
+    def test_trial_balance_export_can_exclude_closing_entries(self):
+        response = self.client.get("/reports/export/trial-balance/excel?include_closing=0")
+        self.assertEqual(response.status_code, 200)
+        values = list(load_workbook(io.BytesIO(response.data), data_only=True).active.values)
+        rows_2026 = [row for row in values if row and row[0] == "2026" and row[4] in ("1110", "4100")]
+        self.assertEqual(len(rows_2026), 2)
+        cash = next(row for row in rows_2026 if row[4] == "1110")
+        revenue = next(row for row in rows_2026 if row[4] == "4100")
+        self.assertEqual(cash[7], 250)
+        self.assertEqual(revenue[8], 250)
+
+    def test_income_statement_export_includes_comparison_columns(self):
+        response = self.client.get(
+            "/reports/export/income-statement/excel?date_from=2026-06-01&date_to=2026-06-30&compare=previous_year"
+        )
+        self.assertEqual(response.status_code, 200)
+        values = list(load_workbook(io.BytesIO(response.data), data_only=True).active.values)
+        self.assertTrue(any("الفترة المقارنة" in row for row in values if row))
+        revenue = next(row for row in values if row and row[1] == "4100")
+        self.assertEqual(revenue[5], 250)
+        self.assertEqual(revenue[6], 100)
+        self.assertEqual(revenue[7], 150)
 
     def test_trial_balance_export_applies_date_filter_to_each_year(self):
         response = self.client.get(
