@@ -1059,21 +1059,67 @@ def journal():
         except (ValueError, TypeError, OverflowError) as exc:
             connection.rollback()
             flash(str(exc) or "بيانات القيد غير صحيحة.", "error")
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    status_filter = request.args.get("status", "").strip()
+    entry_type_filter = request.args.get("entry_type", "").strip()
+    search_query = request.args.get("q", "").strip()[:100]
+    for value in (date_from, date_to):
+        if value:
+            try:
+                if datetime.fromisoformat(value).date().isoformat() != value:
+                    raise ValueError()
+            except ValueError:
+                flash("تاريخ البحث غير صحيح.", "error")
+                date_from = date_to = ""
+                break
+    if date_from and date_to and date_from > date_to:
+        flash("تاريخ البداية يجب ألا يسبق تاريخ النهاية.", "error")
+        date_from = date_to = ""
+    if status_filter not in ("draft", "posted"):
+        status_filter = ""
+    if entry_type_filter not in ("general", "year_end_closing", "year_end_closing_reversal"):
+        entry_type_filter = ""
+    filters, filter_params = [], []
+    if date_from:
+        filters.append("entry_date>=?"); filter_params.append(date_from)
+    if date_to:
+        filters.append("entry_date<=?"); filter_params.append(date_to)
+    if status_filter:
+        filters.append("status=?"); filter_params.append(status_filter)
+    entry_columns = {row["name"] for row in connection.execute("PRAGMA table_info(journal_entries)")}
+    if entry_type_filter and "entry_type" in entry_columns:
+        filters.append("entry_type=?"); filter_params.append(entry_type_filter)
+    if search_query:
+        search_like = "%" + search_query + "%"
+        search_parts = ["reference LIKE ?", "description LIKE ?"]
+        filter_params.extend([search_like, search_like])
+        if search_query.isdigit():
+            search_parts.append("CAST(id AS TEXT)=?")
+            filter_params.append(search_query)
+        filters.append("(" + " OR ".join(search_parts) + ")")
+    where_sql = " AND ".join(filters) if filters else "1=1"
     journal_page = max(1, request.args.get("journal_page", 1, type=int) or 1)
     journal_per_page = request.args.get("journal_per_page", 50, type=int) or 50
     if journal_per_page not in (50, 100):
         journal_per_page = 50
-    journal_total = connection.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
+    journal_total = connection.execute(
+        "SELECT COUNT(*) FROM journal_entries WHERE " + where_sql, filter_params
+    ).fetchone()[0]
     journal_pages = max(1, (journal_total + journal_per_page - 1) // journal_per_page)
     journal_page = min(journal_page, journal_pages)
-    entries = connection.execute("""SELECT * FROM journal_entries
-        ORDER BY entry_date DESC, id DESC LIMIT ? OFFSET ?""",
-        (journal_per_page, (journal_page - 1) * journal_per_page)).fetchall()
+    entries = connection.execute(
+        "SELECT * FROM journal_entries WHERE " + where_sql +
+        " ORDER BY entry_date DESC,id DESC LIMIT ? OFFSET ?",
+        (*filter_params, journal_per_page, (journal_page - 1) * journal_per_page),
+    ).fetchall()
     connection.close()
     return render_template("journal.html", accounts=accounts_list, entries=entries,
         today=datetime.now().date().isoformat(), dimension_options=dimension_options,
         journal_page=journal_page, journal_pages=journal_pages,
-        journal_per_page=journal_per_page, journal_total=journal_total)
+        journal_per_page=journal_per_page, journal_total=journal_total,
+        date_from=date_from, date_to=date_to, status_filter=status_filter,
+        entry_type_filter=entry_type_filter, search_query=search_query)
 
 
 
