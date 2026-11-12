@@ -6,6 +6,7 @@ from pathlib import Path
 
 from flask import Flask
 from openpyxl import load_workbook
+from unittest.mock import patch
 
 from report_exports import register_report_exports
 
@@ -357,7 +358,7 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200,
                          response.data[:250].decode("utf-8", errors="replace"))
         self.assertEqual(response.mimetype, "application/pdf")
-        self.assertTrue(response.data.startswith(b"%PDF")
+        self.assertTrue(response.data.startswith(b"%PDF"))
 
 if __name__ == "__main__":
     unittest.main()
