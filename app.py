@@ -29,6 +29,7 @@ from party_reports import party_bp
 from management_dashboard import cached_management_snapshot, initialize_management_dashboard_schema
 from analytic_dimensions import initialize_analytic_dimensions_schema, active_dimension_options, validate_journal_dimensions
 from financial_planning import planning_bp, initialize_planning_schema
+from activity_profiles import (initialize_activity_profiles_schema, list_activity_profiles, create_activity_profile, set_activity_profile_active, validate_activity_profile)
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
@@ -354,6 +355,7 @@ def initialize_database():
     initialize_management_dashboard_schema(dashboard_connection, activity_row["setting_value"] if activity_row else "commercial")
     initialize_analytic_dimensions_schema(dashboard_connection)
     initialize_planning_schema(dashboard_connection)
+    initialize_activity_profiles_schema(dashboard_connection)
     dashboard_connection.close()
 
 
@@ -633,15 +635,8 @@ def company_setup():
             return redirect(url_for("company_setup"))
         should_load_chart = not has_entries and (request.form.get("replace_chart") == "yes" or previous_activity != activity)
         if should_load_chart:
-            connection.execute("DELETE FROM accounts")
-            inserted = {}
-            for code, name, account_type, parent_code, is_group in CHARTS[activity]:
-                parent_id = inserted.get(parent_code)
-                cur = connection.execute(
-                    "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
-                    (code, name, account_type, parent_id, is_group)
-                )
-                inserted[code] = cur.lastrowid
+            # Activity changes are append-only: never delete or rewrite existing accounts.
+            ensure_activity_chart_accounts(connection, activity)
         connection.execute("INSERT INTO tax_rates(code,name_ar,rate,active) VALUES('VAT',?,?,1) ON CONFLICT(code) DO UPDATE SET name_ar=excluded.name_ar,rate=excluded.rate,active=1",
                            ("ضريبة القيمة المضافة", vat_rate))
         connection.commit()
@@ -654,6 +649,73 @@ def company_setup():
     has_entries = connection.execute("SELECT 1 FROM journal_entries LIMIT 1").fetchone() is not None
     connection.close()
     return render_template("company_setup.html", settings=settings, currencies=currencies, activities=ACTIVITY_LABELS, has_entries=has_entries)
+
+
+@app.route("/settings/activity-profiles", methods=["GET", "POST"])
+@requires("users.manage")
+def activity_profiles():
+    connection = db()
+    initialize_activity_profiles_schema(connection)
+    if request.method == "POST":
+        action = request.form.get("action", "create")
+        try:
+            if action == "create":
+                profile_id = create_activity_profile(
+                    connection, request.form.get("code"), request.form.get("name"),
+                    request.form.get("base_activity"), request.form.get("description", ""),
+                )
+                connection.commit()
+                log("activity_profile_created", request.form.get("code", ""), "activity_profile", profile_id)
+                flash("تم إنشاء ملف النشاط. راجع توافق الحسابات قبل استخدامه.", "success")
+            elif action in {"activate", "deactivate"}:
+                profile_id = int(request.form.get("profile_id", "0"))
+                profile = next((p for p in list_activity_profiles(connection, True) if p["id"] == profile_id), None)
+                if not profile:
+                    raise ValueError("ملف النشاط غير موجود.")
+                if action == "activate":
+                    errors = validate_activity_profile(connection, profile)
+                    if errors:
+                        raise ValueError("لا يمكن تفعيل الملف قبل معالجة الحسابات: " + "؛ ".join(errors[:5]))
+                    connection.execute(
+                        "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity_profile_code',?) "
+                        "ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value",
+                        (profile["code"],),
+                    )
+                    connection.execute(
+                        "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity',?) "
+                        "ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value",
+                        (profile["base_activity"],),
+                    )
+                    connection.commit()
+                    log("activity_profile_activated", profile["code"], "activity_profile", profile_id)
+                    flash("تم تفعيل ملف النشاط. لم يتم حذف أو تعديل أي حساب قائم.", "success")
+                else:
+                    active_code = connection.execute(
+                        "SELECT setting_value FROM company_settings WHERE setting_key='activity_profile_code'"
+                    ).fetchone()
+                    if active_code and active_code["setting_value"] == profile["code"]:
+                        raise ValueError("لا يمكن تعطيل ملف النشاط المستخدم حاليًا.")
+                    set_activity_profile_active(connection, profile_id, False)
+                    connection.commit()
+                    log("activity_profile_deactivated", profile["code"], "activity_profile", profile_id)
+                    flash("تم تعطيل ملف النشاط.", "success")
+            else:
+                raise ValueError("العملية المطلوبة غير معروفة.")
+        except (ValueError, TypeError, sqlite3.IntegrityError) as exc:
+            connection.rollback()
+            flash(str(exc), "error")
+        connection.close()
+        return redirect(url_for("activity_profiles"))
+    profiles = list_activity_profiles(connection, True)
+    active_row = connection.execute(
+        "SELECT setting_value FROM company_settings WHERE setting_key='activity_profile_code'"
+    ).fetchone()
+    active_code = active_row["setting_value"] if active_row else "commercial"
+    for profile in profiles:
+        profile["validation_errors"] = validate_activity_profile(connection, profile)
+        profile["selected"] = profile["code"] == active_code
+    connection.close()
+    return render_template("activity_profiles.html", profiles=profiles, activities=ACTIVITY_LABELS)
 
 
 @app.route("/")
