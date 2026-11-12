@@ -84,10 +84,10 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
             INSERT INTO financial_years VALUES
                 (1,'2025','2025-01-01','2025-12-31','closed'),
                 (2,'2026','2026-01-01','2026-12-31','open');
-            INSERT INTO journal_entries VALUES
-                (1,'2025-06-01','posted'),
-                (2,'2026-06-01','posted'),
-                (3,'2026-07-01','draft'),
+            INSERT INTO journal_entries(id,entry_date,status,entry_type) VALUES
+                (1,'2025-06-01','posted','general'),
+                (2,'2026-06-01','posted','general'),
+                (3,'2026-07-01','draft','general'),
                 (4,'2026-06-15','posted','year_end_closing');
             INSERT INTO journal_lines VALUES
                 (1,1,1,'100','0'),
@@ -124,7 +124,7 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
             by_period.setdefault(row[0], []).append(row)
         self.assertEqual(set(by_period), {"2025", "2026"})
         self.assertEqual(by_period["2025"][0][7], 100)
-        self.assertEqual(by_period["2026"][0][7], 250)
+        self.assertEqual(by_period["2026"][0][7], 275)
         self.assertNotIn(999, [cell for row in rows for cell in row])
 
     def test_trial_balance_export_can_exclude_closing_entries(self):
