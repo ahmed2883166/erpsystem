@@ -1602,8 +1602,10 @@ def accounting_periods():
         start_text = request.form.get("start_date", "").strip()
         end_text = request.form.get("end_date", "").strip()
         try:
-            start_date = datetime.fromisoformat(start_text).date().isoformat()
-            end_date = datetime.fromisoformat(end_text).date().isoformat()
+            start_date = date.fromisoformat(start_text).isoformat()
+            end_date = date.fromisoformat(end_text).isoformat()
+            if start_date != start_text or end_date != end_text:
+                raise ValueError()
             if not name or len(name) > 100 or start_date > end_date:
                 raise ValueError()
             overlap = connection.execute("""SELECT 1 FROM accounting_periods
@@ -1611,6 +1613,15 @@ def accounting_periods():
                 (start_date, end_date)).fetchone()
             if overlap:
                 raise ValueError("توجد فترة محاسبية أخرى تتداخل مع هذا النطاق.")
+            has_years = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_years'"
+            ).fetchone()
+            if has_years and connection.execute("SELECT 1 FROM financial_years LIMIT 1").fetchone():
+                containing_year = connection.execute("""SELECT 1 FROM financial_years
+                    WHERE start_date<=? AND end_date>=? LIMIT 1""",
+                    (start_date, end_date)).fetchone()
+                if not containing_year:
+                    raise ValueError("يجب أن تقع الفترة المحاسبية بالكامل داخل سنة مالية مسجلة.")
             connection.execute("""INSERT INTO accounting_periods(period_name,start_date,end_date,locked,created_at)
                 VALUES(?,?,?,0,?)""", (name, start_date, end_date, now()))
             connection.commit()
@@ -1635,10 +1646,18 @@ def accounting_period_state(period_id):
         flash("حالة الفترة غير صحيحة.", "error")
         return redirect(url_for("accounting_periods"))
     connection = db()
-    row = connection.execute("SELECT period_name FROM accounting_periods WHERE id=?", (period_id,)).fetchone()
+    row = connection.execute("SELECT period_name,start_date,end_date FROM accounting_periods WHERE id=?", (period_id,)).fetchone()
     if not row:
         connection.close()
         flash("الفترة المحاسبية غير موجودة.", "error")
+        return redirect(url_for("accounting_periods"))
+    if state == "0" and connection.execute("""SELECT 1 FROM financial_years
+        WHERE status='closed' AND NOT(end_date<? OR start_date>?) LIMIT 1""",
+        (row["start_date"], row["end_date"])).fetchone() if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_years'"
+        ).fetchone() else False:
+        connection.close()
+        flash("لا يمكن فتح فترة تتقاطع مع سنة مالية مقفولة. استخدم إجراء عكس الإقفال المعتمد أولًا.", "error")
         return redirect(url_for("accounting_periods"))
     connection.execute("UPDATE accounting_periods SET locked=? WHERE id=?", (int(state), period_id))
     connection.commit()
