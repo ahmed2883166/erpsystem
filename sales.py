@@ -239,6 +239,14 @@ def _sales_account_codes(activity):
     return ACTIVITY_POSTING_ACCOUNTS[activity]
 
 
+def _sales_output_vat_account(conn, activity):
+    from chart_templates import ACTIVITY_TAX_ACCOUNT_ROLES
+    role_map = ACTIVITY_TAX_ACCOUNT_ROLES.get(activity)
+    if not role_map or not role_map.get("output_vat"):
+        raise ValueError("لم يتم تعريف دور حساب ضريبة المخرجات لهذا النشاط.")
+    return _account(conn, role_map["output_vat"], "liability")
+
+
 def _allowed_vat_rates(conn):
     # The company tax setup controls the standard VAT rate. Zero is always
     # accepted for zero-rated/exempt/out-of-scope treatments.
@@ -382,7 +390,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     if subtotal <= 0:
         raise ValueError("إجمالي الفاتورة يجب أن يكون أكبر من صفر.")
     if tax_amount > 0 and vat is None:
-        vat = _account(conn, codes["vat"], "liability")
+        vat = _sales_output_vat_account(conn, activity)
     credit_limit = Decimal(customer["credit_limit"] or "0")
     outstanding_rows = conn.execute(
         """SELECT i.id,i.total_amount,i.paid_amount,COALESCE(i.credited_amount,'0') credited_amount
@@ -615,7 +623,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         )
     refundable_amount = max(Decimal("0"), total - max(Decimal("0"), remaining_invoice))
     if tax_total > 0:
-        vat_account = _account(conn, codes["vat"], "liability")
+        vat_account = _sales_output_vat_account(conn, activity)
 
     stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
     credit_no = "SCN-" + stamp
