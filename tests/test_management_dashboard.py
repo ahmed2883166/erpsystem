@@ -269,6 +269,40 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(len(journal_selects), 3)
         self.assertEqual(per_entry_selects, [])
 
+
+    def test_cached_dashboard_includes_and_invalidates_expensive_sections(self):
+        from unittest.mock import patch
+        from management_dashboard import cached_management_snapshot, _SNAPSHOT_CACHE, _SNAPSHOT_CACHE_LOCK
+
+        with _SNAPSHOT_CACHE_LOCK:
+            _SNAPSHOT_CACHE.clear()
+        self.conn.execute("""CREATE TABLE sales_invoices(
+            id INTEGER PRIMARY KEY, status TEXT, invoice_date TEXT,
+            total_amount TEXT, paid_amount TEXT, credited_amount TEXT
+        )""")
+        self.conn.execute("""CREATE TABLE supplier_bills(
+            id INTEGER PRIMARY KEY, status TEXT, bill_date TEXT,
+            total_amount TEXT, paid_amount TEXT, credited_amount TEXT
+        )""")
+        initialize_management_dashboard_schema(self.conn, "commercial")
+
+        with patch("management_dashboard.cash_forecast", return_value={"weeks": []}) as forecast, \\
+             patch("management_dashboard.unusual_journal_entries", return_value=[]) as unusual:
+            first = cached_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
+            second = cached_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
+            self.assertIn("cash_forecast", first)
+            self.assertIn("unusual_entries", first)
+            self.assertEqual(forecast.call_count, 1)
+            self.assertEqual(unusual.call_count, 1)
+
+            self.conn.execute("""INSERT INTO sales_invoices
+                (id,status,invoice_date,total_amount,paid_amount,credited_amount)
+                VALUES(1,'posted','2026-11-20','100','0','0')""")
+            refreshed = cached_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
+            self.assertEqual(forecast.call_count, 2)
+            self.assertEqual(unusual.call_count, 2)
+            self.assertIn("cash_forecast", refreshed)
+
     def test_cached_snapshot_is_invalidated_by_new_journal_lines(self):
         from management_dashboard import cached_management_snapshot
         first = cached_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
