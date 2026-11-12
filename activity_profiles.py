@@ -248,11 +248,15 @@ def active_account_role_ids(conn):
     profile = get_active_activity_profile(conn)
     codes = profile["account_roles"]
     result = {}
+    account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+    group_expr = "COALESCE(is_group,0)" if "is_group" in account_columns else "0"
+    active_expr = "COALESCE(active,1)" if "active" in account_columns else "1"
     for role, values in codes.items():
         ids = set()
         for code in values if isinstance(values, list) else [values]:
             row = conn.execute(
-                "SELECT id,is_group,active FROM accounts WHERE code=?", (str(code),)
+                f"SELECT id,{group_expr} is_group,{active_expr} active FROM accounts WHERE code=?",
+                (str(code),)
             ).fetchone()
             if row and not row["is_group"] and row["active"]:
                 ids.add(row["id"])
