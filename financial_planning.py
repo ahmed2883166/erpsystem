@@ -44,6 +44,13 @@ def initialize_planning_schema(conn):
       UNIQUE(budget_id,account_id)
     );
     CREATE INDEX IF NOT EXISTS idx_budget_period ON budget_plans(date_from,date_to,status);
+    CREATE TABLE IF NOT EXISTS cash_flow_account_mappings(
+      account_id INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+      category TEXT NOT NULL CHECK(category IN ('operating','investing','financing')),
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_cash_flow_mapping_category
+      ON cash_flow_account_mappings(category);
     CREATE TABLE IF NOT EXISTS financial_years(
       id INTEGER PRIMARY KEY,
       year_name TEXT NOT NULL UNIQUE,
@@ -982,6 +989,7 @@ def build_cash_flow_snapshot(conn, start, end):
             (*ids, start)).fetchone()
         opening = Decimal(str(opening_row["value"] or "0"))
         sections = {k: {"in": Decimal("0"), "out": Decimal("0")} for k in ("operating", "investing", "financing")}
+        unmapped_accounts = {}
         entries = conn.execute(f"""SELECT je.id,
             COALESCE(DECIMAL_NET(CASE WHEN jl.account_id IN ({marks}) THEN jl.debit ELSE '0' END,
                                  CASE WHEN jl.account_id IN ({marks}) THEN jl.credit ELSE '0' END),0) cash_net
@@ -1000,7 +1008,15 @@ def build_cash_flow_snapshot(conn, start, end):
             weights = {"operating": Decimal("0"), "investing": Decimal("0"), "financing": Decimal("0")}
             for item in counterpart:
                 code, name = item["code"], item["name_ar"]
-                if item["account_type"] == "asset" and not (
+                mapped = conn.execute(
+                    "SELECT category FROM cash_flow_account_mappings WHERE account_id=?",
+                    (item["account_id"],)
+                ).fetchone() if conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_flow_account_mappings'"
+                ).fetchone() else None
+                if mapped:
+                    category = mapped["category"]
+                elif item["account_type"] == "asset" and not (
                     code.startswith(("11", "21")) or "عميل" in name or "مخزون" in name or "مقدم" in name
                 ):
                     category = "investing"
@@ -1010,6 +1026,8 @@ def build_cash_flow_snapshot(conn, start, end):
                     category = "financing"
                 else:
                     category = "operating"
+                if not mapped:
+                    unmapped_accounts[item["account_id"]] = {"code": code, "name": name, "suggested": category}
                 weights[category] += abs(Decimal(str(item["debit"] or "0"))) + abs(Decimal(str(item["credit"] or "0")))
             total_weight = sum(weights.values(), Decimal("0"))
             if not total_weight:
@@ -1041,6 +1059,8 @@ def build_cash_flow_snapshot(conn, start, end):
         "net_change": net_change, "reconciliation_difference": reconciliation_difference,
         "cash_mapping_available": bool(cash_ids),
         "cash_reconciles": bool(cash_ids) and reconciliation_difference == 0,
+        "unmapped_accounts": sorted(unmapped_accounts.values(), key=lambda item: item["code"]),
+        "unmapped_account_count": len(unmapped_accounts),
     }
 
 
@@ -1129,8 +1149,11 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     investing_net = direct["sections"]["investing"]["in"]-direct["sections"]["investing"]["out"]
     financing_net = direct["sections"]["financing"]["in"]-direct["sections"]["financing"]["out"]
     actual_operating = direct["net_change"]-investing_net-financing_net
-    other_adjustment = actual_operating-calculated_operating
-    operating_net = calculated_operating+other_adjustment
+    # Never force the indirect method to balance through an unexplained plug.
+    # Keep the calculated operating cash flow and disclose the classification
+    # difference so missing adjustments/mappings remain visible to the reviewer.
+    unexplained_difference = actual_operating-calculated_operating
+    operating_net = calculated_operating
 
     def signed_section(value):
         return {"in": max(value, Decimal("0")), "out": max(-value, Decimal("0"))}
@@ -1147,15 +1170,69 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
         {"label":"التغير في الأصول المتداولة الأخرى", "amount":-changes["other_current_assets"], "kind":"working_capital"},
         {"label":"التغير في الموردين والدائنين", "amount":changes["payables"], "kind":"working_capital"},
         {"label":"التغير في الالتزامات المتداولة الأخرى", "amount":changes["other_current_liabilities"], "kind":"working_capital"},
-        {"label":"تسويات أخرى / بنود تحتاج تصنيفًا", "amount":other_adjustment, "kind":"reconciliation"},
     ]
+    total_in = sum((item["in"] for item in sections.values()), Decimal("0"))
+    total_out = sum((item["out"] for item in sections.values()), Decimal("0"))
+    section_net = total_in-total_out
+    reconciliation_difference = direct["net_change"]-section_net
     return {
         **direct, "method":"indirect", "sections":sections,
+        "total_in":total_in, "total_out":total_out,
+        "reconciliation_difference":reconciliation_difference,
+        "cash_reconciles":bool(direct["cash_mapping_available"]) and reconciliation_difference == 0,
         "indirect_items":indirect_items,
         "indirect_operating_net":operating_net,
-        "indirect_reconciliation":operating_net-actual_operating,
+        "indirect_reconciliation":unexplained_difference,
         "indirect_mapping_warning":not bool(current_asset_ids and current_liability_ids),
     }
+
+
+@planning_bp.route("/settings/cash-flow-mapping", methods=["GET", "POST"])
+@_require("users.manage")
+def cash_flow_mapping():
+    conn = _connect()
+    try:
+        initialize_planning_schema(conn)
+        if request.method == "POST":
+            rows = conn.execute(
+                "SELECT id FROM accounts WHERE is_group=0 AND active=1"
+            ).fetchall()
+            allowed_ids = {str(row["id"]) for row in rows}
+            categories = {"operating", "investing", "financing"}
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("DELETE FROM cash_flow_account_mappings")
+            for account_id in sorted(allowed_ids, key=int):
+                category = request.form.get(f"category_{account_id}", "").strip()
+                if category in categories:
+                    conn.execute(
+                        """INSERT INTO cash_flow_account_mappings(account_id,category)
+                           VALUES(?,?)""", (int(account_id), category)
+                    )
+            conn.commit()
+            flash("تم حفظ تصنيف حسابات التدفقات النقدية. الحسابات غير المحددة ستظهر في تقرير المراجعة.", "success")
+            return redirect(url_for("planning.cash_flow_mapping"))
+        accounts = conn.execute("""
+            SELECT a.id,a.code,a.name_ar,a.account_type,m.category
+            FROM accounts a
+            LEFT JOIN cash_flow_account_mappings m ON m.account_id=a.id
+            WHERE a.is_group=0 AND a.active=1
+            ORDER BY a.code
+        """).fetchall()
+        cash_roles = set()
+        try:
+            from management_dashboard import load_management_account_roles
+            cash_roles = set(load_management_account_roles(conn).get("cash", set()))
+        except (sqlite3.Error, KeyError, ValueError):
+            pass
+        return render_template(
+            "cash_flow_mapping.html", accounts=accounts,
+            cash_account_ids=cash_roles,
+            categories={
+                "operating":"تشغيلي", "investing":"استثماري", "financing":"تمويلي"
+            }
+        )
+    finally:
+        conn.close()
 
 
 @planning_bp.route("/reports/cash-flow")
@@ -1188,4 +1265,4 @@ def cash_flow():
     return render_template("cash_flow.html", **snapshot)
 
 
-__all__=["planning_bp","initialize_planning_schema","create_financial_year","list_financial_years","create_opening_entry","close_financial_year","reverse_financial_year_entry","build_balance_sheet_snapshot","build_cash_flow_snapshot","build_cash_flow_indirect_snapshot"]
+__all__=["planning_bp","initialize_planning_schema","create_financial_year","list_financial_years","create_opening_entry","close_financial_year","reverse_financial_year_entry","build_balance_sheet_snapshot","build_cash_flow_snapshot","build_cash_flow_indirect_snapshot","cash_flow_mapping"]
