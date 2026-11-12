@@ -133,3 +133,67 @@ def validate_activity_profile(conn, profile):
         elif row["is_group"] or not row["active"]:
             errors.append(f"الحساب {code} تجميعي أو غير نشط ولا يصلح للترحيل.")
     return errors
+
+
+
+def get_active_activity_profile(conn):
+    """Resolve the company's selected profile; legacy companies safely use built-ins."""
+    selected = conn.execute(
+        "SELECT setting_value FROM company_settings WHERE setting_key='activity_profile_code'"
+    ).fetchone()
+    activity_row = conn.execute(
+        "SELECT setting_value FROM company_settings WHERE setting_key='activity'"
+    ).fetchone()
+    code = selected["setting_value"] if selected else (
+        activity_row["setting_value"] if activity_row else "commercial"
+    )
+    row = conn.execute(
+        "SELECT * FROM activity_profiles WHERE code=? AND active=1", (code,)
+    ).fetchone()
+    if not row:
+        # Existing databases may not yet have run profile schema initialization.
+        activity = activity_row["setting_value"] if activity_row else "commercial"
+        from chart_templates import ACTIVITY_ACCOUNT_ROLES, ACTIVITY_POSTING_ACCOUNTS, ACTIVITY_TAX_ACCOUNT_ROLES
+        if activity not in ACTIVITY_POSTING_ACCOUNTS:
+            raise ValueError("ملف النشاط الحالي غير معروف أو غير نشط.")
+        return {
+            "code": activity, "base_activity": activity,
+            "account_roles": {k: list(v) for k,v in ACTIVITY_ACCOUNT_ROLES[activity].items()},
+            "posting_accounts": dict(ACTIVITY_POSTING_ACCOUNTS[activity]),
+            "tax_roles": dict(ACTIVITY_TAX_ACCOUNT_ROLES[activity]),
+        }
+    profile = dict(row)
+    for source, target in (
+        ("account_roles_json", "account_roles"),
+        ("posting_accounts_json", "posting_accounts"),
+        ("tax_roles_json", "tax_roles"),
+    ):
+        try:
+            profile[target] = json.loads(profile.pop(source))
+        except (TypeError, ValueError):
+            raise ValueError("إعدادات ملف النشاط الحالي تالفة؛ أوقف الترحيل وراجع الملف.")
+    return profile
+
+
+def active_posting_accounts(conn):
+    return get_active_activity_profile(conn)["posting_accounts"]
+
+
+def active_tax_roles(conn):
+    return get_active_activity_profile(conn)["tax_roles"]
+
+
+def active_account_role_ids(conn):
+    profile = get_active_activity_profile(conn)
+    codes = profile["account_roles"]
+    result = {}
+    for role, values in codes.items():
+        ids = set()
+        for code in values if isinstance(values, list) else [values]:
+            row = conn.execute(
+                "SELECT id,is_group,active FROM accounts WHERE code=?", (str(code),)
+            ).fetchone()
+            if row and not row["is_group"] and row["active"]:
+                ids.add(row["id"])
+        result[role] = ids
+    return result
