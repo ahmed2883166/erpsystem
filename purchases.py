@@ -184,12 +184,10 @@ def ensure_detail_account(c, code, name, typ, preferred_parent):
     return found["id"]
 
 def _activity_posting_accounts(c):
-    from chart_templates import ACTIVITY_POSTING_ACCOUNTS
-    row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
-    activity=row["setting_value"] if row else "commercial"
-    mapping=ACTIVITY_POSTING_ACCOUNTS.get(activity)
-    if not mapping:
-        raise ValueError("لا توجد خريطة حسابات معتمدة للنشاط الحالي.")
+    from activity_profiles import active_posting_accounts
+    mapping = active_posting_accounts(c)
+    if not mapping or not mapping.get("supplier_ap"):
+        raise ValueError("ملف النشاط الحالي لا يحتوي حساب الموردين المطلوب للمشتريات.")
     return mapping
 
 def supplier_ap_account(c):
