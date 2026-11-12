@@ -30,6 +30,11 @@ class AuditLogTests(unittest.TestCase):
         """)
         self.connection.commit()
 
+    def _open_connection(self):
+        connection = sqlite3.connect(self.db_path)
+        connection.row_factory = sqlite3.Row
+        return connection
+
     def tearDown(self):
         self.connection.close()
         self.temp.cleanup()
@@ -37,7 +42,7 @@ class AuditLogTests(unittest.TestCase):
     def test_log_records_authenticated_actor_and_request_context(self):
         with nexus_app.app.test_request_context("/", environ_base={"REMOTE_ADDR": "192.0.2.10"}):
             nexus_app.session["user_id"] = 17
-            with patch.object(nexus_app, "db", side_effect=lambda: sqlite3.connect(self.db_path)):
+            with patch.object(nexus_app, "db", side_effect=self._open_connection):
                 nexus_app.log(
                     "journal_posted", "قيد #42",
                     entity_type="journal", entity_id=42, outcome="success"
@@ -138,7 +143,7 @@ class AuditLogTests(unittest.TestCase):
         ):
             nexus_app.session["user_id"] = 17
             nexus_app.g.audit_request_id = "request-test-001"
-            with patch.object(nexus_app, "db", side_effect=lambda: sqlite3.connect(self.db_path)):
+            with patch.object(nexus_app, "db", side_effect=self._open_connection):
                 nexus_app.log_change(
                     "account_updated", "account", 10,
                     {"code": "1000", "name_ar": "الصندوق", "password": "old-secret"},
