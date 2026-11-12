@@ -24,11 +24,14 @@ class CashFlowReportTests(unittest.TestCase):
         financial_planning._connect = connect
         conn = connect()
         conn.executescript("""
-          CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,account_type TEXT,is_group INTEGER DEFAULT 0);
+          CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,account_type TEXT,is_group INTEGER DEFAULT 0,active INTEGER DEFAULT 1);
           CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT);
           CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit TEXT,credit TEXT);
           CREATE TABLE management_account_roles(role TEXT,account_id INTEGER);
           CREATE TABLE management_dashboard_meta(meta_key TEXT PRIMARY KEY,meta_value TEXT);
+          CREATE TABLE cash_flow_account_mappings(
+            account_id INTEGER PRIMARY KEY,category TEXT NOT NULL
+          );
           INSERT INTO accounts VALUES
             (1,'1110','الصندوق','asset',0),
             (2,'3100','رأس المال','equity',0),
@@ -105,6 +108,51 @@ class CashFlowReportTests(unittest.TestCase):
         body = response.get_data(as_text=True)
         self.assertIn("الطريقة المباشرة", body)
         self.assertNotIn("صافي الربح قبل التدفقات النقدية", body)
+
+    def test_explicit_account_mappings_drive_investing_and_financing_sections(self):
+        conn = financial_planning._connect()
+        conn.execute("INSERT INTO cash_flow_account_mappings(account_id,category) VALUES(5,'investing')")
+        conn.execute("INSERT INTO cash_flow_account_mappings(account_id,category) VALUES(6,'financing')")
+        conn.commit()
+        snapshot = financial_planning.build_cash_flow_snapshot(
+            conn, "2026-11-01", "2026-11-30"
+        )
+        conn.close()
+        self.assertEqual(snapshot["sections"]["investing"]["out"], financial_planning.Decimal("200"))
+        self.assertEqual(snapshot["sections"]["financing"]["in"], financial_planning.Decimal("500"))
+        self.assertEqual(snapshot["unmapped_account_count"], 2)
+        self.assertEqual(
+            {item["code"] for item in snapshot["unmapped_accounts"]},
+            {"4100", "6100"},
+        )
+
+    def test_indirect_method_does_not_hide_variance_in_a_plug_adjustment(self):
+        conn = financial_planning._connect()
+        snapshot = financial_planning.build_cash_flow_indirect_snapshot(
+            conn, "2026-11-01", "2026-11-30"
+        )
+        conn.close()
+        labels = {item["label"] for item in snapshot["indirect_items"]}
+        self.assertNotIn("تسويات أخرى / بنود تحتاج تصنيفًا", labels)
+        self.assertEqual(snapshot["indirect_reconciliation"], financial_planning.Decimal("0"))
+        self.assertEqual(snapshot["reconciliation_difference"], financial_planning.Decimal("0"))
+
+    def test_cash_flow_mapping_settings_page_saves_explicit_categories(self):
+        with self.client.session_transaction() as session:
+            session["permissions"] = ["cashflow.view", "users.manage"]
+        response = self.client.post(
+            "/settings/cash-flow-mapping",
+            data={"category_5":"investing", "category_6":"financing"},
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        conn = financial_planning._connect()
+        rows = conn.execute(
+            "SELECT account_id,category FROM cash_flow_account_mappings ORDER BY account_id"
+        ).fetchall()
+        conn.close()
+        self.assertEqual([(row["account_id"],row["category"]) for row in rows],
+                         [(5,"investing"),(6,"financing")])
 
     def test_cash_flow_reconciles_opening_movements_and_closing_cash(self):
         response = self.client.get(
