@@ -78,7 +78,7 @@ class FinancialPlanningTests(unittest.TestCase):
             (4,"2026-01-04","draft",[(1,"999","0"),(3,"0","999")]),
         ]
         for entry_id,entry_date,status,lines in entries:
-            self.conn.execute("INSERT INTO journal_entries VALUES(?,?,?)",(entry_id,entry_date,status))
+            self.conn.execute("INSERT INTO journal_entries(id,entry_date,status) VALUES(?,?,?)",(entry_id,entry_date,status))
             for account_id,debit,credit in lines:
                 self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(?,?,?,?)",
                                   (entry_id,account_id,debit,credit))
