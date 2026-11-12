@@ -487,6 +487,8 @@ def audit_operational_mutations(response):
                     "order_id", "receipt_id", "payment_id", "movement_id",
                     "count_id", "stocktake_id", "party_id", "employee_id",
                     "customer_id", "supplier_id", "period_id", "account_id",
+                    "transaction_id", "custody_id", "credit_note_id", "refund_id",
+                    "category_id", "location_id", "rule_id", "pay_item_id",
                 ) if view_args.get(key) is not None),
                 None,
             )
