@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import app as nexus_app
+import report_exports as report_exports_module
 
 
 class AuditLogTests(unittest.TestCase):
@@ -17,6 +18,9 @@ class AuditLogTests(unittest.TestCase):
         self.connection.execute("CREATE TABLE users(id INTEGER PRIMARY KEY, username TEXT, full_name TEXT)")
         self.connection.execute("INSERT INTO users VALUES(1,'admin','مدير النظام')")
         self.connection.execute("INSERT INTO users VALUES(17,'tester','مستخدم اختبار')")
+        self.connection.execute("CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL)")
+        self.connection.execute("INSERT INTO company_settings VALUES('company_name','NEXUS Audit Test')")
+        self.connection.execute("INSERT INTO company_settings VALUES('base_currency','EGP')")
         self.connection.execute("""
             CREATE TABLE audit_log(
                 id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT,
@@ -103,6 +107,29 @@ class AuditLogTests(unittest.TestCase):
         self.assertEqual(rows[0]["outcome"], "success")
         self.assertEqual(rows[1]["entity_id"], "45")
         self.assertEqual(rows[1]["outcome"], "failure")
+
+    def test_audit_only_user_can_download_current_screen_pdf(self):
+        client = nexus_app.app.test_client()
+        with client.session_transaction() as session:
+            session.update(user_id=17, username="tester", role="viewer", permissions=["audit.view"])
+
+        def open_database(_db_path):
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+
+        with patch.dict(nexus_app.app.config, {"WTF_CSRF_ENABLED": False}):
+            with patch.object(report_exports_module, "connect_database", side_effect=open_database):
+                response = client.post(
+                    "/reports/export/current-screen/pdf",
+                    json={"title": "سجل التدقيق", "tables": [{
+                        "title": "العمليات",
+                        "rows": [["العملية", "النتيجة"], ["journal_posted", "ناجحة"]],
+                    }]},
+                )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertTrue(response.data.startswith(b"%PDF"))
 
     def test_audit_view_is_a_separate_permission_and_route(self):
         self.assertIn("audit.view", nexus_app.PERMISSION_LABELS)
