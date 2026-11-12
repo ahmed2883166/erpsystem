@@ -30,6 +30,7 @@ def register_report_exports(app, db_path, permissions):
         return connect_database(db_path)
 
     @bp.get("/reports/export/<report>/excel")
+    @bp.get("/reports/export/<report>/pdf")
     @require("reports.view")
     def export_report_excel(report):
         conn = connect()
@@ -290,6 +291,100 @@ def register_report_exports(app, db_path, permissions):
                 abort(404)
         finally:
             conn.close()
+
+        if request.path.endswith("/pdf"):
+            try:
+                import os
+                import arabic_reshaper
+                from bidi.algorithm import get_display
+                from reportlab.lib import colors
+                from reportlab.lib.enums import TA_RIGHT, TA_CENTER
+                from reportlab.lib.pagesizes import A4, landscape
+                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                from reportlab.lib.units import mm
+                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+                from xml.sax.saxutils import escape
+            except ImportError:
+                return Response(
+                    "مكتبات PDF غير مثبتة. نفّذ: python -m pip install -r requirements.txt",
+                    status=500, mimetype="text/plain; charset=utf-8"
+                )
+            font_candidates = [
+                os.path.join(os.path.dirname(__file__), "static", "fonts", "DejaVuSans.ttf"),
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed.ttf",
+                "C:/Windows/Fonts/arial.ttf",
+                "C:/Windows/Fonts/tahoma.ttf",
+            ]
+            font_path = next((path for path in font_candidates if os.path.isfile(path)), None)
+            if not font_path:
+                return Response(
+                    "تعذر إنشاء PDF: لم يتم العثور على خط يدعم العربية. أضف DejaVuSans.ttf إلى static/fonts.",
+                    status=503, mimetype="text/plain; charset=utf-8"
+                )
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
+            if "NexusArabic" not in pdfmetrics.getRegisteredFontNames():
+                pdfmetrics.registerFont(TTFont("NexusArabic", font_path))
+
+            def pdf_text(value):
+                text_value = "" if value is None else str(value)
+                shaped = get_display(arabic_reshaper.reshape(text_value))
+                return escape(shaped).replace("\\n", "<br/>")
+
+            page_size = landscape(A4) if len(headers) > 6 else A4
+            output = io.BytesIO()
+            document = SimpleDocTemplate(
+                output, pagesize=page_size, rightMargin=12*mm, leftMargin=12*mm,
+                topMargin=14*mm, bottomMargin=14*mm, title=str(locals().get("title", report)),
+                author=company_name,
+            )
+            styles = getSampleStyleSheet()
+            heading_style = ParagraphStyle(
+                "NexusHeading", parent=styles["Title"], fontName="NexusArabic",
+                fontSize=15, leading=21, alignment=TA_CENTER, textColor=colors.HexColor("#17365D"),
+            )
+            cell_style = ParagraphStyle(
+                "NexusCell", parent=styles["BodyText"], fontName="NexusArabic",
+                fontSize=7.5, leading=10, alignment=TA_RIGHT, wordWrap="RTL",
+            )
+            header_style = ParagraphStyle(
+                "NexusHeader", parent=cell_style, fontSize=8, leading=11,
+                textColor=colors.white, alignment=TA_CENTER,
+            )
+            story = [
+                Paragraph(pdf_text(company_name), heading_style),
+                Paragraph(pdf_text(locals().get("title", report)), heading_style),
+                Paragraph(pdf_text("تاريخ إعداد التقرير: " + datetime.now().strftime("%Y-%m-%d %H:%M")), cell_style),
+                Spacer(1, 5*mm),
+            ]
+            table_data = [[Paragraph(pdf_text(value), header_style) for value in reversed(headers)]]
+            for row in data:
+                table_data.append([
+                    Paragraph(pdf_text(value), cell_style) if isinstance(value, str) else
+                    Paragraph(pdf_text(f"{value:,.2f}" if isinstance(value, (int, float, Decimal)) else value), cell_style)
+                    for value in reversed(row)
+                ])
+            widths = [(page_size[0] - 24*mm) / max(1, len(headers))] * len(headers)
+            table = Table(table_data, colWidths=widths, repeatRows=1, hAlign="RIGHT")
+            table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#167D8D")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#B7C3CC")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F3F6F8")]),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]))
+            story.append(table)
+            document.build(story)
+            output.seek(0)
+            return send_file(output, as_attachment=True,
+                download_name=re.sub(r"\\.xlsx$", ".pdf", filename),
+                mimetype="application/pdf")
 
         try:
             from openpyxl import Workbook
