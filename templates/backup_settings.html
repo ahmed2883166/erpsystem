@@ -53,7 +53,7 @@
   <h3>النسخ المحفوظة على الجهاز</h3>
   <p class="muted">مجلد الحفظ: مجلد النسخ الاحتياطي الافتراضي خارج مجلد المشروع</p>
   <div class="table-wrap"><table><thead><tr><th>اسم الملف</th><th>الحجم</th><th>آخر تعديل</th></tr></thead><tbody>
-    {% for file in files %}<tr><td>{{ file.name }}</td><td>{{ file.size_mb }} MB</td><td>{{ file.modified }}</td></tr>
+    {% for file in files %}<tr><td><a href="{{ url_for('backup_download', filename=file.name) }}">{{ file.name }}</a></td><td>{{ file.size_mb }} MB</td><td>{{ file.modified }}</td></tr>
     {% else %}<tr><td colspan="3">لا توجد نسخ محفوظة حتى الآن.</td></tr>{% endfor %}
   </tbody></table></div>
 </section>
