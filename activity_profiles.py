@@ -258,8 +258,11 @@ def update_custom_activity_profile(conn, profile_id, account_roles_json,
     for mapping, template, label in expected:
         if not isinstance(mapping, dict) or set(mapping) != set(template):
             raise ValueError(f"مفاتيح {label} يجب أن تطابق مفاتيح النشاط الأساسي دون زيادة أو نقص.")
-    if any(not isinstance(v, list) or not v for v in account_roles.values()):
-        raise ValueError("كل دور في أدوار الحسابات يجب أن يحتوي قائمة حسابات غير فارغة.")
+    for role, values in account_roles.items():
+        if not isinstance(values, list):
+            raise ValueError(f"الدور {role} يجب أن يكون قائمة أكواد حسابات.")
+        if not values and ACTIVITY_ACCOUNT_ROLES[base].get(role):
+            raise ValueError(f"الدور {role} لا يجوز أن يكون فارغًا لهذا النشاط.")
     posting_types = {
         "ar": "asset", "revenue": "revenue", "vat": "liability",
         "inventory": "asset", "cogs": "expense", "purchase_inventory": "asset",
