@@ -1443,14 +1443,23 @@ def ledger():
 
             display_conditions = list(date_conditions)
             display_params = list(date_params)
+            search_conditions = []
+            search_params = []
             if search_query:
                 like = "%" + search_query + "%"
-                search_parts = ["je.reference LIKE ?", "je.description LIKE ?", "jl.memo LIKE ?"]
+                search_conditions = [
+                    "ledger_rows.reference LIKE ?",
+                    "ledger_rows.description LIKE ?",
+                    "ledger_rows.memo LIKE ?",
+                ]
+                search_params.extend([like, like, like])
+                display_conditions.append("(je.reference LIKE ? OR je.description LIKE ? OR jl.memo LIKE ?)")
                 display_params.extend([like, like, like])
                 if search_query.isdigit():
-                    search_parts.append("CAST(je.id AS TEXT)=?")
+                    search_conditions.append("ledger_rows.entry_id=?")
+                    display_conditions.append("CAST(je.id AS TEXT)=?")
+                    search_params.append(int(search_query))
                     display_params.append(search_query)
-                display_conditions.append("(" + " OR ".join(search_parts) + ")")
 
             base_opening = Decimal("0")
             if date_from:
@@ -1460,27 +1469,51 @@ def ledger():
                     (account_id, date_from)).fetchone()
                 base_opening = Decimal(str(opening_row["balance"] or "0"))
 
-            history_conditions = ["hist.account_id=jl.account_id", "he.status='posted'",
-                "(he.entry_date<je.entry_date OR (he.entry_date=je.entry_date AND hist.id<=jl.id))"]
-            history_params = []
-            if date_from:
-                history_conditions.append("he.entry_date>=?"); history_params.append(date_from)
-            query = f"""SELECT je.id entry_id,je.entry_date,je.reference,je.description,
-                jl.id line_id,jl.debit,jl.credit,jl.memo,
-                (SELECT GROUP_CONCAT(a2.code || ' - ' || a2.name_ar, '، ')
-                   FROM journal_lines jl2 JOIN accounts a2 ON a2.id=jl2.account_id
-                  WHERE jl2.entry_id=je.id AND jl2.account_id<>jl.account_id) counterpart_accounts,
-                (? + COALESCE((SELECT DECIMAL_NET(hist.debit,hist.credit)
-                    FROM journal_lines hist JOIN journal_entries he ON he.id=hist.entry_id
-                    WHERE {' AND '.join(history_conditions)}),'0')) running_balance
-                FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
-                WHERE {' AND '.join(display_conditions)}
-                ORDER BY je.entry_date,jl.id"""
+            if hasattr(connection, "create_window_function"):
+                # Compute chronological balances once using exact Decimal math,
+                # then filter the rendered rows outside the CTE.
+                outer_where = " AND ".join(search_conditions) if search_conditions else "1=1"
+                query = f"""WITH ledger_rows AS (
+                    SELECT je.id entry_id,je.entry_date,je.reference,je.description,
+                        jl.id line_id,jl.account_id,jl.debit,jl.credit,jl.memo,
+                        (? + DECIMAL_RUNNING_NET(jl.debit,jl.credit) OVER (
+                            ORDER BY je.entry_date,jl.id
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                        )) running_balance
+                    FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                    WHERE {' AND '.join(date_conditions)}
+                )
+                SELECT ledger_rows.*,
+                    (SELECT GROUP_CONCAT(a2.code || ' - ' || a2.name_ar, '، ')
+                     FROM journal_lines jl2 JOIN accounts a2 ON a2.id=jl2.account_id
+                     WHERE jl2.entry_id=ledger_rows.entry_id
+                       AND jl2.account_id<>ledger_rows.account_id) counterpart_accounts
+                FROM ledger_rows WHERE {outer_where}
+                ORDER BY entry_date,line_id"""
+                query_params = [str(base_opening), *date_params, *search_params]
+            else:
+                history_conditions = ["hist.account_id=jl.account_id", "he.status='posted'",
+                    "(he.entry_date<je.entry_date OR (he.entry_date=je.entry_date AND hist.id<=jl.id))"]
+                history_params = []
+                if date_from:
+                    history_conditions.append("he.entry_date>=?"); history_params.append(date_from)
+                query = f"""SELECT je.id entry_id,je.entry_date,je.reference,je.description,
+                    jl.id line_id,jl.account_id,jl.debit,jl.credit,jl.memo,
+                    (SELECT GROUP_CONCAT(a2.code || ' - ' || a2.name_ar, '، ')
+                       FROM journal_lines jl2 JOIN accounts a2 ON a2.id=jl2.account_id
+                      WHERE jl2.entry_id=je.id AND jl2.account_id<>jl.account_id) counterpart_accounts,
+                    (? + COALESCE((SELECT DECIMAL_NET(hist.debit,hist.credit)
+                        FROM journal_lines hist JOIN journal_entries he ON he.id=hist.entry_id
+                        WHERE {' AND '.join(history_conditions)}),'0')) running_balance
+                    FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                    WHERE {' AND '.join(display_conditions)}
+                    ORDER BY je.entry_date,jl.id"""
+                query_params = [str(base_opening), *history_params, *display_params]
             ledger_page = fetch_page(
                 connection, query,
                 f"""SELECT COUNT(*) FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                     WHERE {' AND '.join(display_conditions)}""",
-                [str(base_opening), *history_params, *display_params],
+                query_params,
                 count_params=display_params,
                 page=request.args.get("ledger_page",1,type=int),
                 per_page=request.args.get("ledger_per_page",50,type=int),
