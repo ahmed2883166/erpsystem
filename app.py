@@ -365,6 +365,13 @@ def log(action, details="", entity_type=None, entity_id=None, outcome="success")
     remote_addr = request.remote_addr if has_request_context() else None
     timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
     try:
+        if user_id is not None:
+            try:
+                actor_exists = connection.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone()
+            except sqlite3.Error:
+                actor_exists = None
+            if not actor_exists:
+                user_id = None
         connection.execute(
             """INSERT INTO audit_log
                (user_id, action, details, created_at, entity_type, entity_id, remote_addr, outcome)
