@@ -259,6 +259,37 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
     return entry_id
 
 
+
+def ensure_stock_date_open(conn, value, label="تاريخ حركة المخزون"):
+    """Prevent stock subledger changes inside a locked accounting period or closed year."""
+    try:
+        normalized_date = date.fromisoformat(str(value)).isoformat()
+    except (TypeError, ValueError):
+        raise ValueError(label + " غير صحيح؛ استخدم YYYY-MM-DD.")
+    if normalized_date != str(value):
+        raise ValueError(label + " غير صحيح؛ استخدم YYYY-MM-DD.")
+
+    tables = {row["name"] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('accounting_periods','financial_years')"
+    )}
+    if "accounting_periods" in tables:
+        locked = conn.execute(
+            """SELECT period_name FROM accounting_periods
+               WHERE locked=1 AND start_date<=? AND end_date>=? LIMIT 1""",
+            (normalized_date, normalized_date),
+        ).fetchone()
+        if locked:
+            raise ValueError("الفترة المحاسبية مغلقة: " + locked["period_name"] + ".")
+    if "financial_years" in tables:
+        year = conn.execute(
+            """SELECT year_name,status FROM financial_years
+               WHERE start_date<=? AND end_date>=? LIMIT 1""",
+            (normalized_date, normalized_date),
+        ).fetchone()
+        if year and year["status"] != "open":
+            raise ValueError("لا يمكن تعديل المخزون داخل السنة المالية " + year["year_name"] + " لأنها مغلقة.")
+
+
 def stock_permission(view_name):
     def deco(fn):
         @wraps(fn)
@@ -734,6 +765,8 @@ def movements():
                 if target_location_id and not c.execute("SELECT 1 FROM stock_locations WHERE id=? AND warehouse_id=? AND active=1",(target_location_id,dst)).fetchone():
                     raise ValueError("موقع الوجهة لا يتبع مخزن الوجهة.")
             c.execute("BEGIN IMMEDIATE")
+            movement_date=request.form.get("movement_date") or date.today().isoformat()
+            ensure_stock_date_open(c, movement_date)
             lot_id=None
             lot_no=request.form.get("lot_number","").strip()
             if kind=="receipt":
@@ -752,7 +785,6 @@ def movements():
                 total,allocations=consume_layers(c,product["id"],src,qty,method,lot_id,source_location_id)
                 unit_cost=(total/qty).quantize(MONEY,rounding=ROUND_HALF_UP)
             movement_no=f"STK-{date.today().strftime('%Y%m%d')}-{uuid.uuid4().hex[:12].upper()}"
-            movement_date=request.form.get("movement_date") or date.today().isoformat()
             issue_purpose=request.form.get("issue_purpose") if kind=="issue" else None
             if kind=="issue" and issue_purpose not in {"sale","internal"}:
                 raise ValueError("حدد غرض الصرف: تكلفة مبيعات أو استخدام داخلي.")
@@ -980,6 +1012,7 @@ def counts():
             if not c.execute("SELECT 1 FROM stock_warehouses WHERE id=? AND active=1", (warehouse_id,)).fetchone():
                 raise ValueError("اختر مخزنًا نشطًا.")
             c.execute("BEGIN IMMEDIATE")
+            ensure_stock_date_open(c, count_date, "تاريخ الجرد")
             count_no = "STK-" + date.fromisoformat(count_date).strftime("%Y%m%d") + "-" + uuid.uuid4().hex[:6].upper()
             movement_cutoff = c.execute("""SELECT COALESCE(MAX(id),0) FROM stock_movements
                 WHERE source_warehouse_id=? OR target_warehouse_id=?""",
@@ -1058,6 +1091,7 @@ def count_detail(stocktake_id):
                 raise ValueError("لا يمكن تعديل جرد تم اعتماده.")
             lines = c.execute("SELECT id,snapshot_qty FROM stocktake_lines WHERE stocktake_id=?", (stocktake_id,)).fetchall()
             c.execute("BEGIN IMMEDIATE")
+            ensure_stock_date_open(c, stocktake["count_date"], "تاريخ الجرد")
             for line in lines:
                 raw = request.form.get("counted_" + str(line["id"]), "").strip()
                 if raw == "":
@@ -1107,6 +1141,7 @@ def approve_count(stocktake_id):
         stocktake = c.execute("SELECT * FROM stocktakes WHERE id=?", (stocktake_id,)).fetchone()
         if not stocktake or stocktake["status"] != "counted":
             raise ValueError("يجب حفظ العد أولًا، ولا يمكن اعتماد أمر غير جاهز للمراجعة.")
+        ensure_stock_date_open(c, stocktake["count_date"], "تاريخ الجرد")
         lines = c.execute("""SELECT l.*,p.sku,p.name_ar FROM stocktake_lines l
             JOIN stock_products p ON p.id=l.product_id WHERE l.stocktake_id=? ORDER BY p.sku,l.location_id,l.lot_id""",
             (stocktake_id,)).fetchall()
