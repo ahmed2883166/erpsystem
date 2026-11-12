@@ -167,6 +167,51 @@ class FinancialYearJournalTests(unittest.TestCase):
             [(6, "100", "0", "مصروف تشغيل"), (1, "0", "100", "سداد")], 1)
         self.conn.commit()
 
+    def _create_closed_previous_year(self):
+        previous_id = create_financial_year(
+            self.conn, "2025", "2025-01-01", "2025-12-31", 1
+        )
+        create_opening_entry(
+            self.conn, previous_id,
+            {"1": "1000", "2": "200", "3": "800", "4": "0"}, 1
+        )
+        post_journal(self.conn, "2025-03-01", "SALE-2025-1", "بيع سابق",
+            [(1, "300", "0", "تحصيل"), (5, "0", "300", "إيراد")], 1)
+        self.conn.commit()
+        post_journal(self.conn, "2025-04-01", "EXP-2025-1", "مصروف سابق",
+            [(6, "100", "0", "مصروف"), (1, "0", "100", "سداد")], 1)
+        self.conn.commit()
+        close_financial_year(self.conn, previous_id, 1)
+        return previous_id
+
+    def test_opening_rejects_when_posted_entries_already_exist_in_year(self):
+        post_journal(self.conn, "2026-02-01", "EARLY-POST", "قيد سابق للافتتاح",
+            [(1, "50", "0", "مدين"), (2, "0", "50", "دائن")], 1)
+        self.conn.commit()
+        with self.assertRaisesRegex(ValueError, "قيود مرحلة داخل السنة"):
+            self._opening()
+        self.assertIsNone(self.conn.execute(
+            "SELECT opening_entry_id FROM financial_years WHERE id=?", (self.year_id,)
+        ).fetchone()[0])
+
+    def test_opening_must_match_previous_closed_year_balances(self):
+        self._create_closed_previous_year()
+        with self.assertRaisesRegex(ValueError, "لا تطابق إقفال السنة السابقة"):
+            create_opening_entry(self.conn, self.year_id,
+                {"1": "1199", "2": "200", "3": "800", "4": "199"}, 1)
+        self.assertIsNone(self.conn.execute(
+            "SELECT opening_entry_id FROM financial_years WHERE id=?", (self.year_id,)
+        ).fetchone()[0])
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM journal_entries WHERE reference LIKE 'FY-%-OPEN-%'"
+        ).fetchone()[0], 1)
+
+    def test_opening_accepts_balances_matching_previous_closed_year(self):
+        self._create_closed_previous_year()
+        entry_id = create_opening_entry(self.conn, self.year_id,
+            {"1": "1200", "2": "200", "3": "800", "4": "200"}, 1)
+        self.assertIsNotNone(entry_id)
+
     def test_opening_entry_balances_and_links_once(self):
         entry_id = self._opening()
         self.assertEqual(self.conn.execute(
