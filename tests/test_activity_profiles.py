@@ -22,6 +22,10 @@ class ActivityProfileTests(unittest.TestCase):
     def tearDown(self):
         self.conn.close()
 
+    def _company_settings(self):
+        self.conn.execute("""CREATE TABLE company_settings(
+            setting_key TEXT PRIMARY KEY, setting_value TEXT)""")
+
     def test_seeds_all_builtin_profiles_idempotently(self):
         initialize_activity_profiles_schema(self.conn)
         profiles = list_activity_profiles(self.conn)
@@ -61,6 +65,38 @@ class ActivityProfileTests(unittest.TestCase):
         builtin = next(p for p in list_activity_profiles(self.conn) if p["is_builtin"])
         with self.assertRaises(ValueError):
             set_activity_profile_active(self.conn, builtin["id"], False)
+
+    def test_active_profile_exposes_posting_and_tax_mappings_to_modules(self):
+        from activity_profiles import active_posting_accounts, active_tax_roles, active_account_role_ids
+        self._company_settings()
+        profile_id = create_activity_profile(
+            self.conn, "logistics", "النقل والخدمات اللوجستية", "service"
+        )
+        self.conn.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity','service')"
+        )
+        self.conn.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity_profile_code','logistics')"
+        )
+        self.conn.execute("""INSERT INTO accounts(code,name_ar,account_type,is_group,active)
+            VALUES('1110','الصندوق','asset',0,1),('1120','العملاء','asset',0,1),
+                   ('2100','الموردون','liability',0,1),('4100','إيرادات الخدمات','revenue',0,1),
+                   ('2130','ضريبة المخرجات','liability',0,1),('1165','ضريبة المدخلات','asset',0,1)""")
+        posting = active_posting_accounts(self.conn)
+        taxes = active_tax_roles(self.conn)
+        self.assertEqual(posting["ar"], "1120")
+        self.assertEqual(posting["supplier_ap"], "2100")
+        self.assertEqual(taxes["output_vat"], "2130")
+        self.assertEqual(taxes["input_vat"], "1165")
+        self.assertTrue(active_account_role_ids(self.conn)["cash"])
+
+    def test_legacy_company_without_profile_tables_uses_builtin_mappings(self):
+        from activity_profiles import active_posting_accounts
+        self._company_settings()
+        self.conn.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity','commercial')"
+        )
+        self.assertEqual(active_posting_accounts(self.conn)["ar"], "1130")
 
     def test_adding_activity_accounts_preserves_existing_account_identity(self):
         seed_activity_chart(self.conn, "commercial")
