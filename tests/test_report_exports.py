@@ -34,8 +34,8 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
                 id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
                 debit TEXT DEFAULT '0', credit TEXT DEFAULT '0'
             );
-            CREATE TABLE customers(id INTEGER PRIMARY KEY, name TEXT);
-            CREATE TABLE suppliers(id INTEGER PRIMARY KEY, name TEXT);
+            CREATE TABLE customers(id INTEGER PRIMARY KEY, code TEXT, name TEXT, active INTEGER DEFAULT 1);
+            CREATE TABLE suppliers(id INTEGER PRIMARY KEY, code TEXT, name TEXT, active INTEGER DEFAULT 1);
             CREATE TABLE sales_invoices(
                 id INTEGER PRIMARY KEY, invoice_no TEXT, invoice_date TEXT, customer_id INTEGER,
                 subtotal TEXT, tax_rate TEXT, tax_amount TEXT, total_amount TEXT,
@@ -60,8 +60,8 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
                 payment_date TEXT, amount TEXT, reference TEXT
             );
 
-            INSERT INTO customers VALUES(1,'عميل ضريبي');
-            INSERT INTO suppliers VALUES(1,'مورد ضريبي');
+            INSERT INTO customers VALUES(1,'C001','عميل ضريبي',1);
+            INSERT INTO suppliers VALUES(1,'S001','مورد ضريبي',1);
             INSERT INTO sales_invoices VALUES
                 (1,'INV-TAX','2026-06-10',1,'100','14','14','114','standard','','','posted');
             INSERT INTO supplier_bills VALUES
