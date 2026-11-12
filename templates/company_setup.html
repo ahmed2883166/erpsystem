@@ -55,6 +55,7 @@ applyLocalization();
   </div>
   <div class="notice"><strong>دليل الحسابات:</strong> اختيار النشاط يحدد قالبًا أوليًا مختلفًا للتجاري والخدمي والطبي والمطاعم والصناعي. سيتم إضافة الحسابات الناقصة فقط دون حذف أو إعادة ترميز أو تعديل الحسابات القائمة.</div>
   <label class="checkline"><input type="checkbox" name="replace_chart" value="yes" {% if not has_entries %}checked{% else %}disabled{% endif %}> إضافة الحسابات الناقصة من قالب النشاط المختار {% if has_entries %}(موقوفة لوجود قيود يومية حفاظًا على سلامة البيانات){% else %}(متاح قبل تسجيل أول قيد){% endif %}</label>
+  <label>سبب تغيير إعدادات الشركة (اختياري)<textarea name="change_reason" maxlength="1000" rows="2" placeholder="سبب تغيير النشاط أو العملة أو الإعدادات الضريبية"></textarea></label>
   <button type="submit">حفظ إعدادات الشركة</button>
 </form>
 {% endblock %}
