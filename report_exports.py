@@ -1,5 +1,5 @@
 from database import connect_database
-"""Excel exports for NEXUS ERP reports. PDF output uses the browser's print-to-PDF engine for Arabic support."""
+"""Excel and Arabic-capable PDF exports for NEXUS ERP reports."""
 import io
 import re
 from decimal import Decimal
