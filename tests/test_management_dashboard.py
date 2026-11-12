@@ -55,6 +55,42 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(s["previous"]["net_profit"],Decimal("30"))
         self.assertEqual(s["changes"]["revenue"],Decimal("150.00"))
 
+    def test_dashboard_current_previous_and_asof_balances_use_one_grouped_ledger_scan(self):
+        statements = []
+        self.conn.set_trace_callback(statements.append)
+        snapshot = build_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
+        self.conn.set_trace_callback(None)
+        self.assertEqual(snapshot["current"]["revenue"], Decimal("500"))
+        self.assertEqual(snapshot["previous"]["revenue"], Decimal("200"))
+        self.assertEqual(snapshot["cash"], Decimal("1350"))
+        grouped = [
+            sql for sql in statements
+            if "GROUP BY a.id,a.code,a.name_ar,a.account_type,a.is_group" in sql
+        ]
+        self.assertEqual(len(grouped), 1)
+
+    def test_cash_forecast_groups_outstanding_invoices_by_due_week_exactly(self):
+        self.conn.executescript("""
+            CREATE TABLE sales_invoices(
+                id INTEGER PRIMARY KEY,status TEXT,invoice_date TEXT,due_date TEXT,
+                total_amount TEXT,paid_amount TEXT,credited_amount TEXT
+            );
+            CREATE TABLE supplier_bills(
+                id INTEGER PRIMARY KEY,status TEXT,bill_date TEXT,due_date TEXT,
+                total_amount TEXT,paid_amount TEXT,credited_amount TEXT
+            );
+            INSERT INTO sales_invoices VALUES
+                (1,'posted','2026-11-10','2026-11-08','1000.00','200.00','100.00'),
+                (2,'posted','2026-11-10','2026-11-25','300.00','0','0'),
+                (3,'draft','2026-11-10','2026-11-12','900.00','0','0');
+            INSERT INTO supplier_bills VALUES
+                (1,'posted','2026-11-10','2026-11-26','500.00','100.00','0');
+        """)
+        forecast = cash_forecast(self.conn, date(2026,11,11), 8)
+        self.assertEqual(forecast["weeks"][0]["receipts"], Decimal("700.00"))
+        self.assertEqual(forecast["weeks"][2]["receipts"], Decimal("300.00"))
+        self.assertEqual(forecast["weeks"][2]["payments"], Decimal("400.00"))
+
     def test_period_results_exclude_year_end_closing_journal(self):
         self.conn.execute(
             "INSERT INTO journal_entries(id,entry_date,status,entry_type) VALUES(40,'2026-11-30','posted','year_end_closing')"
