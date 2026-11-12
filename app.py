@@ -1651,11 +1651,15 @@ def accounting_period_state(period_id):
         connection.close()
         flash("الفترة المحاسبية غير موجودة.", "error")
         return redirect(url_for("accounting_periods"))
-    if state == "0" and connection.execute("""SELECT 1 FROM financial_years
-        WHERE status='closed' AND NOT(end_date<? OR start_date>?) LIMIT 1""",
-        (row["start_date"], row["end_date"])).fetchone() if connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_years'"
-        ).fetchone() else False:
+    closed_year_overlap = False
+    has_financial_years = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_years'"
+    ).fetchone()
+    if state == "0" and has_financial_years:
+        closed_year_overlap = connection.execute("""SELECT 1 FROM financial_years
+            WHERE status='closed' AND NOT(end_date<? OR start_date>?) LIMIT 1""",
+            (row["start_date"], row["end_date"])).fetchone()
+    if closed_year_overlap:
         connection.close()
         flash("لا يمكن فتح فترة تتقاطع مع سنة مالية مقفولة. استخدم إجراء عكس الإقفال المعتمد أولًا.", "error")
         return redirect(url_for("accounting_periods"))
