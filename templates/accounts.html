@@ -5,7 +5,7 @@
   <div><h2>دليل الحسابات الهرمي</h2><p class="muted">عرض متدرج يوضح الحسابات الرئيسية والفروع التابعة لها.</p></div>
   <div class="table-actions">
     <button type="button" class="secondary" onclick="window.print()">طباعة / حفظ PDF</button>
-    {% if 'reports.view' in permissions %}<a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='accounts') }}">تصدير Excel</a><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='accounts') }}".replace('/excel','/pdf')>تحميل PDF</a>{% endif %}
+    {% if 'reports.view' in permissions %}<a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='accounts') }}">تصدير Excel</a><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='accounts').replace('/excel','/pdf') }}">تحميل PDF</a>{% endif %}
     {% if 'import_export.manage' in permissions %}<a class="btn secondary" href="{{ url_for('export_data', format='csv') }}">تصدير CSV</a>{% endif %}
   </div>
 </header>
