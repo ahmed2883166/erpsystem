@@ -95,6 +95,19 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         self.assertEqual(response.mimetype, "application/pdf")
         self.assertTrue(response.data.startswith(b"%PDF"))
 
+    def test_balance_sheet_export_uses_snapshot_and_selected_date(self):
+        response = self.client.get("/reports/export/balance-sheet/excel?as_of=2026-06-30")
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(io.BytesIO(response.data), data_only=True)
+        values = list(workbook.active.values)
+        self.assertTrue(any(row[2] == "إجمالي الأصول" and row[3] == 350 for row in values if row[2]))
+
+    def test_balance_sheet_pdf_export_returns_pdf_document(self):
+        response = self.client.get("/reports/export/balance-sheet/pdf?as_of=2026-06-30")
+        self.assertEqual(response.status_code, 200, response.data[:200].decode("utf-8", errors="replace"))
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertTrue(response.data.startswith(b"%PDF"))
+
     def test_trial_balance_export_rejects_reversed_date_range(self):
         response = self.client.get(
             "/reports/export/trial-balance/excel?date_from=2026-12-31&date_to=2026-01-01"
