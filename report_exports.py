@@ -7,7 +7,9 @@ from datetime import datetime
 from functools import wraps
 
 from flask import Blueprint, Response, abort, request, send_file, session
-from income_statement import build_income_statement, normalize_income_statement_period
+from income_statement import (build_income_statement, normalize_income_statement_period,
+                              comparison_period, add_income_statement_comparison,
+                              closing_entries_exclusion_sql)
 
 
 def register_report_exports(app, db_path, permissions):
@@ -62,6 +64,7 @@ def register_report_exports(app, db_path, permissions):
                 date_to = request.args.get("date_to", "").strip()
                 account_type = request.args.get("account_type", "").strip()
                 q = request.args.get("q", "").strip()
+                include_closing = request.args.get("include_closing", "1").strip() != "0"
                 if date_from and date_to and date_from > date_to:
                     abort(400)
                 account_conditions, account_params = ["1=1"], []
@@ -88,6 +91,8 @@ def register_report_exports(app, db_path, permissions):
                 type_labels = {"asset": "أصول", "liability": "التزامات", "equity": "حقوق ملكية", "revenue": "إيرادات", "expense": "مصروفات"}
                 for period_name, period_label, period_from, period_to in periods:
                     join_conditions = ["je.id=jl.entry_id", "je.status='posted'"]
+                    if not include_closing:
+                        join_conditions.append(closing_entries_exclusion_sql(conn))
                     join_params = []
                     if period_from:
                         join_conditions.append("je.entry_date >= ?"); join_params.append(period_from)
@@ -122,8 +127,16 @@ def register_report_exports(app, db_path, permissions):
                 date_from, date_to = normalize_income_statement_period(
                     request.args.get("date_from"), request.args.get("date_to")
                 )
+                compare_mode = request.args.get("compare", "previous_year").strip()
+                if compare_mode not in {"none", "previous_period", "previous_year"}:
+                    compare_mode = "previous_year"
+                compare_dates = comparison_period(date_from, date_to, compare_mode) if compare_mode != "none" else None
                 statement = build_income_statement(conn, date_from, date_to)
-                headers = ["القسم", "كود الحساب", "اسم الحساب", "مدين", "دائن", "صافي الرصيد"]
+                if compare_dates:
+                    statement = add_income_statement_comparison(statement, build_income_statement(conn, *compare_dates))
+                headers = ["القسم", "كود الحساب", "اسم الحساب", "مدين", "دائن", "الفترة الحالية"]
+                if compare_dates:
+                    headers.extend(["الفترة المقارنة", "الفرق", "نسبة التغير %"])
                 data = []
                 for label, rows in (
                     ("الإيرادات", statement["revenue_rows"]),
@@ -131,17 +144,27 @@ def register_report_exports(app, db_path, permissions):
                     ("المصروفات التشغيلية والإدارية", statement["operating_expense_rows"]),
                 ):
                     for row in rows:
-                        data.append([label, row["code"], row["name_ar"],
-                                     row["debit"], row["credit"], row["balance"]])
-                data.extend([
-                    ["الإجمالي", "", "إجمالي الإيرادات", "", "", statement["revenue_total"]],
-                    ["الإجمالي", "", "إجمالي تكلفة النشاط", "", "", statement["cogs_total"]],
-                    ["النتيجة", "", "مجمل الربح / (الخسارة)", "", "", statement["gross_profit"]],
-                    ["الإجمالي", "", "المصروفات التشغيلية والإدارية", "", "", statement["operating_expense_total"]],
-                    ["النتيجة", "", "صافي الربح / (الخسارة)", "", "", statement["net_profit"]],
-                ])
+                        values = [label, row["code"], row["name_ar"], row["debit"], row["credit"], row["balance"]]
+                        if compare_dates:
+                            values.extend([row["previous_balance"], row["variance"], row["variance_percent"]])
+                        data.append(values)
+                totals = [
+                    ("الإجمالي", "إجمالي الإيرادات", "revenue_total"),
+                    ("الإجمالي", "إجمالي تكلفة النشاط", "cogs_total"),
+                    ("النتيجة", "مجمل الربح / (الخسارة)", "gross_profit"),
+                    ("الإجمالي", "المصروفات التشغيلية والإدارية", "operating_expense_total"),
+                    ("النتيجة", "صافي الربح / (الخسارة)", "net_profit"),
+                ]
+                for label, description, key in totals:
+                    values = [label, "", description, "", "", statement[key]]
+                    if compare_dates:
+                        values.extend([statement["comparison"][key], statement["comparison"][key + "_variance"],
+                                       statement["comparison"][key + "_variance_percent"]])
+                    data.append(values)
                 filename = "nexus-income-statement.xlsx"
                 title = f"قائمة الدخل من {date_from} إلى {date_to}"
+                if compare_dates:
+                    title += f" مقارنة بالفترة {compare_dates[0]} إلى {compare_dates[1]}"
             elif report == "balance-sheet":
                 from financial_planning import build_balance_sheet_snapshot
                 as_of = request.args.get("as_of", "").strip() or datetime.now().date().isoformat()
