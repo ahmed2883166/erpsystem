@@ -8,6 +8,7 @@
     <label>اسم الفترة<input name="period_name" maxlength="100" required placeholder="مثال: السنة المالية 2027"></label>
     <label>من تاريخ<input type="date" name="start_date" required></label>
     <label>إلى تاريخ<input type="date" name="end_date" required></label>
+    <label>سبب إنشاء الفترة (اختياري)<input name="change_reason" maxlength="1000"></label>
     <div class="actions"><button type="submit">إنشاء فترة مفتوحة</button></div>
   </form>
 </section>
@@ -19,6 +20,7 @@
     <td><span class="pill">{{ 'مغلقة' if p.locked else 'مفتوحة' }}</span></td>
     <td><form method="post" action="{{ url_for('accounting_period_state',period_id=p.id) }}">
       <input type="hidden" name="locked" value="{{ 0 if p.locked else 1 }}">
+      <input name="change_reason" maxlength="1000" placeholder="سبب تغيير حالة الفترة (اختياري)">
       <button type="submit" class="{{ 'secondary' if p.locked else 'danger' }}">{{ 'فتح الفترة' if p.locked else 'إقفال الفترة' }}</button>
     </form></td></tr>
   {% else %}<tr><td colspan="5">لا توجد فترات مسجلة.</td></tr>{% endfor %}
