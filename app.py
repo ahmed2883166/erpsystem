@@ -1701,7 +1701,11 @@ def backup_settings():
 @app.route("/backup/run-now", methods=["POST"])
 @requires("backup.manage")
 def backup_run_now():
-    filename = create_backup_archive(DB_PATH, BACKUP_DIR, 30)
+    connection = db()
+    keep_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='backup_keep_count'").fetchone()
+    keep_count = int(keep_row["setting_value"]) if keep_row else 30
+    connection.close()
+    filename = create_backup_archive(DB_PATH, BACKUP_DIR, keep_count)
     connection = db()
     values = {"backup_last_run": now(), "backup_last_status": "success",
               "backup_last_error": "", "backup_last_file": filename.name}
