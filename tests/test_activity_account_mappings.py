@@ -4,6 +4,7 @@ import unittest
 from chart_templates import (
     ACTIVITY_ACCOUNT_ROLES,
     ACTIVITY_POSTING_ACCOUNTS,
+    ACTIVITY_TAX_ACCOUNT_ROLES,
     CHARTS,
     migrate_vat_accounts,
 )
@@ -47,6 +48,17 @@ class ActivityAccountMappingTests(unittest.TestCase):
         self.assertEqual(mapping["purchase_inventory"], "1130")
         self.assertEqual(mapping["inventory"], "1130")
         self.assertEqual(mapping["vat"], "2130")
+
+    def test_tax_accounts_are_resolved_by_role_for_every_activity(self):
+        self.assertEqual(set(ACTIVITY_TAX_ACCOUNT_ROLES), set(CHARTS))
+        for activity, roles in ACTIVITY_TAX_ACCOUNT_ROLES.items():
+            self.assertEqual(roles["output_vat"], "2130")
+            self.assertEqual(roles["input_vat"], "1165")
+            chart = {row[0]: row for row in CHARTS[activity]}
+            self.assertEqual(chart[roles["output_vat"]][2], "liability")
+            self.assertEqual(chart[roles["output_vat"]][4], 0)
+            self.assertEqual(chart[roles["input_vat"]][2], "asset")
+            self.assertEqual(chart[roles["input_vat"]][4], 0)
 
     def test_vat_control_code_matches_each_activity_chart(self):
         expected = {activity: "2130" for activity in CHARTS}
