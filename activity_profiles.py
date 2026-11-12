@@ -13,6 +13,21 @@ from chart_templates import (
 
 PROFILE_CODE = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
 
+SPECIALIZED_ACTIVITY_PRESETS = {
+    "transport_logistics": {"name": "النقل والخدمات اللوجستية", "base_activity": "service",
+        "description": "خدمات النقل والوساطة اللوجستية والشحن؛ يهيئ خرائط الخدمات والعملاء والموردين والضرائب، مع استكمال حسابات العهد والناقلين حسب دليل الشركة."},
+    "construction_contracting": {"name": "المقاولات والإنشاءات", "base_activity": "service",
+        "description": "مقاولات ومشروعات؛ يبدأ من النشاط الخدمي ويحتاج ربط حسابات تكاليف المشروعات والأعمال تحت التنفيذ والمستخلصات والاحتجازات."},
+    "hotel_tourism": {"name": "الفنادق والسياحة", "base_activity": "service",
+        "description": "الفنادق والخدمات السياحية؛ يحتاج تخصيص مراكز تكلفة الغرف والمطاعم والخدمات والإيرادات المقدمة."},
+    "financial_leasing": {"name": "التأجير والتمويل التأجيري", "base_activity": "service",
+        "description": "التأجير التشغيلي والتمويلي؛ يحتاج إعداد حسابات أصول حق الاستخدام والتزامات الإيجار والإيراد التمويلي وفق طبيعة العقد."},
+    "wholesale_distribution": {"name": "تجارة الجملة والتوزيع", "base_activity": "commercial",
+        "description": "تجارة الجملة والتوزيع؛ يرث حسابات المخزون والمبيعات والمشتريات مع إمكانية تخصيص الخصومات والعمولات ومراكز التوزيع."},
+    "hospital_clinic": {"name": "المستشفيات والمراكز الطبية", "base_activity": "medical",
+        "description": "الرعاية الصحية والمطالبات التأمينية والمخزون الطبي؛ يتطلب تخصيص حسابات شركات التأمين والمطالبات والمخزون الدوائي."},
+}
+
 
 def initialize_activity_profiles_schema(conn):
     conn.executescript("""
@@ -94,6 +109,22 @@ def create_activity_profile(conn, code, name, base_activity, description=""):
          json.dumps(tax_roles,ensure_ascii=False,sort_keys=True)),
     )
     return cur.lastrowid
+
+
+
+def create_specialized_activity_profile(conn, preset_code):
+    """Create a curated specialized profile once, inheriting a safe base mapping."""
+    preset = SPECIALIZED_ACTIVITY_PRESETS.get(str(preset_code or "").strip())
+    if not preset:
+        raise ValueError("النشاط المتخصص المطلوب غير معروف.")
+    existing = conn.execute(
+        "SELECT id FROM activity_profiles WHERE code=?", (preset_code,)
+    ).fetchone()
+    if existing:
+        return existing["id"]
+    return create_activity_profile(
+        conn, preset_code, preset["name"], preset["base_activity"], preset["description"]
+    )
 
 
 def set_activity_profile_active(conn, profile_id, active):
