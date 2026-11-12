@@ -82,6 +82,40 @@ def register_report_exports(app, db_path, permissions):
                          Decimal(str(r["debit"] or "0")) - Decimal(str(r["credit"] or "0"))] for r in rows]
                 filename = "nexus-trial-balance.xlsx"
                 title = "ميزان المراجعة"
+            elif report == "income-statement":
+                date_from = request.args.get("date_from", "").strip()
+                date_to = request.args.get("date_to", "").strip()
+                conditions = ["je.status='posted'", "a.account_type IN ('revenue','expense')",
+                              "a.is_group=0", "a.active=1"]
+                params = []
+                if date_from:
+                    conditions.append("je.entry_date>=?"); params.append(date_from)
+                if date_to:
+                    conditions.append("je.entry_date<=?"); params.append(date_to)
+                rows = conn.execute(f"""SELECT a.code,a.name_ar,a.account_type,
+                    COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
+                    COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
+                    FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
+                    LEFT JOIN journal_entries je ON je.id=jl.entry_id AND {' AND '.join(conditions)}
+                    WHERE a.account_type IN ('revenue','expense') AND a.is_group=0 AND a.active=1
+                    GROUP BY a.id ORDER BY a.account_type,a.code""", params).fetchall()
+                headers = ["نوع الحساب","كود الحساب","اسم الحساب","مدين","دائن","صافي الرصيد الطبيعي"]
+                data = []
+                revenue_total, expense_total = Decimal("0"), Decimal("0")
+                for row in rows:
+                    debit, credit = Decimal(str(row["debit"] or "0")), Decimal(str(row["credit"] or "0"))
+                    balance = credit - debit if row["account_type"] == "revenue" else debit - credit
+                    revenue_total += balance if row["account_type"] == "revenue" else Decimal("0")
+                    expense_total += balance if row["account_type"] == "expense" else Decimal("0")
+                    data.append(["إيراد" if row["account_type"] == "revenue" else "مصروف",
+                                 row["code"],row["name_ar"],debit,credit,balance])
+                data.extend([
+                    ["الإجمالي","","إجمالي الإيرادات","","",revenue_total],
+                    ["الإجمالي","","إجمالي المصروفات","","",expense_total],
+                    ["النتيجة","","صافي الربح / (الخسارة)","","",revenue_total-expense_total],
+                ])
+                filename = "nexus-income-statement.xlsx"
+                title = "قائمة الدخل"
             elif report == "ledger":
                 account_id = request.args.get("account_id", type=int)
                 date_from = request.args.get("date_from", "").strip()
