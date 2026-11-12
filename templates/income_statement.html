@@ -30,7 +30,7 @@
       {% if row.debit or row.credit or (comparison and row.previous_balance) %}
       <tr><td>{{ row.code }}</td><td>{{ row.name_ar }}</td><td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.balance|money }}</td>{% if comparison %}<td>{{ row.previous_balance|money }}</td><td>{{ row.variance|money }}</td><td>{% if row.variance_percent is not none %}{{ row.variance_percent|money }}%{% else %}—{% endif %}</td>{% endif %}</tr>
       {% endif %}
-    {% else %}<tr><td colspan="5">لا توجد حركات إيرادات مرحلة خلال الفترة.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="{{ 8 if comparison else 5 }}">لا توجد حركات إيرادات مرحلة خلال الفترة.</td></tr>{% endfor %}
     </tbody>
     <tfoot><tr><th colspan="4">إجمالي الإيرادات</th><th>{{ revenue_total|money }} {{ base_currency }}</th>{% if comparison %}<th>{{ comparison.revenue_total|money }}</th><th>{{ comparison.revenue_total_variance|money }}</th><th>{% if comparison.revenue_total_variance_percent is not none %}{{ comparison.revenue_total_variance_percent|money }}%{% else %}—{% endif %}</th>{% endif %}</tr></tfoot>
   </table></div>
@@ -43,7 +43,7 @@
       {% if row.debit or row.credit or (comparison and row.previous_balance) %}
       <tr><td>{{ row.code }}</td><td>{{ row.name_ar }}</td><td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.balance|money }}</td>{% if comparison %}<td>{{ row.previous_balance|money }}</td><td>{{ row.variance|money }}</td><td>{% if row.variance_percent is not none %}{{ row.variance_percent|money }}%{% else %}—{% endif %}</td>{% endif %}</tr>
       {% endif %}
-    {% else %}<tr><td colspan="5">لا توجد حركات تكلفة مباشرة خلال الفترة.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="{{ 8 if comparison else 5 }}">لا توجد حركات تكلفة مباشرة خلال الفترة.</td></tr>{% endfor %}
     </tbody>
     <tfoot><tr><th colspan="4">إجمالي تكلفة النشاط</th><th>{{ cogs_total|money }} {{ base_currency }}</th>{% if comparison %}<th>{{ comparison.cogs_total|money }}</th><th>{{ comparison.cogs_total_variance|money }}</th><th>{% if comparison.cogs_total_variance_percent is not none %}{{ comparison.cogs_total_variance_percent|money }}%{% else %}—{% endif %}</th>{% endif %}</tr></tfoot>
   </table></div>
