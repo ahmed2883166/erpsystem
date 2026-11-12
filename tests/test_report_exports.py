@@ -55,6 +55,11 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
                 id INTEGER PRIMARY KEY, invoice_id INTEGER, credit_note_no TEXT,
                 credit_date TEXT, reason TEXT, total_amount TEXT, status TEXT
             );
+            CREATE TABLE sales_credit_note_lines(
+                id INTEGER PRIMARY KEY, credit_note_id INTEGER,
+                line_total TEXT, tax_amount TEXT, tax_treatment TEXT
+            );
+
 
             CREATE TABLE supplier_credit_notes(
                 id INTEGER PRIMARY KEY, supplier_id INTEGER, credit_no TEXT,
