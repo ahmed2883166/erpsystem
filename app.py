@@ -1398,7 +1398,7 @@ def management_minimum_cash():
         normalized_value = str(value.quantize(Decimal("0.01")))
         connection.execute("""INSERT INTO company_settings(setting_key,setting_value)
             VALUES('minimum_cash_balance',?) ON CONFLICT(setting_key)
-            DO UPDATE SET setting_value=excluded.value""".replace("excluded.value", "excluded.setting_value"),
+            DO UPDATE SET setting_value=excluded.setting_value""",
             (normalized_value,))
         connection.commit()
         connection.close()
