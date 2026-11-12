@@ -112,6 +112,12 @@ ACTIVITY_ACCOUNT_ROLES = {
     },
 }
 
+# Tax control accounts are resolved by accounting role, not by a sales-module code.
+ACTIVITY_TAX_ACCOUNT_ROLES = {
+    activity: {"output_vat": "2130", "input_vat": "1165"}
+    for activity in ACTIVITY_POSTING_ACCOUNTS
+}
+
 # Posting accounts follow each chart. Industrial purchases and sales both use
 # 1130 in v1 because manufacturing/finished-goods conversion is not implemented.
 ACTIVITY_POSTING_ACCOUNTS = {
