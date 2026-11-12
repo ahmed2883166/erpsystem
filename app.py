@@ -1639,7 +1639,11 @@ def delete_user(user_id):
         used=next((label for q,label in checks if connection.execute(q,(user_id,)).fetchone()),None)
         if used: flash("لا يمكن حذف المستخدم لوجود نشاط مسجل في "+used+". يمكنك إيقافه بدل الحذف.","error")
         else:
-            try: connection.execute("DELETE FROM users WHERE id=?",(user_id,)); connection.commit(); flash("تم حذف المستخدم.","success")
+            try:
+                connection.execute("DELETE FROM users WHERE id=?",(user_id,))
+                connection.commit()
+                log("user_deleted", user["username"], entity_type="user", entity_id=user_id)
+                flash("تم حذف المستخدم.","success")
             except sqlite3.IntegrityError: connection.rollback(); flash("لا يمكن حذف المستخدم لوجود سجلات مرتبطة به.","error")
     connection.close(); return redirect(url_for("users"))
 
