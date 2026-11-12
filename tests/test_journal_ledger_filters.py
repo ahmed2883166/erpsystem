@@ -72,6 +72,18 @@ class JournalAndLedgerFilterTests(unittest.TestCase):
         self.assertNotIn("DRAFT-4", html)
         self.assertIn("إجمالي القيود: 1", html)
 
+    def test_journal_search_includes_line_memos_and_account_filter(self):
+        memo_response = self.client.get("/journal?q=Office+rent&status=posted")
+        self.assertEqual(memo_response.status_code, 200)
+        self.assertIn("INV-RENT", memo_response.get_data(as_text=True))
+
+        account_response = self.client.get("/journal?account_id=2&status=posted")
+        self.assertEqual(account_response.status_code, 200)
+        account_html = account_response.get_data(as_text=True)
+        self.assertIn("INV-RENT", account_html)
+        self.assertIn("RCPT-3", account_html)
+        self.assertNotIn("DRAFT-4", account_html)
+
     def test_ledger_search_preserves_full_running_and_closing_balances(self):
         response = self.client.get(
             "/reports/ledger?account_id=1&date_from=2026-01-01&q=rent"
