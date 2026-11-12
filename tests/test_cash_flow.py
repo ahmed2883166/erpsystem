@@ -32,7 +32,7 @@ class CashFlowReportTests(unittest.TestCase):
           CREATE TABLE cash_flow_account_mappings(
             account_id INTEGER PRIMARY KEY,category TEXT NOT NULL
           );
-          INSERT INTO accounts VALUES
+          INSERT INTO accounts(id,code,name_ar,account_type,is_group) VALUES
             (1,'1110','الصندوق','asset',0),
             (2,'3100','رأس المال','equity',0),
             (3,'4100','إيرادات المبيعات','revenue',0),
