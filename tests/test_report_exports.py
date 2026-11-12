@@ -47,6 +47,19 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
                 tax_treatment TEXT, tax_reference TEXT, tax_notes TEXT,
                 input_vat_deductible_percent TEXT, status TEXT
             );
+            CREATE TABLE customer_receipts(
+                id INTEGER PRIMARY KEY, invoice_id INTEGER, receipt_no TEXT,
+                receipt_date TEXT, amount TEXT, reference TEXT
+            );
+            CREATE TABLE supplier_credit_notes(
+                id INTEGER PRIMARY KEY, supplier_id INTEGER, credit_no TEXT,
+                credit_date TEXT, reason TEXT, total_amount TEXT, status TEXT
+            );
+            CREATE TABLE supplier_payments(
+                id INTEGER PRIMARY KEY, supplier_id INTEGER, payment_no TEXT,
+                payment_date TEXT, amount TEXT, reference TEXT
+            );
+
             INSERT INTO customers VALUES(1,'عميل ضريبي');
             INSERT INTO suppliers VALUES(1,'مورد ضريبي');
             INSERT INTO sales_invoices VALUES
@@ -160,6 +173,19 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.data[:200].decode("utf-8", errors="replace"))
         self.assertEqual(response.mimetype, "application/pdf")
         self.assertTrue(response.data.startswith(b"%PDF"))
+
+    def test_customer_statement_pdf_and_excel_exports(self):
+        excel = self.client.get(
+            "/reports/export/party-statement/excel?kind=customer&party_id=1&date_from=2026-06-01&date_to=2026-06-30"
+        )
+        self.assertEqual(excel.status_code, 200)
+        workbook = load_workbook(io.BytesIO(excel.data), data_only=True)
+        self.assertTrue(any(row[2] == "الرصيد الختامي" for row in workbook.active.values if row[2]))
+        pdf = self.client.get(
+            "/reports/export/party-statement/pdf?kind=customer&party_id=1&date_from=2026-06-01&date_to=2026-06-30"
+        )
+        self.assertEqual(pdf.status_code, 200, pdf.data[:200].decode("utf-8", errors="replace"))
+        self.assertTrue(pdf.data.startswith(b"%PDF"))
 
     def test_trial_balance_export_rejects_reversed_date_range(self):
         response = self.client.get(
