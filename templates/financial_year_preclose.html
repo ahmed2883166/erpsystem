@@ -32,7 +32,7 @@
 </section>
 <section class="panel">
   <h3>الإجراء</h3>
-  {% if report.can_close and 'journal.manage' in permissions %}
+  {% if report.year.status == 'open' and report.can_close and 'journal.manage' in permissions %}
     <form method="post" action="{{ url_for('planning.financial_year_close', year_id=report.year.id) }}">
       {% if report.requires_approval %}
         {% if can_approve %}
@@ -45,6 +45,8 @@
         <button type="submit">تنفيذ الإقفال بعد اجتياز الفحوصات</button>
       {% endif %}
     </form>
+  {% elif report.year.status != 'open' %}
+    <p class="muted">هذه السنة ليست مفتوحة؛ لا يمكن تنفيذ إقفال جديد عليها.</p>
   {% else %}
     <p class="muted">لن يظهر إجراء الإقفال حتى معالجة جميع الموانع أو منح صلاحية الترحيل.</p>
   {% endif %}
