@@ -1183,6 +1183,61 @@ def trial_balance():
         account_type=account_type, q=q, types=types, base_currency=settings.get("base_currency",""))
 
 
+@app.route("/reports/income-statement")
+@requires("reports.view")
+def income_statement():
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    try:
+        if date_from:
+            date_from = date.fromisoformat(date_from).isoformat()
+        if date_to:
+            date_to = date.fromisoformat(date_to).isoformat()
+        if date_from and date_to and date_from > date_to:
+            raise ValueError()
+    except ValueError:
+        flash("فترة قائمة الدخل غير صحيحة.", "error")
+        date_from, date_to = "", ""
+    connection = db()
+    conditions = ["je.status='posted'", "a.account_type IN ('revenue','expense')",
+                  "a.is_group=0", "a.active=1"]
+    params = []
+    if date_from:
+        conditions.append("je.entry_date>=?"); params.append(date_from)
+    if date_to:
+        conditions.append("je.entry_date<=?"); params.append(date_to)
+    rows = connection.execute(f"""SELECT a.id,a.code,a.name_ar,a.account_type,
+        COALESCE(DECIMAL_SUM(jl.debit),0) debit,
+        COALESCE(DECIMAL_SUM(jl.credit),0) credit
+        FROM accounts a
+        LEFT JOIN journal_lines jl ON jl.account_id=a.id
+        LEFT JOIN journal_entries je ON je.id=jl.entry_id AND {' AND '.join(conditions)}
+        WHERE a.account_type IN ('revenue','expense') AND a.is_group=0 AND a.active=1
+        GROUP BY a.id ORDER BY a.account_type,a.code""", params).fetchall()
+    revenue_rows, expense_rows = [], []
+    revenue_total, expense_total = Decimal("0"), Decimal("0")
+    for row in rows:
+        debit, credit = Decimal(str(row["debit"] or "0")), Decimal(str(row["credit"] or "0"))
+        balance = (credit - debit) if row["account_type"] == "revenue" else (debit - credit)
+        item = {**dict(row), "debit": debit, "credit": credit, "balance": balance}
+        if row["account_type"] == "revenue":
+            revenue_rows.append(item)
+            revenue_total += balance
+        else:
+            expense_rows.append(item)
+            expense_total += balance
+    settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency','company_name')")}
+    connection.close()
+    net_profit = revenue_total - expense_total
+    return render_template("income_statement.html", revenue_rows=revenue_rows,
+        expense_rows=expense_rows, revenue_total=revenue_total,
+        expense_total=expense_total, net_profit=net_profit,
+        date_from=date_from, date_to=date_to,
+        base_currency=settings.get("base_currency",""),
+        company_name=settings.get("company_name","NEXUS ERP"))
+
+
 @app.route("/reports/ledger")
 @requires("reports.view")
 def ledger():
