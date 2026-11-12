@@ -351,13 +351,16 @@ def build_financial_year_preclose_report(conn, year_id):
         drafts, "يجب معالجة القيود المسودة قبل الإقفال.", drafts > 0)
 
     register_decimal_aggregates(conn)
-    unbalanced = conn.execute("""SELECT COUNT(*) FROM (
-        SELECT je.id FROM journal_entries je
-        LEFT JOIN journal_lines jl ON jl.entry_id=je.id
+    grouped_totals = conn.execute("""SELECT je.id,
+            COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
+            COALESCE(DECIMAL_SUM(jl.credit),'0') credit
+        FROM journal_entries je LEFT JOIN journal_lines jl ON jl.entry_id=je.id
         WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
-        GROUP BY je.id
-        HAVING COALESCE(DECIMAL_SUM(jl.debit),'0') != COALESCE(DECIMAL_SUM(jl.credit),'0')
-    )""", (start, end)).fetchone()[0]
+        GROUP BY je.id""", (start, end)).fetchall()
+    unbalanced = sum(
+        Decimal(str(row["debit"] or "0")) != Decimal(str(row["credit"] or "0"))
+        for row in grouped_totals
+    )
     add("unbalanced_entries", "قيود مرحلة غير متوازنة", "danger" if unbalanced else "success",
         unbalanced, "راجع القيود وصححها بقيود تسوية معتمدة.", unbalanced > 0)
 
