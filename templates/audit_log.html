@@ -1,0 +1,47 @@
+{% extends 'base.html' %}
+{% block title %}سجل المراجعة والتدقيق | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <div><h2>سجل المراجعة والتدقيق</h2><p class="muted">سجل للعمليات المسجلة: المستخدم، العملية، الوقت، والنتيجة. السجل للعرض فقط.</p></div>
+</header>
+<section class="panel no-print">
+  <form method="get" class="report-filter">
+    <label>العملية<input name="action" value="{{ action }}" placeholder="مثال: journal_posted"></label>
+    <label>المستخدم<input name="user" value="{{ user_query }}" placeholder="اسم المستخدم"></label>
+    <label>من تاريخ<input type="date" name="date_from" value="{{ date_from }}"></label>
+    <label>إلى تاريخ<input type="date" name="date_to" value="{{ date_to }}"></label>
+    <button type="submit">بحث</button>
+    <a class="btn secondary" href="{{ url_for('audit_log') }}">مسح الفلاتر</a>
+  </form>
+</section>
+<section class="panel">
+  <p class="muted">عدد النتائج: {{ audit_page.total }} — الصفحة {{ audit_page.page }} من {{ audit_page.pages }}</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>التاريخ والوقت</th><th>المستخدم</th><th>العملية</th><th>نوع السجل</th><th>رقم السجل</th><th>عنوان IP</th><th>النتيجة</th><th>التفاصيل</th></tr></thead>
+      <tbody>
+      {% for row in audit_page.rows %}
+        <tr>
+          <td>{{ row.created_at }}</td>
+          <td>{{ row.full_name or row.username or 'نظام' }}{% if row.username %}<small class="muted">({{ row.username }})</small>{% endif %}</td>
+          <td>{{ row.action }}</td>
+          <td>{{ row.entity_type or '-' }}</td>
+          <td>{{ row.entity_id or '-' }}</td>
+          <td>{{ row.remote_addr or '-' }}</td>
+          <td><span class="status {{ 'success' if row.outcome == 'success' else 'danger' }}">{{ 'ناجحة' if row.outcome == 'success' else 'فاشلة' }}</span></td>
+          <td>{{ row.details or '-' }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="8">لا توجد عمليات مطابقة للفلاتر.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if audit_page.pages > 1 %}
+  <nav class="pagination no-print">
+    {% if audit_page.page > 1 %}<a class="btn secondary" href="{{ url_for('audit_log', page=audit_page.page-1, action=action, user=user_query, date_from=date_from, date_to=date_to) }}">السابق</a>{% endif %}
+    {% if audit_page.page < audit_page.pages %}<a class="btn secondary" href="{{ url_for('audit_log', page=audit_page.page+1, action=action, user=user_query, date_from=date_from, date_to=date_to) }}">التالي</a>{% endif %}
+  </nav>
+  {% endif %}
+</section>
+{% endblock %}
