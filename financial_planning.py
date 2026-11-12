@@ -419,6 +419,15 @@ def build_financial_year_preclose_report(conn, year_id):
             f"الفترة {locked_period['period_name']} مغلقة بالفعل في تاريخ نهاية السنة." if locked_period else
             "لا توجد فترة مقفولة تمنع إجراء الإقفال.", bool(locked_period))
 
+    if _table_exists_financial(conn, "bank_transactions"):
+        bank_columns = {row["name"] for row in conn.execute("PRAGMA table_info(bank_transactions)")}
+        if {"transaction_date", "reconciled"}.issubset(bank_columns):
+            unreconciled_bank = conn.execute("""SELECT COUNT(*) FROM bank_transactions
+                WHERE transaction_date>=? AND transaction_date<=? AND reconciled=0""",
+                (start, end)).fetchone()[0]
+            add("bank_reconciliation", "حركات بنكية غير مسوّاة", "warning" if unreconciled_bank else "success",
+                unreconciled_bank, "راجع المطابقة البنكية للحركات داخل السنة قبل اعتماد الإقفال.", False)
+
     try:
         snapshot = reconciliation_snapshot(conn)
         unlinked = sum(int(item.get("count", 0) or 0)
@@ -430,6 +439,14 @@ def build_financial_year_preclose_report(conn, year_id):
         add("pending_stock", "حركات مخزون تحتاج معالجة محاسبية",
             "warning" if pending else "success", pending,
             "مراجعة عامة على مستوى النظام: راجع حركات المخزون المعلقة قبل اعتماد الأرصدة النهائية.", False)
+        grni = Decimal(str(snapshot.get("grni", "0") or "0"))
+        add("grni_balance", "استلامات بضاعة غير مفوترة (GRNI)",
+            "warning" if grni else "success", 1 if grni else 0,
+            f"رصيد GRNI غير المسوّى على مستوى النظام: {grni}. راجع الاستلامات والفواتير المرتبطة.", False)
+        open_ap = Decimal(str(snapshot.get("open_ap", "0") or "0"))
+        add("open_payables", "أرصدة موردين مفتوحة",
+            "warning" if open_ap else "success", 1 if open_ap else 0,
+            f"إجمالي أرصدة الموردين المفتوحة على مستوى النظام: {open_ap}. طابقها مع كشف الموردين.", False)
         difference = snapshot.get("stock_difference")
         has_difference = difference is not None and Decimal(str(difference)) != 0
         add("stock_reconciliation", "فرق المخزون بين الدفاتر والتقييم",
