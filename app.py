@@ -34,7 +34,9 @@ from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
 from app_paths import DATA_DIR, DB_PATH, BACKUP_DIR
 from backup_scheduler import create_backup_archive, next_backup_datetime, start_backup_scheduler
-from income_statement import build_income_statement, normalize_income_statement_period
+from income_statement import (build_income_statement, normalize_income_statement_period,
+                               comparison_period, add_income_statement_comparison,
+                               closing_entries_exclusion_sql)
 
 # Development/demo builds run locally without a licensing server. Set NEXUS_DEMO_MODE=0
 # explicitly in a commercial deployment to enforce the signed remote licensing flow.
@@ -1321,6 +1323,7 @@ def trial_balance():
     date_to = request.args.get("date_to", "").strip()
     account_type = request.args.get("account_type", "").strip()
     q = request.args.get("q", "").strip()
+    include_closing = request.args.get("include_closing", "1").strip() != "0"
     allowed_types = {"asset", "liability", "equity", "revenue", "expense"}
     if account_type not in allowed_types:
         account_type = ""
@@ -1356,6 +1359,8 @@ def trial_balance():
     sections = []
     for period in period_ranges:
         join_conditions = ["je.id=jl.entry_id", "je.status='posted'"]
+        if not include_closing:
+            join_conditions.append(closing_entries_exclusion_sql(connection))
         join_params = []
         if period["date_from"]:
             join_conditions.append("je.entry_date >= ?"); join_params.append(period["date_from"])
@@ -1376,7 +1381,8 @@ def trial_balance():
     connection.close()
     types = {"asset":"أصول","liability":"التزامات","equity":"حقوق ملكية","revenue":"إيرادات","expense":"مصروفات"}
     return render_template("trial_balance.html", sections=sections, date_from=date_from, date_to=date_to,
-        account_type=account_type, q=q, types=types, base_currency=settings.get("base_currency",""))
+        account_type=account_type, q=q, include_closing=include_closing,
+        types=types, base_currency=settings.get("base_currency",""))
 
 
 @app.route("/reports/income-statement")
@@ -1385,9 +1391,16 @@ def income_statement():
     date_from, date_to = normalize_income_statement_period(
         request.args.get("date_from"), request.args.get("date_to")
     )
+    compare_mode = request.args.get("compare", "previous_year").strip()
+    if compare_mode not in {"none", "previous_period", "previous_year"}:
+        compare_mode = "previous_year"
+    compare_dates = comparison_period(date_from, date_to, compare_mode) if compare_mode != "none" else None
     connection = db()
     try:
         statement = build_income_statement(connection, date_from, date_to)
+        if compare_dates:
+            previous = build_income_statement(connection, *compare_dates)
+            statement = add_income_statement_comparison(statement, previous)
         settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
             "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency','company_name')"
         )}
@@ -1395,7 +1408,9 @@ def income_statement():
         connection.close()
     return render_template(
         "income_statement.html", **statement,
-        date_from=date_from, date_to=date_to,
+        date_from=date_from, date_to=date_to, compare_mode=compare_mode,
+        compare_date_from=compare_dates[0] if compare_dates else "",
+        compare_date_to=compare_dates[1] if compare_dates else "",
         base_currency=settings.get("base_currency", ""),
         company_name=settings.get("company_name", "NEXUS ERP"),
     )
