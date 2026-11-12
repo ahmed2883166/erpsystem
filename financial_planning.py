@@ -153,11 +153,15 @@ def _previous_closed_financial_year(conn, start_date):
         (start_date,)).fetchone()
 
 
-def _opening_balance_mismatches(conn, previous_year, normalized):
-    """Compare submitted natural-sign balances with the previous closed year-end balances."""
+def _opening_balance_mismatches(conn, cutoff_date, normalized):
+    """Compare opening balances with the ledger at the day before the new year starts.
+
+    Any unclosed prior-period profit/loss is included in the retained-earnings
+    account, so an unclosed previous financial year cannot bypass validation.
+    """
     account_rows = conn.execute("""SELECT id,code,name_ar,account_type FROM accounts
         WHERE account_type IN ('asset','liability','equity') AND is_group=0""").fetchall()
-    previous = {row["id"]: Decimal("0") for row in account_rows}
+    expected_balances = {row["id"]: Decimal("0") for row in account_rows}
     metadata = {row["id"]: row for row in account_rows}
     rows = conn.execute("""SELECT jl.account_id,a.account_type,jl.debit,jl.credit
         FROM journal_lines jl
@@ -165,17 +169,44 @@ def _opening_balance_mismatches(conn, previous_year, normalized):
         JOIN accounts a ON a.id=jl.account_id
         WHERE je.status='posted' AND je.entry_date<=?
           AND a.account_type IN ('asset','liability','equity') AND a.is_group=0
-        ORDER BY jl.account_id,je.id,jl.id""", (previous_year["end_date"],)).fetchall()
+        ORDER BY jl.account_id,je.id,jl.id""", (cutoff_date,)).fetchall()
     for row in rows:
         account_id = row["account_id"]
         debit = Decimal(str(row["debit"] or "0"))
         credit = Decimal(str(row["credit"] or "0"))
-        previous[account_id] += (
+        expected_balances[account_id] += (
             debit - credit if row["account_type"] == "asset" else credit - debit
         )
+
+    # If prior P&L has not yet been closed, carry its net result into retained earnings
+    # for comparison with the opening balance entered for the new financial year.
+    pnl_rows = conn.execute("""SELECT a.account_type,jl.debit,jl.credit
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id=jl.entry_id
+        JOIN accounts a ON a.id=jl.account_id
+        WHERE je.status='posted' AND je.entry_date<=?
+          AND a.account_type IN ('revenue','expense') AND a.is_group=0""",
+        (cutoff_date,)).fetchall()
+    prior_net_result = Decimal("0")
+    for row in pnl_rows:
+        debit = Decimal(str(row["debit"] or "0"))
+        credit = Decimal(str(row["credit"] or "0"))
+        prior_net_result += (
+            credit - debit if row["account_type"] == "revenue" else debit - credit
+        )
+    if prior_net_result:
+        retained = _retained_earnings_account(conn)
+        retained_id = retained["id"]
+        expected_balances[retained_id] = expected_balances.get(retained_id, Decimal("0")) + prior_net_result
+        if retained_id not in metadata:
+            account = conn.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE id=?",
+                                   (retained_id,)).fetchone()
+            if account:
+                metadata[retained_id] = account
+
     mismatches = []
-    for account_id in set(previous) | set(normalized):
-        expected = previous.get(account_id, Decimal("0")).quantize(CENT)
+    for account_id in set(expected_balances) | set(normalized):
+        expected = expected_balances.get(account_id, Decimal("0")).quantize(CENT)
         supplied = normalized.get(account_id, Decimal("0")).quantize(CENT)
         if expected != supplied:
             account = metadata.get(account_id)
@@ -264,16 +295,27 @@ def create_opening_entry(conn, year_id, balances, created_by=None):
         if not lines:
             raise ValueError("لا يمكن ترحيل قيد افتتاح بدون أرصدة فعلية.")
         previous_year = _previous_closed_financial_year(conn, year["start_date"])
-        if previous_year and previous_year["status"] == "closed":
-            mismatches = _opening_balance_mismatches(conn, previous_year, normalized)
+        prior_posted = conn.execute("""SELECT COUNT(*) FROM journal_entries
+            WHERE status='posted' AND entry_date<?""", (year["start_date"],)).fetchone()[0]
+        # Validate whenever a prior financial-year record OR any prior posted
+        # ledger activity exists. This also covers legacy companies with no
+        # financial_years row for their historical balances.
+        if previous_year or prior_posted:
+            from datetime import date, timedelta
+            cutoff_date = (date.fromisoformat(year["start_date"]) - timedelta(days=1)).isoformat()
+            mismatches = _opening_balance_mismatches(conn, cutoff_date, normalized)
             if mismatches:
                 details = "؛ ".join(
-                    f"{code} {name}: رصيد الإقفال {expected} مقابل رصيد الافتتاح {supplied}"
+                    f"{code} {name}: الرصيد الدفتري المتوقع {expected} مقابل رصيد الافتتاح {supplied}"
                     for code, name, expected, supplied in mismatches[:8]
                 )
                 suffix = f" (ويوجد {len(mismatches) - 8} اختلافات أخرى)" if len(mismatches) > 8 else ""
+                period_label = (
+                    f"حتى {cutoff_date} بعد السنة السابقة ({previous_year['year_name']})"
+                    if previous_year else f"حتى {cutoff_date} من أرصدة الشركة التاريخية"
+                )
                 raise ValueError(
-                    f"أرصدة الافتتاح لا تطابق إقفال السنة السابقة ({previous_year['year_name']}): "
+                    f"أرصدة الافتتاح لا تطابق الأرصدة الدفترية {period_label}: "
                     f"{details}{suffix}."
                 )
         sequence = _history_sequence(conn, year_id, "opening", "created")
@@ -416,6 +458,29 @@ def reverse_financial_year_entry(conn, year_id, entry_kind, reversal_date, reaso
                 (year["start_date"], year["end_date"])).fetchone()[0]
             if drafts:
                 raise ValueError("لا يمكن عكس الإقفال قبل معالجة القيود المسودة داخل السنة.")
+            later_year = conn.execute("""SELECT fy.year_name FROM financial_years fy
+                WHERE fy.start_date>?
+                  AND (
+                    fy.opening_entry_id IS NOT NULL OR fy.closing_entry_id IS NOT NULL
+                    OR EXISTS (SELECT 1 FROM journal_entries je
+                        WHERE je.entry_date>=fy.start_date AND je.entry_date<=fy.end_date
+                          AND je.status IN ('draft','posted'))
+                  )
+                ORDER BY fy.start_date,fy.id LIMIT 1""", (year["end_date"],)).fetchone()
+            if later_year:
+                raise ValueError(
+                    f"لا يمكن عكس إقفال السنة؛ السنة التالية ({later_year['year_name']}) "
+                    "لها قيد افتتاح أو قيود مسجلة. يجب معالجة السنة التالية أولًا."
+                )
+            later_entries = conn.execute("""SELECT id,entry_date FROM journal_entries
+                WHERE entry_date>? AND status IN ('draft','posted')
+                ORDER BY entry_date,id LIMIT 1""", (year["end_date"],)).fetchone()
+            if later_entries:
+                raise ValueError(
+                    f"لا يمكن عكس إقفال السنة؛ يوجد قيد رقم {later_entries['id']} "
+                    f"بتاريخ {later_entries['entry_date']} بعد نهاية السنة. "
+                    "يجب معالجة القيود اللاحقة أولًا."
+                )
             conn.execute("UPDATE financial_years SET status='open' WHERE id=?", (year_id,))
         original = conn.execute("SELECT id,description,status FROM journal_entries WHERE id=?",
                                  (original_id,)).fetchone()
