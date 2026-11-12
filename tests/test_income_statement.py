@@ -6,7 +6,8 @@ from pathlib import Path
 
 import app as nexus_app
 from accounting_core import register_decimal_aggregates
-from income_statement import build_income_statement, normalize_income_statement_period
+from income_statement import (build_income_statement, normalize_income_statement_period,
+                              comparison_period)
 
 
 class IncomeStatementRouteTests(unittest.TestCase):
@@ -29,6 +30,10 @@ class IncomeStatementRouteTests(unittest.TestCase):
             );
             CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT);
             CREATE TABLE management_account_roles(account_id INTEGER, role TEXT);
+            CREATE TABLE financial_years(
+                id INTEGER PRIMARY KEY, year_name TEXT, start_date TEXT, end_date TEXT, status TEXT
+            );
+            INSERT INTO financial_years VALUES(1,'2026','2026-01-01','2026-12-31','open');
             INSERT INTO accounts VALUES
                 (1,'4100','إيرادات المبيعات','revenue',0,1),
                 (2,'4110','مردودات المبيعات','revenue',0,1),
@@ -43,7 +48,10 @@ class IncomeStatementRouteTests(unittest.TestCase):
                 (4,'2026-11-12','posted','general'),
                 (5,'2026-11-12','posted','general'),
                 (6,'2026-11-12','draft','general'),
-                (7,'2026-11-12','posted','year_end_closing');
+                (7,'2026-11-12','posted','year_end_closing'),
+                (8,'2025-11-10','posted','general'),
+                (9,'2025-11-11','posted','general'),
+                (10,'2025-11-12','posted','general');
             INSERT INTO journal_lines VALUES
                 (1,1,1,'0','1000'),
                 (2,2,2,'100','0'),
@@ -55,7 +63,10 @@ class IncomeStatementRouteTests(unittest.TestCase):
                 (8,7,2,'0','100'),
                 (9,7,3,'0','200'),
                 (10,7,4,'0','250'),
-                (11,7,5,'0','450');
+                (11,7,5,'0','450'),
+                (12,8,1,'0','800'),
+                (13,9,3,'150','0'),
+                (14,10,4,'180','0');
             INSERT INTO company_settings VALUES('base_currency','EGP');
             INSERT INTO company_settings VALUES('company_name','شركة الاختبار');
         """)
@@ -92,6 +103,39 @@ class IncomeStatementRouteTests(unittest.TestCase):
         self.assertIn("250.00", body)  # Operating expenses
         self.assertIn("450.00", body)  # Net profit after operating expenses
         self.assertIn("شركة الاختبار", body)
+
+    def test_income_statement_compares_with_same_period_previous_year(self):
+        response = self.client.get(
+            "/reports/income-statement?date_from=2026-11-01&date_to=2026-11-30&compare=previous_year"
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("مقارنة مع 2025-11-01 — 2025-11-30", body)
+        self.assertIn("800.00", body)  # Prior-year revenue
+        self.assertIn("900.00", body)  # Current-period net revenue
+        self.assertIn("470.00", body)  # Prior-year net profit
+
+    def test_trial_balance_can_exclude_closing_entries(self):
+        included = self.client.get(
+            "/reports/trial-balance?date_from=2026-11-01&date_to=2026-11-30"
+        )
+        excluded = self.client.get(
+            "/reports/trial-balance?date_from=2026-11-01&date_to=2026-11-30&include_closing=0"
+        )
+        self.assertEqual(included.status_code, 200)
+        self.assertEqual(excluded.status_code, 200)
+        self.assertIn(">1000.00</td><td>1000.00</td>", included.get_data(as_text=True))
+        self.assertNotIn(">1000.00</td><td>1000.00</td>", excluded.get_data(as_text=True))
+
+    def test_comparison_period_supports_previous_period_and_leap_year(self):
+        self.assertEqual(
+            comparison_period("2026-03-01", "2026-03-31", "previous_period"),
+            ("2026-01-29", "2026-02-28"),
+        )
+        self.assertEqual(
+            comparison_period("2024-02-01", "2024-02-29", "previous_year"),
+            ("2023-02-01", "2023-02-28"),
+        )
 
     def test_invalid_or_blank_dates_restore_year_to_date_defaults(self):
         today = date(2026, 11, 12)
