@@ -4,7 +4,7 @@ import unittest
 from activity_profiles import (
     initialize_activity_profiles_schema, list_activity_profiles,
     create_activity_profile, set_activity_profile_active,
-    validate_activity_profile,
+    validate_activity_profile, update_custom_activity_profile,
 )
 from chart_templates import seed_activity_chart, ensure_activity_chart_accounts
 
@@ -89,6 +89,45 @@ class ActivityProfileTests(unittest.TestCase):
         self.assertEqual(taxes["output_vat"], "2130")
         self.assertEqual(taxes["input_vat"], "1165")
         self.assertTrue(active_account_role_ids(self.conn)["cash"])
+
+    def test_custom_profile_mapping_editor_saves_valid_account_roles(self):
+        seed_activity_chart(self.conn, "service")
+        profile_id = create_activity_profile(
+            self.conn, "logistics", "النقل والخدمات اللوجستية", "service"
+        )
+        profile = next(p for p in list_activity_profiles(self.conn) if p["id"] == profile_id)
+        update_custom_activity_profile(
+            self.conn, profile_id,
+            __import__("json").dumps(profile["account_roles"]),
+            __import__("json").dumps(profile["posting_accounts"]),
+            __import__("json").dumps(profile["tax_roles"]),
+        )
+        saved = next(p for p in list_activity_profiles(self.conn) if p["id"] == profile_id)
+        self.assertEqual(saved["posting_accounts"], profile["posting_accounts"])
+        self.assertEqual(saved["tax_roles"], profile["tax_roles"])
+
+    def test_custom_profile_mapping_editor_rejects_wrong_account_type(self):
+        seed_activity_chart(self.conn, "service")
+        profile_id = create_activity_profile(
+            self.conn, "logistics", "النقل والخدمات اللوجستية", "service"
+        )
+        profile = next(p for p in list_activity_profiles(self.conn) if p["id"] == profile_id)
+        invalid_posting = dict(profile["posting_accounts"])
+        invalid_posting["revenue"] = invalid_posting["supplier_ap"]
+        with self.assertRaisesRegex(ValueError, "لا يتوافق"):
+            update_custom_activity_profile(
+                self.conn, profile_id,
+                __import__("json").dumps(profile["account_roles"]),
+                __import__("json").dumps(invalid_posting),
+                __import__("json").dumps(profile["tax_roles"]),
+            )
+
+    def test_builtin_profile_mappings_are_read_only(self):
+        builtin = next(p for p in list_activity_profiles(self.conn) if p["is_builtin"])
+        with self.assertRaisesRegex(ValueError, "الأساسية"):
+            update_custom_activity_profile(
+                self.conn, builtin["id"], "{}", "{}", "{}"
+            )
 
     def test_legacy_company_without_profile_tables_uses_builtin_mappings(self):
         from activity_profiles import active_posting_accounts
