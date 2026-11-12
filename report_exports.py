@@ -860,6 +860,7 @@ def register_report_exports(app, db_path, permissions):
             Paragraph(pdf_text(title), heading_style),
             Paragraph(pdf_text("العملة الأساسية: " + base_currency), cell_style),
             Paragraph(pdf_text("تاريخ إعداد التقرير: " + datetime.now().strftime("%Y-%m-%d %H:%M")), cell_style),
+            Paragraph(pdf_text("ملاحظة: يعرض هذا الملف البيانات الظاهرة في الشاشة الحالية فقط؛ وقد توجد صفحات أخرى عند استخدام ترقيم الصفحات."), cell_style),
             Spacer(1, 4*mm),
         ]
         for table_title, rows, columns in normalized_tables:
