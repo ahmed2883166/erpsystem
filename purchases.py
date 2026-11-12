@@ -190,6 +190,11 @@ def _activity_posting_accounts(c):
         raise ValueError("ملف النشاط الحالي لا يحتوي حساب الموردين المطلوب للمشتريات.")
     return mapping
 
+def _activity_tax_roles(c):
+    from activity_profiles import active_tax_roles
+    return active_tax_roles(c)
+
+
 def supplier_ap_account(c):
     mapping=_activity_posting_accounts(c)
     return account(c,mapping["supplier_ap"],"liability")
@@ -580,7 +585,7 @@ def new_bill():
             if receipts and remaining!=0: raise ValueError("قيمة الفاتورة يجب أن تطابق إجمالي إيصالات GRNI المحددة.")
             if tax:
                 # No guessed tax posting: explicit input VAT account is mandatory.
-                vat=ensure_detail_account(c,_activity_posting_accounts(c)["input_vat"],"ضريبة مدخلات قابلة للخصم","asset","1100")
+                vat=ensure_detail_account(c,_activity_tax_roles(c)["input_vat"],"ضريبة مدخلات قابلة للخصم","asset","1100")
                 lines.append(("VAT",tax))
             no="BILL-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             cur=c.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,subtotal,tax_rate,tax_amount,total_amount,created_by,
