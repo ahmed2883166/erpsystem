@@ -204,7 +204,7 @@ def password_hash_needs_upgrade(stored_hash):
 
 def initialize_database():
     DATA_DIR.mkdir(exist_ok=True)
-    BACKUP_DIR.mkdir(exist_ok=True)
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     enable_wal(DB_PATH)
     connection = db()
     connection.executescript("""
