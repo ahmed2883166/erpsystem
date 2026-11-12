@@ -1152,21 +1152,26 @@ def trial_balance():
     if account_type not in allowed_types:
         account_type = ""
     conditions, params = ["1=1"], []
-    if date_from:
-        conditions.append("je.entry_date >= ?"); params.append(date_from)
-    if date_to:
-        conditions.append("je.entry_date <= ?"); params.append(date_to)
     if account_type:
         conditions.append("a.account_type = ?"); params.append(account_type)
     if q:
         conditions.append("(a.code LIKE ? OR a.name_ar LIKE ?)"); params.extend([f"%{q}%", f"%{q}%"])
+    # Keep date/status predicates in the JOIN so accounts with no posted
+    # movements remain visible, while draft/cancelled lines contribute zero.
+    join_conditions = ["je.id=jl.entry_id", "je.status='posted'"]
+    join_params = []
+    if date_from:
+        join_conditions.append("je.entry_date >= ?"); join_params.append(date_from)
+    if date_to:
+        join_conditions.append("je.entry_date <= ?"); join_params.append(date_to)
     connection = db()
     rows = connection.execute(f"""SELECT a.id, a.code, a.name_ar, a.account_type,
-        COALESCE(DECIMAL_SUM(jl.debit),0) debit, COALESCE(DECIMAL_SUM(jl.credit),0) credit
+        COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
+        COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
         FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
-        LEFT JOIN journal_entries je ON je.id=jl.entry_id AND je.status='posted'
+        LEFT JOIN journal_entries je ON {' AND '.join(join_conditions)}
         WHERE {' AND '.join(conditions)}
-        GROUP BY a.id ORDER BY a.code""", params).fetchall()
+        GROUP BY a.id ORDER BY a.code""", [*join_params, *params]).fetchall()
     rows = [dict(row, debit=Decimal(str(row["debit"] or "0")),
                  credit=Decimal(str(row["credit"] or "0"))) for row in rows]
     settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
