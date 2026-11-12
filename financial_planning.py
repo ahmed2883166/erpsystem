@@ -797,6 +797,91 @@ def balance_sheet():
     return render_template("balance_sheet.html",s=snapshot)
 
 
+def build_cash_flow_snapshot(conn, start, end):
+    """Build an IAS 7-oriented cash-flow snapshot for an inclusive date range."""
+    role_rows = conn.execute("SELECT account_id FROM management_account_roles WHERE role='cash'").fetchall()
+    cash_ids = {r["account_id"] for r in role_rows}
+    custom_mapping = conn.execute(
+        "SELECT meta_value FROM management_dashboard_meta WHERE meta_key='roles_customized'"
+    ).fetchone()
+    if not cash_ids and not (custom_mapping and custom_mapping["meta_value"] == "1"):
+        cash_ids = {r["id"] for r in conn.execute(
+            "SELECT id FROM accounts WHERE is_group=0 AND (code IN ('1110','1120') OR name_ar LIKE '%صندوق%' OR name_ar LIKE '%بنك%')"
+        )}
+    if not cash_ids:
+        opening = closing = Decimal("0")
+        sections = {k: {"in": Decimal("0"), "out": Decimal("0")} for k in ("operating", "investing", "financing")}
+    else:
+        marks = ",".join("?" for _ in cash_ids)
+        ids = tuple(sorted(cash_ids))
+        opening_row = conn.execute(f"""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) value
+            FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+            WHERE jl.account_id IN ({marks}) AND je.status='posted' AND je.entry_date<?""",
+            (*ids, start)).fetchone()
+        opening = Decimal(str(opening_row["value"] or "0"))
+        sections = {k: {"in": Decimal("0"), "out": Decimal("0")} for k in ("operating", "investing", "financing")}
+        entries = conn.execute(f"""SELECT je.id,
+            COALESCE(DECIMAL_NET(CASE WHEN jl.account_id IN ({marks}) THEN jl.debit ELSE '0' END,
+                                 CASE WHEN jl.account_id IN ({marks}) THEN jl.credit ELSE '0' END),0) cash_net
+            FROM journal_entries je JOIN journal_lines jl ON jl.entry_id=je.id
+            WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
+            GROUP BY je.id ORDER BY je.entry_date,je.id""",
+            (*ids, *ids, start, end)).fetchall()
+        for entry in entries:
+            net = Decimal(str(entry["cash_net"] or "0"))
+            if not net:
+                continue
+            counterpart = conn.execute(f"""SELECT a.account_type,a.code,a.name_ar,jl.debit,jl.credit
+                FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+                WHERE jl.entry_id=? AND jl.account_id NOT IN ({marks})""",
+                (entry["id"], *ids)).fetchall()
+            weights = {"operating": Decimal("0"), "investing": Decimal("0"), "financing": Decimal("0")}
+            for item in counterpart:
+                code, name = item["code"], item["name_ar"]
+                if item["account_type"] == "asset" and not (
+                    code.startswith(("11", "21")) or "عميل" in name or "مخزون" in name or "مقدم" in name
+                ):
+                    category = "investing"
+                elif item["account_type"] == "equity" or (
+                    item["account_type"] == "liability" and (code.startswith("22") or "قرض" in name)
+                ):
+                    category = "financing"
+                else:
+                    category = "operating"
+                weights[category] += abs(Decimal(str(item["debit"] or "0"))) + abs(Decimal(str(item["credit"] or "0")))
+            total_weight = sum(weights.values(), Decimal("0"))
+            if not total_weight:
+                weights["operating"] = Decimal("1")
+                total_weight = Decimal("1")
+            remaining = abs(net)
+            active = [k for k, value in weights.items() if value]
+            for category in active[:-1]:
+                part = (abs(net) * weights[category] / total_weight).quantize(CENT, rounding=ROUND_HALF_UP)
+                remaining -= part
+                if net > 0:
+                    sections[category]["in"] += part
+                else:
+                    sections[category]["out"] += part
+            category = active[-1]
+            if net > 0:
+                sections[category]["in"] += remaining
+            else:
+                sections[category]["out"] += remaining
+        movement = sum((item["in"] - item["out"] for item in sections.values()), Decimal("0"))
+        closing = opening + movement
+    total_in = sum((item["in"] for item in sections.values()), Decimal("0"))
+    total_out = sum((item["out"] for item in sections.values()), Decimal("0"))
+    net_change = closing - opening
+    reconciliation_difference = net_change - (total_in - total_out)
+    return {
+        "date_from": start, "date_to": end, "opening": opening, "closing": closing,
+        "sections": sections, "total_in": total_in, "total_out": total_out,
+        "net_change": net_change, "reconciliation_difference": reconciliation_difference,
+        "cash_mapping_available": bool(cash_ids),
+        "cash_reconciles": bool(cash_ids) and reconciliation_difference == 0,
+    }
+
+
 @planning_bp.route("/reports/cash-flow")
 @_require("cashflow.view")
 def cash_flow():
