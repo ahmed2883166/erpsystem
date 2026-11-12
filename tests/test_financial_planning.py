@@ -44,6 +44,16 @@ class FinancialPlanningTests(unittest.TestCase):
             create_financial_year(self.conn, "Bad dates", "2027-02-01", "2027-01-01", 1)
         self.assertEqual(len(list_financial_years(self.conn)), 1)
 
+    def test_financial_year_overlap_does_not_require_sqlite_row_factory(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            initialize_planning_schema(conn)
+            create_financial_year(conn, "FY 2026", "2026-01-01", "2026-12-31")
+            with self.assertRaisesRegex(ValueError, "FY 2026"):
+                create_financial_year(conn, "FY 2027", "2026-12-15", "2027-12-14")
+        finally:
+            conn.close()
+
     def test_budget_schema_and_decimal_amounts(self):
         initialize_planning_schema(self.conn)
         tables = {r["name"] for r in self.conn.execute(
