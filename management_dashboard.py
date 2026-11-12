@@ -210,6 +210,7 @@ def initialize_management_dashboard_schema(conn, activity):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_status_date ON journal_entries(status,entry_date,id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_account ON journal_lines(entry_id,account_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry ON journal_lines(account_id,entry_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry_id ON journal_lines(account_id,entry_id,id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_entry_date ON journal_entries(entry_date,id)")
     journal_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
     if "reference" in journal_columns:
