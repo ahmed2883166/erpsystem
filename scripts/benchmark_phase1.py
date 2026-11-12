@@ -9,6 +9,11 @@ import tempfile
 import time
 from datetime import date, timedelta
 from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from accounting_core import reconciliation_snapshot
 from database import connect_database
