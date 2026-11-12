@@ -73,7 +73,7 @@
 <div class="nav-links">
 {% if 'accounts.manage' in permissions %}<a href="{{ url_for('management_account_mapping') }}">ربط حسابات لوحة الإدارة</a>{% endif %}
 {% if 'users.manage' in permissions %}<a href="{{ url_for('accounting_periods') }}">إقفال الفترات المحاسبية</a><a href="{{ url_for('company_setup') }}">إعداد الشركة والعملات</a><a href="{{ url_for('users') }}">المستخدمون والصلاحيات</a>{% endif %}
-{% if 'backup.manage' in permissions %}<a href="{{ url_for('create_backup') }}">نسخة احتياطية</a>{% endif %}
+{% if 'backup.manage' in permissions %}<a href="{{ url_for('backup_settings') }}">النسخ الاحتياطي التلقائي</a><a href="{{ url_for('create_backup') }}">تنزيل نسخة احتياطية الآن</a>{% endif %}
 </div></details>
 {% endif %}
 <a href="{{ url_for('change_password') }}">تغيير كلمة المرور</a><a href="{{ url_for('logout') }}">تسجيل الخروج</a>
