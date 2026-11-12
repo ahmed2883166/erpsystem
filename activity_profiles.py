@@ -199,3 +199,82 @@ def active_account_role_ids(conn):
                 ids.add(row["id"])
         result[role] = ids
     return result
+
+
+
+def update_custom_activity_profile(conn, profile_id, account_roles_json,
+                                   posting_accounts_json, tax_roles_json):
+    """Update mappings for a custom profile after strict structure/type validation."""
+    row = conn.execute(
+        "SELECT * FROM activity_profiles WHERE id=?", (profile_id,)
+    ).fetchone()
+    if not row:
+        raise ValueError("ملف النشاط غير موجود.")
+    if row["is_builtin"]:
+        raise ValueError("لا يمكن تعديل ملفات الأنشطة الأساسية المدمجة.")
+    try:
+        account_roles = json.loads(account_roles_json)
+        posting_accounts = json.loads(posting_accounts_json)
+        tax_roles = json.loads(tax_roles_json)
+    except (TypeError, ValueError):
+        raise ValueError("صيغة JSON غير صحيحة في أحد إعدادات الحسابات.")
+    from chart_templates import ACTIVITY_ACCOUNT_ROLES, ACTIVITY_POSTING_ACCOUNTS, ACTIVITY_TAX_ACCOUNT_ROLES
+    base = row["base_activity"]
+    if base not in ACTIVITY_POSTING_ACCOUNTS:
+        raise ValueError("النشاط الأساسي غير مدعوم.")
+    expected = (
+        (account_roles, ACTIVITY_ACCOUNT_ROLES[base], "أدوار الحسابات"),
+        (posting_accounts, ACTIVITY_POSTING_ACCOUNTS[base], "حسابات الترحيل"),
+        (tax_roles, ACTIVITY_TAX_ACCOUNT_ROLES[base], "حسابات الضرائب"),
+    )
+    for mapping, template, label in expected:
+        if not isinstance(mapping, dict) or set(mapping) != set(template):
+            raise ValueError(f"مفاتيح {label} يجب أن تطابق مفاتيح النشاط الأساسي دون زيادة أو نقص.")
+    if any(not isinstance(v, list) or not v for v in account_roles.values()):
+        raise ValueError("كل دور في أدوار الحسابات يجب أن يحتوي قائمة حسابات غير فارغة.")
+    posting_types = {
+        "ar": "asset", "revenue": "revenue", "vat": "liability",
+        "inventory": "asset", "cogs": "expense", "purchase_inventory": "asset",
+        "supplier_ap": "liability", "input_vat": "asset",
+    }
+    tax_types = {"output_vat": "liability", "input_vat": "asset"}
+    role_types = {
+        "cash": "asset", "receivables": "asset", "payables": "liability",
+        "inventory": "asset", "quick_assets": "asset", "current_assets": "asset",
+        "current_liabilities": "liability", "direct_cost": "expense",
+        "retained_earnings": "equity",
+    }
+    accounts = {r["code"]: r for r in conn.execute(
+        "SELECT code,account_type,is_group,active FROM accounts"
+    )}
+    def check_code(code, expected_type, label):
+        if code in (None, ""):
+            return
+        account = accounts.get(str(code))
+        if not account:
+            raise ValueError(f"الحساب {code} في {label} غير موجود بدليل الحسابات.")
+        if account["is_group"] or not account["active"]:
+            raise ValueError(f"الحساب {code} في {label} تجميعي أو غير نشط.")
+        if expected_type and account["account_type"] != expected_type:
+            raise ValueError(f"نوع الحساب {code} لا يتوافق مع {label}; المتوقع {expected_type}.")
+    for role, values in account_roles.items():
+        if not isinstance(values, list):
+            raise ValueError(f"الدور {role} يجب أن يكون قائمة أكواد حسابات.")
+        for code in values:
+            check_code(code, role_types.get(role), role)
+    for key, code in posting_accounts.items():
+        if code is None and key in {"inventory", "cogs", "purchase_inventory"}:
+            continue
+        if code in (None, ""):
+            raise ValueError(f"حساب الترحيل {key} مطلوب.")
+        check_code(code, posting_types.get(key), key)
+    for key, code in tax_roles.items():
+        check_code(code, tax_types.get(key), key)
+    conn.execute(
+        """UPDATE activity_profiles
+           SET account_roles_json=?,posting_accounts_json=?,tax_roles_json=?,
+               updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+        (json.dumps(account_roles,ensure_ascii=False,sort_keys=True),
+         json.dumps(posting_accounts,ensure_ascii=False,sort_keys=True),
+         json.dumps(tax_roles,ensure_ascii=False,sort_keys=True), profile_id),
+    )
