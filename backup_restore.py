@@ -23,6 +23,8 @@ def extract_validated_backup(archive_path, candidate_path,
         if len(manifests) > 1:
             raise ValueError("ملف النسخة يحتوي على أكثر من Manifest.")
         if manifests:
+            if manifests[0].file_size > 1024 * 1024:
+                raise ValueError("حجم ملف Manifest أكبر من الحد المسموح.")
             try:
                 manifest = json.loads(archive.read(manifests[0]).decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
