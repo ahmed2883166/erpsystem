@@ -675,8 +675,6 @@ def new_credit_note():
                 raise ValueError("إشعار الدائن المخزني متاح فقط لفواتير الأصناف المرتبطة باستلام مشتريات، وليس فواتير المصروفات والخدمات.")
             if c.execute("SELECT 1 FROM supplier_credit_notes WHERE supplier_id=? AND lower(trim(supplier_credit_no))=lower(trim(?))",(supplier,supplier_credit_no)).fetchone():
                 raise ValueError("رقم إشعار الدائن مسجل بالفعل لهذا المورد.")
-            activity_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
-            activity=activity_row["setting_value"] if activity_row else "commercial"
             inventory_code=activity_inventory_code(c)
             if not inventory_code:
                 raise ValueError("النشاط الحالي لا يملك حساب مخزون معرفًا.")
