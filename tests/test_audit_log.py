@@ -1,5 +1,7 @@
 import sqlite3
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import app as nexus_app
@@ -7,7 +9,9 @@ import app as nexus_app
 
 class AuditLogTests(unittest.TestCase):
     def setUp(self):
-        self.connection = sqlite3.connect(":memory:")
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp.name) / "audit.db"
+        self.connection = sqlite3.connect(self.db_path)
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("""
             CREATE TABLE audit_log(
@@ -15,14 +19,16 @@ class AuditLogTests(unittest.TestCase):
                 created_at TEXT, entity_type TEXT, entity_id TEXT, remote_addr TEXT, outcome TEXT
             )
         """)
+        self.connection.commit()
 
     def tearDown(self):
         self.connection.close()
+        self.temp.cleanup()
 
     def test_log_records_authenticated_actor_and_request_context(self):
         with nexus_app.app.test_request_context("/", environ_base={"REMOTE_ADDR": "192.0.2.10"}):
             nexus_app.session["user_id"] = 17
-            with patch.object(nexus_app, "db", return_value=self.connection):
+            with patch.object(nexus_app, "db", side_effect=lambda: sqlite3.connect(self.db_path)):
                 nexus_app.log(
                     "journal_posted", "قيد #42",
                     entity_type="journal", entity_id=42, outcome="success"
