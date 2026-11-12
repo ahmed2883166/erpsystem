@@ -291,6 +291,7 @@ class ManagementDashboardTests(unittest.TestCase):
         ) as unusual:
             first = cached_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
             second = cached_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
+            self.assertEqual(second["current"]["revenue"], first["current"]["revenue"])
             self.assertIn("cash_forecast", first)
             self.assertIn("unusual_entries", first)
             self.assertEqual(forecast.call_count, 1)
