@@ -4,8 +4,8 @@ import unittest
 
 from activity_profiles import (
     initialize_activity_profiles_schema, list_activity_profiles,
-    create_activity_profile, set_activity_profile_active,
-    validate_activity_profile, update_custom_activity_profile,
+    create_activity_profile, create_specialized_activity_profile, SPECIALIZED_ACTIVITY_PRESETS,
+    set_activity_profile_active, validate_activity_profile, update_custom_activity_profile,
 )
 from chart_templates import seed_activity_chart, ensure_activity_chart_accounts
 
@@ -32,6 +32,16 @@ class ActivityProfileTests(unittest.TestCase):
         profiles = list_activity_profiles(self.conn)
         self.assertEqual({p["code"] for p in profiles},
                          {"commercial", "service", "medical", "restaurant", "industrial"})
+
+    def test_specialized_presets_create_custom_profiles_idempotently(self):
+        self.assertIn("transport_logistics", SPECIALIZED_ACTIVITY_PRESETS)
+        first_id = create_specialized_activity_profile(self.conn, "transport_logistics")
+        second_id = create_specialized_activity_profile(self.conn, "transport_logistics")
+        self.assertEqual(first_id, second_id)
+        profile = next(p for p in list_activity_profiles(self.conn) if p["id"] == first_id)
+        self.assertEqual(profile["base_activity"], "service")
+        self.assertFalse(profile["is_builtin"])
+        self.assertIn("النقل", profile["name"])
 
     def test_custom_profile_inherits_base_configuration(self):
         profile_id = create_activity_profile(
