@@ -34,7 +34,7 @@ class ActivityProfileTests(unittest.TestCase):
         )
         profile = next(p for p in list_activity_profiles(self.conn) if p["id"] == profile_id)
         self.assertEqual(profile["base_activity"], "service")
-        self.assertEqual(profile["account_roles"]["cash"], ("1110",))
+        self.assertEqual(profile["account_roles"]["cash"], ["1110"])
         self.assertFalse(profile["is_builtin"])
 
     def test_rejects_invalid_or_duplicate_profile_code(self):
