@@ -391,11 +391,11 @@ def build_financial_year_preclose_report(conn, year_id):
                        for item in snapshot.get("unlinked_documents", []))
         add("unlinked_documents", "مستندات تشغيلية غير مرتبطة بقيود",
             "warning" if unlinked else "success", unlinked,
-            "راجع المستندات التي لم ترتبط بقيود محاسبية.", False)
+            "مراجعة عامة على مستوى النظام: راجع المستندات التي لم ترتبط بقيود محاسبية.", False)
         pending = int(snapshot.get("pending_stock", 0) or 0)
         add("pending_stock", "حركات مخزون تحتاج معالجة محاسبية",
             "warning" if pending else "success", pending,
-            "راجع حركات المخزون المعلقة قبل اعتماد الأرصدة النهائية.", False)
+            "مراجعة عامة على مستوى النظام: راجع حركات المخزون المعلقة قبل اعتماد الأرصدة النهائية.", False)
         difference = snapshot.get("stock_difference")
         has_difference = difference is not None and Decimal(str(difference)) != 0
         add("stock_reconciliation", "فرق المخزون بين الدفاتر والتقييم",
@@ -718,6 +718,12 @@ def financial_year_close(year_id):
             abort(403)
         entry_id = close_financial_year(conn, year_id, session.get("user_id"),
                                         allow_warnings=allow_warnings)
+        if allow_warnings and _table_exists_financial(conn, "audit_log"):
+            conn.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
+                VALUES(?,?,?,CURRENT_TIMESTAMP)""",
+                (session.get("user_id"), "financial_year_warnings_approved",
+                 f"اعتماد تحذيرات الإقفال للسنة {year_id} — قيد الإقفال {entry_id}"))
+            conn.commit()
         flash(f"تم إقفال السنة المالية بقيد رقم {entry_id}.", "success")
     except (ValueError, sqlite3.IntegrityError) as exc:
         flash(str(exc) or "تعذر إقفال السنة المالية.", "error")
