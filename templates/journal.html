@@ -2,6 +2,7 @@
 <header><h2>القيود اليومية</h2><span class="pill">قيد يدوي متعدد السطور</span></header>
 <section class="panel"><p class="muted">أضف أي عدد من السطور. يجب أن يتساوى إجمالي المدين والدائن قبل الترحيل، والترحيل مسموح للحسابات التفصيلية النشطة فقط.</p>
 <form method="post" id="journalForm"><div class="form-row"><label>التاريخ<input type="date" name="entry_date" value="{{ today }}" required></label><label>المرجع<input name="reference" placeholder="يُنشأ تلقائيًا إذا تركته فارغًا"></label></div><label>البيان العام<input name="description" required placeholder="مثال: إثبات مصروف إيجار شهر نوفمبر"></label>
+<label>سبب إنشاء القيد (اختياري)<input name="change_reason" maxlength="1000" placeholder="سبب أو مستند مؤيد للقيد"></label>
 <div class="form-row">
 <label>الفرع<select name="branch_id"><option value="">بدون تحديد</option>{% for x in dimension_options.branches %}<option value="{{ x.id }}">{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
 <label>مركز التكلفة<select name="cost_center_id"><option value="">بدون تحديد</option>{% for x in dimension_options.cost_centers %}<option value="{{ x.id }}">{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
