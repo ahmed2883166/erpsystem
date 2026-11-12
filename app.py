@@ -1390,6 +1390,20 @@ def ledger():
     account_id = request.args.get("account_id", type=int)
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
+    search_query = request.args.get("q", "").strip()[:100]
+    for value in (date_from, date_to):
+        if value:
+            try:
+                if datetime.fromisoformat(value).date().isoformat() != value:
+                    raise ValueError()
+            except ValueError:
+                flash("تاريخ البحث غير صحيح.", "error")
+                date_from = date_to = ""
+                break
+    if date_from and date_to and date_from > date_to:
+        flash("تاريخ البداية يجب ألا يسبق تاريخ النهاية.", "error")
+        date_from = date_to = ""
+
     connection = db()
     accounts_list = connection.execute("SELECT * FROM accounts WHERE active=1 ORDER BY code").fetchall()
     rows, selected = [], None
@@ -1399,63 +1413,94 @@ def ledger():
     total_credit = Decimal("0")
     ledger_page = {"rows": [], "total": 0, "page": 1, "pages": 1, "per_page": 50}
     if account_id:
-        selected = connection.execute("SELECT * FROM accounts WHERE id=? AND is_group=0", (account_id,)).fetchone()
+        selected = connection.execute(
+            "SELECT * FROM accounts WHERE id=? AND is_group=0", (account_id,)
+        ).fetchone()
         if selected:
-            conditions = ["jl.account_id=?", "je.status='posted'"]
-            params = [account_id]
+            date_conditions = ["jl.account_id=?", "je.status='posted'"]
+            date_params = [account_id]
             if date_from:
-                conditions.append("je.entry_date >= ?"); params.append(date_from)
+                date_conditions.append("je.entry_date>=?"); date_params.append(date_from)
             if date_to:
-                conditions.append("je.entry_date <= ?"); params.append(date_to)
+                date_conditions.append("je.entry_date<=?"); date_params.append(date_to)
+
+            display_conditions = list(date_conditions)
+            display_params = list(date_params)
+            if search_query:
+                like = "%" + search_query + "%"
+                search_parts = ["je.reference LIKE ?", "je.description LIKE ?", "jl.memo LIKE ?"]
+                display_params.extend([like, like, like])
+                if search_query.isdigit():
+                    search_parts.append("CAST(je.id AS TEXT)=?")
+                    display_params.append(search_query)
+                display_conditions.append("(" + " OR ".join(search_parts) + ")")
+
             base_opening = Decimal("0")
             if date_from:
-                opening_row = connection.execute("""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) balance
+                opening_row = connection.execute("""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),'0') balance
                     FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                     WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<?""",
                     (account_id, date_from)).fetchone()
                 base_opening = Decimal(str(opening_row["balance"] or "0"))
-            query = f"""SELECT je.id entry_id, je.entry_date, je.reference, je.description,
-                jl.id line_id, jl.debit, jl.credit, jl.memo,
+
+            history_conditions = ["hist.account_id=jl.account_id", "he.status='posted'",
+                "(he.entry_date<je.entry_date OR (he.entry_date=je.entry_date AND hist.id<=jl.id))"]
+            history_params = []
+            if date_from:
+                history_conditions.append("he.entry_date>=?"); history_params.append(date_from)
+            query = f"""SELECT je.id entry_id,je.entry_date,je.reference,je.description,
+                jl.id line_id,jl.debit,jl.credit,jl.memo,
                 (SELECT GROUP_CONCAT(a2.code || ' - ' || a2.name_ar, '، ')
                    FROM journal_lines jl2 JOIN accounts a2 ON a2.id=jl2.account_id
-                  WHERE jl2.entry_id=je.id AND jl2.account_id<>jl.account_id) counterpart_accounts
+                  WHERE jl2.entry_id=je.id AND jl2.account_id<>jl.account_id) counterpart_accounts,
+                (? + COALESCE((SELECT DECIMAL_NET(hist.debit,hist.credit)
+                    FROM journal_lines hist JOIN journal_entries he ON he.id=hist.entry_id
+                    WHERE {' AND '.join(history_conditions)}),'0')) running_balance
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
-                WHERE {' AND '.join(conditions)} ORDER BY je.entry_date, jl.id"""
-            count_query = f"""SELECT COUNT(*) FROM journal_lines jl
-                JOIN journal_entries je ON je.id=jl.entry_id WHERE {' AND '.join(conditions)}"""
-            ledger_page = fetch_page(connection, query, count_query, params,
+                WHERE {' AND '.join(display_conditions)}
+                ORDER BY je.entry_date,jl.id"""
+            ledger_page = fetch_page(
+                connection, query,
+                f"""SELECT COUNT(*) FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                    WHERE {' AND '.join(display_conditions)}""",
+                [str(base_opening), *history_params, *display_params],
                 page=request.args.get("ledger_page",1,type=int),
-                per_page=request.args.get("ledger_per_page",50,type=int))
+                per_page=request.args.get("ledger_per_page",50,type=int),
+            )
             raw_rows = ledger_page["rows"]
-            opening_balance = base_opening
             if raw_rows:
                 first = raw_rows[0]
-                prior = connection.execute(f"""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) balance
-                    FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
-                    WHERE {' AND '.join(conditions)}
-                      AND (je.entry_date < ? OR (je.entry_date=? AND jl.id < ?))""",
-                    tuple(params) + (first["entry_date"], first["entry_date"], first["line_id"])).fetchone()
-                opening_balance += Decimal(str(prior["balance"] or "0"))
-            totals_row = connection.execute(f"""SELECT
-                COALESCE(DECIMAL_SUM(jl.debit),0) debit,
-                COALESCE(DECIMAL_SUM(jl.credit),0) credit,
-                COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) net
+                first_running = Decimal(str(first["running_balance"] or "0"))
+                opening_balance = first_running - Decimal(str(first["debit"] or "0")) + Decimal(str(first["credit"] or "0"))
+            else:
+                opening_balance = base_opening
+
+            filtered_totals = connection.execute(f"""SELECT
+                COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
+                COALESCE(DECIMAL_SUM(jl.credit),'0') credit
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
-                WHERE {' AND '.join(conditions)}""", params).fetchone()
-            total_debit = Decimal(str(totals_row["debit"] or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            total_credit = Decimal(str(totals_row["credit"] or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            closing_balance = (base_opening + Decimal(str(totals_row["net"] or "0"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            running_balance = opening_balance
+                WHERE {' AND '.join(display_conditions)}""", display_params).fetchone()
+            total_debit = Decimal(str(filtered_totals["debit"] or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            total_credit = Decimal(str(filtered_totals["credit"] or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+            period_net = connection.execute(f"""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),'0') net
+                FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                WHERE {' AND '.join(date_conditions)}""", date_params).fetchone()
+            closing_balance = (base_opening + Decimal(str(period_net["net"] or "0"))).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
             for row in raw_rows:
                 item = dict(row)
                 item["debit"] = Decimal(str(item["debit"] or "0"))
                 item["credit"] = Decimal(str(item["credit"] or "0"))
-                running_balance += item["debit"] - item["credit"]
-                item["running_balance"] = running_balance.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                item["running_balance"] = Decimal(str(item["running_balance"] or "0")).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
                 rows.append(item)
     connection.close()
     return render_template("ledger.html", accounts=accounts_list, selected=selected, rows=rows,
-        date_from=date_from, date_to=date_to, opening_balance=opening_balance, closing_balance=closing_balance,
+        date_from=date_from, date_to=date_to, search_query=search_query,
+        opening_balance=opening_balance, closing_balance=closing_balance,
         total_debit=total_debit, total_credit=total_credit, ledger_page=ledger_page)
 
 
