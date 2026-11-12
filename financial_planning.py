@@ -451,7 +451,7 @@ def build_financial_year_preclose_report(conn, year_id):
         has_difference = difference is not None and Decimal(str(difference)) != 0
         add("stock_reconciliation", "فرق المخزون بين الدفاتر والتقييم",
             "warning" if has_difference else "success", 1 if has_difference else 0,
-            f"فرق المخزون: {difference}." if has_difference else
+            f"فرق المخزون على مستوى النظام: {difference}." if has_difference else
             "لا يوجد فرق ظاهر بين قيمة المخزون والتقييم.", False)
     except (sqlite3.Error, KeyError, TypeError, ValueError):
         add("operational_checks", "فحوصات الربط التشغيلي والمخزون", "warning", 1,
