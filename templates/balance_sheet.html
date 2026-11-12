@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}قائمة المركز المالي | NEXUS ERP{% endblock %}
 {% block content %}
-<header><h2>قائمة المركز المالي (الميزانية العمومية)</h2><p class="muted">أرصدة الحسابات المرحلة حتى التاريخ المحدد، مع إظهار نتيجة النشاط ضمن حقوق الملكية.</p></header>
+<header><div><h2>قائمة المركز المالي (الميزانية العمومية)</h2><p class="muted">أرصدة الحسابات المرحلة حتى التاريخ المحدد، مع إظهار نتيجة النشاط ضمن حقوق الملكية.</p></div><div class="table-actions no-print"><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='balance-sheet', as_of=s.as_of) }}">تصدير Excel</a><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='balance-sheet', as_of=s.as_of).replace('/excel','/pdf') }}">تحميل PDF</a></div></header>
 <section class="panel no-print"><form method="get" class="report-filter"><label>كما في تاريخ<input type="date" name="as_of" value="{{ s.as_of }}" required></label><button>عرض الميزانية</button></form></section>
 <section class="stat-grid"><article class="stat-card"><small>إجمالي الأصول</small><strong>{{ '%.2f'|format(s.total_assets) }}</strong></article><article class="stat-card"><small>إجمالي الالتزامات</small><strong>{{ '%.2f'|format(s.total_liabilities) }}</strong></article><article class="stat-card"><small>حقوق الملكية بعد نتيجة النشاط</small><strong>{{ '%.2f'|format(s.total_equity) }}</strong></article><article class="stat-card"><small>نتيجة النشاط المتراكمة</small><strong>{{ '%.2f'|format(s.net_profit) }}</strong></article></section>
 {% for kind,title,total in [('asset','الأصول',s.total_assets),('liability','الالتزامات',s.total_liabilities),('equity','حقوق الملكية',s.equity_before_profit)] %}
