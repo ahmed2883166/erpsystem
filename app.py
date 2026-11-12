@@ -1254,7 +1254,29 @@ def journal():
             dimensions = validate_journal_dimensions(connection, {key: request.form.get(key) for key in ("branch_id", "cost_center_id", "project_id")})
             entry_id = post_journal(connection, entry_date, reference, description, lines, session["user_id"], dimensions)
             connection.commit()
-            log("journal_posted", f"قيد #{entry_id}")
+            posted_entry = connection.execute(
+                "SELECT id,entry_date,reference,description,status FROM journal_entries WHERE id=?",
+                (entry_id,),
+            ).fetchone()
+            posted_lines = [dict(row) for row in connection.execute(
+                """SELECT a.code account_code,a.name_ar account_name,jl.debit,jl.credit,jl.memo
+                   FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+                   WHERE jl.entry_id=? ORDER BY jl.id""",
+                (entry_id,),
+            ).fetchall()]
+            log_change(
+                "journal_posted", "journal_entry", entry_id, None,
+                {
+                    "entry_date": posted_entry["entry_date"],
+                    "reference": posted_entry["reference"],
+                    "description": posted_entry["description"],
+                    "status": posted_entry["status"],
+                    "debit_total": str(total_debit), "credit_total": str(total_credit),
+                    "dimensions": dimensions, "lines": posted_lines,
+                },
+                details=f"قيد #{entry_id}",
+                reason=request.form.get("change_reason", "").strip(),
+            )
             flash("تم ترحيل القيد بنجاح.", "success")
             return redirect(url_for("journal"))
         except (ValueError, TypeError, OverflowError) as exc:
@@ -1981,7 +2003,38 @@ def reverse_journal(entry_id):
             f"قيد عكسي للقيد رقم {entry_id}: {original['description']} — السبب: {reversal_reason}",
             reverse_lines, session["user_id"])
         connection.commit()
-        log("journal_reversed", f"الأصلي #{entry_id}؛ العكسي #{reversal_id}؛ التاريخ {reversal_date}؛ السبب: {reversal_reason}")
+        reversal_entry = connection.execute(
+            "SELECT id,entry_date,reference,description,status FROM journal_entries WHERE id=?",
+            (reversal_id,),
+        ).fetchone()
+        reversal_snapshot_lines = [dict(row) for row in connection.execute(
+            """SELECT a.code account_code,a.name_ar account_name,jl.debit,jl.credit,jl.memo
+               FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+               WHERE jl.entry_id=? ORDER BY jl.id""",
+            (reversal_id,),
+        ).fetchall()]
+        original_snapshot_lines = [dict(row) for row in connection.execute(
+            """SELECT a.code account_code,a.name_ar account_name,jl.debit,jl.credit,jl.memo
+               FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+               WHERE jl.entry_id=? ORDER BY jl.id""",
+            (entry_id,),
+        ).fetchall()]
+        log_change(
+            "journal_reversed", "journal_entry", reversal_id,
+            {
+                "original_entry_id": entry_id, "reference": original["reference"],
+                "entry_date": original["entry_date"], "description": original["description"],
+                "status": original["status"], "lines": original_snapshot_lines,
+            },
+            {
+                "reversal_entry_id": reversal_id, "original_entry_id": entry_id,
+                "entry_date": reversal_entry["entry_date"], "reference": reversal_entry["reference"],
+                "description": reversal_entry["description"], "status": reversal_entry["status"],
+                "reason": reversal_reason, "lines": reversal_snapshot_lines,
+            },
+            details=f"الأصلي #{entry_id}؛ العكسي #{reversal_id}",
+            reason=reversal_reason,
+        )
         flash(f"تم إنشاء القيد العكسي رقم {reversal_id}. القيد الأصلي محفوظ دون تعديل.", "success")
         return redirect(url_for("journal_detail", entry_id=reversal_id))
     except (ValueError, TypeError) as exc:
