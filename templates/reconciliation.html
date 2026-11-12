@@ -4,7 +4,7 @@
 <header>
   <div><h2>مركز المطابقة والترابط</h2>
   <p>{{ settings.get('company_name','NEXUS ERP') }} — العملة الأساسية {{ settings.get('base_currency','') }}</p></div>
-  <div class="table-actions no-print"><button type="button" class="secondary" onclick="window.print()">طباعة / حفظ PDF</button><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='reconciliation') }}">تصدير Excel</a><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='reconciliation') }}".replace('/excel','/pdf')>تحميل PDF</a></div>
+  <div class="table-actions no-print"><button type="button" class="secondary" onclick="window.print()">طباعة / حفظ PDF</button><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='reconciliation') }}">تصدير Excel</a><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='reconciliation').replace('/excel','/pdf') }}">تحميل PDF</a></div>
 </header>
 
 <section class="cards">
