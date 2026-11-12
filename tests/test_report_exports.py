@@ -89,6 +89,12 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         self.assertEqual(len(account_rows), 2)
         self.assertTrue(all(row[0] == "2026" for row in account_rows))
 
+    def test_trial_balance_pdf_export_returns_pdf_document(self):
+        response = self.client.get("/reports/export/trial-balance/pdf")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True)[:300])
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertTrue(response.data.startswith(b"%PDF"))
+
     def test_trial_balance_export_rejects_reversed_date_range(self):
         response = self.client.get(
             "/reports/export/trial-balance/excel?date_from=2026-12-31&date_to=2026-01-01"
