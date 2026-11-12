@@ -31,7 +31,7 @@ from party_reports import party_bp
 from management_dashboard import cached_management_snapshot, initialize_management_dashboard_schema
 from analytic_dimensions import initialize_analytic_dimensions_schema, active_dimension_options, validate_journal_dimensions
 from financial_planning import planning_bp, initialize_planning_schema
-from activity_profiles import (initialize_activity_profiles_schema, list_activity_profiles, create_activity_profile, set_activity_profile_active, validate_activity_profile, update_custom_activity_profile)
+from activity_profiles import (initialize_activity_profiles_schema, list_activity_profiles, create_activity_profile, create_specialized_activity_profile, SPECIALIZED_ACTIVITY_PRESETS, set_activity_profile_active, validate_activity_profile, update_custom_activity_profile)
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
@@ -764,6 +764,12 @@ def activity_profiles():
                 connection.commit()
                 log("activity_profile_created", request.form.get("code", ""), "activity_profile", profile_id)
                 flash("تم إنشاء ملف النشاط. راجع توافق الحسابات قبل استخدامه.", "success")
+            elif action == "create_specialized":
+                preset_code = request.form.get("preset_code", "").strip()
+                profile_id = create_specialized_activity_profile(connection, preset_code)
+                connection.commit()
+                log("specialized_activity_profile_created", preset_code, "activity_profile", profile_id)
+                flash("تم تجهيز ملف النشاط المتخصص. راجع توافق الحسابات وخصص الحسابات قبل التفعيل.", "success")
             elif action == "update_mappings":
                 profile_id = int(request.form.get("profile_id", "0"))
                 update_custom_activity_profile(
@@ -831,7 +837,7 @@ def activity_profiles():
         profile["validation_errors"] = validate_activity_profile(connection, profile)
         profile["selected"] = profile["code"] == active_code
     connection.close()
-    return render_template("activity_profiles.html", profiles=profiles, activities=ACTIVITY_LABELS)
+    return render_template("activity_profiles.html", profiles=profiles, activities=ACTIVITY_LABELS, specialized_presets=SPECIALIZED_ACTIVITY_PRESETS)
 
 
 @app.route("/")
