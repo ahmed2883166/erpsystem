@@ -73,7 +73,7 @@ def create_backup_archive(db_path, backup_dir, keep_count=30):
     """Create a consistent SQLite online backup, zip it, and prune old archives."""
     db_path, backup_dir = Path(db_path), Path(backup_dir)
     backup_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     archive_path = backup_dir / f"{BACKUP_PREFIX}{stamp}.zip"
     snapshot_path = backup_dir / f".snapshot-{stamp}-{os.getpid()}.db"
     source = _connect(db_path)
