@@ -382,7 +382,7 @@ def build_financial_year_preclose_report(conn, year_id):
             WHERE locked=1 AND start_date<=? AND end_date>=? LIMIT 1""", (end, end)).fetchone()
         add("year_end_period", "الفترة المحاسبية في تاريخ نهاية السنة",
             "danger" if locked_period else "success", 1 if locked_period else 0,
-            f"الفترة {locked_period['period_name']} مغلقة في تاريخ نهاية السنة." if locked_period else
+            f"الفترة {locked_period['period_name']} مغلقة بالفعل في تاريخ نهاية السنة." if locked_period else
             "لا توجد فترة مقفولة تمنع إجراء الإقفال.", bool(locked_period))
 
     try:
