@@ -86,10 +86,11 @@ class AuditLogTests(unittest.TestCase):
 
         with nexus_app.app.test_request_context("/sales/invoices/45", method="POST"):
             nexus_app.session["user_id"] = 17
-            nexus_app.request.endpoint = "sales.test_mutation"
+            nexus_app.request.url_rule = SimpleNamespace(endpoint="sales.test_mutation")
             nexus_app.request.view_args = {"invoice_id": 45}
             with patch.object(nexus_app, "db", side_effect=open_database):
-                response = nexus_app.app.response_class("Rejected", status=422)
+                nexus_app.flash("تعذر تنفيذ العملية بسبب بيانات غير صحيحة.", "error")
+                response = nexus_app.app.response_class("", status=302)
                 nexus_app.audit_operational_mutations(response)
 
         rows = self.connection.execute(
