@@ -156,7 +156,7 @@ class CashFlowReportTests(unittest.TestCase):
 
     def test_cash_flow_reconciles_opening_movements_and_closing_cash(self):
         response = self.client.get(
-            "/reports/cash-flow?date_from=2026-11-01&date_to=2026-11-30"
+            "/reports/cash-flow?date_from=2026-11-01&date_to=2026-11-30&method=direct"
         )
         self.assertEqual(response.status_code, 200)
         body = response.get_data(as_text=True)
