@@ -41,10 +41,25 @@ def _change(current, previous):
     return _rounded((current - previous) * Decimal("100") / abs(previous))
 
 
-def account_balances(conn, date_from=None, date_to=None, dimensions=None):
-    """Return exact posted debit/credit totals by account for an optional period."""
+def account_balances(conn, date_from=None, date_to=None, dimensions=None, exclude_closing_entries=False):
+    """Return exact posted debit/credit totals; optionally omit year-end closing journals."""
     conditions = ["je.status='posted'"]
     params = []
+    if exclude_closing_entries:
+        entry_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
+        if "entry_type" in entry_columns:
+            conditions.append("COALESCE(je.entry_type,'general') NOT IN ('year_end_closing','year_end_closing_reversal')")
+        else:
+            history_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_year_journal_history'"
+            ).fetchone()
+            if history_exists:
+                conditions.append("""je.id NOT IN (
+                    SELECT entry_id FROM financial_year_journal_history WHERE entry_kind='closing'
+                ) AND je.id NOT IN (
+                    SELECT related_entry_id FROM financial_year_journal_history
+                    WHERE entry_kind='closing' AND action='reversed' AND related_entry_id IS NOT NULL
+                )""")
     if date_from:
         conditions.append("je.entry_date>=?")
         params.append(date_from)
@@ -265,8 +280,12 @@ def build_management_snapshot(conn, start, end, dimensions=None):
     period_days = (end - start).days
     previous_end = start - timedelta(days=1)
     previous_start = previous_end - timedelta(days=period_days)
-    current_balances = account_balances(conn, start.isoformat(), end.isoformat(), dimensions)
-    previous_balances = account_balances(conn, previous_start.isoformat(), previous_end.isoformat(), dimensions)
+    current_balances = account_balances(
+        conn, start.isoformat(), end.isoformat(), dimensions, exclude_closing_entries=True
+    )
+    previous_balances = account_balances(
+        conn, previous_start.isoformat(), previous_end.isoformat(), dimensions, exclude_closing_entries=True
+    )
     as_of = account_balances(conn, date_to=end.isoformat(), dimensions=dimensions)
     current = income_figures(current_balances, direct_cost_ids=roles["direct_cost"])
     previous = income_figures(previous_balances, direct_cost_ids=roles["direct_cost"])
