@@ -426,11 +426,11 @@ def build_management_snapshot(conn, start, end, dimensions=None):
         "equity_ratio": _percent(equity, assets),
         "asset_turnover": _ratio(current["revenue"], average_assets),
         "inventory_turnover": _ratio(current["cogs"], average_inventory),
-        "inventory_days": _ratio(period_days, _ratio(current["cogs"], average_inventory)) if average_inventory else None,
+        "inventory_days": _ratio(period_days * average_inventory, current["cogs"]) if average_inventory and current["cogs"] else None,
         "receivables_turnover": _ratio(current["revenue"], average_receivables),
-        "collection_days": _ratio(period_days, _ratio(current["revenue"], average_receivables)) if average_receivables else None,
+        "collection_days": _ratio(period_days * average_receivables, current["revenue"]) if average_receivables and current["revenue"] else None,
         "payables_turnover": _ratio(current["cogs"], average_payables),
-        "payment_days": _ratio(period_days, _ratio(current["cogs"], average_payables)) if average_payables else None,
+        "payment_days": _ratio(period_days * average_payables, current["cogs"]) if average_payables and current["cogs"] else None,
     }
     ratios["cash_conversion_cycle"] = (
         ratios["inventory_days"] + ratios["collection_days"] - ratios["payment_days"]
