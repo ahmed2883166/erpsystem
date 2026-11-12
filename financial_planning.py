@@ -247,6 +247,19 @@ def create_opening_entry(conn, year_id, balances, created_by=None):
             )
         if not lines:
             raise ValueError("لا يمكن ترحيل قيد افتتاح بدون أرصدة فعلية.")
+        previous_year = _previous_closed_financial_year(conn, year["start_date"])
+        if previous_year and previous_year["status"] == "closed":
+            mismatches = _opening_balance_mismatches(conn, previous_year, normalized)
+            if mismatches:
+                details = "؛ ".join(
+                    f"{code} {name}: رصيد الإقفال {expected} مقابل رصيد الافتتاح {supplied}"
+                    for code, name, expected, supplied in mismatches[:8]
+                )
+                suffix = f" (ويوجد {len(mismatches) - 8} اختلافات أخرى)" if len(mismatches) > 8 else ""
+                raise ValueError(
+                    f"أرصدة الافتتاح لا تطابق إقفال السنة السابقة ({previous_year['year_name']}): "
+                    f"{details}{suffix}."
+                )
         sequence = _history_sequence(conn, year_id, "opening", "created")
         reference = f"FY-{year_id}-OPEN-{sequence}"
         entry_id = post_journal(
