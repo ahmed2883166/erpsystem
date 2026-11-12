@@ -112,12 +112,6 @@ ACTIVITY_ACCOUNT_ROLES = {
     },
 }
 
-# Tax control accounts are resolved by accounting role, not by a sales-module code.
-ACTIVITY_TAX_ACCOUNT_ROLES = {
-    activity: {"output_vat": "2130", "input_vat": "1165"}
-    for activity in ACTIVITY_POSTING_ACCOUNTS
-}
-
 # Posting accounts follow each chart. Industrial purchases and sales both use
 # 1130 in v1 because manufacturing/finished-goods conversion is not implemented.
 ACTIVITY_POSTING_ACCOUNTS = {
@@ -127,6 +121,13 @@ ACTIVITY_POSTING_ACCOUNTS = {
     "restaurant": {"ar": "1130", "revenue": "4100", "vat": "2130", "inventory": "1140", "cogs": "5100", "purchase_inventory": "1140", "supplier_ap": "2100", "input_vat": "1165"},
     "industrial": {"ar": "1120", "revenue": "4100", "vat": "2130", "inventory": "1130", "cogs": "5400", "purchase_inventory": "1130", "supplier_ap": "2100", "input_vat": "1165"},
 }
+
+# Tax control accounts are resolved by accounting role, not by a sales-module code.
+ACTIVITY_TAX_ACCOUNT_ROLES = {
+    activity: {"output_vat": "2130", "input_vat": "1165"}
+    for activity in ACTIVITY_POSTING_ACCOUNTS
+}
+
 
 
 # Common support branches available in every activity. Existing account IDs and
