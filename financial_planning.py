@@ -408,8 +408,14 @@ def financial_years():
             conn.close()
         return redirect(url_for("planning.financial_years"))
     years = list_financial_years(conn)
+    history = conn.execute("""SELECT h.id,h.entry_kind,h.action,h.entry_id,
+            h.related_entry_id,h.created_at,fy.year_name,je.entry_date,je.reference
+        FROM financial_year_journal_history h
+        JOIN financial_years fy ON fy.id=h.financial_year_id
+        JOIN journal_entries je ON je.id=h.entry_id
+        ORDER BY h.id DESC LIMIT 100""").fetchall()
     conn.close()
-    return render_template("financial_years.html", years=years)
+    return render_template("financial_years.html", years=years, history=history)
 
 
 @planning_bp.route("/financial-years/<int:year_id>/opening", methods=["GET", "POST"])
