@@ -25,6 +25,23 @@
       <div><span class="badge">{{ "مدمج" if profile.is_builtin else "مخصص" }}</span> {% if profile.selected %}<strong>النشاط المستخدم حاليًا</strong>{% endif %}</div>
     </div>
     {% if profile.description %}<p>{{ profile.description }}</p>{% endif %}
+    {% if not profile.is_builtin %}
+    <details class="panel">
+      <summary>تعديل خرائط الحسابات والضرائب</summary>
+      <p class="muted">اكتب أكواد الحسابات الموجودة بدليل الشركة. يجب أن يطابق نوع الحساب دوره المحاسبي. اترك null للحسابات الاختيارية غير المستخدمة في النشاط الخدمي.</p>
+      <form method="post">
+        <input type="hidden" name="action" value="update_mappings">
+        <input type="hidden" name="profile_id" value="{{ profile.id }}">
+        <label>أدوار الحسابات الإدارية (JSON)</label>
+        <textarea name="account_roles_json" rows="10" required>{{ profile.account_roles | tojson(indent=2) }}</textarea>
+        <label>حسابات الترحيل للمبيعات والمشتريات (JSON)</label>
+        <textarea name="posting_accounts_json" rows="8" required>{{ profile.posting_accounts | tojson(indent=2) }}</textarea>
+        <label>حسابات الضرائب (JSON)</label>
+        <textarea name="tax_roles_json" rows="4" required>{{ profile.tax_roles | tojson(indent=2) }}</textarea>
+        <button type="submit">حفظ إعدادات الحسابات</button>
+      </form>
+    </details>
+    {% endif %}
     {% if profile.validation_errors %}
       <p class="muted">نتيجة فحص التوافق:</p><ul>{% for error in profile.validation_errors %}<li>{{ error }}</li>{% endfor %}</ul>
     {% else %}<p>فحص الحسابات: سليم</p>{% endif %}
