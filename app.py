@@ -9,6 +9,7 @@ import sqlite3
 import tempfile
 import zipfile
 from datetime import date, datetime
+from pathlib import Path
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
@@ -2100,7 +2101,7 @@ def restore_backup():
     try:
         archive_fd, archive_name = tempfile.mkstemp(prefix="restore-upload-", suffix=".zip", dir=BACKUP_DIR)
         os.close(archive_fd)
-        archive_path = __import__("pathlib").Path(archive_name)
+        archive_path = Path(archive_name)
         temp_paths.append(archive_path)
         max_archive_bytes = 2 * 1024 * 1024 * 1024
         written = 0
@@ -2116,13 +2117,13 @@ def restore_backup():
 
         candidate_fd, candidate_name = tempfile.mkstemp(prefix="restore-candidate-", suffix=".db", dir=BACKUP_DIR)
         os.close(candidate_fd)
-        candidate_path = __import__("pathlib").Path(candidate_name)
+        candidate_path = Path(candidate_name)
         temp_paths.append(candidate_path)
         extract_validated_backup(archive_path, candidate_path)
 
         safety_fd, safety_name = tempfile.mkstemp(prefix="before-restore-", suffix=".db", dir=BACKUP_DIR)
         os.close(safety_fd)
-        safety_path = __import__("pathlib").Path(safety_name)
+        safety_path = Path(safety_name)
         create_database_safety_copy(DB_PATH, safety_path)
         restore_database_with_rollback(candidate_path, DB_PATH, safety_path, initialize_database)
 
