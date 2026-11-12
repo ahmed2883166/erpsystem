@@ -30,7 +30,62 @@ def initialize_planning_schema(conn):
       UNIQUE(budget_id,account_id)
     );
     CREATE INDEX IF NOT EXISTS idx_budget_period ON budget_plans(date_from,date_to,status);
+    CREATE TABLE IF NOT EXISTS financial_years(
+      id INTEGER PRIMARY KEY,
+      year_name TEXT NOT NULL UNIQUE,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closing','closed')),
+      opening_entry_id INTEGER REFERENCES journal_entries(id),
+      closing_entry_id INTEGER REFERENCES journal_entries(id),
+      created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CHECK(start_date <= end_date)
+    );
+    CREATE INDEX IF NOT EXISTS idx_financial_year_dates
+      ON financial_years(start_date,end_date,status);
     """)
+
+
+def create_financial_year(conn, year_name, start_date, end_date, created_by=None):
+    """Create a non-overlapping financial year; never changes journal data."""
+    from datetime import date
+    name = str(year_name or "").strip()
+    if not name or len(name) > 80:
+        raise ValueError("أدخل اسمًا صحيحًا للسنة المالية.")
+    try:
+        start = date.fromisoformat(str(start_date)).isoformat()
+        end = date.fromisoformat(str(end_date)).isoformat()
+    except (TypeError, ValueError):
+        raise ValueError("تواريخ السنة المالية غير صحيحة؛ استخدم YYYY-MM-DD.")
+    if end < start:
+        raise ValueError("تاريخ نهاية السنة يجب ألا يسبق تاريخ بدايتها.")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        overlap = conn.execute(
+            """SELECT year_name FROM financial_years
+               WHERE start_date <= ? AND end_date >= ? LIMIT 1""",
+            (end, start),
+        ).fetchone()
+        if overlap:
+            raise ValueError(f"الفترة تتداخل مع السنة المالية: {overlap['year_name']}.")
+        cur = conn.execute(
+            """INSERT INTO financial_years(year_name,start_date,end_date,created_by)
+               VALUES(?,?,?,?)""",
+            (name, start, end, created_by),
+        )
+        conn.commit()
+        return cur.lastrowid
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def list_financial_years(conn):
+    """Return financial years in descending chronological order."""
+    return conn.execute(
+        "SELECT * FROM financial_years ORDER BY start_date DESC,id DESC"
+    ).fetchall()
 
 
 def _require(permission):
@@ -294,4 +349,4 @@ def cash_flow():
         cash_reconciles=(bool(cash_ids) and reconciliation_difference==0))
 
 
-__all__=["planning_bp","initialize_planning_schema"]
+__all__=["planning_bp","initialize_planning_schema","create_financial_year","list_financial_years"]
