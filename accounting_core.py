@@ -45,11 +45,27 @@ class _DecimalLayerValueSum:
         return format(self.total, "f")
 
 
+class _DecimalRunningNet:
+    """Exact Decimal window function for chronological ledger balances."""
+    def __init__(self):
+        self.total = Decimal("0")
+    def step(self, debit, credit):
+        self.total += Decimal(str(debit or "0")) - Decimal(str(credit or "0"))
+    def inverse(self, debit, credit):
+        self.total -= Decimal(str(debit or "0")) - Decimal(str(credit or "0"))
+    def value(self):
+        return format(self.total, "f")
+    def finalize(self):
+        return format(self.total, "f")
+
+
 def register_decimal_aggregates(conn):
     """Register exact SQLite aggregate functions for TEXT monetary columns."""
     conn.create_aggregate("DECIMAL_SUM", 1, _DecimalSum)
     conn.create_aggregate("DECIMAL_NET", 2, _DecimalNet)
     conn.create_aggregate("DECIMAL_LAYER_VALUE_SUM", 3, _DecimalLayerValueSum)
+    if hasattr(conn, "create_window_function"):
+        conn.create_window_function("DECIMAL_RUNNING_NET", 2, _DecimalRunningNet)
 
 
 def post_journal(conn, entry_date, reference, description, lines, created_by=None, dimensions=None):
