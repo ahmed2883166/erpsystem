@@ -2,7 +2,7 @@
 from app_paths import DB_PATH
 from database import connect_database
 import sqlite3
-from accounting_core import post_journal
+from accounting_core import post_journal, register_decimal_aggregates, reconciliation_snapshot
 from chart_templates import ACTIVITY_ACCOUNT_ROLES
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
@@ -334,7 +334,83 @@ def create_opening_entry(conn, year_id, balances, created_by=None):
         raise
 
 
-def close_financial_year(conn, year_id, created_by=None):
+def build_financial_year_preclose_report(conn, year_id):
+    """Read-only accounting and operational checks before annual closing."""
+    year = _financial_year_or_error(conn, year_id)
+    start, end = year["start_date"], year["end_date"]
+    checks = []
+
+    def add(code, title, severity, count, details, blocking=False):
+        checks.append({"code": code, "title": title, "severity": severity,
+                       "count": int(count or 0), "details": details,
+                       "blocking": bool(blocking)})
+
+    drafts = conn.execute("""SELECT COUNT(*) FROM journal_entries
+        WHERE status='draft' AND entry_date>=? AND entry_date<=?""", (start, end)).fetchone()[0]
+    add("draft_entries", "قيود مسودة داخل السنة", "danger" if drafts else "success",
+        drafts, "يجب معالجة القيود المسودة قبل الإقفال.", drafts > 0)
+
+    register_decimal_aggregates(conn)
+    unbalanced = conn.execute("""SELECT COUNT(*) FROM (
+        SELECT je.id FROM journal_entries je
+        LEFT JOIN journal_lines jl ON jl.entry_id=je.id
+        WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
+        GROUP BY je.id
+        HAVING COALESCE(DECIMAL_SUM(jl.debit),'0') != COALESCE(DECIMAL_SUM(jl.credit),'0')
+    )""", (start, end)).fetchone()[0]
+    add("unbalanced_entries", "قيود مرحلة غير متوازنة", "danger" if unbalanced else "success",
+        unbalanced, "راجع القيود وصححها بقيود تسوية معتمدة.", unbalanced > 0)
+
+    empty = conn.execute("""SELECT COUNT(*) FROM journal_entries je
+        WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
+          AND NOT EXISTS (SELECT 1 FROM journal_lines jl WHERE jl.entry_id=je.id)""",
+        (start, end)).fetchone()[0]
+    add("empty_entries", "قيود مرحلة بلا سطور", "danger" if empty else "success",
+        empty, "كل قيد مرحّل يجب أن يحتوي على سطور.", empty > 0)
+
+    has_opening = bool(year["opening_entry_id"])
+    add("opening_entry", "قيد افتتاح السنة", "success" if has_opening else "warning",
+        0 if has_opening else 1,
+        "قيد الافتتاح مرتبط بالسنة." if has_opening else
+        "لا يوجد قيد افتتاح مرتبط؛ راجع ما إذا كانت الأرصدة الافتتاحية مطلوبة.", False)
+
+    if _table_exists_financial(conn, "accounting_periods"):
+        unlocked = conn.execute("""SELECT COUNT(*) FROM accounting_periods
+            WHERE start_date<=? AND end_date>=? AND locked=0""", (end, end)).fetchone()[0]
+        add("year_end_period", "الفترة المحاسبية في تاريخ نهاية السنة",
+            "success" if unlocked else "warning", unlocked,
+            "توجد فترة مفتوحة تغطي نهاية السنة." if unlocked else
+            "لا توجد فترة مفتوحة تغطي تاريخ نهاية السنة؛ راجع إعداد الفترات.", False)
+
+    try:
+        snapshot = reconciliation_snapshot(conn)
+        unlinked = sum(int(item.get("count", 0) or 0)
+                       for item in snapshot.get("unlinked_documents", []))
+        add("unlinked_documents", "مستندات تشغيلية غير مرتبطة بقيود",
+            "warning" if unlinked else "success", unlinked,
+            "راجع المستندات التي لم ترتبط بقيود محاسبية.", False)
+        pending = int(snapshot.get("pending_stock", 0) or 0)
+        add("pending_stock", "حركات مخزون تحتاج معالجة محاسبية",
+            "warning" if pending else "success", pending,
+            "راجع حركات المخزون المعلقة قبل اعتماد الأرصدة النهائية.", False)
+        difference = snapshot.get("stock_difference")
+        has_difference = difference is not None and Decimal(str(difference)) != 0
+        add("stock_reconciliation", "فرق المخزون بين الدفاتر والتقييم",
+            "warning" if has_difference else "success", 1 if has_difference else 0,
+            f"فرق المخزون: {difference}." if has_difference else
+            "لا يوجد فرق ظاهر بين قيمة المخزون والتقييم.", False)
+    except (sqlite3.Error, KeyError, TypeError, ValueError):
+        add("operational_checks", "فحوصات الربط التشغيلي والمخزون", "warning", 1,
+            "تعذر استكمال بعض فحوصات الربط أو المخزون؛ راجعها يدويًا.", False)
+
+    blockers = [item for item in checks if item["blocking"]]
+    warnings = [item for item in checks if item["severity"] == "warning"]
+    return {"year": year, "checks": checks, "blockers": blockers,
+            "warnings": warnings, "can_close": not blockers,
+            "requires_approval": bool(warnings)}
+
+
+def close_financial_year(conn, year_id, created_by=None, allow_warnings=False):
     """Close P&L balances into retained earnings and lock the financial year."""
     _start_financial_year_transaction(conn)
     try:
@@ -343,6 +419,12 @@ def close_financial_year(conn, year_id, created_by=None):
             raise ValueError("السنة المالية ليست مفتوحة أو تم إقفالها بالفعل.")
         if year["closing_entry_id"]:
             raise ValueError("يوجد قيد إقفال مرتبط بهذه السنة بالفعل.")
+        preclose = build_financial_year_preclose_report(conn, year_id)
+        if preclose["blockers"]:
+            first = preclose["blockers"][0]
+            raise ValueError(f"فشل فحص ما قبل الإقفال: {first['title']} — {first['count']}. {first['details']}")
+        if preclose["warnings"] and not allow_warnings:
+            raise ValueError("توجد تحذيرات قبل الإقفال. راجع تقرير ما قبل الإقفال، ولا تعتمد الاستثناء إلا بصلاحية المدير.")
         drafts = conn.execute("""SELECT COUNT(*) FROM journal_entries
             WHERE status='draft' AND entry_date>=? AND entry_date<=?""",
             (year["start_date"], year["end_date"])).fetchone()[0]
@@ -578,6 +660,22 @@ def financial_years():
     return render_template("financial_years.html", years=years, history=history)
 
 
+@planning_bp.route("/financial-years/<int:year_id>/pre-close")
+@_require("reports.view")
+def financial_year_preclose(year_id):
+    conn = _connect()
+    try:
+        report = build_financial_year_preclose_report(conn, year_id)
+        return render_template("financial_year_preclose.html", report=report,
+            can_approve=("journal.manage" in set(session.get("permissions", ()))
+                         and session.get("role") == "admin"))
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("planning.financial_years"))
+    finally:
+        conn.close()
+
+
 @planning_bp.route("/financial-years/<int:year_id>/opening", methods=["GET", "POST"])
 @_require("journal.manage")
 def financial_year_opening(year_id):
@@ -612,7 +710,11 @@ def financial_year_opening(year_id):
 def financial_year_close(year_id):
     conn = _connect()
     try:
-        entry_id = close_financial_year(conn, year_id, session.get("user_id"))
+        allow_warnings = request.form.get("approve_warnings") == "1"
+        if allow_warnings and session.get("role") != "admin":
+            abort(403)
+        entry_id = close_financial_year(conn, year_id, session.get("user_id"),
+                                        allow_warnings=allow_warnings)
         flash(f"تم إقفال السنة المالية بقيد رقم {entry_id}.", "success")
     except (ValueError, sqlite3.IntegrityError) as exc:
         flash(str(exc) or "تعذر إقفال السنة المالية.", "error")
