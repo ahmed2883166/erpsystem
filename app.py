@@ -398,7 +398,13 @@ def audit_operational_mutations(response):
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and session.get("user_id") and endpoint.startswith(audited_prefixes):
         try:
             module = endpoint.split(".", 1)[0]
-            record_id = (request.view_args or {}).get("id")
+            view_args = request.view_args or {}
+            record_id = next(
+                (view_args[key] for key in ("id", "entry_id", "invoice_id", "bill_id", "document_id",
+                                             "year_id", "run_id", "product_id", "warehouse_id")
+                 if view_args.get(key) is not None),
+                None,
+            )
             log(
                 "module_operation",
                 f"{request.method} {endpoint} ({response.status_code})",
