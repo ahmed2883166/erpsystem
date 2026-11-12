@@ -1,5 +1,6 @@
-from database import connect_database
 """Budget planning and cash-flow reporting for NEXUS ERP."""
+from app_paths import DB_PATH
+from database import connect_database
 import sqlite3
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
@@ -52,8 +53,8 @@ def _require(permission):
 
 
 def _connect():
-    from pathlib import Path
-    return connect_database(Path(__file__).resolve().parent / "data" / "nexus.db")
+    """Open the configured application database using the shared connection policy."""
+    return connect_database(DB_PATH)
 
 
 @planning_bp.route("/budget", methods=["GET", "POST"])
