@@ -267,6 +267,14 @@ def initialize_database():
             connection.execute(f"ALTER TABLE audit_log ADD COLUMN {column} {declaration}")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at,id)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user_action ON audit_log(user_id,action,created_at)")
+    connection.executescript("""
+        CREATE TRIGGER IF NOT EXISTS audit_log_block_update
+        BEFORE UPDATE ON audit_log
+        BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
+        CREATE TRIGGER IF NOT EXISTS audit_log_block_delete
+        BEFORE DELETE ON audit_log
+        BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
+    """)
 
     user_columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
     if "must_change_password" not in user_columns:
