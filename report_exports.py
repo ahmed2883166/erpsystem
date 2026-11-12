@@ -330,7 +330,7 @@ def register_report_exports(app, db_path, permissions):
             def pdf_text(value):
                 text_value = "" if value is None else str(value)
                 shaped = get_display(arabic_reshaper.reshape(text_value))
-                return escape(shaped).replace("\\n", "<br/>")
+                return escape(shaped).replace("\n", "<br/>")
 
             page_size = landscape(A4) if len(headers) > 6 else A4
             output = io.BytesIO()
@@ -346,7 +346,7 @@ def register_report_exports(app, db_path, permissions):
             )
             cell_style = ParagraphStyle(
                 "NexusCell", parent=styles["BodyText"], fontName="NexusArabic",
-                fontSize=7.5, leading=10, alignment=TA_RIGHT, wordWrap="RTL",
+                fontSize=7.5, leading=10, alignment=TA_RIGHT,
             )
             header_style = ParagraphStyle(
                 "NexusHeader", parent=cell_style, fontSize=8, leading=11,
