@@ -476,6 +476,7 @@ def login():
         connection.execute("DELETE FROM login_attempts WHERE attempted_at < ?", (cutoff_text,))
         if login_attempts_exceeded(connection, username, remote_addr, cutoff_text):
             connection.close()
+            log("login_blocked", f"username={username}", entity_type="auth", outcome="failure")
             flash("تم إيقاف محاولات الدخول مؤقتًا بسبب تكرار المحاولات الفاشلة. حاول بعد 15 دقيقة.", "error")
             return render_template("login.html"), 429
         user = connection.execute("SELECT * FROM users WHERE username=? AND active=1", (username,)).fetchone()
@@ -502,6 +503,7 @@ def login():
                 flash("يجب تغيير كلمة مرور المدير الافتراضية قبل استخدام النظام.", "warning")
                 return redirect(url_for("change_password"))
             return redirect(url_for("dashboard"))
+        log("login_failed", f"username={username}", entity_type="auth", outcome="failure")
         flash("بيانات الدخول غير صحيحة.", "error")
     return render_template("login.html")
 
