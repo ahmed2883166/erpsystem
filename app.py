@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import sqlite3
+import tempfile
 import zipfile
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -35,6 +36,7 @@ from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
 from app_paths import DATA_DIR, DB_PATH, BACKUP_DIR
 from backup_scheduler import create_backup_archive, next_backup_datetime, start_backup_scheduler
+from backup_restore import extract_validated_backup, create_database_safety_copy, restore_database_with_rollback
 from income_statement import (build_income_statement, normalize_income_statement_period,
                                comparison_period, add_income_statement_comparison,
                                closing_entries_exclusion_sql)
@@ -2088,44 +2090,50 @@ def backup_run_now():
 @requires("backup.manage")
 def restore_backup():
     upload = request.files.get("backup")
-    if not upload or not upload.filename.lower().endswith(".zip"):
-        flash("اختر ملف نسخة احتياطية بصيغة ZIP.", "error"); return redirect(url_for("dashboard"))
-    temp = BACKUP_DIR / "restore-temp.zip"
-    candidate = BACKUP_DIR / "restore-candidate.db"
-    upload.save(temp)
+    if not upload or not upload.filename or not upload.filename.lower().endswith(".zip"):
+        flash("اختر ملف نسخة احتياطية بصيغة ZIP.", "error")
+        return redirect(url_for("backup_settings"))
+
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    temp_paths = []
+    safety_path = None
     try:
-        with zipfile.ZipFile(temp) as archive:
-            if "nexus.db" not in archive.namelist():
-                raise ValueError("ملف النسخة لا يحتوي على قاعدة بيانات NEXUS.")
-            with archive.open("nexus.db") as source, open(candidate, "wb") as target:
-                shutil.copyfileobj(source, target)
-        check = sqlite3.connect(candidate)
-        try:
-            integrity = check.execute("PRAGMA integrity_check").fetchone()[0]
-            tables = {r[0] for r in check.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            required = {"users", "accounts", "journal_entries", "journal_lines"}
-            if integrity != "ok" or not required.issubset(tables):
-                raise ValueError("قاعدة البيانات غير سليمة أو لا تطابق هيكل NEXUS ERP.")
-        finally:
-            check.close()
-        safety_copy = BACKUP_DIR / f"before-restore-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
-        live = db()
-        safety = sqlite3.connect(safety_copy)
-        try:
-            live.backup(safety)
-        finally:
-            safety.close()
-            live.close()
-        os.replace(candidate, DB_PATH)
-        initialize_database()
+        archive_fd, archive_name = tempfile.mkstemp(prefix="restore-upload-", suffix=".zip", dir=BACKUP_DIR)
+        os.close(archive_fd)
+        archive_path = __import__("pathlib").Path(archive_name)
+        temp_paths.append(archive_path)
+        max_archive_bytes = 2 * 1024 * 1024 * 1024
+        written = 0
+        with archive_path.open("wb") as target:
+            while True:
+                chunk = upload.stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_archive_bytes:
+                    raise ValueError("حجم ملف النسخة الاحتياطية أكبر من الحد المسموح.")
+                target.write(chunk)
+
+        candidate_fd, candidate_name = tempfile.mkstemp(prefix="restore-candidate-", suffix=".db", dir=BACKUP_DIR)
+        os.close(candidate_fd)
+        candidate_path = __import__("pathlib").Path(candidate_name)
+        temp_paths.append(candidate_path)
+        extract_validated_backup(archive_path, candidate_path)
+
+        safety_fd, safety_name = tempfile.mkstemp(prefix="before-restore-", suffix=".db", dir=BACKUP_DIR)
+        os.close(safety_fd)
+        safety_path = __import__("pathlib").Path(safety_name)
+        create_database_safety_copy(DB_PATH, safety_path)
+        restore_database_with_rollback(candidate_path, DB_PATH, safety_path, initialize_database)
+
         log("backup_restored", upload.filename)
-        flash("تمت الاستعادة بعد التحقق من سلامة قاعدة البيانات، مع حفظ نسخة أمان.", "success")
-    except (zipfile.BadZipFile, ValueError, sqlite3.DatabaseError, OSError) as exc:
+        flash("تم استرجاع النسخة بنجاح بعد فحصها، مع الاحتفاظ بنسخة أمان من البيانات السابقة.", "success")
+    except (zipfile.BadZipFile, ValueError, sqlite3.DatabaseError, OSError, RuntimeError) as exc:
         flash(f"تعذرت الاستعادة: {exc}", "error")
     finally:
-        temp.unlink(missing_ok=True)
-        candidate.unlink(missing_ok=True)
-    return redirect(url_for("dashboard"))
+        for path in temp_paths:
+            path.unlink(missing_ok=True)
+    return redirect(url_for("backup_settings"))
 
 
 # Initialize schema for every WSGI entry point. The explicit skip switch is only
