@@ -11,7 +11,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
-from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for, has_request_context
 from chart_templates import CHARTS, ACTIVITY_LABELS, seed_activity_chart, ensure_activity_chart_accounts, migrate_vat_accounts
 from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
@@ -103,7 +103,7 @@ app.register_blueprint(planning_bp)
 # SECRET_KEY and session/CSRF settings are initialized above.
 
 PERMISSIONS = {
-    "admin": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view"},
+    "admin": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view", "audit.view"},
     "accountant": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view"},
     "viewer": {"accounts.view", "currency.view", "reports.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view", "bank.view", "tax.view", "workforce.view", "party.view", "budget.view", "cashflow.view"},
 }
@@ -136,6 +136,7 @@ PERMISSION_LABELS = {
     "budget.view": "عرض الموازنات ومقارنة الفعلي",
     "budget.manage": "إنشاء وتعديل الموازنات",
     "cashflow.view": "عرض قائمة التدفقات النقدية",
+    "audit.view": "عرض سجل المراجعة والتدقيق",
     "party.view": "عرض كشوف العملاء والموردين",
 }
 ALL_PERMISSIONS = tuple(PERMISSION_LABELS)
@@ -255,6 +256,18 @@ def initialize_database():
             end_date TEXT NOT NULL, locked INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
         );
     """)
+    audit_columns = {row["name"] for row in connection.execute("PRAGMA table_info(audit_log)")}
+    for column, declaration in (
+        ("entity_type", "TEXT"),
+        ("entity_id", "TEXT"),
+        ("remote_addr", "TEXT"),
+        ("outcome", "TEXT NOT NULL DEFAULT 'success'"),
+    ):
+        if column not in audit_columns:
+            connection.execute(f"ALTER TABLE audit_log ADD COLUMN {column} {declaration}")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at,id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user_action ON audit_log(user_id,action,created_at)")
+
     user_columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
     if "must_change_password" not in user_columns:
         connection.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
@@ -338,12 +351,24 @@ def now():
     return datetime.now().isoformat(timespec="seconds")
 
 
-def log(action, details=""):
+def log(action, details="", entity_type=None, entity_id=None, outcome="success"):
     connection = db()
-    connection.execute("INSERT INTO audit_log(user_id, action, details, created_at) VALUES(?,?,?,?)",
-                       (session.get("user_id"), action, details, now()))
-    connection.commit()
-    connection.close()
+    user_id = session.get("user_id") if has_request_context() else None
+    remote_addr = request.remote_addr if has_request_context() else None
+    timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    try:
+        connection.execute(
+            """INSERT INTO audit_log
+               (user_id, action, details, created_at, entity_type, entity_id, remote_addr, outcome)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            (user_id, action, str(details or "")[:1000], timestamp,
+             str(entity_type)[:100] if entity_type else None,
+             str(entity_id)[:100] if entity_id is not None else None,
+             remote_addr, outcome if outcome in {"success", "failure"} else "success"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def requires(permission):
