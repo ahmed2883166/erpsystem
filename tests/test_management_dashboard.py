@@ -286,8 +286,9 @@ class ManagementDashboardTests(unittest.TestCase):
         )""")
         initialize_management_dashboard_schema(self.conn, "commercial")
 
-        with patch("management_dashboard.cash_forecast", return_value={"weeks": []}) as forecast, \\
-             patch("management_dashboard.unusual_journal_entries", return_value=[]) as unusual:
+        with patch("management_dashboard.cash_forecast", return_value={"weeks": []}) as forecast, patch(
+            "management_dashboard.unusual_journal_entries", return_value=[]
+        ) as unusual:
             first = cached_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
             second = cached_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
             self.assertIn("cash_forecast", first)
