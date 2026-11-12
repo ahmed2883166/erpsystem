@@ -173,6 +173,27 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         self.assertEqual(response.mimetype, "application/pdf")
         self.assertTrue(response.data.startswith(b"%PDF"))
 
+    def test_current_screen_pdf_export_returns_pdf_document(self):
+        response = self.client.post(
+            "/reports/export/current-screen/pdf",
+            json={
+                "title": "تقرير تجريبي",
+                "tables": [{
+                    "title": "ملخص الحسابات",
+                    "rows": [["الحساب", "الرصيد"], ["الصندوق", "1250.50"]],
+                }],
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.data[:200].decode("utf-8", errors="replace"))
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertTrue(response.data.startswith(b"%PDF"))
+        self.assertIn("NEXUS-ERP-Current-Screen.pdf", response.headers.get("Content-Disposition", ""))
+
+    def test_existing_report_pdf_uses_pdf_file_extension(self):
+        response = self.client.get("/reports/export/trial-balance/pdf")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("nexus-trial-balance.pdf", response.headers.get("Content-Disposition", ""))
+
     def test_balance_sheet_export_uses_snapshot_and_selected_date(self):
         response = self.client.get("/reports/export/balance-sheet/excel?as_of=2026-06-30")
         self.assertEqual(response.status_code, 200)
