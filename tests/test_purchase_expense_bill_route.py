@@ -149,6 +149,66 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         self.assertTrue(issue["resolved_at"])
         conn.close()
 
+    def test_custom_activity_profile_controls_supplier_bill_payable_account(self):
+        import json
+        from activity_profiles import (
+            initialize_activity_profiles_schema, create_activity_profile,
+            list_activity_profiles, update_custom_activity_profile,
+        )
+        from chart_templates import ensure_activity_chart_accounts
+        conn = purchases.db()
+        ensure_activity_chart_accounts(conn, "commercial")
+        conn.execute(
+            "INSERT INTO accounts(code,name_ar,account_type) VALUES('2111','موردون مخصصون','liability')"
+        )
+        initialize_activity_profiles_schema(conn)
+        profile_id = create_activity_profile(
+            conn, "custom_purchase", "ملف مشتريات مخصص", "commercial"
+        )
+        profile = next(p for p in list_activity_profiles(conn) if p["id"] == profile_id)
+        roles = dict(profile["account_roles"])
+        roles["payables"] = ["2111"]
+        posting = dict(profile["posting_accounts"])
+        posting["supplier_ap"] = "2111"
+        update_custom_activity_profile(
+            conn, profile_id, json.dumps(roles), json.dumps(posting),
+            json.dumps(profile["tax_roles"]),
+        )
+        conn.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity_profile_code','custom_purchase')"
+        )
+        conn.commit()
+        conn.close()
+        with self.client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "accountant"
+        response = self.client.post("/purchases/bills/new", data={
+            "supplier_id": str(self.supplier_id),
+            "supplier_invoice_no": "CUSTOM-AP-001",
+            "bill_date": "2026-11-11",
+            "due_date": "2026-11-30",
+            "bill_kind": "expense",
+            "expense_account_id": str(self.expense_id),
+            "subtotal": "100.00",
+            "tax_rate": "0",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = purchases.db()
+        bill = conn.execute(
+            "SELECT journal_entry_id FROM supplier_bills WHERE supplier_invoice_no='CUSTOM-AP-001'"
+        ).fetchone()
+        lines = conn.execute(
+            """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
+               JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=? ORDER BY jl.id""",
+            (bill["journal_entry_id"],),
+        ).fetchall()
+        self.assertEqual(
+            [(row["code"], Decimal(row["debit"]), Decimal(row["credit"])) for row in lines],
+            [("5000", Decimal("100.00"), Decimal("0.00")),
+             ("2111", Decimal("0.00"), Decimal("100.00"))],
+        )
+        conn.close()
+
     def test_expense_supplier_bill_posts_to_expense_and_payable(self):
         with self.client.session_transaction() as session:
             session["user_id"] = 1
