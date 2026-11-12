@@ -4,7 +4,7 @@ from unittest.mock import patch
 from decimal import Decimal
 
 from chart_templates import CHARTS, seed_activity_chart, ensure_activity_chart_accounts
-from financial_planning import (initialize_planning_schema, build_balance_sheet_snapshot, _money, _connect, create_financial_year, list_financial_years, create_opening_entry, close_financial_year, reverse_financial_year_entry)
+from financial_planning import (initialize_planning_schema, build_balance_sheet_snapshot, _money, _connect, create_financial_year, list_financial_years, create_opening_entry, close_financial_year, reverse_financial_year_entry, build_financial_year_preclose_report)
 from accounting_core import register_decimal_aggregates, post_journal
 
 
@@ -286,6 +286,31 @@ class FinancialYearJournalTests(unittest.TestCase):
         self.assertIsNotNone(self.conn.execute("""SELECT 1 FROM journal_lines
             WHERE entry_id=? AND account_id=7 AND credit='200.00'""",
             (closing_id,)).fetchone())
+
+    def test_preclose_report_flags_drafts_as_blockers_without_mutating_data(self):
+        self.conn.execute("""INSERT INTO journal_entries
+            (entry_date,reference,description,status,created_by,created_at)
+            VALUES('2026-06-01','DRAFT-PRE','مسودة','draft',1,'now')""")
+        self.conn.commit()
+        before = self.conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
+        report = build_financial_year_preclose_report(self.conn, self.year_id)
+        after = self.conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
+        self.assertFalse(report["can_close"])
+        self.assertEqual(report["blockers"][0]["code"], "draft_entries")
+        self.assertEqual(before, after)
+
+    def test_preclose_report_warns_when_opening_entry_is_missing(self):
+        report = build_financial_year_preclose_report(self.conn, self.year_id)
+        self.assertTrue(report["can_close"])
+        self.assertTrue(any(item["code"] == "opening_entry" for item in report["warnings"]))
+
+    def test_close_requires_admin_approval_for_warnings(self):
+        with self.assertRaisesRegex(ValueError, "تحذيرات"):
+            close_financial_year(self.conn, self.year_id, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT status FROM financial_years WHERE id=?", (self.year_id,)).fetchone()[0],
+            "open",
+        )
 
     def test_close_rejects_drafts(self):
         self.conn.execute("""INSERT INTO journal_entries
