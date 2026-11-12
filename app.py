@@ -1063,6 +1063,7 @@ def journal():
     date_to = request.args.get("date_to", "").strip()
     status_filter = request.args.get("status", "").strip()
     entry_type_filter = request.args.get("entry_type", "").strip()
+    account_filter = request.args.get("account_id", type=int)
     search_query = request.args.get("q", "").strip()[:100]
     for value in (date_from, date_to):
         if value:
@@ -1090,10 +1091,26 @@ def journal():
     entry_columns = {row["name"] for row in connection.execute("PRAGMA table_info(journal_entries)")}
     if entry_type_filter and "entry_type" in entry_columns:
         filters.append("entry_type=?"); filter_params.append(entry_type_filter)
+    if account_filter:
+        valid_account = connection.execute(
+            "SELECT 1 FROM accounts WHERE id=? AND is_group=0 AND active=1", (account_filter,)
+        ).fetchone()
+        if valid_account:
+            filters.append("""EXISTS(SELECT 1 FROM journal_lines account_lines
+                WHERE account_lines.entry_id=journal_entries.id AND account_lines.account_id=?)""")
+            filter_params.append(account_filter)
+        else:
+            account_filter = None
     if search_query:
         search_like = "%" + search_query + "%"
-        search_parts = ["reference LIKE ?", "description LIKE ?"]
-        filter_params.extend([search_like, search_like])
+        search_parts = [
+            "reference LIKE ?", "description LIKE ?",
+            """EXISTS(SELECT 1 FROM journal_lines search_lines
+                JOIN accounts search_accounts ON search_accounts.id=search_lines.account_id
+                WHERE search_lines.entry_id=journal_entries.id
+                  AND (search_lines.memo LIKE ? OR search_accounts.code LIKE ? OR search_accounts.name_ar LIKE ?))"""
+        ]
+        filter_params.extend([search_like, search_like, search_like, search_like, search_like])
         if search_query.isdigit():
             search_parts.append("CAST(id AS TEXT)=?")
             filter_params.append(search_query)
@@ -1119,7 +1136,7 @@ def journal():
         journal_page=journal_page, journal_pages=journal_pages,
         journal_per_page=journal_per_page, journal_total=journal_total,
         date_from=date_from, date_to=date_to, status_filter=status_filter,
-        entry_type_filter=entry_type_filter, search_query=search_query)
+        entry_type_filter=entry_type_filter, account_filter=account_filter, search_query=search_query)
 
 
 
