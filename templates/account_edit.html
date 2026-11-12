@@ -7,4 +7,5 @@
 <label>الحساب الأب<select name="parent_id"><option value="">حساب رئيسي</option>{% for g in groups %}<option value="{{ g.id }}" {% if account.parent_id==g.id %}selected{% endif %}>{{ g.code }} - {{ g.name_ar }}</option>{% endfor %}</select></label>
 <label class="checkline"><input type="checkbox" name="is_group" value="yes" {% if account.is_group %}checked{% endif %}> حساب مجموعة</label>
 {% if used %}<p class="notice">الحساب مستخدم في قيود سابقة؛ يمكنك تعديل الكود والاسم فقط. نوع الحساب والتبعية والتصنيف محمية.</p>{% endif %}
+<label>سبب التعديل (اختياري)<textarea name="change_reason" maxlength="1000" rows="2" placeholder="اكتب سبب تغيير بيانات الحساب"></textarea></label>
 <div class="actions"><button>حفظ التعديلات</button><a class="btn secondary" href="{{ url_for('accounts') }}">إلغاء</a></div></form></section>{% endblock %}
