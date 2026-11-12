@@ -141,6 +141,10 @@ def dashboard_period_balances(conn, current_start, current_end, previous_start, 
             AND ({closing_filter}) THEN jl.debit ELSE '0' END),'0') previous_debit,
           COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date BETWEEN ? AND ?
             AND ({closing_filter}) THEN jl.credit ELSE '0' END),'0') previous_credit,
+          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date < ?
+            AND ({closing_filter}) THEN jl.debit ELSE '0' END),'0') opening_debit,
+          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date < ?
+            AND ({closing_filter}) THEN jl.credit ELSE '0' END),'0') opening_credit,
           COALESCE(DECIMAL_SUM(jl.debit),'0') asof_debit,
           COALESCE(DECIMAL_SUM(jl.credit),'0') asof_credit
         FROM journal_lines jl
@@ -150,7 +154,8 @@ def dashboard_period_balances(conn, current_start, current_end, previous_start, 
           {'AND ' + ' AND '.join(dimension_conditions) if dimension_conditions else ''}
         GROUP BY a.id,a.code,a.name_ar,a.account_type,a.is_group
     """, (current_start,current_end,current_start,current_end,
-          previous_start,previous_end,previous_start,previous_end,current_end,*dimension_params)).fetchall()
+          previous_start,previous_end,previous_start,previous_end,current_start,current_start,
+          current_end,*dimension_params)).fetchall()
 
     def make_balances(debit_key, credit_key):
         return {row["id"]: {
@@ -160,7 +165,8 @@ def dashboard_period_balances(conn, current_start, current_end, previous_start, 
         } for row in rows}
     return (make_balances("current_debit","current_credit"),
             make_balances("previous_debit","previous_credit"),
-            make_balances("asof_debit","asof_credit"))
+            make_balances("asof_debit","asof_credit"),
+            make_balances("opening_debit","opening_credit"))
 
 def income_figures(balances, direct_cost_codes=None, direct_cost_ids=None):
     revenue = sum((b["credit"] - b["debit"] for b in balances.values()
@@ -385,13 +391,9 @@ def build_management_snapshot(conn, start, end, dimensions=None):
     period_days = (end - start).days
     previous_end = start - timedelta(days=1)
     previous_start = previous_end - timedelta(days=period_days)
-    current_balances, previous_balances, as_of = dashboard_period_balances(
+    current_balances, previous_balances, as_of, opening_balances = dashboard_period_balances(
         conn, start.isoformat(), end.isoformat(),
         previous_start.isoformat(), previous_end.isoformat(), dimensions
-    )
-    opening_balances = account_balances(
-        conn, date_to=(start - timedelta(days=1)).isoformat(),
-        dimensions=dimensions, exclude_closing_entries=True
     )
     current = income_figures(current_balances, direct_cost_ids=roles["direct_cost"])
     previous = income_figures(previous_balances, direct_cost_ids=roles["direct_cost"])
