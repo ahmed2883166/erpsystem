@@ -209,50 +209,69 @@ def ensure_activity_chart_accounts(conn, activity):
 
 
 def migrate_vat_accounts(conn, activity):
-    """Standardize VAT control accounts while preserving legacy account IDs and journal links.
+    """Standardize output VAT at 2130 and deductible input VAT at 1165.
 
-    Output VAT is always 2130; deductible input VAT is always 1165.
-    Legacy non-VAT uses of 2130 are moved, never merged or deleted.
+    When an older activity used 2120 for output VAT, that same account ID is
+    moved to 2130. Legacy non-VAT uses of 2130 are moved to a dedicated code.
+    Journal lines remain attached to their original account IDs.
     """
     legacy_destinations = {
-        "service": ("2150", "ضرائب أخرى مستحقة"),
         "medical": ("2140", "مقدمات مرضى"),
         "restaurant": ("2140", "إكراميات مستحقة للعاملين"),
         "industrial": ("2210", "قروض طويلة الأجل"),
     }
-    row = conn.execute(
-        "SELECT id, code, name_ar, account_type, is_group, parent_id FROM accounts WHERE code='2130'"
+    old_2130 = conn.execute(
+        "SELECT id, name_ar, account_type, is_group, parent_id FROM accounts WHERE code='2130'"
     ).fetchone()
-    if row and (row["account_type"] != "liability" or row["is_group"] or
-                "ضريبة القيمة المضافة" not in str(row["name_ar"] or "")):
+    moved_legacy_2130 = False
+    if old_2130 and "ضريبة القيمة المضافة" not in str(old_2130["name_ar"] or ""):
         destination = legacy_destinations.get(activity)
-        if not destination:
-            raise ValueError("الحساب 2130 مستخدم لغرض غير ضريبة القيمة المضافة؛ أوقف الترحيل لمراجعة دليل الحسابات يدويًا.")
-        new_code, new_name = destination
-        collision = conn.execute("SELECT id FROM accounts WHERE code=?", (new_code,)).fetchone()
-        if collision:
-            raise ValueError(
-                f"تعذر توحيد الضريبة: الحساب البديل {new_code} موجود بالفعل. "
-                "لم يتم تغيير أي حساب حتى لا تختلط الأرصدة."
-            )
-        parent_id = row["parent_id"]
-        if activity == "industrial":
-            parent = conn.execute("SELECT id,account_type,is_group FROM accounts WHERE code='2200'").fetchone()
-            if parent and (parent["account_type"] != "liability" or not parent["is_group"]):
-                raise ValueError("الحساب 2200 موجود لكنه ليس مجموعة التزامات صالحة.")
-            if not parent:
-                root = conn.execute("SELECT id FROM accounts WHERE code='2000'").fetchone()
-                cur = conn.execute(
-                    "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,1)",
-                    ("2200", "التزامات طويلة الأجل", "liability", root["id"] if root else None),
+        if destination:
+            new_code, new_name = destination
+            collision = conn.execute("SELECT id FROM accounts WHERE code=?", (new_code,)).fetchone()
+            if collision:
+                raise ValueError(
+                    f"تعذر توحيد الضريبة: الحساب البديل {new_code} موجود بالفعل. "
+                    "لم يتم تغيير أي حساب حتى لا تختلط الأرصدة."
                 )
-                parent_id = cur.lastrowid
-            else:
-                parent_id = parent["id"]
-        conn.execute(
-            "UPDATE accounts SET code=?, name_ar=?, parent_id=? WHERE id=?",
-            (new_code, new_name, parent_id, row["id"]),
-        )
+            parent_id = old_2130["parent_id"]
+            if activity == "industrial":
+                parent = conn.execute("SELECT id,account_type,is_group FROM accounts WHERE code='2200'").fetchone()
+                if parent and (parent["account_type"] != "liability" or not parent["is_group"]):
+                    raise ValueError("الحساب 2200 موجود لكنه ليس مجموعة التزامات صالحة.")
+                if not parent:
+                    root = conn.execute("SELECT id FROM accounts WHERE code='2000'").fetchone()
+                    cur = conn.execute(
+                        "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,1)",
+                        ("2200", "التزامات طويلة الأجل", "liability", root["id"] if root else None),
+                    )
+                    parent_id = cur.lastrowid
+                else:
+                    parent_id = parent["id"]
+            conn.execute(
+                "UPDATE accounts SET code=?, name_ar=?, parent_id=? WHERE id=?",
+                (new_code, new_name, parent_id, old_2130["id"]),
+            )
+            moved_legacy_2130 = True
+        elif activity not in {"commercial", "service"}:
+            raise ValueError(
+                "الحساب 2130 مستخدم لغرض غير معروف؛ أوقف الترحيل لمراجعة دليل الحسابات يدويًا."
+            )
+
+    # In the legacy medical, restaurant and industrial charts, 2120 was the
+    # account actually used by sales postings for output VAT. Recode that same
+    # account ID only when 2130 was a non-VAT account and has just been freed.
+    if activity in {"medical", "restaurant", "industrial"} and moved_legacy_2130:
+        old_vat = conn.execute(
+            "SELECT id,account_type,is_group FROM accounts WHERE code='2120'"
+        ).fetchone()
+        if old_vat:
+            if old_vat["account_type"] != "liability" or old_vat["is_group"]:
+                raise ValueError("الحساب 2120 القديم لا يصلح لنقل ضريبة المخرجات إلى 2130.")
+            conn.execute(
+                "UPDATE accounts SET code='2130', name_ar='ضريبة القيمة المضافة - مخرجات' WHERE id=?",
+                (old_vat["id"],),
+            )
 
     vat = conn.execute(
         "SELECT id,account_type,is_group FROM accounts WHERE code='2130'"
