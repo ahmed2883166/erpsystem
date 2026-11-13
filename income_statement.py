@@ -125,7 +125,11 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
         if value is not None:
             conditions.append(f"jl.{key}=?")
             dimension_params.append(value)
+    account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+    section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
+    subtype_expr = "a.account_subtype" if "account_subtype" in account_columns else "NULL"
     rows = conn.execute(f"""SELECT a.id,a.code,a.name_ar,a.account_type,
+        {section_expr} statement_section,{subtype_expr} account_subtype,
         COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
         COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
         FROM accounts a
@@ -147,7 +151,9 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
         if row["account_type"] == "revenue":
             revenue_rows.append(item)
             revenue_total += balance
-        elif row["id"] in direct_cost_ids:
+        elif row["id"] in direct_cost_ids or row["statement_section"] == "direct_costs":
+            # Existing explicit role mappings remain valid; chart metadata is the
+            # fallback for newly added activity-specific direct-cost accounts.
             cogs_rows.append(item)
             cogs_total += balance
         else:
