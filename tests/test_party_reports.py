@@ -390,7 +390,7 @@ class PartyStatementTests(unittest.TestCase):
         supplier_body = supplier.get_data(as_text=True)
         self.assertIn("1,700.00", supplier_body)
         self.assertIn("غير متاح", supplier_body)
-        self.assertIn("لا يحتوي supplier_id", supplier_body)
+        self.assertIn("قيود موردين قديمة", supplier_body)
 
 if __name__ == "__main__":
     unittest.main()
