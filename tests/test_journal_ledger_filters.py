@@ -25,6 +25,12 @@ class JournalAndLedgerFilterTests(unittest.TestCase):
                 id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,
                 debit TEXT DEFAULT '0',credit TEXT DEFAULT '0',memo TEXT DEFAULT ''
             );
+            CREATE TABLE financial_years(
+                id INTEGER PRIMARY KEY,year_name TEXT,start_date TEXT,end_date TEXT,status TEXT
+            );
+            CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT);
+            INSERT INTO financial_years VALUES(1,'2026','2026-01-01','2026-12-31','open');
+            INSERT INTO company_settings VALUES('base_currency','EGP');
             INSERT INTO accounts(id,code,name_ar,account_type) VALUES
                 (1,'1110','الصندوق','asset'),(2,'4100','الإيرادات','revenue');
             INSERT INTO journal_entries VALUES
@@ -104,6 +110,19 @@ class JournalAndLedgerFilterTests(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertIn("لا توجد حركة خلال الفترة", html)
         self.assertIn("130.00", html)
+
+    def test_trial_balance_route_aggregates_posted_entries_and_excludes_drafts(self):
+        response = self.client.get(
+            "/reports/trial-balance?date_from=2026-01-01&date_to=2026-01-31"
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("1110", html)
+        self.assertIn("4100", html)
+        self.assertIn("170.00", html)  # Posted debit and credit totals only.
+        self.assertIn("130.00", html)  # Cash net debit after the posted movements.
+        self.assertIn("-130.00", html)  # Revenue account net credit.
+        self.assertNotIn("999.00", html)  # Draft journal line must not enter the report.
 
 
 if __name__ == "__main__":
