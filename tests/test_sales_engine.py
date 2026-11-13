@@ -588,12 +588,17 @@ class SalesIntegrationTests(unittest.TestCase):
             self.db, self.customer_id, "2026-11-10", self.warehouse_id,
             [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}], "0", 1,
         )
+        second_invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "50"}], "0", 1,
+        )
         cash_id = self.db.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
         advance = sales.post_customer_advance_receipt(
             self.db, self.customer_id, "2026-11-11", "100", cash_id, 1, "ADV-001",
         )
         allocation = sales.allocate_customer_advance(
-            self.db, advance["advance_receipt_id"], [(invoice["invoice_id"], "60")],
+            self.db, advance["advance_receipt_id"],
+            [(invoice["invoice_id"], "60"), (second_invoice["invoice_id"], "20")],
             "2026-11-12", 1,
         )
         refund = sales.post_customer_advance_refund(
@@ -605,14 +610,18 @@ class SalesIntegrationTests(unittest.TestCase):
             "SELECT paid_amount FROM sales_invoices WHERE id=?", (invoice["invoice_id"],)
         ).fetchone()["paid_amount"]
         self.assertEqual(Decimal(paid), Decimal("60.00"))
-        self.assertEqual(allocation["remaining_advance"], Decimal("40.00"))
-        self.assertEqual(refund["remaining_advance"], Decimal("25.00"))
+        second_paid = self.db.execute(
+            "SELECT paid_amount FROM sales_invoices WHERE id=?", (second_invoice["invoice_id"],)
+        ).fetchone()["paid_amount"]
+        self.assertEqual(Decimal(second_paid), Decimal("20.00"))
+        self.assertEqual(allocation["remaining_advance"], Decimal("20.00"))
+        self.assertEqual(refund["remaining_advance"], Decimal("5.00"))
 
         expected = [
             (advance["journal_entry_id"], "1110", Decimal("100.00"), Decimal("0.00")),
             (advance["journal_entry_id"], "2160", Decimal("0.00"), Decimal("100.00")),
-            (allocation["journal_entry_id"], "2160", Decimal("60.00"), Decimal("0.00")),
-            (allocation["journal_entry_id"], "1130", Decimal("0.00"), Decimal("60.00")),
+            (allocation["journal_entry_id"], "2160", Decimal("80.00"), Decimal("0.00")),
+            (allocation["journal_entry_id"], "1130", Decimal("0.00"), Decimal("80.00")),
             (refund["journal_entry_id"], "2160", Decimal("15.00"), Decimal("0.00")),
             (refund["journal_entry_id"], "1110", Decimal("0.00"), Decimal("15.00")),
         ]
