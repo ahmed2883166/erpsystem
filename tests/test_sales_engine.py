@@ -999,5 +999,65 @@ otals["credit"], places=2)
         ).fetchone()[0], 1)
 
 
+    def test_fixed_customer_discount_is_locked_and_allocated_once_across_partial_invoices(self):
+        self.db.execute(
+            "UPDATE customers SET discount_type='fixed',discount_value='10' WHERE id=?",
+            (self.customer_id,),
+        )
+        _, order_id, order_line_id = self._create_accepted_quote_and_order("4")
+        order_discount = self.db.execute(
+            "SELECT discount_amount FROM sales_orders WHERE id=?", (order_id,)
+        ).fetchone()["discount_amount"]
+        self.assertEqual(Decimal(order_discount), Decimal("10.00"))
+        # A later master-data change must not rewrite an already accepted order.
+        self.db.execute(
+            "UPDATE customers SET discount_value='20' WHERE id=?", (self.customer_id,)
+        )
+        quotations.approve_sales_order(self.db, order_id, approver_id=2)
+        self.db.commit()
+        base = date.today()
+
+        self.db.execute("BEGIN IMMEDIATE")
+        first_note = quotations.create_delivery_note(
+            self.db, order_id, (base + timedelta(days=1)).isoformat(),
+            [{"sales_order_line_id": order_line_id, "quantity": "2"}], 2,
+        )
+        quotations.post_delivery_note(self.db, first_note["delivery_note_id"], posted_by=2)
+        first_invoice = quotations.invoice_sales_order(
+            self.db, order_id, (base + timedelta(days=2)).isoformat(),
+            (base + timedelta(days=30)).isoformat(), created_by=2,
+        )
+        self.db.commit()
+        self.assertEqual(first_invoice["discount_amount"], Decimal("5.00"))
+        self.assertEqual(first_invoice["subtotal"], Decimal("35.00"))
+
+        self.db.execute("BEGIN IMMEDIATE")
+        second_note = quotations.create_delivery_note(
+            self.db, order_id, (base + timedelta(days=3)).isoformat(),
+            [{"sales_order_line_id": order_line_id, "quantity": "2"}], 2,
+        )
+        quotations.post_delivery_note(self.db, second_note["delivery_note_id"], posted_by=2)
+        second_invoice = quotations.invoice_sales_order(
+            self.db, order_id, (base + timedelta(days=4)).isoformat(),
+            (base + timedelta(days=30)).isoformat(), created_by=2,
+        )
+        self.db.commit()
+        self.assertEqual(second_invoice["discount_amount"], Decimal("5.00"))
+        self.assertEqual(second_invoice["subtotal"], Decimal("35.00"))
+        self.assertEqual(
+            Decimal(self.db.execute(
+                "SELECT discount_allocated FROM sales_orders WHERE id=?", (order_id,)
+            ).fetchone()["discount_allocated"]),
+            Decimal("10.00"),
+        )
+        self.assertEqual(
+            sum((Decimal(row["discount_amount"]) for row in self.db.execute(
+                "SELECT discount_amount FROM sales_invoices WHERE sales_order_id=?", (order_id,)
+            ).fetchall()), Decimal("0")),
+            Decimal("10.00"),
+        )
+
+
+
 if __name__ == "__main__":
     unittest.main()
