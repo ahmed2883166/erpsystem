@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}دفعات العملاء المقدمة | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <h2>دفعات العملاء المقدمة</h2>
+  <p>تسجيل المقدم كالتزام، ثم تخصيصه على فواتير العميل أو رد الجزء غير المستخدم.</p>
+</header>
+<section class="panel">
+  <h3>استلام مقدم جديد</h3>
+  <form method="post" action="{{ url_for('sales.create_customer_advance_receipt') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="form-grid">
+      <label>العميل
+        <select name="customer_id" required>
+          <option value="">اختر العميل</option>
+          {% for customer in customers %}<option value="{{ customer.id }}">{{ customer.code }} - {{ customer.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>تاريخ الاستلام <input type="date" name="receipt_date" value="{{ today }}" required></label>
+      <label>القيمة <input type="number" name="amount" min="0.01" step="0.01" required></label>
+      <label>الصندوق / البنك
+        <select name="cash_account_id" required>
+          <option value="">اختر الحساب</option>
+          {% for account in cash_accounts %}<option value="{{ account.id }}">{{ account.code }} - {{ account.name_ar }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>مرجع التحويل / الإيصال <input name="reference" maxlength="120"></label>
+    </div>
+    <button type="submit">تسجيل المقدم وترحيل القيد</button>
+  </form>
+</section>
+<section class="panel">
+  <h3>أرصدة المقدمات</h3>
+  <table>
+    <thead><tr><th>رقم الإيصال</th><th>العميل</th><th>التاريخ</th><th>قيمة المقدم</th><th>المتبقي</th><th>القيد</th></tr></thead>
+    <tbody>
+    {% for advance in advances %}
+      <tr>
+        <td>{{ advance.receipt_no }}</td><td>{{ advance.customer_code }} - {{ advance.customer_name }}</td>
+        <td>{{ advance.receipt_date }}</td><td>{{ '%.2f'|format(advance.amount|float) }}</td>
+        <td>{{ '%.2f'|format(advance.remaining_amount) }}</td><td>{{ advance.journal_entry_id }}</td>
+      </tr>
+      {% if advance.remaining_amount > 0 %}
+      <tr><td colspan="6">
+        <div class="form-grid">
+          <form method="post" action="{{ url_for('sales.allocate_customer_advance_route', advance_id=advance.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <h4>تخصيص المقدم على فاتورة</h4>
+            <label>الفاتورة
+              <select name="invoice_id" required>
+                <option value="">اختر فاتورة لنفس العميل</option>
+                {% for invoice in advance.open_invoices %}
+                  <option value="{{ invoice.id }}">{{ invoice.invoice_no }} — المتبقي {{ '%.2f'|format(invoice.outstanding) }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>قيمة التخصيص <input type="number" name="amount" min="0.01" max="{{ advance.remaining_amount }}" step="0.01" required></label>
+            <label>تاريخ التخصيص <input type="date" name="allocation_date" value="{{ today }}" required></label>
+            <button type="submit" {% if not advance.open_invoices %}disabled{% endif %}>تخصيص وترحيل</button>
+          </form>
+          <form method="post" action="{{ url_for('sales.refund_customer_advance_route', advance_id=advance.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <h4>رد جزء من المقدم</h4>
+            <label>قيمة الرد <input type="number" name="amount" min="0.01" max="{{ advance.remaining_amount }}" step="0.01" required></label>
+            <label>تاريخ الرد <input type="date" name="refund_date" value="{{ today }}" required></label>
+            <label>حساب الصندوق / البنك
+              <select name="cash_account_id" required>
+                <option value="">اختر الحساب</option>
+                {% for account in cash_accounts %}<option value="{{ account.id }}">{{ account.code }} - {{ account.name_ar }}</option>{% endfor %}
+              </select>
+            </label>
+            <label>مرجع الرد <input name="reference" maxlength="120"></label>
+            <button type="submit">رد المبلغ وترحيل القيد</button>
+          </form>
+        </div>
+      </td></tr>
+      {% endif %}
+    {% else %}
+      <tr><td colspan="6">لا توجد مقدمات عملاء مسجلة.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
