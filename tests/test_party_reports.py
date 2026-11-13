@@ -140,6 +140,126 @@ class PartyStatementTests(unittest.TestCase):
         # The unallocated 200 advance is intentionally excluded from the statement.
         self.assertIn("1,150.00", body)
 
+    def test_subledger_reconciliation_matches_customer_supplier_and_advance_controls(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS company_settings(
+                setting_key TEXT PRIMARY KEY, setting_value TEXT
+            );
+            INSERT OR REPLACE INTO company_settings VALUES('activity','commercial');
+            CREATE TABLE accounts(
+                id INTEGER PRIMARY KEY, code TEXT NOT NULL, account_type TEXT NOT NULL,
+                is_group INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1
+            );
+            INSERT INTO accounts(id,code,account_type) VALUES
+                (1,'1130','asset'),(2,'2110','liability'),
+                (3,'2160','liability'),(4,'1110','asset');
+            CREATE TABLE journal_entries(
+                id INTEGER PRIMARY KEY, entry_date TEXT NOT NULL, status TEXT NOT NULL
+            );
+            CREATE TABLE journal_lines(
+                id INTEGER PRIMARY KEY, entry_id INTEGER NOT NULL,
+                account_id INTEGER NOT NULL, debit TEXT NOT NULL, credit TEXT NOT NULL
+            );
+            CREATE TABLE customer_receipt_batches(
+                id INTEGER PRIMARY KEY, customer_id INTEGER, receipt_no TEXT,
+                receipt_date TEXT, total_amount TEXT, reference TEXT
+            );
+            CREATE TABLE customer_receipt_allocations(
+                id INTEGER PRIMARY KEY, batch_id INTEGER, invoice_id INTEGER, amount TEXT
+            );
+            CREATE TABLE customer_advance_receipts(
+                id INTEGER PRIMARY KEY, receipt_no TEXT, customer_id INTEGER,
+                receipt_date TEXT, amount TEXT, journal_entry_id INTEGER
+            );
+            CREATE TABLE customer_advance_allocations(
+                id INTEGER PRIMARY KEY, advance_receipt_id INTEGER, invoice_id INTEGER,
+                allocation_date TEXT, amount TEXT, journal_entry_id INTEGER
+            );
+            CREATE TABLE customer_advance_refunds(
+                id INTEGER PRIMARY KEY, advance_receipt_id INTEGER,
+                refund_date TEXT, amount TEXT, journal_entry_id INTEGER
+            );
+        """)
+        conn.execute(
+            "INSERT INTO customer_receipt_batches VALUES(1,1,'RCPTB-1','2026-11-25','150','')"
+        )
+        conn.execute("INSERT INTO customer_receipt_allocations VALUES(1,1,2,'150')")
+        conn.execute(
+            "INSERT INTO sales_credit_notes(id,invoice_id,credit_note_no,credit_date,reason,total_amount,status) "
+            "VALUES(1,2,'SCN-1','2026-11-21','return','20','posted')"
+        )
+        conn.execute(
+            "INSERT INTO customer_refunds(id,credit_note_id,refund_no,refund_date,amount) "
+            "VALUES(1,1,'RF-1','2026-11-22','5')"
+        )
+        conn.execute(
+            "INSERT INTO customer_advance_receipts VALUES(1,'CADV-1',1,'2026-11-23','200',90)"
+        )
+        conn.execute(
+            "INSERT INTO customer_advance_allocations VALUES(1,1,2,'2026-11-24','50',91)"
+        )
+        conn.execute(
+            "INSERT INTO supplier_credit_notes(id,credit_no,supplier_id,bill_id,credit_date,reason,total_amount,status) "
+            "VALUES(1,'SUP-CN-1',1,2,'2026-11-25','return','30','posted')"
+        )
+
+        journal_entries = [
+            (1,'2026-10-10',[(1,'1000','0')]),
+            (2,'2026-11-10',[(1,'500','0')]),
+            (3,'2026-10-20',[(1,'0','200')]),
+            (4,'2026-11-20',[(1,'0','100')]),
+            (5,'2026-11-25',[(1,'0','150')]),
+            (6,'2026-11-24',[(1,'0','50')]),
+            (7,'2026-11-21',[(1,'0','20')]),
+            (8,'2026-11-22',[(1,'5','0')]),
+            (9,'2026-10-10',[(2,'0','2000')]),
+            (10,'2026-11-10',[(2,'0','400')]),
+            (11,'2026-10-20',[(2,'500','0')]),
+            (12,'2026-11-20',[(2,'200','0')]),
+            (13,'2026-11-25',[(2,'30','0')]),
+            (14,'2026-11-23',[(3,'0','200')]),
+            (15,'2026-11-24',[(3,'50','0')]),
+        ]
+        line_id = 1
+        for entry_id, entry_date, control_lines in journal_entries:
+            conn.execute(
+                "INSERT INTO journal_entries(id,entry_date,status) VALUES(?,?,'posted')",
+                (entry_id, entry_date),
+            )
+            for account_id, debit, credit in control_lines:
+                conn.execute(
+                    "INSERT INTO journal_lines VALUES(?,?,?,?,?)",
+                    (line_id, entry_id, account_id, debit, credit),
+                )
+                line_id += 1
+        # Offset each control-account movement with cash or a balancing account line.
+        # The reconciliation reads only the mapped control-account lines.
+        conn.commit()
+        conn.close()
+
+        response = self.client.get(
+            "/reports/subledger-reconciliation?as_of=2026-11-30"
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("مطابقة الأستاذ العام", body)
+        self.assertIn("متطابق", body)
+        self.assertIn("985.00", body)
+        self.assertIn("1,670.00", body)
+        self.assertIn("150.00", body)
+
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("INSERT INTO journal_entries(id,entry_date,status) VALUES(16,'2026-11-30','posted')")
+        conn.execute("INSERT INTO journal_lines VALUES(99,16,1,'10','0')")
+        conn.commit()
+        conn.close()
+        mismatch = self.client.get(
+            "/reports/subledger-reconciliation?as_of=2026-11-30"
+        )
+        self.assertEqual(mismatch.status_code, 200)
+        self.assertIn("يوجد فرق", mismatch.get_data(as_text=True))
+
     def test_party_statement_rejects_invalid_or_reversed_date_ranges(self):
         invalid = self.client.get(
             "/reports/party-statement?kind=customer&party_id=1&date_from=not-a-date"
