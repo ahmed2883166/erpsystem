@@ -140,6 +140,16 @@ class PartyStatementTests(unittest.TestCase):
         # The unallocated 200 advance is intentionally excluded from the statement.
         self.assertIn("1,150.00", body)
 
+    def test_party_statement_rejects_invalid_or_reversed_date_ranges(self):
+        invalid = self.client.get(
+            "/reports/party-statement?kind=customer&party_id=1&date_from=not-a-date"
+        )
+        reversed_range = self.client.get(
+            "/reports/party-statement?kind=customer&party_id=1&date_from=2026-11-30&date_to=2026-11-01"
+        )
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(reversed_range.status_code, 400)
+
     def test_supplier_statement_opening_and_running_balance(self):
         response = self.client.get("/reports/party-statement?kind=supplier&party_id=1&date_from=2026-11-01&date_to=2026-11-30")
         self.assertEqual(response.status_code, 200)
