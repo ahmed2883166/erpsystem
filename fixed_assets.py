@@ -153,7 +153,10 @@ def _post_asset_depreciation(conn, asset, period, user_id, cutoff_date=None):
         Decimal("0"),
     )
     amount = _asset_period_amount(asset, accumulated, period, cutoff_date=cutoff_date)
-    entry_date = cutoff_date or (period + "-01")
+    entry_date = cutoff_date or date(
+        first_day.year, first_day.month,
+        calendar.monthrange(first_day.year, first_day.month)[1]
+    ).isoformat()
     reference = "DEP-" + str(asset["id"]) + "-" + period
     entry = post_journal(
         conn, entry_date, reference, "إهلاك الأصل " + asset["asset_code"],
@@ -350,8 +353,18 @@ def dispose(asset_id):
             if date.fromisoformat(disposal_date).day != last_day:
                 raise ValueError("تم ترحيل إهلاك شهر الاستبعاد بالكامل؛ لا يمكن استبعاد الأصل في منتصف الشهر دون عكس القيد. استخدم تاريخ آخر يوم بالشهر أو عالج القيد بعكس معتمد.")
         else:
-            # Recognize depreciation only through the actual disposal date.
-            _amount,_entry=_post_asset_depreciation(c,asset,period,session["user_id"],cutoff_date=disposal_date)
+            ready=date.fromisoformat(asset["ready_date"])
+            disposal_period=date.fromisoformat(period+"-01")
+            offset=(disposal_period.year-ready.year)*12+disposal_period.month-ready.month
+            final_offset=int(asset["useful_life_months"])-(1 if ready.day==1 else 0)
+            accumulated_before=sum((Decimal(str(x["amount"])) for x in c.execute(
+                "SELECT amount FROM asset_depreciations WHERE asset_id=?",(asset_id,)).fetchall()),Decimal("0"))
+            remaining_before=Decimal(asset["cost"])-Decimal(asset["residual_value"])-accumulated_before
+            if offset>final_offset and remaining_before>0:
+                raise ValueError("لا يمكن استبعاد الأصل قبل استكمال فترات الإهلاك السابقة؛ راجع جدول الإهلاك.")
+            if offset<=final_offset and remaining_before>0:
+                # Recognize depreciation only through the actual disposal date.
+                _amount,_entry=_post_asset_depreciation(c,asset,period,session["user_id"],cutoff_date=disposal_date)
         accumulated=sum((Decimal(str(x["amount"])) for x in c.execute(
             "SELECT amount FROM asset_depreciations WHERE asset_id=?",(asset_id,)).fetchall()),Decimal("0"))
         cost=Decimal(asset["cost"])
