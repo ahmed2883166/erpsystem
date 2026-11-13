@@ -1594,6 +1594,24 @@ def analytic_dimensions_settings():
     connection = db()
     if request.method == "POST":
         try:
+            if request.form.get("action") == "update_branch":
+                branch_id = request.form.get("branch_id", type=int)
+                values = {
+                    "address": request.form.get("address", "").strip()[:300],
+                    "phone": request.form.get("phone", "").strip()[:60],
+                    "email": request.form.get("email", "").strip()[:120],
+                    "tax_number": request.form.get("tax_number", "").strip()[:60],
+                }
+                if not branch_id or not connection.execute("SELECT 1 FROM branches WHERE id=?", (branch_id,)).fetchone():
+                    raise ValueError("الفرع المحدد غير موجود.")
+                connection.execute(
+                    "UPDATE branches SET address=?,phone=?,email=?,tax_number=? WHERE id=?",
+                    (values["address"], values["phone"], values["email"], values["tax_number"], branch_id),
+                )
+                connection.commit()
+                log("branch_print_details_updated", f"branch_id={branch_id}", entity_type="branch", entity_id=branch_id)
+                flash("تم حفظ بيانات الفرع المستخدمة في الطباعة.", "success")
+                return redirect(url_for("analytic_dimensions_settings"))
             kind = request.form.get("dimension_type", "").strip()
             config = {
                 "branch": ("branches", "الفرع"),
@@ -1607,7 +1625,17 @@ def analytic_dimensions_settings():
             name = request.form.get("name_ar", "").strip()
             if not code or len(code) > 30 or not name or len(name) > 120:
                 raise ValueError("أدخل كودًا واسمًا صحيحين للبُعد.")
-            connection.execute(f"INSERT INTO {table}(code,name_ar) VALUES(?,?)", (code, name))
+            if kind == "branch":
+                connection.execute(
+                    """INSERT INTO branches(code,name_ar,address,phone,email,tax_number)
+                       VALUES(?,?,?,?,?,?)""",
+                    (code, name, request.form.get("address", "").strip()[:300],
+                     request.form.get("phone", "").strip()[:60],
+                     request.form.get("email", "").strip()[:120],
+                     request.form.get("tax_number", "").strip()[:60]),
+                )
+            else:
+                connection.execute(f"INSERT INTO {table}(code,name_ar) VALUES(?,?)", (code, name))
             connection.commit()
             log("analytic_dimension_created", f"{kind}:{code}:{name}", entity_type=kind, entity_id=code)
             flash("تمت إضافة " + label + " بنجاح.", "success")
