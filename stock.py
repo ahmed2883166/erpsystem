@@ -219,7 +219,7 @@ def post_scrap_journal(c, movement_id, movement_no, product, movement_date, tota
     return entry_id
 
 
-def post_issue_journal(c, movement_id, movement_no, product, movement_date, total_cost, created_by, purpose):
+def post_issue_journal(c, movement_id, movement_no, product, movement_date, total_cost, created_by, purpose, dimensions=None):
     """Create the GL entry for an issue using the valuation cost consumed in this transaction."""
     existing = c.execute("SELECT journal_entry_id FROM stock_movements WHERE id=?", (movement_id,)).fetchone()
     if existing and existing["journal_entry_id"]:
@@ -258,7 +258,8 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
     entry_id = post_journal(c,movement_date,movement_no,
         f"قيد آلي لصرف مخزون - {product['name_ar']}",
         [(expense_id,amount,0,expense_name),
-         (inventory["id"],0,amount,"تخفيض المخزون بتكلفة الصرف")],created_by)
+         (inventory["id"],0,amount,"تخفيض المخزون بتكلفة الصرف")],created_by,
+        dimensions=dimensions)
     c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?", (entry_id, movement_id))
     return entry_id
 
