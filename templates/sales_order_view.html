@@ -23,7 +23,7 @@
     </tbody>
   </table>
 </section>
-{% if order.status == 'pending_approval' and 'sales.approve' in permissions %}
+{% if order.status == 'pending_approval' and ('sales.approve' in permissions or session.get('role') == 'admin') %}
 <section class="panel">
   <h3>اعتماد أمر البيع</h3>
   <p>الاعتماد لا يصرف المخزون ولا ينشئ قيدًا محاسبيًا. يسمح فقط ببدء التسليم.</p>
