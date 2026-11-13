@@ -63,7 +63,7 @@ def _events(c, kind, party_id):
             'إشعار دائن / مرتجع بيع: ' || cn.reason description,0 debit,
             cn.total_amount credit,2 priority
             FROM sales_credit_notes cn JOIN sales_invoices i ON i.id=cn.invoice_id
-            WHERE i.customer_id=? AND cn.status='posted'""", (party_id,)):
+            WHERE i.customer_id=? AND cn.status IN ('posted','cancelled')""", (party_id,)):
             events.append(dict(r))
         if _table_exists(c, "customer_refunds"):
             for r in c.execute("""SELECT rf.refund_date event_date,rf.refund_no reference,
