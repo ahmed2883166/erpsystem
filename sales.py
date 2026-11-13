@@ -1390,7 +1390,7 @@ def reverse_customer_advance_transaction(
                 (str(Decimal(str(row["paid_amount"] or "0")) - Decimal(str(row["amount"]))),
                  row["invoice_id"]),
             )
-    conn.execute(
+    reversal_record = conn.execute(
         """INSERT INTO customer_advance_reversals
            (source_type,source_id,original_journal_entry_id,reversal_journal_entry_id,
             reversal_date,reason,created_by)
@@ -1399,6 +1399,7 @@ def reverse_customer_advance_transaction(
          reversal_date, reason, created_by),
     )
     return {
+        "reversal_id": reversal_record.lastrowid,
         "source_type": source_type, "source_id": source_id,
         "original_journal_entry_id": original_journal_id,
         "reversal_journal_entry_id": reversal_journal_id,
@@ -1627,7 +1628,7 @@ def reverse_customer_advance_route(source_type, source_id):
         )
         c.commit()
         g.audit_created_record = (
-            "customer_advance_reversals", result["reversal_journal_entry_id"]
+            "customer_advance_reversals", result["reversal_id"]
         )
         flash("تم عكس العملية بقيد عكسي مرتبط دون حذف المستند أو القيد الأصلي.", "success")
     except (ValueError, sqlite3.Error) as exc:
