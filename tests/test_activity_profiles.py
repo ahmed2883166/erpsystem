@@ -81,7 +81,7 @@ class ActivityProfileTests(unittest.TestCase):
         )
         profile = next(p for p in list_activity_profiles(self.conn) if p["id"] == profile_id)
         self.assertEqual(profile["base_activity"], "service")
-        self.assertEqual(profile["account_roles"]["cash"], ["1110"])
+        self.assertEqual(profile["account_roles"]["cash"], ["1110", "1111"])
         self.assertFalse(profile["is_builtin"])
 
     def test_rejects_invalid_or_duplicate_profile_code(self):
@@ -159,7 +159,7 @@ class ActivityProfileTests(unittest.TestCase):
         profile = get_active_activity_profile(self.conn)
         roles = active_account_role_ids(self.conn)
         advance_id = self.conn.execute("SELECT id FROM accounts WHERE code='2160'").fetchone()["id"]
-        self.assertEqual(profile["account_roles"]["customer_advances"], ["2160"])
+        self.assertEqual(profile["account_roles"]["customer_advances"], ["2120", "2160"])
         self.assertIn(advance_id, roles["customer_advances"])
         self.assertIn(advance_id, roles["current_liabilities"])
 
@@ -295,13 +295,16 @@ class ActivityProfileTests(unittest.TestCase):
             "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity_profile_code','logistics')"
         )
         stale_cash_id = self.conn.execute("SELECT id FROM accounts WHERE code='1120'").fetchone()["id"]
-        expected_cash_id = self.conn.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
+        expected_cash_ids = {
+            self.conn.execute("SELECT id FROM accounts WHERE code=?", (code,)).fetchone()["id"]
+            for code in ("1110", "1111")
+        }
         self.conn.execute(
             "INSERT INTO management_account_roles(account_id,role) VALUES(?, 'cash')",
             (stale_cash_id,),
         )
         roles = load_management_account_roles(self.conn)
-        self.assertEqual(roles["cash"], {expected_cash_id})
+        self.assertEqual(roles["cash"], expected_cash_ids)
 
     def test_legacy_company_without_profile_tables_uses_builtin_mappings(self):
         from activity_profiles import active_posting_accounts
