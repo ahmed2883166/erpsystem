@@ -548,10 +548,11 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
             [("2110", Decimal("100.00"), Decimal("0.00")),
              ("1000", Decimal("0.00"), Decimal("100.00"))],
         )
-        remaining = conn.execute(
-            "SELECT SUM(CAST(paid_amount AS REAL)) FROM supplier_bills WHERE supplier_invoice_no IN ('INV-SPLIT-1','INV-SPLIT-2')"
-        ).fetchone()[0]
-        self.assertEqual(Decimal(str(remaining)), Decimal("100.0"))
+        paid_rows = conn.execute(
+            "SELECT paid_amount FROM supplier_bills WHERE supplier_invoice_no IN ('INV-SPLIT-1','INV-SPLIT-2')"
+        ).fetchall()
+        paid_total = sum((Decimal(row["paid_amount"]) for row in paid_rows), Decimal("0"))
+        self.assertEqual(paid_total, Decimal("100.00"))
         conn.close()
 
 
