@@ -110,15 +110,16 @@ app.register_blueprint(planning_bp)
 # SECRET_KEY and session/CSRF settings are initialized above.
 
 PERMISSIONS = {
-    "admin": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "purchases.approve", "sales.manage", "sales.view", "sales.approve", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view", "audit.view"},
-    "accountant": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view"},
-    "viewer": {"accounts.view", "currency.view", "reports.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view", "bank.view", "tax.view", "workforce.view", "party.view", "budget.view", "cashflow.view"},
+    "admin": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "expenses.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "purchases.approve", "sales.manage", "sales.view", "sales.approve", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view", "audit.view"},
+    "accountant": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "expenses.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view"},
+    "viewer": {"accounts.view", "currency.view", "reports.view", "expenses.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view", "bank.view", "tax.view", "workforce.view", "party.view", "budget.view", "cashflow.view"},
 }
 PERMISSION_LABELS = {
     "accounts.view": "عرض شجرة الحسابات",
     "accounts.manage": "إضافة وتعديل الحسابات",
     "journal.manage": "إنشاء وترحيل القيود اليومية",
     "reports.view": "عرض التقارير ولوحة الإدارة",
+    "expenses.view": "عرض تقرير المصروفات التحليلي",
     "users.manage": "إدارة المستخدمين والصلاحيات",
     "backup.manage": "النسخ الاحتياطي والاستعادة",
     "import_export.manage": "استيراد وتصدير البيانات",
@@ -1350,7 +1351,7 @@ def journal():
             reference = request.form.get("reference", "").strip() or "MAN-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
             if len(reference) > 100:
                 raise ValueError("المرجع لا يجب أن يتجاوز 100 حرف.")
-            dimensions = validate_journal_dimensions(connection, {key: request.form.get(key) for key in ("branch_id", "cost_center_id", "project_id")})
+            dimensions = validate_journal_dimensions(connection, {key: request.form.get(key) for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id", "supplier_id")})
             entry_id = post_journal(connection, entry_date, reference, description, lines, session["user_id"], dimensions)
             connection.commit()
             posted_entry = connection.execute(
@@ -1780,7 +1781,7 @@ def income_statement():
 
 
 @app.route("/reports/expense-analysis")
-@requires("reports.view")
+@requires("expenses.view")
 def expense_analysis():
     from expense_analysis import build_expense_analysis
     date_from, date_to = normalize_income_statement_period(
