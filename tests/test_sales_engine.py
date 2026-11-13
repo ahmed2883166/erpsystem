@@ -643,6 +643,49 @@ class SalesIntegrationTests(unittest.TestCase):
             ).fetchone()
             self.assertAlmostEqual(totals["debit"], totals["credit"], places=2)
 
+        # Reconcile both subsidiary balances to their GL control accounts.
+        advance_control = sum(
+            (Decimal(row["credit"]) - Decimal(row["debit"]) for row in self.db.execute(
+                """SELECT jl.debit,jl.credit FROM journal_lines jl
+                   JOIN accounts a ON a.id=jl.account_id WHERE a.code='2160'"""
+            )),
+            Decimal("0"),
+        )
+        advance_subledger = (
+            Decimal(self.db.execute(
+                "SELECT amount FROM customer_advance_receipts WHERE id=?",
+                (advance["advance_receipt_id"],),
+            ).fetchone()["amount"])
+            - sum((Decimal(row["amount"]) for row in self.db.execute(
+                "SELECT amount FROM customer_advance_allocations WHERE advance_receipt_id=?",
+                (advance["advance_receipt_id"],),
+            )), Decimal("0"))
+            - sum((Decimal(row["amount"]) for row in self.db.execute(
+                "SELECT amount FROM customer_advance_refunds WHERE advance_receipt_id=?",
+                (advance["advance_receipt_id"],),
+            )), Decimal("0"))
+        )
+        self.assertEqual(advance_control, Decimal("5.00"))
+        self.assertEqual(advance_subledger, advance_control)
+
+        ar_control = sum(
+            (Decimal(row["debit"]) - Decimal(row["credit"]) for row in self.db.execute(
+                """SELECT jl.debit,jl.credit FROM journal_lines jl
+                   JOIN accounts a ON a.id=jl.account_id WHERE a.code='1130'"""
+            )),
+            Decimal("0"),
+        )
+        ar_subledger = sum(
+            (Decimal(row["total_amount"]) - Decimal(row["paid_amount"] or "0")
+             - Decimal(row["credited_amount"] or "0") for row in self.db.execute(
+                "SELECT total_amount,paid_amount,credited_amount FROM sales_invoices WHERE customer_id=? AND status='posted'",
+                (self.customer_id,),
+            )),
+            Decimal("0"),
+        )
+        self.assertEqual(ar_control, Decimal("70.00"))
+        self.assertEqual(ar_subledger, ar_control)
+
 
     def test_customer_advance_rejects_overallocation_and_cross_customer_invoice(self):
         self.db.execute("BEGIN IMMEDIATE")
