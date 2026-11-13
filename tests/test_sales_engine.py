@@ -643,7 +643,6 @@ class SalesIntegrationTests(unittest.TestCase):
             ).fetchone()
             self.assertAlmostEqual(totals["debit"], totals["credit"], places=2)
 
-otals["credit"], places=2)
 
     def test_customer_advance_rejects_overallocation_and_cross_customer_invoice(self):
         self.db.execute("BEGIN IMMEDIATE")
