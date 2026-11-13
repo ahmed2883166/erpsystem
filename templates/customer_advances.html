@@ -55,7 +55,7 @@
               <label>سبب العكس <input name="reason" minlength="5" maxlength="500" required></label>
               <button type="submit">عكس التخصيص بقيد عكسي</button>
             </form>
-            {% else %}<p>تم العكس بالقيد {{ batch.reversal_journal_entry_id }}</p>{% endif %}
+            {% else %}<p>تم العكس بتاريخ {{ batch.reversal_date }} بالقيد {{ batch.reversal_journal_entry_id }} — السبب: {{ batch.reason }}</p>{% endif %}
           </div>
         {% endfor %}
         {% for refund in advance.refunds %}
@@ -68,7 +68,7 @@
               <label>سبب العكس <input name="reason" minlength="5" maxlength="500" required></label>
               <button type="submit">عكس الرد بقيد عكسي</button>
             </form>
-            {% else %}<p>تم العكس بالقيد {{ refund.reversal_journal_entry_id }}</p>{% endif %}
+            {% else %}<p>تم العكس بتاريخ {{ refund.reversal_date }} بالقيد {{ refund.reversal_journal_entry_id }} — السبب: {{ refund.reason }}</p>{% endif %}
           </div>
         {% endfor %}
         {% if not advance.reversed and advance.remaining_amount == advance.amount %}
@@ -80,7 +80,7 @@
             <button type="submit">عكس الإيصال بقيد عكسي</button>
           </form>
         {% elif advance.reversed %}
-          <p>تم عكس إيصال المقدم بالقيد العكسي.</p>
+          <p>تم عكس إيصال المقدم بتاريخ {{ advance.receipt_reversal.reversal_date }} بالقيد {{ advance.receipt_reversal.reversal_journal_entry_id }} — السبب: {{ advance.receipt_reversal.reason }}</p>
         {% endif %}
       </td></tr>
       {% endif %}
