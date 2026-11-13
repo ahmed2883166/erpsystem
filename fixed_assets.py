@@ -215,7 +215,12 @@ def index():
     assets=c.execute("""SELECT f.*,a.code asset_code_gl,a.name_ar asset_account_name,
       COALESCE((SELECT DECIMAL_SUM(d.amount) FROM asset_depreciations d WHERE d.asset_id=f.id),0) accumulated
       FROM fixed_assets f JOIN accounts a ON a.id=f.asset_account_id ORDER BY f.asset_code""").fetchall()
-    assets=[dict(row,accumulated=Decimal(str(row["accumulated"] or "0"))) for row in assets]
+    assets=[dict(row,
+        accumulated=Decimal(str(row["accumulated"] or "0")),
+        net_book_value=(Decimal("0") if row["status"]=="disposed" else
+            max(Decimal(row["cost"])-Decimal(str(row["accumulated"] or "0")),
+                Decimal(row["residual_value"]))))
+        for row in assets]
     accounts=c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
     c.close()
     return render_template("fixed_assets.html",assets=assets,accounts=accounts,today=date.today().isoformat())
@@ -226,6 +231,7 @@ def schedule(asset_id):
     c=db(); asset=c.execute("SELECT * FROM fixed_assets WHERE id=?",(asset_id,)).fetchone()
     if not asset: c.close(); flash("الأصل غير موجود.","error"); return redirect(url_for("assets.index"))
     rows=c.execute("SELECT * FROM asset_depreciations WHERE asset_id=? ORDER BY period",(asset_id,)).fetchall()
+    disposal=c.execute("SELECT * FROM asset_disposals WHERE asset_id=?",(asset_id,)).fetchone()
     accounts=c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
     posted={x["period"]:Decimal(x["amount"]) for x in rows}
     accumulated=sum(posted.values(),Decimal("0"))
@@ -252,7 +258,8 @@ def schedule(asset_id):
         schedule_rows.append({"period":period,"planned":planned,"actual":actual,"posted":period in posted})
         cumulative += actual if actual is not None else planned
     return render_template("asset_schedule.html",asset=asset,rows=rows,schedule_rows=schedule_rows,accumulated=accumulated,
-      net=max(cost-accumulated,residual),depreciable=depreciable,accounts=accounts)
+      net=(Decimal("0") if asset["status"]=="disposed" else max(cost-accumulated,residual)),
+      depreciable=depreciable,accounts=accounts,disposal=disposal)
 
 @assets_bp.route("/<int:asset_id>/depreciate",methods=["POST"])
 @require(write=True)
