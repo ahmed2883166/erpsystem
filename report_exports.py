@@ -97,6 +97,12 @@ def register_report_exports(app, db_path, permissions):
                 if not years:
                     periods.append(("الفترة المحددة", "الفترة الحالية", date_from, date_to))
                 account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+                if not {"statement_section", "normal_balance"}.issubset(account_columns):
+                    # Direct export registrations and older installations may not have run
+                    # the account-metadata migration yet. It is additive and does not touch journals.
+                    from chart_templates import ensure_account_metadata
+                    ensure_account_metadata(conn)
+                    account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
                 section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
                 normal_expr = "a.normal_balance" if "normal_balance" in account_columns else "NULL"
                 headers = ["الفترة", "التصنيف", "من تاريخ", "إلى تاريخ", "كود الحساب", "اسم الحساب", "نوع الحساب", "مدين", "دائن", "صافي الرصيد", "تصنيف القوائم", "الرصيد الطبيعي"]
