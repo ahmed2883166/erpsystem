@@ -141,6 +141,11 @@ class CashFlowReportTests(unittest.TestCase):
         conn = financial_planning._connect()
         conn.execute("CREATE TABLE fixed_assets(id INTEGER PRIMARY KEY, expense_account_id INTEGER)")
         conn.execute("INSERT INTO fixed_assets(id,expense_account_id) VALUES(1,4)")
+        conn.execute("""CREATE TABLE asset_depreciations(
+            id INTEGER PRIMARY KEY, asset_id INTEGER, period TEXT, amount TEXT,
+            journal_entry_id INTEGER
+        )""")
+        conn.execute("INSERT INTO asset_depreciations VALUES(1,1,'2026-11','80',3)")
         snapshot = financial_planning.build_cash_flow_indirect_snapshot(
             conn, "2026-11-01", "2026-11-30"
         )
