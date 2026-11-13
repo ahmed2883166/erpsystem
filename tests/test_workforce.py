@@ -153,6 +153,43 @@ class WorkforceTests(unittest.TestCase):
         self.assertAlmostEqual(debit, 13150.0, places=2)
         self.assertAlmostEqual(credit, 13150.0, places=2)
 
+    def test_employee_loan_request_approval_disbursement_and_payroll_deduction(self):
+        self.add_employee()
+        conn=sqlite3.connect(self.db_path)
+        conn.execute("INSERT INTO accounts VALUES(8,'1171','سلف العاملين','asset',0,1)")
+        conn.commit(); conn.close()
+        self.client.post("/hr/loans",data={"employee_id":"1","requested_amount":"1000",
+            "installment_count":"3","first_due_period":"2026-11","notes":"طلب سلفة"})
+        conn=sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT status FROM employee_loans").fetchone()[0],"requested")
+        conn.close()
+        self.client.post("/hr/loans/1/approve",data={"approved_amount":"1000",
+            "installment_count":"3","first_due_period":"2026-11"})
+        self.client.post("/hr/loans/1/disburse",data={"cash_account_id":"1","disbursement_date":"2026-11-01"})
+        conn=sqlite3.connect(self.db_path)
+        installments=conn.execute("SELECT due_period,due_amount FROM employee_loan_installments ORDER BY due_period").fetchall()
+        conn.close()
+        self.assertEqual(installments,[("2026-11","333.34"),("2026-12","333.33"),("2027-01","333.33")])
+        self.client.post("/hr/payroll",data={"period":"2026-11","basic_1":"12000","allowances_1":"1500",
+            "overtime_hours_1":"0","overtime_amount_1":"","absent_hours_1":"0","absence_deduction_1":"0",
+            "advance_1":"0","other_deductions_1":"0","tax_1":"500","employee_ins_1":"300","employer_ins_1":"400"})
+        conn=sqlite3.connect(self.db_path)
+        line=conn.execute("SELECT advance_deduction,loan_deduction,net_pay FROM payroll_lines").fetchone()
+        conn.close()
+        self.assertEqual(line,("333.34","333.34","12266.66"))
+        response=self.client.post("/hr/payroll/1/post",data={"salary_expense_account":"4",
+            "employer_ins_expense_account":"3","salaries_payable_account":"5","tax_payable_account":"6",
+            "insurance_payable_account":"7","advances_account":"8","other_deductions_account":"2"})
+        self.assertEqual(response.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        paid=conn.execute("SELECT paid_amount,status FROM employee_loan_installments WHERE due_period='2026-11'").fetchone()
+        balance=conn.execute("SELECT remaining_balance FROM employee_loans WHERE id=1").fetchone()[0]
+        allocation=conn.execute("SELECT amount FROM payroll_loan_allocations").fetchone()[0]
+        conn.close()
+        self.assertEqual(paid,("333.34","paid"))
+        self.assertEqual(balance,"666.66")
+        self.assertEqual(allocation,"333.34")
+
     def test_custody_issue_expense_and_full_settlement(self):
         self.add_employee()
         response = self.client.post("/hr/custody", data={
