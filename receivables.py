@@ -42,6 +42,88 @@ def _amount(value):
   raise ValueError("يوجد مبلغ غير محدود في مستندات الأعمار.")
  return amount
 
+
+def _table_exists(conn, name):
+ return conn.execute(
+  "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+ ).fetchone() is not None
+
+
+def _sum_by_invoice(conn, sql, params):
+ totals={}
+ for row in conn.execute(sql, params).fetchall():
+  invoice_id=row["invoice_id"]
+  totals[invoice_id]=totals.get(invoice_id,Decimal("0"))+_amount(row["amount"])
+ return totals
+
+
+def _customer_aging_movements(conn, as_of):
+ # paid_amount and credited_amount are running totals. They cannot be used
+ # for a historical aging date because they include later receipts/credits.
+ # Rebuild the balances from dated subledger transactions when those tables
+ # are available; retain the legacy totals only for older installations.
+ required=("customer_receipts","customer_receipt_batches",
+           "customer_receipt_allocations","customer_advance_allocations")
+ has_detail=all(_table_exists(conn, table) for table in required)
+ paid_as_of={}
+ if has_detail:
+  sources=(
+   ("SELECT invoice_id,amount FROM customer_receipts WHERE receipt_date<=?",(as_of,)),
+   ("""SELECT a.invoice_id,a.amount FROM customer_receipt_allocations a
+       JOIN customer_receipt_batches b ON b.id=a.batch_id WHERE b.receipt_date<=?""",(as_of,)),
+   ("SELECT invoice_id,amount FROM customer_advance_allocations WHERE allocation_date<=?",(as_of,)),
+  )
+  for sql,params in sources:
+   for invoice_id,amount in conn.execute(sql,params).fetchall():
+    paid_as_of[invoice_id]=paid_as_of.get(invoice_id,Decimal("0"))+_amount(amount)
+ credited_as_of={}
+ if _table_exists(conn,"sales_credit_notes"):
+  columns={row["name"] for row in conn.execute("PRAGMA table_info(sales_credit_notes)")}
+  if "cancel_journal_entry_id" in columns and _table_exists(conn,"journal_entries"):
+   sql="""SELECT cn.invoice_id,cn.total_amount amount
+          FROM sales_credit_notes cn
+          LEFT JOIN journal_entries reversal ON reversal.id=cn.cancel_journal_entry_id
+          WHERE cn.credit_date<=?
+            AND (cn.status='posted' OR
+                 (cn.status='cancelled' AND reversal.entry_date>?))"""
+  else:
+   sql="""SELECT invoice_id,total_amount amount FROM sales_credit_notes
+          WHERE status='posted' AND credit_date<=?"""
+  params=(as_of,as_of) if "reversal" in sql else (as_of,)
+  for invoice_id,amount in conn.execute(sql,params).fetchall():
+   credited_as_of[invoice_id]=credited_as_of.get(invoice_id,Decimal("0"))+_amount(amount)
+ refunds_as_of={}
+ if _table_exists(conn,"customer_refunds") and _table_exists(conn,"sales_credit_notes"):
+  for invoice_id,amount in conn.execute(
+   """SELECT cn.invoice_id,rf.amount FROM customer_refunds rf
+      JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id
+      WHERE cn.credit_date<=? AND rf.refund_date<=?""",(as_of,as_of)
+  ).fetchall():
+   refunds_as_of[invoice_id]=refunds_as_of.get(invoice_id,Decimal("0"))+_amount(amount)
+ return has_detail,paid_as_of,credited_as_of,refunds_as_of
+
+
+def _supplier_aging_movements(conn, as_of):
+ has_detail=(_table_exists(conn,"supplier_payments") and
+             _table_exists(conn,"supplier_payment_allocations"))
+ paid_as_of={}
+ if has_detail:
+  for bill_id,amount in conn.execute(
+   """SELECT a.bill_id,a.amount FROM supplier_payment_allocations a
+      JOIN supplier_payments p ON p.id=a.payment_id
+      WHERE p.payment_date<=?""",(as_of,)
+  ).fetchall():
+   paid_as_of[bill_id]=paid_as_of.get(bill_id,Decimal("0"))+_amount(amount)
+ credited_as_of={}
+ if _table_exists(conn,"supplier_credit_notes"):
+  for bill_id,amount in conn.execute(
+   """SELECT bill_id,total_amount FROM supplier_credit_notes
+      WHERE status='posted' AND credit_date<=?""",(as_of,)
+  ).fetchall():
+   credited_as_of[bill_id]=credited_as_of.get(bill_id,Decimal("0"))+_amount(amount)
+ return has_detail,paid_as_of,credited_as_of
+
+
 @aging_bp.route("/")
 @auth
 def index():
@@ -63,23 +145,29 @@ def index():
     WHERE i.status='posted' AND i.invoice_date<=?
     ORDER BY due_date,cu.name""",(as_of,)).fetchall()
  else:
-  rows=c.execute("""SELECT b.bill_no doc_no,s.code party_code,s.name party_name,b.bill_date doc_date,
+  rows=c.execute("""SELECT b.id invoice_id,b.bill_no doc_no,s.code party_code,s.name party_name,b.bill_date doc_date,
     COALESCE(b.due_date,b.bill_date) due_date,b.total_amount total_amount,b.paid_amount paid_amount,
     COALESCE(b.credited_amount,'0') credited_amount
     FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
     WHERE b.status='posted' AND b.bill_date<=?
     ORDER BY due_date,s.name""",(as_of,)).fetchall()
- refunds_by_invoice={}
- if kind=="customers" and c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_refunds'").fetchone():
-  for refund in c.execute("""SELECT cn.invoice_id,rf.amount FROM customer_refunds rf
-      JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id
-      WHERE cn.status='posted' AND rf.refund_date<=?""",(as_of,)).fetchall():
-   refunds_by_invoice[refund["invoice_id"]]=refunds_by_invoice.get(refund["invoice_id"],Decimal("0"))+_amount(refund["amount"])
+ if kind=="customers":
+  has_detail,paid_by_invoice,credited_by_invoice,refunds_by_invoice=_customer_aging_movements(c,as_of)
+  credit_table_exists=_table_exists(c,"sales_credit_notes")
+ else:
+  has_detail,paid_by_invoice,credited_by_invoice=_supplier_aging_movements(c,as_of)
+  refunds_by_invoice={}
+  credit_table_exists=_table_exists(c,"supplier_credit_notes")
  c.close()
  result=[]; totals=[Decimal("0.00") for _ in range(5)]
  for r in rows:
-  refund_amount = refunds_by_invoice.get(r["invoice_id"], Decimal("0")) if kind=="customers" else Decimal("0")
-  balance=_amount(r["total_amount"])-_amount(r["paid_amount"])-_amount(r["credited_amount"] if "credited_amount" in r.keys() else "0")+refund_amount
+  document_id=r["invoice_id"]
+  paid_amount=paid_by_invoice.get(document_id,Decimal("0")) if has_detail else _amount(r["paid_amount"])
+  credited_amount=credited_by_invoice.get(document_id,Decimal("0"))
+  if not credit_table_exists:
+   credited_amount=_amount(r["credited_amount"] if "credited_amount" in r.keys() else "0")
+  refund_amount=refunds_by_invoice.get(document_id,Decimal("0"))
+  balance=_amount(r["total_amount"])-paid_amount-credited_amount+refund_amount
   if balance<=0:
    continue
   try:
