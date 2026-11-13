@@ -7,6 +7,12 @@
 <h3>إنشاء موازنة جديدة</h3>
 <form method="post">
 <div class="form-row"><div><label>اسم الموازنة *</label><input name="name" required maxlength="120" placeholder="مثال: موازنة الربع الأول 2027"></div><div><label>من تاريخ *</label><input type="date" name="date_from" required></div><div><label>إلى تاريخ *</label><input type="date" name="date_to" required></div></div>
+<div class="form-row">
+<div><label>الفرع</label><select name="branch_id"><option value="">كل الفروع</option>{% for x in dimension_options.branches %}<option value="{{ x.id }}">{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></div>
+<div><label>مركز التكلفة</label><select name="cost_center_id"><option value="">كل مراكز التكلفة</option>{% for x in dimension_options.cost_centers %}<option value="{{ x.id }}">{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></div>
+<div><label>المشروع</label><select name="project_id"><option value="">كل المشروعات</option>{% for x in dimension_options.projects %}<option value="{{ x.id }}">{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></div>
+</div>
+<p class="muted">عند اختيار بُعد، تتم مقارنة الموازنة بحركات الأستاذ العام المطابقة لهذا البعد فقط. تركه فارغًا يعني موازنة على مستوى الشركة بالكامل في هذا البعد.</p>
 <h4>توزيع الموازنة على الحسابات</h4>
 <div class="table-wrap"><table><thead><tr><th>اختيار</th><th>الحساب</th><th>النوع</th><th>المبلغ المخطط</th></tr></thead><tbody>
 {% for a in accounts %}<tr><td><input type="checkbox" name="account_id" value="{{ a.id }}"></td><td>{{ a.code }} — {{ a.name_ar }}</td><td>{{ 'إيراد' if a.account_type=='revenue' else 'مصروف' }}</td><td><input type="number" name="amount_{{ a.id }}" min="0" step="0.01" value="0"></td></tr>{% else %}<tr><td colspan="4">لا توجد حسابات إيرادات أو مصروفات تفصيلية نشطة.</td></tr>{% endfor %}
@@ -15,5 +21,5 @@
 </form>
 </section>
 {% endif %}
-<section class="panel"><h3>الموازنات المحفوظة</h3><div class="table-wrap"><table><thead><tr><th>اسم الموازنة</th><th>من</th><th>إلى</th><th>الحالة</th><th>التفاصيل</th></tr></thead><tbody>{% for p in plans %}<tr><td>{{ p.name }}</td><td>{{ p.date_from }}</td><td>{{ p.date_to }}</td><td>{{ p.status }}</td><td><a href="{{ url_for('planning.budget_detail',budget_id=p.id) }}">عرض مقارنة الفعلي</a></td></tr>{% else %}<tr><td colspan="5">لم يتم إنشاء موازنات بعد.</td></tr>{% endfor %}</tbody></table></div></section>
+<section class="panel"><h3>الموازنات المحفوظة</h3><div class="table-wrap"><table><thead><tr><th>اسم الموازنة</th><th>من</th><th>إلى</th><th>الفرع</th><th>مركز التكلفة</th><th>المشروع</th><th>الحالة</th><th>التفاصيل</th></tr></thead><tbody>{% for p in plans %}<tr><td>{{ p.name }}</td><td>{{ p.date_from }}</td><td>{{ p.date_to }}</td><td>{{ p.branch_name }}</td><td>{{ p.cost_center_name }}</td><td>{{ p.project_name }}</td><td>{{ p.status }}</td><td><a href="{{ url_for('planning.budget_detail',budget_id=p.id) }}">عرض مقارنة الفعلي</a></td></tr>{% else %}<tr><td colspan="8">لم يتم إنشاء موازنات بعد.</td></tr>{% endfor %}</tbody></table></div></section>
 {% endblock %}
