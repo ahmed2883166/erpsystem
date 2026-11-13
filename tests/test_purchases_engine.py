@@ -287,5 +287,36 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.assertEqual(after, before)
 
 
+    def test_partial_receipt_allocations_reserve_only_remaining_value(self):
+        purchases.init_purchase_schema()
+        self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-PART','مورد جزئي')")
+        supplier_id = self.db.execute("SELECT id FROM suppliers WHERE code='SUP-PART'").fetchone()["id"]
+        self.db.execute("INSERT INTO stock_warehouses(code,name_ar) VALUES('W-PART','مخزن جزئي')")
+        warehouse_id = self.db.execute("SELECT id FROM stock_warehouses WHERE code='W-PART'").fetchone()["id"]
+        self.db.execute("""INSERT INTO goods_receipts(receipt_no,supplier_id,warehouse_id,receipt_date,total_value)
+            VALUES('GR-PART',?,?,'2026-11-13','100')""", (supplier_id, warehouse_id))
+        receipt_id = self.db.execute("SELECT id FROM goods_receipts WHERE receipt_no='GR-PART'").fetchone()["id"]
+        self.db.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,
+            subtotal,tax_rate,tax_amount,total_amount,status)
+            VALUES('BILL-PART-1',?,'2026-11-13','INV-PART-1','40','0','0','40','draft')""", (supplier_id,))
+        first_bill = self.db.execute("SELECT id FROM supplier_bills WHERE bill_no='BILL-PART-1'").fetchone()["id"]
+        self.db.execute("INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
+                        (first_bill, receipt_id, "40"))
+        self.db.commit()
+
+        available = purchases._supplier_receipt_available_amount(self.db, receipt_id)
+        self.assertEqual(available, purchases.money("60"))
+        allocations = purchases._validate_supplier_receipt_allocations(
+            self.db, supplier_id, [receipt_id], purchases.money("60"),
+            {"receipt_amount_" + str(receipt_id): "60"}
+        )
+        self.assertEqual(allocations, [(receipt_id, purchases.money("60"))])
+        with self.assertRaisesRegex(ValueError, "يتجاوز المتبقي"):
+            purchases._validate_supplier_receipt_allocations(
+                self.db, supplier_id, [receipt_id], purchases.money("61"),
+                {"receipt_amount_" + str(receipt_id): "61"}
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
