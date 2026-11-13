@@ -392,6 +392,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             "gross_line_total": line_total, "line_total": line_total, "cost_total": cost,
             "tax_rate": line_rate, "tax_treatment": treatment, "tax_amount": Decimal("0.00"),
             "stock_allocations": _allocations if product_id else [],
+            "sales_order_line_id": item.get("sales_order_line_id"),
         })
 
     gross_subtotal = subtotal.quantize(CENT, rounding=ROUND_HALF_UP)
