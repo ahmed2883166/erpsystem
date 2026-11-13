@@ -978,7 +978,7 @@ def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_i
     invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=? AND status='posted'", (invoice_id,)).fetchone()
     if not invoice:
         raise ValueError("فاتورة العميل غير موجودة أو غير مرحلة.")
-    if receipt_date < invoice["invoice_date"]:
+    if "invoice_date" in invoice.keys() and receipt_date < invoice["invoice_date"]:
         raise ValueError("لا يمكن تسجيل تحصيل بتاريخ يسبق تاريخ فاتورة البيع.")
     _ensure_unique_customer_cash_reference(conn, reference)
     outstanding = (Decimal(invoice["total_amount"]) - Decimal(invoice["paid_amount"]) -
