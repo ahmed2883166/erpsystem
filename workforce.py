@@ -138,7 +138,7 @@ def initialize_workforce_schema():
     payroll_cols = {r["name"] for r in c.execute("PRAGMA table_info(payroll_lines)")}
     for name, definition in {
         "loan_deduction": "TEXT NOT NULL DEFAULT '0'",
-        "incentives": "TEXT NOT NULL DEFAULT '0',
+        "incentives": "TEXT NOT NULL DEFAULT '0'",
         "advance_deduction": "TEXT NOT NULL DEFAULT '0'",
         "total_entitlements": "TEXT NOT NULL DEFAULT '0'",
         "total_deductions": "TEXT NOT NULL DEFAULT '0'",
