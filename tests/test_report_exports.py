@@ -182,12 +182,13 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         self.assertNotIn(999, [cell for row in rows for cell in row])
 
     def test_trial_balance_export_includes_statement_classification_columns(self):
+        # Keep the fixture on the legacy accounts schema: no metadata columns.
         conn = sqlite3.connect(self.db_path)
-        conn.execute("ALTER TABLE accounts ADD COLUMN statement_section TEXT")
-        conn.execute("ALTER TABLE accounts ADD COLUMN normal_balance TEXT")
-        conn.execute("UPDATE accounts SET statement_section='current_assets',normal_balance='debit' WHERE code='1110'")
-        conn.commit()
+        legacy_columns = {row[1] for row in conn.execute("PRAGMA table_info(accounts)")}
+        self.assertNotIn("statement_section", legacy_columns)
+        self.assertNotIn("normal_balance", legacy_columns)
         conn.close()
+
         response = self.client.get("/reports/export/trial-balance/excel")
         self.assertEqual(response.status_code, 200)
         values = list(load_workbook(io.BytesIO(response.data), data_only=True).active.values)
@@ -197,6 +198,12 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         cash = next(row for row in values if row and row[4] == "1110")
         self.assertEqual(cash[10], "أصول متداولة")
         self.assertEqual(cash[11], "مدين")
+
+        # The additive metadata migration must be persisted for subsequent requests.
+        conn = sqlite3.connect(self.db_path)
+        migrated_columns = {row[1] for row in conn.execute("PRAGMA table_info(accounts)")}
+        conn.close()
+        self.assertTrue({"statement_section", "normal_balance"}.issubset(migrated_columns))
 
     def test_trial_balance_export_can_exclude_closing_entries(self):
         response = self.client.get("/reports/export/trial-balance/excel?include_closing=0")
