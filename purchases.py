@@ -746,15 +746,21 @@ def post_supplier_bill(c, bill_id, actor_id):
             WHERE x.bill_id=? ORDER BY x.receipt_id""", (bill_id,)).fetchall()
         if not receipt_rows:
             raise ValueError("لا توجد استلامات مرتبطة بفاتورة الأصناف.")
+        matched_total = money("0")
         for receipt in receipt_rows:
             if receipt["supplier_id"] != bill["supplier_id"] or receipt["status"] != "posted":
                 raise ValueError("يوجد إيصال استلام غير صالح أو لا يتبع المورد.")
-            grni = account(c, "2190", "liability")
             amount = money(receipt["matched_amount"])
+            if amount < 0:
+                raise ValueError("قيمة تسوية إيصال GRNI لا يمكن أن تكون سالبة.")
+            matched_total = money(matched_total + amount)
+            grni = account(c, "2190", "liability")
             journal_lines.extend([
                 (grni, amount, 0, "تسوية GRNI"),
                 (ap, 0, amount, "إثبات المورد"),
             ])
+        if matched_total != subtotal:
+            raise ValueError("مجموع تسويات إيصالات GRNI لا يطابق صافي فاتورة المورد.")
     elif bill["bill_kind"] == "expense":
         expense_id = bill["expense_account_id"]
         expense = c.execute("SELECT account_type,is_group,active FROM accounts WHERE id=?", (expense_id,)).fetchone()
