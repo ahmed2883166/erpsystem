@@ -201,7 +201,7 @@ def post_scrap_journal(c, movement_id, movement_no, product, movement_date, tota
     if not inventory_code:
         c.execute("UPDATE stock_movements SET accounting_status='pending_setup' WHERE id=?", (movement_id,))
         return None
-    inventory = c.execute("SELECT id,is_group,active FROM accounts WHERE code=?", (inventory_code,)).fetchone()
+    inventory = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (inventory_code,)).fetchone()
     # Require explicit chart mappings; never create accounts during posting.
     writeoff = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code='6990'").fetchone()
     writeoff_id = writeoff["id"] if writeoff and not writeoff["is_group"] and writeoff["active"] and writeoff["account_type"]=="expense" else None
@@ -228,7 +228,11 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='activity'")}
     activity = settings.get("activity", "commercial")
     from chart_templates import ACTIVITY_POSTING_ACCOUNTS
-    posting_accounts = ACTIVITY_POSTING_ACCOUNTS.get(activity, {})
+    if purpose == "sale":
+        from activity_profiles import active_posting_accounts
+        posting_accounts = active_posting_accounts(c)
+    else:
+        posting_accounts = ACTIVITY_POSTING_ACCOUNTS.get(activity, {})
     if purpose == "sale":
         expense_code = posting_accounts.get("cogs")
         expense_name = "تكلفة المبيعات / تكلفة الخدمات المصروفة"
@@ -242,10 +246,10 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
         return None
     if purpose == "sale":
         expense = c.execute("SELECT id,is_group,active FROM accounts WHERE code=?", (expense_code,)).fetchone() if expense_code else None
-        expense_id = expense["id"] if expense and not expense["is_group"] and expense["active"] else None
+        expense_id = expense["id"] if expense and not expense["is_group"] and expense["active"] and expense["account_type"] == "expense" else None
     inventory_code = posting_accounts.get("inventory")
-    inventory = c.execute("SELECT id,is_group,active FROM accounts WHERE code=?", (inventory_code,)).fetchone() if inventory_code else None
-    if not expense_id or not inventory or inventory["is_group"] or not inventory["active"]:
+    inventory = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (inventory_code,)).fetchone() if inventory_code else None
+    if not expense_id or not inventory or inventory["is_group"] or not inventory["active"] or inventory["account_type"] != "asset":
         raise ValueError("لا يمكن ترحيل حركة الصرف قبل ضبط حساب المصروف وحساب المخزون كحسابين تفصيليين نشطين بالنوع الصحيح.")
     amount = money(D(str(total_cost)))
     if amount <= 0:
