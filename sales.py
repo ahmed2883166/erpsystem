@@ -735,11 +735,20 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
             lot_allocations[-1]["cost_total"] += line_cost - sum(
                 (part["cost_total"] for part in lot_allocations), Decimal("0")
             )
+        from activity_profiles import resolve_product_account_code
+        product_id = original["product_id"]
+        inventory_code = resolve_product_account_code(
+            conn, product_id, "inventory", codes.get("inventory")
+        ) if product_id else None
+        cogs_code = resolve_product_account_code(
+            conn, product_id, "cogs", codes.get("cogs")
+        ) if product_id else None
         normalized.append({
             "original": original, "quantity": qty, "unit_price": unit_price,
             "line_total": line_value, "tax_rate": tax_rate,
             "tax_treatment": treatment, "tax_amount": line_tax,
             "cost_total": line_cost, "lot_allocations": lot_allocations,
+            "inventory_account_code": inventory_code, "cogs_account_code": cogs_code,
         })
 
     subtotal = subtotal.quantize(CENT, rounding=ROUND_HALF_UP)
@@ -827,10 +836,23 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
                                  (movement_id, credit_line_id))
 
     if cost_total > 0:
+        return_cost_groups = {}
+        for item in normalized:
+            if not item["original"]["product_id"] or item["cost_total"] <= 0:
+                continue
+            key = (item["inventory_account_code"], item["cogs_account_code"])
+            return_cost_groups[key] = return_cost_groups.get(key, Decimal("0.00")) + item["cost_total"]
+        return_cost_lines = []
+        for (inventory_code, cogs_code), group_cost in sorted(return_cost_groups.items()):
+            inventory_id = _account(conn, inventory_code, "asset")
+            cogs_id = _account(conn, cogs_code, "expense")
+            return_cost_lines.extend([
+                (inventory_id, group_cost, 0, "إعادة تكلفة المرتجع للمخزون - " + inventory_code),
+                (cogs_id, 0, group_cost, "عكس تكلفة المبيعات - " + cogs_code),
+            ])
         cogs_journal_id = post_journal(
             conn, credit_date, credit_no + "-COGS", "عكس تكلفة المبيعات " + credit_no,
-            [(inventory, cost_total, 0, "إعادة تكلفة البضاعة المرتجعة للمخزون"),
-             (cogs, 0, cost_total, "عكس تكلفة البضاعة المباعة")], created_by, dimensions=dimensions,
+            return_cost_lines, created_by, dimensions=dimensions,
         )
         conn.execute(
             "UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE movement_no LIKE ?",
