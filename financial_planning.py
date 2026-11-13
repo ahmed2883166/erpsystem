@@ -160,7 +160,7 @@ def initialize_planning_schema(conn):
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='journal_entries'"
     ).fetchone()
     if journal_table_exists:
-        if "entry_type" not in {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}:
+        if "entry_type" not in {row[1] for row in conn.execute("PRAGMA table_info(journal_entries)")}:
             conn.execute("ALTER TABLE journal_entries ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'general'")
         # Migrate historical closing journals using the dedicated history table.
         conn.execute("""UPDATE journal_entries SET entry_type='year_end_closing'
@@ -1249,7 +1249,7 @@ def budget_export(budget_id, fmt):
         import arabic_reshaper
         from bidi.algorithm import get_display
         from reportlab.lib import colors
-        from reportlab.lib.enums import TA_RIGHT, TA_CENTER
+        from reportlab.lib.enums import TA_CENTER
         from reportlab.lib.pagesizes import A4, landscape
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib.units import mm
