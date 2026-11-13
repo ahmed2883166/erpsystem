@@ -119,10 +119,16 @@ def _supplier_aging_documents(conn, as_of):
  if not _table_exists(conn, "supplier_bills") or not _table_exists(conn, "suppliers"):
   return []
  columns={row["name"] for row in conn.execute("PRAGMA table_info(supplier_bills)")}
+ supplier_columns={row["name"] for row in conn.execute("PRAGMA table_info(suppliers)")}
+ if not {"id","supplier_id","bill_date","total_amount","status"}.issubset(columns):
+  return []
  credit_expr="COALESCE(b.credited_amount,'0')" if "credited_amount" in columns else "'0'"
  paid_expr="COALESCE(b.paid_amount,'0')" if "paid_amount" in columns else "'0'"
- due_expr="COALESCE(b.due_date,b.bill_date)" if "due_date" in columns else "b.bill_date"
- return conn.execute(f"""SELECT b.id invoice_id,b.bill_no doc_no,s.code party_code,s.name party_name,
+ due_expr="COALESCE(b.due_date,b.bill_date)" if "due_date" in columns and "bill_date" in columns else "b.bill_date"
+ bill_no_expr="b.bill_no" if "bill_no" in columns else "CAST(b.id AS TEXT)"
+ party_code_expr="s.code" if "code" in supplier_columns else "CAST(s.id AS TEXT)"
+ party_name_expr="s.name" if "name" in supplier_columns else "CAST(s.id AS TEXT)"
+ return conn.execute(f"""SELECT b.id invoice_id,{bill_no_expr} doc_no,{party_code_expr} party_code,{party_name_expr} party_name,
    b.bill_date doc_date,{due_expr} due_date,b.total_amount total_amount,
    {paid_expr} paid_amount,{credit_expr} credited_amount
    FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
@@ -130,9 +136,20 @@ def _supplier_aging_documents(conn, as_of):
    ORDER BY due_date,s.name""",(as_of,)).fetchall()
 
 
+def _supplier_credit_notes_linked(conn):
+ if not _table_exists(conn,"supplier_credit_notes"):
+  return False
+ columns={row["name"] for row in conn.execute("PRAGMA table_info(supplier_credit_notes)")}
+ return {"bill_id","total_amount","status","credit_date"}.issubset(columns)
+
+
 def _supplier_aging_movements(conn, as_of):
- has_detail=(_table_exists(conn,"supplier_payments") and
-             _table_exists(conn,"supplier_payment_allocations"))
+ payment_columns=({row["name"] for row in conn.execute("PRAGMA table_info(supplier_payments)")}
+                  if _table_exists(conn,"supplier_payments") else set())
+ allocation_columns=({row["name"] for row in conn.execute("PRAGMA table_info(supplier_payment_allocations)")}
+                     if _table_exists(conn,"supplier_payment_allocations") else set())
+ has_detail=({"id","payment_date"}.issubset(payment_columns) and
+             {"payment_id","bill_id","amount"}.issubset(allocation_columns))
  paid_as_of={}
  paid_all={}
  if has_detail:
@@ -148,7 +165,7 @@ def _supplier_aging_movements(conn, as_of):
    paid_all[bill_id]=paid_all.get(bill_id,Decimal("0"))+_amount(amount)
  credited_as_of={}
  credited_all={}
- if _table_exists(conn,"supplier_credit_notes"):
+ if _supplier_credit_notes_linked(conn):
   for bill_id,amount in conn.execute(
    "SELECT bill_id,total_amount FROM supplier_credit_notes WHERE status='posted'",()
   ).fetchall():
@@ -189,7 +206,7 @@ def index():
  else:
   has_detail,paid_by_invoice,paid_all,credited_by_invoice,credited_all=_supplier_aging_movements(c,as_of)
   refunds_by_invoice={}
-  credit_table_exists=_table_exists(c,"supplier_credit_notes")
+  credit_table_exists=_supplier_credit_notes_linked(c)
  c.close()
  result=[]; totals=[Decimal("0.00") for _ in range(5)]
  for r in rows:
