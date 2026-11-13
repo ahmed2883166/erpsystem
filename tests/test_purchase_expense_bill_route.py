@@ -533,11 +533,12 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             session["user_id"] = 1
             session["role"] = "accountant"
-        response = self.client.get(f"/purchases/bills/{bill_id}/edit")
+        with patch("purchases.render_template", side_effect=lambda _template, **ctx:
+                   str(ctx["receipt_allocations"][receipt_id])) as render:
+            response = self.client.get(f"/purchases/bills/{bill_id}/edit")
         self.assertEqual(response.status_code, 200)
-        html = response.get_data(as_text=True)
-        self.assertIn(f'name="receipt_amount_{receipt_id}"', html)
-        self.assertIn('value="40.00"', html)
+        self.assertEqual(response.get_data(as_text=True), "40.00")
+        self.assertEqual(render.call_args.kwargs["selected_receipt_ids"], {receipt_id})
 
 
 if __name__ == "__main__":
