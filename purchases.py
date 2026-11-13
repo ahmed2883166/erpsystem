@@ -1320,9 +1320,20 @@ def bill_print(bill_id):
       FROM supplier_bill_receipts x JOIN goods_receipts r ON r.id=x.receipt_id
       WHERE x.bill_id=? ORDER BY r.id""",(bill_id,)).fetchall()
     settings={r["setting_key"]:r["setting_value"] for r in c.execute(
-      "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('company_name','base_currency','tax_number')")}
+      "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
+      "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
+    branch = None
+    bill_columns = {row["name"] for row in c.execute("PRAGMA table_info(supplier_bills)")}
+    if "branch_id" in bill_columns and c.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='branches'"
+    ).fetchone() and bill["branch_id"]:
+        branch = c.execute(
+            "SELECT code,name_ar,address,phone,email,tax_number FROM branches WHERE id=?",
+            (bill["branch_id"],),
+        ).fetchone()
     c.close()
-    return render_template("purchase_bill_print.html",bill=bill,journal_lines=journal_lines,receipts=receipts,settings=settings)
+    return render_template("purchase_bill_print.html",bill=bill,journal_lines=journal_lines,
+                           receipts=receipts,settings=settings,branch=branch)
 
 
 @purchase_bp.route("/credit-notes/new", methods=["GET","POST"])
