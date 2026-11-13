@@ -1225,6 +1225,120 @@ def post_customer_advance_refund(conn, advance_receipt_id, refund_date, amount,
             "amount": amount, "remaining_advance": available - amount}
 
 
+
+
+@sales_bp.route("/advances")
+@require("sales.view")
+def customer_advances():
+    c = db()
+    customers = c.execute(
+        "SELECT id,code,name FROM customers WHERE active=1 ORDER BY name"
+    ).fetchall()
+    cash_accounts = c.execute(
+        """SELECT id,code,name_ar FROM accounts
+           WHERE active=1 AND is_group=0 AND account_type='asset'
+           ORDER BY code"""
+    ).fetchall()
+    advances = []
+    for row in c.execute(
+        """SELECT r.*,cu.name customer_name,cu.code customer_code
+           FROM customer_advance_receipts r
+           JOIN customers cu ON cu.id=r.customer_id
+           ORDER BY r.id DESC"""
+    ).fetchall():
+        item = dict(row)
+        item["remaining_amount"] = _customer_advance_available(c, row["id"])
+        item["open_invoices"] = []
+        for invoice in c.execute(
+            """SELECT * FROM sales_invoices WHERE customer_id=? AND status='posted'
+               ORDER BY invoice_date,id""",
+            (row["customer_id"],),
+        ).fetchall():
+            outstanding = (Decimal(str(invoice["total_amount"])) -
+                           Decimal(str(invoice["paid_amount"] or "0")) -
+                           Decimal(str(invoice["credited_amount"] or "0")) +
+                           _refund_total(c, invoice["id"]))
+            if outstanding > 0:
+                item["open_invoices"].append({
+                    "id": invoice["id"], "invoice_no": invoice["invoice_no"],
+                    "invoice_date": invoice["invoice_date"], "outstanding": outstanding,
+                })
+        advances.append(item)
+    c.close()
+    return render_template(
+        "customer_advances.html", customers=customers, cash_accounts=cash_accounts,
+        advances=advances, today=date.today().isoformat(),
+    )
+
+
+@sales_bp.route("/advances/receipt", methods=["POST"])
+@require("sales.manage")
+def create_customer_advance_receipt():
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        result = post_customer_advance_receipt(
+            c, request.form.get("customer_id", type=int),
+            request.form.get("receipt_date", ""), request.form.get("amount", ""),
+            request.form.get("cash_account_id", type=int), session.get("user_id"),
+            request.form.get("reference", ""),
+        )
+        c.commit()
+        flash("تم تسجيل مقدم العميل وترحيل قيده بنجاح: " + result["receipt_no"], "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc), "error")
+    finally:
+        c.close()
+    return redirect(url_for("sales.customer_advances"))
+
+
+@sales_bp.route("/advances/<int:advance_id>/allocate", methods=["POST"])
+@require("sales.manage")
+def allocate_customer_advance_route(advance_id):
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        result = allocate_customer_advance(
+            c, advance_id,
+            [(request.form.get("invoice_id", type=int), request.form.get("amount", ""))],
+            request.form.get("allocation_date", ""), session.get("user_id"),
+        )
+        c.commit()
+        flash(
+            f"تم تخصيص {result['total_amount']:.2f} على {result['invoice_count']} فاتورة بنجاح.",
+            "success",
+        )
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc), "error")
+    finally:
+        c.close()
+    return redirect(url_for("sales.customer_advances"))
+
+
+@sales_bp.route("/advances/<int:advance_id>/refund", methods=["POST"])
+@require("sales.manage")
+def refund_customer_advance_route(advance_id):
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        result = post_customer_advance_refund(
+            c, advance_id, request.form.get("refund_date", ""),
+            request.form.get("amount", ""),
+            request.form.get("cash_account_id", type=int), session.get("user_id"),
+            request.form.get("reference", ""),
+        )
+        c.commit()
+        flash("تم رد مقدم العميل وترحيل القيد: " + result["refund_no"], "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc), "error")
+    finally:
+        c.close()
+    return redirect(url_for("sales.customer_advances"))
+
+
 @sales_bp.route("/")
 @require("sales.view")
 def index():
