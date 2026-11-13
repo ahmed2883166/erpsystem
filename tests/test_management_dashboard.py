@@ -91,6 +91,19 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(forecast["weeks"][2]["receipts"], Decimal("300.00"))
         self.assertEqual(forecast["weeks"][2]["payments"], Decimal("400.00"))
 
+    def test_management_snapshot_explicitly_excludes_closing_entries_from_period_totals(self):
+        from unittest.mock import patch
+        from management_dashboard import dashboard_period_balances as original
+
+        with patch("management_dashboard.dashboard_period_balances", wraps=original) as balances:
+            snapshot = build_management_snapshot(
+                self.conn, date(2026,11,1), date(2026,11,30)
+            )
+        self.assertTrue(balances.call_args.kwargs["exclude_closing_entries"])
+        self.assertEqual(snapshot["current"]["net_profit"], Decimal("100"))
+        # The balance-sheet snapshot still includes all posted entries as of the date.
+        self.assertEqual(snapshot["cash"], Decimal("1350"))
+
     def test_period_results_exclude_year_end_closing_journal(self):
         self.conn.execute(
             "INSERT INTO journal_entries(id,entry_date,status,entry_type) VALUES(40,'2026-11-30','posted','year_end_closing')"
