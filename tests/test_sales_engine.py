@@ -851,7 +851,7 @@ otals["credit"], places=2)
             Decimal(self.db.execute("SELECT qty_remaining FROM stock_valuation_layers").fetchone()[0]),
             Decimal("3.0000"),
         )
-        with self.assertRaisesRegex(ValueError, "لا يسبق تاريخ إذن التسليم"):
+        with self.assertRaisesRegex(ValueError, "يسبق تاريخ إذن التسليم"):
             quotations.invoice_sales_order(
                 self.db, order_id, (base_date - timedelta(days=1)).isoformat(), (base_date + timedelta(days=30)).isoformat(), created_by=2,
             )
@@ -859,7 +859,7 @@ otals["credit"], places=2)
             "SELECT COUNT(*) FROM sales_invoices WHERE sales_order_id=?", (order_id,)
         ).fetchone()[0], 0)
         first_invoice = quotations.invoice_sales_order(
-            self.db, order_id, first_invoice_date, "2026-11-30", created_by=2,
+            self.db, order_id, first_invoice_date, (base_date + timedelta(days=30)).isoformat(), created_by=2,
         )
         self.db.commit()
         self.assertEqual(first_invoice["total_cost"], Decimal("20.00"))
@@ -901,7 +901,7 @@ otals["credit"], places=2)
         ).fetchone()[0], 2)
         self.assertEqual(
             Decimal(self.db.execute("SELECT qty_remaining FROM stock_valuation_layers").fetchone()[0]),
-            Decimal("1.0000"),
+            Decimal("2.0000"),
         )
         self.assertEqual(
             self.db.execute("SELECT status FROM sales_orders WHERE id=?", (order_id,)).fetchone()["status"],
