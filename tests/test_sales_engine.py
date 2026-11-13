@@ -135,7 +135,7 @@ class SalesIntegrationTests(unittest.TestCase):
             "INSERT INTO stock_categories(code,name_ar) VALUES('BEVERAGE','مشروبات')"
         )
         category_id = self.db.execute(
-            "SELECT id FROM stock_categories WHERE code='FOOD'"
+            "SELECT id FROM stock_categories WHERE code='BEVERAGE'"
         ).fetchone()["id"]
         self.db.execute(
             "UPDATE stock_products SET category_id=? WHERE id=?",
