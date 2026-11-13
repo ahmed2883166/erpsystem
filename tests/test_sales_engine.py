@@ -267,6 +267,54 @@ class SalesIntegrationTests(unittest.TestCase):
             )
         self.db.rollback()
 
+    def test_discounted_invoice_credit_notes_reverse_net_sales_and_tax_exactly(self):
+        self.db.execute(
+            "UPDATE customers SET discount_type='percent',discount_value='10' WHERE id=?",
+            (self.customer_id,),
+        )
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "2", "unit_price": "100"}], "14", 1,
+        )
+        self.assertEqual(invoice["subtotal"], Decimal("180.00"))
+        self.assertEqual(invoice["tax_amount"], Decimal("25.20"))
+        line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?", (invoice["invoice_id"],)
+        ).fetchone()["id"]
+
+        first = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-11", "مرتجع جزئي بعد الخصم",
+            [{"invoice_line_id": line_id, "quantity": "1"}], 1,
+        )
+        second = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-12", "استكمال المرتجع بعد الخصم",
+            [{"invoice_line_id": line_id, "quantity": "1"}], 1,
+        )
+        self.db.commit()
+
+        self.assertEqual(first["subtotal"] + second["subtotal"], Decimal("180.00"))
+        self.assertEqual(first["tax_amount"] + second["tax_amount"], Decimal("25.20"))
+        self.assertEqual(first["total_amount"] + second["total_amount"], Decimal("205.20"))
+        self.assertEqual(first["total_cost"] + second["total_cost"], Decimal("20.00"))
+        invoice_lines = self.db.execute(
+            """SELECT a.code,SUM(CAST(jl.debit AS NUMERIC)) debit,SUM(CAST(jl.credit AS NUMERIC)) credit
+               FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+               WHERE jl.entry_id IN (?,?) GROUP BY a.code""",
+            (first["journal_entry_id"], second["journal_entry_id"]),
+        ).fetchall()
+        credit_totals = {row["code"]: (Decimal(row["debit"]), Decimal(row["credit"])) for row in invoice_lines}
+        self.assertEqual(credit_totals["4100"][0], Decimal("180"))
+        self.assertEqual(credit_totals["2130"][0], Decimal("25.2"))
+        self.assertEqual(credit_totals["1130"][1], Decimal("205.2"))
+        self.assertEqual(
+            self.db.execute(
+                "SELECT COUNT(*) FROM sales_credit_note_lines WHERE invoice_line_id=?",
+                (line_id,),
+            ).fetchone()[0],
+            2,
+        )
+
     def test_sales_return_restores_original_lot_and_expiry(self):
         self.db.execute(
             "INSERT INTO stock_products(sku,name_ar,track_lot,track_expiry) VALUES('LOT-1','صنف بتشغيلة',1,1)"
