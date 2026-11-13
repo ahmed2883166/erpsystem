@@ -474,7 +474,7 @@ _OPERATIONAL_AUDIT_RECORDS = {
 }
 
 
-def _operational_audit_snapshot(endpoint, view_args):
+def _operational_audit_snapshot(endpoint, view_args, created_record=None):
     """Read a safe before/after snapshot for known operational records; never writes business data."""
     if created_record:
         table, record_id, child_table, child_key = created_record
