@@ -113,6 +113,43 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(sum(float(x[2] or 0) for x in posted), 14650.0)
         self.assertTrue(any(x[0] == "1300" and x[2] == "200.00" for x in posted))
 
+    def test_payroll_payment_supports_partial_and_full_settlement(self):
+        self.add_employee()
+        self.client.post("/hr/payroll", data={
+            "period": "2026-11", "basic_1": "12000", "allowances_1": "1500",
+            "overtime_hours_1": "10", "overtime_amount_1": "750",
+            "absent_hours_1": "2", "absence_deduction_1": "100",
+            "other_deductions_1": "200", "tax_1": "500",
+            "employee_ins_1": "300", "employer_ins_1": "400"
+        })
+        self.client.post("/hr/payroll/1/post", data={
+            "salary_expense_account": "4", "employer_ins_expense_account": "3",
+            "salaries_payable_account": "5", "tax_payable_account": "6",
+            "insurance_payable_account": "7", "advances_account": "2",
+            "other_deductions_account": "2"
+        })
+        response = self.client.post("/hr/payroll/1/payment", data={
+            "payment_date": "2026-11-30", "amount": "5000", "cash_account_id": "1",
+            "notes": "دفعة أولى"
+        })
+        self.assertEqual(response.status_code, 302)
+        response = self.client.post("/hr/payroll/1/payment", data={
+            "payment_date": "2026-12-01", "amount": "8150", "cash_account_id": "1"
+        })
+        self.assertEqual(response.status_code, 302)
+        response = self.client.post("/hr/payroll/1/payment", data={
+            "payment_date": "2026-12-02", "amount": "1", "cash_account_id": "1"
+        }, follow_redirects=True)
+        self.assertIn("يتجاوز صافي المرتبات المتبقي", response.get_data(as_text=True))
+        conn = sqlite3.connect(self.db_path)
+        payments = conn.execute("SELECT amount FROM payroll_payments WHERE run_id=1 ORDER BY id").fetchall()
+        debit, credit = conn.execute("""SELECT SUM(debit),SUM(credit) FROM journal_lines
+            WHERE entry_id IN (SELECT journal_entry_id FROM payroll_payments)""").fetchone()
+        conn.close()
+        self.assertEqual(payments, [("5000.00",), ("8150.00",)])
+        self.assertAlmostEqual(debit, 13150.0, places=2)
+        self.assertAlmostEqual(credit, 13150.0, places=2)
+
     def test_custody_issue_expense_and_full_settlement(self):
         self.add_employee()
         response = self.client.post("/hr/custody", data={
