@@ -132,7 +132,7 @@ class SalesIntegrationTests(unittest.TestCase):
         ensure_activity_chart_accounts(self.db, "restaurant")
         self.db.execute("UPDATE company_settings SET setting_value='restaurant' WHERE setting_key='activity'")
         self.db.execute(
-            "INSERT INTO stock_categories(code,name_ar) VALUES('FOOD','أغذية')"
+            "INSERT INTO stock_categories(code,name_ar) VALUES('BEVERAGE','مشروبات')"
         )
         category_id = self.db.execute(
             "SELECT id FROM stock_categories WHERE code='FOOD'"
@@ -160,6 +160,24 @@ class SalesIntegrationTests(unittest.TestCase):
             (invoice["invoice_id"],),
         ).fetchone()
         self.assertEqual(revenue_code, "4400")
+        cogs_codes = {
+            row["code"] for row in self.db.execute(
+                """SELECT DISTINCT a.code FROM journal_lines jl
+                   JOIN accounts a ON a.id=jl.account_id
+                   WHERE jl.entry_id=? AND a.account_type='expense'""",
+                (invoice["cogs_journal_entry_id"],),
+            )
+        }
+        inventory_codes = {
+            row["code"] for row in self.db.execute(
+                """SELECT DISTINCT a.code FROM journal_lines jl
+                   JOIN accounts a ON a.id=jl.account_id
+                   WHERE jl.entry_id=? AND a.account_type='asset'""",
+                (invoice["cogs_journal_entry_id"],),
+            )
+        }
+        self.assertIn("5200", cogs_codes)
+        self.assertIn("1150", inventory_codes)
         self.assertEqual(stored["sales_channel"], "delivery_apps")
         self.assertEqual(stored["revenue_account_code"], "4400")
         line_id = self.db.execute(
