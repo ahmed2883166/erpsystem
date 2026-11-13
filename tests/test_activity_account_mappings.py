@@ -15,7 +15,7 @@ class ActivityAccountMappingTests(unittest.TestCase):
         for activity, roles in ACTIVITY_ACCOUNT_ROLES.items():
             chart = {row[0]: row for row in CHARTS[activity]}
             for role, codes in roles.items():
-                expected_type = "liability" if role in {"payables", "current_liabilities"} else (
+                expected_type = "liability" if role in {"payables", "current_liabilities", "customer_advances"} else (
                     "expense" if role == "direct_cost" else (
                         "equity" if role == "retained_earnings" else "asset"
                     )
