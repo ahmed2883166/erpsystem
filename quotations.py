@@ -223,6 +223,22 @@ def approve_sales_order(conn, order_id, approver_id):
  return True
 
 
+def reject_sales_order(conn, order_id, rejected_by, reason):
+ order=conn.execute("SELECT * FROM sales_orders WHERE id=?",(order_id,)).fetchone()
+ if not order: raise ValueError("أمر البيع غير موجود.")
+ if order["status"]!="pending_approval": raise ValueError("أمر البيع ليس في انتظار الاعتماد.")
+ if order["created_by"]==rejected_by: raise ValueError("لا يجوز رفض أمر البيع بواسطة نفس منشئه.")
+ reason=str(reason or "").strip()
+ if len(reason)<5 or len(reason)>500: raise ValueError("سبب رفض أمر البيع مطلوب من 5 إلى 500 حرف.")
+ conn.execute(
+  """UPDATE sales_orders SET status='rejected',rejection_reason=?,rejected_by=?,
+     rejected_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending_approval'""",
+  (reason,rejected_by,order_id))
+ if conn.execute("SELECT changes()").fetchone()[0]!=1:
+  raise ValueError("تم تغيير حالة أمر البيع؛ أعد تحميل الصفحة.")
+ return True
+
+
 def create_delivery_note(conn, order_id, delivery_date, lines, created_by, notes=""):
  order=conn.execute("SELECT * FROM sales_orders WHERE id=?",(order_id,)).fetchone()
  if not order: raise ValueError("أمر البيع غير موجود.")
@@ -541,6 +557,20 @@ def approve_order_route(order_id):
   c.execute("BEGIN IMMEDIATE")
   approve_sales_order(c,order_id,session["user_id"])
   c.commit(); flash("تم اعتماد أمر البيع. يمكن الآن إنشاء أذون التسليم.","success")
+ except (ValueError,InvalidOperation,sqlite3.Error) as e:
+  c.rollback(); flash(str(e),"error")
+ finally: c.close()
+ return redirect(url_for("quotes.sales_order_view",order_id=order_id))
+
+
+@quotes_bp.route("/orders/<int:order_id>/reject",methods=["POST"])
+@require_sales_approval
+def reject_order_route(order_id):
+ c=db()
+ try:
+  c.execute("BEGIN IMMEDIATE")
+  reject_sales_order(c,order_id,session["user_id"],request.form.get("reason",""))
+  c.commit(); flash("تم رفض أمر البيع وتسجيل سبب الرفض.","success")
  except (ValueError,InvalidOperation,sqlite3.Error) as e:
   c.rollback(); flash(str(e),"error")
  finally: c.close()
