@@ -69,58 +69,85 @@ def initialize_assets_schema():
 
 
 def create_asset_from_supplier_bill(conn, bill, actor_id):
-    """Create the fixed-asset register row from an already-posting supplier bill.
-    Caller owns the transaction; this function never posts a second acquisition journal.
-    """
+    """Create one asset register row per supplier-bill asset line, without a second journal."""
     if bill["bill_kind"] != "asset":
         raise ValueError("فاتورة المورد ليست من نوع أصل ثابت.")
     if not bill["journal_entry_id"]:
         raise ValueError("يجب ترحيل فاتورة المورد قبل إنشاء سجل الأصل.")
-    existing = conn.execute(
-        "SELECT id FROM fixed_assets WHERE supplier_bill_id=? OR asset_code=?",
-        (bill["id"], bill["asset_code"]),
+    if conn.execute("SELECT 1 FROM fixed_assets WHERE supplier_bill_id=? LIMIT 1",(bill["id"],)).fetchone():
+        raise ValueError("فاتورة المورد مرتبطة بسجل أصول بالفعل.")
+    has_lines = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='supplier_bill_asset_lines'"
     ).fetchone()
-    if existing:
-        raise ValueError("فاتورة المورد مرتبطة بسجل أصل بالفعل أو كود الأصل مستخدم.")
-    required = (
-        "asset_code", "asset_name", "asset_ready_date", "asset_useful_life_months",
-        "asset_account_id", "asset_accum_account_id", "asset_expense_account_id",
-    )
-    if any(bill[key] in (None, "") for key in required):
-        raise ValueError("بيانات إنشاء الأصل من فاتورة المورد غير مكتملة.")
-    cost = Decimal(str(bill["subtotal"]))
-    residual = Decimal(str(bill["asset_residual_value"] or "0"))
-    life = int(bill["asset_useful_life_months"])
-    ready_date = date.fromisoformat(bill["asset_ready_date"]).isoformat()
-    purchase_date = date.fromisoformat(bill["bill_date"]).isoformat()
-    if cost <= 0 or residual < 0 or residual >= cost or life <= 0 or ready_date < purchase_date:
-        raise ValueError("بيانات تكلفة أو جاهزية أو عمر الأصل غير صالحة.")
-    account_specs = (
-        (bill["asset_account_id"], "asset"),
-        (bill["asset_accum_account_id"], "asset"),
-        (bill["asset_expense_account_id"], "expense"),
-    )
-    for account_id, expected in account_specs:
-        row = conn.execute(
-            "SELECT account_type,is_group,active FROM accounts WHERE id=?", (account_id,)
-        ).fetchone()
-        if not row or row["account_type"] != expected or row["is_group"] or not row["active"]:
-            raise ValueError("أحد حسابات الأصل غير صالح أو غير نشط.")
-    if bill["asset_account_id"] == bill["asset_accum_account_id"]:
-        raise ValueError("حساب تكلفة الأصل يجب أن يختلف عن حساب مجمع الإهلاك.")
-    cursor = conn.execute("""INSERT INTO fixed_assets(
-        asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,
-        useful_life_months,depreciation_method,annual_rate,asset_account_id,
-        accum_account_id,expense_account_id,notes,created_by,supplier_bill_id
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (bill["asset_code"], bill["asset_name"], bill["asset_category"] or "",
-         purchase_date, ready_date, str(cost), str(residual), life,
-         bill["asset_depreciation_method"], str(bill["asset_annual_rate"] or "0"),
-         bill["asset_account_id"], bill["asset_accum_account_id"],
-         bill["asset_expense_account_id"],
-         "تم الإنشاء تلقائيًا من فاتورة المورد " + bill["bill_no"],
-         actor_id, bill["id"]))
-    return cursor.lastrowid
+    rows = conn.execute(
+        "SELECT * FROM supplier_bill_asset_lines WHERE bill_id=? ORDER BY line_no",(bill["id"],)
+    ).fetchall() if has_lines else []
+    if not rows:
+        rows = [{
+            "asset_code": bill["asset_code"], "asset_name": bill["asset_name"],
+            "asset_category": bill["asset_category"] or "", "cost": bill["subtotal"],
+            "ready_date": bill["asset_ready_date"], "residual_value": bill["asset_residual_value"] or "0",
+            "useful_life_months": bill["asset_useful_life_months"],
+            "depreciation_method": bill["asset_depreciation_method"], "annual_rate": bill["asset_annual_rate"] or "0",
+            "asset_account_id": bill["asset_account_id"], "accum_account_id": bill["asset_accum_account_id"],
+            "expense_account_id": bill["asset_expense_account_id"],
+        }]
+    if not rows:
+        raise ValueError("فاتورة الأصل لا تحتوي على أصول.")
+    codes=set()
+    total=Decimal("0")
+    prepared=[]
+    purchase_date=date.fromisoformat(bill["bill_date"]).isoformat()
+    for row in rows:
+        code=str(row["asset_code"] or "").strip()
+        name=str(row["asset_name"] or "").strip()
+        if not code or not name or code in codes:
+            raise ValueError("كود أو اسم أصل غير صالح أو مكرر داخل الفاتورة.")
+        codes.add(code)
+        if conn.execute("SELECT 1 FROM fixed_assets WHERE asset_code=? LIMIT 1",(code,)).fetchone():
+            raise ValueError("كود الأصل مستخدم بالفعل: " + code)
+        cost=Decimal(str(row["cost"]))
+        residual=Decimal(str(row["residual_value"] or "0"))
+        life=int(row["useful_life_months"] or 0)
+        ready_date=date.fromisoformat(row["ready_date"]).isoformat()
+        method=str(row["depreciation_method"] or "straight_line")
+        annual_rate=Decimal(str(row["annual_rate"] or "0"))
+        if cost<=0 or residual<0 or residual>=cost or life<=0 or ready_date<purchase_date:
+            raise ValueError("بيانات تكلفة أو جاهزية أو عمر الأصل غير صالحة: " + code)
+        if method not in {"straight_line","declining_balance"}:
+            raise ValueError("طريقة الإهلاك غير صحيحة للأصل: " + code)
+        if method=="declining_balance" and not (Decimal("0")<annual_rate<=Decimal("100")):
+            raise ValueError("معدل الإهلاك السنوي غير صالح للأصل: " + code)
+        for account_id,expected in ((row["asset_account_id"],"asset"),
+                                    (row["accum_account_id"],"asset"),
+                                    (row["expense_account_id"],"expense")):
+            account_row=conn.execute(
+                "SELECT account_type,is_group,active FROM accounts WHERE id=?",(account_id,)
+            ).fetchone()
+            if not account_row or account_row["account_type"]!=expected or account_row["is_group"] or not account_row["active"]:
+                raise ValueError("أحد حسابات الأصل غير صالح أو غير نشط: " + code)
+        if row["asset_account_id"]==row["accum_account_id"]:
+            raise ValueError("حساب التكلفة ومجمع الإهلاك يجب أن يختلفا: " + code)
+        total+=cost
+        prepared.append((code,name,str(row["asset_category"] or ""),purchase_date,ready_date,
+                         str(cost),str(residual),life,method,str(annual_rate),
+                         row["asset_account_id"],row["accum_account_id"],row["expense_account_id"]))
+    if total!=Decimal(str(bill["subtotal"])):
+        raise ValueError("مجموع تكاليف الأصول لا يساوي صافي فاتورة المورد.")
+    created=[]
+    for values in prepared:
+        code,name,category,purchase,ready,cost,residual,life,method,rate,asset_acc,accum_acc,expense_acc=values
+        cursor=conn.execute("""INSERT INTO fixed_assets(
+            asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,
+            useful_life_months,depreciation_method,annual_rate,asset_account_id,
+            accum_account_id,expense_account_id,notes,created_by,supplier_bill_id
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (code,name,category,purchase,ready,cost,residual,life,method,rate,
+             asset_acc,accum_acc,expense_acc,
+             "تم الإنشاء تلقائيًا من فاتورة المورد " + bill["bill_no"],
+             actor_id,bill["id"]))
+        created.append(cursor.lastrowid)
+    return created
 
 
 def _asset_period_amount(asset, accumulated, period, cutoff_date=None):
