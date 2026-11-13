@@ -120,6 +120,14 @@ def init_purchase_schema():
         c.execute("ALTER TABLE supplier_bills ADD COLUMN due_date TEXT")
         c.execute("UPDATE supplier_bills SET due_date=bill_date WHERE due_date IS NULL")
     for name, declaration in (
+        ("asset_code", "TEXT"), ("asset_name", "TEXT"), ("asset_category", "TEXT"),
+        ("asset_ready_date", "TEXT"), ("asset_residual_value", "TEXT NOT NULL DEFAULT '0'"),
+        ("asset_useful_life_months", "INTEGER"),
+        ("asset_depreciation_method", "TEXT NOT NULL DEFAULT 'straight_line'"),
+        ("asset_annual_rate", "TEXT NOT NULL DEFAULT '0'"),
+        ("asset_account_id", "INTEGER REFERENCES accounts(id)"),
+        ("asset_accum_account_id", "INTEGER REFERENCES accounts(id)"),
+        ("asset_expense_account_id", "INTEGER REFERENCES accounts(id)"),
         ("bill_kind", "TEXT NOT NULL DEFAULT 'inventory'"),
         ("expense_account_id", "INTEGER"),
         ("submitted_by", "INTEGER"), ("submitted_at", "TEXT"),
@@ -271,6 +279,64 @@ def supplier_ap_account(c):
 
 def activity_inventory_code(c):
     return _activity_posting_accounts(c)["purchase_inventory"]
+
+
+def validate_asset_bill_data(c, form, bill_date, subtotal):
+    """Validate asset capitalization details stored on a supplier bill."""
+    asset_code = str(form.get("asset_code", "") or "").strip()
+    asset_name = str(form.get("asset_name", "") or "").strip()
+    if not asset_code or not asset_name:
+        raise ValueError("كود الأصل واسم الأصل مطلوبان لفاتورة الأصل الثابت.")
+    ready_date = date.fromisoformat(str(form.get("asset_ready_date", "") or bill_date)).isoformat()
+    bill_date = date.fromisoformat(str(bill_date)).isoformat()
+    if ready_date < bill_date:
+        raise ValueError("تاريخ جاهزية الأصل لا يمكن أن يسبق تاريخ فاتورة الشراء.")
+    residual = money(form.get("asset_residual_value", "0") or "0")
+    life = int(form.get("asset_useful_life_months", 0) or 0)
+    method = str(form.get("asset_depreciation_method", "straight_line") or "straight_line")
+    annual_rate = Decimal(str(form.get("asset_annual_rate", "0") or "0"))
+    if subtotal <= 0 or residual < 0 or residual >= subtotal or life <= 0:
+        raise ValueError("تحقق من تكلفة الأصل والقيمة التخريدية والعمر الإنتاجي.")
+    if method not in {"straight_line", "declining_balance"}:
+        raise ValueError("طريقة إهلاك الأصل غير صحيحة.")
+    if method == "declining_balance" and not (Decimal("0") < annual_rate <= Decimal("100")):
+        raise ValueError("معدل الإهلاك السنوي يجب أن يكون أكبر من صفر ولا يتجاوز 100%.")
+    ids = {}
+    for field, expected, label in (
+        ("asset_account_id", "asset", "حساب تكلفة الأصل"),
+        ("asset_accum_account_id", "asset", "حساب مجمع الإهلاك"),
+        ("asset_expense_account_id", "expense", "حساب مصروف الإهلاك"),
+    ):
+        try:
+            account_id = int(form.get(field, 0))
+        except (TypeError, ValueError):
+            account_id = 0
+        row = c.execute(
+            "SELECT account_type,is_group,active FROM accounts WHERE id=?", (account_id,)
+        ).fetchone()
+        if not row or row["account_type"] != expected or row["is_group"] or not row["active"]:
+            raise ValueError("اختر " + label + " تفصيليًا ونشطًا ومن النوع الصحيح.")
+        ids[field] = account_id
+    if ids["asset_account_id"] == ids["asset_accum_account_id"]:
+        raise ValueError("حساب تكلفة الأصل يجب أن يختلف عن حساب مجمع الإهلاك.")
+    if c.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fixed_assets'"
+    ).fetchone():
+        existing = c.execute(
+            "SELECT 1 FROM fixed_assets WHERE asset_code=? LIMIT 1", (asset_code,)
+        ).fetchone()
+        if existing:
+            raise ValueError("كود الأصل مستخدم بالفعل في سجل الأصول.")
+    return {
+        "asset_code": asset_code, "asset_name": asset_name,
+        "asset_category": str(form.get("asset_category", "") or "").strip(),
+        "asset_ready_date": ready_date, "asset_residual_value": str(residual),
+        "asset_useful_life_months": life, "asset_depreciation_method": method,
+        "asset_annual_rate": str(annual_rate),
+        "asset_account_id": ids["asset_account_id"],
+        "asset_accum_account_id": ids["asset_accum_account_id"],
+        "asset_expense_account_id": ids["asset_expense_account_id"],
+    }
 
 @purchase_bp.route("/")
 @require("purchases.view")
