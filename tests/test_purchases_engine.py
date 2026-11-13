@@ -180,8 +180,7 @@ class PurchasingAccountingTests(unittest.TestCase):
                          "approved")
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
 
-        with patch("purchases.supplier_ap_account", return_value=99), \\
-             patch("purchases.create_journal", return_value=77):
+        with patch("purchases.supplier_ap_account", return_value=99) as _ap_patch, patch("purchases.create_journal", return_value=77) as _journal_patch:
             entry_id = purchases.post_supplier_bill(self.db, bill_id, 30)
         self.db.commit()
         posted = self.db.execute("SELECT status,journal_entry_id FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
