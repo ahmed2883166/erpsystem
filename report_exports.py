@@ -1,5 +1,6 @@
 from database import connect_database
 """Excel and Arabic-capable PDF exports for NEXUS ERP reports."""
+import base64
 import io
 import re
 from decimal import Decimal
@@ -88,9 +89,19 @@ def register_report_exports(app, db_path, permissions):
                         periods.append((year["year_name"], "الفترة الحالية / مفتوحة" if year["status"] == "open" else "فترة مالية مقفولة", period_from, period_to))
                 if not years:
                     periods.append(("الفترة المحددة", "الفترة الحالية", date_from, date_to))
-                headers = ["الفترة", "التصنيف", "من تاريخ", "إلى تاريخ", "كود الحساب", "اسم الحساب", "نوع الحساب", "مدين", "دائن", "صافي الرصيد"]
+                account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+                section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
+                normal_expr = "a.normal_balance" if "normal_balance" in account_columns else "NULL"
+                headers = ["الفترة", "التصنيف", "من تاريخ", "إلى تاريخ", "كود الحساب", "اسم الحساب", "نوع الحساب", "مدين", "دائن", "صافي الرصيد", "تصنيف القوائم", "الرصيد الطبيعي"]
                 data = []
                 type_labels = {"asset": "أصول", "liability": "التزامات", "equity": "حقوق ملكية", "revenue": "إيرادات", "expense": "مصروفات"}
+                section_labels = {
+                    "current_assets": "أصول متداولة", "non_current_assets": "أصول غير متداولة",
+                    "current_liabilities": "التزامات متداولة", "non_current_liabilities": "التزامات غير متداولة",
+                    "equity": "حقوق ملكية", "revenue": "إيرادات", "contra_revenue": "مردودات وخصومات",
+                    "direct_costs": "تكلفة النشاط", "operating_expenses": "مصروفات تشغيلية",
+                    "finance_costs": "تكاليف تمويلية", "other_income": "إيرادات أخرى",
+                }
                 for period_name, period_label, period_from, period_to in periods:
                     join_conditions = ["je.id=jl.entry_id", "je.status='posted'"]
                     if not include_closing:
@@ -102,6 +113,7 @@ def register_report_exports(app, db_path, permissions):
                         join_conditions.append("je.entry_date <= ?"); join_params.append(period_to)
                     rows = conn.execute(f"""
                         SELECT a.code,a.name_ar,a.account_type,
+                               {section_expr} statement_section,{normal_expr} normal_balance,
                                COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
                                COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
                         FROM accounts a
@@ -112,7 +124,7 @@ def register_report_exports(app, db_path, permissions):
                     """, [*join_params, *account_params]).fetchall()
                     total_debit = Decimal("0")
                     total_credit = Decimal("0")
-                    data.append([period_name, period_label, period_from or "", period_to or "", "", "", "", "", "", ""])
+                    data.append([period_name, period_label, period_from or "", period_to or "", "", "", "", "", "", "", "", ""])
                     for row in rows:
                         debit = Decimal(str(row["debit"] or "0"))
                         credit = Decimal(str(row["credit"] or "0"))
@@ -120,8 +132,10 @@ def register_report_exports(app, db_path, permissions):
                         total_credit += credit
                         data.append([period_name, period_label, period_from or "", period_to or "",
                                      row["code"], row["name_ar"], type_labels.get(row["account_type"], row["account_type"]),
-                                     debit, credit, debit - credit])
-                    data.append([period_name, "إجمالي الفترة", "", "", "", "", "", total_debit, total_credit, total_debit-total_credit])
+                                     debit, credit, debit - credit,
+                                     section_labels.get(row["statement_section"], row["statement_section"] or "غير مصنف"),
+                                     "مدين" if row["normal_balance"] == "debit" else ("دائن" if row["normal_balance"] == "credit" else "—")])
+                    data.append([period_name, "إجمالي الفترة", "", "", "", "", "", total_debit, total_credit, total_debit-total_credit, "", ""])
                     data.append([""] * len(headers))
                 filename = "nexus-trial-balance.xlsx"
                 title = "ميزان المراجعة حسب الفترات المالية"
