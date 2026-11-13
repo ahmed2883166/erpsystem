@@ -804,8 +804,8 @@ def company_setup():
                 connection.close()
                 return redirect(url_for("company_setup"))
             logo_types = (
-                (b"\\x89PNG\\r\\n\\x1a\\n", "image/png"),
-                (b"\\xff\\xd8\\xff", "image/jpeg"),
+                (b"\x89PNG\r\n\x1a\n", "image/png"),
+                (b"\xff\xd8\xff", "image/jpeg"),
                 (b"RIFF", "image/webp"),
             )
             mime = next((kind for signature, kind in logo_types
