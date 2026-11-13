@@ -711,6 +711,12 @@ class SalesIntegrationTests(unittest.TestCase):
         app.secret_key = "test"
         app.add_url_rule("/login", endpoint="login", view_func=lambda: "")
         app.add_url_rule("/dashboard", endpoint="dashboard", view_func=lambda: "")
+        app.add_url_rule("/global-search", endpoint="global_search", view_func=lambda: "")
+        app.add_url_rule("/change-password", endpoint="change_password", view_func=lambda: "")
+        app.add_url_rule("/logout", endpoint="logout", view_func=lambda: "")
+        app.add_url_rule("/aging", endpoint="aging.index", view_func=lambda: "")
+        app.jinja_env.globals["csrf_token"] = lambda: "test-token"
+        app.context_processor(lambda: {"permissions": {"sales.view", "sales.manage"}})
         app.register_blueprint(sales.sales_bp)
         client = app.test_client()
         with client.session_transaction() as session:
@@ -734,6 +740,9 @@ class SalesIntegrationTests(unittest.TestCase):
             "SELECT * FROM customer_advance_receipts WHERE reference='WEB-ADV-1'"
         ).fetchone()
         self.assertIsNotNone(advance)
+        page = client.get("/sales/advances")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("دفعات العملاء المقدمة", page.get_data(as_text=True))
 
         response = client.post(
             f"/sales/advances/{advance['id']}/allocate",
