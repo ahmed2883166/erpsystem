@@ -42,7 +42,49 @@
         <td>{{ advance.receipt_date }}</td><td>{{ '%.2f'|format(advance.amount|float) }}</td>
         <td>{{ '%.2f'|format(advance.remaining_amount) }}</td><td>{{ advance.journal_entry_id }}</td>
       </tr>
-      {% if advance.remaining_amount > 0 and 'sales.manage' in permissions %}
+      {% if 'sales.manage' in permissions %}
+      <tr><td colspan="6">
+        <h4>سجل التخصيصات والردود</h4>
+        {% for batch in advance.allocation_batches %}
+          <div class="panel">
+            <p>تخصيص بتاريخ {{ batch.allocation_date }} — {{ batch.invoice_numbers }} — {{ '%.2f'|format(batch.amount|float) }} — القيد {{ batch.journal_entry_id }}</p>
+            {% if not batch.reversal_journal_entry_id %}
+            <form method="post" action="{{ url_for('sales.reverse_customer_advance_route', source_type='allocation', source_id=batch.journal_entry_id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <label>تاريخ العكس <input type="date" name="reversal_date" value="{{ today }}" required></label>
+              <label>سبب العكس <input name="reason" minlength="5" maxlength="500" required></label>
+              <button type="submit">عكس التخصيص بقيد عكسي</button>
+            </form>
+            {% else %}<p>تم العكس بالقيد {{ batch.reversal_journal_entry_id }}</p>{% endif %}
+          </div>
+        {% endfor %}
+        {% for refund in advance.refunds %}
+          <div class="panel">
+            <p>رد {{ '%.2f'|format(refund.amount|float) }} بتاريخ {{ refund.refund_date }} — {{ refund.refund_no }}</p>
+            {% if not refund.reversal_journal_entry_id %}
+            <form method="post" action="{{ url_for('sales.reverse_customer_advance_route', source_type='refund', source_id=refund.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <label>تاريخ العكس <input type="date" name="reversal_date" value="{{ today }}" required></label>
+              <label>سبب العكس <input name="reason" minlength="5" maxlength="500" required></label>
+              <button type="submit">عكس الرد بقيد عكسي</button>
+            </form>
+            {% else %}<p>تم العكس بالقيد {{ refund.reversal_journal_entry_id }}</p>{% endif %}
+          </div>
+        {% endfor %}
+        {% if not advance.reversed and advance.remaining_amount == advance.amount %}
+          <form method="post" action="{{ url_for('sales.reverse_customer_advance_route', source_type='receipt', source_id=advance.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <h4>عكس إيصال المقدم بالكامل</h4>
+            <label>تاريخ العكس <input type="date" name="reversal_date" value="{{ today }}" required></label>
+            <label>سبب العكس <input name="reason" minlength="5" maxlength="500" required></label>
+            <button type="submit">عكس الإيصال بقيد عكسي</button>
+          </form>
+        {% elif advance.reversed %}
+          <p>تم عكس إيصال المقدم بالقيد العكسي.</p>
+        {% endif %}
+      </td></tr>
+      {% endif %}
+      {% if advance.remaining_amount > 0 and not advance.reversed and 'sales.manage' in permissions %}
       <tr><td colspan="6">
         <div class="form-grid">
           <form method="post" action="{{ url_for('sales.allocate_customer_advance_route', advance_id=advance.id) }}">
