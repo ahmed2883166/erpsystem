@@ -1,0 +1,24 @@
+{% extends "base.html" %}{% block title %}سلف وقروض الموظفين | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>سلف وقروض الموظفين</h2><p>طلب ثم موافقة ثم صرف محاسبي، مع جدول أقساط وخصم تلقائي من مسير الشهر.</p><p><a href="{{url_for('workforce.employees')}}">العودة إلى شؤون الموظفين</a></p></header>
+<section class="panel"><h3>طلب سلفة جديد</h3><form method="post" class="form-grid">
+<label>الموظف<select name="employee_id" required>{% for e in employees %}<option value="{{e.id}}">{{e.employee_code}} - {{e.full_name}}</option>{% endfor %}</select></label>
+<label>المبلغ المطلوب<input type="number" name="requested_amount" min="0.01" step="0.01" required></label>
+<label>عدد الأقساط المقترح<input type="number" name="installment_count" min="1" max="60" value="6" required></label>
+<label>أول شهر خصم<input type="month" name="first_due_period" value="{{today}}" required></label>
+<label style="grid-column:1/-1">سبب الطلب / ملاحظات<input name="notes" maxlength="300"></label>
+<button type="submit">تسجيل الطلب</button></form></section>
+<section class="panel"><h3>سجل الطلبات والسلف</h3><div style="overflow-x:auto"><table>
+<tr><th>المرجع</th><th>الموظف</th><th>المطلوب</th><th>المعتمد</th><th>الأقساط</th><th>الرصيد</th><th>الحالة</th><th>الإجراء</th></tr>
+{% for l in loans %}<tr><td>{{l.loan_no}}</td><td>{{l.employee_code}} - {{l.full_name}}</td><td>{{l.requested_amount}}</td><td>{{l.approved_amount}}</td><td>{{l.installment_count}}</td><td>{{l.remaining_balance}}</td><td>{{{'requested':'بانتظار الموافقة','approved':'معتمدة - بانتظار الصرف','active':'نشطة','closed':'مسددة','rejected':'مرفوضة'}.get(l.status,l.status)}}</td><td>
+{% if l.status=='requested' %}<form method="post" action="{{url_for('workforce.approve_employee_loan',loan_id=l.id)}}" class="form-grid">
+<label>المبلغ المعتمد<input type="number" name="approved_amount" min="0.01" max="{{l.requested_amount}}" step="0.01" value="{{l.requested_amount}}" required></label>
+<label>عدد الأقساط<input type="number" name="installment_count" min="1" max="60" value="{{l.installment_count}}" required></label>
+<label>أول شهر خصم<input type="month" name="first_due_period" value="{{l.first_due_period}}" required></label>
+<button type="submit">اعتماد السلفة</button></form>
+<form method="post" action="{{url_for('workforce.reject_employee_loan',loan_id=l.id)}}"><button class="secondary" type="submit">رفض الطلب</button></form>
+{% elif l.status=='approved' %}<form method="post" action="{{url_for('workforce.disburse_employee_loan',loan_id=l.id)}}" class="form-grid">
+<label>تاريخ الصرف<input type="date" name="disbursement_date" value="{{today}}-01" required></label>
+<label>حساب البنك / الصندوق<select name="cash_account_id" required>{% for a in cash_accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<button type="submit">صرف السلفة وترحيلها</button></form>
+{% elif l.status=='active' %}<a href="{{url_for('workforce.loan_schedule',loan_id=l.id)}}">عرض جدول الأقساط</a>{% else %}—{% endif %}
+</td></tr>{% else %}<tr><td colspan="8">لا توجد طلبات سلف حتى الآن.</td></tr>{% endfor %}</table></div></section>{% endblock %}
