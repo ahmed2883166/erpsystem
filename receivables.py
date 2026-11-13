@@ -133,7 +133,7 @@ def _supplier_aging_documents(conn, as_of):
    {paid_expr} paid_amount,{credit_expr} credited_amount
    FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
    WHERE b.status='posted' AND b.bill_date<=?
-   ORDER BY due_date,s.name""",(as_of,)).fetchall()
+   ORDER BY due_date,party_name,doc_no""",(as_of,)).fetchall()
 
 
 def _supplier_credit_notes_linked(conn):
