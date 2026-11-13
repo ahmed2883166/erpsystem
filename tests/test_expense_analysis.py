@@ -74,7 +74,7 @@ class ExpenseAnalysisTests(unittest.TestCase):
         self.assertEqual(report["operating_total"], Decimal("450.01"))
         self.assertEqual(len(report["detail_rows"]), 3)
         self.assertEqual(report["monthly_rows"][0]["month"], "2026-11")
-        self.assertEqual(report["monthly_rows"][0]["amount"], Decimal("1450"))
+        self.assertEqual(report["monthly_rows"][0]["amount"], Decimal("1450.01"))
 
     def test_report_filters_dimensions_and_keeps_unassigned_separate(self):
         report = build_expense_analysis(
@@ -83,7 +83,10 @@ class ExpenseAnalysisTests(unittest.TestCase):
         )
         self.assertEqual(report["total"], Decimal("1300.01"))
         self.assertTrue(all(row["branch_id"] == 1 for row in report["detail_rows"]))
-        self.assertEqual(report["dimension_rows"][0]["amount"], Decimal("1300"))
+        self.assertEqual(
+            sum((row["amount"] for row in report["dimension_rows"] if row["dimension"] == "الفرع"), Decimal("0")),
+            Decimal("1300.01")
+        )
 
     def test_monthly_decimal_net_preserves_precision_and_matches_period_total(self):
         report = build_expense_analysis(self.conn, "2026-11-01", "2026-11-30")
