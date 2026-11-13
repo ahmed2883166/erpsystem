@@ -328,41 +328,62 @@ def register_report_exports(app, db_path, permissions):
                 filename = "nexus-tax-report-" + snapshot["period"] + ".xlsx"
                 title = "تقرير الضرائب الشهري - " + snapshot["period"]
             elif report == "aging":
-                kind = request.args.get("kind", "customers")
-                as_of = request.args.get("as_of", datetime.now().date().isoformat())
-                if kind == "customers":
-                    invoice_rows = conn.execute("""SELECT i.id invoice_id,i.invoice_no doc_no,cu.code party_code,cu.name party_name,
-                      i.invoice_date doc_date,COALESCE(i.due_date,i.invoice_date) due_date,
-                      i.total_amount,i.paid_amount,COALESCE(i.credited_amount,'0') credited_amount
-                      FROM sales_invoices i JOIN customers cu ON cu.id=i.customer_id
-                      WHERE i.status='posted' AND i.invoice_date<=? ORDER BY due_date,cu.name""",(as_of,)).fetchall()
-                    refund_rows = conn.execute("""SELECT cn.invoice_id,rf.amount FROM customer_refunds rf
-                      JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id
-                      WHERE cn.status='posted' AND rf.refund_date<=?""",(as_of,)).fetchall()
-                    refunds_by_invoice = {}
-                    for refund in refund_rows:
-                        refunds_by_invoice[refund["invoice_id"]] = refunds_by_invoice.get(refund["invoice_id"],Decimal("0")) + Decimal(refund["amount"])
-                    rows = []
-                    for invoice in invoice_rows:
-                        balance = (Decimal(invoice["total_amount"])-Decimal(invoice["paid_amount"] or "0")
-                                   -Decimal(invoice["credited_amount"] or "0")
-                                   +refunds_by_invoice.get(invoice["invoice_id"],Decimal("0")))
-                        if balance > 0:
-                            rows.append({**dict(invoice),"balance":balance})
-                elif kind == "suppliers":
-                    bill_rows = conn.execute("""SELECT b.bill_no doc_no,s.code party_code,s.name party_name,
-                      b.bill_date doc_date,COALESCE(b.due_date,b.bill_date) due_date,
-                      b.total_amount,b.paid_amount
-                      FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
-                      WHERE b.status='posted' AND b.bill_date<=? ORDER BY due_date,s.name""",(as_of,)).fetchall()
-                    rows = []
-                    for bill in bill_rows:
-                        balance = Decimal(bill["total_amount"])-Decimal(bill["paid_amount"] or "0")
-                        if balance > 0:
-                            rows.append({**dict(bill),"balance":balance})
-                else:
-                    abort(400)
+                from receivables import (
+                    _amount, _table_exists, _customer_aging_movements,
+                    _supplier_aging_movements,
+                )
                 from datetime import date as date_type
+                kind = request.args.get("kind", "customers")
+                if kind not in {"customers", "suppliers"}:
+                    abort(400)
+                try:
+                    as_of = date_type.fromisoformat(
+                        request.args.get("as_of", "").strip() or date_type.today().isoformat()
+                    ).isoformat()
+                except ValueError:
+                    abort(400)
+                if kind == "customers":
+                    invoice_rows = conn.execute("""SELECT i.id invoice_id,i.invoice_no doc_no,
+                      cu.code party_code,cu.name party_name,i.invoice_date doc_date,
+                      COALESCE(i.due_date,i.invoice_date) due_date,i.total_amount,
+                      i.paid_amount,COALESCE(i.credited_amount,'0') credited_amount
+                      FROM sales_invoices i JOIN customers cu ON cu.id=i.customer_id
+                      WHERE i.status='posted' AND i.invoice_date<=?
+                      ORDER BY due_date,cu.name""",(as_of,)).fetchall()
+                    has_detail,paid_by_invoice,paid_all,credited_by_invoice,credited_all,refunds_by_invoice = (
+                        _customer_aging_movements(conn, as_of)
+                    )
+                    credit_table_exists = _table_exists(conn, "sales_credit_notes")
+                else:
+                    invoice_rows = conn.execute("""SELECT b.id invoice_id,b.bill_no doc_no,
+                      s.code party_code,s.name party_name,b.bill_date doc_date,
+                      COALESCE(b.due_date,b.bill_date) due_date,b.total_amount,
+                      b.paid_amount,COALESCE(b.credited_amount,'0') credited_amount
+                      FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
+                      WHERE b.status='posted' AND b.bill_date<=?
+                      ORDER BY due_date,s.name""",(as_of,)).fetchall()
+                    has_detail,paid_by_invoice,paid_all,credited_by_invoice,credited_all = (
+                        _supplier_aging_movements(conn, as_of)
+                    )
+                    refunds_by_invoice = {}
+                    credit_table_exists = _table_exists(conn, "supplier_credit_notes")
+                rows = []
+                for invoice in invoice_rows:
+                    document_id = invoice["invoice_id"]
+                    stored_paid = _amount(invoice["paid_amount"])
+                    paid_amount = (
+                        paid_by_invoice.get(document_id, Decimal("0")) +
+                        max(Decimal("0"), stored_paid - paid_all.get(document_id, Decimal("0")))
+                    ) if has_detail else stored_paid
+                    stored_credit = _amount(invoice["credited_amount"])
+                    credited_amount = (
+                        credited_by_invoice.get(document_id, Decimal("0")) +
+                        max(Decimal("0"), stored_credit - credited_all.get(document_id, Decimal("0")))
+                    ) if credit_table_exists else stored_credit
+                    refund_amount = refunds_by_invoice.get(document_id, Decimal("0"))
+                    balance = _amount(invoice["total_amount"]) - paid_amount - credited_amount + refund_amount
+                    if balance > 0:
+                        rows.append({**dict(invoice), "balance": balance})
                 report_date = date_type.fromisoformat(as_of)
                 headers = ["كود الطرف","اسم الطرف","رقم المستند","تاريخ المستند","تاريخ الاستحقاق",
                            "أيام التأخير","غير مستحق","0-30","31-60","61-90","أكثر من 90"]
@@ -374,6 +395,7 @@ def register_report_exports(app, db_path, permissions):
                     data.append([r["party_code"],r["party_name"],r["doc_no"],r["doc_date"],r["due_date"],
                                  max(days,0),*buckets])
                 filename = "nexus-aging-"+kind+".xlsx"
+                title = ("أعمار ديون العملاء" if kind == "customers" else "أعمار ديون الموردين") + " حتى " + as_of
             elif report == "party-statement":
                 from party_reports import _events
                 kind = request.args.get("kind", "customer")
