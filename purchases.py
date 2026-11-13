@@ -983,7 +983,7 @@ def new_bill():
                     raise ValueError("اختر حساب مصروف تفصيليًا ونشطًا.")
                 if receipts:
                     raise ValueError("فاتورة المصروف لا تُربط بإيصالات استلام مخزني.")
-            else:
+            elif bill_kind=="inventory":
                 if not receipts:
                     raise ValueError("فاتورة الأصناف المخزنية تتطلب إيصال استلام.")
                 supplier_ap_account(c)
