@@ -174,7 +174,7 @@ def validate_activity_profile(conn, profile):
         "account_roles": {
             "cash": "asset", "receivables": "asset", "payables": "liability",
             "inventory": "asset", "quick_assets": "asset", "current_assets": "asset",
-            "current_liabilities": "liability", "direct_cost": "expense",
+            "current_liabilities": "liability", "customer_advances": "liability", "direct_cost": "expense",
             "retained_earnings": "equity",
         },
     }
@@ -307,7 +307,7 @@ def update_custom_activity_profile(conn, profile_id, account_roles_json,
     role_types = {
         "cash": "asset", "receivables": "asset", "payables": "liability",
         "inventory": "asset", "quick_assets": "asset", "current_assets": "asset",
-        "current_liabilities": "liability", "direct_cost": "expense",
+        "current_liabilities": "liability", "customer_advances": "liability", "direct_cost": "expense",
         "retained_earnings": "equity",
     }
     accounts = {r["code"]: r for r in conn.execute(
