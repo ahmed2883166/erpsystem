@@ -322,5 +322,46 @@ class PurchasingAccountingTests(unittest.TestCase):
             )
 
 
+    def test_supplier_bill_submission_rejects_grni_allocation_mismatch(self):
+        purchases.init_purchase_schema()
+        self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-SUBMIT-GRNI','مورد مراجعة')")
+        supplier_id = self.db.execute(
+            "SELECT id FROM suppliers WHERE code='SUP-SUBMIT-GRNI'"
+        ).fetchone()["id"]
+        self.db.execute("INSERT INTO stock_warehouses(code,name_ar) VALUES('WH-SUBMIT-GRNI','مخزن مراجعة')")
+        warehouse_id = self.db.execute(
+            "SELECT id FROM stock_warehouses WHERE code='WH-SUBMIT-GRNI'"
+        ).fetchone()["id"]
+        self.db.execute("""INSERT INTO goods_receipts(
+            receipt_no,supplier_id,warehouse_id,receipt_date,status,total_value
+        ) VALUES('GR-SUBMIT-GRNI',?,?,'2026-11-13','posted','100.00')""",
+            (supplier_id, warehouse_id))
+        receipt_id = self.db.execute(
+            "SELECT id FROM goods_receipts WHERE receipt_no='GR-SUBMIT-GRNI'"
+        ).fetchone()["id"]
+        self.db.execute("""INSERT INTO supplier_bills(
+            bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,subtotal,
+            tax_rate,tax_amount,total_amount,status,bill_kind
+        ) VALUES('BILL-SUBMIT-GRNI',?,'2026-11-13','2026-11-30','INV-SUBMIT-GRNI',
+            '100.00','0','0','100.00','draft','inventory')""", (supplier_id,))
+        bill_id = self.db.execute(
+            "SELECT id FROM supplier_bills WHERE bill_no='BILL-SUBMIT-GRNI'"
+        ).fetchone()["id"]
+        self.db.execute(
+            "INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
+            (bill_id, receipt_id, "40.00"),
+        )
+        self.db.commit()
+
+        with self.assertRaisesRegex(ValueError, "مجموع تخصيصات إيصالات GRNI"):
+            purchases.submit_supplier_bill(self.db, bill_id, 10)
+        self.db.rollback()
+        bill = self.db.execute(
+            "SELECT status,journal_entry_id FROM supplier_bills WHERE id=?", (bill_id,)
+        ).fetchone()
+        self.assertEqual(bill["status"], "draft")
+        self.assertIsNone(bill["journal_entry_id"])
+
+
 if __name__ == "__main__":
     unittest.main()
