@@ -52,7 +52,7 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.assertIn("supplier_payments", names)
         self.assertIn("supplier_payment_allocations", names)
 
-    def test_supplier_invoice_number_and_receipt_can_only_be_used_once(self):
+    def test_supplier_invoice_is_unique_and_receipt_can_be_allocated_partially(self):
         purchases.init_purchase_schema()
         self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-1','مورد اختبار')")
         supplier_id = self.db.execute("SELECT id FROM suppliers WHERE code='SUP-1'").fetchone()["id"]
@@ -61,23 +61,27 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.db.execute("""INSERT INTO goods_receipts(receipt_no,supplier_id,warehouse_id,receipt_date,total_value)
                            VALUES('GR-1',?,?, '2026-11-10','100')""", (supplier_id, warehouse_id))
         receipt_id = self.db.execute("SELECT id FROM goods_receipts WHERE receipt_no='GR-1'").fetchone()["id"]
-        self.db.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,
-                           subtotal,tax_rate,tax_amount,total_amount)
-                           VALUES('BILL-1',?,'2026-11-10','DUP','100','0','0','100')""", (supplier_id,))
-        bill_id = self.db.execute("SELECT id FROM supplier_bills WHERE bill_no='BILL-1'").fetchone()["id"]
+        for bill_no, invoice_no in (("BILL-1", "DUP"), ("BILL-2", "UNIQUE-2")):
+            self.db.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,
+                               subtotal,tax_rate,tax_amount,total_amount)
+                               VALUES(?,?,'2026-11-10',?,'40','0','0','40')""",
+                            (bill_no, supplier_id, invoice_no))
+        bill1 = self.db.execute("SELECT id FROM supplier_bills WHERE bill_no='BILL-1'").fetchone()["id"]
+        bill2 = self.db.execute("SELECT id FROM supplier_bills WHERE bill_no='BILL-2'").fetchone()["id"]
+        self.db.execute("INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
+                        (bill1, receipt_id, "40"))
+        self.db.execute("INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
+                        (bill2, receipt_id, "60"))
         with self.assertRaises(sqlite3.IntegrityError):
             self.db.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,
                                subtotal,tax_rate,tax_amount,total_amount)
-                               VALUES('BILL-2',?,'2026-11-10',' dup ','100','0','0','100')""", (supplier_id,))
-        self.db.execute("INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
-                        (bill_id, receipt_id, "100"))
-        self.db.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,
-                           subtotal,tax_rate,tax_amount,total_amount)
-                           VALUES('BILL-3',?,'2026-11-10','UNIQUE-2','100','0','0','100')""", (supplier_id,))
-        other_bill = self.db.execute("SELECT id FROM supplier_bills WHERE bill_no='BILL-3'").fetchone()["id"]
-        with self.assertRaises(sqlite3.IntegrityError):
-            self.db.execute("INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
-                            (other_bill, receipt_id, "100"))
+                               VALUES('BILL-3',?,'2026-11-10',' dup ','100','0','0','100')""", (supplier_id,))
+        self.db.commit()
+        available = purchases._supplier_receipt_available_amount(self.db, receipt_id)
+        self.assertEqual(available, purchases.money("0"))
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM supplier_bill_receipts WHERE receipt_id=?", (receipt_id,)
+        ).fetchone()[0], 2)
 
     def test_purchase_order_requires_independent_approval_before_receipt(self):
         purchases.init_purchase_schema()
