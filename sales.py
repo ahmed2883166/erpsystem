@@ -555,6 +555,8 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
     ).fetchone()
     if not invoice:
         raise ValueError("فاتورة البيع غير موجودة أو غير مرحلة.")
+    if credit_date < invoice["invoice_date"]:
+        raise ValueError("لا يمكن إصدار إشعار دائن بتاريخ يسبق تاريخ فاتورة البيع.")
     dimensions = validate_journal_dimensions(conn, {
         "branch_id": invoice["branch_id"], "cost_center_id": invoice["cost_center_id"],
         "project_id": invoice["project_id"], "customer_id": invoice["customer_id"],
@@ -970,6 +972,9 @@ def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_i
     invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=? AND status='posted'", (invoice_id,)).fetchone()
     if not invoice:
         raise ValueError("فاتورة العميل غير موجودة أو غير مرحلة.")
+    if receipt_date < invoice["invoice_date"]:
+        raise ValueError("لا يمكن تسجيل تحصيل بتاريخ يسبق تاريخ فاتورة البيع.")
+    _ensure_unique_customer_cash_reference(conn, reference)
     outstanding = (Decimal(invoice["total_amount"]) - Decimal(invoice["paid_amount"]) -
                    Decimal(invoice["credited_amount"] or "0") + _refund_total(conn, invoice_id))
     if amount > outstanding:
@@ -1018,6 +1023,8 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
                                (invoice_id, customer_id)).fetchone()
         if not invoice:
             raise ValueError("إحدى الفواتير المحددة لا تتبع العميل أو غير مرحلة.")
+        if receipt_date < invoice["invoice_date"]:
+            raise ValueError("لا يمكن تسجيل تحصيل بتاريخ يسبق تاريخ إحدى فواتير البيع.")
         outstanding = (Decimal(invoice["total_amount"]) - Decimal(invoice["paid_amount"] or "0")
                        - Decimal(invoice["credited_amount"] or "0") + _refund_total(conn, invoice_id))
         if outstanding <= 0:
