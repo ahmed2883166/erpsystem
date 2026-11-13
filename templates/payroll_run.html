@@ -1,4 +1,18 @@
-{% extends "base.html" %}{% block title %}تفاصيل مسير الرواتب | NEXUS ERP{% endblock %}{% block content %}
+{% extends "base.html" %}{% block title %}تفاصيل مسير الرواتب | NEXUS ERP{% if run.status=='posted' %}
+<section class="panel"><h3>صرف صافي المرتبات</h3>
+<p>صافي المسير: <strong>{{totals.net_pay}}</strong> · ما تم صرفه: <strong>{{paid_amount}}</strong> · المتبقي: <strong>{{remaining_payable}}</strong></p>
+{% if remaining_payable > 0 %}
+<form method="post" action="{{url_for('workforce.pay_payroll',run_id=run.id)}}" class="form-grid">
+<label>تاريخ الصرف <input type="date" name="payment_date" value="{{today if today is defined else run.period + '-28'}}" required></label>
+<label>مبلغ الدفعة <input type="number" name="amount" min="0.01" max="{{remaining_payable}}" step="0.01" value="{{remaining_payable}}" required></label>
+<label>حساب البنك أو الصندوق <select name="cash_account_id" required>{% for a in payment_accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<label>مرجع التحويل / ملاحظات <input name="notes" maxlength="250"></label>
+<button type="submit">صرف المرتب وترحيل القيد</button></form>
+{% else %}<p class="muted">تم سداد كامل صافي المرتبات لهذا المسير.</p>{% endif %}
+<h4>سجل دفعات الصرف</h4><table><tr><th>التاريخ</th><th>المبلغ</th><th>الحساب</th><th>رقم القيد</th><th>المرجع</th></tr>
+{% for p in payments %}<tr><td>{{p.payment_date}}</td><td>{{p.amount}}</td><td>{{p.account_code}} - {{p.account_name}}</td><td>{{p.journal_entry_id}}</td><td>{{p.reference}}</td></tr>{% else %}<tr><td colspan="5">لم يتم صرف أي دفعة بعد.</td></tr>{% endfor %}</table>
+</section>{% endif %}
+{% endblock %}{% block content %}
 <header><h2>مسير الرواتب {{run.period}}</h2><p>الحالة: {{'مرحّل' if run.status=='posted' else 'مسودة'}} | رقم القيد: {{run.journal_entry_id or '-'}}</p><p><a href="{{url_for('report_exports.export_report_excel', report='payroll', run_id=run.id)}}">تصدير المسير إلى Excel</a> | <a href="{{url_for('report_exports.export_report_excel', report='payroll', run_id=run.id).replace('/excel','/pdf') }}">تحميل PDF</a></p></header>
 <section class="panel"><h3>تفاصيل مستحقات وخصومات الموظفين</h3><div style="overflow-x:auto"><table><tr><th>الموظف</th><th>أساسي بعد العلاوة</th><th>قيمة العلاوة</th><th>بدلات</th><th>الحافز</th><th>أيام الحافز</th><th>نسبة الإضافي</th><th>إضافي</th><th>خصم غياب</th><th>إجمالي الاستحقاقات</th><th>السلف</th><th>خصومات أخرى</th><th>ضريبة</th><th>تأمين موظف</th><th>تأمين شركة</th><th>صافي المستحق</th></tr>
 {% for r in rows %}<tr><td>{{r.employee_code}} - {{r.full_name}}</td><td>{{r.basic_salary}}</td><td>{{r.salary_raise}}</td><td>{{r.allowances}}</td><td>{{r.incentives}}{% if r.incentive_name %}<br><small>{{r.incentive_name}} ({{r.incentive_method}})</small>{% endif %}</td><td>{{r.incentive_days}}</td><td>{{r.overtime_rate_percent}}%</td><td>{{r.overtime_amount}}</td><td>{{r.absence_deduction}}</td><td>{{r.total_entitlements}}</td><td>{{r.advance_deduction}}</td><td>{{r.other_deductions}}</td><td>{{r.taxable_income_tax}}</td><td>{{r.employee_insurance}}</td><td>{{r.employer_insurance}}</td><td><strong>{{r.net_pay}}</strong></td></tr>{% endfor %}
