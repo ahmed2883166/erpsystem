@@ -85,6 +85,30 @@ class PartyStatementTests(unittest.TestCase):
         self.assertIn("كشف حساب عميل", body)
         self.assertIn("SCN-1", body)
 
+    def test_cancelled_customer_credit_note_and_reversal_net_to_zero(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("ALTER TABLE sales_credit_notes ADD COLUMN cancel_journal_entry_id INTEGER")
+        conn.execute("ALTER TABLE sales_credit_notes ADD COLUMN cancellation_reason TEXT")
+        conn.execute("CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT)")
+        conn.execute("INSERT INTO journal_entries VALUES(1,'2026-11-28','posted')")
+        conn.execute(
+            """INSERT INTO sales_credit_notes(
+                id,invoice_id,credit_note_no,credit_date,reason,total_amount,status,
+                cancel_journal_entry_id,cancellation_reason
+            ) VALUES(2,2,'SCN-CANCEL','2026-11-21','cancelled return','40','cancelled',1,'wrong note')"""
+        )
+        conn.commit()
+        conn.close()
+
+        response = self.client.get(
+            "/reports/party-statement?kind=customer&party_id=1&date_from=2026-11-01&date_to=2026-11-30"
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("SCN-CANCEL", body)
+        self.assertIn("SCN-CANCEL-CANCEL", body)
+        self.assertIn("1,200.00", body)
+
     def test_customer_statement_includes_batch_receipts_without_double_counting(self):
         conn = sqlite3.connect(self.db_path)
         conn.execute("""CREATE TABLE customer_receipt_batches(
