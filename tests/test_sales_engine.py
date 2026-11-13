@@ -260,6 +260,8 @@ class SalesIntegrationTests(unittest.TestCase):
             self.db, self.customer_id, "2026-11-10", self.warehouse_id,
             [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}], "0", 1,
         )
+        self.db.commit()
+        self.db.execute("BEGIN IMMEDIATE")
         cash_id = self.db.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
         with self.assertRaisesRegex(ValueError, "أكبر من المتبقي"):
             sales.post_customer_receipt_batch(
