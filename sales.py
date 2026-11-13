@@ -114,6 +114,20 @@ def init_sales_schema():
       reference TEXT NOT NULL DEFAULT '',
       created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS customer_advance_reversals(
+      id INTEGER PRIMARY KEY,
+      source_type TEXT NOT NULL CHECK(source_type IN ('receipt','allocation','refund')),
+      source_id INTEGER NOT NULL,
+      original_journal_entry_id INTEGER NOT NULL UNIQUE,
+      reversal_journal_entry_id INTEGER NOT NULL UNIQUE,
+      reversal_date TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(source_type,source_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_customer_advance_reversals_date
+      ON customer_advance_reversals(reversal_date,source_type);
     CREATE INDEX IF NOT EXISTS idx_sales_invoice_customer ON sales_invoices(customer_id,invoice_date);
     CREATE INDEX IF NOT EXISTS idx_sales_receipts_invoice ON customer_receipts(invoice_id,receipt_date);
     """)
@@ -1164,17 +1178,29 @@ def _validate_customer_advance_date(value):
 
 def _customer_advance_available(conn, advance_receipt_id):
     receipt = conn.execute(
-        "SELECT amount FROM customer_advance_receipts WHERE id=?",
+        """SELECT r.amount FROM customer_advance_receipts r
+           WHERE r.id=? AND NOT EXISTS (
+             SELECT 1 FROM customer_advance_reversals x
+             WHERE x.source_type='receipt' AND x.source_id=r.id
+           )""",
         (advance_receipt_id,),
     ).fetchone()
     if not receipt:
-        raise ValueError("إيصال مقدم العميل غير موجود.")
+        raise ValueError("إيصال مقدم العميل غير موجود أو تم عكسه.")
     allocated = conn.execute(
-        "SELECT amount FROM customer_advance_allocations WHERE advance_receipt_id=?",
+        """SELECT a.amount FROM customer_advance_allocations a
+           WHERE a.advance_receipt_id=? AND NOT EXISTS (
+             SELECT 1 FROM customer_advance_reversals x
+             WHERE x.source_type='allocation' AND x.source_id=a.journal_entry_id
+           )""",
         (advance_receipt_id,),
     ).fetchall()
     refunded = conn.execute(
-        "SELECT amount FROM customer_advance_refunds WHERE advance_receipt_id=?",
+        """SELECT r.amount FROM customer_advance_refunds r
+           WHERE r.advance_receipt_id=? AND NOT EXISTS (
+             SELECT 1 FROM customer_advance_reversals x
+             WHERE x.source_type='refund' AND x.source_id=r.id
+           )""",
         (advance_receipt_id,),
     ).fetchall()
     used = sum((Decimal(str(row["amount"] or "0")) for row in allocated + refunded), Decimal("0"))
@@ -1293,6 +1319,86 @@ def allocate_customer_advance(conn, advance_receipt_id, allocations, allocation_
         )
     return {"journal_entry_id": journal_id, "total_amount": total,
             "invoice_count": len(normalized), "remaining_advance": available - total}
+
+
+def reverse_customer_advance_transaction(
+    conn, source_type, source_id, reversal_date, reason, created_by=None
+):
+    """Reverse an advance receipt, allocation batch, or refund with a linked journal."""
+    if source_type not in {"receipt", "allocation", "refund"}:
+        raise ValueError("نوع عملية المقدم المراد عكسها غير صحيح.")
+    reversal_date = _validate_customer_advance_date(reversal_date)
+    reason = str(reason or "").strip()
+    if len(reason) < 5 or len(reason) > 500:
+        raise ValueError("سبب العكس مطلوب من 5 إلى 500 حرف.")
+    if source_type == "receipt":
+        source = conn.execute(
+            "SELECT * FROM customer_advance_receipts WHERE id=?", (source_id,)
+        ).fetchone()
+        if not source:
+            raise ValueError("إيصال المقدم غير موجود.")
+        original_journal_id = source["journal_entry_id"]
+        original_date = source["receipt_date"]
+        available = _customer_advance_available(conn, source_id)
+        if available != Decimal(str(source["amount"])):
+            raise ValueError("لا يمكن عكس إيصال المقدم قبل عكس كل التخصيصات والردود المرتبطة به.")
+    elif source_type == "allocation":
+        original_journal_id = int(source_id)
+        allocations = conn.execute(
+            """SELECT a.*,i.invoice_no,i.paid_amount,i.customer_id
+               FROM customer_advance_allocations a
+               JOIN sales_invoices i ON i.id=a.invoice_id
+               WHERE a.journal_entry_id=? ORDER BY a.id""",
+            (original_journal_id,),
+        ).fetchall()
+        if not allocations:
+            raise ValueError("عملية تخصيص المقدم غير موجودة.")
+        original_date = max(row["allocation_date"] for row in allocations)
+        for row in allocations:
+            if Decimal(str(row["paid_amount"] or "0")) < Decimal(str(row["amount"])):
+                raise ValueError("رصيد الفاتورة لا يسمح بعكس قيمة التخصيص بأمان.")
+    else:
+        source = conn.execute(
+            "SELECT * FROM customer_advance_refunds WHERE id=?", (source_id,)
+        ).fetchone()
+        if not source:
+            raise ValueError("عملية رد المقدم غير موجودة.")
+        original_journal_id = source["journal_entry_id"]
+        original_date = source["refund_date"]
+    if reversal_date < original_date:
+        raise ValueError("تاريخ العكس لا يجوز أن يسبق تاريخ العملية الأصلية.")
+    if conn.execute(
+        """SELECT 1 FROM customer_advance_reversals
+           WHERE source_type=? AND source_id=?""",
+        (source_type, source_id),
+    ).fetchone():
+        raise ValueError("تم عكس هذه العملية من قبل.")
+    reversal_no = "CADV-REV-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    reversal_journal_id = _reverse_posted_journal(
+        conn, original_journal_id, reversal_date, reversal_no,
+        "عكس عملية مقدم عميل: " + reason, created_by,
+    )
+    if source_type == "allocation":
+        for row in allocations:
+            conn.execute(
+                "UPDATE sales_invoices SET paid_amount=? WHERE id=?",
+                (str(Decimal(str(row["paid_amount"] or "0")) - Decimal(str(row["amount"]))),
+                 row["invoice_id"]),
+            )
+    conn.execute(
+        """INSERT INTO customer_advance_reversals
+           (source_type,source_id,original_journal_entry_id,reversal_journal_entry_id,
+            reversal_date,reason,created_by)
+           VALUES(?,?,?,?,?,?,?)""",
+        (source_type, source_id, original_journal_id, reversal_journal_id,
+         reversal_date, reason, created_by),
+    )
+    return {
+        "source_type": source_type, "source_id": source_id,
+        "original_journal_entry_id": original_journal_id,
+        "reversal_journal_entry_id": reversal_journal_id,
+        "reversal_no": reversal_no,
+    }
 
 
 def post_customer_advance_refund(conn, advance_receipt_id, refund_date, amount,
@@ -1462,6 +1568,34 @@ def allocate_customer_advance_route(advance_id):
             f"تم تخصيص {result['total_amount']:.2f} على {result['invoice_count']} فاتورة بنجاح.",
             "success",
         )
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc), "error")
+    finally:
+        c.close()
+    return redirect(url_for("sales.customer_advances"))
+
+
+@sales_bp.route("/advances/reversals/<string:source_type>/<int:source_id>", methods=["POST"])
+@require("sales.manage")
+def reverse_customer_advance_route(source_type, source_id):
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        result = reverse_customer_advance_transaction(
+            c, source_type, source_id,
+            request.form.get("reversal_date", ""),
+            request.form.get("reason", ""), session.get("user_id"),
+        )
+        c.commit()
+        if hasattr(g, "audit_created_record"):
+            g.audit_created_record(
+                "customer_advance_reversal", result["reversal_journal_entry_id"],
+                {"source_type": source_type, "source_id": source_id,
+                 "original_journal_entry_id": result["original_journal_entry_id"],
+                 "reason": request.form.get("reason", "").strip()},
+            )
+        flash("تم عكس العملية بقيد عكسي مرتبط دون حذف المستند أو القيد الأصلي.", "success")
     except (ValueError, sqlite3.Error) as exc:
         c.rollback()
         flash(str(exc), "error")
