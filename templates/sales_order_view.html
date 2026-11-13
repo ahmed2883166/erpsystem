@@ -36,6 +36,11 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button>اعتماد أمر البيع</button>
   </form>
+  <form method="post" action="{{ url_for('quotes.reject_order_route', order_id=order.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>سبب الرفض <textarea name="reason" minlength="5" maxlength="500" required></textarea></label>
+    <button class="danger">رفض أمر البيع</button>
+  </form>
 </section>
 {% endif %}
 {% if has_stock_lines and order.status in ['approved','partially_delivered','partially_invoiced'] and 'sales.manage' in permissions %}
