@@ -5,6 +5,7 @@
   <h2>دفعات العملاء المقدمة</h2>
   <p>تسجيل المقدم كالتزام، ثم تخصيصه على فواتير العميل أو رد الجزء غير المستخدم.</p>
 </header>
+{% if 'sales.manage' in permissions %}
 <section class="panel">
   <h3>استلام مقدم جديد</h3>
   <form method="post" action="{{ url_for('sales.create_customer_advance_receipt') }}">
@@ -29,6 +30,7 @@
     <button type="submit">تسجيل المقدم وترحيل القيد</button>
   </form>
 </section>
+{% endif %}
 <section class="panel">
   <h3>أرصدة المقدمات</h3>
   <table>
@@ -40,7 +42,7 @@
         <td>{{ advance.receipt_date }}</td><td>{{ '%.2f'|format(advance.amount|float) }}</td>
         <td>{{ '%.2f'|format(advance.remaining_amount) }}</td><td>{{ advance.journal_entry_id }}</td>
       </tr>
-      {% if advance.remaining_amount > 0 %}
+      {% if advance.remaining_amount > 0 and 'sales.manage' in permissions %}
       <tr><td colspan="6">
         <div class="form-grid">
           <form method="post" action="{{ url_for('sales.allocate_customer_advance_route', advance_id=advance.id) }}">
