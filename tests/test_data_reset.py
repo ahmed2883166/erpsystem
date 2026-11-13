@@ -187,21 +187,27 @@ class CompanyDataResetTests(unittest.TestCase):
             return self.open_database()
 
         backup_path = Path(self.temp.name) / "csrf-reset-backup.zip"
-        with patch.object(nexus_app, "db", side_effect=open_database), \\
-             patch.object(nexus_app, "create_backup_archive", return_value=backup_path) as backup, \\
-             patch.object(nexus_app, "log"):
-            page = client.get("/backup/settings")
-            self.assertEqual(page.status_code, 200)
-            html = page.get_data(as_text=True)
-            token_match = re.search(r'name="csrf_token" value="([^"]+)"', html)
-            self.assertIsNotNone(token_match, "backup settings forms must include a CSRF token")
-            response = client.post(
-                "/backup/reset-data",
-                data={
-                    "csrf_token": token_match.group(1),
-                    "super_admin_password": "RootSecret123!",
-                },
-            )
+        with patch.object(nexus_app, "db", side_effect=open_database) as db_patch:
+            with patch.object(
+                nexus_app, "create_backup_archive", return_value=backup_path
+            ) as backup:
+                with patch.object(nexus_app, "log"):
+                    page = client.get("/backup/settings")
+                    self.assertEqual(page.status_code, 200)
+                    html = page.get_data(as_text=True)
+                    token_match = re.search(
+                        r'name="csrf_token" value="([^"]+)"', html
+                    )
+                    self.assertIsNotNone(
+                        token_match, "backup settings forms must include a CSRF token"
+                    )
+                    response = client.post(
+                        "/backup/reset-data",
+                        data={
+                            "csrf_token": token_match.group(1),
+                            "super_admin_password": "RootSecret123!",
+                        },
+                    )
 
         self.assertEqual(response.status_code, 302)
         backup.assert_called_once()
