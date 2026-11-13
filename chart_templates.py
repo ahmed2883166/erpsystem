@@ -72,7 +72,7 @@ ACTIVITY_LABELS = {
 ACTIVITY_ACCOUNT_ROLES = {
     "commercial": {
         "cash": ("1110", "1120"), "receivables": ("1130",),
-        "payables": ("2110",), "inventory": ("1150",),
+        "payables": ("2110",), "customer_advances": ("2160",), "inventory": ("1150",),
         "quick_assets": ("1110", "1120", "1130", "1140"),
         "current_assets": ("1110", "1120", "1130", "1140", "1150", "1160", "1165"),
         "current_liabilities": ("2110", "2120", "2130", "2140"),
@@ -80,7 +80,7 @@ ACTIVITY_ACCOUNT_ROLES = {
     },
     "service": {
         "cash": ("1110",), "receivables": ("1120", "1130"),
-        "payables": ("2100",), "inventory": (),
+        "payables": ("2100",), "customer_advances": ("2160",), "inventory": (),
         "quick_assets": ("1110", "1120", "1130"),
         "current_assets": ("1110", "1120", "1130", "1140", "1165"),
         "current_liabilities": ("2100", "2110", "2120", "2130", "2150"),
@@ -88,7 +88,7 @@ ACTIVITY_ACCOUNT_ROLES = {
     },
     "medical": {
         "cash": ("1110", "1120"), "receivables": ("1130", "1140"),
-        "payables": ("2100",), "inventory": ("1150", "1160"),
+        "payables": ("2100",), "customer_advances": ("2160",), "inventory": ("1150", "1160"),
         "quick_assets": ("1110", "1120", "1130", "1140"),
         "current_assets": ("1110", "1120", "1130", "1140", "1150", "1160", "1165"),
         "current_liabilities": ("2100", "2110", "2120", "2130", "2140"),
@@ -96,7 +96,7 @@ ACTIVITY_ACCOUNT_ROLES = {
     },
     "restaurant": {
         "cash": ("1110", "1120"), "receivables": ("1130",),
-        "payables": ("2100",), "inventory": ("1140", "1150", "1160"),
+        "payables": ("2100",), "customer_advances": ("2160",), "inventory": ("1140", "1150", "1160"),
         "quick_assets": ("1110", "1120", "1130"),
         "current_assets": ("1110", "1120", "1130", "1140", "1150", "1160", "1165"),
         "current_liabilities": ("2100", "2110", "2120", "2130", "2140"),
@@ -104,7 +104,7 @@ ACTIVITY_ACCOUNT_ROLES = {
     },
     "industrial": {
         "cash": ("1110",), "receivables": ("1120",),
-        "payables": ("2100",), "inventory": ("1130", "1140", "1150", "1160"),
+        "payables": ("2100",), "customer_advances": ("2160",), "inventory": ("1130", "1140", "1150", "1160"),
         "quick_assets": ("1110", "1120"),
         "current_assets": ("1110", "1120", "1130", "1140", "1150", "1160", "1165"),
         "current_liabilities": ("2100", "2110", "2120", "2130"),
@@ -138,6 +138,7 @@ ACTIVITY_TAX_ACCOUNT_ROLES = {
 # posted journal links are preserved by the explicit, idempotent VAT migration below.
 _COMMON_ACTIVITY_ACCOUNTS = [
     ("1165", "ضريبة قيمة مضافة مدخلات قابلة للخصم", "asset", "1100", 0),
+    ("2160", "دفعات مقدمة من العملاء", "liability", "2000", 0),
     ("1240", "أصول ثابتة إضافية", "asset", "1200", 1),
     ("1241", "مباني وتحسينات", "asset", "1240", 0),
     ("1242", "أثاث وتجهيزات", "asset", "1240", 0),
