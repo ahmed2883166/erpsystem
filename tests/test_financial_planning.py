@@ -5,7 +5,7 @@ from unittest.mock import patch
 from decimal import Decimal
 
 from chart_templates import CHARTS, seed_activity_chart, ensure_activity_chart_accounts
-from financial_planning import (initialize_planning_schema, build_balance_sheet_snapshot, _money, _connect, create_financial_year, list_financial_years, create_opening_entry, close_financial_year, reverse_financial_year_entry, build_financial_year_preclose_report)
+from financial_planning import (initialize_planning_schema, build_balance_sheet_snapshot, _money, _connect, create_financial_year, list_financial_years, create_opening_entry, close_financial_year, reverse_financial_year_entry, build_financial_year_preclose_report, build_budget_comparison)
 from accounting_core import register_decimal_aggregates, post_journal
 
 
@@ -19,7 +19,8 @@ class FinancialPlanningTests(unittest.TestCase):
             active INTEGER DEFAULT 1)""")
         self.conn.executescript("""
             CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT);
-            CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit TEXT,credit TEXT);
+            CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit TEXT,credit TEXT,
+                branch_id INTEGER,cost_center_id INTEGER,project_id INTEGER);
         """)
         register_decimal_aggregates(self.conn)
 
@@ -61,12 +62,52 @@ class FinancialPlanningTests(unittest.TestCase):
             "SELECT name FROM sqlite_master WHERE type='table'")}
         self.assertIn("budget_plans", tables)
         self.assertIn("budget_lines", tables)
+        budget_columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(budget_plans)")}
+        self.assertTrue({"branch_id", "cost_center_id", "project_id"}.issubset(budget_columns))
         self.assertEqual(_money("123.456"), Decimal("123.46"))
         with self.assertRaises(ValueError):
             _money("-1")
         with self.assertRaises(Exception):
             _money("NaN")
 
+
+    def test_budget_comparison_filters_dimensions_and_flags_80_percent(self):
+        initialize_planning_schema(self.conn)
+        self.conn.executemany(
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) VALUES(?,?,?,?,0,1)",
+            [(1, "6100", "مصروفات تشغيل", "expense"), (2, "4100", "إيرادات خدمات", "revenue")]
+        )
+        self.conn.execute("""INSERT INTO budget_plans
+            (id,name,date_from,date_to,branch_id,cost_center_id)
+            VALUES(1,'موازنة فرع','2026-11-01','2026-11-30',1,2)""")
+        self.conn.executemany(
+            "INSERT INTO budget_lines(budget_id,account_id,amount) VALUES(1,?,?)",
+            [(1, "1000.00"), (2, "500.00")]
+        )
+        self.conn.executemany(
+            "INSERT INTO journal_entries(id,entry_date,status) VALUES(?,?,?)",
+            [(1, "2026-11-10", "posted"), (2, "2026-11-11", "posted"),
+             (3, "2026-11-12", "draft"), (4, "2026-11-13", "posted")]
+        )
+        self.conn.executemany(
+            """INSERT INTO journal_lines(entry_id,account_id,debit,credit,branch_id,cost_center_id)
+               VALUES(?,?,?,?,?,?)""",
+            [(1, 1, "850", "0", 1, 2), (2, 1, "400", "0", 2, 2),
+             (3, 1, "999", "0", 1, 2), (4, 2, "0", "600", 1, 2)]
+        )
+        plan, rows, totals = build_budget_comparison(self.conn, 1)
+        by_code = {row["code"]: row for row in rows}
+        self.assertEqual(by_code["6100"]["actual"], Decimal("850"))
+        self.assertEqual(by_code["6100"]["status"], "warning")
+        self.assertEqual(by_code["4100"]["actual"], Decimal("600"))
+        self.assertEqual(by_code["4100"]["status"], "ahead")
+        self.assertEqual(totals["expense_actual"], Decimal("850"))
+        self.assertEqual(totals["revenue_actual"], Decimal("600"))
+
+    def test_budget_comparison_rejects_missing_budget(self):
+        initialize_planning_schema(self.conn)
+        with self.assertRaisesRegex(ValueError, "غير موجودة"):
+            build_budget_comparison(self.conn, 999)
 
     def test_balance_sheet_includes_profit_and_excludes_drafts(self):
         self.conn.executemany("INSERT INTO accounts(id,code,name_ar,account_type,is_group) VALUES(?,?,?,?,0)", [
