@@ -253,6 +253,79 @@ def get_active_activity_profile(conn):
     return profile
 
 
+
+# Product-category account routing for activities with distinct inventory/cost buckets.
+# Category codes are explicit, stable identifiers; Arabic/English category names are
+# also accepted for installations that have not standardized category codes yet.
+PRODUCT_ACCOUNT_CATEGORY_RULES = {
+    "restaurant": {
+        "inventory": {
+            "food": ("FOOD", "FOODS", "FOODSTUFF", "أغذية", "مواد غذائية", "غذاء"),
+            "beverage": ("BEVERAGE", "BEVERAGES", "DRINK", "DRINKS", "مشروبات"),
+            "packaging": ("PACKAGING", "PACK", "تعبئة", "تغليف", "مواد التعبئة"),
+        },
+        "cogs": {
+            "food": ("FOOD", "FOODS", "FOODSTUFF", "أغذية", "مواد غذائية", "غذاء"),
+            "beverage": ("BEVERAGE", "BEVERAGES", "DRINK", "DRINKS", "مشروبات"),
+            "packaging": ("PACKAGING", "PACK", "تعبئة", "تغليف", "مواد التعبئة"),
+        },
+    },
+    "medical": {
+        "inventory": {
+            "medical": ("MEDICAL", "MEDICINE", "MEDICINES", "DRUG", "DRUGS", "أدوية", "دواء", "مستلزمات طبية"),
+            "lab": ("LAB", "LABORATORY", "LAB_SUPPLIES", "معامل", "مختبر", "مستلزمات المعامل"),
+        },
+        "cogs": {
+            "medical": ("MEDICAL", "MEDICINE", "MEDICINES", "DRUG", "DRUGS", "أدوية", "دواء", "مستلزمات طبية"),
+            "lab": ("LAB", "LABORATORY", "LAB_SUPPLIES", "معامل", "مختبر", "مستلزمات المعامل"),
+        },
+    },
+}
+
+PRODUCT_CATEGORY_ACCOUNT_CODES = {
+    "restaurant": {
+        "inventory": {"food": "1140", "beverage": "1150", "packaging": "1160"},
+        "cogs": {"food": "5100", "beverage": "5200", "packaging": "5400"},
+    },
+    "medical": {
+        "inventory": {"medical": "1150", "lab": "1160"},
+        "cogs": {"medical": "5300", "lab": "5200"},
+    },
+}
+
+
+def resolve_product_account_code(conn, product_id, role, default_code=None):
+    """Resolve inventory/COGS account from the product's stock category.
+
+    Unknown categories deliberately use the activity's configured default to keep
+    legacy products posting as before; missing or invalid accounts are rejected
+    by the caller before a journal is posted.
+    """
+    profile = get_active_activity_profile(conn)
+    activity = profile["base_activity"]
+    rules = PRODUCT_ACCOUNT_CATEGORY_RULES.get(activity, {}).get(role, {})
+    account_codes = PRODUCT_CATEGORY_ACCOUNT_CODES.get(activity, {}).get(role, {})
+    if not rules or not product_id:
+        return default_code
+    product = conn.execute(
+        """SELECT p.category, c.code category_code, c.name_ar category_name
+           FROM stock_products p
+           LEFT JOIN stock_categories c ON c.id=p.category_id
+           WHERE p.id=?""", (product_id,)
+    ).fetchone()
+    if not product:
+        raise ValueError("الصنف غير موجود أثناء تحديد حساب المخزون أو التكلفة.")
+    candidates = {
+        str(product["category_code"] or "").strip().casefold(),
+        str(product["category"] or "").strip().casefold(),
+        str(product["category_name"] or "").strip().casefold(),
+    }
+    for bucket, aliases in rules.items():
+        if any(str(alias).strip().casefold() in candidates for alias in aliases):
+            return account_codes[bucket]
+    return default_code
+
+
 def active_posting_accounts(conn):
     return get_active_activity_profile(conn)["posting_accounts"]
 
