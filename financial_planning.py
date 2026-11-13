@@ -940,39 +940,6 @@ def budget_detail(budget_id):
     return render_template("budget_detail.html", plan=plan, rows=results, **totals)
 
 
-@planning_bp.route("/budget/<int:budget_id>")
-@_require("budget.view")
-def budget_detail(budget_id):
-    conn = _connect()
-    plan = conn.execute("SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
-    if not plan:
-        conn.close(); abort(404)
-    rows = conn.execute("""
-      SELECT a.id,a.code,a.name_ar,a.account_type,b.amount,
-        COALESCE((SELECT DECIMAL_NET(jl.credit,jl.debit) FROM journal_lines jl
-          JOIN journal_entries je ON je.id=jl.entry_id
-          WHERE jl.account_id=a.id AND je.status='posted'
-            AND je.entry_date>=? AND je.entry_date<=?), '0') actual
-      FROM budget_lines b JOIN accounts a ON a.id=b.account_id
-      WHERE b.budget_id=? ORDER BY a.account_type,a.code
-    """, (plan["date_from"],plan["date_to"],budget_id)).fetchall()
-    results=[]
-    for row in rows:
-        budget=_money(row["amount"])
-        raw=Decimal(str(row["actual"] or "0"))
-        actual=raw if row["account_type"]=="revenue" else -raw
-        variance=actual-budget
-        results.append({**dict(row),"budget":budget,"actual":actual,"variance":variance,
-                        "variance_pct":(variance*100/budget) if budget else None})
-    conn.close()
-    return render_template("budget_detail.html",plan=plan,rows=results,
-                           revenue_budget=sum((x["budget"] for x in results if x["account_type"]=="revenue"),Decimal("0")),
-                           revenue_actual=sum((x["actual"] for x in results if x["account_type"]=="revenue"),Decimal("0")),
-                           expense_budget=sum((x["budget"] for x in results if x["account_type"]=="expense"),Decimal("0")),
-                           expense_actual=sum((x["actual"] for x in results if x["account_type"]=="expense"),Decimal("0")))
-
-
-
 def build_balance_sheet_snapshot(conn, as_of):
     rows = conn.execute("""SELECT a.id,a.code,a.name_ar,a.account_type,a.parent_id,a.is_group,
         COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
