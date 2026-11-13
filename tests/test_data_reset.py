@@ -21,6 +21,7 @@ class CompanyDataResetTests(unittest.TestCase):
             CREATE TABLE currencies(code TEXT PRIMARY KEY, name TEXT);
             CREATE TABLE tax_rates(id INTEGER PRIMARY KEY, code TEXT);
             CREATE TABLE audit_log(id INTEGER PRIMARY KEY, action TEXT);
+            CREATE TABLE login_attempts(id INTEGER PRIMARY KEY, username TEXT, remote_addr TEXT, attempted_at TEXT);
             CREATE TABLE activity_profiles(id INTEGER PRIMARY KEY, name TEXT);
             CREATE TABLE cash_flow_account_mappings(id INTEGER PRIMARY KEY, account_id INTEGER);
             CREATE TABLE management_account_roles(id INTEGER PRIMARY KEY, account_id INTEGER);
@@ -105,6 +106,7 @@ class CompanyDataResetTests(unittest.TestCase):
                 setting_key TEXT PRIMARY KEY, setting_value TEXT
             );
             CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, action TEXT);
+            CREATE TABLE IF NOT EXISTS login_attempts(id INTEGER PRIMARY KEY, username TEXT, remote_addr TEXT, attempted_at TEXT);
             CREATE TABLE IF NOT EXISTS sample_business_data(id INTEGER PRIMARY KEY, value TEXT);
         """)
         connection.execute(
