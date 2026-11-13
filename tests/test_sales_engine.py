@@ -379,6 +379,27 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(credit_totals["4100"][0], Decimal("180"))
         self.assertEqual(credit_totals["2130"][0], Decimal("25.2"))
         self.assertEqual(credit_totals["1130"][1], Decimal("205.2"))
+        cogs_rows = self.db.execute(
+            """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
+               JOIN accounts a ON a.id=jl.account_id
+               WHERE jl.entry_id IN (?,?)""",
+            (first["cogs_journal_entry_id"], second["cogs_journal_entry_id"]),
+        ).fetchall()
+        cogs_totals = {}
+        for row in cogs_rows:
+            debit, credit = cogs_totals.get(row["code"], (Decimal("0"), Decimal("0")))
+            cogs_totals[row["code"]] = (
+                debit + Decimal(str(row["debit"] or "0")),
+                credit + Decimal(str(row["credit"] or "0")),
+            )
+        self.assertEqual(cogs_totals["1150"], (Decimal("20.00"), Decimal("0")))
+        self.assertEqual(cogs_totals["5100"], (Decimal("0"), Decimal("20.00")))
+        self.assertEqual(
+            Decimal(self.db.execute(
+                "SELECT SUM(CAST(qty_remaining AS NUMERIC)) FROM stock_valuation_layers"
+            ).fetchone()[0]),
+            Decimal("5"),
+        )
         self.assertEqual(
             self.db.execute(
                 "SELECT COUNT(*) FROM sales_credit_note_lines WHERE invoice_line_id=?",
