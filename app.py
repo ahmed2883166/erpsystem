@@ -1,3 +1,4 @@
+import base64
 import csv
 import hashlib
 import hmac
@@ -771,6 +772,10 @@ def company_setup():
         settings_values = {
             "inventory_cost_method": inventory_cost_method,
             "company_name": request.form.get("company_name", "").strip(),
+            "company_address": request.form.get("company_address", "").strip()[:300],
+            "company_phone": request.form.get("company_phone", "").strip()[:60],
+            "company_email": request.form.get("company_email", "").strip()[:120],
+            "company_website": request.form.get("company_website", "").strip()[:160],
             "tax_country": tax_country, "tax_regime": tax_regime,
             "tax_number": request.form.get("tax_number", "").strip(),
             "activity": activity, "base_currency": base_currency,
@@ -788,9 +793,31 @@ def company_setup():
             row["setting_key"]: row["setting_value"]
             for row in connection.execute(
                 "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
-                "('company_name','tax_country','tax_regime','activity','base_currency','default_vat_rate','inventory_cost_method')"
+                "('company_name','tax_country','tax_regime','activity','base_currency','default_vat_rate','inventory_cost_method','company_address','company_phone','company_email','company_website')"
             ).fetchall()
         }
+        uploaded_logo = request.files.get("company_logo")
+        if uploaded_logo and uploaded_logo.filename:
+            logo_bytes = uploaded_logo.read(1024 * 1024 + 1)
+            if len(logo_bytes) > 1024 * 1024:
+                flash("حجم الشعار يجب ألا يتجاوز 1 ميجابايت.", "error")
+                connection.close()
+                return redirect(url_for("company_setup"))
+            logo_types = (
+                (b"\\x89PNG\\r\\n\\x1a\\n", "image/png"),
+                (b"\\xff\\xd8\\xff", "image/jpeg"),
+                (b"RIFF", "image/webp"),
+            )
+            mime = next((kind for signature, kind in logo_types
+                         if logo_bytes.startswith(signature) and
+                         (kind != "image/webp" or logo_bytes[8:12] == b"WEBP")), None)
+            if not mime:
+                flash("صيغة الشعار غير مدعومة. استخدم PNG أو JPG أو WEBP.", "error")
+                connection.close()
+                return redirect(url_for("company_setup"))
+            settings_values["company_logo_data"] = "data:" + mime + ";base64," + base64.b64encode(logo_bytes).decode("ascii")
+        elif request.form.get("remove_company_logo") == "yes":
+            settings_values["company_logo_data"] = ""
         previous_activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
         previous_activity = previous_activity_row["setting_value"] if previous_activity_row else None
         has_entries = connection.execute("SELECT 1 FROM journal_entries LIMIT 1").fetchone()
