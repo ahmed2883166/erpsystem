@@ -12,8 +12,9 @@ class ReceivablesAgingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.original_path = receivables.DB_PATH
-        receivables.DB_PATH = Path(self.temp.name) / "nexus.db"
-        conn = sqlite3.connect(receivables.DB_PATH)
+        self.db_path = Path(self.temp.name) / "nexus.db"
+        receivables.DB_PATH = self.db_path
+        conn = sqlite3.connect(self.db_path)
         initialize_party_reporting_schema(conn)
         conn.executemany("INSERT INTO customers(id,code,name,active) VALUES(?,?,?,?)", [(1,"C1","عميل",1)])
         conn.executemany("INSERT INTO suppliers(id,code,name,active) VALUES(?,?,?,?)", [(1,"S1","مورد",1)])
