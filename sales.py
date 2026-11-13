@@ -366,10 +366,23 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             raise ValueError("الكمية أو سعر البيع غير صحيح.")
         product_id = item.get("product_id")
         description = str(item.get("description") or "").strip()
+        product_inventory_code = codes.get("inventory")
+        product_cogs_code = codes.get("cogs")
         if product_id:
             product = conn.execute("SELECT * FROM stock_products WHERE id=? AND active=1", (int(product_id),)).fetchone()
             if not product:
                 raise ValueError("الصنف غير موجود أو غير نشط.")
+            from activity_profiles import resolve_product_account_code
+            product_inventory_code = resolve_product_account_code(
+                conn, product["id"], "inventory", codes.get("inventory")
+            )
+            product_cogs_code = resolve_product_account_code(
+                conn, product["id"], "cogs", codes.get("cogs")
+            )
+            if not product_inventory_code or not product_cogs_code:
+                raise ValueError("لم يتم تحديد حساب مخزون وتكلفة لهذا الصنف ضمن ملف النشاط.")
+            _account(conn, product_inventory_code, "asset")
+            _account(conn, product_cogs_code, "expense")
             if activity == "service":
                 raise ValueError("نشاط الخدمات لا يستخدم صرف المخزون من شاشة المبيعات.")
             if preissued_costs is not None:
@@ -409,6 +422,8 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             "gross_line_total": line_total, "line_total": line_total, "cost_total": cost,
             "tax_rate": line_rate, "tax_treatment": treatment, "tax_amount": Decimal("0.00"),
             "stock_allocations": _allocations if product_id else [],
+            "inventory_account_code": product_inventory_code if product_id else None,
+            "cogs_account_code": product_cogs_code if product_id else None,
             "sales_order_line_id": item.get("sales_order_line_id"),
         })
 
@@ -544,10 +559,23 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
 
     cogs_journal_id = None
     if total_cost > 0 and preissued_costs is None:
+        cost_groups = {}
+        for item in normalized:
+            if not item["product_id"] or item["cost_total"] <= 0:
+                continue
+            key = (item["cogs_account_code"], item["inventory_account_code"])
+            cost_groups[key] = cost_groups.get(key, Decimal("0.00")) + item["cost_total"]
+        cogs_lines = []
+        for (cogs_code, inventory_code), group_cost in sorted(cost_groups.items()):
+            cogs_id = _account(conn, cogs_code, "expense")
+            inventory_id = _account(conn, inventory_code, "asset")
+            cogs_lines.extend([
+                (cogs_id, group_cost, 0, "تكلفة المبيعات - " + cogs_code),
+                (inventory_id, 0, group_cost, "تخفيض المخزون - " + inventory_code),
+            ])
         cogs_journal_id = post_journal(
             conn, invoice_date, invoice_no + "-COGS", "تكلفة مبيعات " + invoice_no,
-            [(cogs, total_cost, 0, "تكلفة البضاعة المباعة"),
-             (inventory, 0, total_cost, "تخفيض المخزون")], created_by, dimensions=dimensions
+            cogs_lines, created_by, dimensions=dimensions
         )
     if preissued_costs is None:
         for row in conn.execute("SELECT id FROM stock_movements WHERE movement_no LIKE ?", (invoice_no + "-%",)).fetchall():
