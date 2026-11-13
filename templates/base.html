@@ -61,7 +61,7 @@
 <details class="nav-group">
 <summary><span>📊 التقارير والتحليل المالي</span><small>القوائم المالية والرقابة</small></summary>
 <div class="nav-links">
-{% if 'reports.view' in permissions %}<a href="{{ url_for('management_dashboard') }}">لوحة الإدارة</a><a href="{{ url_for('planning.balance_sheet') }}">قائمة المركز المالي</a><a href="{{ url_for('planning.financial_years') }}">إدارة السنوات المالية</a><a href="{{ url_for('income_statement') }}">قائمة الدخل</a><a href="{{ url_for('trial_balance') }}">ميزان المراجعة</a><a href="{{ url_for('ledger') }}">دفتر الأستاذ</a><a href="{{ url_for('reconciliation') }}">المطابقة والترابط</a>{% endif %}
+{% if 'reports.view' in permissions %}<a href="{{ url_for('management_dashboard') }}">لوحة الإدارة</a><a href="{{ url_for('planning.balance_sheet') }}">قائمة المركز المالي</a><a href="{{ url_for('planning.financial_years') }}">إدارة السنوات المالية</a><a href="{{ url_for('income_statement') }}">قائمة الدخل</a><a href="{{ url_for('expense_analysis') }}">تقرير المصروفات التحليلي</a><a href="{{ url_for('trial_balance') }}">ميزان المراجعة</a><a href="{{ url_for('ledger') }}">دفتر الأستاذ</a><a href="{{ url_for('reconciliation') }}">المطابقة والترابط</a>{% endif %}
 {% if 'cashflow.view' in permissions or 'reports.view' in permissions %}<a href="{{ url_for('planning.cash_flow') }}">قائمة التدفقات النقدية</a>{% endif %}
 {% if 'budget.view' in permissions %}<a href="{{ url_for('planning.budget_index') }}">الموازنات التقديرية</a>{% endif %}
 </div></details>
