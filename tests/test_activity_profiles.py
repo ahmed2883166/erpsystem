@@ -197,10 +197,16 @@ class ActivityProfileTests(unittest.TestCase):
         self.conn.execute("INSERT INTO stock_products VALUES(1,'',1)")
         self.assertEqual(resolve_product_account_code(self.conn, 1, "inventory", "1140"), "1150")
         self.assertEqual(resolve_product_account_code(self.conn, 1, "cogs", "5100"), "5200")
+        self.conn.execute("UPDATE stock_categories SET code='PACKAGING',name_ar='تغليف' WHERE id=1")
+        self.assertEqual(resolve_product_account_code(self.conn, 1, "inventory", "1140"), "1160")
+        self.assertEqual(resolve_product_account_code(self.conn, 1, "cogs", "5100"), "5400")
         self.conn.execute("UPDATE company_settings SET setting_value='medical' WHERE setting_key='activity'")
         self.conn.execute("UPDATE stock_categories SET code='LAB',name_ar='مستلزمات المعامل' WHERE id=1")
         self.assertEqual(resolve_product_account_code(self.conn, 1, "inventory", "1150"), "1160")
         self.assertEqual(resolve_product_account_code(self.conn, 1, "cogs", "5300"), "5200")
+        self.conn.execute("UPDATE stock_categories SET code='MEDICAL',name_ar='مستلزمات طبية' WHERE id=1")
+        self.assertEqual(resolve_product_account_code(self.conn, 1, "inventory", "1150"), "1150")
+        self.assertEqual(resolve_product_account_code(self.conn, 1, "cogs", "5300"), "5300")
 
     def test_unknown_product_category_keeps_configured_default_account(self):
         from activity_profiles import resolve_product_account_code
