@@ -74,7 +74,7 @@ class CompanyDataResetTests(unittest.TestCase):
         connection = self.open_database()
         result = clear_company_data(connection)
         self.assertGreater(result["deleted_tables"], 0)
-        self.assertEqual(result["deleted_rows"], 3)
+        self.assertEqual(result["deleted_rows"], 5)
         self.assertEqual(
             connection.execute("SELECT COUNT(*) FROM sales_invoices").fetchone()[0], 0
         )
