@@ -291,9 +291,10 @@ def _customer_advance_details(c, as_of):
         return [], False
     if not {"advance_receipt_id", "refund_date", "amount"}.issubset(refund_cols):
         return [], False
+    reference_expr = "COALESCE(r.reference,'')" if "reference" in receipt_cols else "''"
     rows = c.execute(
-        """SELECT r.id,r.receipt_no,r.customer_id,r.receipt_date,r.amount,
-                  COALESCE(r.reference,'') reference,cu.code customer_code,cu.name customer_name
+        f"""SELECT r.id,r.receipt_no,r.customer_id,r.receipt_date,r.amount,
+                  {reference_expr} reference,cu.code customer_code,cu.name customer_name
            FROM customer_advance_receipts r
            JOIN customers cu ON cu.id=r.customer_id
            WHERE r.receipt_date<=? ORDER BY r.receipt_date,r.id""",
