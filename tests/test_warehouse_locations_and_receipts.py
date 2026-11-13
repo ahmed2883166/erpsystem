@@ -45,8 +45,13 @@ class ConsolidatedCustomerReceiptTests(unittest.TestCase):
         self.conn.executescript("""
             CREATE TABLE customers(id INTEGER PRIMARY KEY, name TEXT, active INTEGER);
             INSERT INTO customers VALUES(1,'عميل تجريبي',1);
-            CREATE TABLE accounts(id INTEGER PRIMARY KEY,is_group INTEGER,active INTEGER,account_type TEXT);
-            INSERT INTO accounts VALUES(1,0,1,'asset'),(2,0,1,'asset');
+            CREATE TABLE accounts(
+                id INTEGER PRIMARY KEY, code TEXT NOT NULL, is_group INTEGER,
+                active INTEGER, account_type TEXT
+            );
+            INSERT INTO accounts(id,code,is_group,active,account_type) VALUES
+                (1,'1110',0,1,'asset'),
+                (2,'1120',0,1,'asset');
             CREATE TABLE sales_invoices(
                 id INTEGER PRIMARY KEY, invoice_no TEXT, customer_id INTEGER, status TEXT,
                 total_amount TEXT, paid_amount TEXT, credited_amount TEXT
