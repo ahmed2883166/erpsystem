@@ -971,9 +971,8 @@ def _inventory_method(conn):
 
 
 def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_id, created_by=None, reference=""):
-    amount = Decimal(str(amount)).quantize(CENT, rounding=ROUND_HALF_UP)
-    if amount <= 0:
-        raise ValueError("قيمة التحصيل يجب أن تكون أكبر من صفر.")
+    receipt_date = _validate_customer_advance_date(receipt_date)
+    amount = _validated_customer_advance_amount(amount, "قيمة التحصيل")
     invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=? AND status='posted'", (invoice_id,)).fetchone()
     if not invoice:
         raise ValueError("فاتورة العميل غير موجودة أو غير مرحلة.")
@@ -981,9 +980,7 @@ def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_i
                    Decimal(invoice["credited_amount"] or "0") + _refund_total(conn, invoice_id))
     if amount > outstanding:
         raise ValueError("قيمة التحصيل أكبر من الرصيد المستحق على الفاتورة.")
-    cash = conn.execute("SELECT id,is_group,active,account_type FROM accounts WHERE id=?", (cash_account_id,)).fetchone()
-    if not cash or cash["is_group"] or not cash["active"] or cash["account_type"] != "asset":
-        raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
+    _customer_cash_account(conn, cash_account_id)
     activity = _activity(conn)
     ar = _account(conn, _sales_account_codes(conn, activity)["ar"], "asset")
     receipt_no = "RCPT-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -1010,10 +1007,7 @@ def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_i
 def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, cash_account_id,
                                 created_by=None, reference=""):
     """Post one cash receipt allocated across multiple open invoices of one customer."""
-    try:
-        date.fromisoformat(str(receipt_date))
-    except (TypeError, ValueError):
-        raise ValueError("تاريخ التحصيل غير صحيح.")
+    receipt_date = _validate_customer_advance_date(receipt_date)
     customer = conn.execute("SELECT id,name FROM customers WHERE id=? AND active=1", (customer_id,)).fetchone()
     if not customer:
         raise ValueError("العميل غير موجود أو غير نشط.")
@@ -1024,9 +1018,7 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
         if invoice_id in seen:
             raise ValueError("لا يمكن اختيار الفاتورة أكثر من مرة في نفس الإيصال.")
         seen.add(invoice_id)
-        amount = Decimal(str(raw_amount)).quantize(CENT, rounding=ROUND_HALF_UP)
-        if not amount.is_finite() or amount <= 0:
-            raise ValueError("قيمة التوزيع على كل فاتورة يجب أن تكون أكبر من صفر.")
+        amount = _validated_customer_advance_amount(raw_amount, "قيمة التوزيع على كل فاتورة")
         invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=? AND customer_id=? AND status='posted'",
                                (invoice_id, customer_id)).fetchone()
         if not invoice:
@@ -1041,9 +1033,7 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
         total += amount
     if not normalized or total <= 0:
         raise ValueError("اختر فاتورة واحدة على الأقل وأدخل مبلغ التحصيل.")
-    cash = conn.execute("SELECT id,is_group,active,account_type FROM accounts WHERE id=?", (cash_account_id,)).fetchone()
-    if not cash or cash["is_group"] or not cash["active"] or cash["account_type"] != "asset":
-        raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
+    _customer_cash_account(conn, cash_account_id)
     ar = _account(conn, _sales_account_codes(conn, _activity(conn))["ar"], "asset")
     receipt_no = "RCPTB-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
     dimensions = validate_journal_dimensions(conn, {"customer_id": customer_id})
@@ -1175,6 +1165,8 @@ def allocate_customer_advance(conn, advance_receipt_id, allocations, allocation_
     ).fetchone()
     if not receipt:
         raise ValueError("إيصال مقدم العميل غير موجود أو العميل غير نشط.")
+    if allocation_date < receipt["receipt_date"]:
+        raise ValueError("لا يمكن تخصيص مقدم العميل بتاريخ يسبق تاريخ استلامه.")
     normalized, seen = [], set()
     total = Decimal("0")
     for invoice_id, raw_amount in allocations:
@@ -1188,6 +1180,10 @@ def allocate_customer_advance(conn, advance_receipt_id, allocations, allocation_
         ).fetchone()
         if not invoice:
             raise ValueError("إحدى الفواتير لا تتبع نفس العميل أو غير مرحلة.")
+        if allocation_date < date.fromisoformat(invoice["invoice_date"]).isoformat():
+            raise ValueError(
+                f"لا يمكن تخصيص المقدم على الفاتورة {invoice['invoice_no']} قبل تاريخ إصدارها."
+            )
         outstanding = (Decimal(str(invoice["total_amount"])) -
                        Decimal(str(invoice["paid_amount"] or "0")) -
                        Decimal(str(invoice["credited_amount"] or "0")) +
@@ -1243,6 +1239,8 @@ def post_customer_advance_refund(conn, advance_receipt_id, refund_date, amount,
     ).fetchone()
     if not receipt:
         raise ValueError("إيصال مقدم العميل غير موجود أو العميل غير نشط.")
+    if refund_date < receipt["receipt_date"]:
+        raise ValueError("لا يمكن رد مقدم العميل بتاريخ يسبق تاريخ استلامه.")
     available = _customer_advance_available(conn, advance_receipt_id)
     if amount > available:
         raise ValueError(f"قيمة الرد تتجاوز المتبقي من مقدم العميل ({available:.2f}).")
