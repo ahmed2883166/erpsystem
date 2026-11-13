@@ -366,8 +366,6 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
         revenue_code = codes["revenue"]
     revenue = _account(conn, revenue_code, "revenue")
     vat = None
-    inventory = _account(conn, codes["inventory"], "asset") if codes["inventory"] else None
-    cogs = _account(conn, codes["cogs"], "expense") if codes["cogs"] else None
     if activity != "service" and not warehouse_id:
         raise ValueError("حدد مخزن الصرف قبل ترحيل فاتورة البيع.")
 
