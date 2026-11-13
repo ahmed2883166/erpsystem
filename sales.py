@@ -536,7 +536,8 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         if not qty.is_finite() or qty <= 0:
             raise ValueError("كمية الإشعار يجب أن تكون أكبر من صفر.")
         prior_credit_rows = conn.execute(
-            """SELECT cl.quantity FROM sales_credit_note_lines cl
+            """SELECT cl.quantity,cl.line_total,cl.tax_amount,cl.cost_total
+               FROM sales_credit_note_lines cl
                JOIN sales_credit_notes cn ON cn.id=cl.credit_note_id
                WHERE cl.invoice_line_id=? AND cn.status='posted'""",
             (line_id,),
@@ -547,13 +548,30 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
             raise ValueError(
                 f"الكمية المطلوبة للإشعار أكبر من الكمية المتبقية من البند. المتاح {available_qty}."
             )
+
+        # Credit the actual net invoiced value after line/customer discounts, not
+        # the original gross unit price. Allocate rounded cents proportionally and
+        # give the final returned quantity the exact remaining net/tax/cost balance.
+        remaining_net = Decimal(original["line_total"]) - sum(
+            (Decimal(row["line_total"] or "0") for row in prior_credit_rows), Decimal("0")
+        )
+        remaining_tax = Decimal(original["tax_amount"] or "0") - sum(
+            (Decimal(row["tax_amount"] or "0") for row in prior_credit_rows), Decimal("0")
+        )
+        remaining_cost = Decimal(original["cost_total"] or "0") - sum(
+            (Decimal(row["cost_total"] or "0") for row in prior_credit_rows), Decimal("0")
+        )
+        if qty == available_qty:
+            line_value = remaining_net.quantize(CENT, rounding=ROUND_HALF_UP)
+            line_tax = remaining_tax.quantize(CENT, rounding=ROUND_HALF_UP)
+            line_cost = remaining_cost.quantize(CENT, rounding=ROUND_HALF_UP)
+        else:
+            line_value = (remaining_net * qty / available_qty).quantize(CENT, rounding=ROUND_HALF_UP)
+            line_tax = (remaining_tax * qty / available_qty).quantize(CENT, rounding=ROUND_HALF_UP)
+            line_cost = (remaining_cost * qty / available_qty).quantize(CENT, rounding=ROUND_HALF_UP)
         unit_price = Decimal(original["unit_price"])
-        line_value = (qty * unit_price).quantize(CENT, rounding=ROUND_HALF_UP)
         tax_rate = Decimal(original["tax_rate"] or "0")
         treatment = original["tax_treatment"] or "standard"
-        line_tax = (line_value * tax_rate / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
-        original_qty = sold_qty
-        line_cost = (Decimal(original["cost_total"] or "0") * qty / original_qty).quantize(CENT, rounding=ROUND_HALF_UP)
         subtotal += line_value
         tax_total += line_tax
         cost_total += line_cost
