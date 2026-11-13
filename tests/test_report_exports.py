@@ -304,6 +304,43 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         self.assertEqual(pdf.status_code, 200, pdf.data[:200].decode("utf-8", errors="replace"))
         self.assertTrue(pdf.data.startswith(b"%PDF"))
 
+    def test_customer_advance_statement_excel_and_pdf_exports(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.executescript("""
+            CREATE TABLE customer_advance_receipts(
+                id INTEGER PRIMARY KEY,receipt_no TEXT,customer_id INTEGER,
+                receipt_date TEXT,amount TEXT,reference TEXT
+            );
+            CREATE TABLE customer_advance_allocations(
+                id INTEGER PRIMARY KEY,advance_receipt_id INTEGER,invoice_id INTEGER,
+                allocation_date TEXT,amount TEXT
+            );
+            CREATE TABLE customer_advance_refunds(
+                id INTEGER PRIMARY KEY,advance_receipt_id INTEGER,
+                refund_date TEXT,amount TEXT
+            );
+            INSERT INTO customer_advance_receipts
+                VALUES(1,'CADV-1',1,'2026-06-10','100','BANK-1');
+            INSERT INTO customer_advance_allocations
+                VALUES(1,1,1,'2026-06-12','20');
+            INSERT INTO customer_advance_refunds
+                VALUES(1,1,'2026-06-15','10');
+        """)
+        conn.commit()
+        conn.close()
+        excel = self.client.get(
+            "/reports/export/customer-advances/excel?as_of=2026-06-30"
+        )
+        self.assertEqual(excel.status_code, 200)
+        workbook = load_workbook(io.BytesIO(excel.data), data_only=True)
+        values = list(workbook.active.values)
+        self.assertTrue(any(row[7] == 70 for row in values if len(row) > 7))
+        pdf = self.client.get(
+            "/reports/export/customer-advances/pdf?as_of=2026-06-30"
+        )
+        self.assertEqual(pdf.status_code, 200, pdf.data[:200].decode("utf-8", errors="replace"))
+        self.assertTrue(pdf.data.startswith(b"%PDF"))
+
     def test_trial_balance_export_rejects_reversed_date_range(self):
         response = self.client.get(
             "/reports/export/trial-balance/excel?date_from=2026-12-31&date_to=2026-01-01"
