@@ -394,6 +394,12 @@ def payroll():
                 if raise_amount and e["raise_mode"] == "allowance":
                     allowances = M(allowances + raise_amount)
                 overtime_hours = D(request.form.get("overtime_hours_" + str(e["id"]), "0"))
+                if request.form.get("use_attendance_data") == "1":
+                    attendance_totals = c.execute("""SELECT COALESCE(SUM(CAST(absence_hours AS REAL)),0) absent_hours,
+                        COALESCE(SUM(CAST(approved_overtime_hours AS REAL)),0) overtime_hours
+                        FROM attendance_records WHERE employee_id=? AND attendance_date>=? AND attendance_date<=?""",
+                        (e["id"],period+"-01",(date(start.year + (start.month==12), 1 if start.month==12 else start.month+1, 1)-date.resolution).isoformat())).fetchone()
+                    overtime_hours = D(attendance_totals["overtime_hours"])
                 overtime_rate = D(request.form.get("overtime_rate_percent_" + str(e["id"]), e["overtime_rate_percent"]))
                 overtime_raw = request.form.get("overtime_amount_" + str(e["id"]), "").strip()
                 if overtime_rate < 0 or overtime_rate > 500:
@@ -402,6 +408,25 @@ def payroll():
                                    if not overtime_raw else M(overtime_raw))
                 absent_hours = D(request.form.get("absent_hours_" + str(e["id"]), "0"))
                 absence = M(request.form.get("absence_deduction_" + str(e["id"]), "0"))
+                if request.form.get("use_attendance_data") == "1":
+                    absent_hours = D(attendance_totals["absent_hours"])
+                    next_month = date(start.year + (start.month==12), 1 if start.month==12 else start.month+1, 1)
+                    month_end = (next_month-date.resolution).isoformat()
+                    unpaid_requests = c.execute("""SELECT r.start_date,r.end_date,r.days FROM employee_leave_requests r
+                        JOIN leave_types t ON t.id=r.leave_type_id
+                        WHERE r.employee_id=? AND r.status='approved' AND t.is_paid=0
+                        AND r.start_date<=? AND r.end_date>=?""",(e["id"],month_end,period+"-01")).fetchall()
+                    unpaid_days = Decimal("0")
+                    for leave_row in unpaid_requests:
+                        leave_start=date.fromisoformat(leave_row["start_date"])
+                        leave_end=date.fromisoformat(leave_row["end_date"])
+                        overlap_start=max(leave_start,start)
+                        overlap_end=min(leave_end,date.fromisoformat(month_end))
+                        total_days=Decimal((leave_end-leave_start).days+1)
+                        overlap_days=Decimal((overlap_end-overlap_start).days+1)
+                        unpaid_days += D(leave_row["days"])*overlap_days/total_days
+                    # Payroll uses a transparent 30-day monthly divisor for approved unpaid leave.
+                    absence = M(absent_hours*basic_salary/D(e["standard_hours"]) + unpaid_days*basic_salary/Decimal("30"))
                 incentive_rule_id_raw = request.form.get("incentive_rule_" + str(e["id"]), "").strip()
                 incentive_days = D(request.form.get("incentive_days_" + str(e["id"]), "0"))
                 incentive_name = ""
