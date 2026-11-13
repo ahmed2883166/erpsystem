@@ -101,6 +101,36 @@ class ActivityProfileTests(unittest.TestCase):
         self.assertEqual(taxes["input_vat"], "1165")
         self.assertTrue(active_account_role_ids(self.conn)["cash"])
 
+    def test_customer_advances_role_is_current_liability_and_legacy_profiles_fallback(self):
+        from activity_profiles import active_account_role_ids, get_active_activity_profile
+        seed_activity_chart(self.conn, "service")
+        self._company_settings()
+        profile_id = create_activity_profile(
+            self.conn, "legacy_logistics", "ملف لوجستي قديم", "service"
+        )
+        self.conn.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity','service')"
+        )
+        self.conn.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity_profile_code','legacy_logistics')"
+        )
+        row = self.conn.execute(
+            "SELECT account_roles_json FROM activity_profiles WHERE id=?", (profile_id,)
+        ).fetchone()
+        old_roles = json.loads(row["account_roles_json"])
+        old_roles.pop("customer_advances")
+        self.conn.execute(
+            "UPDATE activity_profiles SET account_roles_json=? WHERE id=?",
+            (json.dumps(old_roles), profile_id),
+        )
+
+        profile = get_active_activity_profile(self.conn)
+        roles = active_account_role_ids(self.conn)
+        advance_id = self.conn.execute("SELECT id FROM accounts WHERE code='2160'").fetchone()["id"]
+        self.assertEqual(profile["account_roles"]["customer_advances"], ["2160"])
+        self.assertIn(advance_id, roles["customer_advances"])
+        self.assertIn(advance_id, roles["current_liabilities"])
+
     def test_custom_profile_mapping_editor_saves_valid_account_roles(self):
         seed_activity_chart(self.conn, "service")
         profile_id = create_activity_profile(
