@@ -69,13 +69,24 @@ def _customer_aging_movements(conn, as_of):
    ("SELECT invoice_id,amount FROM customer_receipts WHERE receipt_date<=?",(as_of,)),
    ("""SELECT a.invoice_id,a.amount FROM customer_receipt_allocations a
        JOIN customer_receipt_batches b ON b.id=a.batch_id WHERE b.receipt_date<=?""",(as_of,)),
-   ("SELECT invoice_id,amount FROM customer_advance_allocations WHERE allocation_date<=?",(as_of,)),
   )
   all_sources=(
    ("SELECT invoice_id,amount FROM customer_receipts",()),
    ("SELECT invoice_id,amount FROM customer_receipt_allocations",()),
-   ("SELECT invoice_id,amount FROM customer_advance_allocations",()),
   )
+  if _table_exists(conn, "customer_advance_reversals"):
+   sources += (("""SELECT a.invoice_id,a.amount FROM customer_advance_allocations a
+       WHERE a.allocation_date<=? AND NOT EXISTS (
+         SELECT 1 FROM customer_advance_reversals x
+         WHERE x.source_type='allocation' AND x.source_id=a.journal_entry_id
+           AND x.reversal_date<=?)""",(as_of,as_of)),)
+   all_sources += (("""SELECT a.invoice_id,a.amount FROM customer_advance_allocations a
+       WHERE NOT EXISTS (
+         SELECT 1 FROM customer_advance_reversals x
+         WHERE x.source_type='allocation' AND x.source_id=a.journal_entry_id)""",()),)
+  else:
+   sources += (("SELECT invoice_id,amount FROM customer_advance_allocations WHERE allocation_date<=?",(as_of,)),)
+   all_sources += (("SELECT invoice_id,amount FROM customer_advance_allocations",()),)
   for sql,params in sources:
    for invoice_id,amount in conn.execute(sql,params).fetchall():
     paid_as_of[invoice_id]=paid_as_of.get(invoice_id,Decimal("0"))+_amount(amount)
