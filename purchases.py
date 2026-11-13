@@ -802,8 +802,13 @@ def post_supplier_bill(c, bill_id, actor_id):
             if receipt["supplier_id"] != bill["supplier_id"] or receipt["status"] != "posted":
                 raise ValueError("يوجد إيصال استلام غير صالح أو لا يتبع المورد.")
             amount = money(receipt["matched_amount"])
-            if amount < 0:
-                raise ValueError("قيمة تسوية إيصال GRNI لا يمكن أن تكون سالبة.")
+            if amount <= 0:
+                raise ValueError("قيمة تسوية إيصال GRNI يجب أن تكون أكبر من صفر.")
+            available_before_this_bill = _supplier_receipt_available_amount(
+                c, receipt["receipt_id"], exclude_bill_id=bill_id
+            )
+            if amount > available_before_this_bill:
+                raise ValueError("تجاوزت تخصيصات فواتير المورد قيمة إيصال GRNI المتاحة.")
             matched_total = money(matched_total + amount)
             grni = account(c, "2190", "liability")
             journal_lines.extend([
