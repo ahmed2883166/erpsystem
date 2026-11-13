@@ -948,21 +948,45 @@ otals["credit"], places=2)
         ).fetchone()[0], 0)
 
         self.db.execute("BEGIN IMMEDIATE")
-        note = quotations.create_delivery_note(
+        reserved_note = quotations.create_delivery_note(
             self.db, order_id, "2026-11-14",
-            [{"sales_order_line_id": order_line_id, "quantity": "6"}], 2,
+            [{"sales_order_line_id": order_line_id, "quantity": "4"}], 2,
+        )
+        self.db.commit()
+        self.db.execute("BEGIN IMMEDIATE")
+        with self.assertRaisesRegex(ValueError, "تتجاوز الكمية المتبقية"):
+            quotations.create_delivery_note(
+                self.db, order_id, "2026-11-14",
+                [{"sales_order_line_id": order_line_id, "quantity": "3"}], 2,
+            )
+        self.db.rollback()
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM delivery_notes WHERE sales_order_id=?", (order_id,)
+        ).fetchone()[0], 1)
+
+        self.db.execute("BEGIN IMMEDIATE")
+        quotations.post_delivery_note(self.db, reserved_note["delivery_note_id"], posted_by=2)
+        self.db.commit()
+        self.assertEqual(
+            Decimal(self.db.execute("SELECT qty_remaining FROM stock_valuation_layers").fetchone()[0]),
+            Decimal("1.0000"),
+        )
+
+        self.db.execute("BEGIN IMMEDIATE")
+        note = quotations.create_delivery_note(
+            self.db, order_id, "2026-11-15",
+            [{"sales_order_line_id": order_line_id, "quantity": "2"}], 2,
         )
         with self.assertRaisesRegex(ValueError, "الرصيد غير كافٍ"):
             quotations.post_delivery_note(self.db, note["delivery_note_id"], posted_by=2)
         self.db.rollback()
         self.assertEqual(
             Decimal(self.db.execute("SELECT qty_remaining FROM stock_valuation_layers").fetchone()[0]),
-            Decimal("5"),
+            Decimal("1.0000"),
         )
         self.assertEqual(self.db.execute(
             "SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'"
-        ).fetchone()[0], 0)
-
+        ).fetchone()[0], 1)
 
 
 if __name__ == "__main__":
