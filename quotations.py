@@ -521,10 +521,16 @@ def sales_order_view(order_id):
  invoices=c.execute("SELECT id,invoice_no,invoice_date,total_amount FROM sales_invoices WHERE sales_order_id=? ORDER BY id",(order_id,)).fetchall()
  warehouses=c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
  has_stock_lines=any(line["product_id"] for line in lines)
+ gross_order_value=sum((Decimal(str(line["ordered_value"])) for line in lines),Decimal("0"))
+ order_discount=Decimal(str(order["discount_amount"] or "0"))
+ net_order_value=gross_order_value-order_discount
+ estimated_tax=(net_order_value*Decimal(str(order["tax_rate"] or "0"))/Decimal("100")).quantize(M,rounding=ROUND_HALF_UP)
  c.close()
  return render_template("sales_order_view.html",order=order,lines=lines,notes=notes,
   invoices=invoices,warehouses=warehouses,has_stock_lines=has_stock_lines,
-  today=date.today().isoformat())
+  gross_order_value=gross_order_value,order_discount=order_discount,
+  net_order_value=net_order_value,estimated_tax=estimated_tax,
+  estimated_total=net_order_value+estimated_tax,today=date.today().isoformat())
 
 
 @quotes_bp.route("/orders/<int:order_id>/approve",methods=["POST"])
