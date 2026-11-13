@@ -507,5 +507,38 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         conn.close()
 
 
+    def test_edit_bill_form_prefills_existing_grni_allocation(self):
+        conn = purchases.db()
+        warehouse = conn.execute(
+            "INSERT INTO stock_warehouses(code,name_ar) VALUES('WH-EDIT-ALLOC','مخزن تعديل')"
+        )
+        receipt = conn.execute("""INSERT INTO goods_receipts(
+            receipt_no,supplier_id,warehouse_id,receipt_date,status,total_value
+        ) VALUES('GR-EDIT-ALLOC',?,?,'2026-11-13','posted','100.00')""",
+            (self.supplier_id, warehouse.lastrowid))
+        bill = conn.execute("""INSERT INTO supplier_bills(
+            bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,subtotal,
+            tax_rate,tax_amount,total_amount,status,bill_kind
+        ) VALUES('BILL-EDIT-ALLOC',?,'2026-11-13','2026-11-30','INV-EDIT-ALLOC',
+            '40.00','0','0','40.00','draft','inventory')""", (self.supplier_id,))
+        conn.execute(
+            "INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
+            (bill.lastrowid, receipt.lastrowid, "40.00"),
+        )
+        conn.commit()
+        bill_id = bill.lastrowid
+        receipt_id = receipt.lastrowid
+        conn.close()
+
+        with self.client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "accountant"
+        response = self.client.get(f"/purchases/bills/{bill_id}/edit")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn(f'name="receipt_amount_{receipt_id}"', html)
+        self.assertIn('value="40.00"', html)
+
+
 if __name__ == "__main__":
     unittest.main()
