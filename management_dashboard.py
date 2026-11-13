@@ -117,8 +117,13 @@ def _closing_entry_condition(conn):
 
 
 def dashboard_period_balances(conn, current_start, current_end, previous_start, previous_end,
-                               dimensions=None):
-    """Fetch current, previous and as-of balances in one exact grouped ledger scan."""
+                               dimensions=None, exclude_closing_entries=False):
+    """Fetch current, previous and as-of balances in one exact grouped ledger scan.
+
+    Closing entries are excluded from income-statement period totals only when
+    explicitly requested by the management snapshot. As-of balance-sheet
+    balances remain inclusive of closing entries.
+    """
     dimensions = dimensions or {}
     available_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")}
     dimension_conditions, dimension_params = [], []
@@ -129,7 +134,7 @@ def dashboard_period_balances(conn, current_start, current_end, previous_start, 
                 raise ValueError("مخطط الأبعاد التحليلية غير محدث. أعد تشغيل البرنامج لإكمال التحديث.")
             dimension_conditions.append(f"jl.{key}=?")
             dimension_params.append(int(value))
-    closing_filter = _closing_entry_condition(conn)
+    closing_filter = _closing_entry_condition(conn) if exclude_closing_entries else "1=1"
     register_decimal_aggregates(conn)
     rows = conn.execute(f"""
         SELECT a.id,a.code,a.name_ar,a.account_type,a.is_group,
@@ -393,7 +398,8 @@ def build_management_snapshot(conn, start, end, dimensions=None):
     previous_start = previous_end - timedelta(days=period_days)
     current_balances, previous_balances, as_of, opening_balances = dashboard_period_balances(
         conn, start.isoformat(), end.isoformat(),
-        previous_start.isoformat(), previous_end.isoformat(), dimensions
+        previous_start.isoformat(), previous_end.isoformat(),
+        dimensions=dimensions, exclude_closing_entries=True,
     )
     current = income_figures(current_balances, direct_cost_ids=roles["direct_cost"])
     previous = income_figures(previous_balances, direct_cost_ids=roles["direct_cost"])
