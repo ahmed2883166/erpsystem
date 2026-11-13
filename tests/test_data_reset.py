@@ -1,4 +1,5 @@
 import sqlite3
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -170,6 +171,45 @@ class CompanyDataResetTests(unittest.TestCase):
         backup.assert_not_called()
         connection = self.open_database()
         self.assertEqual(connection.execute("SELECT COUNT(*) FROM sample_business_data").fetchone()[0], 1)
+        connection.close()
+
+
+    def test_reset_form_includes_csrf_token_and_accepts_protected_post(self):
+        self._seed_route_database()
+        client = nexus_app.app.test_client()
+        with client.session_transaction() as session:
+            session.update(
+                user_id=1, username="admin", role="admin",
+                permissions=["backup.manage"],
+            )
+
+        def open_database():
+            return self.open_database()
+
+        backup_path = Path(self.temp.name) / "csrf-reset-backup.zip"
+        with patch.object(nexus_app, "db", side_effect=open_database), \\
+             patch.object(nexus_app, "create_backup_archive", return_value=backup_path) as backup, \\
+             patch.object(nexus_app, "log"):
+            page = client.get("/backup/settings")
+            self.assertEqual(page.status_code, 200)
+            html = page.get_data(as_text=True)
+            token_match = re.search(r'name="csrf_token" value="([^"]+)"', html)
+            self.assertIsNotNone(token_match, "backup settings forms must include a CSRF token")
+            response = client.post(
+                "/backup/reset-data",
+                data={
+                    "csrf_token": token_match.group(1),
+                    "super_admin_password": "RootSecret123!",
+                },
+            )
+
+        self.assertEqual(response.status_code, 302)
+        backup.assert_called_once()
+        connection = self.open_database()
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM sample_business_data").fetchone()[0],
+            0,
+        )
         connection.close()
 
 
