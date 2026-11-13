@@ -127,7 +127,7 @@ def create_sales_order_from_quotation(conn, quote_id, created_by, warehouse_id=N
  q=conn.execute("SELECT * FROM quotations WHERE id=?",(quote_id,)).fetchone()
  if not q: raise ValueError("عرض السعر غير موجود.")
  if q["status"]!="accepted": raise ValueError("لا يمكن إنشاء أمر بيع إلا من عرض سعر مقبول من العميل.")
- if q["sales_order_id"] if "sales_order_id" in q.keys() else False:
+ if q["sales_order_id"]:
   raise ValueError("تم تحويل عرض السعر إلى أمر بيع بالفعل.")
  if q["valid_until"]<date.today().isoformat(): raise ValueError("انتهت صلاحية عرض السعر.")
  if expected_date and expected_date<date.today().isoformat(): raise ValueError("تاريخ التسليم المتوقع لا يمكن أن يسبق تاريخ أمر البيع.")
