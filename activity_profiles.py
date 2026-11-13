@@ -53,10 +53,19 @@ def initialize_activity_profiles_schema(conn):
         posting = ACTIVITY_POSTING_ACCOUNTS.get(activity, {})
         tax_roles = ACTIVITY_TAX_ACCOUNT_ROLES.get(activity, {})
         conn.execute(
-            """INSERT OR IGNORE INTO activity_profiles
+            """INSERT INTO activity_profiles
                (code,name,base_activity,description,account_roles_json,
                 posting_accounts_json,tax_roles_json,is_builtin,active)
-               VALUES(?,?,?,?,?,?,?,1,1)""",
+               VALUES(?,?,?,?,?,?,?,1,1)
+               ON CONFLICT(code) DO UPDATE SET
+                 name=excluded.name,
+                 base_activity=excluded.base_activity,
+                 description=excluded.description,
+                 account_roles_json=excluded.account_roles_json,
+                 posting_accounts_json=excluded.posting_accounts_json,
+                 tax_roles_json=excluded.tax_roles_json,
+                 updated_at=CURRENT_TIMESTAMP
+               WHERE activity_profiles.is_builtin=1""",
             (activity, label, activity, "ملف نشاط أساسي مدمج مع النظام.",
              json.dumps(roles, ensure_ascii=False, sort_keys=True),
              json.dumps(posting, ensure_ascii=False, sort_keys=True),
