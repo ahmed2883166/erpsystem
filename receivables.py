@@ -49,14 +49,6 @@ def _table_exists(conn, name):
  ).fetchone() is not None
 
 
-def _sum_by_invoice(conn, sql, params):
- totals={}
- for row in conn.execute(sql, params).fetchall():
-  invoice_id=row["invoice_id"]
-  totals[invoice_id]=totals.get(invoice_id,Decimal("0"))+_amount(row["amount"])
- return totals
-
-
 def _customer_aging_movements(conn, as_of):
  # paid_amount and credited_amount are running totals. They cannot be used
  # for a historical aging date because they include later receipts/credits.
@@ -66,6 +58,7 @@ def _customer_aging_movements(conn, as_of):
            "customer_receipt_allocations","customer_advance_allocations")
  has_detail=all(_table_exists(conn, table) for table in required)
  paid_as_of={}
+ paid_all={}
  if has_detail:
   sources=(
    ("SELECT invoice_id,amount FROM customer_receipts WHERE receipt_date<=?",(as_of,)),
@@ -73,10 +66,19 @@ def _customer_aging_movements(conn, as_of):
        JOIN customer_receipt_batches b ON b.id=a.batch_id WHERE b.receipt_date<=?""",(as_of,)),
    ("SELECT invoice_id,amount FROM customer_advance_allocations WHERE allocation_date<=?",(as_of,)),
   )
+  all_sources=(
+   ("SELECT invoice_id,amount FROM customer_receipts",()),
+   ("SELECT invoice_id,amount FROM customer_receipt_allocations",()),
+   ("SELECT invoice_id,amount FROM customer_advance_allocations",()),
+  )
   for sql,params in sources:
    for invoice_id,amount in conn.execute(sql,params).fetchall():
     paid_as_of[invoice_id]=paid_as_of.get(invoice_id,Decimal("0"))+_amount(amount)
+  for sql,params in all_sources:
+   for invoice_id,amount in conn.execute(sql,params).fetchall():
+    paid_all[invoice_id]=paid_all.get(invoice_id,Decimal("0"))+_amount(amount)
  credited_as_of={}
+ credited_all={}
  if _table_exists(conn,"sales_credit_notes"):
   columns={row["name"] for row in conn.execute("PRAGMA table_info(sales_credit_notes)")}
   if "cancel_journal_entry_id" in columns and _table_exists(conn,"journal_entries"):
@@ -90,6 +92,10 @@ def _customer_aging_movements(conn, as_of):
    sql="""SELECT invoice_id,total_amount amount FROM sales_credit_notes
           WHERE status='posted' AND credit_date<=?"""
   params=(as_of,as_of) if "reversal" in sql else (as_of,)
+  for invoice_id,amount in conn.execute(
+   """SELECT invoice_id,total_amount amount FROM sales_credit_notes WHERE status='posted'""",()
+  ).fetchall():
+   credited_all[invoice_id]=credited_all.get(invoice_id,Decimal("0"))+_amount(amount)
   for invoice_id,amount in conn.execute(sql,params).fetchall():
    credited_as_of[invoice_id]=credited_as_of.get(invoice_id,Decimal("0"))+_amount(amount)
  refunds_as_of={}
@@ -100,13 +106,14 @@ def _customer_aging_movements(conn, as_of):
       WHERE cn.credit_date<=? AND rf.refund_date<=?""",(as_of,as_of)
   ).fetchall():
    refunds_as_of[invoice_id]=refunds_as_of.get(invoice_id,Decimal("0"))+_amount(amount)
- return has_detail,paid_as_of,credited_as_of,refunds_as_of
+ return has_detail,paid_as_of,paid_all,credited_as_of,credited_all,refunds_as_of
 
 
 def _supplier_aging_movements(conn, as_of):
  has_detail=(_table_exists(conn,"supplier_payments") and
              _table_exists(conn,"supplier_payment_allocations"))
  paid_as_of={}
+ paid_all={}
  if has_detail:
   for bill_id,amount in conn.execute(
    """SELECT a.bill_id,a.amount FROM supplier_payment_allocations a
@@ -114,14 +121,23 @@ def _supplier_aging_movements(conn, as_of):
       WHERE p.payment_date<=?""",(as_of,)
   ).fetchall():
    paid_as_of[bill_id]=paid_as_of.get(bill_id,Decimal("0"))+_amount(amount)
+  for bill_id,amount in conn.execute(
+   "SELECT bill_id,amount FROM supplier_payment_allocations",()
+  ).fetchall():
+   paid_all[bill_id]=paid_all.get(bill_id,Decimal("0"))+_amount(amount)
  credited_as_of={}
+ credited_all={}
  if _table_exists(conn,"supplier_credit_notes"):
+  for bill_id,amount in conn.execute(
+   "SELECT bill_id,total_amount FROM supplier_credit_notes WHERE status='posted'",()
+  ).fetchall():
+   credited_all[bill_id]=credited_all.get(bill_id,Decimal("0"))+_amount(amount)
   for bill_id,amount in conn.execute(
    """SELECT bill_id,total_amount FROM supplier_credit_notes
       WHERE status='posted' AND credit_date<=?""",(as_of,)
   ).fetchall():
    credited_as_of[bill_id]=credited_as_of.get(bill_id,Decimal("0"))+_amount(amount)
- return has_detail,paid_as_of,credited_as_of
+ return has_detail,paid_as_of,paid_all,credited_as_of,credited_all
 
 
 @aging_bp.route("/")
@@ -152,20 +168,22 @@ def index():
     WHERE b.status='posted' AND b.bill_date<=?
     ORDER BY due_date,s.name""",(as_of,)).fetchall()
  if kind=="customers":
-  has_detail,paid_by_invoice,credited_by_invoice,refunds_by_invoice=_customer_aging_movements(c,as_of)
+  has_detail,paid_by_invoice,paid_all,credited_by_invoice,credited_all,refunds_by_invoice=_customer_aging_movements(c,as_of)
   credit_table_exists=_table_exists(c,"sales_credit_notes")
  else:
-  has_detail,paid_by_invoice,credited_by_invoice=_supplier_aging_movements(c,as_of)
+  has_detail,paid_by_invoice,paid_all,credited_by_invoice,credited_all=_supplier_aging_movements(c,as_of)
   refunds_by_invoice={}
   credit_table_exists=_table_exists(c,"supplier_credit_notes")
  c.close()
  result=[]; totals=[Decimal("0.00") for _ in range(5)]
  for r in rows:
   document_id=r["invoice_id"]
-  paid_amount=paid_by_invoice.get(document_id,Decimal("0")) if has_detail else _amount(r["paid_amount"])
-  credited_amount=credited_by_invoice.get(document_id,Decimal("0"))
-  if not credit_table_exists:
-   credited_amount=_amount(r["credited_amount"] if "credited_amount" in r.keys() else "0")
+  stored_paid=_amount(r["paid_amount"])
+  paid_amount=(paid_by_invoice.get(document_id,Decimal("0"))+
+               max(Decimal("0"),stored_paid-paid_all.get(document_id,Decimal("0")))) if has_detail else stored_paid
+  stored_credit=_amount(r["credited_amount"] if "credited_amount" in r.keys() else "0")
+  credited_amount=(credited_by_invoice.get(document_id,Decimal("0"))+
+                   max(Decimal("0"),stored_credit-credited_all.get(document_id,Decimal("0")))) if credit_table_exists else stored_credit
   refund_amount=refunds_by_invoice.get(document_id,Decimal("0"))
   balance=_amount(r["total_amount"])-paid_amount-credited_amount+refund_amount
   if balance<=0:
