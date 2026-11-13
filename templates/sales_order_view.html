@@ -28,6 +28,12 @@
      ضريبة تقديرية: {{ '%.2f'|format(estimated_tax) }} |
      الإجمالي التقديري: {{ '%.2f'|format(estimated_total) }}</p>
 </section>
+{% if order.status == 'rejected' %}
+<section class="panel">
+  <h3>سبب رفض أمر البيع</h3>
+  <p>{{ order.rejection_reason }}</p>
+</section>
+{% endif %}
 {% if order.status == 'pending_approval' and ('sales.approve' in permissions or session.get('role') == 'admin') %}
 <section class="panel">
   <h3>اعتماد أمر البيع</h3>
