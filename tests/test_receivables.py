@@ -31,9 +31,9 @@ class ReceivablesAgingTests(unittest.TestCase):
         # Dated subledger records let the report reconstruct the selected historical date.
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS customer_receipts(id INTEGER PRIMARY KEY,invoice_id INTEGER,receipt_date TEXT,amount TEXT);
-            CREATE TABLE customer_receipt_batches(id INTEGER PRIMARY KEY,receipt_date TEXT);
-            CREATE TABLE customer_receipt_allocations(batch_id INTEGER,invoice_id INTEGER,amount TEXT);
-            CREATE TABLE customer_advance_allocations(id INTEGER PRIMARY KEY,invoice_id INTEGER,allocation_date TEXT,amount TEXT);
+            CREATE TABLE IF NOT EXISTS customer_receipt_batches(id INTEGER PRIMARY KEY,receipt_date TEXT);
+            CREATE TABLE IF NOT EXISTS customer_receipt_allocations(batch_id INTEGER,invoice_id INTEGER,amount TEXT);
+            CREATE TABLE IF NOT EXISTS customer_advance_allocations(id INTEGER PRIMARY KEY,invoice_id INTEGER,allocation_date TEXT,amount TEXT);
             CREATE TABLE IF NOT EXISTS supplier_payments(
                 id INTEGER PRIMARY KEY,supplier_id INTEGER,payment_date TEXT,
                 payment_no TEXT,amount TEXT,reference TEXT);
@@ -209,6 +209,22 @@ class ReceivablesAgingTests(unittest.TestCase):
         self.assertEqual(pdf_response.status_code, 200)
         self.assertEqual(pdf_response.mimetype, "application/pdf")
         self.assertTrue(pdf_response.data.startswith(b"%PDF"))
+
+
+    def test_supplier_aging_supports_legacy_supplier_table_without_code_or_name(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("ALTER TABLE suppliers RENAME TO suppliers_full")
+        conn.execute("CREATE TABLE suppliers(id INTEGER PRIMARY KEY)")
+        conn.execute("INSERT INTO suppliers(id) VALUES(1)")
+        conn.commit()
+        conn.row_factory = sqlite3.Row
+        documents = receivables._supplier_aging_documents(conn, "2026-11-30")
+        conn.close()
+
+        self.assertEqual(len(documents), 2)
+        self.assertEqual(documents[0]["party_code"], "1")
+        self.assertEqual(documents[0]["party_name"], "1")
+
 
     def test_supplier_aging_handles_bill_table_without_purchase_credit_column(self):
         conn = sqlite3.connect(self.db_path)
