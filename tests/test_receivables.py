@@ -167,9 +167,9 @@ class ReceivablesAgingTests(unittest.TestCase):
         self.assertEqual(before[1][2], Decimal("30.00"))
         self.assertEqual(before[2][2], Decimal("75.00"))
         self.assertEqual(after[1][2], Decimal("25.00"))
-        # 200 invoice - 25 direct receipt - 10 credit + 4 refund = 169.
+        # 200 invoice - 25 direct receipt - 30 posted credits + 4 refund = 149.
         balance = Decimal("200") - after[1][2] - after[3].get(2, Decimal("0")) + after[5].get(2, Decimal("0"))
-        self.assertEqual(balance, Decimal("169.00"))
+        self.assertEqual(balance, Decimal("149.00"))
 
     def test_supplier_aging_uses_payments_and_credit_notes_as_of_date(self):
         response = self.client.get("/reports/aging/?kind=suppliers&as_of=2026-11-30")
