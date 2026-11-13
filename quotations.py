@@ -595,6 +595,43 @@ def sales_order_view(order_id):
   estimated_total=net_order_value+estimated_tax,today=date.today().isoformat())
 
 
+
+@quotes_bp.route("/orders/<int:order_id>/print")
+@require()
+def sales_order_print(order_id):
+ c=db()
+ order=c.execute("""SELECT so.*,cu.code customer_code,cu.name customer_name,
+   cu.tax_number customer_tax_number,q.quote_no,q.tax_rate
+   FROM sales_orders so JOIN customers cu ON cu.id=so.customer_id
+   JOIN quotations q ON q.id=so.quotation_id WHERE so.id=?""",(order_id,)).fetchone()
+ if not order:
+  c.close()
+  from flask import abort
+  abort(404)
+ lines=c.execute("""SELECT l.*,p.sku,p.name_ar product_name
+   FROM sales_order_lines l LEFT JOIN stock_products p ON p.id=l.product_id
+   WHERE l.sales_order_id=? ORDER BY l.id""",(order_id,)).fetchall()
+ settings={r["setting_key"]:r["setting_value"] for r in c.execute(
+  "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
+  "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
+ branch=None
+ branch_exists=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='branches'").fetchone()
+ branch_columns={row["name"] for row in c.execute("PRAGMA table_info(branches)")} if branch_exists else set()
+ if order["branch_id"] and branch_exists:
+  branch_fields=[column if column in branch_columns else "'' AS "+column
+                 for column in ("address","phone","email","tax_number")]
+  branch=c.execute("SELECT code,name_ar,"+",".join(branch_fields)+
+                    " FROM branches WHERE id=?",(order["branch_id"],)).fetchone()
+ gross=sum((Decimal(str(row["ordered_value"] or "0")) for row in lines),Decimal("0"))
+ discount=Decimal(str(order["discount_amount"] or "0"))
+ net=gross-discount
+ tax=(net*Decimal(str(order["tax_rate"] or "0"))/Decimal("100")).quantize(M,rounding=ROUND_HALF_UP)
+ c.close()
+ return render_template("sales_order_print.html",order=order,lines=lines,settings=settings,
+  branch=branch,gross_order_value=gross,order_discount=discount,net_order_value=net,
+  estimated_tax=tax,estimated_total=net+tax)
+
+
 @quotes_bp.route("/orders/<int:order_id>/approve",methods=["POST"])
 @require_sales_approval
 def approve_order_route(order_id):
