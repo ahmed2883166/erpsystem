@@ -1,10 +1,11 @@
 from app_paths import DB_PATH
 from database import connect_database
 """Customer and supplier subledger statements with opening and running balances."""
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from functools import wraps
 
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
 
 party_bp = Blueprint("party_reports", __name__)
 
@@ -112,6 +113,15 @@ def party_statement():
     party_id = request.args.get("party_id", type=int)
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
+    try:
+        if date_from:
+            date_from = date.fromisoformat(date_from).isoformat()
+        if date_to:
+            date_to = date.fromisoformat(date_to).isoformat()
+    except ValueError:
+        abort(400)
+    if date_from and date_to and date_from > date_to:
+        abort(400)
     c = _db()
     parties = c.execute("SELECT id,code,name FROM customers WHERE active=1 ORDER BY code").fetchall() if kind == "customer" else c.execute(
         "SELECT id,code,name FROM suppliers WHERE active=1 ORDER BY code").fetchall()
