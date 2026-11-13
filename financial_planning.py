@@ -31,6 +31,38 @@ def _signed_money(value):
     return amount.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
+def _budget_months(date_from, date_to):
+    from datetime import date
+    start = date.fromisoformat(date_from)
+    end = date.fromisoformat(date_to)
+    if end < start:
+        raise ValueError("فترة الموازنة غير صحيحة.")
+    months = []
+    current = date(start.year, start.month, 1)
+    last = date(end.year, end.month, 1)
+    while current <= last:
+        months.append(current.strftime("%Y-%m"))
+        current = date(current.year + (current.month == 12), 1 if current.month == 12 else current.month + 1, 1)
+    return months
+
+
+def _split_monthly_amount(total, months):
+    if not months:
+        raise ValueError("لا توجد أشهر داخل فترة الموازنة.")
+    total = _money(total)
+    share = (total / Decimal(len(months))).quantize(CENT, rounding=ROUND_HALF_UP)
+    values = [share] * len(months)
+    values[-1] = total - sum(values[:-1], Decimal("0"))
+    return values
+
+
+def _budget_audit(conn, budget_id, action, actor_id, details=""):
+    conn.execute(
+        "INSERT INTO budget_audit_log(budget_id,action,actor_id,details) VALUES(?,?,?,?)",
+        (budget_id, action, actor_id, str(details or "")[:1000])
+    )
+
+
 def initialize_planning_schema(conn):
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS budget_plans(
@@ -44,6 +76,25 @@ def initialize_planning_schema(conn):
       UNIQUE(budget_id,account_id)
     );
     CREATE INDEX IF NOT EXISTS idx_budget_period ON budget_plans(date_from,date_to,status);
+    CREATE TABLE IF NOT EXISTS budget_monthly_lines(
+      id INTEGER PRIMARY KEY,
+      budget_id INTEGER NOT NULL REFERENCES budget_plans(id) ON DELETE CASCADE,
+      account_id INTEGER NOT NULL REFERENCES accounts(id),
+      period TEXT NOT NULL,
+      amount TEXT NOT NULL,
+      UNIQUE(budget_id,account_id,period)
+    );
+    CREATE INDEX IF NOT EXISTS idx_budget_monthly_period ON budget_monthly_lines(budget_id,period,account_id);
+    CREATE TABLE IF NOT EXISTS budget_audit_log(
+      id INTEGER PRIMARY KEY, budget_id INTEGER NOT NULL REFERENCES budget_plans(id),
+      action TEXT NOT NULL, actor_id INTEGER, details TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_budget_audit_history ON budget_audit_log(budget_id,id);
+    CREATE TRIGGER IF NOT EXISTS budget_audit_no_update
+      BEFORE UPDATE ON budget_audit_log BEGIN SELECT RAISE(ABORT,'Budget audit history is immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS budget_audit_no_delete
+      BEFORE DELETE ON budget_audit_log BEGIN SELECT RAISE(ABORT,'Budget audit history is immutable'); END;
     CREATE TABLE IF NOT EXISTS cash_flow_account_mappings(
       account_id INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
       category TEXT NOT NULL CHECK(category IN ('operating','investing','financing')),
@@ -83,6 +134,27 @@ def initialize_planning_schema(conn):
         if column not in budget_columns:
             conn.execute(f"ALTER TABLE budget_plans ADD COLUMN {column} INTEGER")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_budget_dimensions ON budget_plans(branch_id,cost_center_id,project_id)")
+    budget_columns = {row[1] for row in conn.execute("PRAGMA table_info(budget_plans)")}
+    for column, declaration in (("submitted_by", "INTEGER"), ("submitted_at", "TEXT"),
+                                ("approved_by", "INTEGER"), ("approved_at", "TEXT"),
+                                ("rejection_reason", "TEXT")):
+        if column not in budget_columns:
+            conn.execute(f"ALTER TABLE budget_plans ADD COLUMN {column} {declaration}")
+    conn.execute("UPDATE budget_plans SET status='approved' WHERE status='active'")
+    from datetime import date
+    plans = conn.execute("SELECT id,date_from,date_to FROM budget_plans").fetchall()
+    for plan in plans:
+        existing = conn.execute("SELECT 1 FROM budget_monthly_lines WHERE budget_id=? LIMIT 1", (plan["id"],)).fetchone()
+        if existing:
+            continue
+        months = _budget_months(plan["date_from"], plan["date_to"])
+        lines = conn.execute("SELECT account_id,amount FROM budget_lines WHERE budget_id=?", (plan["id"],)).fetchall()
+        for line in lines:
+            allocations = _split_monthly_amount(_money(line["amount"]), months)
+            conn.executemany(
+                "INSERT OR IGNORE INTO budget_monthly_lines(budget_id,account_id,period,amount) VALUES(?,?,?,?)",
+                [(plan["id"], line["account_id"], month, str(amount)) for month, amount in zip(months, allocations)]
+            )
     journal_table_exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='journal_entries'"
     ).fetchone()
