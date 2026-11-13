@@ -78,6 +78,11 @@ def initialize_planning_schema(conn):
     CREATE INDEX IF NOT EXISTS idx_financial_year_journal_history
       ON financial_year_journal_history(financial_year_id,entry_kind,id);
     """)
+    budget_columns = {row["name"] for row in conn.execute("PRAGMA table_info(budget_plans)")}
+    for column in ("branch_id", "cost_center_id", "project_id"):
+        if column not in budget_columns:
+            conn.execute(f"ALTER TABLE budget_plans ADD COLUMN {column} INTEGER")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_budget_dimensions ON budget_plans(branch_id,cost_center_id,project_id)")
     journal_table_exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='journal_entries'"
     ).fetchone()
@@ -810,6 +815,50 @@ def financial_year_reverse(year_id, entry_kind):
     return redirect(url_for("planning.financial_years"))
 
 
+def build_budget_comparison(conn, budget_id):
+    """Compare posted ledger activity with a budget, scoped to its optional dimensions."""
+    plan = conn.execute("SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
+    if not plan:
+        raise ValueError("الموازنة غير موجودة.")
+    dimensions = []
+    params = [plan["date_from"], plan["date_to"]]
+    for key in ("branch_id", "cost_center_id", "project_id"):
+        if plan[key] is not None:
+            dimensions.append(f"jl.{key}=?")
+            params.append(plan[key])
+    dimension_sql = (" AND " + " AND ".join(dimensions)) if dimensions else ""
+    rows = conn.execute(f"""
+      SELECT a.id,a.code,a.name_ar,a.account_type,b.amount,
+        COALESCE((SELECT DECIMAL_NET(
+            CASE WHEN a.account_type='revenue' THEN jl.credit ELSE jl.debit END,
+            CASE WHEN a.account_type='revenue' THEN jl.debit ELSE jl.credit END)
+          FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+          WHERE jl.account_id=a.id AND je.status='posted'
+            AND je.entry_date>=? AND je.entry_date<=? {dimension_sql}), '0') actual
+      FROM budget_lines b JOIN accounts a ON a.id=b.account_id
+      WHERE b.budget_id=? ORDER BY a.account_type,a.code
+    """, (*params, budget_id)).fetchall()
+    results = []
+    for row in rows:
+        budget = _money(row["amount"])
+        actual = Decimal(str(row["actual"] or "0"))
+        variance = actual - budget
+        variance_pct = (variance * 100 / budget) if budget else None
+        utilization_pct = (actual * 100 / budget) if budget else None
+        if row["account_type"] == "expense":
+            status = "over" if actual > budget else ("warning" if budget and actual >= budget * Decimal("0.80") else "ok")
+        else:
+            status = "behind" if budget and actual < budget * Decimal("0.80") else ("ahead" if actual > budget else "ok")
+        results.append({**dict(row), "budget": budget, "actual": actual,
+                        "variance": variance, "variance_pct": variance_pct,
+                        "utilization_pct": utilization_pct, "status": status})
+    totals = {}
+    for kind in ("revenue", "expense"):
+        totals[kind + "_budget"] = sum((x["budget"] for x in results if x["account_type"] == kind), Decimal("0"))
+        totals[kind + "_actual"] = sum((x["actual"] for x in results if x["account_type"] == kind), Decimal("0"))
+    return plan, results, totals
+
+
 @planning_bp.route("/budget", methods=["GET", "POST"])
 @_require("budget.view")
 def budget_index():
@@ -826,6 +875,14 @@ def budget_index():
             date.fromisoformat(start); date.fromisoformat(end)
             if not name or len(name) > 120 or end < start:
                 raise ValueError("أدخل اسمًا وفترة موازنة صحيحة.")
+            dimensions = {}
+            for key, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"), ("project_id", "projects")):
+                raw = request.form.get(key, "").strip()
+                dimensions[key] = int(raw) if raw else None
+                if dimensions[key] is not None:
+                    valid = conn.execute(f"SELECT 1 FROM {table} WHERE id=? AND active=1", (dimensions[key],)).fetchone()
+                    if not valid:
+                        raise ValueError("أحد الأبعاد التحليلية المحددة غير موجود أو غير نشط.")
             ids = request.form.getlist("account_id")
             if not ids:
                 raise ValueError("أضف حسابًا واحدًا على الأقل وحدد موازنته.")
@@ -839,8 +896,11 @@ def budget_index():
             if len({x[0] for x in lines}) != len(lines):
                 raise ValueError("لا تكرر الحساب داخل الموازنة نفسها.")
             conn.execute("BEGIN IMMEDIATE")
-            cur = conn.execute("INSERT INTO budget_plans(name,date_from,date_to,created_by) VALUES(?,?,?,?)",
-                               (name,start,end,session["user_id"]))
+            cur = conn.execute("""INSERT INTO budget_plans
+                (name,date_from,date_to,created_by,branch_id,cost_center_id,project_id)
+                VALUES(?,?,?,?,?,?,?)""",
+                (name,start,end,session["user_id"],dimensions["branch_id"],
+                 dimensions["cost_center_id"],dimensions["project_id"]))
             conn.executemany("INSERT INTO budget_lines(budget_id,account_id,amount) VALUES(?,?,?)",
                              [(cur.lastrowid, aid, amount) for aid,amount in lines])
             conn.commit()
@@ -849,10 +909,35 @@ def budget_index():
         except (ValueError, TypeError, InvalidOperation, sqlite3.IntegrityError) as exc:
             conn.rollback()
             flash(str(exc) or "تعذر حفظ الموازنة.", "error")
-    plans = conn.execute("SELECT * FROM budget_plans ORDER BY date_from DESC,id DESC").fetchall()
+    plans = conn.execute("""SELECT bp.*,
+        COALESCE(br.name_ar,'كل الفروع') branch_name,
+        COALESCE(cc.name_ar,'كل مراكز التكلفة') cost_center_name,
+        COALESCE(p.name_ar,'كل المشروعات') project_name
+        FROM budget_plans bp LEFT JOIN branches br ON br.id=bp.branch_id
+        LEFT JOIN cost_centers cc ON cc.id=bp.cost_center_id
+        LEFT JOIN projects p ON p.id=bp.project_id
+        ORDER BY bp.date_from DESC,bp.id DESC""").fetchall()
     accounts = conn.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 AND account_type IN ('revenue','expense') ORDER BY account_type,code").fetchall()
+    dimension_options = {
+        "branches": conn.execute("SELECT id,code,name_ar FROM branches WHERE active=1 ORDER BY code").fetchall(),
+        "cost_centers": conn.execute("SELECT id,code,name_ar FROM cost_centers WHERE active=1 ORDER BY code").fetchall(),
+        "projects": conn.execute("SELECT id,code,name_ar FROM projects WHERE active=1 ORDER BY code").fetchall(),
+    }
     conn.close()
-    return render_template("budget.html", plans=plans, accounts=accounts)
+    return render_template("budget.html", plans=plans, accounts=accounts, dimension_options=dimension_options)
+
+
+@planning_bp.route("/budget/<int:budget_id>")
+@_require("budget.view")
+def budget_detail(budget_id):
+    conn = _connect()
+    try:
+        plan, results, totals = build_budget_comparison(conn, budget_id)
+    except ValueError:
+        conn.close()
+        abort(404)
+    conn.close()
+    return render_template("budget_detail.html", plan=plan, rows=results, **totals)
 
 
 @planning_bp.route("/budget/<int:budget_id>")
