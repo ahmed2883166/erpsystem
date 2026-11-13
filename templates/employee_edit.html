@@ -4,7 +4,11 @@
 <label>كود الموظف<input name="employee_code" value="{{e.employee_code}}" required></label><label>اسم الموظف<input name="full_name" value="{{e.full_name}}" required></label>
 <label>الرقم القومي<input name="national_id" value="{{e.national_id}}" maxlength="20"></label><label>رقم التأمين الاجتماعي<input name="insurance_number" value="{{e.insurance_number}}"></label>
 <label>العنوان<input name="address" value="{{e.address}}"></label><label>الوظيفة<input name="job_title" value="{{e.job_title}}"></label>
-<label>الإدارة / مركز التكلفة<input name="department" value="{{e.department}}"></label><label>تاريخ التعيين<input type="date" name="hire_date" value="{{e.hire_date}}" required></label>
+<label>الإدارة / المسمى الإداري<input name="department" value="{{e.department}}"></label>
+<label>الفرع التحليلي <select name="branch_id"><option value="">غير محدد</option>{% for d in dimensions.branches %}<option value="{{d.id}}" {% if e.branch_id|string==d.id|string %}selected{% endif %}>{{d.code}} - {{d.name_ar}}</option>{% endfor %}</select></label>
+<label>مركز التكلفة <select name="cost_center_id"><option value="">غير محدد</option>{% for d in dimensions.cost_centers %}<option value="{{d.id}}" {% if e.cost_center_id|string==d.id|string %}selected{% endif %}>{{d.code}} - {{d.name_ar}}</option>{% endfor %}</select></label>
+<label>المشروع <select name="project_id"><option value="">غير محدد</option>{% for d in dimensions.projects %}<option value="{{d.id}}" {% if e.project_id|string==d.id|string %}selected{% endif %}>{{d.code}} - {{d.name_ar}}</option>{% endfor %}</select></label>
+<label>تاريخ التعيين<input type="date" name="hire_date" value="{{e.hire_date}}" required></label>
 <label>الموقف من العمل<select name="work_status"><option value="permanent" {{'selected' if e.work_status=='permanent'}}>مثبت</option><option value="comprehensive_bonus" {{'selected' if e.work_status=='comprehensive_bonus'}}>مكافأة شاملة</option><option value="unpaid_leave" {{'selected' if e.work_status=='unpaid_leave'}}>إجازة بدون مرتب</option><option value="resigned" {{'selected' if e.work_status=='resigned'}}>استقالة</option><option value="retired" {{'selected' if e.work_status=='retired'}}>معاش</option></select></label>
 <label>الراتب الأساسي<input type="number" step="0.01" min="0" name="basic_salary" value="{{e.basic_salary}}" required></label>
 <label>ساعات العمل القياسية شهريًا<input type="number" step="0.01" min="1" name="standard_hours" value="{{e.standard_hours}}" required></label>
