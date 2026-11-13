@@ -47,6 +47,13 @@ def register_report_exports(app, db_path, permissions):
             "SELECT setting_value FROM company_settings WHERE setting_key='base_currency'"
         ).fetchone()
         base_currency = currency_row["setting_value"] if currency_row else ""
+        company_profile = {
+            row["setting_key"]: row["setting_value"]
+            for row in conn.execute(
+                "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
+                "('company_address','company_phone','company_email','company_website','company_logo_data')"
+            )
+        }
         try:
             if report == "accounts":
                 rows = conn.execute("""
@@ -578,7 +585,7 @@ def register_report_exports(app, db_path, permissions):
                 from reportlab.lib.pagesizes import A4, landscape
                 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
                 from reportlab.lib.units import mm
-                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as ReportImage
                 from xml.sax.saxutils import escape
             except ImportError:
                 return Response(
@@ -628,13 +635,33 @@ def register_report_exports(app, db_path, permissions):
                 "NexusHeader", parent=cell_style, fontSize=8, leading=11,
                 textColor=colors.white, alignment=TA_CENTER,
             )
-            story = [
+            story = []
+            logo_data = company_profile.get("company_logo_data", "")
+            if logo_data.startswith("data:image/") and ";base64," in logo_data:
+                try:
+                    logo_bytes = base64.b64decode(logo_data.split(";base64,", 1)[1], validate=True)
+                    logo_image = ReportImage(io.BytesIO(logo_bytes), width=28*mm, height=20*mm, kind="proportional")
+                    story.append(logo_image)
+                except (ValueError, TypeError):
+                    pass
+            story.extend([
                 Paragraph(pdf_text(company_name), heading_style),
                 Paragraph(pdf_text(locals().get("title", report)), heading_style),
+                Paragraph(pdf_text(" · ".join(value for value in (
+                    company_profile.get("company_address", ""),
+                    company_profile.get("company_phone", ""),
+                    company_profile.get("company_email", ""),
+                    company_profile.get("company_website", ""),
+                ) if value)), cell_style),
+                Paragraph(pdf_text("الرقم الضريبي: " + str(conn.execute(
+                    "SELECT setting_value FROM company_settings WHERE setting_key='tax_number'"
+                ).fetchone()["setting_value"] if conn.execute(
+                    "SELECT 1 FROM company_settings WHERE setting_key='tax_number'"
+                ).fetchone() else "")), cell_style),
                 Paragraph(pdf_text("العملة الأساسية: " + base_currency), cell_style),
                 Paragraph(pdf_text("تاريخ إعداد التقرير: " + datetime.now().strftime("%Y-%m-%d %H:%M")), cell_style),
                 Spacer(1, 5*mm),
-            ]
+            ])
             table_data = [[Paragraph(pdf_text(value), header_style) for value in reversed(headers)]]
             for row in data:
                 table_data.append([
