@@ -330,7 +330,7 @@ def register_report_exports(app, db_path, permissions):
             elif report == "aging":
                 from receivables import (
                     _amount, _table_exists, _customer_aging_movements,
-                    _supplier_aging_movements, _supplier_aging_documents,
+                    _supplier_aging_movements, _supplier_aging_documents, _supplier_credit_notes_linked,
                 )
                 from datetime import date as date_type
                 kind = request.args.get("kind", "customers")
@@ -360,7 +360,7 @@ def register_report_exports(app, db_path, permissions):
                         _supplier_aging_movements(conn, as_of)
                     )
                     refunds_by_invoice = {}
-                    credit_table_exists = _table_exists(conn, "supplier_credit_notes")
+                    credit_table_exists = _supplier_credit_notes_linked(conn)
                 rows = []
                 for invoice in invoice_rows:
                     document_id = invoice["invoice_id"]
@@ -383,7 +383,11 @@ def register_report_exports(app, db_path, permissions):
                            "أيام التأخير","غير مستحق","0-30","31-60","61-90","أكثر من 90"]
                 data = []
                 for r in rows:
-                    days=(report_date-date_type.fromisoformat(r["due_date"])).days
+                    try:
+                        due_date = date_type.fromisoformat(r["due_date"]) if r["due_date"] else date_type.fromisoformat(r["doc_date"])
+                    except (TypeError, ValueError):
+                        due_date = report_date
+                    days=(report_date-due_date).days
                     buckets=[Decimal("0") for _ in range(5)]
                     buckets[0 if days<=0 else 1 if days<=30 else 2 if days<=60 else 3 if days<=90 else 4]=Decimal(r["balance"])
                     data.append([r["party_code"],r["party_name"],r["doc_no"],r["doc_date"],r["due_date"],
