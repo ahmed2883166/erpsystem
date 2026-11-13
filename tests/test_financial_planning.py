@@ -5,7 +5,7 @@ from unittest.mock import patch
 from decimal import Decimal
 
 from chart_templates import CHARTS, seed_activity_chart, ensure_activity_chart_accounts
-from financial_planning import (initialize_planning_schema, build_balance_sheet_snapshot, _money, _connect, create_financial_year, list_financial_years, create_opening_entry, close_financial_year, reverse_financial_year_entry, build_financial_year_preclose_report, build_budget_comparison)
+from financial_planning import (initialize_planning_schema, build_balance_sheet_snapshot, _money, _connect, create_financial_year, list_financial_years, create_opening_entry, close_financial_year, reverse_financial_year_entry, build_financial_year_preclose_report, build_budget_comparison, build_budget_monthly_comparison, _budget_months)
 from accounting_core import register_decimal_aggregates, post_journal
 
 
@@ -103,6 +103,49 @@ class FinancialPlanningTests(unittest.TestCase):
         self.assertEqual(by_code["4100"]["status"], "ahead")
         self.assertEqual(totals["expense_actual"], Decimal("850"))
         self.assertEqual(totals["revenue_actual"], Decimal("600"))
+
+    def test_monthly_budget_split_preserves_exact_total_and_remainder(self):
+        months = _budget_months("2026-01-15", "2026-03-20")
+        self.assertEqual(months, ["2026-01", "2026-02", "2026-03"])
+        values = _split_monthly_amount(Decimal("100.00"), months)
+        self.assertEqual(values, [Decimal("33.33"), Decimal("33.33"), Decimal("33.34")])
+        self.assertEqual(sum(values), Decimal("100.00"))
+
+    def test_monthly_budget_actual_comparison_uses_posted_lines_and_exact_decimals(self):
+        initialize_planning_schema(self.conn)
+        self.conn.executemany(
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) VALUES(?,?,?,?,0,1)",
+            [(1, "6100", "مصروف تشغيل", "expense")]
+        )
+        self.conn.execute("""INSERT INTO budget_plans
+            (id,name,date_from,date_to,branch_id) VALUES(1,'موازنة','2026-01-01','2026-02-28',1)""")
+        self.conn.execute("INSERT INTO budget_lines(budget_id,account_id,amount) VALUES(1,1,'100.00')")
+        self.conn.executemany(
+            "INSERT INTO budget_monthly_lines(budget_id,account_id,period,amount) VALUES(1,1,?,?)",
+            [("2026-01","40.00"),("2026-02","60.00")]
+        )
+        self.conn.executemany(
+            "INSERT INTO journal_entries(id,entry_date,status) VALUES(?,?,?)",
+            [(1,"2026-01-05","posted"),(2,"2026-01-20","posted"),(3,"2026-01-22","draft"),(4,"2026-02-02","posted")]
+        )
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit,branch_id) VALUES(?,?,?,?,?)",
+            [(1,1,"10.10","0",1),(2,1,"20.20","0",1),(3,1,"999","0",1),(4,1,"60.00","0",1)]
+        )
+        _, rows = build_budget_monthly_comparison(self.conn, 1)
+        by_period = {r["period"]: r for r in rows}
+        self.assertEqual(by_period["2026-01"]["actual"], Decimal("30.30"))
+        self.assertEqual(by_period["2026-02"]["actual"], Decimal("60.00"))
+        self.assertEqual(by_period["2026-01"]["variance"], Decimal("-9.70"))
+
+    def test_budget_audit_history_is_append_only(self):
+        initialize_planning_schema(self.conn)
+        self.conn.execute("INSERT INTO budget_plans(id,name,date_from,date_to) VALUES(1,'X','2026-01-01','2026-12-31')")
+        self.conn.execute("INSERT INTO budget_audit_log(budget_id,action,actor_id) VALUES(1,'created',1)")
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "immutable"):
+            self.conn.execute("UPDATE budget_audit_log SET action='changed' WHERE budget_id=1")
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "immutable"):
+            self.conn.execute("DELETE FROM budget_audit_log WHERE budget_id=1")
 
     def test_budget_comparison_rejects_missing_budget(self):
         initialize_planning_schema(self.conn)
