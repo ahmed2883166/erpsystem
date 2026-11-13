@@ -1144,12 +1144,31 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
                     "SELECT DISTINCT expense_account_id FROM fixed_assets"
                 ).fetchall()
             }
-    depreciation = sum((Decimal(str(r["debit"]))-Decimal(str(r["credit"]))
+    asset_depreciation_total=Decimal("0")
+    asset_depreciation_exists=conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_depreciations'"
+    ).fetchone()
+    if asset_depreciation_exists:
+        asset_depreciation_columns={
+            row["name"] for row in conn.execute("PRAGMA table_info(asset_depreciations)")
+        }
+        if {"amount","journal_entry_id"}.issubset(asset_depreciation_columns):
+            posted_asset_depreciation=conn.execute("""
+                SELECT d.amount FROM asset_depreciations d
+                JOIN journal_entries je ON je.id=d.journal_entry_id
+                WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
+            """,(start,end)).fetchall()
+            asset_depreciation_total=sum(
+                (Decimal(str(row["amount"] or "0")) for row in posted_asset_depreciation),
+                Decimal("0"),
+            )
+    other_depreciation = sum((Decimal(str(r["debit"]))-Decimal(str(r["credit"]))
                         for r in period_rows if r["account_type"]=="expense"
-                        and (r["account_id"] in depreciation_account_ids
-                             or str(r["code"]).startswith(("64","65"))
+                        and r["account_id"] not in depreciation_account_ids
+                        and (str(r["code"]).startswith(("64","65"))
                              or "إهلاك" in str(r["name_ar"])
                              or "depreciation" in str(r["name_ar"]).lower())), Decimal("0"))
+    depreciation=asset_depreciation_total+other_depreciation
     disposal_gain_loss=Decimal("0")
     disposals_exists=conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_disposals'"
