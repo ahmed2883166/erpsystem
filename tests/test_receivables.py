@@ -37,8 +37,10 @@ class ReceivablesAgingTests(unittest.TestCase):
             CREATE TABLE supplier_payment_allocations(payment_id INTEGER,bill_id INTEGER,amount TEXT);
             CREATE TABLE supplier_credit_notes(id INTEGER PRIMARY KEY,supplier_id INTEGER,bill_id INTEGER,credit_date TEXT,total_amount TEXT,status TEXT);
         """)
-        conn.execute("INSERT INTO customer_receipts VALUES(1,1,'2026-11-10','50')")
-        conn.execute("INSERT INTO supplier_payments VALUES(1,1,'2026-11-12')")
+        conn.execute("""INSERT INTO customer_receipts(id,invoice_id,receipt_no,receipt_date,amount,reference)
+            VALUES(1,1,'CR-1','2026-11-10','50','')""")
+        conn.execute("""INSERT INTO supplier_payments(id,supplier_id,payment_no,payment_date,amount,reference)
+            VALUES(1,1,'SP-1','2026-11-12','50','')""")
         conn.execute("INSERT INTO supplier_payment_allocations VALUES(1,1,'50')")
         # A second customer invoice has settlements and credits both before and after the report date.
         conn.execute("""INSERT INTO sales_invoices
@@ -50,8 +52,10 @@ class ReceivablesAgingTests(unittest.TestCase):
         conn.execute("""INSERT INTO sales_credit_notes
             (id,invoice_id,credit_note_no,credit_date,reason,total_amount,status)
             VALUES(3,2,'SCN-2B','2026-12-02','مرتجع بعد التاريخ','20','posted')""")
-        conn.execute("INSERT INTO customer_receipts VALUES(2,2,'2026-11-25','25')")
-        conn.execute("INSERT INTO customer_receipts VALUES(3,2,'2026-12-05','30')")
+        conn.execute("""INSERT INTO customer_receipts(id,invoice_id,receipt_no,receipt_date,amount,reference)
+            VALUES(2,2,'CR-2A','2026-11-25','25','')""")
+        conn.execute("""INSERT INTO customer_receipts(id,invoice_id,receipt_no,receipt_date,amount,reference)
+            VALUES(3,2,'CR-2B','2026-12-05','30','')""")
         conn.execute("INSERT INTO customer_receipt_batches VALUES(1,'2026-12-06')")
         conn.execute("INSERT INTO customer_receipt_allocations VALUES(1,2,'20')")
         conn.execute("INSERT INTO customer_advance_allocations VALUES(1,2,'2026-11-28','5')")
@@ -65,12 +69,16 @@ class ReceivablesAgingTests(unittest.TestCase):
         conn.execute("""INSERT INTO supplier_bills
             (id,supplier_id,bill_no,bill_date,due_date,total_amount,paid_amount,credited_amount,status)
             VALUES(2,1,'PB-2','2026-11-02','2026-11-12','300','80','40','posted')""")
-        conn.execute("INSERT INTO supplier_payments VALUES(2,1,'2026-11-29')")
+        conn.execute("""INSERT INTO supplier_payments(id,supplier_id,payment_no,payment_date,amount,reference)
+            VALUES(2,1,'SP-2A','2026-11-29','30','')""")
         conn.execute("INSERT INTO supplier_payment_allocations VALUES(2,2,'30')")
-        conn.execute("INSERT INTO supplier_payments VALUES(3,1,'2026-12-02')")
+        conn.execute("""INSERT INTO supplier_payments(id,supplier_id,payment_no,payment_date,amount,reference)
+            VALUES(3,1,'SP-2B','2026-12-02','50','')""")
         conn.execute("INSERT INTO supplier_payment_allocations VALUES(3,2,'50')")
-        conn.execute("INSERT INTO supplier_credit_notes VALUES(1,1,2,'2026-11-20','15','posted')")
-        conn.execute("INSERT INTO supplier_credit_notes VALUES(2,1,2,'2026-12-02','25','posted')")
+        conn.execute("""INSERT INTO supplier_credit_notes(id,credit_no,supplier_id,bill_id,credit_date,reason,total_amount,status)
+            VALUES(1,'SCN-2A',1,2,'2026-11-20','مرتجع قبل التاريخ','15','posted')""")
+        conn.execute("""INSERT INTO supplier_credit_notes(id,credit_no,supplier_id,bill_id,credit_date,reason,total_amount,status)
+            VALUES(2,'SCN-2B',1,2,'2026-12-02','مرتجع بعد التاريخ','25','posted')""")
         conn.commit()
         conn.close()
         # Use a minimal base layout: the real base.html links to app-only endpoints that this test app does not register.
