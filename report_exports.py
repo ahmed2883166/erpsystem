@@ -51,7 +51,7 @@ def register_report_exports(app, db_path, permissions):
             row["setting_key"]: row["setting_value"]
             for row in conn.execute(
                 "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
-                "('company_address','company_phone','company_email','company_website','company_logo_data')"
+                "('company_address','company_phone','company_email','company_website','company_logo_data','tax_number')"
             )
         }
         try:
@@ -653,11 +653,7 @@ def register_report_exports(app, db_path, permissions):
                     company_profile.get("company_email", ""),
                     company_profile.get("company_website", ""),
                 ) if value)), cell_style),
-                Paragraph(pdf_text("الرقم الضريبي: " + str(conn.execute(
-                    "SELECT setting_value FROM company_settings WHERE setting_key='tax_number'"
-                ).fetchone()["setting_value"] if conn.execute(
-                    "SELECT 1 FROM company_settings WHERE setting_key='tax_number'"
-                ).fetchone() else "")), cell_style),
+                Paragraph(pdf_text("الرقم الضريبي: " + company_profile.get("tax_number", "")), cell_style),
                 Paragraph(pdf_text("العملة الأساسية: " + base_currency), cell_style),
                 Paragraph(pdf_text("تاريخ إعداد التقرير: " + datetime.now().strftime("%Y-%m-%d %H:%M")), cell_style),
                 Spacer(1, 5*mm),
