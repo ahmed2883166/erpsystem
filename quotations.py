@@ -41,6 +41,8 @@ def initialize_quotes_schema():
   warehouse_id INTEGER REFERENCES stock_warehouses(id),
   order_date TEXT NOT NULL, expected_date TEXT,
   status TEXT NOT NULL DEFAULT 'pending_approval',
+  discount_type TEXT NOT NULL DEFAULT 'none', discount_value TEXT NOT NULL DEFAULT '0',
+  discount_amount TEXT NOT NULL DEFAULT '0', discount_allocated TEXT NOT NULL DEFAULT '0',
   created_by INTEGER, submitted_by INTEGER,
   approved_by INTEGER, approved_at TEXT,
   rejection_reason TEXT NOT NULL DEFAULT '',
@@ -84,6 +86,14 @@ def initialize_quotes_schema():
  """);
  qcols={r["name"] for r in c.execute("PRAGMA table_info(quotations)")}
  if "sales_order_id" not in qcols: c.execute("ALTER TABLE quotations ADD COLUMN sales_order_id INTEGER")
+ so_cols={r["name"] for r in c.execute("PRAGMA table_info(sales_orders)")}
+ for name,definition in {
+  "discount_type":"TEXT NOT NULL DEFAULT 'none'",
+  "discount_value":"TEXT NOT NULL DEFAULT '0'",
+  "discount_amount":"TEXT NOT NULL DEFAULT '0'",
+  "discount_allocated":"TEXT NOT NULL DEFAULT '0'",
+ }.items():
+  if name not in so_cols: c.execute(f"ALTER TABLE sales_orders ADD COLUMN {name} {definition}")
  dcols={r["name"] for r in c.execute("PRAGMA table_info(delivery_note_lines)")}
  if "invoiced_cost" not in dcols: c.execute("ALTER TABLE delivery_note_lines ADD COLUMN invoiced_cost TEXT NOT NULL DEFAULT '0'")
  lcols={r["name"] for r in c.execute("PRAGMA table_info(delivery_note_line_lots)")}
@@ -141,20 +151,38 @@ def create_sales_order_from_quotation(conn, quote_id, created_by, warehouse_id=N
   raise ValueError("نشاط الخدمات لا يقبل بنود أصناف مخزنية في أمر البيع.")
  if warehouse_id and not conn.execute("SELECT 1 FROM stock_warehouses WHERE id=? AND active=1",(warehouse_id,)).fetchone():
   raise ValueError("مخزن التسليم غير موجود أو غير نشط.")
+ gross_subtotal=Decimal("0")
  for line in lines:
   try:
    qty=Decimal(str(line["quantity"])); price=Decimal(str(line["unit_price"]))
+   line_total=Decimal(str(line["line_total"]))
   except (InvalidOperation,ValueError,TypeError) as exc:
    raise ValueError("كمية أو سعر أحد بنود عرض السعر غير صحيح.") from exc
-  if not qty.is_finite() or qty<=0 or not price.is_finite() or price<0:
+  if not qty.is_finite() or qty<=0 or not price.is_finite() or price<0 or not line_total.is_finite() or line_total<0:
    raise ValueError("كمية أو سعر أحد بنود عرض السعر غير صحيح.")
+  gross_subtotal+=line_total
+ customer=conn.execute("SELECT discount_type,discount_value FROM customers WHERE id=? AND active=1",(q["customer_id"],)).fetchone()
+ if not customer: raise ValueError("العميل غير موجود أو غير نشط.")
+ discount_type=str(customer["discount_type"] or "none").strip().lower()
+ discount_value=Decimal(str(customer["discount_value"] or "0")).quantize(M,rounding=ROUND_HALF_UP)
+ if discount_type not in {"none","percent","fixed"} or not discount_value.is_finite() or discount_value<0:
+  raise ValueError("إعداد خصم العميل غير صحيح.")
+ if discount_type=="percent":
+  if discount_value>100: raise ValueError("نسبة خصم العميل يجب ألا تتجاوز 100%.")
+  discount_amount=(gross_subtotal*discount_value/Decimal("100")).quantize(M,rounding=ROUND_HALF_UP)
+ elif discount_type=="fixed":
+  if discount_value>=gross_subtotal and discount_value>0:
+   raise ValueError("قيمة الخصم الثابت يجب أن تكون أقل من إجمالي أمر البيع.")
+  discount_amount=discount_value
+ else:
+  discount_value=Decimal("0"); discount_amount=Decimal("0")
  order_no="SO-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
  cur=conn.execute(
   """INSERT INTO sales_orders(order_no,quotation_id,customer_id,warehouse_id,order_date,
-     expected_date,status,created_by,submitted_by)
-     VALUES(?,?,?,?,?,?,'pending_approval',?,?)""",
+     expected_date,status,discount_type,discount_value,discount_amount,created_by,submitted_by)
+     VALUES(?,?,?,?,?,?,'pending_approval',?,?,?,?,?)""",
   (order_no,quote_id,q["customer_id"],warehouse_id,date.today().isoformat(),
-   expected_date or None,created_by,created_by))
+   expected_date or None,discount_type,str(discount_value),str(discount_amount),created_by,created_by))
  order_id=cur.lastrowid
  conn.executemany(
   """INSERT INTO sales_order_lines(sales_order_id,quotation_line_id,product_id,description,
