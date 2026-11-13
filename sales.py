@@ -831,6 +831,11 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
 
 
 def _reverse_posted_journal(conn, entry_id, reversal_date, reference, description, created_by):
+    original = conn.execute(
+        "SELECT status FROM journal_entries WHERE id=?", (entry_id,)
+    ).fetchone()
+    if not original or original["status"] != "posted":
+        raise ValueError("لا يمكن عكس قيد غير موجود أو غير مرحل.")
     dimension_keys = (
         "branch_id", "cost_center_id", "project_id", "customer_id",
         "salesperson_id", "supplier_id",
@@ -1511,6 +1516,10 @@ def customer_advances():
     ).fetchall():
         item = dict(row)
         item["remaining_amount"] = (
+            Decimal("0") if c.execute(
+                "SELECT 1 FROM customer_advance_reversals WHERE source_type='receipt' AND source_id=?",
+                (row["id"],),
+            ).fetchone() else
             Decimal(str(row["amount"])) -
             allocated_by_receipt.get(row["id"], Decimal("0")) -
             refunded_by_receipt.get(row["id"], Decimal("0"))
@@ -1617,13 +1626,9 @@ def reverse_customer_advance_route(source_type, source_id):
             request.form.get("reason", ""), session.get("user_id"),
         )
         c.commit()
-        if hasattr(g, "audit_created_record"):
-            g.audit_created_record(
-                "customer_advance_reversal", result["reversal_journal_entry_id"],
-                {"source_type": source_type, "source_id": source_id,
-                 "original_journal_entry_id": result["original_journal_entry_id"],
-                 "reason": request.form.get("reason", "").strip()},
-            )
+        g.audit_created_record = (
+            "customer_advance_reversals", result["reversal_journal_entry_id"]
+        )
         flash("تم عكس العملية بقيد عكسي مرتبط دون حذف المستند أو القيد الأصلي.", "success")
     except (ValueError, sqlite3.Error) as exc:
         c.rollback()
