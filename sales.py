@@ -1031,6 +1031,20 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
 
 
 
+def _customer_cash_account(conn, cash_account_id):
+    """Accept only active detailed cash/bank accounts mapped for this activity."""
+    from activity_profiles import active_account_role_ids
+    allowed_ids = active_account_role_ids(conn).get("cash", set())
+    row = conn.execute(
+        "SELECT id,is_group,active,account_type FROM accounts WHERE id=?",
+        (cash_account_id,),
+    ).fetchone()
+    if (not row or row["id"] not in allowed_ids or row["is_group"] or
+            not row["active"] or row["account_type"] != "asset"):
+        raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا ومربوطًا بملف النشاط.")
+    return row
+
+
 def _customer_advances_account(conn):
     """Resolve the customer-advances liability through the selected activity profile."""
     from activity_profiles import active_account_role_ids
@@ -1092,11 +1106,7 @@ def post_customer_advance_receipt(conn, customer_id, receipt_date, amount,
     ).fetchone()
     if not customer:
         raise ValueError("العميل غير موجود أو غير نشط.")
-    cash = conn.execute(
-        "SELECT id,is_group,active,account_type FROM accounts WHERE id=?", (cash_account_id,)
-    ).fetchone()
-    if not cash or cash["is_group"] or not cash["active"] or cash["account_type"] != "asset":
-        raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
+    _customer_cash_account(conn, cash_account_id)
     advance_account = _customer_advances_account(conn)
     receipt_no = "CADV-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
     dimensions = validate_journal_dimensions(conn, {"customer_id": customer_id})
@@ -1199,11 +1209,7 @@ def post_customer_advance_refund(conn, advance_receipt_id, refund_date, amount,
     available = _customer_advance_available(conn, advance_receipt_id)
     if amount > available:
         raise ValueError(f"قيمة الرد تتجاوز المتبقي من مقدم العميل ({available:.2f}).")
-    cash = conn.execute(
-        "SELECT id,is_group,active,account_type FROM accounts WHERE id=?", (cash_account_id,)
-    ).fetchone()
-    if not cash or cash["is_group"] or not cash["active"] or cash["account_type"] != "asset":
-        raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
+    _customer_cash_account(conn, cash_account_id)
     advance_account = _customer_advances_account(conn)
     refund_no = "CADVR-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
     dimensions = validate_journal_dimensions(conn, {"customer_id": receipt["customer_id"]})
