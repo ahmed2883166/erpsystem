@@ -813,7 +813,7 @@ otals["credit"], places=2)
         return quote_id, order["sales_order_id"], order_line_id
 
     def test_sales_order_partial_delivery_and_invoicing_never_issue_stock_twice(self):
-        quote_id, order_id, order_line_id = self._create_accepted_quote_and_order("4")
+        _, order_id, order_line_id = self._create_accepted_quote_and_order("4")
         with self.assertRaisesRegex(ValueError, "نفس منشئه"):
             quotations.approve_sales_order(self.db, order_id, approver_id=1)
         self.assertEqual(
