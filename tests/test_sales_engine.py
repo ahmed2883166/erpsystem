@@ -207,6 +207,72 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(Decimal(paid), Decimal("40.00"))
         self.assertTrue(receipt["journal_entry_id"])
 
+    def test_batch_customer_receipt_allocates_multiple_invoices_and_posts_one_balanced_journal(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        first = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}], "0", 1,
+        )
+        second = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-11", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "80"}], "0", 1,
+        )
+        cash_id = self.db.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
+        receipt = sales.post_customer_receipt_batch(
+            self.db, self.customer_id, "2026-11-12",
+            [(first["invoice_id"], "30"), (second["invoice_id"], "40")],
+            cash_id, 1, "BANK-DEP-001",
+        )
+        self.db.commit()
+
+        self.assertEqual(receipt["total_amount"], Decimal("70.00"))
+        self.assertEqual(receipt["invoice_count"], 2)
+        paid = {
+            row["id"]: Decimal(row["paid_amount"])
+            for row in self.db.execute(
+                "SELECT id,paid_amount FROM sales_invoices WHERE id IN (?,?)",
+                (first["invoice_id"], second["invoice_id"]),
+            )
+        }
+        self.assertEqual(paid[first["invoice_id"]], Decimal("30.00"))
+        self.assertEqual(paid[second["invoice_id"]], Decimal("40.00"))
+        allocations = self.db.execute(
+            """SELECT invoice_id,amount FROM customer_receipt_allocations a
+               JOIN customer_receipt_batches b ON b.id=a.batch_id
+               WHERE b.receipt_no=? ORDER BY invoice_id""",
+            (receipt["receipt_no"],),
+        ).fetchall()
+        self.assertEqual(sum((Decimal(row["amount"]) for row in allocations), Decimal("0")), Decimal("70.00"))
+        journal = self.db.execute(
+            "SELECT account_id,debit,credit FROM journal_lines WHERE entry_id=?",
+            (receipt["journal_entry_id"],),
+        ).fetchall()
+        cash_code = self.db.execute("SELECT code FROM accounts WHERE id=?", (journal[0]["account_id"],)).fetchone()["code"]
+        ar_code = self.db.execute("SELECT code FROM accounts WHERE id=?", (journal[1]["account_id"],)).fetchone()["code"]
+        self.assertEqual((cash_code, Decimal(journal[0]["debit"]), Decimal(journal[0]["credit"])),
+                         ("1110", Decimal("70.00"), Decimal("0")))
+        self.assertEqual((ar_code, Decimal(journal[1]["debit"]), Decimal(journal[1]["credit"])),
+                         ("1130", Decimal("0"), Decimal("70.00")))
+
+    def test_batch_customer_receipt_overallocation_is_rejected_without_partial_updates(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}], "0", 1,
+        )
+        cash_id = self.db.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
+        with self.assertRaisesRegex(ValueError, "أكبر من المتبقي"):
+            sales.post_customer_receipt_batch(
+                self.db, self.customer_id, "2026-11-12",
+                [(invoice["invoice_id"], "100.01")], cash_id, 1,
+            )
+        self.db.rollback()
+        paid = self.db.execute(
+            "SELECT paid_amount FROM sales_invoices WHERE id=?", (invoice["invoice_id"],)
+        ).fetchone()["paid_amount"]
+        self.assertEqual(Decimal(paid), Decimal("0"))
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM customer_receipt_batches").fetchone()[0], 0)
+
     def test_partial_credit_note_reverses_revenue_tax_cogs_and_restores_stock(self):
         self.db.execute("BEGIN IMMEDIATE")
         invoice = sales.post_invoice(
