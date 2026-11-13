@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}المطابقة التفصيلية للعملاء والموردين | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <h2>المطابقة التفصيلية للعملاء والموردين</h2>
+  <div class="table-actions no-print">
+    <a class="btn secondary" href="{{ url_for('party_reports.subledger_reconciliation', as_of=as_of) }}">العودة للمطابقة الإجمالية</a>
+    <button type="button" class="secondary" onclick="window.print()">طباعة / PDF</button>
+  </div>
+</header>
+<section class="panel no-print">
+  <form method="get" class="report-filter">
+    <label>نوع الطرف
+      <select name="kind">
+        <option value="customer" {% if kind == 'customer' %}selected{% endif %}>العملاء</option>
+        <option value="supplier" {% if kind == 'supplier' %}selected{% endif %}>الموردون</option>
+      </select>
+    </label>
+    <label>حتى تاريخ
+      <input type="date" name="as_of" value="{{ as_of }}" required>
+    </label>
+    <button type="submit">عرض</button>
+  </form>
+</section>
+<section class="panel print-area">
+  <h3>{{ 'أرصدة العملاء' if kind == 'customer' else 'أرصدة الموردين' }} حتى {{ as_of }}</h3>
+  <p>الأرصدة محسوبة من المستندات والحركات التشغيلية المرحلة. رصيد الأستاذ العام للطرف يظهر فقط عندما يكون بُعد الطرف محفوظًا على سطور القيود.</p>
+  <table>
+    <thead><tr>
+      <th>الكود</th><th>اسم الطرف</th><th>رصيد الأستاذ المساعد</th>
+      <th>رصيد الأستاذ العام للطرف</th><th>الفرق</th><th>الحالة</th><th class="no-print">التفاصيل</th>
+    </tr></thead>
+    <tbody>
+    {% for row in rows %}
+      <tr>
+        <td>{{ row.code }}</td><td>{{ row.name }}</td>
+        <td>{{ row.subledger_balance|money }}</td>
+        <td>{{ row.gl_balance|money if row.gl_available else 'غير متاح — لا يوجد بُعد طرف في سطور القيود' }}</td>
+        <td>{{ row.difference|money if row.difference is not none else '—' }}</td>
+        <td>
+          {% if not row.gl_available %}<span class="status-badge warning">الأستاذ العام التفصيلي غير متاح</span>
+          {% elif row.matched %}<span class="status-badge success">متطابق</span>
+          {% else %}<span class="status-badge danger">يوجد فرق</span>{% endif %}
+        </td>
+        <td class="no-print"><a href="{{ url_for('party_reports.party_reconciliation', kind=kind, as_of=as_of, party_id=row.id) }}">عرض الحركات</a></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7">لا توجد أرصدة مفتوحة حتى التاريخ المحدد.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if kind == 'supplier' %}
+    <p class="muted">ملاحظة محاسبية: مخطط القيود الحالي يدعم customer_id ولا يحتوي supplier_id؛ لذلك لا نعرض رصيد GL لكل مورد على أنه صفر أو نقدّر قيمته. تتم مقارنة إجمالي الموردين بحساب المراقبة في شاشة المطابقة الإجمالية.</p>
+  {% endif %}
+</section>
+{% if selected %}
+<section class="panel print-area">
+  <h3>حركة {{ 'العميل' if kind == 'customer' else 'المورد' }}: {{ selected.code }} - {{ selected.name }}</h3>
+  <p>حتى {{ as_of }}. الرصيد الجاري يوضح أثر كل مستند بترتيب التاريخ.</p>
+  <table>
+    <thead><tr><th>التاريخ</th><th>المرجع</th><th>المستند / البيان</th><th>مدين</th><th>دائن</th><th>الرصيد الجاري</th></tr></thead>
+    <tbody>
+    {% for event in details %}
+      <tr>
+        <td>{{ event.event_date }}</td><td>{{ event.reference }}</td><td>{{ event.description }}</td>
+        <td>{{ event.debit|money }}</td><td>{{ event.credit|money }}</td>
+        <td>{{ event.running_balance|money }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6">لا توجد حركات لهذا الطرف حتى التاريخ المحدد.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="no-print"><a href="{{ url_for('party_reports.party_statement', kind=kind, party_id=selected.id, date_to=as_of) }}">فتح كشف الحساب الكامل</a></p>
+</section>
+{% endif %}
+{% endblock %}
