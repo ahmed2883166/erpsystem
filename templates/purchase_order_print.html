@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}أمر شراء {{ order.po_no }} | NEXUS ERP{% endblock %}
+{% block content %}
+<section class="panel print-document">
+<div class="no-print actions"><button type="button" onclick="window.print()">طباعة أمر الشراء / PDF</button></div>
+{% set document_title = 'أمر شراء' %}{% set document_number = order.po_no %}{% set document_date = order.order_date %}
+{% include "partials/print_brand_header.html" %}
+<div class="form-row"><div><b>المورد:</b> {{ order.supplier_name }} ({{ order.supplier_code }})</div><div><b>الرقم الضريبي:</b> {{ order.supplier_tax_number or '—' }}</div><div><b>التسليم المتوقع:</b> {{ order.expected_date or '—' }}</div><div><b>الحالة:</b> {{ order.status }}</div></div>
+<div class="table-wrap"><table><thead><tr><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead><tbody>{% set ns=namespace(total=0) %}{% for x in lines %}{% set amount=x.quantity|float*x.unit_price|float %}{% set ns.total=ns.total+amount %}<tr><td>{{ x.sku }} — {{ x.product_name }}</td><td>{{ x.quantity }}</td><td>{{ x.uom or '' }}</td><td>{{ x.unit_price|money }}</td><td>{{ amount|money }}</td></tr>{% else %}<tr><td colspan="5">لا توجد بنود.</td></tr>{% endfor %}</tbody></table></div>
+<h3>إجمالي أمر الشراء: {{ ns.total|money }} {{ settings.get('base_currency','') }}</h3>
+{% if order.notes %}<p><b>ملاحظات:</b> {{ order.notes }}</p>{% endif %}
+<p class="muted">أمر الشراء مستند طلب/اعتماد، ولا يثبت استلام البضاعة أو ترحيل فاتورة المورد.</p>
+</section>
+{% endblock %}
