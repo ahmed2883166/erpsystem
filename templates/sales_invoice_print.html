@@ -3,23 +3,10 @@
 {% block content %}
 <section class="panel print-document">
 <div class="no-print actions"><button type="button" onclick="window.print()">طباعة الفاتورة / PDF</button><a class="btn secondary" href="{{ url_for('sales.index') }}">العودة للمبيعات</a></div>
-<div class="document-brand" style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;border-bottom:2px solid #17365d;padding:12px 0;margin-bottom:18px">
-  <div style="display:flex;align-items:flex-start;gap:14px;min-width:55%">
-    {% if settings.get('company_logo_data') %}<img src="{{ settings.get('company_logo_data') }}" alt="شعار الشركة" style="max-width:110px;max-height:85px;object-fit:contain">{% endif %}
-    <div><h2 style="margin:0 0 6px">{{ settings.get('company_name','NEXUS ERP') }}</h2>
-      {% if settings.get('company_address') %}<div>{{ settings.get('company_address') }}</div>{% endif %}
-      <div>{% if settings.get('company_phone') %}هاتف: {{ settings.get('company_phone') }}{% endif %}{% if settings.get('company_email') %} · {{ settings.get('company_email') }}{% endif %}</div>
-      {% if settings.get('company_website') %}<div>{{ settings.get('company_website') }}</div>{% endif %}
-      {% if settings.get('tax_number') %}<div>الرقم الضريبي: {{ settings.get('tax_number') }}</div>{% endif %}
-    </div>
-  </div>
-  <div style="text-align:left;min-width:180px"><h3 style="margin:0 0 8px">فاتورة بيع</h3><strong>{{ invoice.invoice_no }}</strong><p>{{ invoice.invoice_date }}</p></div>
-</div>
-{% if branch %}<div class="branch-print-details" style="border:1px solid #d7dde5;padding:10px 12px;margin-bottom:16px;border-radius:6px">
-  <strong>الفرع: {{ branch.name_ar }} ({{ branch.code }})</strong>
-  <div>{% if branch.address %}العنوان: {{ branch.address }}{% endif %}{% if branch.phone %} · هاتف: {{ branch.phone }}{% endif %}</div>
-  <div>{% if branch.email %}{{ branch.email }}{% endif %}{% if branch.tax_number %} · الرقم الضريبي للفرع: {{ branch.tax_number }}{% endif %}</div>
-</div>{% endif %}
+{% set document_title = 'فاتورة بيع' %}
+{% set document_number = {{ invoice.invoice_no }} %}
+{% set document_date = {{ invoice.invoice_date }} %}
+{% include "partials/print_brand_header.html" %}
 <div class="form-row"><div><b>العميل:</b> {{ invoice.customer_name }} ({{ invoice.customer_code }})</div><div><b>الرقم الضريبي:</b> {{ invoice.customer_tax_number or '—' }}</div><div><b>تاريخ الاستحقاق:</b> {{ invoice.due_date or invoice.invoice_date }}</div></div>
 <div class="table-wrap"><table><thead><tr><th>الصنف / الوصف</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead><tbody>{% for x in lines %}<tr><td>{{ x.sku or '' }} {{ x.product_name or x.description }}</td><td>{{ x.quantity }}</td><td>{{ x.unit_price|money }}</td><td>{{ x.line_total|money }}</td></tr>{% endfor %}</tbody></table></div>
 <div class="invoice-totals"><p>إجمالي البنود قبل الخصم: <b>{{ (invoice.subtotal|float + (invoice.discount_amount or '0')|float)|money }}</b></p>{% if invoice.discount_amount and invoice.discount_amount|float > 0 %}<p>خصم العميل: <b>{{ invoice.discount_amount|money }}{% if invoice.discount_type=='percent' %} ({{ invoice.discount_value }}%){% endif %}</b></p>{% endif %}<p>الصافي بعد الخصم وقبل الضريبة: <b>{{ invoice.subtotal|money }}</b></p><p>الضريبة: <b>{{ invoice.tax_amount|money }}</b></p><h3>الإجمالي: {{ invoice.total_amount|money }} {{ settings.get('base_currency','') }}</h3><p>المحصل: {{ invoice.paid_amount|money }}</p><p>الإشعارات الدائنة: {{ invoice.credited_amount or '0' }}</p></div>
