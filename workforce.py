@@ -395,7 +395,7 @@ def payroll():
                 manual_advance_deduction = M(request.form.get("advance_" + str(e["id"]), "0"))
                 due_installments = c.execute("""SELECT i.due_amount,i.paid_amount
                     FROM employee_loan_installments i JOIN employee_loans l ON l.id=i.loan_id
-                    WHERE l.employee_id=? AND l.status='active' AND i.due_period=? AND i.status='pending'
+                    WHERE l.employee_id=? AND l.status='active' AND i.due_period<=? AND i.status='pending'
                     ORDER BY l.id,i.id""", (e["id"], period)).fetchall()
                 loan_deduction = M(sum((max(Decimal("0"),D(i["due_amount"])-D(i["paid_amount"]))
                                          for i in due_installments),Decimal("0")))
@@ -423,6 +423,14 @@ def payroll():
                     rule_set_id = automatic["rule_set_id"]
                     taxable_annual = automatic["taxable_annual"]
                     insured_wage = automatic["insured_wage"]
+                # Collect scheduled loan installments only up to the employee's available net pay.
+                # Any unpaid remainder stays on the installment and rolls forward to later payrolls.
+                fixed_deductions = M(employer_ins + emp_ins + tax + manual_advance_deduction + other_deductions + absence)
+                available_for_loan = M(max(Decimal("0"),gross + employer_ins - fixed_deductions))
+                loan_due_total = M(sum((max(Decimal("0"),D(i["due_amount"])-D(i["paid_amount"]))
+                                        for i in due_installments),Decimal("0")))
+                loan_deduction = min(loan_due_total,available_for_loan)
+                advance_deduction = M(manual_advance_deduction + loan_deduction)
                 total_entitlements = M(gross + employer_ins)
                 total_deductions = M(employer_ins + emp_ins + tax + advance_deduction + other_deductions + absence)
                 net = M(total_entitlements - total_deductions)
