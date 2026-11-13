@@ -65,6 +65,20 @@ class AccountClassificationTests(unittest.TestCase):
         self.assertEqual(project_cost["statement_section"], "direct_costs")
         self.assertEqual(project_cost["normal_balance"], "debit")
 
+    def test_contract_advances_retention_and_warranty_accounts_get_specific_subtypes(self):
+        self.assertEqual(
+            account_metadata_for("liability", "2160", "دفعات مقدمة من العملاء")["account_subtype"],
+            "customer_advance",
+        )
+        self.assertEqual(
+            account_metadata_for("asset", "1193", "دفعات مقدمة لمقاولي الباطن والناقلين")["account_subtype"],
+            "supplier_or_carrier_advance",
+        )
+        self.assertEqual(
+            account_metadata_for("liability", "2232", "مخصص ضمان وصيانة تعاقدية")["account_subtype"],
+            "warranty_provision",
+        )
+
     def test_schema_migration_is_additive_idempotent_and_preserves_account_ids(self):
         before = {
             row["code"]: row["id"]
