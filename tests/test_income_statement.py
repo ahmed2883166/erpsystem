@@ -143,8 +143,12 @@ class IncomeStatementRouteTests(unittest.TestCase):
         self.assertIn("250.00", body)  # Operating expenses
         self.assertIn("450.00", body)  # Net profit after operating expenses
         self.assertIn("شركة الاختبار", body)
-        # Legacy fixture branches intentionally omit address/phone/email/tax columns.
         self.assertIn("فرع القاهرة", body)
+        # The route itself must migrate the legacy branch table before querying it.
+        migrated = sqlite3.connect(self.db_path)
+        branch_columns = {row[1] for row in migrated.execute("PRAGMA table_info(branches)")}
+        migrated.close()
+        self.assertTrue({"address", "phone", "email", "tax_number"}.issubset(branch_columns))
 
     def test_income_statement_compares_with_same_period_previous_year(self):
         response = self.client.get(
