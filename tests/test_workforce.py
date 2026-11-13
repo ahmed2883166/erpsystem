@@ -190,6 +190,38 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(balance,"666.66")
         self.assertEqual(allocation,"333.34")
 
+    def test_attendance_leave_approval_and_payroll_integration(self):
+        self.add_employee()
+        conn=sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO employee_leave_balances(employee_id,leave_type_id,balance_days)
+            VALUES(1,1,'15.00')""")
+        conn.commit(); conn.close()
+        # Annual leave approval consumes the employee's available balance.
+        self.client.post("/hr/leaves",data={"employee_id":"1","leave_type_id":"1",
+            "start_date":"2026-11-02","end_date":"2026-11-03","days":"2","reason":"راحة"})
+        response=self.client.post("/hr/leaves/1/decision",data={"decision":"approved"})
+        self.assertEqual(response.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT balance_days FROM employee_leave_balances").fetchone()[0],"13.00")
+        conn.close()
+        # Approved unpaid leave is included in the payroll deduction.
+        self.client.post("/hr/leaves",data={"employee_id":"1","leave_type_id":"2",
+            "start_date":"2026-11-10","end_date":"2026-11-11","days":"2","reason":"بدون أجر"})
+        self.client.post("/hr/leaves/2/decision",data={"decision":"approved"})
+        self.client.post("/hr/attendance",data={"attendance_date":"2026-11-05","employee_id":"1",
+            "status":"absent","absence_hours":"4","approved_overtime_hours":"0"})
+        self.client.post("/hr/attendance",data={"attendance_date":"2026-11-06","employee_id":"1",
+            "status":"present","absence_hours":"0","approved_overtime_hours":"2"})
+        self.client.post("/hr/payroll",data={"period":"2026-11","use_attendance_data":"1",
+            "basic_1":"10000","allowances_1":"0","overtime_hours_1":"0","overtime_amount_1":"",
+            "overtime_rate_percent_1":"150","absent_hours_1":"0","absence_deduction_1":"0",
+            "advance_1":"0","other_deductions_1":"0","tax_1":"0","employee_ins_1":"0",
+            "employer_ins_1":"0"})
+        conn=sqlite3.connect(self.db_path)
+        line=conn.execute("SELECT overtime_hours,overtime_amount,absent_hours,absence_deduction,net_pay FROM payroll_lines").fetchone()
+        conn.close()
+        self.assertEqual(line,("2","150.00","4","866.67","9283.33"))
+
     def test_custody_issue_expense_and_full_settlement(self):
         self.add_employee()
         response = self.client.post("/hr/custody", data={
