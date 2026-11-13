@@ -862,6 +862,7 @@ otals["credit"], places=2)
         invoice_line_id = self.db.execute(
             "SELECT id FROM sales_invoice_lines WHERE invoice_id=?", (first_invoice["invoice_id"],)
         ).fetchone()["id"]
+        self.db.execute("BEGIN IMMEDIATE")
         credit = sales.post_credit_note(
             self.db, first_invoice["invoice_id"], "2026-11-16", "مرتجع من فاتورة أمر البيع",
             [{"invoice_line_id": invoice_line_id, "quantity": "1"}], 2,
