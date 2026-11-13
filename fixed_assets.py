@@ -283,6 +283,19 @@ def depreciation_run():
                              (asset["id"],period)).fetchone():
                     skipped.append(asset["asset_code"]+" (مرحل بالفعل)")
                     continue
+                ready=date.fromisoformat(asset["ready_date"])
+                current=date.fromisoformat(period+"-01")
+                offset=(current.year-ready.year)*12+current.month-ready.month
+                final_offset=int(asset["useful_life_months"])-(1 if ready.day==1 else 0)
+                accumulated=sum((Decimal(str(row["amount"])) for row in c.execute(
+                    "SELECT amount FROM asset_depreciations WHERE asset_id=?",(asset["id"],)).fetchall()),Decimal("0"))
+                remaining=Decimal(asset["cost"])-Decimal(asset["residual_value"])-accumulated
+                if offset>final_offset:
+                    skipped.append(asset["asset_code"]+" (انتهى العمر الإنتاجي)")
+                    continue
+                if remaining<=0:
+                    skipped.append(asset["asset_code"]+" (اكتمل الإهلاك)")
+                    continue
                 try:
                     amount,_entry=_post_asset_depreciation(c,asset,period,session["user_id"])
                     posted+=1
