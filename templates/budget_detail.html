@@ -13,9 +13,9 @@
 <a class="btn secondary" href="{{ url_for('planning.budget_export',budget_id=plan.id,fmt='pdf') }}">تصدير PDF</a></header>
 {% if plan.status in ['draft','rejected'] and 'budget.manage' in permissions %}
 <section class="panel"><h3>توزيع الموازنة شهريًا</h3>
-<p class="muted">التوزيع الأولي متساوٍ بين الأشهر. عدّل كل شهر حسب الخطة الفعلية، ويجب أن يساوي مجموع الأشهر إجمالي الحساب السنوي.</p>
+<p class="muted">التوزيع الأولي متساوٍ بين الأشهر. عدّل كل شهر حسب الخطة الفعلية، وسيُعاد احتساب إجمالي الموازنة السنوي تلقائيًا من مجموع الأشهر.</p>
 <form method="post" action="{{ url_for('planning.budget_update_distribution',budget_id=plan.id) }}">
-<div class="table-wrap"><table><thead><tr><th>الحساب</th>{% for m in months %}<th>{{ m }}</th>{% endfor %}<th>الإجمالي</th></tr></thead><tbody>
+<div class="table-wrap"><table><thead><tr><th>الحساب</th>{% for m in months %}<th>{{ m }}</th>{% endfor %}<th>الإجمالي السنوي الحالي</th></tr></thead><tbody>
 {% for x in rows %}<tr><td>{{ x.code }} — {{ x.name_ar }}</td>{% for m in months %}<td><input type="number" min="0" step="0.01" name="monthly_amount_{{ x.id }}_{{ m }}" value="{{ monthly_matrix.get(x.id,{}).get(m,'0') }}" required style="min-width:95px"></td>{% endfor %}<td>{{ '%.2f'|format(x.budget) }}</td></tr>{% endfor %}
 </tbody></table></div><button type="submit">حفظ التوزيع الشهري</button></form></section>
 {% endif %}
