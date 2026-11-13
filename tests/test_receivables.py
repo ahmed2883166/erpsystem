@@ -210,6 +210,23 @@ class ReceivablesAgingTests(unittest.TestCase):
         self.assertEqual(pdf_response.mimetype, "application/pdf")
         self.assertTrue(pdf_response.data.startswith(b"%PDF"))
 
+        # Customer exports use the same schema-safe fallback when an older
+        # database has not yet added sales_invoices.credited_amount.
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("ALTER TABLE sales_invoices DROP COLUMN credited_amount")
+        conn.commit()
+        conn.close()
+        customer_excel = client.get(
+            "/reports/export/aging/excel?kind=customers&as_of=2026-11-30"
+        )
+        self.assertEqual(customer_excel.status_code, 200)
+        customer_pdf = client.get(
+            "/reports/export/aging/pdf?kind=customers&as_of=2026-11-30"
+        )
+        self.assertEqual(customer_pdf.status_code, 200)
+        self.assertEqual(customer_pdf.mimetype, "application/pdf")
+        self.assertTrue(customer_pdf.data.startswith(b"%PDF"))
+
 
     def test_supplier_aging_supports_legacy_supplier_table_without_code_or_name(self):
         conn = sqlite3.connect(self.db_path)
