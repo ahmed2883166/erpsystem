@@ -141,6 +141,130 @@ ACTIVITY_TAX_ACCOUNT_ROLES = {
     for activity in ACTIVITY_POSTING_ACCOUNTS
 }
 
+_CONTROL_ROLE_NAMES = {"cash", "receivables", "payables", "inventory", "customer_advances"}
+CONTROL_ACCOUNT_CODES = frozenset(
+    {code for mapping in ACTIVITY_ACCOUNT_ROLES.values()
+     for role, values in mapping.items() if role in _CONTROL_ROLE_NAMES
+     for code in (values if isinstance(values, (tuple, list, set)) else (values,))}
+    | {mapping[key] for mapping in ACTIVITY_POSTING_ACCOUNTS.values()
+       for key in ("ar", "supplier_ap", "vat", "input_vat", "inventory", "purchase_inventory")
+       if mapping.get(key)}
+    | {"2190"}
+)
+
+
+def account_metadata_for(account_type, code, name_ar):
+    """Return non-posting chart metadata without changing ledger identity or balances."""
+    code = str(code or "").strip()
+    name = str(name_ar or "").strip()
+    lower_name = name.lower()
+
+    normal_balance = {
+        "asset": "debit", "expense": "debit",
+        "liability": "credit", "equity": "credit", "revenue": "credit",
+    }.get(account_type, "debit")
+    if account_type == "asset" and any(term in name for term in (
+        "مجمع الإهلاك", "مجمع إطفاء", "مخصص خسائر ائتمانية",
+    )):
+        normal_balance = "credit"
+    elif account_type == "revenue" and any(term in name for term in (
+        "مردودات", "خصومات", "مسموحات",
+    )):
+        normal_balance = "debit"
+
+    if account_type == "asset":
+        statement_section = "current_assets" if code.startswith("11") else (
+            "non_current_assets" if code.startswith("12") else "assets"
+        )
+    elif account_type == "liability":
+        statement_section = "current_liabilities" if code.startswith("21") else (
+            "non_current_liabilities" if code.startswith("22") else "liabilities"
+        )
+    elif account_type == "equity":
+        statement_section = "equity"
+    elif account_type == "revenue":
+        statement_section = "revenue"
+    elif account_type == "expense":
+        statement_section = "direct_costs" if code.startswith(("5", "56")) else (
+            "finance_costs" if code.startswith("72") else "operating_expenses"
+        )
+    else:
+        statement_section = "unclassified"
+
+    if any(term in name for term in ("صندوق", "بنك", "نقدية", "نقاط البيع")):
+        account_subtype = "cash"
+    elif "مخزون" in name:
+        account_subtype = "inventory"
+    elif any(term in name for term in ("عميل", "عملاء", "مرضى", "ذمم مدينة")):
+        account_subtype = "receivable"
+    elif any(term in name for term in ("مورد", "ناقل", "دائن")):
+        account_subtype = "payable"
+    elif "ضريبة" in name or "زكاة" in name:
+        account_subtype = "tax_control"
+    elif "حق الاستخدام" in name:
+        account_subtype = "right_of_use_asset"
+    elif "إيجار" in name and account_type == "liability":
+        account_subtype = "lease_liability"
+    elif "قروض" in name or "تسهيلات" in name:
+        account_subtype = "loan"
+    elif "مكافأة نهاية الخدمة" in name or "منافع العاملين" in name:
+        account_subtype = "employee_benefit"
+    elif "مخصص" in name:
+        account_subtype = "provision_or_allowance"
+    elif "مردودات" in name or "خصومات" in name or "مسموحات" in name:
+        account_subtype = "contra_revenue"
+    elif code == "2190":
+        account_subtype = "goods_received_not_invoiced"
+    elif code in {"1191", "1192"}:
+        account_subtype = "contract_asset_or_retention"
+    elif code == "1193":
+        account_subtype = "supplier_or_carrier_advance"
+    elif code == "2191":
+        account_subtype = "retention_payable"
+    elif code == "2192":
+        account_subtype = "carrier_payable"
+    elif code == "2232":
+        account_subtype = "warranty_provision"
+    elif account_type == "expense" and statement_section == "direct_costs":
+        account_subtype = "direct_cost"
+    elif account_type == "expense" and statement_section == "finance_costs":
+        account_subtype = "finance_cost"
+    else:
+        account_subtype = account_type or "unclassified"
+
+    cash_flow_category = "cash_equivalents" if account_subtype == "cash" else None
+    return {
+        "normal_balance": normal_balance,
+        "statement_section": statement_section,
+        "cash_flow_category": cash_flow_category,
+        "account_subtype": account_subtype,
+        "is_control_account": int(code in CONTROL_ACCOUNT_CODES),
+    }
+
+
+def ensure_account_metadata(conn):
+    """Add and refresh derived chart metadata; never touches journal lines or balances."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+    declarations = {
+        "normal_balance": "TEXT NOT NULL DEFAULT 'debit'",
+        "statement_section": "TEXT",
+        "cash_flow_category": "TEXT",
+        "account_subtype": "TEXT",
+        "is_control_account": "INTEGER NOT NULL DEFAULT 0",
+    }
+    for column, declaration in declarations.items():
+        if column not in columns:
+            conn.execute(f"ALTER TABLE accounts ADD COLUMN {column} {declaration}")
+    for row in conn.execute("SELECT id,code,name_ar,account_type FROM accounts").fetchall():
+        metadata = account_metadata_for(row["account_type"], row["code"], row["name_ar"])
+        conn.execute(
+            """UPDATE accounts SET normal_balance=?,statement_section=?,
+               cash_flow_category=?,account_subtype=?,is_control_account=? WHERE id=?""",
+            (metadata["normal_balance"], metadata["statement_section"],
+             metadata["cash_flow_category"], metadata["account_subtype"],
+             metadata["is_control_account"], row["id"]),
+        )
+
 
 
 # Common support branches available in every activity. Existing account IDs and
