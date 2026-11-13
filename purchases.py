@@ -1020,7 +1020,7 @@ def edit_bill(bill_id):
     return render_template("purchase_bill_new.html", suppliers=suppliers, receipts=receipts,
         expense_accounts=expense_accounts, dimension_options=dimension_options,
         today=date.today().isoformat(), bill=bill, selected_receipt_ids=selected_receipt_ids,
-        edit_mode=True)
+        receipt_allocations=existing_allocations, edit_mode=True)
 
 
 @purchase_bp.route("/bills/<int:bill_id>/submit", methods=["POST"])
