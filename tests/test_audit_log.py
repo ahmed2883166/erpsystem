@@ -254,5 +254,47 @@ class AuditLogTests(unittest.TestCase):
         self.assertIn("audit_log", endpoints)
 
 
+    def test_created_operational_document_is_audited_with_generated_id_and_lines(self):
+        self.connection.executescript("""
+            CREATE TABLE goods_receipts(
+                id INTEGER PRIMARY KEY, receipt_no TEXT, supplier_id INTEGER,
+                total_value TEXT, status TEXT
+            );
+            CREATE TABLE goods_receipt_lines(
+                id INTEGER PRIMARY KEY, receipt_id INTEGER, product_id INTEGER,
+                quantity TEXT, total_cost TEXT
+            );
+            INSERT INTO goods_receipts VALUES(73,'GRN-TEST-073',9,'125.00','posted');
+            INSERT INTO goods_receipt_lines VALUES(1,73,4,'5','125.00');
+        """)
+        self.connection.commit()
+
+        def open_database():
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+
+        with nexus_app.app.test_request_context("/purchases/receipts/new", method="POST"):
+            nexus_app.session["user_id"] = 17
+            nexus_app.request.url_rule = SimpleNamespace(endpoint="purchase.new_receipt")
+            nexus_app.request.view_args = {}
+            nexus_app.g.audit_created_record = (
+                "goods_receipts", 73, "goods_receipt_lines", "receipt_id"
+            )
+            with patch.object(nexus_app, "db", side_effect=open_database):
+                response = nexus_app.app.response_class("Saved", status=302)
+                nexus_app.audit_operational_mutations(response)
+
+        row = self.connection.execute(
+            "SELECT entity_type,entity_id,outcome,before_values,after_values FROM audit_log"
+        ).fetchone()
+        self.assertEqual(row["entity_type"], "purchase")
+        self.assertEqual(row["entity_id"], "73")
+        self.assertEqual(row["outcome"], "success")
+        self.assertIsNone(row["before_values"])
+        self.assertIn('"receipt_no": "GRN-TEST-073"', row["after_values"])
+        self.assertIn('"quantity": "5"', row["after_values"])
+
+
 if __name__ == "__main__":
     unittest.main()
