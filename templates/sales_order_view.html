@@ -33,7 +33,7 @@
   </form>
 </section>
 {% endif %}
-{% if order.status in ['approved','partially_delivered','partially_invoiced'] and 'sales.manage' in permissions %}
+{% if has_stock_lines and order.status in ['approved','partially_delivered','partially_invoiced'] and 'sales.manage' in permissions %}
 <section class="panel">
   <h3>إنشاء إذن تسليم جديد</h3>
   <p>أدخل الكمية التي ستخرج فعليًا من المخزن. يمكن إنشاء أكثر من إذن للتسليم الجزئي.</p>
