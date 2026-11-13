@@ -1729,7 +1729,13 @@ def trial_balance():
             join_conditions.append("je.entry_date >= ?"); join_params.append(period["date_from"])
         if period["date_to"]:
             join_conditions.append("je.entry_date <= ?"); join_params.append(period["date_to"])
+        account_columns = {row["name"] for row in connection.execute("PRAGMA table_info(accounts)")}
+        section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
+        subtype_expr = "a.account_subtype" if "account_subtype" in account_columns else "NULL"
+        normal_expr = "a.normal_balance" if "normal_balance" in account_columns else "NULL"
         rows = connection.execute(f"""SELECT a.id, a.code, a.name_ar, a.account_type,
+            {section_expr} statement_section,{subtype_expr} account_subtype,
+            {normal_expr} normal_balance,
             COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
             COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
             FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
