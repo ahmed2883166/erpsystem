@@ -497,6 +497,11 @@ class SalesIntegrationTests(unittest.TestCase):
         note_id = credit["credit_note_id"]
         note = self.db.execute("SELECT refundable_amount FROM sales_credit_notes WHERE id=?", (note_id,)).fetchone()
         self.assertEqual(Decimal(note["refundable_amount"]), Decimal("50.00"))
+        inventory_id = self.db.execute("SELECT id FROM accounts WHERE code='1150'").fetchone()["id"]
+        with self.assertRaisesRegex(ValueError, "مربوطًا بملف النشاط"):
+            sales.post_customer_refund(
+                self.db, note_id, "2026-11-12", "50", inventory_id, 1, "INVALID-CASH"
+            )
         refund = sales.post_customer_refund(
             self.db, note_id, "2026-11-12", "50", cash_id, 1, "BANK-REF-1"
         )
