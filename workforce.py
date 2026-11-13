@@ -435,7 +435,7 @@ def payroll():
                     employee_insurance,employer_insurance,gross_pay,net_pay,rule_set_id,taxable_annual,insured_wage,
                     incentives,advance_deduction,loan_deduction,total_entitlements,total_deductions,salary_raise,
                     overtime_rate_percent,incentive_rule_id,incentive_name,incentive_days,incentive_method)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (run_id,e["id"],str(basic_salary),str(allowances),str(overtime_hours),str(overtime_amount),
                      str(absent_hours),str(absence),str(other_deductions),str(tax),str(emp_ins),
                      str(employer_ins),str(gross),str(net),
