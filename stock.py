@@ -197,16 +197,25 @@ def post_scrap_journal(c, movement_id, movement_no, product, movement_date, tota
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='activity'") }
     activity = settings.get("activity", "commercial")
     from chart_templates import ACTIVITY_POSTING_ACCOUNTS
-    inventory_code = ACTIVITY_POSTING_ACCOUNTS.get(activity, {}).get("inventory")
-    if not inventory_code:
+    default_inventory_code = ACTIVITY_POSTING_ACCOUNTS.get(activity, {}).get("inventory")
+    if not default_inventory_code:
         c.execute("UPDATE stock_movements SET accounting_status='pending_setup' WHERE id=?", (movement_id,))
         return None
+    from activity_profiles import resolve_product_account_code
+    inventory_code = resolve_product_account_code(
+        c, product["id"], "inventory", default_inventory_code
+    )
     inventory = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (inventory_code,)).fetchone()
-    # Require explicit chart mappings; never create accounts during posting.
-    writeoff = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code='6990'").fetchone()
+    # Restaurant waste is classified in the dedicated spoilage expense account.
+    writeoff_code = "5300" if activity == "restaurant" else "6990"
+    writeoff = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (writeoff_code,)).fetchone()
     writeoff_id = writeoff["id"] if writeoff and not writeoff["is_group"] and writeoff["active"] and writeoff["account_type"]=="expense" else None
-    if not inventory or inventory["is_group"] or not inventory["active"] or not writeoff_id:
-        raise ValueError("لا يمكن ترحيل الإعدام قبل ضبط حساب المخزون وحساب خسائر التالف 6990 كحساب مصروف تفصيلي نشط.")
+    if (not inventory or inventory["is_group"] or not inventory["active"]
+            or inventory["account_type"] != "asset" or not writeoff_id):
+        raise ValueError(
+            f"لا يمكن ترحيل الإعدام قبل ضبط حساب المخزون {inventory_code} "
+            f"وحساب الهالك {writeoff_code} كحسابين تفصيليين نشطين بالنوع الصحيح."
+        )
     amount = money(D(str(total_cost)))
     if amount <= 0:
         c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
