@@ -1240,11 +1240,17 @@ def customer_advances():
     customers = c.execute(
         "SELECT id,code,name FROM customers WHERE active=1 ORDER BY name"
     ).fetchall()
-    cash_accounts = c.execute(
-        """SELECT id,code,name_ar FROM accounts
-           WHERE active=1 AND is_group=0 AND account_type='asset'
-           ORDER BY code"""
-    ).fetchall()
+    from activity_profiles import active_account_role_ids
+    cash_account_ids = sorted(active_account_role_ids(c).get("cash", set()))
+    cash_accounts = []
+    if cash_account_ids:
+        placeholders = ",".join("?" for _ in cash_account_ids)
+        cash_accounts = c.execute(
+            f"""SELECT id,code,name_ar FROM accounts
+                WHERE id IN ({placeholders}) AND active=1 AND is_group=0
+                  AND account_type='asset' ORDER BY code""",
+            tuple(cash_account_ids),
+        ).fetchall()
 
     allocated_by_receipt = {}
     for row in c.execute(
