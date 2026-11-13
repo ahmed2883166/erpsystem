@@ -81,6 +81,10 @@ def list_activity_profiles(conn, include_inactive=False):
                 item[target] = json.loads(item.pop(field))
             except (TypeError, ValueError):
                 raise ValueError(f"ملف النشاط {item.get('code')} يحتوي إعدادات غير صالحة.")
+        if "customer_advances" not in item["account_roles"]:
+            item["account_roles"]["customer_advances"] = list(
+                ACTIVITY_ACCOUNT_ROLES.get(item["base_activity"], {}).get("customer_advances", ("2160",))
+            )
         result.append(item)
     return result
 
@@ -233,6 +237,10 @@ def get_active_activity_profile(conn):
             profile[target] = json.loads(profile.pop(source))
         except (TypeError, ValueError):
             raise ValueError("إعدادات ملف النشاط الحالي تالفة؛ أوقف الترحيل وراجع الملف.")
+    if "customer_advances" not in profile["account_roles"]:
+        profile["account_roles"]["customer_advances"] = list(
+            ACTIVITY_ACCOUNT_ROLES.get(profile["base_activity"], {}).get("customer_advances", ("2160",))
+        )
     return profile
 
 
