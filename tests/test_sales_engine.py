@@ -986,6 +986,87 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(advance_control, Decimal("0.00"))
         self.assertEqual(sales._customer_advance_available(self.db, advance["advance_receipt_id"]), Decimal("0.00"))
 
+    def test_customer_advance_receipt_allocation_and_refund_can_be_reversed_safely(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}],
+            "0", 1,
+        )
+        cash_id = self.db.execute(
+            "SELECT id FROM accounts WHERE code='1110'"
+        ).fetchone()["id"]
+        advance = sales.post_customer_advance_receipt(
+            self.db, self.customer_id, "2026-11-11", "100", cash_id, 1,
+            "ADV-REV-RECEIPT",
+        )
+        allocation = sales.allocate_customer_advance(
+            self.db, advance["advance_receipt_id"],
+            [(invoice["invoice_id"], "60")], "2026-11-12", 1,
+        )
+        invoice_paid = self.db.execute(
+            "SELECT paid_amount FROM sales_invoices WHERE id=?",
+            (invoice["invoice_id"],),
+        ).fetchone()["paid_amount"]
+        self.assertEqual(Decimal(invoice_paid), Decimal("60.00"))
+        reversed_allocation = sales.reverse_customer_advance_transaction(
+            self.db, "allocation", allocation["journal_entry_id"],
+            "2026-11-13", "تصحيح تخصيص على فاتورة غير صحيحة", 1,
+        )
+        self.assertEqual(
+            Decimal(self.db.execute(
+                "SELECT paid_amount FROM sales_invoices WHERE id=?",
+                (invoice["invoice_id"],),
+            ).fetchone()["paid_amount"]),
+            Decimal("0.00"),
+        )
+        self.assertEqual(
+            sales._customer_advance_available(self.db, advance["advance_receipt_id"]),
+            Decimal("100.00"),
+        )
+        with self.assertRaisesRegex(ValueError, "من قبل"):
+            sales.reverse_customer_advance_transaction(
+                self.db, "allocation", allocation["journal_entry_id"],
+                "2026-11-14", "محاولة عكس مكرر", 1,
+            )
+
+        refund = sales.post_customer_advance_refund(
+            self.db, advance["advance_receipt_id"], "2026-11-14",
+            "20", cash_id, 1, "ADV-REF-TO-REVERSE",
+        )
+        sales.reverse_customer_advance_transaction(
+            self.db, "refund",
+            self.db.execute(
+                "SELECT id FROM customer_advance_refunds WHERE refund_no=?",
+                (refund["refund_no"],),
+            ).fetchone()["id"],
+            "2026-11-15", "إلغاء رد المقدم بالخطأ", 1,
+        )
+        self.assertEqual(
+            sales._customer_advance_available(self.db, advance["advance_receipt_id"]),
+            Decimal("100.00"),
+        )
+        receipt_reversal = sales.reverse_customer_advance_transaction(
+            self.db, "receipt", advance["advance_receipt_id"],
+            "2026-11-16", "إلغاء إيصال المقدم الأصلي", 1,
+        )
+        self.assertEqual(
+            self.db.execute(
+                "SELECT COUNT(*) FROM journal_entries WHERE id IN (?,?)",
+                (advance["journal_entry_id"], receipt_reversal["reversal_journal_entry_id"]),
+            ).fetchone()[0],
+            2,
+        )
+        with self.assertRaisesRegex(ValueError, "تم عكسه"):
+            sales._customer_advance_available(self.db, advance["advance_receipt_id"])
+        self.assertEqual(
+            self.db.execute(
+                "SELECT COUNT(*) FROM customer_advance_reversals"
+            ).fetchone()[0],
+            3,
+        )
+        self.db.rollback()
+
     def test_customer_advance_dates_cannot_precede_receipt_or_invoice(self):
         self.db.execute("BEGIN IMMEDIATE")
         first_invoice = sales.post_invoice(
