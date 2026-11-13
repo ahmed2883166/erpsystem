@@ -216,6 +216,8 @@ def account_metadata_for(account_type, code, name_ar):
         account_subtype = "loan"
     elif "مكافأة نهاية الخدمة" in name or "منافع العاملين" in name:
         account_subtype = "employee_benefit"
+    elif code == "2232":
+        account_subtype = "warranty_provision"
     elif "مخصص" in name:
         account_subtype = "provision_or_allowance"
     elif "مردودات" in name or "خصومات" in name or "مسموحات" in name:
@@ -226,8 +228,6 @@ def account_metadata_for(account_type, code, name_ar):
         account_subtype = "retention_payable"
     elif code == "2192":
         account_subtype = "carrier_payable"
-    elif code == "2232":
-        account_subtype = "warranty_provision"
     elif account_type == "expense" and statement_section == "direct_costs":
         account_subtype = "direct_cost"
     elif account_type == "expense" and statement_section == "finance_costs":
