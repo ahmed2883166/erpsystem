@@ -213,6 +213,9 @@ class PurchasingAccountingTests(unittest.TestCase):
         depreciation_expense = self.db.execute(
             "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('6500','مصروف إهلاك','expense',0)"
         ).lastrowid
+        input_vat = self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1170','ضريبة مدخلات','asset',0)"
+        ).lastrowid
         self.db.execute("""INSERT INTO supplier_bills(
             bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,subtotal,
             tax_rate,tax_amount,total_amount,created_by,status,bill_kind,
@@ -220,7 +223,7 @@ class PurchasingAccountingTests(unittest.TestCase):
             asset_useful_life_months,asset_depreciation_method,asset_annual_rate,
             asset_account_id,asset_accum_account_id,asset_expense_account_id
         ) VALUES('BILL-ASSET-1',?,'2026-11-13','2026-12-13','INV-ASSET-1',
-            '120000','0','0','120000',10,'approved','asset',
+            '120000','15','18000','138000',10,'approved','asset',
             'AST-0001','ماكينة تعبئة','معدات','2026-11-20','12000',
             60,'straight_line','0',?,?,?)""",
             (supplier_id, asset_account, accum_account, depreciation_expense))
@@ -230,6 +233,7 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.db.commit()
 
         with patch("purchases.supplier_ap_account", return_value=99), \
+             patch("purchases._activity_tax_roles", return_value={"input_vat": "1170"}), \
              patch("purchases.create_journal", return_value=777) as journal:
             entry_id = purchases.post_supplier_bill(self.db, bill_id, 30)
         self.db.commit()
@@ -249,8 +253,16 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.assertEqual(asset["ready_date"], "2026-11-20")
         self.assertEqual(asset["asset_account_id"] if "asset_account_id" in asset.keys()
                          else asset["asset_account_id"], asset_account)
-        self.assertEqual(journal.call_args.args[4][0][0], asset_account)
-        self.assertEqual(journal.call_args.args[4][0][1], purchases.money("120000"))
+        lines = journal.call_args.args[4]
+        self.assertEqual(lines[0][0], asset_account)
+        self.assertEqual(lines[0][1], purchases.money("120000"))
+        self.assertEqual(lines[2][0], input_vat)
+        self.assertEqual(lines[2][1], purchases.money("18000"))
+        self.assertEqual(lines[3][0], 99)
+        self.assertEqual(lines[3][2], purchases.money("18000"))
+        total_debit = sum((purchases.money(line[1]) for line in lines), purchases.money("0"))
+        total_credit = sum((purchases.money(line[2]) for line in lines), purchases.money("0"))
+        self.assertEqual(total_debit, total_credit)
 
     def test_asset_supplier_bill_rejects_duplicate_asset_code_before_posting(self):
         purchases.init_purchase_schema()
