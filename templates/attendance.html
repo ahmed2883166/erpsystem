@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block title %}الحضور والانصراف | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>الحضور والانصراف</h2><p>سجل يومي للحضور والغياب وساعات الإضافي المعتمدة. يمكن تعديل سجل الموظف لليوم نفسه دون إنشاء تكرار.</p><p><a href="{{url_for('workforce.employees')}}">شؤون الموظفين</a> · <a href="{{url_for('workforce.leaves')}}">الإجازات والأرصدة</a></p></header>
+<section class="panel"><form method="get"><label>تاريخ العمل <input type="date" name="attendance_date" value="{{selected_date}}" required></label><button type="submit">عرض اليوم</button></form>
+<form method="post" class="form-grid"><label>التاريخ <input type="date" name="attendance_date" value="{{selected_date}}" required></label>
+<label>الموظف <select name="employee_id" required>{% for e in employees %}<option value="{{e.id}}">{{e.employee_code}} - {{e.full_name}}</option>{% endfor %}</select></label>
+<label>الحالة <select name="status"><option value="present">حاضر</option><option value="absent">غائب</option><option value="permission">إذن</option><option value="holiday">عطلة</option></select></label>
+<label>وقت الحضور <input type="time" name="check_in"></label><label>وقت الانصراف <input type="time" name="check_out"></label>
+<label>ساعات الغياب <input type="number" name="absence_hours" min="0" max="24" step="0.25" value="0"></label>
+<label>إضافي معتمد (ساعات) <input type="number" name="approved_overtime_hours" min="0" max="24" step="0.25" value="0"></label>
+<label style="grid-column:1/-1">ملاحظات <input name="notes" maxlength="300"></label><button type="submit">حفظ / تحديث سجل اليوم</button></form></section>
+<section class="panel"><h3>سجلات يوم {{selected_date}}</h3><div style="overflow-x:auto"><table><tr><th>كود الموظف</th><th>الموظف</th><th>الحالة</th><th>الحضور</th><th>الانصراف</th><th>غياب (ساعات)</th><th>إضافي معتمد</th><th>ملاحظات</th></tr>
+{% for r in records %}<tr><td>{{r.employee_code}}</td><td>{{r.full_name}}</td><td>{{{'present':'حاضر','absent':'غائب','permission':'إذن','holiday':'عطلة'}.get(r.status,r.status)}}</td><td>{{r.check_in or '-'}}</td><td>{{r.check_out or '-'}}</td><td>{{r.absence_hours}}</td><td>{{r.approved_overtime_hours}}</td><td>{{r.notes}}</td></tr>{% else %}<tr><td colspan="8">لا توجد سجلات لهذا اليوم.</td></tr>{% endfor %}</table></div></section>{% endblock %}
