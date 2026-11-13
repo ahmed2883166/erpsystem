@@ -250,9 +250,14 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
             session["user_id"] = 1
             session["role"] = "accountant"
 
-        response = self.client.get(f"/purchases/bills/{bill_id}/edit")
+        from jinja2 import Environment
+        template_source = (Path(__file__).resolve().parents[1] / "templates" / "purchase_bill_new.html").read_text(encoding="utf-8")
+        Environment().parse(template_source)
+        with patch("purchases.render_template", side_effect=lambda template, **context:
+                   f"{template}:{context['bill']['supplier_invoice_no']}:{context['edit_mode']}"):
+            response = self.client.get(f"/purchases/bills/{bill_id}/edit")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("EDIT-INV", response.get_data(as_text=True))
+        self.assertIn("purchase_bill_new.html:EDIT-INV:True", response.get_data(as_text=True))
 
         response = self.client.post(f"/purchases/bills/{bill_id}/edit", data={
             "supplier_id": str(self.supplier_id),
