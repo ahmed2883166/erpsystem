@@ -139,18 +139,15 @@ def _subledger_total(c, kind, as_of):
     table = "customers" if kind == "customer" else "suppliers"
     if not _table_exists(c, table):
         return Decimal("0"), 0
-    party_ids = [row["id"] for row in c.execute(f"SELECT id FROM {table} ORDER BY id")]
-    total = Decimal("0")
-    open_parties = 0
-    for party_id in party_ids:
-        balance = Decimal("0")
-        for event in _events(c, kind, party_id):
-            if event["event_date"] and event["event_date"] <= as_of:
-                amount = _decimal(event["debit"]) - _decimal(event["credit"])
-                balance += amount if kind == "customer" else -amount
-        total += balance
-        if balance > Decimal("0.01"):
-            open_parties += 1
+    balances = {}
+    for event in _all_party_events(c, kind):
+        if event["event_date"] and event["event_date"] <= as_of:
+            movement = event["debit"] - event["credit"]
+            if kind == "supplier":
+                movement = -movement
+            balances[event["party_id"]] = balances.get(event["party_id"], Decimal("0")) + movement
+    total = sum(balances.values(), Decimal("0"))
+    open_parties = sum(1 for balance in balances.values() if balance > Decimal("0.01"))
     return total, open_parties
 
 
