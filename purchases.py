@@ -1327,8 +1327,13 @@ def bill_print(bill_id):
     if "branch_id" in bill_columns and c.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='branches'"
     ).fetchone() and bill["branch_id"]:
+        branch_columns = {row["name"] for row in c.execute("PRAGMA table_info(branches)")}
+        branch_fields = [
+            column if column in branch_columns else "'' AS " + column
+            for column in ("address", "phone", "email", "tax_number")
+        ]
         branch = c.execute(
-            "SELECT code,name_ar,address,phone,email,tax_number FROM branches WHERE id=?",
+            "SELECT code,name_ar," + ",".join(branch_fields) + " FROM branches WHERE id=?",
             (bill["branch_id"],),
         ).fetchone()
     c.close()
