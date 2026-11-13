@@ -188,7 +188,7 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         response = self.client.get("/reports/export/trial-balance/excel")
         self.assertEqual(response.status_code, 200)
         values = list(load_workbook(io.BytesIO(response.data), data_only=True).active.values)
-        header = values[0]
+        header = next(row for row in values if row and "كود الحساب" in row)
         self.assertEqual(header[10], "تصنيف القوائم")
         self.assertEqual(header[11], "الرصيد الطبيعي")
         cash = next(row for row in values if row and row[4] == "1110")
