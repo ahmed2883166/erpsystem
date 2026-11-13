@@ -7,6 +7,7 @@ from datetime import datetime
 from functools import wraps
 
 from flask import Blueprint, Response, abort, request, send_file, session
+from analytic_dimensions import validate_journal_dimensions
 from income_statement import (build_income_statement, normalize_income_statement_period,
                               comparison_period, add_income_statement_comparison,
                               closing_entries_exclusion_sql)
@@ -132,9 +133,12 @@ def register_report_exports(app, db_path, permissions):
                 if compare_mode not in {"none", "previous_period", "previous_year"}:
                     compare_mode = "previous_year"
                 compare_dates = comparison_period(date_from, date_to, compare_mode) if compare_mode != "none" else None
-                statement = build_income_statement(conn, date_from, date_to)
+                raw_dimensions = {key: request.args.get(key, "").strip() for key in
+                    ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id")}
+                selected_dimensions = validate_journal_dimensions(conn, raw_dimensions) if any(raw_dimensions.values()) else {}
+                statement = build_income_statement(conn, date_from, date_to, selected_dimensions)
                 if compare_dates:
-                    statement = add_income_statement_comparison(statement, build_income_statement(conn, *compare_dates))
+                    statement = add_income_statement_comparison(statement, build_income_statement(conn, *compare_dates, dimensions=selected_dimensions))
                 headers = ["القسم", "كود الحساب", "اسم الحساب", "مدين", "دائن", "الفترة الحالية"]
                 if compare_dates:
                     headers.extend(["الفترة المقارنة", "الفرق", "نسبة التغير %"])
