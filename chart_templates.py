@@ -132,7 +132,6 @@ OPERATIONAL_ACCOUNT_CODES = frozenset(
     {code for mapping in ACTIVITY_ACCOUNT_ROLES.values() for values in mapping.values()
      for code in (values if isinstance(values, (tuple, list, set)) else (values,))}
     | {code for mapping in ACTIVITY_POSTING_ACCOUNTS.values() for code in mapping.values() if code}
-    | {code for mapping in ACTIVITY_TAX_ACCOUNT_ROLES.values() for code in mapping.values() if code}
     | {"2190"}
 )
 
