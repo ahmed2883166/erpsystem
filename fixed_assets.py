@@ -4,7 +4,7 @@ from database import connect_database
 import sqlite3
 import calendar
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from datetime import date
+from datetime import date, timedelta
 from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal
@@ -138,7 +138,7 @@ def _post_asset_depreciation(conn, asset, period, user_id, cutoff_date=None):
     ready = date.fromisoformat(asset["ready_date"])
     offset = (first_day.year - ready.year) * 12 + first_day.month - ready.month
     if offset > 0:
-        previous_month = (first_day.replace(day=1) - __import__("datetime").timedelta(days=1)).strftime("%Y-%m")
+        previous_month = (first_day.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
         if not conn.execute(
             "SELECT 1 FROM asset_depreciations WHERE asset_id=? AND period=?",
             (asset["id"], previous_month),
