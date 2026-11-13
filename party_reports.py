@@ -277,6 +277,48 @@ def party_statement():
 
 
 
+def _customer_advance_details(c, as_of):
+    required = ("customer_advance_receipts", "customer_advance_allocations",
+                "customer_advance_refunds", "customers")
+    if not all(_table_exists(c, table) for table in required):
+        return [], False
+    receipt_cols = _columns(c, "customer_advance_receipts")
+    allocation_cols = _columns(c, "customer_advance_allocations")
+    refund_cols = _columns(c, "customer_advance_refunds")
+    if not {"id", "receipt_no", "customer_id", "receipt_date", "amount"}.issubset(receipt_cols):
+        return [], False
+    if not {"advance_receipt_id", "allocation_date", "amount"}.issubset(allocation_cols):
+        return [], False
+    if not {"advance_receipt_id", "refund_date", "amount"}.issubset(refund_cols):
+        return [], False
+    rows = c.execute(
+        """SELECT r.id,r.receipt_no,r.customer_id,r.receipt_date,r.amount,
+                  COALESCE(r.reference,'') reference,cu.code customer_code,cu.name customer_name
+           FROM customer_advance_receipts r
+           JOIN customers cu ON cu.id=r.customer_id
+           WHERE r.receipt_date<=? ORDER BY r.receipt_date,r.id""",
+        (as_of,),
+    ).fetchall()
+    result = []
+    for row in rows:
+        allocated = sum((_decimal(item["amount"]) for item in c.execute(
+            """SELECT amount FROM customer_advance_allocations
+               WHERE advance_receipt_id=? AND allocation_date<=?""",
+            (row["id"], as_of),
+        )), Decimal("0"))
+        refunded = sum((_decimal(item["amount"]) for item in c.execute(
+            """SELECT amount FROM customer_advance_refunds
+               WHERE advance_receipt_id=? AND refund_date<=?""",
+            (row["id"], as_of),
+        )), Decimal("0"))
+        received = _decimal(row["amount"])
+        result.append({
+            **dict(row), "received": received, "allocated": allocated,
+            "refunded": refunded, "remaining": received - allocated - refunded,
+        })
+    return result, True
+
+
 @party_bp.route("/reports/subledger-reconciliation")
 @_authorized
 def subledger_reconciliation():
@@ -292,3 +334,27 @@ def subledger_reconciliation():
     finally:
         c.close()
     return render_template("subledger_reconciliation.html", rows=rows, as_of=as_of)
+
+
+@party_bp.route("/reports/customer-advances")
+@_authorized
+def customer_advance_statement():
+    try:
+        as_of = date.fromisoformat(
+            request.args.get("as_of", "").strip() or date.today().isoformat()
+        ).isoformat()
+    except ValueError:
+        abort(400)
+    c = _db()
+    try:
+        rows, available = _customer_advance_details(c, as_of)
+    finally:
+        c.close()
+    totals = {
+        key: sum((row[key] for row in rows), Decimal("0"))
+        for key in ("received", "allocated", "refunded", "remaining")
+    }
+    return render_template(
+        "customer_advance_statement.html", rows=rows, totals=totals,
+        as_of=as_of, available=available,
+    )
