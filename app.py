@@ -1825,6 +1825,10 @@ def income_statement():
     compare_dates = comparison_period(date_from, date_to, compare_mode) if compare_mode != "none" else None
     connection = db()
     try:
+        # A test fixture or an upgraded customer database may still have the
+        # legacy branches schema. Run the additive migration on this connection
+        # before loading branch options; it only adds missing columns/indexes.
+        initialize_analytic_dimensions_schema(connection)
         raw_dimensions = {key: request.args.get(key, "").strip() for key in
             ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id")}
         try:
