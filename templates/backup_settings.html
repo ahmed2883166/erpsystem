@@ -5,6 +5,7 @@
 <section class="panel">
   <h3>إعداد الجدولة</h3>
   <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="form-row">
       <div><label for="enabled">حالة النسخ التلقائي</label><select id="enabled" name="enabled"><option value="1" {% if settings.get('backup_enabled','0') == '1' %}selected{% endif %}>مفعّل</option><option value="0" {% if settings.get('backup_enabled','0') != '1' %}selected{% endif %}>متوقف</option></select></div>
       <div><label for="frequency">التكرار</label><select id="frequency" name="frequency">
@@ -39,12 +40,14 @@
     <tr><th>موعد النسخة القادمة</th><td>{{ settings.get('backup_next_run','لم يتم تحديد موعد') }}</td></tr>
     {% if settings.get('backup_last_error') %}<tr><th>تفاصيل الخطأ</th><td>{{ settings.get('backup_last_error') }}</td></tr>{% endif %}
   </tbody></table></div>
-  <form method="post" action="{{ url_for('backup_run_now') }}" class="no-print"><button type="submit" class="secondary">إنشاء نسخة احتياطية الآن</button></form>
+  <form method="post" action="{{ url_for('backup_run_now') }}" class="no-print">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="secondary">إنشاء نسخة احتياطية الآن</button></form>
 </section>
 <section class="panel">
   <h3>استرجاع نسخة احتياطية</h3>
   <p class="muted">الاسترجاع يستبدل بيانات الشركة الحالية بمحتويات النسخة المختارة. سيفحص النظام سلامة قاعدة البيانات أولًا، ويحفظ نسخة أمان من البيانات الحالية قبل الاسترجاع. لا تغلق البرنامج أثناء العملية.</p>
   <form method="post" action="{{ url_for('restore_backup') }}" enctype="multipart/form-data" class="no-print">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div><label for="backup_file">ملف النسخة الاحتياطية ZIP</label><input id="backup_file" name="backup" type="file" accept=".zip,application/zip" required></div>
     <button type="submit" class="danger" onclick="return confirm('تحذير: سيتم استبدال بيانات الشركة الحالية بالبيانات الموجودة في النسخة الاحتياطية. هل تريد المتابعة؟')">فحص واسترجاع النسخة</button>
   </form>
@@ -60,6 +63,7 @@
     </button>
     <dialog id="resetDataPasswordDialog">
       <form method="post" action="{{ url_for('reset_company_data') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <h3>تأكيد هوية مدير النظام الأعلى</h3>
         <p>أدخل كلمة مرور حساب المدير الأساسي (admin) للمتابعة. لن يتم حذف أي بيانات إذا كانت كلمة المرور غير صحيحة.</p>
         <label for="super_admin_password">كلمة مرور المدير الأعلى</label>
