@@ -2498,7 +2498,16 @@ def reset_company_data():
             summary = clear_company_data(reset_connection)
         finally:
             reset_connection.close()
+    except (OSError, sqlite3.Error, RuntimeError, ValueError) as exc:
+        app.logger.exception("Company data reset failed before completion.")
+        try:
+            log("company_data_reset_failed", str(exc)[:500], entity_type="system", outcome="failure")
+        except Exception:
+            app.logger.exception("Could not audit failed company data reset.")
+        flash(f"تعذر تصفير البرنامج؛ لم يتم اعتماد عملية الحذف: {exc}", "error")
+        return redirect(url_for("backup_settings"))
 
+    try:
         log(
             "company_data_reset",
             f"backup={safety_archive.name}; tables={summary['deleted_tables']}; rows={summary['deleted_rows']}",
@@ -2509,15 +2518,16 @@ def reset_company_data():
                 "backup_file": safety_archive.name,
             },
         )
-        flash(
-            f"تم تصفير بيانات الشركة بنجاح. حُذفت {summary['deleted_rows']} سجلات من "
-            f"{summary['deleted_tables']} جداول. تم الاحتفاظ بنسخة الأمان: {safety_archive.name}",
-            "success",
-        )
-    except (OSError, sqlite3.Error, RuntimeError, ValueError) as exc:
-        app.logger.exception("Company data reset failed.")
-        log("company_data_reset_failed", str(exc)[:500], entity_type="system", outcome="failure")
-        flash(f"تعذر تصفير البرنامج؛ لم يتم اعتماد العملية: {exc}", "error")
+    except Exception:
+        # The reset is already committed; never report it as rolled back because
+        # an audit-write failed after the database transaction completed.
+        app.logger.exception("Company data reset completed but audit logging failed.")
+
+    flash(
+        f"تم تصفير بيانات الشركة بنجاح. حُذفت {summary['deleted_rows']} سجلات من "
+        f"{summary['deleted_tables']} جداول. تم الاحتفاظ بنسخة الأمان: {safety_archive.name}",
+        "success",
+    )
     return redirect(url_for("backup_settings"))
 
 
