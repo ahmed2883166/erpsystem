@@ -30,7 +30,7 @@
 <details class="nav-group" open>
 <summary><span>👥 العملاء والمبيعات</span><small>العملاء والعروض والفواتير والتحصيل</small></summary>
 <div class="nav-links">
-<a href="{{ url_for('sales.index') }}">المبيعات وفواتير العملاء</a>
+<a href="{{ url_for('sales.index') }}">المبيعات وفواتير العملاء</a><a href="{{ url_for('sales.customer_advances') }}">دفعات العملاء المقدمة</a>
 {% if 'quotes.view' in permissions %}<a href="{{ url_for('quotes.index') }}">عروض الأسعار والتسعير</a>{% endif %}
 <a href="{{ url_for('aging.index', kind='customers') }}">أعمار ديون العملاء</a>
 {% if 'party.view' in permissions %}<a href="{{ url_for('party_reports.party_statement') }}">كشوف حساب العملاء</a>{% endif %}
