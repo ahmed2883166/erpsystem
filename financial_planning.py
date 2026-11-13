@@ -1252,7 +1252,7 @@ def budget_export(budget_id, fmt):
         import arabic_reshaper
         from bidi.algorithm import get_display
         from reportlab.lib import colors
-        from reportlab.lib.enums import TA_CENTER
+        from reportlab.lib.enums import TA_CENTER, TA_RIGHT
         from reportlab.lib.pagesizes import A4, landscape
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib.units import mm
