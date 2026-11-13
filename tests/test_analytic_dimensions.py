@@ -32,6 +32,21 @@ class AnalyticDimensionsTests(unittest.TestCase):
         self.conn.execute("INSERT INTO branches(code,name_ar) VALUES('CAI','فرع القاهرة')")
         self.branch_id = self.conn.execute("SELECT id FROM branches").fetchone()["id"]
 
+    def test_branch_contact_fields_are_added_by_safe_migration(self):
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(branches)")}
+        self.assertTrue({"address", "phone", "email", "tax_number"}.issubset(columns))
+        self.conn.execute(
+            "UPDATE branches SET address=?,phone=?,email=?,tax_number=? WHERE id=?",
+            ("وسط البلد", "01000000000", "cairo@example.com", "123456", self.branch_id),
+        )
+        branch = self.conn.execute(
+            "SELECT address,phone,email,tax_number FROM branches WHERE id=?", (self.branch_id,)
+        ).fetchone()
+        self.assertEqual(branch["address"], "وسط البلد")
+        self.assertEqual(branch["phone"], "01000000000")
+        self.assertEqual(branch["email"], "cairo@example.com")
+        self.assertEqual(branch["tax_number"], "123456")
+
     def tearDown(self):
         self.conn.close()
 
