@@ -901,9 +901,9 @@ def build_budget_comparison(conn, budget_id):
     dimension_sql = (" AND " + " AND ".join(dimensions)) if dimensions else ""
     rows = conn.execute(f"""
       SELECT a.id,a.code,a.name_ar,a.account_type,b.amount,
-        COALESCE((SELECT DECIMAL_SUM(DECIMAL_NET(
+        COALESCE((SELECT DECIMAL_NET(
             CASE WHEN a.account_type='revenue' THEN jl.credit ELSE jl.debit END,
-            CASE WHEN a.account_type='revenue' THEN jl.debit ELSE jl.credit END))
+            CASE WHEN a.account_type='revenue' THEN jl.debit ELSE jl.credit END)
           FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
           WHERE jl.account_id=a.id AND je.status='posted'
             AND je.entry_date>=? AND je.entry_date<=? {dimension_sql}), '0') actual
@@ -944,9 +944,9 @@ def build_budget_monthly_comparison(conn, budget_id):
     dimension_sql = (" AND " + " AND ".join(dimensions)) if dimensions else ""
     actual_rows = conn.execute(f"""
       SELECT jl.account_id,substr(je.entry_date,1,7) period,
-        DECIMAL_SUM(DECIMAL_NET(
+        DECIMAL_NET(
           CASE WHEN a.account_type='revenue' THEN jl.credit ELSE jl.debit END,
-          CASE WHEN a.account_type='revenue' THEN jl.debit ELSE jl.credit END)) actual
+          CASE WHEN a.account_type='revenue' THEN jl.debit ELSE jl.credit END) actual
       FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
       JOIN accounts a ON a.id=jl.account_id
       WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=? {dimension_sql}
