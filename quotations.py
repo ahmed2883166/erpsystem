@@ -45,6 +45,7 @@ def initialize_quotes_schema():
   discount_amount TEXT NOT NULL DEFAULT '0', discount_allocated TEXT NOT NULL DEFAULT '0',
   created_by INTEGER, submitted_by INTEGER,
   approved_by INTEGER, approved_at TEXT,
+  rejected_by INTEGER, rejected_at TEXT,
   rejection_reason TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
  );
@@ -92,6 +93,8 @@ def initialize_quotes_schema():
   "discount_value":"TEXT NOT NULL DEFAULT '0'",
   "discount_amount":"TEXT NOT NULL DEFAULT '0'",
   "discount_allocated":"TEXT NOT NULL DEFAULT '0'",
+  "rejected_by":"INTEGER",
+  "rejected_at":"TEXT",
  }.items():
   if name not in so_cols: c.execute(f"ALTER TABLE sales_orders ADD COLUMN {name} {definition}")
  sol_cols={r["name"] for r in c.execute("PRAGMA table_info(sales_order_lines)")}
