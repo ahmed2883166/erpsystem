@@ -100,6 +100,9 @@ def init_purchase_schema():
       ON supplier_bill_receipts(receipt_id);
     CREATE INDEX IF NOT EXISTS idx_purchase_receipts_supplier ON goods_receipts(supplier_id,receipt_date);
     """)
+    # suppliers now exists: install the supplier_id column on journal lines
+    # through the same additive migration used by the other analytical dimensions.
+    initialize_analytic_dimensions_schema(c)
     order_columns = {row["name"] for row in c.execute("PRAGMA table_info(purchase_orders)")}
     for name, declaration in (
         ("submitted_by", "INTEGER"), ("submitted_at", "TEXT"),
@@ -594,7 +597,7 @@ def new_receipt():
             qty=Decimal(request.form["quantity"]); unit=money(request.form["unit_cost"]); total=money(qty*unit)
             if qty<=0 or unit<0: raise ValueError("الكمية أو التكلفة غير صحيحة.")
             c.execute("BEGIN IMMEDIATE")
-            dimensions = validate_journal_dimensions(c, request.form)
+            dimensions = validate_journal_dimensions(c, {**request.form, "supplier_id": supplier})
             product_row=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(product,)).fetchone()
             if not product_row or product_row["product_type"]=="service": raise ValueError("اختر صنفًا مخزنيًا نشطًا.")
             location_id=request.form.get("location_id",type=int)
@@ -800,7 +803,7 @@ def post_supplier_bill(c, bill_id, actor_id):
         raise ValueError("فاتورة المورد مرحّلة بالفعل.")
     dimensions = validate_journal_dimensions(c, {
         "branch_id": bill["branch_id"], "cost_center_id": bill["cost_center_id"],
-        "project_id": bill["project_id"],
+        "project_id": bill["project_id"], "supplier_id": bill["supplier_id"],
     })
     ap = supplier_ap_account(c)
     subtotal = money(bill["subtotal"])
@@ -1138,7 +1141,7 @@ def new_credit_note():
                 raise ValueError("فاتورة المورد غير موجودة أو لا تتبع المورد المحدد.")
             dimensions = validate_journal_dimensions(c, {
                 "branch_id": bill["branch_id"], "cost_center_id": bill["cost_center_id"],
-                "project_id": bill["project_id"],
+                "project_id": bill["project_id"], "supplier_id": supplier,
             })
             if request.form["credit_date"] < bill["bill_date"]:
                 raise ValueError("تاريخ إشعار الدائن لا يمكن أن يسبق تاريخ فاتورة المورد.")
@@ -1247,8 +1250,9 @@ def new_payment():
                 or (cash_row["code"] not in cash_codes and not any(word in cash_name for word in cash_words))):
                 raise ValueError("حساب السداد يجب أن يكون حساب صندوق أو بنك تفصيليًا ونشطًا، وليس حساب إيراد أو مصروف أو أصل آخر.")
             ap=supplier_ap_account(c); c.execute("BEGIN IMMEDIATE")
+            dimensions = validate_journal_dimensions(c, {"supplier_id": supplier})
             no="PAY-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
-            eid=create_journal(c,request.form["payment_date"],no,"سداد مورد",[(ap,amount,0,"تخفيض مديونية المورد"),(cash,0,amount,"سداد نقدي/بنكي")],session["user_id"])
+            eid=create_journal(c,request.form["payment_date"],no,"سداد مورد",[(ap,amount,0,"تخفيض مديونية المورد"),(cash,0,amount,"سداد نقدي/بنكي")],session["user_id"],dimensions=dimensions)
             cur=c.execute("INSERT INTO supplier_payments(payment_no,supplier_id,payment_date,amount,cash_account_id,journal_entry_id,reference,created_by) VALUES(?,?,?,?,?,?,?,?)",
               (no,supplier,request.form["payment_date"],str(amount),cash,eid,request.form.get("reference",""),session["user_id"]))
             payment_id=cur.lastrowid; remaining=amount
