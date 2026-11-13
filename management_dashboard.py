@@ -120,9 +120,9 @@ def dashboard_period_balances(conn, current_start, current_end, previous_start, 
                                dimensions=None, exclude_closing_entries=False):
     """Fetch current, previous and as-of balances in one exact grouped ledger scan.
 
-    Closing entries are excluded from income-statement period totals only when
-    explicitly requested by the management snapshot. As-of balance-sheet
-    balances remain inclusive of closing entries.
+    Closing entries are excluded from current/comparison P&L movements only
+    when requested. Opening and as-of balance-sheet balances always include
+    posted closing entries so retained earnings and opening equity stay correct.
     """
     dimensions = dimensions or {}
     available_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")}
@@ -147,9 +147,9 @@ def dashboard_period_balances(conn, current_start, current_end, previous_start, 
           COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date BETWEEN ? AND ?
             AND ({closing_filter}) THEN jl.credit ELSE '0' END),'0') previous_credit,
           COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date < ?
-            AND ({closing_filter}) THEN jl.debit ELSE '0' END),'0') opening_debit,
+            THEN jl.debit ELSE '0' END),'0') opening_debit,
           COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date < ?
-            AND ({closing_filter}) THEN jl.credit ELSE '0' END),'0') opening_credit,
+            THEN jl.credit ELSE '0' END),'0') opening_credit,
           COALESCE(DECIMAL_SUM(jl.debit),'0') asof_debit,
           COALESCE(DECIMAL_SUM(jl.credit),'0') asof_credit
         FROM journal_lines jl
