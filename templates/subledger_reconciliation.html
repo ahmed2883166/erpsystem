@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}مطابقة الأستاذ العام مع الأستاذ المساعد | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <h2>مطابقة الأستاذ العام مع الأستاذ المساعد</h2>
+  <div class="table-actions no-print">
+    <a class="btn secondary" href="{{ url_for('party_reports.party_statement') }}">كشوف حساب الأطراف</a>
+    <button type="button" class="secondary" onclick="window.print()">طباعة / PDF</button>
+  </div>
+</header>
+<section class="panel no-print">
+  <form method="get" class="report-filter">
+    <label>مطابقة حتى تاريخ
+      <input type="date" name="as_of" value="{{ as_of }}" required>
+    </label>
+    <button type="submit">عرض المطابقة</button>
+  </form>
+</section>
+<section class="panel print-area">
+  <h3>نتائج المطابقة حتى {{ as_of }}</h3>
+  <p>تتم مقارنة الرصيد الدفتري لحساب المراقبة مع إجمالي أرصدة الأطراف والحركات التشغيلية المرحلة حتى التاريخ المحدد.</p>
+  <table>
+    <thead>
+      <tr><th>الحساب</th><th>أكواد الحسابات</th><th>رصيد الأستاذ العام</th><th>رصيد الأستاذ المساعد</th><th>الفرق (الأستاذ العام - المساعد)</th><th>الحالة</th></tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.label }}</td>
+        <td>{{ row.account_codes|join(', ') if row.account_codes else 'غير محدد' }}</td>
+        <td>{{ row.gl_balance|money if row.gl_balance is not none else 'غير متاح' }}</td>
+        <td>{{ row.subledger_balance|money if row.available else 'غير متاح' }}</td>
+        <td>{{ row.difference|money if row.difference is not none else '—' }}</td>
+        <td>
+          {% if row.matched %}<span class="status-badge success">متطابق</span>
+          {% elif not row.available %}<span class="status-badge warning">إعداد غير مكتمل</span>
+          {% else %}<span class="status-badge danger">يوجد فرق</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">تنبيه: التقرير رقابي ولا ينشئ قيود تسوية تلقائية. يجب تحليل المستندات والقيود المسببة لأي فرق قبل التصحيح.</p>
+</section>
+{% endblock %}
