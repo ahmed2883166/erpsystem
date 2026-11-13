@@ -1028,7 +1028,7 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
                                (invoice_id, customer_id)).fetchone()
         if not invoice:
             raise ValueError("إحدى الفواتير المحددة لا تتبع العميل أو غير مرحلة.")
-        if receipt_date < invoice["invoice_date"]:
+        if "invoice_date" in invoice.keys() and receipt_date < invoice["invoice_date"]:
             raise ValueError("لا يمكن تسجيل تحصيل بتاريخ يسبق تاريخ إحدى فواتير البيع.")
         outstanding = (Decimal(invoice["total_amount"]) - Decimal(invoice["paid_amount"] or "0")
                        - Decimal(invoice["credited_amount"] or "0") + _refund_total(conn, invoice_id))
@@ -1441,9 +1441,20 @@ def allocate_customer_advance_route(advance_id):
     c = db()
     try:
         c.execute("BEGIN IMMEDIATE")
+        selected_ids = request.form.getlist("invoice_ids")
+        if selected_ids:
+            allocations = [
+                (int(invoice_id), request.form.get("allocation_amount_" + invoice_id, ""))
+                for invoice_id in selected_ids
+            ]
+        else:
+            # Backward compatibility for an older single-invoice form.
+            allocations = [(
+                request.form.get("invoice_id", type=int),
+                request.form.get("amount", ""),
+            )]
         result = allocate_customer_advance(
-            c, advance_id,
-            [(request.form.get("invoice_id", type=int), request.form.get("amount", ""))],
+            c, advance_id, allocations,
             request.form.get("allocation_date", ""), session.get("user_id"),
         )
         c.commit()
