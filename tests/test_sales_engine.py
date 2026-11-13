@@ -246,15 +246,17 @@ class SalesIntegrationTests(unittest.TestCase):
         ).fetchall()
         self.assertEqual(sum((Decimal(row["amount"]) for row in allocations), Decimal("0")), Decimal("70.00"))
         journal = self.db.execute(
-            "SELECT account_id,debit,credit FROM journal_lines WHERE entry_id=?",
+            """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
+               JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=?""",
             (receipt["journal_entry_id"],),
         ).fetchall()
-        cash_code = self.db.execute("SELECT code FROM accounts WHERE id=?", (journal[0]["account_id"],)).fetchone()["code"]
-        ar_code = self.db.execute("SELECT code FROM accounts WHERE id=?", (journal[1]["account_id"],)).fetchone()["code"]
-        self.assertEqual((cash_code, Decimal(journal[0]["debit"]), Decimal(journal[0]["credit"])),
-                         ("1110", Decimal("70.00"), Decimal("0")))
-        self.assertEqual((ar_code, Decimal(journal[1]["debit"]), Decimal(journal[1]["credit"])),
-                         ("1130", Decimal("0"), Decimal("70.00")))
+        totals = {}
+        for row in journal:
+            debit, credit = totals.setdefault(row["code"], [Decimal("0"), Decimal("0")])
+            totals[row["code"]][0] += Decimal(row["debit"])
+            totals[row["code"]][1] += Decimal(row["credit"])
+        self.assertEqual(totals["1110"], [Decimal("70.00"), Decimal("0.00")])
+        self.assertEqual(totals["1130"], [Decimal("0.00"), Decimal("70.00")])
 
     def test_batch_customer_receipt_overallocation_is_rejected_without_partial_updates(self):
         self.db.execute("BEGIN IMMEDIATE")
@@ -632,15 +634,22 @@ class SalesIntegrationTests(unittest.TestCase):
             (refund["journal_entry_id"], "2160", Decimal("15.00"), Decimal("0.00")),
             (refund["journal_entry_id"], "1120", Decimal("0.00"), Decimal("15.00")),
         ]
-        actual = []
+        actual_totals = {}
         for row in self.db.execute(
             """SELECT jl.entry_id,a.code,jl.debit,jl.credit
                FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
-               WHERE jl.entry_id IN (?,?,?) ORDER BY jl.entry_id,a.code""",
+               WHERE jl.entry_id IN (?,?,?)""",
             (advance["journal_entry_id"], allocation["journal_entry_id"], refund["journal_entry_id"]),
         ):
-            actual.append((row["entry_id"], row["code"], Decimal(row["debit"]), Decimal(row["credit"])))
-        self.assertEqual(actual, sorted(expected, key=lambda x: (x[0], x[1])))
+            key = (row["entry_id"], row["code"])
+            totals = actual_totals.setdefault(key, [Decimal("0"), Decimal("0")])
+            totals[0] += Decimal(row["debit"])
+            totals[1] += Decimal(row["credit"])
+        expected_totals = {
+            (entry_id, code): [debit, credit]
+            for entry_id, code, debit, credit in expected
+        }
+        self.assertEqual(actual_totals, expected_totals)
         for entry_id in (advance["journal_entry_id"], allocation["journal_entry_id"], refund["journal_entry_id"]):
             totals = self.db.execute(
                 "SELECT SUM(CAST(debit AS REAL)) debit,SUM(CAST(credit AS REAL)) credit FROM journal_lines WHERE entry_id=?",
@@ -849,6 +858,10 @@ class SalesIntegrationTests(unittest.TestCase):
         sales.post_customer_receipt(
             self.db, invoice["invoice_id"], "2026-11-11", "20",
             cash_id, 1, "BANK-UNIQUE-001",
+        )
+        sales.post_customer_receipt(
+            self.db, invoice["invoice_id"], "2026-11-12", "80",
+            cash_id, 1, "BANK-UNIQUE-002",
         )
         with self.assertRaisesRegex(ValueError, "مستخدم بالفعل"):
             sales.post_customer_advance_receipt(
