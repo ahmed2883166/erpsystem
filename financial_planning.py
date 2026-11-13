@@ -997,7 +997,9 @@ def build_cash_flow_snapshot(conn, start, end):
             (*ids, start)).fetchone()
         opening = Decimal(str(opening_row["value"] or "0"))
         sections = {k: {"in": Decimal("0"), "out": Decimal("0")} for k in ("operating", "investing", "financing")}
-        entries = conn.execute(f"""SELECT je.id,
+        journal_columns={row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
+        reference_expr="COALESCE(je.reference,'')" if "reference" in journal_columns else "''"
+        entries = conn.execute(f"""SELECT je.id,{reference_expr} reference,
             COALESCE(DECIMAL_NET(CASE WHEN jl.account_id IN ({marks}) THEN jl.debit ELSE '0' END,
                                  CASE WHEN jl.account_id IN ({marks}) THEN jl.credit ELSE '0' END),0) cash_net
             FROM journal_entries je JOIN journal_lines jl ON jl.entry_id=je.id
@@ -1007,6 +1009,12 @@ def build_cash_flow_snapshot(conn, start, end):
         for entry in entries:
             net = Decimal(str(entry["cash_net"] or "0"))
             if not net:
+                continue
+            if str(entry["reference"] or "").startswith("ASSET-DISPOSAL-"):
+                if net > 0:
+                    sections["investing"]["in"] += net
+                else:
+                    sections["investing"]["out"] += -net
                 continue
             counterpart = conn.execute(f"""SELECT jl.account_id,a.account_type,a.code,a.name_ar,jl.debit,jl.credit
                 FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
@@ -1107,7 +1115,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     entry_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
     closing_filter = "AND COALESCE(je.entry_type,'general') NOT IN ('year_end_closing','year_end_closing_reversal')" if "entry_type" in entry_columns else ""
     period_rows = conn.execute(f"""
-        SELECT a.account_type,a.code,a.name_ar,
+        SELECT a.id account_id,a.account_type,a.code,a.name_ar,
                COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
                COALESCE(DECIMAL_SUM(jl.credit),'0') credit
         FROM journal_lines jl
@@ -1122,11 +1130,33 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     expenses = sum((Decimal(str(r["debit"]))-Decimal(str(r["credit"]))
                     for r in period_rows if r["account_type"]=="expense"), Decimal("0"))
     net_profit = revenue-expenses
+    depreciation_account_ids=set()
+    fixed_assets_exists=conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fixed_assets'"
+    ).fetchone()
+    if fixed_assets_exists:
+        depreciation_account_ids={
+            row["expense_account_id"] for row in conn.execute(
+                "SELECT DISTINCT expense_account_id FROM fixed_assets"
+            ).fetchall()
+        }
     depreciation = sum((Decimal(str(r["debit"]))-Decimal(str(r["credit"]))
                         for r in period_rows if r["account_type"]=="expense"
-                        and (str(r["code"]).startswith(("64","65"))
+                        and (r["account_id"] in depreciation_account_ids
+                             or str(r["code"]).startswith(("64","65"))
                              or "إهلاك" in str(r["name_ar"])
                              or "depreciation" in str(r["name_ar"]).lower())), Decimal("0"))
+    disposal_gain_loss=Decimal("0")
+    disposals_exists=conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_disposals'"
+    ).fetchone()
+    if disposals_exists:
+        disposal_row=conn.execute(
+            "SELECT COALESCE(DECIMAL_SUM(gain_loss_amount),'0') amount FROM asset_disposals WHERE disposal_date>=? AND disposal_date<=?",
+            (start,end),
+        ).fetchone()
+        disposal_gain_loss=Decimal(str(disposal_row["amount"] or "0"))
+    disposal_adjustment=-disposal_gain_loss
 
     receivables_ids = roles.get("receivables", set())
     inventory_ids = roles.get("inventory", set())
@@ -1144,7 +1174,8 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
         "other_current_liabilities": role_balance(other_current_liability_ids, closing_balances)-role_balance(other_current_liability_ids, opening_balances),
     }
     calculated_operating = (
-        net_profit + depreciation - changes["receivables"] - changes["inventory"]
+        net_profit + depreciation + disposal_adjustment
+        - changes["receivables"] - changes["inventory"]
         - changes["other_current_assets"] + changes["payables"]
         + changes["other_current_liabilities"]
     )
@@ -1167,6 +1198,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     indirect_items = [
         {"label":"صافي الربح قبل التدفقات النقدية", "amount":net_profit, "kind":"profit"},
         {"label":"إضافة الإهلاك والمصروفات غير النقدية المحددة", "amount":depreciation, "kind":"adjustment"},
+        {"label":"استبعاد أرباح / خسائر بيع الأصول من الربح", "amount":disposal_adjustment, "kind":"adjustment"},
         {"label":"التغير في العملاء والمدينين", "amount":-changes["receivables"], "kind":"working_capital"},
         {"label":"التغير في المخزون", "amount":-changes["inventory"], "kind":"working_capital"},
         {"label":"التغير في الأصول المتداولة الأخرى", "amount":-changes["other_current_assets"], "kind":"working_capital"},
