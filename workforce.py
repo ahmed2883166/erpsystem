@@ -445,17 +445,32 @@ def payroll_report():
         run_key = payment["run_id"]
         paid_by_run[run_key] = paid_by_run.get(run_key, Decimal("0")) + D(payment["amount"])
     rows = [dict(row) for row in rows]
+    run_net_pay = {}
     for row in rows:
-        row["paid_amount"] = M(paid_by_run.get(row["run_id"], Decimal("0")))
-        row["remaining_payable"] = M(max(Decimal("0"), D(row["net_pay"])-D(row["paid_amount"])))
+        run_net_pay[row["run_id"]] = run_net_pay.get(row["run_id"], Decimal("0")) + D(row["net_pay"])
     employee_options = c.execute(
         "SELECT id,employee_code,full_name FROM employees ORDER BY employee_code"
     ).fetchall()
     fields = ("basic_salary","salary_raise","allowances","incentives","overtime_amount","gross_pay",
               "absence_deduction","advance_deduction","loan_deduction","other_deductions",
               "taxable_income_tax","employee_insurance","employer_insurance","total_entitlements",
-              "total_deductions","net_pay","paid_amount","remaining_payable")
+              "total_deductions","net_pay")
     totals = {key: M(sum((D(row[key]) for row in rows), Decimal("0"))) for key in fields}
+    if employee_id:
+        # Payroll payments are recorded against the whole run, not individual employees.
+        # Never present a run-level payment as if it were paid to the selected employee.
+        totals["paid_amount"] = None
+        totals["remaining_payable"] = None
+    else:
+        selected_run_ids = set(run_net_pay)
+        totals["paid_amount"] = M(sum(
+            (paid_by_run.get(run_id, Decimal("0")) for run_id in selected_run_ids),
+            Decimal("0")
+        ))
+        totals["remaining_payable"] = M(sum(
+            (max(Decimal("0"), run_net_pay[run_id] - paid_by_run.get(run_id, Decimal("0")))
+             for run_id in selected_run_ids), Decimal("0")
+        ))
     c.close()
     return render_template("payroll_report.html", rows=rows, totals=totals,
                            employees=employee_options, month_from=month_from,
