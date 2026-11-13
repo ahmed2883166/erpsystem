@@ -390,6 +390,76 @@ def add_pay_item():
     return redirect(url_for("workforce.employees"))
 
 
+@workforce_bp.route("/hr/payroll-report", methods=["GET"])
+@_role("admin", "accountant", "viewer")
+def payroll_report():
+    """Historical employee earnings statement sourced only from posted payroll runs."""
+    c = _db()
+    month_from = request.args.get("month_from", "").strip()
+    month_to = request.args.get("month_to", "").strip()
+    employee_id = request.args.get("employee_id", type=int)
+    for label, value in (("من شهر", month_from), ("إلى شهر", month_to)):
+        if value:
+            try:
+                parsed = date.fromisoformat(value + "-01")
+                if parsed.strftime("%Y-%m") != value:
+                    raise ValueError()
+            except ValueError:
+                c.close()
+                flash("صيغة الشهر غير صحيحة في حقل " + label + ".", "error")
+                return redirect(url_for("workforce.payroll_report"))
+    if month_from and month_to and month_from > month_to:
+        c.close()
+        flash("شهر البداية يجب ألا يتجاوز شهر النهاية.", "error")
+        return redirect(url_for("workforce.payroll_report"))
+    where = ["r.status='posted'"]
+    params = []
+    if month_from:
+        where.append("r.period>=?")
+        params.append(month_from)
+    if month_to:
+        where.append("r.period<=?")
+        params.append(month_to)
+    if employee_id:
+        where.append("l.employee_id=?")
+        params.append(employee_id)
+    rows = c.execute("""
+        SELECT r.id AS run_id,r.period,e.id AS employee_id,e.employee_code,e.full_name,e.department,
+               l.basic_salary,l.salary_raise,l.allowances,l.incentives,l.incentive_name,
+               l.overtime_hours,l.overtime_rate_percent,l.overtime_amount,l.gross_pay,
+               l.absent_hours,l.absence_deduction,l.advance_deduction,
+               COALESCE(l.loan_deduction,'0') AS loan_deduction,l.other_deductions,
+               l.taxable_income_tax,l.employee_insurance,l.employer_insurance,
+               l.total_entitlements,l.total_deductions,l.net_pay,
+               COALESCE(p.paid_amount,'0') AS paid_amount
+        FROM payroll_lines l
+        JOIN payroll_runs r ON r.id=l.run_id
+        JOIN employees e ON e.id=l.employee_id
+        LEFT JOIN (
+            SELECT run_id, SUM(CAST(amount AS NUMERIC)) AS paid_amount
+            FROM payroll_payments GROUP BY run_id
+        ) p ON p.run_id=r.id
+        WHERE """ + " AND ".join(where) + """
+        ORDER BY r.period DESC,e.employee_code
+    """, params).fetchall()
+    employee_options = c.execute(
+        "SELECT id,employee_code,full_name FROM employees ORDER BY employee_code"
+    ).fetchall()
+    fields = ("basic_salary","salary_raise","allowances","incentives","overtime_amount","gross_pay",
+              "absence_deduction","advance_deduction","loan_deduction","other_deductions",
+              "taxable_income_tax","employee_insurance","employer_insurance","total_entitlements",
+              "total_deductions","net_pay","paid_amount")
+    totals = {key: M(sum((D(row[key]) for row in rows), Decimal("0"))) for key in fields}
+    totals["remaining_payable"] = M(sum(
+        (max(Decimal("0"), D(row["net_pay"])-D(row["paid_amount"])) for row in rows),
+        Decimal("0")
+    ))
+    c.close()
+    return render_template("payroll_report.html", rows=rows, totals=totals,
+                           employees=employee_options, month_from=month_from,
+                           month_to=month_to, selected_employee=employee_id)
+
+
 @workforce_bp.route("/hr/payroll", methods=["GET", "POST"])
 @_role("admin", "accountant")
 def payroll():
