@@ -1135,11 +1135,15 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fixed_assets'"
     ).fetchone()
     if fixed_assets_exists:
-        depreciation_account_ids={
-            row["expense_account_id"] for row in conn.execute(
-                "SELECT DISTINCT expense_account_id FROM fixed_assets"
-            ).fetchall()
+        fixed_asset_columns={
+            row["name"] for row in conn.execute("PRAGMA table_info(fixed_assets)")
         }
+        if "expense_account_id" in fixed_asset_columns:
+            depreciation_account_ids={
+                row["expense_account_id"] for row in conn.execute(
+                    "SELECT DISTINCT expense_account_id FROM fixed_assets"
+                ).fetchall()
+            }
     depreciation = sum((Decimal(str(r["debit"]))-Decimal(str(r["credit"]))
                         for r in period_rows if r["account_type"]=="expense"
                         and (r["account_id"] in depreciation_account_ids
