@@ -7,6 +7,7 @@ from datetime import date,datetime
 from functools import wraps
 from flask import Blueprint,flash,redirect,render_template,request,session,url_for
 from sales import post_invoice
+from stock import consume_layers, post_issue_journal, ensure_stock_date_open
 
 quotes_bp=Blueprint("quotes",__name__,url_prefix="/sales/quotations")
 
@@ -33,6 +34,50 @@ def initialize_quotes_schema():
   product_id INTEGER REFERENCES stock_products(id), description TEXT NOT NULL,
   quantity TEXT NOT NULL, unit_price TEXT NOT NULL, line_total TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS idx_quotes_customer_dates ON quotations(customer_id,quote_date,valid_until);
+ CREATE TABLE IF NOT EXISTS sales_orders(
+  id INTEGER PRIMARY KEY, order_no TEXT NOT NULL UNIQUE,
+  quotation_id INTEGER NOT NULL UNIQUE REFERENCES quotations(id),
+  customer_id INTEGER NOT NULL REFERENCES customers(id),
+  warehouse_id INTEGER REFERENCES stock_warehouses(id),
+  order_date TEXT NOT NULL, expected_date TEXT,
+  status TEXT NOT NULL DEFAULT 'pending_approval',
+  created_by INTEGER, submitted_by INTEGER,
+  approved_by INTEGER, approved_at TEXT,
+  rejection_reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+ );
+ CREATE TABLE IF NOT EXISTS sales_order_lines(
+  id INTEGER PRIMARY KEY, sales_order_id INTEGER NOT NULL REFERENCES sales_orders(id) ON DELETE CASCADE,
+  quotation_line_id INTEGER REFERENCES quotation_lines(id),
+  product_id INTEGER REFERENCES stock_products(id),
+  description TEXT NOT NULL, ordered_qty TEXT NOT NULL,
+  delivered_qty TEXT NOT NULL DEFAULT '0', invoiced_qty TEXT NOT NULL DEFAULT '0',
+  unit_price TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+ );
+ CREATE INDEX IF NOT EXISTS idx_sales_order_lines_order ON sales_order_lines(sales_order_id,id);
+ CREATE TABLE IF NOT EXISTS delivery_notes(
+  id INTEGER PRIMARY KEY, delivery_no TEXT NOT NULL UNIQUE,
+  sales_order_id INTEGER NOT NULL REFERENCES sales_orders(id),
+  delivery_date TEXT NOT NULL, warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
+  status TEXT NOT NULL DEFAULT 'draft', notes TEXT NOT NULL DEFAULT '',
+  created_by INTEGER, posted_by INTEGER, posted_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+ );
+ CREATE TABLE IF NOT EXISTS delivery_note_lines(
+  id INTEGER PRIMARY KEY, delivery_note_id INTEGER NOT NULL REFERENCES delivery_notes(id) ON DELETE CASCADE,
+  sales_order_line_id INTEGER NOT NULL REFERENCES sales_order_lines(id),
+  product_id INTEGER NOT NULL REFERENCES stock_products(id),
+  quantity TEXT NOT NULL, unit_cost TEXT NOT NULL DEFAULT '0',
+  total_cost TEXT NOT NULL DEFAULT '0', invoiced_qty TEXT NOT NULL DEFAULT '0',
+  stock_movement_id INTEGER REFERENCES stock_movements(id),
+  UNIQUE(delivery_note_id,sales_order_line_id)
+ );
+ CREATE TABLE IF NOT EXISTS delivery_note_line_lots(
+  id INTEGER PRIMARY KEY, delivery_note_line_id INTEGER NOT NULL REFERENCES delivery_note_lines(id),
+  lot_id INTEGER REFERENCES stock_lots(id), quantity TEXT NOT NULL, cost_total TEXT NOT NULL
+ );
+ CREATE INDEX IF NOT EXISTS idx_delivery_note_order ON delivery_notes(sales_order_id,status,delivery_date,id);
+ CREATE INDEX IF NOT EXISTS idx_delivery_line_order_line ON delivery_note_lines(sales_order_line_id,delivery_note_id);
  """); c.close()
 
 def require(write=False):
@@ -46,6 +91,183 @@ def require(write=False):
    return fn(*a,**kw)
   return wrapped
  return deco
+
+
+def create_sales_order_from_quotation(conn, quote_id, created_by, warehouse_id=None, expected_date=None):
+ q=conn.execute("SELECT * FROM quotations WHERE id=?",(quote_id,)).fetchone()
+ if not q: raise ValueError("عرض السعر غير موجود.")
+ if q["status"]!="accepted": raise ValueError("لا يمكن إنشاء أمر بيع إلا من عرض سعر مقبول من العميل.")
+ if q["sales_order_id"] if "sales_order_id" in q.keys() else False:
+  raise ValueError("تم تحويل عرض السعر إلى أمر بيع بالفعل.")
+ if q["valid_until"]<date.today().isoformat(): raise ValueError("انتهت صلاحية عرض السعر.")
+ lines=conn.execute("SELECT * FROM quotation_lines WHERE quotation_id=? ORDER BY id",(quote_id,)).fetchall()
+ if not lines: raise ValueError("عرض السعر لا يحتوي بنودًا.")
+ order_no="SO-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
+ cur=conn.execute(
+  """INSERT INTO sales_orders(order_no,quotation_id,customer_id,warehouse_id,order_date,
+     expected_date,status,created_by,submitted_by)
+     VALUES(?,?,?,?,?,?,'pending_approval',?,?)""",
+  (order_no,quote_id,q["customer_id"],warehouse_id,date.today().isoformat(),
+   expected_date or None,created_by,created_by))
+ order_id=cur.lastrowid
+ conn.executemany(
+  """INSERT INTO sales_order_lines(sales_order_id,quotation_line_id,product_id,description,
+     ordered_qty,unit_price) VALUES(?,?,?,?,?,?)""",
+  [(order_id,x["id"],x["product_id"],x["description"],x["quantity"],x["unit_price"]) for x in lines])
+ conn.execute("UPDATE quotations SET sales_order_id=? WHERE id=?",(order_id,quote_id))
+ return {"sales_order_id":order_id,"order_no":order_no}
+
+
+def approve_sales_order(conn, order_id, approver_id):
+ order=conn.execute("SELECT * FROM sales_orders WHERE id=?",(order_id,)).fetchone()
+ if not order: raise ValueError("أمر البيع غير موجود.")
+ if order["status"]!="pending_approval": raise ValueError("أمر البيع ليس في انتظار الاعتماد.")
+ if order["created_by"]==approver_id: raise ValueError("لا يجوز اعتماد أمر البيع بواسطة نفس منشئه.")
+ if order["warehouse_id"] is None:
+  activity=conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+  if not activity or activity["setting_value"]!="service":
+   raise ValueError("حدد مخزن التسليم قبل اعتماد أمر البيع.")
+ conn.execute(
+  "UPDATE sales_orders SET status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending_approval'",
+  (approver_id,order_id))
+ if conn.execute("SELECT changes()").fetchone()[0]!=1:
+  raise ValueError("تم تغيير حالة أمر البيع؛ أعد تحميل الصفحة.")
+ return True
+
+
+def create_delivery_note(conn, order_id, delivery_date, lines, created_by, notes=""):
+ order=conn.execute("SELECT * FROM sales_orders WHERE id=?",(order_id,)).fetchone()
+ if not order: raise ValueError("أمر البيع غير موجود.")
+ if order["status"] not in {"approved","partially_delivered"}:
+  raise ValueError("لا يمكن إنشاء إذن تسليم قبل اعتماد أمر البيع أو بعد اكتمال التسليم.")
+ ensure_stock_date_open(conn,delivery_date,"تاريخ إذن التسليم")
+ if not lines: raise ValueError("أضف بندًا واحدًا على الأقل لإذن التسليم.")
+ delivery_no="DN-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
+ cur=conn.execute(
+  """INSERT INTO delivery_notes(delivery_no,sales_order_id,delivery_date,warehouse_id,
+     status,notes,created_by) VALUES(?,?,?,?,'draft',?,?)""",
+  (delivery_no,order_id,delivery_date,order["warehouse_id"],notes,created_by))
+ note_id=cur.lastrowid
+ seen=set()
+ for item in lines:
+  line_id=int(item["sales_order_line_id"])
+  if line_id in seen: raise ValueError("لا تكرر نفس بند أمر البيع في إذن التسليم.")
+  seen.add(line_id)
+  line=conn.execute("SELECT * FROM sales_order_lines WHERE id=? AND sales_order_id=?",(line_id,order_id)).fetchone()
+  if not line: raise ValueError("بند إذن التسليم لا يتبع أمر البيع المحدد.")
+  qty=Decimal(str(item["quantity"]))
+  remaining=Decimal(str(line["ordered_qty"]))-Decimal(str(line["delivered_qty"]))
+  if not qty.is_finite() or qty<=0: raise ValueError("كمية التسليم يجب أن تكون أكبر من صفر.")
+  if qty>remaining: raise ValueError("كمية التسليم تتجاوز الكمية المتبقية من أمر البيع.")
+  if not line["product_id"]: raise ValueError("بنود الخدمات لا تحتاج إذن تسليم مخزني.")
+  conn.execute(
+   """INSERT INTO delivery_note_lines(delivery_note_id,sales_order_line_id,product_id,quantity)
+      VALUES(?,?,?,?)""",(note_id,line_id,line["product_id"],str(qty)))
+ return {"delivery_note_id":note_id,"delivery_no":delivery_no}
+
+
+def post_delivery_note(conn, note_id, posted_by):
+ note=conn.execute("SELECT * FROM delivery_notes WHERE id=?",(note_id,)).fetchone()
+ if not note: raise ValueError("إذن التسليم غير موجود.")
+ if note["status"]!="draft": raise ValueError("إذن التسليم تم ترحيله أو إلغاؤه بالفعل.")
+ order=conn.execute("SELECT * FROM sales_orders WHERE id=?",(note["sales_order_id"],)).fetchone()
+ if order["status"] not in {"approved","partially_delivered"}: raise ValueError("أمر البيع غير معتمد للتسليم.")
+ ensure_stock_date_open(conn,note["delivery_date"],"تاريخ إذن التسليم")
+ rows=conn.execute("SELECT * FROM delivery_note_lines WHERE delivery_note_id=? ORDER BY id",(note_id,)).fetchall()
+ if not rows: raise ValueError("إذن التسليم لا يحتوي بنودًا.")
+ method_row=conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
+ method=method_row["setting_value"] if method_row else "average"
+ total_cost=Decimal("0")
+ for row in rows:
+  order_line=conn.execute("SELECT * FROM sales_order_lines WHERE id=?",(row["sales_order_line_id"],)).fetchone()
+  qty=Decimal(str(row["quantity"]))
+  remaining=Decimal(str(order_line["ordered_qty"]))-Decimal(str(order_line["delivered_qty"]))
+  if qty>remaining: raise ValueError("كمية التسليم تجاوزت المتبقي بسبب عملية تسليم أخرى.")
+  product=conn.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(row["product_id"],)).fetchone()
+  if not product: raise ValueError("الصنف غير موجود أو غير نشط.")
+  cost,allocations=consume_layers(conn,row["product_id"],note["warehouse_id"],qty,method)
+  unit_cost=(cost/qty).quantize(M,rounding=ROUND_HALF_UP)
+  movement_no=note["delivery_no"]+"-"+str(row["id"])
+  cur=conn.execute(
+   """INSERT INTO stock_movements(movement_no,movement_type,product_id,source_warehouse_id,
+      quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,issue_purpose)
+      VALUES(?,'issue',?,?,?,?,?,?,?,?, 'pending','sale')""",
+   (movement_no,row["product_id"],note["warehouse_id"],str(qty),str(unit_cost),str(cost),
+    note["delivery_date"],"صرف إذن تسليم "+note["delivery_no"],posted_by))
+  movement_id=cur.lastrowid
+  post_issue_journal(conn,movement_id,movement_no,product,note["delivery_date"],cost,posted_by,"sale")
+  conn.execute(
+   "UPDATE delivery_note_lines SET unit_cost=?,total_cost=?,stock_movement_id=? WHERE id=?",
+   (str(unit_cost),str(cost),movement_id,row["id"]))
+  for lot_id,lot_qty,lot_unit_cost,lot_cost in allocations:
+   conn.execute(
+    "INSERT INTO delivery_note_line_lots(delivery_note_line_id,lot_id,quantity,cost_total) VALUES(?,?,?,?)",
+    (row["id"],lot_id,str(lot_qty),str(lot_cost)))
+  conn.execute("UPDATE sales_order_lines SET delivered_qty=? WHERE id=?",
+   (str(Decimal(str(order_line["delivered_qty"]))+qty),order_line["id"]))
+  total_cost+=cost
+ remaining=conn.execute(
+  "SELECT ordered_qty,delivered_qty FROM sales_order_lines WHERE sales_order_id=?",(order["id"],)).fetchall()
+ all_delivered=all(Decimal(str(x["delivered_qty"]))>=Decimal(str(x["ordered_qty"])) for x in remaining)
+ conn.execute("UPDATE delivery_notes SET status='posted',posted_by=?,posted_at=CURRENT_TIMESTAMP WHERE id=?",
+  (posted_by,note_id))
+ conn.execute("UPDATE sales_orders SET status=? WHERE id=?",
+  ("delivered" if all_delivered else "partially_delivered",order["id"]))
+ return {"delivery_note_id":note_id,"total_cost":total_cost,"fully_delivered":all_delivered}
+
+
+def invoice_sales_order(conn, order_id, invoice_date, due_date, created_by, dimensions=None):
+ order=conn.execute("SELECT * FROM sales_orders WHERE id=?",(order_id,)).fetchone()
+ if not order: raise ValueError("أمر البيع غير موجود.")
+ if order["status"] not in {"approved","partially_delivered","delivered","partially_invoiced"}:
+  raise ValueError("أمر البيع غير معتمد أو لا توجد كميات جاهزة للفوترة.")
+ quotation=conn.execute("SELECT * FROM quotations WHERE id=?",(order["quotation_id"],)).fetchone()
+ order_lines=conn.execute("SELECT * FROM sales_order_lines WHERE sales_order_id=? ORDER BY id",(order_id,)).fetchall()
+ items=[]; fulfillment=[]; consumption_plan=[]
+ for line in order_lines:
+  ready=Decimal(str(line["delivered_qty"]))-Decimal(str(line["invoiced_qty"]))
+  if ready<=0: continue
+  left=ready; cost_total=Decimal("0"); allocations=[]
+  delivery_rows=conn.execute(
+   """SELECT dl.*,dn.delivery_no FROM delivery_note_lines dl
+      JOIN delivery_notes dn ON dn.id=dl.delivery_note_id
+      WHERE dl.sales_order_line_id=? AND dn.status='posted'
+      ORDER BY dn.delivery_date,dn.id,dl.id""",(line["id"],)).fetchall()
+  for dl in delivery_rows:
+   available=Decimal(str(dl["quantity"]))-Decimal(str(dl["invoiced_qty"]))
+   if available<=0 or left<=0: continue
+   take=min(available,left)
+   line_qty=Decimal(str(dl["quantity"]))
+   line_cost=Decimal(str(dl["total_cost"]))
+   take_cost=line_cost if take==available else (line_cost*take/line_qty).quantize(M,rounding=ROUND_HALF_UP)
+   cost_total+=take_cost
+   lot_rows=conn.execute("SELECT * FROM delivery_note_line_lots WHERE delivery_note_line_id=?",(dl["id"],)).fetchall()
+   for lot in lot_rows:
+    lot_qty=Decimal(str(lot["quantity"]))
+    lot_cost=Decimal(str(lot["cost_total"]))
+    allocated_qty=lot_qty if take==available else (lot_qty*take/line_qty)
+    allocated_cost=lot_cost if take==available else (lot_cost*take/line_qty).quantize(M,rounding=ROUND_HALF_UP)
+    allocations.append((lot["lot_id"],allocated_qty,allocated_cost))
+   consumption_plan.append((dl["id"],take))
+   left-=take
+  if left>0: raise ValueError("الكميات المسلمة غير مرتبطة بطبقات تكلفة كافية للفوترة.")
+  items.append({"product_id":line["product_id"],"description":line["description"],
+   "quantity":str(ready),"unit_price":line["unit_price"],"sales_order_line_id":line["id"]})
+  fulfillment.append({"cost_total":str(cost_total),"allocations":allocations})
+ if not items: raise ValueError("لا توجد كميات مسلمة غير مفوترة.")
+ result=post_invoice(conn,order["customer_id"],invoice_date,order["warehouse_id"],items,
+  quotation["tax_rate"],created_by,dimensions=dimensions,preissued_costs=fulfillment,
+  sales_order_id=order_id)
+ conn.execute("UPDATE sales_invoices SET due_date=? WHERE id=?",(due_date or invoice_date,result["invoice_id"]))
+ for delivery_line_id,qty in consumption_plan:
+  conn.execute("UPDATE delivery_note_lines SET invoiced_qty=? WHERE id=?",
+   (str(Decimal(str(conn.execute("SELECT invoiced_qty FROM delivery_note_lines WHERE id=?",(delivery_line_id,)).fetchone()["invoiced_qty"]))+qty),delivery_line_id))
+ remaining=conn.execute("SELECT ordered_qty,invoiced_qty FROM sales_order_lines WHERE sales_order_id=?",(order_id,)).fetchall()
+ all_invoiced=all(Decimal(str(x["invoiced_qty"]))>=Decimal(str(x["ordered_qty"])) for x in remaining)
+ conn.execute("UPDATE sales_orders SET status=? WHERE id=?",
+  ("invoiced" if all_invoiced else ("partially_invoiced" if any(Decimal(str(x["invoiced_qty"]))>0 for x in remaining) else order["status"]),order_id))
+ return result
+
 
 @quotes_bp.route("/",methods=["GET","POST"])
 @require(write=True)
