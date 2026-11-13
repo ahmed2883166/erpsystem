@@ -41,6 +41,8 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
             VALUES('2110','الموردون','liability',0,1);
         INSERT INTO accounts(code,name_ar,account_type,is_group,active)
             VALUES('5000','مصروف إيجار','expense',0,1);
+        INSERT INTO accounts(code,name_ar,account_type,is_group,active)
+            VALUES('1165','ضريبة قيمة مضافة مدخلات','asset',0,1);
         """)
         purchases.init_purchase_schema()
         self.conn.execute("INSERT INTO suppliers(code,name) VALUES('SUP-1','مورد اختبار')")
