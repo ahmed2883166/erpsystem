@@ -647,6 +647,149 @@ def pay_payroll(run_id):
     return redirect(url_for("workforce.payroll_run", run_id=run_id))
 
 
+@workforce_bp.route("/hr/loans", methods=["GET", "POST"])
+@_role("admin", "accountant")
+def employee_loans():
+    c = _db()
+    if request.method == "POST":
+        try:
+            employee_id = int(request.form["employee_id"])
+            amount = M(request.form.get("requested_amount", "0"))
+            count = int(request.form.get("installment_count", "0"))
+            first = request.form.get("first_due_period", "")
+            date.fromisoformat(first + "-01")
+            if not c.execute("SELECT 1 FROM employees WHERE id=? AND active=1", (employee_id,)).fetchone() or amount <= 0 or not 1 <= count <= 60:
+                raise ValueError("راجع الموظف ومبلغ السلفة وعدد الأقساط من 1 إلى 60.")
+            loan_no = "EMP-LOAN-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+            c.execute("""INSERT INTO employee_loans(loan_no,employee_id,request_date,requested_amount,
+                installment_count,first_due_period,notes,created_by) VALUES(?,?,?,?,?,?,?,?)""",
+                (loan_no,employee_id,date.today().isoformat(),str(amount),count,first,
+                 request.form.get("notes","").strip(),session["user_id"]))
+            _audit(c,"employee_loan_requested",loan_no)
+            c.commit()
+            flash("تم تسجيل طلب السلفة في انتظار الموافقة.","success")
+        except (ValueError,KeyError,sqlite3.Error) as exc:
+            c.rollback()
+            flash(str(exc) or "تعذر تسجيل طلب السلفة.","error")
+        c.close()
+        return redirect(url_for("workforce.employee_loans"))
+    loans = c.execute("""SELECT l.*,e.employee_code,e.full_name FROM employee_loans l
+        JOIN employees e ON e.id=l.employee_id ORDER BY l.id DESC""").fetchall()
+    employees = c.execute("SELECT id,employee_code,full_name FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
+    cash_accounts = c.execute("""SELECT id,code,name_ar FROM accounts WHERE active=1 AND is_group=0
+        AND account_type='asset' ORDER BY code""").fetchall()
+    c.close()
+    return render_template("employee_loans.html",loans=loans,employees=employees,
+        cash_accounts=cash_accounts,today=date.today().strftime("%Y-%m"))
+
+
+@workforce_bp.route("/hr/loans/<int:loan_id>/approve", methods=["POST"])
+@_role("admin", "accountant")
+def approve_employee_loan(loan_id):
+    c = _db()
+    try:
+        loan = c.execute("SELECT * FROM employee_loans WHERE id=?", (loan_id,)).fetchone()
+        if not loan or loan["status"] != "requested":
+            raise ValueError("طلب السلفة غير موجود أو سبق اتخاذ قرار.")
+        amount = M(request.form.get("approved_amount",loan["requested_amount"]))
+        count = int(request.form.get("installment_count",loan["installment_count"]))
+        first = request.form.get("first_due_period",loan["first_due_period"])
+        date.fromisoformat(first + "-01")
+        if amount <= 0 or amount > D(loan["requested_amount"]) or not 1 <= count <= 60:
+            raise ValueError("المبلغ المعتمد لا يتجاوز المطلوب وعدد الأقساط من 1 إلى 60.")
+        c.execute("""UPDATE employee_loans SET approved_amount=?,installment_count=?,first_due_period=?,
+            status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP WHERE id=?""",
+            (str(amount),count,first,session["user_id"],loan_id))
+        _audit(c,"employee_loan_approved",loan["loan_no"])
+        c.commit()
+        flash("تم اعتماد السلفة؛ يلزم صرفها لإنشاء جدول الأقساط.","success")
+    except (ValueError,KeyError,sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc) or "تعذر اعتماد الطلب.","error")
+    c.close()
+    return redirect(url_for("workforce.employee_loans"))
+
+
+@workforce_bp.route("/hr/loans/<int:loan_id>/reject", methods=["POST"])
+@_role("admin", "accountant")
+def reject_employee_loan(loan_id):
+    c = _db()
+    try:
+        loan = c.execute("SELECT * FROM employee_loans WHERE id=?", (loan_id,)).fetchone()
+        if not loan or loan["status"] != "requested":
+            raise ValueError("لا يمكن رفض الطلب في حالته الحالية.")
+        c.execute("UPDATE employee_loans SET status='rejected',approved_by=?,approved_at=CURRENT_TIMESTAMP WHERE id=?",
+                  (session["user_id"],loan_id))
+        _audit(c,"employee_loan_rejected",loan["loan_no"])
+        c.commit()
+        flash("تم رفض الطلب مع الاحتفاظ بسجله.","success")
+    except (ValueError,sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc) or "تعذر رفض الطلب.","error")
+    c.close()
+    return redirect(url_for("workforce.employee_loans"))
+
+
+@workforce_bp.route("/hr/loans/<int:loan_id>/disburse", methods=["POST"])
+@_role("admin", "accountant")
+def disburse_employee_loan(loan_id):
+    c = _db()
+    try:
+        loan = c.execute("""SELECT l.*,e.full_name FROM employee_loans l
+            JOIN employees e ON e.id=l.employee_id WHERE l.id=?""",(loan_id,)).fetchone()
+        if not loan or loan["status"] != "approved":
+            raise ValueError("لا يمكن صرف إلا سلفة معتمدة لم تُصرف.")
+        asset = c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE code='1171'").fetchone()
+        if not asset or not asset["active"] or asset["is_group"] or asset["account_type"] != "asset":
+            raise ValueError("حساب سلف العاملين 1171 غير موجود أو غير نشط أو غير تفصيلي.")
+        cash_id = int(request.form["cash_account_id"])
+        cash = c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(cash_id,)).fetchone()
+        if not cash or not cash["active"] or cash["is_group"] or cash["account_type"] != "asset" or cash_id == asset["id"]:
+            raise ValueError("اختر حساب بنك أو صندوق نشطًا وتفصيليًا.")
+        disb_date = date.fromisoformat(request.form.get("disbursement_date") or date.today().isoformat()).isoformat()
+        amount = M(loan["approved_amount"])
+        cents = int(amount * 100)
+        base, rem = divmod(cents, int(loan["installment_count"]))
+        c.execute("BEGIN IMMEDIATE")
+        journal = post_journal(c,disb_date,"EMP-LOAN-DISB-"+str(loan_id),
+            "صرف سلفة للموظف "+loan["full_name"],
+            [(int(asset["id"]),amount,0,"إثبات سلفة موظف"),(cash_id,0,amount,"صرف سلفة من البنك/الصندوق")],
+            session["user_id"])
+        first = date.fromisoformat(loan["first_due_period"] + "-01")
+        for idx in range(int(loan["installment_count"])):
+            month = first.year * 12 + first.month - 1 + idx
+            period = f"{month//12:04d}-{month%12+1:02d}"
+            due = Decimal(base + (1 if idx < rem else 0)) / 100
+            c.execute("INSERT INTO employee_loan_installments(loan_id,due_period,due_amount) VALUES(?,?,?)",
+                      (loan_id,period,str(M(due))))
+        c.execute("""UPDATE employee_loans SET status='active',remaining_balance=?,loan_account_id=?,
+            disbursement_account_id=?,disbursement_date=?,journal_entry_id=? WHERE id=?""",
+            (str(amount),asset["id"],cash_id,disb_date,journal,loan_id))
+        _audit(c,"employee_loan_disbursed",loan["loan_no"]+" journal="+str(journal))
+        c.commit()
+        flash("تم صرف السلفة وترحيل القيد وإنشاء جدول الأقساط.","success")
+    except (ValueError,KeyError,sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc) or "تعذر صرف السلفة.","error")
+    c.close()
+    return redirect(url_for("workforce.employee_loans"))
+
+
+@workforce_bp.route("/hr/loans/<int:loan_id>/schedule", methods=["GET"])
+@_role("admin", "accountant", "viewer")
+def loan_schedule(loan_id):
+    c = _db()
+    loan = c.execute("""SELECT l.*,e.employee_code,e.full_name FROM employee_loans l
+        JOIN employees e ON e.id=l.employee_id WHERE l.id=?""",(loan_id,)).fetchone()
+    if not loan:
+        c.close()
+        flash("السلفة غير موجودة.","error")
+        return redirect(url_for("workforce.employee_loans"))
+    installments = c.execute("SELECT * FROM employee_loan_installments WHERE loan_id=? ORDER BY due_period",(loan_id,)).fetchall()
+    c.close()
+    return render_template("employee_loan_schedule.html",loan=loan,installments=installments)
+
+
 @workforce_bp.route("/hr/custody", methods=["GET", "POST"])
 @_role("admin", "accountant")
 def custody():
