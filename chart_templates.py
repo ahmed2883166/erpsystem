@@ -75,7 +75,7 @@ ACTIVITY_ACCOUNT_ROLES = {
         "payables": ("2110",), "customer_advances": ("2160",), "inventory": ("1150",),
         "quick_assets": ("1110", "1120", "1130", "1140"),
         "current_assets": ("1110", "1120", "1130", "1140", "1150", "1160", "1165"),
-        "current_liabilities": ("2110", "2120", "2130", "2140"),
+        "current_liabilities": ("2110", "2120", "2130", "2140", "2160"),
         "direct_cost": ("5100",),
     },
     "service": {
@@ -83,7 +83,7 @@ ACTIVITY_ACCOUNT_ROLES = {
         "payables": ("2100",), "customer_advances": ("2160",), "inventory": (),
         "quick_assets": ("1110", "1120", "1130"),
         "current_assets": ("1110", "1120", "1130", "1140", "1165"),
-        "current_liabilities": ("2100", "2110", "2120", "2130", "2150"),
+        "current_liabilities": ("2100", "2110", "2120", "2130", "2150", "2160"),
         "direct_cost": ("5100", "5200", "5300"),
     },
     "medical": {
@@ -91,7 +91,7 @@ ACTIVITY_ACCOUNT_ROLES = {
         "payables": ("2100",), "customer_advances": ("2160",), "inventory": ("1150", "1160"),
         "quick_assets": ("1110", "1120", "1130", "1140"),
         "current_assets": ("1110", "1120", "1130", "1140", "1150", "1160", "1165"),
-        "current_liabilities": ("2100", "2110", "2120", "2130", "2140"),
+        "current_liabilities": ("2100", "2110", "2120", "2130", "2140", "2160"),
         "direct_cost": ("5100", "5200", "5300"),
     },
     "restaurant": {
@@ -99,7 +99,7 @@ ACTIVITY_ACCOUNT_ROLES = {
         "payables": ("2100",), "customer_advances": ("2160",), "inventory": ("1140", "1150", "1160"),
         "quick_assets": ("1110", "1120", "1130"),
         "current_assets": ("1110", "1120", "1130", "1140", "1150", "1160", "1165"),
-        "current_liabilities": ("2100", "2110", "2120", "2130", "2140"),
+        "current_liabilities": ("2100", "2110", "2120", "2130", "2140", "2160"),
         "direct_cost": ("5100", "5200", "5300", "5400"),
     },
     "industrial": {
@@ -107,7 +107,7 @@ ACTIVITY_ACCOUNT_ROLES = {
         "payables": ("2100",), "customer_advances": ("2160",), "inventory": ("1130", "1140", "1150", "1160"),
         "quick_assets": ("1110", "1120"),
         "current_assets": ("1110", "1120", "1130", "1140", "1150", "1160", "1165"),
-        "current_liabilities": ("2100", "2110", "2120", "2130"),
+        "current_liabilities": ("2100", "2110", "2120", "2130", "2160"),
         "direct_cost": ("5400",),
     },
 }
