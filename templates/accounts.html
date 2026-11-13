@@ -32,12 +32,12 @@
     <div class="section-heading account-tree-toolbar"><div><h3>شجرة الحسابات</h3><p class="muted">عدد الحسابات: {{ accounts|length }} · افتح أي مستوى لرؤية الفروع التابعة له.</p></div><div class="table-actions no-print"><input id="accountTreeSearch" type="search" placeholder="ابحث بالكود أو اسم الحساب" aria-label="بحث في شجرة الحسابات"><button type="button" class="secondary" id="expandAccountTree">فتح الكل</button><button type="button" class="secondary" id="collapseAccountTree">إغلاق الكل</button><span class="pill">NEXUS ERP</span></div></div>
     <div class="table-wrap">
       <table class="accounts-tree">
-        <thead><tr><th>كود الحساب</th><th>اسم الحساب ومستواه</th><th>النوع</th><th>التصنيف</th><th>الحالة</th>{% if 'accounts.manage' in permissions %}<th class="no-print">الإجراءات</th>{% endif %}</tr></thead>
+        <thead><tr><th>كود الحساب</th><th>اسم الحساب ومستواه</th><th>النوع</th><th>التصنيف</th><th>الرصيد الطبيعي</th><th>القائمة المالية</th><th>الحالة</th>{% if 'accounts.manage' in permissions %}<th class="no-print">الإجراءات</th>{% endif %}</tr></thead>
         <tbody>
         {% set ns = namespace(last_type='') %}
         {% for a in accounts %}
           {% if a.depth == 0 and a.account_type != ns.last_type %}
-            <tr class="account-section-row"><td colspan="{{ 6 if 'accounts.manage' in permissions else 5 }}">{{ {'asset':'الأصول','liability':'الالتزامات','equity':'حقوق الملكية','revenue':'الإيرادات','expense':'المصروفات والتكاليف'}.get(a.account_type,a.account_type) }}</td></tr>
+            <tr class="account-section-row"><td colspan="{{ 8 if 'accounts.manage' in permissions else 7 }}">{{ {'asset':'الأصول','liability':'الالتزامات','equity':'حقوق الملكية','revenue':'الإيرادات','expense':'المصروفات والتكاليف'}.get(a.account_type,a.account_type) }}</td></tr>
             {% set ns.last_type = a.account_type %}
           {% endif %}
           <tr class="account-row {% if a.is_group %}account-group{% else %}account-detail{% endif %}" data-id="{{ a.id }}" data-parent="{{ a.parent_id or '' }}" data-group="{{ a.is_group }}" data-depth="{{ a.depth }}" {% if a.depth > 0 %}hidden{% endif %}>
@@ -51,7 +51,9 @@
               </div>
             </td>
             <td>{{ {'asset':'أصول','liability':'التزامات','equity':'حقوق ملكية','revenue':'إيرادات','expense':'مصروفات'}.get(a.account_type,a.account_type) }}</td>
-            <td>{% if a.is_group %}<span class="account-type-badge group-badge">مجموعة رئيسية</span>{% else %}<span class="account-type-badge detail-badge">تفصيلي</span>{% endif %}</td>
+            <td>{% if a.is_group %}<span class="account-type-badge group-badge">مجموعة رئيسية</span>{% else %}<span class="account-type-badge detail-badge">تفصيلي</span>{% endif %}{% if a.is_control_account|default(0) %}<span class="account-type-badge">حساب رقابي</span>{% endif %}</td>
+            <td>{{ 'مدين' if a.normal_balance|default('debit') == 'debit' else 'دائن' }}</td>
+            <td>{{ {'current_assets':'أصول متداولة','non_current_assets':'أصول غير متداولة','assets':'الأصول','current_liabilities':'التزامات متداولة','non_current_liabilities':'التزامات طويلة الأجل','liabilities':'الالتزامات','equity':'حقوق الملكية','revenue':'الإيرادات','direct_costs':'تكاليف مباشرة','finance_costs':'تكاليف تمويلية','operating_expenses':'مصروفات تشغيلية','unclassified':'غير مصنف'}.get(a.statement_section|default(''), '—') }}</td>
             <td>{{ 'نشط' if a.active else 'موقوف' }}</td>
             {% if 'accounts.manage' in permissions %}<td class="no-print"><div class="actions"><a class="btn secondary" href="{{ url_for('edit_account',account_id=a.id) }}">تعديل</a><form method="post" action="{{ url_for('delete_account',account_id=a.id) }}" onsubmit="return confirm('هل أنت متأكد من حذف الحساب؟');"><button class="danger">حذف</button></form></div></td>{% endif %}
           </tr>
