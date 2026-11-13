@@ -220,7 +220,7 @@ class WorkforceTests(unittest.TestCase):
         conn=sqlite3.connect(self.db_path)
         line=conn.execute("SELECT overtime_hours,overtime_amount,absent_hours,absence_deduction,net_pay FROM payroll_lines").fetchone()
         conn.close()
-        self.assertEqual(line,("2.0","150.00","4.0","866.67","9283.33"))
+        self.assertEqual(line,("2.00","150.00","4.00","866.67","9283.33"))
 
     def test_custody_issue_expense_and_full_settlement(self):
         self.add_employee()
