@@ -141,7 +141,6 @@ def initialize_planning_schema(conn):
         if column not in budget_columns:
             conn.execute(f"ALTER TABLE budget_plans ADD COLUMN {column} {declaration}")
     conn.execute("UPDATE budget_plans SET status='approved' WHERE status='active'")
-    from datetime import date
     plans = conn.execute("SELECT id,date_from,date_to FROM budget_plans").fetchall()
     for plan in plans:
         existing = conn.execute("SELECT 1 FROM budget_monthly_lines WHERE budget_id=? LIMIT 1", (plan["id"],)).fetchone()
@@ -901,9 +900,9 @@ def build_budget_comparison(conn, budget_id):
     dimension_sql = (" AND " + " AND ".join(dimensions)) if dimensions else ""
     rows = conn.execute(f"""
       SELECT a.id,a.code,a.name_ar,a.account_type,b.amount,
-        COALESCE((SELECT DECIMAL_NET(
+        COALESCE((SELECT DECIMAL_SUM(DECIMAL_NET(
             CASE WHEN a.account_type='revenue' THEN jl.credit ELSE jl.debit END,
-            CASE WHEN a.account_type='revenue' THEN jl.debit ELSE jl.credit END)
+            CASE WHEN a.account_type='revenue' THEN jl.debit ELSE jl.credit END))
           FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
           WHERE jl.account_id=a.id AND je.status='posted'
             AND je.entry_date>=? AND je.entry_date<=? {dimension_sql}), '0') actual
@@ -929,6 +928,48 @@ def build_budget_comparison(conn, budget_id):
         totals[kind + "_budget"] = sum((x["budget"] for x in results if x["account_type"] == kind), Decimal("0"))
         totals[kind + "_actual"] = sum((x["actual"] for x in results if x["account_type"] == kind), Decimal("0"))
     return plan, results, totals
+
+
+def build_budget_monthly_comparison(conn, budget_id):
+    plan = conn.execute("SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
+    if not plan:
+        raise ValueError("الموازنة غير موجودة.")
+    dimensions = []
+    params = [plan["date_from"], plan["date_to"]]
+    for key in ("branch_id", "cost_center_id", "project_id"):
+        if plan[key] is not None:
+            dimensions.append(f"jl.{key}=?")
+            params.append(plan[key])
+    dimension_sql = (" AND " + " AND ".join(dimensions)) if dimensions else ""
+    actual_rows = conn.execute(f"""
+      SELECT jl.account_id,substr(je.entry_date,1,7) period,
+        DECIMAL_SUM(DECIMAL_NET(
+          CASE WHEN a.account_type='revenue' THEN jl.credit ELSE jl.debit END,
+          CASE WHEN a.account_type='revenue' THEN jl.debit ELSE jl.credit END)) actual
+      FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+      JOIN accounts a ON a.id=jl.account_id
+      WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=? {dimension_sql}
+      GROUP BY jl.account_id,substr(je.entry_date,1,7)
+    """, params).fetchall()
+    actuals = {(r["account_id"], r["period"]): Decimal(str(r["actual"] or "0")) for r in actual_rows}
+    planned = conn.execute("""
+      SELECT ml.account_id,ml.period,ml.amount,a.code,a.name_ar,a.account_type
+      FROM budget_monthly_lines ml JOIN accounts a ON a.id=ml.account_id
+      WHERE ml.budget_id=? ORDER BY ml.period,a.account_type,a.code
+    """, (budget_id,)).fetchall()
+    results = []
+    for row in planned:
+        budget = _money(row["amount"])
+        actual = actuals.get((row["account_id"], row["period"]), Decimal("0"))
+        variance = actual - budget
+        utilization = actual * 100 / budget if budget else None
+        if row["account_type"] == "expense":
+            status = "over" if actual > budget else ("warning" if budget and actual >= budget * Decimal("0.80") else "ok")
+        else:
+            status = "behind" if budget and actual < budget * Decimal("0.80") else ("ahead" if actual > budget else "ok")
+        results.append({**dict(row), "budget": budget, "actual": actual, "variance": variance,
+                        "utilization_pct": utilization, "status": status})
+    return plan, results
 
 
 @planning_bp.route("/budget", methods=["GET", "POST"])
