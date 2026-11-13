@@ -1305,6 +1305,42 @@ class SalesIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(sales._customer_advance_available(self.db, advance["id"]), Decimal("5.00"))
 
+        allocation_journal_id = self.db.execute(
+            "SELECT journal_entry_id FROM customer_advance_allocations WHERE advance_receipt_id=? LIMIT 1",
+            (advance["id"],),
+        ).fetchone()["journal_entry_id"]
+        response = client.post(
+            f"/sales/advances/reversals/allocation/{allocation_journal_id}",
+            data={"reversal_date": "2026-11-14", "reason": "تصحيح تخصيص تجريبي خاطئ"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            Decimal(self.db.execute(
+                "SELECT paid_amount FROM sales_invoices WHERE id=?",
+                (invoice["invoice_id"],),
+            ).fetchone()["paid_amount"]),
+            Decimal("0.00"),
+        )
+        self.assertEqual(sales._customer_advance_available(self.db, advance["id"]), Decimal("65.00"))
+
+        refund_id = self.db.execute(
+            "SELECT id FROM customer_advance_refunds WHERE reference='WEB-REF-1'"
+        ).fetchone()["id"]
+        response = client.post(
+            f"/sales/advances/reversals/refund/{refund_id}",
+            data={"reversal_date": "2026-11-15", "reason": "إلغاء رد المقدم التجريبي"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(sales._customer_advance_available(self.db, advance["id"]), Decimal("75.00"))
+
+        response = client.post(
+            f"/sales/advances/reversals/receipt/{advance['id']}",
+            data={"reversal_date": "2026-11-16", "reason": "إلغاء إيصال المقدم التجريبي"},
+        )
+        self.assertEqual(response.status_code, 302)
+        with self.assertRaisesRegex(ValueError, "تم عكسه"):
+            sales._customer_advance_available(self.db, advance["id"])
+
 
 
     def _create_accepted_quote_and_order(self, quantity="4"):
