@@ -1751,9 +1751,13 @@ def income_statement():
     compare_dates = comparison_period(date_from, date_to, compare_mode) if compare_mode != "none" else None
     connection = db()
     try:
-        statement = build_income_statement(connection, date_from, date_to)
+        raw_dimensions = {key: request.args.get(key, "").strip() for key in
+            ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id")}
+        selected_dimensions = validate_journal_dimensions(connection, raw_dimensions) if any(raw_dimensions.values()) else {}
+        dimension_options = active_dimension_options(connection)
+        statement = build_income_statement(connection, date_from, date_to, selected_dimensions)
         if compare_dates:
-            previous = build_income_statement(connection, *compare_dates)
+            previous = build_income_statement(connection, *compare_dates, dimensions=selected_dimensions)
             statement = add_income_statement_comparison(statement, previous)
         settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
             "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency','company_name')"
@@ -1763,6 +1767,7 @@ def income_statement():
     return render_template(
         "income_statement.html", **statement,
         date_from=date_from, date_to=date_to, compare_mode=compare_mode,
+        dimension_options=dimension_options, selected_dimensions=selected_dimensions,
         compare_date_from=compare_dates[0] if compare_dates else "",
         compare_date_to=compare_dates[1] if compare_dates else "",
         base_currency=settings.get("base_currency", ""),
