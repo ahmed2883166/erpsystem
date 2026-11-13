@@ -83,6 +83,36 @@ def init_sales_schema():
       UNIQUE(batch_id,invoice_id)
     );
     CREATE INDEX IF NOT EXISTS idx_customer_receipt_alloc_invoice ON customer_receipt_allocations(invoice_id);
+    CREATE TABLE IF NOT EXISTS customer_advance_receipts(
+      id INTEGER PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE,
+      customer_id INTEGER NOT NULL REFERENCES customers(id),
+      receipt_date TEXT NOT NULL, amount TEXT NOT NULL,
+      cash_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      journal_entry_id INTEGER NOT NULL UNIQUE, reference TEXT NOT NULL DEFAULT '',
+      created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS customer_advance_allocations(
+      id INTEGER PRIMARY KEY,
+      advance_receipt_id INTEGER NOT NULL REFERENCES customer_advance_receipts(id),
+      invoice_id INTEGER NOT NULL REFERENCES sales_invoices(id),
+      allocation_date TEXT NOT NULL, amount TEXT NOT NULL,
+      journal_entry_id INTEGER NOT NULL UNIQUE,
+      created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_customer_advance_alloc_receipt
+      ON customer_advance_allocations(advance_receipt_id,allocation_date,id);
+    CREATE INDEX IF NOT EXISTS idx_customer_advance_alloc_invoice
+      ON customer_advance_allocations(invoice_id);
+    CREATE TABLE IF NOT EXISTS customer_advance_refunds(
+      id INTEGER PRIMARY KEY,
+      refund_no TEXT NOT NULL UNIQUE,
+      advance_receipt_id INTEGER NOT NULL REFERENCES customer_advance_receipts(id),
+      refund_date TEXT NOT NULL, amount TEXT NOT NULL,
+      cash_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      journal_entry_id INTEGER NOT NULL UNIQUE,
+      reference TEXT NOT NULL DEFAULT '',
+      created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE INDEX IF NOT EXISTS idx_sales_invoice_customer ON sales_invoices(customer_id,invoice_date);
     CREATE INDEX IF NOT EXISTS idx_sales_receipts_invoice ON customer_receipts(invoice_id,receipt_date);
     """)
@@ -997,6 +1027,202 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
                      (str(Decimal(invoice["paid_amount"] or "0") + amount), invoice["id"]))
     return {"receipt_no": receipt_no, "journal_entry_id": journal_id, "total_amount": total,
             "invoice_count": len(normalized)}
+
+
+
+
+def _customer_advances_account(conn):
+    """Resolve the customer-advances liability through the selected activity profile."""
+    from activity_profiles import active_account_role_ids
+    account_ids = active_account_role_ids(conn).get("customer_advances", set())
+    if len(account_ids) != 1:
+        raise ValueError("يجب ربط دور دفعات العملاء المقدمة بحساب التزام تفصيلي واحد في ملف النشاط.")
+    row = conn.execute(
+        "SELECT id,is_group,active,account_type FROM accounts WHERE id=?",
+        (next(iter(account_ids)),),
+    ).fetchone()
+    if not row or row["is_group"] or not row["active"] or row["account_type"] != "liability":
+        raise ValueError("حساب دفعات العملاء المقدمة غير موجود أو غير نشط أو ليس التزامًا تفصيليًا.")
+    return row["id"]
+
+
+def _validated_customer_advance_amount(raw_amount, label):
+    try:
+        amount = Decimal(str(raw_amount)).quantize(CENT, rounding=ROUND_HALF_UP)
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError(f"{label} يجب أن تكون قيمة مالية صحيحة.")
+    if not amount.is_finite() or amount <= 0:
+        raise ValueError(f"{label} يجب أن تكون أكبر من صفر.")
+    return amount
+
+
+def _validate_customer_advance_date(value):
+    try:
+        return date.fromisoformat(str(value)).isoformat()
+    except (TypeError, ValueError):
+        raise ValueError("تاريخ العملية غير صحيح.")
+
+
+def _customer_advance_available(conn, advance_receipt_id):
+    receipt = conn.execute(
+        "SELECT amount FROM customer_advance_receipts WHERE id=?",
+        (advance_receipt_id,),
+    ).fetchone()
+    if not receipt:
+        raise ValueError("إيصال مقدم العميل غير موجود.")
+    allocated = conn.execute(
+        "SELECT amount FROM customer_advance_allocations WHERE advance_receipt_id=?",
+        (advance_receipt_id,),
+    ).fetchall()
+    refunded = conn.execute(
+        "SELECT amount FROM customer_advance_refunds WHERE advance_receipt_id=?",
+        (advance_receipt_id,),
+    ).fetchall()
+    used = sum((Decimal(str(row["amount"] or "0")) for row in allocated + refunded), Decimal("0"))
+    return Decimal(str(receipt["amount"])) - used
+
+
+def post_customer_advance_receipt(conn, customer_id, receipt_date, amount,
+                                  cash_account_id, created_by=None, reference=""):
+    """Receive an unallocated customer advance; it is a liability, not revenue or AR collection."""
+    receipt_date = _validate_customer_advance_date(receipt_date)
+    amount = _validated_customer_advance_amount(amount, "قيمة مقدم العميل")
+    customer = conn.execute(
+        "SELECT id,name FROM customers WHERE id=? AND active=1", (customer_id,)
+    ).fetchone()
+    if not customer:
+        raise ValueError("العميل غير موجود أو غير نشط.")
+    cash = conn.execute(
+        "SELECT id,is_group,active,account_type FROM accounts WHERE id=?", (cash_account_id,)
+    ).fetchone()
+    if not cash or cash["is_group"] or not cash["active"] or cash["account_type"] != "asset":
+        raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
+    advance_account = _customer_advances_account(conn)
+    receipt_no = "CADV-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    dimensions = validate_journal_dimensions(conn, {"customer_id": customer_id})
+    journal_id = post_journal(
+        conn, receipt_date, receipt_no, "استلام مقدم من العميل " + customer["name"],
+        [(cash_account_id, amount, 0, "استلام مقدم عميل"),
+         (advance_account, 0, amount, "التزام دفعات مقدمة من العميل")],
+        created_by, dimensions=dimensions,
+    )
+    cur = conn.execute(
+        """INSERT INTO customer_advance_receipts
+           (receipt_no,customer_id,receipt_date,amount,cash_account_id,journal_entry_id,reference,created_by)
+           VALUES(?,?,?,?,?,?,?,?)""",
+        (receipt_no, customer_id, receipt_date, str(amount), cash_account_id,
+         journal_id, reference, created_by),
+    )
+    return {"advance_receipt_id": cur.lastrowid, "receipt_no": receipt_no,
+            "journal_entry_id": journal_id, "amount": amount}
+
+
+def allocate_customer_advance(conn, advance_receipt_id, allocations, allocation_date,
+                               created_by=None):
+    """Apply one advance to one or more posted invoices belonging to the same customer."""
+    allocation_date = _validate_customer_advance_date(allocation_date)
+    receipt = conn.execute(
+        """SELECT r.*,c.name customer_name FROM customer_advance_receipts r
+           JOIN customers c ON c.id=r.customer_id WHERE r.id=? AND c.active=1""",
+        (advance_receipt_id,),
+    ).fetchone()
+    if not receipt:
+        raise ValueError("إيصال مقدم العميل غير موجود أو العميل غير نشط.")
+    normalized, seen = [], set()
+    total = Decimal("0")
+    for invoice_id, raw_amount in allocations:
+        if invoice_id in seen:
+            raise ValueError("لا يمكن اختيار الفاتورة أكثر من مرة في نفس عملية التخصيص.")
+        seen.add(invoice_id)
+        amount = _validated_customer_advance_amount(raw_amount, "قيمة التخصيص")
+        invoice = conn.execute(
+            "SELECT * FROM sales_invoices WHERE id=? AND customer_id=? AND status='posted'",
+            (invoice_id, receipt["customer_id"]),
+        ).fetchone()
+        if not invoice:
+            raise ValueError("إحدى الفواتير لا تتبع نفس العميل أو غير مرحلة.")
+        outstanding = (Decimal(str(invoice["total_amount"])) -
+                       Decimal(str(invoice["paid_amount"] or "0")) -
+                       Decimal(str(invoice["credited_amount"] or "0")) +
+                       _refund_total(conn, invoice_id))
+        if outstanding <= 0:
+            raise ValueError("إحدى الفواتير لا يوجد عليها رصيد مستحق.")
+        if amount > outstanding:
+            raise ValueError(
+                f"قيمة التخصيص أكبر من المتبقي على الفاتورة {invoice['invoice_no']} ({outstanding:.2f})."
+            )
+        normalized.append((invoice, amount))
+        total += amount
+    if not normalized:
+        raise ValueError("اختر فاتورة واحدة على الأقل وأدخل قيمة التخصيص.")
+    available = _customer_advance_available(conn, advance_receipt_id)
+    if total > available:
+        raise ValueError(f"قيمة التخصيص تتجاوز المتبقي من مقدم العميل ({available:.2f}).")
+    advance_account = _customer_advances_account(conn)
+    ar = _account(conn, _sales_account_codes(conn, _activity(conn))["ar"], "asset")
+    dimensions = validate_journal_dimensions(conn, {"customer_id": receipt["customer_id"]})
+    allocation_no = "CADVA-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    journal_id = post_journal(
+        conn, allocation_date, allocation_no,
+        "تخصيص مقدم عميل على فواتير " + receipt["customer_name"],
+        [(advance_account, total, 0, "تخفيض التزام مقدم العميل"),
+         (ar, 0, total, "تسوية ذمم العميل بمقدم مستلم")],
+        created_by, dimensions=dimensions,
+    )
+    for invoice, amount in normalized:
+        conn.execute(
+            """INSERT INTO customer_advance_allocations
+               (advance_receipt_id,invoice_id,allocation_date,amount,journal_entry_id,created_by)
+               VALUES(?,?,?,?,?,?)""",
+            (advance_receipt_id, invoice["id"], allocation_date, str(amount), journal_id, created_by),
+        )
+        conn.execute(
+            "UPDATE sales_invoices SET paid_amount=? WHERE id=?",
+            (str(Decimal(str(invoice["paid_amount"] or "0")) + amount), invoice["id"]),
+        )
+    return {"journal_entry_id": journal_id, "total_amount": total,
+            "invoice_count": len(normalized), "remaining_advance": available - total}
+
+
+def post_customer_advance_refund(conn, advance_receipt_id, refund_date, amount,
+                                 cash_account_id, created_by=None, reference=""):
+    """Refund only the unallocated portion of a customer advance."""
+    refund_date = _validate_customer_advance_date(refund_date)
+    amount = _validated_customer_advance_amount(amount, "قيمة رد مقدم العميل")
+    receipt = conn.execute(
+        """SELECT r.*,c.name customer_name FROM customer_advance_receipts r
+           JOIN customers c ON c.id=r.customer_id WHERE r.id=? AND c.active=1""",
+        (advance_receipt_id,),
+    ).fetchone()
+    if not receipt:
+        raise ValueError("إيصال مقدم العميل غير موجود أو العميل غير نشط.")
+    available = _customer_advance_available(conn, advance_receipt_id)
+    if amount > available:
+        raise ValueError(f"قيمة الرد تتجاوز المتبقي من مقدم العميل ({available:.2f}).")
+    cash = conn.execute(
+        "SELECT id,is_group,active,account_type FROM accounts WHERE id=?", (cash_account_id,)
+    ).fetchone()
+    if not cash or cash["is_group"] or not cash["active"] or cash["account_type"] != "asset":
+        raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
+    advance_account = _customer_advances_account(conn)
+    refund_no = "CADVR-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    dimensions = validate_journal_dimensions(conn, {"customer_id": receipt["customer_id"]})
+    journal_id = post_journal(
+        conn, refund_date, refund_no,
+        "رد جزء من مقدم العميل " + receipt["customer_name"],
+        [(advance_account, amount, 0, "تخفيض التزام مقدم العميل"),
+         (cash_account_id, 0, amount, "رد نقدي/بنكي للعميل")],
+        created_by, dimensions=dimensions,
+    )
+    conn.execute(
+        """INSERT INTO customer_advance_refunds
+           (refund_no,advance_receipt_id,refund_date,amount,cash_account_id,journal_entry_id,reference,created_by)
+           VALUES(?,?,?,?,?,?,?,?)""",
+        (refund_no, advance_receipt_id, refund_date, str(amount), cash_account_id,
+         journal_id, reference, created_by),
+    )
+    return {"refund_no": refund_no, "journal_entry_id": journal_id,
+            "amount": amount, "remaining_advance": available - amount}
 
 
 @sales_bp.route("/")
