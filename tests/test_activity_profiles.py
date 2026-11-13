@@ -184,6 +184,33 @@ class ActivityProfileTests(unittest.TestCase):
         self.assertTrue({"5100", "5200", "5300", "5400"}.issubset(
             set(ACTIVITY_ACCOUNT_ROLES["restaurant"]["direct_cost"])))
 
+    def test_product_category_routes_restaurant_and_medical_accounts(self):
+        from activity_profiles import resolve_product_account_code
+        self.conn.execute("CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT)")
+        self.conn.execute("CREATE TABLE stock_categories(id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT)")
+        self.conn.execute("""CREATE TABLE stock_products(
+            id INTEGER PRIMARY KEY, category TEXT DEFAULT '', category_id INTEGER)""")
+        self.conn.execute("INSERT INTO company_settings VALUES('activity','restaurant')")
+        self.conn.execute("INSERT INTO stock_categories VALUES(1,'BEVERAGE','مشروبات')")
+        self.conn.execute("INSERT INTO stock_products VALUES(1,'',1)")
+        self.assertEqual(resolve_product_account_code(self.conn, 1, "inventory", "1140"), "1150")
+        self.assertEqual(resolve_product_account_code(self.conn, 1, "cogs", "5100"), "5200")
+        self.conn.execute("UPDATE company_settings SET setting_value='medical' WHERE setting_key='activity'")
+        self.conn.execute("UPDATE stock_categories SET code='LAB',name_ar='مستلزمات المعامل' WHERE id=1")
+        self.assertEqual(resolve_product_account_code(self.conn, 1, "inventory", "1150"), "1160")
+        self.assertEqual(resolve_product_account_code(self.conn, 1, "cogs", "5300"), "5200")
+
+    def test_unknown_product_category_keeps_configured_default_account(self):
+        from activity_profiles import resolve_product_account_code
+        self.conn.execute("CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT)")
+        self.conn.execute("CREATE TABLE stock_categories(id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT)")
+        self.conn.execute("""CREATE TABLE stock_products(
+            id INTEGER PRIMARY KEY, category TEXT DEFAULT '', category_id INTEGER)""")
+        self.conn.execute("INSERT INTO company_settings VALUES('activity','restaurant')")
+        self.conn.execute("INSERT INTO stock_categories VALUES(1,'MISC','متنوع')")
+        self.conn.execute("INSERT INTO stock_products VALUES(1,'',1)")
+        self.assertEqual(resolve_product_account_code(self.conn, 1, "inventory", "1140"), "1140")
+
     def test_custom_profile_mapping_editor_saves_valid_account_roles(self):
         seed_activity_chart(self.conn, "service")
         profile_id = create_activity_profile(
