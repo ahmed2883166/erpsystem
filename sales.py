@@ -1464,13 +1464,17 @@ def customer_advances():
 
     allocated_by_receipt = {}
     for row in c.execute(
-        "SELECT advance_receipt_id,amount FROM customer_advance_allocations"
+        """SELECT a.advance_receipt_id,a.amount FROM customer_advance_allocations a
+           WHERE NOT EXISTS (SELECT 1 FROM customer_advance_reversals x
+             WHERE x.source_type='allocation' AND x.source_id=a.journal_entry_id)"""
     ).fetchall():
         allocated_by_receipt.setdefault(row["advance_receipt_id"], Decimal("0"))
         allocated_by_receipt[row["advance_receipt_id"]] += Decimal(str(row["amount"] or "0"))
     refunded_by_receipt = {}
     for row in c.execute(
-        "SELECT advance_receipt_id,amount FROM customer_advance_refunds"
+        """SELECT r.advance_receipt_id,r.amount FROM customer_advance_refunds r
+           WHERE NOT EXISTS (SELECT 1 FROM customer_advance_reversals x
+             WHERE x.source_type='refund' AND x.source_id=r.id)"""
     ).fetchall():
         refunded_by_receipt.setdefault(row["advance_receipt_id"], Decimal("0"))
         refunded_by_receipt[row["advance_receipt_id"]] += Decimal(str(row["amount"] or "0"))
@@ -1511,6 +1515,31 @@ def customer_advances():
             allocated_by_receipt.get(row["id"], Decimal("0")) -
             refunded_by_receipt.get(row["id"], Decimal("0"))
         )
+        item["reversed"] = c.execute(
+            "SELECT 1 FROM customer_advance_reversals WHERE source_type='receipt' AND source_id=?",
+            (row["id"],),
+        ).fetchone() is not None
+        item["allocation_batches"] = c.execute(
+            """SELECT a.journal_entry_id,MIN(a.allocation_date) allocation_date,
+                      SUM(CAST(a.amount AS NUMERIC)) amount,COUNT(*) invoice_count,
+                      GROUP_CONCAT(i.invoice_no, ', ') invoice_numbers,
+                      x.reversal_journal_entry_id
+               FROM customer_advance_allocations a
+               JOIN sales_invoices i ON i.id=a.invoice_id
+               LEFT JOIN customer_advance_reversals x
+                 ON x.source_type='allocation' AND x.source_id=a.journal_entry_id
+               WHERE a.advance_receipt_id=?
+               GROUP BY a.journal_entry_id,x.reversal_journal_entry_id
+               ORDER BY a.journal_entry_id DESC""",
+            (row["id"],),
+        ).fetchall()
+        item["refunds"] = c.execute(
+            """SELECT r.*,x.reversal_journal_entry_id FROM customer_advance_refunds r
+               LEFT JOIN customer_advance_reversals x
+                 ON x.source_type='refund' AND x.source_id=r.id
+               WHERE r.advance_receipt_id=? ORDER BY r.id DESC""",
+            (row["id"],),
+        ).fetchall()
         item["open_invoices"] = open_invoices_by_customer.get(row["customer_id"], [])
         advances.append(item)
     c.close()
