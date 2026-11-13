@@ -234,6 +234,76 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         )
         conn.close()
 
+    def test_rejected_supplier_bill_can_be_edited_and_returns_to_draft(self):
+        conn = purchases.db()
+        conn.execute("""INSERT INTO supplier_bills(
+            bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,subtotal,tax_rate,
+            tax_amount,total_amount,created_by,status,bill_kind,expense_account_id,
+            submitted_by,submitted_at,rejected_by,rejected_at,rejection_reason
+        ) VALUES('EDIT-REJ',?,'2026-11-11','2026-11-30','EDIT-INV','100','0','0','100',
+            1,'rejected','expense',?,1,CURRENT_TIMESTAMP,2,CURRENT_TIMESTAMP,'مطلوب تصحيح القيمة')""",
+            (self.supplier_id, self.expense_id))
+        bill_id = conn.execute("SELECT id FROM supplier_bills WHERE bill_no='EDIT-REJ'").fetchone()["id"]
+        conn.commit()
+        conn.close()
+        with self.client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "accountant"
+
+        response = self.client.get(f"/purchases/bills/{bill_id}/edit")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("EDIT-INV", response.get_data(as_text=True))
+
+        response = self.client.post(f"/purchases/bills/{bill_id}/edit", data={
+            "supplier_id": str(self.supplier_id),
+            "supplier_invoice_no": "EDIT-INV-UPDATED",
+            "bill_date": "2026-11-12",
+            "due_date": "2026-12-01",
+            "bill_kind": "expense",
+            "expense_account_id": str(self.expense_id),
+            "subtotal": "125.00",
+            "tax_rate": "14",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = purchases.db()
+        bill = conn.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+        self.assertEqual(bill["status"], "draft")
+        self.assertEqual(bill["supplier_invoice_no"], "EDIT-INV-UPDATED")
+        self.assertEqual(bill["subtotal"], "125.00")
+        self.assertEqual(bill["tax_amount"], "17.50")
+        self.assertEqual(bill["total_amount"], "142.50")
+        self.assertEqual(bill["bill_date"], "2026-11-12")
+        self.assertEqual(bill["due_date"], "2026-12-01")
+        self.assertIsNone(bill["journal_entry_id"])
+        self.assertIsNone(bill["submitted_by"])
+        self.assertIsNone(bill["approved_by"])
+        self.assertIsNone(bill["rejected_by"])
+        self.assertIsNone(bill["rejection_reason"])
+        self.assertEqual(conn.execute(
+            "SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
+        conn.close()
+
+    def test_posted_supplier_bill_cannot_be_edited(self):
+        conn = purchases.db()
+        conn.execute("""INSERT INTO supplier_bills(
+            bill_no,supplier_id,bill_date,supplier_invoice_no,subtotal,tax_rate,tax_amount,
+            total_amount,created_by,status,bill_kind,expense_account_id,journal_entry_id
+        ) VALUES('EDIT-POSTED',?,'2026-11-11','EDIT-POSTED-INV','100','0','0','100',
+            1,'posted','expense',?,55)""", (self.supplier_id, self.expense_id))
+        bill_id = conn.execute("SELECT id FROM supplier_bills WHERE bill_no='EDIT-POSTED'").fetchone()["id"]
+        conn.commit()
+        conn.close()
+        with self.client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "accountant"
+        response = self.client.get(f"/purchases/bills/{bill_id}/edit")
+        self.assertEqual(response.status_code, 302)
+        conn = purchases.db()
+        bill = conn.execute("SELECT status,journal_entry_id FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+        self.assertEqual(bill["status"], "posted")
+        self.assertEqual(bill["journal_entry_id"], 55)
+        conn.close()
+
     def test_expense_supplier_bill_posts_to_expense_and_payable(self):
         with self.client.session_transaction() as session:
             session["user_id"] = 1
