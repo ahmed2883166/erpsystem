@@ -1753,7 +1753,11 @@ def income_statement():
     try:
         raw_dimensions = {key: request.args.get(key, "").strip() for key in
             ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id")}
-        selected_dimensions = validate_journal_dimensions(connection, raw_dimensions) if any(raw_dimensions.values()) else {}
+        try:
+            selected_dimensions = validate_journal_dimensions(connection, raw_dimensions) if any(raw_dimensions.values()) else {}
+        except ValueError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("income_statement", date_from=date_from, date_to=date_to, compare=compare_mode))
         dimension_options = active_dimension_options(connection)
         statement = build_income_statement(connection, date_from, date_to, selected_dimensions)
         if compare_dates:
