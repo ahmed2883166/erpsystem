@@ -124,6 +124,11 @@ def init_sales_schema():
     }.items():
         if name not in line_columns:
             c.execute(f"ALTER TABLE sales_invoice_lines ADD COLUMN {name} {definition}")
+    invoice_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoices)")}
+    if "sales_order_id" not in invoice_columns:
+        c.execute("ALTER TABLE sales_invoices ADD COLUMN sales_order_id INTEGER")
+    if "sales_order_line_id" not in line_columns:
+        c.execute("ALTER TABLE sales_invoice_lines ADD COLUMN sales_order_line_id INTEGER")
     c.execute("""CREATE TABLE IF NOT EXISTS sales_credit_notes(
       id INTEGER PRIMARY KEY, credit_note_no TEXT NOT NULL UNIQUE,
       invoice_id INTEGER NOT NULL REFERENCES sales_invoices(id),
@@ -302,8 +307,8 @@ def _allowed_vat_rates(conn):
         raise ValueError("قائمة نسب الضريبة المعتمدة في إعدادات الشركة غير صحيحة.")
 
 
-def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate, created_by=None, allow_credit_override=False, dimensions=None):
-    """Create invoice, stock issues and balanced GL entries inside caller transaction."""
+def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate, created_by=None, allow_credit_override=False, dimensions=None, preissued_costs=None, sales_order_id=None):
+    """Create invoice and balanced GL; optionally consume stock already issued by delivery notes."""
     rate = Decimal(str(tax_rate)).quantize(CENT, rounding=ROUND_HALF_UP)
     if not rate.is_finite() or rate < 0 or rate > 100:
         raise ValueError("نسبة الضريبة الافتراضية يجب أن تكون بين صفر و100.")
@@ -335,7 +340,9 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     subtotal = Decimal("0.00")
     total_cost = Decimal("0.00")
     tax_amount = Decimal("0.00")
-    for item in lines:
+    if preissued_costs is not None and len(preissued_costs) != len(lines):
+        raise ValueError("بيانات تكلفة إذن التسليم لا تطابق بنود الفاتورة.")
+    for line_index, item in enumerate(lines):
         qty = Decimal(str(item.get("quantity", "1")))
         unit_price = Decimal(str(item.get("unit_price", "0"))).quantize(CENT, rounding=ROUND_HALF_UP)
         if not qty.is_finite() or qty <= 0 or not unit_price.is_finite() or unit_price < 0:
@@ -348,10 +355,17 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
                 raise ValueError("الصنف غير موجود أو غير نشط.")
             if activity == "service":
                 raise ValueError("نشاط الخدمات لا يستخدم صرف المخزون من شاشة المبيعات.")
-            cost, _allocations = consume_layers(
-                conn, product["id"], int(warehouse_id), qty,
-                "average" if activity == "service" else _inventory_method(conn)
-            )
+            if preissued_costs is not None:
+                fulfillment = preissued_costs[line_index]
+                cost = Decimal(str(fulfillment.get("cost_total", "0"))).quantize(CENT, rounding=ROUND_HALF_UP)
+                _allocations = fulfillment.get("allocations", [])
+                if cost < 0:
+                    raise ValueError("تكلفة إذن التسليم غير صحيحة.")
+            else:
+                cost, _allocations = consume_layers(
+                    conn, product["id"], int(warehouse_id), qty,
+                    "average" if activity == "service" else _inventory_method(conn)
+                )
             description = description or product["name_ar"]
         else:
             if activity != "service":
@@ -448,17 +462,17 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     cur = conn.execute(
         """INSERT INTO sales_invoices(invoice_no,customer_id,invoice_date,warehouse_id,subtotal,
            tax_rate,tax_amount,discount_type,discount_value,discount_amount,total_amount,
-           created_by,branch_id,cost_center_id,project_id,salesperson_id)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           created_by,branch_id,cost_center_id,project_id,salesperson_id,sales_order_id)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (invoice_no, customer_id, invoice_date, warehouse_id, str(subtotal), str(effective_rate),
          str(tax_amount), discount_type, str(discount_value), str(discount_amount), str(total_amount),
          created_by, dimensions["branch_id"], dimensions["cost_center_id"],
-         dimensions["project_id"], dimensions["salesperson_id"])
+         dimensions["project_id"], dimensions["salesperson_id"], sales_order_id)
     )
     invoice_id = cur.lastrowid
     for index, item in enumerate(normalized, 1):
         movement_id = None
-        if item["product_id"]:
+        if item["product_id"] and preissued_costs is None:
             movement_no = invoice_no + "-" + str(index)
             move = conn.execute(
                 """INSERT INTO stock_movements(movement_no,movement_type,product_id,source_warehouse_id,
@@ -469,16 +483,21 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
                  invoice_date, "صرف مبيعات " + invoice_no, created_by)
             )
             movement_id = move.lastrowid
+        order_line_id = item.get("sales_order_line_id")
         line_cursor = conn.execute(
             """INSERT INTO sales_invoice_lines(invoice_id,product_id,description,quantity,unit_price,
-               line_total,cost_total,stock_movement_id,tax_rate,tax_treatment,tax_amount)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+               line_total,cost_total,stock_movement_id,tax_rate,tax_treatment,tax_amount,sales_order_line_id)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
             (invoice_id, item["product_id"], item["description"], str(item["quantity"]),
              str(item["unit_price"]), str(item["line_total"]), str(item["cost_total"]), movement_id,
-             str(item["tax_rate"]), item["tax_treatment"], str(item["tax_amount"]))
+             str(item["tax_rate"]), item["tax_treatment"], str(item["tax_amount"]), order_line_id)
         )
         invoice_line_id = line_cursor.lastrowid
-        for lot_id, allocated_qty, allocated_unit_cost, allocated_cost in item.get("stock_allocations", []):
+        for allocation in item.get("stock_allocations", []):
+            if len(allocation) == 4:
+                lot_id, allocated_qty, allocated_unit_cost, allocated_cost = allocation
+            else:
+                lot_id, allocated_qty, allocated_cost = allocation
             conn.execute(
                 "INSERT INTO sales_invoice_line_lots(invoice_line_id,lot_id,quantity,cost_total) VALUES(?,?,?,?)",
                 (invoice_line_id, lot_id, str(allocated_qty), str(allocated_cost))
@@ -493,15 +512,16 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     conn.execute("UPDATE sales_invoices SET journal_entry_id=? WHERE id=?", (journal_id, invoice_id))
 
     cogs_journal_id = None
-    if total_cost > 0:
+    if total_cost > 0 and preissued_costs is None:
         cogs_journal_id = post_journal(
             conn, invoice_date, invoice_no + "-COGS", "تكلفة مبيعات " + invoice_no,
             [(cogs, total_cost, 0, "تكلفة البضاعة المباعة"),
              (inventory, 0, total_cost, "تخفيض المخزون")], created_by, dimensions=dimensions
         )
-    for row in conn.execute("SELECT id FROM stock_movements WHERE movement_no LIKE ?", (invoice_no + "-%",)).fetchall():
-        conn.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status=? WHERE id=?",
-                     (cogs_journal_id, "posted" if cogs_journal_id else "not_required", row["id"]))
+    if preissued_costs is None:
+        for row in conn.execute("SELECT id FROM stock_movements WHERE movement_no LIKE ?", (invoice_no + "-%",)).fetchall():
+            conn.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status=? WHERE id=?",
+                         (cogs_journal_id, "posted" if cogs_journal_id else "not_required", row["id"]))
     return {"invoice_id": invoice_id, "invoice_no": invoice_no, "journal_entry_id": journal_id,
             "cogs_journal_entry_id": cogs_journal_id, "subtotal": subtotal,
             "gross_subtotal": gross_subtotal, "discount_type": discount_type,
