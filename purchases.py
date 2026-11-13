@@ -1522,3 +1522,28 @@ def new_payment():
       AND (lower(name_ar) LIKE '%صندوق%' OR lower(name_ar) LIKE '%بنك%' OR lower(name_ar) LIKE '%نقد%' OR lower(name_ar) LIKE '%نقاط البيع%'
            OR code IN ('1000','1110','1120')) ORDER BY code""").fetchall()
     c.close(); return render_template("purchase_payment_new.html",suppliers=su,cash_accounts=cash,today=date.today().isoformat())
+
+
+@purchase_bp.route("/payments/<int:payment_id>/print")
+@require("purchases.view")
+def payment_print(payment_id):
+    c = db()
+    payment = c.execute("""SELECT p.*,s.code supplier_code,s.name supplier_name,
+        a.code cash_code,a.name_ar cash_name FROM supplier_payments p
+        JOIN suppliers s ON s.id=p.supplier_id
+        JOIN accounts a ON a.id=p.cash_account_id WHERE p.id=?""", (payment_id,)).fetchone()
+    if not payment:
+        c.close()
+        from flask import abort
+        abort(404)
+    allocations = c.execute("""SELECT b.bill_no,b.bill_date,a.amount
+        FROM supplier_payment_allocations a JOIN supplier_bills b ON b.id=a.bill_id
+        WHERE a.payment_id=? ORDER BY b.bill_date,b.id""", (payment_id,)).fetchall()
+    settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
+        "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
+    c.close()
+    return render_template("supplier_payment_print.html", payment=payment, allocations=allocations,
+                           settings=settings, branch=None)
+
+
