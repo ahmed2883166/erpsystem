@@ -833,13 +833,8 @@ def _reverse_posted_journal(conn, entry_id, reversal_date, reference, descriptio
 
 def post_customer_refund(conn, credit_note_id, refund_date, amount, cash_account_id,
                          created_by=None, reference=""):
-    try:
-        date.fromisoformat(refund_date)
-    except (TypeError, ValueError):
-        raise ValueError("تاريخ رد المبلغ غير صحيح.")
-    amount = Decimal(str(amount)).quantize(CENT, rounding=ROUND_HALF_UP)
-    if not amount.is_finite() or amount <= 0:
-        raise ValueError("قيمة رد المبلغ يجب أن تكون أكبر من صفر.")
+    refund_date = _validate_customer_advance_date(refund_date)
+    amount = _validated_customer_advance_amount(amount, "قيمة رد المبلغ")
     note = conn.execute(
         "SELECT * FROM sales_credit_notes WHERE id=? AND status='posted'", (credit_note_id,)
     ).fetchone()
@@ -852,15 +847,7 @@ def post_customer_refund(conn, credit_note_id, refund_date, amount, cash_account
     refundable = Decimal(note["refundable_amount"] or "0") - already_refunded
     if amount > refundable:
         raise ValueError(f"قيمة الرد تتجاوز المبلغ القابل للاسترداد. المتاح {max(refundable, Decimal('0'))}.")
-    cash = conn.execute(
-        "SELECT id,code,name_ar,is_group,active,account_type FROM accounts WHERE id=?", (cash_account_id,)
-    ).fetchone()
-    cash_name = (cash["name_ar"] or "").lower() if cash else ""
-    cash_codes = {"1000","1110","1120","1121","1122"}
-    cash_words = ("صندوق","بنك","بنوك","مصرف","نقد","cash","bank")
-    if (not cash or cash["is_group"] or not cash["active"] or cash["account_type"] != "asset"
-        or (cash["code"] not in cash_codes and not any(word in cash_name for word in cash_words))):
-        raise ValueError("حساب رد المبلغ يجب أن يكون حساب صندوق أو بنك تفصيليًا ونشطًا.")
+    _customer_cash_account(conn, cash_account_id)
     invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=?", (note["invoice_id"],)).fetchone()
     ar = _account(conn, _sales_account_codes(conn, _activity(conn))["ar"], "asset")
     refund_no = "SREF-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -1863,12 +1850,17 @@ def refund_credit_note(credit_note_id):
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
             c.rollback()
             flash(str(exc), "error")
-    cash_accounts = c.execute(
-        """SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=0 AND active=1
-           AND (code IN ('1000','1110','1120','1121','1122') OR lower(name_ar) LIKE '%بنك%'
-                OR lower(name_ar) LIKE '%مصرف%' OR lower(name_ar) LIKE '%صندوق%' OR lower(name_ar) LIKE '%نقد%')
-           ORDER BY code"""
-    ).fetchall()
+    from activity_profiles import active_account_role_ids
+    cash_account_ids = sorted(active_account_role_ids(c).get("cash", set()))
+    cash_accounts = []
+    if cash_account_ids:
+        placeholders = ",".join("?" for _ in cash_account_ids)
+        cash_accounts = c.execute(
+            f"""SELECT id,code,name_ar FROM accounts
+                WHERE id IN ({placeholders}) AND account_type='asset'
+                  AND is_group=0 AND active=1 ORDER BY code""",
+            tuple(cash_account_ids),
+        ).fetchall()
     c.close()
     return render_template("sales_refund_new.html", note=note, remaining_refundable=remaining_refundable,
                            cash_accounts=cash_accounts, today=date.today().isoformat())
