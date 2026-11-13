@@ -143,6 +143,8 @@ class IncomeStatementRouteTests(unittest.TestCase):
         self.assertIn("250.00", body)  # Operating expenses
         self.assertIn("450.00", body)  # Net profit after operating expenses
         self.assertIn("شركة الاختبار", body)
+        # Legacy fixture branches intentionally omit address/phone/email/tax columns.
+        self.assertIn("فرع القاهرة", body)
 
     def test_income_statement_compares_with_same_period_previous_year(self):
         response = self.client.get(
