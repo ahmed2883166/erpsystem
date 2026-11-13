@@ -90,6 +90,20 @@ class SharedAccountingCoreTests(unittest.TestCase):
             post_journal(self.db, "2026-11-09", "INV-3", "خطأ",
                          [(1, 100, 0, "مدين"), (2, 0, 90, "دائن")], 7)
 
+    def test_unknown_analytical_dimension_is_rejected_instead_of_silently_ignored(self):
+        with self.assertRaisesRegex(ValueError, "أبعاد تحليلية غير معروفة"):
+            post_journal(
+                self.db, "2026-11-09", "INV-UNKNOWN-DIM", "اختبار بُعد غير معروف",
+                [(1, 25, 0, "مدين"), (2, 0, 25, "دائن")], 7,
+                {"brnch_id": 1},
+            )
+        self.assertEqual(
+            self.db.execute(
+                "SELECT COUNT(*) FROM journal_entries WHERE reference='INV-UNKNOWN-DIM'"
+            ).fetchone()[0],
+            0,
+        )
+
     def test_group_and_inactive_accounts_rejected(self):
         with self.assertRaises(ValueError):
             post_journal(self.db, "2026-11-09", "INV-4", "خطأ",
