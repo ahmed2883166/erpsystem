@@ -144,16 +144,17 @@ def initialize_planning_schema(conn):
     conn.execute("UPDATE budget_plans SET status='approved' WHERE status='active'")
     plans = conn.execute("SELECT id,date_from,date_to FROM budget_plans").fetchall()
     for plan in plans:
-        existing = conn.execute("SELECT 1 FROM budget_monthly_lines WHERE budget_id=? LIMIT 1", (plan["id"],)).fetchone()
+        budget_id, date_from, date_to = plan[0], plan[1], plan[2]
+        existing = conn.execute("SELECT 1 FROM budget_monthly_lines WHERE budget_id=? LIMIT 1", (budget_id,)).fetchone()
         if existing:
             continue
-        months = _budget_months(plan["date_from"], plan["date_to"])
-        lines = conn.execute("SELECT account_id,amount FROM budget_lines WHERE budget_id=?", (plan["id"],)).fetchall()
+        months = _budget_months(date_from, date_to)
+        lines = conn.execute("SELECT account_id,amount FROM budget_lines WHERE budget_id=?", (budget_id,)).fetchall()
         for line in lines:
-            allocations = _split_monthly_amount(_money(line["amount"]), months)
+            allocations = _split_monthly_amount(_money(line[1]), months)
             conn.executemany(
                 "INSERT OR IGNORE INTO budget_monthly_lines(budget_id,account_id,period,amount) VALUES(?,?,?,?)",
-                [(plan["id"], line["account_id"], month, str(amount)) for month, amount in zip(months, allocations)]
+                [(budget_id, line[0], month, str(amount)) for month, amount in zip(months, allocations)]
             )
     journal_table_exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='journal_entries'"
