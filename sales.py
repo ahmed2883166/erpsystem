@@ -129,6 +129,8 @@ def init_sales_schema():
         c.execute("ALTER TABLE sales_invoices ADD COLUMN sales_order_id INTEGER")
     if "sales_order_line_id" not in line_columns:
         c.execute("ALTER TABLE sales_invoice_lines ADD COLUMN sales_order_line_id INTEGER")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_sales_invoices_order ON sales_invoices(sales_order_id,id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_sales_invoice_lines_order_line ON sales_invoice_lines(sales_order_line_id,invoice_id)")
     c.execute("""CREATE TABLE IF NOT EXISTS sales_credit_notes(
       id INTEGER PRIMARY KEY, credit_note_no TEXT NOT NULL UNIQUE,
       invoice_id INTEGER NOT NULL REFERENCES sales_invoices(id),
