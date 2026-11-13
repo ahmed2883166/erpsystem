@@ -5,7 +5,7 @@ from unittest.mock import patch
 from decimal import Decimal
 
 from chart_templates import CHARTS, seed_activity_chart, ensure_activity_chart_accounts
-from financial_planning import (initialize_planning_schema, build_balance_sheet_snapshot, _money, _connect, create_financial_year, list_financial_years, create_opening_entry, close_financial_year, reverse_financial_year_entry, build_financial_year_preclose_report, build_budget_comparison, build_budget_monthly_comparison, _budget_months)
+from financial_planning import (initialize_planning_schema, build_balance_sheet_snapshot, _money, _connect, create_financial_year, list_financial_years, create_opening_entry, close_financial_year, reverse_financial_year_entry, build_financial_year_preclose_report, build_budget_comparison, build_budget_monthly_comparison, _budget_months, _split_monthly_amount)
 from accounting_core import register_decimal_aggregates, post_journal
 
 
