@@ -178,6 +178,23 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         self.assertEqual(revenue_2026[9], -225)
         self.assertNotIn(999, [cell for row in rows for cell in row])
 
+    def test_trial_balance_export_includes_statement_classification_columns(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("ALTER TABLE accounts ADD COLUMN statement_section TEXT")
+        conn.execute("ALTER TABLE accounts ADD COLUMN normal_balance TEXT")
+        conn.execute("UPDATE accounts SET statement_section='current_assets',normal_balance='debit' WHERE code='1110'")
+        conn.commit()
+        conn.close()
+        response = self.client.get("/reports/export/trial-balance/excel")
+        self.assertEqual(response.status_code, 200)
+        values = list(load_workbook(io.BytesIO(response.data), data_only=True).active.values)
+        header = values[0]
+        self.assertEqual(header[10], "تصنيف القوائم")
+        self.assertEqual(header[11], "الرصيد الطبيعي")
+        cash = next(row for row in values if row and row[4] == "1110")
+        self.assertEqual(cash[10], "أصول متداولة")
+        self.assertEqual(cash[11], "مدين")
+
     def test_trial_balance_export_can_exclude_closing_entries(self):
         response = self.client.get("/reports/export/trial-balance/excel?include_closing=0")
         self.assertEqual(response.status_code, 200)
