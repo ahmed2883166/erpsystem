@@ -728,7 +728,7 @@ def order_print(order_id):
         "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
     c.close()
     return render_template("purchase_order_print.html", order=order, lines=lines,
-                           settings=settings, branch=None)
+                           settings=settings, branch=None, order_total=order_total)
 
 
 @purchase_bp.route("/orders/<int:order_id>/delete",methods=["POST"])
