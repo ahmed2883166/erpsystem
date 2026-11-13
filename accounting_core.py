@@ -89,7 +89,7 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
         if financial_year and financial_year["status"] != "open":
             raise ValueError(f"لا يمكن الترحيل داخل السنة المالية {financial_year['year_name']} لأنها ليست مفتوحة.")
     dimensions = dimensions or {}
-    dimension_keys = ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id")
+    dimension_keys = ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id", "supplier_id")
     unknown_dimensions = sorted(set(dimensions) - set(dimension_keys))
     if unknown_dimensions:
         raise ValueError(
