@@ -437,6 +437,38 @@ def register_report_exports(app, db_path, permissions):
                 data.append(["", "", "الرصيد الختامي", total_debit, total_credit, balance])
                 filename = f"nexus-party-statement-{kind}-{party['code']}.xlsx"
                 title = ("كشف حساب عميل" if kind == "customer" else "كشف حساب مورد") + f" - {party['code']} {party['name']}"
+            elif report == "customer-advances":
+                from datetime import date as date_type
+                from party_reports import _customer_advance_details
+                try:
+                    as_of = date_type.fromisoformat(
+                        request.args.get("as_of", "").strip() or date_type.today().isoformat()
+                    ).isoformat()
+                except ValueError:
+                    abort(400)
+                rows, available = _customer_advance_details(conn, as_of)
+                if not available:
+                    abort(404)
+                headers = [
+                    "تاريخ الاستلام", "رقم الإيصال", "كود العميل", "اسم العميل",
+                    "إجمالي المقبوض", "المخصص على الفواتير", "المردود",
+                    "المتبقي غير المخصص", "مرجع البنك",
+                ]
+                data = [[
+                    row["receipt_date"], row["receipt_no"], row["customer_code"],
+                    row["customer_name"], row["received"], row["allocated"],
+                    row["refunded"], row["remaining"], row["reference"],
+                ] for row in rows]
+                totals = {
+                    key: sum((row[key] for row in rows), Decimal("0"))
+                    for key in ("received", "allocated", "refunded", "remaining")
+                }
+                data.append([
+                    "", "", "", "الإجمالي", totals["received"], totals["allocated"],
+                    totals["refunded"], totals["remaining"], "",
+                ])
+                filename = "nexus-customer-advances-" + as_of + ".xlsx"
+                title = "كشف مقدمات العملاء حتى " + as_of
             elif report == "payroll":
                 run_id = request.args.get("run_id", type=int)
                 if not run_id:
