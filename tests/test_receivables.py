@@ -34,10 +34,35 @@ class ReceivablesAgingTests(unittest.TestCase):
             CREATE TABLE customer_receipt_batches(id INTEGER PRIMARY KEY,receipt_date TEXT);
             CREATE TABLE customer_receipt_allocations(batch_id INTEGER,invoice_id INTEGER,amount TEXT);
             CREATE TABLE customer_advance_allocations(id INTEGER PRIMARY KEY,invoice_id INTEGER,allocation_date TEXT,amount TEXT);
-            CREATE TABLE supplier_payments(id INTEGER PRIMARY KEY,supplier_id INTEGER,payment_date TEXT);
-            CREATE TABLE supplier_payment_allocations(payment_id INTEGER,bill_id INTEGER,amount TEXT);
-            CREATE TABLE supplier_credit_notes(id INTEGER PRIMARY KEY,supplier_id INTEGER,bill_id INTEGER,credit_date TEXT,total_amount TEXT,status TEXT);
+            CREATE TABLE IF NOT EXISTS supplier_payments(
+                id INTEGER PRIMARY KEY,supplier_id INTEGER,payment_date TEXT,
+                payment_no TEXT,amount TEXT,reference TEXT);
+            CREATE TABLE IF NOT EXISTS supplier_payment_allocations(
+                payment_id INTEGER,bill_id INTEGER,amount TEXT);
+            CREATE TABLE IF NOT EXISTS supplier_credit_notes(
+                id INTEGER PRIMARY KEY,supplier_id INTEGER,bill_id INTEGER,credit_date TEXT,
+                credit_no TEXT,reason TEXT,total_amount TEXT,status TEXT);
         """)
+        # The party-reporting fixture may pre-create skeletal tables. Upgrade only
+        # this isolated test DB to the columns consumed by the real purchase subledger.
+        required_columns = {
+            "supplier_payments": {
+                "payment_no": "TEXT", "amount": "TEXT", "reference": "TEXT",
+                "payment_date": "TEXT", "supplier_id": "INTEGER",
+            },
+            "supplier_payment_allocations": {
+                "payment_id": "INTEGER", "bill_id": "INTEGER", "amount": "TEXT",
+            },
+            "supplier_credit_notes": {
+                "supplier_id": "INTEGER", "bill_id": "INTEGER", "credit_date": "TEXT",
+                "credit_no": "TEXT", "reason": "TEXT", "total_amount": "TEXT", "status": "TEXT",
+            },
+        }
+        for table, columns in required_columns.items():
+            existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            for column, declaration in columns.items():
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
         conn.execute("""INSERT INTO customer_receipts(id,invoice_id,receipt_no,receipt_date,amount,reference)
             VALUES(1,1,'CR-1','2026-11-10','50','')""")
         conn.execute("""INSERT INTO supplier_payments(id,supplier_id,payment_no,payment_date,amount,reference)
