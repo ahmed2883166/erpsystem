@@ -697,10 +697,15 @@ def _validate_supplier_receipt_allocations(c, supplier_id, receipt_ids, subtotal
 
 
 def _available_supplier_receipts(c, supplier_id, exclude_bill_id=None):
-    rows = c.execute("""SELECT r.*,s.name supplier_name FROM goods_receipts r
-        JOIN suppliers s ON s.id=r.supplier_id
-        WHERE r.supplier_id=? AND r.status='posted' ORDER BY r.id""",
-        (supplier_id,)).fetchall()
+    if supplier_id is None:
+        rows = c.execute("""SELECT r.*,s.name supplier_name FROM goods_receipts r
+            JOIN suppliers s ON s.id=r.supplier_id
+            WHERE r.status='posted' ORDER BY r.id""").fetchall()
+    else:
+        rows = c.execute("""SELECT r.*,s.name supplier_name FROM goods_receipts r
+            JOIN suppliers s ON s.id=r.supplier_id
+            WHERE r.supplier_id=? AND r.status='posted' ORDER BY r.id""",
+            (supplier_id,)).fetchall()
     available = []
     for row in rows:
         amount = _supplier_receipt_available_amount(c, row["id"], exclude_bill_id)
@@ -901,7 +906,7 @@ def new_bill():
             c.rollback(); flash(str(e),"error")
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     expense_accounts=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code").fetchall()
-    receipts = _available_supplier_receipts(c, request.args.get("supplier_id", type=int) or 0)
+    receipts = _available_supplier_receipts(c)
     dimension_options=active_dimension_options(c)
     c.close(); return render_template("purchase_bill_new.html",suppliers=su,receipts=receipts,expense_accounts=expense_accounts,dimension_options=dimension_options,today=date.today().isoformat())
 
