@@ -96,7 +96,7 @@ def init_sales_schema():
       advance_receipt_id INTEGER NOT NULL REFERENCES customer_advance_receipts(id),
       invoice_id INTEGER NOT NULL REFERENCES sales_invoices(id),
       allocation_date TEXT NOT NULL, amount TEXT NOT NULL,
-      journal_entry_id INTEGER NOT NULL UNIQUE,
+      journal_entry_id INTEGER NOT NULL,
       created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_customer_advance_alloc_receipt
