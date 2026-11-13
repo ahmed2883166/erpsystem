@@ -47,6 +47,12 @@ def initialize_analytic_dimensions_schema(conn):
         if "salesperson_id" not in columns:
             conn.execute("ALTER TABLE journal_lines ADD COLUMN salesperson_id INTEGER REFERENCES salespersons(id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_salesperson ON journal_lines(salesperson_id,entry_id)")
+    # Supplier dimension is installed only after the purchasing module creates
+    # its suppliers table. Re-running this additive migration is safe.
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='suppliers'").fetchone():
+        if "supplier_id" not in columns:
+            conn.execute("ALTER TABLE journal_lines ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_supplier ON journal_lines(supplier_id,entry_id)")
     conn.commit()
 
 
@@ -59,6 +65,8 @@ def active_dimension_options(conn):
             if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customers'").fetchone() else [],
         "salespersons": conn.execute("SELECT id,code,name AS name_ar FROM salespersons WHERE active=1 ORDER BY code").fetchall()
             if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='salespersons'").fetchone() else [],
+        "suppliers": conn.execute("SELECT id,code,name AS name_ar FROM suppliers WHERE active=1 ORDER BY code").fetchall()
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='suppliers'").fetchone() else [],
     }
 
 
@@ -67,7 +75,8 @@ def validate_journal_dimensions(conn, dimensions):
     dimensions = dimensions or {}
     result = {}
     for key, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"),
-                       ("project_id", "projects"), ("customer_id", "customers"), ("salesperson_id", "salespersons")):
+                       ("project_id", "projects"), ("customer_id", "customers"), ("salesperson_id", "salespersons"),
+                       ("supplier_id", "suppliers")):
         raw = dimensions.get(key)
         if raw in (None, ""):
             result[key] = None
