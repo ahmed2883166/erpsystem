@@ -137,6 +137,58 @@ class CashFlowReportTests(unittest.TestCase):
         self.assertEqual(snapshot["indirect_reconciliation"], financial_planning.Decimal("0"))
         self.assertEqual(snapshot["reconciliation_difference"], financial_planning.Decimal("0"))
 
+    def test_fixed_asset_depreciation_account_is_added_back_in_indirect_method(self):
+        conn = financial_planning._connect()
+        conn.execute("CREATE TABLE fixed_assets(id INTEGER PRIMARY KEY, expense_account_id INTEGER)")
+        conn.execute("INSERT INTO fixed_assets(id,expense_account_id) VALUES(1,4)")
+        snapshot = financial_planning.build_cash_flow_indirect_snapshot(
+            conn, "2026-11-01", "2026-11-30"
+        )
+        conn.close()
+        adjustment = next(
+            item for item in snapshot["indirect_items"]
+            if item["label"] == "إضافة الإهلاك والمصروفات غير النقدية المحددة"
+        )
+        self.assertEqual(adjustment["amount"], financial_planning.Decimal("80"))
+
+    def test_asset_disposal_cash_proceeds_are_classified_as_investing(self):
+        conn = financial_planning._connect()
+        conn.execute("ALTER TABLE journal_entries ADD COLUMN reference TEXT")
+        conn.execute("INSERT INTO accounts(id,code,name_ar,account_type,is_group) VALUES(7,'1290','مجمع إهلاك','asset',0)")
+        conn.execute("INSERT INTO journal_entries(id,entry_date,status,reference) VALUES(6,'2026-11-18','posted','ASSET-DISPOSAL-1')")
+        conn.executemany(
+            "INSERT INTO journal_lines(id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?)",
+            [
+                (11,6,1,"700","0"),
+                (12,6,5,"0","500"),
+                (13,6,7,"100","0"),
+                (14,6,3,"0","300"),
+            ],
+        )
+        conn.commit()
+        snapshot = financial_planning.build_cash_flow_snapshot(
+            conn, "2026-11-01", "2026-11-30"
+        )
+        conn.close()
+        self.assertEqual(snapshot["sections"]["investing"]["in"], financial_planning.Decimal("700"))
+        self.assertEqual(snapshot["sections"]["investing"]["out"], financial_planning.Decimal("200"))
+
+    def test_asset_disposal_gain_is_removed_from_indirect_operating_cash_flow(self):
+        conn = financial_planning._connect()
+        conn.execute("""CREATE TABLE asset_disposals(
+            id INTEGER PRIMARY KEY, disposal_date TEXT, gain_loss_amount TEXT
+        )""")
+        conn.execute("INSERT INTO asset_disposals VALUES(1,'2026-11-18','300')")
+        snapshot = financial_planning.build_cash_flow_indirect_snapshot(
+            conn, "2026-11-01", "2026-11-30"
+        )
+        conn.close()
+        adjustment = next(
+            item for item in snapshot["indirect_items"]
+            if item["label"] == "استبعاد أرباح / خسائر بيع الأصول من الربح"
+        )
+        self.assertEqual(adjustment["amount"], financial_planning.Decimal("-300"))
+
     def test_cash_flow_mapping_settings_page_saves_explicit_categories(self):
         with self.client.session_transaction() as session:
             session["permissions"] = ["cashflow.view", "users.manage"]
