@@ -459,6 +459,74 @@ def log_change(action, entity_type, entity_id, before_values, after_values, deta
 
 
 
+
+_OPERATIONAL_AUDIT_RECORDS = {
+    "sales.invoice": ("sales_invoices", "invoice_id", "id", "sales_invoice_lines", "invoice_id"),
+    "sales.credit_note": ("sales_credit_notes", "credit_note_id", "id", "sales_credit_note_lines", "credit_note_id"),
+    "sales.refund": ("customer_refunds", "refund_id", "id", None, None),
+    "purchase.order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
+    "purchase.receipt": ("goods_receipts", "receipt_id", "id", "goods_receipt_lines", "receipt_id"),
+    "purchase.bill": ("supplier_bills", "bill_id", "id", "supplier_bill_receipts", "bill_id"),
+    "purchase.payment": ("supplier_payments", "payment_id", "id", "supplier_payment_allocations", "payment_id"),
+    "stock.count": ("stocktakes", "stocktake_id", "id", "stocktake_lines", "stocktake_id"),
+    "bank.reconcile": ("bank_transactions", "transaction_id", "id", None, None),
+    "assets.depreciate": ("fixed_assets", "asset_id", "id", "asset_depreciations", "asset_id"),
+    "workforce.payroll": ("payroll_runs", "run_id", "id", "payroll_lines", "run_id"),
+    "workforce.employee": ("employees", "employee_id", "id", "employee_pay_items", "employee_id"),
+    "workforce.custody": ("employee_custodies", "custody_id", "id", "custody_expenses", "custody_id"),
+}
+
+
+def _operational_audit_snapshot(endpoint, view_args):
+    """Read a safe before/after snapshot for known operational records; never writes business data."""
+    spec = next((value for prefix, value in _OPERATIONAL_AUDIT_RECORDS.items()
+                 if endpoint.startswith(prefix)), None)
+    if not spec:
+        return None
+    table, argument, primary_key, child_table, child_key = spec
+    record_id = (view_args or {}).get(argument)
+    if record_id is None:
+        return None
+    connection = db()
+    try:
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        if not exists:
+            return None
+        row = connection.execute(
+            f"SELECT * FROM {table} WHERE {primary_key}=?", (record_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        snapshot = {"record": dict(row)}
+        if child_table:
+            child_exists = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (child_table,)
+            ).fetchone()
+            if child_exists:
+                snapshot["details"] = [
+                    dict(item) for item in connection.execute(
+                        f"SELECT * FROM {child_table} WHERE {child_key}=? ORDER BY id",
+                        (record_id,),
+                    ).fetchall()
+                ]
+        return _audit_safe_value(snapshot)
+    finally:
+        connection.close()
+
+
+@app.before_request
+def capture_operational_audit_before():
+    endpoint = request.endpoint or ""
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and session.get("user_id"):
+        try:
+            g.audit_before_values = _operational_audit_snapshot(endpoint, request.view_args or {})
+        except Exception:
+            g.audit_before_values = None
+            app.logger.exception("Could not capture operational audit before snapshot.")
+
+
 @app.after_request
 def audit_operational_mutations(response):
     endpoint = request.endpoint or ""
@@ -492,12 +560,16 @@ def audit_operational_mutations(response):
                 ) if view_args.get(key) is not None),
                 None,
             )
+            after_values = _operational_audit_snapshot(endpoint, view_args)
+            before_values = getattr(g, "audit_before_values", None)
             log(
                 "module_operation",
                 f"{request.method} {endpoint} ({response.status_code})",
                 entity_type=module,
                 entity_id=record_id,
                 outcome="failure" if response.status_code >= 400 or error_flashes else "success",
+                before_values=before_values,
+                after_values=after_values,
                 submitted_values=_audit_request_payload(),
             )
         except Exception:
