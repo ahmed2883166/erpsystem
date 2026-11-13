@@ -197,7 +197,9 @@ class ReceivablesAgingTests(unittest.TestCase):
         # Simulate a legacy/partially initialized allocation table. The PDF path
         # must fall back to bill-level paid_amount instead of failing on bill_id.
         conn = sqlite3.connect(self.db_path)
-        conn.execute("ALTER TABLE supplier_payment_allocations DROP COLUMN bill_id")
+        conn.execute("ALTER TABLE supplier_payment_allocations RENAME TO supplier_payment_allocations_full")
+        conn.execute("CREATE TABLE supplier_payment_allocations(payment_id INTEGER,amount TEXT)")
+        conn.execute("DROP TABLE supplier_payment_allocations_full")
         conn.commit()
         conn.close()
 
