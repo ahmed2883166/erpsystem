@@ -649,9 +649,12 @@ def post_payroll(run_id):
         for payroll_line in rows:
             dims = {key: payroll_line[key] for key in ("branch_id", "cost_center_id", "project_id")}
             employee_label = payroll_line["employee_code"] + " - " + payroll_line["full_name"]
-            salary_cost = M(D(payroll_line["gross_pay"]) - D(payroll_line["absence_deduction"]))
-            if salary_cost:
-                lines.append((salary_expense, salary_cost, 0, "أجور ومرتبات - " + employee_label, dims))
+            gross_cost = M(payroll_line["gross_pay"])
+            absence_cost = M(payroll_line["absence_deduction"])
+            if gross_cost:
+                lines.append((salary_expense, gross_cost, 0, "أجور ومرتبات - " + employee_label, dims))
+            if absence_cost:
+                lines.append((salary_expense, 0, absence_cost, "تخفيض مصروف الغياب - " + employee_label, dims))
             employer_cost = M(payroll_line["employer_insurance"])
             if employer_cost:
                 lines.append((employer_ins_expense, employer_cost, 0, "حصة الشركة بالتأمينات - " + employee_label, dims))
