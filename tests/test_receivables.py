@@ -29,7 +29,7 @@ class ReceivablesAgingTests(unittest.TestCase):
             VALUES(2,1,'RF-2','2026-12-01','5')""")
         # Dated subledger records let the report reconstruct the selected historical date.
         conn.executescript("""
-            CREATE TABLE customer_receipts(id INTEGER PRIMARY KEY,invoice_id INTEGER,receipt_date TEXT,amount TEXT);
+            CREATE TABLE IF NOT EXISTS customer_receipts(id INTEGER PRIMARY KEY,invoice_id INTEGER,receipt_date TEXT,amount TEXT);
             CREATE TABLE customer_receipt_batches(id INTEGER PRIMARY KEY,receipt_date TEXT);
             CREATE TABLE customer_receipt_allocations(batch_id INTEGER,invoice_id INTEGER,amount TEXT);
             CREATE TABLE customer_advance_allocations(id INTEGER PRIMARY KEY,invoice_id INTEGER,allocation_date TEXT,amount TEXT);
@@ -152,6 +152,13 @@ class ReceivablesAgingTests(unittest.TestCase):
             user_session["role"] = "accountant"
             user_session["permissions"] = ["reports.view"]
 
+        # Older databases can have supplier_bills before the purchases migration
+        # adds credited_amount. Both XLSX and PDF exports must remain available.
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("ALTER TABLE supplier_bills DROP COLUMN credited_amount")
+        conn.commit()
+        conn.close()
+
         for kind, expected in (("customers", 164), ("suppliers", 255)):
             response = client.get(
                 f"/reports/export/aging/excel?kind={kind}&as_of=2026-11-30"
@@ -160,6 +167,34 @@ class ReceivablesAgingTests(unittest.TestCase):
             workbook = load_workbook(BytesIO(response.data), data_only=True)
             values = [cell.value for row in workbook.active.iter_rows() for cell in row]
             self.assertIn(expected, values)
+
+        pdf_response = client.get(
+            "/reports/export/aging/pdf?kind=suppliers&as_of=2026-11-30"
+        )
+        self.assertEqual(pdf_response.status_code, 200)
+        self.assertEqual(pdf_response.mimetype, "application/pdf")
+        self.assertTrue(pdf_response.data.startswith(b"%PDF"))
+
+    def test_supplier_aging_handles_bill_table_without_purchase_credit_column(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("ALTER TABLE supplier_bills DROP COLUMN credited_amount")
+        conn.commit()
+        conn.close()
+
+        response = self.client.get("/reports/aging/?kind=suppliers&as_of=2026-11-30")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("255.00", response.get_data(as_text=True))
+
+    def test_supplier_aging_is_empty_before_supplier_bills_table_is_initialized(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("DROP TABLE supplier_bills")
+        conn.commit()
+        conn.close()
+
+        receivables.initialize_aging_schema()
+        response = self.client.get("/reports/aging/?kind=suppliers&as_of=2026-11-30")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("PB-1", response.get_data(as_text=True))
 
     def test_supplier_aging_does_not_require_customer_invoice_fields(self):
         response = self.client.get("/reports/aging/?kind=suppliers&as_of=2026-11-30")
