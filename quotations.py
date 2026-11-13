@@ -96,7 +96,8 @@ def sales_permission(permission, fallback_roles):
   @wraps(fn)
   def wrapped(*args,**kwargs):
    if not session.get("user_id"): return redirect(url_for("login"))
-   allowed=(permission in set(session.get("permissions",[]))) if "permissions" in session else session.get("role") in fallback_roles
+   allowed=(permission in set(session.get("permissions",[])) or
+            (permission=="sales.approve" and session.get("role")=="admin")) if "permissions" in session else session.get("role") in fallback_roles
    if not allowed:
     flash("لا تملك الصلاحية المطلوبة لإدارة أوامر البيع والتسليم.","error")
     return redirect(url_for("dashboard"))
@@ -397,7 +398,7 @@ def status(quote_id):
  return redirect(url_for("quotes.view",quote_id=quote_id))
 
 @quotes_bp.route("/<int:quote_id>/convert",methods=["POST"])
-@require(write=True)
+@require_sales_manage
 def convert(quote_id):
  c=db()
  try:
