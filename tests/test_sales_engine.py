@@ -38,7 +38,7 @@ class SalesIntegrationTests(unittest.TestCase):
         INSERT INTO company_settings VALUES('inventory_cost_method','average');
         """)
         for code, name, typ in [
-            ("1110", "الصندوق", "asset"), ("1130", "العملاء", "asset"), ("2160", "دفعات مقدمة من العملاء", "liability"),
+            ("1110", "الصندوق", "asset"), ("1120", "البنك", "asset"), ("1130", "العملاء", "asset"), ("2160", "دفعات مقدمة من العملاء", "liability"),
             ("1150", "المخزون", "asset"), ("2130", "ضريبة مخرجات", "liability"),
             ("4100", "المبيعات", "revenue"), ("5100", "تكلفة المبيعات", "expense")
         ]:
@@ -579,10 +579,7 @@ class SalesIntegrationTests(unittest.TestCase):
         saved = self.db.execute("SELECT discount_type,discount_value,discount_amount FROM sales_invoices WHERE id=?",
                                 (result["invoice_id"],)).fetchone()
         self.assertEqual((saved["discount_type"], saved["discount_value"], Decimal(saved["discount_amount"])),
-                         ("fixed", "15.00", Decimal("15.00")))
-
-
-    def test_customer_advance_receipt_allocation_and_refund_post_balanced_journals(self):
+                         ("fixed", "1    def test_customer_advance_receipt_allocation_and_refund_post_balanced_journals(self):
         self.db.execute("BEGIN IMMEDIATE")
         invoice = sales.post_invoice(
             self.db, self.customer_id, "2026-11-10", self.warehouse_id,
@@ -601,8 +598,9 @@ class SalesIntegrationTests(unittest.TestCase):
             [(invoice["invoice_id"], "60"), (second_invoice["invoice_id"], "20")],
             "2026-11-12", 1,
         )
+        bank_id = self.db.execute("SELECT id FROM accounts WHERE code='1120'").fetchone()["id"]
         refund = sales.post_customer_advance_refund(
-            self.db, advance["advance_receipt_id"], "2026-11-13", "15", cash_id, 1, "REF-ADV-001",
+            self.db, advance["advance_receipt_id"], "2026-11-13", "15", bank_id, 1, "REF-ADV-001",
         )
         self.db.commit()
 
@@ -623,7 +621,7 @@ class SalesIntegrationTests(unittest.TestCase):
             (allocation["journal_entry_id"], "2160", Decimal("80.00"), Decimal("0.00")),
             (allocation["journal_entry_id"], "1130", Decimal("0.00"), Decimal("80.00")),
             (refund["journal_entry_id"], "2160", Decimal("15.00"), Decimal("0.00")),
-            (refund["journal_entry_id"], "1110", Decimal("0.00"), Decimal("15.00")),
+            (refund["journal_entry_id"], "1120", Decimal("0.00"), Decimal("15.00")),
         ]
         actual = []
         for row in self.db.execute(
@@ -640,6 +638,8 @@ class SalesIntegrationTests(unittest.TestCase):
                 (entry_id,),
             ).fetchone()
             self.assertAlmostEqual(totals["debit"], totals["credit"], places=2)
+
+otals["credit"], places=2)
 
     def test_customer_advance_rejects_overallocation_and_cross_customer_invoice(self):
         self.db.execute("BEGIN IMMEDIATE")
