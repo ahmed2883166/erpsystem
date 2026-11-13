@@ -117,6 +117,43 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(snapshot["current"]["expenses"],Decimal("400"))
         self.assertEqual(snapshot["current"]["net_profit"],Decimal("100"))
 
+    def test_closed_full_year_keeps_management_profit_and_balanced_position(self):
+        self.conn.execute(
+            "INSERT INTO journal_entries(id,entry_date,status,entry_type) "
+            "VALUES(40,'2026-12-31','posted','year_end_closing')"
+        )
+        # Close 2026 P&L: revenue 700, expenses 570, net profit 130.
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(40,?,?,?)",
+            [(7,"700","0"),(8,"0","420"),(9,"0","150"),(6,"0","130")],
+        )
+        snapshot = build_management_snapshot(
+            self.conn, date(2026,1,1), date(2026,12,31)
+        )
+        self.assertEqual(snapshot["current"]["revenue"], Decimal("700"))
+        self.assertEqual(snapshot["current"]["expenses"], Decimal("570"))
+        self.assertEqual(snapshot["current"]["net_profit"], Decimal("130"))
+        self.assertEqual(snapshot["cash"], Decimal("1350"))
+        self.assertEqual(snapshot["total_equity"], Decimal("1630"))
+        self.assertTrue(snapshot["balance_ok"])
+
+    def test_prior_year_closing_entry_is_included_in_next_year_opening_balances(self):
+        from management_dashboard import dashboard_period_balances
+
+        self.conn.execute(
+            "INSERT INTO journal_entries(id,entry_date,status,entry_type) "
+            "VALUES(41,'2026-12-31','posted','year_end_closing')"
+        )
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(41,?,?,?)",
+            [(7,"700","0"),(8,"0","420"),(9,"0","150"),(6,"0","130")],
+        )
+        _current, _previous, _as_of, opening = dashboard_period_balances(
+            self.conn, "2027-01-01", "2027-01-31",
+            "2026-12-01", "2026-12-31", exclude_closing_entries=True,
+        )
+        self.assertEqual(opening[6]["credit"], Decimal("1630"))
+
     def test_position_and_liquidity(self):
         s=build_management_snapshot(self.conn,date(2026,11,1),date(2026,11,30))
         self.assertEqual(s["gross_margin"],Decimal("40.00"))
