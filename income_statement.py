@@ -3,6 +3,7 @@ from datetime import date
 from decimal import Decimal
 
 from accounting_core import register_decimal_aggregates
+from analytic_dimensions import validate_journal_dimensions
 
 
 CLOSING_ENTRY_TYPES = ("year_end_closing", "year_end_closing_reversal")
@@ -100,7 +101,7 @@ def add_income_statement_comparison(current, previous):
     return current
 
 
-def build_income_statement(conn, date_from, date_to):
+def build_income_statement(conn, date_from, date_to, dimensions=None):
     """Calculate revenue, COGS, gross profit, operating expenses and net profit."""
     register_decimal_aggregates(conn)
     closing_filter = closing_entries_exclusion_sql(conn)
@@ -119,6 +120,12 @@ def build_income_statement(conn, date_from, date_to):
         "je.status='posted'", "je.entry_date>=?", "je.entry_date<=?",
         closing_filter,
     ]
+    dimension_params = []
+    for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id"):
+        value = (dimensions or {}).get(key)
+        if value is not None:
+            conditions.append(f"jl.{key}=?")
+            dimension_params.append(value)
     rows = conn.execute(f"""SELECT a.id,a.code,a.name_ar,a.account_type,
         COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
         COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
@@ -127,7 +134,7 @@ def build_income_statement(conn, date_from, date_to):
         LEFT JOIN journal_entries je ON je.id=jl.entry_id AND {' AND '.join(conditions)}
         WHERE a.account_type IN ('revenue','expense') AND a.is_group=0 AND a.active=1
         GROUP BY a.id ORDER BY a.account_type,a.code""",
-        (date_from, date_to)).fetchall()
+        (date_from, date_to, *dimension_params)).fetchall()
 
     revenue_rows, cogs_rows, operating_expense_rows = [], [], []
     revenue_total = Decimal("0")
