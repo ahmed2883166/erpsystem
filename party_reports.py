@@ -104,6 +104,126 @@ def _events(c, kind, party_id):
     return sorted(events, key=lambda x: (x["event_date"], x["priority"], x["reference"] or ""))
 
 
+def _decimal(value):
+    return Decimal(str(value or "0"))
+
+
+def _gl_control_balance(c, account_codes, as_of, normal_side):
+    codes = sorted({str(code) for code in account_codes if code not in (None, "")})
+    if not codes:
+        return None, []
+    placeholders = ",".join("?" for _ in codes)
+    accounts = c.execute(
+        f"SELECT id,code FROM accounts WHERE code IN ({placeholders}) AND is_group=0 AND active=1",
+        codes,
+    ).fetchall()
+    account_ids = [row["id"] for row in accounts]
+    if not account_ids:
+        return None, codes
+    marks = ",".join("?" for _ in account_ids)
+    rows = c.execute(
+        f"""SELECT jl.debit,jl.credit FROM journal_lines jl
+            JOIN journal_entries je ON je.id=jl.entry_id
+            WHERE je.status='posted' AND je.entry_date<=?
+              AND jl.account_id IN ({marks})""",
+        (as_of, *account_ids),
+    ).fetchall()
+    debit = sum((_decimal(row["debit"]) for row in rows), Decimal("0"))
+    credit = sum((_decimal(row["credit"]) for row in rows), Decimal("0"))
+    return (debit - credit if normal_side == "debit" else credit - debit), [
+        row["code"] for row in accounts
+    ]
+
+
+def _subledger_total(c, kind, as_of):
+    table = "customers" if kind == "customer" else "suppliers"
+    if not _table_exists(c, table):
+        return Decimal("0"), 0
+    party_ids = [row["id"] for row in c.execute(f"SELECT id FROM {table} ORDER BY id")]
+    total = Decimal("0")
+    open_parties = 0
+    for party_id in party_ids:
+        balance = Decimal("0")
+        for event in _events(c, kind, party_id):
+            if event["event_date"] and event["event_date"] <= as_of:
+                amount = _decimal(event["debit"]) - _decimal(event["credit"])
+                balance += amount if kind == "customer" else -amount
+        total += balance
+        if balance > Decimal("0.01"):
+            open_parties += 1
+    return total, open_parties
+
+
+def _customer_advance_subledger(c, as_of):
+    required = ("customer_advance_receipts", "customer_advance_allocations",
+                "customer_advance_refunds")
+    if not all(_table_exists(c, table) for table in required):
+        return Decimal("0"), False
+    receipt_columns = _columns(c, "customer_advance_receipts")
+    allocation_columns = _columns(c, "customer_advance_allocations")
+    refund_columns = _columns(c, "customer_advance_refunds")
+    if not {"id", "receipt_date", "amount"}.issubset(receipt_columns):
+        return Decimal("0"), False
+    if not {"advance_receipt_id", "allocation_date", "amount"}.issubset(allocation_columns):
+        return Decimal("0"), False
+    if not {"advance_receipt_id", "refund_date", "amount"}.issubset(refund_columns):
+        return Decimal("0"), False
+    receipts = sum((_decimal(row["amount"]) for row in c.execute(
+        "SELECT amount FROM customer_advance_receipts WHERE receipt_date<=?", (as_of,)
+    )), Decimal("0"))
+    allocations = sum((_decimal(row["amount"]) for row in c.execute(
+        "SELECT amount FROM customer_advance_allocations WHERE allocation_date<=?", (as_of,)
+    )), Decimal("0"))
+    refunds = sum((_decimal(row["amount"]) for row in c.execute(
+        "SELECT amount FROM customer_advance_refunds WHERE refund_date<=?", (as_of,)
+    )), Decimal("0"))
+    return receipts - allocations - refunds, True
+
+
+def build_subledger_reconciliation(c, as_of):
+    """Compare customer, supplier and customer-advance subledgers with GL controls."""
+    from activity_profiles import get_active_activity_profile
+
+    profile = get_active_activity_profile(c)
+    posting = profile.get("posting_accounts") or {}
+    roles = profile.get("account_roles") or {}
+    definitions = (
+        ("customers", "ذمم العملاء", (posting.get("ar"),), "debit"),
+        ("suppliers", "ذمم الموردين", (posting.get("supplier_ap"),), "credit"),
+    )
+    results = []
+    for key, label, codes, normal_side in definitions:
+        subledger, party_count = _subledger_total(c, "customer" if key == "customers" else "supplier", as_of)
+        gl_balance, found_codes = _gl_control_balance(c, codes, as_of, normal_side)
+        difference = gl_balance - subledger if gl_balance is not None else None
+        results.append({
+            "key": key, "label": label, "gl_balance": gl_balance,
+            "subledger_balance": subledger, "difference": difference,
+            "account_codes": found_codes, "party_count": party_count,
+            "available": gl_balance is not None,
+            "matched": gl_balance is not None and abs(difference) <= Decimal("0.01"),
+        })
+
+    advance_codes = roles.get("customer_advances", ())
+    if not isinstance(advance_codes, (list, tuple)):
+        advance_codes = (advance_codes,)
+    advance_subledger, advance_available = _customer_advance_subledger(c, as_of)
+    advance_gl, found_advance_codes = _gl_control_balance(c, advance_codes, as_of, "credit")
+    advance_difference = (
+        advance_gl - advance_subledger
+        if advance_gl is not None and advance_available else None
+    )
+    results.append({
+        "key": "customer_advances", "label": "مقدمات العملاء",
+        "gl_balance": advance_gl, "subledger_balance": advance_subledger,
+        "difference": advance_difference, "account_codes": found_advance_codes,
+        "party_count": None, "available": advance_gl is not None and advance_available,
+        "matched": (advance_gl is not None and advance_available and
+                    abs(advance_difference) <= Decimal("0.01")),
+    })
+    return results
+
+
 @party_bp.route("/reports/party-statement")
 @_authorized
 def party_statement():
@@ -154,3 +274,21 @@ def party_statement():
     return render_template("party_statement.html", kind=kind, parties=parties, selected=selected,
         rows=rows, opening=opening.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
         closing=closing, total_debit=total_debit.quantize(Decimal("0.01")), total_credit=total_credit.quantize(Decimal("0.01")), date_from=date_from, date_to=date_to)
+
+
+
+@party_bp.route("/reports/subledger-reconciliation")
+@_authorized
+def subledger_reconciliation():
+    try:
+        as_of = date.fromisoformat(
+            request.args.get("as_of", "").strip() or date.today().isoformat()
+        ).isoformat()
+    except ValueError:
+        abort(400)
+    c = _db()
+    try:
+        rows = build_subledger_reconciliation(c, as_of)
+    finally:
+        c.close()
+    return render_template("subledger_reconciliation.html", rows=rows, as_of=as_of)
