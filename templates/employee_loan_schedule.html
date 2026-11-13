@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block title %}جدول أقساط السلفة | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>جدول أقساط السلفة</h2><p>{{loan.employee_code}} - {{loan.full_name}} · {{loan.loan_no}}</p><p><a href="{{url_for('workforce.employee_loans')}}">العودة إلى سجل السلف</a></p></header>
+<section class="panel"><p>المبلغ المعتمد: <strong>{{loan.approved_amount}}</strong> · الرصيد المتبقي: <strong>{{loan.remaining_balance}}</strong></p>
+<table><tr><th>الشهر</th><th>القسط</th><th>المسدد</th><th>المتبقي</th><th>الحالة</th></tr>
+{% for i in installments %}<tr><td>{{i.due_period}}</td><td>{{i.due_amount}}</td><td>{{i.paid_amount}}</td><td>{{(i.due_amount|float-i.paid_amount|float)|round(2)}}</td><td>{{'مسدد' if i.status=='paid' else 'مستحق'}}</td></tr>{% endfor %}</table></section>{% endblock %}
