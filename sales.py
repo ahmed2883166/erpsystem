@@ -310,7 +310,7 @@ def _allowed_vat_rates(conn):
         raise ValueError("قائمة نسب الضريبة المعتمدة في إعدادات الشركة غير صحيحة.")
 
 
-def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate, created_by=None, allow_credit_override=False, dimensions=None, preissued_costs=None, sales_order_id=None):
+def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate, created_by=None, allow_credit_override=False, dimensions=None, preissued_costs=None, sales_order_id=None, discount_override=None):
     """Create invoice and balanced GL; optionally consume stock already issued by delivery notes."""
     rate = Decimal(str(tax_rate)).quantize(CENT, rounding=ROUND_HALF_UP)
     if not rate.is_finite() or rate < 0 or rate > 100:
@@ -399,23 +399,36 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
         })
 
     gross_subtotal = subtotal.quantize(CENT, rounding=ROUND_HALF_UP)
-    discount_type = str(customer["discount_type"] or "none").strip().lower()
-    discount_value = Decimal(str(customer["discount_value"] or "0")).quantize(CENT, rounding=ROUND_HALF_UP)
-    if discount_type not in {"none", "percent", "fixed"}:
-        raise ValueError("نوع خصم العميل غير صحيح.")
-    if not discount_value.is_finite() or discount_value < 0:
-        raise ValueError("قيمة خصم العميل يجب أن تكون صفرًا أو أكبر.")
-    if discount_type == "percent":
-        if discount_value > 100:
-            raise ValueError("نسبة خصم العميل يجب ألا تتجاوز 100%.")
-        discount_amount = (gross_subtotal * discount_value / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
-    elif discount_type == "fixed":
-        if discount_value >= gross_subtotal and discount_value > 0:
-            raise ValueError("قيمة الخصم الثابت يجب أن تكون أقل من إجمالي البنود.")
-        discount_amount = discount_value
+    if discount_override is not None:
+        discount_type = str(discount_override.get("discount_type", "none")).strip().lower()
+        discount_value = Decimal(str(discount_override.get("discount_value", "0"))).quantize(CENT, rounding=ROUND_HALF_UP)
+        discount_amount = Decimal(str(discount_override.get("discount_amount", "0"))).quantize(CENT, rounding=ROUND_HALF_UP)
+        if discount_type not in {"none", "percent", "fixed"}:
+            raise ValueError("نوع خصم أمر البيع غير صحيح.")
+        if not discount_value.is_finite() or discount_value < 0 or not discount_amount.is_finite() or discount_amount < 0:
+            raise ValueError("قيمة خصم أمر البيع غير صحيحة.")
+        if discount_type == "percent" and discount_value > 100:
+            raise ValueError("نسبة خصم أمر البيع يجب ألا تتجاوز 100%.")
+        if discount_amount >= gross_subtotal and discount_amount > 0:
+            raise ValueError("خصم أمر البيع لا يمكن أن يساوي أو يتجاوز إجمالي الفاتورة.")
     else:
-        discount_value = Decimal("0.00")
-        discount_amount = Decimal("0.00")
+        discount_type = str(customer["discount_type"] or "none").strip().lower()
+        discount_value = Decimal(str(customer["discount_value"] or "0")).quantize(CENT, rounding=ROUND_HALF_UP)
+        if discount_type not in {"none", "percent", "fixed"}:
+            raise ValueError("نوع خصم العميل غير صحيح.")
+        if not discount_value.is_finite() or discount_value < 0:
+            raise ValueError("قيمة خصم العميل يجب أن تكون صفرًا أو أكبر.")
+        if discount_type == "percent":
+            if discount_value > 100:
+                raise ValueError("نسبة خصم العميل يجب ألا تتجاوز 100%.")
+            discount_amount = (gross_subtotal * discount_value / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
+        elif discount_type == "fixed":
+            if discount_value >= gross_subtotal and discount_value > 0:
+                raise ValueError("قيمة الخصم الثابت يجب أن تكون أقل من إجمالي البنود.")
+            discount_amount = discount_value
+        else:
+            discount_value = Decimal("0.00")
+            discount_amount = Decimal("0.00")
     if discount_amount >= gross_subtotal and discount_amount > 0:
         raise ValueError("الخصم لا يمكن أن يساوي أو يتجاوز إجمالي الفاتورة.")
     remaining_discount = discount_amount
