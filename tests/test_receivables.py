@@ -45,7 +45,7 @@ class ReceivablesAgingTests(unittest.TestCase):
         # A second customer invoice has settlements and credits both before and after the report date.
         conn.execute("""INSERT INTO sales_invoices
             (id,customer_id,invoice_no,invoice_date,due_date,total_amount,paid_amount,credited_amount,status)
-            VALUES(2,1,'SI-2','2026-11-02','2026-11-12','200','75','30','posted')""")
+            VALUES(2,1,'SI-2','2026-11-02','2026-11-12','200','80','30','posted')""")
         conn.execute("""INSERT INTO sales_credit_notes
             (id,invoice_id,credit_note_no,credit_date,reason,total_amount,status)
             VALUES(2,2,'SCN-2A','2026-11-18','مرتجع قبل التاريخ','10','posted')""")
