@@ -102,6 +102,7 @@ def register_report_exports(app, db_path, permissions):
                     # the account-metadata migration yet. It is additive and does not touch journals.
                     from chart_templates import ensure_account_metadata
                     ensure_account_metadata(conn)
+                    conn.commit()
                     account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
                 section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
                 normal_expr = "a.normal_balance" if "normal_balance" in account_columns else "NULL"
