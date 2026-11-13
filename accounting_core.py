@@ -100,9 +100,26 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
                           if key in dimension_keys and value not in (None, "") and key not in available_dimension_keys]
     if missing_dimensions:
         raise ValueError("يجب تحديث مخطط الأبعاد التحليلية قبل ترحيل القيد.")
-    dimension_values = tuple(dimensions.get(key) for key in available_dimension_keys)
     normalized = []
-    for account_id, debit, credit, memo in lines:
+    for line in lines:
+        if len(line) not in (4, 5):
+            raise ValueError("صيغة أحد أسطر القيد غير صحيحة.")
+        account_id, debit, credit, memo = line[:4]
+        line_dimensions = dict(dimensions)
+        if len(line) == 5:
+            if line[4] is not None and not isinstance(line[4], dict):
+                raise ValueError("الأبعاد التحليلية لسطر القيد يجب أن تكون في صورة قاموس.")
+            line_dimensions.update(line[4] or {})
+        unknown_line_dimensions = sorted(set(line_dimensions) - set(dimension_keys))
+        if unknown_line_dimensions:
+            raise ValueError("أبعاد تحليلية غير معروفة: " + ", ".join(unknown_line_dimensions))
+        missing_line_dimensions = [
+            key for key, value in line_dimensions.items()
+            if value not in (None, "") and key not in available_dimension_keys
+        ]
+        if missing_line_dimensions:
+            raise ValueError("يجب تحديث مخطط الأبعاد التحليلية قبل ترحيل القيد.")
+        dimension_values = tuple(line_dimensions.get(key) for key in available_dimension_keys)
         try:
             dr, cr = amt(debit), amt(credit)
         except (InvalidOperation, ValueError, TypeError):
