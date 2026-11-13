@@ -27,6 +27,39 @@ class FinancialPlanningTests(unittest.TestCase):
     def tearDown(self):
         self.conn.close()
 
+    def test_budget_pdf_export_returns_pdf_file(self):
+        from flask import Flask
+        import financial_planning
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("""CREATE TABLE company_settings(
+            setting_key TEXT PRIMARY KEY, setting_value TEXT
+        )""")
+        conn.executemany("INSERT INTO company_settings VALUES(?,?)", [
+            ("company_name", "NEXUS Test"), ("base_currency", "EGP")
+        ])
+        plan = {
+            "id": 1, "name": "موازنة اختبار",
+            "date_from": "2026-01-01", "date_to": "2026-01-31"
+        }
+        app = Flask(__name__)
+        app.secret_key = "test-secret"
+        app.register_blueprint(financial_planning.planning_bp)
+
+        with patch("financial_planning._connect", return_value=conn), \\
+             patch("financial_planning.build_budget_monthly_comparison",
+                   return_value=(plan, [])):
+            client = app.test_client()
+            with client.session_transaction() as session:
+                session["user_id"] = 1
+                session["permissions"] = ["budget.view"]
+            response = client.get("/budget/1/export/pdf")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertTrue(response.data.startswith(b"%PDF-"))
+
     def test_connect_uses_centralized_database_path(self):
         with patch("financial_planning.DB_PATH", "/tmp/nexus-test.db"), \
              patch("financial_planning.connect_database", return_value="connection") as connect:
