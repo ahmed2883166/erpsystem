@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}تقرير مستحقات الموظفين | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <h2>تقرير مستحقات وتفاصيل رواتب الموظفين</h2>
+  <p>يعرض المسيرات المرحلة فقط، ويمكن عرض جميع الموظفين أو موظف محدد خلال شهر أو فترة.</p>
+  <p class="muted">التقرير تاريخي ولا يعيد حساب الرواتب من بيانات الموظف الحالية. كل صف يعكس القيم المحفوظة وقت إعداد المسير.</p>
+</header>
+<section class="panel">
+  <h3>فلاتر التقرير</h3>
+  <form method="get" class="form-grid">
+    <label>من شهر <input type="month" name="month_from" value="{{ month_from }}"></label>
+    <label>إلى شهر <input type="month" name="month_to" value="{{ month_to }}"></label>
+    <label>الموظف
+      <select name="employee_id">
+        <option value="">كل الموظفين</option>
+        {% for e in employees %}
+          <option value="{{ e.id }}" {% if selected_employee==e.id %}selected{% endif %}>{{ e.employee_code }} - {{ e.full_name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="actions"><button type="submit">عرض التقرير</button> <a class="button secondary" href="{{ url_for('workforce.payroll_report') }}">مسح الفلاتر</a></div>
+  </form>
+</section>
+<section class="panel">
+  <h3>ملخص التقرير</h3>
+  <div class="stats-grid">
+    <div class="stat"><span>إجمالي الأجر قبل الخصومات</span><strong>{{ totals.gross_pay }}</strong></div>
+    <div class="stat"><span>إجمالي الاستحقاقات شامل تكلفة الشركة</span><strong>{{ totals.total_entitlements }}</strong></div>
+    <div class="stat"><span>صافي مستحق الموظفين</span><strong>{{ totals.net_pay }}</strong></div>
+    <div class="stat"><span>ما تم صرفه فعليًا</span><strong>{{ totals.paid_amount }}</strong></div>
+    <div class="stat"><span>المتبقي للصرف</span><strong>{{ totals.remaining_payable }}</strong></div>
+    <div class="stat"><span>تأمينات تتحملها الشركة</span><strong>{{ totals.employer_insurance }}</strong></div>
+  </div>
+</section>
+<section class="panel">
+  <h3>تفاصيل كل موظف ومسير</h3>
+  <div style="overflow-x:auto">
+    <table>
+      <thead><tr>
+        <th>الشهر</th><th>كود الموظف</th><th>اسم الموظف</th><th>القسم</th>
+        <th>الأساسي</th><th>العلاوة</th><th>البدلات</th><th>الحوافز</th>
+        <th>الإضافي</th><th>إجمالي الأجر</th><th>خصم الغياب</th>
+        <th>السلف</th><th>قسط القرض</th><th>خصومات أخرى</th>
+        <th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th>
+        <th>إجمالي الاستحقاقات</th><th>إجمالي الاستقطاعات</th>
+        <th>صافي المستحق</th><th>المدفوع</th><th>المتبقي</th><th>القسيمة</th>
+      </tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td>{{ r.period }}</td><td>{{ r.employee_code }}</td><td>{{ r.full_name }}</td><td>{{ r.department or '-' }}</td>
+          <td>{{ r.basic_salary }}</td><td>{{ r.salary_raise }}</td><td>{{ r.allowances }}</td><td>{{ r.incentives }}</td>
+          <td>{{ r.overtime_amount }}</td><td>{{ r.gross_pay }}</td><td>{{ r.absence_deduction }}</td>
+          <td>{{ r.advance_deduction }}</td><td>{{ r.loan_deduction }}</td><td>{{ r.other_deductions }}</td>
+          <td>{{ r.taxable_income_tax }}</td><td>{{ r.employee_insurance }}</td><td>{{ r.employer_insurance }}</td>
+          <td>{{ r.total_entitlements }}</td><td>{{ r.total_deductions }}</td><td><strong>{{ r.net_pay }}</strong></td>
+          <td>{{ r.paid_amount }}</td><td>{{ [0, (r.net_pay|float - r.paid_amount|float)]|max|round(2) }}</td>
+          <td><a href="{{ url_for('report_exports.export_report_excel', report='payroll-payslip', run_id=r.run_id, employee_id=r.employee_id).replace('/excel','/pdf') }}">PDF</a> · <a href="{{ url_for('report_exports.export_report_excel', report='payroll-payslip', run_id=r.run_id, employee_id=r.employee_id) }}">Excel</a></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="23">لا توجد مسيرات مرحلة مطابقة للفلاتر المختارة.</td></tr>
+      {% endfor %}
+      </tbody>
+      {% if rows %}
+      <tfoot><tr><th colspan="4">الإجمالي</th>
+        <th>{{ totals.basic_salary }}</th><th>{{ totals.salary_raise }}</th><th>{{ totals.allowances }}</th>
+        <th>{{ totals.incentives }}</th><th>{{ totals.overtime_amount }}</th><th>{{ totals.gross_pay }}</th>
+        <th>{{ totals.absence_deduction }}</th><th>{{ totals.advance_deduction }}</th><th>{{ totals.loan_deduction }}</th>
+        <th>{{ totals.other_deductions }}</th><th>{{ totals.taxable_income_tax }}</th><th>{{ totals.employee_insurance }}</th>
+        <th>{{ totals.employer_insurance }}</th><th>{{ totals.total_entitlements }}</th><th>{{ totals.total_deductions }}</th>
+        <th>{{ totals.net_pay }}</th><th>{{ totals.paid_amount }}</th><th>{{ totals.remaining_payable }}</th><th></th>
+      </tr></tfoot>
+      {% endif %}
+    </table>
+  </div>
+  <p class="muted">حصة الموظف بالتأمينات والضريبة والسلف والخصومات تقلل صافي المستحق. حصة الشركة بالتأمينات تكلفة إضافية على الشركة ولا تخصم من الموظف. المدفوع والمتبقي محسوبان من حركات صرف الرواتب المسجلة.</p>
+</section>
+{% endblock %}
