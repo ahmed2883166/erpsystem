@@ -3,7 +3,6 @@ from datetime import date
 from decimal import Decimal
 
 from accounting_core import register_decimal_aggregates
-from analytic_dimensions import validate_journal_dimensions
 
 
 CLOSING_ENTRY_TYPES = ("year_end_closing", "year_end_closing_reversal")
