@@ -161,20 +161,13 @@ def init_purchase_schema():
                      ON CONFLICT(issue_type,issue_key) DO UPDATE SET
                        resolved=0,resolved_by=NULL,resolved_at=NULL""",
                   (str(row["supplier_id"])+":"+row["k"],))
-    duplicate_receipts=c.execute("""SELECT receipt_id,COUNT(*) n FROM supplier_bill_receipts
-      GROUP BY receipt_id HAVING COUNT(*)>1""").fetchall()
-    for row in duplicate_receipts:
-        c.execute("""INSERT INTO purchase_integrity_issues(issue_type,issue_key)
-                     VALUES('duplicate_receipt_link',?)
-                     ON CONFLICT(issue_type,issue_key) DO UPDATE SET
-                       resolved=0,resolved_by=NULL,resolved_at=NULL""",
-                  (str(row["receipt_id"]),))
+    # One GRNI receipt may be invoiced in several partial supplier bills.
+    # Drop the legacy one-receipt/one-bill index additively; existing allocation
+    # rows and journal links remain untouched.
+    c.execute("DROP INDEX IF EXISTS uq_supplier_bill_receipt_once")
     if not duplicate_bills:
         c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bill_invoice_no
           ON supplier_bills(supplier_id, lower(trim(supplier_invoice_no)))""")
-    if not duplicate_receipts:
-        c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bill_receipt_once
-          ON supplier_bill_receipts(receipt_id)""")
     c.commit()
     c.close()
 
@@ -665,6 +658,59 @@ def new_receipt():
     dimension_options=active_dimension_options(c)
     c.close(); return render_template("purchase_receipt_new.html",suppliers=su,warehouses=wh,products=pr,orders=orders,locations=locations,dimension_options=dimension_options,today=date.today().isoformat())
 
+def _supplier_receipt_available_amount(c, receipt_id, exclude_bill_id=None):
+    params = [receipt_id]
+    sql = """SELECT x.matched_amount FROM supplier_bill_receipts x
+             WHERE x.receipt_id=?"""
+    if exclude_bill_id is not None:
+        sql += " AND x.bill_id<>?"
+        params.append(exclude_bill_id)
+    allocated = sum((money(row["matched_amount"]) for row in c.execute(sql, params)), money("0"))
+    receipt = c.execute("SELECT total_value FROM goods_receipts WHERE id=?", (receipt_id,)).fetchone()
+    if not receipt:
+        raise ValueError("إيصال الاستلام غير موجود.")
+    return money(money(receipt["total_value"]) - allocated)
+
+
+def _validate_supplier_receipt_allocations(c, supplier_id, receipt_ids, subtotal, form,
+                                           exclude_bill_id=None):
+    allocations = []
+    total_allocated = money("0")
+    for receipt_id in dict.fromkeys(receipt_ids):
+        receipt = c.execute("""SELECT id,total_value FROM goods_receipts
+            WHERE id=? AND supplier_id=? AND status='posted'""",
+            (receipt_id, supplier_id)).fetchone()
+        if not receipt:
+            raise ValueError("إيصال الاستلام غير تابع لهذا المورد أو غير مرحّل.")
+        available = _supplier_receipt_available_amount(c, receipt_id, exclude_bill_id)
+        raw_amount = form.get("receipt_amount_" + str(receipt_id))
+        amount = money(raw_amount) if raw_amount not in (None, "") else available
+        if amount <= 0:
+            raise ValueError("قيمة تخصيص إيصال الاستلام يجب أن تكون أكبر من صفر.")
+        if amount > available:
+            raise ValueError("قيمة التخصيص تتجاوز المتبقي غير المفوتر من إيصال الاستلام.")
+        allocations.append((receipt_id, amount))
+        total_allocated = money(total_allocated + amount)
+    if total_allocated != money(subtotal):
+        raise ValueError("مجموع تخصيصات إيصالات GRNI يجب أن يساوي صافي فاتورة المورد.")
+    return allocations
+
+
+def _available_supplier_receipts(c, supplier_id, exclude_bill_id=None):
+    rows = c.execute("""SELECT r.*,s.name supplier_name FROM goods_receipts r
+        JOIN suppliers s ON s.id=r.supplier_id
+        WHERE r.supplier_id=? AND r.status='posted' ORDER BY r.id""",
+        (supplier_id,)).fetchall()
+    available = []
+    for row in rows:
+        amount = _supplier_receipt_available_amount(c, row["id"], exclude_bill_id)
+        if amount > 0:
+            item = dict(row)
+            item["available_amount"] = amount
+            available.append(item)
+    return available
+
+
 def submit_supplier_bill(c, bill_id, actor_id):
     c.execute("BEGIN IMMEDIATE")
     bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
@@ -825,18 +871,11 @@ def new_bill():
                 if not receipts:
                     raise ValueError("فاتورة الأصناف المخزنية تتطلب إيصال استلام.")
                 supplier_ap_account(c)
-            remaining=subtotal
             receipt_allocations=[]
-            for rid in receipts:
-                r=c.execute("SELECT * FROM goods_receipts WHERE id=? AND supplier_id=? AND status='posted'",(rid,supplier)).fetchone()
-                if not r: raise ValueError("إيصال الاستلام غير تابع لهذا المورد أو غير مرحّل.")
-                if c.execute("SELECT 1 FROM supplier_bill_receipts WHERE receipt_id=? LIMIT 1",(rid,)).fetchone():
-                    raise ValueError("إيصال الاستلام مرتبط بفاتورة مورد أخرى بالفعل.")
-                allocated=money(r["total_value"])
-                if allocated>remaining: raise ValueError("إجمالي إيصالات الاستلام أكبر من قيمة الفاتورة.")
-                receipt_allocations.append((rid,allocated)); remaining-=allocated
-            if bill_kind=="inventory" and remaining!=0:
-                raise ValueError("قيمة الفاتورة يجب أن تطابق إجمالي إيصالات GRNI المحددة.")
+            if bill_kind=="inventory":
+                receipt_allocations = _validate_supplier_receipt_allocations(
+                    c, supplier, receipts, subtotal, request.form
+                )
             if tax:
                 ensure_detail_account(c,_activity_tax_roles(c)["input_vat"],"ضريبة مدخلات قابلة للخصم","asset","1100")
             no="BILL-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -862,8 +901,7 @@ def new_bill():
             c.rollback(); flash(str(e),"error")
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     expense_accounts=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code").fetchall()
-    receipts=c.execute("""SELECT r.*,s.name supplier_name FROM goods_receipts r JOIN suppliers s ON s.id=r.supplier_id
-      WHERE r.status='posted' AND NOT EXISTS(SELECT 1 FROM supplier_bill_receipts x WHERE x.receipt_id=r.id) ORDER BY r.id""").fetchall()
+    receipts = _available_supplier_receipts(c, request.args.get("supplier_id", type=int) or 0)
     dimension_options=active_dimension_options(c)
     c.close(); return render_template("purchase_bill_new.html",suppliers=su,receipts=receipts,expense_accounts=expense_accounts,dimension_options=dimension_options,today=date.today().isoformat())
 
@@ -928,25 +966,11 @@ def edit_bill(bill_id):
                     raise ValueError("فاتورة الأصناف المخزنية تتطلب إيصال استلام.")
                 supplier_ap_account(c)
 
-            remaining = subtotal
             allocations = []
-            for receipt_id in receipts:
-                receipt = c.execute("""SELECT * FROM goods_receipts
-                    WHERE id=? AND supplier_id=? AND status='posted'""",
-                    (receipt_id, supplier)).fetchone()
-                if not receipt:
-                    raise ValueError("إيصال الاستلام غير تابع لهذا المورد أو غير مرحّل.")
-                used_elsewhere = c.execute("""SELECT 1 FROM supplier_bill_receipts
-                    WHERE receipt_id=? AND bill_id<>? LIMIT 1""", (receipt_id, bill_id)).fetchone()
-                if used_elsewhere:
-                    raise ValueError("إيصال الاستلام مرتبط بفاتورة مورد أخرى بالفعل.")
-                amount = money(receipt["total_value"])
-                if amount > remaining:
-                    raise ValueError("إجمالي إيصالات الاستلام أكبر من قيمة الفاتورة.")
-                allocations.append((receipt_id, amount))
-                remaining -= amount
-            if bill_kind == "inventory" and remaining != 0:
-                raise ValueError("قيمة الفاتورة يجب أن تطابق إجمالي إيصالات GRNI المحددة.")
+            if bill_kind == "inventory":
+                allocations = _validate_supplier_receipt_allocations(
+                    c, supplier, receipts, subtotal, request.form, exclude_bill_id=bill_id
+                )
             if tax:
                 ensure_detail_account(c, _activity_tax_roles(c)["input_vat"],
                                       "ضريبة مدخلات قابلة للخصم", "asset", "1100")
@@ -977,14 +1001,10 @@ def edit_bill(bill_id):
     suppliers = c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     expense_accounts = c.execute("""SELECT id,code,name_ar FROM accounts
         WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code""").fetchall()
-    receipts = c.execute("""SELECT r.*,s.name supplier_name FROM goods_receipts r
-        JOIN suppliers s ON s.id=r.supplier_id
-        WHERE r.status='posted' AND (
-            NOT EXISTS(SELECT 1 FROM supplier_bill_receipts x WHERE x.receipt_id=r.id)
-            OR EXISTS(SELECT 1 FROM supplier_bill_receipts own WHERE own.receipt_id=r.id AND own.bill_id=?)
-        ) ORDER BY r.id""", (bill_id,)).fetchall()
-    selected_receipt_ids = {row["receipt_id"] for row in c.execute(
-        "SELECT receipt_id FROM supplier_bill_receipts WHERE bill_id=?", (bill_id,)).fetchall()}
+    receipts = _available_supplier_receipts(c, bill["supplier_id"], exclude_bill_id=bill_id)
+    existing_allocations = {row["receipt_id"]: money(row["matched_amount"]) for row in c.execute(
+        "SELECT receipt_id,matched_amount FROM supplier_bill_receipts WHERE bill_id=?", (bill_id,)).fetchall()}
+    selected_receipt_ids = set(existing_allocations)
     dimension_options = active_dimension_options(c)
     c.close()
     return render_template("purchase_bill_new.html", suppliers=suppliers, receipts=receipts,
