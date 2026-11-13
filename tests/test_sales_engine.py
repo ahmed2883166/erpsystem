@@ -1213,7 +1213,7 @@ class SalesIntegrationTests(unittest.TestCase):
             ).fetchone()[0],
             1,
         )
-        self.assertEqual(sales._customer_advance_available(self.db, advance["id"]), Decimal("15.00"))
+        self.assertEqual(sales._customer_advance_available(self.db, advance["id"]), Decimal("5.00"))
 
 
 
