@@ -39,7 +39,7 @@ class AccountChartSafetyTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             session["user_id"] = 1
             session["permissions"] = ["accounts.manage"]
-        with patch("app.db", return_value=self.conn):
+        with patch("app.db", return_value=self.conn), patch("app.log"):
             return self.client.post(
                 f"/accounts/{account_id}/edit",
                 data={
