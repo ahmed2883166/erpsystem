@@ -149,13 +149,15 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
             asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,
             useful_life_months,depreciation_method,annual_rate,asset_account_id,
             accum_account_id,expense_account_id,notes,created_by,supplier_bill_id
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)""",
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (code,name,category,purchase,ready,cost,residual,life,method,rate,
              asset_acc,accum_acc,expense_acc,
-             "تم الإنشاء تلقائيًا من فاتورة المورد " + bill["bill_no"], actor_id))
+             "تم الإنشاء تلقائيًا من فاتورة المورد " + bill["bill_no"], actor_id,
+             bill["id"] if len(prepared)==1 else None))
         asset_id=cursor.lastrowid
-        conn.execute("INSERT INTO fixed_asset_supplier_bill_links(bill_id,asset_id) VALUES(?,?)",
-                     (bill["id"],asset_id))
+        if len(prepared)>1:
+            conn.execute("INSERT INTO fixed_asset_supplier_bill_links(bill_id,asset_id) VALUES(?,?)",
+                         (bill["id"],asset_id))
         created.append(asset_id)
     return created
 
