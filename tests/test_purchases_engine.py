@@ -258,10 +258,10 @@ class PurchasingAccountingTests(unittest.TestCase):
         lines = journal.call_args.args[4]
         self.assertEqual(lines[0][0], asset_account)
         self.assertEqual(lines[0][1], purchases.money("120000"))
-        self.assertEqual(lines[3][0], input_vat)
-        self.assertEqual(lines[3][1], purchases.money("18000"))
-        self.assertEqual(lines[4][0], 99)
-        self.assertEqual(lines[4][2], purchases.money("18000"))
+        self.assertEqual(lines[2][0], input_vat)
+        self.assertEqual(lines[2][1], purchases.money("18000"))
+        self.assertEqual(lines[3][0], 99)
+        self.assertEqual(lines[3][2], purchases.money("18000"))
         total_debit = sum((purchases.money(line[1]) for line in lines), purchases.money("0"))
         total_credit = sum((purchases.money(line[2]) for line in lines), purchases.money("0"))
         self.assertEqual(total_debit, total_credit)
@@ -325,7 +325,7 @@ class PurchasingAccountingTests(unittest.TestCase):
         lines = journal.call_args.args[4]
         self.assertEqual([line[1] for line in lines[:2]],
                          [purchases.money("70000"),purchases.money("50000")])
-        self.assertEqual(lines[2][0], input_vat)
+        self.assertEqual(lines[3][0], input_vat)
         debit = sum((purchases.money(line[1]) for line in lines), purchases.money("0"))
         credit = sum((purchases.money(line[2]) for line in lines), purchases.money("0"))
         self.assertEqual(debit, credit)
