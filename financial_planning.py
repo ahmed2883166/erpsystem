@@ -1087,17 +1087,19 @@ def budget_update_distribution(budget_id):
         months = _budget_months(plan["date_from"], plan["date_to"])
         lines = conn.execute("SELECT account_id,amount FROM budget_lines WHERE budget_id=?", (budget_id,)).fetchall()
         updates = []
+        revised_totals = []
         for line in lines:
             values = []
             for month in months:
                 value = _money(request.form.get(f"monthly_amount_{line['account_id']}_{month}", ""))
                 values.append(value)
                 updates.append((str(value), budget_id, line["account_id"], month))
-            if sum(values, Decimal("0")) != _money(line["amount"]):
-                raise ValueError(f"مجموع التوزيع الشهري للحساب {line['account_id']} يجب أن يساوي إجمالي الموازنة.")
+            revised_totals.append((str(sum(values, Decimal("0"))), budget_id, line["account_id"]))
         conn.executemany("""UPDATE budget_monthly_lines SET amount=?
             WHERE budget_id=? AND account_id=? AND period=?""", updates)
-        _budget_audit(conn, budget_id, "distribution_updated", session["user_id"], "تعديل التوزيع الشهري مع الحفاظ على إجمالي كل حساب")
+        conn.executemany("UPDATE budget_lines SET amount=? WHERE budget_id=? AND account_id=?", revised_totals)
+        _budget_audit(conn, budget_id, "distribution_updated", session["user_id"],
+            "حفظ التوزيع الشهري وإعادة احتساب إجمالي الموازنة لكل حساب من مجموع الأشهر")
         conn.commit()
         flash("تم حفظ التوزيع الشهري.", "success")
     except (ValueError, InvalidOperation, TypeError) as exc:
