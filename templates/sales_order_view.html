@@ -1,0 +1,106 @@
+{% extends 'base.html' %}
+{% block title %}أمر البيع {{ order.order_no }} | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <div>
+    <h2>أمر البيع {{ order.order_no }}</h2>
+    <p>{{ order.customer_code }} - {{ order.customer_name }} | عرض السعر {{ order.quote_no }}</p>
+    <p>الحالة: <strong>{{ order.status }}</strong> | تاريخ الأمر: {{ order.order_date }}</p>
+  </div>
+</header>
+<section class="panel">
+  <h3>بنود أمر البيع</h3>
+  <table>
+    <thead><tr><th>الصنف / الوصف</th><th>الكمية المطلوبة</th><th>تم تسليمها</th><th>تمت فوترتها</th><th>متبقي للتسليم</th><th>جاهز للفوترة</th><th>سعر الوحدة</th></tr></thead>
+    <tbody>
+    {% for line in lines %}
+      <tr>
+        <td>{{ line.description }}</td><td>{{ line.ordered_qty }}</td><td>{{ line.delivered_qty }}</td>
+        <td>{{ line.invoiced_qty }}</td><td>{{ '%.4f'|format(line.remaining_delivery) }}</td>
+        <td>{{ '%.4f'|format(line.ready_to_invoice) }}</td><td>{{ line.unit_price }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% if order.status == 'pending_approval' and 'sales.approve' in permissions %}
+<section class="panel">
+  <h3>اعتماد أمر البيع</h3>
+  <p>الاعتماد لا يصرف المخزون ولا ينشئ قيدًا محاسبيًا. يسمح فقط ببدء التسليم.</p>
+  <form method="post" action="{{ url_for('quotes.approve_order_route', order_id=order.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button>اعتماد أمر البيع</button>
+  </form>
+</section>
+{% endif %}
+{% if order.status in ['approved','partially_delivered','partially_invoiced'] and 'quotes.manage' in permissions %}
+<section class="panel">
+  <h3>إنشاء إذن تسليم جديد</h3>
+  <p>أدخل الكمية التي ستخرج فعليًا من المخزن. يمكن إنشاء أكثر من إذن للتسليم الجزئي.</p>
+  <form method="post" action="{{ url_for('quotes.create_delivery_note_route', order_id=order.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>تاريخ التسليم <input type="date" name="delivery_date" value="{{ today }}" required></label>
+    <table>
+      <thead><tr><th>الصنف</th><th>متبقي للتسليم</th><th>الكمية في الإذن</th></tr></thead>
+      <tbody>
+      {% for line in lines if line.product_id and line.remaining_delivery > 0 %}
+        <tr>
+          <td>{{ line.description }}</td>
+          <td>{{ '%.4f'|format(line.remaining_delivery) }}</td>
+          <td>
+            <input type="hidden" name="sales_order_line_id" value="{{ line.id }}">
+            <input type="number" name="quantity" min="0" max="{{ line.remaining_delivery }}" step="0.0001" placeholder="اتركه فارغًا للتخطي">
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <label>ملاحظات <textarea name="notes"></textarea></label>
+    <button>حفظ إذن التسليم كمسودة</button>
+  </form>
+</section>
+{% endif %}
+<section class="panel">
+  <h3>أذون التسليم</h3>
+  <table>
+    <thead><tr><th>رقم الإذن</th><th>التاريخ</th><th>الحالة</th><th>إجراء</th></tr></thead>
+    <tbody>
+    {% for note in notes %}
+      <tr>
+        <td>{{ note.delivery_no }}</td><td>{{ note.delivery_date }}</td><td>{{ note.status }}</td>
+        <td>
+          {% if note.status == 'draft' and 'quotes.manage' in permissions %}
+            <form method="post" action="{{ url_for('quotes.post_delivery_note_route', note_id=note.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button>ترحيل الإذن وصرف المخزون</button>
+            </form>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4">لا توجد أذون تسليم.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% if 'quotes.manage' in permissions and order.status in ['approved','partially_delivered','delivered','partially_invoiced'] %}
+<section class="panel">
+  <h3>إصدار فاتورة للكميات المسلمة غير المفوترة</h3>
+  <p>الفاتورة ستشمل الكميات المسلمة فقط. تكلفة المخزون تم إثباتها عند ترحيل إذن التسليم ولن يعاد صرف المخزون أو إثبات تكلفة المبيعات مرة ثانية.</p>
+  <form method="post" action="{{ url_for('quotes.invoice_order_route', order_id=order.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>تاريخ الفاتورة <input type="date" name="invoice_date" value="{{ today }}" required></label>
+    <label>تاريخ الاستحقاق <input type="date" name="due_date" value="{{ today }}" required></label>
+    <button>إصدار فاتورة الكميات المسلمة</button>
+  </form>
+</section>
+{% endif %}
+<section class="panel">
+  <h3>فواتير أمر البيع</h3>
+  <table><thead><tr><th>رقم الفاتورة</th><th>التاريخ</th><th>الإجمالي</th></tr></thead><tbody>
+  {% for invoice in invoices %}
+    <tr><td><a href="{{ url_for('sales.invoice_print', invoice_id=invoice.id) }}">{{ invoice.invoice_no }}</a></td><td>{{ invoice.invoice_date }}</td><td>{{ invoice.total_amount }}</td></tr>
+  {% else %}<tr><td colspan="3">لم تصدر فواتير بعد.</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+{% endblock %}
