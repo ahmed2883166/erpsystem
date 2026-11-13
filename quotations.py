@@ -192,7 +192,7 @@ def approve_sales_order(conn, order_id, approver_id):
 def create_delivery_note(conn, order_id, delivery_date, lines, created_by, notes=""):
  order=conn.execute("SELECT * FROM sales_orders WHERE id=?",(order_id,)).fetchone()
  if not order: raise ValueError("أمر البيع غير موجود.")
- if order["status"] not in {"approved","partially_delivered"}:
+ if order["status"] not in {"approved","partially_delivered","partially_invoiced"}:
   raise ValueError("لا يمكن إنشاء إذن تسليم قبل اعتماد أمر البيع أو بعد اكتمال التسليم.")
  ensure_stock_date_open(conn,delivery_date,"تاريخ إذن التسليم")
  if not lines: raise ValueError("أضف بندًا واحدًا على الأقل لإذن التسليم.")
@@ -225,7 +225,7 @@ def post_delivery_note(conn, note_id, posted_by):
  if not note: raise ValueError("إذن التسليم غير موجود.")
  if note["status"]!="draft": raise ValueError("إذن التسليم تم ترحيله أو إلغاؤه بالفعل.")
  order=conn.execute("SELECT * FROM sales_orders WHERE id=?",(note["sales_order_id"],)).fetchone()
- if order["status"] not in {"approved","partially_delivered"}: raise ValueError("أمر البيع غير معتمد للتسليم.")
+ if order["status"] not in {"approved","partially_delivered","partially_invoiced"}: raise ValueError("أمر البيع غير معتمد للتسليم.")
  ensure_stock_date_open(conn,note["delivery_date"],"تاريخ إذن التسليم")
  rows=conn.execute("SELECT * FROM delivery_note_lines WHERE delivery_note_id=? ORDER BY id",(note_id,)).fetchall()
  if not rows: raise ValueError("إذن التسليم لا يحتوي بنودًا.")
@@ -279,14 +279,17 @@ def invoice_sales_order(conn, order_id, invoice_date, due_date, created_by, dime
  order_lines=conn.execute("SELECT * FROM sales_order_lines WHERE sales_order_id=? ORDER BY id",(order_id,)).fetchall()
  items=[]; fulfillment=[]; consumption_plan=[]
  for line in order_lines:
-  ready=Decimal(str(line["delivered_qty"]))-Decimal(str(line["invoiced_qty"]))
+  if line["product_id"]:
+   ready=Decimal(str(line["delivered_qty"]))-Decimal(str(line["invoiced_qty"]))
+  else:
+   ready=Decimal(str(line["ordered_qty"]))-Decimal(str(line["invoiced_qty"]))
   if ready<=0: continue
   left=ready; cost_total=Decimal("0"); allocations=[]
   delivery_rows=conn.execute(
    """SELECT dl.*,dn.delivery_no FROM delivery_note_lines dl
       JOIN delivery_notes dn ON dn.id=dl.delivery_note_id
       WHERE dl.sales_order_line_id=? AND dn.status='posted'
-      ORDER BY dn.delivery_date,dn.id,dl.id""",(line["id"],)).fetchall()
+      ORDER BY dn.delivery_date,dn.id,dl.id""",(line["id"],)).fetchall() if line["product_id"] else []
   for dl in delivery_rows:
    available=Decimal(str(dl["quantity"]))-Decimal(str(dl["invoiced_qty"]))
    if available<=0 or left<=0: continue
@@ -311,7 +314,8 @@ def invoice_sales_order(conn, order_id, invoice_date, due_date, created_by, dime
     lot_plan.append((lot["id"],allocated_qty,allocated_cost))
    consumption_plan.append((dl["id"],take,take_cost,lot_plan))
    left-=take
-  if left>0: raise ValueError("الكميات المسلمة غير مرتبطة بطبقات تكلفة كافية للفوترة.")
+  if line["product_id"] and left>0:
+   raise ValueError("الكميات المسلمة غير مرتبطة بطبقات تكلفة كافية للفوترة.")
   items.append({"product_id":line["product_id"],"description":line["description"],
    "quantity":str(ready),"unit_price":line["unit_price"],"sales_order_line_id":line["id"]})
   fulfillment.append({"cost_total":str(cost_total),"allocations":allocations})
