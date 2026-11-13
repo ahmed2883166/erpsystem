@@ -821,14 +821,21 @@ def _reverse_posted_journal(conn, entry_id, reversal_date, reference, descriptio
     ).fetchall()
     if not rows:
         raise ValueError("لا يمكن عكس قيد غير موجود أو بلا تفاصيل.")
+    dimension_keys = (
+        "branch_id", "cost_center_id", "project_id", "customer_id",
+        "salesperson_id", "supplier_id",
+    )
     reversed_lines = [
-        (row["account_id"], Decimal(str(row["credit"] or "0")),
-         Decimal(str(row["debit"] or "0")), "عكس: " + str(row["memo"] or ""))
+        (
+            row["account_id"], Decimal(str(row["credit"] or "0")),
+            Decimal(str(row["debit"] or "0")), "عكس: " + str(row["memo"] or ""),
+            {key: row[key] for key in dimension_keys if key in row.keys()},
+        )
         for row in rows
     ]
-    dimensions = {key: rows[0][key] for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id")}
-    return post_journal(conn, reversal_date, reference, description, reversed_lines, created_by,
-                        dimensions=dimensions)
+    return post_journal(
+        conn, reversal_date, reference, description, reversed_lines, created_by,
+    )
 
 
 def post_customer_refund(conn, credit_note_id, refund_date, amount, cash_account_id,
@@ -847,6 +854,9 @@ def post_customer_refund(conn, credit_note_id, refund_date, amount, cash_account
     refundable = Decimal(note["refundable_amount"] or "0") - already_refunded
     if amount > refundable:
         raise ValueError(f"قيمة الرد تتجاوز المبلغ القابل للاسترداد. المتاح {max(refundable, Decimal('0'))}.")
+    if refund_date < note["credit_date"]:
+        raise ValueError("لا يمكن رد مبلغ بتاريخ يسبق تاريخ الإشعار الدائن.")
+    _ensure_unique_customer_cash_reference(conn, reference)
     _customer_cash_account(conn, cash_account_id)
     invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=?", (note["invoice_id"],)).fetchone()
     ar = _account(conn, _sales_account_codes(conn, _activity(conn))["ar"], "asset")
@@ -964,6 +974,7 @@ def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_i
                    Decimal(invoice["credited_amount"] or "0") + _refund_total(conn, invoice_id))
     if amount > outstanding:
         raise ValueError("قيمة التحصيل أكبر من الرصيد المستحق على الفاتورة.")
+    _ensure_unique_customer_cash_reference(conn, reference)
     _customer_cash_account(conn, cash_account_id)
     activity = _activity(conn)
     ar = _account(conn, _sales_account_codes(conn, activity)["ar"], "asset")
@@ -1017,6 +1028,7 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
         total += amount
     if not normalized or total <= 0:
         raise ValueError("اختر فاتورة واحدة على الأقل وأدخل مبلغ التحصيل.")
+    _ensure_unique_customer_cash_reference(conn, reference)
     _customer_cash_account(conn, cash_account_id)
     ar = _account(conn, _sales_account_codes(conn, _activity(conn))["ar"], "asset")
     receipt_no = "RCPTB-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -1066,6 +1078,30 @@ def _common_customer_invoice_dimensions(conn, invoices, customer_id):
     # One journal line cannot represent multiple branch/project assignments.
     # Preserve the customer dimension rather than falsely assigning one invoice's dimensions.
     return validate_journal_dimensions(conn, {"customer_id": customer_id})
+
+
+def _ensure_unique_customer_cash_reference(conn, reference):
+    """Reject a reused external cash/bank reference across customer cash documents."""
+    reference = str(reference or "").strip()
+    if not reference:
+        return
+    sources = (
+        ("customer_receipts", "reference"),
+        ("customer_receipt_batches", "reference"),
+        ("customer_advance_receipts", "reference"),
+        ("customer_advance_refunds", "reference"),
+        ("customer_refunds", "reference"),
+    )
+    for table, column in sources:
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone():
+            columns = {row["name"] for row in conn.execute(f'PRAGMA table_info("{table}")')}
+            if column in columns and conn.execute(
+                f'SELECT 1 FROM "{table}" WHERE TRIM(COALESCE("{column}",\'\'))=? LIMIT 1',
+                (reference,),
+            ).fetchone():
+                raise ValueError("رقم مرجع البنك/الإيصال مستخدم بالفعل في عملية تحصيل أو رد سابقة.")
 
 
 def _customer_cash_account(conn, cash_account_id):
@@ -1143,6 +1179,7 @@ def post_customer_advance_receipt(conn, customer_id, receipt_date, amount,
     ).fetchone()
     if not customer:
         raise ValueError("العميل غير موجود أو غير نشط.")
+    _ensure_unique_customer_cash_reference(conn, reference)
     _customer_cash_account(conn, cash_account_id)
     advance_account = _customer_advances_account(conn)
     receipt_no = "CADV-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -1263,6 +1300,7 @@ def post_customer_advance_refund(conn, advance_receipt_id, refund_date, amount,
     available = _customer_advance_available(conn, advance_receipt_id)
     if amount > available:
         raise ValueError(f"قيمة الرد تتجاوز المتبقي من مقدم العميل ({available:.2f}).")
+    _ensure_unique_customer_cash_reference(conn, reference)
     _customer_cash_account(conn, cash_account_id)
     advance_account = _customer_advances_account(conn)
     refund_no = "CADVR-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
