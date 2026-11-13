@@ -1944,9 +1944,20 @@ def invoice_print(invoice_id):
         FROM sales_invoice_lines l LEFT JOIN stock_products p ON p.id=l.product_id
         WHERE l.invoice_id=? ORDER BY l.id""", (invoice_id,)).fetchall()
     settings = {r["setting_key"]:r["setting_value"] for r in c.execute(
-        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('company_name','base_currency','tax_number')")}
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
+        "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
+    branch = None
+    invoice_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoices)")}
+    if "branch_id" in invoice_columns and c.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='branches'"
+    ).fetchone() and invoice["branch_id"]:
+        branch = c.execute(
+            "SELECT code,name_ar,address,phone,email,tax_number FROM branches WHERE id=?",
+            (invoice["branch_id"],),
+        ).fetchone()
     c.close()
-    return render_template("sales_invoice_print.html", invoice=invoice, lines=lines, settings=settings)
+    return render_template("sales_invoice_print.html", invoice=invoice, lines=lines,
+                           settings=settings, branch=branch)
 
 @sales_bp.route("/credit-notes/new", methods=["GET", "POST"])
 @require("sales.manage")
