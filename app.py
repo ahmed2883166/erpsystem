@@ -2446,17 +2446,42 @@ def reset_company_data():
         return redirect(url_for("backup_settings"))
 
     supplied_password = request.form.get("super_admin_password", "")
+    remote_addr = request.remote_addr or "unknown"
+    cutoff_text = datetime.fromtimestamp(datetime.now().timestamp() - 900).isoformat(timespec="seconds")
     connection = db()
+    if login_attempts_exceeded(connection, "super-admin-reset", remote_addr, cutoff_text):
+        connection.close()
+        log("company_data_reset_locked", "تجاوز الحد المسموح لمحاولات كلمة مرور المدير الأعلى",
+            entity_type="system", outcome="failure")
+        flash("تم إيقاف محاولة التصفير مؤقتًا بسبب تكرار كلمات المرور الخاطئة.", "error")
+        return redirect(url_for("backup_settings"))
+
+    current_admin = connection.execute(
+        "SELECT id FROM users WHERE id=? AND role='admin' AND active=1",
+        (session.get("user_id"),),
+    ).fetchone()
     root_admin = connection.execute(
         "SELECT id,password_hash FROM users "
         "WHERE username='admin' AND role='admin' AND active=1"
     ).fetchone()
-    connection.close()
-    if not root_admin or not verify_password(supplied_password, root_admin["password_hash"]):
-        log("company_data_reset_rejected", "كلمة مرور مدير النظام الأعلى غير صحيحة",
+    if not current_admin or not root_admin or not verify_password(supplied_password, root_admin["password_hash"]):
+        connection.execute(
+            "INSERT INTO login_attempts(username,remote_addr,attempted_at) VALUES(?,?,?)",
+            ("super-admin-reset", remote_addr, now()),
+        )
+        connection.commit()
+        connection.close()
+        log("company_data_reset_rejected", "كلمة مرور مدير النظام الأعلى غير صحيحة أو لا توجد جلسة مدير فعالة",
             entity_type="system", outcome="failure")
-        flash("كلمة مرور مدير النظام الأعلى غير صحيحة. لم يتم حذف أي بيانات.", "error")
+        flash("بيانات مدير النظام الأعلى غير صحيحة. لم يتم حذف أي بيانات.", "error")
         return redirect(url_for("backup_settings"))
+
+    connection.execute(
+        "DELETE FROM login_attempts WHERE username='super-admin-reset' AND remote_addr=?",
+        (remote_addr,),
+    )
+    connection.commit()
+    connection.close()
 
     try:
         settings_connection = db()
