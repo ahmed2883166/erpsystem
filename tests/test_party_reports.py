@@ -113,6 +113,12 @@ class PartyStatementTests(unittest.TestCase):
 
     def test_customer_statement_includes_advance_applications_but_not_unallocated_receipt(self):
         conn = sqlite3.connect(self.db_path)
+        conn.execute("""CREATE TABLE customer_advance_receipts(
+            id INTEGER PRIMARY KEY, receipt_no TEXT, customer_id INTEGER,
+            receipt_date TEXT, amount TEXT, journal_entry_id INTEGER
+        )""")
+        conn.execute("""INSERT INTO customer_advance_receipts
+            VALUES(1,'CADV-UNALLOCATED',1,'2026-11-23','200.00',98)""")
         conn.execute("""CREATE TABLE customer_advance_allocations(
             id INTEGER PRIMARY KEY, advance_receipt_id INTEGER, invoice_id INTEGER,
             allocation_date TEXT, amount TEXT, journal_entry_id INTEGER
@@ -129,6 +135,7 @@ class PartyStatementTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.get_data(as_text=True)
         self.assertIn("CADVA-1", body)
+        self.assertNotIn("CADV-UNALLOCATED", body)
         # Opening 800 + current invoice 500 - receipts 100 - batch 150 - advance allocation 50.
         self.assertIn("1,000.00", body)
 
