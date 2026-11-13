@@ -285,21 +285,37 @@ def reconciliation_snapshot(conn):
                     gl_stock += Decimal(str(row["debit"] or "0")) - Decimal(str(row["credit"] or "0"))
 
     grni = Decimal("0")
-    if _table_exists(conn, "goods_receipts") and _table_exists(conn, "supplier_bill_receipts"):
-        matched_by_receipt = {}
-        for row in conn.execute("SELECT receipt_id,matched_amount FROM supplier_bill_receipts"):
-            matched_by_receipt[row["receipt_id"]] = matched_by_receipt.get(row["receipt_id"], Decimal("0")) + Decimal(str(row["matched_amount"] or "0"))
-        for row in conn.execute("SELECT id,total_value FROM goods_receipts WHERE status='posted'"):
-            unmatched = Decimal(str(row["total_value"] or "0")) - matched_by_receipt.get(row["id"], Decimal("0"))
-            if unmatched > 0:
-                grni += unmatched
+    if (_table_exists(conn, "goods_receipts") and
+            _table_exists(conn, "supplier_bill_receipts") and
+            _table_exists(conn, "supplier_bills")):
+        receipt_link_columns = _columns(conn, "supplier_bill_receipts")
+        bill_columns = _columns(conn, "supplier_bills")
+        # A draft, pending, or rejected invoice does not settle GRNI. The
+        # liability moves to AP only after the supplier bill is posted.
+        if {"bill_id", "receipt_id", "matched_amount"}.issubset(receipt_link_columns) and "status" in bill_columns:
+            matched_by_receipt = {}
+            for row in conn.execute("""SELECT x.receipt_id,x.matched_amount
+                FROM supplier_bill_receipts x
+                JOIN supplier_bills b ON b.id=x.bill_id
+                WHERE b.status='posted'"""):
+                matched_by_receipt[row["receipt_id"]] = matched_by_receipt.get(row["receipt_id"], Decimal("0")) + Decimal(str(row["matched_amount"] or "0"))
+            for row in conn.execute("SELECT id,total_value FROM goods_receipts WHERE status='posted'"):
+                unmatched = Decimal(str(row["total_value"] or "0")) - matched_by_receipt.get(row["id"], Decimal("0"))
+                if unmatched > 0:
+                    grni += unmatched
 
     open_ap = Decimal("0")
     if _table_exists(conn, "supplier_bills"):
         cols = _columns(conn, "supplier_bills")
         if {"total_amount", "paid_amount", "status"}.issubset(cols):
-            for row in conn.execute("SELECT total_amount,paid_amount FROM supplier_bills WHERE status='posted'"):
-                open_ap += Decimal(str(row["total_amount"] or "0")) - Decimal(str(row["paid_amount"] or "0"))
+            credited_expr = "credited_amount" if "credited_amount" in cols else "'0'"
+            for row in conn.execute(
+                f"SELECT total_amount,paid_amount,{credited_expr} credited_amount "
+                "FROM supplier_bills WHERE status='posted'"
+            ):
+                open_ap += (Decimal(str(row["total_amount"] or "0")) -
+                            Decimal(str(row["paid_amount"] or "0")) -
+                            Decimal(str(row["credited_amount"] or "0")))
 
     linkage_checks = [
         ("goods_receipts", "إيصالات الاستلام", "journal_entry_id"),
