@@ -2,7 +2,7 @@ from app_paths import DB_PATH
 from database import connect_database
 """Customer price lists and quotation workflow."""
 import sqlite3
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import date,datetime
 from functools import wraps
 from flask import Blueprint,flash,redirect,render_template,request,session,url_for
@@ -129,8 +129,22 @@ def create_sales_order_from_quotation(conn, quote_id, created_by, warehouse_id=N
  if q["sales_order_id"] if "sales_order_id" in q.keys() else False:
   raise ValueError("تم تحويل عرض السعر إلى أمر بيع بالفعل.")
  if q["valid_until"]<date.today().isoformat(): raise ValueError("انتهت صلاحية عرض السعر.")
+ if expected_date and expected_date<date.today().isoformat(): raise ValueError("تاريخ التسليم المتوقع لا يمكن أن يسبق تاريخ أمر البيع.")
  lines=conn.execute("SELECT * FROM quotation_lines WHERE quotation_id=? ORDER BY id",(quote_id,)).fetchall()
  if not lines: raise ValueError("عرض السعر لا يحتوي بنودًا.")
+ activity=conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+ activity_code=activity["setting_value"] if activity else "commercial"
+ if activity_code!="service" and not warehouse_id:
+  raise ValueError("حدد مخزن التسليم عند إنشاء أمر البيع.")
+ if warehouse_id and not conn.execute("SELECT 1 FROM stock_warehouses WHERE id=? AND active=1",(warehouse_id,)).fetchone():
+  raise ValueError("مخزن التسليم غير موجود أو غير نشط.")
+ for line in lines:
+  try:
+   qty=Decimal(str(line["quantity"])); price=Decimal(str(line["unit_price"]))
+  except (InvalidOperation,ValueError,TypeError) as exc:
+   raise ValueError("كمية أو سعر أحد بنود عرض السعر غير صحيح.") from exc
+  if not qty.is_finite() or qty<=0 or not price.is_finite() or price<0:
+   raise ValueError("كمية أو سعر أحد بنود عرض السعر غير صحيح.")
  order_no="SO-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
  cur=conn.execute(
   """INSERT INTO sales_orders(order_no,quotation_id,customer_id,warehouse_id,order_date,
@@ -152,10 +166,14 @@ def approve_sales_order(conn, order_id, approver_id):
  if not order: raise ValueError("أمر البيع غير موجود.")
  if order["status"]!="pending_approval": raise ValueError("أمر البيع ليس في انتظار الاعتماد.")
  if order["created_by"]==approver_id: raise ValueError("لا يجوز اعتماد أمر البيع بواسطة نفس منشئه.")
- if order["warehouse_id"] is None:
-  activity=conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
-  if not activity or activity["setting_value"]!="service":
-   raise ValueError("حدد مخزن التسليم قبل اعتماد أمر البيع.")
+ activity=conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+ activity_code=activity["setting_value"] if activity else "commercial"
+ if order["warehouse_id"] is None and activity_code!="service":
+  raise ValueError("حدد مخزن التسليم قبل اعتماد أمر البيع.")
+ if order["warehouse_id"] and not conn.execute(
+  "SELECT 1 FROM stock_warehouses WHERE id=? AND active=1",(order["warehouse_id"],)
+ ).fetchone():
+  raise ValueError("مخزن التسليم غير موجود أو غير نشط.")
  conn.execute(
   "UPDATE sales_orders SET status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending_approval'",
   (approver_id,order_id))
@@ -184,7 +202,10 @@ def create_delivery_note(conn, order_id, delivery_date, lines, created_by, notes
   seen.add(line_id)
   line=conn.execute("SELECT * FROM sales_order_lines WHERE id=? AND sales_order_id=?",(line_id,order_id)).fetchone()
   if not line: raise ValueError("بند إذن التسليم لا يتبع أمر البيع المحدد.")
-  qty=Decimal(str(item["quantity"]))
+  try:
+   qty=Decimal(str(item["quantity"]))
+  except (InvalidOperation,ValueError,TypeError) as exc:
+   raise ValueError("كمية التسليم غير صحيحة.") from exc
   remaining=Decimal(str(line["ordered_qty"]))-Decimal(str(line["delivered_qty"]))
   if not qty.is_finite() or qty<=0: raise ValueError("كمية التسليم يجب أن تكون أكبر من صفر.")
   if qty>remaining: raise ValueError("كمية التسليم تتجاوز الكمية المتبقية من أمر البيع.")
@@ -388,7 +409,7 @@ def convert(quote_id):
   c.commit()
   flash("تم إنشاء أمر البيع "+result["order_no"]+" وإرساله للاعتماد الداخلي.","success")
   return redirect(url_for("quotes.sales_order_view",order_id=result["sales_order_id"]))
- except (ValueError,sqlite3.Error) as e:
+ except (ValueError,InvalidOperation,sqlite3.Error) as e:
   c.rollback(); flash(str(e),"error")
   return redirect(url_for("quotes.view",quote_id=quote_id))
  finally: c.close()
