@@ -47,16 +47,22 @@
         <div class="form-grid">
           <form method="post" action="{{ url_for('sales.allocate_customer_advance_route', advance_id=advance.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <h4>تخصيص المقدم على فاتورة</h4>
-            <label>الفاتورة
-              <select name="invoice_id" required>
-                <option value="">اختر فاتورة لنفس العميل</option>
-                {% for invoice in advance.open_invoices %}
-                  <option value="{{ invoice.id }}">{{ invoice.invoice_no }} — المتبقي {{ '%.2f'|format(invoice.outstanding) }}</option>
-                {% endfor %}
-              </select>
-            </label>
-            <label>قيمة التخصيص <input type="number" name="amount" min="0.01" max="{{ advance.remaining_amount }}" step="0.01" required></label>
+            <h4>توزيع المقدم على فاتورة أو أكثر</h4>
+            <table>
+              <thead><tr><th>اختيار</th><th>الفاتورة</th><th>المتبقي</th><th>مبلغ التخصيص</th></tr></thead>
+              <tbody>
+              {% for invoice in advance.open_invoices %}
+                <tr>
+                  <td><input type="checkbox" name="invoice_ids" value="{{ invoice.id }}"></td>
+                  <td>{{ invoice.invoice_no }}</td>
+                  <td>{{ '%.2f'|format(invoice.outstanding) }}</td>
+                  <td><input type="number" name="allocation_amount_{{ invoice.id }}" min="0" step="0.01" placeholder="0.00"></td>
+                </tr>
+              {% else %}
+                <tr><td colspan="4">لا توجد فواتير مفتوحة لهذا العميل.</td></tr>
+              {% endfor %}
+              </tbody>
+            </table>
             <label>تاريخ التخصيص <input type="date" name="allocation_date" value="{{ today }}" required></label>
             <button type="submit" {% if not advance.open_invoices %}disabled{% endif %}>تخصيص وترحيل</button>
           </form>
