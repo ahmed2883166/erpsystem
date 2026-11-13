@@ -148,6 +148,7 @@ class ReceivablesAgingTests(unittest.TestCase):
 
     def test_customer_aging_excludes_reversed_advance_allocation_after_reversal_date(self):
         conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
         conn.execute("ALTER TABLE customer_advance_allocations ADD COLUMN journal_entry_id INTEGER")
         conn.execute("UPDATE customer_advance_allocations SET journal_entry_id=500 WHERE id=1")
         conn.execute("UPDATE sales_invoices SET paid_amount='75' WHERE id=2")
