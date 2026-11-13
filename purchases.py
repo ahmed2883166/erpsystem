@@ -31,7 +31,9 @@ def init_purchase_schema():
     CREATE TABLE IF NOT EXISTS purchase_orders(
       id INTEGER PRIMARY KEY, po_no TEXT NOT NULL UNIQUE, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
       order_date TEXT NOT NULL, expected_date TEXT, status TEXT NOT NULL DEFAULT 'draft',
-      notes TEXT NOT NULL DEFAULT '', created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      notes TEXT NOT NULL DEFAULT '', created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      submitted_by INTEGER, submitted_at TEXT, approved_by INTEGER, approved_at TEXT,
+      rejected_by INTEGER, rejected_at TEXT, rejection_reason TEXT, approval_reason TEXT
     );
     CREATE TABLE IF NOT EXISTS purchase_order_lines(
       id INTEGER PRIMARY KEY, po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
@@ -98,6 +100,16 @@ def init_purchase_schema():
       ON supplier_bill_receipts(receipt_id);
     CREATE INDEX IF NOT EXISTS idx_purchase_receipts_supplier ON goods_receipts(supplier_id,receipt_date);
     """)
+    order_columns = {row["name"] for row in c.execute("PRAGMA table_info(purchase_orders)")}
+    for name, declaration in (
+        ("submitted_by", "INTEGER"), ("submitted_at", "TEXT"),
+        ("approved_by", "INTEGER"), ("approved_at", "TEXT"),
+        ("rejected_by", "INTEGER"), ("rejected_at", "TEXT"),
+        ("rejection_reason", "TEXT"), ("approval_reason", "TEXT"),
+    ):
+        if name not in order_columns:
+            c.execute("ALTER TABLE purchase_orders ADD COLUMN " + name + " " + declaration)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_purchase_orders_approval ON purchase_orders(status, created_at, id)")
     bill_columns = {row["name"] for row in c.execute("PRAGMA table_info(supplier_bills)")}
     if "credited_amount" not in bill_columns:
         c.execute("ALTER TABLE supplier_bills ADD COLUMN credited_amount TEXT NOT NULL DEFAULT '0'")
@@ -160,12 +172,63 @@ def require(permission):
         @wraps(fn)
         def wrapped(*a,**kw):
             if "user_id" not in session: return redirect(url_for("login"))
-            allowed={"purchases.manage":{"admin","accountant"},"purchases.view":{"admin","accountant","viewer"}}
+            allowed={"purchases.manage":{"admin","accountant"},"purchases.view":{"admin","accountant","viewer"},"purchases.approve":{"admin"}}
             if (permission not in set(session["permissions"])) if "permissions" in session else (session.get("role") not in allowed.get(permission,set())):
                 flash("لا تملك الصلاحية المطلوبة.","error"); return redirect(url_for("dashboard"))
             return fn(*a,**kw)
         return wrapped
     return deco
+
+def submit_purchase_order(c, order_id, actor_id):
+    c.execute("BEGIN IMMEDIATE")
+    order = c.execute("SELECT * FROM purchase_orders WHERE id=?", (order_id,)).fetchone()
+    if not order:
+        raise ValueError("أمر الشراء غير موجود.")
+    if order["status"] not in {"draft", "rejected"}:
+        raise ValueError("لا يمكن إرسال أمر الشراء للمراجعة من حالته الحالية.")
+    if not c.execute("SELECT 1 FROM purchase_order_lines WHERE po_id=? LIMIT 1", (order_id,)).fetchone():
+        raise ValueError("لا يمكن إرسال أمر شراء بدون بنود.")
+    c.execute("""UPDATE purchase_orders SET status='pending_approval',
+        submitted_by=?, submitted_at=CURRENT_TIMESTAMP, approved_by=NULL, approved_at=NULL,
+        rejected_by=NULL, rejected_at=NULL, rejection_reason=NULL, approval_reason=NULL
+        WHERE id=?""", (actor_id, order_id))
+
+
+def approve_purchase_order(c, order_id, actor_id, reason=""):
+    c.execute("BEGIN IMMEDIATE")
+    order = c.execute("SELECT * FROM purchase_orders WHERE id=?", (order_id,)).fetchone()
+    if not order:
+        raise ValueError("أمر الشراء غير موجود.")
+    if order["status"] != "pending_approval":
+        raise ValueError("أمر الشراء ليس بانتظار الاعتماد.")
+    if order["created_by"] == actor_id or order["submitted_by"] == actor_id:
+        raise ValueError("لا يجوز اعتماد أمر شراء أنشأته أو أرسلته للمراجعة بنفسك.")
+    if order["created_by"] is None or order["submitted_by"] is None:
+        raise ValueError("بيانات منشئ أو مرسل أمر الشراء غير مكتملة؛ راجع المستند.")
+    c.execute("""UPDATE purchase_orders SET status='approved', approved_by=?,
+        approved_at=CURRENT_TIMESTAMP, approval_reason=? WHERE id=? AND status='pending_approval'""",
+        (actor_id, reason.strip(), order_id))
+    if c.execute("SELECT changes()").fetchone()[0] != 1:
+        raise ValueError("تغيرت حالة أمر الشراء؛ أعد تحميل الصفحة.")
+
+
+def reject_purchase_order(c, order_id, actor_id, reason):
+    reason = (reason or "").strip()
+    if len(reason) < 5:
+        raise ValueError("اكتب سبب رفض واضحًا (5 أحرف على الأقل).")
+    c.execute("BEGIN IMMEDIATE")
+    order = c.execute("SELECT * FROM purchase_orders WHERE id=?", (order_id,)).fetchone()
+    if not order:
+        raise ValueError("أمر الشراء غير موجود.")
+    if order["status"] != "pending_approval":
+        raise ValueError("أمر الشراء ليس بانتظار الاعتماد.")
+    if order["created_by"] == actor_id or order["submitted_by"] == actor_id:
+        raise ValueError("لا يجوز رفض مستند أنشأته أو أرسلته للمراجعة بنفسك.")
+    c.execute("""UPDATE purchase_orders SET status='rejected', rejected_by=?,
+        rejected_at=CURRENT_TIMESTAMP, rejection_reason=? WHERE id=? AND status='pending_approval'""",
+        (actor_id, reason, order_id))
+    if c.execute("SELECT changes()").fetchone()[0] != 1:
+        raise ValueError("تغيرت حالة أمر الشراء؛ أعد تحميل الصفحة.")
 
 def account(c, code, typ=None):
     row=c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?",(code,)).fetchone()
@@ -429,6 +492,53 @@ def new_order():
     c.close(); return render_template("purchase_order_new.html",suppliers=su,products=products,today=date.today().isoformat())
 
 
+@purchase_bp.route("/orders/<int:order_id>/submit", methods=["POST"])
+@require("purchases.manage")
+def submit_order(order_id):
+    c = db()
+    try:
+        submit_purchase_order(c, order_id, session["user_id"])
+        c.commit()
+        flash("تم إرسال أمر الشراء للمراجعة والاعتماد.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc), "error")
+    finally:
+        c.close()
+    return redirect(url_for("purchase.index"))
+
+
+@purchase_bp.route("/orders/<int:order_id>/approve", methods=["POST"])
+@require("purchases.approve")
+def approve_order(order_id):
+    c = db()
+    try:
+        approve_purchase_order(c, order_id, session["user_id"], request.form.get("reason", ""))
+        c.commit()
+        flash("تم اعتماد أمر الشراء. أصبح الاستلام مسموحًا.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc), "error")
+    finally:
+        c.close()
+    return redirect(url_for("purchase.index"))
+
+
+@purchase_bp.route("/orders/<int:order_id>/reject", methods=["POST"])
+@require("purchases.approve")
+def reject_order(order_id):
+    c = db()
+    try:
+        reject_purchase_order(c, order_id, session["user_id"], request.form.get("reason", ""))
+        c.commit()
+        flash("تم رفض أمر الشراء وإعادته للتعديل مع حفظ سبب الرفض.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc), "error")
+    finally:
+        c.close()
+    return redirect(url_for("purchase.index"))
+
 @purchase_bp.route("/orders/<int:order_id>/edit",methods=["GET","POST"])
 @require("purchases.manage")
 def edit_order(order_id):
@@ -437,14 +547,15 @@ def edit_order(order_id):
     if not order:
         c.close(); flash("أمر الشراء غير موجود.","error"); return redirect(url_for("purchase.index"))
     received=c.execute("SELECT 1 FROM goods_receipts WHERE po_id=? LIMIT 1",(order_id,)).fetchone() is not None
-    if received or order["status"]!="draft":
+    if received or order["status"] not in {"draft", "rejected"}:
         c.close(); flash("لا يمكن تعديل أمر شراء تم استلامه أو اعتماده.","error"); return redirect(url_for("purchase.index"))
     if request.method=="POST":
         try:
             supplier=int(request.form["supplier_id"]); product=int(request.form["product_id"])
             qty=Decimal(request.form["quantity"]); price=money(request.form["unit_price"])
             if qty<=0 or price<0: raise ValueError("الكمية والسعر غير صحيحين.")
-            c.execute("UPDATE purchase_orders SET supplier_id=?,order_date=?,expected_date=?,notes=? WHERE id=?",
+            c.execute("""UPDATE purchase_orders SET supplier_id=?,order_date=?,expected_date=?,notes=?,status='draft',
+              rejected_by=NULL,rejected_at=NULL,rejection_reason=NULL WHERE id=?""",
               (supplier,request.form["order_date"],request.form.get("expected_date") or None,request.form.get("notes",""),order_id))
             c.execute("UPDATE purchase_order_lines SET product_id=?,quantity=?,unit_price=? WHERE id=?",
               (product,str(qty),str(price),order["line_id"]))
@@ -460,7 +571,7 @@ def edit_order(order_id):
 def delete_order(order_id):
     c=db(); order=c.execute("SELECT * FROM purchase_orders WHERE id=?",(order_id,)).fetchone()
     if not order: flash("أمر الشراء غير موجود.","error")
-    elif order["status"]!="draft": flash("لا يمكن حذف أمر شراء معتمد.","error")
+    elif order["status"] not in {"draft", "rejected"}: flash("لا يمكن حذف أمر شراء تم إرساله للمراجعة أو اعتماده.","error")
     elif c.execute("SELECT 1 FROM goods_receipts WHERE po_id=? LIMIT 1",(order_id,)).fetchone():
         flash("لا يمكن حذف أمر الشراء لوجود استلام مرتبط به.","error")
     else:
@@ -494,7 +605,7 @@ def new_receipt():
                 request.form.get("production_date",""),request.form.get("expiry_date",""),request.form["receipt_date"])
             po_line_id=None
             if po_id:
-                po=c.execute("SELECT * FROM purchase_orders WHERE id=? AND supplier_id=? AND status IN ('draft','partially_received')",
+                po=c.execute("SELECT * FROM purchase_orders WHERE id=? AND supplier_id=? AND status IN ('approved','partially_received')",
                              (po_id,supplier)).fetchone()
                 if not po: raise ValueError("أمر الشراء غير موجود أو لا يتبع المورد أو مغلق.")
                 po_lines=c.execute("SELECT * FROM purchase_order_lines WHERE po_id=? AND product_id=? ORDER BY id",
