@@ -1,5 +1,4 @@
 """Analytical expense reporting by account and optional business dimensions."""
-from datetime import date
 from decimal import Decimal
 
 from accounting_core import register_decimal_aggregates
@@ -84,5 +83,4 @@ def build_expense_analysis(conn, date_from, date_to, dimensions=None):
         "dimension_rows":sorted(dimension_totals.values(),key=lambda x:(x["dimension"],-x["amount"])),
         "monthly_rows":monthly,
         "total":total,"direct_total":direct_total,"operating_total":operating_total,
-        "transaction_count":len(detail_rows),
     }
