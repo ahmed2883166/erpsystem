@@ -816,7 +816,7 @@ def submit_supplier_bill(c, bill_id, actor_id):
     elif bill["bill_kind"] == "asset":
         if bill_receipts:
             raise ValueError("فاتورة الأصل الثابت لا يجوز ربطها بإيصالات استلام مخزني.")
-        validate_asset_bill_data(c, bill, bill["bill_date"], money(bill["subtotal"]))
+        validate_asset_bill_data(c, dict(bill), bill["bill_date"], money(bill["subtotal"]))
     else:
         raise ValueError("نوع فاتورة المورد المخزن غير معروف.")
     c.execute("""UPDATE supplier_bills SET status='pending_approval',
@@ -917,7 +917,7 @@ def post_supplier_bill(c, bill_id, actor_id):
     elif bill["bill_kind"] == "asset":
         if c.execute("SELECT 1 FROM supplier_bill_receipts WHERE bill_id=? LIMIT 1", (bill_id,)).fetchone():
             raise ValueError("فاتورة الأصل الثابت لا يجوز ربطها بإيصالات استلام مخزني.")
-        asset_data = validate_asset_bill_data(c, bill, bill["bill_date"], subtotal)
+        asset_data = validate_asset_bill_data(c, dict(bill), bill["bill_date"], subtotal)
         journal_lines.extend([
             (asset_data["asset_account_id"], subtotal, 0, "رسملة تكلفة الأصل " + asset_data["asset_name"]),
             (ap, 0, subtotal, "إثبات المورد مقابل شراء أصل ثابت"),
@@ -967,9 +967,15 @@ def new_bill():
                          (supplier,supplier_invoice_no)).fetchone():
                 raise ValueError("رقم فاتورة المورد مسجل بالفعل لهذا المورد.")
             bill_kind=request.form.get("bill_kind","inventory").strip()
-            if bill_kind not in {"inventory","expense"}:
+            if bill_kind not in {"inventory","expense","asset"}:
                 raise ValueError("نوع فاتورة المورد غير صحيح.")
             expense_account_id=None
+            asset_data={}
+            if bill_kind=="asset":
+                if receipts:
+                    raise ValueError("فاتورة الأصل الثابت لا تُربط بإيصالات استلام مخزني.")
+                asset_data=validate_asset_bill_data(c,request.form,request.form["bill_date"],subtotal)
+                supplier_ap_account(c)
             if bill_kind=="expense":
                 expense_account_id=int(request.form.get("expense_account_id","0"))
                 expense_row=c.execute("SELECT account_type,is_group,active FROM accounts WHERE id=?",(expense_account_id,)).fetchone()
@@ -993,11 +999,18 @@ def new_bill():
             if due_date < request.form["bill_date"]: raise ValueError("تاريخ استحقاق المورد لا يمكن أن يسبق تاريخ الفاتورة.")
             cur=c.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,
                 subtotal,tax_rate,tax_amount,total_amount,created_by,branch_id,cost_center_id,project_id,
-                status,bill_kind,expense_account_id)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?)""",
+                status,bill_kind,expense_account_id,asset_code,asset_name,asset_category,asset_ready_date,
+                asset_residual_value,asset_useful_life_months,asset_depreciation_method,asset_annual_rate,
+                asset_account_id,asset_accum_account_id,asset_expense_account_id)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (no,supplier,request.form["bill_date"],due_date,supplier_invoice_no,str(subtotal),str(rate),
                  str(tax),str(total),session["user_id"],dimensions["branch_id"],dimensions["cost_center_id"],
-                 dimensions["project_id"],bill_kind,expense_account_id))
+                 dimensions["project_id"],bill_kind,expense_account_id,
+                 asset_data.get("asset_code"),asset_data.get("asset_name"),asset_data.get("asset_category"),
+                 asset_data.get("asset_ready_date"),asset_data.get("asset_residual_value","0"),
+                 asset_data.get("asset_useful_life_months"),asset_data.get("asset_depreciation_method","straight_line"),
+                 asset_data.get("asset_annual_rate","0"),asset_data.get("asset_account_id"),
+                 asset_data.get("asset_accum_account_id"),asset_data.get("asset_expense_account_id")))
             bid=cur.lastrowid
             for rid,amt in receipt_allocations:
                 c.execute("INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
@@ -1011,9 +1024,12 @@ def new_bill():
             c.rollback(); flash(str(e),"error")
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     expense_accounts=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code").fetchall()
+    asset_accounts=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=0 AND active=1 ORDER BY code").fetchall()
     receipts = _available_supplier_receipts(c)
     dimension_options=active_dimension_options(c)
-    c.close(); return render_template("purchase_bill_new.html",suppliers=su,receipts=receipts,expense_accounts=expense_accounts,dimension_options=dimension_options,today=date.today().isoformat())
+    c.close(); return render_template("purchase_bill_new.html",suppliers=su,receipts=receipts,
+        expense_accounts=expense_accounts,asset_accounts=asset_accounts,
+        dimension_options=dimension_options,today=date.today().isoformat())
 
 
 @purchase_bp.route("/bills/<int:bill_id>/edit", methods=["GET", "POST"])
