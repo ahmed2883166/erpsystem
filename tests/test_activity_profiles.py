@@ -33,6 +33,38 @@ class ActivityProfileTests(unittest.TestCase):
         self.assertEqual({p["code"] for p in profiles},
                          {"commercial", "service", "medical", "restaurant", "industrial"})
 
+    def test_builtin_profile_mappings_refresh_without_overwriting_custom_profiles(self):
+        import json
+
+        builtin = self.conn.execute(
+            "SELECT id FROM activity_profiles WHERE code='service'"
+        ).fetchone()["id"]
+        self.conn.execute(
+            "UPDATE activity_profiles SET account_roles_json='{}' WHERE id=?",
+            (builtin,),
+        )
+        custom_id = create_activity_profile(
+            self.conn, "custom_service", "خدمة مخصصة", "service"
+        )
+        self.conn.execute(
+            "UPDATE activity_profiles SET account_roles_json='{}' WHERE id=?",
+            (custom_id,),
+        )
+
+        initialize_activity_profiles_schema(self.conn)
+
+        builtin_roles = json.loads(self.conn.execute(
+            "SELECT account_roles_json FROM activity_profiles WHERE id=?",
+            (builtin,),
+        ).fetchone()["account_roles_json"])
+        custom_roles = json.loads(self.conn.execute(
+            "SELECT account_roles_json FROM activity_profiles WHERE id=?",
+            (custom_id,),
+        ).fetchone()["account_roles_json"])
+        self.assertIn("5610", builtin_roles["direct_cost"])
+        self.assertIn("1191", builtin_roles["current_assets"])
+        self.assertEqual(custom_roles, {})
+
     def test_specialized_presets_create_custom_profiles_idempotently(self):
         self.assertIn("transport_logistics", SPECIALIZED_ACTIVITY_PRESETS)
         first_id = create_specialized_activity_profile(self.conn, "transport_logistics")
