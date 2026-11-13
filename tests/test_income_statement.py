@@ -119,6 +119,8 @@ class IncomeStatementRouteTests(unittest.TestCase):
             session["permissions"] = ["reports.view", "expenses.view"]
 
     def test_analytical_expense_report_route_renders_filtered_report(self):
+        with self.client.session_transaction() as session:
+            session["permissions"] = ["reports.view", "expenses.view"]
         response = self.client.get(
             "/reports/expense-analysis?date_from=2026-11-01&date_to=2026-11-30"
         )
