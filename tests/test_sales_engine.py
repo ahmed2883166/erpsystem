@@ -581,7 +581,7 @@ class SalesIntegrationTests(unittest.TestCase):
         saved = self.db.execute("SELECT discount_type,discount_value,discount_amount FROM sales_invoices WHERE id=?",
                                 (result["invoice_id"],)).fetchone()
         self.assertEqual((saved["discount_type"], saved["discount_value"], Decimal(saved["discount_amount"])),
-                         ("fixed", "15.00", "15.00"))
+                         ("fixed", "15.00", Decimal("15.00")))
 
     def test_customer_advance_receipt_allocation_and_refund_post_balanced_journals(self):
         self.db.execute("BEGIN IMMEDIATE")
@@ -899,7 +899,9 @@ class SalesIntegrationTests(unittest.TestCase):
             "SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'"
         ).fetchone()[0], 2)
         self.assertEqual(
-            Decimal(self.db.execute("SELECT qty_remaining FROM stock_valuation_layers").fetchone()[0]),
+            Decimal(self.db.execute(
+                "SELECT SUM(CAST(qty_remaining AS NUMERIC)) FROM stock_valuation_layers"
+            ).fetchone()[0]),
             Decimal("2.0000"),
         )
         self.assertEqual(
