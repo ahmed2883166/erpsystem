@@ -7,10 +7,28 @@
 <label>نوع البُعد<select name="dimension_type" required><option value="branch">فرع</option><option value="cost_center">مركز تكلفة</option><option value="project">مشروع</option></select></label>
 <label>الكود<input name="code" required maxlength="30"></label>
 <label>الاسم<input name="name_ar" required maxlength="120"></label>
+<label>العنوان (للفرع)<input name="address" maxlength="300"></label>
+<label>الهاتف (للفرع)<input name="phone" maxlength="60"></label>
+<label>البريد (للفرع)<input name="email" maxlength="120"></label>
+<label>الرقم الضريبي (للفرع)<input name="tax_number" maxlength="60"></label>
 <button type="submit">إضافة</button>
 </form>
 </section>
-{% for key,title,rows in [('branches','الفروع',options.branches),('cost_centers','مراكز التكلفة',options.cost_centers),('projects','المشروعات',options.projects)] %}
+<section class="panel"><h3>الفروع وبيانات الطباعة</h3>
+<p class="muted">أدخل بيانات كل فرع مرة واحدة؛ ستظهر تلقائيًا في فواتير البيع وفواتير المورد المرتبطة بهذا الفرع.</p>
+{% for x in options.branches %}
+<form method="post" class="form-row" style="border-bottom:1px solid var(--border-color,#ddd);padding:12px 0">
+<input type="hidden" name="action" value="update_branch"><input type="hidden" name="branch_id" value="{{ x.id }}">
+<div><strong>{{ x.code }} — {{ x.name_ar }}</strong></div>
+<label>العنوان<input name="address" maxlength="300" value="{{ x.address or '' }}"></label>
+<label>الهاتف<input name="phone" maxlength="60" value="{{ x.phone or '' }}"></label>
+<label>البريد الإلكتروني<input type="email" name="email" maxlength="120" value="{{ x.email or '' }}"></label>
+<label>الرقم الضريبي<input name="tax_number" maxlength="60" value="{{ x.tax_number or '' }}"></label>
+<button type="submit">حفظ بيانات الفرع</button>
+</form>
+{% else %}<p>لا توجد فروع مضافة حتى الآن.</p>{% endfor %}
+</section>
+{% for key,title,rows in [('cost_centers','مراكز التكلفة',options.cost_centers),('projects','المشروعات',options.projects)] %}
 <section class="panel"><h3>{{ title }}</h3><div class="table-wrap"><table><thead><tr><th>الكود</th><th>الاسم</th><th>الحالة</th></tr></thead><tbody>{% for x in rows %}<tr><td>{{ x.code }}</td><td>{{ x.name_ar }}</td><td class="success">نشط</td></tr>{% else %}<tr><td colspan="3">لا توجد عناصر مضافة.</td></tr>{% endfor %}</tbody></table></div></section>
 {% endfor %}
 {% endblock %}
