@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}تقرير المصروفات التحليلي | NEXUS ERP{% endblock %}
+{% block content %}
+<header class="report-header">
+  <h2>تقرير المصروفات التحليلي</h2>
+  <p class="muted">{{ company_name }} · تحليل المصروفات والتكاليف حسب الحساب والفرع ومركز التكلفة والمشروع</p>
+</header>
+<section class="panel no-print">
+  <form method="get" class="form-row">
+    <div><label for="date_from">من تاريخ</label><input id="date_from" type="date" name="date_from" value="{{ date_from }}"></div>
+    <div><label for="date_to">إلى تاريخ</label><input id="date_to" type="date" name="date_to" value="{{ date_to }}"></div>
+    {% for key,label,items in [("branch_id","الفرع",dimension_options.branches),("cost_center_id","مركز التكلفة",dimension_options.cost_centers),("project_id","المشروع",dimension_options.projects)] %}
+    <div><label for="{{key}}">{{label}}</label><select id="{{key}}" name="{{key}}"><option value="">كل {{label}}</option>{% for item in items %}<option value="{{item.id}}" {% if selected_dimensions.get(key)|string == item.id|string %}selected{% endif %}>{{item.code}} - {{item.name_ar}}</option>{% endfor %}</select></div>
+    {% endfor %}
+    <div class="form-actions"><button type="submit">عرض التقرير</button>
+      <a class="button secondary" href="{{ url_for('report_exports.export_report_excel',report='expense-analysis',date_from=date_from,date_to=date_to,**selected_dimensions) }}">تصدير Excel</a>
+      <a class="button secondary" href="{{ url_for('report_exports.export_report_excel',report='expense-analysis',date_from=date_from,date_to=date_to,**selected_dimensions).replace('/excel','/pdf') }}">تحميل PDF</a>
+      <button type="button" class="secondary" onclick="window.print()">طباعة</button>
+    </div>
+  </form>
+</section>
+<section class="panel">
+  <div class="report-title"><h3>ملخص المصروفات</h3><p>{{ date_from }} — {{ date_to }}</p></div>
+  <div class="summary-grid">
+    <div class="summary-card"><h3>إجمالي المصروفات والتكاليف</h3><strong>{{ total|money }} {{ base_currency }}</strong></div>
+    <div class="summary-card"><h3>التكاليف المباشرة</h3><strong>{{ direct_total|money }} {{ base_currency }}</strong></div>
+    <div class="summary-card"><h3>المصروفات التشغيلية والإدارية</h3><strong>{{ operating_total|money }} {{ base_currency }}</strong></div>
+  </div>
+  <p class="muted">يعرض التقرير القيود المرحلة فقط، ويستبعد قيود إقفال السنة وعكسها. المبالغ بصافي المدين ناقص الدائن؛ لذلك تظهر التسويات الدائنة كتخفيض للمصروف.</p>
+</section>
+<section class="panel">
+  <h3>أولًا: تحليل المصروف حسب الحساب والأبعاد</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>التصنيف</th><th>كود الحساب</th><th>اسم الحساب</th><th>الفرع</th><th>مركز التكلفة</th><th>المشروع</th><th>مدين</th><th>دائن</th><th>صافي المصروف</th></tr></thead>
+    <tbody>
+    {% for row in detail_rows %}
+      <tr><td>{{ row.category }}</td><td>{{ row.code }}</td><td>{{ row.name_ar }}</td>
+      <td>{{ row.branch_code or '—' }} {{ row.branch_name }}</td>
+      <td>{{ row.cost_center_code or '—' }} {{ row.cost_center_name }}</td>
+      <td>{{ row.project_code or '—' }} {{ row.project_name }}</td>
+      <td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.amount|money }}</td></tr>
+    {% else %}<tr><td colspan="9">لا توجد مصروفات مرحلة خلال الفترة المحددة.</td></tr>{% endfor %}
+    </tbody><tfoot><tr><th colspan="8">الإجمالي</th><th>{{ total|money }} {{ base_currency }}</th></tr></tfoot>
+  </table></div>
+</section>
+<section class="panel">
+  <h3>ثانيًا: التحليل حسب الفرع ومركز التكلفة والمشروع</h3>
+  <div class="table-wrap"><table><thead><tr><th>نوع البعد</th><th>الكود</th><th>الاسم</th><th>صافي المصروف</th></tr></thead>
+  <tbody>{% for row in dimension_rows %}<tr><td>{{ row.dimension }}</td><td>{{ row.code or '—' }}</td><td>{{ row.name }}</td><td>{{ row.amount|money }}</td></tr>
+  {% else %}<tr><td colspan="4">لا توجد بيانات تحليلية.</td></tr>{% endfor %}</tbody></table></div>
+</section>
+<section class="panel">
+  <h3>ثالثًا: تطور المصروفات شهريًا</h3>
+  <div class="table-wrap"><table><thead><tr><th>الشهر</th><th>صافي المصروف</th></tr></thead>
+  <tbody>{% for row in monthly_rows %}<tr><td>{{ row.month }}</td><td>{{ row.amount|money }}</td></tr>
+  {% else %}<tr><td colspan="2">لا توجد حركات خلال الفترة.</td></tr>{% endfor %}</tbody>
+  <tfoot><tr><th>الإجمالي</th><th>{{ total|money }} {{ base_currency }}</th></tr></tfoot></table></div>
+</section>
+{% endblock %}
