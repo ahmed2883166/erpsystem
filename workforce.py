@@ -395,11 +395,12 @@ def payroll():
                     allowances = M(allowances + raise_amount)
                 overtime_hours = D(request.form.get("overtime_hours_" + str(e["id"]), "0"))
                 if request.form.get("use_attendance_data") == "1":
-                    attendance_totals = c.execute("""SELECT COALESCE(SUM(CAST(absence_hours AS REAL)),0) absent_hours,
-                        COALESCE(SUM(CAST(approved_overtime_hours AS REAL)),0) overtime_hours
+                    attendance_rows = c.execute("""SELECT absence_hours,approved_overtime_hours
                         FROM attendance_records WHERE employee_id=? AND attendance_date>=? AND attendance_date<=?""",
-                        (e["id"],period+"-01",(date(start.year + (start.month==12), 1 if start.month==12 else start.month+1, 1)-date.resolution).isoformat())).fetchone()
-                    overtime_hours = D(attendance_totals["overtime_hours"])
+                        (e["id"],period+"-01",(date(start.year + (start.month==12), 1 if start.month==12 else start.month+1, 1)-date.resolution).isoformat())).fetchall()
+                    attendance_absent_hours = M(sum((D(x["absence_hours"]) for x in attendance_rows),Decimal("0")))
+                    attendance_overtime_hours = M(sum((D(x["approved_overtime_hours"]) for x in attendance_rows),Decimal("0")))
+                    overtime_hours = attendance_overtime_hours
                 overtime_rate = D(request.form.get("overtime_rate_percent_" + str(e["id"]), e["overtime_rate_percent"]))
                 overtime_raw = request.form.get("overtime_amount_" + str(e["id"]), "").strip()
                 if overtime_rate < 0 or overtime_rate > 500:
@@ -409,7 +410,7 @@ def payroll():
                 absent_hours = D(request.form.get("absent_hours_" + str(e["id"]), "0"))
                 absence = M(request.form.get("absence_deduction_" + str(e["id"]), "0"))
                 if request.form.get("use_attendance_data") == "1":
-                    absent_hours = D(attendance_totals["absent_hours"])
+                    absent_hours = attendance_absent_hours
                     next_month = date(start.year + (start.month==12), 1 if start.month==12 else start.month+1, 1)
                     month_end = (next_month-date.resolution).isoformat()
                     unpaid_requests = c.execute("""SELECT r.start_date,r.end_date,r.days FROM employee_leave_requests r
