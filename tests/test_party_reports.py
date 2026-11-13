@@ -334,5 +334,50 @@ class PartyStatementTests(unittest.TestCase):
         self.assertIn("1,670.00", body)
 
 
+
+    def test_detailed_party_reconciliation_shows_customer_gl_and_discloses_supplier_dimension_gap(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.executescript("""
+            CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT);
+            INSERT INTO company_settings VALUES('activity','commercial');
+            CREATE TABLE accounts(
+                id INTEGER PRIMARY KEY, code TEXT NOT NULL, account_type TEXT NOT NULL,
+                is_group INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1
+            );
+            INSERT INTO accounts(id,code,account_type) VALUES
+                (1,'1130','asset'),(2,'2110','liability');
+            CREATE TABLE journal_entries(
+                id INTEGER PRIMARY KEY, entry_date TEXT NOT NULL, status TEXT NOT NULL
+            );
+            CREATE TABLE journal_lines(
+                id INTEGER PRIMARY KEY, entry_id INTEGER NOT NULL,
+                account_id INTEGER NOT NULL, debit TEXT NOT NULL, credit TEXT NOT NULL,
+                customer_id INTEGER
+            );
+            INSERT INTO journal_entries VALUES(1,'2026-11-30','posted');
+            INSERT INTO journal_lines VALUES(1,1,1,'1200','0',1);
+        """)
+        conn.commit()
+        conn.close()
+
+        customer = self.client.get(
+            "/reports/party-reconciliation?kind=customer&as_of=2026-11-30&party_id=1"
+        )
+        self.assertEqual(customer.status_code, 200)
+        customer_body = customer.get_data(as_text=True)
+        self.assertIn("1,200.00", customer_body)
+        self.assertIn("متطابق", customer_body)
+        self.assertIn("SI-OLD", customer_body)
+        self.assertIn("SI-NOW", customer_body)
+
+        supplier = self.client.get(
+            "/reports/party-reconciliation?kind=supplier&as_of=2026-11-30&party_id=1"
+        )
+        self.assertEqual(supplier.status_code, 200)
+        supplier_body = supplier.get_data(as_text=True)
+        self.assertIn("1,700.00", supplier_body)
+        self.assertIn("غير متاح", supplier_body)
+        self.assertIn("لا يحتوي supplier_id", supplier_body)
+
 if __name__ == "__main__":
     unittest.main()
