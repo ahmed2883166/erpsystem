@@ -264,6 +264,69 @@ class PurchasingAccountingTests(unittest.TestCase):
         total_credit = sum((purchases.money(line[2]) for line in lines), purchases.money("0"))
         self.assertEqual(total_debit, total_credit)
 
+    def test_supplier_bill_creates_multiple_independent_assets_from_one_invoice(self):
+        purchases.init_purchase_schema()
+        fixed_assets.initialize_assets_schema()
+        self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-MULTI-ASSET','مورد أصول متعددة')")
+        supplier_id = self.db.execute(
+            "SELECT id FROM suppliers WHERE code='SUP-MULTI-ASSET'"
+        ).fetchone()["id"]
+        asset_account = self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1520','أصول معدات','asset',0)"
+        ).lastrowid
+        accum_account = self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1592','مجمع إهلاك أصول','asset',0)"
+        ).lastrowid
+        depreciation_expense = self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('6502','مصروف إهلاك أصول','expense',0)"
+        ).lastrowid
+        input_vat = self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1172','ضريبة مدخلات أصول','asset',0)"
+        ).lastrowid
+        self.db.execute("""INSERT INTO supplier_bills(
+            bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,subtotal,
+            tax_rate,tax_amount,total_amount,created_by,status,bill_kind
+        ) VALUES('BILL-MULTI-ASSET',?,'2026-11-13','2026-12-13','INV-MULTI-ASSET',
+            '120000','15','18000','138000',10,'approved','asset')""", (supplier_id,))
+        bill_id = self.db.execute(
+            "SELECT id FROM supplier_bills WHERE bill_no='BILL-MULTI-ASSET'"
+        ).fetchone()["id"]
+        for line_no, code, name, cost, residual, life, ready in (
+            (1, "AST-MULTI-01", "ماكينة تعبئة", "70000", "7000", 60, "2026-11-20"),
+            (2, "AST-MULTI-02", "رافعة شوكية", "50000", "5000", 36, "2026-11-25"),
+        ):
+            self.db.execute("""INSERT INTO supplier_bill_asset_lines(
+                bill_id,line_no,asset_code,asset_name,asset_category,cost,ready_date,
+                residual_value,useful_life_months,depreciation_method,annual_rate,
+                asset_account_id,accum_account_id,expense_account_id
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (bill_id,line_no,code,name,"معدات",cost,ready,residual,life,"straight_line","0",
+             asset_account,accum_account,depreciation_expense))
+        self.db.commit()
+        with patch("purchases.supplier_ap_account", return_value=99), \
+             patch("purchases._activity_tax_roles", return_value={"input_vat": "1172"}), \
+             patch("purchases.create_journal", return_value=779) as journal:
+            entry_id = purchases.post_supplier_bill(self.db, bill_id, 30)
+        self.db.commit()
+
+        self.assertEqual(entry_id, 779)
+        assets = self.db.execute(
+            "SELECT asset_code,cost,residual_value,useful_life_months,supplier_bill_id "
+            "FROM fixed_assets WHERE supplier_bill_id=? ORDER BY asset_code", (bill_id,)
+        ).fetchall()
+        self.assertEqual(len(assets), 2)
+        self.assertEqual(
+            [(x["asset_code"],x["cost"],x["residual_value"],x["useful_life_months"]) for x in assets],
+            [("AST-MULTI-01","70000","7000",60),("AST-MULTI-02","50000","5000",36)]
+        )
+        lines = journal.call_args.args[4]
+        self.assertEqual([line[1] for line in lines[:2]],
+                         [purchases.money("70000"),purchases.money("50000")])
+        self.assertEqual(lines[2][0], input_vat)
+        debit = sum((purchases.money(line[1]) for line in lines), purchases.money("0"))
+        credit = sum((purchases.money(line[2]) for line in lines), purchases.money("0"))
+        self.assertEqual(debit, credit)
+
     def test_asset_supplier_bill_rejects_duplicate_asset_code_before_posting(self):
         purchases.init_purchase_schema()
         fixed_assets.initialize_assets_schema()
