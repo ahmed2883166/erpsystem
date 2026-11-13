@@ -194,6 +194,13 @@ class ReceivablesAgingTests(unittest.TestCase):
             values = [cell.value for row in workbook.active.iter_rows() for cell in row]
             self.assertIn(expected, values)
 
+        # Simulate a legacy/partially initialized allocation table. The PDF path
+        # must fall back to bill-level paid_amount instead of failing on bill_id.
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("ALTER TABLE supplier_payment_allocations DROP COLUMN bill_id")
+        conn.commit()
+        conn.close()
+
         pdf_response = client.get(
             "/reports/export/aging/pdf?kind=suppliers&as_of=2026-11-30"
         )
