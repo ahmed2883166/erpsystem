@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from flask import Flask
+from unittest.mock import patch
 
 import purchases
 import stock
@@ -147,6 +148,76 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.assertEqual(resubmitted["status"], "pending_approval")
         self.assertIsNone(resubmitted["rejection_reason"])
         self.assertIsNone(resubmitted["approved_by"])
+
+    def test_supplier_bill_requires_independent_approval_before_posting(self):
+        purchases.init_purchase_schema()
+        self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-BILL-APP','مورد فاتورة')")
+        supplier_id = self.db.execute("SELECT id FROM suppliers WHERE code='SUP-BILL-APP'").fetchone()["id"]
+        self.db.execute("INSERT INTO stock_warehouses(code,name_ar) VALUES('WB-APP','مخزن فاتورة')")
+        warehouse_id = self.db.execute("SELECT id FROM stock_warehouses WHERE code='WB-APP'").fetchone()["id"]
+        self.db.execute("""INSERT INTO goods_receipts(receipt_no,supplier_id,warehouse_id,receipt_date,total_value)
+            VALUES('GR-BILL-APP',? ,?,'2026-11-13','100')""", (supplier_id, warehouse_id))
+        receipt_id = self.db.execute("SELECT id FROM goods_receipts WHERE receipt_no='GR-BILL-APP'").fetchone()["id"]
+        self.db.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,
+            subtotal,tax_rate,tax_amount,total_amount,created_by,status,bill_kind)
+            VALUES('BILL-APP',?,'2026-11-13','2026-12-13','INV-APP','100','0','0','100',10,'draft','inventory')""",
+            (supplier_id,))
+        bill_id = self.db.execute("SELECT id FROM supplier_bills WHERE bill_no='BILL-APP'").fetchone()["id"]
+        self.db.execute("INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
+                        (bill_id, receipt_id, "100"))
+        self.db.commit()
+
+        purchases.submit_supplier_bill(self.db, bill_id, 10)
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT status FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()[0],
+                         "pending_approval")
+        with self.assertRaisesRegex(ValueError, "لا يجوز اعتماد"):
+            purchases.approve_supplier_bill(self.db, bill_id, 10)
+        self.db.rollback()
+        purchases.approve_supplier_bill(self.db, bill_id, 20, "مطابقة فاتورة المورد")
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT status FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()[0],
+                         "approved")
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
+
+        with patch("purchases.supplier_ap_account", return_value=99), \\
+             patch("purchases.create_journal", return_value=77):
+            entry_id = purchases.post_supplier_bill(self.db, bill_id, 30)
+        self.db.commit()
+        posted = self.db.execute("SELECT status,journal_entry_id FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+        self.assertEqual(posted["status"], "posted")
+        self.assertEqual(posted["journal_entry_id"], entry_id)
+        self.assertEqual(entry_id, 77)
+        with self.assertRaisesRegex(ValueError, "قبل اعتمادها"):
+            purchases.post_supplier_bill(self.db, bill_id, 30)
+        self.db.rollback()
+
+    def test_supplier_bill_rejection_requires_reason_and_can_be_resubmitted(self):
+        purchases.init_purchase_schema()
+        self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-BILL-REJ','مورد رفض فاتورة')")
+        supplier_id = self.db.execute("SELECT id FROM suppliers WHERE code='SUP-BILL-REJ'").fetchone()["id"]
+        self.db.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,
+            subtotal,tax_rate,tax_amount,total_amount,created_by,status,bill_kind,expense_account_id)
+            VALUES('BILL-REJ',?,'2026-11-13','2026-12-13','INV-REJ','50','0','0','50',10,'draft','expense',?)""",
+            (supplier_id, self.db.execute("SELECT id FROM accounts WHERE code='5000'").fetchone()["id"]))
+        bill_id = self.db.execute("SELECT id FROM supplier_bills WHERE bill_no='BILL-REJ'").fetchone()["id"]
+        self.db.commit()
+        purchases.submit_supplier_bill(self.db, bill_id, 10)
+        self.db.commit()
+        with self.assertRaisesRegex(ValueError, "سبب رفض"):
+            purchases.reject_supplier_bill(self.db, bill_id, 20, "لا")
+        self.db.rollback()
+        purchases.reject_supplier_bill(self.db, bill_id, 20, "المستند يحتاج مراجعة")
+        self.db.commit()
+        state = self.db.execute("SELECT status,rejection_reason FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+        self.assertEqual(state["status"], "rejected")
+        self.assertEqual(state["rejection_reason"], "المستند يحتاج مراجعة")
+        purchases.submit_supplier_bill(self.db, bill_id, 10)
+        self.db.commit()
+        state = self.db.execute("SELECT status,rejection_reason,approved_by FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+        self.assertEqual(state["status"], "pending_approval")
+        self.assertIsNone(state["rejection_reason"])
+        self.assertIsNone(state["approved_by"])
 
     def test_journal_posting_is_balanced(self):
         dr = purchases.account(self.db, "5000", "expense")
