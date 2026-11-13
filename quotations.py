@@ -5,7 +5,7 @@ import sqlite3
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import date,datetime
 from functools import wraps
-from flask import Blueprint,flash,redirect,render_template,request,session,url_for
+from flask import Blueprint,flash,g,redirect,render_template,request,session,url_for
 from sales import post_invoice
 from stock import consume_layers, post_issue_journal, ensure_stock_date_open
 
@@ -429,6 +429,7 @@ def convert(quote_id):
    c,quote_id,session["user_id"],request.form.get("warehouse_id",type=int),
    request.form.get("expected_date") or None)
   c.execute("UPDATE quotations SET status='converted_to_order' WHERE id=?",(quote_id,))
+  g.audit_created_record=("sales_orders",result["sales_order_id"],"sales_order_lines","sales_order_id")
   c.commit()
   flash("تم إنشاء أمر البيع "+result["order_no"]+" وإرساله للاعتماد الداخلي.","success")
   return redirect(url_for("quotes.sales_order_view",order_id=result["sales_order_id"]))
@@ -488,6 +489,7 @@ def create_delivery_note_route(order_id):
   c.execute("BEGIN IMMEDIATE")
   result=create_delivery_note(c,order_id,request.form.get("delivery_date",""),
    lines,session["user_id"],request.form.get("notes",""))
+  g.audit_created_record=("delivery_notes",result["delivery_note_id"],"delivery_note_lines","delivery_note_id")
   c.commit(); flash("تم إنشاء إذن التسليم "+result["delivery_no"]+" كمسودة.","success")
  except (ValueError,sqlite3.Error) as e:
   c.rollback(); flash(str(e),"error")
@@ -521,6 +523,7 @@ def invoice_order_route(order_id):
   c.execute("BEGIN IMMEDIATE")
   result=invoice_sales_order(c,order_id,request.form.get("invoice_date") or date.today().isoformat(),
    request.form.get("due_date") or date.today().isoformat(),session["user_id"],dimensions=request.form)
+  g.audit_created_record=("sales_invoices",result["invoice_id"],"sales_invoice_lines","invoice_id")
   c.commit(); flash("تم إصدار فاتورة الكميات المسلمة فقط: "+result["invoice_no"],"success")
   return redirect(url_for("quotes.sales_order_view",order_id=order_id))
  except (ValueError,sqlite3.Error) as e:
