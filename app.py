@@ -1779,6 +1779,37 @@ def income_statement():
     )
 
 
+@app.route("/reports/expense-analysis")
+@requires("reports.view")
+def expense_analysis():
+    from expense_analysis import build_expense_analysis
+    date_from, date_to = normalize_income_statement_period(
+        request.args.get("date_from"), request.args.get("date_to")
+    )
+    connection = db()
+    try:
+        raw_dimensions = {key: request.args.get(key, "").strip()
+                          for key in ("branch_id", "cost_center_id", "project_id")}
+        try:
+            selected_dimensions = validate_journal_dimensions(connection, raw_dimensions) if any(raw_dimensions.values()) else {}
+        except ValueError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("expense_analysis", date_from=date_from, date_to=date_to))
+        dimension_options = active_dimension_options(connection)
+        report = build_expense_analysis(connection, date_from, date_to, selected_dimensions)
+        settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
+            "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency','company_name')"
+        )}
+    finally:
+        connection.close()
+    return render_template(
+        "expense_analysis.html", **report, date_from=date_from, date_to=date_to,
+        dimension_options=dimension_options, selected_dimensions=selected_dimensions,
+        base_currency=settings.get("base_currency", ""),
+        company_name=settings.get("company_name", "NEXUS ERP"),
+    )
+
+
 @app.route("/reports/ledger")
 @requires("reports.view")
 def ledger():
