@@ -98,6 +98,32 @@ class AnalyticDimensionsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_journal_dimensions(self.conn, {"branch_id": "999"})
 
+    def test_idempotency_compares_analytical_dimensions(self):
+        second = self.conn.execute(
+            "INSERT INTO branches(code,name_ar) VALUES('ALX','فرع الإسكندرية')"
+        ).lastrowid
+        lines = [(1, "100", "0", "مدين"), (2, "0", "100", "دائن")]
+        first_id = post_journal(
+            self.conn, "2026-11-05", "DIM-IDEMPOTENT", "قيد متعدد الأبعاد",
+            lines, 1, {"branch_id": self.branch_id},
+        )
+        repeated_id = post_journal(
+            self.conn, "2026-11-05", "DIM-IDEMPOTENT", "قيد متعدد الأبعاد",
+            lines, 1, {"branch_id": self.branch_id},
+        )
+        self.assertEqual(first_id, repeated_id)
+        with self.assertRaisesRegex(ValueError, "مرجع القيد مستخدم بالفعل"):
+            post_journal(
+                self.conn, "2026-11-05", "DIM-IDEMPOTENT", "قيد متعدد الأبعاد",
+                lines, 1, {"branch_id": second},
+            )
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM journal_entries WHERE reference='DIM-IDEMPOTENT'"
+            ).fetchone()[0],
+            1,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
