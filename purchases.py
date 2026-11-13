@@ -351,7 +351,7 @@ def integrity_issues():
     }
     index_status = {
         "supplier_invoice": "uq_supplier_bill_invoice_no" in indexes,
-        "receipt_link": "uq_supplier_bill_receipt_once" in indexes,
+        "receipt_partial_allocation": "uq_supplier_bill_receipt_once" not in indexes,
     }
     c.close()
     return render_template(
