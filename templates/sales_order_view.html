@@ -22,6 +22,11 @@
     {% endfor %}
     </tbody>
   </table>
+  <p>إجمالي البنود: {{ '%.2f'|format(gross_order_value) }} |
+     خصم أمر البيع: {{ '%.2f'|format(order_discount) }} |
+     الصافي: {{ '%.2f'|format(net_order_value) }} |
+     ضريبة تقديرية: {{ '%.2f'|format(estimated_tax) }} |
+     الإجمالي التقديري: {{ '%.2f'|format(estimated_total) }}</p>
 </section>
 {% if order.status == 'pending_approval' and ('sales.approve' in permissions or session.get('role') == 'admin') %}
 <section class="panel">
