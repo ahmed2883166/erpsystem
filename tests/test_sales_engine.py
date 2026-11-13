@@ -836,6 +836,47 @@ class SalesIntegrationTests(unittest.TestCase):
             Decimal("0.00"),
         )
 
+    def test_customer_cash_references_are_unique_and_refunds_follow_credit_note_date(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}],
+            "0", 1,
+        )
+        cash_id = self.db.execute(
+            "SELECT id FROM accounts WHERE code='1110'"
+        ).fetchone()["id"]
+        sales.post_customer_receipt(
+            self.db, invoice["invoice_id"], "2026-11-11", "20",
+            cash_id, 1, "BANK-UNIQUE-001",
+        )
+        with self.assertRaisesRegex(ValueError, "مستخدم بالفعل"):
+            sales.post_customer_advance_receipt(
+                self.db, self.customer_id, "2026-11-12", "30",
+                cash_id, 1, "BANK-UNIQUE-001",
+            )
+        line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?",
+            (invoice["invoice_id"],),
+        ).fetchone()["id"]
+        credit = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-15", "اختبار تاريخ الرد",
+            [{"invoice_line_id": line_id, "quantity": "0.5"}], 1,
+        )
+        with self.assertRaisesRegex(ValueError, "يسبق تاريخ الإشعار الدائن"):
+            sales.post_customer_refund(
+                self.db, credit["credit_note_id"], "2026-11-14", "50",
+                cash_id, 1, "BANK-REFUND-EARLY",
+            )
+        self.assertEqual(
+            self.db.execute(
+                "SELECT COUNT(*) FROM customer_refunds WHERE credit_note_id=?",
+                (credit["credit_note_id"],),
+            ).fetchone()[0],
+            0,
+        )
+        self.db.rollback()
+
     def test_customer_settlement_cycle_preserves_invoice_dimensions_and_reconciles_gl(self):
         branch_id = self.db.execute(
             "INSERT INTO branches(code,name_ar) VALUES('BR-COL','فرع التحصيل')"
