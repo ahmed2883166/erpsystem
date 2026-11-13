@@ -27,13 +27,59 @@ def initialize_quotes_schema():
   id INTEGER PRIMARY KEY, quote_no TEXT NOT NULL UNIQUE, customer_id INTEGER NOT NULL REFERENCES customers(id),
   quote_date TEXT NOT NULL, valid_until TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft',
   subtotal TEXT NOT NULL, tax_rate TEXT NOT NULL, tax_amount TEXT NOT NULL, total_amount TEXT NOT NULL,
-  sales_invoice_id INTEGER, notes TEXT NOT NULL DEFAULT '', created_by INTEGER,
+  sales_invoice_id INTEGER, sales_order_id INTEGER, notes TEXT NOT NULL DEFAULT '', created_by INTEGER,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
  CREATE TABLE IF NOT EXISTS quotation_lines(
   id INTEGER PRIMARY KEY, quotation_id INTEGER NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
   product_id INTEGER REFERENCES stock_products(id), description TEXT NOT NULL,
   quantity TEXT NOT NULL, unit_price TEXT NOT NULL, line_total TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS idx_quotes_customer_dates ON quotations(customer_id,quote_date,valid_until);
+ CREATE TABLE IF NOT EXISTS sales_orders(
+  id INTEGER PRIMARY KEY, order_no TEXT NOT NULL UNIQUE,
+  quotation_id INTEGER NOT NULL UNIQUE REFERENCES quotations(id),
+  customer_id INTEGER NOT NULL REFERENCES customers(id),
+  warehouse_id INTEGER REFERENCES stock_warehouses(id),
+  order_date TEXT NOT NULL, expected_date TEXT,
+  status TEXT NOT NULL DEFAULT 'pending_approval',
+  created_by INTEGER, submitted_by INTEGER,
+  approved_by INTEGER, approved_at TEXT,
+  rejection_reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+ );
+ CREATE TABLE IF NOT EXISTS sales_order_lines(
+  id INTEGER PRIMARY KEY, sales_order_id INTEGER NOT NULL REFERENCES sales_orders(id) ON DELETE CASCADE,
+  quotation_line_id INTEGER REFERENCES quotation_lines(id),
+  product_id INTEGER REFERENCES stock_products(id),
+  description TEXT NOT NULL, ordered_qty TEXT NOT NULL,
+  delivered_qty TEXT NOT NULL DEFAULT '0', invoiced_qty TEXT NOT NULL DEFAULT '0',
+  unit_price TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+ );
+ CREATE INDEX IF NOT EXISTS idx_sales_order_lines_order ON sales_order_lines(sales_order_id,id);
+ CREATE TABLE IF NOT EXISTS delivery_notes(
+  id INTEGER PRIMARY KEY, delivery_no TEXT NOT NULL UNIQUE,
+  sales_order_id INTEGER NOT NULL REFERENCES sales_orders(id),
+  delivery_date TEXT NOT NULL, warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
+  status TEXT NOT NULL DEFAULT 'draft', notes TEXT NOT NULL DEFAULT '',
+  created_by INTEGER, posted_by INTEGER, posted_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+ );
+ CREATE TABLE IF NOT EXISTS delivery_note_lines(
+  id INTEGER PRIMARY KEY, delivery_note_id INTEGER NOT NULL REFERENCES delivery_notes(id) ON DELETE CASCADE,
+  sales_order_line_id INTEGER NOT NULL REFERENCES sales_order_lines(id),
+  product_id INTEGER NOT NULL REFERENCES stock_products(id),
+  quantity TEXT NOT NULL, unit_cost TEXT NOT NULL DEFAULT '0',
+  total_cost TEXT NOT NULL DEFAULT '0', invoiced_qty TEXT NOT NULL DEFAULT '0',
+  invoiced_cost TEXT NOT NULL DEFAULT '0',
+  stock_movement_id INTEGER REFERENCES stock_movements(id),
+  UNIQUE(delivery_note_id,sales_order_line_id)
+ );
+ CREATE TABLE IF NOT EXISTS delivery_note_line_lots(
+  id INTEGER PRIMARY KEY, delivery_note_line_id INTEGER NOT NULL REFERENCES delivery_note_lines(id),
+  lot_id INTEGER REFERENCES stock_lots(id), quantity TEXT NOT NULL, cost_total TEXT NOT NULL,
+  invoiced_qty TEXT NOT NULL DEFAULT '0', invoiced_cost TEXT NOT NULL DEFAULT '0'
+ );
+ CREATE INDEX IF NOT EXISTS idx_delivery_note_order ON delivery_notes(sales_order_id,status,delivery_date,id);
+ CREATE INDEX IF NOT EXISTS idx_delivery_line_order_line ON delivery_note_lines(sales_order_line_id,delivery_note_id);
  CREATE TABLE IF NOT EXISTS sales_orders(
   id INTEGER PRIMARY KEY, order_no TEXT NOT NULL UNIQUE,
   quotation_id INTEGER NOT NULL UNIQUE REFERENCES quotations(id),
@@ -78,7 +124,15 @@ def initialize_quotes_schema():
  );
  CREATE INDEX IF NOT EXISTS idx_delivery_note_order ON delivery_notes(sales_order_id,status,delivery_date,id);
  CREATE INDEX IF NOT EXISTS idx_delivery_line_order_line ON delivery_note_lines(sales_order_line_id,delivery_note_id);
- """); c.close()
+ """);
+ qcols={r["name"] for r in c.execute("PRAGMA table_info(quotations)")}
+ if "sales_order_id" not in qcols: c.execute("ALTER TABLE quotations ADD COLUMN sales_order_id INTEGER")
+ dcols={r["name"] for r in c.execute("PRAGMA table_info(delivery_note_lines)")}
+ if "invoiced_cost" not in dcols: c.execute("ALTER TABLE delivery_note_lines ADD COLUMN invoiced_cost TEXT NOT NULL DEFAULT '0'")
+ lcols={r["name"] for r in c.execute("PRAGMA table_info(delivery_note_line_lots)")}
+ if "invoiced_qty" not in lcols: c.execute("ALTER TABLE delivery_note_line_lots ADD COLUMN invoiced_qty TEXT NOT NULL DEFAULT '0'")
+ if "invoiced_cost" not in lcols: c.execute("ALTER TABLE delivery_note_line_lots ADD COLUMN invoiced_cost TEXT NOT NULL DEFAULT '0'")
+ c.close()
 
 def require(write=False):
  def deco(fn):
@@ -239,16 +293,23 @@ def invoice_sales_order(conn, order_id, invoice_date, due_date, created_by, dime
    take=min(available,left)
    line_qty=Decimal(str(dl["quantity"]))
    line_cost=Decimal(str(dl["total_cost"]))
-   take_cost=line_cost if take==available else (line_cost*take/line_qty).quantize(M,rounding=ROUND_HALF_UP)
+   already_cost=Decimal(str(dl["invoiced_cost"] or "0"))
+   remaining_cost=line_cost-already_cost
+   take_cost=remaining_cost if take==available else (line_cost*take/line_qty).quantize(M,rounding=ROUND_HALF_UP)
    cost_total+=take_cost
+   lot_plan=[]
    lot_rows=conn.execute("SELECT * FROM delivery_note_line_lots WHERE delivery_note_line_id=?",(dl["id"],)).fetchall()
    for lot in lot_rows:
     lot_qty=Decimal(str(lot["quantity"]))
     lot_cost=Decimal(str(lot["cost_total"]))
-    allocated_qty=lot_qty if take==available else (lot_qty*take/line_qty)
-    allocated_cost=lot_cost if take==available else (lot_cost*take/line_qty).quantize(M,rounding=ROUND_HALF_UP)
+    lot_already_qty=Decimal(str(lot["invoiced_qty"] or "0"))
+    lot_already_cost=Decimal(str(lot["invoiced_cost"] or "0"))
+    lot_available=lot_qty-lot_already_qty
+    allocated_qty=lot_available if take==available else (lot_qty*take/line_qty)
+    allocated_cost=(lot_cost-lot_already_cost) if take==available else (lot_cost*take/line_qty).quantize(M,rounding=ROUND_HALF_UP)
     allocations.append((lot["lot_id"],allocated_qty,allocated_cost))
-   consumption_plan.append((dl["id"],take))
+    lot_plan.append((lot["id"],allocated_qty,allocated_cost))
+   consumption_plan.append((dl["id"],take,take_cost,lot_plan))
    left-=take
   if left>0: raise ValueError("الكميات المسلمة غير مرتبطة بطبقات تكلفة كافية للفوترة.")
   items.append({"product_id":line["product_id"],"description":line["description"],
@@ -259,9 +320,16 @@ def invoice_sales_order(conn, order_id, invoice_date, due_date, created_by, dime
   quotation["tax_rate"],created_by,dimensions=dimensions,preissued_costs=fulfillment,
   sales_order_id=order_id)
  conn.execute("UPDATE sales_invoices SET due_date=? WHERE id=?",(due_date or invoice_date,result["invoice_id"]))
- for delivery_line_id,qty in consumption_plan:
-  conn.execute("UPDATE delivery_note_lines SET invoiced_qty=? WHERE id=?",
-   (str(Decimal(str(conn.execute("SELECT invoiced_qty FROM delivery_note_lines WHERE id=?",(delivery_line_id,)).fetchone()["invoiced_qty"]))+qty),delivery_line_id))
+ for delivery_line_id,qty,allocated_cost,lot_plan in consumption_plan:
+  current=conn.execute("SELECT invoiced_qty,invoiced_cost FROM delivery_note_lines WHERE id=?",(delivery_line_id,)).fetchone()
+  conn.execute("UPDATE delivery_note_lines SET invoiced_qty=?,invoiced_cost=? WHERE id=?",
+   (str(Decimal(str(current["invoiced_qty"]))+qty),
+    str(Decimal(str(current["invoiced_cost"]))+allocated_cost),delivery_line_id))
+  for lot_id,lot_qty,lot_cost in lot_plan:
+   lot_current=conn.execute("SELECT invoiced_qty,invoiced_cost FROM delivery_note_line_lots WHERE id=?",(lot_id,)).fetchone()
+   conn.execute("UPDATE delivery_note_line_lots SET invoiced_qty=?,invoiced_cost=? WHERE id=?",
+    (str(Decimal(str(lot_current["invoiced_qty"]))+lot_qty),
+     str(Decimal(str(lot_current["invoiced_cost"]))+lot_cost),lot_id))
  remaining=conn.execute("SELECT ordered_qty,invoiced_qty FROM sales_order_lines WHERE sales_order_id=?",(order_id,)).fetchall()
  all_invoiced=all(Decimal(str(x["invoiced_qty"]))>=Decimal(str(x["ordered_qty"])) for x in remaining)
  conn.execute("UPDATE sales_orders SET status=? WHERE id=?",
