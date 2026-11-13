@@ -753,14 +753,19 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(Decimal(str(grni_net)), Decimal("0.0"))
         bill_lines = conn.execute(
-            """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
-               JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=? ORDER BY jl.id""",
+            """SELECT a.code,
+                      SUM(CAST(jl.debit AS REAL)) debit,
+                      SUM(CAST(jl.credit AS REAL)) credit
+               FROM journal_lines jl
+               JOIN accounts a ON a.id=jl.account_id
+               WHERE jl.entry_id=?
+               GROUP BY a.code ORDER BY a.code""",
             (bill["journal_entry_id"],),
         ).fetchall()
         self.assertEqual(
-            [(row["code"], Decimal(row["debit"]), Decimal(row["credit"])) for row in bill_lines],
-            [("2190", Decimal("100.00"), Decimal("0.00")),
-             ("2110", Decimal("0.00"), Decimal("100.00"))],
+            [(row["code"], Decimal(str(row["debit"])), Decimal(str(row["credit"]))) for row in bill_lines],
+            [("2110", Decimal("0.0"), Decimal("100.0")),
+             ("2190", Decimal("100.0"), Decimal("0.0"))],
         )
         conn.close()
 
