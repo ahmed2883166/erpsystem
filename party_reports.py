@@ -224,6 +224,153 @@ def build_subledger_reconciliation(c, as_of):
     return results
 
 
+
+
+def _all_party_events(c, kind):
+    """Load party events in a fixed number of queries for scalable reconciliation."""
+    events = []
+    if kind == "customer":
+        queries = [
+            ("""SELECT customer_id party_id,invoice_date event_date,invoice_no reference,
+                'فاتورة مبيعات' description,total_amount debit,0 credit,0 priority
+                FROM sales_invoices WHERE status='posted'""", ()),
+            ("""SELECT i.customer_id party_id,cr.receipt_date event_date,cr.receipt_no reference,
+                'مقبوضات عميل ' || COALESCE(cr.reference,'') description,0 debit,
+                cr.amount credit,1 priority FROM customer_receipts cr
+                JOIN sales_invoices i ON i.id=cr.invoice_id""", ()),
+        ]
+        if _table_exists(c, "customer_receipt_batches"):
+            queries.append(( """SELECT customer_id party_id,receipt_date event_date,receipt_no reference,
+                'تحصيل مجمع من العميل' description,0 debit,total_amount credit,1 priority
+                FROM customer_receipt_batches""", ()))
+        if _table_exists(c, "customer_advance_allocations"):
+            queries.append(( """SELECT i.customer_id party_id,a.allocation_date event_date,
+                'CADVA-' || a.id reference,'تخصيص مقدم عميل على فاتورة ' || i.invoice_no description,
+                0 debit,a.amount credit,2 priority FROM customer_advance_allocations a
+                JOIN sales_invoices i ON i.id=a.invoice_id""", ()))
+        queries.append(( """SELECT i.customer_id party_id,cn.credit_date event_date,
+            cn.credit_note_no reference,'إشعار دائن / مرتجع بيع: ' || cn.reason description,
+            0 debit,cn.total_amount credit,2 priority FROM sales_credit_notes cn
+            JOIN sales_invoices i ON i.id=cn.invoice_id
+            WHERE cn.status IN ('posted','cancelled')""", ()))
+        if _table_exists(c, "customer_refunds"):
+            queries.append(( """SELECT i.customer_id party_id,rf.refund_date event_date,
+                rf.refund_no reference,'رد مبلغ للعميل عن إشعار دائن' description,
+                rf.amount debit,0 credit,3 priority FROM customer_refunds rf
+                JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id
+                JOIN sales_invoices i ON i.id=cn.invoice_id""", ()))
+        if "cancel_journal_entry_id" in _columns(c, "sales_credit_notes"):
+            queries.append(( """SELECT i.customer_id party_id,je.entry_date event_date,
+                cn.credit_note_no || '-CANCEL' reference,
+                'إلغاء إشعار دائن: ' || cn.cancellation_reason description,
+                cn.total_amount debit,0 credit,4 priority FROM sales_credit_notes cn
+                JOIN sales_invoices i ON i.id=cn.invoice_id
+                JOIN journal_entries je ON je.id=cn.cancel_journal_entry_id
+                WHERE cn.status='cancelled'""", ()))
+    else:
+        queries = [
+            ("""SELECT supplier_id party_id,bill_date event_date,bill_no reference,
+                'فاتورة مشتريات' description,0 debit,total_amount credit,0 priority
+                FROM supplier_bills WHERE status='posted'""", ()),
+            ("""SELECT supplier_id party_id,credit_date event_date,credit_no reference,
+                'إشعار دائن مشتريات / مرتجع مورد: ' || reason description,
+                total_amount debit,0 credit,1 priority FROM supplier_credit_notes
+                WHERE status='posted'""", ()),
+            ("""SELECT supplier_id party_id,payment_date event_date,payment_no reference,
+                'مدفوعات مورد ' || COALESCE(reference,'') description,
+                amount debit,0 credit,2 priority FROM supplier_payments""", ()),
+        ]
+    for sql, params in queries:
+        for row in c.execute(sql, params):
+            event = dict(row)
+            event["debit"] = _decimal(event["debit"])
+            event["credit"] = _decimal(event["credit"])
+            events.append(event)
+    return events
+
+
+def _gl_party_control_balance(c, account_codes, party_id, as_of, normal_side, dimension):
+    """Return a party-specific GL control only when that dimension is stored on journal lines."""
+    if dimension not in _columns(c, "journal_lines"):
+        return None, False
+    codes = sorted({str(code) for code in account_codes if code not in (None, "")})
+    if not codes:
+        return None, False
+    placeholders = ",".join("?" for _ in codes)
+    accounts = c.execute(
+        f"SELECT id FROM accounts WHERE code IN ({placeholders}) AND is_group=0 AND active=1",
+        codes,
+    ).fetchall()
+    account_ids = [row["id"] for row in accounts]
+    if not account_ids:
+        return None, False
+    marks = ",".join("?" for _ in account_ids)
+    rows = c.execute(
+        f"""SELECT jl.debit,jl.credit FROM journal_lines jl
+            JOIN journal_entries je ON je.id=jl.entry_id
+            WHERE je.status='posted' AND je.entry_date<=?
+              AND jl.account_id IN ({marks}) AND jl.{dimension}=?""",
+        (as_of, *account_ids, party_id),
+    ).fetchall()
+    debit = sum((_decimal(row["debit"]) for row in rows), Decimal("0"))
+    credit = sum((_decimal(row["credit"]) for row in rows), Decimal("0"))
+    return (debit - credit if normal_side == "debit" else credit - debit), True
+
+
+def build_party_reconciliation(c, kind, as_of, selected_party_id=None):
+    """Build per-party balances with explicit availability of party-level GL dimensions."""
+    from activity_profiles import get_active_activity_profile
+
+    table = "customers" if kind == "customer" else "suppliers"
+    normal_side = "debit" if kind == "customer" else "credit"
+    dimension = "customer_id" if kind == "customer" else "supplier_id"
+    profile = get_active_activity_profile(c)
+    posting = profile.get("posting_accounts") or {}
+    account_code = posting.get("ar" if kind == "customer" else "supplier_ap")
+    parties = c.execute(f"SELECT id,code,name FROM {table} ORDER BY code,id").fetchall()
+    all_events = _all_party_events(c, kind)
+    grouped = {}
+    for event in all_events:
+        if event["event_date"] and event["event_date"] <= as_of:
+            grouped.setdefault(event["party_id"], []).append(event)
+
+    results = []
+    details = []
+    for party in parties:
+        balance = Decimal("0")
+        party_events = grouped.get(party["id"], [])
+        for event in party_events:
+            movement = event["debit"] - event["credit"]
+            balance += movement if kind == "customer" else -movement
+        gl_balance, gl_available = _gl_party_control_balance(
+            c, (account_code,), party["id"], as_of, normal_side, dimension
+        )
+        difference = gl_balance - balance if gl_available else None
+        item = {
+            "id": party["id"], "code": party["code"], "name": party["name"],
+            "subledger_balance": balance, "gl_balance": gl_balance,
+            "difference": difference, "gl_available": gl_available,
+            "matched": gl_available and abs(difference) <= Decimal("0.01"),
+        }
+        if abs(balance) > Decimal("0.01") or (gl_available and abs(gl_balance) > Decimal("0.01")):
+            results.append(item)
+        if selected_party_id == party["id"]:
+            sign = Decimal("1") if kind == "customer" else Decimal("-1")
+            running = Decimal("0")
+            for event in sorted(party_events, key=lambda x: (
+                x["event_date"], x["priority"], x["reference"] or ""
+            )):
+                movement = (event["debit"] - event["credit"]) * sign
+                running += movement
+                details.append({
+                    **event, "running_balance": running.quantize(
+                        Decimal("0.01"), rounding=ROUND_HALF_UP
+                    ),
+                })
+    results.sort(key=lambda item: (item["code"] or "", item["id"]))
+    return results, details
+
+
 @party_bp.route("/reports/party-statement")
 @_authorized
 def party_statement():
@@ -335,6 +482,34 @@ def subledger_reconciliation():
     finally:
         c.close()
     return render_template("subledger_reconciliation.html", rows=rows, as_of=as_of)
+
+
+
+@party_bp.route("/reports/party-reconciliation")
+@_authorized
+def party_reconciliation():
+    kind = request.args.get("kind", "customer")
+    if kind not in {"customer", "supplier"}:
+        kind = "customer"
+    try:
+        as_of = date.fromisoformat(
+            request.args.get("as_of", "").strip() or date.today().isoformat()
+        ).isoformat()
+    except ValueError:
+        abort(400)
+    party_id = request.args.get("party_id", type=int)
+    c = _db()
+    try:
+        rows, details = build_party_reconciliation(c, kind, as_of, party_id)
+        table = "customers" if kind == "customer" else "suppliers"
+        parties = c.execute(f"SELECT id,code,name FROM {table} ORDER BY code,id").fetchall()
+        selected = next((party for party in parties if party["id"] == party_id), None)
+    finally:
+        c.close()
+    return render_template(
+        "party_reconciliation.html", kind=kind, as_of=as_of, rows=rows,
+        details=details, parties=parties, selected=selected,
+    )
 
 
 @party_bp.route("/reports/customer-advances")
