@@ -1365,6 +1365,7 @@ class SalesIntegrationTests(unittest.TestCase):
 
         order_page = client.get(f"/sales/quotations/orders/{order_id}")
         self.assertEqual(order_page.status_code, 200)
+        self.assertIn("في انتظار الاعتماد", order_page.get_data(as_text=True))
         self.assertNotIn("اعتماد أمر البيع", order_page.get_data(as_text=True))
         denied = client.post(f"/sales/quotations/orders/{order_id}/approve")
         self.assertEqual(denied.status_code, 302)
@@ -1384,6 +1385,7 @@ class SalesIntegrationTests(unittest.TestCase):
             "approved",
         )
         approved_page = client.get(f"/sales/quotations/orders/{order_id}")
+        self.assertIn("معتمد", approved_page.get_data(as_text=True))
         self.assertIn("إنشاء إذن تسليم جديد", approved_page.get_data(as_text=True))
 
 
