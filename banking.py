@@ -5,7 +5,7 @@ import sqlite3
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal
 
 bank_bp = Blueprint("bank", __name__, url_prefix="/bank")
@@ -76,9 +76,10 @@ def index():
             c.execute("BEGIN IMMEDIATE")
             no="BANK-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             jid=post_journal(c,request.form["transaction_date"],no,request.form["description"].strip() or "حركة بنكية",lines,session["user_id"])
-            c.execute("""INSERT INTO bank_transactions(transaction_no,transaction_date,bank_account_id,transaction_type,amount,counter_account_id,destination_bank_account_id,description,bank_reference,journal_entry_id,created_by)
+            bank_cursor = c.execute("""INSERT INTO bank_transactions(transaction_no,transaction_date,bank_account_id,transaction_type,amount,counter_account_id,destination_bank_account_id,description,bank_reference,journal_entry_id,created_by)
                          VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(no,request.form["transaction_date"],bank_id,kind,str(amount),counter_id,destination_id,request.form["description"].strip() or "حركة بنكية",request.form.get("bank_reference","").strip(),jid,session["user_id"]))
             c.commit()
+            g.audit_created_record = ("bank_transactions", bank_cursor.lastrowid, None, None)
             flash("تم تسجيل الحركة البنكية وترحيل قيدها المحاسبي.","success")
             return redirect(url_for("bank.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
