@@ -272,6 +272,54 @@ class FinancialYearJournalTests(unittest.TestCase):
             "SELECT opening_entry_id FROM financial_years WHERE id=?", (self.year_id,)
         ).fetchone()[0])
 
+    def test_real_financial_year_close_keeps_dashboard_profit_and_next_year_opening_equity(self):
+        from management_dashboard import (
+            initialize_management_dashboard_schema,
+            build_management_snapshot,
+            dashboard_period_balances,
+        )
+        self.conn.execute("""CREATE TABLE company_settings(
+            setting_key TEXT PRIMARY KEY,setting_value TEXT NOT NULL
+        )""")
+        self.conn.executemany("INSERT INTO company_settings VALUES(?,?)", [
+            ("activity", "commercial"), ("base_currency", "EGP"),
+            ("company_name", "NEXUS test"),
+        ])
+        initialize_management_dashboard_schema(self.conn, "commercial")
+        self._opening()
+        self._activity()
+
+        closing_id = close_financial_year(
+            self.conn, self.year_id, 1, allow_warnings=True
+        )
+        closing = self.conn.execute(
+            "SELECT entry_type,status FROM journal_entries WHERE id=?",
+            (closing_id,),
+        ).fetchone()
+        self.assertEqual(tuple(closing), ("year_end_closing", "posted"))
+        year = self.conn.execute(
+            "SELECT status,closing_entry_id FROM financial_years WHERE id=?",
+            (self.year_id,),
+        ).fetchone()
+        self.assertEqual(tuple(year), ("closed", closing_id))
+
+        snapshot = build_management_snapshot(
+            self.conn, __import__("datetime").date(2026,1,1),
+            __import__("datetime").date(2026,12,31),
+        )
+        self.assertEqual(snapshot["current"]["revenue"], Decimal("300.00"))
+        self.assertEqual(snapshot["current"]["expenses"], Decimal("100.00"))
+        self.assertEqual(snapshot["current"]["net_profit"], Decimal("200.00"))
+        self.assertEqual(snapshot["cash"], Decimal("1200.00"))
+        self.assertEqual(snapshot["total_equity"], Decimal("1000.00"))
+        self.assertTrue(snapshot["balance_ok"])
+
+        _current, _previous, _as_of, next_year_opening = dashboard_period_balances(
+            self.conn, "2027-01-01", "2027-01-31",
+            "2026-12-01", "2026-12-31", exclude_closing_entries=True,
+        )
+        self.assertEqual(next_year_opening[4]["credit"], Decimal("200.00"))
+
     def test_close_resolves_retained_earnings_from_activity_role(self):
         self.conn.execute("""INSERT INTO accounts
             (id,code,name_ar,account_type,parent_id,is_group,active)
