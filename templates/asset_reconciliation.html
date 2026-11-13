@@ -1,0 +1,5 @@
+{% extends 'base.html' %}{% block title %}مطابقة سجل الأصول | NEXUS ERP{% endblock %}{% block content %}
+<header><div><h2>مطابقة سجل الأصول مع الأستاذ العام</h2><p class="muted">مقارنة تكلفة الأصول ومجمع الإهلاك المسجلين في سجل الأصول بأرصدة الحسابات المرحلة.</p></div><a class="btn secondary" href="{{url_for('assets.index')}}">سجل الأصول</a></header>
+<section class="panel"><form method="get" class="form-row"><label>كما في تاريخ<input type="date" name="as_of" value="{{as_of}}"></label><button>عرض المطابقة</button></form></section>
+<section class="panel"><table><tr><th>الحساب</th><th>نوع المطابقة</th><th>سجل الأصول</th><th>الأستاذ العام</th><th>الفرق</th><th>الحالة</th></tr>{% for r in rows %}<tr><td>{{r.code}} - {{r.name}}</td><td>{{r.kind}}</td><td>{{'%.2f'|format(r.register)}}</td><td>{{'%.2f'|format(r.gl)}}</td><td>{{'%.2f'|format(r.difference)}}</td><td>{{'مطابق' if r.difference == 0 else 'يحتاج مراجعة'}}</td></tr>{% else %}<tr><td colspan="6">لا توجد أصول مسجلة حتى هذا التاريخ.</td></tr>{% endfor %}</table></section>
+{% endblock %}
