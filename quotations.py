@@ -298,10 +298,12 @@ def invoice_sales_order(conn, order_id, invoice_date, due_date, created_by, dime
   if ready<=0: continue
   left=ready; cost_total=Decimal("0"); allocations=[]
   delivery_rows=conn.execute(
-   """SELECT dl.*,dn.delivery_no FROM delivery_note_lines dl
+   """SELECT dl.*,dn.delivery_no,dn.delivery_date FROM delivery_note_lines dl
       JOIN delivery_notes dn ON dn.id=dl.delivery_note_id
       WHERE dl.sales_order_line_id=? AND dn.status='posted'
       ORDER BY dn.delivery_date,dn.id,dl.id""",(line["id"],)).fetchall() if line["product_id"] else []
+  if delivery_rows and invoice_day<max(date.fromisoformat(dl["delivery_date"]) for dl in delivery_rows):
+   raise ValueError("تاريخ الفاتورة لا يمكن أن يسبق تاريخ إذن التسليم.")
   for dl in delivery_rows:
    available=Decimal(str(dl["quantity"]))-Decimal(str(dl["invoiced_qty"]))
    if available<=0 or left<=0: continue
