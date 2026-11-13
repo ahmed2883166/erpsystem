@@ -600,11 +600,15 @@ def payroll_run(run_id):
         "net_pay": M(sum((D(x["net_pay"]) for x in rows), Decimal("0"))),
     }
     remaining_payable = M(max(Decimal("0"), totals["net_pay"] - paid_amount))
+    period_start = date.fromisoformat(run["period"] + "-01")
+    next_month = date(period_start.year + (period_start.month == 12),
+                      1 if period_start.month == 12 else period_start.month + 1, 1)
+    period_end = (next_month - date.resolution).isoformat()
     c.close()
     return render_template("payroll_run.html", run=run, rows=rows, accounts=accounts,
                            payment_accounts=payment_accounts, payments=payments,
                            paid_amount=paid_amount, remaining_payable=remaining_payable,
-                           today=date.today().isoformat(), totals=totals)
+                           today=date.today().isoformat(), totals=totals, period_end=period_end)
 
 
 @workforce_bp.route("/hr/payroll/<int:run_id>/post", methods=["POST"])
