@@ -39,6 +39,7 @@ def initialize_assets_schema():
       total_units TEXT NOT NULL DEFAULT '0', asset_account_id INTEGER NOT NULL REFERENCES accounts(id),
       accum_account_id INTEGER NOT NULL REFERENCES accounts(id), expense_account_id INTEGER NOT NULL REFERENCES accounts(id),
       status TEXT NOT NULL DEFAULT 'active', notes TEXT NOT NULL DEFAULT '', created_by INTEGER,
+      supplier_bill_id INTEGER UNIQUE REFERENCES supplier_bills(id),
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS asset_depreciations(
@@ -60,7 +61,66 @@ def initialize_assets_schema():
     );
     CREATE INDEX IF NOT EXISTS idx_asset_disposals_date ON asset_disposals(disposal_date);
     """)
+    asset_columns = {row["name"] for row in c.execute("PRAGMA table_info(fixed_assets)")}
+    if "supplier_bill_id" not in asset_columns:
+        c.execute("ALTER TABLE fixed_assets ADD COLUMN supplier_bill_id INTEGER REFERENCES supplier_bills(id)")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_fixed_asset_supplier_bill ON fixed_assets(supplier_bill_id) WHERE supplier_bill_id IS NOT NULL")
     c.close()
+
+
+def create_asset_from_supplier_bill(conn, bill, actor_id):
+    """Create the fixed-asset register row from an already-posting supplier bill.
+    Caller owns the transaction; this function never posts a second acquisition journal.
+    """
+    if bill["bill_kind"] != "asset":
+        raise ValueError("فاتورة المورد ليست من نوع أصل ثابت.")
+    if not bill["journal_entry_id"]:
+        raise ValueError("يجب ترحيل فاتورة المورد قبل إنشاء سجل الأصل.")
+    existing = conn.execute(
+        "SELECT id FROM fixed_assets WHERE supplier_bill_id=? OR asset_code=?",
+        (bill["id"], bill["asset_code"]),
+    ).fetchone()
+    if existing:
+        raise ValueError("فاتورة المورد مرتبطة بسجل أصل بالفعل أو كود الأصل مستخدم.")
+    required = (
+        "asset_code", "asset_name", "asset_ready_date", "asset_useful_life_months",
+        "asset_account_id", "asset_accum_account_id", "asset_expense_account_id",
+    )
+    if any(bill[key] in (None, "") for key in required):
+        raise ValueError("بيانات إنشاء الأصل من فاتورة المورد غير مكتملة.")
+    cost = Decimal(str(bill["subtotal"]))
+    residual = Decimal(str(bill["asset_residual_value"] or "0"))
+    life = int(bill["asset_useful_life_months"])
+    ready_date = date.fromisoformat(bill["asset_ready_date"]).isoformat()
+    purchase_date = date.fromisoformat(bill["bill_date"]).isoformat()
+    if cost <= 0 or residual < 0 or residual >= cost or life <= 0 or ready_date < purchase_date:
+        raise ValueError("بيانات تكلفة أو جاهزية أو عمر الأصل غير صالحة.")
+    account_specs = (
+        (bill["asset_account_id"], "asset"),
+        (bill["asset_accum_account_id"], "asset"),
+        (bill["asset_expense_account_id"], "expense"),
+    )
+    for account_id, expected in account_specs:
+        row = conn.execute(
+            "SELECT account_type,is_group,active FROM accounts WHERE id=?", (account_id,)
+        ).fetchone()
+        if not row or row["account_type"] != expected or row["is_group"] or not row["active"]:
+            raise ValueError("أحد حسابات الأصل غير صالح أو غير نشط.")
+    if bill["asset_account_id"] == bill["asset_accum_account_id"]:
+        raise ValueError("حساب تكلفة الأصل يجب أن يختلف عن حساب مجمع الإهلاك.")
+    cursor = conn.execute("""INSERT INTO fixed_assets(
+        asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,
+        useful_life_months,depreciation_method,annual_rate,asset_account_id,
+        accum_account_id,expense_account_id,notes,created_by,supplier_bill_id
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (bill["asset_code"], bill["asset_name"], bill["asset_category"] or "",
+         purchase_date, ready_date, str(cost), str(residual), life,
+         bill["asset_depreciation_method"], str(bill["asset_annual_rate"] or "0"),
+         bill["asset_account_id"], bill["asset_accum_account_id"],
+         bill["asset_expense_account_id"],
+         "تم الإنشاء تلقائيًا من فاتورة المورد " + bill["bill_no"],
+         actor_id, bill["id"]))
+    return cursor.lastrowid
 
 
 def _asset_period_amount(asset, accumulated, period, cutoff_date=None):
