@@ -1155,6 +1155,10 @@ class SalesIntegrationTests(unittest.TestCase):
             self.db, self.customer_id, "2026-11-10", self.warehouse_id,
             [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}], "0", 1,
         )
+        second_invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "50"}], "0", 1,
+        )
         self.db.commit()
         cash_id = self.db.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
 
@@ -1173,14 +1177,29 @@ class SalesIntegrationTests(unittest.TestCase):
 
         response = client.post(
             f"/sales/advances/{advance['id']}/allocate",
-            data={"invoice_id": str(invoice["invoice_id"]), "amount": "50",
-                  "allocation_date": "2026-11-12"},
+            data={
+                "invoice_ids": [str(invoice["invoice_id"]), str(second_invoice["invoice_id"])],
+                "allocation_amount_" + str(invoice["invoice_id"]): "40",
+                "allocation_amount_" + str(second_invoice["invoice_id"]): "20",
+                "allocation_date": "2026-11-12",
+            },
         )
         self.assertEqual(response.status_code, 302)
         paid = self.db.execute(
             "SELECT paid_amount FROM sales_invoices WHERE id=?", (invoice["invoice_id"],)
         ).fetchone()["paid_amount"]
-        self.assertEqual(Decimal(paid), Decimal("50.00"))
+        second_paid = self.db.execute(
+            "SELECT paid_amount FROM sales_invoices WHERE id=?", (second_invoice["invoice_id"],)
+        ).fetchone()["paid_amount"]
+        self.assertEqual(Decimal(paid), Decimal("40.00"))
+        self.assertEqual(Decimal(second_paid), Decimal("20.00"))
+        self.assertEqual(
+            self.db.execute(
+                "SELECT COUNT(*) FROM customer_advance_allocations WHERE advance_receipt_id=?",
+                (advance["id"],),
+            ).fetchone()[0],
+            2,
+        )
 
         response = client.post(
             f"/sales/advances/{advance['id']}/refund",
