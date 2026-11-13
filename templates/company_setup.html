@@ -15,10 +15,16 @@ applyLocalization();
 </script>{% endblock %}
 {% block content %}
 <header><div><h2>إعداد الشركة والنظام</h2><p>اختيار الدولة يضبط العملة والنظام الضريبي ومعدل VAT تلقائيًا. اختيار النشاط يحمّل شجرة الحسابات المناسبة قبل بدء القيود.</p></div></header>
-<form method="post" class="panel">
+<form method="post" enctype="multipart/form-data" class="panel">
   <h3>بيانات الشركة</h3>
   <div class="form-row">
     <div><label>اسم الشركة</label><input name="company_name" value="{{ settings.get('company_name','') }}" placeholder="اسم الشركة" required></div>
+    <div><label>العنوان الرئيسي</label><input name="company_address" maxlength="300" value="{{ settings.get('company_address','') }}" placeholder="عنوان الشركة"></div>
+    <div><label>هاتف الشركة</label><input name="company_phone" maxlength="60" value="{{ settings.get('company_phone','') }}" placeholder="رقم الهاتف"></div>
+    <div><label>البريد الإلكتروني</label><input type="email" name="company_email" maxlength="120" value="{{ settings.get('company_email','') }}" placeholder="info@example.com"></div>
+    <div><label>الموقع الإلكتروني</label><input name="company_website" maxlength="160" value="{{ settings.get('company_website','') }}" placeholder="www.example.com"></div>
+    <div><label>شعار الشركة (PNG / JPG / WEBP حتى 1 ميجابايت)</label><input type="file" name="company_logo" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"></div>
+    {% if settings.get('company_logo_data') %}<div><label>الشعار الحالي</label><img src="{{ settings.get('company_logo_data') }}" alt="شعار الشركة" style="max-width:150px;max-height:90px;object-fit:contain;display:block"><label class="checkline"><input type="checkbox" name="remove_company_logo" value="yes"> إزالة الشعار الحالي</label></div>{% endif %}
     <div><label>الدولة / التوطين الضريبي</label><select name="tax_country">
       <option value="EG" {% if settings.get('tax_country','EG')=='EG' %}selected{% endif %}>مصر</option>
       <option value="SA" {% if settings.get('tax_country')=='SA' %}selected{% endif %}>السعودية</option>
