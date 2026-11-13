@@ -714,9 +714,13 @@ class SalesIntegrationTests(unittest.TestCase):
         app.add_url_rule("/global-search", endpoint="global_search", view_func=lambda: "")
         app.add_url_rule("/change-password", endpoint="change_password", view_func=lambda: "")
         app.add_url_rule("/logout", endpoint="logout", view_func=lambda: "")
+        app.add_url_rule("/about", endpoint="about", view_func=lambda: "")
+        app.add_url_rule("/license", endpoint="license_page", view_func=lambda: "")
         app.add_url_rule("/aging", endpoint="aging.index", view_func=lambda: "")
         app.jinja_env.globals["csrf_token"] = lambda: "test-token"
-        app.context_processor(lambda: {"permissions": {"sales.view", "sales.manage"}})
+        app.context_processor(lambda: {
+            "permissions": {"sales.view", "sales.manage"}, "license_info": {"status": "demo"}
+        })
         app.register_blueprint(sales.sales_bp)
         client = app.test_client()
         with client.session_transaction() as session:
