@@ -4,8 +4,8 @@
 <section class="panel print-document">
 <div class="no-print actions"><button type="button" onclick="window.print()">طباعة الفاتورة / PDF</button><a class="btn secondary" href="{{ url_for('sales.index') }}">العودة للمبيعات</a></div>
 {% set document_title = 'فاتورة بيع' %}
-{% set document_number = {{ invoice.invoice_no }} %}
-{% set document_date = {{ invoice.invoice_date }} %}
+{% set document_number = invoice.invoice_no %}
+{% set document_date = invoice.invoice_date %}
 {% include "partials/print_brand_header.html" %}
 <div class="form-row"><div><b>العميل:</b> {{ invoice.customer_name }} ({{ invoice.customer_code }})</div><div><b>الرقم الضريبي:</b> {{ invoice.customer_tax_number or '—' }}</div><div><b>تاريخ الاستحقاق:</b> {{ invoice.due_date or invoice.invoice_date }}</div></div>
 <div class="table-wrap"><table><thead><tr><th>الصنف / الوصف</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead><tbody>{% for x in lines %}<tr><td>{{ x.sku or '' }} {{ x.product_name or x.description }}</td><td>{{ x.quantity }}</td><td>{{ x.unit_price|money }}</td><td>{{ x.line_total|money }}</td></tr>{% endfor %}</tbody></table></div>
