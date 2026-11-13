@@ -1389,5 +1389,34 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertIn("إنشاء إذن تسليم جديد", approved_page.get_data(as_text=True))
 
 
+    def test_sales_order_dimensions_flow_to_delivery_cogs_and_invoice(self):
+        from datetime import date, timedelta
+        branch=self.db.execute("INSERT INTO branches(code,name_ar) VALUES('B1','فرع القاهرة')").lastrowid
+        center=self.db.execute("INSERT INTO cost_centers(code,name_ar) VALUES('CC1','مركز تجاري')").lastrowid
+        project=self.db.execute("INSERT INTO projects(code,name_ar) VALUES('PJ1','مشروع تجريبي')").lastrowid
+        salesperson=self.db.execute("INSERT INTO salespersons(code,name) VALUES('SP1','مندوب')").lastrowid
+        quote_id,old_order,_=self._create_accepted_quote_and_order("1")
+        self.db.execute("UPDATE quotations SET sales_order_id=NULL WHERE id=?",(quote_id,))
+        self.db.execute("DELETE FROM sales_orders WHERE id=?",(old_order,)); self.db.commit()
+        self.db.execute("BEGIN IMMEDIATE")
+        order=quotations.create_sales_order_from_quotation(self.db,quote_id,1,self.warehouse_id,
+            (date.today()+timedelta(days=10)).isoformat(),{"branch_id":branch,"cost_center_id":center,"project_id":project,"salesperson_id":salesperson})
+        oid=order["sales_order_id"]
+        line=self.db.execute("SELECT id FROM sales_order_lines WHERE sales_order_id=?",(oid,)).fetchone()["id"]
+        quotations.approve_sales_order(self.db,oid,2); self.db.commit()
+        self.db.execute("BEGIN IMMEDIATE")
+        note=quotations.create_delivery_note(self.db,oid,(date.today()+timedelta(days=1)).isoformat(),[{"sales_order_line_id":line,"quantity":"1"}],2)
+        quotations.post_delivery_note(self.db,note["delivery_note_id"],2); self.db.commit()
+        row=self.db.execute("""SELECT branch_id,cost_center_id,project_id,customer_id,salesperson_id FROM journal_lines
+            WHERE entry_id=(SELECT journal_entry_id FROM stock_movements WHERE movement_type='issue' ORDER BY id DESC LIMIT 1)
+            AND debit<>'0'""").fetchone()
+        self.assertEqual(tuple(row),(branch,center,project,self.customer_id,salesperson))
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice=quotations.invoice_sales_order(self.db,oid,(date.today()+timedelta(days=2)).isoformat(),(date.today()+timedelta(days=30)).isoformat(),2)
+        self.db.commit()
+        row=self.db.execute("SELECT branch_id,cost_center_id,project_id,customer_id,salesperson_id FROM journal_lines WHERE entry_id=? AND debit<>'0'",(invoice["journal_entry_id"],)).fetchone()
+        self.assertEqual(tuple(row),(branch,center,project,self.customer_id,salesperson))
+
+
 if __name__ == "__main__":
     unittest.main()
