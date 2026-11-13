@@ -447,14 +447,24 @@ def payroll_report():
     rows = [dict(row) for row in rows]
     run_net_pay = {}
     for row in rows:
+        loan = D(row["loan_deduction"])
+        row["manual_advance_deduction"] = M(max(Decimal("0"), D(row["advance_deduction"]) - loan))
+        row["employee_deductions"] = M(
+            D(row["absence_deduction"]) + row["manual_advance_deduction"] + loan
+            + D(row["other_deductions"]) + D(row["taxable_income_tax"])
+            + D(row["employee_insurance"])
+        )
+        row["employer_total_cost"] = M(
+            D(row["gross_pay"]) - D(row["absence_deduction"]) + D(row["employer_insurance"])
+        )
         run_net_pay[row["run_id"]] = run_net_pay.get(row["run_id"], Decimal("0")) + D(row["net_pay"])
     employee_options = c.execute(
         "SELECT id,employee_code,full_name FROM employees ORDER BY employee_code"
     ).fetchall()
     fields = ("basic_salary","salary_raise","allowances","incentives","overtime_amount","gross_pay",
-              "absence_deduction","advance_deduction","loan_deduction","other_deductions",
-              "taxable_income_tax","employee_insurance","employer_insurance","total_entitlements",
-              "total_deductions","net_pay")
+              "absence_deduction","manual_advance_deduction","loan_deduction","other_deductions",
+              "taxable_income_tax","employee_insurance","employer_insurance","employee_deductions",
+              "employer_total_cost","net_pay")
     totals = {key: M(sum((D(row[key]) for row in rows), Decimal("0"))) for key in fields}
     if employee_id:
         # Payroll payments are recorded against the whole run, not individual employees.
