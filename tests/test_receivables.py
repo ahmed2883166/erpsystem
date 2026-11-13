@@ -27,9 +27,50 @@ class ReceivablesAgingTests(unittest.TestCase):
             VALUES(1,1,'RF-1','2026-11-20','10')""")
         conn.execute("""INSERT INTO customer_refunds(id,credit_note_id,refund_no,refund_date,amount)
             VALUES(2,1,'RF-2','2026-12-01','5')""")
+        # Dated subledger records let the report reconstruct the selected historical date.
+        conn.executescript("""
+            CREATE TABLE customer_receipts(id INTEGER PRIMARY KEY,invoice_id INTEGER,receipt_date TEXT,amount TEXT);
+            CREATE TABLE customer_receipt_batches(id INTEGER PRIMARY KEY,receipt_date TEXT);
+            CREATE TABLE customer_receipt_allocations(batch_id INTEGER,invoice_id INTEGER,amount TEXT);
+            CREATE TABLE customer_advance_allocations(id INTEGER PRIMARY KEY,invoice_id INTEGER,allocation_date TEXT,amount TEXT);
+            CREATE TABLE supplier_payments(id INTEGER PRIMARY KEY,supplier_id INTEGER,payment_date TEXT);
+            CREATE TABLE supplier_payment_allocations(payment_id INTEGER,bill_id INTEGER,amount TEXT);
+            CREATE TABLE supplier_credit_notes(id INTEGER PRIMARY KEY,supplier_id INTEGER,bill_id INTEGER,credit_date TEXT,total_amount TEXT,status TEXT);
+        """)
+        conn.execute("INSERT INTO customer_receipts VALUES(1,1,'2026-11-10','50')")
+        conn.execute("INSERT INTO supplier_payments VALUES(1,1,'2026-11-12')")
+        conn.execute("INSERT INTO supplier_payment_allocations VALUES(1,1,'50')")
+        # A second customer invoice has settlements and credits both before and after the report date.
+        conn.execute("""INSERT INTO sales_invoices
+            (id,customer_id,invoice_no,invoice_date,due_date,total_amount,paid_amount,credited_amount,status)
+            VALUES(2,1,'SI-2','2026-11-02','2026-11-12','200','75','30','posted')""")
+        conn.execute("""INSERT INTO sales_credit_notes
+            (id,invoice_id,credit_note_no,credit_date,reason,total_amount,status)
+            VALUES(2,2,'SCN-2A','2026-11-18','مرتجع قبل التاريخ','10','posted')""")
+        conn.execute("""INSERT INTO sales_credit_notes
+            (id,invoice_id,credit_note_no,credit_date,reason,total_amount,status)
+            VALUES(3,2,'SCN-2B','2026-12-02','مرتجع بعد التاريخ','20','posted')""")
+        conn.execute("INSERT INTO customer_receipts VALUES(2,2,'2026-11-25','25')")
+        conn.execute("INSERT INTO customer_receipts VALUES(3,2,'2026-12-05','30')")
+        conn.execute("INSERT INTO customer_receipt_batches VALUES(1,'2026-12-06')")
+        conn.execute("INSERT INTO customer_receipt_allocations VALUES(1,2,'20')")
+        conn.execute("INSERT INTO customer_advance_allocations VALUES(1,2,'2026-11-28','5')")
+        conn.execute("""INSERT INTO customer_refunds(id,credit_note_id,refund_no,refund_date,amount)
+            VALUES(3,2,'RF-3','2026-11-20','4')""")
+        conn.execute("""INSERT INTO customer_refunds(id,credit_note_id,refund_no,refund_date,amount)
+            VALUES(4,3,'RF-4','2026-12-04','6')""")
         conn.execute("""INSERT INTO supplier_bills
             (id,supplier_id,bill_no,bill_date,due_date,total_amount,paid_amount,credited_amount,status)
             VALUES(1,1,'PB-1','2026-11-01','2026-11-10','200','50','0','posted')""")
+        conn.execute("""INSERT INTO supplier_bills
+            (id,supplier_id,bill_no,bill_date,due_date,total_amount,paid_amount,credited_amount,status)
+            VALUES(2,1,'PB-2','2026-11-02','2026-11-12','300','80','40','posted')""")
+        conn.execute("INSERT INTO supplier_payments VALUES(2,1,'2026-11-29')")
+        conn.execute("INSERT INTO supplier_payment_allocations VALUES(2,2,'30')")
+        conn.execute("INSERT INTO supplier_payments VALUES(3,1,'2026-12-02')")
+        conn.execute("INSERT INTO supplier_payment_allocations VALUES(3,2,'50')")
+        conn.execute("INSERT INTO supplier_credit_notes VALUES(1,1,2,'2026-11-20','15','posted')")
+        conn.execute("INSERT INTO supplier_credit_notes VALUES(2,1,2,'2026-12-02','25','posted')")
         conn.commit()
         conn.close()
         # Use a minimal base layout: the real base.html links to app-only endpoints that this test app does not register.
@@ -61,6 +102,24 @@ class ReceivablesAgingTests(unittest.TestCase):
         body = response.get_data(as_text=True)
         self.assertIn("40", body)
         self.assertNotIn("45.00", body)
+
+    def test_customer_aging_uses_receipts_advances_credits_and_refunds_as_of_date(self):
+        response = self.client.get("/reports/aging/?kind=customers&as_of=2026-11-30")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        # Invoice 2: 200 - 25 direct receipt - 5 advance - 10 credit + 4 refund = 164.
+        self.assertIn("164.00", body)
+        # Later receipt, batch allocation, credit note and refund must not affect 30 November.
+        self.assertNotIn("139.00", body)
+
+    def test_supplier_aging_uses_payments_and_credit_notes_as_of_date(self):
+        response = self.client.get("/reports/aging/?kind=suppliers&as_of=2026-11-30")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        # Bill 2: 300 - 30 payment - 15 credit note = 255.
+        self.assertIn("255.00", body)
+        # The December payment and credit note are excluded.
+        self.assertNotIn("205.00", body)
 
     def test_supplier_aging_does_not_require_customer_invoice_fields(self):
         response = self.client.get("/reports/aging/?kind=suppliers&as_of=2026-11-30")
