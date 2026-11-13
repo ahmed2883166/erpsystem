@@ -2092,6 +2092,30 @@ def new_receipt():
     return render_template("sales_receipt_new.html", invoices=invoices, customers=customers,
                            cash_accounts=cash_accounts, today=date.today().isoformat())
 
+@sales_bp.route("/receipts/<int:receipt_id>/print")
+@require("sales.view")
+def receipt_print(receipt_id):
+    c = db()
+    receipt = c.execute("""SELECT r.*,cu.code customer_code,cu.name customer_name,
+        a.code cash_code,a.name_ar cash_name FROM customer_receipt_batches r
+        JOIN customers cu ON cu.id=r.customer_id
+        JOIN accounts a ON a.id=r.cash_account_id WHERE r.id=?""", (receipt_id,)).fetchone()
+    if not receipt:
+        c.close()
+        abort(404)
+    allocations = c.execute("""SELECT i.invoice_no,i.invoice_date,i.total_amount,
+        a.amount FROM customer_receipt_allocations a
+        JOIN sales_invoices i ON i.id=a.invoice_id WHERE a.batch_id=? ORDER BY a.id""",
+        (receipt_id,)).fetchall()
+    settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
+        "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
+    c.close()
+    return render_template("sales_receipt_print.html", receipt=receipt, allocations=allocations,
+                           settings=settings, branch=None)
+
+
+
 
 
 
