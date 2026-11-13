@@ -64,6 +64,24 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def _submit_approve_and_post(self, bill_id, creator_id=1):
+        with self.client.session_transaction() as session:
+            session["user_id"] = creator_id
+            session["role"] = "accountant"
+        response = self.client.post(f"/purchases/bills/{bill_id}/submit")
+        self.assertEqual(response.status_code, 302)
+        with self.client.session_transaction() as session:
+            session["user_id"] = creator_id + 1
+            session["role"] = "admin"
+        response = self.client.post(f"/purchases/bills/{bill_id}/approve", data={"reason": "مطابقة الفاتورة"})
+        self.assertEqual(response.status_code, 302)
+        with self.client.session_transaction() as session:
+            session["user_id"] = creator_id
+            session["role"] = "accountant"
+        response = self.client.post(f"/purchases/bills/{bill_id}/post")
+        self.assertEqual(response.status_code, 302)
+
+
     def test_integrity_screen_displays_legacy_duplicate_supplier_invoices(self):
         conn = purchases.db()
         conn.execute("DROP INDEX IF EXISTS uq_supplier_bill_invoice_no")
@@ -195,8 +213,15 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         conn = purchases.db()
         bill = conn.execute(
-            "SELECT journal_entry_id FROM supplier_bills WHERE supplier_invoice_no='CUSTOM-AP-001'"
+            "SELECT id,status,journal_entry_id FROM supplier_bills WHERE supplier_invoice_no='CUSTOM-AP-001'"
         ).fetchone()
+        self.assertEqual(bill["status"], "draft")
+        self.assertIsNone(bill["journal_entry_id"])
+        bill_id = bill["id"]
+        conn.close()
+        self._submit_approve_and_post(bill_id)
+        conn = purchases.db()
+        bill = conn.execute("SELECT journal_entry_id FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
         lines = conn.execute(
             """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
                JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=? ORDER BY jl.id""",
@@ -229,7 +254,14 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
             "SELECT * FROM supplier_bills WHERE supplier_invoice_no='EXP-2026-001'"
         ).fetchone()
         self.assertIsNotNone(bill)
+        self.assertEqual(bill["status"], "draft")
+        self.assertIsNone(bill["journal_entry_id"])
         self.assertEqual(bill["due_date"], "2026-11-30")
+        bill_id = bill["id"]
+        conn.close()
+        self._submit_approve_and_post(bill_id)
+        conn = purchases.db()
+        bill = conn.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
         lines = conn.execute(
             "SELECT a.code,jl.debit,jl.credit FROM journal_lines jl "
             "JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=? ORDER BY jl.id",
