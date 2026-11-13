@@ -58,7 +58,8 @@ class FixedAssetDepreciationCalculationTests(unittest.TestCase):
             journal_entry_id INTEGER UNIQUE, UNIQUE(asset_id,period)
         )""")
         asset = dict(self.asset, id=7, ready_date="2026-01-01",
-                     cost="1200", residual_value="0", useful_life_months=12)
+                     cost="1200", residual_value="0", useful_life_months=12,
+                     asset_account_id=10, accum_account_id=11, expense_account_id=12)
         with patch("fixed_assets.post_journal", return_value=55) as post:
             amount, entry_id = _post_asset_depreciation(conn, asset, "2026-01", 9)
         self.assertEqual(amount, Decimal("100.00"))
@@ -79,7 +80,8 @@ class FixedAssetDepreciationCalculationTests(unittest.TestCase):
             journal_entry_id INTEGER UNIQUE, UNIQUE(asset_id,period)
         )""")
         asset = dict(self.asset, id=8, ready_date="2026-01-01",
-                     cost="1200", residual_value="0", useful_life_months=12)
+                     cost="1200", residual_value="0", useful_life_months=12,
+                     asset_account_id=10, accum_account_id=11, expense_account_id=12)
         with patch("fixed_assets.post_journal") as post:
             with self.assertRaisesRegex(ValueError, "الفترة السابقة"):
                 _post_asset_depreciation(conn, asset, "2026-02", 9)
