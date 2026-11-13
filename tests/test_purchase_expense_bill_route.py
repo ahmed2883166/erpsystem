@@ -86,6 +86,70 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
 
 
+    def test_supplier_bill_and_payment_journals_carry_supplier_dimension(self):
+        conn = purchases.db()
+        conn.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group,active) VALUES('1110','الصندوق','asset',0,1)"
+        )
+        cash_id = conn.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
+        conn.commit()
+        conn.close()
+
+        with self.client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "accountant"
+        response = self.client.post("/purchases/bills/new", data={
+            "supplier_id": str(self.supplier_id),
+            "supplier_invoice_no": "SUP-DIM-INV-001",
+            "bill_date": "2026-11-11",
+            "due_date": "2026-11-30",
+            "bill_kind": "expense",
+            "expense_account_id": str(self.expense_id),
+            "subtotal": "100.00",
+            "tax_rate": "0",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = purchases.db()
+        bill = conn.execute(
+            "SELECT id FROM supplier_bills WHERE supplier_invoice_no='SUP-DIM-INV-001'"
+        ).fetchone()
+        self.assertIsNotNone(bill)
+        conn.close()
+
+        self._submit_approve_and_post(bill["id"])
+        conn = purchases.db()
+        posted_bill = conn.execute(
+            "SELECT journal_entry_id FROM supplier_bills WHERE id=?", (bill["id"],)
+        ).fetchone()
+        bill_dimensions = conn.execute(
+            "SELECT supplier_id FROM journal_lines WHERE entry_id=?",
+            (posted_bill["journal_entry_id"],),
+        ).fetchall()
+        self.assertTrue(bill_dimensions)
+        self.assertTrue(all(row["supplier_id"] == self.supplier_id for row in bill_dimensions))
+        conn.close()
+
+        response = self.client.post("/purchases/payments/new", data={
+            "supplier_id": str(self.supplier_id),
+            "amount": "100.00",
+            "cash_account_id": str(cash_id),
+            "payment_date": "2026-11-12",
+            "reference": "SUP-DIM-PAY-001",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = purchases.db()
+        payment = conn.execute(
+            "SELECT journal_entry_id FROM supplier_payments WHERE reference='SUP-DIM-PAY-001'"
+        ).fetchone()
+        self.assertIsNotNone(payment)
+        payment_dimensions = conn.execute(
+            "SELECT supplier_id FROM journal_lines WHERE entry_id=?",
+            (payment["journal_entry_id"],),
+        ).fetchall()
+        self.assertTrue(payment_dimensions)
+        self.assertTrue(all(row["supplier_id"] == self.supplier_id for row in payment_dimensions))
+        conn.close()
+
     def test_integrity_screen_displays_legacy_duplicate_supplier_invoices(self):
         conn = purchases.db()
         conn.execute("DROP INDEX IF EXISTS uq_supplier_bill_invoice_no")
