@@ -904,7 +904,7 @@ def register_report_exports(app, db_path, permissions):
             from reportlab.lib.units import mm
             from reportlab.pdfbase import pdfmetrics
             from reportlab.pdfbase.ttfonts import TTFont
-            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as ReportImage
             from xml.sax.saxutils import escape
         except ImportError:
             return Response(
@@ -943,6 +943,13 @@ def register_report_exports(app, db_path, permissions):
                 "SELECT setting_value FROM company_settings WHERE setting_key='base_currency'"
             ).fetchone()
             base_currency = currency_row["setting_value"] if currency_row else ""
+            company_profile = {
+                row["setting_key"]: row["setting_value"]
+                for row in conn.execute(
+                    "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
+                    "('company_address','company_phone','company_email','company_website','company_logo_data','tax_number')"
+                )
+            }
         finally:
             conn.close()
 
@@ -996,14 +1003,30 @@ def register_report_exports(app, db_path, permissions):
             "NexusScreenHeader", parent=cell_style, textColor=colors.white,
             fontSize=7 if max_columns > 8 else 8, alignment=TA_CENTER,
         )
-        story = [
+        story = []
+        logo_data = company_profile.get("company_logo_data", "")
+        if logo_data.startswith("data:image/") and ";base64," in logo_data:
+            try:
+                logo_bytes = base64.b64decode(logo_data.split(";base64,", 1)[1], validate=True)
+                story.append(ReportImage(io.BytesIO(logo_bytes), width=28*mm, height=20*mm, kind="proportional"))
+            except (ValueError, TypeError):
+                pass
+        company_contact = " · ".join(value for value in (
+            company_profile.get("company_address", ""),
+            company_profile.get("company_phone", ""),
+            company_profile.get("company_email", ""),
+            company_profile.get("company_website", ""),
+        ) if value)
+        story.extend([
             Paragraph(pdf_text(company_name), heading_style),
+            Paragraph(pdf_text(company_contact), cell_style),
+            Paragraph(pdf_text("الرقم الضريبي: " + company_profile.get("tax_number", "")), cell_style),
             Paragraph(pdf_text(title), heading_style),
             Paragraph(pdf_text("العملة الأساسية: " + base_currency), cell_style),
             Paragraph(pdf_text("تاريخ إعداد التقرير: " + datetime.now().strftime("%Y-%m-%d %H:%M")), cell_style),
             Paragraph(pdf_text("ملاحظة: يعرض هذا الملف البيانات الظاهرة في الشاشة الحالية فقط؛ وقد توجد صفحات أخرى عند استخدام ترقيم الصفحات."), cell_style),
             Spacer(1, 4*mm),
-        ]
+        ])
         for table_title, rows, columns in normalized_tables:
             story.append(Paragraph(pdf_text(table_title), table_title_style))
             table_data = []
