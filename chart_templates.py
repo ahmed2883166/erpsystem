@@ -192,6 +192,14 @@ def account_metadata_for(account_type, code, name_ar):
 
     if any(term in name for term in ("صندوق", "بنك", "نقدية", "نقاط البيع")):
         account_subtype = "cash"
+    elif code in {"1191", "1192"}:
+        account_subtype = "contract_asset_or_retention"
+    elif code == "1193":
+        account_subtype = "supplier_or_carrier_advance"
+    elif code == "2160" or ("دفعات مقدمة" in name and "عملاء" in name):
+        account_subtype = "customer_advance"
+    elif any(term in name for term in ("مجمع الإهلاك", "مجمع إطفاء")):
+        account_subtype = "accumulated_depreciation_or_amortization"
     elif "مخزون" in name:
         account_subtype = "inventory"
     elif any(term in name for term in ("عميل", "عملاء", "مرضى", "ذمم مدينة")):
@@ -214,10 +222,6 @@ def account_metadata_for(account_type, code, name_ar):
         account_subtype = "contra_revenue"
     elif code == "2190":
         account_subtype = "goods_received_not_invoiced"
-    elif code in {"1191", "1192"}:
-        account_subtype = "contract_asset_or_retention"
-    elif code == "1193":
-        account_subtype = "supplier_or_carrier_advance"
     elif code == "2191":
         account_subtype = "retention_payable"
     elif code == "2192":
