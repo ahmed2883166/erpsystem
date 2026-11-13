@@ -155,7 +155,7 @@ def initialize_workforce_schema():
     c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('annual','إجازة سنوية',1,1)")
     c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('unpaid','إجازة بدون أجر',0,0)")
     c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('sick','إجازة مرضية',1,0)")
-        employee_cols = {r["name"] for r in c.execute("PRAGMA table_info(employees)")}
+    employee_cols = {r["name"] for r in c.execute("PRAGMA table_info(employees)")}
     for name, definition in {
         "address": "TEXT NOT NULL DEFAULT ''",
         "national_id": "TEXT NOT NULL DEFAULT ''",
