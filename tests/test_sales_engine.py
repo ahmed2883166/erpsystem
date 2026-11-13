@@ -1059,5 +1059,30 @@ otals["credit"], places=2)
 
 
 
+    def test_sales_order_rejection_requires_reason_and_preserves_no_stock_or_gl_effect(self):
+        _, order_id, _ = self._create_accepted_quote_and_order("2")
+        with self.assertRaisesRegex(ValueError, "نفس منشئه"):
+            quotations.reject_sales_order(self.db, order_id, rejected_by=1, reason="رفض")
+        with self.assertRaisesRegex(ValueError, "سبب رفض أمر البيع مطلوب"):
+            quotations.reject_sales_order(self.db, order_id, rejected_by=2, reason="لا")
+        quotations.reject_sales_order(
+            self.db, order_id, rejected_by=2, reason="مراجعة السعر والموافقة التجارية غير مكتملة",
+        )
+        self.db.commit()
+        order = self.db.execute(
+            "SELECT status,rejection_reason,rejected_by FROM sales_orders WHERE id=?", (order_id,)
+        ).fetchone()
+        self.assertEqual(order["status"], "rejected")
+        self.assertEqual(order["rejected_by"], 2)
+        self.assertEqual(order["rejection_reason"], "مراجعة السعر والموافقة التجارية غير مكتملة")
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'"
+        ).fetchone()[0], 0)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
+        with self.assertRaisesRegex(ValueError, "ليس في انتظار الاعتماد"):
+            quotations.approve_sales_order(self.db, order_id, approver_id=2)
+
+
+
 if __name__ == "__main__":
     unittest.main()
