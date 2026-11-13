@@ -173,6 +173,8 @@ class ActivityProfileTests(unittest.TestCase):
                          {"2140", "2160"})
         self.assertEqual(set(ACTIVITY_ACCOUNT_ROLES["service"]["customer_advances"]),
                          {"2120", "2160"})
+        self.assertEqual(set(ACTIVITY_ACCOUNT_ROLES["service"]["cash"]), {"1110", "1111"})
+        self.assertIn(("1111", "البنوك", "asset", "1100", 0), CHARTS["service"])
 
     def test_restaurant_roles_include_all_stock_and_cost_detail_accounts(self):
         from chart_templates import ACTIVITY_ACCOUNT_ROLES, CHARTS
