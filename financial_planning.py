@@ -1306,7 +1306,11 @@ def budget_export(budget_id, fmt):
 
 
 def build_balance_sheet_snapshot(conn, as_of):
-    rows = conn.execute("""SELECT a.id,a.code,a.name_ar,a.account_type,a.parent_id,a.is_group,
+    account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+    section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
+    subtype_expr = "a.account_subtype" if "account_subtype" in account_columns else "NULL"
+    rows = conn.execute(f"""SELECT a.id,a.code,a.name_ar,a.account_type,a.parent_id,a.is_group,
+        {section_expr} statement_section,{subtype_expr} account_subtype,
         COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
         COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
       FROM accounts a
@@ -1319,7 +1323,11 @@ def build_balance_sheet_snapshot(conn, as_of):
         credit=Decimal(str(row["credit"] or "0"))
         kind=row["account_type"]
         balance=debit-credit if kind=="asset" or kind=="expense" else credit-debit
-        accounts[row["id"]]={**dict(row),"balance":balance}
+        accounts[row["id"]]={**dict(row),"balance":balance,
+            "statement_section": row["statement_section"] or {
+                "asset": "assets", "liability": "liabilities",
+                "equity": "equity", "revenue": "revenue", "expense": "operating_expenses",
+            }.get(kind, "unclassified")}
     totals={"asset":Decimal("0"),"liability":Decimal("0"),"equity":Decimal("0"),
             "revenue":Decimal("0"),"expense":Decimal("0")}
     for item in accounts.values():
@@ -1350,7 +1358,8 @@ def build_balance_sheet_snapshot(conn, as_of):
                 if item["account_type"]!=kind or item["id"] in seen:
                     continue
                 value=group_totals.get(item["id"],Decimal("0")) if item["is_group"] else item["balance"]
-                flat.append({**item,"display_balance":value,"depth":depth})
+                flat.append({**item,"display_balance":value,"depth":depth,
+                    "statement_section": item.get("statement_section") or kind})
                 walk(item["id"],depth+1,seen|{item["id"]})
         walk(None)
         sections[kind]=flat
