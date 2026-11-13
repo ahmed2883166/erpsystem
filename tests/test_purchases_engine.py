@@ -315,7 +315,7 @@ class PurchasingAccountingTests(unittest.TestCase):
             {"receipt_amount_" + str(receipt_id): "60"}
         )
         self.assertEqual(allocations, [(receipt_id, purchases.money("60"))])
-        with self.assertRaisesRegex(ValueError, "يتجاوز المتبقي"):
+        with self.assertRaisesRegex(ValueError, "قيمة التخصيص تتجاوز المتبقي غير المفوتر من إيصال الاستلام"):
             purchases._validate_supplier_receipt_allocations(
                 self.db, supplier_id, [receipt_id], purchases.money("61"),
                 {"receipt_amount_" + str(receipt_id): "61"}
