@@ -1400,9 +1400,17 @@ def build_cash_flow_snapshot(conn, start, end):
         "SELECT meta_value FROM management_dashboard_meta WHERE meta_key='roles_customized'"
     ).fetchone()
     if not cash_ids and not (custom_mapping and custom_mapping["meta_value"] == "1"):
-        cash_ids = {r["id"] for r in conn.execute(
-            "SELECT id FROM accounts WHERE is_group=0 AND (code IN ('1110','1120') OR name_ar LIKE '%صندوق%' OR name_ar LIKE '%بنك%')"
-        )}
+        account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+        if "cash_flow_category" in account_columns:
+            cash_ids = {r["id"] for r in conn.execute(
+                """SELECT id FROM accounts WHERE is_group=0 AND
+                   (cash_flow_category='cash_equivalents' OR code IN ('1110','1120')
+                    OR name_ar LIKE '%صندوق%' OR name_ar LIKE '%بنك%')"""
+            )}
+        else:
+            cash_ids = {r["id"] for r in conn.execute(
+                "SELECT id FROM accounts WHERE is_group=0 AND (code IN ('1110','1120') OR name_ar LIKE '%صندوق%' OR name_ar LIKE '%بنك%')"
+            )}
     mapping_exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_flow_account_mappings'"
     ).fetchone()
@@ -1442,7 +1450,10 @@ def build_cash_flow_snapshot(conn, start, end):
                 else:
                     sections["investing"]["out"] += -net
                 continue
-            counterpart = conn.execute(f"""SELECT jl.account_id,a.account_type,a.code,a.name_ar,jl.debit,jl.credit
+            account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+            section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
+            counterpart = conn.execute(f"""SELECT jl.account_id,a.account_type,a.code,a.name_ar,
+                {section_expr} statement_section,jl.debit,jl.credit
                 FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
                 WHERE jl.entry_id=? AND jl.account_id NOT IN ({marks})""",
                 (entry["id"], *ids)).fetchall()
@@ -1452,11 +1463,13 @@ def build_cash_flow_snapshot(conn, start, end):
                 mapped_category = cash_flow_mappings.get(item["account_id"])
                 if mapped_category:
                     category = mapped_category
-                elif item["account_type"] == "asset" and not (
-                    code.startswith(("11", "21")) or "عميل" in name or "مخزون" in name or "مقدم" in name
+                elif item["statement_section"] == "non_current_assets" or (
+                    item["account_type"] == "asset" and not (
+                        code.startswith(("11", "21")) or "عميل" in name or "مخزون" in name or "مقدم" in name
+                    )
                 ):
                     category = "investing"
-                elif item["account_type"] == "equity" or (
+                elif item["account_type"] == "equity" or item["statement_section"] == "non_current_liabilities" or (
                     item["account_type"] == "liability" and (code.startswith("22") or "قرض" in name)
                 ):
                     category = "financing"
