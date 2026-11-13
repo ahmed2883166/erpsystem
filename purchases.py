@@ -701,6 +701,29 @@ def edit_order(order_id):
     c.close(); return render_template("purchase_order_edit.html",order=order,suppliers=suppliers,products=products)
 
 
+
+@purchase_bp.route("/orders/<int:order_id>/print")
+@require("purchases.view")
+def order_print(order_id):
+    c = db()
+    order = c.execute("""SELECT p.*,s.code supplier_code,s.name supplier_name,
+        s.tax_number supplier_tax_number FROM purchase_orders p
+        JOIN suppliers s ON s.id=p.supplier_id WHERE p.id=?""", (order_id,)).fetchone()
+    if not order:
+        c.close()
+        from flask import abort
+        abort(404)
+    lines = c.execute("""SELECT l.*,p.sku,p.name_ar product_name,p.uom
+        FROM purchase_order_lines l JOIN stock_products p ON p.id=l.product_id
+        WHERE l.po_id=? ORDER BY l.id""", (order_id,)).fetchall()
+    settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
+        "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
+    c.close()
+    return render_template("purchase_order_print.html", order=order, lines=lines,
+                           settings=settings, branch=None)
+
+
 @purchase_bp.route("/orders/<int:order_id>/delete",methods=["POST"])
 @require("purchases.manage")
 def delete_order(order_id):
