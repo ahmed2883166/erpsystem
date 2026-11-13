@@ -73,6 +73,10 @@ class ActivityAccountMappingTests(unittest.TestCase):
                     "5500": ("expense", 1), "5510": ("expense", 0),
                     "6800": ("expense", 1), "6810": ("expense", 0),
                     "7240": ("expense", 1), "7241": ("expense", 0),
+                    "1190": ("asset", 1), "1191": ("asset", 0),
+                    "2191": ("liability", 0), "2192": ("liability", 0),
+                    "2232": ("liability", 0), "5600": ("expense", 1),
+                    "5610": ("expense", 0), "5650": ("expense", 0),
                 }
                 for code, (account_type, is_group) in expected.items():
                     row = conn.execute(
@@ -86,6 +90,7 @@ class ActivityAccountMappingTests(unittest.TestCase):
                     "1171": "1170", "1261": "1260", "2171": "2170",
                     "2231": "2230", "4710": "4700", "5510": "5500",
                     "6810": "6800", "7241": "7240",
+                    "1191": "1190", "5610": "5600", "5650": "5600",
                 }
                 for code, parent_code in expected_parents.items():
                     parent = conn.execute("""
