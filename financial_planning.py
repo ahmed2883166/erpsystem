@@ -1155,11 +1155,15 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_disposals'"
     ).fetchone()
     if disposals_exists:
-        disposal_row=conn.execute(
-            "SELECT COALESCE(DECIMAL_SUM(gain_loss_amount),'0') amount FROM asset_disposals WHERE disposal_date>=? AND disposal_date<=?",
-            (start,end),
-        ).fetchone()
-        disposal_gain_loss=Decimal(str(disposal_row["amount"] or "0"))
+        disposal_columns={
+            row["name"] for row in conn.execute("PRAGMA table_info(asset_disposals)")
+        }
+        if {"gain_loss_amount","disposal_date"}.issubset(disposal_columns):
+            disposal_row=conn.execute(
+                "SELECT COALESCE(DECIMAL_SUM(gain_loss_amount),'0') amount FROM asset_disposals WHERE disposal_date>=? AND disposal_date<=?",
+                (start,end),
+            ).fetchone()
+            disposal_gain_loss=Decimal(str(disposal_row["amount"] or "0"))
     disposal_adjustment=-disposal_gain_loss
 
     receivables_ids = roles.get("receivables", set())
