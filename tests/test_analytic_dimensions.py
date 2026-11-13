@@ -15,6 +15,8 @@ class AnalyticDimensionsTests(unittest.TestCase):
                 account_type TEXT, is_group INTEGER DEFAULT 0, active INTEGER DEFAULT 1);
             CREATE TABLE customers(id INTEGER PRIMARY KEY,code TEXT,name TEXT,active INTEGER DEFAULT 1);
             CREATE TABLE salespersons(id INTEGER PRIMARY KEY,code TEXT,name TEXT,active INTEGER DEFAULT 1);
+            CREATE TABLE suppliers(id INTEGER PRIMARY KEY,code TEXT,name TEXT,active INTEGER DEFAULT 1);
+            INSERT INTO suppliers(id,code,name) VALUES(1,'SUP-01','مورد تجريبي');
             INSERT INTO customers(id,code,name) VALUES(1,'C001','عميل تجريبي'),(2,'C002','عميل آخر');
             INSERT INTO salespersons(id,code,name) VALUES(1,'SP01','مندوب أول'),(2,'SP02','مندوب ثانٍ');
             CREATE TABLE journal_entries(id INTEGER PRIMARY KEY, entry_date TEXT NOT NULL,
@@ -93,6 +95,22 @@ class AnalyticDimensionsTests(unittest.TestCase):
         self.assertTrue(all(row["salesperson_id"] == 2 for row in rows))
         filtered = account_balances(self.conn, "2026-11-01", "2026-11-30", {"salesperson_id": 2})
         self.assertEqual(filtered[1]["debit"], 125)
+
+    def test_supplier_dimension_is_saved_and_validated_on_journal_lines(self):
+        dimensions = validate_journal_dimensions(self.conn, {"supplier_id": "1"})
+        entry_id = post_journal(
+            self.conn, "2026-11-06", "DIM-SUP-001", "قيد مورد",
+            [(1, "90", "0", "مدين"), (2, "0", "90", "دائن")],
+            1, dimensions,
+        )
+        rows = self.conn.execute(
+            "SELECT supplier_id FROM journal_lines WHERE entry_id=?", (entry_id,)
+        ).fetchall()
+        self.assertEqual([row["supplier_id"] for row in rows], [1, 1])
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM journal_lines WHERE supplier_id=1").fetchone()[0],
+            2,
+        )
 
     def test_invalid_or_inactive_dimension_is_rejected(self):
         with self.assertRaises(ValueError):
