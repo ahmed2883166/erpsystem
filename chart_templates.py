@@ -213,7 +213,7 @@ for _activity, _chart in CHARTS.items():
     _available = set(_existing)
     for _row in _COMMON_ACTIVITY_ACCOUNTS:
         _code, _name, _type, _parent, _is_group = _row
-        if _code in _existing or _parent not in _available:
+        if _code in _existing or (_parent is not None and _parent not in _available):
             continue
         _chart.append(_row)
         _available.add(_code)
