@@ -461,19 +461,16 @@ def log_change(action, entity_type, entity_id, before_values, after_values, deta
 
 
 _OPERATIONAL_AUDIT_RECORDS = {
-    "sales.invoice": ("sales_invoices", "invoice_id", "id", "sales_invoice_lines", "invoice_id"),
-    "sales.credit_note": ("sales_credit_notes", "credit_note_id", "id", "sales_credit_note_lines", "credit_note_id"),
-    "sales.refund": ("customer_refunds", "refund_id", "id", None, None),
-    "purchase.order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
-    "purchase.receipt": ("goods_receipts", "receipt_id", "id", "goods_receipt_lines", "receipt_id"),
-    "purchase.bill": ("supplier_bills", "bill_id", "id", "supplier_bill_receipts", "bill_id"),
-    "purchase.payment": ("supplier_payments", "payment_id", "id", "supplier_payment_allocations", "payment_id"),
-    "stock.count": ("stocktakes", "stocktake_id", "id", "stocktake_lines", "stocktake_id"),
+    "sales.refund_credit_note": ("sales_credit_notes", "credit_note_id", "id", "sales_credit_note_lines", "credit_note_id"),
+    "sales.cancel_credit_note_route": ("sales_credit_notes", "credit_note_id", "id", "sales_credit_note_lines", "credit_note_id"),
+    "purchase.edit_order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
+    "purchase.delete_order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
+    "stock.count_detail": ("stocktakes", "stocktake_id", "id", "stocktake_lines", "stocktake_id"),
+    "stock.approve_count": ("stocktakes", "stocktake_id", "id", "stocktake_lines", "stocktake_id"),
     "bank.reconcile": ("bank_transactions", "transaction_id", "id", None, None),
     "assets.depreciate": ("fixed_assets", "asset_id", "id", "asset_depreciations", "asset_id"),
-    "workforce.payroll": ("payroll_runs", "run_id", "id", "payroll_lines", "run_id"),
-    "workforce.employee": ("employees", "employee_id", "id", "employee_pay_items", "employee_id"),
-    "workforce.custody": ("employee_custodies", "custody_id", "id", "custody_expenses", "custody_id"),
+    "workforce.edit_employee": ("employees", "employee_id", "id", "employee_pay_items", "employee_id"),
+    "workforce.post_payroll": ("payroll_runs", "run_id", "id", "payroll_lines", "run_id"),
 }
 
 
