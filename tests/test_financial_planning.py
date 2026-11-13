@@ -47,9 +47,11 @@ class FinancialPlanningTests(unittest.TestCase):
         app.secret_key = "test-secret"
         app.register_blueprint(financial_planning.planning_bp)
 
-        with patch("financial_planning._connect", return_value=conn), \\
-             patch("financial_planning.build_budget_monthly_comparison",
-                   return_value=(plan, [])):
+        with (
+            patch("financial_planning._connect", return_value=conn),
+            patch("financial_planning.build_budget_monthly_comparison",
+                  return_value=(plan, [])),
+        ):
             client = app.test_client()
             with client.session_transaction() as session:
                 session["user_id"] = 1
