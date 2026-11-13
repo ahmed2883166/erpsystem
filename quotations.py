@@ -137,6 +137,8 @@ def create_sales_order_from_quotation(conn, quote_id, created_by, warehouse_id=N
  activity_code=activity["setting_value"] if activity else "commercial"
  if activity_code!="service" and not warehouse_id:
   raise ValueError("حدد مخزن التسليم عند إنشاء أمر البيع.")
+ if activity_code=="service" and any(line["product_id"] for line in lines):
+  raise ValueError("نشاط الخدمات لا يقبل بنود أصناف مخزنية في أمر البيع.")
  if warehouse_id and not conn.execute("SELECT 1 FROM stock_warehouses WHERE id=? AND active=1",(warehouse_id,)).fetchone():
   raise ValueError("مخزن التسليم غير موجود أو غير نشط.")
  for line in lines:
@@ -189,6 +191,8 @@ def create_delivery_note(conn, order_id, delivery_date, lines, created_by, notes
  if order["status"] not in {"approved","partially_delivered","partially_invoiced"}:
   raise ValueError("لا يمكن إنشاء إذن تسليم قبل اعتماد أمر البيع أو بعد اكتمال التسليم.")
  ensure_stock_date_open(conn,delivery_date,"تاريخ إذن التسليم")
+ if delivery_date<order["order_date"]:
+  raise ValueError("تاريخ إذن التسليم لا يمكن أن يسبق تاريخ أمر البيع.")
  if not lines: raise ValueError("أضف بندًا واحدًا على الأقل لإذن التسليم.")
  delivery_no="DN-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
  cur=conn.execute(
@@ -224,6 +228,10 @@ def post_delivery_note(conn, note_id, posted_by):
  order=conn.execute("SELECT * FROM sales_orders WHERE id=?",(note["sales_order_id"],)).fetchone()
  if order["status"] not in {"approved","partially_delivered","partially_invoiced"}: raise ValueError("أمر البيع غير معتمد للتسليم.")
  ensure_stock_date_open(conn,note["delivery_date"],"تاريخ إذن التسليم")
+ if note["delivery_date"]<order["order_date"]:
+  raise ValueError("تاريخ إذن التسليم لا يمكن أن يسبق تاريخ أمر البيع.")
+ if not conn.execute("SELECT 1 FROM stock_warehouses WHERE id=? AND active=1",(note["warehouse_id"],)).fetchone():
+  raise ValueError("مخزن إذن التسليم غير موجود أو غير نشط.")
  rows=conn.execute("SELECT * FROM delivery_note_lines WHERE delivery_note_id=? ORDER BY id",(note_id,)).fetchall()
  if not rows: raise ValueError("إذن التسليم لا يحتوي بنودًا.")
  method_row=conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
@@ -272,6 +280,13 @@ def invoice_sales_order(conn, order_id, invoice_date, due_date, created_by, dime
  if not order: raise ValueError("أمر البيع غير موجود.")
  if order["status"] not in {"approved","partially_delivered","delivered","partially_invoiced"}:
   raise ValueError("أمر البيع غير معتمد أو لا توجد كميات جاهزة للفوترة.")
+ try:
+  invoice_day=date.fromisoformat(invoice_date)
+  due_day=date.fromisoformat(due_date or invoice_date)
+ except (TypeError,ValueError) as exc:
+  raise ValueError("تاريخ الفاتورة أو الاستحقاق غير صحيح.") from exc
+ if due_day<invoice_day: raise ValueError("تاريخ الاستحقاق لا يمكن أن يسبق تاريخ الفاتورة.")
+ if invoice_day<date.fromisoformat(order["order_date"]): raise ValueError("تاريخ الفاتورة لا يمكن أن يسبق تاريخ أمر البيع.")
  quotation=conn.execute("SELECT * FROM quotations WHERE id=?",(order["quotation_id"],)).fetchone()
  order_lines=conn.execute("SELECT * FROM sales_order_lines WHERE sales_order_id=? ORDER BY id",(order_id,)).fetchall()
  items=[]; fulfillment=[]; consumption_plan=[]
