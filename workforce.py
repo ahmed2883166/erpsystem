@@ -166,6 +166,10 @@ def initialize_workforce_schema():
     for name, definition in {
         "address": "TEXT NOT NULL DEFAULT ''",
         "national_id": "TEXT NOT NULL DEFAULT ''",
+        "legal_category": "TEXT NOT NULL DEFAULT 'local'",
+        "insurance_number": "TEXT NOT NULL DEFAULT ''",
+        "insured_wage": "TEXT NOT NULL DEFAULT '0'",
+        "insurance_enabled": "INTEGER NOT NULL DEFAULT 1",
         "variable_salary": "TEXT NOT NULL DEFAULT '0'",
         "work_status": "TEXT NOT NULL DEFAULT 'permanent'",
         "raise_type": "TEXT NOT NULL DEFAULT 'fixed'",
@@ -371,8 +375,8 @@ def import_employees_excel():
             "insurance_number": ("رقم التأمين", "رقم التأمين الاجتماعي", "insurance_number"),
             "basic_salary": ("الأساسي", "الراتب الأساسي", "basic_salary"),
             "variable_salary": ("المتغير", "الأجر المتغير", "variable_salary"),
-            "work_status": ("الحالة الوظيفية", "الحالة", "work_status", "status"),
-            "active": ("نشط", "active"),
+            "work_status": ("الحالة الوظيفية", "work_status", "employment_status"),
+            "active": ("نشط", "الحالة", "حالة الموظف", "active"),
         }
         indexes = {}
         for key, names in aliases.items():
@@ -385,7 +389,7 @@ def import_employees_excel():
         if missing:
             raise ValueError("الأعمدة الإلزامية غير موجودة: كود الموظف، اسم الموظف، الأساسي.")
         status_map = {
-            "permanent": "permanent", "مثبت": "permanent", "دائم": "permanent",
+            "permanent": "permanent", "مثبت": "permanent", "دائم": "permanent", "على رأس العمل": "permanent",
             "comprehensive_bonus": "comprehensive_bonus", "مكافأة شاملة": "comprehensive_bonus",
             "unpaid_leave": "unpaid_leave", "إجازة بدون مرتب": "unpaid_leave",
             "resigned": "resigned", "مستقيل": "resigned", "استقالة": "resigned",
@@ -416,7 +420,7 @@ def import_employees_excel():
             if not status:
                 raise ValueError(f"صف Excel رقم {excel_row}: الحالة الوظيفية غير معروفة ({raw_status}).")
             active_raw = str(cell("active", "1")).strip().lower()
-            active = 0 if active_raw in ("0", "false", "no", "لا", "غير نشط") else 1
+            active = 0 if active_raw in ("0", "false", "no", "لا", "غير نشط", "موقوف", "متوقف") else 1
             parsed_rows.append({
                 "code": code, "name": name, "address": str(cell("address")).strip(),
                 "national_id": str(cell("national_id")).strip(),
@@ -477,8 +481,8 @@ def export_employees_excel():
                      "unpaid_leave":"إجازة بدون مرتب","resigned":"استقالة","retired":"معاش"}
     for row in rows:
         sheet.append([row["employee_code"],row["full_name"],row["address"],row["national_id"],
-                      row["insurance_number"],float(D(row["basic_salary"])),
-                      float(D(row["variable_salary"])),status_labels.get(row["work_status"],row["work_status"]),
+                      row["insurance_number"],D(row["basic_salary"]),
+                      D(row["variable_salary"]),status_labels.get(row["work_status"],row["work_status"]),
                       "نعم" if row["active"] else "لا"])
     for cell in sheet[1]:
         cell.font = Font(bold=True, color="FFFFFF")
