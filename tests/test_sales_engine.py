@@ -7,6 +7,7 @@ from decimal import Decimal
 
 import analytic_dimensions
 import sales
+import party_reports
 import quotations
 import stock
 
@@ -1023,6 +1024,14 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(
             sales._customer_advance_available(self.db, advance["advance_receipt_id"]),
             Decimal("100.00"),
+        )
+        self.assertEqual(
+            party_reports._customer_advance_subledger(self.db, "2026-11-12"),
+            (Decimal("40.00"), True),
+        )
+        self.assertEqual(
+            party_reports._customer_advance_subledger(self.db, "2026-11-13"),
+            (Decimal("100.00"), True),
         )
         with self.assertRaisesRegex(ValueError, "من قبل"):
             sales.reverse_customer_advance_transaction(
