@@ -163,6 +163,27 @@ class ActivityProfileTests(unittest.TestCase):
         self.assertIn(advance_id, roles["customer_advances"])
         self.assertIn(advance_id, roles["current_liabilities"])
 
+    def test_builtin_chart_control_roles_cover_legacy_customer_advances(self):
+        from chart_templates import ACTIVITY_ACCOUNT_ROLES, CHARTS
+        commercial = {row[0] for row in CHARTS["commercial"]}
+        service = {row[0] for row in CHARTS["service"]}
+        self.assertTrue({"2140", "2160"}.issubset(commercial))
+        self.assertTrue({"2120", "2160"}.issubset(service))
+        self.assertEqual(set(ACTIVITY_ACCOUNT_ROLES["commercial"]["customer_advances"]),
+                         {"2140", "2160"})
+        self.assertEqual(set(ACTIVITY_ACCOUNT_ROLES["service"]["customer_advances"]),
+                         {"2120", "2160"})
+
+    def test_restaurant_roles_include_all_stock_and_cost_detail_accounts(self):
+        from chart_templates import ACTIVITY_ACCOUNT_ROLES, CHARTS
+        chart_codes = {row[0] for row in CHARTS["restaurant"]}
+        self.assertTrue({"1140", "1150", "1160"}.issubset(chart_codes))
+        self.assertTrue({"5100", "5200", "5300", "5400"}.issubset(chart_codes))
+        self.assertTrue({"1140", "1150", "1160"}.issubset(
+            set(ACTIVITY_ACCOUNT_ROLES["restaurant"]["inventory"])))
+        self.assertTrue({"5100", "5200", "5300", "5400"}.issubset(
+            set(ACTIVITY_ACCOUNT_ROLES["restaurant"]["direct_cost"])))
+
     def test_custom_profile_mapping_editor_saves_valid_account_roles(self):
         seed_activity_chart(self.conn, "service")
         profile_id = create_activity_profile(
