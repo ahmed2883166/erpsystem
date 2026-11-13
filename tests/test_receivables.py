@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from flask import Flask
 
