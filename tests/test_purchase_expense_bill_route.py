@@ -685,15 +685,16 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         conn.close()
 
         # A further receipt against a fully received order must not create stock or GRNI.
-        response = self.client.post("/purchases/receipts/new", data={
-            "supplier_id": str(self.supplier_id),
-            "product_id": str(product_id),
-            "warehouse_id": str(warehouse_id),
-            "po_id": str(order_id),
-            "quantity": "1",
-            "unit_cost": "10.00",
-            "receipt_date": "2026-11-13",
-        })
+        with patch("purchases.render_template", return_value="receipt form"):
+            response = self.client.post("/purchases/receipts/new", data={
+                "supplier_id": str(self.supplier_id),
+                "product_id": str(product_id),
+                "warehouse_id": str(warehouse_id),
+                "po_id": str(order_id),
+                "quantity": "1",
+                "unit_cost": "10.00",
+                "receipt_date": "2026-11-13",
+            })
         self.assertEqual(response.status_code, 302)
         conn = purchases.db()
         self.assertEqual(
