@@ -78,6 +78,76 @@ class PurchasingAccountingTests(unittest.TestCase):
             self.db.execute("INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
                             (other_bill, receipt_id, "100"))
 
+    def test_purchase_order_requires_independent_approval_before_receipt(self):
+        purchases.init_purchase_schema()
+        self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-APP','مورد اعتماد')")
+        supplier_id = self.db.execute("SELECT id FROM suppliers WHERE code='SUP-APP'").fetchone()["id"]
+        self.db.execute("INSERT INTO stock_products(id,sku,name_ar) VALUES(1,'PO-ITEM-1','صنف اختبار')")
+        self.db.execute("""INSERT INTO purchase_orders(po_no,supplier_id,order_date,created_by)
+                           VALUES('PO-APP-1',?,'2026-11-13',1)""", (supplier_id,))
+        order_id = self.db.execute("SELECT id FROM purchase_orders WHERE po_no='PO-APP-1'").fetchone()["id"]
+        self.db.execute("INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price) VALUES(?,?,?,?)",
+                        (order_id, 1, "3", "25"))
+        self.db.commit()
+
+        purchases.submit_purchase_order(self.db, order_id, 1)
+        self.db.commit()
+        state = self.db.execute("SELECT status,submitted_by FROM purchase_orders WHERE id=?", (order_id,)).fetchone()
+        self.assertEqual(state["status"], "pending_approval")
+        self.assertEqual(state["submitted_by"], 1)
+
+        with self.assertRaisesRegex(ValueError, "لا يجوز اعتماد"):
+            purchases.approve_purchase_order(self.db, order_id, 1)
+        self.db.rollback()
+        self.assertEqual(self.db.execute("SELECT status FROM purchase_orders WHERE id=?", (order_id,)).fetchone()[0],
+                         "pending_approval")
+
+        purchases.approve_purchase_order(self.db, order_id, 2, "مطابقة السعر والكمية")
+        self.db.commit()
+        approved = self.db.execute(
+            "SELECT status,approved_by,approved_at,approval_reason FROM purchase_orders WHERE id=?", (order_id,)
+        ).fetchone()
+        self.assertEqual(approved["status"], "approved")
+        self.assertEqual(approved["approved_by"], 2)
+        self.assertTrue(approved["approved_at"])
+        self.assertEqual(approved["approval_reason"], "مطابقة السعر والكمية")
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM stock_movements").fetchone()[0], 0)
+
+        with self.assertRaisesRegex(ValueError, "ليس بانتظار الاعتماد"):
+            purchases.approve_purchase_order(self.db, order_id, 3)
+        self.db.rollback()
+
+    def test_purchase_order_rejection_requires_reason_and_can_be_resubmitted(self):
+        purchases.init_purchase_schema()
+        self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-REJ','مورد رفض')")
+        supplier_id = self.db.execute("SELECT id FROM suppliers WHERE code='SUP-REJ'").fetchone()["id"]
+        self.db.execute("INSERT INTO stock_products(id,sku,name_ar) VALUES(1,'PO-ITEM-2','صنف اختبار')")
+        self.db.execute("""INSERT INTO purchase_orders(po_no,supplier_id,order_date,created_by)
+                           VALUES('PO-REJ-1',?,'2026-11-13',1)""", (supplier_id,))
+        order_id = self.db.execute("SELECT id FROM purchase_orders WHERE po_no='PO-REJ-1'").fetchone()["id"]
+        self.db.execute("INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price) VALUES(?,?,?,?)",
+                        (order_id, 1, "2", "40"))
+        self.db.commit()
+        purchases.submit_purchase_order(self.db, order_id, 1)
+        self.db.commit()
+        with self.assertRaisesRegex(ValueError, "سبب رفض"):
+            purchases.reject_purchase_order(self.db, order_id, 2, "لا")
+        self.db.rollback()
+        purchases.reject_purchase_order(self.db, order_id, 2, "السعر أعلى من العرض")
+        self.db.commit()
+        rejected = self.db.execute("SELECT status,rejection_reason FROM purchase_orders WHERE id=?", (order_id,)).fetchone()
+        self.assertEqual(rejected["status"], "rejected")
+        self.assertEqual(rejected["rejection_reason"], "السعر أعلى من العرض")
+        purchases.submit_purchase_order(self.db, order_id, 1)
+        self.db.commit()
+        resubmitted = self.db.execute(
+            "SELECT status,rejection_reason,approved_by FROM purchase_orders WHERE id=?", (order_id,)
+        ).fetchone()
+        self.assertEqual(resubmitted["status"], "pending_approval")
+        self.assertIsNone(resubmitted["rejection_reason"])
+        self.assertIsNone(resubmitted["approved_by"])
+
     def test_journal_posting_is_balanced(self):
         dr = purchases.account(self.db, "5000", "expense")
         cr = purchases.account(self.db, "2190", "liability")
