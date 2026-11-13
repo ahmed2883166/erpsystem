@@ -1,5 +1,12 @@
 {% extends "base.html" %}{% block title %}شؤون الموظفين | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>شؤون الموظفين</h2><p>ملف وظيفي متكامل يشمل الهوية والتأمينات والحالة الوظيفية ومكونات الأجر والعلاوات.</p><p><a class="button" href="{{url_for('workforce.employee_loans')}}">سجل السلف والقروض</a></p></header>
+<header><h2>شؤون الموظفين</h2><p>ملف وظيفي متكامل يشمل الهوية والتأمينات والحالة الوظيفية ومكونات الأجر والعلاوات.</p><p><a class="button" href="{{url_for('workforce.employee_loans')}}">سجل السلف والقروض</a>
+<a class="button secondary" href="{{url_for('workforce.export_employees_excel')}}">تصدير الموظفين Excel</a>
+<a class="button secondary" href="{{url_for('workforce.download_employee_template')}}">تحميل نموذج Excel</a></p></header>
+<section class="panel"><h3>استيراد بيانات الموظفين من Excel</h3>
+<p class="muted">ارفع ملف XLSX بنفس أعمدة النموذج. كود الموظف هو مفتاح المطابقة: الكود الموجود سيتم تحديث بياناته، والجديد سيتم إضافته. العملية كلها تتم أو تُلغى بالكامل عند وجود خطأ.</p>
+<form method="post" action="{{ url_for('workforce.import_employees_excel') }}" enctype="multipart/form-data" class="form-grid">
+<label>ملف الموظفين Excel (.xlsx)<input type="file" name="file" accept=".xlsx" required></label>
+<button type="submit">استيراد الموظفين</button></form></section>
 <section class="panel"><h3>إضافة موظف جديد</h3><form method="post" class="form-grid">
 <label>كود الموظف<input name="employee_code" required></label><label>اسم الموظف<input name="full_name" required></label>
 <label>الرقم القومي<input name="national_id" maxlength="20"></label><label>رقم التأمين الاجتماعي<input name="insurance_number"></label>
