@@ -322,7 +322,10 @@ def invoice_sales_order(conn, order_id, invoice_date, due_date, created_by, dime
  if invoice_day<date.fromisoformat(order["order_date"]): raise ValueError("تاريخ الفاتورة لا يمكن أن يسبق تاريخ أمر البيع.")
  quotation=conn.execute("SELECT * FROM quotations WHERE id=?",(order["quotation_id"],)).fetchone()
  order_lines=conn.execute("SELECT * FROM sales_order_lines WHERE sales_order_id=? ORDER BY id",(order_id,)).fetchall()
- items=[]; fulfillment=[]; consumption_plan=[]
+ items=[]; fulfillment=[]; consumption_plan=[]; invoice_qty_by_line={}
+ order_gross=sum((Decimal(str(line["ordered_qty"]))*Decimal(str(line["unit_price"]))
+                  for line in order_lines),Decimal("0"))
+ invoice_gross=Decimal("0")
  for line in order_lines:
   if line["product_id"]:
    ready=Decimal(str(line["delivered_qty"]))-Decimal(str(line["invoiced_qty"]))
@@ -366,11 +369,33 @@ def invoice_sales_order(conn, order_id, invoice_date, due_date, created_by, dime
   items.append({"product_id":line["product_id"],"description":line["description"],
    "quantity":str(ready),"unit_price":line["unit_price"],"sales_order_line_id":line["id"]})
   fulfillment.append({"cost_total":str(cost_total),"allocations":allocations})
+  invoice_gross+=ready*Decimal(str(line["unit_price"]))
+  invoice_qty_by_line[line["id"]]=ready
  if not items: raise ValueError("لا توجد كميات مسلمة غير مفوترة.")
+ will_complete=all(
+  Decimal(str(line["invoiced_qty"]))+invoice_qty_by_line.get(line["id"],Decimal("0"))
+  >=Decimal(str(line["ordered_qty"])) for line in order_lines
+ )
+ total_order_discount=Decimal(str(order["discount_amount"] or "0"))
+ already_allocated=Decimal(str(order["discount_allocated"] or "0"))
+ remaining_discount=max(Decimal("0"),total_order_discount-already_allocated)
+ if will_complete:
+  invoice_discount=remaining_discount
+ elif order_gross>0 and total_order_discount>0:
+  invoice_discount=min(remaining_discount,(total_order_discount*invoice_gross/order_gross).quantize(M,rounding=ROUND_HALF_UP))
+ else:
+  invoice_discount=Decimal("0")
+ discount_override={
+  "discount_type":order["discount_type"],
+  "discount_value":order["discount_value"],
+  "discount_amount":str(invoice_discount),
+ }
  result=post_invoice(conn,order["customer_id"],invoice_date,order["warehouse_id"],items,
   quotation["tax_rate"],created_by,dimensions=dimensions,preissued_costs=fulfillment,
-  sales_order_id=order_id)
+  sales_order_id=order_id,discount_override=discount_override)
  conn.execute("UPDATE sales_invoices SET due_date=? WHERE id=?",(due_date or invoice_date,result["invoice_id"]))
+ conn.execute("UPDATE sales_orders SET discount_allocated=? WHERE id=?",
+  (str(already_allocated+invoice_discount),order_id))
  for delivery_line_id,qty,allocated_cost,lot_plan in consumption_plan:
   current=conn.execute("SELECT invoiced_qty,invoiced_cost FROM delivery_note_lines WHERE id=?",(delivery_line_id,)).fetchone()
   conn.execute("UPDATE delivery_note_lines SET invoiced_qty=?,invoiced_cost=? WHERE id=?",
