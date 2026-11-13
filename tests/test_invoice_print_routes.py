@@ -43,6 +43,10 @@ class InvoicePrintRouteTests(unittest.TestCase):
           CREATE TABLE supplier_bill_receipts(bill_id INTEGER,receipt_id INTEGER,matched_amount TEXT);
           CREATE TABLE goods_receipts(id INTEGER PRIMARY KEY,receipt_no TEXT,receipt_date TEXT,total_value TEXT);
           CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT);
+          CREATE TABLE branches(
+            id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,address TEXT DEFAULT '',
+            phone TEXT DEFAULT '',email TEXT DEFAULT '',tax_number TEXT DEFAULT '',active INTEGER DEFAULT 1
+          );
           INSERT INTO customers VALUES(1,'C-1','عميل اختبار','');
           INSERT INTO suppliers VALUES(1,'S-1','مورد اختبار','');
           INSERT INTO stock_products VALUES(1,'P-1','صنف اختبار');
@@ -51,8 +55,16 @@ class InvoicePrintRouteTests(unittest.TestCase):
           INSERT INTO sales_invoice_lines VALUES(1,1,1,'صنف اختبار','2','50','100');
           INSERT INTO supplier_bills VALUES
             (1,'PB-ROUTE',1,'2026-11-10','2026-11-20','SUP-100','100','14','114','0','0',2,'posted');
+          ALTER TABLE sales_invoices ADD COLUMN branch_id INTEGER;
+          ALTER TABLE supplier_bills ADD COLUMN branch_id INTEGER;
+          INSERT INTO branches VALUES(1,'CAI','فرع القاهرة','وسط البلد - القاهرة','01000000000','cairo@example.com','123456',1);
+          UPDATE sales_invoices SET branch_id=1 WHERE id=1;
+          UPDATE supplier_bills SET branch_id=1 WHERE id=1;
           INSERT INTO company_settings VALUES('company_name','NEXUS ERP');
           INSERT INTO company_settings VALUES('base_currency','EGP');
+          INSERT INTO company_settings VALUES('company_address','عنوان الشركة الرئيسي');
+          INSERT INTO company_settings VALUES('company_phone','0222222222');
+          INSERT INTO company_settings VALUES('company_email','info@nexus.test');
         """)
         conn.commit()
         conn.close()
@@ -89,6 +101,10 @@ class InvoicePrintRouteTests(unittest.TestCase):
         self.assertIn("SI-ROUTE", body)
         self.assertIn("عميل اختبار", body)
         self.assertIn("114.00", body)
+        self.assertIn("عنوان الشركة الرئيسي", body)
+        self.assertIn("فرع القاهرة", body)
+        self.assertIn("وسط البلد - القاهرة", body)
+        self.assertIn("cairo@example.com", body)
 
     def test_supplier_bill_print_route_uses_real_database_and_template(self):
         response = self.client.get("/purchases/bills/1/print")
@@ -97,6 +113,10 @@ class InvoicePrintRouteTests(unittest.TestCase):
         self.assertIn("PB-ROUTE", body)
         self.assertIn("مورد اختبار", body)
         self.assertIn("114.00", body)
+        self.assertIn("عنوان الشركة الرئيسي", body)
+        self.assertIn("فرع القاهرة", body)
+        self.assertIn("وسط البلد - القاهرة", body)
+        self.assertIn("123456", body)
 
 
 if __name__ == "__main__":
