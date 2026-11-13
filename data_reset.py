@@ -10,8 +10,6 @@ PRESERVED_TABLES = frozenset({
     "currencies",
     "tax_rates",
     "audit_log",
-    "accounting_periods",
-    "financial_years",
     "activity_profiles",
     "cash_flow_account_mappings",
     "management_account_roles",
