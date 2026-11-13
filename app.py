@@ -38,6 +38,7 @@ from database import connect_database, enable_wal, fetch_page
 from app_paths import DATA_DIR, DB_PATH, BACKUP_DIR
 from backup_scheduler import create_backup_archive, next_backup_datetime, start_backup_scheduler
 from backup_restore import extract_validated_backup, restore_database_with_rollback
+from data_reset import clear_company_data
 from income_statement import (build_income_statement, normalize_income_statement_period,
                                comparison_period, add_income_statement_comparison,
                                closing_entries_exclusion_sql)
@@ -2432,6 +2433,66 @@ def backup_run_now():
     connection.close()
     log("backup_created", filename.name)
     flash("تم إنشاء النسخة الاحتياطية الآن بنجاح.", "success")
+    return redirect(url_for("backup_settings"))
+
+
+@app.route("/backup/reset-data", methods=["POST"])
+@requires("backup.manage")
+def reset_company_data():
+    if session.get("role") != "admin":
+        log("company_data_reset_rejected", "محاولة تصفير دون دور مدير النظام", entity_type="system",
+            outcome="failure")
+        flash("تصفير البرنامج متاح لمدير النظام الأعلى فقط.", "error")
+        return redirect(url_for("backup_settings"))
+
+    supplied_password = request.form.get("super_admin_password", "")
+    connection = db()
+    root_admin = connection.execute(
+        "SELECT id,password_hash FROM users "
+        "WHERE username='admin' AND role='admin' AND active=1"
+    ).fetchone()
+    connection.close()
+    if not root_admin or not verify_password(supplied_password, root_admin["password_hash"]):
+        log("company_data_reset_rejected", "كلمة مرور مدير النظام الأعلى غير صحيحة",
+            entity_type="system", outcome="failure")
+        flash("كلمة مرور مدير النظام الأعلى غير صحيحة. لم يتم حذف أي بيانات.", "error")
+        return redirect(url_for("backup_settings"))
+
+    try:
+        settings_connection = db()
+        keep_row = settings_connection.execute(
+            "SELECT setting_value FROM company_settings WHERE setting_key='backup_keep_count'"
+        ).fetchone()
+        keep_count = int(keep_row["setting_value"]) if keep_row else 30
+        settings_connection.close()
+
+        # A verified backup must exist before the first destructive statement.
+        safety_archive = create_backup_archive(DB_PATH, BACKUP_DIR, keep_count)
+        reset_connection = db()
+        try:
+            summary = clear_company_data(reset_connection)
+        finally:
+            reset_connection.close()
+
+        log(
+            "company_data_reset",
+            f"backup={safety_archive.name}; tables={summary['deleted_tables']}; rows={summary['deleted_rows']}",
+            entity_type="system",
+            after_values={
+                "deleted_tables": summary["deleted_tables"],
+                "deleted_rows": summary["deleted_rows"],
+                "backup_file": safety_archive.name,
+            },
+        )
+        flash(
+            f"تم تصفير بيانات الشركة بنجاح. حُذفت {summary['deleted_rows']} سجلات من "
+            f"{summary['deleted_tables']} جداول. تم الاحتفاظ بنسخة الأمان: {safety_archive.name}",
+            "success",
+        )
+    except (OSError, sqlite3.Error, RuntimeError, ValueError) as exc:
+        app.logger.exception("Company data reset failed.")
+        log("company_data_reset_failed", str(exc)[:500], entity_type="system", outcome="failure")
+        flash(f"تعذر تصفير البرنامج؛ لم يتم اعتماد العملية: {exc}", "error")
     return redirect(url_for("backup_settings"))
 
 
