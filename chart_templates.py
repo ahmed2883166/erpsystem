@@ -157,7 +157,6 @@ def account_metadata_for(account_type, code, name_ar):
     """Return non-posting chart metadata without changing ledger identity or balances."""
     code = str(code or "").strip()
     name = str(name_ar or "").strip()
-    lower_name = name.lower()
 
     normal_balance = {
         "asset": "debit", "expense": "debit",
