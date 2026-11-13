@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 from decimal import Decimal
 
@@ -786,12 +787,13 @@ otals["credit"], places=2)
     def _create_accepted_quote_and_order(self, quantity="4"):
         quotations.DB_PATH = sales.DB_PATH
         quotations.initialize_quotes_schema()
+        today = date.today()
         cur = self.db.execute(
             """INSERT INTO quotations(quote_no,customer_id,quote_date,valid_until,status,
                subtotal,tax_rate,tax_amount,total_amount,notes,created_by)
-               VALUES('QT-TEST-1',?,'2026-11-10','2026-12-10','accepted',
-                      ?, '14', ?, ?, '', 1)""",
-            (self.customer_id, str(Decimal(quantity) * Decimal("20")),
+               VALUES('QT-TEST-1',?,?,?,'accepted',?, '14', ?, ?, '', 1)""",
+            (self.customer_id, today.isoformat(), (today + timedelta(days=30)).isoformat(),
+             str(Decimal(quantity) * Decimal("20")),
              str(Decimal(quantity) * Decimal("20") * Decimal("0.14")),
              str(Decimal(quantity) * Decimal("20") * Decimal("1.14"))),
         )
@@ -814,6 +816,12 @@ otals["credit"], places=2)
 
     def test_sales_order_partial_delivery_and_invoicing_never_issue_stock_twice(self):
         _, order_id, order_line_id = self._create_accepted_quote_and_order("4")
+        base_date = date.today()
+        first_delivery_date = (base_date + timedelta(days=1)).isoformat()
+        first_invoice_date = (base_date + timedelta(days=2)).isoformat()
+        credit_date = (base_date + timedelta(days=3)).isoformat()
+        second_delivery_date = (base_date + timedelta(days=4)).isoformat()
+        second_invoice_date = (base_date + timedelta(days=5)).isoformat()
         with self.assertRaisesRegex(ValueError, "نفس منشئه"):
             quotations.approve_sales_order(self.db, order_id, approver_id=1)
         self.assertEqual(
@@ -825,7 +833,7 @@ otals["credit"], places=2)
 
         self.db.execute("BEGIN IMMEDIATE")
         first_note = quotations.create_delivery_note(
-            self.db, order_id, "2026-11-14",
+            self.db, order_id, first_delivery_date,
             [{"sales_order_line_id": order_line_id, "quantity": "2"}], 2,
         )
         # A draft delivery note must not move stock or create a journal.
@@ -845,13 +853,13 @@ otals["credit"], places=2)
         )
         with self.assertRaisesRegex(ValueError, "لا يسبق تاريخ إذن التسليم"):
             quotations.invoice_sales_order(
-                self.db, order_id, "2026-11-13", "2026-11-30", created_by=2,
+                self.db, order_id, (base_date - timedelta(days=1)).isoformat(), (base_date + timedelta(days=30)).isoformat(), created_by=2,
             )
         self.assertEqual(self.db.execute(
             "SELECT COUNT(*) FROM sales_invoices WHERE sales_order_id=?", (order_id,)
         ).fetchone()[0], 0)
         first_invoice = quotations.invoice_sales_order(
-            self.db, order_id, "2026-11-15", "2026-11-30", created_by=2,
+            self.db, order_id, first_invoice_date, "2026-11-30", created_by=2,
         )
         self.db.commit()
         self.assertEqual(first_invoice["total_cost"], Decimal("20.00"))
@@ -864,7 +872,7 @@ otals["credit"], places=2)
         ).fetchone()["id"]
         self.db.execute("BEGIN IMMEDIATE")
         credit = sales.post_credit_note(
-            self.db, first_invoice["invoice_id"], "2026-11-16", "مرتجع من فاتورة أمر البيع",
+            self.db, first_invoice["invoice_id"], credit_date, "مرتجع من فاتورة أمر البيع",
             [{"invoice_line_id": invoice_line_id, "quantity": "1"}], 2,
         )
         self.db.commit()
@@ -878,12 +886,12 @@ otals["credit"], places=2)
 
         self.db.execute("BEGIN IMMEDIATE")
         second_note = quotations.create_delivery_note(
-            self.db, order_id, "2026-11-16",
+            self.db, order_id, second_delivery_date,
             [{"sales_order_line_id": order_line_id, "quantity": "2"}], 2,
         )
         quotations.post_delivery_note(self.db, second_note["delivery_note_id"], posted_by=2)
         second_invoice = quotations.invoice_sales_order(
-            self.db, order_id, "2026-11-17", "2026-11-30", created_by=2,
+            self.db, order_id, second_invoice_date, (base_date + timedelta(days=30)).isoformat(), created_by=2,
         )
         self.db.commit()
 
@@ -933,13 +941,15 @@ otals["credit"], places=2)
 
     def test_sales_delivery_rejects_overdelivery_and_rolls_back_insufficient_stock(self):
         _, order_id, order_line_id = self._create_accepted_quote_and_order("6")
+        delivery_date = (date.today() + timedelta(days=1)).isoformat()
+        second_delivery_date = (date.today() + timedelta(days=2)).isoformat()
         quotations.approve_sales_order(self.db, order_id, approver_id=2)
         self.db.commit()
 
         self.db.execute("BEGIN IMMEDIATE")
         with self.assertRaisesRegex(ValueError, "تتجاوز الكمية المتبقية"):
             quotations.create_delivery_note(
-                self.db, order_id, "2026-11-14",
+                self.db, order_id, delivery_date,
                 [{"sales_order_line_id": order_line_id, "quantity": "7"}], 2,
             )
         self.db.rollback()
@@ -949,14 +959,14 @@ otals["credit"], places=2)
 
         self.db.execute("BEGIN IMMEDIATE")
         reserved_note = quotations.create_delivery_note(
-            self.db, order_id, "2026-11-14",
+            self.db, order_id, delivery_date,
             [{"sales_order_line_id": order_line_id, "quantity": "4"}], 2,
         )
         self.db.commit()
         self.db.execute("BEGIN IMMEDIATE")
         with self.assertRaisesRegex(ValueError, "تتجاوز الكمية المتبقية"):
             quotations.create_delivery_note(
-                self.db, order_id, "2026-11-14",
+                self.db, order_id, delivery_date,
                 [{"sales_order_line_id": order_line_id, "quantity": "3"}], 2,
             )
         self.db.rollback()
@@ -974,7 +984,7 @@ otals["credit"], places=2)
 
         self.db.execute("BEGIN IMMEDIATE")
         note = quotations.create_delivery_note(
-            self.db, order_id, "2026-11-15",
+            self.db, order_id, second_delivery_date,
             [{"sales_order_line_id": order_line_id, "quantity": "2"}], 2,
         )
         with self.assertRaisesRegex(ValueError, "الرصيد غير كافٍ"):
