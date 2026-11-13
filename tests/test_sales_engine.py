@@ -825,7 +825,7 @@ otals["credit"], places=2)
 
         self.db.execute("BEGIN IMMEDIATE")
         first_note = quotations.create_delivery_note(
-            self.db, order_id, "2026-11-11",
+            self.db, order_id, "2026-11-16",
             [{"sales_order_line_id": order_line_id, "quantity": "2"}], 2,
         )
         # A draft delivery note must not move stock or create a journal.
@@ -844,7 +844,7 @@ otals["credit"], places=2)
             Decimal("3.0000"),
         )
         first_invoice = quotations.invoice_sales_order(
-            self.db, order_id, "2026-11-12", "2026-11-30", created_by=2,
+            self.db, order_id, "2026-11-15", "2026-11-30", created_by=2,
         )
         self.db.commit()
         self.assertEqual(first_invoice["total_cost"], Decimal("20.00"))
@@ -855,12 +855,12 @@ otals["credit"], places=2)
 
         self.db.execute("BEGIN IMMEDIATE")
         second_note = quotations.create_delivery_note(
-            self.db, order_id, "2026-11-13",
+            self.db, order_id, "2026-11-16",
             [{"sales_order_line_id": order_line_id, "quantity": "2"}], 2,
         )
         quotations.post_delivery_note(self.db, second_note["delivery_note_id"], posted_by=2)
         second_invoice = quotations.invoice_sales_order(
-            self.db, order_id, "2026-11-14", "2026-11-30", created_by=2,
+            self.db, order_id, "2026-11-17", "2026-11-30", created_by=2,
         )
         self.db.commit()
 
@@ -904,7 +904,7 @@ otals["credit"], places=2)
         self.db.execute("BEGIN IMMEDIATE")
         with self.assertRaisesRegex(ValueError, "تتجاوز الكمية المتبقية"):
             quotations.create_delivery_note(
-                self.db, order_id, "2026-11-11",
+                self.db, order_id, "2026-11-14",
                 [{"sales_order_line_id": order_line_id, "quantity": "7"}], 2,
             )
         self.db.rollback()
@@ -914,7 +914,7 @@ otals["credit"], places=2)
 
         self.db.execute("BEGIN IMMEDIATE")
         note = quotations.create_delivery_note(
-            self.db, order_id, "2026-11-11",
+            self.db, order_id, "2026-11-14",
             [{"sales_order_line_id": order_line_id, "quantity": "6"}], 2,
         )
         with self.assertRaisesRegex(ValueError, "الرصيد غير كافٍ"):
