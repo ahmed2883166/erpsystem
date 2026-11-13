@@ -1020,13 +1020,20 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
     _customer_cash_account(conn, cash_account_id)
     ar = _account(conn, _sales_account_codes(conn, _activity(conn))["ar"], "asset")
     receipt_no = "RCPTB-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
-    dimensions = _common_customer_invoice_dimensions(
-        conn, [invoice for invoice, _amount in normalized], customer_id
-    )
+    journal_lines = [
+        (cash_account_id, total, 0, "إجمالي التحصيل المجمع", {"customer_id": customer_id})
+    ]
+    for invoice, amount in normalized:
+        invoice_dimensions = validate_journal_dimensions(
+            conn, _customer_invoice_dimensions(invoice)
+        )
+        journal_lines.append((
+            ar, 0, amount, "تخفيض ذمم الفاتورة " + invoice["invoice_no"],
+            invoice_dimensions,
+        ))
     journal_id = post_journal(
         conn, receipt_date, receipt_no, "تحصيل مجمع من العميل " + customer["name"],
-        [(cash_account_id, total, 0, "إجمالي التحصيل المجمع"),
-         (ar, 0, total, "تخفيض ذمم العميل عن عدة فواتير")], created_by, dimensions=dimensions
+        journal_lines, created_by,
     )
     cursor = conn.execute("""INSERT INTO customer_receipt_batches
         (receipt_no,customer_id,receipt_date,total_amount,cash_account_id,journal_entry_id,reference,created_by)
@@ -1206,16 +1213,23 @@ def allocate_customer_advance(conn, advance_receipt_id, allocations, allocation_
         raise ValueError(f"قيمة التخصيص تتجاوز المتبقي من مقدم العميل ({available:.2f}).")
     advance_account = _customer_advances_account(conn)
     ar = _account(conn, _sales_account_codes(conn, _activity(conn))["ar"], "asset")
-    dimensions = _common_customer_invoice_dimensions(
-        conn, [invoice for invoice, _amount in normalized], receipt["customer_id"]
-    )
     allocation_no = "CADVA-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    journal_lines = [
+        (advance_account, total, 0, "تخفيض التزام مقدم العميل",
+         validate_journal_dimensions(conn, {"customer_id": receipt["customer_id"]}))
+    ]
+    for invoice, amount in normalized:
+        invoice_dimensions = validate_journal_dimensions(
+            conn, _customer_invoice_dimensions(invoice)
+        )
+        journal_lines.append((
+            ar, 0, amount, "تسوية ذمم الفاتورة " + invoice["invoice_no"],
+            invoice_dimensions,
+        ))
     journal_id = post_journal(
         conn, allocation_date, allocation_no,
         "تخصيص مقدم عميل على فواتير " + receipt["customer_name"],
-        [(advance_account, total, 0, "تخفيض التزام مقدم العميل"),
-         (ar, 0, total, "تسوية ذمم العميل بمقدم مستلم")],
-        created_by, dimensions=dimensions,
+        journal_lines, created_by,
     )
     for invoice, amount in normalized:
         conn.execute(
