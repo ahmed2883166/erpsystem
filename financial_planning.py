@@ -170,6 +170,7 @@ def initialize_planning_schema(conn):
             WHERE id IN (SELECT entry_id FROM financial_year_journal_history
                          WHERE entry_kind='closing' AND action='reversed')""")
         conn.commit()
+    conn.commit()
 
 
 def create_financial_year(conn, year_name, start_date, end_date, created_by=None):
