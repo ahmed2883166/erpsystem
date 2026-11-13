@@ -1,7 +1,8 @@
-"""NEXUS ERP sales v1: customer invoices, stock issue, GL posting and receipts.
+"""NEXUS ERP sales: quotations, approved sales orders, delivery notes, invoices and receipts.
 
-Sales invoices are posted atomically with stock valuation and the shared journal engine.
-Quotations, separate delivery orders, returns and credit notes remain future work.
+Direct invoices and delivered-order invoices share the same accounting engine. Goods
+issued through delivery notes are costed and posted once; their later invoices only
+recognize receivables, revenue and VAT.
 """
 from app_paths import DB_PATH
 import sqlite3
