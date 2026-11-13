@@ -57,9 +57,15 @@
 <fieldset id="inventory-fields"><legend>إيصالات GRNI المطابقة – للأصناف المخزنية فقط</legend>{% for r in receipts %}<div class="form-row"><label><input type="checkbox" name="receipt_id" value="{{ r.id }}" {% if selected_receipt_ids is defined and r.id in selected_receipt_ids %}checked{% endif %}> {{ r.receipt_no }} — {{ r.supplier_name }} — إجمالي {{ r.total_value }} — متاح {{ r.available_amount }}</label><input name="receipt_amount_{{ r.id }}" type="number" min="0.01" max="{{ r.available_amount }}" step="0.01" value="{{ receipt_allocations[r.id] if receipt_allocations is defined and r.id in receipt_allocations else r.available_amount }}" aria-label="قيمة التخصيص من الإيصال {{ r.receipt_no }}"></div>{% else %}<p>لا توجد إيصالات غير مفوترة متاحة.</p>{% endfor %}</fieldset><script>
 function toggleBillKind(){
   const kind=document.getElementById('bill-kind').value;
-  document.getElementById('asset-fields').style.display=kind==='asset'?'block':'none';
-  document.getElementById('inventory-fields').style.display=kind==='inventory'?'block':'none';
-  document.getElementById('expense-account-field').style.display=kind==='expense'?'block':'none';
+  const asset=document.getElementById('asset-fields');
+  const inventory=document.getElementById('inventory-fields');
+  const expense=document.getElementById('expense-account-field');
+  asset.style.display=kind==='asset'?'block':'none';
+  inventory.style.display=kind==='inventory'?'block':'none';
+  expense.style.display=kind==='expense'?'block':'none';
+  asset.querySelectorAll('input,select').forEach(el=>el.disabled=kind!=='asset');
+  inventory.querySelectorAll('input,select').forEach(el=>el.disabled=kind!=='inventory');
+  expense.querySelectorAll('input,select').forEach(el=>el.disabled=kind!=='expense');
 }
 document.getElementById('bill-kind').addEventListener('change',toggleBillKind);
 document.getElementById('add-asset-line').addEventListener('click',()=>{
