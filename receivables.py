@@ -114,6 +114,32 @@ def _customer_aging_movements(conn, as_of):
  return has_detail,paid_as_of,paid_all,credited_as_of,credited_all,refunds_as_of
 
 
+
+def _customer_aging_documents(conn, as_of):
+ # Keep aging available on installations that have not yet received every
+ # sales migration. Missing running-total columns are reconstructed from dated
+ # subledger movements below rather than causing the report/export to fail.
+ if not _table_exists(conn, "sales_invoices") or not _table_exists(conn, "customers"):
+  return []
+ columns={row["name"] for row in conn.execute("PRAGMA table_info(sales_invoices)")}
+ customer_columns={row["name"] for row in conn.execute("PRAGMA table_info(customers)")}
+ if not {"id","customer_id","invoice_date","total_amount","status"}.issubset(columns):
+  return []
+ invoice_no_expr="i.invoice_no" if "invoice_no" in columns else "CAST(i.id AS TEXT)"
+ due_expr="COALESCE(i.due_date,i.invoice_date)" if "due_date" in columns else "i.invoice_date"
+ paid_expr="COALESCE(i.paid_amount,'0')" if "paid_amount" in columns else "'0'"
+ credit_expr="COALESCE(i.credited_amount,'0')" if "credited_amount" in columns else "'0'"
+ party_code_expr="cu.code" if "code" in customer_columns else "CAST(cu.id AS TEXT)"
+ party_name_expr="cu.name" if "name" in customer_columns else "CAST(cu.id AS TEXT)"
+ return conn.execute(f"""SELECT i.id invoice_id,{invoice_no_expr} doc_no,
+   {party_code_expr} party_code,{party_name_expr} party_name,
+   i.invoice_date doc_date,{due_expr} due_date,i.total_amount total_amount,
+   {paid_expr} paid_amount,{credit_expr} credited_amount
+   FROM sales_invoices i JOIN customers cu ON cu.id=i.customer_id
+   WHERE i.status='posted' AND i.invoice_date<=?
+   ORDER BY due_date,party_name,doc_no""",(as_of,)).fetchall()
+
+
 def _supplier_aging_documents(conn, as_of):
  # The reporting page may be opened before the purchases module initializes.
  if not _table_exists(conn, "supplier_bills") or not _table_exists(conn, "suppliers"):
@@ -192,12 +218,7 @@ def index():
   today=date.today(); as_of=today.isoformat()
  c=db()
  if kind=="customers":
-  rows=c.execute("""SELECT i.id invoice_id,i.invoice_no doc_no,cu.code party_code,cu.name party_name,i.invoice_date doc_date,
-    COALESCE(i.due_date,i.invoice_date) due_date,i.total_amount total_amount,i.paid_amount paid_amount,
-    COALESCE(i.credited_amount,'0') credited_amount
-    FROM sales_invoices i JOIN customers cu ON cu.id=i.customer_id
-    WHERE i.status='posted' AND i.invoice_date<=?
-    ORDER BY due_date,cu.name""",(as_of,)).fetchall()
+  rows=_customer_aging_documents(c,as_of)
  else:
   rows=_supplier_aging_documents(c,as_of)
  if kind=="customers":
