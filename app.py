@@ -1592,6 +1592,8 @@ def management_minimum_cash():
 @requires("accounts.manage")
 def analytic_dimensions_settings():
     connection = db()
+    # Ensure legacy databases have additive branch contact fields before any write.
+    initialize_analytic_dimensions_schema(connection)
     if request.method == "POST":
         try:
             if request.form.get("action") == "update_branch":
