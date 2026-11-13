@@ -1083,6 +1083,146 @@ otals["credit"], places=2)
             quotations.approve_sales_order(self.db, order_id, approver_id=2)
 
 
+    def test_sales_order_to_collection_posts_complete_gl_and_trial_balance(self):
+        _, order_id, order_line_id = self._create_accepted_quote_and_order("2")
+        base = date.today()
+        delivery_date = (base + timedelta(days=1)).isoformat()
+        invoice_date = (base + timedelta(days=2)).isoformat()
+        receipt_date = (base + timedelta(days=3)).isoformat()
+
+        # Approval is operational only: no stock movement or journal is created.
+        quotations.approve_sales_order(self.db, order_id, approver_id=2)
+        self.db.commit()
+        self.assertEqual(
+            self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0
+        )
+        self.assertEqual(
+            self.db.execute(
+                "SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'"
+            ).fetchone()[0],
+            0,
+        )
+
+        self.db.execute("BEGIN IMMEDIATE")
+        note = quotations.create_delivery_note(
+            self.db, order_id, delivery_date,
+            [{"sales_order_line_id": order_line_id, "quantity": "2"}], 2,
+        )
+        quotations.post_delivery_note(self.db, note["delivery_note_id"], posted_by=2)
+        self.db.commit()
+
+        delivery = self.db.execute(
+            "SELECT status FROM delivery_notes WHERE id=?", (note["delivery_note_id"],)
+        ).fetchone()
+        self.assertEqual(delivery["status"], "posted")
+        issue_rows = self.db.execute(
+            """SELECT movement_no,total_cost,accounting_status,journal_entry_id
+               FROM stock_movements WHERE movement_type='issue'"""
+        ).fetchall()
+        self.assertEqual(len(issue_rows), 1)
+        self.assertEqual(Decimal(issue_rows[0]["total_cost"]), Decimal("20.00"))
+        self.assertEqual(issue_rows[0]["accounting_status"], "posted")
+        self.assertIsNotNone(issue_rows[0]["journal_entry_id"])
+
+        # Invoicing recognizes revenue, receivable and VAT, but must not issue
+        # inventory or recognize COGS for a second time.
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = quotations.invoice_sales_order(
+            self.db, order_id, invoice_date,
+            (base + timedelta(days=30)).isoformat(), created_by=2,
+        )
+        self.db.commit()
+        self.assertEqual(invoice["subtotal"], Decimal("40.00"))
+        self.assertEqual(invoice["tax_amount"], Decimal("5.60"))
+        self.assertEqual(invoice["total_amount"], Decimal("45.60"))
+        self.assertEqual(invoice["total_cost"], Decimal("20.00"))
+        self.assertIsNone(invoice["cogs_journal_entry_id"])
+        self.assertEqual(
+            self.db.execute(
+                "SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'"
+            ).fetchone()[0],
+            1,
+        )
+
+        invoice_row = self.db.execute(
+            """SELECT status,paid_amount,journal_entry_id,sales_order_id
+               FROM sales_invoices WHERE id=?""",
+            (invoice["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(invoice_row["status"], "posted")
+        self.assertEqual(invoice_row["sales_order_id"], order_id)
+        self.assertEqual(Decimal(invoice_row["paid_amount"]), Decimal("0"))
+        invoice_line = self.db.execute(
+            """SELECT sales_order_line_id,quantity,line_total,cost_total
+               FROM sales_invoice_lines WHERE invoice_id=?""",
+            (invoice["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(invoice_line["sales_order_line_id"], order_line_id)
+        self.assertEqual(Decimal(invoice_line["quantity"]), Decimal("2"))
+        self.assertEqual(Decimal(invoice_line["line_total"]), Decimal("40.00"))
+        self.assertEqual(Decimal(invoice_line["cost_total"]), Decimal("20.00"))
+
+        cash_id = self.db.execute(
+            "SELECT id FROM accounts WHERE code='1110'"
+        ).fetchone()["id"]
+        self.db.execute("BEGIN IMMEDIATE")
+        receipt = sales.post_customer_receipt_batch(
+            self.db, self.customer_id, receipt_date,
+            [(invoice["invoice_id"], "45.60")], cash_id, 2, "SO-E2E-COLLECTION",
+        )
+        self.db.commit()
+        self.assertEqual(receipt["total_amount"], Decimal("45.60"))
+        self.assertEqual(receipt["invoice_count"], 1)
+        paid = self.db.execute(
+            "SELECT paid_amount FROM sales_invoices WHERE id=?",
+            (invoice["invoice_id"],),
+        ).fetchone()["paid_amount"]
+        self.assertEqual(Decimal(paid), Decimal("45.60"))
+        self.assertEqual(
+            self.db.execute(
+                """SELECT COUNT(*) FROM customer_receipt_allocations a
+                   JOIN customer_receipt_batches b ON b.id=a.batch_id
+                   WHERE b.receipt_no=? AND a.invoice_id=?""",
+                (receipt["receipt_no"], invoice["invoice_id"]),
+            ).fetchone()[0],
+            1,
+        )
+
+        # Verify the accounting trail from source documents through GL and TB.
+        order_status = self.db.execute(
+            "SELECT status FROM sales_orders WHERE id=?", (order_id,)
+        ).fetchone()["status"]
+        self.assertEqual(order_status, "invoiced")
+        account_totals = {}
+        for row in self.db.execute(
+            """SELECT a.code,jl.debit,jl.credit
+               FROM journal_lines jl
+               JOIN journal_entries je ON je.id=jl.entry_id
+               JOIN accounts a ON a.id=jl.account_id
+               WHERE je.status='posted'"""
+        ):
+            debit, credit = account_totals.get(
+                row["code"], (Decimal("0"), Decimal("0"))
+            )
+            account_totals[row["code"]] = (
+                debit + Decimal(str(row["debit"] or "0")),
+                credit + Decimal(str(row["credit"] or "0")),
+            )
+
+        self.assertEqual(account_totals["1130"], (Decimal("45.60"), Decimal("45.60")))
+        self.assertEqual(account_totals["1110"], (Decimal("45.60"), Decimal("0")))
+        self.assertEqual(account_totals["4100"], (Decimal("0"), Decimal("40.00")))
+        self.assertEqual(account_totals["2130"], (Decimal("0"), Decimal("5.60")))
+        self.assertEqual(account_totals["5100"], (Decimal("20.00"), Decimal("0")))
+        self.assertEqual(account_totals["1150"], (Decimal("0"), Decimal("20.00")))
+
+        tb_debit = sum((values[0] for values in account_totals.values()), Decimal("0"))
+        tb_credit = sum((values[1] for values in account_totals.values()), Decimal("0"))
+        self.assertEqual(tb_debit, Decimal("111.20"))
+        self.assertEqual(tb_credit, Decimal("111.20"))
+        self.assertEqual(tb_debit, tb_credit)
+
+
 
 if __name__ == "__main__":
     unittest.main()
