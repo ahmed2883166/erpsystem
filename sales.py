@@ -1951,8 +1951,13 @@ def invoice_print(invoice_id):
     if "branch_id" in invoice_columns and c.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='branches'"
     ).fetchone() and invoice["branch_id"]:
+        branch_columns = {row["name"] for row in c.execute("PRAGMA table_info(branches)")}
+        branch_fields = [
+            column if column in branch_columns else "'' AS " + column
+            for column in ("address", "phone", "email", "tax_number")
+        ]
         branch = c.execute(
-            "SELECT code,name_ar,address,phone,email,tax_number FROM branches WHERE id=?",
+            "SELECT code,name_ar," + ",".join(branch_fields) + " FROM branches WHERE id=?",
             (invoice["branch_id"],),
         ).fetchone()
     c.close()
