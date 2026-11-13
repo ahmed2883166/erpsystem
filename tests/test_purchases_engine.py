@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import purchases
 import stock
+import fixed_assets
 
 
 class PurchasingAccountingTests(unittest.TestCase):
@@ -15,6 +16,7 @@ class PurchasingAccountingTests(unittest.TestCase):
         db_path = Path(self.tmp.name) / "nexus.db"
         purchases.DB_PATH = db_path
         stock.DB_PATH = db_path
+        fixed_assets.DB_PATH = db_path
         stock.initialize_stock_schema()
         self.db = purchases.db()
         self.db.executescript("""
@@ -194,6 +196,107 @@ class PurchasingAccountingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "قبل اعتمادها"):
             purchases.post_supplier_bill(self.db, bill_id, 30)
         self.db.rollback()
+
+    def test_asset_supplier_bill_posts_ppe_and_creates_linked_asset_record(self):
+        purchases.init_purchase_schema()
+        fixed_assets.initialize_assets_schema()
+        self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-ASSET','مورد أصول')")
+        supplier_id = self.db.execute(
+            "SELECT id FROM suppliers WHERE code='SUP-ASSET'"
+        ).fetchone()["id"]
+        asset_account = self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1500','معدات','asset',0)"
+        ).lastrowid
+        accum_account = self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1590','مجمع إهلاك معدات','asset',0)"
+        ).lastrowid
+        depreciation_expense = self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('6500','مصروف إهلاك','expense',0)"
+        ).lastrowid
+        self.db.execute("""INSERT INTO supplier_bills(
+            bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,subtotal,
+            tax_rate,tax_amount,total_amount,created_by,status,bill_kind,
+            asset_code,asset_name,asset_category,asset_ready_date,asset_residual_value,
+            asset_useful_life_months,asset_depreciation_method,asset_annual_rate,
+            asset_account_id,asset_accum_account_id,asset_expense_account_id
+        ) VALUES('BILL-ASSET-1',?,'2026-11-13','2026-12-13','INV-ASSET-1',
+            '120000','0','0','120000',10,'approved','asset',
+            'AST-0001','ماكينة تعبئة','معدات','2026-11-20','12000',
+            60,'straight_line','0',?,?,?)""",
+            (supplier_id, asset_account, accum_account, depreciation_expense))
+        bill_id = self.db.execute(
+            "SELECT id FROM supplier_bills WHERE bill_no='BILL-ASSET-1'"
+        ).fetchone()["id"]
+        self.db.commit()
+
+        with patch("purchases.supplier_ap_account", return_value=99), \
+             patch("purchases.create_journal", return_value=777) as journal:
+            entry_id = purchases.post_supplier_bill(self.db, bill_id, 30)
+        self.db.commit()
+
+        self.assertEqual(entry_id, 777)
+        bill = self.db.execute(
+            "SELECT status,journal_entry_id FROM supplier_bills WHERE id=?", (bill_id,)
+        ).fetchone()
+        self.assertEqual((bill["status"], bill["journal_entry_id"]), ("posted", 777))
+        asset = self.db.execute(
+            "SELECT * FROM fixed_assets WHERE supplier_bill_id=?", (bill_id,)
+        ).fetchone()
+        self.assertIsNotNone(asset)
+        self.assertEqual(asset["asset_code"], "AST-0001")
+        self.assertEqual(asset["cost"], "120000")
+        self.assertEqual(asset["purchase_date"], "2026-11-13")
+        self.assertEqual(asset["ready_date"], "2026-11-20")
+        self.assertEqual(asset["asset_account_id"] if "asset_account_id" in asset.keys()
+                         else asset["asset_account_id"], asset_account)
+        self.assertEqual(journal.call_args.args[4][0][0], asset_account)
+        self.assertEqual(journal.call_args.args[4][0][1], purchases.money("120000"))
+
+    def test_asset_supplier_bill_rejects_duplicate_asset_code_before_posting(self):
+        purchases.init_purchase_schema()
+        fixed_assets.initialize_assets_schema()
+        self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-ASSET-DUP','مورد أصول مكرر')")
+        supplier_id = self.db.execute(
+            "SELECT id FROM suppliers WHERE code='SUP-ASSET-DUP'"
+        ).fetchone()["id"]
+        asset_account = self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1510','معدات مكررة','asset',0)"
+        ).lastrowid
+        accum_account = self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1591','مجمع إهلاك معدات مكررة','asset',0)"
+        ).lastrowid
+        depreciation_expense = self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('6501','مصروف إهلاك مكرر','expense',0)"
+        ).lastrowid
+        self.db.execute("""INSERT INTO fixed_assets(
+            asset_code,asset_name,purchase_date,ready_date,cost,residual_value,
+            useful_life_months,asset_account_id,accum_account_id,expense_account_id
+        ) VALUES('AST-DUP','أصل سابق','2026-01-01','2026-01-01','1000','0',12,?,?,?)""",
+            (asset_account, accum_account, depreciation_expense))
+        self.db.execute("""INSERT INTO supplier_bills(
+            bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,subtotal,
+            tax_rate,tax_amount,total_amount,created_by,status,bill_kind,
+            asset_code,asset_name,asset_ready_date,asset_residual_value,
+            asset_useful_life_months,asset_depreciation_method,asset_annual_rate,
+            asset_account_id,asset_accum_account_id,asset_expense_account_id
+        ) VALUES('BILL-ASSET-DUP',?,'2026-11-13','2026-12-13','INV-ASSET-DUP',
+            '1200','0','0','1200',10,'approved','asset',
+            'AST-DUP','أصل مكرر','2026-11-13','0',12,'straight_line','0',?,?,?)""",
+            (supplier_id, asset_account, accum_account, depreciation_expense))
+        bill_id = self.db.execute(
+            "SELECT id FROM supplier_bills WHERE bill_no='BILL-ASSET-DUP'"
+        ).fetchone()["id"]
+        self.db.commit()
+        with patch("purchases.supplier_ap_account", return_value=99), \
+             patch("purchases.create_journal", return_value=778):
+            with self.assertRaisesRegex(ValueError, "كود الأصل مستخدم"):
+                purchases.post_supplier_bill(self.db, bill_id, 30)
+        self.db.rollback()
+        bill = self.db.execute(
+            "SELECT status,journal_entry_id FROM supplier_bills WHERE id=?", (bill_id,)
+        ).fetchone()
+        self.assertEqual(bill["status"], "approved")
+        self.assertIsNone(bill["journal_entry_id"])
 
     def test_supplier_bill_rejection_requires_reason_and_can_be_resubmitted(self):
         purchases.init_purchase_schema()
