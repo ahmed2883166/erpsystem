@@ -229,6 +229,26 @@ def _accounts(c):
     return c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
 
 
+def _dimension_options(c):
+    tables = {row["name"] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    return {
+        key: c.execute(f"SELECT id,code,name_ar FROM {table} WHERE active=1 ORDER BY code").fetchall()
+        if table in tables else []
+        for key, table in (("branches","branches"),("cost_centers","cost_centers"),("projects","projects"))
+    }
+
+
+def _validate_employee_dimensions(c, values):
+    for value, table, label in zip(values[-3:], ("branches","cost_centers","projects"),
+                                   ("الفرع","مركز التكلفة","المشروع")):
+        if value is None:
+            continue
+        if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+            raise ValueError("جدول " + label + " غير مهيأ.")
+        if not c.execute(f"SELECT 1 FROM {table} WHERE id=? AND active=1", (value,)).fetchone():
+            raise ValueError("اختر " + label + " نشطًا وصحيحًا.")
+
+
 def _employee_form_values(form):
     salary = M(form.get("basic_salary"))
     hours = D(form.get("standard_hours", "208"))
