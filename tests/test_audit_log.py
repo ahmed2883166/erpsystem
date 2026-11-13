@@ -216,6 +216,36 @@ class AuditLogTests(unittest.TestCase):
         self.assertNotIn("old-secret", row["before_values"])
         self.assertEqual(row["remote_addr"], "192.0.2.20")
 
+    def test_operational_snapshot_captures_parent_and_detail_rows(self):
+        self.connection.executescript("""
+            CREATE TABLE stocktakes(
+                id INTEGER PRIMARY KEY, count_no TEXT, status TEXT, notes TEXT
+            );
+            CREATE TABLE stocktake_lines(
+                id INTEGER PRIMARY KEY, stocktake_id INTEGER, product_id INTEGER,
+                counted_qty TEXT, variance_qty TEXT
+            );
+            INSERT INTO stocktakes VALUES(31,'ST-031','draft','جرد تجريبي');
+            INSERT INTO stocktake_lines VALUES(1,31,7,'12','2');
+        """)
+        self.connection.commit()
+        with patch.object(nexus_app, "db", side_effect=self._open_connection):
+            before = nexus_app._operational_audit_snapshot(
+                "stock.approve_count", {"stocktake_id": 31}
+            )
+            self.connection.execute("UPDATE stocktakes SET status='approved' WHERE id=31")
+            self.connection.execute(
+                "UPDATE stocktake_lines SET variance_qty='3' WHERE stocktake_id=31"
+            )
+            self.connection.commit()
+            after = nexus_app._operational_audit_snapshot(
+                "stock.approve_count", {"stocktake_id": 31}
+            )
+        self.assertEqual(before["record"]["status"], "draft")
+        self.assertEqual(before["details"][0]["variance_qty"], "2")
+        self.assertEqual(after["record"]["status"], "approved")
+        self.assertEqual(after["details"][0]["variance_qty"], "3")
+
     def test_audit_view_is_a_separate_permission_and_route(self):
         self.assertIn("audit.view", nexus_app.PERMISSION_LABELS)
         self.assertIn("audit.view", nexus_app.PERMISSIONS["admin"])
