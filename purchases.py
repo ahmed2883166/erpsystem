@@ -780,7 +780,10 @@ def new_receipt():
                 outstanding=Decimal(po_line["quantity"])-Decimal(po_line["received_qty"])
                 if qty>outstanding: raise ValueError("كمية الاستلام أكبر من الكمية المتبقية في أمر الشراء.")
                 po_line_id=po_line["id"]
-            invcode=activity_inventory_code(c)
+            from activity_profiles import resolve_product_account_code
+            invcode=resolve_product_account_code(
+                c, product_row["id"], "inventory", activity_inventory_code(c)
+            )
             if not invcode: raise ValueError("النشاط الحالي لا يملك حساب مخزون تلقائيًا؛ اضبط الربط أولًا.")
             inv=account(c,invcode,"asset")
             # GRNI must be explicitly configured as a detailed liability account.
