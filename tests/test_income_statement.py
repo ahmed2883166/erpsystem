@@ -69,6 +69,22 @@ class IncomeStatementRouteTests(unittest.TestCase):
                 (14,10,4,'180','0');
             INSERT INTO company_settings VALUES('base_currency','EGP');
             INSERT INTO company_settings VALUES('company_name','شركة الاختبار');
+            CREATE TABLE branches(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,active INTEGER DEFAULT 1);
+            CREATE TABLE cost_centers(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,active INTEGER DEFAULT 1);
+            CREATE TABLE projects(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,status TEXT DEFAULT 'active',active INTEGER DEFAULT 1);
+            CREATE TABLE customers(id INTEGER PRIMARY KEY,code TEXT,name TEXT,active INTEGER DEFAULT 1);
+            CREATE TABLE salespersons(id INTEGER PRIMARY KEY,code TEXT,name TEXT,active INTEGER DEFAULT 1);
+            INSERT INTO branches VALUES(1,'B1','فرع القاهرة',1);
+            INSERT INTO cost_centers VALUES(1,'CC1','مركز تجاري',1);
+            INSERT INTO projects VALUES(1,'P1','مشروع ألف','active',1);
+            INSERT INTO customers VALUES(1,'C1','عميل ألف',1);
+            INSERT INTO salespersons VALUES(1,'SP1','مندوب ألف',1);
+            ALTER TABLE journal_lines ADD COLUMN branch_id INTEGER;
+            ALTER TABLE journal_lines ADD COLUMN cost_center_id INTEGER;
+            ALTER TABLE journal_lines ADD COLUMN project_id INTEGER;
+            ALTER TABLE journal_lines ADD COLUMN customer_id INTEGER;
+            ALTER TABLE journal_lines ADD COLUMN salesperson_id INTEGER;
+            UPDATE journal_lines SET branch_id=1,project_id=1,customer_id=1,salesperson_id=1 WHERE id IN (1,3);
         """)
         conn.commit()
         conn.close()
@@ -143,6 +159,16 @@ class IncomeStatementRouteTests(unittest.TestCase):
         self.assertEqual(normalize_income_statement_period("not-a-date", "2026-11-12", today), expected)
         self.assertEqual(normalize_income_statement_period("", "", today), expected)
         self.assertEqual(normalize_income_statement_period("2026-12-01", "2026-01-01", today), expected)
+
+    def test_income_statement_filters_revenue_and_direct_cost_by_same_dimensions(self):
+        response = self.client.get("/reports/income-statement?date_from=2026-11-01&date_to=2026-11-30&compare=none&project_id=1")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("مشروع ألف", body)
+        self.assertIn("1,000.00", body)
+        self.assertIn("200.00", body)
+        self.assertIn("800.00", body)
+        self.assertNotIn("900.00", body)
 
     def test_shared_calculation_returns_expected_sections(self):
         conn = sqlite3.connect(self.db_path)
