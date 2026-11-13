@@ -44,7 +44,8 @@ def initialize_workforce_schema():
       work_status TEXT NOT NULL DEFAULT 'permanent',
       raise_type TEXT NOT NULL DEFAULT 'fixed', raise_value TEXT NOT NULL DEFAULT '0',
       raise_mode TEXT NOT NULL DEFAULT 'basic', raise_effective_date TEXT NOT NULL DEFAULT '',
-      overtime_rate_percent TEXT NOT NULL DEFAULT '150'
+      overtime_rate_percent TEXT NOT NULL DEFAULT '150',
+      branch_id INTEGER, cost_center_id INTEGER, project_id INTEGER
     );
     CREATE TABLE IF NOT EXISTS employee_pay_items(
       id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id),
@@ -156,6 +157,10 @@ def initialize_workforce_schema():
     c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('unpaid','إجازة بدون أجر',0,0)")
     c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('sick','إجازة مرضية',1,0)")
     employee_cols = {r["name"] for r in c.execute("PRAGMA table_info(employees)")}
+    for name in ("branch_id", "cost_center_id", "project_id"):
+        if name not in employee_cols:
+            c.execute("ALTER TABLE employees ADD COLUMN " + name + " INTEGER")
+
     for name, definition in {
         "address": "TEXT NOT NULL DEFAULT ''",
         "national_id": "TEXT NOT NULL DEFAULT ''",
@@ -251,6 +256,8 @@ def _employee_form_values(form):
         form.get("address", "").strip(), form.get("national_id", "").strip(),
         work_status, raise_type, str(raise_value), raise_mode, effective_date,
         str(overtime_rate),
+        form.get("branch_id") or None, form.get("cost_center_id") or None,
+        form.get("project_id") or None,
     )
 
 
@@ -263,8 +270,9 @@ def employees():
             values = _employee_form_values(request.form)
             c.execute("""INSERT INTO employees(employee_code,full_name,job_title,department,hire_date,basic_salary,
                 standard_hours,legal_category,insurance_number,insured_wage,insurance_enabled,address,national_id,
-                work_status,raise_type,raise_value,raise_mode,raise_effective_date,overtime_rate_percent)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", values)
+                work_status,raise_type,raise_value,raise_mode,raise_effective_date,overtime_rate_percent,
+                branch_id,cost_center_id,project_id)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", values)
             _audit(c, "employee_created", values[0])
             c.commit()
             flash("تم إضافة الموظف وحفظ بياناته الوظيفية والأجرية.", "success")
@@ -302,7 +310,7 @@ def edit_employee(employee_id):
             c.execute("""UPDATE employees SET employee_code=?,full_name=?,job_title=?,department=?,hire_date=?,
                 basic_salary=?,standard_hours=?,legal_category=?,insurance_number=?,insured_wage=?,insurance_enabled=?,
                 address=?,national_id=?,work_status=?,raise_type=?,raise_value=?,raise_mode=?,
-                raise_effective_date=?,overtime_rate_percent=? WHERE id=?""", (*values, employee_id))
+                raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=? WHERE id=?""", (*values, employee_id))
             _audit(c, "employee_updated", values[0])
             c.commit()
             flash("تم تحديث ملف الموظف.", "success")
@@ -582,7 +590,9 @@ def post_payroll(run_id):
         run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         if not run or run["status"] != "draft":
             raise ValueError("المسير غير موجود أو تم ترحيله بالفعل.")
-        rows = c.execute("SELECT * FROM payroll_lines WHERE run_id=?", (run_id,)).fetchall()
+        rows = c.execute("""SELECT l.*,e.branch_id,e.cost_center_id,e.project_id,e.full_name,e.employee_code
+            FROM payroll_lines l JOIN employees e ON e.id=l.employee_id WHERE l.run_id=?
+            ORDER BY e.employee_code""", (run_id,)).fetchall()
         if not rows:
             raise ValueError("لا توجد تفاصيل في مسير الرواتب.")
         salary_expense = int(request.form["salary_expense_account"])
@@ -606,16 +616,23 @@ def post_payroll(run_id):
                                         (advances_account,)).fetchone()
             if not advance_account or advance_account["code"] != "1171" or advance_account["account_type"] != "asset" or advance_account["is_group"] or not advance_account["active"]:
                 raise ValueError("خصم أقساط قروض الموظفين يتطلب حساب سلف العاملين 1171 نشطًا وتفصيليًا.")
-        lines = [
-            (salary_expense, M(gross), 0, "مصروف الأجور والمرتبات قبل الاستقطاعات"),
-            (salary_expense, 0, M(absence_deduction), "تخفيض مصروف الأجور بخصم الغياب"),
-            (employer_ins_expense, M(employer_ins), 0, "مصروف حصة الشركة في التأمينات"),
+        lines = []
+        for payroll_line in rows:
+            dims = {key: payroll_line[key] for key in ("branch_id", "cost_center_id", "project_id")}
+            employee_label = payroll_line["employee_code"] + " - " + payroll_line["full_name"]
+            salary_cost = M(D(payroll_line["gross_pay"]) - D(payroll_line["absence_deduction"]))
+            if salary_cost:
+                lines.append((salary_expense, salary_cost, 0, "أجور ومرتبات - " + employee_label, dims))
+            employer_cost = M(payroll_line["employer_insurance"])
+            if employer_cost:
+                lines.append((employer_ins_expense, employer_cost, 0, "حصة الشركة بالتأمينات - " + employee_label, dims))
+        lines.extend([
             (salaries_payable, 0, M(net), "صافي مستحقات الموظفين"),
             (advances_account, 0, M(advance_deduction), "استرداد سلف العاملين"),
             (other_deductions_account, 0, M(other_deductions), "الحساب المقابل للخصومات الأخرى"),
             (tax_payable, 0, M(tax), "ضريبة مرتبات مستحقة"),
             (insurance_payable, 0, M(emp_ins + employer_ins), "تأمينات اجتماعية مستحقة"),
-        ]
+        ])
         c.execute("BEGIN IMMEDIATE")
         journal_id = post_journal(c, run["period"] + "-01", "PAYROLL-" + run["period"],
                                   "مسير مرتبات شهر " + run["period"], lines, session["user_id"])
