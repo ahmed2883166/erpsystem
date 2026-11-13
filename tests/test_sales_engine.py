@@ -825,7 +825,7 @@ otals["credit"], places=2)
 
         self.db.execute("BEGIN IMMEDIATE")
         first_note = quotations.create_delivery_note(
-            self.db, order_id, "2026-11-16",
+            self.db, order_id, "2026-11-14",
             [{"sales_order_line_id": order_line_id, "quantity": "2"}], 2,
         )
         # A draft delivery note must not move stock or create a journal.
