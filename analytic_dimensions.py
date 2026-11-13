@@ -27,6 +27,11 @@ def initialize_analytic_dimensions_schema(conn):
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     """)
+    # Additive branch contact details used by printed invoices and documents.
+    branch_columns = {row["name"] for row in conn.execute("PRAGMA table_info(branches)")}
+    for column in ("address", "phone", "email", "tax_number"):
+        if column not in branch_columns:
+            conn.execute(f"ALTER TABLE branches ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='journal_lines'").fetchone():
         # Dimension tables exist; journal columns are added once the journal table is created.
         conn.commit()
@@ -58,7 +63,7 @@ def initialize_analytic_dimensions_schema(conn):
 
 def active_dimension_options(conn):
     return {
-        "branches": conn.execute("SELECT id,code,name_ar FROM branches WHERE active=1 ORDER BY code").fetchall(),
+        "branches": conn.execute("SELECT id,code,name_ar,address,phone,email,tax_number FROM branches WHERE active=1 ORDER BY code").fetchall(),
         "cost_centers": conn.execute("SELECT id,code,name_ar FROM cost_centers WHERE active=1 ORDER BY code").fetchall(),
         "projects": conn.execute("SELECT id,code,name_ar FROM projects WHERE active=1 ORDER BY code").fetchall(),
         "customers": conn.execute("SELECT id,code,name AS name_ar FROM customers WHERE active=1 ORDER BY code").fetchall()
