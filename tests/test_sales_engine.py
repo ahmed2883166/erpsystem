@@ -761,6 +761,102 @@ class SalesIntegrationTests(unittest.TestCase):
         self.db.rollback()
 
 
+    def test_customer_settlement_cycle_preserves_invoice_dimensions_and_reconciles_gl(self):
+        branch_id = self.db.execute(
+            "INSERT INTO branches(code,name_ar) VALUES('BR-COL','فرع التحصيل')"
+        ).lastrowid
+        center_id = self.db.execute(
+            "INSERT INTO cost_centers(code,name_ar) VALUES('CC-COL','مركز التحصيل')"
+        ).lastrowid
+        project_id = self.db.execute(
+            "INSERT INTO projects(code,name_ar) VALUES('PJ-COL','مشروع التحصيل')"
+        ).lastrowid
+        salesperson_id = self.db.execute(
+            "INSERT INTO salespersons(code,name) VALUES('SP-COL','مندوب التحصيل')"
+        ).lastrowid
+        dimensions = {
+            "branch_id": branch_id, "cost_center_id": center_id,
+            "project_id": project_id, "salesperson_id": salesperson_id,
+        }
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}],
+            "0", 1, dimensions=dimensions,
+        )
+        cash_id = self.db.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
+        advance = sales.post_customer_advance_receipt(
+            self.db, self.customer_id, "2026-11-11", "20", cash_id, 1,
+        )
+        allocation = sales.allocate_customer_advance(
+            self.db, advance["advance_receipt_id"],
+            [(invoice["invoice_id"], "20")], "2026-11-12", 1,
+        )
+        batch = sales.post_customer_receipt_batch(
+            self.db, self.customer_id, "2026-11-13",
+            [(invoice["invoice_id"], "80")], cash_id, 1, "DIM-BATCH",
+        )
+        line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?",
+            (invoice["invoice_id"],),
+        ).fetchone()["id"]
+        credit = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-14", "مرتجع بعد التحصيل",
+            [{"invoice_line_id": line_id, "quantity": "0.5"}], 1,
+        )
+        refund = sales.post_customer_refund(
+            self.db, credit["credit_note_id"], "2026-11-15", "50", cash_id, 1,
+        )
+        self.db.commit()
+
+        expected_dimensions = (
+            branch_id, center_id, project_id, self.customer_id, salesperson_id,
+        )
+        for entry_id in (allocation["journal_entry_id"], batch["journal_entry_id"], refund["journal_entry_id"]):
+            ar_line = self.db.execute(
+                """SELECT jl.branch_id,jl.cost_center_id,jl.project_id,jl.customer_id,jl.salesperson_id
+                   FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+                   WHERE jl.entry_id=? AND a.code='1130' LIMIT 1""",
+                (entry_id,),
+            ).fetchone()
+            self.assertEqual(tuple(ar_line), expected_dimensions)
+
+        ar_control = sum(
+            (Decimal(row["debit"]) - Decimal(row["credit"]) for row in self.db.execute(
+                """SELECT jl.debit,jl.credit FROM journal_lines jl
+                   JOIN accounts a ON a.id=jl.account_id WHERE a.code='1130'"""
+            )),
+            Decimal("0"),
+        )
+        invoice_row = self.db.execute(
+            "SELECT total_amount,paid_amount,credited_amount FROM sales_invoices WHERE id=?",
+            (invoice["invoice_id"],),
+        ).fetchone()
+        refund_total = sum(
+            (Decimal(row["amount"]) for row in self.db.execute(
+                """SELECT rf.amount FROM customer_refunds rf
+                   JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id WHERE cn.invoice_id=?""",
+                (invoice["invoice_id"],),
+            )),
+            Decimal("0"),
+        )
+        ar_subledger = (
+            Decimal(invoice_row["total_amount"]) - Decimal(invoice_row["paid_amount"])
+            - Decimal(invoice_row["credited_amount"]) + refund_total
+        )
+        self.assertEqual(ar_control, Decimal("0.00"))
+        self.assertEqual(ar_subledger, ar_control)
+
+        advance_control = sum(
+            (Decimal(row["credit"]) - Decimal(row["debit"]) for row in self.db.execute(
+                """SELECT jl.debit,jl.credit FROM journal_lines jl
+                   JOIN accounts a ON a.id=jl.account_id WHERE a.code='2160'"""
+            )),
+            Decimal("0"),
+        )
+        self.assertEqual(advance_control, Decimal("0.00"))
+        self.assertEqual(sales._customer_advance_available(self.db, advance["advance_receipt_id"]), Decimal("0.00"))
+
     def test_customer_advance_dates_cannot_precede_receipt_or_invoice(self):
         self.db.execute("BEGIN IMMEDIATE")
         first_invoice = sales.post_invoice(
