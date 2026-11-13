@@ -127,6 +127,42 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 2)
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'").fetchone()[0], 1)
 
+    def test_restaurant_invoice_posts_to_selected_sales_channel(self):
+        from chart_templates import ensure_activity_chart_accounts
+        ensure_activity_chart_accounts(self.db, "restaurant")
+        self.db.execute("UPDATE company_settings SET setting_value='restaurant' WHERE setting_key='activity'")
+        self.db.execute(
+            "INSERT INTO stock_categories(code,name_ar) VALUES('FOOD','أغذية')"
+        )
+        category_id = self.db.execute(
+            "SELECT id FROM stock_categories WHERE code='FOOD'"
+        ).fetchone()["id"]
+        self.db.execute(
+            "UPDATE stock_products SET category_id=? WHERE id=?",
+            (category_id, self.product_id),
+        )
+        self.db.commit()
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "20"}],
+            "14", 1, sales_channel="delivery_apps",
+        )
+        self.db.commit()
+        revenue_code = self.db.execute(
+            """SELECT a.code FROM journal_lines jl
+               JOIN accounts a ON a.id=jl.account_id
+               WHERE jl.entry_id=? AND jl.credit>0 AND a.account_type='revenue'""",
+            (invoice["journal_entry_id"],),
+        ).fetchone()["code"]
+        stored = self.db.execute(
+            "SELECT sales_channel,revenue_account_code FROM sales_invoices WHERE id=?",
+            (invoice["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(revenue_code, "4400")
+        self.assertEqual(stored["sales_channel"], "delivery_apps")
+        self.assertEqual(stored["revenue_account_code"], "4400")
+
     def test_mixed_line_tax_treatments(self):
         self.db.execute("BEGIN IMMEDIATE")
         result = sales.post_invoice(self.db, self.customer_id, "2026-11-10", self.warehouse_id, [
