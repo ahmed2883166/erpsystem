@@ -184,6 +184,8 @@ def create_sales_order_from_quotation(conn, quote_id, created_by, warehouse_id=N
   discount_amount=discount_value
  else:
   discount_value=Decimal("0"); discount_amount=Decimal("0")
+ if discount_amount>=gross_subtotal and discount_amount>0:
+  raise ValueError("خصم العميل لا يمكن أن يساوي أو يتجاوز إجمالي أمر البيع.")
  order_no="SO-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
  cur=conn.execute(
   """INSERT INTO sales_orders(order_no,quotation_id,customer_id,warehouse_id,order_date,
