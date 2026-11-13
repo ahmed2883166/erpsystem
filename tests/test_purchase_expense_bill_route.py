@@ -695,7 +695,9 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
                 "unit_cost": "10.00",
                 "receipt_date": "2026-11-13",
             })
-        self.assertEqual(response.status_code, 302)
+        # Validation failures re-render the receipt form (HTTP 200) and must
+        # leave stock and GRNI untouched.
+        self.assertEqual(response.status_code, 200)
         conn = purchases.db()
         self.assertEqual(
             conn.execute("SELECT COUNT(*) FROM goods_receipts WHERE po_id=?", (order_id,)).fetchone()[0],
