@@ -162,6 +162,23 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(revenue_code, "4400")
         self.assertEqual(stored["sales_channel"], "delivery_apps")
         self.assertEqual(stored["revenue_account_code"], "4400")
+        line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?",
+            (invoice["invoice_id"],),
+        ).fetchone()["id"]
+        self.db.execute("BEGIN IMMEDIATE")
+        credit = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-11", "مرتجع",
+            [{"invoice_line_id": line_id, "quantity": "1"}], 1,
+        )
+        self.db.commit()
+        reversed_revenue = self.db.execute(
+            """SELECT a.code FROM journal_lines jl
+               JOIN accounts a ON a.id=jl.account_id
+               WHERE jl.entry_id=? AND jl.debit>0 AND a.account_type='revenue'""",
+            (credit["journal_entry_id"],),
+        ).fetchone()["code"]
+        self.assertEqual(reversed_revenue, "4400")
 
     def test_mixed_line_tax_treatments(self):
         self.db.execute("BEGIN IMMEDIATE")
