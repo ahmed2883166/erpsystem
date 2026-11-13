@@ -80,50 +80,7 @@ def initialize_quotes_schema():
  );
  CREATE INDEX IF NOT EXISTS idx_delivery_note_order ON delivery_notes(sales_order_id,status,delivery_date,id);
  CREATE INDEX IF NOT EXISTS idx_delivery_line_order_line ON delivery_note_lines(sales_order_line_id,delivery_note_id);
- CREATE TABLE IF NOT EXISTS sales_orders(
-  id INTEGER PRIMARY KEY, order_no TEXT NOT NULL UNIQUE,
-  quotation_id INTEGER NOT NULL UNIQUE REFERENCES quotations(id),
-  customer_id INTEGER NOT NULL REFERENCES customers(id),
-  warehouse_id INTEGER REFERENCES stock_warehouses(id),
-  order_date TEXT NOT NULL, expected_date TEXT,
-  status TEXT NOT NULL DEFAULT 'pending_approval',
-  created_by INTEGER, submitted_by INTEGER,
-  approved_by INTEGER, approved_at TEXT,
-  rejection_reason TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
- );
- CREATE TABLE IF NOT EXISTS sales_order_lines(
-  id INTEGER PRIMARY KEY, sales_order_id INTEGER NOT NULL REFERENCES sales_orders(id) ON DELETE CASCADE,
-  quotation_line_id INTEGER REFERENCES quotation_lines(id),
-  product_id INTEGER REFERENCES stock_products(id),
-  description TEXT NOT NULL, ordered_qty TEXT NOT NULL,
-  delivered_qty TEXT NOT NULL DEFAULT '0', invoiced_qty TEXT NOT NULL DEFAULT '0',
-  unit_price TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
- );
- CREATE INDEX IF NOT EXISTS idx_sales_order_lines_order ON sales_order_lines(sales_order_id,id);
- CREATE TABLE IF NOT EXISTS delivery_notes(
-  id INTEGER PRIMARY KEY, delivery_no TEXT NOT NULL UNIQUE,
-  sales_order_id INTEGER NOT NULL REFERENCES sales_orders(id),
-  delivery_date TEXT NOT NULL, warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
-  status TEXT NOT NULL DEFAULT 'draft', notes TEXT NOT NULL DEFAULT '',
-  created_by INTEGER, posted_by INTEGER, posted_at TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
- );
- CREATE TABLE IF NOT EXISTS delivery_note_lines(
-  id INTEGER PRIMARY KEY, delivery_note_id INTEGER NOT NULL REFERENCES delivery_notes(id) ON DELETE CASCADE,
-  sales_order_line_id INTEGER NOT NULL REFERENCES sales_order_lines(id),
-  product_id INTEGER NOT NULL REFERENCES stock_products(id),
-  quantity TEXT NOT NULL, unit_cost TEXT NOT NULL DEFAULT '0',
-  total_cost TEXT NOT NULL DEFAULT '0', invoiced_qty TEXT NOT NULL DEFAULT '0',
-  stock_movement_id INTEGER REFERENCES stock_movements(id),
-  UNIQUE(delivery_note_id,sales_order_line_id)
- );
- CREATE TABLE IF NOT EXISTS delivery_note_line_lots(
-  id INTEGER PRIMARY KEY, delivery_note_line_id INTEGER NOT NULL REFERENCES delivery_note_lines(id),
-  lot_id INTEGER REFERENCES stock_lots(id), quantity TEXT NOT NULL, cost_total TEXT NOT NULL
- );
- CREATE INDEX IF NOT EXISTS idx_delivery_note_order ON delivery_notes(sales_order_id,status,delivery_date,id);
- CREATE INDEX IF NOT EXISTS idx_delivery_line_order_line ON delivery_note_lines(sales_order_line_id,delivery_note_id);
+
  """);
  qcols={r["name"] for r in c.execute("PRAGMA table_info(quotations)")}
  if "sales_order_id" not in qcols: c.execute("ALTER TABLE quotations ADD COLUMN sales_order_id INTEGER")
