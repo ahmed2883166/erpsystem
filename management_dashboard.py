@@ -407,7 +407,6 @@ def build_management_snapshot(conn, start, end, dimensions=None):
     gross_profit = current["revenue"] - current["cogs"]
     period_days = Decimal(max(1, (end-start).days+1))
     opening_assets = _leaf_sum(opening_balances, "asset")
-    opening_liabilities = _leaf_sum(opening_balances, "liability")
     opening_equity = _leaf_sum(opening_balances, "equity")
     average_assets = (opening_assets + assets) / Decimal("2")
     average_equity = (opening_equity + equity) / Decimal("2")
