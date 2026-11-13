@@ -265,6 +265,13 @@ class PartyStatementTests(unittest.TestCase):
         self.assertEqual(mismatch.status_code, 200)
         self.assertIn("يوجد فرق", mismatch.get_data(as_text=True))
 
+        advances = self.client.get("/reports/customer-advances?as_of=2026-11-30")
+        self.assertEqual(advances.status_code, 200)
+        advance_body = advances.get_data(as_text=True)
+        self.assertIn("200.00", advance_body)
+        self.assertIn("50.00", advance_body)
+        self.assertIn("150.00", advance_body)
+
     def test_party_statement_rejects_invalid_or_reversed_date_ranges(self):
         invalid = self.client.get(
             "/reports/party-statement?kind=customer&party_id=1&date_from=not-a-date"
