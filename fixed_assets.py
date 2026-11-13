@@ -216,6 +216,7 @@ def schedule(asset_id):
     c=db(); asset=c.execute("SELECT * FROM fixed_assets WHERE id=?",(asset_id,)).fetchone()
     if not asset: c.close(); flash("الأصل غير موجود.","error"); return redirect(url_for("assets.index"))
     rows=c.execute("SELECT * FROM asset_depreciations WHERE asset_id=? ORDER BY period",(asset_id,)).fetchall()
+    accounts=c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
     posted={x["period"]:Decimal(x["amount"]) for x in rows}
     accumulated=sum(posted.values(),Decimal("0"))
     c.close()
@@ -241,7 +242,7 @@ def schedule(asset_id):
         schedule_rows.append({"period":period,"planned":planned,"actual":actual,"posted":period in posted})
         cumulative += actual if actual is not None else planned
     return render_template("asset_schedule.html",asset=asset,rows=rows,schedule_rows=schedule_rows,accumulated=accumulated,
-      net=max(cost-accumulated,residual),depreciable=depreciable)
+      net=max(cost-accumulated,residual),depreciable=depreciable,accounts=accounts)
 
 @assets_bp.route("/<int:asset_id>/depreciate",methods=["POST"])
 @require(write=True)
@@ -328,8 +329,14 @@ def dispose(asset_id):
         if output_vat_account_id:
             checked_account(output_vat_account_id,{"liability"},"حساب ضريبة المخرجات")
         period=disposal_date[:7]
-        if not c.execute("SELECT 1 FROM asset_depreciations WHERE asset_id=? AND period=?",
-                         (asset_id,period)).fetchone():
+        already_depreciated=c.execute("SELECT 1 FROM asset_depreciations WHERE asset_id=? AND period=?",
+                                       (asset_id,period)).fetchone()
+        if already_depreciated:
+            last_day=calendar.monthrange(date.fromisoformat(disposal_date).year,
+                                         date.fromisoformat(disposal_date).month)[1]
+            if date.fromisoformat(disposal_date).day != last_day:
+                raise ValueError("تم ترحيل إهلاك شهر الاستبعاد بالكامل؛ لا يمكن استبعاد الأصل في منتصف الشهر دون عكس القيد. استخدم تاريخ آخر يوم بالشهر أو عالج القيد بعكس معتمد.")
+        else:
             # Recognize depreciation only through the actual disposal date.
             _amount,_entry=_post_asset_depreciation(c,asset,period,session["user_id"],cutoff_date=disposal_date)
         accumulated=sum((Decimal(str(x["amount"])) for x in c.execute(
@@ -379,20 +386,25 @@ def reconciliation():
     c=db()
     rows=[]
     try:
-        assets=c.execute("""SELECT f.asset_account_id,f.accum_account_id,
-            COALESCE(SUM(CAST(f.cost AS NUMERIC)),0) gross_cost,
-            COALESCE((SELECT SUM(CAST(d.amount AS NUMERIC)) FROM asset_depreciations d
-                JOIN journal_entries je ON je.id=d.journal_entry_id
-                WHERE d.asset_id=f.id AND je.status='posted' AND je.entry_date<=?),0) accumulated
-            FROM fixed_assets f
-            LEFT JOIN asset_disposals x ON x.asset_id=f.id
+        assets=c.execute("""SELECT f.id,f.asset_account_id,f.accum_account_id,f.cost,
+            x.disposal_date
+            FROM fixed_assets f LEFT JOIN asset_disposals x ON x.asset_id=f.id
             WHERE f.purchase_date<=? AND (x.id IS NULL OR x.disposal_date>?)
-            GROUP BY f.asset_account_id,f.accum_account_id
-            ORDER BY f.asset_account_id,f.accum_account_id""",(as_of,as_of,as_of)).fetchall()
-        for item in assets:
+            ORDER BY f.asset_account_id,f.accum_account_id,f.id""",(as_of,as_of)).fetchall()
+        grouped={}
+        for asset_row in assets:
+            key=(asset_row["asset_account_id"],asset_row["accum_account_id"])
+            item=grouped.setdefault(key,{"gross_cost":Decimal("0"),"accumulated":Decimal("0")})
+            item["gross_cost"]+=Decimal(str(asset_row["cost"]))
+            depreciation_rows=c.execute("""SELECT d.amount FROM asset_depreciations d
+                JOIN journal_entries je ON je.id=d.journal_entry_id
+                WHERE d.asset_id=? AND je.status='posted' AND je.entry_date<=?""",
+                (asset_row["id"],as_of)).fetchall()
+            item["accumulated"]+=sum((Decimal(str(x["amount"])) for x in depreciation_rows),Decimal("0"))
+        for (asset_account_id,accum_account_id),item in grouped.items():
             for account_id,kind,expected in (
-                (item["asset_account_id"],"تكلفة الأصول",Decimal(str(item["gross_cost"] or "0"))),
-                (item["accum_account_id"],"مجمع الإهلاك",Decimal(str(item["accumulated"] or "0"))),
+                (asset_account_id,"تكلفة الأصول",item["gross_cost"]),
+                (accum_account_id,"مجمع الإهلاك",item["accumulated"]),
             ):
                 gl=c.execute("""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) balance
                     FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
