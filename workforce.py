@@ -78,6 +78,26 @@ def initialize_workforce_schema():
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_payroll_payments_run ON payroll_payments(run_id,payment_date,id);
+    CREATE TABLE IF NOT EXISTS employee_loans (
+      id INTEGER PRIMARY KEY, loan_no TEXT NOT NULL UNIQUE, employee_id INTEGER NOT NULL REFERENCES employees(id),
+      request_date TEXT NOT NULL, requested_amount TEXT NOT NULL, approved_amount TEXT NOT NULL DEFAULT '0',
+      installment_count INTEGER NOT NULL DEFAULT 1, first_due_period TEXT NOT NULL,
+      remaining_balance TEXT NOT NULL DEFAULT '0',
+      status TEXT NOT NULL DEFAULT 'requested' CHECK(status IN ('requested','approved','active','closed','rejected')),
+      loan_account_id INTEGER REFERENCES accounts(id), disbursement_account_id INTEGER REFERENCES accounts(id),
+      disbursement_date TEXT, journal_entry_id INTEGER UNIQUE, notes TEXT NOT NULL DEFAULT '',
+      created_by INTEGER, approved_by INTEGER, approved_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS employee_loan_installments (
+      id INTEGER PRIMARY KEY, loan_id INTEGER NOT NULL REFERENCES employee_loans(id),
+      due_period TEXT NOT NULL, due_amount TEXT NOT NULL, paid_amount TEXT NOT NULL DEFAULT '0',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','paid')), UNIQUE(loan_id,due_period)
+    );
+    CREATE TABLE IF NOT EXISTS payroll_loan_allocations (
+      id INTEGER PRIMARY KEY, payroll_line_id INTEGER NOT NULL REFERENCES payroll_lines(id),
+      installment_id INTEGER NOT NULL REFERENCES employee_loan_installments(id),
+      amount TEXT NOT NULL, UNIQUE(payroll_line_id,installment_id)
+    );
     CREATE TABLE IF NOT EXISTS payroll_incentive_rules(
       id INTEGER PRIMARY KEY, name TEXT NOT NULL,
       calculation_method TEXT NOT NULL CHECK(calculation_method IN ('fixed','percentage_basic','per_day')),
@@ -117,7 +137,8 @@ def initialize_workforce_schema():
             c.execute("ALTER TABLE employees ADD COLUMN " + name + " " + definition)
     payroll_cols = {r["name"] for r in c.execute("PRAGMA table_info(payroll_lines)")}
     for name, definition in {
-        "incentives": "TEXT NOT NULL DEFAULT '0'",
+        "loan_deduction": "TEXT NOT NULL DEFAULT '0'",
+        "incentives": "TEXT NOT NULL DEFAULT '0',
         "advance_deduction": "TEXT NOT NULL DEFAULT '0'",
         "total_entitlements": "TEXT NOT NULL DEFAULT '0'",
         "total_deductions": "TEXT NOT NULL DEFAULT '0'",
@@ -371,7 +392,14 @@ def payroll():
                             raise ValueError("أدخل عدد أيام الحافز للموظف " + e["full_name"] + ".")
                         event_incentive = M(incentive_value * incentive_days)
                 incentives = M(M(request.form.get("incentives_" + str(e["id"]), "0")) + event_incentive)
-                advance_deduction = M(request.form.get("advance_" + str(e["id"]), "0"))
+                manual_advance_deduction = M(request.form.get("advance_" + str(e["id"]), "0"))
+                due_installments = c.execute("""SELECT i.due_amount,i.paid_amount
+                    FROM employee_loan_installments i JOIN employee_loans l ON l.id=i.loan_id
+                    WHERE l.employee_id=? AND l.status='active' AND i.due_period=? AND i.status='pending'
+                    ORDER BY l.id,i.id""", (e["id"], period)).fetchall()
+                loan_deduction = M(sum((max(Decimal("0"),D(i["due_amount"])-D(i["paid_amount"]))
+                                         for i in due_installments),Decimal("0")))
+                advance_deduction = M(manual_advance_deduction + loan_deduction)
                 other_deductions = M(request.form.get("other_deductions_" + str(e["id"]), "0"))
                 tax = M(request.form.get("tax_" + str(e["id"]), "0"))
                 emp_ins = M(request.form.get("employee_ins_" + str(e["id"]), "0"))
@@ -405,14 +433,14 @@ def payroll():
                 c.execute("""INSERT INTO payroll_lines(run_id,employee_id,basic_salary,allowances,overtime_hours,
                     overtime_amount,absent_hours,absence_deduction,other_deductions,taxable_income_tax,
                     employee_insurance,employer_insurance,gross_pay,net_pay,rule_set_id,taxable_annual,insured_wage,
-                    incentives,advance_deduction,total_entitlements,total_deductions,salary_raise,
+                    incentives,advance_deduction,loan_deduction,total_entitlements,total_deductions,salary_raise,
                     overtime_rate_percent,incentive_rule_id,incentive_name,incentive_days,incentive_method)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (run_id,e["id"],str(basic_salary),str(allowances),str(overtime_hours),str(overtime_amount),
                      str(absent_hours),str(absence),str(other_deductions),str(tax),str(emp_ins),
                      str(employer_ins),str(gross),str(net),
                      rule_set_id, str(taxable_annual), str(insured_wage),
-                     str(incentives),str(advance_deduction),str(total_entitlements),str(total_deductions),
+                     str(incentives),str(advance_deduction),str(loan_deduction),str(total_entitlements),str(total_deductions),
                      str(raise_amount),str(overtime_rate),incentive_rule_id,incentive_name,
                      str(incentive_days),incentive_method))
             _audit(c, "payroll_draft_created", period)
@@ -505,6 +533,12 @@ def post_payroll(run_id):
         absence_deduction = sum((D(x["absence_deduction"]) for x in rows), Decimal("0"))
         other_deductions_account = int(request.form["other_deductions_account"])
         advances_account = int(request.form["advances_account"])
+        total_loan_deduction = M(sum((D(x["loan_deduction"]) for x in rows),Decimal("0")))
+        if total_loan_deduction > 0:
+            advance_account = c.execute("SELECT id,code,account_type,is_group,active FROM accounts WHERE id=?",
+                                        (advances_account,)).fetchone()
+            if not advance_account or advance_account["code"] != "1171" or advance_account["account_type"] != "asset" or advance_account["is_group"] or not advance_account["active"]:
+                raise ValueError("خصم أقساط قروض الموظفين يتطلب حساب سلف العاملين 1171 نشطًا وتفصيليًا.")
         lines = [
             (salary_expense, M(gross), 0, "مصروف الأجور والمرتبات قبل الاستقطاعات"),
             (salary_expense, 0, M(absence_deduction), "تخفيض مصروف الأجور بخصم الغياب"),
@@ -518,6 +552,36 @@ def post_payroll(run_id):
         c.execute("BEGIN IMMEDIATE")
         journal_id = post_journal(c, run["period"] + "-01", "PAYROLL-" + run["period"],
                                   "مسير مرتبات شهر " + run["period"], lines, session["user_id"])
+        for payroll_line in rows:
+            left = D(payroll_line["loan_deduction"])
+            if left <= 0:
+                continue
+            due_rows = c.execute("""SELECT i.id,i.due_amount,i.paid_amount
+                FROM employee_loan_installments i JOIN employee_loans l ON l.id=i.loan_id
+                WHERE l.employee_id=(SELECT employee_id FROM payroll_lines WHERE id=?)
+                  AND l.status='active' AND i.due_period=? AND i.status='pending'
+                ORDER BY l.id,i.id""", (payroll_line["id"],run["period"])).fetchall()
+            for item in due_rows:
+                outstanding = max(Decimal("0"),D(item["due_amount"])-D(item["paid_amount"]))
+                amount = min(left,outstanding)
+                if amount <= 0:
+                    continue
+                c.execute("INSERT INTO payroll_loan_allocations(payroll_line_id,installment_id,amount) VALUES(?,?,?)",
+                          (payroll_line["id"],item["id"],str(M(amount))))
+                paid = M(D(item["paid_amount"])+amount)
+                c.execute("UPDATE employee_loan_installments SET paid_amount=?,status=? WHERE id=?",
+                          (str(paid),"paid" if paid>=D(item["due_amount"]) else "pending",item["id"]))
+                left = M(left-amount)
+                if left <= 0:
+                    break
+            if left > 0:
+                raise ValueError("تعذر توزيع خصم قسط السلفة على جدول الأقساط.")
+        for loan in c.execute("SELECT id,approved_amount FROM employee_loans WHERE status='active'").fetchall():
+            paid = M(sum((D(x["paid_amount"]) for x in c.execute(
+                "SELECT paid_amount FROM employee_loan_installments WHERE loan_id=?",(loan["id"],)).fetchall()),Decimal("0")))
+            balance = M(max(Decimal("0"),D(loan["approved_amount"])-paid))
+            c.execute("UPDATE employee_loans SET remaining_balance=?,status=? WHERE id=?",
+                      (str(balance),"closed" if balance<=0 else "active",loan["id"]))
         c.execute("UPDATE payroll_runs SET status='posted',journal_entry_id=? WHERE id=?", (journal_id, run_id))
         _audit(c, "payroll_posted", run["period"] + " journal=" + str(journal_id))
         c.commit()
