@@ -45,6 +45,61 @@ class ActivityAccountMappingTests(unittest.TestCase):
                     self.assertEqual(chart[code][2], expected_type)
                     self.assertEqual(chart[code][4], 0)
 
+    def test_common_chart_expansion_adds_financial_control_branches(self):
+        from chart_templates import seed_activity_chart, ensure_activity_chart_accounts
+
+        for activity in CHARTS:
+            with self.subTest(activity=activity):
+                conn = sqlite3.connect(":memory:")
+                conn.row_factory = sqlite3.Row
+                conn.execute("""CREATE TABLE accounts(
+                    id INTEGER PRIMARY KEY, code TEXT UNIQUE, name_ar TEXT,
+                    account_type TEXT, parent_id INTEGER, is_group INTEGER DEFAULT 0,
+                    active INTEGER DEFAULT 1)""")
+                seed_activity_chart(conn, activity)
+                before_ids = {
+                    row["code"]: row["id"]
+                    for row in conn.execute("SELECT id,code FROM accounts")
+                }
+                ensure_activity_chart_accounts(conn, activity)
+                ensure_activity_chart_accounts(conn, activity)
+                expected = {
+                    "1170": ("asset", 1), "1171": ("asset", 0),
+                    "1180": ("asset", 0), "1250": ("asset", 0),
+                    "1260": ("asset", 1), "1261": ("asset", 0),
+                    "2170": ("liability", 1), "2190": ("liability", 0),
+                    "2200": ("liability", 1), "2231": ("liability", 0),
+                    "4700": ("revenue", 1), "4710": ("revenue", 0),
+                    "5500": ("expense", 1), "5510": ("expense", 0),
+                    "6800": ("expense", 1), "6810": ("expense", 0),
+                    "7200": ("expense", 1), "7210": ("expense", 0),
+                }
+                for code, (account_type, is_group) in expected.items():
+                    row = conn.execute(
+                        "SELECT account_type,is_group FROM accounts WHERE code=?",
+                        (code,),
+                    ).fetchone()
+                    self.assertIsNotNone(row, code)
+                    self.assertEqual((row["account_type"], row["is_group"]),
+                                     (account_type, is_group), code)
+                for code, old_id in before_ids.items():
+                    self.assertEqual(
+                        conn.execute("SELECT id FROM accounts WHERE code=?", (code,)).fetchone()["id"],
+                        old_id,
+                    )
+                duplicates = conn.execute(
+                    "SELECT code,COUNT(*) n FROM accounts GROUP BY code HAVING COUNT(*)>1"
+                ).fetchall()
+                self.assertEqual(duplicates, [])
+                conn.close()
+
+    def test_operational_mapping_codes_are_marked_immutable(self):
+        from chart_templates import OPERATIONAL_ACCOUNT_CODES
+
+        self.assertTrue({"1110", "1130", "1165", "2130", "2190"}.issubset(
+            OPERATIONAL_ACCOUNT_CODES
+        ))
+
     def test_industrial_v1_uses_same_stock_control_for_purchases_and_sales(self):
         mapping = ACTIVITY_POSTING_ACCOUNTS["industrial"]
         self.assertEqual(mapping["purchase_inventory"], "1130")
