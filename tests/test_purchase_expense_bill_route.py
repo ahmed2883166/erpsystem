@@ -767,6 +767,102 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
             [("2110", Decimal("0.0"), Decimal("100.0")),
              ("2190", Decimal("100.0"), Decimal("0.0"))],
         )
+
+        # Pay the posted supplier bill and verify allocation, AP, cash, ledger,
+        # and the trial-balance control total from posted journal lines.
+        cash_account = conn.execute(
+            """INSERT INTO accounts(code,name_ar,account_type,is_group,active)
+               VALUES('1000','الصندوق','asset',0,1)"""
+        )
+        cash_account_id = cash_account.lastrowid
+        conn.commit()
+        conn.close()
+
+        with self.client.session_transaction() as session:
+            session["user_id"] = 4
+            session["role"] = "accountant"
+        payment_response = self.client.post("/purchases/payments/new", data={
+            "supplier_id": str(self.supplier_id),
+            "payment_date": "2026-11-14",
+            "amount": "100.00",
+            "cash_account_id": str(cash_account_id),
+            "reference": "PO-E2E-PAYMENT",
+        })
+        self.assertEqual(payment_response.status_code, 302)
+
+        conn = purchases.db()
+        payment = conn.execute(
+            """SELECT id,journal_entry_id,amount FROM supplier_payments
+               WHERE reference='PO-E2E-PAYMENT'"""
+        ).fetchone()
+        self.assertIsNotNone(payment)
+        self.assertEqual(Decimal(payment["amount"]), Decimal("100.00"))
+        allocations = conn.execute(
+            """SELECT bill_id,amount FROM supplier_payment_allocations
+               WHERE payment_id=?""", (payment["id"],)
+        ).fetchall()
+        self.assertEqual(
+            [(row["bill_id"], Decimal(row["amount"])) for row in allocations],
+            [(bill_id, Decimal("100.00"))],
+        )
+        paid_bill = conn.execute(
+            "SELECT paid_amount,total_amount FROM supplier_bills WHERE id=?", (bill_id,)
+        ).fetchone()
+        self.assertEqual(Decimal(paid_bill["paid_amount"]), Decimal("100.00"))
+        self.assertEqual(Decimal(paid_bill["total_amount"]), Decimal("100.00"))
+
+        ap_id = conn.execute("SELECT id FROM accounts WHERE code='2110'").fetchone()["id"]
+        ap_net = Decimal("0")
+        cash_net = Decimal("0")
+        for row in conn.execute(
+            """SELECT jl.account_id,jl.debit,jl.credit
+               FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+               WHERE je.status='posted' AND jl.account_id IN (?,?)""",
+            (ap_id, cash_account_id),
+        ):
+            net = Decimal(row["debit"]) - Decimal(row["credit"])
+            if row["account_id"] == ap_id:
+                ap_net += net
+            else:
+                cash_net += net
+        self.assertEqual(ap_net, Decimal("0.00"))
+        self.assertEqual(cash_net, Decimal("-100.00"))
+
+        payment_lines = conn.execute(
+            """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
+               JOIN accounts a ON a.id=jl.account_id
+               WHERE jl.entry_id=? ORDER BY a.code""",
+            (payment["journal_entry_id"],),
+        ).fetchall()
+        self.assertEqual(
+            [(row["code"], Decimal(row["debit"]), Decimal(row["credit"])) for row in payment_lines],
+            [("1000", Decimal("0.00"), Decimal("100.00")),
+             ("2110", Decimal("100.00"), Decimal("0.00"))],
+        )
+
+        trial_balance = conn.execute(
+            """SELECT a.code,
+                      COALESCE(SUM(CAST(jl.debit AS NUMERIC)),0) debit,
+                      COALESCE(SUM(CAST(jl.credit AS NUMERIC)),0) credit
+               FROM accounts a
+               LEFT JOIN journal_lines jl ON jl.account_id=a.id
+               LEFT JOIN journal_entries je ON je.id=jl.entry_id AND je.status='posted'
+               GROUP BY a.id,a.code ORDER BY a.code"""
+        ).fetchall()
+        tb_debit = sum((Decimal(str(row["debit"])) for row in trial_balance), Decimal("0"))
+        tb_credit = sum((Decimal(str(row["credit"])) for row in trial_balance), Decimal("0"))
+        self.assertGreater(tb_debit, Decimal("0"))
+        self.assertEqual(tb_debit, tb_credit)
+
+        final_grni_net = Decimal("0")
+        for row in conn.execute(
+            """SELECT jl.debit,jl.credit FROM journal_lines jl
+               JOIN journal_entries je ON je.id=jl.entry_id
+               WHERE jl.account_id=? AND je.status='posted'""",
+            (grni_id,),
+        ):
+            final_grni_net += Decimal(row["credit"]) - Decimal(row["debit"])
+        self.assertEqual(final_grni_net, Decimal("0.00"))
         conn.close()
 
 
