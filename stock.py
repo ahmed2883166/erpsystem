@@ -245,7 +245,7 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
         c.execute("UPDATE stock_movements SET accounting_status='pending_purpose' WHERE id=?", (movement_id,))
         return None
     if purpose == "sale":
-        expense = c.execute("SELECT id,is_group,active FROM accounts WHERE code=?", (expense_code,)).fetchone() if expense_code else None
+        expense = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (expense_code,)).fetchone() if expense_code else None
         expense_id = expense["id"] if expense and not expense["is_group"] and expense["active"] and expense["account_type"] == "expense" else None
     inventory_code = posting_accounts.get("inventory")
     inventory = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (inventory_code,)).fetchone() if inventory_code else None
