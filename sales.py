@@ -368,11 +368,11 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
                 )
             description = description or product["name_ar"]
         else:
-            if activity != "service":
+            if activity != "service" and preissued_costs is None:
                 raise ValueError("اختر صنف مخزني لكل بند في فاتورة هذا النشاط.")
             cost = Decimal("0.00")
             if not description:
-                raise ValueError("اكتب وصف الخدمة.")
+                raise ValueError("اكتب وصف الخدمة أو البند غير المخزني.")
         line_total = (qty * unit_price).quantize(CENT, rounding=ROUND_HALF_UP)
         treatment = str(item.get("tax_treatment") or "standard").strip().lower()
         if treatment not in {"standard", "zero_rated", "exempt", "out_of_scope"}:
