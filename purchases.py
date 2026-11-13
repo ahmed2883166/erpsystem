@@ -1064,7 +1064,7 @@ def edit_bill(bill_id):
             total = money(subtotal + tax)
             receipts = list(dict.fromkeys(int(x) for x in request.form.getlist("receipt_id")))
             bill_kind = request.form.get("bill_kind", "inventory").strip()
-            if bill_kind not in {"inventory", "expense"}:
+            if bill_kind not in {"inventory", "expense", "asset"}:
                 raise ValueError("نوع فاتورة المورد غير صحيح.")
 
             c.execute("BEGIN IMMEDIATE")
@@ -1079,6 +1079,7 @@ def edit_bill(bill_id):
                 raise ValueError("رقم فاتورة المورد مسجل بالفعل لهذا المورد.")
 
             expense_account_id = None
+            asset_data = {}
             if bill_kind == "expense":
                 expense_account_id = int(request.form.get("expense_account_id", "0"))
                 expense_row = c.execute("""SELECT account_type,is_group,active FROM accounts WHERE id=?""",
@@ -1087,6 +1088,11 @@ def edit_bill(bill_id):
                     raise ValueError("اختر حساب مصروف تفصيليًا ونشطًا.")
                 if receipts:
                     raise ValueError("فاتورة المصروف لا تُربط بإيصالات استلام مخزني.")
+            elif bill_kind == "asset":
+                if receipts:
+                    raise ValueError("فاتورة الأصل الثابت لا تُربط بإيصالات استلام مخزني.")
+                asset_data = validate_asset_bill_data(c, request.form, bill_date, subtotal)
+                supplier_ap_account(c)
             else:
                 if not receipts:
                     raise ValueError("فاتورة الأصناف المخزنية تتطلب إيصال استلام.")
@@ -1104,12 +1110,20 @@ def edit_bill(bill_id):
             c.execute("""UPDATE supplier_bills SET supplier_id=?,bill_date=?,due_date=?,
                 supplier_invoice_no=?,subtotal=?,tax_rate=?,tax_amount=?,total_amount=?,
                 branch_id=?,cost_center_id=?,project_id=?,bill_kind=?,expense_account_id=?,
+                asset_code=?,asset_name=?,asset_category=?,asset_ready_date=?,asset_residual_value=?,
+                asset_useful_life_months=?,asset_depreciation_method=?,asset_annual_rate=?,
+                asset_account_id=?,asset_accum_account_id=?,asset_expense_account_id=?,
                 status='draft',submitted_by=NULL,submitted_at=NULL,approved_by=NULL,approved_at=NULL,
                 rejected_by=NULL,rejected_at=NULL,rejection_reason=NULL,approval_reason=NULL
                 WHERE id=? AND status IN ('draft','rejected') AND journal_entry_id IS NULL""",
                 (supplier, bill_date, due_date, supplier_invoice_no, str(subtotal), str(rate),
                  str(tax), str(total), dimensions["branch_id"], dimensions["cost_center_id"],
-                 dimensions["project_id"], bill_kind, expense_account_id, bill_id))
+                 dimensions["project_id"], bill_kind, expense_account_id,
+                 asset_data.get("asset_code"),asset_data.get("asset_name"),asset_data.get("asset_category"),
+                 asset_data.get("asset_ready_date"),asset_data.get("asset_residual_value","0"),
+                 asset_data.get("asset_useful_life_months"),asset_data.get("asset_depreciation_method","straight_line"),
+                 asset_data.get("asset_annual_rate","0"),asset_data.get("asset_account_id"),
+                 asset_data.get("asset_accum_account_id"),asset_data.get("asset_expense_account_id"),bill_id))
             if c.execute("SELECT changes()").fetchone()[0] != 1:
                 raise ValueError("لم يتم تحديث الفاتورة؛ أعد تحميل الصفحة.")
             c.execute("DELETE FROM supplier_bill_receipts WHERE bill_id=?", (bill_id,))
@@ -1127,6 +1141,8 @@ def edit_bill(bill_id):
     suppliers = c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     expense_accounts = c.execute("""SELECT id,code,name_ar FROM accounts
         WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code""").fetchall()
+    asset_accounts = c.execute("""SELECT id,code,name_ar FROM accounts
+        WHERE account_type='asset' AND is_group=0 AND active=1 ORDER BY code""").fetchall()
     receipts = _available_supplier_receipts(c, bill["supplier_id"], exclude_bill_id=bill_id)
     existing_allocations = {row["receipt_id"]: money(row["matched_amount"]) for row in c.execute(
         "SELECT receipt_id,matched_amount FROM supplier_bill_receipts WHERE bill_id=?", (bill_id,)).fetchall()}
@@ -1134,8 +1150,8 @@ def edit_bill(bill_id):
     dimension_options = active_dimension_options(c)
     c.close()
     return render_template("purchase_bill_new.html", suppliers=suppliers, receipts=receipts,
-        expense_accounts=expense_accounts, dimension_options=dimension_options,
-        today=date.today().isoformat(), bill=bill, selected_receipt_ids=selected_receipt_ids,
+        expense_accounts=expense_accounts, asset_accounts=asset_accounts,
+        dimension_options=dimension_options, today=date.today().isoformat(), bill=bill, selected_receipt_ids=selected_receipt_ids,
         receipt_allocations=existing_allocations, edit_mode=True)
 
 
