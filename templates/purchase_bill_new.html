@@ -2,20 +2,57 @@
 <div><label>الفرع التحليلي</label><select name="branch_id"><option value="">بدون تحديد</option>{% for x in dimension_options.branches %}<option value="{{x.id}}" {% if bill and bill.branch_id==x.id %}selected{% endif %}>{{x.code}} - {{x.name_ar}}</option>{% endfor %}</select></div>
 <div><label>مركز التكلفة</label><select name="cost_center_id"><option value="">بدون تحديد</option>{% for x in dimension_options.cost_centers %}<option value="{{x.id}}" {% if bill and bill.cost_center_id==x.id %}selected{% endif %}>{{x.code}} - {{x.name_ar}}</option>{% endfor %}</select></div>
 <div><label>المشروع</label><select name="project_id"><option value="">بدون تحديد</option>{% for x in dimension_options.projects %}<option value="{{x.id}}" {% if bill and bill.project_id==x.id %}selected{% endif %}>{{x.code}} - {{x.name_ar}}</option>{% endfor %}</select></div></div>
-<fieldset id="asset-fields"><legend>بيانات الأصل الثابت – تُنشأ تلقائيًا بعد ترحيل الفاتورة</legend>
+<fieldset id="asset-fields"><legend>الأصول الثابتة داخل الفاتورة</legend>
+<p class="muted">أضف كل أصل في سطر مستقل. مجموع تكاليف الأصول يجب أن يساوي صافي الفاتورة قبل الضريبة. كل أصل سيظهر منفصلًا في سجل الأصول.</p>
+<div id="asset-lines">
+{% if existing_asset_lines is defined and existing_asset_lines %}
+{% for line in existing_asset_lines %}
+<div class="panel asset-line" style="margin:10px 0;padding:12px">
 <div class="form-row">
-<div><label>كود الأصل</label><input name="asset_code" value="{{ bill.asset_code if bill else '' }}" placeholder="AST-0001"></div>
-<div><label>اسم الأصل</label><input name="asset_name" value="{{ bill.asset_name if bill else '' }}"></div>
-<div><label>الفئة</label><input name="asset_category" value="{{ bill.asset_category if bill else '' }}" placeholder="معدات / سيارات / أجهزة"></div>
-<div><label>تاريخ الجاهزية للاستخدام</label><input name="asset_ready_date" type="date" value="{{ bill.asset_ready_date if bill and bill.asset_ready_date else (bill.bill_date if bill else today) }}"></div>
-<div><label>القيمة التخريدية</label><input name="asset_residual_value" type="number" min="0" step="0.01" value="{{ bill.asset_residual_value if bill else '0' }}"></div>
-<div><label>العمر الإنتاجي (شهر)</label><input name="asset_useful_life_months" type="number" min="1" value="{{ bill.asset_useful_life_months if bill else '' }}"></div>
-<div><label>طريقة الإهلاك</label><select name="asset_depreciation_method"><option value="straight_line" {% if not bill or bill.asset_depreciation_method=='straight_line' %}selected{% endif %}>القسط الثابت</option><option value="declining_balance" {% if bill and bill.asset_depreciation_method=='declining_balance' %}selected{% endif %}>الرصيد المتناقص</option></select></div>
-<div><label>معدل الإهلاك السنوي % (للمتناقص)</label><input name="asset_annual_rate" type="number" min="0" max="100" step="0.01" value="{{ bill.asset_annual_rate if bill else '0' }}"></div>
-<div><label>حساب تكلفة الأصل</label><select name="asset_account_id"><option value="">اختر حساب الأصل</option>{% for a in asset_accounts %}<option value="{{a.id}}" {% if bill and bill.asset_account_id==a.id %}selected{% endif %}>{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></div>
-<div><label>حساب مجمع الإهلاك</label><select name="asset_accum_account_id"><option value="">اختر مجمع الإهلاك</option>{% for a in asset_accounts %}<option value="{{a.id}}" {% if bill and bill.asset_accum_account_id==a.id %}selected{% endif %}>{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></div>
-<div><label>حساب مصروف الإهلاك</label><select name="asset_expense_account_id"><option value="">اختر مصروف الإهلاك</option>{% for a in expense_accounts %}<option value="{{a.id}}" {% if bill and bill.asset_expense_account_id==a.id %}selected{% endif %}>{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></div>
-</div><p class="muted">تكلفة الأصل هي صافي الفاتورة قبل الضريبة. ضريبة المدخلات تُسجل منفصلة وفق إعدادات النشاط.</p>
+<div><label>كود الأصل</label><input name="asset_code[]" value="{{line.asset_code}}" required></div>
+<div><label>اسم الأصل</label><input name="asset_name[]" value="{{line.asset_name}}" required></div>
+<div><label>الفئة</label><input name="asset_category[]" value="{{line.asset_category}}"></div>
+<div><label>تكلفة الأصل قبل الضريبة</label><input name="asset_cost[]" type="number" min="0.01" step="0.01" value="{{line.cost}}" required></div>
+<div><label>تاريخ الجاهزية</label><input name="asset_ready_date[]" type="date" value="{{line.ready_date}}" required></div>
+<div><label>القيمة التخريدية</label><input name="asset_residual_value[]" type="number" min="0" step="0.01" value="{{line.residual_value}}" required></div>
+<div><label>العمر الإنتاجي (شهر)</label><input name="asset_useful_life_months[]" type="number" min="1" value="{{line.useful_life_months}}" required></div>
+<div><label>طريقة الإهلاك</label><select name="asset_depreciation_method[]"><option value="straight_line" {% if line.depreciation_method=='straight_line' %}selected{% endif %}>القسط الثابت</option><option value="declining_balance" {% if line.depreciation_method=='declining_balance' %}selected{% endif %}>الرصيد المتناقص</option></select></div>
+<div><label>معدل الإهلاك السنوي %</label><input name="asset_annual_rate[]" type="number" min="0" max="100" step="0.01" value="{{line.annual_rate}}"></div>
+<div><label>حساب تكلفة الأصل</label><select name="asset_account_id[]" required><option value="">اختر</option>{% for a in asset_accounts %}<option value="{{a.id}}" {% if line.asset_account_id==a.id %}selected{% endif %}>{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></div>
+<div><label>حساب مجمع الإهلاك</label><select name="asset_accum_account_id[]" required><option value="">اختر</option>{% for a in asset_accounts %}<option value="{{a.id}}" {% if line.accum_account_id==a.id %}selected{% endif %}>{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></div>
+<div><label>حساب مصروف الإهلاك</label><select name="asset_expense_account_id[]" required><option value="">اختر</option>{% for a in expense_accounts %}<option value="{{a.id}}" {% if line.expense_account_id==a.id %}selected{% endif %}>{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></div>
+</div><button type="button" class="btn secondary remove-asset-line">حذف الأصل من الفاتورة</button></div>
+{% endfor %}
+{% else %}
+<div class="panel asset-line" style="margin:10px 0;padding:12px">
+<div class="form-row">
+<div><label>كود الأصل</label><input name="asset_code[]" value="{{bill.asset_code if bill else ''}}" required></div>
+<div><label>اسم الأصل</label><input name="asset_name[]" value="{{bill.asset_name if bill else ''}}" required></div>
+<div><label>الفئة</label><input name="asset_category[]" value="{{bill.asset_category if bill else ''}}"></div>
+<div><label>تكلفة الأصل قبل الضريبة</label><input name="asset_cost[]" type="number" min="0.01" step="0.01" value="{{bill.subtotal if bill and bill.bill_kind=='asset' else ''}}" required></div>
+<div><label>تاريخ الجاهزية</label><input name="asset_ready_date[]" type="date" value="{{bill.asset_ready_date if bill and bill.asset_ready_date else (bill.bill_date if bill else today)}}" required></div>
+<div><label>القيمة التخريدية</label><input name="asset_residual_value[]" type="number" min="0" step="0.01" value="{{bill.asset_residual_value if bill else '0'}}" required></div>
+<div><label>العمر الإنتاجي (شهر)</label><input name="asset_useful_life_months[]" type="number" min="1" value="{{bill.asset_useful_life_months if bill else ''}}" required></div>
+<div><label>طريقة الإهلاك</label><select name="asset_depreciation_method[]"><option value="straight_line" {% if not bill or bill.asset_depreciation_method=='straight_line' %}selected{% endif %}>القسط الثابت</option><option value="declining_balance" {% if bill and bill.asset_depreciation_method=='declining_balance' %}selected{% endif %}>الرصيد المتناقص</option></select></div>
+<div><label>معدل الإهلاك السنوي %</label><input name="asset_annual_rate[]" type="number" min="0" max="100" step="0.01" value="{{bill.asset_annual_rate if bill else '0'}}"></div>
+<div><label>حساب تكلفة الأصل</label><select name="asset_account_id[]" required><option value="">اختر</option>{% for a in asset_accounts %}<option value="{{a.id}}" {% if bill and bill.asset_account_id==a.id %}selected{% endif %}>{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></div>
+<div><label>حساب مجمع الإهلاك</label><select name="asset_accum_account_id[]" required><option value="">اختر</option>{% for a in asset_accounts %}<option value="{{a.id}}" {% if bill and bill.asset_accum_account_id==a.id %}selected{% endif %}>{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></div>
+<div><label>حساب مصروف الإهلاك</label><select name="asset_expense_account_id[]" required><option value="">اختر</option>{% for a in expense_accounts %}<option value="{{a.id}}" {% if bill and bill.asset_expense_account_id==a.id %}selected{% endif %}>{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></div>
+</div><button type="button" class="btn secondary remove-asset-line">حذف الأصل من الفاتورة</button></div>
+{% endif %}
+</div>
+<button type="button" id="add-asset-line" class="btn secondary">+ إضافة أصل آخر</button>
+<template id="asset-row-template"><div class="panel asset-line" style="margin:10px 0;padding:12px"><div class="form-row">
+<div><label>كود الأصل</label><input name="asset_code[]" required></div><div><label>اسم الأصل</label><input name="asset_name[]" required></div>
+<div><label>الفئة</label><input name="asset_category[]"></div><div><label>تكلفة الأصل قبل الضريبة</label><input name="asset_cost[]" type="number" min="0.01" step="0.01" required></div>
+<div><label>تاريخ الجاهزية</label><input name="asset_ready_date[]" type="date" value="{{today}}" required></div><div><label>القيمة التخريدية</label><input name="asset_residual_value[]" type="number" min="0" step="0.01" value="0" required></div>
+<div><label>العمر الإنتاجي (شهر)</label><input name="asset_useful_life_months[]" type="number" min="1" required></div>
+<div><label>طريقة الإهلاك</label><select name="asset_depreciation_method[]"><option value="straight_line">القسط الثابت</option><option value="declining_balance">الرصيد المتناقص</option></select></div>
+<div><label>معدل الإهلاك السنوي %</label><input name="asset_annual_rate[]" type="number" min="0" max="100" step="0.01" value="0"></div>
+<div><label>حساب تكلفة الأصل</label><select name="asset_account_id[]" required><option value="">اختر</option>{% for a in asset_accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></div>
+<div><label>حساب مجمع الإهلاك</label><select name="asset_accum_account_id[]" required><option value="">اختر</option>{% for a in asset_accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></div>
+<div><label>حساب مصروف الإهلاك</label><select name="asset_expense_account_id[]" required><option value="">اختر</option>{% for a in expense_accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></div>
+</div><button type="button" class="btn secondary remove-asset-line">حذف الأصل من الفاتورة</button></div></template>
 </fieldset>
 <fieldset id="inventory-fields"><legend>إيصالات GRNI المطابقة – للأصناف المخزنية فقط</legend>{% for r in receipts %}<div class="form-row"><label><input type="checkbox" name="receipt_id" value="{{ r.id }}" {% if selected_receipt_ids is defined and r.id in selected_receipt_ids %}checked{% endif %}> {{ r.receipt_no }} — {{ r.supplier_name }} — إجمالي {{ r.total_value }} — متاح {{ r.available_amount }}</label><input name="receipt_amount_{{ r.id }}" type="number" min="0.01" max="{{ r.available_amount }}" step="0.01" value="{{ receipt_allocations[r.id] if receipt_allocations is defined and r.id in receipt_allocations else r.available_amount }}" aria-label="قيمة التخصيص من الإيصال {{ r.receipt_no }}"></div>{% else %}<p>لا توجد إيصالات غير مفوترة متاحة.</p>{% endfor %}</fieldset><script>
 function toggleBillKind(){
@@ -25,5 +62,16 @@ function toggleBillKind(){
   document.getElementById('expense-account-field').style.display=kind==='expense'?'block':'none';
 }
 document.getElementById('bill-kind').addEventListener('change',toggleBillKind);
+document.getElementById('add-asset-line').addEventListener('click',()=>{
+  const fragment=document.getElementById('asset-row-template').content.cloneNode(true);
+  document.getElementById('asset-lines').appendChild(fragment);
+});
+document.getElementById('asset-lines').addEventListener('click',event=>{
+  if(event.target.classList.contains('remove-asset-line')){
+    const lines=document.querySelectorAll('#asset-lines .asset-line');
+    if(lines.length>1) event.target.closest('.asset-line').remove();
+    else alert('يجب أن تحتوي فاتورة الأصل على أصل واحد على الأقل.');
+  }
+});
 toggleBillKind();
 </script><div class="actions"><button type="submit">{{ "حفظ التعديلات كمسودة" if edit_mode else "حفظ مسودة الفاتورة" }}</button><a class="btn secondary" href="{{ url_for('purchase.index') }}">إلغاء</a></div></form></section>{% endblock %}
