@@ -469,6 +469,7 @@ _OPERATIONAL_AUDIT_RECORDS = {
     "purchase.submit_order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
     "purchase.approve_order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
     "purchase.reject_order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
+    "purchase.edit_bill": ("supplier_bills", "bill_id", "id", "supplier_bill_receipts", "bill_id"),
     "purchase.submit_bill": ("supplier_bills", "bill_id", "id", "supplier_bill_receipts", "bill_id"),
     "purchase.approve_bill": ("supplier_bills", "bill_id", "id", "supplier_bill_receipts", "bill_id"),
     "purchase.reject_bill": ("supplier_bills", "bill_id", "id", "supplier_bill_receipts", "bill_id"),
