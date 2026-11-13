@@ -1,9 +1,32 @@
 {% extends "base.html" %}
-{% block title %}مقارنة الموازنة بالفعلي | NEXUS ERP{% endblock %}
+{% block title %}مقارنة الموازنة بالفعلي | NEXUS ERP<section class="panel"><h3>مقارنة شهرية حسب الحساب</h3><p class="muted">الفعلي من القيود المرحلة فقط، وموزع على الشهر الفعلي للقيد. القيم بالعملة الأساسية للشركة.</p><div class="table-wrap"><table><thead><tr><th>الشهر</th><th>الحساب</th><th>النوع</th><th>المخطط</th><th>الفعلي</th><th>الانحراف</th><th>الاستهلاك</th><th>الحالة</th></tr></thead><tbody>
+{% for x in monthly_rows %}<tr><td>{{ x.period }}</td><td>{{ x.code }} — {{ x.name_ar }}</td><td>{{ 'إيراد' if x.account_type=='revenue' else 'مصروف' }}</td><td>{{ '%.2f'|format(x.budget) }}</td><td>{{ '%.2f'|format(x.actual) }}</td><td>{{ '%.2f'|format(x.variance) }}</td><td>{% if x.utilization_pct is not none %}{{ '%.1f'|format(x.utilization_pct) }}%{% else %}—{% endif %}</td><td>{% if x.status=='over' %}<span class="danger">تجاوز</span>{% elif x.status=='warning' %}<span class="warning">80% فأكثر</span>{% elif x.status=='behind' %}<span class="warning">إيراد أقل من المستهدف</span>{% elif x.status=='ahead' %}<span class="success">أعلى من المستهدف</span>{% else %}<span class="success">ضمن الحدود</span>{% endif %}</td></tr>{% else %}<tr><td colspan="8">لا توجد بيانات شهرية.</td></tr>{% endfor %}
+</tbody></table></div></section>
+<section class="panel"><h3>سجل المراجعة والاعتماد</h3><div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>المستخدم</th><th>الحدث</th><th>التفاصيل</th></tr></thead><tbody>{% for h in history %}<tr><td>{{ h.created_at }}</td><td>{{ h.username or h.actor_id or 'النظام' }}</td><td>{{ h.action }}</td><td>{{ h.details }}</td></tr>{% else %}<tr><td colspan="4">لا توجد أحداث بعد.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}
 {% block content %}
 <header><h2>{{ plan.name }}</h2><p class="muted">الفترة: {{ plan.date_from }} — {{ plan.date_to }}</p>
 <p class="muted">النطاق: {{ plan.branch_id and 'فرع محدد' or 'كل الفروع' }} · {{ plan.cost_center_id and 'مركز تكلفة محدد' or 'كل مراكز التكلفة' }} · {{ plan.project_id and 'مشروع محدد' or 'كل المشروعات' }}</p>
-<a class="btn secondary" href="{{ url_for('planning.budget_index') }}">العودة للموازنات</a></header>
+<span class="badge">{{ {'draft':'مسودة','pending':'بانتظار الاعتماد','approved':'معتمدة','rejected':'مرفوضة'}.get(plan.status,plan.status) }}</span>
+<a class="btn secondary" href="{{ url_for('planning.budget_index') }}">العودة للموازنات</a>
+<a class="btn secondary" href="{{ url_for('planning.budget_export',budget_id=plan.id,fmt='excel') }}">تصدير Excel</a>
+<a class="btn secondary" href="{{ url_for('planning.budget_export',budget_id=plan.id,fmt='pdf') }}">تصدير PDF</a></header>
+{% if plan.status in ['draft','rejected'] and 'budget.manage' in permissions %}
+<section class="panel"><h3>توزيع الموازنة شهريًا</h3>
+<p class="muted">التوزيع الأولي متساوٍ بين الأشهر. عدّل كل شهر حسب الخطة الفعلية، ويجب أن يساوي مجموع الأشهر إجمالي الحساب السنوي.</p>
+<form method="post" action="{{ url_for('planning.budget_update_distribution',budget_id=plan.id) }}">
+<div class="table-wrap"><table><thead><tr><th>الحساب</th>{% for m in months %}<th>{{ m }}</th>{% endfor %}<th>الإجمالي</th></tr></thead><tbody>
+{% for x in rows %}<tr><td>{{ x.code }} — {{ x.name_ar }}</td>{% for m in months %}<td><input type="number" min="0" step="0.01" name="monthly_amount_{{ x.id }}_{{ m }}" value="{{ monthly_matrix.get(x.id,{}).get(m,'0') }}" required style="min-width:95px"></td>{% endfor %}<td>{{ '%.2f'|format(x.budget) }}</td></tr>{% endfor %}
+</tbody></table></div><button type="submit">حفظ التوزيع الشهري</button></form></section>
+{% endif %}
+{% if plan.status in ['draft','rejected'] and 'budget.manage' in permissions %}
+<section class="panel"><h3>إرسال للاعتماد</h3><form method="post" action="{{ url_for('planning.budget_submit',budget_id=plan.id) }}"><button type="submit">إرسال الموازنة للمراجعة والاعتماد</button></form></section>
+{% endif %}
+{% if plan.status=='pending' and 'budget.approve' in permissions %}
+<section class="panel"><h3>مراجعة واعتماد الموازنة</h3>
+<form method="post" action="{{ url_for('planning.budget_approve',budget_id=plan.id) }}"><button type="submit">اعتماد الموازنة</button></form>
+<form method="post" action="{{ url_for('planning.budget_reject',budget_id=plan.id) }}"><label>سبب الرفض (إجباري)</label><input name="reason" required maxlength="1000"><button type="submit" class="danger">رفض الموازنة</button></form></section>
+{% endif %}
 <section class="stat-grid"><article class="stat-card"><small>الإيرادات المخططة</small><strong>{{ '%.2f'|format(revenue_budget) }}</strong></article><article class="stat-card"><small>الإيرادات الفعلية</small><strong>{{ '%.2f'|format(revenue_actual) }}</strong></article><article class="stat-card"><small>المصروفات المخططة</small><strong>{{ '%.2f'|format(expense_budget) }}</strong></article><article class="stat-card"><small>المصروفات الفعلية</small><strong>{{ '%.2f'|format(expense_actual) }}</strong></article></section>
 <section class="panel"><h3>الفعلي مقابل المخطط</h3><p class="muted">في الإيرادات: الانحراف الموجب أفضل. في المصروفات: الانحراف السالب أفضل. الأرقام الفعلية من القيود المرحلة فقط.</p><div class="table-wrap"><table><thead><tr><th>الحساب</th><th>النوع</th><th>المخطط</th><th>الفعلي</th><th>الانحراف</th><th>نسبة الانحراف</th><th>نسبة استهلاك الموازنة</th><th>التقييم</th></tr></thead><tbody>{% for x in rows %}<tr><td>{{ x.code }} — {{ x.name_ar }}</td><td>{{ 'إيراد' if x.account_type=='revenue' else 'مصروف' }}</td><td>{{ '%.2f'|format(x.budget) }}</td><td>{{ '%.2f'|format(x.actual) }}</td><td>{{ '%.2f'|format(x.variance) }}</td><td>{% if x.variance_pct is not none %}{{ '%.1f'|format(x.variance_pct) }}%{% else %}—{% endif %}</td>
 <td>{% if x.utilization_pct is not none %}{{ '%.1f'|format(x.utilization_pct) }}%{% else %}—{% endif %}</td>
