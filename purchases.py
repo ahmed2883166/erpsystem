@@ -727,10 +727,25 @@ def submit_supplier_bill(c, bill_id, actor_id):
         raise ValueError("الفاتورة مرتبطة بقيد مرحل ولا يمكن إعادة إرسالها.")
     if not bill["supplier_invoice_no"].strip():
         raise ValueError("رقم فاتورة المورد مطلوب.")
-    if bill["bill_kind"] == "inventory" and not c.execute(
-        "SELECT 1 FROM supplier_bill_receipts WHERE bill_id=? LIMIT 1", (bill_id,)
-    ).fetchone():
-        raise ValueError("فاتورة الأصناف المخزنية تتطلب إيصال استلام.")
+    bill_receipts = c.execute("""SELECT receipt_id,matched_amount FROM supplier_bill_receipts
+        WHERE bill_id=? ORDER BY receipt_id""", (bill_id,)).fetchall()
+    if bill["bill_kind"] == "inventory":
+        if not bill_receipts:
+            raise ValueError("فاتورة الأصناف المخزنية تتطلب إيصال استلام.")
+        receipt_ids = [row["receipt_id"] for row in bill_receipts]
+        allocation_form = {
+            "receipt_amount_" + str(row["receipt_id"]): row["matched_amount"]
+            for row in bill_receipts
+        }
+        _validate_supplier_receipt_allocations(
+            c, bill["supplier_id"], receipt_ids, money(bill["subtotal"]),
+            allocation_form, exclude_bill_id=bill_id
+        )
+    elif bill["bill_kind"] == "expense":
+        if bill_receipts:
+            raise ValueError("فاتورة المصروف لا يجوز ربطها بإيصالات استلام مخزني.")
+    else:
+        raise ValueError("نوع فاتورة المورد المخزن غير معروف.")
     c.execute("""UPDATE supplier_bills SET status='pending_approval',
         submitted_by=?,submitted_at=CURRENT_TIMESTAMP,approved_by=NULL,approved_at=NULL,
         rejected_by=NULL,rejected_at=NULL,rejection_reason=NULL,approval_reason=NULL
