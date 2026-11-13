@@ -90,6 +90,11 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
             raise ValueError(f"لا يمكن الترحيل داخل السنة المالية {financial_year['year_name']} لأنها ليست مفتوحة.")
     dimensions = dimensions or {}
     dimension_keys = ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id")
+    unknown_dimensions = sorted(set(dimensions) - set(dimension_keys))
+    if unknown_dimensions:
+        raise ValueError(
+            "أبعاد تحليلية غير معروفة: " + ", ".join(unknown_dimensions)
+        )
     available_dimension_keys = tuple(key for key in dimension_keys if key in _columns(conn, "journal_lines"))
     missing_dimensions = [key for key, value in dimensions.items()
                           if key in dimension_keys and value not in (None, "") and key not in available_dimension_keys]
