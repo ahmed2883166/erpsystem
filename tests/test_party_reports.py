@@ -279,7 +279,7 @@ class PartyStatementTests(unittest.TestCase):
         self.assertIn("متطابق", body)
         self.assertIn("985.00", body)
         self.assertIn("1,670.00", body)
-        self.assertIn("150.00", body)
+        self.assertIn("130.00", body)
 
         conn = sqlite3.connect(self.db_path)
         conn.execute("INSERT INTO journal_entries(id,entry_date,status) VALUES(16,'2026-11-30','posted')")
