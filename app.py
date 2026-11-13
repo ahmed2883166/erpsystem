@@ -1066,10 +1066,13 @@ def edit_account(account_id):
         code, name = request.form.get("code", "").strip(), request.form.get("name_ar", "").strip()
         if not code or not name:
             flash("كود واسم الحساب مطلوبان.", "error")
-        elif code != account["code"] and (used or account["code"] in OPERATIONAL_ACCOUNT_CODES):
-            flash("لا يمكن تغيير كود حساب مستخدم في القيود أو مرتبط بخرائط الترحيل والتشغيل؛ غيّر الاسم أو أنشئ حسابًا جديدًا وانقل الاستخدام بطريقة محاسبية معتمدة.", "error")
-        elif used and (request.form.get("account_type") != account["account_type"] or (int(request.form["parent_id"]) if request.form.get("parent_id") else None) != account["parent_id"] or (1 if request.form.get("is_group") == "yes" else 0) != account["is_group"]):
-            flash("الحساب مستخدم في قيود سابقة؛ يسمح بتعديل الاسم فقط حفاظًا على سلامة التقارير.", "error")
+        elif (used or account["code"] in OPERATIONAL_ACCOUNT_CODES) and (
+            code != account["code"]
+            or request.form.get("account_type") != account["account_type"]
+            or (int(request.form["parent_id"]) if request.form.get("parent_id") else None) != account["parent_id"]
+            or (1 if request.form.get("is_group") == "yes" else 0) != account["is_group"]
+        ):
+            flash("الحساب مستخدم في القيود أو مرتبط بخرائط الترحيل والتشغيل؛ يسمح بتعديل الاسم فقط حفاظًا على سلامة الحسابات والتقارير.", "error")
         else:
             parent_id = request.form.get("parent_id") or None
             new_type = request.form.get("account_type")
@@ -1113,7 +1116,7 @@ def edit_account(account_id):
                     flash("كود الحساب مستخدم بالفعل.", "error")
     groups = connection.execute("SELECT * FROM accounts WHERE is_group=1 AND active=1 AND id<>? ORDER BY code", (account_id,)).fetchall()
     connection.close()
-    return render_template("account_edit.html", account=account, groups=groups, used=used)
+    return render_template("account_edit.html", account=account, groups=groups, used=used, code_protected=(used or account["code"] in OPERATIONAL_ACCOUNT_CODES))
 
 
 
