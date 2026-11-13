@@ -91,6 +91,24 @@ def initialize_quotes_schema():
  if "invoiced_cost" not in lcols: c.execute("ALTER TABLE delivery_note_line_lots ADD COLUMN invoiced_cost TEXT NOT NULL DEFAULT '0'")
  c.close()
 
+def sales_permission(permission, fallback_roles):
+ def deco(fn):
+  @wraps(fn)
+  def wrapped(*args,**kwargs):
+   if not session.get("user_id"): return redirect(url_for("login"))
+   allowed=(permission in set(session.get("permissions",[]))) if "permissions" in session else session.get("role") in fallback_roles
+   if not allowed:
+    flash("لا تملك الصلاحية المطلوبة لإدارة أوامر البيع والتسليم.","error")
+    return redirect(url_for("dashboard"))
+   return fn(*args,**kwargs)
+  return wrapped
+ return deco
+
+require_sales_view=sales_permission("sales.view",{"admin","accountant","viewer"})
+require_sales_manage=sales_permission("sales.manage",{"admin","accountant"})
+require_sales_approval=sales_permission("sales.approve",{"admin"})
+
+
 def require(write=False):
  def deco(fn):
   @wraps(fn)
@@ -377,7 +395,7 @@ def convert(quote_id):
 
 
 @quotes_bp.route("/orders/<int:order_id>")
-@require()
+@require_sales_view
 def sales_order_view(order_id):
  c=db()
  order=c.execute(
@@ -401,12 +419,8 @@ def sales_order_view(order_id):
 
 
 @quotes_bp.route("/orders/<int:order_id>/approve",methods=["POST"])
-@require(write=True)
+@require_sales_approval
 def approve_order_route(order_id):
- permissions=set(session.get("permissions",[]))
- if ("sales.approve" not in permissions) if "permissions" in session else session.get("role")!="admin":
-  flash("اعتماد أوامر البيع متاح لصلاحية اعتماد مستقلة.","error")
-  return redirect(url_for("quotes.sales_order_view",order_id=order_id))
  c=db()
  try:
   c.execute("BEGIN IMMEDIATE")
@@ -419,7 +433,7 @@ def approve_order_route(order_id):
 
 
 @quotes_bp.route("/orders/<int:order_id>/delivery-notes",methods=["POST"])
-@require(write=True)
+@require_sales_manage
 def create_delivery_note_route(order_id):
  c=db()
  try:
@@ -438,7 +452,7 @@ def create_delivery_note_route(order_id):
 
 
 @quotes_bp.route("/delivery-notes/<int:note_id>/post",methods=["POST"])
-@require(write=True)
+@require_sales_manage
 def post_delivery_note_route(note_id):
  c=db()
  order_id=None
@@ -456,7 +470,7 @@ def post_delivery_note_route(note_id):
 
 
 @quotes_bp.route("/orders/<int:order_id>/invoice",methods=["POST"])
-@require(write=True)
+@require_sales_manage
 def invoice_order_route(order_id):
  c=db()
  try:
