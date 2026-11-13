@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal
 
 workforce_bp = Blueprint("workforce", __name__)
@@ -408,6 +408,7 @@ def payroll():
                      str(incentive_days),incentive_method))
             _audit(c, "payroll_draft_created", period)
             c.commit()
+            g.audit_created_record = ("payroll_runs", run_id, "payroll_lines", "run_id")
             flash("تم إنشاء مسير الرواتب كمسودة. راجع البنود ثم رحّله.", "success")
             return redirect(url_for("workforce.payroll_run", run_id=run_id))
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as e:
