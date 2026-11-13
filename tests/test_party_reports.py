@@ -200,6 +200,9 @@ class PartyStatementTests(unittest.TestCase):
             "INSERT INTO customer_advance_allocations VALUES(1,1,2,'2026-11-24','50',91)"
         )
         conn.execute(
+            "INSERT INTO customer_advance_refunds VALUES(1,1,'2026-11-26','20',92)"
+        )
+        conn.execute(
             "INSERT INTO supplier_credit_notes(id,credit_no,supplier_id,bill_id,credit_date,reason,total_amount,status) "
             "VALUES(1,'SUP-CN-1',1,2,'2026-11-25','return','30','posted')"
         )
@@ -220,6 +223,7 @@ class PartyStatementTests(unittest.TestCase):
             (13,'2026-11-25',[(2,'30','0')]),
             (14,'2026-11-23',[(3,'0','200')]),
             (15,'2026-11-24',[(3,'50','0')]),
+            (17,'2026-11-26',[(3,'20','0')]),
         ]
         line_id = 1
         for entry_id, entry_date, control_lines in journal_entries:
@@ -270,7 +274,8 @@ class PartyStatementTests(unittest.TestCase):
         advance_body = advances.get_data(as_text=True)
         self.assertIn("200.00", advance_body)
         self.assertIn("50.00", advance_body)
-        self.assertIn("150.00", advance_body)
+        self.assertIn("20.00", advance_body)
+        self.assertIn("130.00", advance_body)
 
     def test_party_statement_rejects_invalid_or_reversed_date_ranges(self):
         invalid = self.client.get(
