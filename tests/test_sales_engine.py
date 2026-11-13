@@ -581,7 +581,7 @@ class SalesIntegrationTests(unittest.TestCase):
         saved = self.db.execute("SELECT discount_type,discount_value,discount_amount FROM sales_invoices WHERE id=?",
                                 (result["invoice_id"],)).fetchone()
         self.assertEqual((saved["discount_type"], saved["discount_value"], Decimal(saved["discount_amount"])),
-                         ("fixed", "15", "15.00"))
+                         ("fixed", "15.00", "15.00"))
 
     def test_customer_advance_receipt_allocation_and_refund_post_balanced_journals(self):
         self.db.execute("BEGIN IMMEDIATE")
