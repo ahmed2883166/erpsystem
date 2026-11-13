@@ -13,12 +13,17 @@ def db():
 
 def initialize_aging_schema():
  c=db()
- for table in ("sales_invoices","supplier_bills"):
+ for table, source_date in (("sales_invoices","invoice_date"),("supplier_bills","bill_date")):
+  if not _table_exists(c, table):
+   continue
   cols={r["name"] for r in c.execute("PRAGMA table_info("+table+")")}
-  if "due_date" not in cols: c.execute("ALTER TABLE "+table+" ADD COLUMN due_date TEXT")
- c.execute("UPDATE sales_invoices SET due_date=invoice_date WHERE due_date IS NULL OR due_date=''")
- c.execute("UPDATE supplier_bills SET due_date=bill_date WHERE due_date IS NULL OR due_date=''")
- c.commit(); c.close()
+  if "due_date" not in cols:
+   c.execute("ALTER TABLE "+table+" ADD COLUMN due_date TEXT")
+  c.execute(
+   "UPDATE "+table+" SET due_date="+source_date+" WHERE due_date IS NULL OR due_date=''"
+  )
+ c.commit()
+ c.close()
 
 def auth(fn):
  @wraps(fn)
@@ -109,6 +114,22 @@ def _customer_aging_movements(conn, as_of):
  return has_detail,paid_as_of,paid_all,credited_as_of,credited_all,refunds_as_of
 
 
+def _supplier_aging_documents(conn, as_of):
+ # The reporting page may be opened before the purchases module initializes.
+ if not _table_exists(conn, "supplier_bills") or not _table_exists(conn, "suppliers"):
+  return []
+ columns={row["name"] for row in conn.execute("PRAGMA table_info(supplier_bills)")}
+ credit_expr="COALESCE(b.credited_amount,'0')" if "credited_amount" in columns else "'0'"
+ paid_expr="COALESCE(b.paid_amount,'0')" if "paid_amount" in columns else "'0'"
+ due_expr="COALESCE(b.due_date,b.bill_date)" if "due_date" in columns else "b.bill_date"
+ return conn.execute(f"""SELECT b.id invoice_id,b.bill_no doc_no,s.code party_code,s.name party_name,
+   b.bill_date doc_date,{due_expr} due_date,b.total_amount total_amount,
+   {paid_expr} paid_amount,{credit_expr} credited_amount
+   FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
+   WHERE b.status='posted' AND b.bill_date<=?
+   ORDER BY due_date,s.name""",(as_of,)).fetchall()
+
+
 def _supplier_aging_movements(conn, as_of):
  has_detail=(_table_exists(conn,"supplier_payments") and
              _table_exists(conn,"supplier_payment_allocations"))
@@ -161,12 +182,7 @@ def index():
     WHERE i.status='posted' AND i.invoice_date<=?
     ORDER BY due_date,cu.name""",(as_of,)).fetchall()
  else:
-  rows=c.execute("""SELECT b.id invoice_id,b.bill_no doc_no,s.code party_code,s.name party_name,b.bill_date doc_date,
-    COALESCE(b.due_date,b.bill_date) due_date,b.total_amount total_amount,b.paid_amount paid_amount,
-    COALESCE(b.credited_amount,'0') credited_amount
-    FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
-    WHERE b.status='posted' AND b.bill_date<=?
-    ORDER BY due_date,s.name""",(as_of,)).fetchall()
+  rows=_supplier_aging_documents(c,as_of)
  if kind=="customers":
   has_detail,paid_by_invoice,paid_all,credited_by_invoice,credited_all,refunds_by_invoice=_customer_aging_movements(c,as_of)
   credit_table_exists=_table_exists(c,"sales_credit_notes")
