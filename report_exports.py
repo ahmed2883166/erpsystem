@@ -23,7 +23,8 @@ def register_report_exports(app, db_path, permissions):
                 role = session.get("role")
                 if not session.get("user_id"):
                     abort(401)
-                if permission not in set(session.get("permissions", permissions.get(role, set()))):
+                required_permission = "expenses.view" if kwargs.get("report") == "expense-analysis" else permission
+                if required_permission not in set(session.get("permissions", permissions.get(role, set()))):
                     abort(403)
                 return view(*args, **kwargs)
             return wrapped
@@ -131,24 +132,27 @@ def register_report_exports(app, db_path, permissions):
                     request.args.get("date_from"), request.args.get("date_to")
                 )
                 raw_dimensions = {key: request.args.get(key, "").strip()
-                                  for key in ("branch_id", "cost_center_id", "project_id")}
+                                  for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id", "supplier_id")}
                 selected_dimensions = validate_journal_dimensions(conn, raw_dimensions) if any(raw_dimensions.values()) else {}
                 report_data = build_expense_analysis(conn, date_from, date_to, selected_dimensions)
                 headers = ["القسم", "التصنيف", "كود الحساب", "اسم الحساب", "الفرع", "مركز التكلفة",
-                           "المشروع", "مدين", "دائن", "صافي المصروف"]
+                           "المشروع", "العميل", "المندوب", "المورد", "مدين", "دائن", "صافي المصروف"]
                 data = []
                 for row in report_data["detail_rows"]:
                     data.append(["تفصيل الحساب", row["category"], row["code"], row["name_ar"],
                                  row["branch_code"] + " - " + row["branch_name"],
                                  row["cost_center_code"] + " - " + row["cost_center_name"],
                                  row["project_code"] + " - " + row["project_name"],
+                                 row["customer_code"] + " - " + row["customer_name"],
+                                 row["salesperson_code"] + " - " + row["salesperson_name"],
+                                 row["supplier_code"] + " - " + row["supplier_name"],
                                  row["debit"], row["credit"], row["amount"]])
-                data.append(["الإجمالي", "", "", "", "", "", "", "", "", report_data["total"]])
-                data.append(["التكاليف المباشرة", "", "", "", "", "", "", "", "", report_data["direct_total"]])
-                data.append(["المصروفات التشغيلية والإدارية", "", "", "", "", "", "", "", "", report_data["operating_total"]])
-                data.extend([["تحليل بعد", row["dimension"], row["code"], row["name"], "", "", "",
-                              "", "", row["amount"]] for row in report_data["dimension_rows"]])
-                data.extend([["تطور شهري", row["month"], "", "", "", "", "", "", "", row["amount"]]
+                data.append(["الإجمالي", "", "", "", "", "", "", "", "", "", "", "", report_data["total"]])
+                data.append(["التكاليف المباشرة", "", "", "", "", "", "", "", "", "", "", "", report_data["direct_total"]])
+                data.append(["المصروفات التشغيلية والإدارية", "", "", "", "", "", "", "", "", "", "", "", report_data["operating_total"]])
+                data.extend([["تحليل بعد", row["dimension"], row["code"], row["name"], "", "", "", "", "", "", "", "", row["amount"]]
+                             for row in report_data["dimension_rows"]])
+                data.extend([["تطور شهري", row["month"], "", "", "", "", "", "", "", "", "", "", row["amount"]]
                              for row in report_data["monthly_rows"]])
                 filename = "nexus-expense-analysis.xlsx"
                 title = f"تقرير المصروفات التحليلي من {date_from} إلى {date_to}"
