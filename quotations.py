@@ -52,7 +52,7 @@ def initialize_quotes_schema():
   id INTEGER PRIMARY KEY, sales_order_id INTEGER NOT NULL REFERENCES sales_orders(id) ON DELETE CASCADE,
   quotation_line_id INTEGER REFERENCES quotation_lines(id),
   product_id INTEGER REFERENCES stock_products(id),
-  description TEXT NOT NULL, ordered_qty TEXT NOT NULL,
+  description TEXT NOT NULL, ordered_qty TEXT NOT NULL, ordered_value TEXT NOT NULL DEFAULT '0',
   delivered_qty TEXT NOT NULL DEFAULT '0', invoiced_qty TEXT NOT NULL DEFAULT '0',
   unit_price TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
  );
@@ -94,6 +94,14 @@ def initialize_quotes_schema():
   "discount_allocated":"TEXT NOT NULL DEFAULT '0'",
  }.items():
   if name not in so_cols: c.execute(f"ALTER TABLE sales_orders ADD COLUMN {name} {definition}")
+ sol_cols={r["name"] for r in c.execute("PRAGMA table_info(sales_order_lines)")}
+ if "ordered_value" not in sol_cols:
+  c.execute("ALTER TABLE sales_order_lines ADD COLUMN ordered_value TEXT NOT NULL DEFAULT '0'")
+  for line in c.execute(
+   """SELECT sol.id,ql.line_total FROM sales_order_lines sol
+      JOIN quotation_lines ql ON ql.id=sol.quotation_line_id"""
+  ).fetchall():
+   c.execute("UPDATE sales_order_lines SET ordered_value=? WHERE id=?",(line["line_total"],line["id"]))
  dcols={r["name"] for r in c.execute("PRAGMA table_info(delivery_note_lines)")}
  if "invoiced_cost" not in dcols: c.execute("ALTER TABLE delivery_note_lines ADD COLUMN invoiced_cost TEXT NOT NULL DEFAULT '0'")
  lcols={r["name"] for r in c.execute("PRAGMA table_info(delivery_note_line_lots)")}
@@ -186,8 +194,8 @@ def create_sales_order_from_quotation(conn, quote_id, created_by, warehouse_id=N
  order_id=cur.lastrowid
  conn.executemany(
   """INSERT INTO sales_order_lines(sales_order_id,quotation_line_id,product_id,description,
-     ordered_qty,unit_price) VALUES(?,?,?,?,?,?)""",
-  [(order_id,x["id"],x["product_id"],x["description"],x["quantity"],x["unit_price"]) for x in lines])
+     ordered_qty,ordered_value,unit_price) VALUES(?,?,?,?,?,?,?)""",
+  [(order_id,x["id"],x["product_id"],x["description"],x["quantity"],x["line_total"],x["unit_price"]) for x in lines])
  conn.execute("UPDATE quotations SET sales_order_id=? WHERE id=?",(order_id,quote_id))
  return {"sales_order_id":order_id,"order_no":order_no}
 
@@ -323,8 +331,7 @@ def invoice_sales_order(conn, order_id, invoice_date, due_date, created_by, dime
  quotation=conn.execute("SELECT * FROM quotations WHERE id=?",(order["quotation_id"],)).fetchone()
  order_lines=conn.execute("SELECT * FROM sales_order_lines WHERE sales_order_id=? ORDER BY id",(order_id,)).fetchall()
  items=[]; fulfillment=[]; consumption_plan=[]; invoice_qty_by_line={}
- order_gross=sum((Decimal(str(line["ordered_qty"]))*Decimal(str(line["unit_price"]))
-                  for line in order_lines),Decimal("0"))
+ order_gross=sum((Decimal(str(line["ordered_value"])) for line in order_lines),Decimal("0"))
  invoice_gross=Decimal("0")
  for line in order_lines:
   if line["product_id"]:
@@ -369,7 +376,7 @@ def invoice_sales_order(conn, order_id, invoice_date, due_date, created_by, dime
   items.append({"product_id":line["product_id"],"description":line["description"],
    "quantity":str(ready),"unit_price":line["unit_price"],"sales_order_line_id":line["id"]})
   fulfillment.append({"cost_total":str(cost_total),"allocations":allocations})
-  invoice_gross+=ready*Decimal(str(line["unit_price"]))
+  invoice_gross+=(ready*Decimal(str(line["unit_price"]))).quantize(M,rounding=ROUND_HALF_UP)
   invoice_qty_by_line[line["id"]]=ready
  if not items: raise ValueError("لا توجد كميات مسلمة غير مفوترة.")
  will_complete=all(
