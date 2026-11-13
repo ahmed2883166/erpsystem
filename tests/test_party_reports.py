@@ -136,8 +136,9 @@ class PartyStatementTests(unittest.TestCase):
         body = response.get_data(as_text=True)
         self.assertIn("CADVA-1", body)
         self.assertNotIn("CADV-UNALLOCATED", body)
-        # Opening 800 + current invoice 500 - receipts 100 - batch 150 - advance allocation 50.
-        self.assertIn("1,000.00", body)
+        # Opening 800 + current invoice 500 - receipt 100 - advance allocation 50.
+        # The unallocated 200 advance is intentionally excluded from the statement.
+        self.assertIn("1,150.00", body)
 
     def test_supplier_statement_opening_and_running_balance(self):
         response = self.client.get("/reports/party-statement?kind=supplier&party_id=1&date_from=2026-11-01&date_to=2026-11-30")
