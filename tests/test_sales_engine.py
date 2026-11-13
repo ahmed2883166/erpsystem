@@ -1010,7 +1010,7 @@ class SalesIntegrationTests(unittest.TestCase):
             (invoice["invoice_id"],),
         ).fetchone()["paid_amount"]
         self.assertEqual(Decimal(invoice_paid), Decimal("60.00"))
-        reversed_allocation = sales.reverse_customer_advance_transaction(
+        sales.reverse_customer_advance_transaction(
             self.db, "allocation", allocation["journal_entry_id"],
             "2026-11-13", "تصحيح تخصيص على فاتورة غير صحيحة", 1,
         )
