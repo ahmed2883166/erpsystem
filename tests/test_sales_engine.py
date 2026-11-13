@@ -1225,5 +1225,167 @@ class SalesIntegrationTests(unittest.TestCase):
 
 
 
+    def test_mixed_service_order_preserves_partial_invoice_state_after_later_delivery(self):
+        _, order_id, stock_line_id = self._create_accepted_quote_and_order("4")
+        base = date.today()
+        service_quote_line = self.db.execute(
+            """INSERT INTO quotation_lines(quotation_id,product_id,description,quantity,unit_price,line_total)
+               SELECT quotation_id,NULL,'خدمة نقل', '1','20','20'
+               FROM sales_orders WHERE id=?""",
+            (order_id,),
+        ).lastrowid
+        self.db.execute(
+            """INSERT INTO sales_order_lines(sales_order_id,quotation_line_id,product_id,description,
+               ordered_qty,ordered_value,unit_price) VALUES(?,?,NULL,'خدمة نقل','1','20','20')""",
+            (order_id, service_quote_line),
+        )
+        self.db.commit()
+
+        quotations.approve_sales_order(self.db, order_id, approver_id=2)
+        self.db.commit()
+        first_date = (base + timedelta(days=1)).isoformat()
+        self.db.execute("BEGIN IMMEDIATE")
+        first = quotations.create_delivery_note(
+            self.db, order_id, first_date,
+            [{"sales_order_line_id": stock_line_id, "quantity": "2"}], 2,
+        )
+        quotations.post_delivery_note(self.db, first["delivery_note_id"], posted_by=2)
+        self.db.commit()
+        self.assertEqual(
+            self.db.execute("SELECT status FROM sales_orders WHERE id=?", (order_id,)).fetchone()["status"],
+            "partially_delivered",
+        )
+
+        self.db.execute("BEGIN IMMEDIATE")
+        first_invoice = quotations.invoice_sales_order(
+            self.db, order_id, (base + timedelta(days=2)).isoformat(),
+            (base + timedelta(days=30)).isoformat(), created_by=2,
+        )
+        self.db.commit()
+        self.assertEqual(first_invoice["subtotal"], Decimal("60.00"))
+        self.assertEqual(
+            self.db.execute("SELECT status FROM sales_orders WHERE id=?", (order_id,)).fetchone()["status"],
+            "partially_invoiced",
+        )
+
+        self.db.execute("BEGIN IMMEDIATE")
+        second = quotations.create_delivery_note(
+            self.db, order_id, (base + timedelta(days=3)).isoformat(),
+            [{"sales_order_line_id": stock_line_id, "quantity": "2"}], 2,
+        )
+        quotations.post_delivery_note(self.db, second["delivery_note_id"], posted_by=2)
+        self.db.commit()
+        # A later delivery must not erase the fact that the order has already been invoiced partially.
+        self.assertEqual(
+            self.db.execute("SELECT status FROM sales_orders WHERE id=?", (order_id,)).fetchone()["status"],
+            "partially_invoiced",
+        )
+
+        self.db.execute("BEGIN IMMEDIATE")
+        second_invoice = quotations.invoice_sales_order(
+            self.db, order_id, (base + timedelta(days=4)).isoformat(),
+            (base + timedelta(days=30)).isoformat(), created_by=2,
+        )
+        self.db.commit()
+        self.assertEqual(second_invoice["subtotal"], Decimal("40.00"))
+        self.assertEqual(
+            self.db.execute("SELECT status FROM sales_orders WHERE id=?", (order_id,)).fetchone()["status"],
+            "invoiced",
+        )
+        self.assertEqual(
+            self.db.execute("SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'").fetchone()[0],
+            2,
+        )
+        self.assertEqual(
+            sum((Decimal(row["cost_total"]) for row in self.db.execute(
+                "SELECT cost_total FROM sales_invoice_lines WHERE invoice_id IN (?,?)",
+                (first_invoice["invoice_id"], second_invoice["invoice_id"]),
+            ).fetchall()), Decimal("0")),
+            Decimal("40.00"),
+        )
+
+    def test_delivery_post_rejects_mismatched_product_without_stock_or_gl_effect(self):
+        _, order_id, line_id = self._create_accepted_quote_and_order("2")
+        other = self.db.execute(
+            "INSERT INTO stock_products(sku,name_ar) VALUES('P2','صنف آخر')"
+        ).lastrowid
+        quotations.approve_sales_order(self.db, order_id, approver_id=2)
+        self.db.commit()
+        self.db.execute("BEGIN IMMEDIATE")
+        note = quotations.create_delivery_note(
+            self.db, order_id, (date.today() + timedelta(days=1)).isoformat(),
+            [{"sales_order_line_id": line_id, "quantity": "1"}], 2,
+        )
+        self.db.execute(
+            "UPDATE delivery_note_lines SET product_id=? WHERE delivery_note_id=?",
+            (other, note["delivery_note_id"]),
+        )
+        with self.assertRaisesRegex(ValueError, "لا يطابق الصنف المخزني"):
+            quotations.post_delivery_note(self.db, note["delivery_note_id"], posted_by=2)
+        self.assertEqual(
+            self.db.execute("SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'").fetchone()[0],
+            0,
+        )
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
+        self.db.rollback()
+
+    def test_sales_order_routes_enforce_permissions_and_render_read_only_actions(self):
+        from flask import Flask, session
+        from jinja2 import ChoiceLoader, DictLoader
+
+        quote_id, order_id, _line_id = self._create_accepted_quote_and_order("2")
+        app = Flask(
+            __name__,
+            template_folder=str(Path(__file__).resolve().parents[1] / "templates"),
+        )
+        app.secret_key = "route-test-secret"
+        app.add_url_rule("/login", endpoint="login", view_func=lambda: "")
+        app.add_url_rule("/dashboard", endpoint="dashboard", view_func=lambda: "")
+        app.jinja_loader = ChoiceLoader([
+            DictLoader({"base.html": "{% block title %}{% endblock %}{% block content %}{% endblock %}"}),
+            app.jinja_loader,
+        ])
+        app.jinja_env.globals["csrf_token"] = lambda: "test-token"
+        app.context_processor(
+            lambda: {"permissions": set(session.get("permissions", []))}
+        )
+        app.register_blueprint(quotations.quotes_bp)
+        client = app.test_client()
+
+        with client.session_transaction() as user_session:
+            user_session["user_id"] = 1
+            user_session["role"] = "accountant"
+            user_session["permissions"] = ["sales.view", "sales.manage", "quotes.view"]
+
+        quote_page = client.get(f"/sales/quotations/{quote_id}")
+        self.assertEqual(quote_page.status_code, 200)
+        quote_html = quote_page.get_data(as_text=True)
+        self.assertNotIn("قبول العرض", quote_html)
+        self.assertNotIn("إنشاء أمر بيع وإرساله للاعتماد", quote_html)
+
+        order_page = client.get(f"/sales/quotations/orders/{order_id}")
+        self.assertEqual(order_page.status_code, 200)
+        self.assertNotIn("اعتماد أمر البيع", order_page.get_data(as_text=True))
+        denied = client.post(f"/sales/quotations/orders/{order_id}/approve")
+        self.assertEqual(denied.status_code, 302)
+        self.assertEqual(
+            self.db.execute("SELECT status FROM sales_orders WHERE id=?", (order_id,)).fetchone()["status"],
+            "pending_approval",
+        )
+
+        with client.session_transaction() as user_session:
+            user_session["user_id"] = 2
+            user_session["role"] = "admin"
+            user_session["permissions"] = ["sales.view", "sales.manage", "sales.approve", "quotes.view", "quotes.manage"]
+        approved = client.post(f"/sales/quotations/orders/{order_id}/approve")
+        self.assertEqual(approved.status_code, 302)
+        self.assertEqual(
+            self.db.execute("SELECT status FROM sales_orders WHERE id=?", (order_id,)).fetchone()["status"],
+            "approved",
+        )
+        approved_page = client.get(f"/sales/quotations/orders/{order_id}")
+        self.assertIn("إنشاء إذن تسليم جديد", approved_page.get_data(as_text=True))
+
+
 if __name__ == "__main__":
     unittest.main()
