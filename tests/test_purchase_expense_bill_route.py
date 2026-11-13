@@ -43,6 +43,8 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
             VALUES('5000','مصروف إيجار','expense',0,1);
         INSERT INTO accounts(code,name_ar,account_type,is_group,active)
             VALUES('1165','ضريبة قيمة مضافة مدخلات','asset',0,1);
+        INSERT INTO accounts(code,name_ar,account_type,is_group,active)
+            VALUES('2190','بضاعة مستلمة غير مفوترة GRNI','liability',0,1);
         """)
         purchases.init_purchase_schema()
         self.conn.execute("INSERT INTO suppliers(code,name) VALUES('SUP-1','مورد اختبار')")
@@ -309,6 +311,82 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         bill = conn.execute("SELECT status,journal_entry_id FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
         self.assertEqual(bill["status"], "posted")
         self.assertEqual(bill["journal_entry_id"], 55)
+        conn.close()
+
+    def _create_inventory_bill_with_receipts(self, bill_no, invoice_no, receipt_amounts, subtotal, tax_rate="0"):
+        conn = purchases.db()
+        receipt_ids = []
+        for index, amount in enumerate(receipt_amounts, start=1):
+            cursor = conn.execute(
+                """INSERT INTO goods_receipts(
+                    receipt_no,supplier_id,warehouse_id,receipt_date,status,total_value
+                ) VALUES(?,?,1,'2026-11-11','posted',?)""",
+                (f"GR-{bill_no}-{index}", self.supplier_id, str(amount)),
+            )
+            receipt_ids.append(cursor.lastrowid)
+        tax = (Decimal(str(subtotal)) * Decimal(str(tax_rate)) / Decimal("100")).quantize(Decimal("0.01"))
+        total = Decimal(str(subtotal)) + tax
+        cursor = conn.execute(
+            """INSERT INTO supplier_bills(
+                bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,subtotal,
+                tax_rate,tax_amount,total_amount,created_by,status,bill_kind
+            ) VALUES(?,?, '2026-11-11','2026-11-30',?,?,?,?,?,1,'approved','inventory')""",
+            (bill_no, self.supplier_id, invoice_no, str(subtotal), str(tax_rate), str(tax), str(total)),
+        )
+        bill_id = cursor.lastrowid
+        for receipt_id, amount in zip(receipt_ids, receipt_amounts):
+            conn.execute(
+                "INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
+                (bill_id, receipt_id, str(amount)),
+            )
+        conn.commit()
+        conn.close()
+        return bill_id
+
+    def test_inventory_bill_posting_rejects_grni_mismatch_without_journal(self):
+        bill_id = self._create_inventory_bill_with_receipts(
+            "GRNI-MISMATCH", "INV-GRNI-MISMATCH", ["60.00", "40.00"], "110.00"
+        )
+        conn = purchases.db()
+        with self.assertRaisesRegex(ValueError, "لا يطابق صافي فاتورة المورد"):
+            purchases.post_supplier_bill(conn, bill_id, 2)
+        conn.rollback()
+        bill = conn.execute(
+            "SELECT status,journal_entry_id FROM supplier_bills WHERE id=?", (bill_id,)
+        ).fetchone()
+        self.assertEqual(bill["status"], "approved")
+        self.assertIsNone(bill["journal_entry_id"])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
+        conn.close()
+
+    def test_inventory_bill_posts_multiple_receipts_and_input_vat_once(self):
+        bill_id = self._create_inventory_bill_with_receipts(
+            "GRNI-MULTI", "INV-GRNI-MULTI", ["60.00", "40.00"], "100.00", "14"
+        )
+        conn = purchases.db()
+        entry_id = purchases.post_supplier_bill(conn, bill_id, 2)
+        conn.commit()
+        lines = conn.execute(
+            """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
+               JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=? ORDER BY jl.id""",
+            (entry_id,),
+        ).fetchall()
+        self.assertEqual(
+            [(row["code"], Decimal(row["debit"]), Decimal(row["credit"])) for row in lines],
+            [("2190", Decimal("60.00"), Decimal("0.00")),
+             ("2110", Decimal("0.00"), Decimal("60.00")),
+             ("2190", Decimal("40.00"), Decimal("0.00")),
+             ("2110", Decimal("0.00"), Decimal("40.00")),
+             ("1165", Decimal("14.00"), Decimal("0.00")),
+             ("2110", Decimal("0.00"), Decimal("14.00"))],
+        )
+        self.assertEqual(sum((Decimal(row["debit"]) for row in lines), Decimal("0")),
+                         sum((Decimal(row["credit"]) for row in lines), Decimal("0")))
+        bill = conn.execute(
+            "SELECT status,journal_entry_id FROM supplier_bills WHERE id=?", (bill_id,)
+        ).fetchone()
+        self.assertEqual(bill["status"], "posted")
+        self.assertEqual(bill["journal_entry_id"], entry_id)
         conn.close()
 
     def test_expense_supplier_bill_posts_to_expense_and_payable(self):
