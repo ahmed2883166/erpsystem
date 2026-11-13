@@ -859,6 +859,19 @@ otals["credit"], places=2)
         self.assertEqual(self.db.execute(
             "SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'"
         ).fetchone()[0], 1)
+        invoice_line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?", (first_invoice["invoice_id"],)
+        ).fetchone()["id"]
+        credit = sales.post_credit_note(
+            self.db, first_invoice["invoice_id"], "2026-11-16", "مرتجع من فاتورة أمر البيع",
+            [{"invoice_line_id": invoice_line_id, "quantity": "1"}], 2,
+        )
+        self.db.commit()
+        self.assertEqual(credit["total_cost"], Decimal("10.00"))
+        self.assertEqual(
+            Decimal(self.db.execute("SELECT SUM(CAST(qty_remaining AS REAL)) FROM stock_valuation_layers").fetchone()[0]),
+            Decimal("4"),
+        )
         with self.assertRaisesRegex(ValueError, "تم ترحيله"):
             quotations.post_delivery_note(self.db, first_note["delivery_note_id"], posted_by=2)
 
@@ -904,6 +917,18 @@ otals["credit"], places=2)
             Decimal("0"),
         )
         self.assertEqual(cogs_debit, Decimal("40.00"))
+        cogs_credit = sum(
+            (Decimal(row["credit"] or "0") for row in self.db.execute(
+                """SELECT jl.credit FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+                   WHERE a.code='5100'"""
+            ).fetchall()),
+            Decimal("0"),
+        )
+        self.assertEqual(cogs_credit, Decimal("10.00"))
+        self.assertEqual(
+            Decimal(self.db.execute("SELECT SUM(CAST(qty_remaining AS REAL)) FROM stock_valuation_layers").fetchone()[0]),
+            Decimal("2"),
+        )
 
     def test_sales_delivery_rejects_overdelivery_and_rolls_back_insufficient_stock(self):
         _, order_id, order_line_id = self._create_accepted_quote_and_order("6")
