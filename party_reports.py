@@ -50,6 +50,14 @@ def _events(c, kind, party_id):
                 'تحصيل مجمع من العميل' description,0 debit,total_amount credit,1 priority
                 FROM customer_receipt_batches WHERE customer_id=?""", (party_id,)):
                 events.append(dict(r))
+        if _table_exists(c, "customer_advance_allocations"):
+            for r in c.execute("""SELECT a.allocation_date event_date,
+                'CADVA-' || a.id reference,'تخصيص مقدم عميل على فاتورة ' || i.invoice_no description,
+                0 debit,a.amount credit,2 priority
+                FROM customer_advance_allocations a
+                JOIN sales_invoices i ON i.id=a.invoice_id
+                WHERE i.customer_id=?""", (party_id,)):
+                events.append(dict(r))
         for r in c.execute("""SELECT cn.credit_date event_date,cn.credit_note_no reference,
             'إشعار دائن / مرتجع بيع: ' || cn.reason description,0 debit,
             cn.total_amount credit,2 priority
