@@ -851,10 +851,7 @@ def post_customer_refund(conn, credit_note_id, refund_date, amount, cash_account
     invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=?", (note["invoice_id"],)).fetchone()
     ar = _account(conn, _sales_account_codes(conn, _activity(conn))["ar"], "asset")
     refund_no = "SREF-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
-    dimensions = validate_journal_dimensions(conn, {
-        "branch_id": invoice["branch_id"], "cost_center_id": invoice["cost_center_id"],
-        "project_id": invoice["project_id"],
-    })
+    dimensions = validate_journal_dimensions(conn, _customer_invoice_dimensions(invoice))
     journal_id = post_journal(
         conn, refund_date, refund_no, "رد مبلغ للعميل عن إشعار " + note["credit_note_no"],
         [(ar, amount, 0, "تسوية الرصيد الدائن للعميل"),
@@ -1023,7 +1020,9 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
     _customer_cash_account(conn, cash_account_id)
     ar = _account(conn, _sales_account_codes(conn, _activity(conn))["ar"], "asset")
     receipt_no = "RCPTB-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
-    dimensions = validate_journal_dimensions(conn, {"customer_id": customer_id})
+    dimensions = _common_customer_invoice_dimensions(
+        conn, [invoice for invoice, _amount in normalized], customer_id
+    )
     journal_id = post_journal(
         conn, receipt_date, receipt_no, "تحصيل مجمع من العميل " + customer["name"],
         [(cash_account_id, total, 0, "إجمالي التحصيل المجمع"),
@@ -1043,6 +1042,23 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
             "invoice_count": len(normalized)}
 
 
+
+
+def _customer_invoice_dimensions(invoice):
+    """Return the analytical dimensions carried by a customer invoice."""
+    keys = ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id")
+    available = set(invoice.keys())
+    return {key: invoice[key] for key in keys if key in available and invoice[key] not in (None, "")}
+
+
+def _common_customer_invoice_dimensions(conn, invoices, customer_id):
+    """Keep invoice dimensions when a grouped settlement shares one dimension set."""
+    candidates = [_customer_invoice_dimensions(invoice) for invoice in invoices]
+    if candidates and all(item == candidates[0] for item in candidates[1:]):
+        return validate_journal_dimensions(conn, candidates[0])
+    # One journal line cannot represent multiple branch/project assignments.
+    # Preserve the customer dimension rather than falsely assigning one invoice's dimensions.
+    return validate_journal_dimensions(conn, {"customer_id": customer_id})
 
 
 def _customer_cash_account(conn, cash_account_id):
@@ -1190,7 +1206,9 @@ def allocate_customer_advance(conn, advance_receipt_id, allocations, allocation_
         raise ValueError(f"قيمة التخصيص تتجاوز المتبقي من مقدم العميل ({available:.2f}).")
     advance_account = _customer_advances_account(conn)
     ar = _account(conn, _sales_account_codes(conn, _activity(conn))["ar"], "asset")
-    dimensions = validate_journal_dimensions(conn, {"customer_id": receipt["customer_id"]})
+    dimensions = _common_customer_invoice_dimensions(
+        conn, [invoice for invoice, _amount in normalized], receipt["customer_id"]
+    )
     allocation_no = "CADVA-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
     journal_id = post_journal(
         conn, allocation_date, allocation_no,
