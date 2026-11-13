@@ -404,6 +404,14 @@ def register_report_exports(app, db_path, permissions):
                 party_id = request.args.get("party_id", type=int)
                 date_from = request.args.get("date_from", "").strip()
                 date_to = request.args.get("date_to", "").strip()
+                from datetime import date as date_type
+                try:
+                    if date_from:
+                        date_from = date_type.fromisoformat(date_from).isoformat()
+                    if date_to:
+                        date_to = date_type.fromisoformat(date_to).isoformat()
+                except ValueError:
+                    abort(400)
                 if date_from and date_to and date_from > date_to:
                     abort(400)
                 table_name = "customers" if kind == "customer" else "suppliers"
