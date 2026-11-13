@@ -65,6 +65,12 @@ def initialize_assets_schema():
     if "supplier_bill_id" not in asset_columns:
         c.execute("ALTER TABLE fixed_assets ADD COLUMN supplier_bill_id INTEGER REFERENCES supplier_bills(id)")
     c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_fixed_asset_supplier_bill ON fixed_assets(supplier_bill_id) WHERE supplier_bill_id IS NOT NULL")
+    c.execute("""CREATE TABLE IF NOT EXISTS fixed_asset_supplier_bill_links(
+        bill_id INTEGER NOT NULL REFERENCES supplier_bills(id),
+        asset_id INTEGER NOT NULL UNIQUE REFERENCES fixed_assets(id),
+        PRIMARY KEY(bill_id,asset_id)
+    )""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_fixed_asset_bill_links_bill ON fixed_asset_supplier_bill_links(bill_id)")
     c.close()
 
 
@@ -74,7 +80,9 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
         raise ValueError("فاتورة المورد ليست من نوع أصل ثابت.")
     if not bill["journal_entry_id"]:
         raise ValueError("يجب ترحيل فاتورة المورد قبل إنشاء سجل الأصل.")
-    if conn.execute("SELECT 1 FROM fixed_assets WHERE supplier_bill_id=? LIMIT 1",(bill["id"],)).fetchone():
+    if conn.execute("SELECT 1 FROM fixed_assets WHERE supplier_bill_id=? LIMIT 1",(bill["id"],)).fetchone() or conn.execute(
+        "SELECT 1 FROM fixed_asset_supplier_bill_links WHERE bill_id=? LIMIT 1",(bill["id"],)
+    ).fetchone():
         raise ValueError("فاتورة المورد مرتبطة بسجل أصول بالفعل.")
     has_lines = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='supplier_bill_asset_lines'"
@@ -141,12 +149,14 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
             asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,
             useful_life_months,depreciation_method,annual_rate,asset_account_id,
             accum_account_id,expense_account_id,notes,created_by,supplier_bill_id
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)""",
             (code,name,category,purchase,ready,cost,residual,life,method,rate,
              asset_acc,accum_acc,expense_acc,
-             "تم الإنشاء تلقائيًا من فاتورة المورد " + bill["bill_no"],
-             actor_id,bill["id"]))
-        created.append(cursor.lastrowid)
+             "تم الإنشاء تلقائيًا من فاتورة المورد " + bill["bill_no"], actor_id))
+        asset_id=cursor.lastrowid
+        conn.execute("INSERT INTO fixed_asset_supplier_bill_links(bill_id,asset_id) VALUES(?,?)",
+                     (bill["id"],asset_id))
+        created.append(asset_id)
     return created
 
 
@@ -303,7 +313,8 @@ def index():
       sb.bill_no supplier_bill_no,sb.supplier_invoice_no,
       COALESCE((SELECT DECIMAL_SUM(d.amount) FROM asset_depreciations d WHERE d.asset_id=f.id),0) accumulated
       FROM fixed_assets f JOIN accounts a ON a.id=f.asset_account_id
-      LEFT JOIN supplier_bills sb ON sb.id=f.supplier_bill_id
+      LEFT JOIN fixed_asset_supplier_bill_links l ON l.asset_id=f.id
+      LEFT JOIN supplier_bills sb ON sb.id=COALESCE(f.supplier_bill_id,l.bill_id)
       ORDER BY f.asset_code""").fetchall()
     assets=[dict(row,
         accumulated=Decimal(str(row["accumulated"] or "0")),
