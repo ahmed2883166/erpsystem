@@ -1610,6 +1610,7 @@ def analytic_dimensions_settings():
                 )
                 connection.commit()
                 log("branch_print_details_updated", f"branch_id={branch_id}", entity_type="branch", entity_id=branch_id)
+                connection.close()
                 flash("تم حفظ بيانات الفرع المستخدمة في الطباعة.", "success")
                 return redirect(url_for("analytic_dimensions_settings"))
             kind = request.form.get("dimension_type", "").strip()
@@ -1638,6 +1639,7 @@ def analytic_dimensions_settings():
                 connection.execute(f"INSERT INTO {table}(code,name_ar) VALUES(?,?)", (code, name))
             connection.commit()
             log("analytic_dimension_created", f"{kind}:{code}:{name}", entity_type=kind, entity_id=code)
+            connection.close()
             flash("تمت إضافة " + label + " بنجاح.", "success")
             return redirect(url_for("analytic_dimensions_settings"))
         except (ValueError, sqlite3.IntegrityError) as exc:
