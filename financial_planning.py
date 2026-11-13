@@ -1010,14 +1010,23 @@ def budget_index():
                 raise ValueError("لا تكرر الحساب داخل الموازنة نفسها.")
             conn.execute("BEGIN IMMEDIATE")
             cur = conn.execute("""INSERT INTO budget_plans
-                (name,date_from,date_to,created_by,branch_id,cost_center_id,project_id)
-                VALUES(?,?,?,?,?,?,?)""",
+                (name,date_from,date_to,created_by,branch_id,cost_center_id,project_id,status)
+                VALUES(?,?,?,?,?,?,?,'draft')""",
                 (name,start,end,session["user_id"],dimensions["branch_id"],
                  dimensions["cost_center_id"],dimensions["project_id"]))
+            budget_id = cur.lastrowid
             conn.executemany("INSERT INTO budget_lines(budget_id,account_id,amount) VALUES(?,?,?)",
-                             [(cur.lastrowid, aid, amount) for aid,amount in lines])
+                             [(budget_id, aid, amount) for aid,amount in lines])
+            months = _budget_months(start, end)
+            monthly_values = []
+            for account_id, amount in lines:
+                monthly_values.extend((budget_id, account_id, month, str(value))
+                    for month, value in zip(months, _split_monthly_amount(_money(amount), months)))
+            conn.executemany("""INSERT INTO budget_monthly_lines
+                (budget_id,account_id,period,amount) VALUES(?,?,?,?)""", monthly_values)
+            _budget_audit(conn, budget_id, "created", session["user_id"], "إنشاء الموازنة وتوزيعها مبدئيًا بالتساوي على الأشهر")
             conn.commit()
-            flash("تم حفظ الموازنة بنجاح.", "success")
+            flash("تم حفظ الموازنة كمسودة. راجع التوزيع الشهري ثم أرسلها للاعتماد.", "success")
             return redirect(url_for("planning.budget_detail", budget_id=cur.lastrowid))
         except (ValueError, TypeError, InvalidOperation, sqlite3.IntegrityError) as exc:
             conn.rollback()
@@ -1046,11 +1055,135 @@ def budget_detail(budget_id):
     conn = _connect()
     try:
         plan, results, totals = build_budget_comparison(conn, budget_id)
+        plan, monthly_rows = build_budget_monthly_comparison(conn, budget_id)
+        months = _budget_months(plan["date_from"], plan["date_to"])
+        monthly_matrix = {}
+        for row in conn.execute("SELECT account_id,period,amount FROM budget_monthly_lines WHERE budget_id=?", (budget_id,)):
+            monthly_matrix.setdefault(row["account_id"], {})[row["period"]] = row["amount"]
+        history = conn.execute("""SELECT l.*,u.username FROM budget_audit_log l
+            LEFT JOIN users u ON u.id=l.actor_id WHERE l.budget_id=? ORDER BY l.id DESC""", (budget_id,)).fetchall()
     except ValueError:
         conn.close()
         abort(404)
     conn.close()
-    return render_template("budget_detail.html", plan=plan, rows=results, **totals)
+    return render_template("budget_detail.html", plan=plan, rows=results, months=months,
+        monthly_rows=monthly_rows, monthly_matrix=monthly_matrix, history=history, **totals)
+
+
+@planning_bp.post("/budget/<int:budget_id>/distribution")
+@_require("budget.manage")
+def budget_update_distribution(budget_id):
+    conn = _connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        plan = conn.execute("SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
+        if not plan:
+            abort(404)
+        if plan["status"] not in {"draft", "rejected"}:
+            abort(409, "لا يمكن تعديل توزيع موازنة مرسلة أو معتمدة.")
+        months = _budget_months(plan["date_from"], plan["date_to"])
+        lines = conn.execute("SELECT account_id,amount FROM budget_lines WHERE budget_id=?", (budget_id,)).fetchall()
+        updates = []
+        for line in lines:
+            values = []
+            for month in months:
+                value = _money(request.form.get(f"monthly_amount_{line['account_id']}_{month}", ""))
+                values.append(value)
+                updates.append((str(value), budget_id, line["account_id"], month))
+            if sum(values, Decimal("0")) != _money(line["amount"]):
+                raise ValueError(f"مجموع التوزيع الشهري للحساب {line['account_id']} يجب أن يساوي إجمالي الموازنة.")
+        conn.executemany("""UPDATE budget_monthly_lines SET amount=?
+            WHERE budget_id=? AND account_id=? AND period=?""", updates)
+        _budget_audit(conn, budget_id, "distribution_updated", session["user_id"], "تعديل التوزيع الشهري مع الحفاظ على إجمالي كل حساب")
+        conn.commit()
+        flash("تم حفظ التوزيع الشهري.", "success")
+    except (ValueError, InvalidOperation, TypeError) as exc:
+        conn.rollback()
+        flash(str(exc), "error")
+    finally:
+        conn.close()
+    return redirect(url_for("planning.budget_detail", budget_id=budget_id))
+
+
+@planning_bp.post("/budget/<int:budget_id>/submit")
+@_require("budget.manage")
+def budget_submit(budget_id):
+    conn = _connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        plan = conn.execute("SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
+        if not plan:
+            abort(404)
+        if plan["status"] not in {"draft", "rejected"}:
+            abort(409)
+        mismatch = conn.execute("""SELECT b.account_id,b.amount,COALESCE(SUM(CAST(ml.amount AS NUMERIC)),0) monthly_total
+            FROM budget_lines b LEFT JOIN budget_monthly_lines ml
+              ON ml.budget_id=b.budget_id AND ml.account_id=b.account_id
+            WHERE b.budget_id=? GROUP BY b.account_id,b.amount""", (budget_id,)).fetchall()
+        for row in mismatch:
+            if _money(row["amount"]) != _money(row["monthly_total"]):
+                raise ValueError("لا يمكن إرسال الموازنة قبل تساوي إجمالي التوزيع الشهري مع المبلغ السنوي لكل حساب.")
+        conn.execute("""UPDATE budget_plans SET status='pending',submitted_by=?,submitted_at=CURRENT_TIMESTAMP,
+            rejection_reason=NULL WHERE id=?""", (session["user_id"], budget_id))
+        _budget_audit(conn, budget_id, "submitted", session["user_id"], "إرسال الموازنة للاعتماد")
+        conn.commit()
+        flash("تم إرسال الموازنة للاعتماد.", "success")
+    except ValueError as exc:
+        conn.rollback()
+        flash(str(exc), "error")
+    finally:
+        conn.close()
+    return redirect(url_for("planning.budget_detail", budget_id=budget_id))
+
+
+@planning_bp.post("/budget/<int:budget_id>/approve")
+@_require("budget.approve")
+def budget_approve(budget_id):
+    conn = _connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        plan = conn.execute("SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
+        if not plan:
+            abort(404)
+        if plan["status"] != "pending":
+            abort(409)
+        if plan["created_by"] == session["user_id"]:
+            abort(403, "لا يجوز لمنشئ الموازنة اعتمادها بنفسه.")
+        conn.execute("UPDATE budget_plans SET status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP WHERE id=?",
+                     (session["user_id"], budget_id))
+        _budget_audit(conn, budget_id, "approved", session["user_id"], "اعتماد الموازنة")
+        conn.commit()
+        flash("تم اعتماد الموازنة. أصبحت للعرض فقط ولا يمكن تعديلها.", "success")
+    finally:
+        conn.close()
+    return redirect(url_for("planning.budget_detail", budget_id=budget_id))
+
+
+@planning_bp.post("/budget/<int:budget_id>/reject")
+@_require("budget.approve")
+def budget_reject(budget_id):
+    conn = _connect()
+    try:
+        reason = request.form.get("reason", "").strip()
+        if not reason:
+            raise ValueError("يجب كتابة سبب رفض الموازنة.")
+        conn.execute("BEGIN IMMEDIATE")
+        plan = conn.execute("SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
+        if not plan:
+            abort(404)
+        if plan["status"] != "pending" or plan["created_by"] == session["user_id"]:
+            abort(409)
+        conn.execute("UPDATE budget_plans SET status='rejected',rejection_reason=? WHERE id=?",
+                     (reason[:1000], budget_id))
+        _budget_audit(conn, budget_id, "rejected", session["user_id"], reason)
+        conn.commit()
+        flash("تم رفض الموازنة مع تسجيل السبب.", "success")
+    except ValueError as exc:
+        conn.rollback()
+        flash(str(exc), "error")
+    finally:
+        conn.close()
+    return redirect(url_for("planning.budget_detail", budget_id=budget_id))
 
 
 def build_balance_sheet_snapshot(conn, as_of):
