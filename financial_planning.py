@@ -1116,7 +1116,7 @@ def budget_submit(budget_id):
             abort(404)
         if plan["status"] not in {"draft", "rejected"}:
             abort(409)
-        mismatch = conn.execute("""SELECT b.account_id,b.amount,COALESCE(SUM(CAST(ml.amount AS NUMERIC)),0) monthly_total
+        mismatch = conn.execute("""SELECT b.account_id,b.amount,COALESCE(DECIMAL_SUM(ml.amount),'0') monthly_total
             FROM budget_lines b LEFT JOIN budget_monthly_lines ml
               ON ml.budget_id=b.budget_id AND ml.account_id=b.account_id
             WHERE b.budget_id=? GROUP BY b.account_id,b.amount""", (budget_id,)).fetchall()
