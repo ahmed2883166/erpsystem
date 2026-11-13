@@ -528,6 +528,37 @@ def register_report_exports(app, db_path, permissions):
                 ])
                 filename = "nexus-customer-advances-" + as_of + ".xlsx"
                 title = "كشف مقدمات العملاء حتى " + as_of
+            elif report == "payroll-payslip":
+                run_id = request.args.get("run_id", type=int)
+                employee_id = request.args.get("employee_id", type=int)
+                if not run_id or not employee_id:
+                    abort(400)
+                run = conn.execute("SELECT period,status FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+                row = conn.execute("""SELECT e.employee_code,e.full_name,e.department,l.*
+                    FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
+                    WHERE l.run_id=? AND l.employee_id=?""", (run_id,employee_id)).fetchone()
+                if not run or run["status"] != "posted" or not row:
+                    abort(404)
+                headers = ["بيان الاستحقاق أو الاستقطاع", "المبلغ"]
+                items = [
+                    ("الراتب الأساسي بعد العلاوة", row["basic_salary"]),
+                    ("قيمة العلاوة", row["salary_raise"]),
+                    ("البدلات", row["allowances"]),
+                    ("الحوافز", row["incentives"]),
+                    ("قيمة العمل الإضافي", row["overtime_amount"]),
+                    ("إجمالي الأجر قبل الاستقطاعات", row["gross_pay"]),
+                    ("خصم الغياب", row["absence_deduction"]),
+                    ("السلف والدفعات المستردة", row["advance_deduction"]),
+                    ("أقساط قروض الموظف", row["loan_deduction"]),
+                    ("خصومات أخرى", row["other_deductions"]),
+                    ("ضريبة المرتبات", row["taxable_income_tax"]),
+                    ("حصة الموظف بالتأمينات", row["employee_insurance"]),
+                    ("صافي المستحق", row["net_pay"]),
+                    ("حصة الشركة بالتأمينات (لا تخصم من الموظف)", row["employer_insurance"]),
+                ]
+                data = [[label, Decimal(str(value or "0"))] for label,value in items]
+                filename = "nexus-payslip-" + row["employee_code"] + "-" + run["period"] + ".xlsx"
+                title = "قسيمة راتب " + row["full_name"] + " - " + row["employee_code"] + " - " + run["period"]
             elif report == "payroll":
                 run_id = request.args.get("run_id", type=int)
                 if not run_id:
