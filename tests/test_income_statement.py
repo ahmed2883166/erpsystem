@@ -170,6 +170,40 @@ class IncomeStatementRouteTests(unittest.TestCase):
         self.assertIn("800.00", body)
         self.assertNotIn("900.00", body)
 
+    def test_income_statement_exports_keep_selected_analytic_dimensions(self):
+        from flask import Flask
+        from io import BytesIO
+        from openpyxl import load_workbook
+        from report_exports import register_report_exports
+
+        export_app = Flask(__name__)
+        export_app.secret_key = "export-test-secret"
+        register_report_exports(export_app, self.db_path, {"admin": {"reports.view"}})
+        client = export_app.test_client()
+        with client.session_transaction() as user_session:
+            user_session["user_id"] = 1
+            user_session["role"] = "admin"
+            user_session["permissions"] = ["reports.view"]
+
+        query = (
+            "?date_from=2026-11-01&date_to=2026-11-30&compare=none"
+            "&project_id=1"
+        )
+        excel = client.get("/reports/export/income-statement/excel" + query)
+        self.assertEqual(excel.status_code, 200)
+        workbook = load_workbook(BytesIO(excel.data), data_only=True)
+        values = [cell.value for row in workbook.active.iter_rows() for cell in row]
+        self.assertIn(1000, values)
+        self.assertIn(200, values)
+        self.assertIn(800, values)
+        self.assertNotIn(900, values)
+
+        pdf = client.get("/reports/export/income-statement/pdf" + query)
+        if pdf.status_code == 503:
+            self.skipTest("Arabic PDF font is not installed in this test environment.")
+        self.assertEqual(pdf.status_code, 200)
+        self.assertTrue(pdf.data.startswith(b"%PDF"))
+
     def test_shared_calculation_returns_expected_sections(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
