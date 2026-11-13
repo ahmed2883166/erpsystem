@@ -137,6 +137,25 @@ def init_purchase_schema():
     ):
         if name not in bill_columns:
             c.execute("ALTER TABLE supplier_bills ADD COLUMN " + name + " " + declaration)
+    c.execute("""CREATE TABLE IF NOT EXISTS supplier_bill_asset_lines(
+      id INTEGER PRIMARY KEY,
+      bill_id INTEGER NOT NULL REFERENCES supplier_bills(id) ON DELETE CASCADE,
+      line_no INTEGER NOT NULL,
+      asset_code TEXT NOT NULL,
+      asset_name TEXT NOT NULL,
+      asset_category TEXT NOT NULL DEFAULT '',
+      cost TEXT NOT NULL,
+      ready_date TEXT NOT NULL,
+      residual_value TEXT NOT NULL DEFAULT '0',
+      useful_life_months INTEGER NOT NULL,
+      depreciation_method TEXT NOT NULL DEFAULT 'straight_line',
+      annual_rate TEXT NOT NULL DEFAULT '0',
+      asset_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      accum_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      expense_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      UNIQUE(bill_id,line_no), UNIQUE(bill_id,asset_code)
+    )""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_supplier_bill_asset_lines ON supplier_bill_asset_lines(bill_id,line_no)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_supplier_bills_approval ON supplier_bills(status, bill_date, id)")
     for name, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"), ("project_id", "projects")):
         if name not in bill_columns:
@@ -279,6 +298,49 @@ def supplier_ap_account(c):
 
 def activity_inventory_code(c):
     return _activity_posting_accounts(c)["purchase_inventory"]
+
+
+def validate_asset_bill_lines(c, form, bill_date, subtotal):
+    """Validate repeated asset rows; retain backward compatibility with old forms."""
+    fields = ("asset_code","asset_name","asset_category","asset_ready_date","asset_residual_value",
+              "asset_useful_life_months","asset_depreciation_method","asset_annual_rate",
+              "asset_account_id","asset_accum_account_id","asset_expense_account_id","asset_cost")
+    rows = {name: form.getlist(name + "[]") for name in fields}
+    count = max((len(values) for values in rows.values()), default=0)
+    if count == 0:
+        legacy = dict(form)
+        return [dict(validate_asset_bill_data(c, legacy, bill_date, subtotal), cost=str(subtotal))]
+    lines, seen, total = [], set(), money("0")
+    for index in range(count):
+        def val(name, default=""):
+            values = rows[name]
+            return values[index].strip() if index < len(values) and values[index] is not None else default
+        cost = money(val("asset_cost", "0") or "0")
+        line = {
+            "asset_code": val("asset_code"), "asset_name": val("asset_name"),
+            "asset_category": val("asset_category"), "asset_ready_date": val("asset_ready_date", bill_date) or bill_date,
+            "asset_residual_value": val("asset_residual_value", "0") or "0",
+            "asset_useful_life_months": val("asset_useful_life_months", "0") or "0",
+            "asset_depreciation_method": val("asset_depreciation_method", "straight_line") or "straight_line",
+            "asset_annual_rate": val("asset_annual_rate", "0") or "0",
+            "asset_account_id": val("asset_account_id"),
+            "asset_accum_account_id": val("asset_accum_account_id"),
+            "asset_expense_account_id": val("asset_expense_account_id"),
+        }
+        if not line["asset_code"] and not line["asset_name"] and cost == 0:
+            continue
+        if line["asset_code"] in seen:
+            raise ValueError("كود الأصل مكرر داخل الفاتورة: " + line["asset_code"])
+        seen.add(line["asset_code"])
+        validated = validate_asset_bill_data(c, line, bill_date, cost)
+        validated["cost"] = str(cost)
+        lines.append(validated)
+        total = money(total + cost)
+    if not lines:
+        raise ValueError("أضف أصلًا واحدًا على الأقل إلى فاتورة الأصل.")
+    if total != money(subtotal):
+        raise ValueError("مجموع تكاليف الأصول يجب أن يساوي صافي فاتورة المورد قبل الضريبة.")
+    return lines
 
 
 def validate_asset_bill_data(c, form, bill_date, subtotal):
@@ -917,11 +979,21 @@ def post_supplier_bill(c, bill_id, actor_id):
     elif bill["bill_kind"] == "asset":
         if c.execute("SELECT 1 FROM supplier_bill_receipts WHERE bill_id=? LIMIT 1", (bill_id,)).fetchone():
             raise ValueError("فاتورة الأصل الثابت لا يجوز ربطها بإيصالات استلام مخزني.")
-        asset_data = validate_asset_bill_data(c, dict(bill), bill["bill_date"], subtotal)
-        journal_lines.extend([
-            (asset_data["asset_account_id"], subtotal, 0, "رسملة تكلفة الأصل " + asset_data["asset_name"]),
-            (ap, 0, subtotal, "إثبات المورد مقابل شراء أصل ثابت"),
-        ])
+        asset_rows = c.execute("SELECT * FROM supplier_bill_asset_lines WHERE bill_id=? ORDER BY line_no",(bill_id,)).fetchall()
+        if asset_rows:
+            line_total = money("0")
+            for row in asset_rows:
+                cost = money(row["cost"])
+                line_total = money(line_total + cost)
+                journal_lines.append((row["asset_account_id"],cost,0,
+                    "رسملة الأصل " + row["asset_code"] + " - " + row["asset_name"]))
+            if line_total != subtotal:
+                raise ValueError("مجموع تكاليف الأصول لا يساوي صافي فاتورة المورد.")
+        else:
+            asset_data = validate_asset_bill_data(c, dict(bill), bill["bill_date"], subtotal)
+            journal_lines.append((asset_data["asset_account_id"],subtotal,0,
+                "رسملة تكلفة الأصل " + asset_data["asset_name"]))
+        journal_lines.append((ap,0,subtotal,"إثبات المورد مقابل شراء أصل ثابت"))
     else:
         raise ValueError("نوع فاتورة المورد المخزن غير معروف.")
     if tax:
@@ -974,7 +1046,7 @@ def new_bill():
             if bill_kind=="asset":
                 if receipts:
                     raise ValueError("فاتورة الأصل الثابت لا تُربط بإيصالات استلام مخزني.")
-                asset_data=validate_asset_bill_data(c,request.form,request.form["bill_date"],subtotal)
+                asset_lines=validate_asset_bill_lines(c,request.form,request.form["bill_date"],subtotal)
                 supplier_ap_account(c)
             if bill_kind=="expense":
                 expense_account_id=int(request.form.get("expense_account_id","0"))
@@ -1012,6 +1084,17 @@ def new_bill():
                  asset_data.get("asset_annual_rate","0"),asset_data.get("asset_account_id"),
                  asset_data.get("asset_accum_account_id"),asset_data.get("asset_expense_account_id")))
             bid=cur.lastrowid
+            if bill_kind == "asset":
+                for line_no, line in enumerate(asset_lines, 1):
+                    c.execute("""INSERT INTO supplier_bill_asset_lines(
+                        bill_id,line_no,asset_code,asset_name,asset_category,cost,ready_date,
+                        residual_value,useful_life_months,depreciation_method,annual_rate,
+                        asset_account_id,accum_account_id,expense_account_id
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (bid,line_no,line["asset_code"],line["asset_name"],line["asset_category"],line["cost"],
+                     line["asset_ready_date"],line["asset_residual_value"],line["asset_useful_life_months"],
+                     line["asset_depreciation_method"],line["asset_annual_rate"],line["asset_account_id"],
+                     line["asset_accum_account_id"],line["asset_expense_account_id"]))
             for rid,amt in receipt_allocations:
                 c.execute("INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
                           (bid,rid,str(amt)))
@@ -1091,7 +1174,7 @@ def edit_bill(bill_id):
             elif bill_kind == "asset":
                 if receipts:
                     raise ValueError("فاتورة الأصل الثابت لا تُربط بإيصالات استلام مخزني.")
-                asset_data = validate_asset_bill_data(c, request.form, bill_date, subtotal)
+                asset_lines = validate_asset_bill_lines(c, request.form, bill_date, subtotal)
                 supplier_ap_account(c)
             else:
                 if not receipts:
@@ -1126,6 +1209,18 @@ def edit_bill(bill_id):
                  asset_data.get("asset_accum_account_id"),asset_data.get("asset_expense_account_id"),bill_id))
             if c.execute("SELECT changes()").fetchone()[0] != 1:
                 raise ValueError("لم يتم تحديث الفاتورة؛ أعد تحميل الصفحة.")
+            c.execute("DELETE FROM supplier_bill_asset_lines WHERE bill_id=?", (bill_id,))
+            if bill_kind == "asset":
+                for line_no, line in enumerate(asset_lines, 1):
+                    c.execute("""INSERT INTO supplier_bill_asset_lines(
+                        bill_id,line_no,asset_code,asset_name,asset_category,cost,ready_date,
+                        residual_value,useful_life_months,depreciation_method,annual_rate,
+                        asset_account_id,accum_account_id,expense_account_id
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (bill_id,line_no,line["asset_code"],line["asset_name"],line["asset_category"],line["cost"],
+                     line["asset_ready_date"],line["asset_residual_value"],line["asset_useful_life_months"],
+                     line["asset_depreciation_method"],line["asset_annual_rate"],line["asset_account_id"],
+                     line["asset_accum_account_id"],line["asset_expense_account_id"]))
             c.execute("DELETE FROM supplier_bill_receipts WHERE bill_id=?", (bill_id,))
             for receipt_id, amount in allocations:
                 c.execute("""INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount)
@@ -1147,12 +1242,13 @@ def edit_bill(bill_id):
     existing_allocations = {row["receipt_id"]: money(row["matched_amount"]) for row in c.execute(
         "SELECT receipt_id,matched_amount FROM supplier_bill_receipts WHERE bill_id=?", (bill_id,)).fetchall()}
     selected_receipt_ids = set(existing_allocations)
+    existing_asset_lines = c.execute("SELECT * FROM supplier_bill_asset_lines WHERE bill_id=? ORDER BY line_no",(bill_id,)).fetchall()
     dimension_options = active_dimension_options(c)
     c.close()
     return render_template("purchase_bill_new.html", suppliers=suppliers, receipts=receipts,
         expense_accounts=expense_accounts, asset_accounts=asset_accounts,
         dimension_options=dimension_options, today=date.today().isoformat(), bill=bill, selected_receipt_ids=selected_receipt_ids,
-        receipt_allocations=existing_allocations, edit_mode=True)
+        receipt_allocations=existing_allocations, existing_asset_lines=existing_asset_lines, edit_mode=True)
 
 
 @purchase_bp.route("/bills/<int:bill_id>/submit", methods=["POST"])
