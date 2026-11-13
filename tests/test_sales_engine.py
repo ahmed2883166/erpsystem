@@ -364,12 +364,18 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(first["total_amount"] + second["total_amount"], Decimal("205.20"))
         self.assertEqual(first["total_cost"] + second["total_cost"], Decimal("20.00"))
         invoice_lines = self.db.execute(
-            """SELECT a.code,SUM(CAST(jl.debit AS NUMERIC)) debit,SUM(CAST(jl.credit AS NUMERIC)) credit
-               FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
-               WHERE jl.entry_id IN (?,?) GROUP BY a.code""",
+            """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
+               JOIN accounts a ON a.id=jl.account_id
+               WHERE jl.entry_id IN (?,?)""",
             (first["journal_entry_id"], second["journal_entry_id"]),
         ).fetchall()
-        credit_totals = {row["code"]: (Decimal(row["debit"]), Decimal(row["credit"])) for row in invoice_lines}
+        credit_totals = {}
+        for row in invoice_lines:
+            debit, credit = credit_totals.get(row["code"], (Decimal("0"), Decimal("0")))
+            credit_totals[row["code"]] = (
+                debit + Decimal(str(row["debit"] or "0")),
+                credit + Decimal(str(row["credit"] or "0")),
+            )
         self.assertEqual(credit_totals["4100"][0], Decimal("180"))
         self.assertEqual(credit_totals["2130"][0], Decimal("25.2"))
         self.assertEqual(credit_totals["1130"][1], Decimal("205.2"))
