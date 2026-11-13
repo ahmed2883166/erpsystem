@@ -16,7 +16,7 @@ class SharedAccountingCoreTests(unittest.TestCase):
         CREATE TABLE stock_valuation_layers(id INTEGER PRIMARY KEY,qty_remaining TEXT,unit_cost TEXT);
         CREATE TABLE goods_receipts(id INTEGER PRIMARY KEY,total_value TEXT,status TEXT,journal_entry_id INTEGER);
         CREATE TABLE supplier_bill_receipts(bill_id INTEGER,receipt_id INTEGER,matched_amount TEXT);
-        CREATE TABLE supplier_bills(id INTEGER PRIMARY KEY,total_amount TEXT,paid_amount TEXT,status TEXT,journal_entry_id INTEGER);
+        CREATE TABLE supplier_bills(id INTEGER PRIMARY KEY,total_amount TEXT,paid_amount TEXT,status TEXT,journal_entry_id INTEGER,credited_amount TEXT DEFAULT '0');
         CREATE TABLE supplier_payments(id INTEGER PRIMARY KEY,journal_entry_id INTEGER);
         CREATE TABLE sales_invoices(id INTEGER PRIMARY KEY,journal_entry_id INTEGER);
         CREATE TABLE customer_receipts(id INTEGER PRIMARY KEY,journal_entry_id INTEGER);
@@ -37,7 +37,7 @@ class SharedAccountingCoreTests(unittest.TestCase):
         INSERT INTO stock_valuation_layers VALUES(2,'3','20');
         INSERT INTO goods_receipts VALUES(1,'100','posted',10);
         INSERT INTO supplier_bill_receipts VALUES(1,1,'40');
-        INSERT INTO supplier_bills VALUES(1,'100','30','posted',11);
+        INSERT INTO supplier_bills VALUES(1,'100','30','posted',11,'0');
         INSERT INTO supplier_payments VALUES(1,12);
         INSERT INTO sales_invoices VALUES(1,13);
         INSERT INTO customer_receipts VALUES(1,14);
@@ -182,6 +182,16 @@ class SharedAccountingCoreTests(unittest.TestCase):
     def test_partial_receipt_match_keeps_unmatched_grni(self):
         snapshot = reconciliation_snapshot(self.db)
         self.assertEqual(snapshot["grni"], 60.0)
+
+    def test_draft_supplier_bill_does_not_reduce_grni(self):
+        self.db.execute("UPDATE supplier_bills SET status='draft' WHERE id=1")
+        snapshot = reconciliation_snapshot(self.db)
+        self.assertEqual(snapshot["grni"], 100.0)
+
+    def test_supplier_credit_notes_reduce_open_ap(self):
+        self.db.execute("UPDATE supplier_bills SET credited_amount='10' WHERE id=1")
+        snapshot = reconciliation_snapshot(self.db)
+        self.assertEqual(snapshot["open_ap"], 60.0)
 
     def test_unlinked_document_and_pending_stock_detection(self):
         snapshot = reconciliation_snapshot(self.db)
