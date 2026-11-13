@@ -55,7 +55,7 @@
           <td>{{ r.advance_deduction }}</td><td>{{ r.loan_deduction }}</td><td>{{ r.other_deductions }}</td>
           <td>{{ r.taxable_income_tax }}</td><td>{{ r.employee_insurance }}</td><td>{{ r.employer_insurance }}</td>
           <td>{{ r.total_entitlements }}</td><td>{{ r.total_deductions }}</td><td><strong>{{ r.net_pay }}</strong></td>
-          <td>{{ r.paid_amount }}</td><td>{{ [0, (r.net_pay|float - r.paid_amount|float)]|max|round(2) }}</td>
+          <td>{{ r.paid_amount }}</td><td>{{ r.remaining_payable }}</td>
           <td><a href="{{ url_for('report_exports.export_report_excel', report='payroll-payslip', run_id=r.run_id, employee_id=r.employee_id).replace('/excel','/pdf') }}">PDF</a> · <a href="{{ url_for('report_exports.export_report_excel', report='payroll-payslip', run_id=r.run_id, employee_id=r.employee_id) }}">Excel</a></td>
         </tr>
       {% else %}
