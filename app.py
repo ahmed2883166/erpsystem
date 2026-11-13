@@ -14,7 +14,7 @@ from functools import wraps
 import uuid
 
 from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for, has_request_context, g
-from chart_templates import CHARTS, ACTIVITY_LABELS, seed_activity_chart, ensure_activity_chart_accounts, migrate_vat_accounts
+from chart_templates import (CHARTS, ACTIVITY_LABELS, OPERATIONAL_ACCOUNT_CODES, seed_activity_chart, ensure_activity_chart_accounts, migrate_vat_accounts)
 from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
 from sales import sales_bp, init_sales_schema
@@ -1066,8 +1066,10 @@ def edit_account(account_id):
         code, name = request.form.get("code", "").strip(), request.form.get("name_ar", "").strip()
         if not code or not name:
             flash("كود واسم الحساب مطلوبان.", "error")
+        elif code != account["code"] and (used or account["code"] in OPERATIONAL_ACCOUNT_CODES):
+            flash("لا يمكن تغيير كود حساب مستخدم في القيود أو مرتبط بخرائط الترحيل والتشغيل؛ غيّر الاسم أو أنشئ حسابًا جديدًا وانقل الاستخدام بطريقة محاسبية معتمدة.", "error")
         elif used and (request.form.get("account_type") != account["account_type"] or (int(request.form["parent_id"]) if request.form.get("parent_id") else None) != account["parent_id"] or (1 if request.form.get("is_group") == "yes" else 0) != account["is_group"]):
-            flash("الحساب مستخدم في قيود سابقة؛ يسمح بتعديل الكود والاسم فقط حفاظًا على سلامة التقارير.", "error")
+            flash("الحساب مستخدم في قيود سابقة؛ يسمح بتعديل الاسم فقط حفاظًا على سلامة التقارير.", "error")
         else:
             parent_id = request.form.get("parent_id") or None
             new_type = request.form.get("account_type")
