@@ -261,14 +261,12 @@ class SalesIntegrationTests(unittest.TestCase):
             [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}], "0", 1,
         )
         self.db.commit()
-        self.db.execute("BEGIN IMMEDIATE")
         cash_id = self.db.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
         with self.assertRaisesRegex(ValueError, "أكبر من المتبقي"):
             sales.post_customer_receipt_batch(
                 self.db, self.customer_id, "2026-11-12",
                 [(invoice["invoice_id"], "100.01")], cash_id, 1,
             )
-        self.db.rollback()
         paid = self.db.execute(
             "SELECT paid_amount FROM sales_invoices WHERE id=?", (invoice["invoice_id"],)
         ).fetchone()["paid_amount"]
