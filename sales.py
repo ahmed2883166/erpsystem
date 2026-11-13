@@ -1239,6 +1239,43 @@ def customer_advances():
            WHERE active=1 AND is_group=0 AND account_type='asset'
            ORDER BY code"""
     ).fetchall()
+
+    allocated_by_receipt = {}
+    for row in c.execute(
+        "SELECT advance_receipt_id,amount FROM customer_advance_allocations"
+    ).fetchall():
+        allocated_by_receipt.setdefault(row["advance_receipt_id"], Decimal("0"))
+        allocated_by_receipt[row["advance_receipt_id"]] += Decimal(str(row["amount"] or "0"))
+    refunded_by_receipt = {}
+    for row in c.execute(
+        "SELECT advance_receipt_id,amount FROM customer_advance_refunds"
+    ).fetchall():
+        refunded_by_receipt.setdefault(row["advance_receipt_id"], Decimal("0"))
+        refunded_by_receipt[row["advance_receipt_id"]] += Decimal(str(row["amount"] or "0"))
+
+    refunds_by_invoice = {}
+    for row in c.execute(
+        """SELECT cn.invoice_id,rf.amount FROM customer_refunds rf
+           JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id
+           WHERE cn.status='posted'"""
+    ).fetchall():
+        refunds_by_invoice.setdefault(row["invoice_id"], Decimal("0"))
+        refunds_by_invoice[row["invoice_id"]] += Decimal(str(row["amount"] or "0"))
+
+    open_invoices_by_customer = {}
+    for invoice in c.execute(
+        "SELECT * FROM sales_invoices WHERE status='posted' ORDER BY invoice_date,id"
+    ).fetchall():
+        outstanding = (Decimal(str(invoice["total_amount"])) -
+                       Decimal(str(invoice["paid_amount"] or "0")) -
+                       Decimal(str(invoice["credited_amount"] or "0")) +
+                       refunds_by_invoice.get(invoice["id"], Decimal("0")))
+        if outstanding > 0:
+            open_invoices_by_customer.setdefault(invoice["customer_id"], []).append({
+                "id": invoice["id"], "invoice_no": invoice["invoice_no"],
+                "invoice_date": invoice["invoice_date"], "outstanding": outstanding,
+            })
+
     advances = []
     for row in c.execute(
         """SELECT r.*,cu.name customer_name,cu.code customer_code
@@ -1247,29 +1284,18 @@ def customer_advances():
            ORDER BY r.id DESC"""
     ).fetchall():
         item = dict(row)
-        item["remaining_amount"] = _customer_advance_available(c, row["id"])
-        item["open_invoices"] = []
-        for invoice in c.execute(
-            """SELECT * FROM sales_invoices WHERE customer_id=? AND status='posted'
-               ORDER BY invoice_date,id""",
-            (row["customer_id"],),
-        ).fetchall():
-            outstanding = (Decimal(str(invoice["total_amount"])) -
-                           Decimal(str(invoice["paid_amount"] or "0")) -
-                           Decimal(str(invoice["credited_amount"] or "0")) +
-                           _refund_total(c, invoice["id"]))
-            if outstanding > 0:
-                item["open_invoices"].append({
-                    "id": invoice["id"], "invoice_no": invoice["invoice_no"],
-                    "invoice_date": invoice["invoice_date"], "outstanding": outstanding,
-                })
+        item["remaining_amount"] = (
+            Decimal(str(row["amount"])) -
+            allocated_by_receipt.get(row["id"], Decimal("0")) -
+            refunded_by_receipt.get(row["id"], Decimal("0"))
+        )
+        item["open_invoices"] = open_invoices_by_customer.get(row["customer_id"], [])
         advances.append(item)
     c.close()
     return render_template(
         "customer_advances.html", customers=customers, cash_accounts=cash_accounts,
         advances=advances, today=date.today().isoformat(),
     )
-
 
 @sales_bp.route("/advances/receipt", methods=["POST"])
 @require("sales.manage")
