@@ -375,7 +375,7 @@ class PartyStatementTests(unittest.TestCase):
         # GL balance incomplete and must not be reported as an exact match.
         conn = sqlite3.connect(self.db_path)
         conn.execute("INSERT INTO journal_entries VALUES(2,'2026-11-30','posted')")
-        conn.execute("INSERT INTO journal_lines VALUES(2,2,1,'10','0',NULL)")
+        conn.execute("INSERT INTO journal_lines VALUES(2,2,1,'10','0',NULL,NULL)")
         conn.commit()
         conn.close()
         legacy = self.client.get(
