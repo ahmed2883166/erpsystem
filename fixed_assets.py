@@ -183,11 +183,18 @@ def index():
         try:
             cost=Decimal(request.form["cost"]); residual=Decimal(request.form.get("residual_value","0"))
             life=int(request.form["useful_life_months"])
-            if cost<=0 or residual<0 or residual>=cost or life<=0: raise ValueError("تحقق من التكلفة والقيمة التخريدية والعمر الإنتاجي.")
-            if request.form["ready_date"] < request.form["purchase_date"]: raise ValueError("تاريخ الجاهزية لا يمكن أن يسبق تاريخ الشراء.")
+            if not cost.is_finite() or not residual.is_finite() or cost<=0 or residual<0 or residual>=cost or life<=0:
+                raise ValueError("تحقق من التكلفة والقيمة التخريدية والعمر الإنتاجي.")
+            purchase_date=date.fromisoformat(request.form["purchase_date"]).isoformat()
+            ready_date=date.fromisoformat(request.form["ready_date"]).isoformat()
+            if ready_date < purchase_date: raise ValueError("تاريخ الجاهزية لا يمكن أن يسبق تاريخ الشراء.")
+            if not request.form["asset_code"].strip() or not request.form["asset_name"].strip():
+                raise ValueError("كود الأصل واسم الأصل حقول إلزامية.")
             method=request.form["depreciation_method"]
             if method not in {"straight_line","declining_balance"}: raise ValueError("طريقة الإهلاك غير صحيحة.")
             ids=[int(request.form[k]) for k in ("asset_account_id","accum_account_id","expense_account_id")]
+            if ids[0] == ids[1]:
+                raise ValueError("يجب أن يكون حساب تكلفة الأصل مختلفًا عن حساب مجمع الإهلاك.")
             for aid in ids:
                 row=c.execute("SELECT is_group,active,account_type FROM accounts WHERE id=?",(aid,)).fetchone()
                 if not row or row["is_group"] or not row["active"]: raise ValueError("اختر حسابات تفصيلية نشطة.")
@@ -198,7 +205,7 @@ def index():
             asset_cursor = c.execute("""INSERT INTO fixed_assets(asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,useful_life_months,depreciation_method,annual_rate,total_units,asset_account_id,accum_account_id,expense_account_id,notes,created_by)
               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (request.form["asset_code"].strip(),request.form["asset_name"].strip(),request.form.get("category","").strip(),
-               request.form["purchase_date"],request.form["ready_date"],str(cost),str(residual),life,method,
+               purchase_date,ready_date,str(cost),str(residual),life,method,
                request.form.get("annual_rate","0"),request.form.get("total_units","0"),*ids,request.form.get("notes",""),session["user_id"]))
             asset_id = asset_cursor.lastrowid
             c.commit(); g.audit_created_record = ("fixed_assets", asset_id, None, None); flash("تم تسجيل الأصل. تأكد من أن قيد الشراء الأصلي مسجل قبل بدء الإهلاك.","success")
@@ -341,6 +348,8 @@ def dispose(asset_id):
             if not row or row["is_group"] or not row["active"] or row["account_type"] not in allowed_types:
                 raise ValueError("اختر "+label+" تفصيليًا ونشطًا ومن النوع المحاسبي الصحيح.")
         checked_account(proceeds_account_id,{"asset"},"حساب النقدية أو العملاء")
+        if proceeds_account_id in {asset["asset_account_id"],asset["accum_account_id"]}:
+            raise ValueError("حساب المتحصلات يجب ألا يكون حساب تكلفة الأصل أو مجمع الإهلاك.")
         checked_account(gain_loss_account_id,{"revenue","expense"},"حساب أرباح/خسائر الاستبعاد")
         if output_vat_account_id:
             checked_account(output_vat_account_id,{"liability"},"حساب ضريبة المخرجات")
