@@ -3,23 +3,10 @@
 {% block content %}
 <section class="panel print-document">
 <div class="no-print actions"><button type="button" onclick="window.print()">طباعة الفاتورة / PDF</button><a class="btn secondary" href="{{ url_for('purchase.index') }}">العودة للمشتريات</a></div>
-<div class="document-brand" style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;border-bottom:2px solid #17365d;padding:12px 0;margin-bottom:18px">
-  <div style="display:flex;align-items:flex-start;gap:14px;min-width:55%">
-    {% if settings.get('company_logo_data') %}<img src="{{ settings.get('company_logo_data') }}" alt="شعار الشركة" style="max-width:110px;max-height:85px;object-fit:contain">{% endif %}
-    <div><h2 style="margin:0 0 6px">{{ settings.get('company_name','NEXUS ERP') }}</h2>
-      {% if settings.get('company_address') %}<div>{{ settings.get('company_address') }}</div>{% endif %}
-      <div>{% if settings.get('company_phone') %}هاتف: {{ settings.get('company_phone') }}{% endif %}{% if settings.get('company_email') %} · {{ settings.get('company_email') }}{% endif %}</div>
-      {% if settings.get('company_website') %}<div>{{ settings.get('company_website') }}</div>{% endif %}
-      {% if settings.get('tax_number') %}<div>الرقم الضريبي: {{ settings.get('tax_number') }}</div>{% endif %}
-    </div>
-  </div>
-  <div style="text-align:left;min-width:180px"><h3 style="margin:0 0 8px">فاتورة مورد</h3><strong>{{ bill.bill_no }}</strong><p>{{ bill.bill_date }}</p></div>
-</div>
-{% if branch %}<div class="branch-print-details" style="border:1px solid #d7dde5;padding:10px 12px;margin-bottom:16px;border-radius:6px">
-  <strong>الفرع: {{ branch.name_ar }} ({{ branch.code }})</strong>
-  <div>{% if branch.address %}العنوان: {{ branch.address }}{% endif %}{% if branch.phone %} · هاتف: {{ branch.phone }}{% endif %}</div>
-  <div>{% if branch.email %}{{ branch.email }}{% endif %}{% if branch.tax_number %} · الرقم الضريبي للفرع: {{ branch.tax_number }}{% endif %}</div>
-</div>{% endif %}
+{% set document_title = 'فاتورة مورد' %}
+{% set document_number = {{ bill.bill_no }} %}
+{% set document_date = {{ bill.bill_date }} %}
+{% include "partials/print_brand_header.html" %}
 <div class="form-row"><div><b>المورد:</b> {{ bill.supplier_name }} ({{ bill.supplier_code }})</div><div><b>الرقم الضريبي:</b> {{ bill.supplier_tax_number or '—' }}</div><div><b>رقم فاتورة المورد:</b> {{ bill.supplier_invoice_no }}</div><div><b>الاستحقاق:</b> {{ bill.due_date or bill.bill_date }}</div></div>
 <h3>استلامات البضاعة المرتبطة</h3><div class="table-wrap"><table><thead><tr><th>رقم الاستلام</th><th>التاريخ</th><th>القيمة</th></tr></thead><tbody>{% for x in receipts %}<tr><td>{{ x.receipt_no }}</td><td>{{ x.receipt_date }}</td><td>{{ x.total_value|money }}</td></tr>{% else %}<tr><td colspan="3">فاتورة خدمة أو مصروف مباشر.</td></tr>{% endfor %}</tbody></table></div>
 <div class="invoice-totals"><p>الصافي قبل الضريبة: <b>{{ bill.subtotal|money }}</b></p><p>الضريبة: <b>{{ bill.tax_amount|money }}</b></p><h3>الإجمالي: {{ bill.total_amount|money }} {{ settings.get('base_currency','') }}</h3><p>المسدد: {{ bill.paid_amount|money }}</p><p>الإشعارات الدائنة: {{ bill.credited_amount or '0' }}</p></div>
