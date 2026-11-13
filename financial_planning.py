@@ -78,7 +78,7 @@ def initialize_planning_schema(conn):
     CREATE INDEX IF NOT EXISTS idx_financial_year_journal_history
       ON financial_year_journal_history(financial_year_id,entry_kind,id);
     """)
-    budget_columns = {row["name"] for row in conn.execute("PRAGMA table_info(budget_plans)")}
+    budget_columns = {row[1] for row in conn.execute("PRAGMA table_info(budget_plans)")}
     for column in ("branch_id", "cost_center_id", "project_id"):
         if column not in budget_columns:
             conn.execute(f"ALTER TABLE budget_plans ADD COLUMN {column} INTEGER")
