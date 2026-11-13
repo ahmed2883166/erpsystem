@@ -424,6 +424,11 @@ def invoice_sales_order(conn, order_id, invoice_date, due_date, created_by, dime
  conn.execute("UPDATE sales_invoices SET due_date=? WHERE id=?",(due_date or invoice_date,result["invoice_id"]))
  conn.execute("UPDATE sales_orders SET discount_allocated=? WHERE id=?",
   (str(already_allocated+invoice_discount),order_id))
+ for line in order_lines:
+  quantity_invoiced=invoice_qty_by_line.get(line["id"],Decimal("0"))
+  if quantity_invoiced>0:
+   conn.execute("UPDATE sales_order_lines SET invoiced_qty=? WHERE id=?",
+    (str(Decimal(str(line["invoiced_qty"]))+quantity_invoiced),line["id"]))
  for delivery_line_id,qty,allocated_cost,lot_plan in consumption_plan:
   current=conn.execute("SELECT invoiced_qty,invoiced_cost FROM delivery_note_lines WHERE id=?",(delivery_line_id,)).fetchone()
   conn.execute("UPDATE delivery_note_lines SET invoiced_qty=?,invoiced_cost=? WHERE id=?",
