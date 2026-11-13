@@ -6,7 +6,8 @@ from accounting_core import post_journal, register_decimal_aggregates, reconcili
 from chart_templates import ACTIVITY_ACCOUNT_ROLES
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
-from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, Response, abort, flash, redirect, render_template, request, send_file, session, url_for
+import io
 
 planning_bp = Blueprint("planning", __name__)
 CENT = Decimal("0.01")
@@ -1184,6 +1185,120 @@ def budget_reject(budget_id):
     finally:
         conn.close()
     return redirect(url_for("planning.budget_detail", budget_id=budget_id))
+
+
+@planning_bp.get("/budget/<int:budget_id>/export/<fmt>")
+@_require("budget.view")
+def budget_export(budget_id, fmt):
+    if fmt not in {"excel", "pdf"}:
+        abort(404)
+    conn = _connect()
+    try:
+        plan, rows = build_budget_monthly_comparison(conn, budget_id)
+        company = conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='company_name'").fetchone()
+        currency = conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
+        company_name = company["setting_value"] if company else "NEXUS ERP"
+        currency_code = currency["setting_value"] if currency else ""
+        if not rows:
+            rows = []
+        report_rows = [[r["period"], r["code"], r["name_ar"],
+                        "إيراد" if r["account_type"] == "revenue" else "مصروف",
+                        r["budget"], r["actual"], r["variance"],
+                        r["utilization_pct"] if r["utilization_pct"] is not None else "—",
+                        r["status"]] for r in rows]
+    except ValueError:
+        conn.close()
+        abort(404)
+    finally:
+        conn.close()
+    headers = ["الشهر", "كود الحساب", "اسم الحساب", "النوع", "المخطط", "الفعلي", "الانحراف", "نسبة الاستهلاك %", "الحالة"]
+    if fmt == "excel":
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            return Response("مكتبة openpyxl غير مثبتة.", status=500, mimetype="text/plain; charset=utf-8")
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Budget vs Actual"
+        sheet.append([company_name])
+        sheet.append(["مقارنة الموازنة بالفعلي", plan["name"]])
+        sheet.append(["الفترة", plan["date_from"], plan["date_to"], "العملة", currency_code])
+        sheet.append(headers)
+        for row in report_rows:
+            sheet.append([float(v) if isinstance(v, Decimal) else v for v in row])
+        for cell in sheet[4]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="167D8D")
+            cell.alignment = Alignment(horizontal="center")
+        sheet.freeze_panes = "A5"
+        sheet.auto_filter.ref = f"A4:I{max(4, sheet.max_row)}"
+        for column in sheet.columns:
+            letter = get_column_letter(column[0].column)
+            sheet.column_dimensions[letter].width = min(34, max(13, max(len(str(c.value or "")) for c in column) + 2))
+        output = io.BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        return send_file(output, as_attachment=True,
+            download_name=f"budget-actual-{budget_id}.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    try:
+        import os
+        import arabic_reshaper
+        from bidi.algorithm import get_display
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_RIGHT, TA_CENTER
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import mm
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from xml.sax.saxutils import escape
+    except ImportError:
+        return Response("مكتبات PDF غير مثبتة.", status=500, mimetype="text/plain; charset=utf-8")
+    font_candidates = [
+        os.path.join(os.path.dirname(__file__), "static", "fonts", "DejaVuSans.ttf"),
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed.ttf",
+        "C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/tahoma.ttf",
+    ]
+    font_path = next((path for path in font_candidates if os.path.isfile(path)), None)
+    if not font_path:
+        return Response("تعذر إنشاء PDF: أضف DejaVuSans.ttf إلى static/fonts.", status=503, mimetype="text/plain; charset=utf-8")
+    if "NexusArabic" not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(TTFont("NexusArabic", font_path))
+    def pdf_text(value):
+        return escape(get_display(arabic_reshaper.reshape("" if value is None else str(value))))
+    output = io.BytesIO()
+    page_size = landscape(A4)
+    doc = SimpleDocTemplate(output, pagesize=page_size, rightMargin=10*mm, leftMargin=10*mm,
+                            topMargin=12*mm, bottomMargin=12*mm, title="مقارنة الموازنة بالفعلي", author=company_name)
+    styles = getSampleStyleSheet()
+    heading = ParagraphStyle("BudgetHeading", parent=styles["Title"], fontName="NexusArabic", fontSize=14, leading=19, alignment=TA_CENTER)
+    cell = ParagraphStyle("BudgetCell", parent=styles["BodyText"], fontName="NexusArabic", fontSize=7, leading=9, alignment=TA_RIGHT)
+    head = ParagraphStyle("BudgetHead", parent=cell, textColor=colors.white, alignment=TA_CENTER)
+    story = [Paragraph(pdf_text(company_name), heading),
+             Paragraph(pdf_text("مقارنة الموازنة بالفعلي — " + plan["name"]), heading),
+             Paragraph(pdf_text(f"الفترة: {plan['date_from']} إلى {plan['date_to']} | العملة: {currency_code}"), cell),
+             Spacer(1, 4*mm)]
+    data = [[Paragraph(pdf_text(x), head) for x in reversed(headers)]]
+    for row in report_rows:
+        data.append([Paragraph(pdf_text(f"{x:,.2f}" if isinstance(x, Decimal) else x), cell) for x in reversed(row)])
+    table = Table(data, colWidths=[(page_size[0]-20*mm)/len(headers)]*len(headers), repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#167D8D")),
+        ("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#B7C3CC")),
+        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+        ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#F3F6F8")]),
+        ("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),
+        ("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3),
+    ]))
+    story.append(table)
+    doc.build(story)
+    output.seek(0)
+    return send_file(output, as_attachment=True, download_name=f"budget-actual-{budget_id}.pdf", mimetype="application/pdf")
 
 
 def build_balance_sheet_snapshot(conn, as_of):
