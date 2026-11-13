@@ -119,5 +119,27 @@ class InvoicePrintRouteTests(unittest.TestCase):
         self.assertIn("123456", body)
 
 
+    def test_print_routes_support_legacy_branch_table_without_contact_columns(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.executescript("""
+          ALTER TABLE branches RENAME TO branches_with_contact;
+          CREATE TABLE branches(
+            id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,active INTEGER DEFAULT 1
+          );
+          INSERT INTO branches(id,code,name_ar,active)
+            SELECT id,code,name_ar,active FROM branches_with_contact;
+          DROP TABLE branches_with_contact;
+        """)
+        conn.commit()
+        conn.close()
+        for path in ("/sales/invoices/1/print", "/purchases/bills/1/print"):
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 200, path)
+            body = response.get_data(as_text=True)
+            self.assertIn("فرع القاهرة", body)
+            self.assertNotIn("no such column", body.lower())
+
+
+
 if __name__ == "__main__":
     unittest.main()
