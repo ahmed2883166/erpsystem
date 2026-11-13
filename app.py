@@ -464,6 +464,8 @@ def log_change(action, entity_type, entity_id, before_values, after_values, deta
 
 
 _OPERATIONAL_AUDIT_RECORDS = {
+    "quotes.approve_order_route": ("sales_orders", "order_id", "id", "sales_order_lines", "sales_order_id"),
+    "quotes.post_delivery_note_route": ("delivery_notes", "note_id", "id", "delivery_note_lines", "delivery_note_id"),
     "sales.refund_credit_note": ("sales_credit_notes", "credit_note_id", "id", "sales_credit_note_lines", "credit_note_id"),
     "sales.cancel_credit_note_route": ("sales_credit_notes", "credit_note_id", "id", "sales_credit_note_lines", "credit_note_id"),
     "purchase.edit_order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
