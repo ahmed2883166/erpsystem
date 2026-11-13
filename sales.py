@@ -1811,8 +1811,17 @@ def new_receipt():
             item = dict(row)
             item["remaining_amount"] = outstanding
             invoices.append(item)
-    cash_accounts = c.execute("""SELECT id,code,name_ar FROM accounts
-        WHERE account_type='asset' AND is_group=0 AND active=1 ORDER BY code""").fetchall()
+    from activity_profiles import active_account_role_ids
+    cash_account_ids = sorted(active_account_role_ids(c).get("cash", set()))
+    cash_accounts = []
+    if cash_account_ids:
+        placeholders = ",".join("?" for _ in cash_account_ids)
+        cash_accounts = c.execute(
+            f"""SELECT id,code,name_ar FROM accounts
+                WHERE id IN ({placeholders}) AND account_type='asset'
+                  AND is_group=0 AND active=1 ORDER BY code""",
+            tuple(cash_account_ids),
+        ).fetchall()
     c.close()
     return render_template("sales_receipt_new.html", invoices=invoices, customers=customers,
                            cash_accounts=cash_accounts, today=date.today().isoformat())
