@@ -53,12 +53,12 @@ class ExpenseAnalysisTests(unittest.TestCase):
                 (5,'2026-12-01','posted','general'),
                 (6,'2026-11-25','posted','general');
             INSERT INTO journal_lines VALUES
-                (1,NULL,NULL,NULL,1,1,'1000','0',1,1,1),
-                (2,NULL,NULL,NULL,1,2,'300','0',1,1,1),
-                (3,NULL,NULL,NULL,2,2,'200','50',NULL,NULL,NULL),
-                (4,NULL,NULL,NULL,3,2,'900','0',1,1,1),
-                (5,NULL,NULL,NULL,4,2,'700','0',1,1,1),
-                (6,NULL,NULL,NULL,5,2,'400','0',1,1,1),
+                (1,1,1,'1000','0',1,1,1,NULL,NULL,NULL),
+                (2,1,2,'300','0',1,1,1,NULL,NULL,NULL),
+                (3,2,2,'200','50',NULL,NULL,NULL,NULL,NULL,NULL),
+                (4,3,2,'900','0',1,1,1,NULL,NULL,NULL),
+                (5,4,2,'700','0',1,1,1,NULL,NULL,NULL),
+                (6,5,2,'400','0',1,1,1,NULL,NULL,NULL),
                 (7,6,2,'100000000000000000.01','100000000000000000.00',1,1,1,NULL,NULL,NULL);
         """)
         self.conn.execute("UPDATE journal_lines SET customer_id=1,salesperson_id=1,supplier_id=1 WHERE id=1")
