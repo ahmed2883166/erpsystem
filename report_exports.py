@@ -329,7 +329,7 @@ def register_report_exports(app, db_path, permissions):
                 title = "تقرير الضرائب الشهري - " + snapshot["period"]
             elif report == "aging":
                 from receivables import (
-                    _amount, _table_exists, _customer_aging_movements,
+                    _amount, _table_exists, _customer_aging_documents, _customer_aging_movements,
                     _supplier_aging_movements, _supplier_aging_documents, _supplier_credit_notes_linked,
                 )
                 from datetime import date as date_type
@@ -343,13 +343,7 @@ def register_report_exports(app, db_path, permissions):
                 except ValueError:
                     abort(400)
                 if kind == "customers":
-                    invoice_rows = conn.execute("""SELECT i.id invoice_id,i.invoice_no doc_no,
-                      cu.code party_code,cu.name party_name,i.invoice_date doc_date,
-                      COALESCE(i.due_date,i.invoice_date) due_date,i.total_amount,
-                      i.paid_amount,COALESCE(i.credited_amount,'0') credited_amount
-                      FROM sales_invoices i JOIN customers cu ON cu.id=i.customer_id
-                      WHERE i.status='posted' AND i.invoice_date<=?
-                      ORDER BY due_date,cu.name""",(as_of,)).fetchall()
+                    invoice_rows = _customer_aging_documents(conn, as_of)
                     has_detail,paid_by_invoice,paid_all,credited_by_invoice,credited_all,refunds_by_invoice = (
                         _customer_aging_movements(conn, as_of)
                     )
