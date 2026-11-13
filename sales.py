@@ -51,6 +51,8 @@ def init_sales_schema():
       total_amount TEXT NOT NULL, paid_amount TEXT NOT NULL DEFAULT '0',
       status TEXT NOT NULL DEFAULT 'posted', journal_entry_id INTEGER UNIQUE,
       cogs_journal_entry_id INTEGER UNIQUE, created_by INTEGER,
+      sales_channel TEXT NOT NULL DEFAULT 'default',
+      revenue_account_code TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS sales_invoice_lines(
@@ -142,6 +144,10 @@ def init_sales_schema():
     invoice_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoices)")}
     if "sales_order_id" not in invoice_columns:
         c.execute("ALTER TABLE sales_invoices ADD COLUMN sales_order_id INTEGER")
+    if "sales_channel" not in invoice_columns:
+        c.execute("ALTER TABLE sales_invoices ADD COLUMN sales_channel TEXT NOT NULL DEFAULT 'default'")
+    if "revenue_account_code" not in invoice_columns:
+        c.execute("ALTER TABLE sales_invoices ADD COLUMN revenue_account_code TEXT NOT NULL DEFAULT ''")
     if "sales_order_line_id" not in line_columns:
         c.execute("ALTER TABLE sales_invoice_lines ADD COLUMN sales_order_line_id INTEGER")
     c.execute("CREATE INDEX IF NOT EXISTS idx_sales_invoices_order ON sales_invoices(sales_order_id,id)")
@@ -324,7 +330,7 @@ def _allowed_vat_rates(conn):
         raise ValueError("قائمة نسب الضريبة المعتمدة في إعدادات الشركة غير صحيحة.")
 
 
-def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate, created_by=None, allow_credit_override=False, dimensions=None, preissued_costs=None, sales_order_id=None, discount_override=None):
+def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate, created_by=None, allow_credit_override=False, dimensions=None, preissued_costs=None, sales_order_id=None, discount_override=None, sales_channel="default"):
     """Create invoice and balanced GL; optionally consume stock already issued by delivery notes."""
     rate = Decimal(str(tax_rate)).quantize(CENT, rounding=ROUND_HALF_UP)
     if not rate.is_finite() or rate < 0 or rate > 100:
@@ -346,7 +352,19 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     activity = _activity(conn)
     codes = _sales_account_codes(conn, activity)
     ar = _account(conn, codes["ar"], "asset")
-    revenue = _account(conn, codes["revenue"], "revenue")
+    sales_channel = str(sales_channel or "default").strip().lower()
+    restaurant_channels = {
+        "dine_in": "4100", "takeaway": "4200",
+        "direct_delivery": "4300", "delivery_apps": "4400",
+    }
+    if activity == "restaurant":
+        if sales_channel not in restaurant_channels:
+            raise ValueError("حدد قناة بيع صحيحة: صالة أو تيك أواي أو توصيل مباشر أو تطبيقات.")
+        revenue_code = restaurant_channels[sales_channel]
+    else:
+        sales_channel = "default"
+        revenue_code = codes["revenue"]
+    revenue = _account(conn, revenue_code, "revenue")
     vat = None
     inventory = _account(conn, codes["inventory"], "asset") if codes["inventory"] else None
     cogs = _account(conn, codes["cogs"], "expense") if codes["cogs"] else None
@@ -508,12 +526,14 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     cur = conn.execute(
         """INSERT INTO sales_invoices(invoice_no,customer_id,invoice_date,warehouse_id,subtotal,
            tax_rate,tax_amount,discount_type,discount_value,discount_amount,total_amount,
-           created_by,branch_id,cost_center_id,project_id,salesperson_id,sales_order_id)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           created_by,branch_id,cost_center_id,project_id,salesperson_id,sales_order_id,
+           sales_channel,revenue_account_code)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (invoice_no, customer_id, invoice_date, warehouse_id, str(subtotal), str(effective_rate),
          str(tax_amount), discount_type, str(discount_value), str(discount_amount), str(total_amount),
          created_by, dimensions["branch_id"], dimensions["cost_center_id"],
-         dimensions["project_id"], dimensions["salesperson_id"], sales_order_id)
+         dimensions["project_id"], dimensions["salesperson_id"], sales_order_id,
+         sales_channel, revenue_code)
     )
     invoice_id = cur.lastrowid
     for index, item in enumerate(normalized, 1):
@@ -1942,7 +1962,8 @@ def new_invoice():
                                   request.form.get("warehouse_id", type=int), items,
                                   request.form.get("tax_rate", "0"), session["user_id"],
                                   allow_credit_override=(session.get("role") == "admin" and request.form.get("credit_override") == "1"),
-                                  dimensions=request.form)
+                                  dimensions=request.form,
+                                  sales_channel=request.form.get("sales_channel", "default"))
             due_date = request.form.get("due_date") or request.form["invoice_date"]
             if due_date < request.form["invoice_date"]:
                 raise ValueError("تاريخ الاستحقاق لا يمكن أن يسبق تاريخ الفاتورة.")
