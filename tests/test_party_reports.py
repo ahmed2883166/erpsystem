@@ -153,7 +153,7 @@ class PartyStatementTests(unittest.TestCase):
             );
             INSERT INTO accounts(id,code,account_type) VALUES
                 (1,'1130','asset'),(2,'2110','liability'),
-                (3,'2160','liability'),(4,'1110','asset');
+                (3,'2160','liability'),(4,'1110','asset'),(5,'3999','equity');
             CREATE TABLE journal_entries(
                 id INTEGER PRIMARY KEY, entry_date TEXT NOT NULL, status TEXT NOT NULL
             );
@@ -233,8 +233,12 @@ class PartyStatementTests(unittest.TestCase):
                     (line_id, entry_id, account_id, debit, credit),
                 )
                 line_id += 1
-        # Offset each control-account movement with cash or a balancing account line.
-        # The reconciliation reads only the mapped control-account lines.
+                # Keep each synthetic journal balanced without changing control totals.
+                conn.execute(
+                    "INSERT INTO journal_lines VALUES(?,?,?,?,?)",
+                    (line_id, entry_id, 5, credit, debit),
+                )
+                line_id += 1
         conn.commit()
         conn.close()
 
@@ -252,6 +256,7 @@ class PartyStatementTests(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         conn.execute("INSERT INTO journal_entries(id,entry_date,status) VALUES(16,'2026-11-30','posted')")
         conn.execute("INSERT INTO journal_lines VALUES(99,16,1,'10','0')")
+        conn.execute("INSERT INTO journal_lines VALUES(100,16,5,'0','10')")
         conn.commit()
         conn.close()
         mismatch = self.client.get(
