@@ -15,7 +15,7 @@ class CompanyDataResetTests(unittest.TestCase):
         connection = sqlite3.connect(self.db_path)
         connection.executescript("""
             PRAGMA foreign_keys=ON;
-            CREATE TABLE users(id INTEGER PRIMARY KEY, username TEXT, role TEXT, password_hash TEXT);
+            CREATE TABLE users(id INTEGER PRIMARY KEY, username TEXT, role TEXT, active INTEGER, password_hash TEXT);
             CREATE TABLE accounts(id INTEGER PRIMARY KEY, code TEXT);
             CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT);
             CREATE TABLE currencies(code TEXT PRIMARY KEY, name TEXT);
@@ -39,7 +39,7 @@ class CompanyDataResetTests(unittest.TestCase):
             );
             CREATE TRIGGER audit_log_block_delete BEFORE DELETE ON audit_log
             BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
-            INSERT INTO users VALUES(1, 'admin', 'admin', 'root-hash');
+            INSERT INTO users VALUES(1, 'admin', 'admin', 1, 'root-hash');
             INSERT INTO accounts VALUES(1, '1000');
             INSERT INTO company_settings VALUES('company_name', 'NEXUS Test');
             INSERT INTO currencies VALUES('EGP', 'Egyptian Pound');
@@ -158,7 +158,8 @@ class CompanyDataResetTests(unittest.TestCase):
 
         with patch.dict(nexus_app.app.config, {"WTF_CSRF_ENABLED": False}):
             with patch.object(nexus_app, "db", side_effect=open_database), \
-                 patch.object(nexus_app, "create_backup_archive") as backup:
+                 patch.object(nexus_app, "create_backup_archive") as backup, \
+                 patch.object(nexus_app, "log"):
                 response = client.post(
                     "/backup/reset-data",
                     data={"super_admin_password": "wrong-password"},
