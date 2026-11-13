@@ -288,6 +288,7 @@ def employees():
     if request.method == "POST":
         try:
             values = _employee_form_values(request.form)
+            _validate_employee_dimensions(c, values)
             c.execute("""INSERT INTO employees(employee_code,full_name,job_title,department,hire_date,basic_salary,
                 standard_hours,legal_category,insurance_number,insured_wage,insurance_enabled,address,national_id,
                 work_status,raise_type,raise_value,raise_mode,raise_effective_date,overtime_rate_percent,
@@ -310,9 +311,11 @@ def employees():
     items = c.execute("""SELECT p.*,e.employee_code,e.full_name FROM employee_pay_items p
                          JOIN employees e ON e.id=p.employee_id ORDER BY e.employee_code,p.id DESC""").fetchall()
     incentive_rules = c.execute("SELECT * FROM payroll_incentive_rules ORDER BY active DESC,name").fetchall()
+    dimensions = _dimension_options(c)
     c.close()
     return render_template("employees.html", employees=rows, employee_options=employee_options,
-                           employees_page=employees_page, items=items, incentive_rules=incentive_rules)
+                           employees_page=employees_page, items=items, incentive_rules=incentive_rules,
+                           dimensions=dimensions)
 
 
 @workforce_bp.route("/hr/<int:employee_id>/edit", methods=["GET", "POST"])
@@ -327,6 +330,7 @@ def edit_employee(employee_id):
     if request.method == "POST":
         try:
             values = _employee_form_values(request.form)
+            _validate_employee_dimensions(c, values)
             c.execute("""UPDATE employees SET employee_code=?,full_name=?,job_title=?,department=?,hire_date=?,
                 basic_salary=?,standard_hours=?,legal_category=?,insurance_number=?,insured_wage=?,insurance_enabled=?,
                 address=?,national_id=?,work_status=?,raise_type=?,raise_value=?,raise_mode=?,
@@ -339,8 +343,9 @@ def edit_employee(employee_id):
         except (ValueError, KeyError, sqlite3.IntegrityError) as exc:
             c.rollback()
             flash(str(exc) or "تعذر تحديث بيانات الموظف.", "error")
+    dimensions = _dimension_options(c)
     c.close()
-    return render_template("employee_edit.html", e=employee)
+    return render_template("employee_edit.html", e=employee, dimensions=dimensions)
 
 
 @workforce_bp.route("/hr/incentive-rules", methods=["POST"])
