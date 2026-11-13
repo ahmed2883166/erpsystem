@@ -979,7 +979,6 @@ def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_i
                    Decimal(invoice["credited_amount"] or "0") + _refund_total(conn, invoice_id))
     if amount > outstanding:
         raise ValueError("قيمة التحصيل أكبر من الرصيد المستحق على الفاتورة.")
-    _ensure_unique_customer_cash_reference(conn, reference)
     _customer_cash_account(conn, cash_account_id)
     activity = _activity(conn)
     ar = _account(conn, _sales_account_codes(conn, activity)["ar"], "asset")
