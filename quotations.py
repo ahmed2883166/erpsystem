@@ -300,10 +300,15 @@ def post_delivery_note(conn, note_id, posted_by):
  method=method_row["setting_value"] if method_row else "average"
  total_cost=Decimal("0")
  for row in rows:
-  order_line=conn.execute("SELECT * FROM sales_order_lines WHERE id=?",(row["sales_order_line_id"],)).fetchone()
+  order_line=conn.execute("SELECT * FROM sales_order_lines WHERE id=? AND sales_order_id=?",(row["sales_order_line_id"],order["id"])).fetchone()
+  if not order_line or not order_line["product_id"] or int(order_line["product_id"])!=int(row["product_id"]):
+   raise ValueError("بند إذن التسليم لا يطابق الصنف المخزني في أمر البيع.")
+  if int(note["warehouse_id"])!=int(order["warehouse_id"] or 0):
+   raise ValueError("مخزن إذن التسليم لا يطابق مخزن أمر البيع.")
   qty=Decimal(str(row["quantity"]))
   remaining=Decimal(str(order_line["ordered_qty"]))-Decimal(str(order_line["delivered_qty"]))
-  if qty>remaining: raise ValueError("كمية التسليم تجاوزت المتبقي بسبب عملية تسليم أخرى.")
+  if not qty.is_finite() or qty<=0 or qty>remaining:
+   raise ValueError("كمية التسليم تجاوزت المتبقي بسبب عملية تسليم أخرى.")
   product=conn.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(row["product_id"],)).fetchone()
   if not product: raise ValueError("الصنف غير موجود أو غير نشط.")
   cost,allocations=consume_layers(conn,row["product_id"],note["warehouse_id"],qty,method)
@@ -328,12 +333,17 @@ def post_delivery_note(conn, note_id, posted_by):
    (str(Decimal(str(order_line["delivered_qty"]))+qty),order_line["id"]))
   total_cost+=cost
  remaining=conn.execute(
-  "SELECT ordered_qty,delivered_qty FROM sales_order_lines WHERE sales_order_id=?",(order["id"],)).fetchall()
- all_delivered=all(Decimal(str(x["delivered_qty"]))>=Decimal(str(x["ordered_qty"])) for x in remaining)
+  "SELECT ordered_qty,delivered_qty,invoiced_qty,product_id FROM sales_order_lines WHERE sales_order_id=?",(order["id"],)).fetchall()
+ all_delivered=all(
+  (not x["product_id"]) or
+  Decimal(str(x["delivered_qty"]))>=Decimal(str(x["ordered_qty"]))
+  for x in remaining
+ )
+ any_invoiced=any(Decimal(str(x["invoiced_qty"] or "0"))>0 for x in remaining)
  conn.execute("UPDATE delivery_notes SET status='posted',posted_by=?,posted_at=CURRENT_TIMESTAMP WHERE id=?",
   (posted_by,note_id))
- conn.execute("UPDATE sales_orders SET status=? WHERE id=?",
-  ("delivered" if all_delivered else "partially_delivered",order["id"]))
+ next_status=("partially_invoiced" if any_invoiced else ("delivered" if all_delivered else "partially_delivered"))
+ conn.execute("UPDATE sales_orders SET status=? WHERE id=?",(next_status,order["id"]))
  return {"delivery_note_id":note_id,"total_cost":total_cost,"fully_delivered":all_delivered}
 
 
@@ -536,9 +546,19 @@ def sales_order_view(order_id):
  if not order:
   c.close(); flash("أمر البيع غير موجود.","error"); return redirect(url_for("quotes.index"))
  lines=[]
+ reserved_by_line={}
+ for reserved_row in c.execute(
+  """SELECT dl.sales_order_line_id,dl.quantity FROM delivery_note_lines dl
+     JOIN delivery_notes dn ON dn.id=dl.delivery_note_id
+     WHERE dn.sales_order_id=? AND dn.status='draft'""",(order_id,)).fetchall():
+  reserved_by_line[reserved_row["sales_order_line_id"]]=(
+   reserved_by_line.get(reserved_row["sales_order_line_id"],Decimal("0"))+
+   Decimal(str(reserved_row["quantity"]))
+  )
  for row in c.execute("SELECT * FROM sales_order_lines WHERE sales_order_id=? ORDER BY id",(order_id,)).fetchall():
   item=dict(row)
-  item["remaining_delivery"]=max(Decimal("0"),Decimal(row["ordered_qty"])-Decimal(row["delivered_qty"]))
+  item["reserved_delivery"]=reserved_by_line.get(row["id"],Decimal("0"))
+  item["remaining_delivery"]=max(Decimal("0"),Decimal(row["ordered_qty"])-Decimal(row["delivered_qty"])-item["reserved_delivery"])
   item["ready_to_invoice"]=max(Decimal("0"),Decimal(row["delivered_qty"])-Decimal(row["invoiced_qty"]))
   lines.append(item)
  notes=c.execute("SELECT * FROM delivery_notes WHERE sales_order_id=? ORDER BY id DESC",(order_id,)).fetchall()
