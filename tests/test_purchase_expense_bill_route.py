@@ -537,7 +537,6 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
             [(row["supplier_invoice_no"], Decimal(row["amount"])) for row in allocations],
             [("INV-SPLIT-1", Decimal("40.00")), ("INV-SPLIT-2", Decimal("60.00"))],
         )
-        payable_id = conn.execute("SELECT id FROM accounts WHERE code='2110'").fetchone()["id"]
         payment_lines = conn.execute(
             """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
                JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=? ORDER BY jl.id""",
