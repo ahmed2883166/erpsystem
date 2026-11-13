@@ -713,9 +713,16 @@ def order_print(order_id):
         c.close()
         from flask import abort
         abort(404)
-    lines = c.execute("""SELECT l.*,p.sku,p.name_ar product_name,p.uom
+    raw_lines = c.execute("""SELECT l.*,p.sku,p.name_ar product_name,p.uom
         FROM purchase_order_lines l JOIN stock_products p ON p.id=l.product_id
         WHERE l.po_id=? ORDER BY l.id""", (order_id,)).fetchall()
+    lines = []
+    order_total = Decimal("0")
+    for row in raw_lines:
+        item = dict(row)
+        item["line_total"] = Decimal(str(row["quantity"])) * Decimal(str(row["unit_price"]))
+        order_total += item["line_total"]
+        lines.append(item)
     settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
         "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
