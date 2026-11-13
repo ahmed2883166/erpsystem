@@ -312,6 +312,7 @@ def index():
         except (ValueError,InvalidOperation,KeyError,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود الأصل مستخدم أو توجد بيانات غير صحيحة.","error")
     assets=c.execute("""SELECT f.*,a.code asset_code_gl,a.name_ar asset_account_name,
+      COALESCE(f.supplier_bill_id,l.bill_id) linked_supplier_bill_id,
       sb.bill_no supplier_bill_no,sb.supplier_invoice_no,
       COALESCE((SELECT DECIMAL_SUM(d.amount) FROM asset_depreciations d WHERE d.asset_id=f.id),0) accumulated
       FROM fixed_assets f JOIN accounts a ON a.id=f.asset_account_id
