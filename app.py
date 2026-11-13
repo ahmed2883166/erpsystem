@@ -476,12 +476,16 @@ _OPERATIONAL_AUDIT_RECORDS = {
 
 def _operational_audit_snapshot(endpoint, view_args):
     """Read a safe before/after snapshot for known operational records; never writes business data."""
-    spec = next((value for prefix, value in _OPERATIONAL_AUDIT_RECORDS.items()
-                 if endpoint.startswith(prefix)), None)
-    if not spec:
-        return None
-    table, argument, primary_key, child_table, child_key = spec
-    record_id = (view_args or {}).get(argument)
+    if created_record:
+        table, record_id, child_table, child_key = created_record
+        primary_key = "id"
+    else:
+        spec = next((value for prefix, value in _OPERATIONAL_AUDIT_RECORDS.items()
+                     if endpoint.startswith(prefix)), None)
+        if not spec:
+            return None
+        table, argument, primary_key, child_table, child_key = spec
+        record_id = (view_args or {}).get(argument)
     if record_id is None:
         return None
     connection = db()
@@ -557,7 +561,10 @@ def audit_operational_mutations(response):
                 ) if view_args.get(key) is not None),
                 None,
             )
-            after_values = _operational_audit_snapshot(endpoint, view_args)
+            created_record = getattr(g, "audit_created_record", None)
+            after_values = _operational_audit_snapshot(endpoint, view_args, created_record)
+            if created_record:
+                record_id = created_record[1]
             before_values = getattr(g, "audit_before_values", None)
             log(
                 "module_operation",
