@@ -187,7 +187,7 @@ class CompanyDataResetTests(unittest.TestCase):
             return self.open_database()
 
         backup_path = Path(self.temp.name) / "csrf-reset-backup.zip"
-        with patch.object(nexus_app, "db", side_effect=open_database) as db_patch:
+        with patch.object(nexus_app, "db", side_effect=open_database):
             with patch.object(
                 nexus_app, "create_backup_archive", return_value=backup_path
             ) as backup:
