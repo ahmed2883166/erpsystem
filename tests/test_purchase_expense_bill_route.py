@@ -440,5 +440,72 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         conn.close()
 
 
+    def test_one_grni_receipt_can_be_split_across_two_posted_supplier_bills(self):
+        conn = purchases.db()
+        warehouse = conn.execute(
+            "INSERT INTO stock_warehouses(code,name_ar) VALUES('WH-SPLIT','مخزن تقسيم')"
+        )
+        receipt = conn.execute("""INSERT INTO goods_receipts(
+            receipt_no,supplier_id,warehouse_id,receipt_date,status,total_value
+        ) VALUES('GR-SPLIT',?,?,'2026-11-13','posted','100.00')""",
+            (self.supplier_id, warehouse.lastrowid))
+        receipt_id = receipt.lastrowid
+        conn.commit()
+        conn.close()
+
+        with self.client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "accountant"
+        for invoice_no, amount in (("INV-SPLIT-1", "40.00"), ("INV-SPLIT-2", "60.00")):
+            response = self.client.post("/purchases/bills/new", data={
+                "supplier_id": str(self.supplier_id),
+                "supplier_invoice_no": invoice_no,
+                "bill_date": "2026-11-13",
+                "due_date": "2026-11-30",
+                "bill_kind": "inventory",
+                "subtotal": amount,
+                "tax_rate": "0",
+                "receipt_id": str(receipt_id),
+                "receipt_amount_" + str(receipt_id): amount,
+            })
+            self.assertEqual(response.status_code, 302)
+            conn = purchases.db()
+            bill = conn.execute(
+                "SELECT id,status,journal_entry_id FROM supplier_bills WHERE supplier_invoice_no=?",
+                (invoice_no,)
+            ).fetchone()
+            self.assertIsNotNone(bill)
+            self.assertEqual(bill["status"], "draft")
+            self.assertIsNone(bill["journal_entry_id"])
+            bill_id = bill["id"]
+            allocation = conn.execute(
+                "SELECT matched_amount FROM supplier_bill_receipts WHERE bill_id=? AND receipt_id=?",
+                (bill_id, receipt_id)
+            ).fetchone()
+            self.assertEqual(Decimal(allocation["matched_amount"]), Decimal(amount))
+            conn.close()
+            self._submit_approve_and_post(bill_id)
+
+        conn = purchases.db()
+        allocations = conn.execute(
+            "SELECT matched_amount FROM supplier_bill_receipts WHERE receipt_id=? ORDER BY bill_id",
+            (receipt_id,)
+        ).fetchall()
+        self.assertEqual([Decimal(row["matched_amount"]) for row in allocations],
+                         [Decimal("40.00"), Decimal("60.00")])
+        posted = conn.execute(
+            "SELECT COUNT(*) FROM supplier_bills WHERE supplier_invoice_no IN ('INV-SPLIT-1','INV-SPLIT-2') AND status='posted' AND journal_entry_id IS NOT NULL"
+        ).fetchone()[0]
+        self.assertEqual(posted, 2)
+        grni_account = conn.execute("SELECT id FROM accounts WHERE code='2190'").fetchone()["id"]
+        grni_debits = conn.execute(
+            """SELECT debit FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+               WHERE jl.account_id=? AND je.status='posted' ORDER BY jl.id""", (grni_account,)
+        ).fetchall()
+        self.assertEqual(sum((Decimal(row["debit"]) for row in grni_debits), Decimal("0")),
+                         Decimal("100.00"))
+        conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()
