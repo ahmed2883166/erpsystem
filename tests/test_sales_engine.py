@@ -761,6 +761,81 @@ class SalesIntegrationTests(unittest.TestCase):
         self.db.rollback()
 
 
+    def test_batch_receipt_and_advance_allocation_preserve_each_invoice_dimensions(self):
+        branch_a = self.db.execute(
+            "INSERT INTO branches(code,name_ar) VALUES('BR-MIX-A','فرع أ')"
+        ).lastrowid
+        branch_b = self.db.execute(
+            "INSERT INTO branches(code,name_ar) VALUES('BR-MIX-B','فرع ب')"
+        ).lastrowid
+        project_a = self.db.execute(
+            "INSERT INTO projects(code,name_ar) VALUES('PJ-MIX-A','مشروع أ')"
+        ).lastrowid
+        project_b = self.db.execute(
+            "INSERT INTO projects(code,name_ar) VALUES('PJ-MIX-B','مشروع ب')"
+        ).lastrowid
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice_a = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}],
+            "0", 1, dimensions={"branch_id": branch_a, "project_id": project_a},
+        )
+        invoice_b = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}],
+            "0", 1, dimensions={"branch_id": branch_b, "project_id": project_b},
+        )
+        cash_id = self.db.execute(
+            "SELECT id FROM accounts WHERE code='1110'"
+        ).fetchone()["id"]
+        advance = sales.post_customer_advance_receipt(
+            self.db, self.customer_id, "2026-11-11", "100", cash_id, 1,
+        )
+        allocation = sales.allocate_customer_advance(
+            self.db, advance["advance_receipt_id"],
+            [(invoice_a["invoice_id"], "50"), (invoice_b["invoice_id"], "50")],
+            "2026-11-12", 1,
+        )
+        batch = sales.post_customer_receipt_batch(
+            self.db, self.customer_id, "2026-11-13",
+            [(invoice_a["invoice_id"], "50"), (invoice_b["invoice_id"], "50")],
+            cash_id, 1, "MIXED-DIMENSIONS",
+        )
+        self.db.commit()
+
+        expected = {
+            invoice_a["invoice_id"]: (branch_a, project_a),
+            invoice_b["invoice_id"]: (branch_b, project_b),
+        }
+        for entry_id in (allocation["journal_entry_id"], batch["journal_entry_id"]):
+            rows = self.db.execute(
+                """SELECT jl.credit,jl.branch_id,jl.project_id
+                   FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+                   WHERE jl.entry_id=? AND a.code='1130' ORDER BY jl.credit""",
+                (entry_id,),
+            ).fetchall()
+            self.assertEqual(len(rows), 2)
+            actual = {(row["branch_id"], row["project_id"]) for row in rows}
+            self.assertEqual(actual, set(expected.values()))
+            self.assertEqual(
+                sum((Decimal(row["credit"]) for row in rows), Decimal("0")),
+                Decimal("100.00"),
+            )
+        self.assertEqual(
+            self.db.execute(
+                "SELECT COUNT(*) FROM journal_entries WHERE reference IN (?,?)",
+                (allocation["journal_entry_id"] and self.db.execute(
+                    "SELECT reference FROM journal_entries WHERE id=?",
+                    (allocation["journal_entry_id"],),
+                ).fetchone()["reference"], batch["receipt_no"]),
+            ).fetchone()[0],
+            2,
+        )
+        self.assertEqual(
+            sales._customer_advance_available(self.db, advance["advance_receipt_id"]),
+            Decimal("0.00"),
+        )
+
     def test_customer_settlement_cycle_preserves_invoice_dimensions_and_reconciles_gl(self):
         branch_id = self.db.execute(
             "INSERT INTO branches(code,name_ar) VALUES('BR-COL','فرع التحصيل')"
