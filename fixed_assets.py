@@ -6,7 +6,7 @@ import calendar
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import date
 from functools import wraps
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal
 
 assets_bp = Blueprint("assets", __name__, url_prefix="/assets")
@@ -74,12 +74,13 @@ def index():
             if account_types[0]!="asset" or account_types[1]!="asset" or account_types[2]!="expense":
                 raise ValueError("حساب الأصل ومجمع الإهلاك يجب أن يكونا من الأصول، ومصروف الإهلاك من المصروفات.")
             if method=="declining_balance" and not (Decimal("0") < Decimal(request.form.get("annual_rate","0")) <= Decimal("100")): raise ValueError("معدل الإهلاك السنوي يجب أن يكون أكبر من صفر ولا يتجاوز 100%.")
-            c.execute("""INSERT INTO fixed_assets(asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,useful_life_months,depreciation_method,annual_rate,total_units,asset_account_id,accum_account_id,expense_account_id,notes,created_by)
+            asset_cursor = c.execute("""INSERT INTO fixed_assets(asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,useful_life_months,depreciation_method,annual_rate,total_units,asset_account_id,accum_account_id,expense_account_id,notes,created_by)
               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (request.form["asset_code"].strip(),request.form["asset_name"].strip(),request.form.get("category","").strip(),
                request.form["purchase_date"],request.form["ready_date"],str(cost),str(residual),life,method,
                request.form.get("annual_rate","0"),request.form.get("total_units","0"),*ids,request.form.get("notes",""),session["user_id"]))
-            c.commit(); flash("تم تسجيل الأصل. تأكد من أن قيد الشراء الأصلي مسجل قبل بدء الإهلاك.","success")
+            asset_id = asset_cursor.lastrowid
+            c.commit(); g.audit_created_record = ("fixed_assets", asset_id, None, None); flash("تم تسجيل الأصل. تأكد من أن قيد الشراء الأصلي مسجل قبل بدء الإهلاك.","success")
             return redirect(url_for("assets.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود الأصل مستخدم أو توجد بيانات غير صحيحة.","error")
