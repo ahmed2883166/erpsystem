@@ -813,6 +813,10 @@ def submit_supplier_bill(c, bill_id, actor_id):
     elif bill["bill_kind"] == "expense":
         if bill_receipts:
             raise ValueError("فاتورة المصروف لا يجوز ربطها بإيصالات استلام مخزني.")
+    elif bill["bill_kind"] == "asset":
+        if bill_receipts:
+            raise ValueError("فاتورة الأصل الثابت لا يجوز ربطها بإيصالات استلام مخزني.")
+        validate_asset_bill_data(c, bill, bill["bill_date"], money(bill["subtotal"]))
     else:
         raise ValueError("نوع فاتورة المورد المخزن غير معروف.")
     c.execute("""UPDATE supplier_bills SET status='pending_approval',
@@ -910,6 +914,14 @@ def post_supplier_bill(c, bill_id, actor_id):
             (expense_id, subtotal, 0, "مصروف فاتورة المورد"),
             (ap, 0, subtotal, "إثبات المورد"),
         ])
+    elif bill["bill_kind"] == "asset":
+        if c.execute("SELECT 1 FROM supplier_bill_receipts WHERE bill_id=? LIMIT 1", (bill_id,)).fetchone():
+            raise ValueError("فاتورة الأصل الثابت لا يجوز ربطها بإيصالات استلام مخزني.")
+        asset_data = validate_asset_bill_data(c, bill, bill["bill_date"], subtotal)
+        journal_lines.extend([
+            (asset_data["asset_account_id"], subtotal, 0, "رسملة تكلفة الأصل " + asset_data["asset_name"]),
+            (ap, 0, subtotal, "إثبات المورد مقابل شراء أصل ثابت"),
+        ])
     else:
         raise ValueError("نوع فاتورة المورد المخزن غير معروف.")
     if tax:
@@ -929,6 +941,10 @@ def post_supplier_bill(c, bill_id, actor_id):
         WHERE id=? AND status='approved' AND journal_entry_id IS NULL""", (entry_id, bill_id))
     if c.execute("SELECT changes()").fetchone()[0] != 1:
         raise ValueError("تغيرت حالة فاتورة المورد أثناء الترحيل.")
+    if bill["bill_kind"] == "asset":
+        from fixed_assets import create_asset_from_supplier_bill
+        posted_bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+        create_asset_from_supplier_bill(c, posted_bill, actor_id)
     return entry_id
 
 
