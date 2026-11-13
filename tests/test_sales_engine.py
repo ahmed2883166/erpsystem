@@ -713,6 +713,77 @@ class SalesIntegrationTests(unittest.TestCase):
         self.db.rollback()
 
 
+    def test_customer_advance_dates_cannot_precede_receipt_or_invoice(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        first_invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}], "0", 1,
+        )
+        future_invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-15", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "50"}], "0", 1,
+        )
+        cash_id = self.db.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
+        advance = sales.post_customer_advance_receipt(
+            self.db, self.customer_id, "2026-11-11", "100", cash_id, 1,
+        )
+        with self.assertRaisesRegex(ValueError, "يسبق تاريخ استلامه"):
+            sales.allocate_customer_advance(
+                self.db, advance["advance_receipt_id"],
+                [(first_invoice["invoice_id"], "10")], "2026-11-10", 1,
+            )
+        with self.assertRaisesRegex(ValueError, "قبل تاريخ إصدارها"):
+            sales.allocate_customer_advance(
+                self.db, advance["advance_receipt_id"],
+                [(future_invoice["invoice_id"], "10")], "2026-11-12", 1,
+            )
+        with self.assertRaisesRegex(ValueError, "يسبق تاريخ استلامه"):
+            sales.post_customer_advance_refund(
+                self.db, advance["advance_receipt_id"], "2026-11-10", "10", cash_id, 1,
+            )
+        self.assertEqual(
+            self.db.execute(
+                "SELECT COUNT(*) FROM customer_advance_allocations WHERE advance_receipt_id=?",
+                (advance["advance_receipt_id"],),
+            ).fetchone()[0], 0,
+        )
+        self.assertEqual(
+            self.db.execute(
+                "SELECT COUNT(*) FROM customer_advance_refunds WHERE advance_receipt_id=?",
+                (advance["advance_receipt_id"],),
+            ).fetchone()[0], 0,
+        )
+        self.db.rollback()
+
+    def test_customer_receipts_require_mapped_cash_accounts_and_valid_values(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}], "0", 1,
+        )
+        inventory_id = self.db.execute("SELECT id FROM accounts WHERE code='1150'").fetchone()["id"]
+        with self.assertRaisesRegex(ValueError, "مربوطًا بملف النشاط"):
+            sales.post_customer_receipt(
+                self.db, invoice["invoice_id"], "2026-11-11", "10", inventory_id, 1,
+            )
+        with self.assertRaisesRegex(ValueError, "مربوطًا بملف النشاط"):
+            sales.post_customer_receipt_batch(
+                self.db, self.customer_id, "2026-11-11",
+                [(invoice["invoice_id"], "10")], inventory_id, 1,
+            )
+        cash_id = self.db.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
+        with self.assertRaisesRegex(ValueError, "قيمة التحصيل"):
+            sales.post_customer_receipt(
+                self.db, invoice["invoice_id"], "2026-11-11", "NaN", cash_id, 1,
+            )
+        with self.assertRaisesRegex(ValueError, "تاريخ العملية غير صحيح"):
+            sales.post_customer_receipt(
+                self.db, invoice["invoice_id"], "not-a-date", "10", cash_id, 1,
+            )
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM customer_receipts").fetchone()[0], 0)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM customer_receipt_batches").fetchone()[0], 0)
+        self.db.rollback()
+
     def test_customer_advance_routes_receive_allocate_and_refund(self):
         from flask import Flask
         app = Flask(__name__, template_folder=str(Path(__file__).resolve().parents[1] / "templates"))
