@@ -74,16 +74,19 @@ class IncomeStatementRouteTests(unittest.TestCase):
             CREATE TABLE projects(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,status TEXT DEFAULT 'active',active INTEGER DEFAULT 1);
             CREATE TABLE customers(id INTEGER PRIMARY KEY,code TEXT,name TEXT,active INTEGER DEFAULT 1);
             CREATE TABLE salespersons(id INTEGER PRIMARY KEY,code TEXT,name TEXT,active INTEGER DEFAULT 1);
+            CREATE TABLE suppliers(id INTEGER PRIMARY KEY,code TEXT,name TEXT,active INTEGER DEFAULT 1);
             INSERT INTO branches VALUES(1,'B1','فرع القاهرة',1);
             INSERT INTO cost_centers VALUES(1,'CC1','مركز تجاري',1);
             INSERT INTO projects VALUES(1,'P1','مشروع ألف','active',1);
             INSERT INTO customers VALUES(1,'C1','عميل ألف',1);
             INSERT INTO salespersons VALUES(1,'SP1','مندوب ألف',1);
+            INSERT INTO suppliers VALUES(1,'S1','مورد ألف',1);
             ALTER TABLE journal_lines ADD COLUMN branch_id INTEGER;
             ALTER TABLE journal_lines ADD COLUMN cost_center_id INTEGER;
             ALTER TABLE journal_lines ADD COLUMN project_id INTEGER;
             ALTER TABLE journal_lines ADD COLUMN customer_id INTEGER;
             ALTER TABLE journal_lines ADD COLUMN salesperson_id INTEGER;
+            ALTER TABLE journal_lines ADD COLUMN supplier_id INTEGER;
             UPDATE journal_lines SET branch_id=1,project_id=1,customer_id=1,salesperson_id=1 WHERE id IN (1,3);
         """)
         conn.commit()
@@ -101,11 +104,19 @@ class IncomeStatementRouteTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             session["user_id"] = 1
             session["role"] = "admin"
-            session["permissions"] = ["reports.view"]
+            session["permissions"] = ["reports.view", "expenses.view"]
 
     def tearDown(self):
         nexus_app.db = self.original_db
         self.temp.cleanup()
+
+    def test_expense_analysis_requires_dedicated_expenses_view_permission(self):
+        with self.client.session_transaction() as session:
+            session["permissions"] = ["reports.view"]
+        response = self.client.get("/reports/expense-analysis")
+        self.assertEqual(response.status_code, 302)
+        with self.client.session_transaction() as session:
+            session["permissions"] = ["reports.view", "expenses.view"]
 
     def test_analytical_expense_report_route_renders_filtered_report(self):
         response = self.client.get(
