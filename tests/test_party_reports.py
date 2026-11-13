@@ -85,6 +85,32 @@ class PartyStatementTests(unittest.TestCase):
         self.assertIn("كشف حساب عميل", body)
         self.assertIn("SCN-1", body)
 
+    def test_customer_statement_includes_batch_receipts_without_double_counting(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""CREATE TABLE customer_receipt_batches(
+            id INTEGER PRIMARY KEY, customer_id INTEGER, receipt_no TEXT,
+            receipt_date TEXT, total_amount TEXT, reference TEXT
+        )""")
+        conn.execute("""CREATE TABLE customer_receipt_allocations(
+            id INTEGER PRIMARY KEY, batch_id INTEGER, invoice_id INTEGER, amount TEXT
+        )""")
+        conn.execute(
+            "INSERT INTO customer_receipt_batches VALUES(1,1,'RCPTB-1','2026-11-25','150.00','BANK-1')"
+        )
+        conn.execute(
+            "INSERT INTO customer_receipt_allocations VALUES(1,1,2,'150.00')"
+        )
+        conn.commit()
+        conn.close()
+
+        response = self.client.get(
+            "/reports/party-statement?kind=customer&party_id=1&date_from=2026-11-01&date_to=2026-11-30"
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("RCPTB-1", body)
+        self.assertIn("1,050.00", body)  # 500 invoice - 100 receipt - 150 batch receipt + 200 old invoice net in opening.
+
     def test_supplier_statement_opening_and_running_balance(self):
         response = self.client.get("/reports/party-statement?kind=supplier&party_id=1&date_from=2026-11-01&date_to=2026-11-30")
         self.assertEqual(response.status_code, 200)
