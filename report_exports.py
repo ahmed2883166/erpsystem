@@ -330,7 +330,7 @@ def register_report_exports(app, db_path, permissions):
             elif report == "aging":
                 from receivables import (
                     _amount, _table_exists, _customer_aging_movements,
-                    _supplier_aging_movements,
+                    _supplier_aging_movements, _supplier_aging_documents,
                 )
                 from datetime import date as date_type
                 kind = request.args.get("kind", "customers")
@@ -355,13 +355,7 @@ def register_report_exports(app, db_path, permissions):
                     )
                     credit_table_exists = _table_exists(conn, "sales_credit_notes")
                 else:
-                    invoice_rows = conn.execute("""SELECT b.id invoice_id,b.bill_no doc_no,
-                      s.code party_code,s.name party_name,b.bill_date doc_date,
-                      COALESCE(b.due_date,b.bill_date) due_date,b.total_amount,
-                      b.paid_amount,COALESCE(b.credited_amount,'0') credited_amount
-                      FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
-                      WHERE b.status='posted' AND b.bill_date<=?
-                      ORDER BY due_date,s.name""",(as_of,)).fetchall()
+                    invoice_rows = _supplier_aging_documents(conn, as_of)
                     has_detail,paid_by_invoice,paid_all,credited_by_invoice,credited_all = (
                         _supplier_aging_movements(conn, as_of)
                     )
