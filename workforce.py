@@ -2,11 +2,12 @@ from app_paths import DB_PATH
 from database import connect_database, fetch_page
 """Employee master, payroll preparation and employee custody workflows."""
 import sqlite3
+import io
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
+from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g, send_file
 from accounting_core import post_journal
 
 workforce_bp = Blueprint("workforce", __name__)
@@ -41,6 +42,7 @@ def initialize_workforce_schema():
       hire_date TEXT NOT NULL, basic_salary TEXT NOT NULL, standard_hours TEXT NOT NULL DEFAULT '208',
       active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       address TEXT NOT NULL DEFAULT '', national_id TEXT NOT NULL DEFAULT '',
+      variable_salary TEXT NOT NULL DEFAULT '0',
       work_status TEXT NOT NULL DEFAULT 'permanent',
       raise_type TEXT NOT NULL DEFAULT 'fixed', raise_value TEXT NOT NULL DEFAULT '0',
       raise_mode TEXT NOT NULL DEFAULT 'basic', raise_effective_date TEXT NOT NULL DEFAULT '',
@@ -164,6 +166,7 @@ def initialize_workforce_schema():
     for name, definition in {
         "address": "TEXT NOT NULL DEFAULT ''",
         "national_id": "TEXT NOT NULL DEFAULT ''",
+        "variable_salary": "TEXT NOT NULL DEFAULT '0'",
         "work_status": "TEXT NOT NULL DEFAULT 'permanent'",
         "raise_type": "TEXT NOT NULL DEFAULT 'fixed'",
         "raise_value": "TEXT NOT NULL DEFAULT '0'",
@@ -348,6 +351,179 @@ def edit_employee(employee_id):
     return render_template("employee_edit.html", e=employee, dimensions=dimensions)
 
 
+@workforce_bp.route("/hr/import-excel", methods=["POST"])
+@_role("admin", "accountant")
+def import_employees_excel():
+    upload = request.files.get("file")
+    if not upload or not upload.filename.lower().endswith(".xlsx"):
+        flash("اختر ملف Excel بصيغة XLSX.", "error")
+        return redirect(url_for("workforce.employees"))
+    try:
+        from openpyxl import load_workbook
+        workbook = load_workbook(upload, read_only=True, data_only=True)
+        sheet = workbook.active
+        header_values = [str(value or "").strip().lower() for value in next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))]
+        aliases = {
+            "employee_code": ("كود الموظف", "employee_code", "code"),
+            "full_name": ("اسم الموظف", "الاسم", "full_name", "name"),
+            "address": ("العنوان", "address"),
+            "national_id": ("الرقم القومي", "رقم قومي", "national_id"),
+            "insurance_number": ("رقم التأمين", "رقم التأمين الاجتماعي", "insurance_number"),
+            "basic_salary": ("الأساسي", "الراتب الأساسي", "basic_salary"),
+            "variable_salary": ("المتغير", "الأجر المتغير", "variable_salary"),
+            "work_status": ("الحالة الوظيفية", "الحالة", "work_status", "status"),
+            "active": ("نشط", "active"),
+        }
+        indexes = {}
+        for key, names in aliases.items():
+            for index, header in enumerate(header_values):
+                if header in tuple(name.lower() for name in names):
+                    indexes[key] = index
+                    break
+        required = ("employee_code", "full_name", "basic_salary")
+        missing = [key for key in required if key not in indexes]
+        if missing:
+            raise ValueError("الأعمدة الإلزامية غير موجودة: كود الموظف، اسم الموظف، الأساسي.")
+        status_map = {
+            "permanent": "permanent", "مثبت": "permanent", "دائم": "permanent",
+            "comprehensive_bonus": "comprehensive_bonus", "مكافأة شاملة": "comprehensive_bonus",
+            "unpaid_leave": "unpaid_leave", "إجازة بدون مرتب": "unpaid_leave",
+            "resigned": "resigned", "مستقيل": "resigned", "استقالة": "resigned",
+            "retired": "retired", "معاش": "retired", "متقاعد": "retired",
+        }
+        parsed_rows, seen_codes = [], set()
+        for excel_row, values in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+            if not any(value is not None and str(value).strip() for value in values):
+                continue
+            def cell(key, default=""):
+                index = indexes.get(key)
+                return values[index] if index is not None and index < len(values) and values[index] is not None else default
+            code, name = str(cell("employee_code")).strip(), str(cell("full_name")).strip()
+            if not code or not name:
+                raise ValueError(f"صف Excel رقم {excel_row}: كود الموظف والاسم مطلوبان.")
+            if code in seen_codes:
+                raise ValueError(f"كود الموظف {code} مكرر داخل ملف Excel (صف {excel_row}).")
+            seen_codes.add(code)
+            try:
+                basic = M(cell("basic_salary"))
+                variable = M(cell("variable_salary", "0") or "0")
+            except (InvalidOperation, ValueError):
+                raise ValueError(f"صف Excel رقم {excel_row}: قيمة الأساسي أو المتغير غير صحيحة.")
+            if basic < 0 or variable < 0:
+                raise ValueError(f"صف Excel رقم {excel_row}: الرواتب لا تقبل قيمة سالبة.")
+            raw_status = str(cell("work_status", "permanent")).strip()
+            status = status_map.get(raw_status.lower(), status_map.get(raw_status))
+            if not status:
+                raise ValueError(f"صف Excel رقم {excel_row}: الحالة الوظيفية غير معروفة ({raw_status}).")
+            active_raw = str(cell("active", "1")).strip().lower()
+            active = 0 if active_raw in ("0", "false", "no", "لا", "غير نشط") else 1
+            parsed_rows.append({
+                "code": code, "name": name, "address": str(cell("address")).strip(),
+                "national_id": str(cell("national_id")).strip(),
+                "insurance_number": str(cell("insurance_number")).strip(),
+                "basic": str(basic), "variable": str(variable), "status": status, "active": active,
+            })
+        if not parsed_rows:
+            raise ValueError("ملف Excel لا يحتوي على صفوف موظفين.")
+        c = _db()
+        c.execute("BEGIN IMMEDIATE")
+        created = updated = 0
+        for row in parsed_rows:
+            existing = c.execute("SELECT id FROM employees WHERE employee_code=?", (row["code"],)).fetchone()
+            if existing:
+                c.execute("""UPDATE employees SET full_name=?,address=?,national_id=?,insurance_number=?,
+                    basic_salary=?,variable_salary=?,work_status=?,active=? WHERE id=?""",
+                    (row["name"],row["address"],row["national_id"],row["insurance_number"],
+                     row["basic"],row["variable"],row["status"],row["active"],existing["id"]))
+                updated += 1
+            else:
+                c.execute("""INSERT INTO employees(employee_code,full_name,address,national_id,insurance_number,
+                    basic_salary,variable_salary,work_status,active,hire_date)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    (row["code"],row["name"],row["address"],row["national_id"],row["insurance_number"],
+                     row["basic"],row["variable"],row["status"],row["active"],date.today().isoformat()))
+                created += 1
+        _audit(c, "employees_excel_import", f"created={created};updated={updated}")
+        c.commit()
+        c.close()
+        workbook.close()
+        flash(f"تم استيراد {len(parsed_rows)} موظف: إضافة {created} وتحديث {updated}.", "success")
+    except Exception as exc:
+        try:
+            c.rollback()
+            c.close()
+        except Exception:
+            pass
+        flash("لم يتم استيراد أي بيانات. " + str(exc), "error")
+    return redirect(url_for("workforce.employees"))
+
+
+@workforce_bp.route("/hr/export-excel", methods=["GET"])
+@_role("admin", "accountant", "viewer")
+def export_employees_excel():
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    c = _db()
+    rows = c.execute("""SELECT employee_code,full_name,address,national_id,insurance_number,
+        basic_salary,variable_salary,work_status,active FROM employees ORDER BY employee_code""").fetchall()
+    c.close()
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Employees"
+    headers = ["كود الموظف","اسم الموظف","العنوان","الرقم القومي","رقم التأمين",
+               "الأساسي","المتغير","الحالة الوظيفية","نشط"]
+    sheet.append(headers)
+    status_labels = {"permanent":"مثبت","comprehensive_bonus":"مكافأة شاملة",
+                     "unpaid_leave":"إجازة بدون مرتب","resigned":"استقالة","retired":"معاش"}
+    for row in rows:
+        sheet.append([row["employee_code"],row["full_name"],row["address"],row["national_id"],
+                      row["insurance_number"],float(D(row["basic_salary"])),
+                      float(D(row["variable_salary"])),status_labels.get(row["work_status"],row["work_status"]),
+                      "نعم" if row["active"] else "لا"])
+    for cell in sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="244062")
+        cell.alignment = Alignment(horizontal="center")
+    for col, width in enumerate((18,30,38,20,20,16,16,22,12), start=1):
+        sheet.column_dimensions[chr(64+col)].width = width
+    for row in sheet.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = Alignment(horizontal="right")
+        for col in (1,2,3,4,5,8,9):
+            row[col-1].number_format = "@"
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return send_file(output, as_attachment=True, download_name="NEXUS_Employees.xlsx",
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@workforce_bp.route("/hr/template-excel", methods=["GET"])
+@_role("admin", "accountant", "viewer")
+def download_employee_template():
+    from openpyxl import Workbook
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Employees"
+    sheet.append(["كود الموظف","اسم الموظف","العنوان","الرقم القومي","رقم التأمين",
+                  "الأساسي","المتغير","الحالة الوظيفية","نشط"])
+    sheet.freeze_panes = "A2"
+    for col, width in enumerate((18,30,38,20,20,16,16,22,12), start=1):
+        sheet.column_dimensions[chr(64+col)].width = width
+    guide = workbook.create_sheet("تعليمات")
+    guide.append(["الحقل","التعليمات"])
+    guide.append(["الحالة الوظيفية","مثبت أو مكافأة شاملة أو إجازة بدون مرتب أو استقالة أو معاش"])
+    guide.append(["نشط","نعم أو لا؛ يحدد إذا كان ملف الموظف نشطًا بالنظام"])
+    guide.append(["الأساسي والمتغير","أرقام غير سالبة. المتغير يُحمّل افتراضيًا في خانة البدلات عند إعداد المسير"])
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return send_file(output, as_attachment=True, download_name="NEXUS_Employees_Template.xlsx",
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
 @workforce_bp.route("/hr/incentive-rules", methods=["POST"])
 @_role("admin", "accountant")
 def add_incentive_rule():
@@ -520,7 +696,7 @@ def payroll():
                         basic_salary = M(basic_salary + raise_amount)
                 if basic_salary <= 0:
                     raise ValueError("الراتب الأساسي للموظف " + e["full_name"] + " يجب أن يكون أكبر من صفر.")
-                allowances = M(request.form.get("allowances_" + str(e["id"]), "0"))
+                allowances = M(request.form.get("allowances_" + str(e["id"]), e["variable_salary"]))
                 if raise_amount and e["raise_mode"] == "allowance":
                     allowances = M(allowances + raise_amount)
                 overtime_hours = D(request.form.get("overtime_hours_" + str(e["id"]), "0"))
