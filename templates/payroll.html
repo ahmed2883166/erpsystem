@@ -1,0 +1,35 @@
+{% extends "base.html" %}{% block title %}مسير الرواتب | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>مسير الرواتب</h2><p>إدخال الراتب والبدلات والعلاوة المسجلة في ملف الموظف، وحوافز المناسبات والإضافي بنسبته وطريقة حسابه.</p><p class="muted">أقساط السلف النشطة تُحسب تلقائيًا حسب جدول الاستحقاق ضمن خصم السلف؛ لا تدخل القسط يدويًا مرة أخرى.</p><p><a href="{{url_for('workforce.employee_loans')}}">إدارة طلبات وسجل سلف الموظفين</a> · <a href="{{url_for('workforce.attendance')}}">الحضور والانصراف</a> · <a href="{{url_for('workforce.leaves')}}">الإجازات والأرصدة</a></p></header>
+<section class="panel"><h3>إنشاء مسير شهري</h3>
+<div class="flash success">وضع الرواتب: إدخال يدوي بالكامل. القواعد الضريبية والتأمينية المحفوظة لا تُطبّق تلقائيًا ولا تستبدل القيم التي تدخلها هنا. المحاسب مسؤول عن إدخال المبالغ المعتمدة ومراجعتها قبل ترحيل المسير.</div>
+<p><a href="{{url_for('payroll_compliance.report')}}">تقرير الضرائب والتأمينات</a> · <a href="{{url_for('payroll_compliance.payments')}}">سداد الالتزامات</a>.</p>
+<form method="post"><label>الشهر <input type="month" name="period" value="{{today}}" required></label>
+<p class="muted">تُطبق العلاوة المسجلة في ملف الموظف تلقائيًا إذا كان تاريخ سريانها في أول الشهر أو قبله. الإضافي = ساعات الإضافي × (الأساسي ÷ ساعات العمل القياسية) × نسبة الإضافي. يمكنك ترك قيمة الإضافي فارغة ليحسبها النظام أو إدخال قيمة يدوية. الحافز المختار يُحسب كمبلغ ثابت أو كنسبة من الأساسي أو قيمة يومية × عدد الأيام.</p>
+<label class="inline-check"><input type="checkbox" name="auto_calculate_statutory" value="1" checked> احسب تلقائيًا ضريبة المرتبات وتأمين الموظف وتأمين الشركة وفق قواعد الدولة وفئة كل موظف السارية على شهر المسير</label>
+<label class="inline-check"><input type="checkbox" name="use_attendance_data" value="1"> استخدم الحضور المعتمد والإجازات بدون أجر في حساب ساعات الإضافي وخصم الغياب تلقائيًا</label>
+<p class="muted">عند التفعيل، تُستبدل ساعات الإضافي والغياب اليدوية بإجماليات سجل الحضور للشهر. الإجازة بدون أجر المعتمدة تخصم بنسبة الأجر الشهري ÷ 30 لكل يوم، والإجازات المدفوعة لا تخصم. راجع السجلات قبل إنشاء المسير.</p>
+<p class="muted">عند تفعيل الخيار، يجب أن تكون القواعد والشرائح الضريبية والتأمينية مكتملة ومراجعة. عند عدم تفعيله تظل القيم اليدوية هي المعتمدة.</p>
+<div style="overflow-x:auto"><table><tr><th>الموظف</th><th>الأساسي قبل العلاوة</th><th>البدلات</th><th>نوع الحافز</th><th>أيام الحافز</th><th>حافز يدوي إضافي</th><th>ساعات إضافي</th><th>نسبة الإضافي %</th><th>قيمة الإضافي (اتركها فارغة للحساب)</th><th>ساعات غياب</th><th>خصم الغياب</th><th>السلف</th><th>خصومات أخرى</th><th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th></tr>
+{% for e in employees %}<tr><td>{{e.employee_code}} - {{e.full_name}}<br><small>الأساسي المسجل: {{e.basic_salary}} | العلاوة: {{e.raise_value}} {{'%' if e.raise_type=='percentage' else 'مبلغ'}}</small></td>
+<td><input type="number" min="0.01" step="0.01" name="basic_{{e.id}}" value="{{e.basic_salary}}" required></td>
+<td><input type="number" min="0" step="0.01" name="allowances_{{e.id}}" value="0" required></td>
+<td><select name="incentive_rule_{{e.id}}"><option value="">بدون حافز مناسبة</option>{% for rule in incentive_rules %}<option value="{{rule.id}}">{{rule.name}} — {{'مبلغ ثابت' if rule.calculation_method=='fixed' else 'نسبة من الأساسي' if rule.calculation_method=='percentage_basic' else 'قيمة يومية'}}</option>{% endfor %}</select></td>
+<td><input type="number" min="0" step="0.01" name="incentive_days_{{e.id}}" value="0"></td>
+<td><input type="number" min="0" step="0.01" name="incentives_{{e.id}}" value="0" required></td>
+<td><input type="number" min="0" step="0.01" name="overtime_hours_{{e.id}}" value="0"></td>
+<td><input type="number" min="0" max="500" step="0.01" name="overtime_rate_percent_{{e.id}}" value="{{e.overtime_rate_percent}}"></td>
+<td><input type="number" min="0" step="0.01" name="overtime_amount_{{e.id}}" value="" placeholder="تلقائي"></td>
+<td><input type="number" min="0" step="0.01" name="absent_hours_{{e.id}}" value="0"></td>
+<td><input type="number" min="0" step="0.01" name="absence_deduction_{{e.id}}" value="0" required></td>
+<td><input type="number" min="0" step="0.01" name="advance_{{e.id}}" value="0" required></td>
+<td><input type="number" min="0" step="0.01" name="other_deductions_{{e.id}}" value="0" required></td>
+<td><input type="number" min="0" step="0.01" name="tax_{{e.id}}" value="0" required></td>
+<td><input type="number" min="0" step="0.01" name="employee_ins_{{e.id}}" value="0" required></td>
+<td><input type="number" min="0" step="0.01" name="employer_ins_{{e.id}}" value="0" required></td></tr>{% endfor %}</table></div>
+<button type="submit">حفظ المسير كمسودة للمراجعة</button></form></section>
+<section class="panel"><h3>المسيرات السابقة</h3><table><tr><th>الشهر</th><th>الحالة</th><th>القيد</th><th>التفاصيل</th></tr>{% for r in runs %}<tr><td>{{r.period}}</td><td>{{'مرحّل' if r.status=='posted' else 'مسودة'}}</td><td>{{r.journal_entry_id or '-'}}</td><td><a href="{{url_for('workforce.payroll_run',run_id=r.id)}}">فتح المسير</a></td></tr>{% else %}<tr><td colspan="4">لا توجد مسيرات.</td></tr>{% endfor %}</table>
+<div class="actions pagination"><span class="muted">إجمالي المسيرات: {{ runs_page.total }} — الصفحة {{ runs_page.page }} من {{ runs_page.pages }}</span>
+<form method="get" class="inline-form"><label>عدد السطور <select name="runs_per_page" onchange="this.form.submit()"><option value="50" {% if runs_page.per_page==50 %}selected{% endif %}>50</option><option value="100" {% if runs_page.per_page==100 %}selected{% endif %}>100</option></select></label></form>
+{% if runs_page.page>1 %}<a class="button secondary" href="{{ url_for('workforce.payroll',runs_page=runs_page.page-1,runs_per_page=runs_page.per_page) }}">السابق</a>{% endif %}
+{% if runs_page.page<runs_page.pages %}<a class="button" href="{{ url_for('workforce.payroll',runs_page=runs_page.page+1,runs_per_page=runs_page.per_page) }}">التالي</a>{% endif %}</div></section>
+{% endblock %}
