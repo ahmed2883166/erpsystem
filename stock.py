@@ -11,7 +11,7 @@ import uuid
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from datetime import date
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, money
 
 stock_bp = Blueprint("stock", __name__, url_prefix="/stock")
@@ -809,7 +809,7 @@ def movements():
                 c.execute("UPDATE stock_movements SET accounting_status='pending_document' WHERE id=?", (mid,))
             elif kind=="issue":
                 post_issue_journal(c,mid,movement_no,product,movement_date,total,session.get("user_id"),issue_purpose)
-            c.commit(); flash(f"تم ترحيل الحركة {movement_no}.", "success")
+            c.commit(); g.audit_created_record = ("stock_movements", mid, None, None); flash(f"تم ترحيل الحركة {movement_no}.", "success")
         except (ValueError,InvalidOperation,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e), "error")
         finally: c.close()
