@@ -50,6 +50,16 @@
   </form>
 </section>
 <section class="panel">
+  <h3>تصفير بيانات البرنامج</h3>
+  <p class="muted">هذه العملية تحذف بيانات التشغيل الخاصة بالشركة مثل العملاء والموردين والمخزون والمستندات والحركات والقيود والرواتب. تحتفظ بإعدادات الشركة والعملة والضرائب وشجرة الحسابات والمستخدمين وحساب مدير النظام الأعلى وسجل التدقيق وإعدادات النظام.</p>
+  <p class="warning">تحذير شديد: لا يمكن التراجع عن التصفير من داخل البرنامج. سينشئ النظام نسخة احتياطية كاملة تلقائيًا قبل الحذف، ولن يبدأ الحذف إذا فشل إنشاء النسخة أو التحقق من كلمة مرور مدير النظام الأعلى.</p>
+  <form method="post" action="{{ url_for('reset_company_data') }}" class="no-print"
+        onsubmit="if (!confirm('هل أنت متأكد من حذف جميع بيانات البرنامج؟ سيتم إنشاء نسخة احتياطية أولًا، لكن التصفير لا يمكن التراجع عنه من داخل النظام.')) return false; const rootPassword = window.prompt('أدخل كلمة مرور مدير النظام الأعلى لتأكيد تصفير البرنامج:'); if (rootPassword === null || rootPassword.length === 0) return false; this.elements.super_admin_password.value = rootPassword; return true;">
+    <input type="hidden" name="super_admin_password" value="">
+    <button type="submit" class="danger">تصفير البرنامج بالكامل</button>
+  </form>
+</section>
+<section class="panel">
   <h3>النسخ المحفوظة على الجهاز</h3>
   <p class="muted">مجلد الحفظ: مجلد النسخ الاحتياطي الافتراضي خارج مجلد المشروع</p>
   <div class="table-wrap"><table><thead><tr><th>اسم الملف</th><th>الحجم</th><th>آخر تعديل</th></tr></thead><tbody>
