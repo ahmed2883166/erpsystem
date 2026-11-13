@@ -72,7 +72,7 @@ class ActivityAccountMappingTests(unittest.TestCase):
                     "4700": ("revenue", 1), "4710": ("revenue", 0),
                     "5500": ("expense", 1), "5510": ("expense", 0),
                     "6800": ("expense", 1), "6810": ("expense", 0),
-                    "7200": ("expense", 1), "7210": ("expense", 0),
+                    "7240": ("expense", 1), "7241": ("expense", 0),
                 }
                 for code, (account_type, is_group) in expected.items():
                     row = conn.execute(
