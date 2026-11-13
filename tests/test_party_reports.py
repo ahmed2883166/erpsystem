@@ -352,10 +352,11 @@ class PartyStatementTests(unittest.TestCase):
             CREATE TABLE journal_lines(
                 id INTEGER PRIMARY KEY, entry_id INTEGER NOT NULL,
                 account_id INTEGER NOT NULL, debit TEXT NOT NULL, credit TEXT NOT NULL,
-                customer_id INTEGER
+                customer_id INTEGER, supplier_id INTEGER
             );
             INSERT INTO journal_entries VALUES(1,'2026-11-30','posted');
-            INSERT INTO journal_lines VALUES(1,1,1,'1200','0',1);
+            INSERT INTO journal_lines VALUES(1,1,1,'1200','0',1,NULL);
+            INSERT INTO journal_lines VALUES(2,1,2,'0','1700',NULL,1);
         """)
         conn.commit()
         conn.close()
@@ -389,8 +390,9 @@ class PartyStatementTests(unittest.TestCase):
         self.assertEqual(supplier.status_code, 200)
         supplier_body = supplier.get_data(as_text=True)
         self.assertIn("1,700.00", supplier_body)
-        self.assertIn("غير متاح", supplier_body)
-        self.assertIn("قيود موردين قديمة", supplier_body)
+        self.assertIn("متطابق", supplier_body)
+        self.assertIn("1,700.00", supplier_body)
+        self.assertNotIn("الأستاذ العام التفصيلي غير متاح", supplier_body)
 
 if __name__ == "__main__":
     unittest.main()
