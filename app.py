@@ -110,7 +110,7 @@ app.register_blueprint(planning_bp)
 # SECRET_KEY and session/CSRF settings are initialized above.
 
 PERMISSIONS = {
-    "admin": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "expenses.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "purchases.approve", "sales.manage", "sales.view", "sales.approve", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view", "audit.view"},
+    "admin": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "expenses.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "purchases.approve", "sales.manage", "sales.view", "sales.approve", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "budget.approve", "cashflow.view", "audit.view"},
     "accountant": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "expenses.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view"},
     "viewer": {"accounts.view", "currency.view", "reports.view", "expenses.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view", "bank.view", "tax.view", "workforce.view", "party.view", "budget.view", "cashflow.view"},
 }
@@ -144,7 +144,8 @@ PERMISSION_LABELS = {
     "currency.view": "عرض أسعار العملات وفروق الصرف",
     "currency.manage": "إدارة العملات وفروق الصرف",
     "budget.view": "عرض الموازنات ومقارنة الفعلي",
-    "budget.manage": "إنشاء وتعديل الموازنات",
+    "budget.manage": "إنشاء وإعداد الموازنات وإرسالها للاعتماد",
+    "budget.approve": "اعتماد أو رفض الموازنات (مع منع الاعتماد الذاتي)",
     "cashflow.view": "عرض قائمة التدفقات النقدية",
     "audit.view": "عرض سجل المراجعة والتدقيق",
     "party.view": "عرض كشوف العملاء والموردين",
@@ -155,7 +156,7 @@ _PERMISSION_IMPLICATIONS = {
     "purchases.manage": "purchases.view", "sales.manage": "sales.view",
     "assets.manage": "assets.view", "quotes.manage": "quotes.view",
     "bank.manage": "bank.view", "tax.manage": "tax.view",
-    "workforce.manage": "workforce.view", "currency.manage": "currency.view", "budget.manage": "budget.view",
+    "workforce.manage": "workforce.view", "currency.manage": "currency.view", "budget.manage": "budget.view", "budget.approve": "budget.view",
 }
 
 def normalize_user_permissions(values):
