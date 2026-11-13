@@ -111,6 +111,27 @@ class PartyStatementTests(unittest.TestCase):
         self.assertIn("RCPTB-1", body)
         self.assertIn("1,050.00", body)  # 500 invoice - 100 receipt - 150 batch receipt + 200 old invoice net in opening.
 
+    def test_customer_statement_includes_advance_applications_but_not_unallocated_receipt(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""CREATE TABLE customer_advance_allocations(
+            id INTEGER PRIMARY KEY, advance_receipt_id INTEGER, invoice_id INTEGER,
+            allocation_date TEXT, amount TEXT, journal_entry_id INTEGER
+        )""")
+        conn.execute(
+            "INSERT INTO customer_advance_allocations VALUES(1,1,2,'2026-11-24','50.00',99)"
+        )
+        conn.commit()
+        conn.close()
+
+        response = self.client.get(
+            "/reports/party-statement?kind=customer&party_id=1&date_from=2026-11-01&date_to=2026-11-30"
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("CADVA-1", body)
+        # Opening 800 + current invoice 500 - receipts 100 - batch 150 - advance allocation 50.
+        self.assertIn("1,000.00", body)
+
     def test_supplier_statement_opening_and_running_balance(self):
         response = self.client.get("/reports/party-statement?kind=supplier&party_id=1&date_from=2026-11-01&date_to=2026-11-30")
         self.assertEqual(response.status_code, 200)
