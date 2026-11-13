@@ -853,7 +853,7 @@ otals["credit"], places=2)
         )
         with self.assertRaisesRegex(ValueError, "يسبق تاريخ إذن التسليم"):
             quotations.invoice_sales_order(
-                self.db, order_id, (base_date - timedelta(days=1)).isoformat(), (base_date + timedelta(days=30)).isoformat(), created_by=2,
+                self.db, order_id, base_date.isoformat(), (base_date + timedelta(days=30)).isoformat(), created_by=2,
             )
         self.assertEqual(self.db.execute(
             "SELECT COUNT(*) FROM sales_invoices WHERE sales_order_id=?", (order_id,)
