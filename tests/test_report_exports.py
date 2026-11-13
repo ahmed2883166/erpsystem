@@ -163,6 +163,9 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         workbook = load_workbook(io.BytesIO(response.data), data_only=True)
         sheet = workbook.active
         values = list(sheet.values)
+        header = next(row for row in values if row and "كود الحساب" in row)
+        self.assertIn("تصنيف القوائم", header)
+        self.assertIn("الرصيد الطبيعي", header)
         rows = [row for row in values if row and row[4] in ("1110", "4100")]
         self.assertEqual(len(rows), 4)
         by_period = {}
