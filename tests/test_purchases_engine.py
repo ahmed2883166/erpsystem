@@ -289,6 +289,10 @@ class PurchasingAccountingTests(unittest.TestCase):
 
     def test_partial_receipt_allocations_reserve_only_remaining_value(self):
         purchases.init_purchase_schema()
+        self.db.execute("CREATE UNIQUE INDEX uq_supplier_bill_receipt_once ON supplier_bill_receipts(receipt_id)")
+        purchases.init_purchase_schema()
+        indexes = {row["name"] for row in self.db.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+        self.assertNotIn("uq_supplier_bill_receipt_once", indexes)
         self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-PART','مورد جزئي')")
         supplier_id = self.db.execute("SELECT id FROM suppliers WHERE code='SUP-PART'").fetchone()["id"]
         self.db.execute("INSERT INTO stock_warehouses(code,name_ar) VALUES('W-PART','مخزن جزئي')")
