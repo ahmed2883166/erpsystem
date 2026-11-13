@@ -646,8 +646,6 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
     credit_revenue_code = invoice["revenue_account_code"] or codes["revenue"]
     revenue = _account(conn, credit_revenue_code, "revenue")
     vat_account = None
-    inventory = _account(conn, codes["inventory"], "asset") if codes["inventory"] else None
-    cogs = _account(conn, codes["cogs"], "expense") if codes["cogs"] else None
 
     normalized = []
     subtotal = Decimal("0.00")
