@@ -146,6 +146,29 @@ class ReceivablesAgingTests(unittest.TestCase):
         # Later receipt, batch allocation, credit note and refund must not affect 30 November.
         self.assertNotIn("139.00", body)
 
+    def test_customer_aging_excludes_reversed_advance_allocation_after_reversal_date(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("ALTER TABLE customer_advance_allocations ADD COLUMN journal_entry_id INTEGER")
+        conn.execute("UPDATE customer_advance_allocations SET journal_entry_id=500 WHERE id=1")
+        conn.execute("UPDATE sales_invoices SET paid_amount='75' WHERE id=2")
+        conn.execute("""CREATE TABLE customer_advance_reversals(
+            id INTEGER PRIMARY KEY,source_type TEXT,source_id INTEGER,
+            original_journal_entry_id INTEGER,reversal_journal_entry_id INTEGER,
+            reversal_date TEXT,reason TEXT,created_by INTEGER)""")
+        conn.execute("""INSERT INTO customer_advance_reversals
+            VALUES(1,'allocation',500,900,901,'2026-12-02','تصحيح تخصيص',1)""")
+        conn.commit()
+        before = receivables._customer_aging_movements(conn, "2026-11-30")
+        after = receivables._customer_aging_movements(conn, "2026-12-03")
+        conn.close()
+        self.assertTrue(before[0])
+        self.assertEqual(before[1][2], Decimal("30.00"))
+        self.assertEqual(before[2][2], Decimal("75.00"))
+        self.assertEqual(after[1][2], Decimal("25.00"))
+        # 200 invoice - 25 direct receipt - 10 credit + 4 refund = 169.
+        balance = Decimal("200") - after[1][2] - after[3].get(2, Decimal("0")) + after[5].get(2, Decimal("0"))
+        self.assertEqual(balance, Decimal("169.00"))
+
     def test_supplier_aging_uses_payments_and_credit_notes_as_of_date(self):
         response = self.client.get("/reports/aging/?kind=suppliers&as_of=2026-11-30")
         self.assertEqual(response.status_code, 200)
