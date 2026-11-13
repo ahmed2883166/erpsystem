@@ -129,6 +129,38 @@ class ReceivablesAgingTests(unittest.TestCase):
         # The December payment and credit note are excluded.
         self.assertNotIn("205.00", body)
 
+    def test_aging_excel_exports_match_historical_screen_balances(self):
+        from flask import Flask
+        from io import BytesIO
+        from openpyxl import load_workbook
+        from report_exports import register_report_exports
+
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT)")
+        conn.executemany("INSERT INTO company_settings VALUES(?,?)", [
+            ("company_name", "شركة الاختبار"), ("base_currency", "EGP")
+        ])
+        conn.commit()
+        conn.close()
+
+        export_app = Flask(__name__)
+        export_app.secret_key = "aging-export-test-secret"
+        register_report_exports(export_app, self.db_path, {"accountant": {"reports.view"}})
+        client = export_app.test_client()
+        with client.session_transaction() as user_session:
+            user_session["user_id"] = 1
+            user_session["role"] = "accountant"
+            user_session["permissions"] = ["reports.view"]
+
+        for kind, expected in (("customers", 164), ("suppliers", 255)):
+            response = client.get(
+                f"/reports/export/aging/excel?kind={kind}&as_of=2026-11-30"
+            )
+            self.assertEqual(response.status_code, 200)
+            workbook = load_workbook(BytesIO(response.data), data_only=True)
+            values = [cell.value for row in workbook.active.iter_rows() for cell in row]
+            self.assertIn(expected, values)
+
     def test_supplier_aging_does_not_require_customer_invoice_fields(self):
         response = self.client.get("/reports/aging/?kind=suppliers&as_of=2026-11-30")
         self.assertEqual(response.status_code, 200)
