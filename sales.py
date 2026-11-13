@@ -1336,6 +1336,12 @@ def reverse_customer_advance_transaction(
     reason = str(reason or "").strip()
     if len(reason) < 5 or len(reason) > 500:
         raise ValueError("سبب العكس مطلوب من 5 إلى 500 حرف.")
+    if conn.execute(
+        """SELECT 1 FROM customer_advance_reversals
+           WHERE source_type=? AND source_id=?""",
+        (source_type, source_id),
+    ).fetchone():
+        raise ValueError("تم عكس هذه العملية من قبل.")
     if source_type == "receipt":
         source = conn.execute(
             "SELECT * FROM customer_advance_receipts WHERE id=?", (source_id,)
@@ -1372,12 +1378,6 @@ def reverse_customer_advance_transaction(
         original_date = source["refund_date"]
     if reversal_date < original_date:
         raise ValueError("تاريخ العكس لا يجوز أن يسبق تاريخ العملية الأصلية.")
-    if conn.execute(
-        """SELECT 1 FROM customer_advance_reversals
-           WHERE source_type=? AND source_id=?""",
-        (source_type, source_id),
-    ).fetchone():
-        raise ValueError("تم عكس هذه العملية من قبل.")
     reversal_no = "CADV-REV-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
     reversal_journal_id = _reverse_posted_journal(
         conn, original_journal_id, reversal_date, reversal_no,
