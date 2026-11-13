@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}كشف مقدمات العملاء | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <h2>كشف مقدمات العملاء غير المخصصة</h2>
+  <div class="table-actions no-print">
+    <a class="btn secondary" href="{{ url_for('party_reports.subledger_reconciliation') }}">مطابقة الأستاذ المساعد</a>
+    <a class="btn secondary" href="{{ url_for('party_reports.party_statement', kind='customer') }}">كشوف حساب العملاء</a>
+    <button type="button" class="secondary" onclick="window.print()">طباعة / PDF</button>
+  </div>
+</header>
+<section class="panel no-print">
+  <form method="get" class="report-filter">
+    <label>حتى تاريخ <input type="date" name="as_of" value="{{ as_of }}" required></label>
+    <button type="submit">عرض الكشف</button>
+  </form>
+</section>
+<section class="panel print-area">
+  <h3>حركة مقدمات العملاء حتى {{ as_of }}</h3>
+  {% if not available %}
+    <p class="status-badge warning">جداول مقدمات العملاء غير مكتملة في قاعدة البيانات الحالية.</p>
+  {% else %}
+    <section class="cards compact-cards">
+      <article><span>إجمالي المقبوض</span><b>{{ totals.received|money }}</b></article>
+      <article><span>المخصص على فواتير</span><b>{{ totals.allocated|money }}</b></article>
+      <article><span>المردود للعملاء</span><b>{{ totals.refunded|money }}</b></article>
+      <article><span>المتبقي غير المخصص</span><b>{{ totals.remaining|money }}</b></article>
+    </section>
+    <table>
+      <thead><tr><th>التاريخ</th><th>رقم الإيصال</th><th>كود العميل</th><th>العميل</th><th>المقبوض</th><th>المخصص</th><th>المردود</th><th>المتبقي</th><th>المرجع</th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+        <tr>
+          <td>{{ row.receipt_date }}</td><td>{{ row.receipt_no }}</td>
+          <td>{{ row.customer_code }}</td><td>{{ row.customer_name }}</td>
+          <td>{{ row.received|money }}</td><td>{{ row.allocated|money }}</td>
+          <td>{{ row.refunded|money }}</td><td>{{ row.remaining|money }}</td><td>{{ row.reference }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="9">لا توجد مقدمات مستلمة حتى التاريخ المحدد.</td></tr>
+      {% endfor %}
+      <tr><th colspan="4">الإجمالي</th><th>{{ totals.received|money }}</th><th>{{ totals.allocated|money }}</th><th>{{ totals.refunded|money }}</th><th>{{ totals.remaining|money }}</th><th></th></tr>
+      </tbody>
+    </table>
+  {% endif %}
+  <p class="muted">هذا الكشف يعرض التزام مقدمات العملاء مستقلًا عن ذمم العملاء؛ تخصيص المقدم فقط هو الذي يخفض رصيد العميل في كشف حسابه.</p>
+</section>
+{% endblock %}
