@@ -218,7 +218,7 @@ def get_active_activity_profile(conn):
     ).fetchone() if profile_table else None
     if not row:
         activity = settings.get("activity") or code
-        from chart_templates import ACTIVITY_ACCOUNT_ROLES, ACTIVITY_POSTING_ACCOUNTS, ACTIVITY_TAX_ACCOUNT_ROLES
+        from chart_templates import ACTIVITY_POSTING_ACCOUNTS, ACTIVITY_TAX_ACCOUNT_ROLES
         if activity not in ACTIVITY_POSTING_ACCOUNTS:
             raise ValueError("ملف النشاط الحالي غير معروف أو غير نشط.")
         return {
