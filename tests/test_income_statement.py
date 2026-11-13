@@ -107,6 +107,17 @@ class IncomeStatementRouteTests(unittest.TestCase):
         nexus_app.db = self.original_db
         self.temp.cleanup()
 
+    def test_analytical_expense_report_route_renders_filtered_report(self):
+        response = self.client.get(
+            "/reports/expense-analysis?date_from=2026-11-01&date_to=2026-11-30"
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("تقرير المصروفات التحليلي", body)
+        self.assertIn("مصروفات التشغيل", body)
+        self.assertIn("250.00", body)
+
+
     def test_income_statement_excludes_closing_and_draft_entries_and_separates_cogs(self):
         response = self.client.get(
             "/reports/income-statement?date_from=2026-11-01&date_to=2026-11-30"
