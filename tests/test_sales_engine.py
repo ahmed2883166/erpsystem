@@ -843,6 +843,13 @@ otals["credit"], places=2)
             Decimal(self.db.execute("SELECT qty_remaining FROM stock_valuation_layers").fetchone()[0]),
             Decimal("3.0000"),
         )
+        with self.assertRaisesRegex(ValueError, "لا يسبق تاريخ إذن التسليم"):
+            quotations.invoice_sales_order(
+                self.db, order_id, "2026-11-13", "2026-11-30", created_by=2,
+            )
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM sales_invoices WHERE sales_order_id=?", (order_id,)
+        ).fetchone()[0], 0)
         first_invoice = quotations.invoice_sales_order(
             self.db, order_id, "2026-11-15", "2026-11-30", created_by=2,
         )
@@ -852,6 +859,8 @@ otals["credit"], places=2)
         self.assertEqual(self.db.execute(
             "SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'"
         ).fetchone()[0], 1)
+        with self.assertRaisesRegex(ValueError, "تم ترحيله"):
+            quotations.post_delivery_note(self.db, first_note["delivery_note_id"], posted_by=2)
 
         self.db.execute("BEGIN IMMEDIATE")
         second_note = quotations.create_delivery_note(
