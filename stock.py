@@ -234,7 +234,10 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
     else:
         posting_accounts = ACTIVITY_POSTING_ACCOUNTS.get(activity, {})
     if purpose == "sale":
-        expense_code = posting_accounts.get("cogs")
+        from activity_profiles import resolve_product_account_code
+        expense_code = resolve_product_account_code(
+            c, product["id"], "cogs", posting_accounts.get("cogs")
+        )
         expense_name = "تكلفة المبيعات / تكلفة الخدمات المصروفة"
     elif purpose == "internal":
         expense_code = "6991"
@@ -247,7 +250,10 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
     if purpose == "sale":
         expense = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (expense_code,)).fetchone() if expense_code else None
         expense_id = expense["id"] if expense and not expense["is_group"] and expense["active"] and expense["account_type"] == "expense" else None
-    inventory_code = posting_accounts.get("inventory")
+    from activity_profiles import resolve_product_account_code
+    inventory_code = resolve_product_account_code(
+        c, product["id"], "inventory", posting_accounts.get("inventory")
+    )
     inventory = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (inventory_code,)).fetchone() if inventory_code else None
     if not expense_id or not inventory or inventory["is_group"] or not inventory["active"] or inventory["account_type"] != "asset":
         raise ValueError("لا يمكن ترحيل حركة الصرف قبل ضبط حساب المصروف وحساب المخزون كحسابين تفصيليين نشطين بالنوع الصحيح.")
