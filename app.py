@@ -971,6 +971,7 @@ def accounts():
             connection.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
                                (code, name, account_type, parent_id, is_group))
             account_id = connection.execute("SELECT id FROM accounts WHERE code=?", (code,)).fetchone()["id"]
+            ensure_account_metadata(connection)
             connection.commit()
             log_change(
                 "account_created", "account", account_id, None,
@@ -2384,6 +2385,7 @@ def import_accounts():
                 inserted += 1
             except sqlite3.IntegrityError:
                 skipped += 1
+        ensure_account_metadata(connection)
         connection.commit()
     except Exception:
         connection.rollback()
