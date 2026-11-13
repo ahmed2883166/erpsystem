@@ -1,7 +1,9 @@
+import sqlite3
 import unittest
 from decimal import Decimal
+from unittest.mock import patch
 
-from fixed_assets import _asset_period_amount
+from fixed_assets import _asset_period_amount, _post_asset_depreciation
 
 
 class FixedAssetDepreciationCalculationTests(unittest.TestCase):
@@ -46,6 +48,43 @@ class FixedAssetDepreciationCalculationTests(unittest.TestCase):
         declining = dict(self.asset, depreciation_method="declining_balance", annual_rate="20")
         amount = _asset_period_amount(declining, Decimal("0"), "2026-02")
         self.assertEqual(amount, Decimal("2000.00"))
+
+
+    def test_posting_creates_one_record_and_dates_journal_at_month_end(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("""CREATE TABLE asset_depreciations(
+            id INTEGER PRIMARY KEY, asset_id INTEGER, period TEXT, amount TEXT,
+            journal_entry_id INTEGER UNIQUE, UNIQUE(asset_id,period)
+        )""")
+        asset = dict(self.asset, id=7, ready_date="2026-01-01",
+                     cost="1200", residual_value="0", useful_life_months=12)
+        with patch("fixed_assets.post_journal", return_value=55) as post:
+            amount, entry_id = _post_asset_depreciation(conn, asset, "2026-01", 9)
+        self.assertEqual(amount, Decimal("100.00"))
+        self.assertEqual(entry_id, 55)
+        self.assertEqual(post.call_args.args[1], "2026-01-31")
+        row = conn.execute(
+            "SELECT period,amount,journal_entry_id FROM asset_depreciations"
+        ).fetchone()
+        self.assertEqual((row["period"], row["amount"], row["journal_entry_id"]),
+                         ("2026-01", "100.00", 55))
+        conn.close()
+
+    def test_posting_rejects_a_gap_in_the_depreciation_sequence(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("""CREATE TABLE asset_depreciations(
+            id INTEGER PRIMARY KEY, asset_id INTEGER, period TEXT, amount TEXT,
+            journal_entry_id INTEGER UNIQUE, UNIQUE(asset_id,period)
+        )""")
+        asset = dict(self.asset, id=8, ready_date="2026-01-01",
+                     cost="1200", residual_value="0", useful_life_months=12)
+        with patch("fixed_assets.post_journal") as post:
+            with self.assertRaisesRegex(ValueError, "الفترة السابقة"):
+                _post_asset_depreciation(conn, asset, "2026-02", 9)
+        post.assert_not_called()
+        conn.close()
 
     def test_period_before_ready_date_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "قبل جاهزية"):
