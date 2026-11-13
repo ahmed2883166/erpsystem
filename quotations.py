@@ -211,7 +211,12 @@ def create_delivery_note(conn, order_id, delivery_date, lines, created_by, notes
    qty=Decimal(str(item["quantity"]))
   except (InvalidOperation,ValueError,TypeError) as exc:
    raise ValueError("كمية التسليم غير صحيحة.") from exc
-  remaining=Decimal(str(line["ordered_qty"]))-Decimal(str(line["delivered_qty"]))
+  reserved=conn.execute(
+   """SELECT COALESCE(SUM(CAST(dl.quantity AS NUMERIC)),0) reserved
+      FROM delivery_note_lines dl JOIN delivery_notes dn ON dn.id=dl.delivery_note_id
+      WHERE dl.sales_order_line_id=? AND dn.status='draft'""",(line_id,)).fetchone()["reserved"]
+  remaining=(Decimal(str(line["ordered_qty"]))-Decimal(str(line["delivered_qty"]))
+             -Decimal(str(reserved or "0")))
   if not qty.is_finite() or qty<=0: raise ValueError("كمية التسليم يجب أن تكون أكبر من صفر.")
   if qty>remaining: raise ValueError("كمية التسليم تتجاوز الكمية المتبقية من أمر البيع.")
   if not line["product_id"]: raise ValueError("بنود الخدمات لا تحتاج إذن تسليم مخزني.")
