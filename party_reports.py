@@ -305,6 +305,17 @@ def _gl_party_control_balance(c, account_codes, party_id, as_of, normal_side, di
     if not account_ids:
         return None, False
     marks = ",".join("?" for _ in account_ids)
+    # Legacy or unassigned control-account lines prevent a reliable per-party
+    # GL comparison; never present a partial dimension balance as complete.
+    unassigned = c.execute(
+        f"""SELECT 1 FROM journal_lines jl
+            JOIN journal_entries je ON je.id=jl.entry_id
+            WHERE je.status='posted' AND je.entry_date<=?
+              AND jl.account_id IN ({marks}) AND jl.{dimension} IS NULL LIMIT 1""",
+        (as_of, *account_ids),
+    ).fetchone()
+    if unassigned:
+        return None, False
     rows = c.execute(
         f"""SELECT jl.debit,jl.credit FROM journal_lines jl
             JOIN journal_entries je ON je.id=jl.entry_id
