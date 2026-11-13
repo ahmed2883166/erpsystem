@@ -109,7 +109,7 @@ app.register_blueprint(planning_bp)
 # SECRET_KEY and session/CSRF settings are initialized above.
 
 PERMISSIONS = {
-    "admin": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view", "audit.view"},
+    "admin": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "purchases.approve", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view", "audit.view"},
     "accountant": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view"},
     "viewer": {"accounts.view", "currency.view", "reports.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view", "bank.view", "tax.view", "workforce.view", "party.view", "budget.view", "cashflow.view"},
 }
@@ -124,6 +124,7 @@ PERMISSION_LABELS = {
     "stock.view": "عرض المخزون والتقارير",
     "stock.manage": "إضافة وتعديل حركات المخزون",
     "purchases.view": "عرض المشتريات والموردين",
+    "purchases.approve": "مراجعة واعتماد أوامر الشراء (مع منع اعتماد المستند الذاتي)",
     "purchases.manage": "إدارة المشتريات وإشعارات المورد",
     "sales.view": "عرض المبيعات والعملاء",
     "sales.manage": "إدارة المبيعات",
@@ -465,6 +466,9 @@ _OPERATIONAL_AUDIT_RECORDS = {
     "sales.cancel_credit_note_route": ("sales_credit_notes", "credit_note_id", "id", "sales_credit_note_lines", "credit_note_id"),
     "purchase.edit_order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
     "purchase.delete_order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
+    "purchase.submit_order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
+    "purchase.approve_order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
+    "purchase.reject_order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
     "stock.count_detail": ("stocktakes", "stocktake_id", "id", "stocktake_lines", "stocktake_id"),
     "stock.approve_count": ("stocktakes", "stocktake_id", "id", "stocktake_lines", "stocktake_id"),
     "bank.reconcile": ("bank_transactions", "transaction_id", "id", None, None),
