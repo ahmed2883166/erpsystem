@@ -430,30 +430,32 @@ def payroll_report():
                l.absent_hours,l.absence_deduction,l.advance_deduction,
                COALESCE(l.loan_deduction,'0') AS loan_deduction,l.other_deductions,
                l.taxable_income_tax,l.employee_insurance,l.employer_insurance,
-               l.total_entitlements,l.total_deductions,l.net_pay,
-               COALESCE(p.paid_amount,'0') AS paid_amount
+               l.total_entitlements,l.total_deductions,l.net_pay
         FROM payroll_lines l
         JOIN payroll_runs r ON r.id=l.run_id
         JOIN employees e ON e.id=l.employee_id
-        LEFT JOIN (
-            SELECT run_id, SUM(CAST(amount AS NUMERIC)) AS paid_amount
-            FROM payroll_payments GROUP BY run_id
-        ) p ON p.run_id=r.id
         WHERE """ + " AND ".join(where) + """
         ORDER BY r.period DESC,e.employee_code
     """, params).fetchall()
+    payment_rows = c.execute(
+        "SELECT run_id,amount FROM payroll_payments ORDER BY run_id,id"
+    ).fetchall()
+    paid_by_run = {}
+    for payment in payment_rows:
+        run_key = payment["run_id"]
+        paid_by_run[run_key] = paid_by_run.get(run_key, Decimal("0")) + D(payment["amount"])
+    rows = [dict(row) for row in rows]
+    for row in rows:
+        row["paid_amount"] = M(paid_by_run.get(row["run_id"], Decimal("0")))
+        row["remaining_payable"] = M(max(Decimal("0"), D(row["net_pay"])-D(row["paid_amount"])))
     employee_options = c.execute(
         "SELECT id,employee_code,full_name FROM employees ORDER BY employee_code"
     ).fetchall()
     fields = ("basic_salary","salary_raise","allowances","incentives","overtime_amount","gross_pay",
               "absence_deduction","advance_deduction","loan_deduction","other_deductions",
               "taxable_income_tax","employee_insurance","employer_insurance","total_entitlements",
-              "total_deductions","net_pay","paid_amount")
+              "total_deductions","net_pay","paid_amount","remaining_payable")
     totals = {key: M(sum((D(row[key]) for row in rows), Decimal("0"))) for key in fields}
-    totals["remaining_payable"] = M(sum(
-        (max(Decimal("0"), D(row["net_pay"])-D(row["paid_amount"])) for row in rows),
-        Decimal("0")
-    ))
     c.close()
     return render_template("payroll_report.html", rows=rows, totals=totals,
                            employees=employee_options, month_from=month_from,
