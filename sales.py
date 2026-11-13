@@ -817,21 +817,27 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
 
 
 def _reverse_posted_journal(conn, entry_id, reversal_date, reference, description, created_by):
-    rows = conn.execute(
-        "SELECT account_id,debit,credit,memo,branch_id,cost_center_id,project_id,customer_id,salesperson_id FROM journal_lines WHERE entry_id=? ORDER BY id",
-        (entry_id,),
-    ).fetchall()
-    if not rows:
-        raise ValueError("لا يمكن عكس قيد غير موجود أو بلا تفاصيل.")
     dimension_keys = (
         "branch_id", "cost_center_id", "project_id", "customer_id",
         "salesperson_id", "supplier_id",
     )
+    available_dimensions = {
+        row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")
+    }
+    selected_dimensions = [key for key in dimension_keys if key in available_dimensions]
+    selected_columns = ["account_id", "debit", "credit", "memo", *selected_dimensions]
+    rows = conn.execute(
+        "SELECT " + ",".join(selected_columns) +
+        " FROM journal_lines WHERE entry_id=? ORDER BY id",
+        (entry_id,),
+    ).fetchall()
+    if not rows:
+        raise ValueError("لا يمكن عكس قيد غير موجود أو بلا تفاصيل.")
     reversed_lines = [
         (
             row["account_id"], Decimal(str(row["credit"] or "0")),
             Decimal(str(row["debit"] or "0")), "عكس: " + str(row["memo"] or ""),
-            {key: row[key] for key in dimension_keys if key in row.keys()},
+            {key: row[key] for key in selected_dimensions},
         )
         for row in rows
     ]
