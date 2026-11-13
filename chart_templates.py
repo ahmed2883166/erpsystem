@@ -19,7 +19,7 @@ CHARTS = {
         ("5000","تكلفة المبيعات","expense",None,1),("5100","تكلفة البضاعة المباعة","expense","5000",0),
         ("6000","المصروفات التشغيلية","expense",None,1),("6100","الرواتب والأجور","expense","6000",0),
         ("6200","الإيجارات","expense","6000",0),("6300","التسويق والبيع","expense","6000",0),("6400","مصروفات إدارية وعمومية","expense","6000",0),
-        ("7000","إيرادات ومصروفات أخرى","revenue",None,1),("7100","إيرادات أخرى","revenue","7000",0),("7200","مصروفات تمويلية","expense","7000",0),
+        ("7000","إيرادات أخرى","revenue",None,1),("7100","إيرادات أخرى","revenue","7000",0),("7200","مصروفات تمويلية","expense",None,1),
     ],
     "service": [
         ("1000","الأصول","asset",None,1),("1100","الأصول المتداولة","asset","1000",1),("1110","الصندوق والبنوك","asset","1100",0),
@@ -126,6 +126,16 @@ ACTIVITY_POSTING_ACCOUNTS = {
 for _activity_roles in ACTIVITY_ACCOUNT_ROLES.values():
     _activity_roles["retained_earnings"] = ("3200",)
 
+# Codes referenced by posting, tax, and subledger role mappings must remain stable.
+# 2190 is also the GRNI control account used by the purchasing receipt/bill flow.
+OPERATIONAL_ACCOUNT_CODES = frozenset(
+    {code for mapping in ACTIVITY_ACCOUNT_ROLES.values() for values in mapping.values()
+     for code in (values if isinstance(values, (tuple, list, set)) else (values,))}
+    | {code for mapping in ACTIVITY_POSTING_ACCOUNTS.values() for code in mapping.values() if code}
+    | {code for mapping in ACTIVITY_TAX_ACCOUNT_ROLES.values() for code in mapping.values() if code}
+    | {"2190"}
+)
+
 # Tax control accounts are resolved by accounting role, not by a sales-module code.
 ACTIVITY_TAX_ACCOUNT_ROLES = {
     activity: {"output_vat": "2130", "input_vat": "1165"}
@@ -156,6 +166,47 @@ _COMMON_ACTIVITY_ACCOUNTS = [
     ("6710", "إعلانات وحملات تسويقية", "expense", "6700", 0),
     ("6720", "عمولات البيع والتسويق", "expense", "6700", 0),
     ("6730", "ضيافة وعروض ترويجية", "expense", "6700", 0),
+    # Additional current assets and receivables.
+    ("1170", "سلف وعهد وأرصدة مدينة أخرى", "asset", "1100", 1),
+    ("1171", "سلف العاملين", "asset", "1170", 0),
+    ("1172", "عهد العاملين", "asset", "1170", 0),
+    ("1173", "مصروفات مدفوعة مقدمًا", "asset", "1170", 0),
+    ("1174", "إيرادات مستحقة وأرصدة مدينة أخرى", "asset", "1170", 0),
+    ("1180", "مخصص خسائر ائتمانية متوقعة - العملاء", "asset", "1100", 0),
+    # Long-term operating assets.
+    ("1250", "أصول حق الاستخدام", "asset", "1200", 0),
+    ("1260", "الأصول غير الملموسة", "asset", "1200", 1),
+    ("1261", "برامج وتراخيص وأنظمة", "asset", "1260", 0),
+    ("1269", "مجمع إطفاء الأصول غير الملموسة", "asset", "1260", 0),
+    ("1270", "استثمارات طويلة الأجل", "asset", "1200", 0),
+    # Current liabilities, accruals and GRNI.
+    ("2170", "التزامات تشغيلية مستحقة", "liability", "2000", 1),
+    ("2171", "مصروفات مستحقة", "liability", "2170", 0),
+    ("2172", "رواتب وأجور مستحقة", "liability", "2170", 0),
+    ("2173", "تأمينات اجتماعية مستحقة", "liability", "2170", 0),
+    ("2180", "الجزء المتداول من القروض", "liability", "2000", 0),
+    ("2190", "بضاعة مستلمة ولم ترد فاتورتها - GRNI", "liability", "2000", 0),
+    # Long-term liabilities and employee benefits.
+    ("2200", "الالتزامات طويلة الأجل", "liability", "2000", 1),
+    ("2210", "قروض وتسهيلات طويلة الأجل", "liability", "2200", 0),
+    ("2220", "التزامات عقود الإيجار", "liability", "2200", 0),
+    ("2230", "التزامات منافع العاملين", "liability", "2200", 1),
+    ("2231", "مخصص مكافأة نهاية الخدمة", "liability", "2230", 0),
+    ("2240", "التزامات ضريبة مؤجلة", "liability", "2200", 0),
+    # Additional income, inventory losses and operating expenses.
+    ("4700", "إيرادات ومكاسب أخرى", "revenue", "4000", 1),
+    ("4710", "أرباح بيع أصول", "revenue", "4700", 0),
+    ("4720", "أرباح فروق عملة", "revenue", "4700", 0),
+    ("5500", "فروق وهالك وتسويات المخزون", "expense", "5000", 1),
+    ("5510", "عجز وهالك مخزون", "expense", "5500", 0),
+    ("6800", "مصروفات تشغيلية أخرى", "expense", "6000", 1),
+    ("6810", "مصروف الإهلاك", "expense", "6800", 0),
+    ("6820", "مصروف الخسائر الائتمانية", "expense", "6800", 0),
+    ("6830", "خسائر انخفاض قيمة الأصول", "expense", "6800", 0),
+    ("7200", "مصروفات تمويلية", "expense", None, 1),
+    ("7210", "مصروف فوائد وتمويل", "expense", "7200", 0),
+    ("7220", "عمولات ومصاريف بنكية", "expense", "7200", 0),
+    ("7230", "خسائر فروق عملة", "expense", "7200", 0),
 ]
 
 for _activity, _chart in CHARTS.items():
