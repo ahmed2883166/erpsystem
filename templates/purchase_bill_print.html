@@ -4,8 +4,8 @@
 <section class="panel print-document">
 <div class="no-print actions"><button type="button" onclick="window.print()">طباعة الفاتورة / PDF</button><a class="btn secondary" href="{{ url_for('purchase.index') }}">العودة للمشتريات</a></div>
 {% set document_title = 'فاتورة مورد' %}
-{% set document_number = {{ bill.bill_no }} %}
-{% set document_date = {{ bill.bill_date }} %}
+{% set document_number = bill.bill_no %}
+{% set document_date = bill.bill_date %}
 {% include "partials/print_brand_header.html" %}
 <div class="form-row"><div><b>المورد:</b> {{ bill.supplier_name }} ({{ bill.supplier_code }})</div><div><b>الرقم الضريبي:</b> {{ bill.supplier_tax_number or '—' }}</div><div><b>رقم فاتورة المورد:</b> {{ bill.supplier_invoice_no }}</div><div><b>الاستحقاق:</b> {{ bill.due_date or bill.bill_date }}</div></div>
 <h3>استلامات البضاعة المرتبطة</h3><div class="table-wrap"><table><thead><tr><th>رقم الاستلام</th><th>التاريخ</th><th>القيمة</th></tr></thead><tbody>{% for x in receipts %}<tr><td>{{ x.receipt_no }}</td><td>{{ x.receipt_date }}</td><td>{{ x.total_value|money }}</td></tr>{% else %}<tr><td colspan="3">فاتورة خدمة أو مصروف مباشر.</td></tr>{% endfor %}</tbody></table></div>
