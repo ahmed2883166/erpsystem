@@ -862,6 +862,131 @@ def new_bill():
     c.close(); return render_template("purchase_bill_new.html",suppliers=su,receipts=receipts,expense_accounts=expense_accounts,dimension_options=dimension_options,today=date.today().isoformat())
 
 
+@purchase_bp.route("/bills/<int:bill_id>/edit", methods=["GET", "POST"])
+@require("purchases.manage")
+def edit_bill(bill_id):
+    c = db()
+    bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+    if not bill:
+        c.close()
+        from flask import abort
+        abort(404)
+    if bill["status"] not in {"draft", "rejected"} or bill["journal_entry_id"] is not None:
+        c.close()
+        flash("لا يمكن تعديل فاتورة إلا إذا كانت مسودة أو مرفوضة وغير مرتبطة بقيد مرحّل.", "error")
+        return redirect(url_for("purchase.index"))
+
+    if request.method == "POST":
+        try:
+            supplier = int(request.form["supplier_id"])
+            subtotal = money(request.form["subtotal"])
+            rate = Decimal(request.form.get("tax_rate", "0"))
+            bill_date = request.form["bill_date"]
+            due_date = request.form.get("due_date") or bill_date
+            supplier_invoice_no = request.form["supplier_invoice_no"].strip()
+            if subtotal <= 0 or rate < 0 or rate > 100:
+                raise ValueError("قيمة الفاتورة أو الضريبة غير صحيحة.")
+            if not supplier_invoice_no or not bill_date:
+                raise ValueError("رقم فاتورة المورد وتاريخها مطلوبان.")
+            if due_date < bill_date:
+                raise ValueError("تاريخ استحقاق المورد لا يمكن أن يسبق تاريخ الفاتورة.")
+            tax = money(subtotal * rate / Decimal("100"))
+            total = money(subtotal + tax)
+            receipts = list(dict.fromkeys(int(x) for x in request.form.getlist("receipt_id")))
+            bill_kind = request.form.get("bill_kind", "inventory").strip()
+            if bill_kind not in {"inventory", "expense"}:
+                raise ValueError("نوع فاتورة المورد غير صحيح.")
+
+            c.execute("BEGIN IMMEDIATE")
+            current = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+            if not current or current["status"] not in {"draft", "rejected"} or current["journal_entry_id"] is not None:
+                raise ValueError("تغيرت حالة الفاتورة؛ لا يمكن تعديلها الآن.")
+            dimensions = validate_journal_dimensions(c, request.form)
+            duplicate = c.execute("""SELECT 1 FROM supplier_bills
+                WHERE supplier_id=? AND lower(trim(supplier_invoice_no))=lower(trim(?)) AND id<>? LIMIT 1""",
+                (supplier, supplier_invoice_no, bill_id)).fetchone()
+            if duplicate:
+                raise ValueError("رقم فاتورة المورد مسجل بالفعل لهذا المورد.")
+
+            expense_account_id = None
+            if bill_kind == "expense":
+                expense_account_id = int(request.form.get("expense_account_id", "0"))
+                expense_row = c.execute("""SELECT account_type,is_group,active FROM accounts WHERE id=?""",
+                                        (expense_account_id,)).fetchone()
+                if not expense_row or expense_row["account_type"] != "expense" or expense_row["is_group"] or not expense_row["active"]:
+                    raise ValueError("اختر حساب مصروف تفصيليًا ونشطًا.")
+                if receipts:
+                    raise ValueError("فاتورة المصروف لا تُربط بإيصالات استلام مخزني.")
+            else:
+                if not receipts:
+                    raise ValueError("فاتورة الأصناف المخزنية تتطلب إيصال استلام.")
+                supplier_ap_account(c)
+
+            remaining = subtotal
+            allocations = []
+            for receipt_id in receipts:
+                receipt = c.execute("""SELECT * FROM goods_receipts
+                    WHERE id=? AND supplier_id=? AND status='posted'""",
+                    (receipt_id, supplier)).fetchone()
+                if not receipt:
+                    raise ValueError("إيصال الاستلام غير تابع لهذا المورد أو غير مرحّل.")
+                used_elsewhere = c.execute("""SELECT 1 FROM supplier_bill_receipts
+                    WHERE receipt_id=? AND bill_id<>? LIMIT 1""", (receipt_id, bill_id)).fetchone()
+                if used_elsewhere:
+                    raise ValueError("إيصال الاستلام مرتبط بفاتورة مورد أخرى بالفعل.")
+                amount = money(receipt["total_value"])
+                if amount > remaining:
+                    raise ValueError("إجمالي إيصالات الاستلام أكبر من قيمة الفاتورة.")
+                allocations.append((receipt_id, amount))
+                remaining -= amount
+            if bill_kind == "inventory" and remaining != 0:
+                raise ValueError("قيمة الفاتورة يجب أن تطابق إجمالي إيصالات GRNI المحددة.")
+            if tax:
+                ensure_detail_account(c, _activity_tax_roles(c)["input_vat"],
+                                      "ضريبة مدخلات قابلة للخصم", "asset", "1100")
+
+            c.execute("""UPDATE supplier_bills SET supplier_id=?,bill_date=?,due_date=?,
+                supplier_invoice_no=?,subtotal=?,tax_rate=?,tax_amount=?,total_amount=?,
+                branch_id=?,cost_center_id=?,project_id=?,bill_kind=?,expense_account_id=?,
+                status='draft',submitted_by=NULL,submitted_at=NULL,approved_by=NULL,approved_at=NULL,
+                rejected_by=NULL,rejected_at=NULL,rejection_reason=NULL,approval_reason=NULL
+                WHERE id=? AND status IN ('draft','rejected') AND journal_entry_id IS NULL""",
+                (supplier, bill_date, due_date, supplier_invoice_no, str(subtotal), str(rate),
+                 str(tax), str(total), dimensions["branch_id"], dimensions["cost_center_id"],
+                 dimensions["project_id"], bill_kind, expense_account_id, bill_id))
+            if c.execute("SELECT changes()").fetchone()[0] != 1:
+                raise ValueError("لم يتم تحديث الفاتورة؛ أعد تحميل الصفحة.")
+            c.execute("DELETE FROM supplier_bill_receipts WHERE bill_id=?", (bill_id,))
+            for receipt_id, amount in allocations:
+                c.execute("""INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount)
+                    VALUES(?,?,?)""", (bill_id, receipt_id, str(amount)))
+            c.commit()
+            flash("تم حفظ التعديلات كمسودة. يجب إرسال الفاتورة للمراجعة من جديد.", "success")
+            return redirect(url_for("purchase.index"))
+        except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
+            c.rollback()
+            flash(str(exc), "error")
+            bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+
+    suppliers = c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
+    expense_accounts = c.execute("""SELECT id,code,name_ar FROM accounts
+        WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code""").fetchall()
+    receipts = c.execute("""SELECT r.*,s.name supplier_name FROM goods_receipts r
+        JOIN suppliers s ON s.id=r.supplier_id
+        WHERE r.status='posted' AND (
+            NOT EXISTS(SELECT 1 FROM supplier_bill_receipts x WHERE x.receipt_id=r.id)
+            OR EXISTS(SELECT 1 FROM supplier_bill_receipts own WHERE own.receipt_id=r.id AND own.bill_id=?)
+        ) ORDER BY r.id""", (bill_id,)).fetchall()
+    selected_receipt_ids = {row["receipt_id"] for row in c.execute(
+        "SELECT receipt_id FROM supplier_bill_receipts WHERE bill_id=?", (bill_id,)).fetchall()}
+    dimension_options = active_dimension_options(c)
+    c.close()
+    return render_template("purchase_bill_new.html", suppliers=suppliers, receipts=receipts,
+        expense_accounts=expense_accounts, dimension_options=dimension_options,
+        today=date.today().isoformat(), bill=bill, selected_receipt_ids=selected_receipt_ids,
+        edit_mode=True)
+
+
 @purchase_bp.route("/bills/<int:bill_id>/submit", methods=["POST"])
 @require("purchases.manage")
 def submit_bill(bill_id):
