@@ -5,7 +5,7 @@
 {% set delivery_status_labels = {'draft':'مسودة','posted':'مرحّل'} %}
 <header>
   <div>
-    <h2>أمر البيع {{ order.order_no }}</h2>
+    <h2>أمر البيع {{ order.order_no }}</h2><a class="button secondary" href="{{ url_for('quotes.sales_order_print',order_id=order.id) }}">طباعة أمر البيع</a>
     <p>{{ order.customer_code }} - {{ order.customer_name }} | عرض السعر {{ order.quote_no }}</p>
     <p>الحالة: <strong>{{ order_status_labels.get(order.status, order.status) }}</strong> | تاريخ الأمر: {{ order.order_date }}</p>
   </div>
