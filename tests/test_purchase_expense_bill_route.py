@@ -842,17 +842,31 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
 
         trial_balance = conn.execute(
             """SELECT a.code,
-                      COALESCE(SUM(CAST(jl.debit AS NUMERIC)),0) debit,
-                      COALESCE(SUM(CAST(jl.credit AS NUMERIC)),0) credit
+                      COALESCE(SUM(CAST(posted_lines.debit AS NUMERIC)),0) debit,
+                      COALESCE(SUM(CAST(posted_lines.credit AS NUMERIC)),0) credit
                FROM accounts a
-               LEFT JOIN journal_lines jl ON jl.account_id=a.id
-               LEFT JOIN journal_entries je ON je.id=jl.entry_id AND je.status='posted'
+               LEFT JOIN (
+                   SELECT jl.account_id,jl.debit,jl.credit
+                   FROM journal_lines jl
+                   JOIN journal_entries je ON je.id=jl.entry_id
+                   WHERE je.status='posted'
+               ) posted_lines ON posted_lines.account_id=a.id
                GROUP BY a.id,a.code ORDER BY a.code"""
         ).fetchall()
         tb_debit = sum((Decimal(str(row["debit"])) for row in trial_balance), Decimal("0"))
         tb_credit = sum((Decimal(str(row["credit"])) for row in trial_balance), Decimal("0"))
         self.assertGreater(tb_debit, Decimal("0"))
         self.assertEqual(tb_debit, tb_credit)
+
+        account_balances = {
+            row["code"]: Decimal(str(row["debit"])) - Decimal(str(row["credit"]))
+            for row in trial_balance
+        }
+        inventory_net = account_balances["1150"]
+        self.assertEqual(inventory_net, Decimal("100.00"))
+        self.assertEqual(account_balances["2190"], Decimal("0.00"))
+        self.assertEqual(account_balances["2110"], Decimal("0.00"))
+        self.assertEqual(account_balances["1000"], Decimal("-100.00"))
 
         final_grni_net = Decimal("0")
         for row in conn.execute(
