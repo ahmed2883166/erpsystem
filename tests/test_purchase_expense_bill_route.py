@@ -315,13 +315,18 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
 
     def _create_inventory_bill_with_receipts(self, bill_no, invoice_no, receipt_amounts, subtotal, tax_rate="0"):
         conn = purchases.db()
+        warehouse = conn.execute(
+            "INSERT INTO stock_warehouses(code,name_ar) VALUES(?,?)",
+            (f"WH-{bill_no}", "مخزن اختبار"),
+        )
+        warehouse_id = warehouse.lastrowid
         receipt_ids = []
         for index, amount in enumerate(receipt_amounts, start=1):
             cursor = conn.execute(
                 """INSERT INTO goods_receipts(
                     receipt_no,supplier_id,warehouse_id,receipt_date,status,total_value
-                ) VALUES(?,?,1,'2026-11-11','posted',?)""",
-                (f"GR-{bill_no}-{index}", self.supplier_id, str(amount)),
+                ) VALUES(?,?,?,'2026-11-11','posted',?)""",
+                (f"GR-{bill_no}-{index}", self.supplier_id, warehouse_id, str(amount)),
             )
             receipt_ids.append(cursor.lastrowid)
         tax = (Decimal(str(subtotal)) * Decimal(str(tax_rate)) / Decimal("100")).quantize(Decimal("0.01"))
