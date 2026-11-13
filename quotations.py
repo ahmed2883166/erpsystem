@@ -7,6 +7,7 @@ from datetime import date,datetime
 from functools import wraps
 from flask import Blueprint,flash,g,redirect,render_template,request,session,url_for
 from sales import post_invoice
+from analytic_dimensions import validate_journal_dimensions, active_dimension_options
 from stock import consume_layers, post_issue_journal, ensure_stock_date_open
 
 quotes_bp=Blueprint("quotes",__name__,url_prefix="/sales/quotations")
@@ -43,6 +44,8 @@ def initialize_quotes_schema():
   status TEXT NOT NULL DEFAULT 'pending_approval',
   discount_type TEXT NOT NULL DEFAULT 'none', discount_value TEXT NOT NULL DEFAULT '0',
   discount_amount TEXT NOT NULL DEFAULT '0', discount_allocated TEXT NOT NULL DEFAULT '0',
+  branch_id INTEGER REFERENCES branches(id), cost_center_id INTEGER REFERENCES cost_centers(id),
+  project_id INTEGER REFERENCES projects(id), salesperson_id INTEGER REFERENCES salespersons(id),
   created_by INTEGER, submitted_by INTEGER,
   approved_by INTEGER, approved_at TEXT,
   rejected_by INTEGER, rejected_at TEXT,
@@ -95,6 +98,10 @@ def initialize_quotes_schema():
   "discount_allocated":"TEXT NOT NULL DEFAULT '0'",
   "rejected_by":"INTEGER",
   "rejected_at":"TEXT",
+  "branch_id":"INTEGER REFERENCES branches(id)",
+  "cost_center_id":"INTEGER REFERENCES cost_centers(id)",
+  "project_id":"INTEGER REFERENCES projects(id)",
+  "salesperson_id":"INTEGER REFERENCES salespersons(id)",
  }.items():
   if name not in so_cols: c.execute(f"ALTER TABLE sales_orders ADD COLUMN {name} {definition}")
  sol_cols={r["name"] for r in c.execute("PRAGMA table_info(sales_order_lines)")}
@@ -144,7 +151,7 @@ def require(write=False):
  return deco
 
 
-def create_sales_order_from_quotation(conn, quote_id, created_by, warehouse_id=None, expected_date=None):
+def create_sales_order_from_quotation(conn, quote_id, created_by, warehouse_id=None, expected_date=None, dimensions=None):
  q=conn.execute("SELECT * FROM quotations WHERE id=?",(quote_id,)).fetchone()
  if not q: raise ValueError("عرض السعر غير موجود.")
  if q["status"]!="accepted": raise ValueError("لا يمكن إنشاء أمر بيع إلا من عرض سعر مقبول من العميل.")
@@ -189,13 +196,18 @@ def create_sales_order_from_quotation(conn, quote_id, created_by, warehouse_id=N
   discount_value=Decimal("0"); discount_amount=Decimal("0")
  if discount_amount>=gross_subtotal and discount_amount>0:
   raise ValueError("خصم العميل لا يمكن أن يساوي أو يتجاوز إجمالي أمر البيع.")
+ dimensions=validate_journal_dimensions(conn, dimensions or {})
+ dimensions["customer_id"]=int(q["customer_id"])
  order_no="SO-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
  cur=conn.execute(
   """INSERT INTO sales_orders(order_no,quotation_id,customer_id,warehouse_id,order_date,
-     expected_date,status,discount_type,discount_value,discount_amount,created_by,submitted_by)
-     VALUES(?,?,?,?,?,?,'pending_approval',?,?,?,?,?)""",
+     expected_date,status,discount_type,discount_value,discount_amount,branch_id,cost_center_id,
+     project_id,salesperson_id,created_by,submitted_by)
+     VALUES(?,?,?,?,?,?,'pending_approval',?,?,?,?,?,?,?,?,?)""",
   (order_no,quote_id,q["customer_id"],warehouse_id,date.today().isoformat(),
-   expected_date or None,discount_type,str(discount_value),str(discount_amount),created_by,created_by))
+   expected_date or None,discount_type,str(discount_value),str(discount_amount),
+   dimensions.get("branch_id"),dimensions.get("cost_center_id"),dimensions.get("project_id"),
+   dimensions.get("salesperson_id"),created_by,created_by))
  order_id=cur.lastrowid
  conn.executemany(
   """INSERT INTO sales_order_lines(sales_order_id,quotation_line_id,product_id,description,
@@ -321,7 +333,9 @@ def post_delivery_note(conn, note_id, posted_by):
    (movement_no,row["product_id"],note["warehouse_id"],str(qty),str(unit_cost),str(cost),
     note["delivery_date"],"صرف إذن تسليم "+note["delivery_no"],posted_by))
   movement_id=cur.lastrowid
-  post_issue_journal(conn,movement_id,movement_no,product,note["delivery_date"],cost,posted_by,"sale")
+  posting_dimensions={key: order[key] for key in ("branch_id","cost_center_id","project_id","salesperson_id")}
+  posting_dimensions["customer_id"]=order["customer_id"]
+  post_issue_journal(conn,movement_id,movement_no,product,note["delivery_date"],cost,posted_by,"sale",dimensions=posting_dimensions)
   conn.execute(
    "UPDATE delivery_note_lines SET unit_cost=?,total_cost=?,stock_movement_id=? WHERE id=?",
    (str(unit_cost),str(cost),movement_id,row["id"]))
@@ -428,8 +442,10 @@ def invoice_sales_order(conn, order_id, invoice_date, due_date, created_by, dime
   "discount_value":order["discount_value"],
   "discount_amount":str(invoice_discount),
  }
+ inherited_dimensions={key: order[key] for key in ("branch_id","cost_center_id","project_id","salesperson_id")}
+ inherited_dimensions.update({key:value for key,value in (dimensions or {}).items() if value not in (None,"")})
  result=post_invoice(conn,order["customer_id"],invoice_date,order["warehouse_id"],items,
-  quotation["tax_rate"],created_by,dimensions=dimensions,preissued_costs=fulfillment,
+  quotation["tax_rate"],created_by,dimensions=inherited_dimensions,preissued_costs=fulfillment,
   sales_order_id=order_id,discount_override=discount_override)
  conn.execute("UPDATE sales_invoices SET due_date=? WHERE id=?",(due_date or invoice_date,result["invoice_id"]))
  conn.execute("UPDATE sales_orders SET discount_allocated=? WHERE id=?",
@@ -501,7 +517,8 @@ def view(quote_id):
  if not q: c.close(); flash("عرض السعر غير موجود.","error"); return redirect(url_for("quotes.index"))
  lines=c.execute("SELECT l.*,p.sku FROM quotation_lines l LEFT JOIN stock_products p ON p.id=l.product_id WHERE l.quotation_id=?",(quote_id,)).fetchall()
  warehouses=c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
- c.close(); return render_template("quotation_view.html",q=q,lines=lines,warehouses=warehouses,today=date.today().isoformat())
+ dimension_options=active_dimension_options(c)
+ c.close(); return render_template("quotation_view.html",q=q,lines=lines,warehouses=warehouses,dimension_options=dimension_options,today=date.today().isoformat())
 
 @quotes_bp.route("/<int:quote_id>/status",methods=["POST"])
 @require(write=True)
@@ -523,7 +540,8 @@ def convert(quote_id):
   c.execute("BEGIN IMMEDIATE")
   result=create_sales_order_from_quotation(
    c,quote_id,session["user_id"],request.form.get("warehouse_id",type=int),
-   request.form.get("expected_date") or None)
+   request.form.get("expected_date") or None,
+   dimensions={key:request.form.get(key) for key in ("branch_id","cost_center_id","project_id","salesperson_id")})
   c.execute("UPDATE quotations SET status='converted_to_order' WHERE id=?",(quote_id,))
   g.audit_created_record=("sales_orders",result["sales_order_id"],"sales_order_lines","sales_order_id")
   c.commit()
