@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import analytic_dimensions
 import sales
+import quotations
 import stock
 
 
@@ -779,6 +780,153 @@ otals["credit"], places=2)
             1,
         )
         self.assertEqual(sales._customer_advance_available(self.db, advance["id"]), Decimal("15.00"))
+
+
+
+    def _create_accepted_quote_and_order(self, quantity="4"):
+        quotations.DB_PATH = sales.DB_PATH
+        quotations.initialize_quotes_schema()
+        cur = self.db.execute(
+            """INSERT INTO quotations(quote_no,customer_id,quote_date,valid_until,status,
+               subtotal,tax_rate,tax_amount,total_amount,notes,created_by)
+               VALUES('QT-TEST-1',?,'2026-11-10','2026-12-10','accepted',
+                      ?, '14', ?, ?, '', 1)""",
+            (self.customer_id, str(Decimal(quantity) * Decimal("20")),
+             str(Decimal(quantity) * Decimal("20") * Decimal("0.14")),
+             str(Decimal(quantity) * Decimal("20") * Decimal("1.14"))),
+        )
+        quote_id = cur.lastrowid
+        self.db.execute(
+            """INSERT INTO quotation_lines(quotation_id,product_id,description,quantity,unit_price,line_total)
+               VALUES(?,?,?,?,'20',?)""",
+            (quote_id, self.product_id, "صنف اختبار", quantity,
+             str(Decimal(quantity) * Decimal("20"))),
+        )
+        order = quotations.create_sales_order_from_quotation(
+            self.db, quote_id, created_by=1, warehouse_id=self.warehouse_id,
+        )
+        self.db.commit()
+        order_line_id = self.db.execute(
+            "SELECT id FROM sales_order_lines WHERE sales_order_id=?",
+            (order["sales_order_id"],),
+        ).fetchone()["id"]
+        return quote_id, order["sales_order_id"], order_line_id
+
+    def test_sales_order_partial_delivery_and_invoicing_never_issue_stock_twice(self):
+        quote_id, order_id, order_line_id = self._create_accepted_quote_and_order("4")
+        with self.assertRaisesRegex(ValueError, "نفس منشئه"):
+            quotations.approve_sales_order(self.db, order_id, approver_id=1)
+        self.assertEqual(
+            self.db.execute("SELECT status FROM sales_orders WHERE id=?", (order_id,)).fetchone()["status"],
+            "pending_approval",
+        )
+        quotations.approve_sales_order(self.db, order_id, approver_id=2)
+        self.db.commit()
+
+        self.db.execute("BEGIN IMMEDIATE")
+        first_note = quotations.create_delivery_note(
+            self.db, order_id, "2026-11-11",
+            [{"sales_order_line_id": order_line_id, "quantity": "2"}], 2,
+        )
+        # A draft delivery note must not move stock or create a journal.
+        self.assertEqual(
+            Decimal(self.db.execute("SELECT qty_remaining FROM stock_valuation_layers").fetchone()[0]),
+            Decimal("5"),
+        )
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'"
+        ).fetchone()[0], 0)
+        quotations.post_delivery_note(self.db, first_note["delivery_note_id"], posted_by=2)
+        self.db.commit()
+
+        self.assertEqual(
+            Decimal(self.db.execute("SELECT qty_remaining FROM stock_valuation_layers").fetchone()[0]),
+            Decimal("3.0000"),
+        )
+        first_invoice = quotations.invoice_sales_order(
+            self.db, order_id, "2026-11-12", "2026-11-30", created_by=2,
+        )
+        self.db.commit()
+        self.assertEqual(first_invoice["total_cost"], Decimal("20.00"))
+        self.assertIsNone(first_invoice["cogs_journal_entry_id"])
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'"
+        ).fetchone()[0], 1)
+
+        self.db.execute("BEGIN IMMEDIATE")
+        second_note = quotations.create_delivery_note(
+            self.db, order_id, "2026-11-13",
+            [{"sales_order_line_id": order_line_id, "quantity": "2"}], 2,
+        )
+        quotations.post_delivery_note(self.db, second_note["delivery_note_id"], posted_by=2)
+        second_invoice = quotations.invoice_sales_order(
+            self.db, order_id, "2026-11-14", "2026-11-30", created_by=2,
+        )
+        self.db.commit()
+
+        self.assertEqual(second_invoice["total_cost"], Decimal("20.00"))
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'"
+        ).fetchone()[0], 2)
+        self.assertEqual(
+            Decimal(self.db.execute("SELECT qty_remaining FROM stock_valuation_layers").fetchone()[0]),
+            Decimal("1.0000"),
+        )
+        self.assertEqual(
+            self.db.execute("SELECT status FROM sales_orders WHERE id=?", (order_id,)).fetchone()["status"],
+            "invoiced",
+        )
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM sales_invoices WHERE sales_order_id=?", (order_id,)
+        ).fetchone()[0], 2)
+        invoice_cost = sum(
+            (Decimal(row["cost_total"]) for row in self.db.execute(
+                "SELECT cost_total FROM sales_invoice_lines WHERE sales_order_line_id=?",
+                (order_line_id,),
+            ).fetchall()),
+            Decimal("0"),
+        )
+        self.assertEqual(invoice_cost, Decimal("40.00"))
+        cogs_debit = sum(
+            (Decimal(row["debit"] or "0") for row in self.db.execute(
+                """SELECT jl.debit FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+                   WHERE a.code='5100'"""
+            ).fetchall()),
+            Decimal("0"),
+        )
+        self.assertEqual(cogs_debit, Decimal("40.00"))
+
+    def test_sales_delivery_rejects_overdelivery_and_rolls_back_insufficient_stock(self):
+        _, order_id, order_line_id = self._create_accepted_quote_and_order("6")
+        quotations.approve_sales_order(self.db, order_id, approver_id=2)
+        self.db.commit()
+
+        self.db.execute("BEGIN IMMEDIATE")
+        with self.assertRaisesRegex(ValueError, "تتجاوز الكمية المتبقية"):
+            quotations.create_delivery_note(
+                self.db, order_id, "2026-11-11",
+                [{"sales_order_line_id": order_line_id, "quantity": "7"}], 2,
+            )
+        self.db.rollback()
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM delivery_notes WHERE sales_order_id=?", (order_id,)
+        ).fetchone()[0], 0)
+
+        self.db.execute("BEGIN IMMEDIATE")
+        note = quotations.create_delivery_note(
+            self.db, order_id, "2026-11-11",
+            [{"sales_order_line_id": order_line_id, "quantity": "6"}], 2,
+        )
+        with self.assertRaisesRegex(ValueError, "الرصيد غير كافٍ"):
+            quotations.post_delivery_note(self.db, note["delivery_note_id"], posted_by=2)
+        self.db.rollback()
+        self.assertEqual(
+            Decimal(self.db.execute("SELECT qty_remaining FROM stock_valuation_layers").fetchone()[0]),
+            Decimal("5"),
+        )
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'"
+        ).fetchone()[0], 0)
 
 
 
