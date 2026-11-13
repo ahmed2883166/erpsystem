@@ -38,7 +38,7 @@ class SalesIntegrationTests(unittest.TestCase):
         INSERT INTO company_settings VALUES('inventory_cost_method','average');
         """)
         for code, name, typ in [
-            ("1110", "الصندوق", "asset"), ("1130", "العملاء", "asset"),
+            ("1110", "الصندوق", "asset"), ("1130", "العملاء", "asset"), ("2160", "دفعات مقدمة من العملاء", "liability"),
             ("1150", "المخزون", "asset"), ("2130", "ضريبة مخرجات", "liability"),
             ("4100", "المبيعات", "revenue"), ("5100", "تكلفة المبيعات", "expense")
         ]:
@@ -580,6 +580,120 @@ class SalesIntegrationTests(unittest.TestCase):
                                 (result["invoice_id"],)).fetchone()
         self.assertEqual((saved["discount_type"], saved["discount_value"], Decimal(saved["discount_amount"])),
                          ("fixed", "15.00", Decimal("15.00")))
+
+
+    def test_customer_advance_receipt_allocation_and_refund_post_balanced_journals(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}], "0", 1,
+        )
+        cash_id = self.db.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
+        advance = sales.post_customer_advance_receipt(
+            self.db, self.customer_id, "2026-11-11", "100", cash_id, 1, "ADV-001",
+        )
+        allocation = sales.allocate_customer_advance(
+            self.db, advance["advance_receipt_id"], [(invoice["invoice_id"], "60")],
+            "2026-11-12", 1,
+        )
+        refund = sales.post_customer_advance_refund(
+            self.db, advance["advance_receipt_id"], "2026-11-13", "15", cash_id, 1, "REF-ADV-001",
+        )
+        self.db.commit()
+
+        paid = self.db.execute(
+            "SELECT paid_amount FROM sales_invoices WHERE id=?", (invoice["invoice_id"],)
+        ).fetchone()["paid_amount"]
+        self.assertEqual(Decimal(paid), Decimal("60.00"))
+        self.assertEqual(allocation["remaining_advance"], Decimal("40.00"))
+        self.assertEqual(refund["remaining_advance"], Decimal("25.00"))
+
+        expected = [
+            (advance["journal_entry_id"], "1110", Decimal("100.00"), Decimal("0.00")),
+            (advance["journal_entry_id"], "2160", Decimal("0.00"), Decimal("100.00")),
+            (allocation["journal_entry_id"], "2160", Decimal("60.00"), Decimal("0.00")),
+            (allocation["journal_entry_id"], "1130", Decimal("0.00"), Decimal("60.00")),
+            (refund["journal_entry_id"], "2160", Decimal("15.00"), Decimal("0.00")),
+            (refund["journal_entry_id"], "1110", Decimal("0.00"), Decimal("15.00")),
+        ]
+        actual = []
+        for row in self.db.execute(
+            """SELECT jl.entry_id,a.code,jl.debit,jl.credit
+               FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+               WHERE jl.entry_id IN (?,?,?) ORDER BY jl.entry_id,a.code""",
+            (advance["journal_entry_id"], allocation["journal_entry_id"], refund["journal_entry_id"]),
+        ):
+            actual.append((row["entry_id"], row["code"], Decimal(row["debit"]), Decimal(row["credit"])))
+        self.assertEqual(actual, sorted(expected, key=lambda x: (x[0], x[1])))
+        for entry_id in (advance["journal_entry_id"], allocation["journal_entry_id"], refund["journal_entry_id"]):
+            totals = self.db.execute(
+                "SELECT SUM(CAST(debit AS REAL)) debit,SUM(CAST(credit AS REAL)) credit FROM journal_lines WHERE entry_id=?",
+                (entry_id,),
+            ).fetchone()
+            self.assertAlmostEqual(totals["debit"], totals["credit"], places=2)
+
+    def test_customer_advance_rejects_overallocation_and_cross_customer_invoice(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        first_invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}], "0", 1,
+        )
+        self.db.execute("INSERT INTO customers(code,name) VALUES('C2','عميل آخر')")
+        second_customer_id = self.db.execute(
+            "SELECT id FROM customers WHERE code='C2'"
+        ).fetchone()["id"]
+        second_invoice = sales.post_invoice(
+            self.db, second_customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "20"}], "0", 1,
+        )
+        cash_id = self.db.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
+        advance = sales.post_customer_advance_receipt(
+            self.db, self.customer_id, "2026-11-11", "50", cash_id, 1,
+        )
+
+        with self.assertRaisesRegex(ValueError, "تتجاوز المتبقي من مقدم العميل"):
+            sales.allocate_customer_advance(
+                self.db, advance["advance_receipt_id"], [(first_invoice["invoice_id"], "50.01")],
+                "2026-11-12", 1,
+            )
+        with self.assertRaisesRegex(ValueError, "لا تتبع نفس العميل"):
+            sales.allocate_customer_advance(
+                self.db, advance["advance_receipt_id"], [(second_invoice["invoice_id"], "10")],
+                "2026-11-12", 1,
+            )
+        self.assertEqual(
+            self.db.execute(
+                "SELECT COUNT(*) FROM customer_advance_allocations WHERE advance_receipt_id=?",
+                (advance["advance_receipt_id"],),
+            ).fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            self.db.execute(
+                "SELECT paid_amount FROM sales_invoices WHERE id=?", (first_invoice["invoice_id"],)
+            ).fetchone()["paid_amount"],
+            "0",
+        )
+        self.db.rollback()
+
+    def test_customer_advance_refund_cannot_exceed_unallocated_balance(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        cash_id = self.db.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
+        advance = sales.post_customer_advance_receipt(
+            self.db, self.customer_id, "2026-11-11", "30", cash_id, 1,
+        )
+        with self.assertRaisesRegex(ValueError, "تتجاوز المتبقي من مقدم العميل"):
+            sales.post_customer_advance_refund(
+                self.db, advance["advance_receipt_id"], "2026-11-12", "30.01", cash_id, 1,
+            )
+        self.assertEqual(
+            self.db.execute(
+                "SELECT COUNT(*) FROM customer_advance_refunds WHERE advance_receipt_id=?",
+                (advance["advance_receipt_id"],),
+            ).fetchone()[0],
+            0,
+        )
+        self.db.rollback()
 
 
 if __name__ == "__main__":
