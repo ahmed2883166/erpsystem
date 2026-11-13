@@ -119,10 +119,43 @@ def initialize_workforce_schema():
       amount TEXT NOT NULL, description TEXT NOT NULL, receipt_reference TEXT NOT NULL DEFAULT '',
       created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS attendance_records(
+      id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id),
+      attendance_date TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('present','absent','permission','holiday')),
+      check_in TEXT NOT NULL DEFAULT '', check_out TEXT NOT NULL DEFAULT '',
+      absence_hours TEXT NOT NULL DEFAULT '0', approved_overtime_hours TEXT NOT NULL DEFAULT '0',
+      notes TEXT NOT NULL DEFAULT '', recorded_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(employee_id,attendance_date)
+    );
+    CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance_records(attendance_date,employee_id);
+    CREATE TABLE IF NOT EXISTS leave_types(
+      id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+      is_paid INTEGER NOT NULL DEFAULT 1, requires_balance INTEGER NOT NULL DEFAULT 0,
+      active INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE TABLE IF NOT EXISTS employee_leave_balances(
+      id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id),
+      leave_type_id INTEGER NOT NULL REFERENCES leave_types(id),
+      balance_days TEXT NOT NULL DEFAULT '0', updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(employee_id,leave_type_id)
+    );
+    CREATE TABLE IF NOT EXISTS employee_leave_requests(
+      id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id),
+      leave_type_id INTEGER NOT NULL REFERENCES leave_types(id),
+      start_date TEXT NOT NULL, end_date TEXT NOT NULL, days TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'requested'
+        CHECK(status IN ('requested','approved','rejected')),
+      requested_by INTEGER, decided_by INTEGER, decided_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_leave_requests_dates ON employee_leave_requests(start_date,end_date,status);
     CREATE INDEX IF NOT EXISTS idx_payroll_period ON payroll_runs(period);
     CREATE INDEX IF NOT EXISTS idx_custody_employee ON employee_custodies(employee_id,status);
     """)
-    employee_cols = {r["name"] for r in c.execute("PRAGMA table_info(employees)")}
+    c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('annual','إجازة سنوية',1,1)")
+    c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('unpaid','إجازة بدون أجر',0,0)")
+    c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('sick','إجازة مرضية',1,0)")
+        employee_cols = {r["name"] for r in c.execute("PRAGMA table_info(employees)")}
     for name, definition in {
         "address": "TEXT NOT NULL DEFAULT ''",
         "national_id": "TEXT NOT NULL DEFAULT ''",
@@ -796,6 +829,146 @@ def loan_schedule(loan_id):
     installments = c.execute("SELECT * FROM employee_loan_installments WHERE loan_id=? ORDER BY due_period",(loan_id,)).fetchall()
     c.close()
     return render_template("employee_loan_schedule.html",loan=loan,installments=installments)
+
+
+@workforce_bp.route("/hr/attendance", methods=["GET", "POST"])
+@_role("admin", "accountant")
+def attendance():
+    c = _db()
+    selected_date = request.values.get("attendance_date", date.today().isoformat())
+    try:
+        date.fromisoformat(selected_date)
+    except ValueError:
+        selected_date = date.today().isoformat()
+    if request.method == "POST":
+        try:
+            employee_id = int(request.form["employee_id"])
+            status = request.form.get("status","present")
+            if status not in {"present","absent","permission","holiday"}:
+                raise ValueError("حالة الحضور غير صحيحة.")
+            check_in = request.form.get("check_in","").strip()
+            check_out = request.form.get("check_out","").strip()
+            absence_hours = D(request.form.get("absence_hours","0"))
+            overtime_hours = D(request.form.get("approved_overtime_hours","0"))
+            if min(absence_hours,overtime_hours)<0 or absence_hours>24 or overtime_hours>24:
+                raise ValueError("ساعات الغياب أو الإضافي خارج النطاق المسموح.")
+            for tm in (check_in,check_out):
+                if tm:
+                    datetime.strptime(tm,"%H:%M")
+            if check_in and check_out and check_out <= check_in:
+                raise ValueError("وقت الانصراف يجب أن يكون بعد وقت الحضور في نفس اليوم.")
+            if status=="absent" and absence_hours<=0:
+                raise ValueError("حدد ساعات الغياب عند تسجيل يوم غياب.")
+            if status!="absent" and absence_hours>0:
+                raise ValueError("ساعات الغياب تسجل فقط مع حالة غياب.")
+            if not c.execute("SELECT 1 FROM employees WHERE id=? AND active=1",(employee_id,)).fetchone():
+                raise ValueError("الموظف غير موجود أو غير نشط.")
+            c.execute("""INSERT INTO attendance_records(employee_id,attendance_date,status,check_in,check_out,
+                absence_hours,approved_overtime_hours,notes,recorded_by)
+                VALUES(?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(employee_id,attendance_date) DO UPDATE SET status=excluded.status,
+                check_in=excluded.check_in,check_out=excluded.check_out,absence_hours=excluded.absence_hours,
+                approved_overtime_hours=excluded.approved_overtime_hours,notes=excluded.notes,
+                recorded_by=excluded.recorded_by""",
+                (employee_id,selected_date,status,check_in,check_out,str(M(absence_hours)),
+                 str(M(overtime_hours)),request.form.get("notes","").strip(),session["user_id"]))
+            _audit(c,"attendance_saved",str(employee_id)+" "+selected_date+" "+status)
+            c.commit()
+            flash("تم حفظ سجل الحضور والانصراف.","success")
+        except (ValueError,KeyError,sqlite3.Error) as exc:
+            c.rollback()
+            flash(str(exc) or "تعذر حفظ سجل الحضور.","error")
+        c.close()
+        return redirect(url_for("workforce.attendance",attendance_date=selected_date))
+    employees = c.execute("SELECT id,employee_code,full_name FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
+    records = c.execute("""SELECT a.*,e.employee_code,e.full_name FROM attendance_records a
+        JOIN employees e ON e.id=a.employee_id WHERE a.attendance_date=? ORDER BY e.employee_code""",
+        (selected_date,)).fetchall()
+    c.close()
+    return render_template("attendance.html",employees=employees,records=records,selected_date=selected_date)
+
+
+@workforce_bp.route("/hr/leaves", methods=["GET", "POST"])
+@_role("admin", "accountant")
+def leaves():
+    c = _db()
+    if request.method == "POST":
+        try:
+            employee_id=int(request.form["employee_id"]); leave_type_id=int(request.form["leave_type_id"])
+            start=date.fromisoformat(request.form["start_date"]); end=date.fromisoformat(request.form["end_date"])
+            days=D(request.form.get("days","0"))
+            leave_type=c.execute("SELECT * FROM leave_types WHERE id=? AND active=1",(leave_type_id,)).fetchone()
+            if end<start or days<=0 or not leave_type:
+                raise ValueError("راجع نوع الإجازة والتواريخ وعدد الأيام.")
+            if not c.execute("SELECT 1 FROM employees WHERE id=? AND active=1",(employee_id,)).fetchone():
+                raise ValueError("الموظف غير موجود أو غير نشط.")
+            c.execute("""INSERT INTO employee_leave_requests(employee_id,leave_type_id,start_date,end_date,days,
+                reason,requested_by) VALUES(?,?,?,?,?,?,?)""",
+                (employee_id,leave_type_id,start.isoformat(),end.isoformat(),str(M(days)),
+                 request.form.get("reason","").strip(),session["user_id"]))
+            _audit(c,"leave_requested",str(employee_id)+" "+start.isoformat()+".."+end.isoformat())
+            c.commit(); flash("تم تسجيل طلب الإجازة في انتظار الاعتماد.","success")
+        except (ValueError,KeyError,sqlite3.Error) as exc:
+            c.rollback(); flash(str(exc) or "تعذر تسجيل طلب الإجازة.","error")
+        c.close(); return redirect(url_for("workforce.leaves"))
+    employees=c.execute("SELECT id,employee_code,full_name FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
+    types=c.execute("SELECT * FROM leave_types WHERE active=1 ORDER BY id").fetchall()
+    balances=c.execute("""SELECT b.*,e.employee_code,e.full_name,t.name leave_name
+        FROM employee_leave_balances b JOIN employees e ON e.id=b.employee_id
+        JOIN leave_types t ON t.id=b.leave_type_id ORDER BY e.employee_code,t.id""").fetchall()
+    requests=c.execute("""SELECT r.*,e.employee_code,e.full_name,t.name leave_name,t.is_paid,t.requires_balance
+        FROM employee_leave_requests r JOIN employees e ON e.id=r.employee_id
+        JOIN leave_types t ON t.id=r.leave_type_id ORDER BY r.id DESC""").fetchall()
+    c.close()
+    return render_template("leaves.html",employees=employees,types=types,balances=balances,requests=requests)
+
+
+@workforce_bp.route("/hr/leaves/balance", methods=["POST"])
+@_role("admin", "accountant")
+def set_leave_balance():
+    c=_db()
+    try:
+        employee_id=int(request.form["employee_id"]); leave_type_id=int(request.form["leave_type_id"])
+        days=M(request.form.get("balance_days","0"))
+        if days<0 or not c.execute("SELECT 1 FROM employees WHERE id=?",(employee_id,)).fetchone() or not c.execute("SELECT 1 FROM leave_types WHERE id=? AND requires_balance=1",(leave_type_id,)).fetchone():
+            raise ValueError("رصيد الإجازة غير صحيح.")
+        c.execute("""INSERT INTO employee_leave_balances(employee_id,leave_type_id,balance_days)
+            VALUES(?,?,?) ON CONFLICT(employee_id,leave_type_id) DO UPDATE SET
+            balance_days=excluded.balance_days,updated_at=CURRENT_TIMESTAMP""",(employee_id,leave_type_id,str(days)))
+        _audit(c,"leave_balance_adjusted",str(employee_id)+" type="+str(leave_type_id)+" balance="+str(days))
+        c.commit(); flash("تم تحديث رصيد الإجازة بعد المراجعة.","success")
+    except (ValueError,KeyError,sqlite3.Error) as exc:
+        c.rollback(); flash(str(exc) or "تعذر تحديث رصيد الإجازة.","error")
+    c.close(); return redirect(url_for("workforce.leaves"))
+
+
+@workforce_bp.route("/hr/leaves/<int:request_id>/decision", methods=["POST"])
+@_role("admin", "accountant")
+def decide_leave(request_id):
+    c=_db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        leave=c.execute("""SELECT r.*,t.is_paid,t.requires_balance,t.name leave_name
+            FROM employee_leave_requests r JOIN leave_types t ON t.id=r.leave_type_id WHERE r.id=?""",
+            (request_id,)).fetchone()
+        decision=request.form.get("decision")
+        if not leave or leave["status"]!="requested" or decision not in {"approved","rejected"}:
+            raise ValueError("طلب الإجازة غير موجود أو سبق اتخاذ قرار.")
+        if decision=="approved" and leave["is_paid"] and leave["requires_balance"]:
+            balance=c.execute("SELECT balance_days FROM employee_leave_balances WHERE employee_id=? AND leave_type_id=?",
+                (leave["employee_id"],leave["leave_type_id"])).fetchone()
+            if not balance or D(balance["balance_days"])<D(leave["days"]):
+                raise ValueError("رصيد الإجازة السنوية غير كافٍ.")
+            new_balance=M(D(balance["balance_days"])-D(leave["days"]))
+            c.execute("UPDATE employee_leave_balances SET balance_days=?,updated_at=CURRENT_TIMESTAMP WHERE employee_id=? AND leave_type_id=?",
+                (str(new_balance),leave["employee_id"],leave["leave_type_id"]))
+        c.execute("UPDATE employee_leave_requests SET status=?,decided_by=?,decided_at=CURRENT_TIMESTAMP WHERE id=?",
+            (decision,session["user_id"],request_id))
+        _audit(c,"leave_"+decision,str(request_id)+" "+leave["leave_name"])
+        c.commit(); flash("تم اعتماد الإجازة." if decision=="approved" else "تم رفض الإجازة.","success")
+    except (ValueError,KeyError,sqlite3.Error) as exc:
+        c.rollback(); flash(str(exc) or "تعذر اتخاذ قرار الإجازة.","error")
+    c.close(); return redirect(url_for("workforce.leaves"))
 
 
 @workforce_bp.route("/hr/custody", methods=["GET", "POST"])
