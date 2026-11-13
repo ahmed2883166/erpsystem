@@ -311,8 +311,9 @@ class PurchasingAccountingTests(unittest.TestCase):
 
         self.assertEqual(entry_id, 779)
         assets = self.db.execute(
-            "SELECT asset_code,cost,residual_value,useful_life_months,supplier_bill_id "
-            "FROM fixed_assets WHERE supplier_bill_id=? ORDER BY asset_code", (bill_id,)
+            """SELECT f.asset_code,f.cost,f.residual_value,f.useful_life_months,l.bill_id supplier_bill_id
+               FROM fixed_assets f JOIN fixed_asset_supplier_bill_links l ON l.asset_id=f.id
+               WHERE l.bill_id=? ORDER BY f.asset_code""", (bill_id,)
         ).fetchall()
         self.assertEqual(len(assets), 2)
         self.assertEqual(
