@@ -8,7 +8,10 @@
 <form method="post" action="{{url_for('quotes.status',quote_id=q.id)}}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="status" value="rejected"><button class="danger" {% if q.status not in ['draft','sent'] %}disabled{% endif %}>رفض العرض</button></form>
 {% endif %}
 {% if q.status == 'accepted' and not q.sales_order_id and 'quotes.manage' in permissions and 'sales.manage' in permissions %}
-<form method="post" action="{{url_for('quotes.convert',quote_id=q.id)}}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>مخزن التسليم<select name="warehouse_id"><option value="">اختر المخزن</option>{% for w in warehouses %}<option value="{{w.id}}">{{w.code}} - {{w.name_ar}}</option>{% endfor %}</select></label><label>تاريخ التسليم المتوقع<input type="date" name="expected_date" value="{{today}}"></label><button>إنشاء أمر بيع وإرساله للاعتماد</button></form>
+<form method="post" action="{{url_for('quotes.convert',quote_id=q.id)}}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>مخزن التسليم<select name="warehouse_id"><option value="">اختر المخزن</option>{% for w in warehouses %}<option value="{{w.id}}">{{w.code}} - {{w.name_ar}}</option>{% endfor %}</select></label><label>تاريخ التسليم المتوقع<input type="date" name="expected_date" value="{{today}}"></label>
+{% for key,label,items in [('branch_id','الفرع',dimension_options.branches),('cost_center_id','مركز التكلفة',dimension_options.cost_centers),('project_id','المشروع',dimension_options.projects),('salesperson_id','مندوب المبيعات',dimension_options.salespersons)] %}
+<label>{{label}}<select name="{{key}}"><option value="">بدون تحديد</option>{% for item in items %}<option value="{{item.id}}">{{item.code}} - {{item.name_ar}}</option>{% endfor %}</select></label>
+{% endfor %}<button>إنشاء أمر بيع وإرساله للاعتماد</button></form>
 {% elif q.sales_order_id %}
 <a class="btn secondary" href="{{url_for('quotes.sales_order_view',order_id=q.sales_order_id)}}">فتح أمر البيع</a>
 {% endif %}
