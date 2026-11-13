@@ -33,7 +33,7 @@
   </form>
 </section>
 {% endif %}
-{% if order.status in ['approved','partially_delivered','partially_invoiced'] and 'quotes.manage' in permissions %}
+{% if order.status in ['approved','partially_delivered','partially_invoiced'] and 'sales.manage' in permissions %}
 <section class="panel">
   <h3>إنشاء إذن تسليم جديد</h3>
   <p>أدخل الكمية التي ستخرج فعليًا من المخزن. يمكن إنشاء أكثر من إذن للتسليم الجزئي.</p>
@@ -69,7 +69,7 @@
       <tr>
         <td>{{ note.delivery_no }}</td><td>{{ note.delivery_date }}</td><td>{{ note.status }}</td>
         <td>
-          {% if note.status == 'draft' and 'quotes.manage' in permissions %}
+          {% if note.status == 'draft' and 'sales.manage' in permissions %}
             <form method="post" action="{{ url_for('quotes.post_delivery_note_route', note_id=note.id) }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button>ترحيل الإذن وصرف المخزون</button>
@@ -83,7 +83,7 @@
     </tbody>
   </table>
 </section>
-{% if 'quotes.manage' in permissions and order.status in ['approved','partially_delivered','delivered','partially_invoiced'] %}
+{% if 'sales.manage' in permissions and order.status in ['approved','partially_delivered','delivered','partially_invoiced'] %}
 <section class="panel">
   <h3>إصدار فاتورة للكميات المسلمة غير المفوترة</h3>
   <p>الفاتورة ستشمل الكميات المسلمة فقط. تكلفة المخزون تم إثباتها عند ترحيل إذن التسليم ولن يعاد صرف المخزون أو إثبات تكلفة المبيعات مرة ثانية.</p>
