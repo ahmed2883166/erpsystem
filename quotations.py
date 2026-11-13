@@ -401,22 +401,113 @@ def status(quote_id):
 def convert(quote_id):
  c=db()
  try:
-  q=c.execute("SELECT * FROM quotations WHERE id=?",(quote_id,)).fetchone()
-  if not q: raise ValueError("عرض السعر غير موجود.")
-  if q["sales_invoice_id"]: raise ValueError("تم تحويل العرض إلى فاتورة بالفعل.")
-  if q["status"] not in {"accepted","sent"}: raise ValueError("يجب قبول العرض أو إرساله قبل التحويل.")
-  if q["valid_until"]<date.today().isoformat(): raise ValueError("انتهت صلاحية عرض السعر.")
-  lines=c.execute("SELECT * FROM quotation_lines WHERE quotation_id=?",(quote_id,)).fetchall()
-  items=[{"product_id":x["product_id"],"description":x["description"],"quantity":x["quantity"],"unit_price":x["unit_price"]} for x in lines]
-  warehouse_id=request.form.get("warehouse_id",type=int)
   c.execute("BEGIN IMMEDIATE")
-  result=post_invoice(c,q["customer_id"],date.today().isoformat(),warehouse_id,items,q["tax_rate"],session["user_id"])
-  c.execute("UPDATE sales_invoices SET due_date=? WHERE id=?",(date.today().isoformat(),result["invoice_id"]))
-  c.execute("UPDATE quotations SET status='converted',sales_invoice_id=? WHERE id=?",(result["invoice_id"],quote_id))
-  c.commit(); flash("تم تحويل العرض إلى فاتورة بيع "+result["invoice_no"],"success")
- except (ValueError,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
+  result=create_sales_order_from_quotation(
+   c,quote_id,session["user_id"],request.form.get("warehouse_id",type=int),
+   request.form.get("expected_date") or None)
+  c.execute("UPDATE quotations SET status='converted_to_order' WHERE id=?",(quote_id,))
+  c.commit()
+  flash("تم إنشاء أمر البيع "+result["order_no"]+" وإرساله للاعتماد الداخلي.","success")
+  return redirect(url_for("quotes.sales_order_view",order_id=result["sales_order_id"]))
+ except (ValueError,sqlite3.Error) as e:
+  c.rollback(); flash(str(e),"error")
+  return redirect(url_for("quotes.view",quote_id=quote_id))
  finally: c.close()
- return redirect(url_for("quotes.view",quote_id=quote_id))
+
+
+@quotes_bp.route("/orders/<int:order_id>")
+@require()
+def sales_order_view(order_id):
+ c=db()
+ order=c.execute(
+  """SELECT so.*,cu.name customer_name,cu.code customer_code,q.quote_no,q.tax_rate
+     FROM sales_orders so JOIN customers cu ON cu.id=so.customer_id
+     JOIN quotations q ON q.id=so.quotation_id WHERE so.id=?""",(order_id,)).fetchone()
+ if not order:
+  c.close(); flash("أمر البيع غير موجود.","error"); return redirect(url_for("quotes.index"))
+ lines=[]
+ for row in c.execute("SELECT * FROM sales_order_lines WHERE sales_order_id=? ORDER BY id",(order_id,)).fetchall():
+  item=dict(row)
+  item["remaining_delivery"]=max(Decimal("0"),Decimal(row["ordered_qty"])-Decimal(row["delivered_qty"]))
+  item["ready_to_invoice"]=max(Decimal("0"),Decimal(row["delivered_qty"])-Decimal(row["invoiced_qty"]))
+  lines.append(item)
+ notes=c.execute("SELECT * FROM delivery_notes WHERE sales_order_id=? ORDER BY id DESC",(order_id,)).fetchall()
+ invoices=c.execute("SELECT id,invoice_no,invoice_date,total_amount FROM sales_invoices WHERE sales_order_id=? ORDER BY id",(order_id,)).fetchall()
+ warehouses=c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
+ c.close()
+ return render_template("sales_order_view.html",order=order,lines=lines,notes=notes,
+  invoices=invoices,warehouses=warehouses,today=date.today().isoformat())
+
+
+@quotes_bp.route("/orders/<int:order_id>/approve",methods=["POST"])
+@require(write=True)
+def approve_order_route(order_id):
+ permissions=set(session.get("permissions",[]))
+ if ("sales.approve" not in permissions) if "permissions" in session else session.get("role")!="admin":
+  flash("اعتماد أوامر البيع متاح لصلاحية اعتماد مستقلة.","error")
+  return redirect(url_for("quotes.sales_order_view",order_id=order_id))
+ c=db()
+ try:
+  c.execute("BEGIN IMMEDIATE")
+  approve_sales_order(c,order_id,session["user_id"])
+  c.commit(); flash("تم اعتماد أمر البيع. يمكن الآن إنشاء أذون التسليم.","success")
+ except (ValueError,sqlite3.Error) as e:
+  c.rollback(); flash(str(e),"error")
+ finally: c.close()
+ return redirect(url_for("quotes.sales_order_view",order_id=order_id))
+
+
+@quotes_bp.route("/orders/<int:order_id>/delivery-notes",methods=["POST"])
+@require(write=True)
+def create_delivery_note_route(order_id):
+ c=db()
+ try:
+  ids=request.form.getlist("sales_order_line_id")
+  quantities=request.form.getlist("quantity")
+  lines=[{"sales_order_line_id":line_id,"quantity":qty}
+         for line_id,qty in zip(ids,quantities) if str(qty).strip()]
+  c.execute("BEGIN IMMEDIATE")
+  result=create_delivery_note(c,order_id,request.form.get("delivery_date",""),
+   lines,session["user_id"],request.form.get("notes",""))
+  c.commit(); flash("تم إنشاء إذن التسليم "+result["delivery_no"]+" كمسودة.","success")
+ except (ValueError,sqlite3.Error) as e:
+  c.rollback(); flash(str(e),"error")
+ finally: c.close()
+ return redirect(url_for("quotes.sales_order_view",order_id=order_id))
+
+
+@quotes_bp.route("/delivery-notes/<int:note_id>/post",methods=["POST"])
+@require(write=True)
+def post_delivery_note_route(note_id):
+ c=db()
+ order_id=None
+ try:
+  c.execute("BEGIN IMMEDIATE")
+  note=c.execute("SELECT sales_order_id FROM delivery_notes WHERE id=?",(note_id,)).fetchone()
+  if not note: raise ValueError("إذن التسليم غير موجود.")
+  order_id=note["sales_order_id"]
+  result=post_delivery_note(c,note_id,session["user_id"])
+  c.commit(); flash("تم ترحيل إذن التسليم وصرف المخزون. تكلفة الصرف: "+str(result["total_cost"]),"success")
+ except (ValueError,sqlite3.Error) as e:
+  c.rollback(); flash(str(e),"error")
+ finally: c.close()
+ return redirect(url_for("quotes.sales_order_view",order_id=order_id)) if order_id else redirect(url_for("quotes.index"))
+
+
+@quotes_bp.route("/orders/<int:order_id>/invoice",methods=["POST"])
+@require(write=True)
+def invoice_order_route(order_id):
+ c=db()
+ try:
+  c.execute("BEGIN IMMEDIATE")
+  result=invoice_sales_order(c,order_id,request.form.get("invoice_date") or date.today().isoformat(),
+   request.form.get("due_date") or date.today().isoformat(),session["user_id"],dimensions=request.form)
+  c.commit(); flash("تم إصدار فاتورة الكميات المسلمة فقط: "+result["invoice_no"],"success")
+  return redirect(url_for("quotes.sales_order_view",order_id=order_id))
+ except (ValueError,sqlite3.Error) as e:
+  c.rollback(); flash(str(e),"error")
+  return redirect(url_for("quotes.sales_order_view",order_id=order_id))
+ finally: c.close()
 
 @quotes_bp.route("/price-rules",methods=["GET","POST"])
 @require(write=True)
