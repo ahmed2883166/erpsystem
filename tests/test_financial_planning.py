@@ -276,7 +276,7 @@ class FinancialYearJournalTests(unittest.TestCase):
     def test_real_financial_year_close_keeps_dashboard_profit_and_next_year_opening_equity(self):
         from management_dashboard import (
             initialize_management_dashboard_schema,
-            build_management_snapshot,
+            cached_management_snapshot,
             dashboard_period_balances,
         )
         self.conn.execute("""CREATE TABLE company_settings(
@@ -289,6 +289,11 @@ class FinancialYearJournalTests(unittest.TestCase):
         initialize_management_dashboard_schema(self.conn, "commercial")
         self._opening()
         self._activity()
+        before_close = cached_management_snapshot(
+            self.conn, date(2026,1,1), date(2026,12,31)
+        )
+        self.assertEqual(before_close["current"]["net_profit"], Decimal("200.00"))
+        self.assertEqual(before_close["total_equity"], Decimal("800.00"))
 
         closing_id = close_financial_year(
             self.conn, self.year_id, 1, allow_warnings=True
@@ -304,9 +309,8 @@ class FinancialYearJournalTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(tuple(year), ("closed", closing_id))
 
-        snapshot = build_management_snapshot(
-            self.conn, date(2026,1,1),
-            date(2026,12,31),
+        snapshot = cached_management_snapshot(
+            self.conn, date(2026,1,1), date(2026,12,31)
         )
         self.assertEqual(snapshot["current"]["revenue"], Decimal("300.00"))
         self.assertEqual(snapshot["current"]["expenses"], Decimal("100.00"))
