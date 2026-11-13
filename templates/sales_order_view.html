@@ -11,12 +11,12 @@
 <section class="panel">
   <h3>بنود أمر البيع</h3>
   <table>
-    <thead><tr><th>الصنف / الوصف</th><th>الكمية المطلوبة</th><th>تم تسليمها</th><th>تمت فوترتها</th><th>متبقي للتسليم</th><th>جاهز للفوترة</th><th>سعر الوحدة</th></tr></thead>
+    <thead><tr><th>الصنف / الوصف</th><th>الكمية المطلوبة</th><th>تم تسليمها</th><th>تمت فوترتها</th><th>محجوز في مسودات</th><th>متاح للتسليم</th><th>جاهز للفوترة</th><th>سعر الوحدة</th></tr></thead>
     <tbody>
     {% for line in lines %}
       <tr>
         <td>{{ line.description }}</td><td>{{ line.ordered_qty }}</td><td>{{ line.delivered_qty }}</td>
-        <td>{{ line.invoiced_qty }}</td><td>{{ '%.4f'|format(line.remaining_delivery) }}</td>
+        <td>{{ line.invoiced_qty }}</td><td>{{ '%.4f'|format(line.reserved_delivery) }}</td><td>{{ '%.4f'|format(line.remaining_delivery) }}</td>
         <td>{{ '%.4f'|format(line.ready_to_invoice) }}</td><td>{{ line.unit_price }}</td>
       </tr>
     {% endfor %}
