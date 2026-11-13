@@ -705,5 +705,62 @@ class SalesIntegrationTests(unittest.TestCase):
         self.db.rollback()
 
 
+    def test_customer_advance_routes_receive_allocate_and_refund(self):
+        from flask import Flask
+        app = Flask(__name__, template_folder=str(Path(__file__).resolve().parents[1] / "templates"))
+        app.secret_key = "test"
+        app.add_url_rule("/login", endpoint="login", view_func=lambda: "")
+        app.add_url_rule("/dashboard", endpoint="dashboard", view_func=lambda: "")
+        app.register_blueprint(sales.sales_bp)
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "accountant"
+
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "100"}], "0", 1,
+        )
+        self.db.commit()
+        cash_id = self.db.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
+
+        response = client.post("/sales/advances/receipt", data={
+            "customer_id": str(self.customer_id), "receipt_date": "2026-11-11",
+            "amount": "75", "cash_account_id": str(cash_id), "reference": "WEB-ADV-1",
+        })
+        self.assertEqual(response.status_code, 302)
+        advance = self.db.execute(
+            "SELECT * FROM customer_advance_receipts WHERE reference='WEB-ADV-1'"
+        ).fetchone()
+        self.assertIsNotNone(advance)
+
+        response = client.post(
+            f"/sales/advances/{advance['id']}/allocate",
+            data={"invoice_id": str(invoice["invoice_id"]), "amount": "50",
+                  "allocation_date": "2026-11-12"},
+        )
+        self.assertEqual(response.status_code, 302)
+        paid = self.db.execute(
+            "SELECT paid_amount FROM sales_invoices WHERE id=?", (invoice["invoice_id"],)
+        ).fetchone()["paid_amount"]
+        self.assertEqual(Decimal(paid), Decimal("50.00"))
+
+        response = client.post(
+            f"/sales/advances/{advance['id']}/refund",
+            data={"refund_date": "2026-11-13", "amount": "10",
+                  "cash_account_id": str(cash_id), "reference": "WEB-REF-1"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            self.db.execute(
+                "SELECT COUNT(*) FROM customer_advance_refunds WHERE reference='WEB-REF-1'"
+            ).fetchone()[0],
+            1,
+        )
+        self.assertEqual(sales._customer_advance_available(self.db, advance["id"]), Decimal("15.00"))
+
+
+
 if __name__ == "__main__":
     unittest.main()
