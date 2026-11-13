@@ -504,6 +504,54 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         ).fetchall()
         self.assertEqual(sum((Decimal(row["debit"]) for row in grni_debits), Decimal("0")),
                          Decimal("100.00"))
+        conn.execute("""INSERT INTO accounts(code,name_ar,account_type,is_group,active)
+            VALUES('1000','الصندوق','asset',0,1)""")
+        cash_account_id = conn.execute("SELECT id FROM accounts WHERE code='1000'").fetchone()["id"]
+        conn.commit()
+        conn.close()
+
+        with self.client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "accountant"
+        payment_response = self.client.post("/purchases/payments/new", data={
+            "supplier_id": str(self.supplier_id),
+            "payment_date": "2026-11-13",
+            "amount": "100.00",
+            "cash_account_id": str(cash_account_id),
+            "reference": "PAY-GRNI-SPLIT",
+        })
+        self.assertEqual(payment_response.status_code, 302)
+        conn = purchases.db()
+        payment = conn.execute(
+            "SELECT amount,journal_entry_id FROM supplier_payments WHERE reference='PAY-GRNI-SPLIT'"
+        ).fetchone()
+        self.assertIsNotNone(payment)
+        self.assertEqual(Decimal(payment["amount"]), Decimal("100.00"))
+        allocations = conn.execute(
+            """SELECT a.amount,b.supplier_invoice_no FROM supplier_payment_allocations a
+               JOIN supplier_bills b ON b.id=a.bill_id
+               WHERE a.payment_id=(SELECT id FROM supplier_payments WHERE reference='PAY-GRNI-SPLIT')
+               ORDER BY b.supplier_invoice_no"""
+        ).fetchall()
+        self.assertEqual(
+            [(row["supplier_invoice_no"], Decimal(row["amount"])) for row in allocations],
+            [("INV-SPLIT-1", Decimal("40.00")), ("INV-SPLIT-2", Decimal("60.00"))],
+        )
+        payable_id = conn.execute("SELECT id FROM accounts WHERE code='2110'").fetchone()["id"]
+        payment_lines = conn.execute(
+            """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
+               JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=? ORDER BY jl.id""",
+            (payment["journal_entry_id"],),
+        ).fetchall()
+        self.assertEqual(
+            [(row["code"], Decimal(row["debit"]), Decimal(row["credit"])) for row in payment_lines],
+            [("2110", Decimal("100.00"), Decimal("0.00")),
+             ("1000", Decimal("0.00"), Decimal("100.00"))],
+        )
+        remaining = conn.execute(
+            "SELECT SUM(CAST(paid_amount AS REAL)) FROM supplier_bills WHERE supplier_invoice_no IN ('INV-SPLIT-1','INV-SPLIT-2')"
+        ).fetchone()[0]
+        self.assertEqual(Decimal(str(remaining)), Decimal("100.0"))
         conn.close()
 
 
