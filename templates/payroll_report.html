@@ -26,7 +26,7 @@
   <h3>ملخص التقرير</h3>
   <div class="stats-grid">
     <div class="stat"><span>إجمالي الأجر قبل الخصومات</span><strong>{{ totals.gross_pay }}</strong></div>
-    <div class="stat"><span>إجمالي الاستحقاقات شامل تكلفة الشركة</span><strong>{{ totals.total_entitlements }}</strong></div>
+    <div class="stat"><span>إجمالي تكلفة الأجر على الشركة</span><strong>{{ totals.employer_total_cost }}</strong></div>
     <div class="stat"><span>صافي مستحق الموظفين</span><strong>{{ totals.net_pay }}</strong></div>
     <div class="stat"><span>إجمالي ما تم صرفه للمسيرات</span><strong>{% if totals.paid_amount is not none %}{{ totals.paid_amount }}{% else %}غير موزع على الموظف{% endif %}</strong></div>
     <div class="stat"><span>المتبقي للمسيرات</span><strong>{% if totals.remaining_payable is not none %}{{ totals.remaining_payable }}{% else %}غير موزع على الموظف{% endif %}</strong></div>
@@ -41,9 +41,9 @@
         <th>الشهر</th><th>كود الموظف</th><th>اسم الموظف</th><th>القسم</th>
         <th>الأساسي</th><th>العلاوة</th><th>البدلات</th><th>الحوافز</th>
         <th>الإضافي</th><th>إجمالي الأجر</th><th>خصم الغياب</th>
-        <th>السلف</th><th>قسط القرض</th><th>خصومات أخرى</th>
+        <th>السلف المستردة</th><th>قسط القرض</th><th>خصومات أخرى</th>
         <th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th>
-        <th>إجمالي الاستحقاقات</th><th>إجمالي الاستقطاعات</th>
+        <th>إجمالي خصومات الموظف</th><th>تكلفة الأجر على الشركة</th>
         <th>صافي المستحق</th><th>القسيمة</th>
       </tr></thead>
       <tbody>
@@ -52,9 +52,9 @@
           <td>{{ r.period }}</td><td>{{ r.employee_code }}</td><td>{{ r.full_name }}</td><td>{{ r.department or '-' }}</td>
           <td>{{ r.basic_salary }}</td><td>{{ r.salary_raise }}</td><td>{{ r.allowances }}</td><td>{{ r.incentives }}</td>
           <td>{{ r.overtime_amount }}</td><td>{{ r.gross_pay }}</td><td>{{ r.absence_deduction }}</td>
-          <td>{{ r.advance_deduction }}</td><td>{{ r.loan_deduction }}</td><td>{{ r.other_deductions }}</td>
+          <td>{{ r.manual_advance_deduction }}</td><td>{{ r.loan_deduction }}</td><td>{{ r.other_deductions }}</td>
           <td>{{ r.taxable_income_tax }}</td><td>{{ r.employee_insurance }}</td><td>{{ r.employer_insurance }}</td>
-          <td>{{ r.total_entitlements }}</td><td>{{ r.total_deductions }}</td><td><strong>{{ r.net_pay }}</strong></td>
+          <td>{{ r.employee_deductions }}</td><td>{{ r.employer_total_cost }}</td><td><strong>{{ r.net_pay }}</strong></td>
           <td><a href="{{ url_for('report_exports.export_report_excel', report='payroll-payslip', run_id=r.run_id, employee_id=r.employee_id).replace('/excel','/pdf') }}">PDF</a> · <a href="{{ url_for('report_exports.export_report_excel', report='payroll-payslip', run_id=r.run_id, employee_id=r.employee_id) }}">Excel</a></td>
         </tr>
       {% else %}
@@ -67,7 +67,7 @@
         <th>{{ totals.incentives }}</th><th>{{ totals.overtime_amount }}</th><th>{{ totals.gross_pay }}</th>
         <th>{{ totals.absence_deduction }}</th><th>{{ totals.advance_deduction }}</th><th>{{ totals.loan_deduction }}</th>
         <th>{{ totals.other_deductions }}</th><th>{{ totals.taxable_income_tax }}</th><th>{{ totals.employee_insurance }}</th>
-        <th>{{ totals.employer_insurance }}</th><th>{{ totals.total_entitlements }}</th><th>{{ totals.total_deductions }}</th>
+        <th>{{ totals.employer_insurance }}</th><th>{{ totals.employee_deductions }}</th><th>{{ totals.employer_total_cost }}</th>
         <th>{{ totals.net_pay }}</th><th></th>
       </tr></tfoot>
       {% endif %}
