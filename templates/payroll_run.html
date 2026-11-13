@@ -3,7 +3,7 @@
 <p>صافي المسير: <strong>{{totals.net_pay}}</strong> · ما تم صرفه: <strong>{{paid_amount}}</strong> · المتبقي: <strong>{{remaining_payable}}</strong></p>
 {% if remaining_payable > 0 %}
 <form method="post" action="{{url_for('workforce.pay_payroll',run_id=run.id)}}" class="form-grid">
-<label>تاريخ الصرف <input type="date" name="payment_date" value="{{today if today is defined else run.period + '-28'}}" required></label>
+<label>تاريخ الصرف <input type="date" name="payment_date" value="{{today}}" required></label>
 <label>مبلغ الدفعة <input type="number" name="amount" min="0.01" max="{{remaining_payable}}" step="0.01" value="{{remaining_payable}}" required></label>
 <label>حساب البنك أو الصندوق <select name="cash_account_id" required>{% for a in payment_accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
 <label>مرجع التحويل / ملاحظات <input name="notes" maxlength="250"></label>
