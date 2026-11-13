@@ -59,6 +59,16 @@ def _events(c, kind, party_id):
                 JOIN sales_invoices i ON i.id=a.invoice_id
                 WHERE i.customer_id=?""", (party_id,)):
                 events.append(dict(r))
+        if _table_exists(c, "customer_advance_reversals"):
+            for r in c.execute("""SELECT x.reversal_date event_date,
+                'CADVA-REV-' || x.id reference,
+                'عكس تخصيص مقدم عميل على فاتورة ' || i.invoice_no description,
+                a.amount debit,0 credit,3 priority
+                FROM customer_advance_reversals x
+                JOIN customer_advance_allocations a ON a.journal_entry_id=x.source_id
+                JOIN sales_invoices i ON i.id=a.invoice_id
+                WHERE x.source_type='allocation' AND i.customer_id=?""", (party_id,)):
+                events.append(dict(r))
         for r in c.execute("""SELECT cn.credit_date event_date,cn.credit_note_no reference,
             'إشعار دائن / مرتجع بيع: ' || cn.reason description,0 debit,
             cn.total_amount credit,2 priority
@@ -165,15 +175,30 @@ def _customer_advance_subledger(c, as_of):
         return Decimal("0"), False
     if not {"advance_receipt_id", "refund_date", "amount"}.issubset(refund_columns):
         return Decimal("0"), False
-    receipts = sum((_decimal(row["amount"]) for row in c.execute(
-        "SELECT amount FROM customer_advance_receipts WHERE receipt_date<=?", (as_of,)
-    )), Decimal("0"))
-    allocations = sum((_decimal(row["amount"]) for row in c.execute(
-        "SELECT amount FROM customer_advance_allocations WHERE allocation_date<=?", (as_of,)
-    )), Decimal("0"))
-    refunds = sum((_decimal(row["amount"]) for row in c.execute(
-        "SELECT amount FROM customer_advance_refunds WHERE refund_date<=?", (as_of,)
-    )), Decimal("0"))
+    has_reversals = _table_exists(c, "customer_advance_reversals")
+    if has_reversals:
+        receipts_sql = """SELECT r.amount FROM customer_advance_receipts r
+            WHERE r.receipt_date<=? AND NOT EXISTS (
+              SELECT 1 FROM customer_advance_reversals x
+              WHERE x.source_type='receipt' AND x.source_id=r.id AND x.reversal_date<=?)"""
+        allocations_sql = """SELECT a.amount FROM customer_advance_allocations a
+            WHERE a.allocation_date<=? AND NOT EXISTS (
+              SELECT 1 FROM customer_advance_reversals x
+              WHERE x.source_type='allocation' AND x.source_id=a.journal_entry_id
+                AND x.reversal_date<=?)"""
+        refunds_sql = """SELECT r.amount FROM customer_advance_refunds r
+            WHERE r.refund_date<=? AND NOT EXISTS (
+              SELECT 1 FROM customer_advance_reversals x
+              WHERE x.source_type='refund' AND x.source_id=r.id AND x.reversal_date<=?)"""
+        receipt_params = allocation_params = refund_params = (as_of, as_of)
+    else:
+        receipts_sql = "SELECT amount FROM customer_advance_receipts WHERE receipt_date<=?"
+        allocations_sql = "SELECT amount FROM customer_advance_allocations WHERE allocation_date<=?"
+        refunds_sql = "SELECT amount FROM customer_advance_refunds WHERE refund_date<=?"
+        receipt_params = allocation_params = refund_params = (as_of,)
+    receipts = sum((_decimal(row["amount"]) for row in c.execute(receipts_sql, receipt_params)), Decimal("0"))
+    allocations = sum((_decimal(row["amount"]) for row in c.execute(allocations_sql, allocation_params)), Decimal("0"))
+    refunds = sum((_decimal(row["amount"]) for row in c.execute(refunds_sql, refund_params)), Decimal("0"))
     return receipts - allocations - refunds, True
 
 
@@ -245,6 +270,15 @@ def _all_party_events(c, kind):
                 'CADVA-' || a.id reference,'تخصيص مقدم عميل على فاتورة ' || i.invoice_no description,
                 0 debit,a.amount credit,2 priority FROM customer_advance_allocations a
                 JOIN sales_invoices i ON i.id=a.invoice_id""", ()))
+        if _table_exists(c, "customer_advance_reversals"):
+            queries.append(( """SELECT i.customer_id party_id,x.reversal_date event_date,
+                'CADVA-REV-' || x.id reference,
+                'عكس تخصيص مقدم عميل على فاتورة ' || i.invoice_no description,
+                a.amount debit,0 credit,3 priority
+                FROM customer_advance_reversals x
+                JOIN customer_advance_allocations a ON a.journal_entry_id=x.source_id
+                JOIN sales_invoices i ON i.id=a.invoice_id
+                WHERE x.source_type='allocation'""", ()))
         queries.append(( """SELECT i.customer_id party_id,cn.credit_date event_date,
             cn.credit_note_no reference,'إشعار دائن / مرتجع بيع: ' || cn.reason description,
             0 debit,cn.total_amount credit,2 priority FROM sales_credit_notes cn
@@ -503,17 +537,31 @@ def _customer_advance_details(c, as_of):
     ).fetchall()
     result = []
     for row in rows:
-        allocated = sum((_decimal(item["amount"]) for item in c.execute(
-            """SELECT amount FROM customer_advance_allocations
-               WHERE advance_receipt_id=? AND allocation_date<=?""",
-            (row["id"], as_of),
-        )), Decimal("0"))
-        refunded = sum((_decimal(item["amount"]) for item in c.execute(
-            """SELECT amount FROM customer_advance_refunds
-               WHERE advance_receipt_id=? AND refund_date<=?""",
-            (row["id"], as_of),
-        )), Decimal("0"))
-        received = _decimal(row["amount"])
+        has_reversals = _table_exists(c, "customer_advance_reversals")
+        if has_reversals:
+            allocation_sql = """SELECT a.amount FROM customer_advance_allocations a
+                WHERE a.advance_receipt_id=? AND a.allocation_date<=? AND NOT EXISTS (
+                  SELECT 1 FROM customer_advance_reversals x
+                  WHERE x.source_type='allocation' AND x.source_id=a.journal_entry_id
+                    AND x.reversal_date<=?)"""
+            refund_sql = """SELECT r.amount FROM customer_advance_refunds r
+                WHERE r.advance_receipt_id=? AND r.refund_date<=? AND NOT EXISTS (
+                  SELECT 1 FROM customer_advance_reversals x
+                  WHERE x.source_type='refund' AND x.source_id=r.id AND x.reversal_date<=?)"""
+            allocation_params = refund_params = (row["id"], as_of, as_of)
+            receipt_reversed = c.execute(
+                """SELECT 1 FROM customer_advance_reversals
+                   WHERE source_type='receipt' AND source_id=? AND reversal_date<=?""",
+                (row["id"], as_of),
+            ).fetchone() is not None
+        else:
+            allocation_sql = "SELECT amount FROM customer_advance_allocations WHERE advance_receipt_id=? AND allocation_date<=?"
+            refund_sql = "SELECT amount FROM customer_advance_refunds WHERE advance_receipt_id=? AND refund_date<=?"
+            allocation_params = refund_params = (row["id"], as_of)
+            receipt_reversed = False
+        allocated = sum((_decimal(item["amount"]) for item in c.execute(allocation_sql, allocation_params)), Decimal("0"))
+        refunded = sum((_decimal(item["amount"]) for item in c.execute(refund_sql, refund_params)), Decimal("0"))
+        received = Decimal("0") if receipt_reversed else _decimal(row["amount"])
         result.append({
             **dict(row), "received": received, "allocated": allocated,
             "refunded": refunded, "remaining": received - allocated - refunded,
