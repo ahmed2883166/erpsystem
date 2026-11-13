@@ -690,6 +690,11 @@ otals["credit"], places=2)
     def test_customer_advance_refund_cannot_exceed_unallocated_balance(self):
         self.db.execute("BEGIN IMMEDIATE")
         cash_id = self.db.execute("SELECT id FROM accounts WHERE code='1110'").fetchone()["id"]
+        inventory_id = self.db.execute("SELECT id FROM accounts WHERE code='1150'").fetchone()["id"]
+        with self.assertRaisesRegex(ValueError, "مربوطًا بملف النشاط"):
+            sales.post_customer_advance_receipt(
+                self.db, self.customer_id, "2026-11-11", "30", inventory_id, 1,
+            )
         advance = sales.post_customer_advance_receipt(
             self.db, self.customer_id, "2026-11-11", "30", cash_id, 1,
         )
