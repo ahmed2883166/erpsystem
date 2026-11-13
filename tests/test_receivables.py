@@ -226,6 +226,17 @@ class ReceivablesAgingTests(unittest.TestCase):
         self.assertEqual(documents[0]["party_name"], "1")
 
 
+    def test_customer_aging_handles_legacy_invoice_table_without_credit_column(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("ALTER TABLE sales_invoices DROP COLUMN credited_amount")
+        conn.commit()
+        conn.close()
+
+        response = self.client.get("/reports/aging/?kind=customers&as_of=2026-11-30")
+        self.assertEqual(response.status_code, 200)
+        # Credit notes are still reconstructed from their dated subledger rows.
+        self.assertIn("164.00", response.get_data(as_text=True))
+
     def test_supplier_aging_handles_bill_table_without_purchase_credit_column(self):
         conn = sqlite3.connect(self.db_path)
         conn.execute("ALTER TABLE supplier_bills DROP COLUMN credited_amount")
