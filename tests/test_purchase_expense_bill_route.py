@@ -589,5 +589,178 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         self.assertEqual(render.call_args.kwargs["selected_receipt_ids"], {receipt_id})
 
 
+
+    def test_purchase_order_partial_receipts_grni_supplier_bill_end_to_end(self):
+        conn = purchases.db()
+        conn.execute("""INSERT INTO accounts(code,name_ar,account_type,is_group,active)
+            VALUES('1150','مخزون بضائع','asset',0,1)""")
+        product = conn.execute("""INSERT INTO stock_products(
+            sku,name_ar,product_type,uom,purchase_price,active
+        ) VALUES('PO-E2E-001','صنف اختبار دورة الشراء','goods','قطعة','10.00',1)""")
+        product_id = product.lastrowid
+        warehouse = conn.execute(
+            "INSERT INTO stock_warehouses(code,name_ar) VALUES('WH-PO-E2E','مخزن دورة الشراء')"
+        )
+        warehouse_id = warehouse.lastrowid
+        conn.commit()
+        conn.close()
+
+        with self.client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "accountant"
+        response = self.client.post("/purchases/orders/new", data={
+            "supplier_id": str(self.supplier_id),
+            "product_id": str(product_id),
+            "quantity": "10",
+            "unit_price": "10.00",
+            "order_date": "2026-11-13",
+            "expected_date": "2026-11-20",
+            "notes": "اختبار استلام جزئي",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = purchases.db()
+        order = conn.execute(
+            "SELECT id,status FROM purchase_orders ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        self.assertEqual(order["status"], "draft")
+        order_id = order["id"]
+        conn.close()
+
+        response = self.client.post(f"/purchases/orders/{order_id}/submit")
+        self.assertEqual(response.status_code, 302)
+        with self.client.session_transaction() as session:
+            session["user_id"] = 2
+            session["role"] = "admin"
+        response = self.client.post(
+            f"/purchases/orders/{order_id}/approve",
+            data={"reason": "مطابقة طلب الشراء"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        receipt_ids = []
+        for quantity in ("4", "6"):
+            with self.client.session_transaction() as session:
+                session["user_id"] = 3
+                session["role"] = "accountant"
+            response = self.client.post("/purchases/receipts/new", data={
+                "supplier_id": str(self.supplier_id),
+                "product_id": str(product_id),
+                "warehouse_id": str(warehouse_id),
+                "po_id": str(order_id),
+                "quantity": quantity,
+                "unit_cost": "10.00",
+                "receipt_date": "2026-11-13",
+            })
+            self.assertEqual(response.status_code, 302)
+            conn = purchases.db()
+            receipt = conn.execute(
+                "SELECT id,status,journal_entry_id,total_value FROM goods_receipts ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            self.assertEqual(receipt["status"], "posted")
+            self.assertIsNotNone(receipt["journal_entry_id"])
+            self.assertEqual(Decimal(receipt["total_value"]), Decimal(quantity) * Decimal("10.00"))
+            receipt_ids.append(receipt["id"])
+            conn.close()
+
+        conn = purchases.db()
+        order = conn.execute(
+            "SELECT status FROM purchase_orders WHERE id=?", (order_id,)
+        ).fetchone()
+        order_line = conn.execute(
+            "SELECT quantity,received_qty FROM purchase_order_lines WHERE po_id=?", (order_id,)
+        ).fetchone()
+        self.assertEqual(order["status"], "received")
+        self.assertEqual(Decimal(order_line["quantity"]), Decimal("10"))
+        self.assertEqual(Decimal(order_line["received_qty"]), Decimal("10"))
+        self.assertEqual(
+            stock.current_qty(conn, product_id, warehouse_id),
+            Decimal("10"),
+        )
+        receipt_rows = conn.execute(
+            "SELECT id,journal_entry_id FROM goods_receipts WHERE po_id=? ORDER BY id",
+            (order_id,),
+        ).fetchall()
+        self.assertEqual(len(receipt_rows), 2)
+        self.assertEqual([row["id"] for row in receipt_rows], receipt_ids)
+        conn.close()
+
+        # A further receipt against a fully received order must not create stock or GRNI.
+        response = self.client.post("/purchases/receipts/new", data={
+            "supplier_id": str(self.supplier_id),
+            "product_id": str(product_id),
+            "warehouse_id": str(warehouse_id),
+            "po_id": str(order_id),
+            "quantity": "1",
+            "unit_cost": "10.00",
+            "receipt_date": "2026-11-13",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = purchases.db()
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM goods_receipts WHERE po_id=?", (order_id,)).fetchone()[0],
+            2,
+        )
+        self.assertEqual(stock.current_qty(conn, product_id, warehouse_id), Decimal("10"))
+        conn.close()
+
+        response = self.client.post("/purchases/bills/new", data={
+            "supplier_id": str(self.supplier_id),
+            "supplier_invoice_no": "INV-PO-E2E-001",
+            "bill_date": "2026-11-13",
+            "due_date": "2026-11-30",
+            "bill_kind": "inventory",
+            "subtotal": "100.00",
+            "tax_rate": "0",
+            "receipt_id": [str(receipt_ids[0]), str(receipt_ids[1])],
+            "receipt_amount_" + str(receipt_ids[0]): "40.00",
+            "receipt_amount_" + str(receipt_ids[1]): "60.00",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = purchases.db()
+        bill = conn.execute(
+            "SELECT id,status,journal_entry_id FROM supplier_bills WHERE supplier_invoice_no='INV-PO-E2E-001'"
+        ).fetchone()
+        self.assertIsNotNone(bill)
+        self.assertEqual(bill["status"], "draft")
+        self.assertIsNone(bill["journal_entry_id"])
+        bill_id = bill["id"]
+        conn.close()
+        self._submit_approve_and_post(bill_id)
+
+        conn = purchases.db()
+        bill = conn.execute(
+            "SELECT status,journal_entry_id FROM supplier_bills WHERE id=?", (bill_id,)
+        ).fetchone()
+        self.assertEqual(bill["status"], "posted")
+        self.assertIsNotNone(bill["journal_entry_id"])
+        allocation_total = conn.execute(
+            "SELECT matched_amount FROM supplier_bill_receipts WHERE bill_id=? ORDER BY receipt_id",
+            (bill_id,),
+        ).fetchall()
+        self.assertEqual(
+            [Decimal(row["matched_amount"]) for row in allocation_total],
+            [Decimal("40.00"), Decimal("60.00")],
+        )
+        grni_id = conn.execute("SELECT id FROM accounts WHERE code='2190'").fetchone()["id"]
+        grni_net = conn.execute(
+            """SELECT COALESCE(SUM(CAST(jl.credit AS REAL)-CAST(jl.debit AS REAL)),0)
+               FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+               WHERE jl.account_id=? AND je.status='posted'""",
+            (grni_id,),
+        ).fetchone()[0]
+        self.assertEqual(Decimal(str(grni_net)), Decimal("0.0"))
+        bill_lines = conn.execute(
+            """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
+               JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=? ORDER BY jl.id""",
+            (bill["journal_entry_id"],),
+        ).fetchall()
+        self.assertEqual(
+            [(row["code"], Decimal(row["debit"]), Decimal(row["credit"])) for row in bill_lines],
+            [("2190", Decimal("100.00"), Decimal("0.00")),
+             ("2110", Decimal("0.00"), Decimal("100.00"))],
+        )
+        conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()
