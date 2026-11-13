@@ -1,11 +1,13 @@
 {% extends 'base.html' %}
 {% block title %}أمر البيع {{ order.order_no }} | NEXUS ERP{% endblock %}
 {% block content %}
+{% set order_status_labels = {'pending_approval':'في انتظار الاعتماد','approved':'معتمد','rejected':'مرفوض','partially_delivered':'تم التسليم جزئيًا','delivered':'تم التسليم بالكامل','partially_invoiced':'تمت الفوترة جزئيًا','invoiced':'تمت الفوترة بالكامل'} %}
+{% set delivery_status_labels = {'draft':'مسودة','posted':'مرحّل'} %}
 <header>
   <div>
     <h2>أمر البيع {{ order.order_no }}</h2>
     <p>{{ order.customer_code }} - {{ order.customer_name }} | عرض السعر {{ order.quote_no }}</p>
-    <p>الحالة: <strong>{{ order.status }}</strong> | تاريخ الأمر: {{ order.order_date }}</p>
+    <p>الحالة: <strong>{{ order_status_labels.get(order.status, order.status) }}</strong> | تاريخ الأمر: {{ order.order_date }}</p>
   </div>
 </header>
 <section class="panel">
@@ -83,7 +85,7 @@
     <tbody>
     {% for note in notes %}
       <tr>
-        <td>{{ note.delivery_no }}</td><td>{{ note.delivery_date }}</td><td>{{ note.status }}</td>
+        <td>{{ note.delivery_no }}</td><td>{{ note.delivery_date }}</td><td>{{ delivery_status_labels.get(note.status, note.status) }}</td>
         <td>
           {% if note.status == 'draft' and 'sales.manage' in permissions %}
             <form method="post" action="{{ url_for('quotes.post_delivery_note_route', note_id=note.id) }}">
