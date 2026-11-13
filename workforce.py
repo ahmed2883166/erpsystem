@@ -69,6 +69,15 @@ def initialize_workforce_schema():
       incentive_days TEXT NOT NULL DEFAULT '0', incentive_method TEXT NOT NULL DEFAULT '',
       UNIQUE(run_id,employee_id)
     );
+    CREATE TABLE IF NOT EXISTS payroll_payments(
+      id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL REFERENCES payroll_runs(id),
+      payment_date TEXT NOT NULL, amount TEXT NOT NULL,
+      cash_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      journal_entry_id INTEGER NOT NULL UNIQUE, reference TEXT NOT NULL UNIQUE,
+      notes TEXT NOT NULL DEFAULT '', created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_payroll_payments_run ON payroll_payments(run_id,payment_date,id);
     CREATE TABLE IF NOT EXISTS payroll_incentive_rules(
       id INTEGER PRIMARY KEY, name TEXT NOT NULL,
       calculation_method TEXT NOT NULL CHECK(calculation_method IN ('fixed','percentage_basic','per_day')),
@@ -440,6 +449,11 @@ def payroll_run(run_id):
     rows = c.execute("""SELECT l.*,e.employee_code,e.full_name,e.department FROM payroll_lines l
                         JOIN employees e ON e.id=l.employee_id WHERE l.run_id=? ORDER BY e.employee_code""", (run_id,)).fetchall()
     accounts = _accounts(c)
+    payment_accounts = c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 AND account_type='asset' ORDER BY code").fetchall()
+    payments = c.execute("""SELECT p.*,a.code AS account_code,a.name_ar AS account_name
+        FROM payroll_payments p JOIN accounts a ON a.id=p.cash_account_id
+        WHERE p.run_id=? ORDER BY p.payment_date,p.id""", (run_id,)).fetchall()
+    paid_amount = M(sum((D(p["amount"]) for p in payments), Decimal("0")))
     totals = {
         "basic_salary": M(sum((D(x["basic_salary"]) for x in rows), Decimal("0"))),
         "allowances": M(sum((D(x["allowances"]) for x in rows), Decimal("0"))),
@@ -457,8 +471,11 @@ def payroll_run(run_id):
         "employer_insurance": M(sum((D(x["employer_insurance"]) for x in rows), Decimal("0"))),
         "net_pay": M(sum((D(x["net_pay"]) for x in rows), Decimal("0"))),
     }
+    remaining_payable = M(max(Decimal("0"), totals["net_pay"] - paid_amount))
     c.close()
-    return render_template("payroll_run.html", run=run, rows=rows, accounts=accounts, totals=totals)
+    return render_template("payroll_run.html", run=run, rows=rows, accounts=accounts,
+                           payment_accounts=payment_accounts, payments=payments,
+                           paid_amount=paid_amount, remaining_payable=remaining_payable, totals=totals)
 
 
 @workforce_bp.route("/hr/payroll/<int:run_id>/post", methods=["POST"])
@@ -507,6 +524,61 @@ def post_payroll(run_id):
     except (ValueError, KeyError, sqlite3.Error) as e:
         c.rollback()
         flash(str(e), "error")
+    c.close()
+    return redirect(url_for("workforce.payroll_run", run_id=run_id))
+
+
+@workforce_bp.route("/hr/payroll/<int:run_id>/payment", methods=["POST"])
+@_role("admin", "accountant")
+def pay_payroll(run_id):
+    c = _db()
+    try:
+        run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+        if not run or run["status"] != "posted":
+            raise ValueError("لا يمكن صرف مرتب لمسير غير مرحّل.")
+        rows = c.execute("SELECT net_pay FROM payroll_lines WHERE run_id=?", (run_id,)).fetchall()
+        if not rows:
+            raise ValueError("لا توجد تفاصيل في المسير.")
+        net_payable = M(sum((D(row["net_pay"]) for row in rows), Decimal("0")))
+        paid = M(sum((D(row["amount"]) for row in c.execute(
+            "SELECT amount FROM payroll_payments WHERE run_id=?", (run_id,)).fetchall()), Decimal("0")))
+        amount = M(request.form.get("amount"))
+        if amount <= 0:
+            raise ValueError("مبلغ صرف المرتب يجب أن يكون أكبر من صفر.")
+        if amount > net_payable - paid:
+            raise ValueError("مبلغ الصرف يتجاوز صافي المرتبات المتبقي.")
+        payment_date = date.fromisoformat(request.form.get("payment_date") or date.today().isoformat()).isoformat()
+        cash_account_id = int(request.form["cash_account_id"])
+        account = c.execute("""SELECT id,code,account_type,is_group,active FROM accounts
+            WHERE id=?""", (cash_account_id,)).fetchone()
+        if not account or not account["active"] or account["is_group"] or account["account_type"] != "asset":
+            raise ValueError("اختر حساب بنك أو صندوق تفصيليًا ونشطًا من الأصول.")
+        reference = "PAYROLL-PAY-" + str(run_id) + "-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+        c.execute("BEGIN IMMEDIATE")
+        # Recheck outstanding value inside the write transaction to prevent concurrent overpayment.
+        paid_now = M(sum((D(row["amount"]) for row in c.execute(
+            "SELECT amount FROM payroll_payments WHERE run_id=?", (run_id,)).fetchall()), Decimal("0")))
+        if amount > net_payable - paid_now:
+            raise ValueError("مبلغ الصرف يتجاوز صافي المرتبات المتبقي بعد احتساب الدفعات الأخرى.")
+        journal_id = post_journal(c, payment_date, reference,
+            "صرف مرتبات مسير " + run["period"],
+            [(int(c.execute("""SELECT jl.account_id FROM journal_lines jl
+                JOIN journal_entries je ON je.id=jl.entry_id
+                WHERE je.id=? AND jl.credit>0
+                ORDER BY jl.id LIMIT 1""", (run["journal_entry_id"],)).fetchone()[0]),
+              amount, 0, "إقفال صافي مستحقات الموظفين"),
+             (cash_account_id, 0, amount, "صرف صافي المرتبات من البنك/الصندوق")],
+            session["user_id"])
+        c.execute("""INSERT INTO payroll_payments(run_id,payment_date,amount,cash_account_id,
+            journal_entry_id,reference,notes,created_by) VALUES(?,?,?,?,?,?,?,?)""",
+            (run_id,payment_date,str(amount),cash_account_id,journal_id,reference,
+             request.form.get("notes","").strip(),session["user_id"]))
+        _audit(c, "payroll_payment_posted", reference + " amount=" + str(amount))
+        c.commit()
+        flash("تم صرف دفعة المرتبات وترحيل قيدها بنجاح.", "success")
+    except (ValueError, KeyError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc), "error")
     c.close()
     return redirect(url_for("workforce.payroll_run", run_id=run_id))
 
