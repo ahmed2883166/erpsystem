@@ -6,7 +6,9 @@
   <div class="table-actions no-print">
     <a class="btn secondary" href="{{ url_for('party_reports.subledger_reconciliation') }}">مطابقة الأستاذ المساعد</a>
     <a class="btn secondary" href="{{ url_for('party_reports.party_statement', kind='customer') }}">كشوف حساب العملاء</a>
-    <button type="button" class="secondary" onclick="window.print()">طباعة / PDF</button>
+    <a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='customer-advances', as_of=as_of) }}">Excel</a>
+    <a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='customer-advances', as_of=as_of, _external=False) | replace('/excel','/pdf') }}">PDF</a>
+    <button type="button" class="secondary" onclick="window.print()">طباعة</button>
   </div>
 </header>
 <section class="panel no-print">
