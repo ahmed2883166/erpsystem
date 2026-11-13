@@ -475,7 +475,8 @@ def payroll_run(run_id):
     c.close()
     return render_template("payroll_run.html", run=run, rows=rows, accounts=accounts,
                            payment_accounts=payment_accounts, payments=payments,
-                           paid_amount=paid_amount, remaining_payable=remaining_payable, totals=totals)
+                           paid_amount=paid_amount, remaining_payable=remaining_payable,
+                           today=date.today().isoformat(), totals=totals)
 
 
 @workforce_bp.route("/hr/payroll/<int:run_id>/post", methods=["POST"])
@@ -563,8 +564,7 @@ def pay_payroll(run_id):
         journal_id = post_journal(c, payment_date, reference,
             "صرف مرتبات مسير " + run["period"],
             [(int(c.execute("""SELECT jl.account_id FROM journal_lines jl
-                JOIN journal_entries je ON je.id=jl.entry_id
-                WHERE je.id=? AND jl.credit>0
+                WHERE jl.entry_id=? AND jl.memo='صافي مستحقات الموظفين' AND jl.credit>0
                 ORDER BY jl.id LIMIT 1""", (run["journal_entry_id"],)).fetchone()[0]),
               amount, 0, "إقفال صافي مستحقات الموظفين"),
              (cash_account_id, 0, amount, "صرف صافي المرتبات من البنك/الصندوق")],
