@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import date
 import unittest
 from unittest.mock import patch
 from decimal import Decimal
@@ -304,8 +305,8 @@ class FinancialYearJournalTests(unittest.TestCase):
         self.assertEqual(tuple(year), ("closed", closing_id))
 
         snapshot = build_management_snapshot(
-            self.conn, __import__("datetime").date(2026,1,1),
-            __import__("datetime").date(2026,12,31),
+            self.conn, date(2026,1,1),
+            date(2026,12,31),
         )
         self.assertEqual(snapshot["current"]["revenue"], Decimal("300.00"))
         self.assertEqual(snapshot["current"]["expenses"], Decimal("100.00"))
