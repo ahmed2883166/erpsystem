@@ -82,6 +82,19 @@ class ActivityAccountMappingTests(unittest.TestCase):
                     self.assertIsNotNone(row, code)
                     self.assertEqual((row["account_type"], row["is_group"]),
                                      (account_type, is_group), code)
+                expected_parents = {
+                    "1171": "1170", "1261": "1260", "2171": "2170",
+                    "2231": "2230", "4710": "4700", "5510": "5500",
+                    "6810": "6800", "7241": "7240",
+                }
+                for code, parent_code in expected_parents.items():
+                    parent = conn.execute("""
+                        SELECT p.code FROM accounts child
+                        JOIN accounts p ON p.id=child.parent_id
+                        WHERE child.code=?
+                    """, (code,)).fetchone()
+                    self.assertIsNotNone(parent, code)
+                    self.assertEqual(parent["code"], parent_code, code)
                 for code, old_id in before_ids.items():
                     self.assertEqual(
                         conn.execute("SELECT id FROM accounts WHERE code=?", (code,)).fetchone()["id"],
