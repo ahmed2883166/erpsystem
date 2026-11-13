@@ -370,6 +370,19 @@ class PartyStatementTests(unittest.TestCase):
         self.assertIn("SI-OLD", customer_body)
         self.assertIn("SI-NOW", customer_body)
 
+        # A legacy control-account line without customer_id makes a party-level
+        # GL balance incomplete and must not be reported as an exact match.
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("INSERT INTO journal_entries VALUES(2,'2026-11-30','posted')")
+        conn.execute("INSERT INTO journal_lines VALUES(2,2,1,'10','0',NULL)")
+        conn.commit()
+        conn.close()
+        legacy = self.client.get(
+            "/reports/party-reconciliation?kind=customer&as_of=2026-11-30&party_id=1"
+        )
+        self.assertEqual(legacy.status_code, 200)
+        self.assertIn("غير متاح", legacy.get_data(as_text=True))
+
         supplier = self.client.get(
             "/reports/party-reconciliation?kind=supplier&as_of=2026-11-30&party_id=1"
         )
