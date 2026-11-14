@@ -1309,14 +1309,53 @@ def build_balance_sheet_snapshot(conn, as_of):
     account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
     section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
     subtype_expr = "a.account_subtype" if "account_subtype" in account_columns else "NULL"
+
+    # Opening journals for a later year are a reconciliation copy of balances
+    # already present in the historical ledger. Including both the historical
+    # movements and that opening copy doubles the balance sheet. Keep genuine
+    # first-year opening balances, but omit copied opening entries (and their
+    # reversal journals) whenever posted ledger history predates that year.
+    excluded_opening_ids = set()
+    if _table_exists_financial(conn, "financial_years") and _table_exists_financial(
+        conn, "financial_year_journal_history"
+    ):
+        opening_rows = conn.execute("""
+            SELECT h.entry_id,fy.start_date
+            FROM financial_year_journal_history h
+            JOIN financial_years fy ON fy.id=h.financial_year_id
+            WHERE h.entry_kind='opening' AND h.action='created'
+              AND fy.start_date<=?
+              AND EXISTS (
+                  SELECT 1 FROM journal_entries prior
+                  WHERE prior.status='posted' AND prior.entry_date<fy.start_date
+              )
+        """, (as_of,)).fetchall()
+        excluded_opening_ids = {int(row["entry_id"]) for row in opening_rows}
+        if excluded_opening_ids:
+            marks = ",".join("?" for _ in excluded_opening_ids)
+            reversal_rows = conn.execute(f"""
+                SELECT entry_id FROM financial_year_journal_history
+                WHERE entry_kind='opening' AND action='reversed'
+                  AND related_entry_id IN ({marks})
+            """, tuple(sorted(excluded_opening_ids))).fetchall()
+            excluded_opening_ids.update(int(row["entry_id"]) for row in reversal_rows)
+
+    exclusion_sql = ""
+    exclusion_params = []
+    if excluded_opening_ids:
+        marks = ",".join("?" for _ in excluded_opening_ids)
+        exclusion_sql = f" AND je.id NOT IN ({marks})"
+        exclusion_params = sorted(excluded_opening_ids)
+
     rows = conn.execute(f"""SELECT a.id,a.code,a.name_ar,a.account_type,a.parent_id,a.is_group,
         {section_expr} statement_section,{subtype_expr} account_subtype,
         COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
         COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
       FROM accounts a
       LEFT JOIN journal_lines jl ON jl.account_id=a.id
-      LEFT JOIN journal_entries je ON je.id=jl.entry_id AND je.status='posted' AND je.entry_date<=?
-      GROUP BY a.id ORDER BY a.code""", (as_of,)).fetchall()
+      LEFT JOIN journal_entries je ON je.id=jl.entry_id AND je.status='posted'
+        AND je.entry_date<=? {exclusion_sql}
+      GROUP BY a.id ORDER BY a.code""", (as_of, *exclusion_params)).fetchall()
     accounts = {}
     for row in rows:
         debit=Decimal(str(row["debit"] or "0"))
