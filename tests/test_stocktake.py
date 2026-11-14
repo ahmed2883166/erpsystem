@@ -1,4 +1,5 @@
 import os
+import json
 from decimal import Decimal
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ os.environ["NEXUS_SKIP_DB_INIT"] = "1"
 
 import app as nexus
 import stock
+from activity_profiles import initialize_activity_profiles_schema, create_activity_profile
 
 
 class StocktakeRouteTests(unittest.TestCase):
@@ -396,6 +398,64 @@ class StocktakeRouteTests(unittest.TestCase):
                               (header["id"],)).fetchone()
         self.assertEqual(header["status"], "approved")
         self.assertEqual(header["journal_entry_id"], 777)
+        conn.close()
+
+
+    def test_service_goods_requires_explicit_valid_inventory_account(self):
+        self._login()
+        conn = stock.get_db()
+        initialize_activity_profiles_schema(conn)
+        conn.execute("""CREATE TABLE company_settings(
+            setting_key TEXT PRIMARY KEY,setting_value TEXT)""")
+        conn.execute("INSERT INTO company_settings VALUES('activity','service')")
+        conn.commit()
+        conn.close()
+
+        unit = stock.get_db().execute(
+            "SELECT id FROM stock_uoms WHERE code='PCS'"
+        ).fetchone()["id"]
+        form = {
+            "sku": "SERVICE-GOODS-1", "name_ar": "مخزون خدمي",
+            "base_uom_id": str(unit), "product_type": "goods",
+            "purchase_price": "10", "sale_price": "15",
+        }
+        response = self.client.post("/stock/products", data=form)
+        self.assertEqual(response.status_code, 302)
+        conn = stock.get_db()
+        self.assertIsNone(conn.execute(
+            "SELECT id FROM stock_products WHERE sku='SERVICE-GOODS-1'"
+        ).fetchone())
+        conn.close()
+
+        conn = stock.get_db()
+        profile_id = create_activity_profile(
+            conn, "service_with_inventory_test", "خدمي بمخزون اختباري", "service"
+        )
+        profile = conn.execute(
+            "SELECT posting_accounts_json FROM activity_profiles WHERE id=?",
+            (profile_id,)
+        ).fetchone()
+        posting = json.loads(profile["posting_accounts_json"])
+        posting["inventory"] = "1130"
+        conn.execute(
+            "UPDATE activity_profiles SET posting_accounts_json=? WHERE id=?",
+            (json.dumps(posting),profile_id)
+        )
+        conn.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity_profile_code',?)",
+            ("service_with_inventory_test",)
+        )
+        conn.commit()
+        conn.close()
+
+        response = self.client.post("/stock/products", data=form)
+        self.assertEqual(response.status_code, 302)
+        conn = stock.get_db()
+        created = conn.execute(
+            "SELECT product_type FROM stock_products WHERE sku='SERVICE-GOODS-1'"
+        ).fetchone()
+        self.assertIsNotNone(created)
+        self.assertEqual(created["product_type"], "goods")
         conn.close()
 
 
