@@ -101,6 +101,32 @@ class TaxCenterTests(unittest.TestCase):
         self.assertTrue(any("الرقم الضريبي للطرف" in x["issue"] for x in issues))
         self.assertTrue(any("فرق بين الضريبة المحسوبة" in x["issue"] for x in issues))
 
+    def test_tax_ledger_reconciliation_matches_posted_control_accounts(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.executescript("""
+          CREATE TABLE accounts(id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT, account_type TEXT,
+                                is_group INTEGER DEFAULT 0, active INTEGER DEFAULT 1);
+          CREATE TABLE journal_entries(id INTEGER PRIMARY KEY, entry_date TEXT, status TEXT);
+          CREATE TABLE journal_lines(id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
+                                     debit TEXT DEFAULT '0', credit TEXT DEFAULT '0');
+          INSERT INTO accounts VALUES(1,'2130','ضريبة مخرجات','liability',0,1);
+          INSERT INTO accounts VALUES(2,'1165','ضريبة مدخلات','asset',0,1);
+          INSERT INTO journal_entries VALUES(1,'2026-11-05','posted');
+          INSERT INTO journal_entries VALUES(2,'2026-11-07','posted');
+          INSERT INTO journal_lines VALUES(1,1,1,'0','137.20');
+          INSERT INTO journal_lines VALUES(2,2,2,'56','0');
+        """)
+        conn.commit()
+        conn.close()
+        conn = tax_center._db()
+        try:
+            snapshot = tax_center.build_tax_report_snapshot(conn, "2026-11")
+        finally:
+            conn.close()
+        self.assertTrue(snapshot["ledger_reconciliation"]["available"])
+        self.assertEqual(snapshot["ledger_reconciliation"]["output_difference"], 0)
+        self.assertEqual(snapshot["ledger_reconciliation"]["input_difference"], 0)
+
     def test_posted_purchase_tax_classification_is_locked(self):
         self.login()
         response = self.client.post("/reports/tax/classify/purchase/1", data={
