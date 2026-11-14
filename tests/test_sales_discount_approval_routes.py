@@ -86,11 +86,8 @@ class SalesDiscountApprovalRouteTests(unittest.TestCase):
 
     def test_invoice_discount_approval_posts_invoice_once_and_links_decision(self):
         request_id = self._add_request()
-        def fake_post_invoice(*args, **kwargs):
-            conn = self._connect()
+        def fake_post_invoice(conn, *args, **kwargs):
             conn.execute("INSERT INTO sales_invoices(id,due_date) VALUES(71,NULL)")
-            conn.commit()
-            conn.close()
             return {"invoice_id": 71, "invoice_no": "INV-71"}
 
         with patch.object(sales, "db", side_effect=self._connect), \
