@@ -556,7 +556,8 @@ def schedule(asset_id):
         cumulative += actual if actual is not None else planned
     return render_template("asset_schedule.html",asset=asset,rows=rows,schedule_rows=schedule_rows,accumulated=accumulated,
       net=(Decimal("0") if asset["status"]=="disposed" else max(cost-accumulated,residual)),
-      depreciable=depreciable,accounts=accounts,disposal=disposal)
+      depreciable=depreciable,accounts=accounts,disposal=disposal,
+      disposal_type_labels=ASSET_DISPOSAL_TYPES)
 
 @assets_bp.route("/<int:asset_id>/depreciate",methods=["POST"])
 @require(write=True)
