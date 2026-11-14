@@ -226,7 +226,8 @@ def statement_reconciliation():
                 date.fromisoformat(statement_date)
                 account=c.execute("""SELECT a.id FROM accounts a
                     WHERE a.id=? AND a.account_type='asset' AND a.is_group=0 AND a.active=1
-                    AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.kind='bank' AND ca.active=1)
+                    AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.kind='bank' AND ca.active=1
+                        AND ca.currency_code=(SELECT setting_value FROM company_settings WHERE setting_key='base_currency'))
                       OR lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%')""",
                     (account_id,)).fetchone()
                 if not account: raise ValueError("اختر حساب بنك نشطًا من سجل الخزائن والبنوك.")
@@ -304,7 +305,8 @@ def statement_reconciliation():
         account_id=request.args.get("account_id",type=int)
         accounts=c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
             WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
-            AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.kind='bank' AND ca.active=1)
+            AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.kind='bank' AND ca.active=1
+                AND ca.currency_code=(SELECT setting_value FROM company_settings WHERE setting_key='base_currency'))
               OR lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%')
             ORDER BY a.code""").fetchall()
         if account_id is None and accounts:
