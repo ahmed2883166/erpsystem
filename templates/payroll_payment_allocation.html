@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}توزيع دفعة مرتبات | NEXUS ERP{% endblock %}
+{% block content %}
+<header><h2>توزيع دفعة مرتبات على الموظفين</h2><p>المسير {{run.period}} — الدفعة {{payment.reference}} — {{payment.payment_date}}</p><p>قيمة الدفعة: <strong>{{payment.amount}}</strong></p><p class="muted">هذه العملية توزيع تحليلي فقط؛ لا تنشئ قيدًا جديدًا ولا تعدل القيد الأصلي أو قيمة الدفعة.</p></header>
+<section class="panel">
+{% if existing %}
+<h3>التوزيع المحفوظ لهذه الدفعة</h3><table><tr><th>الموظف</th><th>المبلغ</th></tr>{% for a in existing %}<tr><td>{{a.employee_code}} - {{a.full_name}}</td><td>{{a.amount}}</td></tr>{% endfor %}</table>
+{% else %}
+<form method="post"><div style="overflow-x:auto"><table><tr><th>الموظف</th><th>صافي المستحق</th><th>سبق توزيعه من دفعات أخرى</th><th>المتاح للتوزيع</th><th>نصيبه من هذه الدفعة</th></tr>
+{% for l in lines %}<tr><td>{{l.employee_code}} - {{l.full_name}}</td><td>{{l.net_pay}}</td><td>{{allocated_by_line.get(l.id,0)}}</td><td>{{l.net_pay|float - allocated_by_line.get(l.id,0)|float}}</td><td><input type="number" min="0" max="{{l.net_pay|float - allocated_by_line.get(l.id,0)|float}}" step="0.01" name="allocation_{{l.id}}" value="0"></td></tr>{% endfor %}</table></div>
+<p class="muted">مجموع المبالغ التي تدخلها يجب أن يساوي قيمة الدفعة {{payment.amount}} بالضبط. لن يتم حفظ أي توزيع جزئي.</p><button type="submit">حفظ توزيع الدفعة</button></form>
+{% endif %}
+<a class="button secondary" href="{{url_for('workforce.payroll_run',run_id=run.id)}}">العودة إلى المرتبات</a>
+</section>
+{% endblock %}
