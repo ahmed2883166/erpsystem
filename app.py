@@ -3064,17 +3064,17 @@ def edit_user(user_id):
         else:
             try:
                 selected = normalize_user_permissions(request.form.getlist("permissions"))
+                if user_id == session.get("user_id"):
+                    current_permissions = stored_user_permissions(user["permissions_json"], user["role"])
+                    requested_active = 1 if request.form.get("active") == "yes" else 0
+                    if role != user["role"] or selected != current_permissions or requested_active != user["active"]:
+                        raise ValueError("لا يمكنك تغيير دورك أو صلاحياتك أو حالة حسابك من الجلسة الحالية.")
                 if user["role"] == "admin":
                     protected_admin_permissions = normalize_user_permissions(PERMISSIONS["admin"])
                     requested_active = 1 if request.form.get("active") == "yes" else 0
                     if (role != "admin" or requested_active != 1
                             or not set(protected_admin_permissions).issubset(selected)):
                         raise ValueError("لا يمكن تغيير دور مدير النظام أو تعطيل حسابه أو تقليص صلاحياته الأساسية.")
-                if user_id == session.get("user_id"):
-                    current_permissions = stored_user_permissions(user["permissions_json"], user["role"])
-                    requested_active = 1 if request.form.get("active") == "yes" else 0
-                    if role != user["role"] or selected != current_permissions or requested_active != user["active"]:
-                        raise ValueError("لا يمكنك تغيير دورك أو صلاحياتك أو حالة حسابك من الجلسة الحالية.")
                 before_values = {
                     "username": user["username"], "full_name": user["full_name"],
                     "role": user["role"], "role_name": role_names.get(user["role"], user["role"]),
