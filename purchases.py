@@ -847,7 +847,13 @@ def new_receipt():
             mid=movement.lastrowid
             c.execute("INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost) VALUES(?,?,?,?,?,?,?,?)",
               (product,wh,location_id,lot_id,mid,str(qty),str(qty),str(unit)))
-            eid=create_journal(c,request.form["receipt_date"],no,"استلام مشتريات غير مفوتر "+no,[(inv,total,0,"إثبات مخزون مستلم"),(grni,0,total,"بضاعة مستلمة غير مفوترة")],session["user_id"],dimensions=dimensions)
+            stock_line_dimensions = {
+                "stock_product_id": int(product),
+                "stock_warehouse_id": int(wh),
+            }
+            eid=create_journal(c,request.form["receipt_date"],no,"استلام مشتريات غير مفوتر "+no,
+                [(inv,total,0,"إثبات مخزون مستلم",stock_line_dimensions),
+                 (grni,0,total,"بضاعة مستلمة غير مفوترة")],session["user_id"],dimensions=dimensions)
             c.execute("UPDATE goods_receipts SET journal_entry_id=? WHERE id=?",(eid,rid))
             c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?",(eid,mid))
             c.commit(); g.audit_created_record = ("goods_receipts", rid, "goods_receipt_lines", "receipt_id"); flash(f"تم الاستلام وترحيل قيد GRNI رقم {no}.","success"); return redirect(url_for("purchase.index"))
