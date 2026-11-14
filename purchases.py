@@ -1438,6 +1438,7 @@ def submit_supplier_bill(c, bill_id, actor_id):
             c, bill["supplier_id"], receipt_ids, money(bill["subtotal"]),
             allocation_form, exclude_bill_id=bill_id
         )
+        _validate_saved_supplier_bill_inventory_lines(c, bill)
     elif bill["bill_kind"] == "expense":
         if bill_receipts:
             raise ValueError("فاتورة المصروف لا يجوز ربطها بإيصالات استلام مخزني.")
@@ -1823,6 +1824,11 @@ def edit_bill(bill_id):
                 allocations = _validate_supplier_receipt_allocations(
                     c, supplier, receipts, subtotal, request.form, exclude_bill_id=bill_id
                 )
+                inventory_lines = _validate_supplier_bill_inventory_lines(
+                    c, supplier, receipts, subtotal, request.form, exclude_bill_id=bill_id
+                )
+            else:
+                inventory_lines = []
             if tax:
                 ensure_detail_account(c, _activity_tax_roles(c)["input_vat"],
                                       "ضريبة مدخلات قابلة للخصم", "asset", "1100")
@@ -1858,10 +1864,17 @@ def edit_bill(bill_id):
                      line["asset_ready_date"],line["asset_residual_value"],line["asset_useful_life_months"],
                      line["asset_depreciation_method"],line["asset_annual_rate"],line["asset_account_id"],
                      line["asset_accum_account_id"],line["asset_expense_account_id"]))
+            c.execute("DELETE FROM supplier_bill_inventory_lines WHERE bill_id=?", (bill_id,))
             c.execute("DELETE FROM supplier_bill_receipts WHERE bill_id=?", (bill_id,))
             for receipt_id, amount in allocations:
                 c.execute("""INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount)
                     VALUES(?,?,?)""", (bill_id, receipt_id, str(amount)))
+            for line_no, line in enumerate(inventory_lines, 1):
+                c.execute("""INSERT INTO supplier_bill_inventory_lines(
+                    bill_id,line_no,receipt_line_id,product_id,billed_quantity,invoice_unit_price,line_total
+                ) VALUES(?,?,?,?,?,?,?)""",
+                (bill_id,line_no,line["receipt_line_id"],line["product_id"],str(line["quantity"]),
+                 str(line["unit_price"]),str(line["line_total"])))
             c.commit()
             flash("تم حفظ التعديلات كمسودة. يجب إرسال الفاتورة للمراجعة من جديد.", "success")
             return redirect(url_for("purchase.index"))
@@ -1879,10 +1892,21 @@ def edit_bill(bill_id):
     existing_allocations = {row["receipt_id"]: money(row["matched_amount"]) for row in c.execute(
         "SELECT receipt_id,matched_amount FROM supplier_bill_receipts WHERE bill_id=?", (bill_id,)).fetchall()}
     selected_receipt_ids = set(existing_allocations)
+    receipt_line_ids = [row["id"] for row in c.execute(
+        "SELECT id FROM goods_receipt_lines WHERE receipt_id IN (" +
+        ",".join("?" for _ in receipts) + ")",
+        [row["id"] for row in receipts]).fetchall()] if receipts else []
+    receipt_lines = _supplier_receipt_line_rows(c, [row["id"] for row in receipts])
+    existing_invoice_lines = {
+        row["receipt_line_id"]: row for row in c.execute(
+            "SELECT * FROM supplier_bill_inventory_lines WHERE bill_id=?", (bill_id,)
+        ).fetchall()
+    }
     existing_asset_lines = c.execute("SELECT * FROM supplier_bill_asset_lines WHERE bill_id=? ORDER BY line_no",(bill_id,)).fetchall()
     dimension_options = active_dimension_options(c)
     c.close()
     return render_template("purchase_bill_new.html", suppliers=suppliers, receipts=receipts,
+        receipt_lines=receipt_lines, existing_invoice_lines=existing_invoice_lines,
         expense_accounts=expense_accounts, asset_accounts=asset_accounts,
         dimension_options=dimension_options, today=date.today().isoformat(), bill=bill, selected_receipt_ids=selected_receipt_ids,
         receipt_allocations=existing_allocations, existing_asset_lines=existing_asset_lines, edit_mode=True)
