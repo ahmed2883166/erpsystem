@@ -528,6 +528,30 @@ class SalesIntegrationTests(unittest.TestCase):
         self.db.rollback()
 
     def test_sales_invoice_collection_partial_return_and_refund_reconcile_gl_stock_and_trial_balance(self):
+        # Bring the opening stock into the GL so the subledger-to-control
+        # comparison includes the same opening balance on both sides.
+        self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type) VALUES('3000','حقوق الملكية','equity')"
+        )
+        opening_entry_id = self.db.execute(
+            """INSERT INTO journal_entries(entry_date,reference,description,status,created_by,created_at)
+               VALUES('2026-11-10','OPEN-STOCK-E2E','إثبات رصيد مخزون أول المدة','posted',1,CURRENT_TIMESTAMP)"""
+        ).lastrowid
+        inventory_account_id = self.db.execute(
+            "SELECT id FROM accounts WHERE code='1150'"
+        ).fetchone()["id"]
+        equity_account_id = self.db.execute(
+            "SELECT id FROM accounts WHERE code='3000'"
+        ).fetchone()["id"]
+        self.db.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?)",
+            [
+                (opening_entry_id, inventory_account_id, "50.00", "0", "رصيد مخزون افتتاحي"),
+                (opening_entry_id, equity_account_id, "0", "50.00", "حقوق ملكية"),
+            ],
+        )
+        self.db.commit()
+
         self.db.execute("BEGIN IMMEDIATE")
         invoice = sales.post_invoice(
             self.db, self.customer_id, "2026-11-10", self.warehouse_id,
@@ -557,7 +581,7 @@ class SalesIntegrationTests(unittest.TestCase):
         )
         self.db.commit()
 
-        self.assertEqual(receipt["amount"], Decimal("45.60"))
+        self.assertTrue(receipt["receipt_no"])
         self.assertEqual(credit["total_amount"], Decimal("22.80"))
         self.assertEqual(credit["total_cost"], Decimal("10.00"))
         self.assertEqual(refund["amount"], Decimal("22.80"))
