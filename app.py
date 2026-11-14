@@ -1555,6 +1555,10 @@ def journal():
             filter_params.append(search_query)
         filters.append("(" + " OR ".join(search_parts) + ")")
     where_sql = " AND ".join(filters) if filters else "1=1"
+    sort_order = request.args.get("sort_order", "asc").strip().lower()
+    if sort_order not in ("asc", "desc"):
+        sort_order = "asc"
+    sort_sql = "ASC" if sort_order == "asc" else "DESC"
     journal_page = max(1, request.args.get("journal_page", 1, type=int) or 1)
     journal_per_page = request.args.get("journal_per_page", 50, type=int) or 50
     if journal_per_page not in (50, 100):
@@ -1566,7 +1570,7 @@ def journal():
     journal_page = min(journal_page, journal_pages)
     entries = connection.execute(
         "SELECT * FROM journal_entries WHERE " + where_sql +
-        " ORDER BY entry_date DESC,id DESC LIMIT ? OFFSET ?",
+        f" ORDER BY id {sort_sql} LIMIT ? OFFSET ?",
         (*filter_params, journal_per_page, (journal_page - 1) * journal_per_page),
     ).fetchall()
     connection.close()
@@ -1575,7 +1579,8 @@ def journal():
         journal_page=journal_page, journal_pages=journal_pages,
         journal_per_page=journal_per_page, journal_total=journal_total,
         date_from=date_from, date_to=date_to, status_filter=status_filter,
-        entry_type_filter=entry_type_filter, account_filter=account_filter, search_query=search_query)
+        entry_type_filter=entry_type_filter, account_filter=account_filter, search_query=search_query,
+        sort_order=sort_order)
 
 
 
