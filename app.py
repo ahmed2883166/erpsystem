@@ -180,13 +180,93 @@ def normalize_user_permissions(values):
     return sorted(selected)
 
 def stored_user_permissions(raw, role):
-    try:
-        values = json.loads(raw) if raw else PERMISSIONS.get(role, set())
-    except (TypeError, ValueError, json.JSONDecodeError):
-        values = PERMISSIONS.get(role, set())
+    if raw:
+        try:
+            values = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = role_default_permissions(role)
+    else:
+        values = role_default_permissions(role)
     if not isinstance(values, (list, tuple, set)):
-        values = PERMISSIONS.get(role, set())
+        values = role_default_permissions(role)
     return normalize_user_permissions(values)
+
+
+ROLE_SYSTEM_NAMES = {"admin": "مدير النظام", "accountant": "محاسب", "viewer": "مشاهد"}
+
+
+def initialize_roles_schema(connection):
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS roles (
+            role_key TEXT PRIMARY KEY,
+            role_name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            permissions_json TEXT NOT NULL,
+            is_system INTEGER NOT NULL DEFAULT 0,
+            active INTEGER NOT NULL DEFAULT 1,
+            created_by INTEGER,
+            updated_by INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    for role_key, permissions in PERMISSIONS.items():
+        connection.execute(
+            """INSERT OR IGNORE INTO roles(
+                 role_key,role_name,permissions_json,is_system,active,created_at,updated_at
+               ) VALUES(?,?,?,?,1,?,?)""",
+            (role_key, ROLE_SYSTEM_NAMES[role_key],
+             json.dumps(sorted(permissions), ensure_ascii=False), 1, timestamp, timestamp),
+        )
+
+
+def role_permissions_catalog(connection, include_role=None):
+    role_permissions = {key: sorted(values) for key, values in PERMISSIONS.items()}
+    role_names = dict(ROLE_SYSTEM_NAMES)
+    custom_roles = []
+    rows = connection.execute(
+        """SELECT role_key,role_name,permissions_json,active FROM roles
+           WHERE is_system=0 AND (active=1 OR role_key=?) ORDER BY role_name COLLATE NOCASE""",
+        (include_role or "",),
+    ).fetchall()
+    for row in rows:
+        try:
+            values = json.loads(row["permissions_json"] or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = []
+        permissions = normalize_user_permissions(values if isinstance(values, (list, tuple, set)) else [])
+        role_permissions[row["role_key"]] = permissions
+        role_names[row["role_key"]] = row["role_name"]
+        if row["active"]:
+            custom_roles.append({
+                "role_key": row["role_key"], "role_name": row["role_name"],
+                "permissions": permissions,
+            })
+    return role_permissions, role_names, custom_roles
+
+
+def role_default_permissions(role):
+    if role in PERMISSIONS:
+        return normalize_user_permissions(PERMISSIONS[role])
+    connection = db()
+    try:
+        row = connection.execute(
+            "SELECT permissions_json FROM roles WHERE role_key=? AND active=1", (role,)
+        ).fetchone()
+        if not row:
+            return []
+        values = json.loads(row["permissions_json"] or "[]")
+        return normalize_user_permissions(values if isinstance(values, (list, tuple, set)) else [])
+    except (sqlite3.Error, TypeError, ValueError, json.JSONDecodeError):
+        return []
+    finally:
+        connection.close()
+
+
+def user_permissions_storage(selected, role, role_permissions):
+    normalized = normalize_user_permissions(selected)
+    defaults = normalize_user_permissions(role_permissions.get(role, []))
+    return None if normalized == defaults else json.dumps(normalized, ensure_ascii=False)
 
 register_report_exports(app, DB_PATH, PERMISSIONS)
 
@@ -312,6 +392,7 @@ def initialize_database():
         connection.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
     if "permissions_json" not in user_columns:
         connection.execute("ALTER TABLE users ADD COLUMN permissions_json TEXT")
+    initialize_roles_schema(connection)
     account_columns = {row["name"] for row in connection.execute("PRAGMA table_info(accounts)")}
     if "is_group" not in account_columns:
         connection.execute("ALTER TABLE accounts ADD COLUMN is_group INTEGER NOT NULL DEFAULT 0")
@@ -2818,43 +2899,161 @@ def reconciliation():
 @requires("users.manage")
 def users():
     connection = db()
+    initialize_roles_schema(connection)
+    role_permissions, role_names, custom_roles = role_permissions_catalog(connection)
     if request.method == "POST":
         try:
             role = request.form["role"]
-            if role not in PERMISSIONS:
-                raise ValueError("الدور المحدد غير صحيح.")
+            if role not in role_permissions:
+                raise ValueError("الدور المحدد غير صحيح أو غير نشط.")
             selected = normalize_user_permissions(request.form.getlist("permissions"))
-            connection.execute("INSERT INTO users(username,full_name,password_hash,role,created_at,permissions_json) VALUES(?,?,?,?,?,?)",
-                               (request.form["username"].strip(), request.form["full_name"].strip(), password_hash(request.form["password"]), role, now(), json.dumps(selected, ensure_ascii=False)))
-            created_user_id = connection.execute("SELECT id FROM users WHERE username=?", (request.form["username"].strip(),)).fetchone()["id"]
+            stored_permissions = user_permissions_storage(selected, role, role_permissions)
+            username = request.form["username"].strip()
+            connection.execute(
+                "INSERT INTO users(username,full_name,password_hash,role,created_at,permissions_json) VALUES(?,?,?,?,?,?)",
+                (username, request.form["full_name"].strip(), password_hash(request.form["password"]),
+                 role, now(), stored_permissions),
+            )
+            created_user_id = connection.execute(
+                "SELECT id FROM users WHERE username=?", (username,)
+            ).fetchone()["id"]
             connection.commit()
             log_change(
                 "user_created", "user", created_user_id, None,
-                {"username": request.form["username"].strip(), "full_name": request.form["full_name"].strip(),
-                 "role": role, "active": 1, "permissions": selected},
-                details=request.form["username"].strip(),
-                reason=request.form.get("change_reason", "").strip(),
+                {"username": username, "full_name": request.form["full_name"].strip(),
+                 "role": role, "role_name": role_names.get(role, role), "active": 1,
+                 "permissions": selected, "permissions_inherited_from_role": stored_permissions is None},
+                details=username, reason=request.form.get("change_reason", "").strip(),
             )
             flash("تم إنشاء المستخدم.", "success")
         except sqlite3.IntegrityError:
+            connection.rollback()
             flash("اسم المستخدم مستخدم بالفعل.", "error")
         except ValueError as exc:
+            connection.rollback()
             flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
-    rows = connection.execute("SELECT id,username,full_name,role,active,created_at,permissions_json FROM users ORDER BY id").fetchall()
+    rows = [dict(row) for row in connection.execute(
+        "SELECT id,username,full_name,role,active,created_at,permissions_json FROM users ORDER BY id"
+    ).fetchall()]
+    for row in rows:
+        row["role_name"] = role_names.get(row["role"], row["role"])
+        row["effective_permissions"] = stored_user_permissions(row["permissions_json"], row["role"])
     connection.close()
-    return render_template("users.html", users=rows, role_permissions={role: sorted(values) for role, values in PERMISSIONS.items()}, default_permissions=sorted(PERMISSIONS.get("admin", set())), all_permissions=ALL_PERMISSIONS, permission_labels=PERMISSION_LABELS)
+    return render_template(
+        "users.html", users=rows, role_permissions=role_permissions, role_names=role_names,
+        custom_roles=custom_roles, is_role_admin=session.get("role") == "admin",
+        default_permissions=sorted(PERMISSIONS.get("admin", set())),
+        all_permissions=ALL_PERMISSIONS, permission_labels=PERMISSION_LABELS,
+    )
+
+
+@app.route("/users/roles", methods=["POST"])
+@requires("users.manage")
+def manage_user_roles():
+    if session.get("role") != "admin":
+        flash("إدارة قوالب الأدوار المخصصة متاحة لمدير النظام فقط.", "error")
+        return redirect(url_for("users"))
+    connection = db()
+    initialize_roles_schema(connection)
+    action = request.form.get("action", "")
+    role_key = request.form.get("role_key", "").strip()
+    try:
+        if action == "create":
+            role_name = request.form.get("role_name", "").strip()
+            selected = normalize_user_permissions(request.form.getlist("role_permissions"))
+            if len(role_name) < 2 or len(role_name) > 80:
+                raise ValueError("اسم الدور مطلوب من حرفين إلى 80 حرفًا.")
+            role_key = "custom_" + uuid.uuid4().hex[:10]
+            timestamp = now()
+            connection.execute(
+                """INSERT INTO roles(role_key,role_name,permissions_json,is_system,active,
+                   created_by,updated_by,created_at,updated_at)
+                   VALUES(?,?,?,0,1,?,?,?,?)""",
+                (role_key, role_name, json.dumps(selected, ensure_ascii=False),
+                 session["user_id"], session["user_id"], timestamp, timestamp),
+            )
+            connection.commit()
+            log_change("role_created", "role", role_key, None,
+                {"role_name": role_name, "permissions": selected, "active": 1},
+                details=role_key, reason=request.form.get("change_reason", "").strip())
+            flash("تم إنشاء الدور المخصص.", "success")
+        elif action == "update":
+            current = connection.execute(
+                "SELECT * FROM roles WHERE role_key=? AND is_system=0 AND active=1", (role_key,)
+            ).fetchone()
+            if not current:
+                raise ValueError("الدور المخصص غير موجود أو غير نشط.")
+            role_name = request.form.get("role_name", "").strip()
+            selected = normalize_user_permissions(request.form.getlist("role_permissions"))
+            if len(role_name) < 2 or len(role_name) > 80:
+                raise ValueError("اسم الدور مطلوب من حرفين إلى 80 حرفًا.")
+            before_values = {
+                "role_name": current["role_name"],
+                "permissions": normalize_user_permissions(json.loads(current["permissions_json"] or "[]")),
+                "active": current["active"],
+            }
+            after_values = {"role_name": role_name, "permissions": selected, "active": 1}
+            connection.execute(
+                """UPDATE roles SET role_name=?,permissions_json=?,updated_by=?,updated_at=?
+                   WHERE role_key=? AND is_system=0""",
+                (role_name, json.dumps(selected, ensure_ascii=False), session["user_id"], now(), role_key),
+            )
+            connection.commit()
+            log_change("role_updated", "role", role_key, before_values, after_values,
+                details=role_key, reason=request.form.get("change_reason", "").strip())
+            flash("تم تحديث الدور. المستخدمون الذين يرثون صلاحيات الدور سيحصلون على التحديث عند تسجيل الدخول التالي.", "success")
+        elif action == "deactivate":
+            current = connection.execute(
+                "SELECT * FROM roles WHERE role_key=? AND is_system=0 AND active=1", (role_key,)
+            ).fetchone()
+            if not current:
+                raise ValueError("الدور المخصص غير موجود أو غير نشط.")
+            assigned = connection.execute(
+                "SELECT COUNT(*) FROM users WHERE role=?", (role_key,)
+            ).fetchone()[0]
+            if assigned:
+                raise ValueError("لا يمكن تعطيل الدور لأنه مرتبط بمستخدمين. غيّر أدوارهم أولًا.")
+            connection.execute(
+                "UPDATE roles SET active=0,updated_by=?,updated_at=? WHERE role_key=? AND is_system=0",
+                (session["user_id"], now(), role_key),
+            )
+            connection.commit()
+            log_change("role_deactivated", "role", role_key,
+                {"role_name": current["role_name"], "active": 1},
+                {"role_name": current["role_name"], "active": 0},
+                details=role_key, reason=request.form.get("change_reason", "").strip())
+            flash("تم تعطيل الدور المخصص.", "success")
+        else:
+            raise ValueError("عملية إدارة الدور غير معروفة.")
+    except sqlite3.IntegrityError:
+        connection.rollback()
+        flash("اسم الدور مستخدم بالفعل. اختر اسمًا مختلفًا.", "error")
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        connection.rollback()
+        flash(safe_error_message(exc, "تعذر حفظ الدور. لم يتم حفظ أي تغييرات."), "error")
+    finally:
+        connection.close()
+    return redirect(url_for("users"))
 
 
 @app.route("/users/<int:user_id>/edit",methods=["GET","POST"])
 @requires("users.manage")
 def edit_user(user_id):
-    connection=db(); user=connection.execute("SELECT id,username,full_name,role,active,permissions_json FROM users WHERE id=?",(user_id,)).fetchone()
+    connection = db()
+    initialize_roles_schema(connection)
+    user = connection.execute(
+        "SELECT id,username,full_name,role,active,permissions_json FROM users WHERE id=?",
+        (user_id,),
+    ).fetchone()
     if not user:
-        connection.close(); flash("المستخدم غير موجود.","error"); return redirect(url_for("users"))
-    if request.method=="POST":
-        role=request.form.get("role")
-        if role not in PERMISSIONS:
-            flash("الدور المحدد غير صحيح.","error")
+        connection.close()
+        flash("المستخدم غير موجود.", "error")
+        return redirect(url_for("users"))
+    role_permissions, role_names, _custom_roles = role_permissions_catalog(connection, include_role=user["role"])
+    if request.method == "POST":
+        role = request.form.get("role")
+        if role not in role_permissions:
+            flash("الدور المحدد غير صحيح أو غير نشط.", "error")
         else:
             try:
                 selected = normalize_user_permissions(request.form.getlist("permissions"))
@@ -2865,29 +3064,43 @@ def edit_user(user_id):
                         raise ValueError("لا يمكنك تغيير دورك أو صلاحياتك أو حالة حسابك من الجلسة الحالية.")
                 before_values = {
                     "username": user["username"], "full_name": user["full_name"],
-                    "role": user["role"], "active": user["active"],
+                    "role": user["role"], "role_name": role_names.get(user["role"], user["role"]),
+                    "active": user["active"],
                     "permissions": stored_user_permissions(user["permissions_json"], user["role"]),
                 }
                 after_values = {
                     "username": request.form["username"].strip(),
                     "full_name": request.form["full_name"].strip(), "role": role,
+                    "role_name": role_names.get(role, role),
                     "active": 1 if request.form.get("active") == "yes" else 0,
                     "permissions": selected,
                 }
-                connection.execute("UPDATE users SET username=?,full_name=?,role=?,active=?,permissions_json=? WHERE id=?",
-                  (request.form["username"].strip(),request.form["full_name"].strip(),role,1 if request.form.get("active")=="yes" else 0,json.dumps(selected, ensure_ascii=False),user_id))
-                connection.commit(); connection.close()
-                log_change(
-                    "user_updated", "user", user_id, before_values, after_values,
-                    details=after_values["username"], reason=request.form.get("change_reason", "").strip(),
+                stored_permissions = user_permissions_storage(selected, role, role_permissions)
+                connection.execute(
+                    "UPDATE users SET username=?,full_name=?,role=?,active=?,permissions_json=? WHERE id=?",
+                    (after_values["username"], after_values["full_name"], role,
+                     after_values["active"], stored_permissions, user_id),
                 )
-                flash("تم تعديل المستخدم.","success"); return redirect(url_for("users"))
+                connection.commit()
+                connection.close()
+                after_values["permissions_inherited_from_role"] = stored_permissions is None
+                log_change("user_updated", "user", user_id, before_values, after_values,
+                    details=after_values["username"], reason=request.form.get("change_reason", "").strip())
+                flash("تم تعديل المستخدم.", "success")
+                return redirect(url_for("users"))
             except sqlite3.IntegrityError:
-                connection.rollback(); flash("اسم المستخدم مستخدم بالفعل.","error")
+                connection.rollback()
+                flash("اسم المستخدم مستخدم بالفعل.", "error")
             except ValueError as exc:
-                connection.rollback(); flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
-    selected_permissions = set(stored_user_permissions(user["permissions_json"] if "permissions_json" in user.keys() else None, user["role"]))
-    connection.close(); return render_template("user_edit.html",user=user,roles=PERMISSIONS,all_permissions=ALL_PERMISSIONS,permission_labels=PERMISSION_LABELS,selected_permissions=selected_permissions)
+                connection.rollback()
+                flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
+    selected_permissions = set(stored_user_permissions(user["permissions_json"], user["role"]))
+    connection.close()
+    return render_template(
+        "user_edit.html", user=user, roles=role_permissions, role_names=role_names,
+        all_permissions=ALL_PERMISSIONS, permission_labels=PERMISSION_LABELS,
+        selected_permissions=selected_permissions,
+    )
 
 
 @app.route("/users/<int:user_id>/delete",methods=["POST"])

@@ -73,6 +73,54 @@ class UserPermissionRouteTests(unittest.TestCase):
         self.assertEqual(audit[2], "failure")
         self.assertIn("edit_user", audit[3])
 
+    def test_admin_can_create_custom_role_and_new_user_inherits_role_permissions(self):
+        with self.client.session_transaction() as session:
+            session.update(user_id=1, username="admin", full_name="مدير",
+                           role="admin", permissions=["users.manage"])
+        response = self.client.post("/users/roles", data={
+            "action": "create", "role_name": "مدير المبيعات",
+            "role_permissions": ["sales.view", "sales.manage", "sales.approve"],
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(nexus.DB_PATH)
+        role_key, role_json = conn.execute(
+            "SELECT role_key,permissions_json FROM roles WHERE role_name='مدير المبيعات'"
+        ).fetchone()
+        conn.close()
+        role_permissions = json.loads(role_json)
+        self.assertIn("sales.view", role_permissions)
+        self.assertIn("sales.manage", role_permissions)
+        self.assertIn("sales.approve", role_permissions)
+
+        response = self.client.post("/users", data={
+            "username": "sales.manager", "full_name": "مدير مبيعات",
+            "password": "long-password-123", "role": role_key,
+            "permissions": role_permissions,
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(nexus.DB_PATH)
+        saved_role, saved_permissions = conn.execute(
+            "SELECT role,permissions_json FROM users WHERE username='sales.manager'"
+        ).fetchone()
+        conn.close()
+        self.assertEqual(saved_role, role_key)
+        self.assertIsNone(saved_permissions)
+        self.assertEqual(nexus.stored_user_permissions(saved_permissions, saved_role), role_permissions)
+
+    def test_non_admin_cannot_manage_custom_roles_even_if_users_manage_is_granted(self):
+        with self.client.session_transaction() as session:
+            session.update(user_id=1, username="admin", full_name="مدير",
+                           role="accountant", permissions=["users.manage"])
+        response = self.client.post("/users/roles", data={
+            "action": "create", "role_name": "دور غير مصرح",
+            "role_permissions": ["users.manage"],
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(nexus.DB_PATH)
+        count = conn.execute("SELECT COUNT(*) FROM roles WHERE role_name='دور غير مصرح'").fetchone()[0]
+        conn.close()
+        self.assertEqual(count, 0)
+
     def test_user_cannot_change_own_role_or_permissions_even_with_admin_page_access(self):
         with self.client.session_transaction() as session:
             session.update(user_id=1, username="admin", full_name="مدير",

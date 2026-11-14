@@ -6,7 +6,7 @@
 <form method="post">
 <label>اسم المستخدم<input name="username" value="{{ user.username }}" required></label>
 <label>الاسم الكامل<input name="full_name" value="{{ user.full_name }}" required></label>
-<label>الدور الأساسي<select name="role">{% for role in roles %}<option value="{{ role }}" {% if user.role==role %}selected{% endif %}>{{ role }}</option>{% endfor %}</select></label>
+<label>الدور الأساسي<select name="role">{% for role in roles %}<option value="{{ role }}" {% if user.role==role %}selected{% endif %}>{{ role_names.get(role, role) }}</option>{% endfor %}</select></label>
 <label class="checkline"><input type="checkbox" name="active" value="yes" {% if user.active %}checked{% endif %}> المستخدم نشط</label>
 <h3>الصلاحيات الفعلية</h3><p class="muted">الصلاحيات المحددة هنا هي التي ستُطبق على هذا المستخدم بعد تسجيل الدخول التالي.</p>
 <div class="permission-grid">
