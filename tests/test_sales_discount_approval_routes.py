@@ -45,6 +45,11 @@ class SalesDiscountApprovalRouteTests(unittest.TestCase):
         sales.DB_PATH = self.original_sales_db_path
         self.temp.cleanup()
 
+    def _connect(self):
+        conn = sqlite3.connect(sales.DB_PATH)
+        conn.row_factory = sqlite3.Row
+        return conn
+
     def _add_request(self, request_type="invoice", created_by=10, sales_order_id=None):
         payload = {
             "customer_id": 1, "invoice_date": "2026-11-14", "due_date": "2026-11-30",
@@ -81,7 +86,7 @@ class SalesDiscountApprovalRouteTests(unittest.TestCase):
 
     def test_invoice_discount_approval_posts_invoice_once_and_links_decision(self):
         request_id = self._add_request()
-        with patch.object(sales, "db", return_value=self.connection), \
+        with patch.object(sales, "db", side_effect=self._connect), \
              patch.object(sales, "post_invoice", return_value={"invoice_id": 71, "invoice_no": "INV-71"}) as post, \
              patch.object(nexus, "log"):
             self._login()
