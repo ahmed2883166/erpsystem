@@ -45,20 +45,16 @@
 
 <section class="panel">
   <h3>الأداء المالي خلال الفترة</h3>
-  <div class="stat-grid">
-    <div class="stat-card"><small>صافي الإيرادات</small><strong>{{ money(s.current.revenue) }}</strong><div>{{ delta(s.changes.revenue) }}</div></div>
-    <div class="stat-card"><small>إجمالي المصروفات والتكاليف</small><strong>{{ money(s.current.expenses) }}</strong><div>{{ delta(s.changes.expenses, False) }}</div></div>
-    <div class="stat-card"><small>صافي الربح / (الخسارة)</small><strong>{{ money(s.current.net_profit) }}</strong><div>{{ delta(s.changes.net_profit) }}</div></div>
-    <div class="stat-card"><small>هامش مجمل الربح</small><strong>{% if s.gross_margin is none %}—{% else %}{{ '%.2f'|format(s.gross_margin) }}%{% endif %}</strong></div>
-  </div>
-  <div class="table-wrap">
+  <div class="table-wrap financial-performance-table">
     <table>
-      <thead><tr><th>البند</th><th>الفترة الحالية</th><th>الفترة المقارنة</th><th>التغير</th></tr></thead>
+      <thead><tr><th>القائمة المالية المختصرة</th><th>الفترة الحالية</th><th>الفترة المقارنة</th><th>الفرق</th></tr></thead>
       <tbody>
-        <tr><td>الإيرادات</td><td>{{ money(s.current.revenue) }}</td><td>{{ money(s.previous.revenue) }}</td><td>{{ delta(s.changes.revenue) }}</td></tr>
-        <tr><td>التكاليف المباشرة</td><td>{{ money(s.current.cogs) }}</td><td>{{ money(s.previous.cogs) }}</td><td>—</td></tr>
-        <tr><td>إجمالي المصروفات</td><td>{{ money(s.current.expenses) }}</td><td>{{ money(s.previous.expenses) }}</td><td>{{ delta(s.changes.expenses, False) }}</td></tr>
-        <tr class="total"><td>صافي الربح / (الخسارة)</td><td>{{ money(s.current.net_profit) }}</td><td>{{ money(s.previous.net_profit) }}</td><td>{{ delta(s.changes.net_profit) }}</td></tr>
+        <tr><td>صافي الإيرادات</td><td>{{ money(s.current.revenue) }}</td><td>{{ money(s.previous.revenue) }}</td><td>{{ money(s.current.revenue - s.previous.revenue) }}</td></tr>
+        <tr><td>(−) تكلفة المبيعات والتكاليف المباشرة</td><td>{{ money(s.current.cogs) }}</td><td>{{ money(s.previous.cogs) }}</td><td>{{ money(s.current.cogs - s.previous.cogs) }}</td></tr>
+        <tr class="financial-subtotal"><td>مجمل الربح</td><td>{{ money(s.current.revenue - s.current.cogs) }}</td><td>{{ money(s.previous.revenue - s.previous.cogs) }}</td><td>{{ money((s.current.revenue - s.current.cogs) - (s.previous.revenue - s.previous.cogs)) }}</td></tr>
+        <tr><td>(−) المصروفات الأخرى</td><td>{{ money(s.current.expenses - s.current.cogs) }}</td><td>{{ money(s.previous.expenses - s.previous.cogs) }}</td><td>{{ money((s.current.expenses - s.current.cogs) - (s.previous.expenses - s.previous.cogs)) }}</td></tr>
+        <tr class="total financial-net"><td>صافي الربح / (الخسارة)</td><td>{{ money(s.current.net_profit) }}</td><td>{{ money(s.previous.net_profit) }}</td><td>{{ money(s.current.net_profit - s.previous.net_profit) }}</td></tr>
+        <tr><td>هامش مجمل الربح</td><td>{{ percent(s.ratios.gross_margin) }}</td><td>{% if s.previous.revenue %}{{ percent(((s.previous.revenue - s.previous.cogs) * 100 / s.previous.revenue)) }}{% else %}—{% endif %}</td><td>{% if s.current.revenue and s.previous.revenue %}{{ '%.2f'|format((s.current.revenue - s.current.cogs) * 100 / s.current.revenue - (s.previous.revenue - s.previous.cogs) * 100 / s.previous.revenue) }} نقطة مئوية{% else %}—{% endif %}</td></tr>
       </tbody>
     </table>
   </div>
