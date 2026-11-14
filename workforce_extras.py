@@ -168,11 +168,14 @@ def employee_financial_statement(employee_id):
         return redirect(url_for("workforce.employees"))
     month_from = request.args.get("month_from","").strip()
     month_to = request.args.get("month_to","").strip()
-    for value in (month_from,month_to):
-        if value and date.fromisoformat(value+"-01").strftime("%Y-%m") != value:
-            c.close()
-            flash("صيغة الفترة غير صحيحة.","error")
-            return redirect(url_for("workforce.employee_financial_statement",employee_id=employee_id))
+    try:
+        for value in (month_from,month_to):
+            if value and date.fromisoformat(value+"-01").strftime("%Y-%m") != value:
+                raise ValueError()
+    except ValueError:
+        c.close()
+        flash("صيغة الفترة غير صحيحة.","error")
+        return redirect(url_for("workforce.employee_financial_statement",employee_id=employee_id))
     if month_from and month_to and month_from > month_to:
         c.close()
         flash("بداية الفترة يجب ألا تتجاوز نهايتها.","error")
