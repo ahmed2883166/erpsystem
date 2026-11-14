@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}قسيمة راتب {{slip.full_name}} | NEXUS ERP{% endblock %}
+{% block content %}
+<header class="no-print">
+  <h2>قسيمة راتب تفصيلية</h2>
+  <p><a href="{{ url_for('workforce.payroll_run', run_id=slip.run_id) }}">العودة إلى تفاصيل المسير</a></p>
+  <button type="button" onclick="window.print()">طباعة / حفظ PDF</button>
+</header>
+<section class="panel payslip">
+  <div class="payslip-heading">
+    <div><h2>NEXUS ERP</h2><h3>قسيمة راتب شهر {{slip.period}}</h3></div>
+    <div><strong>رقم الموظف:</strong> {{slip.employee_code}}<br><strong>حالة المسير:</strong> {{'مرحّل' if slip.status=='posted' else 'معكوس'}}</div>
+  </div>
+  <h3>بيانات الموظف</h3>
+  <table>
+    <tr><th>اسم الموظف</th><td>{{slip.full_name}}</td><th>كود الموظف</th><td>{{slip.employee_code}}</td></tr>
+    <tr><th>المسمى الوظيفي</th><td>{{slip.job_title or '-'}}</td><th>الإدارة / القسم</th><td>{{slip.department or '-'}}</td></tr>
+    <tr><th>تاريخ التعيين</th><td>{{slip.hire_date or '-'}}</td><th>رقم التأمين</th><td>{{slip.insurance_number or '-'}}</td></tr>
+  </table>
+  <div class="payslip-columns">
+    <div>
+      <h3>الاستحقاقات</h3>
+      <table>
+        <tr><th>البيان</th><th>المبلغ</th></tr>
+        <tr><td>الراتب الأساسي بعد العلاوة</td><td>{{slip.basic_salary}}</td></tr>
+        {% if slip.salary_raise|float > 0 %}<tr><td>قيمة العلاوة المطبقة (للعلم – داخلة في الأساسي)</td><td>{{slip.salary_raise}}</td></tr>{% endif %}
+        <tr><td>البدلات</td><td>{{slip.allowances}}</td></tr>
+        <tr><td>الحوافز{% if slip.incentive_name %} — {{slip.incentive_name}}{% endif %}</td><td>{{slip.incentives}}</td></tr>
+        <tr><td>الإضافي ({{slip.overtime_hours}} ساعة × {{slip.overtime_rate_percent}}%)</td><td>{{slip.overtime_amount}}</td></tr>
+        <tr><td>إجمالي الأجر قبل الاستقطاعات</td><td>{{slip.gross_pay}}</td></tr>
+      </table>
+    </div>
+    <div>
+      <h3>الاستقطاعات</h3>
+      <table>
+        <tr><th>البيان</th><th>المبلغ</th></tr>
+        <tr><td>خصم الغياب ({{slip.absent_hours}} ساعة)</td><td>{{slip.absence_deduction}}</td></tr>
+        <tr><td>أقساط السلف</td><td>{{slip.loan_deduction}}</td></tr>
+        <tr><td>سلف / دفعات مقدمة أخرى</td><td>{{slip.manual_advance_deduction}}</td></tr>
+        <tr><td>خصومات أخرى</td><td>{{slip.other_deductions}}</td></tr>
+        <tr><td>ضريبة المرتبات</td><td>{{slip.taxable_income_tax}}</td></tr>
+        <tr><td>حصة الموظف في التأمينات</td><td>{{slip.employee_insurance}}</td></tr>
+        <tr><th>إجمالي استقطاعات الموظف</th><th>{{slip.employee_deductions}}</th></tr>
+      </table>
+    </div>
+  </div>
+  <div class="payslip-net">
+    <span>صافي الراتب المستحق</span>
+    <strong>{{slip.net_pay}}</strong>
+  </div>
+  <h3>بيانات إضافية</h3>
+  <table>
+    <tr><th>حصة الشركة في التأمينات (لا تخصم من صافي الموظف)</th><td>{{slip.employer_insurance}}</td></tr>
+    <tr><th>إجمالي الاستحقاقات المحاسبي للمسير</th><td>{{slip.total_entitlements}}</td></tr>
+    <tr><th>إجمالي الاستقطاعات المحاسبي للمسير</th><td>{{slip.total_deductions}}</td></tr>
+    <tr><th>مراجعة الإضافي اليدوي</th><td>{% if slip.overtime_manual_override %}تم اعتماد مبلغ يدوي — السبب: {{slip.overtime_override_reason}}{% else %}لم يتم إجراء تعديل يدوي{% endif %}</td></tr>
+  </table>
+  <p class="muted">هذه القسيمة مستخرجة من بيانات مسير الرواتب المحفوظة والمرحّلة. أي دفعات صرف مسجلة على مستوى المسير لا تُنسب لموظف بعينه في هذه القسيمة.</p>
+  <p class="payslip-signatures">توقيع الموظف: .................................... <span>اعتماد شؤون العاملين: ....................................</span></p>
+</section>
+<style>
+.payslip{max-width:1000px;margin:18px auto;padding:24px}
+.payslip-heading{display:flex;justify-content:space-between;gap:20px;align-items:center;border-bottom:2px solid #777;padding-bottom:12px}
+.payslip-columns{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.payslip-net{display:flex;justify-content:space-between;align-items:center;margin:22px 0;padding:18px;border:2px solid #555;font-size:1.2rem}
+.payslip-net strong{font-size:1.7rem}
+.payslip-signatures{display:flex;justify-content:space-between;margin-top:36px}
+@media(max-width:700px){.payslip-columns{grid-template-columns:1fr}.payslip-heading,.payslip-signatures{display:block}}
+@media print{aside,.global-search,.global-report-actions,.theme-toggle,.no-print{display:none!important}main{margin:0!important;padding:0!important}.payslip{border:0!important;box-shadow:none!important;max-width:none;margin:0;padding:8mm}.payslip-columns{grid-template-columns:1fr 1fr;break-inside:avoid}body{background:#fff!important;color:#000!important}}
+</style>
+{% endblock %}
