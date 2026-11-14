@@ -9,8 +9,10 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g, send_file, current_app
+from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g, send_file, send_from_directory, current_app
 from werkzeug.utils import secure_filename
+from pathlib import Path
+from PIL import Image, ImageOps, UnidentifiedImageError
 from accounting_core import post_journal
 from code_sequences import next_code
 
@@ -448,6 +450,12 @@ def _employee_form_values(form):
 
 
 
+def _employee_photo_directory():
+    directory = Path(current_app.instance_path) / "uploads" / "employees"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
 def _save_employee_photo(upload):
     if not upload or not upload.filename:
         return None
@@ -457,13 +465,38 @@ def _save_employee_photo(upload):
     content = upload.stream.read(5 * 1024 * 1024 + 1)
     if not content or len(content) > 5 * 1024 * 1024:
         raise ValueError("حجم صورة الموظف يجب ألا يتجاوز 5 ميجابايت.")
-    filename = uuid.uuid4().hex + extension
-    relative_path = os.path.join("uploads", "employees", filename)
-    absolute_dir = os.path.join(current_app.static_folder, "uploads", "employees")
-    os.makedirs(absolute_dir, exist_ok=True)
-    with open(os.path.join(absolute_dir, filename), "wb") as photo_file:
-        photo_file.write(content)
-    return relative_path.replace(os.sep, "/")
+    try:
+        from io import BytesIO
+        with Image.open(BytesIO(content)) as probe:
+            if probe.format not in {"JPEG", "PNG", "WEBP"}:
+                raise ValueError("محتوى الملف ليس صورة JPG أو PNG أو WEBP سليمة.")
+            probe.verify()
+        with Image.open(BytesIO(content)) as source:
+            if source.width * source.height > 20_000_000:
+                raise ValueError("أبعاد صورة الموظف أكبر من الحد المسموح.")
+            normalized = ImageOps.exif_transpose(source).convert("RGB")
+            normalized.thumbnail((2400, 2400))
+            filename = uuid.uuid4().hex + ".jpg"
+            normalized.save(_employee_photo_directory() / filename, format="JPEG", quality=88, optimize=True)
+    except (UnidentifiedImageError, OSError, SyntaxError) as exc:
+        raise ValueError("تعذر قراءة الصورة؛ اختر ملف صورة حقيقيًا وسليمًا.") from exc
+    return "employees/" + filename
+
+
+def _delete_employee_photo(relative_path):
+    if not relative_path:
+        return
+    normalized = str(relative_path).replace("\\", "/")
+    parts = normalized.split("/")
+    if len(parts) != 2 or parts[0] != "employees" or not parts[1].endswith(".jpg"):
+        return
+    directory = _employee_photo_directory().resolve()
+    target = (directory / parts[1]).resolve()
+    if target.parent == directory:
+        try:
+            target.unlink(missing_ok=True)
+        except OSError:
+            current_app.logger.warning("Could not remove replaced employee photo: %s", target.name)
 
 def _salary_change_preview(c, form):
     decision_no = form.get("decision_no", "").strip()
@@ -581,11 +614,30 @@ def salary_history():
     return render_template("salary_history.html",employees=employees,rows=rows,selected_employee=employee_id)
 
 
+@workforce_bp.route("/hr/<int:employee_id>/photo", methods=["GET"])
+@_role("admin", "accountant", "viewer")
+def employee_photo(employee_id):
+    c = _db()
+    employee = c.execute("SELECT photo_path FROM employees WHERE id=?", (employee_id,)).fetchone()
+    c.close()
+    if not employee or not employee["photo_path"]:
+        return "Not found", 404
+    relative = str(employee["photo_path"]).replace("\\", "/")
+    parts = relative.split("/")
+    if len(parts) != 2 or parts[0] != "employees" or not parts[1].endswith(".jpg"):
+        return "Not found", 404
+    response = send_from_directory(_employee_photo_directory(), parts[1], mimetype="image/jpeg", max_age=0)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
 @workforce_bp.route("/hr", methods=["GET", "POST"])
 @_role("admin", "accountant")
 def employees():
     c = _db()
     if request.method == "POST":
+        photo_path = None
         try:
             values = _employee_form_values(request.form)
             values = (next_code(c, "employee", "EMP", "employees", "employee_code"), *values[1:])
@@ -602,6 +654,7 @@ def employees():
             flash("تم إضافة الموظف وحفظ بياناته الوظيفية والأجرية.", "success")
         except (ValueError, KeyError, sqlite3.IntegrityError) as e:
             c.rollback()
+            _delete_employee_photo(photo_path)
             flash(str(e) or "كود الموظف أو الرقم القومي مستخدم بالفعل.", "error")
         c.close()
         return redirect(url_for("workforce.employees"))
@@ -631,10 +684,13 @@ def edit_employee(employee_id):
         flash("الموظف غير موجود.", "error")
         return redirect(url_for("workforce.employees"))
     if request.method == "POST":
+        new_photo_path = None
         try:
             values = _employee_form_values(request.form)
             _validate_employee_dimensions(c, values)
-            photo_path = _save_employee_photo(request.files.get("photo"))
+            new_photo_path = _save_employee_photo(request.files.get("photo"))
+            old_photo_path = employee["photo_path"]
+            photo_path = new_photo_path
             if photo_path:
                 c.execute("""UPDATE employees SET employee_code=?,full_name=?,job_title=?,department=?,hire_date=?,
                     basic_salary=?,standard_hours=?,variable_salary=?,legal_category=?,insurance_number=?,insured_wage=?,insurance_enabled=?,
@@ -649,11 +705,14 @@ def edit_employee(employee_id):
                     (*values, employee_id))
             _audit(c, "employee_updated", values[0])
             c.commit()
+            if new_photo_path:
+                _delete_employee_photo(old_photo_path)
             flash("تم تحديث ملف الموظف.", "success")
             c.close()
             return redirect(url_for("workforce.employees"))
         except (ValueError, KeyError, sqlite3.IntegrityError) as exc:
             c.rollback()
+            _delete_employee_photo(new_photo_path)
             flash(str(exc) or "تعذر تحديث بيانات الموظف.", "error")
     dimensions = _dimension_options(c)
     c.close()
@@ -1324,7 +1383,6 @@ def post_payroll(run_id):
         tax_payable = int(request.form["tax_payable_account"])
         insurance_payable = int(request.form["insurance_payable_account"])
         employer_ins_expense = int(request.form["employer_ins_expense_account"])
-        gross = sum((D(x["gross_pay"]) for x in rows), Decimal("0"))
         net = sum((D(x["net_pay"]) for x in rows), Decimal("0"))
         tax = sum((D(x["taxable_income_tax"]) for x in rows), Decimal("0"))
         emp_ins = sum((D(x["employee_insurance"]) for x in rows), Decimal("0"))
@@ -1332,7 +1390,6 @@ def post_payroll(run_id):
         other_deductions = sum((D(x["other_deductions"]) for x in rows), Decimal("0"))
         penalty_deduction = sum((D(x["penalty_deduction"]) if "penalty_deduction" in x.keys() else Decimal("0") for x in rows), Decimal("0"))
         advance_deduction = sum((D(x["advance_deduction"]) for x in rows), Decimal("0"))
-        absence_deduction = sum((D(x["absence_deduction"]) for x in rows), Decimal("0"))
         other_deductions_account = int(request.form["other_deductions_account"])
         advances_account = int(request.form["advances_account"])
         total_loan_deduction = M(sum((D(x["loan_deduction"]) for x in rows),Decimal("0")))
@@ -1932,7 +1989,6 @@ def friday_allowance():
                 raise ValueError("حدد شهرًا صحيحًا لبدل الجمعة.")
             next_month = date(month_start.year + (1 if month_start.month == 12 else 0),
                               1 if month_start.month == 12 else month_start.month + 1, 1)
-            month_end = next_month - date.resolution
             expense_account_id = int(request.form["expense_account_id"])
             payable_account_id = int(request.form["payable_account_id"])
             expense_account = c.execute("""SELECT id,account_type,is_group,active FROM accounts WHERE id=?""",
