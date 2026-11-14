@@ -26,6 +26,7 @@ from receivables import aging_bp, initialize_aging_schema
 from quotations import quotes_bp, initialize_quotes_schema
 from tax_center import tax_bp, initialize_tax_schema
 from workforce import workforce_bp, initialize_workforce_schema
+import workforce_extras
 from payroll_compliance import payroll_compliance_bp, initialize_payroll_compliance_schema
 from currency_center import currency_bp, initialize_currency_schema
 from party_reports import party_bp
@@ -376,6 +377,7 @@ def initialize_database():
     initialize_quotes_schema()
     initialize_tax_schema()
     initialize_workforce_schema()
+    workforce_extras.initialize_workforce_extras_schema()
     initialize_payroll_compliance_schema()
     initialize_currency_schema()
     dashboard_connection = db()
