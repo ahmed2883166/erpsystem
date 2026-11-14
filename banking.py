@@ -73,6 +73,17 @@ def init_bank_schema():
     CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_statement_tx_side
       ON bank_statement_lines(matched_transaction_id,matched_side)
       WHERE matched_transaction_id IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS bank_statement_balances(
+      id INTEGER PRIMARY KEY,
+      bank_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      period_start TEXT NOT NULL,
+      period_end TEXT NOT NULL,
+      opening_balance TEXT NOT NULL,
+      closing_balance TEXT NOT NULL,
+      created_by INTEGER,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(bank_account_id,period_start,period_end)
+    );
     """)
     c.close()
 
@@ -218,6 +229,30 @@ def statement_reconciliation():
                 g.audit_created_record=("bank_statement_lines",cur.lastrowid,None,None)
                 flash("تمت إضافة سطر كشف البنك للمطابقة.","success")
                 return redirect(url_for("bank.statement_reconciliation",account_id=account_id))
+            if action=="save_balances":
+                account_id=request.form.get("bank_account_id",type=int)
+                period_start=request.form.get("start_date","").strip()
+                period_end=request.form.get("end_date","").strip()
+                opening=Decimal(request.form.get("opening_balance","0")).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)
+                closing=Decimal(request.form.get("closing_balance","0")).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)
+                date.fromisoformat(period_start); date.fromisoformat(period_end)
+                if period_end<period_start: raise ValueError("تاريخ نهاية كشف البنك يجب ألا يسبق تاريخ بدايته.")
+                if not c.execute("SELECT 1 FROM accounts WHERE id=? AND account_type='asset' AND is_group=0 AND active=1",(account_id,)).fetchone():
+                    raise ValueError("اختر حساب بنك تفصيليًا ونشطًا.")
+                c.execute("""INSERT INTO bank_statement_balances(bank_account_id,period_start,period_end,opening_balance,closing_balance,created_by)
+                    VALUES(?,?,?,?,?,?)
+                    ON CONFLICT(bank_account_id,period_start,period_end) DO UPDATE SET
+                    opening_balance=excluded.opening_balance,closing_balance=excluded.closing_balance,
+                    created_by=excluded.created_by,updated_at=CURRENT_TIMESTAMP""",
+                    (account_id,period_start,period_end,str(opening),str(closing),session.get("user_id")))
+                c.commit()
+                c.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
+                    VALUES(?,?,?,?)""",(session.get("user_id"),"bank_statement_balance",
+                    f"حفظ رصيد افتتاحي وختامي لكشف البنك للحساب {account_id} للفترة {period_start} إلى {period_end}",
+                    datetime.now().isoformat(timespec="seconds")))
+                c.commit()
+                flash("تم حفظ رصيد بداية ونهاية كشف البنك للفترة.","success")
+                return redirect(url_for("bank.statement_reconciliation",account_id=account_id,start_date=period_start,end_date=period_end))
             if action=="match":
                 line_id=request.form.get("line_id",type=int)
                 transaction_id=request.form.get("transaction_id",type=int)
@@ -272,12 +307,23 @@ def statement_reconciliation():
                 book_rows.append(dict(tx, signed_amount=signed, side=side))
             statement_total=sum((Decimal(str(line["signed_amount"])) for line in lines),Decimal("0"))
             matched_count=sum(1 for line in lines if line["matched_transaction_id"])
+            balances=c.execute("""SELECT opening_balance,closing_balance FROM bank_statement_balances
+                WHERE bank_account_id=? AND period_start=? AND period_end=?""",
+                (account_id,period_start,period_end)).fetchone()
+            opening_balance=Decimal(str(balances["opening_balance"])) if balances else Decimal("0")
+            closing_balance=Decimal(str(balances["closing_balance"])) if balances else Decimal("0")
+            expected_closing_balance=opening_balance+book_total
+            closing_difference=closing_balance-expected_closing_balance
         else:
             lines=[]; book_rows=[]; statement_total=Decimal("0"); book_total=Decimal("0"); matched_count=0
+            opening_balance=Decimal("0"); closing_balance=Decimal("0")
+            expected_closing_balance=Decimal("0"); closing_difference=Decimal("0")
         c.close()
         return render_template("bank_reconciliation.html",accounts=accounts,account_id=account_id,
             lines=lines,book_rows=book_rows,statement_total=statement_total,book_total=book_total,
             difference=statement_total-book_total,matched_count=matched_count,
+            opening_balance=opening_balance,closing_balance=closing_balance,
+            expected_closing_balance=expected_closing_balance,closing_difference=closing_difference,
             start_date=period_start,end_date=period_end,today=today.isoformat())
     except (ValueError,InvalidOperation,sqlite3.Error) as exc:
         c.rollback()
