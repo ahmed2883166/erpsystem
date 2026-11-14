@@ -18,10 +18,10 @@
 <section class="panel"><h3>كشوف المنح</h3><div style="overflow-x:auto"><table><tr><th>رقم</th><th>المنحة</th><th>التاريخ</th><th>طريقة الحساب</th><th>إجمالي الاستحقاق</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th>الإجراءات</th></tr>
 {% for g in grants %}<tr><td>{{g.id}}</td><td>{{g.grant_name_snapshot}}</td><td>{{g.grant_date}}</td>
 <td>{{{'fixed':'مبلغ مقطوع','percentage_basic':'نسبة من الأساسي','per_day':'عدد أيام من الأساسي'}.get(g.calculation_method,g.calculation_method)}}</td>
-<td>{{g.total_amount}}</td><td>{{g.paid_total}}</td><td>{{(g.total_amount|float)-(g.paid_total|float)}}</td>
+<td>{{g.total_amount}}</td><td>{{g.paid_total}}</td><td>{{g.outstanding_total}}</td>
 <td>{{{'draft':'مسودة','approved':'معتمدة','partially_paid':'مدفوع جزئيًا','paid':'مدفوعة بالكامل'}.get(g.status,g.status)}}</td><td>
 <details><summary>مراجعة الموظفين والمبالغ</summary><table><tr><th>كود الموظف</th><th>اسم الموظف</th><th>الراتب الأساسي</th><th>الاستحقاق</th><th>المدفوع</th><th>المتبقي</th></tr>
-{% for line in grant_lines[g.id] %}<tr><td>{{line.employee_code_snapshot}}</td><td>{{line.employee_name_snapshot}}</td><td>{{line.basic_salary_snapshot}}</td><td>{{line.amount}}</td><td>{{line.paid_amount}}</td><td>{{(line.amount|float)-(line.paid_amount|float)}}</td></tr>{% endfor %}</table></details>
+{% for line in grant_lines[g.id] %}<tr><td>{{line.employee_code_snapshot}}</td><td>{{line.employee_name_snapshot}}</td><td>{{line.basic_salary_snapshot}}</td><td>{{line.amount}}</td><td>{{line.paid_amount}}</td><td>{{line.remaining_amount}}</td></tr>{% endfor %}</table></details>
 <a href="{{url_for('workforce.print_employee_grant',grant_id=g.id)}}" target="_blank">كشف الطباعة</a>
 {% if g.status=='draft' %}<form method="post" action="{{url_for('workforce.approve_employee_grant',grant_id=g.id)}}" style="display:inline"><button type="submit">اعتماد وترحيل</button></form>{% endif %}
 {% if g.status in ['approved','partially_paid'] %}<details><summary>تسجيل صرف</summary><form method="post" action="{{url_for('workforce.pay_employee_grant',grant_id=g.id)}}" class="form-grid">
