@@ -1945,6 +1945,91 @@ def management_account_mapping():
                            selected=roles, accounts=accounts)
 
 
+@app.route("/approvals")
+def approval_inbox():
+    """Read-only unified inbox; decisions remain in each module's existing guarded route."""
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    permissions = set(session.get("permissions", PERMISSIONS.get(session.get("role"), set())))
+    approval_permissions = {"purchases.approve", "sales.approve", "budget.approve"}
+    if not (permissions & approval_permissions):
+        flash("لا تملك صلاحية مراجعة المستندات المعلقة.", "error")
+        return redirect(url_for("dashboard"))
+
+    connection = db()
+    actor_id = session.get("user_id")
+    items = []
+    try:
+        if "purchases.approve" in permissions:
+            for row in connection.execute("""
+                SELECT p.id,p.po_no AS document_no,p.order_date AS document_date,
+                       s.name AS counterparty,p.created_by,p.submitted_by
+                FROM purchase_orders p JOIN suppliers s ON s.id=p.supplier_id
+                WHERE p.status='pending_approval'
+                ORDER BY p.order_date DESC,p.id DESC
+            """).fetchall():
+                own = row["created_by"] == actor_id or row["submitted_by"] == actor_id
+                items.append({
+                    "kind": "أمر شراء", "number": row["document_no"],
+                    "date": row["document_date"], "counterparty": row["counterparty"],
+                    "href": url_for("purchase.index"), "can_act": not own,
+                    "blocked_reason": "لا يجوز اعتماد أو رفض المستند الذي أنشأته أو أرسلته للمراجعة." if own else "",
+                })
+            for row in connection.execute("""
+                SELECT b.id,b.bill_no AS document_no,b.bill_date AS document_date,
+                       s.name AS counterparty,b.total_amount,b.created_by,b.submitted_by
+                FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
+                WHERE b.status='pending_approval'
+                ORDER BY b.bill_date DESC,b.id DESC
+            """).fetchall():
+                own = row["created_by"] == actor_id or row["submitted_by"] == actor_id
+                items.append({
+                    "kind": "فاتورة مورد", "number": row["document_no"],
+                    "date": row["document_date"], "counterparty": row["counterparty"],
+                    "amount": row["total_amount"], "href": url_for("purchase.index"),
+                    "can_act": not own,
+                    "blocked_reason": "لا يجوز اعتماد أو رفض المستند الذي أنشأته أو أرسلته للمراجعة." if own else "",
+                })
+
+        if "sales.approve" in permissions:
+            for row in connection.execute("""
+                SELECT so.id,so.order_no AS document_no,so.order_date AS document_date,
+                       c.name AS counterparty,so.created_by
+                FROM sales_orders so JOIN customers c ON c.id=so.customer_id
+                WHERE so.status='pending_approval'
+                ORDER BY so.order_date DESC,so.id DESC
+            """).fetchall():
+                own = row["created_by"] == actor_id
+                items.append({
+                    "kind": "أمر بيع", "number": row["document_no"],
+                    "date": row["document_date"], "counterparty": row["counterparty"],
+                    "href": url_for("quotes.sales_order_view", order_id=row["id"]),
+                    "can_act": not own,
+                    "blocked_reason": "لا يجوز اعتماد أمر البيع بواسطة منشئه." if own else "",
+                })
+
+        if "budget.approve" in permissions:
+            for row in connection.execute("""
+                SELECT id,name AS document_no,date_from AS document_date,
+                       date_to,created_by
+                FROM budget_plans WHERE status='pending'
+                ORDER BY date_from DESC,id DESC
+            """).fetchall():
+                own = row["created_by"] == actor_id
+                items.append({
+                    "kind": "موازنة", "number": row["document_no"],
+                    "date": row["document_date"], "counterparty": "حتى " + row["date_to"],
+                    "href": url_for("planning.budget_detail", budget_id=row["id"]),
+                    "can_act": not own,
+                    "blocked_reason": "لا يجوز لمنشئ الموازنة اعتمادها بنفسه." if own else "",
+                })
+    finally:
+        connection.close()
+
+    items.sort(key=lambda item: (item.get("date") or "", item.get("number") or ""), reverse=True)
+    return render_template("approval_inbox.html", items=items, pending_count=len(items))
+
+
 @app.route("/security/audit-log")
 @requires("audit.view")
 def audit_log():
