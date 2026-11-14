@@ -133,7 +133,7 @@ OPERATIONAL_ACCOUNT_CODES = frozenset(
     {code for mapping in ACTIVITY_ACCOUNT_ROLES.values() for values in mapping.values()
      for code in (values if isinstance(values, (tuple, list, set)) else (values,))}
     | {code for mapping in ACTIVITY_POSTING_ACCOUNTS.values() for code in mapping.values() if code}
-    | {"2190"}
+    | {"2190", "6990", "6991"}
 )
 
 # Tax control accounts are resolved by accounting role, not by a sales-module code.
