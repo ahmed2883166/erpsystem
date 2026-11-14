@@ -1460,6 +1460,42 @@ def build_cash_flow_snapshot(conn, start, end):
                 else:
                     sections["investing"]["out"] += -net
                 continue
+            # Supplier payments may settle several bills. Split the cash outflow
+            # according to the actual bill allocations so asset acquisitions are
+            # investing cash flows, not operating merely because AP was credited.
+            payment_tables = {
+                row["name"] for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
+                    "('supplier_payments','supplier_payment_allocations','supplier_bills')"
+                )
+            }
+            if net < 0 and payment_tables == {
+                "supplier_payments", "supplier_payment_allocations", "supplier_bills"
+            }:
+                payment = conn.execute(
+                    "SELECT id FROM supplier_payments WHERE journal_entry_id=?", (entry["id"],)
+                ).fetchone()
+                if payment:
+                    allocations = conn.execute("""
+                        SELECT COALESCE(DECIMAL_SUM(pa.amount),'0') total_allocated,
+                               COALESCE(DECIMAL_SUM(CASE WHEN sb.bill_kind='asset'
+                                   THEN pa.amount ELSE '0' END),'0') asset_allocated
+                        FROM supplier_payment_allocations pa
+                        JOIN supplier_bills sb ON sb.id=pa.bill_id
+                        WHERE pa.payment_id=?
+                    """, (payment["id"],)).fetchone()
+                    total_allocated = Decimal(str(allocations["total_allocated"] or "0"))
+                    asset_allocated = Decimal(str(allocations["asset_allocated"] or "0"))
+                    if total_allocated > 0 and asset_allocated > 0:
+                        investing_out = min(
+                            abs(net),
+                            (abs(net) * asset_allocated / total_allocated).quantize(
+                                Decimal("0.01"), rounding=ROUND_HALF_UP
+                            ),
+                        )
+                        sections["investing"]["out"] += investing_out
+                        sections["operating"]["out"] += abs(net) - investing_out
+                        continue
             account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
             section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
             counterpart = conn.execute(f"""SELECT jl.account_id,a.account_type,a.code,a.name_ar,
