@@ -1462,7 +1462,11 @@ def post_payroll(run_id):
             (insurance_payable, 0, M(emp_ins + employer_ins), "تأمينات اجتماعية مستحقة"),
         ])
         c.execute("BEGIN IMMEDIATE")
-        journal_id = post_journal(c, run["period"] + "-01", "PAYROLL-" + run["period"],
+        # Include the immutable payroll run ID in the reference. A reversed payroll
+        # journal remains posted in the ledger for auditability, so a corrected
+        # replacement run must not collide with the original journal reference.
+        payroll_reference = "PAYROLL-" + run["period"] + "-RUN-" + str(run_id)
+        journal_id = post_journal(c, run["period"] + "-01", payroll_reference,
                                   "مرتبات شهر " + run["period"], lines, session["user_id"])
         for payroll_line in rows:
             left = D(payroll_line["loan_deduction"])
@@ -1471,8 +1475,8 @@ def post_payroll(run_id):
             due_rows = c.execute("""SELECT i.id,i.due_amount,i.paid_amount
                 FROM employee_loan_installments i JOIN employee_loans l ON l.id=i.loan_id
                 WHERE l.employee_id=(SELECT employee_id FROM payroll_lines WHERE id=?)
-                  AND l.status='active' AND i.due_period=? AND i.status='pending'
-                ORDER BY l.id,i.id""", (payroll_line["id"],run["period"])).fetchall()
+                  AND l.status='active' AND i.due_period<=? AND i.status='pending'
+                ORDER BY i.due_period,l.id,i.id""", (payroll_line["id"],run["period"])).fetchall()
             for item in due_rows:
                 outstanding = max(Decimal("0"),D(item["due_amount"])-D(item["paid_amount"]))
                 amount = min(left,outstanding)
