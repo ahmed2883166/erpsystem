@@ -768,6 +768,11 @@ def payroll_report():
     rows = [dict(row) for row in rows]
     run_net_pay = {}
     allocated_total_by_run = {}
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'").fetchone():
+        for allocation_row in c.execute("""SELECT l.run_id,a.amount FROM payroll_payment_allocations a
+            JOIN payroll_lines l ON l.id=a.payroll_line_id""").fetchall():
+            run_key = allocation_row["run_id"]
+            allocated_total_by_run[run_key] = allocated_total_by_run.get(run_key,Decimal("0")) + D(allocation_row["amount"])
     for row in rows:
         allocated = Decimal("0")
         if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'").fetchone():
@@ -776,7 +781,6 @@ def payroll_report():
                 (row["payroll_line_id"],)).fetchall()),Decimal("0"))
         row["paid_amount"] = M(allocated)
         row["remaining_payable"] = M(max(Decimal("0"),D(row["net_pay"])-allocated))
-        allocated_total_by_run[row["run_id"]] = allocated_total_by_run.get(row["run_id"],Decimal("0")) + allocated
         loan = D(row["loan_deduction"])
         row["manual_advance_deduction"] = M(max(Decimal("0"), D(row["advance_deduction"]) - loan))
         row["employee_deductions"] = M(
