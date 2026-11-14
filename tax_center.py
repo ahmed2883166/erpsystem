@@ -73,7 +73,7 @@ def _tax_ledger_reconciliation(conn, summary):
         "available": False, "output_account": "", "input_account": "",
         "output_ledger": Decimal("0"), "input_ledger": Decimal("0"),
         "output_report": summary["output_vat"],
-        "input_report": sum((Decimal(str(row["tax_amount"])) for row in []), Decimal("0")),
+        "input_report": Decimal("0"),
         "output_difference": Decimal("0"), "input_difference": Decimal("0"),
         "issues": [],
     }
@@ -89,7 +89,6 @@ def _tax_ledger_reconciliation(conn, summary):
         result["issues"].append("تعذر تحديد حسابات ضريبة المدخلات والمخرجات من ملف النشاط.")
         return result
     result["input_report"] = summary.get("purchase_tax_total", Decimal("0"))
-    register = False
     from accounting_core import register_decimal_aggregates
     register_decimal_aggregates(conn)
     for role, target in (("output_vat", "output"), ("input_vat", "input")):
@@ -107,9 +106,9 @@ def _tax_ledger_reconciliation(conn, summary):
                    COALESCE(DECIMAL_SUM(jl.debit),0) debit,
                    COALESCE(DECIMAL_SUM(jl.credit),0) credit
             FROM accounts a
-            LEFT JOIN journal_lines jl ON jl.account_id=a.id
-            LEFT JOIN journal_entries je ON je.id=jl.entry_id
-                 AND je.status='posted' AND je.entry_date>=? AND je.entry_date<?
+            LEFT JOIN journal_entries je ON je.status='posted'
+                 AND je.entry_date>=? AND je.entry_date<?
+            LEFT JOIN journal_lines jl ON jl.account_id=a.id AND jl.entry_id=je.id
             WHERE a.code IN ({placeholders})
             GROUP BY a.id,a.code
         """, (summary["period_start"], summary["period_end"], *codes)).fetchall()
