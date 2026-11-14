@@ -154,13 +154,26 @@ def _build_saudi_tax_preparation(conn, period, summary):
     }
     try:
         from income_statement import build_income_statement
+        from financial_planning import build_balance_sheet_snapshot
+        from accounting_core import register_decimal_aggregates
+        register_decimal_aggregates(conn)
         statement = build_income_statement(conn, date_from, date_to)
+        balance_sheet = build_balance_sheet_snapshot(conn, date_to)
         for key in ("revenue_total", "cogs_total", "gross_profit",
                     "operating_expense_total", "net_profit"):
             result[key] = statement[key]
+        result.update({
+            "total_assets": balance_sheet["total_assets"],
+            "total_liabilities": balance_sheet["total_liabilities"],
+            "equity_before_profit": balance_sheet["equity_before_profit"],
+            "total_equity": balance_sheet["total_equity"],
+            "balance_difference": balance_sheet["balance_difference"],
+            "balance_sheet_balanced": balance_sheet["balanced"],
+            "negative_asset_accounts": balance_sheet["negative_asset_accounts"],
+        })
         result["available"] = True
     except (ImportError, sqlite3.Error, KeyError, ValueError) as exc:
-        result["notice"] = "تعذر استخراج قائمة الدخل السنوية من الأستاذ العام: " + str(exc)
+        result["notice"] = "تعذر استخراج بيانات القوائم السنوية من الأستاذ العام: " + str(exc)
     return result
 
 
