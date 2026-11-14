@@ -63,13 +63,13 @@
     {% for l in lines %}
       <tr>
         <td>{{ l.statement_date }}</td><td>{{ l.signed_amount|money }}</td><td>{{ l.description }}</td><td>{{ l.bank_reference }}</td>
-        <td>{{ ('مطابق مع ' ~ l.transaction_no) if l.matched_transaction_id else 'غير مطابق' }}</td>
+        <td>{{ ('مطابق مع ' ~ l.transaction_no) if (l.matched_transaction_id or l.matched_journal_line_id) else 'غير مطابق' }}</td>
         <td>
-        {% if not l.matched_transaction_id %}
+        {% if not (l.matched_transaction_id or l.matched_journal_line_id) %}
           <form method="post" class="inline-form">
             <input type="hidden" name="action" value="match"><input type="hidden" name="line_id" value="{{ l.id }}">
-            <select name="transaction_id" required><option value="">اختر حركة دفترية</option>
-              {% for tx in book_rows %}<option value="{{ tx.id }}">{{ tx.transaction_no }} — {{ tx.transaction_date }} — {{ tx.signed_amount|money }} — {{ tx.description }}</option>{% endfor %}
+            <select name="journal_line_id" required><option value="">اختر حركة دفترية</option>
+              {% for tx in book_rows %}<option value="{{ tx.journal_line_id }}">{{ 'قيد #' ~ tx.entry_id }} — {{ tx.transaction_date }} — {{ tx.signed_amount|money }} — {{ tx.description }}{% if tx.memo %} — {{ tx.memo }}{% endif %}</option>{% endfor %}
             </select><button class="secondary">مطابقة</button>
           </form>
         {% else %}<span class="muted">تمت المطابقة</span>{% endif %}
