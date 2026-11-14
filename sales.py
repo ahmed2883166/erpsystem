@@ -392,7 +392,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
                 conn, int(product_id), selected_uom_id, "sales"
             )
         qty = entered_qty * conversion_factor
-        unit_price = (entered_unit_price / conversion_factor).quantize(CENT, rounding=ROUND_HALF_UP)
+        unit_price = entered_unit_price / conversion_factor
         description = str(item.get("description") or "").strip()
         product_inventory_code = codes.get("inventory")
         product_cogs_code = codes.get("cogs")
