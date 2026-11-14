@@ -104,8 +104,8 @@ def init_purchase_schema():
     # through the same additive migration used by the other analytical dimensions.
     initialize_analytic_dimensions_schema(c)
     for table, fields in (
-        ("purchase_order_lines",(("entered_quantity","TEXT"),("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
-        ("goods_receipt_lines",(("entered_quantity","TEXT"),("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
+        ("purchase_order_lines",(("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
+        ("goods_receipt_lines",(("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
     ):
         existing={row["name"] for row in c.execute("PRAGMA table_info("+table+")")}
         for name,declaration in fields:
