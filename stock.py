@@ -1977,15 +1977,21 @@ def approve_count(stocktake_id):
                               (inventory_code,)).fetchone() if inventory_code else None
         if not inventory or inventory["is_group"] or not inventory["active"] or inventory["account_type"] != "asset":
             raise ValueError("اضبط حساب المخزون كحساب أصول تفصيلي نشط قبل اعتماد الجرد.")
-        # Both shortage and surplus use the dedicated inventory-count variance
-        # account 6990. A credit to this expense account offsets the expense for
-        # verified stock gains; a debit records shortages.
-        variance_account = c.execute(
+        # Physical shortages are a direct inventory loss (5510). Verified
+        # surpluses remain a separate count-variance credit (6990), so a gain
+        # cannot be netted against shortage expense.
+        shortage_account = c.execute(
+            "SELECT id,code,account_type,is_group,active FROM accounts WHERE code='5510'"
+        ).fetchone()
+        surplus_account = c.execute(
             "SELECT id,code,account_type,is_group,active FROM accounts WHERE code='6990'"
         ).fetchone()
-        if (not variance_account or variance_account["is_group"] or not variance_account["active"]
-                or variance_account["account_type"] != "expense"):
-            raise ValueError("يجب تفعيل الحساب التفصيلي 6990 (فروق الجرد) من نوع مصروف قبل اعتماد الجرد.")
+        if (not shortage_account or shortage_account["is_group"] or not shortage_account["active"]
+                or shortage_account["account_type"] != "expense"):
+            raise ValueError("يجب تفعيل الحساب التفصيلي 5510 (عجز وهالك المخزون) من نوع مصروف قبل اعتماد الجرد.")
+        if (not surplus_account or surplus_account["is_group"] or not surplus_account["active"]
+                or surplus_account["account_type"] != "expense"):
+            raise ValueError("يجب تفعيل الحساب التفصيلي 6990 (فروق الجرد والزيادات) من نوع مصروف قبل اعتماد الجرد.")
         from activity_profiles import resolve_product_account_code
         journal_lines, movement_ids = [], []
         for line in lines:
@@ -2024,7 +2030,7 @@ def approve_count(stocktake_id):
                      str(cost / qty),str(cost),stocktake["count_date"],"عجز جرد فعلي",session.get("user_id")))
                 movement_ids.append(cur.lastrowid)
                 if cost > 0:
-                    journal_lines.append((variance_account["id"],cost,0,"عجز جرد - " + line["name_ar"]))
+                    journal_lines.append((shortage_account["id"],cost,0,"عجز جرد - " + line["name_ar"]))
                     journal_lines.append((
                         product_inventory["id"],0,cost,"تخفيض مخزون - " + line["name_ar"],
                         {"stock_product_id": int(line["product_id"]),
@@ -2052,7 +2058,7 @@ def approve_count(stocktake_id):
                 journal_lines.extend([(product_inventory["id"],cost,0,"زيادة مخزون - " + line["name_ar"],
                                       {"stock_product_id": int(line["product_id"]),
                                        "stock_warehouse_id": int(stocktake["warehouse_id"])}),
-                                      (variance_account["id"],0,cost,"زيادة مخزون - عكس مصروف فروق الجرد - " + line["name_ar"])])
+                                      (surplus_account["id"],0,cost,"زيادة مخزون - عكس مصروف فروق الجرد - " + line["name_ar"])])
                 c.execute("UPDATE stocktake_lines SET variance_value=? WHERE id=?", (str(cost),line["id"]))
         journal_id = None
         if journal_lines:
