@@ -14,7 +14,7 @@
 <div style="overflow:auto;max-width:100%">
 <table class="attendance-matrix" style="min-width:1100px">
 <thead><tr><th style="position:sticky;right:0;background:var(--panel,#202a36);z-index:2">كود الموظف / الاسم</th>
-{% for day in days %}<th style="min-width:90px">{{day}}</th>{% endfor %}</tr></thead>
+{% for day in days %}<th style="min-width:90px;{% if day in friday_days %}background:#6b4b18;color:white{% endif %}">{{day}}{% if day in friday_days %}<br><small>جمعة</small>{% endif %}</th>{% endfor %}</tr></thead>
 <tbody>
 {% for row in grid %}<tr><th style="position:sticky;right:0;background:var(--panel,#202a36);z-index:1;text-align:right">{{row.employee.employee_code}}<br>{{row.employee.full_name}}</th>
 {% for record in row.days %}<td style="vertical-align:top;min-width:90px">
