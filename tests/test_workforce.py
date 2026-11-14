@@ -99,7 +99,7 @@ class WorkforceTests(unittest.TestCase):
             "employee_ins_1": "300", "employer_ins_1": "400"
         })
         draft = self.client.get("/hr/payroll/1/employee/1/payslip", follow_redirects=True)
-        self.assertIn("القسيمة النهائية متاحة بعد ترحيل المسير فقط", draft.get_data(as_text=True))
+        self.assertIn("القسيمة النهائية متاحة بعد ترحيل المرتبات فقط", draft.get_data(as_text=True))
         conn = sqlite3.connect(self.db_path)
         conn.execute("UPDATE payroll_runs SET status='posted' WHERE id=1")
         conn.commit()
@@ -192,7 +192,7 @@ class WorkforceTests(unittest.TestCase):
         response = self.client.post("/hr/payroll/1/reverse", data={
             "reversal_date": "2026-12-03", "reason": "اختبار منع عكس مسير له دفعات"
         }, follow_redirects=True)
-        self.assertIn("لا يمكن عكس مسير له دفعات صرف مسجلة", response.get_data(as_text=True))
+        self.assertIn("لا يمكن عكس قيد المرتبات مع وجود دفعات صرف مسجلة", response.get_data(as_text=True))
         conn = sqlite3.connect(self.db_path)
         payments = conn.execute("SELECT amount FROM payroll_payments WHERE run_id=1 ORDER BY id").fetchall()
         debit, credit = conn.execute("""SELECT SUM(debit),SUM(credit) FROM journal_lines
@@ -505,7 +505,7 @@ class WorkforceTests(unittest.TestCase):
         response = self.client.post("/hr/payroll/1/reverse", data={
             "reversal_date": "2026-12-02", "reason": "محاولة عكس ثانية"
         }, follow_redirects=True)
-        self.assertIn("لا يمكن عكس مسير غير مرحّل", response.get_data(as_text=True))
+        self.assertIn("لا يمكن عكس قيد مرتبات غير مرحّل", response.get_data(as_text=True))
 
     def test_workforce_backfill_migration_runs_once(self):
         conn = sqlite3.connect(self.db_path)
