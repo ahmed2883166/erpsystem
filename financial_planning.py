@@ -1501,6 +1501,25 @@ def build_cash_flow_snapshot(conn, start, end):
                     inferred_operating_account_ids.add(row["account_id"])
                 cash_flow_mappings.setdefault(row["account_id"], "operating")
 
+    # Legacy/custom charts may not have parent_id relationships. In this chart,
+    # 11xx detail assets and 21xx detail liabilities are current working capital.
+    # Respect an explicit non-operating classification if the user configured one.
+    for row in conn.execute(
+        "SELECT id,code,account_type FROM accounts WHERE is_group=0"
+    ).fetchall():
+        code = str(row["code"] or "")
+        is_current = (
+            row["account_type"] == "asset" and code.startswith("11")
+        ) or (
+            row["account_type"] == "liability" and code.startswith("21")
+        )
+        if not is_current:
+            continue
+        explicit_category = cash_flow_mappings.get(row["id"])
+        if explicit_category is None:
+            inferred_operating_account_ids.add(row["id"])
+            cash_flow_mappings[row["id"]] = "operating"
+
     unmapped_accounts = {}
     if not cash_ids:
         opening = closing = Decimal("0")
@@ -1800,6 +1819,21 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
                 current_asset_ids.add(mapped["account_id"])
             elif mapped["account_type"] == "liability":
                 current_liability_ids.add(mapped["account_id"])
+
+    # Fallback for charts where detailed current liabilities use the standard
+    # 21xx range but are not linked to a 2100 parent (e.g. payroll payable/GRNI).
+    mapping_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_flow_account_mappings'"
+    ).fetchone()
+    configured_categories = {
+        row["account_id"]: row["category"]
+        for row in conn.execute("SELECT account_id,category FROM cash_flow_account_mappings")
+    } if mapping_table else {}
+    for row in conn.execute(
+        "SELECT id,code,account_type FROM accounts WHERE is_group=0 AND account_type='liability'"
+    ).fetchall():
+        if str(row["code"] or "").startswith("21") and configured_categories.get(row["id"], "operating") == "operating":
+            current_liability_ids.add(row["id"])
 
     other_current_asset_ids = current_asset_ids-cash_ids-receivables_ids-inventory_ids
     other_current_liability_ids = current_liability_ids-payables_ids
