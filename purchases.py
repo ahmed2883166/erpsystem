@@ -1522,8 +1522,21 @@ def new_credit_note():
                    str(money(item["cost"]/item["quantity"])),str(item["cost"]),
                    str(item["entered_quantity"]),item["uom_id"],item["uom_key"],
                    item["entered_uom_name"],str(item["conversion_factor"])))
-            journal_lines=[(ap_id,total,0,"تخفيض مديونية المورد بإشعار دائن"),
-                           (inventory_id,0,subtotal,"إخراج مخزون مرتجع للمورد")]
+            journal_lines=[(ap_id,total,0,"تخفيض مديونية المورد بإشعار دائن")]
+            from activity_profiles import resolve_product_account_code
+            return_inventory_groups={}
+            for item in line_data:
+                item_inventory_code=resolve_product_account_code(
+                    c,item["product_id"],"inventory",inventory_code
+                )
+                item_key=(item_inventory_code,int(item["product_id"]),int(item["warehouse_id"]))
+                return_inventory_groups[item_key]=return_inventory_groups.get(item_key,Decimal("0"))+item["cost"]
+            for (item_inventory_code,product_id,warehouse_id),item_cost in sorted(return_inventory_groups.items()):
+                item_inventory_id=account(c,item_inventory_code,"asset")
+                journal_lines.append((
+                    item_inventory_id,0,item_cost,"إخراج مخزون مرتجع للمورد",
+                    {"stock_product_id":product_id,"stock_warehouse_id":warehouse_id}
+                ))
             if tax:
                 vat_id=account(c,_activity_tax_roles(c)["input_vat"],"asset")
                 journal_lines.append((vat_id,0,tax,"عكس ضريبة المدخلات حسب إشعار المورد"))
