@@ -1839,17 +1839,27 @@ def pay_employee_grant(grant_id):
         lines=c.execute("SELECT id,amount,paid_amount FROM employee_grant_lines WHERE grant_id=? ORDER BY id",(grant_id,)).fetchall()
         outstanding_by_line=[(line,M(D(line["amount"])-D(line["paid_amount"]))) for line in lines]
         total_outstanding=M(sum((due for _line,due in outstanding_by_line),Decimal("0")))
-        remaining=amount
-        for index,(line,due) in enumerate(outstanding_by_line):
-            if due<=0 or remaining<=0: continue
-            if index==len(outstanding_by_line)-1:
-                allocation=min(due,remaining)
-            else:
-                allocation=min(due,remaining,M(amount*due/total_outstanding))
-            if allocation>0:
+        total_cents=int(amount*100)
+        base_cents=int(total_outstanding*100)
+        allocations=[]
+        allocated_cents=0
+        for line,due in outstanding_by_line:
+            due_cents=int(due*100)
+            share_cents=(total_cents*due_cents)//base_cents if base_cents else 0
+            share_cents=min(due_cents,share_cents)
+            allocations.append([line,due_cents,share_cents])
+            allocated_cents+=share_cents
+        remainder_cents=total_cents-allocated_cents
+        for item in allocations:
+            extra=min(item[1]-item[2],remainder_cents)
+            item[2]+=extra
+            remainder_cents-=extra
+            if remainder_cents<=0: break
+        for line,_due_cents,allocated in allocations:
+            if allocated>0:
+                allocation=Decimal(allocated)/Decimal("100")
                 c.execute("UPDATE employee_grant_lines SET paid_amount=? WHERE id=?",
                     (str(M(D(line["paid_amount"])+allocation)),line["id"]))
-                remaining=M(remaining-allocation)
         new_status="paid" if amount==outstanding else "partially_paid"
         c.execute("UPDATE employee_grants SET status=? WHERE id=?",(new_status,grant_id))
         _audit(c,"employee_grant_payment","grant="+str(grant_id)+" amount="+str(amount)+" journal="+str(journal_id))
