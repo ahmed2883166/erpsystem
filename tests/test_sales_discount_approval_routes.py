@@ -131,7 +131,7 @@ class SalesDiscountApprovalRouteTests(unittest.TestCase):
 
     def test_sales_order_discount_approval_unlocks_only_discount_gate(self):
         request_id = self._add_request("sales_order", sales_order_id=31)
-        with patch.object(sales, "db", return_value=self.connection), patch.object(nexus, "log"):
+        with patch.object(sales, "db", side_effect=self._connect), patch.object(nexus, "log"):
             self._login()
             response = self.client.post(
                 f"/sales/discount-approvals/{request_id}",
@@ -150,7 +150,7 @@ class SalesDiscountApprovalRouteTests(unittest.TestCase):
 
     def test_sales_order_discount_rejection_rejects_order_without_posting(self):
         request_id = self._add_request("sales_order", sales_order_id=32)
-        with patch.object(sales, "db", return_value=self.connection), \
+        with patch.object(sales, "db", side_effect=self._connect), \
              patch.object(sales, "post_invoice") as post, \
              patch.object(nexus, "log"):
             self._login()
@@ -167,7 +167,7 @@ class SalesDiscountApprovalRouteTests(unittest.TestCase):
 
     def test_request_creator_cannot_approve_or_reject_own_discount(self):
         request_id = self._add_request(created_by=20)
-        with patch.object(sales, "db", return_value=self.connection):
+        with patch.object(sales, "db", side_effect=self._connect):
             self._login(user_id=20)
             response = self.client.post(
                 f"/sales/discount-approvals/{request_id}",
@@ -185,7 +185,7 @@ class SalesDiscountApprovalRouteTests(unittest.TestCase):
 
     def test_sales_manage_without_sales_approve_cannot_review_discount(self):
         request_id = self._add_request()
-        with patch.object(sales, "db", return_value=self.connection):
+        with patch.object(sales, "db", side_effect=self._connect):
             self._login(permissions=["sales.manage"])
             response = self.client.post(
                 f"/sales/discount-approvals/{request_id}",
