@@ -2646,6 +2646,13 @@ def import_data_wizard():
         errors = []
         try:
             connection.execute("BEGIN IMMEDIATE")
+            if dataset == "opening_balances":
+                connection.execute("""CREATE TABLE IF NOT EXISTS opening_balance_import_refs (
+                    id INTEGER PRIMARY KEY, record_type TEXT NOT NULL, reference TEXT NOT NULL,
+                    entity_key TEXT NOT NULL, journal_entry_id INTEGER NOT NULL REFERENCES journal_entries(id),
+                    source_file TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(record_type,reference,entity_key)
+                )""")
             for row_number, source_row in enumerate(rows, start=2):
                 values = {key: (source_row[index] if index is not None else "") for key, index in mapping.items()}
                 clean = {key: str(value or "").strip() for key, value in values.items()}
@@ -2676,6 +2683,7 @@ def import_data_wizard():
                             raise ValueError("حساب الأرباح المحتجزة/الأرصدة الافتتاحية غير مضبوط في ملف النشاط.")
                         amount = Decimal("0")
                         journal_lines = []
+                        entity_key = ""
                         document_suffix = uuid.uuid4().hex[:10].upper()
                         if record_type == "customer":
                             customer = connection.execute("SELECT * FROM customers WHERE code=? AND active=1",
@@ -2699,6 +2707,7 @@ def import_data_wizard():
                                 (invoice_id,description,quantity,unit_price,line_total,cost_total)
                                 VALUES(?,?, '1', ?, ?, '0')""",
                                 (cur.lastrowid, "رصيد افتتاحي - " + ref, str(amount), str(amount)))
+                            entity_key = customer["code"]
                             journal_lines = [(ar["id"], amount, Decimal("0"), "رصيد عميل افتتاحي: " + customer["name"]),
                                              (retained["id"], Decimal("0"), amount, "مقابل الأرصدة الافتتاحية")]
                             journal_ref = "OPENING-CUSTOMER-" + document_suffix
@@ -2724,6 +2733,7 @@ def import_data_wizard():
                                  tax_amount,total_amount,paid_amount,status,created_by)
                                 VALUES(?,?,?,?,?,?,'0','0',?,'0','posted',?)""",
                                 (bill_no, supplier["id"], entry_date, due_date, ref, str(amount), str(amount), session.get("user_id")))
+                            entity_key = supplier["code"]
                             journal_lines = [(retained["id"], amount, Decimal("0"), "مقابل الأرصدة الافتتاحية"),
                                              (ap["id"], Decimal("0"), amount, "رصيد مورد افتتاحي: " + supplier["name"])]
                             journal_ref = "OPENING-SUPPLIER-" + document_suffix
@@ -2746,6 +2756,7 @@ def import_data_wizard():
                             inv = connection.execute("SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
                                 (str(inv_code),)).fetchone()
                             if not inv: raise ValueError("حساب المخزون غير مضبوط في ملف النشاط الحالي.")
+                            entity_key = product["sku"] + "|" + warehouse["code"]
                             journal_ref = "OPENING-STOCK-" + document_suffix
                             journal_id = post_journal(connection, entry_date, journal_ref,
                                 "إثبات مخزون افتتاحي: " + product["name_ar"],
@@ -2765,6 +2776,10 @@ def import_data_wizard():
                                 (product["id"], warehouse["id"], cur.lastrowid, str(qty), str(qty), str(unit_cost), str(amount)))
                         else:
                             raise ValueError("نوع الرصيد يجب أن يكون customer أو supplier أو inventory.")
+                        connection.execute("""INSERT INTO opening_balance_import_refs
+                            (record_type,reference,entity_key,journal_entry_id,source_file)
+                            VALUES(?,?,?,?,?)""",
+                            (record_type, ref, entity_key, journal_id, payload.get("filename", "")))
                     elif dataset == "accounts":
                         allowed_types = {"asset", "liability", "equity", "revenue", "expense"}
                         arabic_types = {"أصل": "asset", "الأصول": "asset", "التزام": "liability", "الالتزامات": "liability",
