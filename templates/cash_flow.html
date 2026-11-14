@@ -11,15 +11,17 @@
   <a class="btn {{ 'primary' if method == 'indirect' else 'secondary' }}" href="{{ url_for('planning.cash_flow', date_from=date_from, date_to=date_to, method='indirect') }}">الطريقة غير المباشرة</a>
   <a class="btn {{ 'primary' if method == 'direct' else 'secondary' }}" href="{{ url_for('planning.cash_flow', date_from=date_from, date_to=date_to, method='direct') }}">الطريقة المباشرة</a>
 </section>
-<section class="stat-grid"><article class="stat-card"><small>رصيد أول الفترة</small><strong>{{ opening|money }}</strong></article>
+<section class="panel"><h3>ملخص التدفقات النقدية للفترة</h3><div class="table-wrap"><table class="financial-summary-table"><thead><tr><th>المؤشر</th><th>القيمة</th></tr></thead><tbody>
+<tr><td>رصيد أول الفترة</td><td>{{ opening|money }}</td></tr>
 {% if method == 'indirect' %}
-<article class="stat-card"><small>صافي التدفق التشغيلي</small><strong>{{ indirect_operating_net|money }}</strong></article>
-<article class="stat-card"><small>صافي التغير في النقدية</small><strong>{{ net_change|money }}</strong></article>
+<tr><td>صافي التدفق التشغيلي</td><td>{{ indirect_operating_net|money }}</td></tr>
+<tr><td>صافي التغير في النقدية</td><td>{{ net_change|money }}</td></tr>
 {% else %}
-<article class="stat-card"><small>إجمالي المقبوضات</small><strong>{{ total_in|money }}</strong></article>
-<article class="stat-card"><small>إجمالي المدفوعات</small><strong>{{ total_out|money }}</strong></article>
+<tr><td>إجمالي المقبوضات</td><td>{{ total_in|money }}</td></tr>
+<tr><td>إجمالي المدفوعات</td><td>{{ total_out|money }}</td></tr>
 {% endif %}
-<article class="stat-card"><small>رصيد آخر الفترة</small><strong>{{ closing|money }}</strong></article></section>
+<tr class="financial-subtotal"><td>رصيد آخر الفترة</td><td>{{ closing|money }}</td></tr>
+</tbody></table></div></section>
 {% if method == 'indirect' %}
 <section class="panel">
   <h3>التدفقات من الأنشطة التشغيلية — الطريقة غير المباشرة</h3>
