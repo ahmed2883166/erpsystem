@@ -386,7 +386,7 @@ def register_report_exports(app, db_path, permissions):
                     ["ملخص", "", "", "صافي الضريبة الرقابي", "", "", "", summary["net_vat"], "", ""],
                 ])
                 saudi = snapshot.get("saudi_preparation")
-                if saudi:
+                if saudi and saudi.get("available"):
                     data.extend([
                         ["السعودية - ملف سنوي", "", "", "السنة المالية", saudi["year"], "", "", "", "", ""],
                         ["السعودية - ملف سنوي", "", "", "الإيرادات المحاسبية", saudi["revenue_total"], "", "", "", "", ""],
