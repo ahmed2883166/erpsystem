@@ -2,7 +2,7 @@
 {% block title %}العلاوات والزيادات الجماعية | NEXUS ERP{% endblock %}
 {% block content %}
 <header><h2>إدارة العلاوات والزيادات الجماعية</h2>
-<p>إنشاء قرار زيادة لفئة من الموظفين، ومعاينة أثره قبل الاعتماد، مع حفظ تاريخ الأجر السابق والجديد.</p>
+<p>إنشاء قرار علاوة واحد يطبق على كل الموظفين النشطين أو فئة محددة، مع معاينة أثره قبل الاعتماد وحفظ تاريخ الأجر لكل موظف. الموظف في إجازة بدون مرتب مشمول إذا اخترت كل النشطين.</p>
 <p><a class="button secondary" href="{{url_for('workforce.salary_history')}}">سجل تاريخ الأجور</a> <a href="{{url_for('workforce.employees')}}">شؤون الموظفين</a></p></header>
 {% if error %}<div class="flash error">{{error}}</div>{% endif %}
 <section class="panel"><h3>بيانات القرار</h3>
@@ -12,9 +12,9 @@
 <label>تاريخ سريان الزيادة<input type="date" name="effective_date" required value="{{request.form.get('effective_date',today)}}"></label>
 <label>اسم / وصف القرار<input name="title" required placeholder="العلاوة الدورية لعام 2027" value="{{request.form.get('title','')}}"></label>
 <label>الفئة المستفيدة<select name="employee_scope">
-<option value="permanent" {% if request.form.get('employee_scope','permanent')=='permanent' %}selected{% endif %}>الموظفون المثبتون</option>
+<option value="permanent" {% if request.form.get('employee_scope','all_active')=='permanent' %}selected{% endif %}>الموظفون المثبتون</option>
 <option value="comprehensive_bonus" {% if request.form.get('employee_scope')=='comprehensive_bonus' %}selected{% endif %}>مكافأة شاملة</option>
-<option value="all_active" {% if request.form.get('employee_scope')=='all_active' %}selected{% endif %}>كل الموظفين النشطين</option>
+<option value="all_active" {% if request.form.get('employee_scope','all_active')=='all_active' %}selected{% endif %}>كل الموظفين النشطين (بما فيهم الإجازة بدون مرتب)</option>
 <option value="unpaid_leave" {% if request.form.get('employee_scope')=='unpaid_leave' %}selected{% endif %}>إجازة بدون مرتب</option>
 </select></label>
 <label>طريقة الزيادة<select name="calculation_type"><option value="fixed" {% if request.form.get('calculation_type','fixed')=='fixed' %}selected{% endif %}>مبلغ ثابت</option><option value="percentage" {% if request.form.get('calculation_type')=='percentage' %}selected{% endif %}>نسبة مئوية</option></select></label>
@@ -24,7 +24,7 @@
 <label style="grid-column:1/-1">ملاحظات / سند القرار<textarea name="notes" rows="3">{{request.form.get('notes','')}}</textarea></label>
 <button type="submit" name="preview" value="1">معاينة الموظفين وقيم الزيادة</button>
 </form>
-<p class="muted">المعاينة لا تغيّر أي بيانات. لا يتم تحديث الرواتب أو إضافة البدلات إلا بعد تأكيد القرار في الخطوة التالية. راجع نطاق الاستحقاق ونص القرار قبل الاعتماد.</p>
+<p class="muted">المعاينة لا تغيّر أي بيانات. اختيار «كل الموظفين النشطين» يشمل المثبتين والمكافأة الشاملة والإجازة بدون مرتب، ويستبعد المستقيلين والمتقاعدين والملفات غير النشطة. لا يتم التحديث إلا بعد التأكيد.</p>
 </section>
 {% if preview %}
 <section class="panel"><h3>معاينة القرار — {{preview.title}}</h3>
