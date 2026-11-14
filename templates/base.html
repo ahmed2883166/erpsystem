@@ -10,7 +10,7 @@
 <summary><span>📦 المخازن والمخزون</span><small>إدارة الأصناف والأماكن والحركة</small></summary>
 <div class="nav-links">
 {% if 'stock.view' in permissions %}<a href="{{ url_for('stock.index') }}">لوحة المخزون</a>{% endif %}
-{% if 'stock.manage' in permissions %}<a href="{{ url_for('stock.products') }}">تعريف الأصناف وأسعارها</a><a href="{{ url_for('stock.categories') }}">مجموعات المنتجات</a><a href="{{ url_for('stock.uoms') }}">وحدات القياس والتحويلات</a><a href="{{ url_for('stock.warehouses') }}">تعريف المخازن</a><a href="{{ url_for('stock.locations') }}">الأدوار ومواقع التخزين</a><a href="{{ url_for('stock.product_locations') }}">توزيع الأصناف داخل المخازن</a><a href="{{ url_for('stock.movements') }}">حركات وتحويلات المخزون</a>{% endif %}
+{% if 'stock.manage' in permissions %}<a href="{{ url_for('stock.products') }}">تعريف الأصناف وأسعارها</a><a href="{{ url_for('stock.categories') }}">مجموعات المنتجات</a><a href="{{ url_for('stock.uoms') }}">وحدات القياس والتحويلات</a><a href="{{ url_for('stock.product_uoms') }}">وحدات تعبئة الأصناف</a><a href="{{ url_for('stock.warehouses') }}">تعريف المخازن</a><a href="{{ url_for('stock.locations') }}">الأدوار ومواقع التخزين</a><a href="{{ url_for('stock.product_locations') }}">توزيع الأصناف داخل المخازن</a><a href="{{ url_for('stock.movements') }}">حركات وتحويلات المخزون</a>{% endif %}
 {% if 'stock.view' in permissions %}<a href="{{ url_for('stock.reports') }}">تقارير وأرصدة المخزون</a>{% endif %}
 {% if 'stock.manage' in permissions %}<a href="{{ url_for('stock.counts') }}">الجرد الفعلي ومطابقة المخزون</a>{% endif %}
 </div></details>
