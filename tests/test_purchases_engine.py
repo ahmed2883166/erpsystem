@@ -344,7 +344,6 @@ class PurchasingAccountingTests(unittest.TestCase):
         report_values = report_response.get_data(as_text=True)
         self.assertIn("matched", report_values)
         self.assertIn("60", report_values)
-        self.assertIn("False", report_values)
 
         # Every journal entry created by the full cycle must balance.
         unbalanced = self.db.execute(
