@@ -2034,7 +2034,7 @@ def salesperson_list():
             flash("تم إضافة مندوب المبيعات.", "success")
         except (ValueError, sqlite3.IntegrityError) as exc:
             c.rollback()
-            flash(str(exc) or "كود مندوب المبيعات مستخدم بالفعل.", "error")
+            flash(safe_error_message(exc, "كود مندوب المبيعات مستخدم بالفعل."), "error")
     rows = c.execute("SELECT * FROM salespersons ORDER BY code").fetchall()
     c.close()
     return render_template("sales_salespersons.html", rows=rows)
