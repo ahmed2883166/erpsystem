@@ -2049,5 +2049,137 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(tuple(row),(branch,center,project,self.customer_id,salesperson))
 
 
+    def test_sales_credit_note_converts_package_quantity_and_preserves_entered_unit(self):
+        base_unit = self.db.execute(
+            "SELECT id FROM stock_uoms WHERE code='PCS'"
+        ).fetchone()["id"]
+        self.db.execute(
+            "UPDATE stock_products SET base_uom_id=? WHERE id=?",
+            (base_unit, self.product_id),
+        )
+        package_id = self.db.execute(
+            """INSERT INTO stock_product_uoms(
+                 product_id,custom_code,custom_name,factor_to_base,is_base,
+                 purchase_enabled,sales_enabled)
+               VALUES(?,?,?,?,0,1,1)""",
+            (self.product_id, "PACK2", "عبوة 2 قطعة", "2"),
+        ).lastrowid
+        extra_move = self.db.execute(
+            """INSERT INTO stock_movements(
+                 movement_no,movement_type,product_id,target_warehouse_id,quantity,
+                 unit_cost,total_cost,movement_date)
+               VALUES('OPEN-EXTRA','receipt',?,?, '5','10','50','2026-11-10')""",
+            (self.product_id, self.warehouse_id),
+        ).lastrowid
+        self.db.execute(
+            """INSERT INTO stock_valuation_layers(
+                 product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost)
+               VALUES(?,?,?,'5','5','10')""",
+            (self.product_id, self.warehouse_id, extra_move),
+        )
+        self.db.commit()
+
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "2", "unit_price": "40",
+              "uom_id": "P:" + str(package_id)}],
+            "0", 1,
+        )
+        line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?",
+            (invoice["invoice_id"],),
+        ).fetchone()["id"]
+        first = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-11", "مرتجع عبوة أولى",
+            [{"invoice_line_id": line_id, "quantity": "1", "uom_key": "P:" + str(package_id)}], 1,
+        )
+        saved = self.db.execute(
+            """SELECT quantity,entered_quantity,uom_key,entered_uom_name,conversion_factor
+               FROM sales_credit_note_lines WHERE id=?""",
+            (self.db.execute(
+                "SELECT id FROM sales_credit_note_lines WHERE credit_note_id=?",
+                (first["credit_note_id"],),
+            ).fetchone()["id"],),
+        ).fetchone()
+        movement = self.db.execute(
+            """SELECT quantity,entered_quantity,entered_uom_key,entered_uom_name
+               FROM stock_movements WHERE movement_no LIKE 'SCN-%' ORDER BY id DESC LIMIT 1"""
+        ).fetchone()
+        self.assertEqual(Decimal(saved["quantity"]), Decimal("2"))
+        self.assertEqual(Decimal(saved["entered_quantity"]), Decimal("1"))
+        self.assertEqual(saved["uom_key"], "P:" + str(package_id))
+        self.assertEqual(saved["entered_uom_name"], "عبوة 2 قطعة")
+        self.assertEqual(Decimal(saved["conversion_factor"]), Decimal("2"))
+        self.assertEqual(Decimal(movement["quantity"]), Decimal("2"))
+        self.assertEqual(Decimal(movement["entered_quantity"]), Decimal("1"))
+        self.assertEqual(movement["entered_uom_key"], "P:" + str(package_id))
+
+        second = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-12", "استكمال المرتجع",
+            [{"invoice_line_id": line_id, "quantity": "1", "uom_key": "P:" + str(package_id)}], 1,
+        )
+        self.db.commit()
+        self.assertEqual(first["subtotal"] + second["subtotal"], invoice["subtotal"])
+        returned_base_qty = sum(
+            (Decimal(row["quantity"]) for row in self.db.execute(
+                "SELECT quantity FROM sales_credit_note_lines WHERE invoice_line_id=?", (line_id,)
+            )),
+            Decimal("0"),
+        )
+        self.assertEqual(returned_base_qty, Decimal("4"))
+
+    def test_sales_credit_note_rejects_package_return_exceeding_remaining_base_quantity(self):
+        base_unit = self.db.execute(
+            "SELECT id FROM stock_uoms WHERE code='PCS'"
+        ).fetchone()["id"]
+        self.db.execute(
+            "UPDATE stock_products SET base_uom_id=? WHERE id=?",
+            (base_unit, self.product_id),
+        )
+        package_id = self.db.execute(
+            """INSERT INTO stock_product_uoms(
+                 product_id,custom_code,custom_name,factor_to_base,is_base,
+                 purchase_enabled,sales_enabled)
+               VALUES(?,?,?,?,0,1,1)""",
+            (self.product_id, "PACK3", "عبوة 3 قطع", "3"),
+        ).lastrowid
+        extra_move = self.db.execute(
+            """INSERT INTO stock_movements(
+                 movement_no,movement_type,product_id,target_warehouse_id,quantity,
+                 unit_cost,total_cost,movement_date)
+               VALUES('OPEN-EXTRA-2','receipt',?,?, '10','10','100','2026-11-10')""",
+            (self.product_id, self.warehouse_id),
+        ).lastrowid
+        self.db.execute(
+            """INSERT INTO stock_valuation_layers(
+                 product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost)
+               VALUES(?,?,?,'10','10','10')""",
+            (self.product_id, self.warehouse_id, extra_move),
+        )
+        self.db.commit()
+
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "2", "unit_price": "60",
+              "uom_id": "P:" + str(package_id)}],
+            "0", 1,
+        )
+        line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?", (invoice["invoice_id"],)
+        ).fetchone()["id"]
+        sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-11", "مرتجع جزئي",
+            [{"invoice_line_id": line_id, "quantity": "1", "uom_key": "P:" + str(package_id)}], 1,
+        )
+        with self.assertRaisesRegex(ValueError, "الكمية المطلوبة للإشعار أكبر"):
+            sales.post_credit_note(
+                self.db, invoice["invoice_id"], "2026-11-12", "كمية زائدة",
+                [{"invoice_line_id": line_id, "quantity": "2", "uom_key": "P:" + str(package_id)}], 1,
+            )
+        self.db.rollback()
+
+
 if __name__ == "__main__":
     unittest.main()
