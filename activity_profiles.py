@@ -357,7 +357,13 @@ def active_account_role_ids(conn):
     codes = profile["account_roles"]
     if profile["base_activity"] == "industrial":
         codes = dict(codes)
+        # Only 1130 is an active stock-control account. Keep legacy asset
+        # balances in old 1140/1150/1160 accounts visible in current assets,
+        # without treating them as inventory accounts or posting targets.
         codes["inventory"] = ["1130"]
+        codes["current_assets"] = list(dict.fromkeys(
+            [*codes.get("current_assets", []), "1140", "1150", "1160"]
+        ))
     result = {}
     account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
     group_expr = "COALESCE(is_group,0)" if "is_group" in account_columns else "0"
