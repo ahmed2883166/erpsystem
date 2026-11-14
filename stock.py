@@ -14,6 +14,7 @@ from datetime import date
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, money
 from analytic_dimensions import initialize_analytic_dimensions_schema
+from code_sequences import next_code
 
 stock_bp = Blueprint("stock", __name__, url_prefix="/stock")
 
@@ -725,14 +726,14 @@ def products():
     categories=c.execute("SELECT id,code,name_ar FROM stock_categories WHERE active=1 ORDER BY name_ar").fetchall()
     if request.method=="POST":
         try:
-            sku=request.form.get("sku","").strip()
             name=request.form.get("name_ar","").strip()
             base_uom_id=request.form.get("base_uom_id",type=int)
             selected_uom=c.execute("SELECT id,name_ar FROM stock_uoms WHERE id=? AND active=1",(base_uom_id,)).fetchone() if base_uom_id else None
             uom=selected_uom["name_ar"] if selected_uom else ""
             category_id=request.form.get("category_id",type=int)
             category=c.execute("SELECT name_ar FROM stock_categories WHERE id=? AND active=1",(category_id,)).fetchone() if category_id else None
-            if not sku or not name or not selected_uom: raise ValueError("الكود والاسم ووحدة القياس حقول مطلوبة.")
+            if not name or not selected_uom: raise ValueError("اسم الصنف ووحدة القياس حقول مطلوبة.")
+            sku = next_code(c, "product", "ITM", "stock_products", "sku")
             if category_id and not category: raise ValueError("مجموعة الصنف غير صحيحة.")
             purchase_price=money(dec(request.form.get("purchase_price","0"),"سعر الشراء"))
             sale_price=money(dec(request.form.get("sale_price","0"),"سعر البيع"))
