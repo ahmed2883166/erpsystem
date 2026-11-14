@@ -351,6 +351,9 @@ def active_tax_roles(conn):
 def active_account_role_ids(conn):
     profile = get_active_activity_profile(conn)
     codes = profile["account_roles"]
+    if profile["base_activity"] == "industrial":
+        codes = dict(codes)
+        codes["inventory"] = ["1130"]
     result = {}
     account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
     group_expr = "COALESCE(is_group,0)" if "is_group" in account_columns else "0"
