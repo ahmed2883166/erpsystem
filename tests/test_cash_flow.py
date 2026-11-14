@@ -207,6 +207,49 @@ class CashFlowReportTests(unittest.TestCase):
         self.assertNotIn("1260", remaining_unmapped)
         self.assertNotIn("2150", remaining_unmapped)
 
+    def test_unparented_payroll_payable_and_grni_are_included_in_indirect_working_capital(self):
+        conn = financial_planning._connect()
+        conn.executemany(
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group) VALUES(?,?,?,?,0)",
+            [
+                (7, "2130", "مستحقات المرتبات", "liability"),
+                (8, "2190", "بضاعة مستلمة غير مفوترة GRNI", "liability"),
+            ],
+        )
+        conn.execute("INSERT INTO journal_entries VALUES(6,'2026-11-20','posted')")
+        conn.executemany(
+            "INSERT INTO journal_lines VALUES(?,?,?,?,?)",
+            [
+                (11, 6, 1, "5269.23", "0"),
+                (12, 6, 7, "0", "5269.23"),
+            ],
+        )
+        conn.execute("INSERT INTO journal_entries VALUES(7,'2026-11-21','posted')")
+        conn.executemany(
+            "INSERT INTO journal_lines VALUES(?,?,?,?,?)",
+            [
+                (13, 7, 1, "20", "0"),
+                (14, 7, 8, "0", "20"),
+            ],
+        )
+        direct = financial_planning.build_cash_flow_snapshot(
+            conn, "2026-11-01", "2026-11-30"
+        )
+        indirect = financial_planning.build_cash_flow_indirect_snapshot(
+            conn, "2026-11-01", "2026-11-30"
+        )
+        conn.close()
+        self.assertEqual(direct["reconciliation_difference"], financial_planning.Decimal("0"))
+        self.assertEqual(indirect["indirect_reconciliation"], financial_planning.Decimal("0"))
+        self.assertEqual(indirect["reconciliation_difference"], financial_planning.Decimal("0"))
+        other_liabilities = next(
+            item for item in indirect["indirect_items"]
+            if item["label"] == "التغير في الالتزامات المتداولة الأخرى"
+        )
+        self.assertEqual(other_liabilities["amount"], financial_planning.Decimal("5289.23"))
+        self.assertNotIn("2130", {row["code"] for row in indirect["unmapped_accounts"]})
+        self.assertNotIn("2190", {row["code"] for row in indirect["unmapped_accounts"]})
+
     def test_fixed_asset_depreciation_account_is_added_back_in_indirect_method(self):
         conn = financial_planning._connect()
         conn.execute("CREATE TABLE fixed_assets(id INTEGER PRIMARY KEY, expense_account_id INTEGER)")
