@@ -126,6 +126,7 @@ ACTIVITY_POSTING_ACCOUNTS = {
 for _activity_roles in ACTIVITY_ACCOUNT_ROLES.values():
     _activity_roles["retained_earnings"] = ("3200",)
     _activity_roles["interbranch_transfers"] = ("1185",)
+    _activity_roles["current_assets"] = tuple(dict.fromkeys((*_activity_roles["current_assets"], "1185")))
 
 # Codes referenced by posting, tax, and subledger role mappings must remain stable.
 # 2190 is also the GRNI control account used by the purchasing receipt/bill flow.
