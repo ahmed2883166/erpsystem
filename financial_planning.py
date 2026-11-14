@@ -1719,6 +1719,38 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     # investing or financing. For the indirect method, explicitly mapped
     # operating assets/liabilities are also working-capital accounts; include
     # them in balance-change adjustments instead of silently omitting them.
+    # First infer current working-capital accounts from the chart hierarchy.
+    # This covers detailed accounts below the current-asset/current-liability
+    # parent groups even when an explicit cash-flow role has not been assigned.
+    account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+    if {"parent_id", "code", "name_ar", "is_group"}.issubset(account_columns):
+        current_group_rows = conn.execute(
+            """WITH RECURSIVE ancestry(account_id,parent_id,account_type,depth) AS (
+                   SELECT id,parent_id,account_type,0 FROM accounts WHERE is_group=0
+                   UNION ALL
+                   SELECT ancestry.account_id,parent.parent_id,ancestry.account_type,depth+1
+                   FROM ancestry JOIN accounts parent ON parent.id=ancestry.parent_id
+                   WHERE parent.parent_id IS NOT NULL AND depth<8
+               )
+               SELECT DISTINCT ancestry.account_id,ancestry.account_type,grp.code,grp.name_ar
+               FROM ancestry JOIN accounts grp ON grp.id=ancestry.parent_id
+               WHERE grp.is_group=1"""
+        ).fetchall()
+        for ancestor in current_group_rows:
+            code = str(ancestor["code"] or "")
+            name = str(ancestor["name_ar"] or "")
+            if ancestor["account_type"] == "asset" and (
+                code == "1100" or "الأصول المتداولة" in name
+            ):
+                current_asset_ids.add(ancestor["account_id"])
+            elif ancestor["account_type"] == "liability" and (
+                code == "2100" or "الالتزامات المتداولة" in name
+            ):
+                current_liability_ids.add(ancestor["account_id"])
+
+    # Explicit operating mappings are an additional source for custom charts
+    # whose parent groups do not use standard current-asset/current-liability
+    # codes or names.
     mapping_table = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_flow_account_mappings'"
     ).fetchone()
