@@ -399,6 +399,10 @@ class StocktakeRouteTests(unittest.TestCase):
             **{"cost_" + str(line["id"]): "7" for line in lines},
         })
         self.assertEqual(response.status_code, 302)
+        # A reviewer different from the count creator must approve the count.
+        with self.client.session_transaction() as session:
+            session["user_id"] = 8
+            session["username"] = "reviewer"
 
         with patch("stock.post_journal", return_value=777) as post:
             response = self.client.post("/stock/counts/" + str(header["id"]) + "/approve")
