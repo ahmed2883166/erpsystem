@@ -1067,7 +1067,7 @@ def payroll():
                     snapshot_item("earning","بدلات / مستحقات متغيرة يدوية",manual_allowance,"payroll_input",None,30)
                     if raise_amount and e["raise_mode"] == "allowance":
                         snapshot_item("earning","علاوة مستقلة",M(raise_amount * payroll_factor),"salary_raise",e["id"],35)
-                    manual_incentive = M(request.form.get("incentives_" + str(e["id"]),"0"))
+                    manual_incentive = M("0" if e["work_status"] == "unpaid_leave" else request.form.get("incentives_" + str(e["id"]),"0"))
                     snapshot_item("earning","حافز يدوي إضافي",manual_incentive,"payroll_input",None,40)
                     snapshot_item("earning",incentive_name or "حافز مناسبة",event_incentive,"incentive_rule",incentive_rule_id,45)
                     snapshot_item("earning","عمل إضافي",overtime_amount,"attendance_or_manual",None,50)
