@@ -14,9 +14,10 @@
 <label>الموقف من العمل<select name="work_status"><option value="permanent" {{'selected' if e.work_status=='permanent'}}>مثبت</option><option value="comprehensive_bonus" {{'selected' if e.work_status=='comprehensive_bonus'}}>مكافأة شاملة</option><option value="unpaid_leave" {{'selected' if e.work_status=='unpaid_leave'}}>إجازة بدون مرتب</option><option value="resigned" {{'selected' if e.work_status=='resigned'}}>استقالة</option><option value="retired" {{'selected' if e.work_status=='retired'}}>معاش</option></select></label>
 <label>تاريخ سريان الاستقالة / المعاش<input type="date" name="termination_date" value="{{e.termination_date or ''}}"></label>
 <label>الراتب الأساسي<input type="number" step="0.01" min="0" name="basic_salary" value="{{e.basic_salary}}" required></label>
+<label>الراتب المتغير / البدلات الشهرية<input type="number" step="0.01" min="0" name="variable_salary" value="{{e.variable_salary or '0'}}"></label>
 <label>ساعات العمل القياسية شهريًا<input type="number" step="0.01" min="1" name="standard_hours" value="{{e.standard_hours}}" required></label>
 <label>الفئة القانونية<input name="legal_category" value="{{e.legal_category}}" required></label>
-<label>أجر الاشتراك التأميني<input type="number" step="0.01" min="0" name="insured_wage" value="{{e.insured_wage}}"></label>
+<label>أجر الاشتراك التأميني (مستقل عن الأساسي والمتغير)<input type="number" step="0.01" min="0" name="insured_wage" value="{{e.insured_wage}}"></label>
 <label>خاضع للتأمينات<select name="insurance_enabled"><option value="1" {{'selected' if e.insurance_enabled}}>نعم</option><option value="0" {{'selected' if not e.insurance_enabled}}>لا</option></select></label>
 <input type="hidden" name="raise_type" value="{{e.raise_type or 'fixed'}}">
 <input type="hidden" name="raise_value" value="{{e.raise_value or '0'}}">
