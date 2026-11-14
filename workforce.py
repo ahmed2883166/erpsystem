@@ -84,6 +84,12 @@ def initialize_workforce_schema():
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_payroll_payments_run ON payroll_payments(run_id,payment_date,id);
+    CREATE TABLE IF NOT EXISTS payroll_reversals(
+      id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL UNIQUE REFERENCES payroll_runs(id),
+      reversal_date TEXT NOT NULL, reason TEXT NOT NULL,
+      reversal_journal_entry_id INTEGER NOT NULL UNIQUE, created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS employee_loans (
       id INTEGER PRIMARY KEY, loan_no TEXT NOT NULL UNIQUE, employee_id INTEGER NOT NULL REFERENCES employees(id),
       request_date TEXT NOT NULL, requested_amount TEXT NOT NULL, approved_amount TEXT NOT NULL DEFAULT '0',
@@ -1030,6 +1036,61 @@ def post_payroll(run_id):
     except (ValueError, KeyError, sqlite3.Error) as e:
         c.rollback()
         flash(str(e), "error")
+    c.close()
+    return redirect(url_for("workforce.payroll_run", run_id=run_id))
+
+
+@workforce_bp.route("/hr/payroll/<int:run_id>/reverse", methods=["POST"])
+@_role("admin", "accountant")
+def reverse_payroll(run_id):
+    c = _db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+        if not run or run["status"] != "posted" or not run["journal_entry_id"]:
+            raise ValueError("لا يمكن عكس مسير غير مرحّل أو سبق عكسه.")
+        if c.execute("SELECT 1 FROM payroll_reversals WHERE run_id=?", (run_id,)).fetchone():
+            raise ValueError("تم عكس هذا المسير من قبل.")
+        payments = c.execute("SELECT COUNT(*) FROM payroll_payments WHERE run_id=?", (run_id,)).fetchone()[0]
+        if payments:
+            raise ValueError("لا يمكن عكس مسير له دفعات صرف مسجلة. سوِّ الدفعات أولًا ثم راجع حسابات الموظفين.")
+        reversal_date = date.fromisoformat(request.form.get("reversal_date") or date.today().isoformat()).isoformat()
+        reason = request.form.get("reason", "").strip()
+        if not reason:
+            raise ValueError("سبب عكس المسير مطلوب ويجب توثيقه.")
+        available_columns = {row["name"] for row in c.execute("PRAGMA table_info(journal_lines)").fetchall()}
+        dimension_keys = ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id", "supplier_id")
+        selected_dimensions = [key for key in dimension_keys if key in available_columns]
+        select_columns = ["account_id", "debit", "credit", "memo"] + selected_dimensions
+        original_lines = c.execute(
+            "SELECT " + ",".join(select_columns) + " FROM journal_lines WHERE entry_id=? ORDER BY id",
+            (run["journal_entry_id"],)
+        ).fetchall()
+        if len(original_lines) < 2:
+            raise ValueError("القيد الأصلي غير مكتمل ولا يمكن عكسه بأمان.")
+        reversal_lines = []
+        for line in original_lines:
+            dimensions = {key: line[key] for key in selected_dimensions if line[key] not in (None, "")}
+            reversal_lines.append((
+                int(line["account_id"]), M(line["credit"]), M(line["debit"]),
+                "عكس قيد المرتبات: " + str(line["memo"] or ""), dimensions
+            ))
+        reference = "PAYROLL-REV-" + str(run_id)
+        reversal_journal_id = post_journal(
+            c, reversal_date, reference,
+            "عكس مسير مرتبات " + run["period"] + " — " + reason,
+            reversal_lines, session["user_id"]
+        )
+        c.execute("""INSERT INTO payroll_reversals(run_id,reversal_date,reason,
+            reversal_journal_entry_id,created_by) VALUES(?,?,?,?,?)""",
+            (run_id, reversal_date, reason, reversal_journal_id, session["user_id"]))
+        c.execute("UPDATE payroll_runs SET status='reversed' WHERE id=?", (run_id,))
+        _audit(c, "payroll_run_reversed", reference + " reason=" + reason)
+        c.commit()
+        flash("تم إنشاء قيد عكسي مستقل للمسير. القيد الأصلي وتفاصيل المرتبات لم يتم حذفهما أو تعديلهما.", "success")
+    except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc), "error")
     c.close()
     return redirect(url_for("workforce.payroll_run", run_id=run_id))
 
