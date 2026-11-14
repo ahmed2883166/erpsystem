@@ -16,8 +16,10 @@ class TaxCenterTests(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         conn.executescript("""
           CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL);
-          CREATE TABLE customers(id INTEGER PRIMARY KEY, name TEXT NOT NULL);
-          CREATE TABLE suppliers(id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+          INSERT INTO company_settings VALUES('company_name','Test Co');
+          INSERT INTO company_settings VALUES('tax_number','123456789');
+          CREATE TABLE customers(id INTEGER PRIMARY KEY, name TEXT NOT NULL, tax_number TEXT NOT NULL DEFAULT '');
+          CREATE TABLE suppliers(id INTEGER PRIMARY KEY, name TEXT NOT NULL, tax_number TEXT NOT NULL DEFAULT '');
           CREATE TABLE sales_invoices(
             id INTEGER PRIMARY KEY, invoice_no TEXT, customer_id INTEGER, invoice_date TEXT,
             subtotal TEXT, tax_rate TEXT, tax_amount TEXT, total_amount TEXT, status TEXT);
@@ -83,6 +85,21 @@ class TaxCenterTests(unittest.TestCase):
         self.assertIn("140.00", body)
         self.assertIn("56.00", body)
         self.assertIn("مبيعات بسعر صفر", body)
+
+    def test_quality_report_flags_missing_party_tax_number_and_bad_amounts(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("UPDATE customers SET tax_number='' WHERE id=1")
+        conn.execute("UPDATE sales_invoices SET tax_amount='150' WHERE id=1")
+        conn.commit()
+        conn.close()
+        snapshot_conn = tax_center._db()
+        try:
+            snapshot = tax_center.build_tax_report_snapshot(snapshot_conn, "2026-11")
+        finally:
+            snapshot_conn.close()
+        issues = snapshot["quality_issues"]
+        self.assertTrue(any("الرقم الضريبي للطرف" in x["issue"] for x in issues))
+        self.assertTrue(any("فرق بين الضريبة المحسوبة" in x["issue"] for x in issues))
 
     def test_posted_purchase_tax_classification_is_locked(self):
         self.login()
