@@ -489,10 +489,15 @@ def _delete_employee_photo(relative_path):
         return
     normalized = str(relative_path).replace("\\", "/")
     parts = normalized.split("/")
-    if len(parts) != 2 or parts[0] != "employees" or not parts[1].endswith(".jpg"):
+    if len(parts) == 2 and parts[0] == "employees" and parts[1].endswith(".jpg"):
+        directory = _employee_photo_directory().resolve()
+        target = (directory / parts[1]).resolve()
+    elif (len(parts) == 3 and parts[0] == "uploads" and parts[1] == "employees"
+          and parts[2] == Path(parts[2]).name):
+        directory = (Path(current_app.static_folder) / "uploads" / "employees").resolve()
+        target = (directory / parts[2]).resolve()
+    else:
         return
-    directory = _employee_photo_directory().resolve()
-    target = (directory / parts[1]).resolve()
     if target.parent == directory:
         try:
             target.unlink(missing_ok=True)
