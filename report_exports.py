@@ -384,6 +384,9 @@ def register_report_exports(app, db_path, permissions):
                     ["ملخص", "", "", "مدخلات غير قابلة للخصم", "", "", "", summary["non_deductible_input"], "", ""],
                     ["ملخص", "", "", "صافي الضريبة الرقابي", "", "", "", summary["net_vat"], "", ""],
                 ])
+                for issue in snapshot.get("quality_issues", []):
+                    data.append(["فحص بيانات", "", issue["document"], issue["issue"],
+                                 issue["severity"], "", "", "", "", ""])
                 filename = "nexus-tax-report-" + snapshot["period"] + ".xlsx"
                 title = "تقرير الضرائب الشهري - " + snapshot["period"]
             elif report == "aging":
