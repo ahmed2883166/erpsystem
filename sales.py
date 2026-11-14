@@ -431,7 +431,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             cost = Decimal("0.00")
             if not description:
                 raise ValueError("اكتب وصف الخدمة أو البند غير المخزني.")
-        line_total = (qty * unit_price).quantize(CENT, rounding=ROUND_HALF_UP)
+        line_total = (entered_qty * entered_unit_price).quantize(CENT, rounding=ROUND_HALF_UP)
         treatment = str(item.get("tax_treatment") or "standard").strip().lower()
         if treatment not in {"standard", "zero_rated", "exempt", "out_of_scope"}:
             raise ValueError("المعاملة الضريبية للبند غير صحيحة.")
@@ -1965,9 +1965,9 @@ def new_invoice():
                             AND (valid_to IS NULL OR valid_to>=?)""",
                           (int(request.form["customer_id"]), int(pid), request.form["invoice_date"],
                            request.form["invoice_date"])).fetchall()
-                        matched_price = _select_customer_price_rule(price_rules, qty)
+                        factor,_ = product_uom_factor(c,int(pid),uom_id,"sales")
+                        matched_price = _select_customer_price_rule(price_rules, Decimal(str(qty))*factor)
                         if matched_price is not None:
-                            factor,_ = product_uom_factor(c,int(pid),uom_id,"sales")
                             selected_price = Decimal(str(matched_price))*factor
                     items.append({"product_id": int(pid) if pid else None, "quantity": qty,
                                   "unit_price": selected_price, "uom_id":uom_id,
