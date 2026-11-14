@@ -12,6 +12,7 @@
 <label>المشروع <select name="project_id"><option value="">غير محدد</option>{% for d in dimensions.projects %}<option value="{{d.id}}" {% if e.project_id|string==d.id|string %}selected{% endif %}>{{d.code}} - {{d.name_ar}}</option>{% endfor %}</select></label>
 <label>تاريخ التعيين<input type="date" name="hire_date" value="{{e.hire_date}}" required></label>
 <label>الموقف من العمل<select name="work_status"><option value="permanent" {{'selected' if e.work_status=='permanent'}}>مثبت</option><option value="comprehensive_bonus" {{'selected' if e.work_status=='comprehensive_bonus'}}>مكافأة شاملة</option><option value="unpaid_leave" {{'selected' if e.work_status=='unpaid_leave'}}>إجازة بدون مرتب</option><option value="resigned" {{'selected' if e.work_status=='resigned'}}>استقالة</option><option value="retired" {{'selected' if e.work_status=='retired'}}>معاش</option></select></label>
+<label>تاريخ سريان الاستقالة / المعاش<input type="date" name="termination_date" value="{{e.termination_date or ''}}"></label>
 <label>الراتب الأساسي<input type="number" step="0.01" min="0" name="basic_salary" value="{{e.basic_salary}}" required></label>
 <label>ساعات العمل القياسية شهريًا<input type="number" step="0.01" min="1" name="standard_hours" value="{{e.standard_hours}}" required></label>
 <label>الفئة القانونية<input name="legal_category" value="{{e.legal_category}}" required></label>
