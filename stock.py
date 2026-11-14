@@ -382,6 +382,39 @@ def product_uom_options(c, product_id):
     return result
 
 
+def post_interbranch_transfer_journal(c, movement_id, movement_no, product, movement_date,
+                                      total_cost, created_by, source_branch_id, target_branch_id):
+    """Post branch-tagged inventory transfer clearing lines without changing consolidated stock value."""
+    if not source_branch_id or not target_branch_id or source_branch_id == target_branch_id:
+        c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
+        return None
+    existing = c.execute("SELECT journal_entry_id FROM stock_movements WHERE id=?", (movement_id,)).fetchone()
+    if existing and existing["journal_entry_id"]:
+        return existing["journal_entry_id"]
+    clearing = c.execute(
+        "SELECT id,is_group,active,account_type FROM accounts WHERE code='1185'"
+    ).fetchone()
+    if not clearing or clearing["is_group"] or not clearing["active"] or clearing["account_type"] != "asset":
+        raise ValueError("لا يمكن ترحيل التحويل بين الفروع قبل تفعيل الحساب التفصيلي 1185 (تحويلات مخزون بين الفروع) من نوع أصل.")
+    amount = money(D(str(total_cost)))
+    if amount <= 0:
+        c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
+        return None
+    entry_id = post_journal(
+        c, movement_date, movement_no,
+        f"قيد تحويل مخزون بين الفروع - {product['name_ar']}",
+        [
+            (clearing["id"], amount, 0, "مدين - مخزون مستلم بالفرع الوجهة",
+             {"branch_id": target_branch_id}),
+            (clearing["id"], 0, amount, "دائن - مخزون محول من الفرع المصدر",
+             {"branch_id": source_branch_id}),
+        ], created_by,
+    )
+    c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?",
+              (entry_id, movement_id))
+    return entry_id
+
+
 def post_scrap_journal(c, movement_id, movement_no, product, movement_date, total_cost, created_by):
     """Post an approved scrap movement only when explicit chart accounts exist."""
     existing = c.execute("SELECT journal_entry_id FROM stock_movements WHERE id=?", (movement_id,)).fetchone()
@@ -1123,8 +1156,23 @@ def movements():
             if kind=="scrap":
                 post_scrap_journal(c,mid,movement_no,product,movement_date,total,session.get("user_id"))
             elif kind in {"transfer","relocate"}:
-                # Internal warehouse/bin transfers do not affect the consolidated inventory GL.
-                c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (mid,))
+                if kind == "transfer":
+                    source_branch = c.execute("SELECT branch_id FROM stock_warehouses WHERE id=?", (src,)).fetchone()
+                    target_branch = c.execute("SELECT branch_id FROM stock_warehouses WHERE id=?", (dst,)).fetchone()
+                    source_branch_id = source_branch["branch_id"] if source_branch else None
+                    target_branch_id = target_branch["branch_id"] if target_branch else None
+                    if bool(source_branch_id) != bool(target_branch_id):
+                        raise ValueError("اربط المخزنين بفرعين محددين قبل التحويل؛ لا يمكن اعتبار تحويل فرع إلى مخزن بلا فرع تحويلًا داخليًا.")
+                    if source_branch_id and target_branch_id and source_branch_id != target_branch_id:
+                        post_interbranch_transfer_journal(
+                            c, mid, movement_no, product, movement_date, total,
+                            session.get("user_id"), source_branch_id, target_branch_id
+                        )
+                    else:
+                        c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (mid,))
+                else:
+                    # Bin relocation inside the same warehouse never changes GL.
+                    c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (mid,))
             elif kind=="receipt":
                 # A receipt needs a supplier invoice or an explicit GRNI document before posting.
                 c.execute("UPDATE stock_movements SET accounting_status='pending_document' WHERE id=?", (mid,))
