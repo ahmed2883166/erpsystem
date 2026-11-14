@@ -487,6 +487,59 @@ class StocktakeRouteTests(unittest.TestCase):
         self.assertNotIn("دفتر الأستاذ غير مهيأ".encode(), response.data)
 
 
+    def test_pending_purpose_and_setup_can_be_resolved_from_stock_queue(self):
+        self._login()
+        conn = stock.get_db()
+        pending_purpose_id = conn.execute("""INSERT INTO stock_movements(
+            movement_no,movement_type,product_id,source_warehouse_id,quantity,unit_cost,
+            total_cost,movement_date,accounting_status)
+            VALUES('PENDING-PURPOSE','issue',?,?,'2','5','10','2026-11-14','pending_purpose')""",
+            (self.product_id, self.warehouse_id)).lastrowid
+        pending_setup_id = conn.execute("""INSERT INTO stock_movements(
+            movement_no,movement_type,product_id,source_warehouse_id,quantity,unit_cost,
+            total_cost,movement_date,accounting_status,issue_purpose)
+            VALUES('PENDING-SETUP','issue',?,?,'2','5','10','2026-11-14','pending_setup','sale')""",
+            (self.product_id, self.warehouse_id)).lastrowid
+        conn.commit()
+        conn.close()
+
+        queue = self.client.get("/stock/pending")
+        self.assertEqual(queue.status_code, 200)
+        self.assertIn(b"PENDING-PURPOSE", queue.data)
+        self.assertIn(b"PENDING-SETUP", queue.data)
+
+        def fake_post_issue(conn, movement_id, movement_no, product, movement_date,
+                            total_cost, created_by, purpose, dimensions=None):
+            self.assertIn(purpose, {"sale", "internal"})
+            conn.execute(
+                "UPDATE stock_movements SET journal_entry_id=777,accounting_status='posted' WHERE id=?",
+                (movement_id,),
+            )
+            return 777
+
+        with patch("stock.post_issue_journal", side_effect=fake_post_issue) as post:
+            first = self.client.post(
+                f"/stock/pending/{pending_purpose_id}/resolve",
+                data={"issue_purpose": "sale"},
+            )
+            second = self.client.post(
+                f"/stock/pending/{pending_setup_id}/resolve", data={},
+            )
+        self.assertEqual(first.status_code, 302)
+        self.assertEqual(second.status_code, 302)
+        self.assertEqual(post.call_count, 2)
+
+        conn = stock.get_db()
+        rows = conn.execute(
+            "SELECT issue_purpose,accounting_status,journal_entry_id FROM stock_movements WHERE id IN (?,?) ORDER BY id",
+            (pending_purpose_id, pending_setup_id),
+        ).fetchall()
+        self.assertEqual(rows[0]["issue_purpose"], "sale")
+        self.assertTrue(all(row["accounting_status"] == "posted" for row in rows))
+        self.assertTrue(all(row["journal_entry_id"] == 777 for row in rows))
+        conn.close()
+
+
     def test_pending_document_cannot_be_reposted_from_stock_queue(self):
         self._login()
         conn = stock.get_db()
