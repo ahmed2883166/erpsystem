@@ -407,6 +407,57 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM payroll_runs").fetchone()[0], 0)
         conn.close()
 
+    def test_posted_payroll_reversal_creates_independent_balanced_journal(self):
+        self.add_employee()
+        self.client.post("/hr/payroll", data={
+            "period": "2026-11", "basic_1": "10000", "allowances_1": "0",
+            "overtime_hours_1": "0", "overtime_amount_1": "",
+            "absence_deduction_1": "0", "other_deductions_1": "0",
+            "tax_1": "0", "employee_ins_1": "0", "employer_ins_1": "0"
+        })
+        response = self.client.post("/hr/payroll/1/post", data={
+            "salary_expense_account": "4", "employer_ins_expense_account": "3",
+            "salaries_payable_account": "5", "tax_payable_account": "6",
+            "insurance_payable_account": "7", "advances_account": "2",
+            "other_deductions_account": "2"
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        original_id = conn.execute("SELECT journal_entry_id FROM payroll_runs WHERE id=1").fetchone()[0]
+        original_lines = conn.execute(
+            "SELECT account_id,debit,credit,memo FROM journal_lines WHERE entry_id=? ORDER BY id",
+            (original_id,)
+        ).fetchall()
+        conn.close()
+        response = self.client.post("/hr/payroll/1/reverse", data={
+            "reversal_date": "2026-12-01", "reason": "تصحيح مسير بعد مراجعة الموارد البشرية"
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        run_status = conn.execute("SELECT status FROM payroll_runs WHERE id=1").fetchone()[0]
+        reversal_id = conn.execute(
+            "SELECT reversal_journal_entry_id FROM payroll_reversals WHERE run_id=1"
+        ).fetchone()[0]
+        reversal_lines = conn.execute(
+            "SELECT account_id,debit,credit FROM journal_lines WHERE entry_id=? ORDER BY id",
+            (reversal_id,)
+        ).fetchall()
+        original_exists = conn.execute(
+            "SELECT COUNT(*) FROM journal_entries WHERE id=? AND status='posted'", (original_id,)
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(run_status, "reversed")
+        self.assertEqual(original_exists, 1)
+        self.assertEqual(len(original_lines), len(reversal_lines))
+        for original, reversed_line in zip(original_lines, reversal_lines):
+            self.assertEqual(reversed_line[0], original[0])
+            self.assertEqual(reversed_line[1], original[2])
+            self.assertEqual(reversed_line[2], original[1])
+        response = self.client.post("/hr/payroll/1/reverse", data={
+            "reversal_date": "2026-12-02", "reason": "محاولة عكس ثانية"
+        }, follow_redirects=True)
+        self.assertIn("لا يمكن عكس مسير غير مرحّل", response.get_data(as_text=True))
+
     def test_workforce_backfill_migration_runs_once(self):
         conn = sqlite3.connect(self.db_path)
         first = conn.execute("SELECT applied_at FROM workforce_migrations WHERE migration_key='backfill_payroll_totals_v1'").fetchone()[0]
