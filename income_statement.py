@@ -139,6 +139,25 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
         GROUP BY a.id ORDER BY a.account_type,a.code""",
         (date_from, date_to, *dimension_params)).fetchall()
 
+    # A loss on disposal may historically have been configured against a
+    # revenue-type account (for example 4710). The disposal register is the
+    # authoritative source for the nature of that posting in this period.
+    disposal_loss_account_ids = set()
+    disposal_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_disposals'"
+    ).fetchone()
+    if disposal_table:
+        disposal_columns = {row["name"] for row in conn.execute("PRAGMA table_info(asset_disposals)")}
+        if {"gain_loss_account_id", "gain_loss_amount", "disposal_date"}.issubset(disposal_columns):
+            disposal_loss_account_ids = {
+                row["gain_loss_account_id"] for row in conn.execute(
+                    """SELECT DISTINCT gain_loss_account_id FROM asset_disposals
+                       WHERE disposal_date>=? AND disposal_date<=?
+                         AND CAST(gain_loss_amount AS NUMERIC)<0""",
+                    (date_from, date_to),
+                ).fetchall()
+            }
+
     revenue_rows, cogs_rows, operating_expense_rows = [], [], []
     revenue_total = Decimal("0")
     cogs_total = Decimal("0")
@@ -146,9 +165,14 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
     for row in rows:
         debit = Decimal(str(row["debit"] or "0"))
         credit = Decimal(str(row["credit"] or "0"))
-        balance = credit - debit if row["account_type"] == "revenue" else debit - credit
-        item = {**dict(row), "debit": debit, "credit": credit, "balance": balance}
-        if row["account_type"] == "revenue":
+        effective_type = (
+            "expense" if row["account_type"] == "revenue"
+            and row["id"] in disposal_loss_account_ids else row["account_type"]
+        )
+        balance = credit - debit if effective_type == "revenue" else debit - credit
+        item = {**dict(row), "account_type": effective_type,
+                "debit": debit, "credit": credit, "balance": balance}
+        if effective_type == "revenue":
             revenue_rows.append(item)
             revenue_total += balance
         elif row["id"] in direct_cost_ids or row["statement_section"] == "direct_costs":
