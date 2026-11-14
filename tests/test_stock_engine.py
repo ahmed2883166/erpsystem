@@ -181,7 +181,7 @@ class StockValuationTests(unittest.TestCase):
         )
         self.assertIsNone(result)
         saved=self.db.execute(
-            "SELECT journal_entry_id,accounting_status FROM stock_movements WHERE id=?",
+            "SELECT journal_entry_id,accounting_status,accounting_note FROM stock_movements WHERE id=?",
             (movement_id,)
         ).fetchone()
         self.assertIsNone(saved["journal_entry_id"])
