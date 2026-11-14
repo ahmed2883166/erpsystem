@@ -564,6 +564,7 @@ def log_change(action, entity_type, entity_id, before_values, after_values, deta
 
 
 _OPERATIONAL_AUDIT_RECORDS = {
+    "sales.discount_approval": ("sales_discount_approval_requests", "request_id", "id", None, None),
     "quotes.approve_order_route": ("sales_orders", "order_id", "id", "sales_order_lines", "sales_order_id"),
     "quotes.reject_order_route": ("sales_orders", "order_id", "id", "sales_order_lines", "sales_order_id"),
     "quotes.invoice_order_route": ("sales_orders", "order_id", "id", "sales_order_lines", "sales_order_id"),
@@ -615,7 +616,12 @@ def _operational_audit_snapshot(endpoint, view_args, created_record=None):
         ).fetchone()
         if row is None:
             return None
-        snapshot = {"record": dict(row)}
+        record_values = dict(row)
+        if table == "sales_discount_approval_requests":
+            # Do not copy the full invoice payload into the audit trail; the
+            # request header contains the review-relevant discount/status data.
+            record_values.pop("payload_json", None)
+        snapshot = {"record": record_values}
         if child_table:
             child_exists = connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (child_table,)
@@ -688,7 +694,7 @@ def audit_operational_mutations(response):
                     "count_id", "stocktake_id", "party_id", "employee_id",
                     "customer_id", "supplier_id", "period_id", "account_id",
                     "transaction_id", "custody_id", "credit_note_id", "refund_id",
-                    "category_id", "location_id", "rule_id", "pay_item_id",
+                    "category_id", "location_id", "rule_id", "pay_item_id", "request_id",
                 ) if view_args.get(key) is not None),
                 None,
             )

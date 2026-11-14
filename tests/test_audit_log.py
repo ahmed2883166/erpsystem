@@ -269,6 +269,40 @@ class AuditLogTests(unittest.TestCase):
         self.assertEqual(after["record"]["status"], "approved")
         self.assertEqual(after["details"][0]["variance_qty"], "3")
 
+    def test_sales_discount_approval_snapshot_captures_decision_without_invoice_payload(self):
+        self.connection.executescript("""
+            CREATE TABLE sales_discount_approval_requests(
+                id INTEGER PRIMARY KEY, request_no TEXT, status TEXT,
+                discount_amount TEXT, discount_percent TEXT, request_type TEXT,
+                reviewed_by INTEGER, decision_reason TEXT, payload_json TEXT
+            );
+            INSERT INTO sales_discount_approval_requests VALUES(
+                91,'SDR-91','pending','25.00','12.50','invoice',NULL,'',
+                '{"customer_id":7,"items":[{"product_id":3,"unit_price":"200"}]}'
+            );
+        """)
+        self.connection.commit()
+        def open_database():
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+        with patch.object(nexus_app, "db", side_effect=open_database):
+            before = nexus_app._operational_audit_snapshot(
+                "sales.discount_approval", {"request_id": 91}
+            )
+            self.connection.execute(
+                "UPDATE sales_discount_approval_requests SET status='approved',reviewed_by=1 WHERE id=91"
+            )
+            self.connection.commit()
+            after = nexus_app._operational_audit_snapshot(
+                "sales.discount_approval", {"request_id": 91}
+            )
+        self.assertEqual(before["record"]["status"], "pending")
+        self.assertEqual(after["record"]["status"], "approved")
+        self.assertEqual(after["record"]["reviewed_by"], 1)
+        self.assertNotIn("payload_json", before["record"])
+        self.assertNotIn("payload_json", after["record"])
+
     def test_audit_view_is_a_separate_permission_and_route(self):
         self.assertIn("audit.view", nexus_app.PERMISSION_LABELS)
         self.assertIn("audit.view", nexus_app.PERMISSIONS["admin"])
