@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}العلاوات والزيادات الجماعية | NEXUS ERP{% endblock %}
+{% block content %}
+<header><h2>إدارة العلاوات والزيادات الجماعية</h2>
+<p>إنشاء قرار زيادة لفئة من الموظفين، ومعاينة أثره قبل الاعتماد، مع حفظ تاريخ الأجر السابق والجديد.</p>
+<p><a class="button secondary" href="{{url_for('workforce.salary_history')}}">سجل تاريخ الأجور</a> <a href="{{url_for('workforce.employees')}}">شؤون الموظفين</a></p></header>
+{% if error %}<div class="flash error">{{error}}</div>{% endif %}
+<section class="panel"><h3>بيانات القرار</h3>
+<form method="post" class="form-grid">
+<label>رقم القرار<input name="decision_no" required value="{{request.form.get('decision_no','')}}"></label>
+<label>تاريخ القرار<input type="date" name="decision_date" required value="{{request.form.get('decision_date',today)}}"></label>
+<label>تاريخ سريان الزيادة<input type="date" name="effective_date" required value="{{request.form.get('effective_date',today)}}"></label>
+<label>اسم / وصف القرار<input name="title" required placeholder="العلاوة الدورية لعام 2027" value="{{request.form.get('title','')}}"></label>
+<label>الفئة المستفيدة<select name="employee_scope">
+<option value="permanent" {% if request.form.get('employee_scope','permanent')=='permanent' %}selected{% endif %}>الموظفون المثبتون</option>
+<option value="comprehensive_bonus" {% if request.form.get('employee_scope')=='comprehensive_bonus' %}selected{% endif %}>مكافأة شاملة</option>
+<option value="all_active" {% if request.form.get('employee_scope')=='all_active' %}selected{% endif %}>كل الموظفين النشطين</option>
+<option value="unpaid_leave" {% if request.form.get('employee_scope')=='unpaid_leave' %}selected{% endif %}>إجازة بدون مرتب</option>
+<option value="resigned" {% if request.form.get('employee_scope')=='resigned' %}selected{% endif %}>مستقيل</option>
+<option value="retired" {% if request.form.get('employee_scope')=='retired' %}selected{% endif %}>معاش</option>
+</select></label>
+<label>طريقة الزيادة<select name="calculation_type"><option value="fixed" {% if request.form.get('calculation_type','fixed')=='fixed' %}selected{% endif %}>مبلغ ثابت</option><option value="percentage" {% if request.form.get('calculation_type')=='percentage' %}selected{% endif %}>نسبة مئوية</option></select></label>
+<label>أساس حساب النسبة<select name="calculation_base"><option value="basic" {% if request.form.get('calculation_base','basic')=='basic' %}selected{% endif %}>الراتب الأساسي</option><option value="insured_wage" {% if request.form.get('calculation_base')=='insured_wage' %}selected{% endif %}>أجر الاشتراك التأميني</option></select></label>
+<label>قيمة الزيادة / النسبة<input type="number" min="0.01" step="0.01" name="calculation_value" required value="{{request.form.get('calculation_value','')}}"></label>
+<label>طريقة المعالجة<select name="treatment"><option value="basic" {% if request.form.get('treatment','basic')=='basic' %}selected{% endif %}>تضاف إلى الأساسي</option><option value="allowance" {% if request.form.get('treatment')=='allowance' %}selected{% endif %}>تصرف كبدل مستقل متكرر</option></select></label>
+<label style="grid-column:1/-1">ملاحظات / سند القرار<textarea name="notes" rows="3">{{request.form.get('notes','')}}</textarea></label>
+<button type="submit" name="preview" value="1">معاينة الموظفين وقيم الزيادة</button>
+</form>
+<p class="muted">المعاينة لا تغيّر أي بيانات. لا يتم تحديث الرواتب أو إضافة البدلات إلا بعد تأكيد القرار في الخطوة التالية. راجع نطاق الاستحقاق ونص القرار قبل الاعتماد.</p>
+</section>
+{% if preview %}
+<section class="panel"><h3>معاينة القرار — {{preview.title}}</h3>
+<p>القرار رقم {{preview.decision_no}} · السريان {{preview.effective_date}} · عدد الموظفين {{preview.employees|length}}</p>
+<div style="overflow-x:auto"><table><tr><th>كود الموظف</th><th>الموظف</th><th>الأساسي الحالي</th><th>أساس الحساب</th><th>قيمة الزيادة</th><th>الأساسي بعد القرار</th></tr>
+{% for e in preview.employees %}<tr><td>{{e.code}}</td><td>{{e.name}}</td><td>{{"%.2f"|format(e.old)}}</td><td>{{"%.2f"|format(e.basis)}}</td><td>{{"%.2f"|format(e.amount)}}</td><td>{{"%.2f"|format(e.new)}}</td></tr>{% endfor %}</table></div>
+<form method="post" class="actions">
+{% for key in ['decision_no','decision_date','effective_date','title','employee_scope','calculation_type','calculation_base','calculation_value','treatment','notes'] %}
+<input type="hidden" name="{{key}}" value="{{request.form.get(key,'')}}">
+{% endfor %}
+<label><input type="checkbox" name="confirm" value="1" required> أؤكد مراجعة القرار ومعاينة الموظفين وأوافق على تطبيقه من تاريخ السريان.</label>
+<button type="submit" name="confirm" value="1">اعتماد القرار وتطبيق الزيادة</button>
+</form>
+</section>
+{% endif %}
+<section class="panel"><h3>القرارات المعتمدة</h3><div style="overflow-x:auto"><table><tr><th>رقم القرار</th><th>الوصف</th><th>تاريخ السريان</th><th>الفئة</th><th>نوع الزيادة</th><th>المعالجة</th><th>عدد الموظفين</th></tr>
+{% for b in batches %}<tr><td>{{b.decision_no}}</td><td>{{b.title}}</td><td>{{b.effective_date}}</td><td>{{{'permanent':'مثبت','comprehensive_bonus':'مكافأة شاملة','all_active':'كل النشطين','unpaid_leave':'إجازة بدون مرتب','resigned':'مستقيل','retired':'معاش'}.get(b.employee_scope,b.employee_scope)}}</td><td>{{b.calculation_value}} {{'%' if b.calculation_type=='percentage' else 'جنيه'}}</td><td>{{'ضمن الأساسي' if b.treatment=='basic' else 'بدل مستقل'}}</td><td>{{b.employee_count}}</td></tr>
+{% else %}<tr><td colspan="7">لا توجد قرارات معتمدة حتى الآن.</td></tr>{% endfor %}</table></div></section>
+{% endblock %}
