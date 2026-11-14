@@ -121,7 +121,7 @@ class SalesIntegrationTests(unittest.TestCase):
         initialize_activity_profiles_schema(self.db)
         extra_accounts = [
             ("1140", "مخزون الغذاء", "asset"), ("1160", "مخزون التعبئة", "asset"),
-            ("4200", "مبيعات تيك أواي", "revenue"), ("4300", "مبيعات توصيل", "revenue"),
+            ("4300", "مبيعات توصيل", "revenue"),
             ("4400", "مبيعات التطبيقات", "revenue"),
             ("5200", "تكلفة المشروبات", "expense"), ("5400", "تكلفة التعبئة", "expense"),
         ]
