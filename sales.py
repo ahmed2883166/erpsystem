@@ -13,7 +13,7 @@ from functools import wraps
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal
 from database import connect_database, fetch_page
-from stock import consume_layers, product_uom_factor, product_uom_options
+from stock import consume_layers, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 
 sales_bp = Blueprint("sales", __name__, url_prefix="/sales")
@@ -134,7 +134,7 @@ def init_sales_schema():
     CREATE INDEX IF NOT EXISTS idx_sales_receipts_invoice ON customer_receipts(invoice_id,receipt_date);
     """)
     line_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoice_lines)")}
-    for name, definition in (("entered_quantity","TEXT"),("uom_id","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'")):
+    for name, definition in (("entered_quantity","TEXT"),("uom_id","TEXT"),("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'")):
         if name not in line_columns:
             c.execute("ALTER TABLE sales_invoice_lines ADD COLUMN "+name+" "+definition)
     for name, definition in {
@@ -385,11 +385,15 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             raise ValueError("الكمية أو سعر البيع غير صحيح.")
         product_id = item.get("product_id")
         conversion_factor = Decimal("1")
-        selected_uom_id = item.get("uom_id")
+        selected_uom_key = item.get("uom_id")
         selected_uom_name = ""
+        stored_uom_id = None
         if product_id:
             conversion_factor, selected_uom_name = product_uom_factor(
-                conn, int(product_id), selected_uom_id, "sales"
+                conn, int(product_id), selected_uom_key, "sales"
+            )
+            stored_uom_id, selected_uom_name = product_uom_storage(
+                conn, int(product_id), selected_uom_key
             )
         qty = entered_qty * conversion_factor
         unit_price = entered_unit_price / conversion_factor
@@ -447,7 +451,8 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
         normalized.append({
             "product_id": int(product_id) if product_id else None,
             "description": description, "quantity": qty, "unit_price": unit_price,
-            "entered_quantity": entered_qty, "uom_id": str(selected_uom_id or ""),
+            "entered_quantity": entered_qty, "uom_id": stored_uom_id,
+            "uom_key": str(selected_uom_key or ""), "entered_uom_name": selected_uom_name,
             "conversion_factor": conversion_factor,
             "gross_line_total": line_total, "line_total": line_total, "cost_total": cost,
             "tax_rate": line_rate, "tax_treatment": treatment, "tax_amount": Decimal("0.00"),
@@ -565,12 +570,12 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
         line_cursor = conn.execute(
             """INSERT INTO sales_invoice_lines(invoice_id,product_id,description,quantity,unit_price,
                line_total,cost_total,stock_movement_id,tax_rate,tax_treatment,tax_amount,sales_order_line_id,
-               entered_quantity,uom_id,conversion_factor)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (invoice_id, item["product_id"], item["description"], str(item["quantity"]),
              str(item["unit_price"]), str(item["line_total"]), str(item["cost_total"]), movement_id,
              str(item["tax_rate"]), item["tax_treatment"], str(item["tax_amount"]), order_line_id,
-             str(item["entered_quantity"]), item["uom_id"], str(item["conversion_factor"]))
+             str(item["entered_quantity"]), item["uom_id"], item["uom_key"], item["entered_uom_name"], str(item["conversion_factor"]))
         )
         invoice_line_id = line_cursor.lastrowid
         for allocation in item.get("stock_allocations", []):
@@ -2034,11 +2039,10 @@ def invoice_print(invoice_id):
     for row in raw_lines:
         item=dict(row)
         item["display_quantity"]=row["entered_quantity"] or row["quantity"]
+        item["display_uom"]=row["entered_uom_name"] or row["uom"] or ""
         try:
-            factor,item["display_uom"]=product_uom_factor(c,row["product_id"],row["uom_id"])
             item["display_unit_price"]=(Decimal(str(row["line_total"]))/Decimal(str(item["display_quantity"]))).quantize(CENT,rounding=ROUND_HALF_UP)
-        except (ValueError,TypeError,InvalidOperation,ZeroDivisionError):
-            item["display_uom"]=row["uom"] or ""
+        except (TypeError,InvalidOperation,ZeroDivisionError):
             item["display_unit_price"]=row["unit_price"]
         lines.append(item)
     settings = {r["setting_key"]:r["setting_value"] for r in c.execute(
