@@ -4,7 +4,8 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from fixed_assets import (_asset_disposal_journal_lines, _asset_period_amount,
-                          _post_asset_depreciation, _reverse_full_period_depreciation_for_disposal,\n                          _validate_dedicated_accum_account,
+                          _post_asset_depreciation, _reverse_full_period_depreciation_for_disposal,
+                          _validate_dedicated_accum_account,
                           register_assets_from_journal_lines)
 
 
