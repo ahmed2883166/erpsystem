@@ -870,10 +870,12 @@ def categories():
             name=request.form.get("name_ar","").strip()
             code=request.form.get("code","").strip().upper()
             description=request.form.get("description","").strip()
-            if not name or not code: raise ValueError("كود واسم المجموعة مطلوبان.")
+            if not name: raise ValueError("اسم المجموعة مطلوب.")
             if category_id:
+                if not code: raise ValueError("كود المجموعة مطلوب عند التعديل.")
                 c.execute("UPDATE stock_categories SET code=?,name_ar=?,description=? WHERE id=?",(code,name,description,category_id))
             else:
+                code=next_code(c, "stock_category", "CAT", "stock_categories", "code")
                 c.execute("INSERT INTO stock_categories(code,name_ar,description) VALUES(?,?,?)",(code,name,description))
             c.commit();flash("تم حفظ مجموعة المنتجات.","success")
         except (ValueError,sqlite3.IntegrityError) as e:
@@ -904,8 +906,9 @@ def warehouses():
     c=get_db()
     if request.method=="POST":
         try:
-            code=request.form.get("code","").strip(); name=request.form.get("name_ar","").strip()
-            if not code or not name: raise ValueError("كود واسم المخزن مطلوبان.")
+            name=request.form.get("name_ar","").strip()
+            if not name: raise ValueError("اسم المخزن مطلوب.")
+            code=next_code(c, "warehouse", "WH", "stock_warehouses", "code")
             branch_id=request.form.get("branch_id",type=int)
             branch=c.execute("SELECT name_ar FROM branches WHERE id=? AND active=1",(branch_id,)).fetchone() if branch_id else None
             if branch_id and not branch: raise ValueError("اختر فرعًا موجودًا ونشطًا.")
