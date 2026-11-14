@@ -476,6 +476,53 @@ class PurchasingAccountingTests(unittest.TestCase):
             self.assertEqual(movement["accounting_status"], "posted")
             self.assertEqual(movement["journal_entry_id"], receipt["journal_entry_id"])
 
+    def test_industrial_goods_receipt_posts_only_to_1130(self):
+        purchases.init_purchase_schema()
+        self.db.execute("INSERT INTO company_settings(setting_key,setting_value) VALUES('activity','industrial')")
+        self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group,active) VALUES('1130','مخزون المواد والأصناف','asset',0,1)"
+        )
+        supplier_id = self.db.execute(
+            "INSERT INTO suppliers(code,name) VALUES('SUP-IND','مورد صناعي')"
+        ).lastrowid
+        warehouse_id = self.db.execute(
+            "INSERT INTO stock_warehouses(code,name_ar) VALUES('W-IND','مخزن صناعي')"
+        ).lastrowid
+        product_id = self.db.execute(
+            "INSERT INTO stock_products(sku,name_ar) VALUES('IND-GOODS-1','بضاعة صناعية')"
+        ).lastrowid
+
+        app = Flask(__name__)
+        app.secret_key = "test"
+        app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
+        app.register_blueprint(purchases.purchase_bp)
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "admin"
+
+        response = client.post("/purchases/receipts/new", data={
+            "supplier_id": str(supplier_id), "product_id": str(product_id),
+            "warehouse_id": str(warehouse_id), "receipt_date": "2026-11-14",
+            "quantity": "2", "unit_cost": "10",
+        })
+        self.assertEqual(response.status_code, 302)
+        receipt = self.db.execute(
+            "SELECT journal_entry_id FROM goods_receipts ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        lines = {
+            row["code"]: (Decimal(row["debit"]), Decimal(row["credit"]))
+            for row in self.db.execute(
+                """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
+                   JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=?""",
+                (receipt["journal_entry_id"],),
+            )
+        }
+        self.assertEqual(lines["1130"], (Decimal("20.00"), Decimal("0")))
+        self.assertEqual(lines["2190"], (Decimal("0"), Decimal("20.00")))
+        self.assertNotIn("1140", lines)
+        self.assertNotIn("1150", lines)
+
     def test_journal_posting_is_balanced(self):
         dr = purchases.account(self.db, "5000", "expense")
         cr = purchases.account(self.db, "2190", "liability")
