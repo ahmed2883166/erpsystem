@@ -68,6 +68,68 @@ class FinancialPlanningTests(unittest.TestCase):
             self.assertEqual(_connect(), "connection")
             connect.assert_called_once_with("/tmp/nexus-test.db")
 
+    def test_balance_sheet_does_not_double_count_opening_copy_of_prior_year_balances(self):
+        self.conn.executemany(
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) VALUES(?,?,?,?,0,1)",
+            [(1, "1110", "النقدية", "asset"), (2, "3100", "رأس المال", "equity")]
+        )
+        self.conn.executescript("""
+            CREATE TABLE financial_years(
+                id INTEGER PRIMARY KEY, year_name TEXT, start_date TEXT, end_date TEXT,
+                status TEXT, opening_entry_id INTEGER, closing_entry_id INTEGER
+            );
+            CREATE TABLE financial_year_journal_history(
+                id INTEGER PRIMARY KEY, financial_year_id INTEGER, entry_kind TEXT,
+                action TEXT, entry_id INTEGER, related_entry_id INTEGER
+            );
+            INSERT INTO financial_years VALUES(1,'2026','2026-01-01','2026-12-31','closed',NULL,NULL);
+            INSERT INTO financial_years VALUES(2,'2027','2027-01-01','2027-12-31','open',2,NULL);
+            INSERT INTO financial_year_journal_history
+                VALUES(1,2,'opening','created',2,NULL);
+        """)
+        self.conn.executemany(
+            "INSERT INTO journal_entries(id,entry_date,status) VALUES(?,?,?)",
+            [(1, "2026-12-31", "posted"), (2, "2027-01-01", "posted")]
+        )
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(?,?,?,?)",
+            [(1, 1, "515517.40", "0"), (1, 2, "0", "515517.40"),
+             (2, 1, "515517.40", "0"), (2, 2, "0", "515517.40")]
+        )
+        snapshot = build_balance_sheet_snapshot(self.conn, "2027-01-31")
+        self.assertEqual(snapshot["total_assets"], Decimal("515517.40"))
+        self.assertEqual(snapshot["total_equity"], Decimal("515517.40"))
+        self.assertTrue(snapshot["balanced"])
+
+    def test_first_year_opening_balance_is_not_excluded_without_prior_ledger(self):
+        self.conn.executemany(
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) VALUES(?,?,?,?,0,1)",
+            [(1, "1110", "النقدية", "asset"), (2, "3100", "رأس المال", "equity")]
+        )
+        self.conn.executescript("""
+            CREATE TABLE financial_years(
+                id INTEGER PRIMARY KEY, year_name TEXT, start_date TEXT, end_date TEXT,
+                status TEXT, opening_entry_id INTEGER, closing_entry_id INTEGER
+            );
+            CREATE TABLE financial_year_journal_history(
+                id INTEGER PRIMARY KEY, financial_year_id INTEGER, entry_kind TEXT,
+                action TEXT, entry_id INTEGER, related_entry_id INTEGER
+            );
+            INSERT INTO financial_years VALUES(1,'2027','2027-01-01','2027-12-31','open',1,NULL);
+            INSERT INTO financial_year_journal_history
+                VALUES(1,1,'opening','created',1,NULL);
+        """)
+        self.conn.execute(
+            "INSERT INTO journal_entries(id,entry_date,status) VALUES(1,'2027-01-01','posted')"
+        )
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(?,?,?,?)",
+            [(1, 1, "1000.00", "0"), (1, 2, "0", "1000.00")]
+        )
+        snapshot = build_balance_sheet_snapshot(self.conn, "2027-01-31")
+        self.assertEqual(snapshot["total_assets"], Decimal("1000.00"))
+        self.assertTrue(snapshot["balanced"])
+
     def test_financial_year_creation_and_overlap_protection(self):
         initialize_planning_schema(self.conn)
         year_id = create_financial_year(self.conn, "2026", "2026-01-01", "2026-12-31", 1)
