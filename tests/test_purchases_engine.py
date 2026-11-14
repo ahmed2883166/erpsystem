@@ -404,6 +404,78 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.assertIsNone(state["rejection_reason"])
         self.assertIsNone(state["approved_by"])
 
+    def test_restaurant_goods_receipt_posts_inventory_by_product_category(self):
+        purchases.init_purchase_schema()
+        self.db.execute("UPDATE company_settings SET setting_value='restaurant' WHERE setting_key='activity'")
+        self.db.executemany(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group,active) VALUES(?,?,?,0,1)",
+            [
+                ("1140", "مخزون الغذاء", "asset"),
+                ("1150", "مخزون المشروبات", "asset"),
+                ("1160", "مخزون التعبئة", "asset"),
+            ],
+        )
+        supplier_id = self.db.execute(
+            "INSERT INTO suppliers(code,name) VALUES('SUP-REST','مورد مطعم')"
+        ).lastrowid
+        warehouse_id = self.db.execute(
+            "INSERT INTO stock_warehouses(code,name_ar) VALUES('W-REST','مخزن المطعم')"
+        ).lastrowid
+        category_rows = [
+            ("FOOD", "غذاء", "1140"),
+            ("BEVERAGE", "مشروبات", "1150"),
+            ("PACKAGING", "تعبئة", "1160"),
+        ]
+        products = []
+        for code, name, expected_inventory in category_rows:
+            category_id = self.db.execute(
+                "INSERT INTO stock_categories(code,name_ar) VALUES(?,?)", (code, name)
+            ).lastrowid
+            product_id = self.db.execute(
+                "INSERT INTO stock_products(sku,name_ar,category_id) VALUES(?,?,?)",
+                ("PUR-" + code, name, category_id),
+            ).lastrowid
+            products.append((product_id, expected_inventory))
+
+        app = Flask(__name__)
+        app.secret_key = "test"
+        app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
+        app.register_blueprint(purchases.purchase_bp)
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "admin"
+
+        for index, (product_id, expected_inventory) in enumerate(products, 1):
+            response = client.post("/purchases/receipts/new", data={
+                "supplier_id": str(supplier_id),
+                "product_id": str(product_id),
+                "warehouse_id": str(warehouse_id),
+                "receipt_date": "2026-11-14",
+                "quantity": "2",
+                "unit_cost": "10",
+            })
+            self.assertEqual(response.status_code, 302)
+            receipt = self.db.execute(
+                "SELECT journal_entry_id FROM goods_receipts ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            self.assertIsNotNone(receipt["journal_entry_id"])
+            lines = {
+                row["code"]: (Decimal(row["debit"]), Decimal(row["credit"]))
+                for row in self.db.execute(
+                    """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
+                       JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=?""",
+                    (receipt["journal_entry_id"],),
+                )
+            }
+            self.assertEqual(lines[expected_inventory], (Decimal("20.00"), Decimal("0")))
+            self.assertEqual(lines["2190"], (Decimal("0"), Decimal("20.00")))
+            movement = self.db.execute(
+                "SELECT accounting_status,journal_entry_id FROM stock_movements WHERE movement_no LIKE 'PUR-%' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            self.assertEqual(movement["accounting_status"], "posted")
+            self.assertEqual(movement["journal_entry_id"], receipt["journal_entry_id"])
+
     def test_journal_posting_is_balanced(self):
         dr = purchases.account(self.db, "5000", "expense")
         cr = purchases.account(self.db, "2190", "liability")
