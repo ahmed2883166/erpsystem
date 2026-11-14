@@ -112,7 +112,7 @@ class StockValuationTests(unittest.TestCase):
             (self.product_id,second_wh,second_move))
         self.db.execute("""INSERT INTO stock_warehouse_product_settings(
             product_id,warehouse_id,min_qty,reorder_point,reorder_qty)
-            VALUES(?,?, '5','50','20'),(?,?, '10','80','30')""",
+            VALUES(?,?, '5','250','20'),(?,?, '10','80','30')""",
             (self.product_id,self.warehouse_id,self.product_id,second_wh))
         totals={
             (self.product_id,self.warehouse_id):{"qty":Decimal("200")},
@@ -122,7 +122,7 @@ class StockValuationTests(unittest.TestCase):
         self.assertEqual(len(alerts),1)
         self.assertEqual(alerts[0]["warehouse_code"],"W1")
         self.assertEqual(alerts[0]["qty"],Decimal("200"))
-        self.assertEqual(alerts[0]["point"],Decimal("50"))
+        self.assertEqual(alerts[0]["point"],Decimal("250"))
 
     def test_minimum_stock_is_used_when_reorder_point_is_zero(self):
         self.db.execute("""INSERT INTO stock_warehouse_product_settings(
