@@ -134,9 +134,7 @@ def build_tax_report_snapshot(conn, period_value):
         **dict(r),
         "taxable_base": Decimal(r["taxable_base"] or "0"),
         "tax_amount": Decimal(r["tax_amount"] or "0"),
-        "tax_rate": (
-            Decimal(r["tax_amount"] or "0") * Decimal("100") / Decimal(r["taxable_base"])
-        ).quantize(Decimal("0.01")) if Decimal(r["taxable_base"] or "0") else Decimal("0"),
+        "tax_rate": Decimal(r["tax_rate"] or "0"),
         "total_amount": Decimal(r["total_amount"] or "0")
     } for r in sales]
     sales = [{**r, "document_type": "فاتورة بيع"} for r in sales] + sales_credits
