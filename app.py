@@ -57,6 +57,17 @@ from security_controls import login_attempts_exceeded, linked_operational_source
 
 app = Flask(__name__)
 
+@app.after_request
+def add_security_headers(response):
+    """Apply browser security headers without assuming HTTPS on a private LAN."""
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if os.environ.get("NEXUS_COOKIE_SECURE", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
 @app.template_filter("money")
 def format_money(value):
     try:
@@ -3189,5 +3200,5 @@ if os.environ.get("NEXUS_SKIP_DB_INIT", "0").strip() != "1":
 
 if __name__ == "__main__":
     from waitress import serve
-    serve(app, host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 5000)),
+    serve(app, host=os.environ.get("HOST", "0.0.0.0"), port=int(os.environ.get("PORT", 5000)),
           threads=max(2, int(os.environ.get("NEXUS_THREADS", "8"))))
