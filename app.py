@@ -3244,7 +3244,18 @@ if os.environ.get("NEXUS_SKIP_DB_INIT", "0").strip() != "1":
 if __name__ == "__main__":
     from waitress import serve
     requested_host = os.environ.get("HOST", "127.0.0.1").strip()
-    if requested_host not in {"127.0.0.1", "::1", "localhost"} and os.environ.get("NEXUS_ALLOW_LAN", "0").strip().lower() not in {"1", "true", "yes", "on"}:
-        raise RuntimeError("LAN binding is disabled by default. Set NEXUS_ALLOW_LAN=1 explicitly after changing the default admin password and configuring HTTPS.")
+    lan_binding = requested_host not in {"127.0.0.1", "::1", "localhost"}
+    if lan_binding:
+        if os.environ.get("NEXUS_ALLOW_LAN", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+            raise RuntimeError("LAN binding is disabled by default. Set NEXUS_ALLOW_LAN=1 explicitly only after securing the administrator account and HTTPS.")
+        if os.environ.get("NEXUS_COOKIE_SECURE", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+            raise RuntimeError("LAN binding requires NEXUS_COOKIE_SECURE=1. Put NEXUS behind HTTPS before enabling LAN.")
+        startup_db = db()
+        try:
+            default_admin = startup_db.execute("SELECT password_hash,must_change_password FROM users WHERE username='admin' AND active=1").fetchone()
+            if default_admin and (verify_password("admin123", default_admin["password_hash"]) or default_admin["must_change_password"]):
+                raise RuntimeError("Change the default administrator password locally before enabling LAN access.")
+        finally:
+            startup_db.close()
     serve(app, host=requested_host, port=int(os.environ.get("PORT", 5000)),
           threads=max(2, int(os.environ.get("NEXUS_THREADS", "8"))))
