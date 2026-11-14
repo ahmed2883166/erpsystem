@@ -164,6 +164,40 @@ def initialize_workforce_schema():
       UNIQUE(employee_id,attendance_date)
     );
     CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance_records(attendance_date,employee_id);
+    CREATE TABLE IF NOT EXISTS employee_grant_types(
+      id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS employee_grants(
+      id INTEGER PRIMARY KEY, grant_type_id INTEGER NOT NULL REFERENCES employee_grant_types(id),
+      grant_name_snapshot TEXT NOT NULL,
+      calculation_method TEXT NOT NULL CHECK(calculation_method IN ('fixed','percentage_basic','per_day')),
+      calculation_value TEXT NOT NULL, days_count TEXT NOT NULL DEFAULT '0',
+      expense_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      payable_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      grant_date TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft'
+        CHECK(status IN ('draft','approved','partially_paid','paid')),
+      total_amount TEXT NOT NULL, journal_entry_id INTEGER UNIQUE,
+      notes TEXT NOT NULL DEFAULT '', created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS employee_grant_lines(
+      id INTEGER PRIMARY KEY, grant_id INTEGER NOT NULL REFERENCES employee_grants(id) ON DELETE CASCADE,
+      employee_id INTEGER NOT NULL REFERENCES employees(id), employee_code_snapshot TEXT NOT NULL,
+      employee_name_snapshot TEXT NOT NULL, basic_salary_snapshot TEXT NOT NULL,
+      amount TEXT NOT NULL, paid_amount TEXT NOT NULL DEFAULT '0',
+      UNIQUE(grant_id,employee_id)
+    );
+    CREATE TABLE IF NOT EXISTS employee_grant_payments(
+      id INTEGER PRIMARY KEY, grant_id INTEGER NOT NULL REFERENCES employee_grants(id),
+      payment_date TEXT NOT NULL, amount TEXT NOT NULL,
+      cash_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      journal_entry_id INTEGER NOT NULL UNIQUE, reference TEXT NOT NULL UNIQUE,
+      notes TEXT NOT NULL DEFAULT '', created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_employee_grant_lines_grant ON employee_grant_lines(grant_id,id);
+    CREATE INDEX IF NOT EXISTS idx_employee_grant_payments_grant ON employee_grant_payments(grant_id,payment_date,id);
     CREATE TABLE IF NOT EXISTS leave_types(
       id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
       is_paid INTEGER NOT NULL DEFAULT 1, requires_balance INTEGER NOT NULL DEFAULT 0,
@@ -1653,6 +1687,183 @@ def loan_schedule(loan_id):
     installments = c.execute("SELECT * FROM employee_loan_installments WHERE loan_id=? ORDER BY due_period",(loan_id,)).fetchall()
     c.close()
     return render_template("employee_loan_schedule.html",loan=loan,installments=installments)
+
+
+@workforce_bp.route("/hr/grants", methods=["GET"])
+@_role("admin", "accountant", "viewer")
+def employee_grants():
+    c = _db()
+    grant_types = c.execute("SELECT * FROM employee_grant_types WHERE active=1 ORDER BY name").fetchall()
+    employees = c.execute("""SELECT id,employee_code,full_name,basic_salary,work_status FROM employees
+        WHERE active=1 AND work_status NOT IN ('unpaid_leave','resigned','retired') ORDER BY employee_code""").fetchall()
+    accounts = _accounts(c)
+    grants = c.execute("""SELECT g.*,t.name AS grant_type_name,
+        (SELECT COALESCE(SUM(p.amount),0) FROM employee_grant_payments p WHERE p.grant_id=g.id) AS paid_total
+        FROM employee_grants g JOIN employee_grant_types t ON t.id=g.grant_type_id ORDER BY g.id DESC LIMIT 100""").fetchall()
+    c.close()
+    return render_template("employee_grants.html",grant_types=grant_types,employees=employees,accounts=accounts,grants=grants)
+
+
+@workforce_bp.route("/hr/grants/types", methods=["POST"])
+@_role("admin", "accountant")
+def add_employee_grant_type():
+    c = _db()
+    try:
+        name = request.form.get("name","").strip()
+        if not name or len(name)>120:
+            raise ValueError("اكتب اسم المنحة بحد أقصى 120 حرفًا.")
+        c.execute("INSERT INTO employee_grant_types(name) VALUES(?)",(name,))
+        _audit(c,"employee_grant_type_created",name)
+        c.commit()
+        flash("تم حفظ اسم المنحة.", "success")
+    except (ValueError,sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc) if isinstance(exc,ValueError) else "اسم المنحة موجود بالفعل أو تعذر حفظه.","error")
+    c.close()
+    return redirect(url_for("workforce.employee_grants"))
+
+
+@workforce_bp.route("/hr/grants/create", methods=["POST"])
+@_role("admin", "accountant")
+def create_employee_grant():
+    c = _db()
+    try:
+        grant_type_id = int(request.form["grant_type_id"])
+        grant_type = c.execute("SELECT * FROM employee_grant_types WHERE id=? AND active=1",(grant_type_id,)).fetchone()
+        if not grant_type: raise ValueError("اختر اسم منحة نشطًا.")
+        method = request.form.get("calculation_method","")
+        if method not in {"fixed","percentage_basic","per_day"}: raise ValueError("طريقة حساب المنحة غير صحيحة.")
+        value = M(request.form.get("calculation_value","0"))
+        days_count = D(request.form.get("days_count","0"))
+        if value<=0 or days_count<0 or (method=="per_day" and days_count<=0):
+            raise ValueError("أدخل قيمة موجبة للمنحة وحدد عدد الأيام عند اختيار طريقة الأيام.")
+        expense_id=int(request.form["expense_account_id"]); payable_id=int(request.form["payable_account_id"])
+        expense=c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(expense_id,)).fetchone()
+        payable=c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(payable_id,)).fetchone()
+        if not expense or not expense["active"] or expense["is_group"] or expense["account_type"]!="expense":
+            raise ValueError("اختر حساب مصروف منح تفصيليًا ونشطًا.")
+        if not payable or not payable["active"] or payable["is_group"] or payable["account_type"]!="liability" or expense_id==payable_id:
+            raise ValueError("اختر حساب منح مستحقة تفصيليًا ونشطًا ومختلفًا عن حساب المصروف.")
+        if request.form.get("all_employees")=="1":
+            employees=c.execute("""SELECT id,employee_code,full_name,basic_salary FROM employees
+                WHERE active=1 AND work_status NOT IN ('unpaid_leave','resigned','retired') ORDER BY employee_code""").fetchall()
+        else:
+            ids=sorted({int(x) for x in request.form.getlist("employee_ids")})
+            if not ids: raise ValueError("اختر الموظفين أو حدد جميع الموظفين.")
+            marks=",".join("?" for _ in ids)
+            employees=c.execute(f"""SELECT id,employee_code,full_name,basic_salary FROM employees
+                WHERE id IN ({marks}) AND active=1 AND work_status NOT IN ('unpaid_leave','resigned','retired')
+                ORDER BY employee_code""",ids).fetchall()
+            if len(employees)!=len(ids): raise ValueError("بعض الموظفين غير نشطين أو غير مستحقين للمنحة.")
+        if not employees: raise ValueError("لا يوجد موظفون مستحقون للمنحة.")
+        snapshots=[]
+        for emp in employees:
+            basic=M(emp["basic_salary"])
+            amount=M(basic*value/Decimal("100")) if method=="percentage_basic" else (M((basic/Decimal("30"))*days_count) if method=="per_day" else value)
+            if amount<=0: raise ValueError("قيمة المنحة الناتجة يجب أن تكون أكبر من صفر.")
+            snapshots.append((emp,basic,amount))
+        total=M(sum((x[2] for x in snapshots),Decimal("0")))
+        grant_date=date.fromisoformat(request.form.get("grant_date") or date.today().isoformat()).isoformat()
+        c.execute("BEGIN IMMEDIATE")
+        c.execute("""INSERT INTO employee_grants(grant_type_id,grant_name_snapshot,calculation_method,calculation_value,
+            days_count,expense_account_id,payable_account_id,grant_date,total_amount,notes,created_by)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (grant_type_id,grant_type["name"],method,str(value),str(M(days_count)),expense_id,payable_id,
+             grant_date,str(total),request.form.get("notes","").strip(),session["user_id"]))
+        grant_id=c.execute("SELECT last_insert_rowid()").fetchone()[0]
+        for emp,basic,amount in snapshots:
+            c.execute("""INSERT INTO employee_grant_lines(grant_id,employee_id,employee_code_snapshot,
+                employee_name_snapshot,basic_salary_snapshot,amount) VALUES(?,?,?,?,?,?)""",
+                (grant_id,emp["id"],emp["employee_code"],emp["full_name"],str(basic),str(amount)))
+        _audit(c,"employee_grant_draft_created","grant="+str(grant_id)+" total="+str(total))
+        c.commit()
+        flash("تم إعداد كشف المنحة كمسودة. راجع المبالغ قبل الاعتماد.", "success")
+    except (ValueError,KeyError,sqlite3.Error) as exc:
+        c.rollback(); flash(str(exc) or "تعذر إعداد المنحة.","error")
+    c.close()
+    return redirect(url_for("workforce.employee_grants"))
+
+
+@workforce_bp.route("/hr/grants/<int:grant_id>/approve", methods=["POST"])
+@_role("admin", "accountant")
+def approve_employee_grant(grant_id):
+    c=_db()
+    try:
+        grant=c.execute("SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
+        if not grant or grant["status"]!="draft": raise ValueError("المنحة غير موجودة أو سبق اعتمادها.")
+        lines=c.execute("SELECT * FROM employee_grant_lines WHERE grant_id=? ORDER BY id",(grant_id,)).fetchall()
+        total=M(sum((D(x["amount"]) for x in lines),Decimal("0")))
+        if not lines or total<=0 or total!=M(grant["total_amount"]): raise ValueError("كشف المنحة غير مكتمل أو غير متوازن.")
+        c.execute("BEGIN IMMEDIATE")
+        journal_id=post_journal(c,grant["grant_date"],"EMP-GRANT-"+str(grant_id),
+            "إثبات استحقاق منحة: "+grant["grant_name_snapshot"],
+            [(int(grant["expense_account_id"]),total,0,"مصروف المنح"),
+             (int(grant["payable_account_id"]),0,total,"منح مستحقة للموظفين")],session["user_id"])
+        c.execute("UPDATE employee_grants SET status='approved',journal_entry_id=? WHERE id=?",(journal_id,grant_id))
+        _audit(c,"employee_grant_approved","grant="+str(grant_id)+" journal="+str(journal_id))
+        c.commit(); flash("تم اعتماد المنحة وإثبات المصروف والمنح المستحقة بقيد يومية.","success")
+    except (ValueError,KeyError,sqlite3.Error) as exc:
+        c.rollback(); flash(str(exc) or "تعذر اعتماد المنحة.","error")
+    c.close()
+    return redirect(url_for("workforce.employee_grants"))
+
+
+@workforce_bp.route("/hr/grants/<int:grant_id>/pay", methods=["POST"])
+@_role("admin", "accountant")
+def pay_employee_grant(grant_id):
+    c=_db()
+    try:
+        grant=c.execute("SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
+        if not grant or grant["status"] not in {"approved","partially_paid"}: raise ValueError("اعتمد المنحة أولًا قبل الصرف.")
+        amount=M(request.form.get("amount","0"))
+        if amount<=0: raise ValueError("مبلغ الصرف يجب أن يكون أكبر من صفر.")
+        cash_id=int(request.form["cash_account_id"])
+        cash=c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(cash_id,)).fetchone()
+        if not cash or not cash["active"] or cash["is_group"] or cash["account_type"]!="asset":
+            raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
+        paid=M(sum((D(x["amount"]) for x in c.execute("SELECT amount FROM employee_grant_payments WHERE grant_id=?",(grant_id,)).fetchall()),Decimal("0")))
+        outstanding=M(D(grant["total_amount"])-paid)
+        if amount>outstanding: raise ValueError("مبلغ الصرف أكبر من المتبقي.")
+        payment_date=date.fromisoformat(request.form.get("payment_date") or date.today().isoformat()).isoformat()
+        reference="EMP-GRANT-PAY-"+str(grant_id)+"-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
+        c.execute("BEGIN IMMEDIATE")
+        journal_id=post_journal(c,payment_date,reference,"صرف منحة: "+grant["grant_name_snapshot"],
+            [(int(grant["payable_account_id"]),amount,0,"تخفيض المنح المستحقة"),
+             (cash_id,0,amount,"صرف المنحة من النقدية/البنك")],session["user_id"])
+        c.execute("""INSERT INTO employee_grant_payments(grant_id,payment_date,amount,cash_account_id,
+            journal_entry_id,reference,notes,created_by) VALUES(?,?,?,?,?,?,?,?)""",
+            (grant_id,payment_date,str(amount),cash_id,journal_id,reference,request.form.get("notes","").strip(),session["user_id"]))
+        remaining=amount
+        lines=c.execute("SELECT id,amount,paid_amount FROM employee_grant_lines WHERE grant_id=? ORDER BY id",(grant_id,)).fetchall()
+        for line in lines:
+            due=M(D(line["amount"])-D(line["paid_amount"])); allocation=min(remaining,due)
+            if allocation>0:
+                c.execute("UPDATE employee_grant_lines SET paid_amount=? WHERE id=?",
+                    (str(M(D(line["paid_amount"])+allocation)),line["id"]))
+                remaining=M(remaining-allocation)
+            if remaining<=0: break
+        new_status="paid" if amount==outstanding else "partially_paid"
+        c.execute("UPDATE employee_grants SET status=? WHERE id=?",(new_status,grant_id))
+        _audit(c,"employee_grant_payment","grant="+str(grant_id)+" amount="+str(amount)+" journal="+str(journal_id))
+        c.commit(); flash("تم تسجيل صرف المنحة وترحيل قيد السداد.","success")
+    except (ValueError,KeyError,sqlite3.Error) as exc:
+        c.rollback(); flash(str(exc) or "تعذر تسجيل صرف المنحة.","error")
+    c.close()
+    return redirect(url_for("workforce.employee_grants"))
+
+
+@workforce_bp.route("/hr/grants/<int:grant_id>/print", methods=["GET"])
+@_role("admin", "accountant", "viewer")
+def print_employee_grant(grant_id):
+    c=_db()
+    grant=c.execute("SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
+    lines=c.execute("SELECT * FROM employee_grant_lines WHERE grant_id=? ORDER BY employee_code_snapshot",(grant_id,)).fetchall() if grant else []
+    c.close()
+    if not grant:
+        flash("المنحة غير موجودة.","error")
+        return redirect(url_for("workforce.employee_grants"))
+    return render_template("employee_grant_print.html",grant=grant,lines=lines,
+                           show_basic=grant["calculation_method"]!="fixed")
 
 
 @workforce_bp.route("/hr/attendance", methods=["GET", "POST"])
