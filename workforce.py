@@ -1836,12 +1836,15 @@ def pay_employee_grant(grant_id):
         cash=c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(cash_id,)).fetchone()
         if not cash or not cash["active"] or cash["is_group"] or cash["account_type"]!="asset":
             raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
-        paid=M(sum((D(x["amount"]) for x in c.execute("SELECT amount FROM employee_grant_payments WHERE grant_id=?",(grant_id,)).fetchall()),Decimal("0")))
-        outstanding=M(D(grant["total_amount"])-paid)
-        if amount>outstanding: raise ValueError("مبلغ الصرف أكبر من المتبقي.")
         payment_date=date.fromisoformat(request.form.get("payment_date") or date.today().isoformat()).isoformat()
         reference="EMP-GRANT-PAY-"+str(grant_id)+"-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
         c.execute("BEGIN IMMEDIATE")
+        grant=c.execute("SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
+        if not grant or grant["status"] not in {"approved","partially_paid"}:
+            raise ValueError("المنحة لم تعد متاحة للصرف.")
+        paid=M(sum((D(x["amount"]) for x in c.execute("SELECT amount FROM employee_grant_payments WHERE grant_id=?",(grant_id,)).fetchall()),Decimal("0")))
+        outstanding=M(D(grant["total_amount"])-paid)
+        if amount>outstanding: raise ValueError("مبلغ الصرف أكبر من المتبقي.")
         journal_id=post_journal(c,payment_date,reference,"صرف منحة: "+grant["grant_name_snapshot"],
             [(int(grant["payable_account_id"]),amount,0,"تخفيض المنح المستحقة"),
              (cash_id,0,amount,"صرف المنحة من النقدية/البنك")],session["user_id"])
