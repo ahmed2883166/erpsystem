@@ -278,7 +278,10 @@ class PurchasingAccountingTests(unittest.TestCase):
             "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1520','أصول معدات','asset',0)"
         ).lastrowid
         accum_account = self.db.execute(
-            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1592','مجمع إهلاك أصول','asset',0)"
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1592','مجمع إهلاك ماكينة التعبئة','asset',0)"
+        ).lastrowid
+        accum_account_2 = self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1593','مجمع إهلاك الرافعة الشوكية','asset',0)"
         ).lastrowid
         depreciation_expense = self.db.execute(
             "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('6502','مصروف إهلاك أصول','expense',0)"
@@ -294,9 +297,9 @@ class PurchasingAccountingTests(unittest.TestCase):
         bill_id = self.db.execute(
             "SELECT id FROM supplier_bills WHERE bill_no='BILL-MULTI-ASSET'"
         ).fetchone()["id"]
-        for line_no, code, name, cost, residual, life, ready in (
-            (1, "AST-MULTI-01", "ماكينة تعبئة", "70000", "7000", 60, "2026-11-20"),
-            (2, "AST-MULTI-02", "رافعة شوكية", "50000", "5000", 36, "2026-11-25"),
+        for line_no, code, name, cost, residual, life, ready, line_accum_account in (
+            (1, "AST-MULTI-01", "ماكينة تعبئة", "70000", "7000", 60, "2026-11-20", accum_account),
+            (2, "AST-MULTI-02", "رافعة شوكية", "50000", "5000", 36, "2026-11-25", accum_account_2),
         ):
             self.db.execute("""INSERT INTO supplier_bill_asset_lines(
                 bill_id,line_no,asset_code,asset_name,asset_category,cost,ready_date,
@@ -304,7 +307,7 @@ class PurchasingAccountingTests(unittest.TestCase):
                 asset_account_id,accum_account_id,expense_account_id
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (bill_id,line_no,code,name,"معدات",cost,ready,residual,life,"straight_line","0",
-             asset_account,accum_account,depreciation_expense))
+             asset_account,line_accum_account,depreciation_expense))
         self.db.commit()
         with patch("purchases.supplier_ap_account", return_value=99), \
              patch("purchases._activity_tax_roles", return_value={"input_vat": "1172"}), \
@@ -314,11 +317,12 @@ class PurchasingAccountingTests(unittest.TestCase):
 
         self.assertEqual(entry_id, 779)
         assets = self.db.execute(
-            """SELECT f.asset_code,f.cost,f.residual_value,f.useful_life_months,l.bill_id supplier_bill_id
+            """SELECT f.asset_code,f.cost,f.residual_value,f.useful_life_months,f.accum_account_id,l.bill_id supplier_bill_id
                FROM fixed_assets f JOIN fixed_asset_supplier_bill_links l ON l.asset_id=f.id
                WHERE l.bill_id=? ORDER BY f.asset_code""", (bill_id,)
         ).fetchall()
         self.assertEqual(len(assets), 2)
+        self.assertEqual(len({x["accum_account_id"] for x in assets}), 2)
         self.assertEqual(
             [(x["asset_code"],x["cost"],x["residual_value"],x["useful_life_months"]) for x in assets],
             [("AST-MULTI-01","70000","7000",60),("AST-MULTI-02","50000","5000",36)]
