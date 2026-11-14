@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block title %}مندوبو المبيعات | NEXUS ERP{% endblock %}{% block content %}
 <header><h2>مندوبو المبيعات</h2><p>اربط كل فاتورة بمندوب لقياس المبيعات والعمولات والأداء حسب المندوب.</p></header>
-<section class="panel"><form method="post" class="form-grid"><label>كود المندوب<input name="code" maxlength="30" required></label><label>اسم المندوب<input name="name" maxlength="120" required></label><button type="submit">إضافة مندوب</button></form></section>
+<section class="panel"><form method="post" class="form-grid"><label>كود المندوب<small>يُنشأ تلقائيًا عند الحفظ</small></label><label>اسم المندوب<input name="name" maxlength="120" required></label><button type="submit">إضافة مندوب</button></form></section>
 <section class="panel"><table><tr><th>الكود</th><th>الاسم</th><th>الحالة</th></tr>{% for x in rows %}<tr><td>{{x.code}}</td><td>{{x.name}}</td><td>{{'نشط' if x.active else 'غير نشط'}}</td></tr>{% else %}<tr><td colspan="3">لا يوجد مندوبو مبيعات مسجلون.</td></tr>{% endfor %}</table></section>
 {% endblock %}
