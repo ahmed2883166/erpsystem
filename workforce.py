@@ -914,8 +914,10 @@ def payroll():
                         total_days=Decimal((leave_end-leave_start).days+1)
                         overlap_days=Decimal((overlap_end-overlap_start).days+1)
                         unpaid_days += D(leave_row["days"])*overlap_days/total_days
-                    # Payroll uses a transparent 30-day monthly divisor for approved unpaid leave.
-                    absence = M(absent_hours*basic_salary/D(e["standard_hours"]) + unpaid_days*basic_salary/Decimal("30"))
+                    # Payroll uses a transparent 30-day divisor for approved unpaid leave.
+                    unpaid_days = min(Decimal("30"),unpaid_days)
+                    absence = M(absent_hours*basic_salary/D(e["standard_hours"]) +
+                                unpaid_days*(basic_salary+allowances)/Decimal("30"))
                 incentive_rule_id_raw = request.form.get("incentive_rule_" + str(e["id"]), "").strip()
                 incentive_days = D(request.form.get("incentive_days_" + str(e["id"]), "0"))
                 incentive_name = ""
