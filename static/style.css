@@ -409,3 +409,6 @@ td.numeric,th.numeric,.financial-summary-table td:last-child,
   .balance-equation{margin-top:14px;padding:10px 12px;background:#f4f6f8!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}.balance-disclaimer{font-size:8pt!important}.balance-report-footer{margin-top:12px}
   .table-wrap{overflow:visible!important}
 }
+
+/* Persistent navigation context: highlight the current destination. */
+nav a.active{background:var(--nav-hover);border-color:#8aa6c5;color:#fff;box-shadow:inset -3px 0 0 var(--accent)}
