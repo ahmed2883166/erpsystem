@@ -3,6 +3,7 @@ from database import connect_database
 """Tax center: auditable VAT classification and monthly control report."""
 from datetime import date
 from decimal import Decimal
+import sqlite3
 from functools import wraps
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
@@ -138,6 +139,31 @@ def _period(value):
     return value, start, end
 
 
+def _build_saudi_tax_preparation(conn, period, summary):
+    """Annual accounting figures for Saudi tax workpapers; deliberately no liability calculation."""
+    year = int(period[:4])
+    date_from, date_to = f"{year}-01-01", f"{year}-12-31"
+    result = {
+        "available": False, "year": year, "date_from": date_from, "date_to": date_to,
+        "revenue_total": Decimal("0"), "cogs_total": Decimal("0"),
+        "gross_profit": Decimal("0"), "operating_expense_total": Decimal("0"),
+        "net_profit": Decimal("0"), "output_vat": summary["output_vat"],
+        "input_vat": summary["input_vat"], "net_vat": summary["net_vat"],
+        "zakat_or_income_tax": None,
+        "notice": "بيانات محاسبية مساندة فقط؛ لم يتم احتساب وعاء الزكاة أو ضريبة الدخل أو الضريبة المستحقة.",
+    }
+    try:
+        from income_statement import build_income_statement
+        statement = build_income_statement(conn, date_from, date_to)
+        for key in ("revenue_total", "cogs_total", "gross_profit",
+                    "operating_expense_total", "net_profit"):
+            result[key] = statement[key]
+        result["available"] = True
+    except (ImportError, sqlite3.Error, KeyError, ValueError) as exc:
+        result["notice"] = "تعذر استخراج قائمة الدخل السنوية من الأستاذ العام: " + str(exc)
+    return result
+
+
 def build_tax_report_snapshot(conn, period_value):
     period, start, end = _period(period_value)
     customer_tax_number = _party_tax_number_expr(conn, "customers", "c")
@@ -246,6 +272,10 @@ def build_tax_report_snapshot(conn, period_value):
     summary["period_start"] = start.isoformat()
     summary["period_end"] = end.isoformat()
     ledger_reconciliation = _tax_ledger_reconciliation(conn, summary)
+    saudi_preparation = (
+        _build_saudi_tax_preparation(conn, period, summary)
+        if settings.get("tax_country") == "SA" else None
+    )
     # Advisory data-quality checks. These never modify posted documents or journals.
     quality_issues = []
     company_tax_number = (settings.get("tax_number") or "").strip()
@@ -286,6 +316,7 @@ def build_tax_report_snapshot(conn, period_value):
         "inconsistent_purchases": inconsistent_purchases,
         "quality_issues": quality_issues,
         "ledger_reconciliation": ledger_reconciliation,
+        "saudi_preparation": saudi_preparation,
     }
 
 
