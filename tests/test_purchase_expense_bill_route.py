@@ -514,6 +514,13 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         ) VALUES('GR-SPLIT',?,?,'2026-11-13','posted','100.00')""",
             (self.supplier_id, warehouse.lastrowid))
         receipt_id = receipt.lastrowid
+        conn.execute("INSERT INTO stock_products(id,sku,name_ar) VALUES(81,'SPLIT-ITEM','صنف التقسيم')")
+        conn.execute("""INSERT INTO goods_receipt_lines(
+            receipt_id,product_id,quantity,unit_cost,total_cost
+        ) VALUES(?,81,'10','10','100')""", (receipt_id,))
+        receipt_line_id = conn.execute(
+            "SELECT id FROM goods_receipt_lines WHERE receipt_id=?", (receipt_id,)
+        ).fetchone()["id"]
         conn.commit()
         conn.close()
 
@@ -531,6 +538,8 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
                 "tax_rate": "0",
                 "receipt_id": str(receipt_id),
                 "receipt_amount_" + str(receipt_id): amount,
+                "invoice_quantity_" + str(receipt_line_id): str(Decimal(amount) / Decimal("10")),
+                "invoice_unit_price_" + str(receipt_line_id): "10.00",
             })
             self.assertEqual(response.status_code, 302)
             conn = purchases.db()
@@ -770,6 +779,15 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         self.assertEqual(stock.current_qty(conn, product_id, warehouse_id), Decimal("10"))
         conn.close()
 
+        conn = purchases.db()
+        receipt_line_map = {
+            row["receipt_id"]: row["id"]
+            for row in conn.execute(
+                "SELECT id,receipt_id FROM goods_receipt_lines WHERE receipt_id IN (?,?)",
+                (receipt_ids[0], receipt_ids[1])
+            ).fetchall()
+        }
+        conn.close()
         response = self.client.post("/purchases/bills/new", data={
             "supplier_id": str(self.supplier_id),
             "supplier_invoice_no": "INV-PO-E2E-001",
@@ -781,6 +799,10 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
             "receipt_id": [str(receipt_ids[0]), str(receipt_ids[1])],
             "receipt_amount_" + str(receipt_ids[0]): "40.00",
             "receipt_amount_" + str(receipt_ids[1]): "60.00",
+            "invoice_quantity_" + str(receipt_line_map[receipt_ids[0]]): "4",
+            "invoice_unit_price_" + str(receipt_line_map[receipt_ids[0]]): "10.00",
+            "invoice_quantity_" + str(receipt_line_map[receipt_ids[1]]): "6",
+            "invoice_unit_price_" + str(receipt_line_map[receipt_ids[1]]): "10.00",
         })
         self.assertEqual(response.status_code, 302)
         conn = purchases.db()
