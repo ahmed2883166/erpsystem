@@ -40,9 +40,10 @@
 <tr><td>صافي رواتب مستحقة</td><td>0.00</td><td>{{totals.net_pay}}</td></tr>
 <tr><td>استرداد سلف العاملين</td><td>0.00</td><td>{{totals.advance_deduction}}</td></tr>
 <tr><td>الحساب المقابل للخصومات الأخرى</td><td>0.00</td><td>{{totals.other_deductions}}</td></tr>
+<tr><td>جزاءات الموظفين المعتمدة</td><td>0.00</td><td>{{totals.penalty_deduction}}</td></tr>
 <tr><td>ضريبة مرتبات مستحقة</td><td>0.00</td><td>{{totals.tax}}</td></tr>
 <tr><td>تأمينات اجتماعية مستحقة</td><td>0.00</td><td>{{totals.employee_insurance + totals.employer_insurance}}</td></tr>
-<tr><th>الإجمالي</th><th>{{totals.gross_pay + totals.employer_insurance}}</th><th>{{totals.net_pay + totals.other_deductions + totals.advance_deduction + totals.tax + totals.employee_insurance + totals.employer_insurance + totals.absence_deduction}}</th></tr></table><form method="post" action="{{url_for('workforce.post_payroll',run_id=run.id)}}" class="form-grid">
+<tr><th>الإجمالي</th><th>{{totals.gross_pay + totals.employer_insurance}}</th><th>{{totals.net_pay + totals.other_deductions + totals.penalty_deduction + totals.advance_deduction + totals.tax + totals.employee_insurance + totals.employer_insurance + totals.absence_deduction}}</th></tr></table><form method="post" action="{{url_for('workforce.post_payroll',run_id=run.id)}}" class="form-grid">
 {% for field,label in [('salary_expense_account','مصروف الأجور والمرتبات'),('employer_ins_expense_account','مصروف حصة الشركة بالتأمينات'),('salaries_payable_account','رواتب مستحقة للموظفين'),('tax_payable_account','ضريبة مرتبات مستحقة'),('insurance_payable_account','تأمينات اجتماعية مستحقة'),('advances_account','حساب سلف العاملين المستردة'),('other_deductions_account','الحساب المقابل للخصومات الأخرى (جزاءات/تسويات)')] %}
 <label>{{label}}<select name="{{field}}" required>{% for a in accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}} ({{a.account_type}})</option>{% endfor %}</select></label>{% endfor %}
 <button type="submit">اعتماد وترحيل المرتبات</button></form></section>{% endif %}
