@@ -870,6 +870,7 @@ def payroll():
                 if raise_amount and e["raise_mode"] == "allowance":
                     allowances = M(allowances + raise_amount)
                 overtime_hours = D(request.form.get("overtime_hours_" + str(e["id"]), "0"))
+                unpaid_days = Decimal("0")
                 if request.form.get("use_attendance_data") == "1":
                     attendance_rows = c.execute("""SELECT absence_hours,approved_overtime_hours
                         FROM attendance_records WHERE employee_id=? AND attendance_date>=? AND attendance_date<=?""",
@@ -935,13 +936,16 @@ def payroll():
                 # Percentage incentives use the prorated basic; per-day incentives follow entered eligible days.
                 if incentive_method == "percentage_basic" and payroll_days < 30:
                     event_incentive = M(monthly_basic_salary * payroll_factor * D(incentive_rule["calculation_value"]) / Decimal("100"))
-                incentives = M(M(request.form.get("incentives_" + str(e["id"]), "0")) + event_incentive)
+                incentive_total = M(M(request.form.get("incentives_" + str(e["id"]), "0")) + event_incentive)
+                if unpaid_days > 0:
+                    incentive_total = M(incentive_total * max(Decimal("0"),Decimal("30")-unpaid_days) / Decimal("30"))
+                incentives = incentive_total
                 # Prorate monthly salary and recurring allowances for a mid-month termination.
                 # Loan installments remain contractual amounts and are not prorated by service days.
                 if payroll_days < 30:
                     basic_salary = M(monthly_basic_salary * payroll_factor)
                     allowances = M(allowances * payroll_factor)
-                    raise_amount = M(raise_amount * payroll_factor)
+                    raise_amount = M(raise_amount if e["work_status"] == "unpaid_leave" else raise_amount * payroll_factor)
                 manual_advance_deduction = M(request.form.get("advance_" + str(e["id"]), "0"))
                 due_installments = c.execute("""SELECT i.due_amount,i.paid_amount
                     FROM employee_loan_installments i JOIN employee_loans l ON l.id=i.loan_id
