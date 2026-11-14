@@ -1,0 +1,36 @@
+{% extends "base.html" %}{% block title %}منح ومكافآت الموظفين | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>المنح والمكافآت المستقلة</h2><p>إعداد المنحة ومراجعة استحقاق كل موظف واعتمادها وصرفها بعيدًا عن مسير المرتبات.</p></header>
+<section class="panel"><h3>تعريف أسماء المنح</h3><form method="post" action="{{url_for('workforce.add_employee_grant_type')}}" class="form-grid">
+<label>اسم المنحة<input name="name" placeholder="منحة رمضان / منحة عيد / منحة مناسبة" required maxlength="120"></label><button type="submit">حفظ اسم المنحة</button></form>
+{% if grant_types %}<p class="muted">المنح المعرفة: {% for t in grant_types %}{{t.name}}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}</section>
+<section class="panel"><h3>إعداد كشف منحة جديد</h3><form method="post" action="{{url_for('workforce.create_employee_grant')}}" class="form-grid">
+<label>اسم المنحة <select name="grant_type_id" required>{% for t in grant_types %}<option value="{{t.id}}">{{t.name}}</option>{% endfor %}</select></label>
+<label>تاريخ المنحة <input type="date" name="grant_date" required></label>
+<label>طريقة الحساب <select name="calculation_method" id="grantMethod" required><option value="percentage_basic">نسبة من الأساسي</option><option value="per_day">عدد أيام من الأساسي</option><option value="fixed">مبلغ مقطوع لكل موظف</option></select></label>
+<label>النسبة / المبلغ <input type="number" name="calculation_value" min="0.01" step="0.01" required></label>
+<label id="grantDays">عدد الأيام <input type="number" name="days_count" min="0.01" step="0.01" value="1"></label>
+<label>حساب مصروف المنح <select name="expense_account_id" required>{% for a in accounts if a.account_type=='expense' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<label>حساب المنح المستحقة <select name="payable_account_id" required>{% for a in accounts if a.account_type=='liability' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<label style="grid-column:1/-1"><input type="checkbox" name="all_employees" value="1"> إضافة جميع الموظفين المستحقين تلقائيًا</label>
+<label style="grid-column:1/-1">أو اختر موظفين محددين <select name="employee_ids" multiple size="7" style="width:100%">{% for e in employees %}<option value="{{e.id}}">{{e.employee_code}} - {{e.full_name}} (أساسي {{e.basic_salary}})</option>{% endfor %}</select><small>اضغط Ctrl لاختيار أكثر من موظف. الموظف المستقيل أو المحال للمعاش أو في إجازة بدون مرتب لا يدخل ضمن المنحة.</small></label>
+<label style="grid-column:1/-1">ملاحظات <input name="notes" maxlength="300"></label>
+<button type="submit" {% if not grant_types %}disabled{% endif %}>إنشاء كشف المنحة للمراجعة</button></form></section>
+<section class="panel"><h3>كشوف المنح</h3><div style="overflow-x:auto"><table><tr><th>رقم</th><th>المنحة</th><th>التاريخ</th><th>طريقة الحساب</th><th>إجمالي الاستحقاق</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th>الإجراءات</th></tr>
+{% for g in grants %}<tr><td>{{g.id}}</td><td>{{g.grant_name_snapshot}}</td><td>{{g.grant_date}}</td>
+<td>{{{'fixed':'مبلغ مقطوع','percentage_basic':'نسبة من الأساسي','per_day':'عدد أيام من الأساسي'}.get(g.calculation_method,g.calculation_method)}}</td>
+<td>{{g.total_amount}}</td><td>{{g.paid_total}}</td><td>{{(g.total_amount|float)-(g.paid_total|float)}}</td>
+<td>{{{'draft':'مسودة','approved':'معتمدة','partially_paid':'مدفوع جزئيًا','paid':'مدفوعة بالكامل'}.get(g.status,g.status)}}</td><td>
+<a href="{{url_for('workforce.print_employee_grant',grant_id=g.id)}}" target="_blank">كشف الطباعة</a>
+{% if g.status=='draft' %}<form method="post" action="{{url_for('workforce.approve_employee_grant',grant_id=g.id)}}" style="display:inline"><button type="submit">اعتماد وترحيل</button></form>{% endif %}
+{% if g.status in ['approved','partially_paid'] %}<details><summary>تسجيل صرف</summary><form method="post" action="{{url_for('workforce.pay_employee_grant',grant_id=g.id)}}" class="form-grid">
+<label>مبلغ الصرف <input type="number" name="amount" min="0.01" max="{{(g.total_amount|float)-(g.paid_total|float)}}" step="0.01" required></label>
+<label>تاريخ الصرف <input type="date" name="payment_date" required></label>
+<label>الصندوق / البنك <select name="cash_account_id" required>{% for a in accounts if a.account_type=='asset' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<label>ملاحظات <input name="notes"></label><button type="submit">صرف وترحيل القيد</button></form></details>{% endif %}
+</td></tr>{% else %}<tr><td colspan="9">لا توجد منح مسجلة بعد.</td></tr>{% endfor %}</table></div></section>
+{% endblock %}
+{% block scripts %}<script>
+const method=document.getElementById('grantMethod'),days=document.getElementById('grantDays');
+function updateGrantDays(){days.hidden=method.value!=='per_day';}
+method.addEventListener('change',updateGrantDays);updateGrantDays();
+</script>{% endblock %}
