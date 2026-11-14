@@ -237,8 +237,12 @@ def statement_reconciliation():
                 closing=Decimal(request.form.get("closing_balance","0")).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)
                 date.fromisoformat(period_start); date.fromisoformat(period_end)
                 if period_end<period_start: raise ValueError("تاريخ نهاية كشف البنك يجب ألا يسبق تاريخ بدايته.")
-                if not c.execute("SELECT 1 FROM accounts WHERE id=? AND account_type='asset' AND is_group=0 AND active=1",(account_id,)).fetchone():
-                    raise ValueError("اختر حساب بنك تفصيليًا ونشطًا.")
+                if not c.execute("""SELECT 1 FROM accounts a WHERE a.id=? AND a.account_type='asset'
+                    AND a.is_group=0 AND a.active=1
+                    AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.kind='bank' AND ca.active=1)
+                      OR lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%')""",
+                    (account_id,)).fetchone():
+                    raise ValueError("اختر حساب بنك تفصيليًا ونشطًا من سجل الخزائن والبنوك.")
                 c.execute("""INSERT INTO bank_statement_balances(bank_account_id,period_start,period_end,opening_balance,closing_balance,created_by)
                     VALUES(?,?,?,?,?,?)
                     ON CONFLICT(bank_account_id,period_start,period_end) DO UPDATE SET
