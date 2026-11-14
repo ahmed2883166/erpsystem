@@ -84,7 +84,7 @@
   <div class="table-wrap"><table>
     <thead><tr><th>التاريخ</th><th>رقم الحركة</th><th>البيان</th><th>اتجاه الحساب</th><th>المبلغ بإشارة الكشف</th></tr></thead>
     <tbody>{% for tx in book_rows %}
-      <tr><td>{{ tx.transaction_date }}</td><td>{{ tx.transaction_no }}</td><td>{{ tx.description }}</td><td>{{ 'وارد' if tx.signed_amount>0 else 'صادر' }}</td><td>{{ tx.signed_amount|money }}</td></tr>
+      <tr><td>{{ tx.transaction_date }}</td><td>قيد #{{ tx.entry_id }}</td><td>{{ tx.description }}{% if tx.memo %} — {{ tx.memo }}{% endif %}</td><td>{{ 'وارد' if tx.signed_amount>0 else 'صادر' }}</td><td>{{ tx.signed_amount|money }}</td></tr>
     {% else %}<tr><td colspan="5">لا توجد حركات دفترية على الحساب خلال الفترة.</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>
