@@ -183,6 +183,37 @@ class SalesIntegrationTests(unittest.TestCase):
             self.assertEqual(movement["accounting_status"], "posted")
             self.assertEqual(movement["journal_entry_id"], invoice["cogs_journal_entry_id"])
 
+    def test_industrial_v1_invoice_uses_only_1130_inventory_and_5400_cogs(self):
+        from activity_profiles import initialize_activity_profiles_schema
+
+        self.db.execute("UPDATE company_settings SET setting_value='industrial' WHERE setting_key='activity'")
+        initialize_activity_profiles_schema(self.db)
+        self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type) VALUES('5400','تكلفة البضاعة المباعة','expense')"
+        )
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-14", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "1", "unit_price": "25"}],
+            "0", 1,
+        )
+        self.db.commit()
+        balances = {
+            row["code"]: (Decimal(row["debit"]), Decimal(row["credit"]))
+            for row in self.db.execute(
+                """SELECT a.code,SUM(CAST(jl.debit AS NUMERIC)) debit,
+                          SUM(CAST(jl.credit AS NUMERIC)) credit
+                   FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+                   WHERE jl.entry_id=? GROUP BY a.code""",
+                (invoice["cogs_journal_entry_id"],),
+            )
+        }
+        self.assertEqual(balances["5400"], (Decimal("10"), Decimal("0")))
+        self.assertEqual(balances["1130"], (Decimal("0"), Decimal("10")))
+        self.assertNotIn("1140", balances)
+        self.assertNotIn("1150", balances)
+        self.assertEqual(invoice["total_cost"], Decimal("10.00"))
+
     def test_invoice_posts_revenue_tax_cogs_and_stock_issue(self):
         self.db.execute("BEGIN IMMEDIATE")
         result = sales.post_invoice(self.db, self.customer_id, "2026-11-10", self.warehouse_id,
