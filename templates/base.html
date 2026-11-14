@@ -219,4 +219,41 @@
    pdfButton.addEventListener('click',()=>download(pdfButton,'pdf'));
  }
 })();
+
+(function(){
+ const displayDate=value=>{
+   if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(value||''))return '';
+   return value.slice(8,10)+'/'+value.slice(5,7)+'/'+value.slice(0,4);
+ };
+ const initialize=input=>{
+   if(input.dataset.nexusDateDisplay==='1')return;
+   input.dataset.nexusDateDisplay='1';
+   const wrapper=document.createElement('span');
+   wrapper.className='nexus-date-control';
+   const display=document.createElement('span');
+   display.className='nexus-date-display';
+   display.setAttribute('aria-hidden','true');
+   const refresh=()=>{
+     display.textContent=displayDate(input.value)||'يوم / شهر / سنة';
+     display.classList.toggle('is-empty',!input.value);
+   };
+   input.parentNode.insertBefore(wrapper,input);
+   wrapper.appendChild(display);
+   wrapper.appendChild(input);
+   input.classList.add('nexus-native-date');
+   input.addEventListener('input',refresh);
+   input.addEventListener('change',refresh);
+   refresh();
+ };
+ const scan=root=>{
+   if(root.matches&&root.matches('input[type="date"]'))initialize(root);
+   root.querySelectorAll?.('input[type="date"]').forEach(initialize);
+ };
+ scan(document);
+ new MutationObserver(records=>{
+   records.forEach(record=>record.addedNodes.forEach(node=>{
+     if(node.nodeType===1)scan(node);
+   }));
+ }).observe(document.body,{childList:true,subtree:true});
+})();
 </script>{% block scripts %}{% endblock %}</body></html>
