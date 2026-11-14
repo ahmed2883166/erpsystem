@@ -2444,6 +2444,7 @@ IMPORT_DATASETS = {
             {"key": "address", "label": "العنوان", "required": False},
             {"key": "national_id", "label": "الرقم القومي", "required": False},
             {"key": "work_status", "label": "حالة العمل", "required": False},
+            {"key": "termination_date", "label": "تاريخ انتهاء الخدمة (إن وجد)", "required": False},
         ],
     },
     "customers": {
@@ -2654,12 +2655,17 @@ def import_data_wizard():
                         status = clean.get("work_status") or "permanent"
                         if status not in {"permanent", "comprehensive_bonus", "unpaid_leave", "resigned", "retired"}:
                             raise ValueError("حالة العمل غير معروفة.")
+                        termination_date = clean.get("termination_date", "")
+                        if termination_date:
+                            date.fromisoformat(termination_date)
+                        if status in {"resigned", "retired"} and not termination_date:
+                            raise ValueError("يجب تحديد تاريخ انتهاء الخدمة للموظف المستقيل أو المحال للمعاش.")
                         connection.execute("""INSERT INTO employees
-                            (employee_code,full_name,job_title,department,hire_date,basic_salary,address,national_id,work_status)
-                            VALUES(?,?,?,?,?,?,?,?,?)""",
+                            (employee_code,full_name,job_title,department,hire_date,basic_salary,address,national_id,work_status,termination_date)
+                            VALUES(?,?,?,?,?,?,?,?,?,?)""",
                             (clean["employee_code"], clean["full_name"], clean.get("job_title",""),
                              clean.get("department",""), clean["hire_date"], str(salary),
-                             clean.get("address",""), clean.get("national_id",""), status))
+                             clean.get("address",""), clean.get("national_id",""), status, termination_date))
                     elif dataset in {"customers", "suppliers"}:
                         if not clean["code"] or not clean["name"]:
                             raise ValueError("الكود والاسم حقول إلزامية.")
