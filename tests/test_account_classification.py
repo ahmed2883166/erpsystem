@@ -65,6 +65,15 @@ class AccountClassificationTests(unittest.TestCase):
         self.assertEqual(project_cost["statement_section"], "direct_costs")
         self.assertEqual(project_cost["normal_balance"], "debit")
 
+    def test_goodwill_impairment_is_a_contra_asset_not_accumulated_amortization(self):
+        goodwill = account_metadata_for("asset", "1262", "الشهرة")
+        impairment = account_metadata_for("asset", "1268", "مخصص انخفاض قيمة الشهرة")
+        self.assertEqual(goodwill["normal_balance"], "debit")
+        self.assertEqual(goodwill["statement_section"], "non_current_assets")
+        self.assertEqual(impairment["normal_balance"], "credit")
+        self.assertEqual(impairment["statement_section"], "non_current_assets")
+        self.assertEqual(impairment["account_subtype"], "impairment_allowance")
+
     def test_contract_advances_retention_and_warranty_accounts_get_specific_subtypes(self):
         self.assertEqual(
             account_metadata_for("liability", "2160", "دفعات مقدمة من العملاء")["account_subtype"],
