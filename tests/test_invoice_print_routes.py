@@ -12,6 +12,7 @@ import receivables
 
 class InvoicePrintRouteTests(unittest.TestCase):
     def setUp(self):
+        nexus_app.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
         self.temp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp.name) / "invoices.db"
         self.old_sales_path = sales.DB_PATH
