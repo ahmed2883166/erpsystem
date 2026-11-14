@@ -185,6 +185,44 @@ def initialize_stock_schema():
     stocktake_columns = {row["name"] for row in c.execute("PRAGMA table_info(stocktakes)")}
     if "movement_cutoff_id" not in stocktake_columns:
         c.execute("ALTER TABLE stocktakes ADD COLUMN movement_cutoff_id INTEGER NOT NULL DEFAULT 0")
+
+    # Unit catalog and additive links; legacy quantities remain untouched.
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS stock_uom_categories(
+      id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name_ar TEXT NOT NULL UNIQUE,
+      active INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE TABLE IF NOT EXISTS stock_uoms(
+      id INTEGER PRIMARY KEY, category_id INTEGER NOT NULL REFERENCES stock_uom_categories(id),
+      code TEXT NOT NULL UNIQUE, name_ar TEXT NOT NULL, factor_to_base TEXT NOT NULL,
+      is_base INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1,
+      UNIQUE(category_id,name_ar)
+    );
+    CREATE INDEX IF NOT EXISTS idx_stock_uoms_category ON stock_uoms(category_id,active);
+    """)
+    for code,label in [("count","العدد"),("mass","الوزن"),("volume","الحجم"),("length","الطول"),("area","المساحة"),("time","الزمن")]:
+        c.execute("INSERT OR IGNORE INTO stock_uom_categories(code,name_ar) VALUES(?,?)",(code,label))
+    seeded_units = [
+      ("count","PCS","قطعة","1",1),("count","DOZ","دستة","12",0),
+      ("mass","MG","ملليجرام","0.001",0),("mass","G","جرام","1",1),("mass","KG","كيلوجرام","1000",0),("mass","TON","طن متري","1000000",0),
+      ("volume","ML","ملليلتر","1",1),("volume","L","لتر","1000",0),("volume","M3","متر مكعب","1000000",0),
+      ("length","MM","ملليمتر","1",1),("length","CM","سنتيمتر","10",0),("length","M","متر","1000",0),("length","KM","كيلومتر","1000000",0),
+      ("area","CM2","سنتيمتر مربع","1",1),("area","M2","متر مربع","10000",0),
+      ("time","MIN","دقيقة","1",1),("time","HOUR","ساعة","60",0),("time","DAY","يوم","1440",0)
+    ]
+    for category_code,code,label,factor,is_base in seeded_units:
+        category=c.execute("SELECT id FROM stock_uom_categories WHERE code=?",(category_code,)).fetchone()
+        c.execute("INSERT OR IGNORE INTO stock_uoms(category_id,code,name_ar,factor_to_base,is_base) VALUES(?,?,?,?,?)",
+            (category["id"],code,label,factor,is_base))
+    product_columns={row["name"] for row in c.execute("PRAGMA table_info(stock_products)")}
+    if "base_uom_id" not in product_columns:
+        c.execute("ALTER TABLE stock_products ADD COLUMN base_uom_id INTEGER REFERENCES stock_uoms(id)")
+    movement_columns={row["name"] for row in c.execute("PRAGMA table_info(stock_movements)")}
+    if "entered_quantity" not in movement_columns:
+        c.execute("ALTER TABLE stock_movements ADD COLUMN entered_quantity TEXT")
+    if "entered_uom_id" not in movement_columns:
+        c.execute("ALTER TABLE stock_movements ADD COLUMN entered_uom_id INTEGER REFERENCES stock_uoms(id)")
+
     c.close()
 
 
@@ -475,10 +513,12 @@ def products():
         try:
             sku=request.form.get("sku","").strip()
             name=request.form.get("name_ar","").strip()
-            uom=request.form.get("uom","قطعة").strip()
+            base_uom_id=request.form.get("base_uom_id",type=int)
+            selected_uom=c.execute("SELECT id,name_ar FROM stock_uoms WHERE id=? AND active=1",(base_uom_id,)).fetchone() if base_uom_id else None
+            uom=selected_uom["name_ar"] if selected_uom else ""
             category_id=request.form.get("category_id",type=int)
             category=c.execute("SELECT name_ar FROM stock_categories WHERE id=? AND active=1",(category_id,)).fetchone() if category_id else None
-            if not sku or not name or not uom: raise ValueError("الكود والاسم ووحدة القياس حقول مطلوبة.")
+            if not sku or not name or not selected_uom: raise ValueError("الكود والاسم ووحدة القياس حقول مطلوبة.")
             if category_id and not category: raise ValueError("مجموعة الصنف غير صحيحة.")
             purchase_price=money(dec(request.form.get("purchase_price","0"),"سعر الشراء"))
             sale_price=money(dec(request.form.get("sale_price","0"),"سعر البيع"))
@@ -487,9 +527,9 @@ def products():
             min_qty=q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))
             if purchase_price<0 or sale_price<0 or min(reorder_point,reorder_qty,min_qty)<0:
                 raise ValueError("الأسعار والكميات لا يمكن أن تكون سالبة.")
-            c.execute("""INSERT INTO stock_products(sku,name_ar,category,category_id,product_type,uom,barcode,track_lot,track_expiry,min_qty,purchase_price,sale_price,reorder_point,reorder_qty)
-              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(sku,name,category["name_ar"] if category else "",category_id,
-              request.form.get("product_type","goods"),uom,request.form.get("barcode","").strip() or None,
+            c.execute("""INSERT INTO stock_products(sku,name_ar,category,category_id,product_type,uom,base_uom_id,barcode,track_lot,track_expiry,min_qty,purchase_price,sale_price,reorder_point,reorder_qty)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(sku,name,category["name_ar"] if category else "",category_id,
+              request.form.get("product_type","goods"),uom,base_uom_id,request.form.get("barcode","").strip() or None,
               int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),
               str(min_qty),str(purchase_price),str(sale_price),str(reorder_point),str(reorder_qty)))
             c.commit(); flash("تم حفظ الصنف.", "success")
@@ -497,6 +537,7 @@ def products():
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود الصنف أو الباركود مستخدم بالفعل.", "error")
         finally: c.close()
         return redirect(url_for("stock.products"))
+    uoms=c.execute("SELECT u.id,u.code,u.name_ar,u.category_id,c.name_ar category_name FROM stock_uoms u JOIN stock_uom_categories c ON c.id=u.category_id WHERE u.active=1 AND c.active=1 ORDER BY c.id,u.is_base DESC,u.name_ar").fetchall()
     q=request.args.get("q","").strip()
     category_filter=request.args.get("category_id","").strip()
     sql="SELECT p.*,sc.name_ar category_name FROM stock_products p LEFT JOIN stock_categories sc ON sc.id=p.category_id WHERE 1=1"
@@ -515,8 +556,47 @@ def products():
         page=request.args.get("products_page",1,type=int),
         per_page=request.args.get("products_per_page",50,type=int))
     rows=products_page["rows"]; c.close()
-    return render_template("stock_products.html",rows=rows,categories=categories,search=q,
+    return render_template("stock_products.html",rows=rows,categories=categories,uoms=uoms,search=q,
         category_filter=category_filter,products_page=products_page)
+
+
+
+@stock_bp.route("/uoms", methods=["GET","POST"])
+@stock_permission("stock.manage")
+def uoms():
+    c=get_db()
+    if request.method=="POST":
+        try:
+            action=request.form.get("action","unit")
+            if action=="category":
+                code=request.form.get("code","").strip().upper()
+                name=request.form.get("name_ar","").strip()
+                if not code or not name: raise ValueError("كود واسم مجموعة الوحدات مطلوبان.")
+                c.execute("INSERT INTO stock_uom_categories(code,name_ar) VALUES(?,?)",(code,name))
+                flash("تم إنشاء مجموعة وحدات القياس.","success")
+            else:
+                category_id=request.form.get("category_id",type=int)
+                code=request.form.get("unit_code","").strip().upper()
+                name=request.form.get("unit_name","").strip()
+                factor=dec(request.form.get("factor_to_base",""),"معامل التحويل")
+                is_base=int(request.form.get("is_base")=="on")
+                category=c.execute("SELECT id FROM stock_uom_categories WHERE id=? AND active=1",(category_id,)).fetchone()
+                if not category or not code or not name or factor<=0: raise ValueError("أدخل المجموعة والكود والاسم ومعامل تحويل أكبر من صفر.")
+                if is_base and factor!=1: raise ValueError("وحدة الأساس يجب أن يكون معاملها 1.")
+                if is_base and c.execute("SELECT 1 FROM stock_uoms WHERE category_id=? AND is_base=1 AND active=1",(category_id,)).fetchone():
+                    raise ValueError("يوجد بالفعل وحدة أساس نشطة لهذه المجموعة.")
+                c.execute("INSERT INTO stock_uoms(category_id,code,name_ar,factor_to_base,is_base) VALUES(?,?,?,?,?)",
+                    (category_id,code,name,str(factor),is_base))
+                flash("تم حفظ وحدة القياس.","success")
+            c.commit()
+        except (ValueError,sqlite3.IntegrityError) as exc:
+            c.rollback(); flash(str(exc) if isinstance(exc,ValueError) else "الكود أو الاسم مستخدم بالفعل.","error")
+        finally: c.close()
+        return redirect(url_for("stock.uoms"))
+    categories=c.execute("SELECT * FROM stock_uom_categories WHERE active=1 ORDER BY name_ar").fetchall()
+    rows=c.execute("SELECT u.*,c.name_ar category_name FROM stock_uoms u JOIN stock_uom_categories c ON c.id=u.category_id ORDER BY c.name_ar,u.is_base DESC,u.name_ar").fetchall()
+    c.close()
+    return render_template("stock_uoms.html",categories=categories,rows=rows)
 
 
 @stock_bp.route("/categories", methods=["GET","POST"])
@@ -671,11 +751,16 @@ def edit_product(product_id):
     if not product:
         c.close(); flash("الصنف غير موجود.","error"); return redirect(url_for("stock.products"))
     used=c.execute("SELECT 1 FROM stock_movements WHERE product_id=? LIMIT 1",(product_id,)).fetchone() is not None
+    uoms=c.execute("SELECT u.id,u.code,u.name_ar,u.category_id,c.name_ar category_name FROM stock_uoms u JOIN stock_uom_categories c ON c.id=u.category_id WHERE u.active=1 AND c.active=1 ORDER BY c.id,u.is_base DESC,u.name_ar").fetchall()
     if request.method=="POST":
         try:
-            sku=request.form.get("sku","").strip(); name=request.form.get("name_ar","").strip(); uom=request.form.get("uom","").strip()
-            if not sku or not name or not uom: raise ValueError("الكود والاسم والوحدة مطلوبة.")
-            if used and (request.form.get("product_type") != product["product_type"] or uom != product["uom"] or int(request.form.get("track_lot")=="on") != product["track_lot"] or int(request.form.get("track_expiry")=="on") != product["track_expiry"]):
+            sku=request.form.get("sku","").strip(); name=request.form.get("name_ar","").strip()
+            base_uom_id=request.form.get("base_uom_id",type=int)
+            selected_uom=c.execute("SELECT id,name_ar FROM stock_uoms WHERE id=? AND active=1",(base_uom_id,)).fetchone() if base_uom_id else None
+            uom=selected_uom["name_ar"] if selected_uom else (product["uom"] if not product["base_uom_id"] else "")
+            if not sku or not name or not uom: raise ValueError("الكود والاسم ووحدة القياس مطلوبة.")
+            if product["base_uom_id"] and not selected_uom: raise ValueError("اختر وحدة قياس نشطة.")
+            if used and (request.form.get("product_type") != product["product_type"] or (base_uom_id or None) != (product["base_uom_id"] or None) or int(request.form.get("track_lot")=="on") != product["track_lot"] or int(request.form.get("track_expiry")=="on") != product["track_expiry"]):
                 raise ValueError("الصنف له حركات سابقة؛ لا يمكن تغيير نوعه أو وحدة قياسه أو إعدادات تتبع التشغيلة/الصلاحية.")
             category_id=request.form.get("category_id",type=int)
             category=c.execute("SELECT name_ar FROM stock_categories WHERE id=? AND active=1",(category_id,)).fetchone() if category_id else None
@@ -687,12 +772,12 @@ def edit_product(product_id):
             reorder_qty=q4(dec(request.form.get("reorder_qty","0"),"كمية إعادة الطلب"))
             if purchase_price < 0 or sale_price < 0 or min(min_qty,reorder_point,reorder_qty)<0:
                 raise ValueError("الأسعار والكميات لا يمكن أن تكون سالبة.")
-            c.execute("""UPDATE stock_products SET sku=?,name_ar=?,category=?,category_id=?,product_type=?,uom=?,barcode=?,track_lot=?,track_expiry=?,min_qty=?,purchase_price=?,sale_price=?,reorder_point=?,reorder_qty=? WHERE id=?""",
-              (sku,name,category["name_ar"] if category else "",category_id,request.form.get("product_type","goods"),uom,request.form.get("barcode","").strip() or None,int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),str(min_qty),str(purchase_price),str(sale_price),str(reorder_point),str(reorder_qty),product_id))
+            c.execute("""UPDATE stock_products SET sku=?,name_ar=?,category=?,category_id=?,product_type=?,uom=?,base_uom_id=?,barcode=?,track_lot=?,track_expiry=?,min_qty=?,purchase_price=?,sale_price=?,reorder_point=?,reorder_qty=? WHERE id=?""",
+              (sku,name,category["name_ar"] if category else "",category_id,request.form.get("product_type","goods"),uom,base_uom_id,request.form.get("barcode","").strip() or None,int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),str(min_qty),str(purchase_price),str(sale_price),str(reorder_point),str(reorder_qty),product_id))
             c.commit(); c.close(); flash("تم تعديل الصنف.","success"); return redirect(url_for("stock.products"))
         except (ValueError,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "الكود أو الباركود مستخدم بالفعل.","error")
-    c.close(); return render_template("stock_product_edit.html",product=product,used=used,categories=categories)
+    c.close(); return render_template("stock_product_edit.html",product=product,used=used,categories=categories,uoms=uoms)
 
 
 @stock_bp.route("/products/<int:product_id>/delete",methods=["POST"])
@@ -761,8 +846,18 @@ def movements():
             product=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(request.form.get("product_id"),)).fetchone()
             if not product: raise ValueError("الصنف غير موجود أو غير نشط.")
             if product["product_type"] == "service": raise ValueError("الخدمات لا تُدار كأصناف مخزنية.")
-            qty=q4(dec(request.form.get("quantity"),"الكمية"))
-            if qty<=0: raise ValueError("الكمية يجب أن تكون أكبر من صفر.")
+            entered_qty=q4(dec(request.form.get("quantity"),"الكمية"))
+            if entered_qty<=0: raise ValueError("الكمية يجب أن تكون أكبر من صفر.")
+            entered_uom_id=request.form.get("uom_id",type=int)
+            if product["base_uom_id"]:
+                base_uom=c.execute("SELECT id,category_id,factor_to_base FROM stock_uoms WHERE id=? AND active=1",(product["base_uom_id"],)).fetchone()
+                entered_uom=c.execute("SELECT id,category_id,factor_to_base FROM stock_uoms WHERE id=? AND active=1",(entered_uom_id,)).fetchone() if entered_uom_id else None
+                if not base_uom or not entered_uom or entered_uom["category_id"]!=base_uom["category_id"]:
+                    raise ValueError("وحدة الحركة يجب أن تكون من نفس مجموعة وحدة الصنف.")
+                qty=q4(entered_qty*D(str(entered_uom["factor_to_base"]))/D(str(base_uom["factor_to_base"])))
+            else:
+                if entered_uom_id: raise ValueError("الصنف القديم غير مربوط بدليل وحدات القياس؛ استخدم وحدته الحالية.")
+                qty=entered_qty
             src=request.form.get("source_warehouse_id",type=int)
             dst=request.form.get("target_warehouse_id",type=int)
             if kind=="receipt" and not dst: raise ValueError("حدد مخزن الاستلام.")
@@ -809,8 +904,8 @@ def movements():
             if kind=="issue" and issue_purpose not in {"sale","internal"}:
                 raise ValueError("حدد غرض الصرف: تكلفة مبيعات أو استخدام داخلي.")
             cur=c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,source_warehouse_id,target_warehouse_id,
-              source_location_id,target_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,issue_purpose)
-              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(movement_no,kind,product["id"],src,dst,source_location_id,target_location_id,lot_id,str(qty),str(unit_cost),str(total),movement_date,request.form.get("notes","").strip(),session.get("user_id"),issue_purpose))
+              source_location_id,target_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,issue_purpose,entered_quantity,entered_uom_id)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(movement_no,kind,product["id"],src,dst,source_location_id,target_location_id,lot_id,str(qty),str(unit_cost),str(total),movement_date,request.form.get("notes","").strip(),session.get("user_id"),issue_purpose,str(entered_qty),entered_uom_id))
             mid=cur.lastrowid
             if kind=="receipt":
                 c.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost)
@@ -834,7 +929,8 @@ def movements():
             c.rollback(); flash(str(e), "error")
         finally: c.close()
         return redirect(url_for("stock.movements"))
-    products=c.execute("SELECT id,sku,name_ar,uom,track_lot,track_expiry FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
+    products=c.execute("SELECT p.id,p.sku,p.name_ar,p.uom,p.base_uom_id,p.track_lot,p.track_expiry,u.category_id base_uom_category FROM stock_products p LEFT JOIN stock_uoms u ON u.id=p.base_uom_id WHERE p.active=1 ORDER BY p.name_ar").fetchall()
+    movement_uoms=c.execute("SELECT id,category_id,name_ar,factor_to_base FROM stock_uoms WHERE active=1 ORDER BY name_ar").fetchall()
     warehouses=c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     locations=c.execute("SELECT id,warehouse_id,code,name_ar,location_type FROM stock_locations WHERE active=1 ORDER BY warehouse_id,code").fetchall()
     movement_page = max(1, request.args.get("movement_page", 1, type=int) or 1)
@@ -850,7 +946,7 @@ def movements():
       ORDER BY m.id DESC LIMIT ? OFFSET ?""",
       (movement_per_page, (movement_page - 1) * movement_per_page)).fetchall()
     c.close()
-    return render_template("stock_movements.html",products=products,warehouses=warehouses,locations=locations,rows=rows,
+    return render_template("stock_movements.html",products=products,movement_uoms=movement_uoms,warehouses=warehouses,locations=locations,rows=rows,
         movement_page=movement_page,movement_pages=movement_pages,movement_per_page=movement_per_page,
         movement_total=movement_total,today=date.today().isoformat())
 
