@@ -383,6 +383,22 @@ class FinancialYearJournalTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "بالفعل"):
             self._opening()
 
+    def test_opening_accepts_debit_balances_in_liability_and_equity_accounts(self):
+        entry_id = create_opening_entry(
+            self.conn, self.year_id,
+            {"1": "1000", "2": "-100", "3": "1100", "4": "0"}, 1
+        )
+        lines = {
+            row["account_id"]: (Decimal(row["debit"]), Decimal(row["credit"]))
+            for row in self.conn.execute(
+                "SELECT account_id,debit,credit FROM journal_lines WHERE entry_id=?",
+                (entry_id,),
+            )
+        }
+        self.assertEqual(lines[1], (Decimal("1000.00"), Decimal("0.00")))
+        self.assertEqual(lines[2], (Decimal("100.00"), Decimal("0.00")))
+        self.assertEqual(lines[3], (Decimal("0.00"), Decimal("1100.00")))
+
     def test_unbalanced_opening_is_rejected_without_journal(self):
         with self.assertRaisesRegex(ValueError, "غير متوازن"):
             create_opening_entry(self.conn, self.year_id,
