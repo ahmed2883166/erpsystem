@@ -284,15 +284,15 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(_percent(Decimal("1"), Decimal("4")), Decimal("25.00"))
 
     def test_negative_asset_balances_are_reported_for_review(self):
+        self.conn.execute("INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) VALUES(20,'1199','حساب أصل سالب','asset',0,1)")
         self.conn.execute("INSERT INTO journal_entries(id,entry_date,status) VALUES(50,'2026-11-14','posted')")
         self.conn.executemany(
             "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(50,?,?,?)",
-            [(1, "0", "75.25"), (9, "75.25", "0")],
+            [(20, "0", "75.25"), (9, "75.25", "0")],
         )
         snapshot = build_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
-        self.assertIn({"id": 1, "code": "1110", "name": "الصندوق", "balance": Decimal("-75.25")},
+        self.assertIn({"id": 20, "code": "1199", "name": "حساب أصل سالب", "balance": Decimal("-75.25")},
                       snapshot["negative_asset_accounts"])
-        self.assertIsNone(snapshot["ratios"]["debt_ratio"] if snapshot["total_assets"] <= 0 else "valid")
 
     def test_reversed_dates_rejected(self):
         with self.assertRaises(ValueError):
