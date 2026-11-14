@@ -232,3 +232,27 @@ th,td{padding:8px 10px}
  .panel{padding:13px}
  .account-tree-toolbar .table-actions>*{flex:1 1 100%}
 }
+
+
+/* LAN/mobile usability refinements */
+@media(max-width:850px){
+  aside{padding:16px 14px}
+  aside h1{font-size:22px;margin-bottom:12px}
+  nav{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  nav .nav-group{grid-column:1/-1}
+  nav a{min-height:46px;padding:10px 12px}
+  main{width:100%;padding:18px 14px}
+  .table-wrap{width:100%;max-width:100%;-webkit-overflow-scrolling:touch}
+  .table-wrap table{min-width:640px}
+}
+@media(max-width:560px){
+  nav{grid-template-columns:1fr}
+  nav .nav-group{grid-column:auto}
+  body{font-size:14px}
+  input,select,textarea{font-size:16px;min-height:46px}
+  button,.btn,a.button{min-height:46px;padding:10px 14px}
+  .actions,.toolbar{align-items:stretch}
+  .actions>*{max-width:100%}
+  .table-wrap table{min-width:600px}
+  .login{margin:6vh auto;padding:24px}
+}
