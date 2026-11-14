@@ -146,6 +146,10 @@ class WorkforceTests(unittest.TestCase):
             "payment_date": "2026-12-02", "amount": "1", "cash_account_id": "1"
         }, follow_redirects=True)
         self.assertIn("يتجاوز صافي المرتبات المتبقي", response.get_data(as_text=True))
+        response = self.client.post("/hr/payroll/1/reverse", data={
+            "reversal_date": "2026-12-03", "reason": "اختبار منع عكس مسير له دفعات"
+        }, follow_redirects=True)
+        self.assertIn("لا يمكن عكس مسير له دفعات صرف مسجلة", response.get_data(as_text=True))
         conn = sqlite3.connect(self.db_path)
         payments = conn.execute("SELECT amount FROM payroll_payments WHERE run_id=1 ORDER BY id").fetchall()
         debit, credit = conn.execute("""SELECT SUM(debit),SUM(credit) FROM journal_lines
