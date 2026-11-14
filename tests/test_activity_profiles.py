@@ -218,6 +218,14 @@ class ActivityProfileTests(unittest.TestCase):
         self._company_settings()
         self.conn.execute("INSERT INTO company_settings VALUES('activity','industrial')")
         seed_activity_chart(self.conn, "industrial")
+        self.conn.executemany(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group,active) VALUES(?,?,'asset',0,1)",
+            [
+                ("1140", "رصيد تاريخي غير مستخدم 1140"),
+                ("1150", "رصيد تاريخي غير مستخدم 1150"),
+                ("1160", "رصيد تاريخي غير مستخدم 1160"),
+            ],
+        )
         profile_id = create_activity_profile(
             self.conn, "industrial_alt", "ملف صناعي تجريبي", "industrial"
         )
@@ -243,11 +251,19 @@ class ActivityProfileTests(unittest.TestCase):
         )
         self.assertEqual(resolve_product_account_code(self.conn, 999, "inventory", "1150"), "1130")
         self.assertEqual(resolve_product_account_code(self.conn, 999, "cogs", "5100"), "5400")
-        from activity_profiles import active_posting_accounts
+        from activity_profiles import active_posting_accounts, active_account_role_ids
         posting = active_posting_accounts(self.conn)
         self.assertEqual(posting["inventory"], "1130")
         self.assertEqual(posting["purchase_inventory"], "1130")
         self.assertEqual(posting["cogs"], "5400")
+        roles = active_account_role_ids(self.conn)
+        self.assertEqual(roles["inventory"], {
+            self.conn.execute("SELECT id FROM accounts WHERE code='1130'").fetchone()["id"]
+        })
+        self.assertTrue({
+            self.conn.execute("SELECT id FROM accounts WHERE code=?", (code,)).fetchone()["id"]
+            for code in ("1140", "1150", "1160")
+        }.issubset(roles["current_assets"]))
 
     def test_unknown_product_category_keeps_configured_default_account(self):
         from activity_profiles import resolve_product_account_code
