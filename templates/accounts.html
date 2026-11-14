@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}دليل الحسابات | NEXUS ERP{% endblock %}
 {% block styles %}<style>
-.accounts-tree .account-group{background:rgba(100,116,139,.07);font-weight:600}
+.accounts-tree .account-group{background:rgba(100,116,139,.07);font-weight:600}\n.contra-asset-badge{border:1px solid #b7791f;color:#8a5a12;background:rgba(183,121,31,.08)}
 .accounts-tree .account-detail td:first-child{padding-right:18px}
 .account-parent-path{display:block;color:var(--muted,#64748b);font-size:.78em;font-weight:400}
 .account-tree-toolbar{align-items:flex-start;gap:12px;flex-wrap:wrap}
@@ -62,7 +62,7 @@
               </div>
             </td>
             <td>{{ {'asset':'أصول','liability':'التزامات','equity':'حقوق ملكية','revenue':'إيرادات','expense':'مصروفات'}.get(a.account_type,a.account_type) }}</td>
-            <td>{% if a.is_group %}<span class="account-type-badge group-badge">مجموعة رئيسية</span>{% else %}<span class="account-type-badge detail-badge">تفصيلي</span>{% endif %}{% if a.is_control_account|default(0) %}<span class="account-type-badge">حساب رقابي</span>{% endif %}</td>
+            <td>{% if a.is_group %}<span class="account-type-badge group-badge">مجموعة رئيسية</span>{% else %}<span class="account-type-badge detail-badge">تفصيلي</span>{% endif %}{% if a.is_control_account|default(0) %}<span class="account-type-badge">حساب رقابي</span>{% endif %}{% if a.account_subtype|default('') in ('accumulated_depreciation_or_amortization','impairment_allowance') %}<span class="account-type-badge contra-asset-badge">حساب مقابل للأصل</span>{% endif %}</td>
             <td>{{ 'مدين' if a.normal_balance|default('debit') == 'debit' else 'دائن' }}</td>
             <td>{{ {'current_assets':'أصول متداولة','non_current_assets':'أصول غير متداولة','assets':'الأصول','current_liabilities':'التزامات متداولة','non_current_liabilities':'التزامات طويلة الأجل','liabilities':'الالتزامات','equity':'حقوق الملكية','revenue':'الإيرادات','direct_costs':'تكاليف مباشرة','finance_costs':'تكاليف تمويلية','operating_expenses':'مصروفات تشغيلية','unclassified':'غير مصنف'}.get(a.statement_section|default(''), '—') }}</td>
             <td>{{ 'نشط' if a.active else 'موقوف' }}</td>
