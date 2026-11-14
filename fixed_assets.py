@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import date, timedelta
 from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
-from accounting_core import post_journal
+from accounting_core import post_journal, safe_error_message
 from code_sequences import next_code
 
 assets_bp = Blueprint("assets", __name__, url_prefix="/assets")
@@ -679,7 +679,7 @@ def depreciate(asset_id):
         c.commit()
         flash("تم ترحيل قيد الإهلاك بقيمة "+str(amount),"success")
     except (ValueError,KeyError,sqlite3.Error) as e:
-        c.rollback(); flash(str(e),"error")
+        c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     finally:
         c.close()
     return redirect(url_for("assets.schedule",asset_id=asset_id))
@@ -727,7 +727,7 @@ def depreciation_run():
             c.commit()
             flash(f"تم ترحيل إهلاك {posted} أصلًا عن {period}. تم تجاوز {len(skipped)} أصلًا سبق ترحيلها.","success")
         except (ValueError,KeyError,sqlite3.Error) as e:
-            c.rollback(); results=[]; flash(str(e),"error")
+            c.rollback(); results=[]; flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     c.close()
     return render_template("asset_depreciation_run.html",period=period,results=results)
 
@@ -820,7 +820,7 @@ def dispose(asset_id):
         c.commit()
         flash("تم استبعاد الأصل وترحيل قيد البيع/الاستبعاد. ربح أو خسارة الاستبعاد: "+str(gain_loss),"success")
     except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
-        c.rollback(); flash(str(e),"error")
+        c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     finally:
         c.close()
     return redirect(url_for("assets.index"))
