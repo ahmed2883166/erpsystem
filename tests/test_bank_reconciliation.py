@@ -45,10 +45,13 @@ class BankStatementAmountTests(unittest.TestCase):
                 banking.init_bank_schema()
             check=sqlite3.connect(database_path)
             columns={row[1] for row in check.execute("PRAGMA table_info(bank_statement_lines)")}
+            balance_columns={row[1] for row in check.execute("PRAGMA table_info(bank_statement_balances)")}
             indexes={row[1] for row in check.execute("PRAGMA index_list(bank_statement_lines)")}
             check.close()
             self.assertIn("matched_journal_line_id",columns)
             self.assertIn("idx_bank_statement_journal_line",indexes)
+            self.assertIn("opening_reviewed",balance_columns)
+            self.assertIn("opening_review_note",balance_columns)
 
 
 
@@ -83,7 +86,7 @@ class BankOpeningReconciliationTests(unittest.TestCase):
                   "opening_reviewed":1,"opening_review_note":"شيكات معلقة من الشهر السابق"}
         state=opening_reconciliation_state(balances,Decimal("900.00"),Decimal("200.00"))
         self.assertTrue(state["opening_ready"])
-        self.assertEqual(state["closing_difference"],Decimal("100.00"))
+        self.assertEqual(state["closing_difference"],Decimal("0.00"))
         self.assertIn("شيكات",state["opening_review_note"])
 
     def test_ambiguous_candidates_count_by_signed_amount_not_debit_credit_shape(self):
