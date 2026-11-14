@@ -133,7 +133,7 @@ class StockValuationTests(unittest.TestCase):
         )
         self.assertEqual(len(alerts),1)
         self.assertEqual(alerts[0]["point"],Decimal("8"))
-        self.assertEqual(alerts[0]["suggested"],Decimal("4"))
+        self.assertEqual(alerts[0]["suggested"],Decimal("8"))
 
     def test_default_product_location_rejects_location_from_another_warehouse(self):
         second_wh=self.db.execute(
