@@ -1467,6 +1467,37 @@ def build_cash_flow_snapshot(conn, start, end):
         row["account_id"]: row["category"]
         for row in conn.execute("SELECT account_id,category FROM cash_flow_account_mappings")
     } if mapping_exists else {}
+
+    # Current assets and current liabilities are operating working capital by
+    # default under the indirect/direct cash-flow presentation. Infer this from
+    # the account tree so new detail accounts do not remain "unmapped" or get
+    # incorrectly classified as investing/financing solely by their code.
+    account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+    if {"parent_id", "code", "name_ar", "is_group"}.issubset(account_columns):
+        inferred_working_capital = conn.execute(
+            """WITH RECURSIVE ancestry(account_id,parent_id,account_type,depth) AS (
+                   SELECT id,parent_id,account_type,0 FROM accounts WHERE is_group=0
+                   UNION ALL
+                   SELECT ancestry.account_id,parent.parent_id,ancestry.account_type,depth+1
+                   FROM ancestry JOIN accounts parent ON parent.id=ancestry.parent_id
+                   WHERE parent.parent_id IS NOT NULL AND depth<8
+               )
+               SELECT DISTINCT ancestry.account_id,ancestry.account_type,grp.code,grp.name_ar
+               FROM ancestry JOIN accounts grp ON grp.id=ancestry.parent_id
+               WHERE grp.is_group=1"""
+        ).fetchall()
+        for row in inferred_working_capital:
+            code = str(row["code"] or "")
+            name = str(row["name_ar"] or "")
+            is_current_asset = row["account_type"] == "asset" and (
+                code == "1100" or "الأصول المتداولة" in name
+            )
+            is_current_liability = row["account_type"] == "liability" and (
+                code == "2100" or "الالتزامات المتداولة" in name
+            )
+            if is_current_asset or is_current_liability:
+                cash_flow_mappings.setdefault(row["account_id"], "operating")
+
     unmapped_accounts = {}
     if not cash_ids:
         opening = closing = Decimal("0")
