@@ -97,6 +97,44 @@ class StockValuationTests(unittest.TestCase):
             "SELECT accounting_status FROM stock_movements WHERE id=?",(movement_id,)
         ).fetchone()["accounting_status"],"not_required")
 
+    def test_reorder_alerts_are_scoped_to_each_warehouse(self):
+        second_wh=self.db.execute(
+            "INSERT INTO stock_warehouses(code,name_ar) VALUES('W-SECOND','مخزن ثاني')"
+        ).lastrowid
+        second_move=self.db.execute("""INSERT INTO stock_movements(
+            movement_no,movement_type,product_id,target_warehouse_id,quantity,
+            unit_cost,total_cost,movement_date)
+            VALUES('R-SECOND','receipt',? ,?,'100','10','1000','2026-11-14')""",
+            (self.product_id,second_wh)).lastrowid
+        self.db.execute("""INSERT INTO stock_valuation_layers(
+            product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost,value_remaining)
+            VALUES(?,?,?,'100','100','10','1000')""",
+            (self.product_id,second_wh,second_move))
+        self.db.execute("""INSERT INTO stock_warehouse_product_settings(
+            product_id,warehouse_id,min_qty,reorder_point,reorder_qty)
+            VALUES(?,?, '5','50','20'),(?,?, '10','80','30')""",
+            (self.product_id,self.warehouse_id,self.product_id,second_wh))
+        totals={
+            (self.product_id,self.warehouse_id):{"qty":Decimal("200")},
+            (self.product_id,second_wh):{"qty":Decimal("100")},
+        }
+        alerts=stock.calculate_warehouse_reorder_alerts(self.db,totals)
+        self.assertEqual(len(alerts),1)
+        self.assertEqual(alerts[0]["warehouse_code"],"W1")
+        self.assertEqual(alerts[0]["qty"],Decimal("200"))
+        self.assertEqual(alerts[0]["point"],Decimal("50"))
+
+    def test_minimum_stock_is_used_when_reorder_point_is_zero(self):
+        self.db.execute("""INSERT INTO stock_warehouse_product_settings(
+            product_id,warehouse_id,min_qty,reorder_point,reorder_qty)
+            VALUES(?,?, '8','0','0')""",(self.product_id,self.warehouse_id))
+        alerts=stock.calculate_warehouse_reorder_alerts(
+            self.db,{(self.product_id,self.warehouse_id):{"qty":Decimal("4")}}
+        )
+        self.assertEqual(len(alerts),1)
+        self.assertEqual(alerts[0]["point"],Decimal("8"))
+        self.assertEqual(alerts[0]["suggested"],Decimal("4"))
+
     def test_default_product_location_rejects_location_from_another_warehouse(self):
         second_wh=self.db.execute(
             "INSERT INTO stock_warehouses(code,name_ar) VALUES('W2','مخزن آخر')"
