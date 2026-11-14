@@ -393,12 +393,14 @@ def index():
       ea.code expense_account_code,ea.name_ar expense_account_name,
       COALESCE(f.supplier_bill_id,l.bill_id) linked_supplier_bill_id,
       sb.bill_no supplier_bill_no,sb.supplier_invoice_no,
+      p.entry_id linked_journal_entry_id,
       COALESCE((SELECT DECIMAL_SUM(d.amount) FROM asset_depreciations d WHERE d.asset_id=f.id),0) accumulated
       FROM fixed_assets f JOIN accounts a ON a.id=f.asset_account_id
       JOIN accounts aa ON aa.id=f.accum_account_id
       JOIN accounts ea ON ea.id=f.expense_account_id
       LEFT JOIN fixed_asset_supplier_bill_links l ON l.asset_id=f.id
       LEFT JOIN supplier_bills sb ON sb.id=COALESCE(f.supplier_bill_id,l.bill_id)
+      LEFT JOIN fixed_asset_journal_lines p ON p.fixed_asset_id=f.id
       ORDER BY f.asset_code""").fetchall()
     assets=[dict(row,
         accumulated=Decimal(str(row["accumulated"] or "0")),
@@ -691,7 +693,8 @@ def reconciliation():
         assets=c.execute("""SELECT f.id,f.asset_account_id,f.accum_account_id,f.cost,
             x.disposal_date
             FROM fixed_assets f LEFT JOIN asset_disposals x ON x.asset_id=f.id
-            WHERE f.purchase_date<=? AND (x.id IS NULL OR x.disposal_date>?)
+            WHERE f.purchase_date<=? AND f.status<>'reversed'
+              AND (x.id IS NULL OR x.disposal_date>?)
             ORDER BY f.asset_account_id,f.accum_account_id,f.id""",(as_of,as_of)).fetchall()
         grouped={}
         for asset_row in assets:
