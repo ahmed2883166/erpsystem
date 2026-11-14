@@ -1700,8 +1700,13 @@ def employee_grants():
     grants = c.execute("""SELECT g.*,t.name AS grant_type_name,
         (SELECT COALESCE(SUM(p.amount),0) FROM employee_grant_payments p WHERE p.grant_id=g.id) AS paid_total
         FROM employee_grants g JOIN employee_grant_types t ON t.id=g.grant_type_id ORDER BY g.id DESC LIMIT 100""").fetchall()
+    grant_lines = {}
+    for grant in grants:
+        grant_lines[grant["id"]] = c.execute("SELECT * FROM employee_grant_lines WHERE grant_id=? ORDER BY employee_code_snapshot",
+            (grant["id"],)).fetchall()
     c.close()
-    return render_template("employee_grants.html",grant_types=grant_types,employees=employees,accounts=accounts,grants=grants)
+    return render_template("employee_grants.html",grant_types=grant_types,employees=employees,accounts=accounts,
+                           grants=grants,grant_lines=grant_lines,today=date.today().isoformat())
 
 
 @workforce_bp.route("/hr/grants/types", methods=["POST"])
@@ -1890,9 +1895,11 @@ def attendance():
                     status = request.form.get(f"status_{employee_id}_{day_number}","").strip()
                     if status not in allowed:
                         raise ValueError("حالة حضور غير صحيحة.")
-                    if not status:
-                        continue
                     day_date = date(month_start.year,month_start.month,day_number).isoformat()
+                    if not status:
+                        c.execute("DELETE FROM attendance_records WHERE employee_id=? AND attendance_date=?",
+                                  (employee_id,day_date))
+                        continue
                     check_in = request.form.get(f"check_in_{employee_id}_{day_number}","").strip()
                     check_out = request.form.get(f"check_out_{employee_id}_{day_number}","").strip()
                     for tm in (check_in,check_out):
