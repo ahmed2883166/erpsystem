@@ -107,6 +107,64 @@ class UserPermissionRouteTests(unittest.TestCase):
         self.assertIsNone(saved_permissions)
         self.assertEqual(nexus.stored_user_permissions(saved_permissions, saved_role), role_permissions)
 
+    def test_custom_role_updates_are_audited_and_assigned_roles_cannot_be_disabled(self):
+        with self.client.session_transaction() as session:
+            session.update(user_id=1, username="admin", full_name="مدير",
+                           role="admin", permissions=["users.manage"])
+        self.client.post("/users/roles", data={
+            "action": "create", "role_name": "مراجع المبيعات",
+            "role_permissions": ["sales.view", "sales.manage"],
+        })
+        conn = sqlite3.connect(nexus.DB_PATH)
+        role_key = conn.execute(
+            "SELECT role_key FROM roles WHERE role_name='مراجع المبيعات'"
+        ).fetchone()[0]
+        conn.close()
+        self.client.post("/users", data={
+            "username": "sales.reviewer", "full_name": "مراجع",
+            "password": "long-password-123", "role": role_key,
+            "permissions": ["sales.view", "sales.manage"],
+        })
+        conn = sqlite3.connect(nexus.DB_PATH)
+        user_id = conn.execute(
+            "SELECT id FROM users WHERE username='sales.reviewer'"
+        ).fetchone()[0]
+        conn.close()
+
+        updated = self.client.post("/users/roles", data={
+            "action": "update", "role_key": role_key,
+            "role_name": "مراجع مبيعات أول",
+            "role_permissions": ["sales.view"],
+        })
+        self.assertEqual(updated.status_code, 302)
+        self.assertEqual(nexus.stored_user_permissions(None, role_key), ["sales.view"])
+
+        self.client.post("/users/roles", data={
+            "action": "deactivate", "role_key": role_key,
+        })
+        conn = sqlite3.connect(nexus.DB_PATH)
+        active = conn.execute("SELECT active FROM roles WHERE role_key=?", (role_key,)).fetchone()[0]
+        conn.close()
+        self.assertEqual(active, 1)
+
+        self.client.post(f"/users/{user_id}/edit", data={
+            "username": "sales.reviewer", "full_name": "مراجع",
+            "role": "viewer", "active": "yes",
+            "permissions": sorted(nexus.PERMISSIONS["viewer"]),
+        })
+        self.client.post("/users/roles", data={
+            "action": "deactivate", "role_key": role_key,
+        })
+        conn = sqlite3.connect(nexus.DB_PATH)
+        active = conn.execute("SELECT active FROM roles WHERE role_key=?", (role_key,)).fetchone()[0]
+        audit_actions = [row[0] for row in conn.execute(
+            "SELECT action FROM audit_log WHERE entity_type='role' ORDER BY id"
+        )]
+        conn.close()
+        self.assertEqual(active, 0)
+        self.assertIn("role_updated", audit_actions)
+        self.assertIn("role_deactivated", audit_actions)
+
     def test_non_admin_cannot_manage_custom_roles_even_if_users_manage_is_granted(self):
         with self.client.session_transaction() as session:
             session.update(user_id=1, username="admin", full_name="مدير",
