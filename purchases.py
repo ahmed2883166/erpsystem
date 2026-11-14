@@ -502,9 +502,10 @@ def three_way_match():
         JOIN purchase_orders po ON po.id=pol.po_id
         JOIN suppliers s ON s.id=po.supplier_id
         JOIN stock_products p ON p.id=pol.product_id
+        WHERE po.status<>'cancelled'
         ORDER BY po.order_date DESC,po.id DESC,pol.id
     """
-    page = fetch_page(c, query, "SELECT COUNT(*) FROM purchase_order_lines",
+    page = fetch_page(c, query, "SELECT COUNT(*) FROM purchase_order_lines pol JOIN purchase_orders po ON po.id=pol.po_id WHERE po.status<>'cancelled'",
         page=request.args.get("page",1,type=int),
         per_page=request.args.get("per_page",50,type=int))
     rows = [dict(row) for row in page["rows"]]
@@ -1217,24 +1218,27 @@ def _validate_supplier_receipt_allocations(c, supplier_id, receipt_ids, subtotal
 
 def _supplier_receipt_line_rows(c, receipt_ids):
     receipt_ids = list(dict.fromkeys(int(value) for value in receipt_ids))
-    if not receipt_ids:
-        return []
-    placeholders = ",".join("?" for _ in receipt_ids)
-    return c.execute(f"""
-        SELECT gl.id AS receipt_line_id,gl.receipt_id,gl.po_line_id,gl.product_id,
-               gl.quantity AS received_quantity,gl.unit_cost AS received_unit_cost,
-               gl.total_cost AS received_total_cost,r.supplier_id,r.status AS receipt_status,
-               r.receipt_no,s.name AS supplier_name,p.sku,p.name_ar AS product_name,p.uom,
-               po.po_no,pol.unit_price AS ordered_unit_price
-        FROM goods_receipt_lines gl
-        JOIN goods_receipts r ON r.id=gl.receipt_id
-        JOIN suppliers s ON s.id=r.supplier_id
-        JOIN stock_products p ON p.id=gl.product_id
-        LEFT JOIN purchase_order_lines pol ON pol.id=gl.po_line_id
-        LEFT JOIN purchase_orders po ON po.id=pol.po_id
-        WHERE gl.receipt_id IN ({placeholders})
-        ORDER BY r.receipt_date,r.id,gl.id
-    """, receipt_ids).fetchall()
+    result = []
+    # Keep each IN clause comfortably below SQLite's host-parameter limit.
+    for offset in range(0, len(receipt_ids), 500):
+        batch = receipt_ids[offset:offset + 500]
+        placeholders = ",".join("?" for _ in batch)
+        result.extend(c.execute(f"""
+            SELECT gl.id AS receipt_line_id,gl.receipt_id,gl.po_line_id,gl.product_id,
+                   gl.quantity AS received_quantity,gl.unit_cost AS received_unit_cost,
+                   gl.total_cost AS received_total_cost,r.supplier_id,r.status AS receipt_status,
+                   r.receipt_no,s.name AS supplier_name,p.sku,p.name_ar AS product_name,p.uom,
+                   po.po_no,pol.unit_price AS ordered_unit_price
+            FROM goods_receipt_lines gl
+            JOIN goods_receipts r ON r.id=gl.receipt_id
+            JOIN suppliers s ON s.id=r.supplier_id
+            JOIN stock_products p ON p.id=gl.product_id
+            LEFT JOIN purchase_order_lines pol ON pol.id=gl.po_line_id
+            LEFT JOIN purchase_orders po ON po.id=pol.po_id
+            WHERE gl.receipt_id IN ({placeholders})
+            ORDER BY r.receipt_date,r.id,gl.id
+        """, batch).fetchall())
+    return result
 
 
 def _validate_supplier_bill_inventory_lines(c, supplier_id, receipt_ids, subtotal, form,
