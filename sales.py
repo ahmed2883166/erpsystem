@@ -13,7 +13,7 @@ from functools import wraps
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal
 from database import connect_database, fetch_page
-from stock import consume_layers
+from stock import consume_layers, product_uom_factor, product_uom_options
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 
 sales_bp = Blueprint("sales", __name__, url_prefix="/sales")
@@ -379,11 +379,20 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     if preissued_costs is not None and len(preissued_costs) != len(lines):
         raise ValueError("بيانات تكلفة إذن التسليم لا تطابق بنود الفاتورة.")
     for line_index, item in enumerate(lines):
-        qty = Decimal(str(item.get("quantity", "1")))
-        unit_price = Decimal(str(item.get("unit_price", "0"))).quantize(CENT, rounding=ROUND_HALF_UP)
-        if not qty.is_finite() or qty <= 0 or not unit_price.is_finite() or unit_price < 0:
+        entered_qty = Decimal(str(item.get("quantity", "1")))
+        entered_unit_price = Decimal(str(item.get("unit_price", "0"))).quantize(CENT, rounding=ROUND_HALF_UP)
+        if not entered_qty.is_finite() or entered_qty <= 0 or not entered_unit_price.is_finite() or entered_unit_price < 0:
             raise ValueError("الكمية أو سعر البيع غير صحيح.")
         product_id = item.get("product_id")
+        conversion_factor = Decimal("1")
+        selected_uom_id = item.get("uom_id")
+        selected_uom_name = ""
+        if product_id:
+            conversion_factor, selected_uom_name = product_uom_factor(
+                conn, int(product_id), selected_uom_id, "sales"
+            )
+        qty = entered_qty * conversion_factor
+        unit_price = (entered_unit_price / conversion_factor).quantize(CENT, rounding=ROUND_HALF_UP)
         description = str(item.get("description") or "").strip()
         product_inventory_code = codes.get("inventory")
         product_cogs_code = codes.get("cogs")
@@ -438,6 +447,8 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
         normalized.append({
             "product_id": int(product_id) if product_id else None,
             "description": description, "quantity": qty, "unit_price": unit_price,
+            "entered_quantity": entered_qty, "uom_id": str(selected_uom_id or ""),
+            "conversion_factor": conversion_factor,
             "gross_line_total": line_total, "line_total": line_total, "cost_total": cost,
             "tax_rate": line_rate, "tax_treatment": treatment, "tax_amount": Decimal("0.00"),
             "stock_allocations": _allocations if product_id else [],
@@ -553,11 +564,13 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
         order_line_id = item.get("sales_order_line_id")
         line_cursor = conn.execute(
             """INSERT INTO sales_invoice_lines(invoice_id,product_id,description,quantity,unit_price,
-               line_total,cost_total,stock_movement_id,tax_rate,tax_treatment,tax_amount,sales_order_line_id)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+               line_total,cost_total,stock_movement_id,tax_rate,tax_treatment,tax_amount,sales_order_line_id,
+               entered_quantity,uom_id,conversion_factor)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (invoice_id, item["product_id"], item["description"], str(item["quantity"]),
              str(item["unit_price"]), str(item["line_total"]), str(item["cost_total"]), movement_id,
-             str(item["tax_rate"]), item["tax_treatment"], str(item["tax_amount"]), order_line_id)
+             str(item["tax_rate"]), item["tax_treatment"], str(item["tax_amount"]), order_line_id,
+             str(item["entered_quantity"]), item["uom_id"], str(item["conversion_factor"]))
         )
         invoice_line_id = line_cursor.lastrowid
         for allocation in item.get("stock_allocations", []):
@@ -1940,10 +1953,10 @@ def new_invoice():
     if request.method == "POST":
         try:
             items = []
-            for pid, qty, price, desc, line_rate, treatment in zip(request.form.getlist("product_id"),
+            for pid, qty, price, desc, line_rate, treatment, uom_id in zip(request.form.getlist("product_id"),
                     request.form.getlist("quantity"), request.form.getlist("unit_price"),
                     request.form.getlist("description"), request.form.getlist("line_tax_rate"),
-                    request.form.getlist("line_tax_treatment")):
+                    request.form.getlist("line_tax_treatment"), request.form.getlist("uom_id")):
                 if pid or desc.strip():
                     selected_price = price
                     if pid:
@@ -1954,9 +1967,11 @@ def new_invoice():
                            request.form["invoice_date"])).fetchall()
                         matched_price = _select_customer_price_rule(price_rules, qty)
                         if matched_price is not None:
-                            selected_price = matched_price
+                            factor,_ = product_uom_factor(c,int(pid),uom_id,"sales")
+                            selected_price = Decimal(str(matched_price))*factor
                     items.append({"product_id": int(pid) if pid else None, "quantity": qty,
-                                  "unit_price": selected_price, "description": desc, "tax_rate": line_rate, "tax_treatment": treatment})
+                                  "unit_price": selected_price, "uom_id":uom_id,
+                                  "description": desc, "tax_rate": line_rate, "tax_treatment": treatment})
             c.execute("BEGIN IMMEDIATE")
             result = post_invoice(c, int(request.form["customer_id"]), request.form["invoice_date"],
                                   request.form.get("warehouse_id", type=int), items,
@@ -1990,12 +2005,13 @@ def new_invoice():
         exposure_by_customer[invoice_row["customer_id"]] = exposure_by_customer.get(invoice_row["customer_id"], Decimal("0")) + balance
     customers = [dict(row, outstanding=exposure_by_customer.get(row["id"], Decimal("0"))) for row in customers]
     products = c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
+    product_uoms={p["id"]:product_uom_options(c,p["id"]) for p in products}
     warehouses = c.execute("SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','default_vat_rate')")}
     dimension_options = active_dimension_options(c)
     c.close()
-    return render_template("sales_invoice_new.html", customers=customers, products=products,
+    return render_template("sales_invoice_new.html", customers=customers, products=products, product_uoms=product_uoms,
                            warehouses=warehouses, settings=settings, dimension_options=dimension_options,
                            today=date.today().isoformat())
 
