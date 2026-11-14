@@ -1597,10 +1597,14 @@ def resolve_pending_movement(movement_id):
                 movement["movement_date"],movement["total_cost"],session.get("user_id"))
         else:
             raise ValueError("نوع الحركة لا يدعم المعالجة اليدوية من شاشة الحركات المعلقة.")
-        conn.commit()
         final_status = conn.execute(
             "SELECT accounting_status FROM stock_movements WHERE id=?", (movement_id,)
         ).fetchone()["accounting_status"]
+        conn.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
+            VALUES(?,?,?,?)""",(session.get("user_id"),"stock_pending_movement_processed",
+            f"معالجة الحركة المعلقة {movement['movement_no']}؛ الحالة النهائية: {final_status}؛ غرض الصرف: {purpose or 'غير محدد'}",
+            datetime.now().isoformat(timespec="seconds")))
+        conn.commit()
         if final_status == "posted":
             flash("تمت معالجة الحركة وترحيل قيدها المحاسبي.", "success")
         else:
