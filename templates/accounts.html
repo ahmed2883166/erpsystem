@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block title %}دليل الحسابات | NEXUS ERP{% endblock %}
-{% block styles %}<style>
+<style>
 .accounts-tree .account-group{background:rgba(100,116,139,.07);font-weight:600}\n.contra-asset-badge{border:1px solid #b7791f;color:#8a5a12;background:rgba(183,121,31,.08)}
 .accounts-tree .account-detail td:first-child{padding-right:18px}
 .account-parent-path{display:block;color:var(--muted,#64748b);font-size:.78em;font-weight:400}
@@ -11,7 +11,7 @@
 .accounts-tree .tree-toggle{min-width:28px;padding:2px 7px;margin-left:6px}
 .account-legend{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
 @media(max-width:800px){.accounts-layout{display:flex;flex-direction:column}.accounts-tree{min-width:850px}.account-tree-toolbar .table-actions{width:100%}.account-tree-toolbar input{flex:1}}
-</style>{% endblock %}
+</style>
 {% block content %}
 <header class="no-print">
   <div><h2>دليل الحسابات الهرمي</h2><p class="muted">عرض متدرج يوضح الحسابات الرئيسية والفروع التابعة لها.</p></div>
