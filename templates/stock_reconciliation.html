@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}مطابقة تقييم المخزون مع الأستاذ | NEXUS ERP{% endblock %}
+{% block content %}
+<header><div><h2>مطابقة تقييم المخزون مع دفتر الأستاذ</h2><p class="muted">مقارنة قيمة طبقات التقييم المتبقية بأرصدة حسابات المخزون المرحلة حتى الآن.</p></div><a class="btn secondary" href="{{ url_for('stock.reports') }}">تقارير المخزون</a></header>
+<section class="panel">
+<div class="grid grid-3">
+<div class="metric"><span>قيمة طبقات التقييم</span><strong>{{ total_valuation|money }}</strong></div>
+<div class="metric"><span>رصيد حسابات المخزون بالأستاذ</span><strong>{{ total_ledger|money }}</strong></div>
+<div class="metric"><span>إجمالي الفرق (التقييم - الأستاذ)</span><strong>{{ total_difference|money }}</strong></div>
+</div>
+<p class="muted">رصيد الأستاذ = إجمالي المدين ناقص إجمالي الدائن للقيود المرحلة. التقرير يعرض الرصيد الحالي؛ لا يُستخدم لإعادة بناء أرصدة تاريخية بأثر رجعي.</p>
+<div class="table-wrap"><table><thead><tr><th>الحساب</th><th>اسم الحساب</th><th>طبقات التقييم</th><th>دفتر الأستاذ</th><th>الفرق</th><th>الحالة</th></tr></thead><tbody>
+{% for row in rows %}<tr><td>{{ row.code }}</td><td>{{ row.name }}</td><td>{{ row.valuation|money }}</td><td>{{ row.ledger|money }}</td><td>{{ row.difference|money }}</td><td>{% if row.difference == 0 %}<span class="status success">متطابق</span>{% else %}<span class="status danger">يحتاج مراجعة</span>{% endif %}</td></tr>{% else %}<tr><td colspan="6">لا توجد بيانات مطابقة للعرض.</td></tr>{% endfor %}
+</tbody></table></div>
+</section>
+{% endblock %}
