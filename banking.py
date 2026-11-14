@@ -406,7 +406,7 @@ def cash_accounts():
             if mode=="new":
                 parent_id=request.form.get("parent_id",type=int)
                 parent=c.execute("SELECT id,code,account_type,is_group,active FROM accounts WHERE id=?",(parent_id,)).fetchone()
-                if not parent or parent["account_type"]!="asset" or not parent["is_group"] or not parent["active"] or not str(parent["code"]).startswith("11") or not str(parent["code"]).isdigit():
+                if not parent or parent["account_type"]!="asset" or not parent["is_group"] or not parent["active"] or str(parent["code"])!="1100":
                     raise ValueError("لإنشاء خزنة أو بنك اختر مجموعة الأصول المتداولة النقدية (مثل 1100) حتى يظهر الحساب في التصنيف الصحيح بالقوائم المالية.")
                 code=None
                 for sequence in range(1,1000):
@@ -429,7 +429,7 @@ def cash_accounts():
                 from activity_profiles import active_account_role_ids
                 cash_role_ids=active_account_role_ids(c).get("cash", set())
                 already_registered=c.execute("SELECT 1 FROM cash_accounts WHERE account_id=?",(account_id,)).fetchone()
-                if account_id not in cash_role_ids and not already_registered and not str(account["code"]).startswith(("110","111","112")):
+                if account_id not in cash_role_ids and not already_registered:
                     raise ValueError("الحساب المحدد ليس ضمن حسابات النقدية/البنوك المعتمدة. اختر حسابًا من دور النقدية في ملف النشاط أو أنشئ حسابًا تحت مجموعة النقدية.")
             else:
                 raise ValueError("طريقة ربط حساب الأستاذ غير صحيحة.")
