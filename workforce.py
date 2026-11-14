@@ -12,6 +12,7 @@ from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g, send_file, current_app
 from werkzeug.utils import secure_filename
 from accounting_core import post_journal
+from code_sequences import next_code
 
 workforce_bp = Blueprint("workforce", __name__)
 
@@ -504,6 +505,7 @@ def employees():
     if request.method == "POST":
         try:
             values = _employee_form_values(request.form)
+            values = (next_code(c, "employee", "EMP", "employees", "employee_code"), *values[1:])
             _validate_employee_dimensions(c, values)
             photo_path = _save_employee_photo(request.files.get("photo"))
             c.execute("""INSERT INTO employees(employee_code,full_name,job_title,department,hire_date,basic_salary,
