@@ -108,6 +108,8 @@ def index():
     c=db()
     if request.method=="POST":
         try:
+            base_currency_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
+            base_currency=base_currency_row["setting_value"] if base_currency_row else "EGP"
             kind=request.form["transaction_type"]
             bank_id=int(request.form["bank_account_id"])
             amount=Decimal(request.form["amount"]).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)
@@ -116,9 +118,11 @@ def index():
                 r=c.execute("SELECT id,code,name_ar,account_type,is_group,active FROM accounts WHERE id=?",(aid,)).fetchone()
                 if not r or r["account_type"]!="asset" or r["is_group"] or not r["active"]:
                     raise ValueError("اختر حساب بنك/نقد تفصيليًا ونشطًا.")
-                registry=c.execute("SELECT active FROM cash_accounts WHERE account_id=?",(aid,)).fetchone()
+                registry=c.execute("SELECT active,currency_code,branch_id FROM cash_accounts WHERE account_id=?",(aid,)).fetchone()
                 if registry and not registry["active"]:
                     raise ValueError("الخزنة أو البنك معطل؛ فعّله أولًا قبل تسجيل حركة جديدة.")
+                if registry and registry["currency_code"]!=base_currency:
+                    raise ValueError("حسابات الخزائن والبنوك في هذه النسخة تُرحّل بالعملة الأساسية فقط؛ لا تسجل حركة بعملة أجنبية قبل تفعيل معالجة فروق وأسعار الصرف.")
                 if not registry and not any(term in (r["name_ar"] or "") for term in ("صندوق","بنك","بنوك","مصرف")) and r["code"] not in {"1110","1120","1121","1122"}:
                     raise ValueError("الحساب غير معرف كخزنة أو بنك. أضفه أولًا من شاشة إدارة الخزائن والبنوك.")
                 return aid
@@ -132,13 +136,20 @@ def index():
                 target_currency=c.execute("SELECT currency_code FROM cash_accounts WHERE account_id=? AND active=1",(destination_id,)).fetchone()
                 if source_currency and target_currency and source_currency["currency_code"]!=target_currency["currency_code"]:
                     raise ValueError("لا يمكن تحويل نفس المبلغ بين خزنة/بنك بعملتين مختلفتين؛ استخدم قيد صرف عملة مستقلًا.")
-                lines=[(destination_id,amount,0,"تحويل وارد إلى حساب النقدية/البنك"),(bank_id,0,amount,"تحويل صادر من حساب النقدية/البنك")]
+                source_registry=c.execute("SELECT branch_id FROM cash_accounts WHERE account_id=? AND active=1",(bank_id,)).fetchone()
+                target_registry=c.execute("SELECT branch_id FROM cash_accounts WHERE account_id=? AND active=1",(destination_id,)).fetchone()
+                source_dimensions={"branch_id":source_registry["branch_id"]} if source_registry and source_registry["branch_id"] else {}
+                target_dimensions={"branch_id":target_registry["branch_id"]} if target_registry and target_registry["branch_id"] else {}
+                lines=[(destination_id,amount,0,"تحويل وارد إلى حساب النقدية/البنك",target_dimensions),
+                       (bank_id,0,amount,"تحويل صادر من حساب النقدية/البنك",source_dimensions)]
             else:
                 if not counter_id: raise ValueError("حدد الحساب المقابل للحركة.")
                 counter=c.execute("SELECT id,is_group,active FROM accounts WHERE id=?",(counter_id,)).fetchone()
                 if not counter or counter["is_group"] or not counter["active"]: raise ValueError("الحساب المقابل يجب أن يكون تفصيليًا ونشطًا.")
-                if kind in ("deposit",): lines=[(bank_id,amount,0,"إيداع بنكي"),(counter_id,0,amount,"الحساب المقابل")]
-                elif kind in ("withdrawal","fee"): lines=[(counter_id,amount,0,"مصروف/سحب بنكي"),(bank_id,0,amount,"الحساب البنكي")]
+                registry=c.execute("SELECT branch_id FROM cash_accounts WHERE account_id=? AND active=1",(bank_id,)).fetchone()
+                branch_dimensions={"branch_id":registry["branch_id"]} if registry and registry["branch_id"] else {}
+                if kind in ("deposit",): lines=[(bank_id,amount,0,"إيداع بنكي",branch_dimensions),(counter_id,0,amount,"الحساب المقابل",branch_dimensions)]
+                elif kind in ("withdrawal","fee"): lines=[(counter_id,amount,0,"مصروف/سحب بنكي",branch_dimensions),(bank_id,0,amount,"الحساب البنكي",branch_dimensions)]
                 else: raise ValueError("نوع الحركة غير صحيح.")
             c.execute("BEGIN IMMEDIATE")
             no="BANK-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -370,8 +381,12 @@ def cash_accounts():
             if branch_id and not c.execute("SELECT 1 FROM branches WHERE id=? AND active=1",(branch_id,)).fetchone():
                 raise ValueError("الفرع المحدد غير موجود أو غير نشط.")
             currency=(request.form.get("currency_code") or "EGP").strip().upper()
+            base_currency_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
+            base_currency=base_currency_row["setting_value"] if base_currency_row else "EGP"
+            if currency!=base_currency:
+                raise ValueError("حاليًا تُرحّل حركات الخزائن والبنوك بالعملة الأساسية فقط؛ لا تختَر عملة أجنبية حتى تُضاف معالجة فروق وأسعار الصرف.")
             if not c.execute("SELECT 1 FROM currencies WHERE code=? AND active=1",(currency,)).fetchone():
-                raise ValueError("اختر عملة نشطة في إعدادات العملات.")
+                raise ValueError("العملة الأساسية غير مفعلة في إعدادات العملات.")
             if mode=="new":
                 parent_id=request.form.get("parent_id",type=int)
                 parent=c.execute("SELECT id,code,account_type,is_group,active FROM accounts WHERE id=?",(parent_id,)).fetchone()
@@ -420,7 +435,9 @@ def cash_accounts():
         AND NOT EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id)
         ORDER BY a.code""").fetchall()
     branches=c.execute("SELECT id,code,name_ar FROM branches WHERE active=1 ORDER BY code").fetchall()
-    currencies=c.execute("SELECT code,name_ar FROM currencies WHERE active=1 ORDER BY code").fetchall()
+    base_currency_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
+    base_currency=base_currency_row["setting_value"] if base_currency_row else "EGP"
+    currencies=c.execute("SELECT code,name_ar FROM currencies WHERE code=? AND active=1",(base_currency,)).fetchall()
     c.close()
     return render_template("cash_accounts.html",rows=rows,groups=groups,available=available,
         branches=branches,currencies=currencies,today=date.today().isoformat())
