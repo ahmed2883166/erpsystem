@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}جزاءات الموظفين | NEXUS ERP{% endblock %}
+{% block content %}
+<header><h2>جزاءات الموظفين</h2><p>تسجيل الجزاء ثم اعتماده قبل إدخاله في مسير المرتبات. لا يؤثر الطلب غير المعتمد على الراتب.</p></header>
+<section class="panel"><h3>تسجيل جزاء</h3><form method="post" class="form-grid">
+<label>الموظف<select name="employee_id" required>{% for e in employees %}<option value="{{e.id}}">{{e.employee_code}} - {{e.full_name}}</option>{% endfor %}</select></label>
+<label>تاريخ القرار<input type="date" name="penalty_date" value="{{today}}" required></label>
+<label>شهر الخصم<input type="month" name="effective_period" value="{{period}}" required></label>
+<label>قيمة الخصم<input type="number" name="amount" min="0" step="0.01" value="0"></label>
+<label>مدة الجزاء بالأيام<input type="number" name="duration_days" min="0" step="0.5" value="0"></label>
+<label>رقم القرار / المستند<input name="reference" maxlength="100"></label>
+<label style="grid-column:1/-1">سبب الجزاء<input name="reason" maxlength="500" required></label>
+<button type="submit">تسجيل الجزاء للمراجعة</button></form></section>
+<section class="panel"><h3>سجل الجزاءات</h3><div style="overflow-x:auto"><table>
+<tr><th>الموظف</th><th>تاريخ القرار</th><th>شهر الخصم</th><th>السبب</th><th>القيمة</th><th>الأيام</th><th>المرجع</th><th>الحالة</th><th>الإجراء</th></tr>
+{% for p in rows %}<tr><td>{{p.employee_code}} - {{p.full_name}}</td><td>{{p.penalty_date}}</td><td>{{p.effective_period}}</td><td>{{p.reason}}</td><td>{{p.amount}}</td><td>{{p.duration_days}}</td><td>{{p.reference or '-'}}</td><td>{{{'requested':'بانتظار الاعتماد','approved':'معتمد','rejected':'مرفوض','deducted':'تم الخصم','cancelled':'ملغي'}.get(p.status,p.status)}}</td><td>{% if p.status=='requested' %}<form method="post" action="{{url_for('workforce.decide_employee_penalty',penalty_id=p.id)}}"><button name="decision" value="approved">اعتماد</button><button class="secondary" name="decision" value="rejected">رفض</button></form>{% endif %}</td></tr>
+{% else %}<tr><td colspan="9">لا توجد جزاءات مسجلة.</td></tr>{% endfor %}</table></div></section>
+{% endblock %}
