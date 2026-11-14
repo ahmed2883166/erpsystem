@@ -26,6 +26,14 @@ class ActivityAccountMappingTests(unittest.TestCase):
                         self.assertEqual(chart[code][2], expected_type)
                         self.assertEqual(chart[code][4], 0)
 
+    def test_customer_advances_use_one_canonical_account_for_new_postings(self):
+        self.assertEqual(ACTIVITY_ACCOUNT_ROLES["commercial"]["customer_advances"], ("2160",))
+        self.assertEqual(ACTIVITY_ACCOUNT_ROLES["service"]["customer_advances"], ("2160",))
+        # Legacy accounts remain in current-liability reporting so their historical balances
+        # are not hidden when new transactions move to the canonical control account.
+        self.assertIn("2140", ACTIVITY_ACCOUNT_ROLES["commercial"]["current_liabilities"])
+        self.assertIn("2120", ACTIVITY_ACCOUNT_ROLES["service"]["current_liabilities"])
+
     def test_posting_accounts_match_each_activity_chart(self):
         for activity, mapping in ACTIVITY_POSTING_ACCOUNTS.items():
             chart = {row[0]: row for row in CHARTS[activity]}
