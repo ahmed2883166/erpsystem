@@ -209,17 +209,13 @@ def index():
 @require()
 def reconcile(transaction_id):
     c=db()
-    row=c.execute("SELECT * FROM bank_transactions WHERE id=?",(transaction_id,)).fetchone()
+    row=c.execute("SELECT bank_account_id FROM bank_transactions WHERE id=?",(transaction_id,)).fetchone()
+    c.close()
     if not row:
-        c.close(); flash("الحركة البنكية غير موجودة.","error"); return redirect(url_for("bank.index"))
-    c.execute("UPDATE bank_transactions SET reconciled=1,statement_date=?,statement_reference=? WHERE id=?",
-              (request.form.get("statement_date") or row["transaction_date"],request.form.get("statement_reference","").strip(),transaction_id))
-    c.commit(); c.close()
-    flash("تم تعليم الحركة كمطابقة مع كشف البنك.","success")
-    return redirect(url_for("bank.index"))
-
-
-
+        flash("الحركة البنكية غير موجودة.","error")
+        return redirect(url_for("bank.index"))
+    flash("تم إيقاف المطابقة اليدوية حتى لا تُعلّم الحركة كمطابقة دون كشف. استخدم شاشة التسوية البنكية لمطابقة سطر الكشف مع سطر الأستاذ.","warning")
+    return redirect(url_for("bank.statement_reconciliation",account_id=row["bank_account_id"]))
 
 
 @bank_bp.route("/reconciliation", methods=["GET", "POST"])
