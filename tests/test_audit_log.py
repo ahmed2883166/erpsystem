@@ -57,6 +57,28 @@ class AuditLogTests(unittest.TestCase):
         self.assertEqual(row["outcome"], "success")
         self.assertNotIn("password", (row["details"] or "").lower())
 
+    def test_operational_audit_snapshot_supports_composite_key_child_table(self):
+        self.connection.executescript("""
+            CREATE TABLE supplier_bills(id INTEGER PRIMARY KEY, bill_no TEXT);
+            CREATE TABLE supplier_bill_receipts(
+                bill_id INTEGER NOT NULL, receipt_id INTEGER NOT NULL,
+                matched_amount TEXT NOT NULL, PRIMARY KEY(bill_id,receipt_id)
+            );
+            INSERT INTO supplier_bills VALUES(7,'BILL-7');
+            INSERT INTO supplier_bill_receipts VALUES(7,3,'120.00');
+            INSERT INTO supplier_bill_receipts VALUES(7,2,'80.00');
+        """)
+        self.connection.commit()
+        with patch.object(nexus_app, "db", side_effect=self._open_connection):
+            snapshot = nexus_app._operational_audit_snapshot(
+                "purchase.post_bill", {"bill_id": 7}
+            )
+        self.assertEqual(snapshot["record"]["bill_no"], "BILL-7")
+        self.assertEqual(
+            [(row["receipt_id"], row["matched_amount"]) for row in snapshot["details"]],
+            [(2, "80.00"), (3, "120.00")],
+        )
+
     def test_audit_page_requires_permission_and_renders_log_rows(self):
         self.connection.execute(
             """INSERT INTO audit_log
