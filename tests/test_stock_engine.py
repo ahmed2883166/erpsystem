@@ -93,7 +93,7 @@ class StockValuationTests(unittest.TestCase):
         self.assertEqual(lines[1][1:3],(0,Decimal("100.00")))
         self.assertEqual(lines[1][4],{"branch_id":source_branch})
         saved=self.db.execute(
-            "SELECT journal_entry_id,accounting_status FROM stock_movements WHERE id=?",
+            "SELECT journal_entry_id,accounting_status,accounting_note FROM stock_movements WHERE id=?",
             (movement_id,)
         ).fetchone()
         self.assertEqual(saved["journal_entry_id"],991)
@@ -186,6 +186,7 @@ class StockValuationTests(unittest.TestCase):
         ).fetchone()
         self.assertIsNone(saved["journal_entry_id"])
         self.assertEqual(saved["accounting_status"],"pending_purpose")
+        self.assertIn("حدد غرض الصرف",saved["accounting_note"])
 
     def test_issue_journal_posting_is_idempotent(self):
         movement_id=self.db.execute("""INSERT INTO stock_movements(
