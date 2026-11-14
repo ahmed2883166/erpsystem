@@ -649,8 +649,6 @@ def employee_form_2_salary(employee_id):
         flash("الموظف غير موجود.", "error")
         return redirect(url_for("workforce.employees"))
     insured_wage = M(employee["insured_wage"] or "0")
-    if insured_wage <= 0:
-        insured_wage = M(D(employee["basic_salary"]) + D(employee["variable_salary"] or "0"))
     return render_template("form2_salary.html", e=employee, insured_wage=insured_wage,
                            print_date=date.today().isoformat())
 
