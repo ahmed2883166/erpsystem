@@ -631,7 +631,7 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(totals["4200"], (Decimal("20.00"), Decimal("0")))
         self.assertEqual(totals["2130"], (Decimal("2.80"), Decimal("5.60")))
         self.assertEqual(totals["5100"], (Decimal("20.00"), Decimal("10.00")))
-        self.assertEqual(totals["1150"], (Decimal("50.00"), Decimal("10.00")))
+        self.assertEqual(totals["1150"], (Decimal("60.00"), Decimal("20.00")))
 
         inventory_gl = totals["1150"][0] - totals["1150"][1]
         self.assertEqual(inventory_gl, stock_value)
