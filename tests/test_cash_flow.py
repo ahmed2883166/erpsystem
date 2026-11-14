@@ -201,6 +201,7 @@ class CashFlowReportTests(unittest.TestCase):
         self.assertEqual(snapshot["indirect_operating_net"], financial_planning.Decimal("200"))
         self.assertEqual(snapshot["reconciliation_difference"], financial_planning.Decimal("0"))
         self.assertFalse(snapshot["indirect_mapping_warning"])
+        self.assertEqual(snapshot["unmapped_account_count"], 0)
 
     def test_fixed_asset_depreciation_account_is_added_back_in_indirect_method(self):
         conn = financial_planning._connect()
