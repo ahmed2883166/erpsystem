@@ -1472,6 +1472,7 @@ def build_cash_flow_snapshot(conn, start, end):
     # default under the indirect/direct cash-flow presentation. Infer this from
     # the account tree so new detail accounts do not remain "unmapped" or get
     # incorrectly classified as investing/financing solely by their code.
+    inferred_operating_account_ids = set()
     account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
     if {"parent_id", "code", "name_ar", "is_group"}.issubset(account_columns):
         inferred_working_capital = conn.execute(
@@ -1496,6 +1497,8 @@ def build_cash_flow_snapshot(conn, start, end):
                 code == "2100" or "الالتزامات المتداولة" in name
             )
             if is_current_asset or is_current_liability:
+                if row["account_id"] not in cash_flow_mappings:
+                    inferred_operating_account_ids.add(row["account_id"])
                 cash_flow_mappings.setdefault(row["account_id"], "operating")
 
     unmapped_accounts = {}
@@ -1626,6 +1629,7 @@ def build_cash_flow_snapshot(conn, start, end):
         "cash_reconciles": bool(cash_ids) and reconciliation_difference == 0,
         "unmapped_accounts": sorted(unmapped_accounts.values(), key=lambda item: item["code"]),
         "unmapped_account_count": len(unmapped_accounts),
+        "inferred_operating_account_ids": sorted(inferred_operating_account_ids),
     }
 
 
