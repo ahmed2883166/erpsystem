@@ -1603,10 +1603,15 @@ def approve_count(stocktake_id):
                               (inventory_code,)).fetchone() if inventory_code else None
         if not inventory or inventory["is_group"] or not inventory["active"] or inventory["account_type"] != "asset":
             raise ValueError("اضبط حساب المخزون كحساب أصول تفصيلي نشط قبل اعتماد الجرد.")
-        shortage_id = request.form.get("shortage_account_id", type=int)
-        surplus_id = request.form.get("surplus_account_id", type=int)
-        shortage_account = c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (shortage_id,)).fetchone() if shortage_id else None
-        surplus_account = c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (surplus_id,)).fetchone() if surplus_id else None
+        # Both shortage and surplus use the dedicated inventory-count variance
+        # account 6990. A credit to this expense account offsets the expense for
+        # verified stock gains; a debit records shortages.
+        variance_account = c.execute(
+            "SELECT id,code,account_type,is_group,active FROM accounts WHERE code='6990'"
+        ).fetchone()
+        if (not variance_account or variance_account["is_group"] or not variance_account["active"]
+                or variance_account["account_type"] != "expense"):
+            raise ValueError("يجب تفعيل الحساب التفصيلي 6990 (فروق الجرد) من نوع مصروف قبل اعتماد الجرد.")
         journal_lines, movement_ids = [], []
         for line in lines:
             snapshot = D(str(line["snapshot_qty"]))
@@ -1621,8 +1626,6 @@ def approve_count(stocktake_id):
                 c.execute("UPDATE stocktake_lines SET variance_value='0' WHERE id=?", (line["id"],))
                 continue
             if variance < 0:
-                if not shortage_account or shortage_account["account_type"] != "expense" or shortage_account["is_group"] or not shortage_account["active"]:
-                    raise ValueError("اختر حساب مصروف تفصيلي نشط لعجز المخزون.")
                 qty = -variance
                 method_row = c.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
                 method = method_row["setting_value"] if method_row else "fifo"
@@ -1636,12 +1639,10 @@ def approve_count(stocktake_id):
                      str(cost / qty),str(cost),stocktake["count_date"],"عجز جرد فعلي",session.get("user_id")))
                 movement_ids.append(cur.lastrowid)
                 if cost > 0:
-                    journal_lines.extend([(shortage_account["id"],cost,0,"عجز جرد - " + line["name_ar"]),
+                    journal_lines.extend([(variance_account["id"],cost,0,"عجز جرد - " + line["name_ar"]),
                                           (inventory["id"],0,cost,"تخفيض مخزون - " + line["name_ar"])])
                 c.execute("UPDATE stocktake_lines SET variance_value=? WHERE id=?", (str(-cost),line["id"]))
             else:
-                if not surplus_account or surplus_account["account_type"] != "revenue" or surplus_account["is_group"] or not surplus_account["active"]:
-                    raise ValueError("اختر حساب إيراد/أرباح أخرى تفصيلي نشط لزيادة المخزون.")
                 unit_cost = D(str(line["counted_unit_cost"] or "0"))
                 if unit_cost <= 0:
                     raise ValueError("أدخل تكلفة الوحدة للصنف " + line["sku"] + " ذي الزيادة قبل الاعتماد.")
@@ -1660,7 +1661,7 @@ def approve_count(stocktake_id):
                      movement_id,str(variance),str(variance),str(unit_cost),str(cost)))
                 movement_ids.append(movement_id)
                 journal_lines.extend([(inventory["id"],cost,0,"زيادة مخزون - " + line["name_ar"]),
-                                      (surplus_account["id"],0,cost,"أرباح/فروق جرد - " + line["name_ar"])])
+                                      (variance_account["id"],0,cost,"زيادة مخزون - عكس مصروف فروق الجرد - " + line["name_ar"])])
                 c.execute("UPDATE stocktake_lines SET variance_value=? WHERE id=?", (str(cost),line["id"]))
         journal_id = None
         if journal_lines:
