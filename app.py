@@ -21,7 +21,7 @@ from purchases import purchase_bp, init_purchase_schema
 from sales import sales_bp, init_sales_schema
 from accounting_core import post_journal, reconciliation_snapshot
 from banking import bank_bp, init_bank_schema
-from fixed_assets import assets_bp, initialize_assets_schema
+from fixed_assets import assets_bp, initialize_assets_schema, register_assets_from_journal_lines
 from receivables import aging_bp, initialize_aging_schema
 from quotations import quotes_bp, initialize_quotes_schema
 from tax_center import tax_bp, initialize_tax_schema
@@ -1414,15 +1414,22 @@ def journal():
         debits = request.form.getlist("debit")
         credits = request.form.getlist("credit")
         memos = request.form.getlist("memo")
+        line_types = request.form.getlist("line_type")
+        asset_names = request.form.getlist("asset_name")
+        asset_categories = request.form.getlist("asset_category")
+        asset_ready_dates = request.form.getlist("asset_ready_date")
         try:
             entry_date = datetime.fromisoformat(request.form.get("entry_date", "").strip()).date().isoformat()
             description = request.form.get("description", "").strip()
             if not description or len(description) > 500:
                 raise ValueError("أدخل بيانًا صحيحًا للقيد (حتى 500 حرف).")
-            if not (len(account_ids) == len(debits) == len(credits) == len(memos)):
+            if not (len(account_ids) == len(debits) == len(credits) == len(memos) == len(line_types) == len(asset_names) == len(asset_categories) == len(asset_ready_dates)):
                 raise ValueError("بيانات سطور القيد غير مكتملة.")
             lines = []
-            for account_id, debit_text, credit_text, memo in zip(account_ids, debits, credits, memos):
+            line_asset_details = []
+            for account_id, debit_text, credit_text, memo, line_type, asset_name, asset_category, asset_ready_date in zip(
+                account_ids, debits, credits, memos, line_types, asset_names, asset_categories, asset_ready_dates
+            ):
                 if not account_id:
                     raise ValueError("اختر حسابًا لكل سطر.")
                 try:
@@ -1435,8 +1442,22 @@ def journal():
                     raise ValueError("المبالغ يجب أن تكون أرقامًا موجبة أو صفرًا.")
                 if debit > 0 and credit > 0:
                     raise ValueError("لا يجوز أن يجمع السطر الواحد بين المدين والدائن.")
+                if line_type not in {"normal", "fixed_asset"}:
+                    raise ValueError("نوع سطر القيد غير صحيح.")
                 if debit or credit:
                     lines.append((aid, debit, credit, (memo or "").strip()))
+                    if line_type == "fixed_asset":
+                        if not asset_name.strip():
+                            raise ValueError("اكتب اسم الأصل في سطر الشراء المحدد كأصل ثابت.")
+                        if debit <= 0 or credit != 0:
+                            raise ValueError("سطر الأصل الثابت يجب أن يكون مدينًا فقط.")
+                        line_asset_details.append({
+                            "asset_name": asset_name.strip(),
+                            "category": asset_category.strip(),
+                            "ready_date": asset_ready_date.strip() or entry_date,
+                        })
+                    else:
+                        line_asset_details.append(None)
             total_debit = sum((x[1] for x in lines), Decimal("0"))
             total_credit = sum((x[2] for x in lines), Decimal("0"))
             if len(lines) < 2 or total_debit <= 0 or total_debit != total_credit:
@@ -1446,6 +1467,8 @@ def journal():
                 raise ValueError("المرجع لا يجب أن يتجاوز 100 حرف.")
             dimensions = validate_journal_dimensions(connection, {key: request.form.get(key) for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id", "supplier_id")})
             entry_id = post_journal(connection, entry_date, reference, description, lines, session["user_id"], dimensions)
+            if any(line_asset_details):
+                register_assets_from_journal_lines(connection, entry_id, line_asset_details, session["user_id"])
             connection.commit()
             posted_entry = connection.execute(
                 "SELECT id,entry_date,reference,description,status FROM journal_entries WHERE id=?",
