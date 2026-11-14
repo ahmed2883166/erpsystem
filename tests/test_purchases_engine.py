@@ -270,7 +270,7 @@ class PurchasingAccountingTests(unittest.TestCase):
 
         allocation = purchases._validate_supplier_receipt_allocations(
             self.db, supplier_id, [receipt_id], purchases.money("340"),
-            {"receipt_amount_" + str(receipt_id): "360"},
+            {"receipt_amount_" + str(receipt_id): "360"}, exclude_bill_id=bill_id
         )
         self.assertEqual(allocation, [(receipt_id, purchases.money("360"))])
 
