@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}إدارة الخزائن والبنوك | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <div><h2>الخزائن والبنوك</h2><p class="muted">كل سجل يمثل خزنة أو بنكًا واحدًا ويرتبط بحساب أستاذ تفصيلي مستقل. لا تحذف السجلات؛ عطّلها عند التوقف عن الاستخدام.</p></div>
+  <a class="btn secondary" href="{{ url_for('bank.index') }}">العودة إلى الحركة النقدية</a>
+</header>
+<div class="grid">
+<section class="panel">
+  <h3>إضافة خزنة أو بنك</h3>
+  <form method="post">
+    <label>النوع
+      <select name="kind" id="cashKind" required><option value="cash">خزنة</option><option value="bank">بنك</option></select>
+    </label>
+    <label>الاسم الظاهر *</label><input name="name_ar" required placeholder="مثال: الخزنة الرئيسية / البنك الأهلي">
+    <label>طريقة ربط حساب الأستاذ
+      <select name="account_mode" id="accountMode"><option value="existing">ربط حساب تفصيلي موجود</option><option value="new">إنشاء حساب أستاذ جديد تحت مجموعة أصول</option></select>
+    </label>
+    <div id="existingAccount">
+      <label>الحساب التفصيلي غير المرتبط
+        <select name="account_id"><option value="">اختر الحساب</option>{% for a in available %}<option value="{{ a.id }}">{{ a.code }} - {{ a.name_ar }}</option>{% endfor %}</select>
+      </label>
+    </div>
+    <div id="newAccount" hidden>
+      <label>مجموعة الأصول الأب
+        <select name="parent_id"><option value="">اختر المجموعة</option>{% for a in groups %}<option value="{{ a.id }}">{{ a.code }} - {{ a.name_ar }}</option>{% endfor %}</select>
+      </label>
+      <p class="muted">سيُنشأ حساب تفصيلي بكود داخلي تلقائيًا تحت المجموعة التي تختارها، دون تعديل أي حساب أو رصيد قائم.</p>
+    </div>
+    <label>الفرع
+      <select name="branch_id"><option value="">بدون فرع محدد</option>{% for b in branches %}<option value="{{ b.id }}">{{ b.code }} - {{ b.name_ar }}</option>{% endfor %}</select>
+    </label>
+    <label>العملة
+      <select name="currency_code" required>{% for c in currencies %}<option value="{{ c.code }}" {% if c.code=='EGP' %}selected{% endif %}>{{ c.code }} - {{ c.name_ar }}</option>{% endfor %}</select>
+    </label>
+    <div id="bankDetails" hidden>
+      <label>اسم البنك</label><input name="bank_name">
+      <label>رقم الحساب / IBAN</label><input name="iban" dir="ltr">
+    </div>
+    <label>تاريخ بدء الاستخدام<input type="date" name="opening_date" value="{{ today }}" required></label>
+    <button type="submit">حفظ وربط الحساب</button>
+  </form>
+</section>
+<section class="panel">
+  <h3>السجلات المعرفة</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>النوع</th><th>الاسم</th><th>حساب الأستاذ</th><th>الفرع</th><th>العملة</th><th>بيانات البنك</th><th>الحالة</th><th>الإجراء</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>{{ 'خزنة' if r.kind=='cash' else 'بنك' }}</td>
+        <td>{{ r.name_ar }}</td>
+        <td><a href="{{ url_for('ledger',account_id=r.account_id) }}">{{ r.account_code }} - {{ r.account_name }}</a></td>
+        <td>{{ (r.branch_code ~ ' - ' ~ r.branch_name) if r.branch_id else '—' }}</td>
+        <td>{{ r.currency_code }}</td>
+        <td>{{ (r.bank_name ~ ' / ' ~ r.iban) if r.kind=='bank' else '—' }}</td>
+        <td>{{ 'نشط' if r.active else 'معطل' }}</td>
+        <td><form method="post" action="{{ url_for('bank.toggle_cash_account',cash_account_id=r.id) }}"><button class="secondary">{{ 'تعطيل' if r.active else 'تفعيل' }}</button></form></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8">لم تُعرّف خزائن أو بنوك بعد. ابدأ بإضافة أول حساب.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const mode=document.getElementById('accountMode');
+const existing=document.getElementById('existingAccount');
+const fresh=document.getElementById('newAccount');
+const kind=document.getElementById('cashKind');
+const bankDetails=document.getElementById('bankDetails');
+function syncCashAccountForm(){
+  const isNew=mode.value==='new';
+  existing.hidden=isNew;
+  fresh.hidden=!isNew;
+  bankDetails.hidden=kind.value!=='bank';
+}
+mode.addEventListener('change',syncCashAccountForm);
+kind.addEventListener('change',syncCashAccountForm);
+syncCashAccountForm();
+</script>
+{% endblock %}
