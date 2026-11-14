@@ -246,9 +246,10 @@ class StockValuationTests(unittest.TestCase):
             stock.current_qty(self.db,self.product_id,self.warehouse_id,lot_b),
             Decimal("-1")
         )
+        # Omitting lot_id means the total across all lots in this warehouse.
         self.assertEqual(
             stock.current_qty(self.db,self.product_id,self.warehouse_id),
-            Decimal("7")
+            Decimal("207")
         )
 
 
