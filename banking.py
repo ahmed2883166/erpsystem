@@ -199,7 +199,7 @@ def index():
         WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
           AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.active=1
               AND ca.currency_code=(SELECT setting_value FROM company_settings WHERE setting_key='base_currency'))
-            OR lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%' OR a.code IN ('1110','1120','1121','1122'))
+            OR lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%' OR lower(a.name_ar) LIKE '%صندوق%')
         GROUP BY a.id ORDER BY a.code""").fetchall()
     bank_balances=[dict(row,balance=Decimal(str(row["balance"] or "0"))) for row in bank_balances]
     c.close()
