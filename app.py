@@ -627,6 +627,30 @@ def requires(permission):
 
 
 @app.before_request
+def refresh_session_authorization():
+    """Refresh role and permissions from the database so changes take effect immediately."""
+    user_id = session.get("user_id")
+    if not user_id or request.endpoint == "static":
+        return None
+    connection = db()
+    try:
+        user = connection.execute(
+            "SELECT id, role, active, permissions_json, must_change_password, full_name "
+            "FROM users WHERE id=?", (user_id,)
+        ).fetchone()
+    finally:
+        connection.close()
+    if not user or not user["active"]:
+        session.clear()
+        return redirect(url_for("login"))
+    session["role"] = user["role"]
+    session["permissions"] = stored_user_permissions(user["permissions_json"], user["role"])
+    session["must_change_password"] = bool(user["must_change_password"])
+    session["full_name"] = user["full_name"]
+    return None
+
+
+@app.before_request
 def enforce_forced_password_change():
     if session.get("must_change_password"):
         allowed_endpoints = {"change_password", "logout", "static"}
