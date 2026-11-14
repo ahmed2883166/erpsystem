@@ -148,5 +148,41 @@ class StockValuationTests(unittest.TestCase):
                 (self.product_id,second_wh,first_loc))
 
 
+    def test_issue_without_purpose_is_marked_pending_not_posted(self):
+        self.db.execute("""CREATE TABLE company_settings(
+            setting_key TEXT PRIMARY KEY,setting_value TEXT)""")
+        movement_id=self.db.execute("""INSERT INTO stock_movements(
+            movement_no,movement_type,product_id,source_warehouse_id,quantity,
+            unit_cost,total_cost,movement_date,accounting_status)
+            VALUES('ISSUE-NO-PURPOSE','issue',?,?,'1','10','10','2026-11-14','pending')""",
+            (self.product_id,self.warehouse_id)).lastrowid
+        result=stock.post_issue_journal(
+            self.db,movement_id,"ISSUE-NO-PURPOSE",{"id":self.product_id,"name_ar":"منتج اختبار"},
+            "2026-11-14",Decimal("10"),7,None
+        )
+        self.assertIsNone(result)
+        saved=self.db.execute(
+            "SELECT journal_entry_id,accounting_status FROM stock_movements WHERE id=?",
+            (movement_id,)
+        ).fetchone()
+        self.assertIsNone(saved["journal_entry_id"])
+        self.assertEqual(saved["accounting_status"],"pending_purpose")
+
+    def test_issue_journal_posting_is_idempotent(self):
+        movement_id=self.db.execute("""INSERT INTO stock_movements(
+            movement_no,movement_type,product_id,quantity,unit_cost,total_cost,
+            movement_date,journal_entry_id,accounting_status)
+            VALUES('ISSUE-ALREADY-POSTED','issue',?,'1','10','10','2026-11-14',456,'posted')""",
+            (self.product_id,)).lastrowid
+        with patch("stock.post_journal") as post:
+            result=stock.post_issue_journal(
+                self.db,movement_id,"ISSUE-ALREADY-POSTED",
+                {"id":self.product_id,"name_ar":"منتج اختبار"},
+                "2026-11-14",Decimal("10"),7,"sale"
+            )
+        self.assertEqual(result,456)
+        post.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
