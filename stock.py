@@ -12,7 +12,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from datetime import date, datetime
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
-from accounting_core import post_journal, money
+from accounting_core import post_journal, money, safe_error_message
 from analytic_dimensions import initialize_analytic_dimensions_schema
 from code_sequences import next_code
 
@@ -1005,7 +1005,7 @@ def delete_category(category_id):
         if used: raise ValueError("لا يمكن حذف المجموعة لوجود أصناف مرتبطة بها؛ انقل الأصناف أولًا.")
         c.execute("DELETE FROM stock_categories WHERE id=?",(category_id,));c.commit();flash("تم حذف المجموعة.","success")
     except (ValueError,sqlite3.IntegrityError) as e:
-        c.rollback();flash(str(e),"error")
+        c.rollback();flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     finally:c.close()
     return redirect(url_for("stock.categories"))
 
@@ -1123,7 +1123,7 @@ def product_locations():
             flash("تم تحديد الموقع الافتراضي وإسناد الأرصدة القديمة غير المحددة إليه.", "success")
         except (ValueError, sqlite3.Error) as exc:
             c.rollback()
-            flash(str(exc), "error")
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
         finally:
             c.close()
         return redirect(url_for("stock.product_locations"))
@@ -1385,7 +1385,7 @@ def movements():
             else:
                 flash(f"تم حفظ الحركة {movement_no}.","success")
         except (ValueError,InvalidOperation,sqlite3.IntegrityError) as e:
-            c.rollback(); flash(str(e), "error")
+            c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
         finally: c.close()
         return redirect(url_for("stock.movements"))
     products=c.execute("SELECT p.id,p.sku,p.name_ar,p.uom,p.base_uom_id,p.track_lot,p.track_expiry,u.category_id base_uom_category FROM stock_products p LEFT JOIN stock_uoms u ON u.id=p.base_uom_id WHERE p.active=1 ORDER BY p.name_ar").fetchall()
@@ -1701,7 +1701,7 @@ def valuation_reconciliation():
             difference_account_count=difference_account_count,reconciliation_status=reconciliation_status,
             report_generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     except (ValueError, sqlite3.Error) as exc:
-        flash(str(exc), "error")
+        flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
         return render_template("stock_reconciliation.html", rows=[], warehouse_rows=[], warehouse_product_rows=[],
             detail_rows=[],unallocated_rows=[],unallocated_total=D("0"),detail_tagged_total=D("0"),
             detail_matched_count=0,detail_difference_count=0,
@@ -1780,7 +1780,7 @@ def resolve_pending_movement(movement_id):
             flash("لم تُرحّل الحركة؛ ما زالت معلقة بسبب نقص إعدادات الحسابات. راجع ملف النشاط وربط الحسابات ثم أعد المحاولة.", "warning")
     except (ValueError, sqlite3.Error) as exc:
         conn.rollback()
-        flash(str(exc),"error")
+        flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     finally:
         conn.close()
     return redirect(url_for("stock.pending_movements"))
@@ -1927,7 +1927,7 @@ def count_detail(stocktake_id):
             return redirect(url_for("stock.count_detail", stocktake_id=stocktake_id))
         except (ValueError, sqlite3.Error) as exc:
             c.rollback()
-            flash(str(exc), "error")
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     lines = c.execute("""WITH RECURSIVE location_paths(id,warehouse_id,path) AS (
         SELECT id,warehouse_id,code || ' - ' || name_ar FROM stock_locations WHERE parent_id IS NULL
         UNION ALL
@@ -2074,7 +2074,7 @@ def approve_count(stocktake_id):
               else "تم اعتماد الجرد؛ لا توجد فروق تستلزم قيدًا محاسبيًا.", "success")
     except (ValueError, sqlite3.Error) as exc:
         c.rollback()
-        flash(str(exc), "error")
+        flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
         c.close()
     return redirect(url_for("stock.count_detail", stocktake_id=stocktake_id))
