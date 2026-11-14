@@ -113,6 +113,76 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertIn("4101", posted_codes)
         self.assertNotIn("1130", posted_codes)
 
+    def test_restaurant_invoice_posts_category_specific_inventory_and_cogs(self):
+        from activity_profiles import initialize_activity_profiles_schema
+
+        self.db.execute("UPDATE company_settings SET setting_value='restaurant' WHERE setting_key='activity'")
+        initialize_activity_profiles_schema(self.db)
+        extra_accounts = [
+            ("1140", "مخزون الغذاء", "asset"), ("1160", "مخزون التعبئة", "asset"),
+            ("4200", "مبيعات تيك أواي", "revenue"), ("4300", "مبيعات توصيل", "revenue"),
+            ("4400", "مبيعات التطبيقات", "revenue"),
+            ("5200", "تكلفة المشروبات", "expense"), ("5400", "تكلفة التعبئة", "expense"),
+        ]
+        self.db.executemany(
+            "INSERT INTO accounts(code,name_ar,account_type) VALUES(?,?,?)",
+            extra_accounts,
+        )
+        categories = [
+            ("FOOD", "غذاء", "1140", "5100"),
+            ("BEVERAGE", "مشروبات", "1150", "5200"),
+            ("PACKAGING", "تعبئة", "1160", "5400"),
+        ]
+        for code, name, inventory_code, cogs_code in categories:
+            category_id = self.db.execute(
+                "INSERT INTO stock_categories(code,name_ar) VALUES(?,?)", (code, name)
+            ).lastrowid
+            product_id = self.db.execute(
+                "INSERT INTO stock_products(sku,name_ar,category_id) VALUES(?,?,?)",
+                ("REST-" + code, name, category_id),
+            ).lastrowid
+            movement_id = self.db.execute(
+                """INSERT INTO stock_movements(
+                    movement_no,movement_type,product_id,target_warehouse_id,quantity,
+                    unit_cost,total_cost,movement_date)
+                    VALUES(?,'receipt',?,?,'2','10','20','2026-11-10')""",
+                ("OPEN-" + code, product_id, self.warehouse_id),
+            ).lastrowid
+            self.db.execute(
+                """INSERT INTO stock_valuation_layers(
+                    product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost)
+                    VALUES(?,?,?,'2','2','10')""",
+                (product_id, self.warehouse_id, movement_id),
+            )
+
+            self.db.execute("BEGIN IMMEDIATE")
+            invoice = sales.post_invoice(
+                self.db, self.customer_id, "2026-11-14", self.warehouse_id,
+                [{"product_id": product_id, "quantity": "1", "unit_price": "25"}],
+                "0", 1, sales_channel="dine_in",
+            )
+            self.db.commit()
+
+            posted = {
+                row["code"]: (Decimal(row["debit"]), Decimal(row["credit"]))
+                for row in self.db.execute(
+                    """SELECT a.code,SUM(CAST(jl.debit AS NUMERIC)) debit,
+                              SUM(CAST(jl.credit AS NUMERIC)) credit
+                       FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+                       WHERE jl.entry_id=? GROUP BY a.code""",
+                    (invoice["cogs_journal_entry_id"],),
+                )
+            }
+            self.assertEqual(posted[cogs_code], (Decimal("10"), Decimal("0")))
+            self.assertEqual(posted[inventory_code], (Decimal("0"), Decimal("10")))
+            self.assertEqual(invoice["total_cost"], Decimal("10.00"))
+            movement = self.db.execute(
+                "SELECT accounting_status,journal_entry_id FROM stock_movements WHERE movement_no LIKE ?",
+                (invoice["invoice_no"] + "-%",),
+            ).fetchone()
+            self.assertEqual(movement["accounting_status"], "posted")
+            self.assertEqual(movement["journal_entry_id"], invoice["cogs_journal_entry_id"])
+
     def test_invoice_posts_revenue_tax_cogs_and_stock_issue(self):
         self.db.execute("BEGIN IMMEDIATE")
         result = sales.post_invoice(self.db, self.customer_id, "2026-11-10", self.warehouse_id,
