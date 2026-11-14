@@ -1,4 +1,5 @@
 import os
+from decimal import Decimal
 import tempfile
 import unittest
 from pathlib import Path
