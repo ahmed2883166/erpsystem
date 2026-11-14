@@ -703,7 +703,7 @@ def product_uoms():
     products=c.execute("""SELECT p.id,p.sku,p.name_ar,p.uom FROM stock_products p
         WHERE p.active=1 AND p.base_uom_id IS NOT NULL ORDER BY p.name_ar""").fetchall()
     rows=c.execute("""SELECT x.*,p.sku,p.name_ar product_name FROM stock_product_uoms x
-        JOIN stock_products p ON p.id=x.product_id ORDER BY p.name_ar,x.custom_name""").fetchall()
+        JOIN stock_products p ON p.id=x.product_id WHERE x.is_base=0 ORDER BY p.name_ar,x.custom_name""").fetchall()
     c.close()
     return render_template("stock_product_uoms.html",products=products,rows=rows)
 
@@ -898,6 +898,9 @@ def edit_product(product_id):
     if not product:
         c.close(); flash("الصنف غير موجود.","error"); return redirect(url_for("stock.products"))
     used=c.execute("SELECT 1 FROM stock_movements WHERE product_id=? LIMIT 1",(product_id,)).fetchone() is not None
+    for table in ("purchase_order_lines","goods_receipt_lines","sales_invoice_lines"):
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():
+            used=used or c.execute("SELECT 1 FROM "+table+" WHERE product_id=? LIMIT 1",(product_id,)).fetchone() is not None
     uoms=c.execute("SELECT u.id,u.code,u.name_ar,u.category_id,c.name_ar category_name FROM stock_uoms u JOIN stock_uom_categories c ON c.id=u.category_id WHERE u.active=1 AND c.active=1 ORDER BY c.id,u.is_base DESC,u.name_ar").fetchall()
     if request.method=="POST":
         try:
@@ -924,6 +927,16 @@ def edit_product(product_id):
                 raise ValueError("الأسعار والكميات لا يمكن أن تكون سالبة.")
             c.execute("""UPDATE stock_products SET sku=?,name_ar=?,category=?,category_id=?,product_type=?,uom=?,base_uom_id=?,barcode=?,track_lot=?,track_expiry=?,min_qty=?,purchase_price=?,sale_price=?,reorder_point=?,reorder_qty=? WHERE id=?""",
               (sku,name,category["name_ar"] if category else "",category_id,request.form.get("product_type","goods"),uom,base_uom_id,request.form.get("barcode","").strip() or None,int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),str(min_qty),str(purchase_price),str(sale_price),str(reorder_point),str(reorder_qty),product_id))
+            if (base_uom_id or None)!=(product["base_uom_id"] or None):
+                base_unit=c.execute("SELECT code,name_ar FROM stock_uoms WHERE id=? AND active=1",(base_uom_id,)).fetchone()
+                if not base_unit: raise ValueError("وحدة الأساس الجديدة غير نشطة.")
+                base_mapping=c.execute("SELECT id FROM stock_product_uoms WHERE product_id=? AND is_base=1",(product_id,)).fetchone()
+                if base_mapping:
+                    c.execute("""UPDATE stock_product_uoms SET uom_id=?,custom_code=?,custom_name=?,factor_to_base='1'
+                        WHERE id=?""",(base_uom_id,base_unit["code"],base_unit["name_ar"],base_mapping["id"]))
+                else:
+                    c.execute("""INSERT INTO stock_product_uoms(product_id,uom_id,custom_code,custom_name,factor_to_base,is_base)
+                        VALUES(?,?,?,?, '1',1)""",(product_id,base_uom_id,base_unit["code"],base_unit["name_ar"]))
             c.commit(); c.close(); flash("تم تعديل الصنف.","success"); return redirect(url_for("stock.products"))
         except (ValueError,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "الكود أو الباركود مستخدم بالفعل.","error")
