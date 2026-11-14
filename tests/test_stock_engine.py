@@ -33,6 +33,25 @@ class StockValuationTests(unittest.TestCase):
         self.db.close()
         self.tmp.cleanup()
 
+    def test_product_uom_options_reads_custom_code_column(self):
+        unit=self.db.execute(
+            "SELECT id,category_id FROM stock_uoms WHERE code='PCS'"
+        ).fetchone()
+        self.db.execute(
+            "UPDATE stock_products SET base_uom_id=? WHERE id=?",
+            (unit["id"],self.product_id)
+        )
+        self.db.execute("""INSERT INTO stock_product_uoms(
+            product_id,uom_id,custom_code,custom_name,factor_to_base,is_base,
+            purchase_enabled,sales_enabled)
+            VALUES(?,?, 'PCS-CUSTOM','قطعة مخصصة','1',1,1,1)""",
+            (self.product_id,unit["id"]))
+        options=stock.product_uom_options(self.db,self.product_id)
+        self.assertTrue(any(
+            option["code"]=="PCS-CUSTOM" and option["name_ar"]=="قطعة مخصصة"
+            for option in options
+        ))
+
     def test_fifo_cost(self):
         cost, allocations = stock.consume_layers(self.db,self.product_id,self.warehouse_id,stock.D("50"),"fifo")
         self.assertEqual(cost, stock.D("500.00"))
