@@ -882,6 +882,9 @@ def edit_product(product_id):
             uom=selected_uom["name_ar"] if selected_uom else (product["uom"] if not product["base_uom_id"] else "")
             if not sku or not name or not uom: raise ValueError("الكود والاسم ووحدة القياس مطلوبة.")
             if product["base_uom_id"] and not selected_uom: raise ValueError("اختر وحدة قياس نشطة.")
+            package_units_exist=c.execute("SELECT 1 FROM stock_product_uoms WHERE product_id=? AND is_base=0 AND active=1 LIMIT 1",(product_id,)).fetchone()
+            if package_units_exist and (base_uom_id or None)!=(product["base_uom_id"] or None):
+                raise ValueError("لا يمكن تغيير وحدة الأساس بعد تعريف وحدات تعبئة خاصة بالصنف؛ راجع وحدات التعبئة أولًا.")
             if used and (request.form.get("product_type") != product["product_type"] or (base_uom_id or None) != (product["base_uom_id"] or None) or int(request.form.get("track_lot")=="on") != product["track_lot"] or int(request.form.get("track_expiry")=="on") != product["track_expiry"]):
                 raise ValueError("الصنف له حركات سابقة؛ لا يمكن تغيير نوعه أو وحدة قياسه أو إعدادات تتبع التشغيلة/الصلاحية.")
             category_id=request.form.get("category_id",type=int)
