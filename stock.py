@@ -1457,7 +1457,7 @@ def valuation_reconciliation():
         default_inventory = posting.get("inventory")
         if not default_inventory:
             raise ValueError("لا يوجد حساب مخزون مضبوط في ملف النشاط الحالي.")
-        products = conn.execute("SELECT id,sku,name_ar FROM stock_products WHERE active=1 ORDER BY sku").fetchall()
+        products = conn.execute("SELECT id,sku,name_ar FROM stock_products ORDER BY sku").fetchall()
         valuation_by_code = {}
         valuation_by_warehouse = {}
         warehouse_product_totals = {}
@@ -1513,7 +1513,12 @@ def valuation_reconciliation():
             WHERE active=1 AND is_group=0 AND code IN (
                 SELECT DISTINCT code FROM accounts WHERE code IS NOT NULL
             ) ORDER BY code""").fetchall()
+        profile = __import__("activity_profiles").get_active_activity_profile(conn)
+        configured_inventory = profile.get("account_roles", {}).get("inventory", [])
+        if not isinstance(configured_inventory, (list, tuple)):
+            configured_inventory = [configured_inventory]
         inventory_codes = set(valuation_by_code)
+        inventory_codes.update(str(code) for code in configured_inventory if code not in (None, ""))
         inventory_codes.add(default_inventory)
         accounts = {row["code"]: row for row in account_rows if row["code"] in inventory_codes}
         missing = sorted(inventory_codes - set(accounts))
@@ -1574,9 +1579,13 @@ def resolve_pending_movement(movement_id):
     conn = get_db()
     try:
         conn.execute("BEGIN IMMEDIATE")
-        movement = conn.execute("""SELECT m.*,p.id product_id,p.id id,p.name_ar,p.sku
+        movement_row = conn.execute("""SELECT m.*,p.id product_id,p.name_ar,p.sku
             FROM stock_movements m JOIN stock_products p ON p.id=m.product_id WHERE m.id=?""",
             (movement_id,)).fetchone()
+        movement = dict(movement_row) if movement_row else None
+        if movement:
+            # The journal helpers expect product["id"]; keep movement_id separate.
+            movement["id"] = movement["product_id"]
         if not movement or movement["accounting_status"] not in ("pending_purpose","pending_setup","pending_document"):
             raise ValueError("الحركة غير موجودة أو لم تعد معلقة.")
         if movement["accounting_status"] == "pending_document":
