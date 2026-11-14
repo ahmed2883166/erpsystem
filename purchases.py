@@ -692,6 +692,8 @@ def edit_order(order_id):
       FROM purchase_orders p LEFT JOIN purchase_order_lines l ON l.po_id=p.id WHERE p.id=?""",(order_id,)).fetchone()
     if not order:
         c.close(); flash("أمر الشراء غير موجود.","error"); return redirect(url_for("purchase.index"))
+    order=dict(order)
+    order["entered_unit_price"]=str(Decimal(str(order["unit_price"] or "0"))*Decimal(str(order.get("conversion_factor") or "1")))
     received=c.execute("SELECT 1 FROM goods_receipts WHERE po_id=? LIMIT 1",(order_id,)).fetchone() is not None
     if received or order["status"] not in {"draft", "rejected"}:
         c.close(); flash("لا يمكن تعديل أمر شراء تم استلامه أو اعتماده.","error"); return redirect(url_for("purchase.index"))
@@ -701,7 +703,7 @@ def edit_order(order_id):
             entered_qty=Decimal(request.form["quantity"]); entered_price=money(request.form["unit_price"])
             if entered_qty<=0 or entered_price<0: raise ValueError("الكمية والسعر غير صحيحين.")
             factor,uom_name=product_uom_factor(c,product,request.form.get("uom_id"),"purchase")
-            qty=q4(entered_qty*factor); price=money(entered_price/factor)
+            qty=q4(entered_qty*factor); price=entered_price/factor
             c.execute("""UPDATE purchase_orders SET supplier_id=?,order_date=?,expected_date=?,notes=?,status='draft',
               rejected_by=NULL,rejected_at=NULL,rejection_reason=NULL WHERE id=?""",
               (supplier,request.form["order_date"],request.form.get("expected_date") or None,request.form.get("notes",""),order_id))
