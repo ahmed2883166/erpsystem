@@ -1836,15 +1836,20 @@ def pay_employee_grant(grant_id):
         c.execute("""INSERT INTO employee_grant_payments(grant_id,payment_date,amount,cash_account_id,
             journal_entry_id,reference,notes,created_by) VALUES(?,?,?,?,?,?,?,?)""",
             (grant_id,payment_date,str(amount),cash_id,journal_id,reference,request.form.get("notes","").strip(),session["user_id"]))
-        remaining=amount
         lines=c.execute("SELECT id,amount,paid_amount FROM employee_grant_lines WHERE grant_id=? ORDER BY id",(grant_id,)).fetchall()
-        for line in lines:
-            due=M(D(line["amount"])-D(line["paid_amount"])); allocation=min(remaining,due)
+        outstanding_by_line=[(line,M(D(line["amount"])-D(line["paid_amount"]))) for line in lines]
+        total_outstanding=M(sum((due for _line,due in outstanding_by_line),Decimal("0")))
+        remaining=amount
+        for index,(line,due) in enumerate(outstanding_by_line):
+            if due<=0 or remaining<=0: continue
+            if index==len(outstanding_by_line)-1:
+                allocation=min(due,remaining)
+            else:
+                allocation=min(due,remaining,M(amount*due/total_outstanding))
             if allocation>0:
                 c.execute("UPDATE employee_grant_lines SET paid_amount=? WHERE id=?",
                     (str(M(D(line["paid_amount"])+allocation)),line["id"]))
                 remaining=M(remaining-allocation)
-            if remaining<=0: break
         new_status="paid" if amount==outstanding else "partially_paid"
         c.execute("UPDATE employee_grants SET status=? WHERE id=?",(new_status,grant_id))
         _audit(c,"employee_grant_payment","grant="+str(grant_id)+" amount="+str(amount)+" journal="+str(journal_id))
