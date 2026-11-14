@@ -193,8 +193,11 @@ class ActivityProfileTests(unittest.TestCase):
         self.conn.execute("""CREATE TABLE stock_products(
             id INTEGER PRIMARY KEY, category TEXT DEFAULT '', category_id INTEGER)""")
         self.conn.execute("INSERT INTO company_settings VALUES('activity','restaurant')")
-        self.conn.execute("INSERT INTO stock_categories VALUES(1,'BEVERAGE','مشروبات')")
+        self.conn.execute("INSERT INTO stock_categories VALUES(1,'FOOD','غذاء')")
         self.conn.execute("INSERT INTO stock_products VALUES(1,'',1)")
+        self.assertEqual(resolve_product_account_code(self.conn, 1, "inventory", "1140"), "1140")
+        self.assertEqual(resolve_product_account_code(self.conn, 1, "cogs", "5100"), "5100")
+        self.conn.execute("UPDATE stock_categories SET code='BEVERAGE',name_ar='مشروبات' WHERE id=1")
         self.assertEqual(resolve_product_account_code(self.conn, 1, "inventory", "1140"), "1150")
         self.assertEqual(resolve_product_account_code(self.conn, 1, "cogs", "5100"), "5200")
         self.conn.execute("UPDATE stock_categories SET code='PACKAGING',name_ar='تغليف' WHERE id=1")
@@ -207,6 +210,39 @@ class ActivityProfileTests(unittest.TestCase):
         self.conn.execute("UPDATE stock_categories SET code='MEDICAL',name_ar='مستلزمات طبية' WHERE id=1")
         self.assertEqual(resolve_product_account_code(self.conn, 1, "inventory", "1150"), "1150")
         self.assertEqual(resolve_product_account_code(self.conn, 1, "cogs", "5300"), "5300")
+
+    def test_industrial_profile_cannot_redirect_inventory_or_cogs_to_production_accounts(self):
+        from activity_profiles import create_activity_profile, update_custom_activity_profile
+        from activity_profiles import resolve_product_account_code
+
+        self._company_settings()
+        self.conn.execute("INSERT INTO company_settings VALUES('activity','industrial')")
+        seed_activity_chart(self.conn, "industrial")
+        profile_id = create_activity_profile(
+            self.conn, "industrial_alt", "ملف صناعي تجريبي", "industrial"
+        )
+        profile = next(p for p in list_activity_profiles(self.conn) if p["id"] == profile_id)
+        roles = dict(profile["account_roles"])
+        posting = dict(profile["posting_accounts"])
+        roles["inventory"] = ["1140", "1150"]
+        posting["inventory"] = "1150"
+        posting["purchase_inventory"] = "1150"
+        posting["cogs"] = "5100"
+        with self.assertRaisesRegex(ValueError, "حساب مخزون واحدًا فقط"):
+            update_custom_activity_profile(
+                self.conn, profile_id, json.dumps(roles),
+                json.dumps(posting), json.dumps(profile["tax_roles"]),
+            )
+
+        self.conn.execute(
+            "UPDATE activity_profiles SET posting_accounts_json=? WHERE id=?",
+            (json.dumps(posting), profile_id),
+        )
+        self.conn.execute(
+            "UPDATE company_settings SET setting_value='industrial_alt' WHERE setting_key='activity_profile_code'"
+        )
+        self.assertEqual(resolve_product_account_code(self.conn, 999, "inventory", "1150"), "1130")
+        self.assertEqual(resolve_product_account_code(self.conn, 999, "cogs", "5100"), "5400")
 
     def test_unknown_product_category_keeps_configured_default_account(self):
         from activity_profiles import resolve_product_account_code
