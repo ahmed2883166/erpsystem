@@ -662,6 +662,29 @@ def make_lot(c, product, lot_number, production_date, expiry_date, as_of=None):
     return lot["id"]
 
 
+def calculate_warehouse_reorder_alerts(conn, warehouse_totals):
+    """Return reorder alerts by product and warehouse, never by consolidated product stock."""
+    alerts=[]
+    settings=conn.execute("""SELECT s.*,p.sku,p.name_ar,p.uom,w.code warehouse_code,w.name_ar warehouse_name
+        FROM stock_warehouse_product_settings s
+        JOIN stock_products p ON p.id=s.product_id AND p.active=1
+        JOIN stock_warehouses w ON w.id=s.warehouse_id AND w.active=1
+        ORDER BY w.code,p.sku""").fetchall()
+    for setting in settings:
+        current=warehouse_totals.get((setting["product_id"],setting["warehouse_id"]),{"qty":D("0")})["qty"]
+        point=D(str(setting["reorder_point"] or "0"))
+        minimum=D(str(setting["min_qty"] or "0"))
+        threshold=point if point>0 else minimum
+        suggested=D(str(setting["reorder_qty"] or "0"))
+        if threshold>0 and current<=threshold:
+            if suggested<=0:
+                suggested=max(minimum,threshold-current)
+            alerts.append({"sku":setting["sku"],"name_ar":setting["name_ar"],"uom":setting["uom"],
+                "warehouse_code":setting["warehouse_code"],"warehouse_name":setting["warehouse_name"],
+                "qty":current,"point":threshold,"minimum":minimum,"suggested":suggested})
+    return alerts
+
+
 @stock_bp.route("/")
 @stock_permission("stock.view")
 def index():
@@ -679,20 +702,13 @@ def index():
         product_qty[layer["product_id"]]=product_qty.get(layer["product_id"],Decimal("0"))+quantity
         if layer["lot_id"] is not None:
             lot_qty[layer["lot_id"]]=lot_qty.get(layer["lot_id"],Decimal("0"))+quantity
-    reorder_alert_count=0
-    warehouse_qty={}
+    dashboard_warehouse_totals={}
     for layer in c.execute("""SELECT warehouse_id,product_id,qty_remaining
         FROM stock_valuation_layers WHERE CAST(qty_remaining AS REAL)>0""").fetchall():
-        key=(layer["warehouse_id"],layer["product_id"])
-        warehouse_qty[key]=warehouse_qty.get(key,Decimal("0"))+Decimal(str(layer["qty_remaining"] or "0"))
-    for setting in c.execute("""SELECT s.product_id,s.warehouse_id,s.reorder_point,s.min_qty
-        FROM stock_warehouse_product_settings s
-        JOIN stock_products p ON p.id=s.product_id AND p.active=1
-        JOIN stock_warehouses w ON w.id=s.warehouse_id AND w.active=1""").fetchall():
-        point=Decimal(str(setting["reorder_point"] or "0"))
-        threshold=point if point>0 else Decimal(str(setting["min_qty"] or "0"))
-        if threshold>0 and warehouse_qty.get((setting["warehouse_id"],setting["product_id"]),Decimal("0"))<=threshold:
-            reorder_alert_count+=1
+        key=(layer["product_id"],layer["warehouse_id"])
+        total=dashboard_warehouse_totals.setdefault(key,{"qty":Decimal("0")})
+        total["qty"]+=Decimal(str(layer["qty_remaining"] or "0"))
+    reorder_alert_count=len(calculate_warehouse_reorder_alerts(c,dashboard_warehouse_totals))
     expiry_alert_count=0
     for lot in c.execute("""SELECT id,expiry_date FROM stock_lots WHERE expiry_date IS NOT NULL""").fetchall():
         if (date.fromisoformat(lot["expiry_date"])-today).days<=30 and lot_qty.get(lot["id"],Decimal("0"))>0:
@@ -1336,22 +1352,7 @@ def reports():
       LEFT JOIN stock_warehouses w ON w.id=COALESCE(m.target_warehouse_id,m.source_warehouse_id)
       ORDER BY m.id DESC LIMIT 100""").fetchall()
     # Reorder alerts are evaluated independently for each active warehouse.
-    reorder_alerts=[]
-    for setting in c.execute("""SELECT s.*,p.sku,p.name_ar,p.uom,w.code warehouse_code,w.name_ar warehouse_name
-        FROM stock_warehouse_product_settings s
-        JOIN stock_products p ON p.id=s.product_id AND p.active=1
-        JOIN stock_warehouses w ON w.id=s.warehouse_id AND w.active=1
-        ORDER BY w.code,p.sku""").fetchall():
-        current=warehouse_totals.get((setting["product_id"],setting["warehouse_id"]),{"qty":Decimal("0"),"value":Decimal("0")})["qty"]
-        point=Decimal(str(setting["reorder_point"] or "0"))
-        minimum=Decimal(str(setting["min_qty"] or "0"))
-        threshold=point if point>0 else minimum
-        suggested=Decimal(str(setting["reorder_qty"] or "0"))
-        if threshold>0 and current<=threshold:
-            if suggested<=0: suggested=max(minimum,threshold-current)
-            reorder_alerts.append({"sku":setting["sku"],"name_ar":setting["name_ar"],"uom":setting["uom"],
-                "warehouse_code":setting["warehouse_code"],"warehouse_name":setting["warehouse_name"],
-                "qty":current,"point":threshold,"minimum":minimum,"suggested":suggested})
+    reorder_alerts=calculate_warehouse_reorder_alerts(c,warehouse_totals)
     # 90-day turnover is cost of goods issued for sale divided by average inventory
     # value. Average stock is reconstructed from today's valuation and net stock movements.
     today=date.today()
