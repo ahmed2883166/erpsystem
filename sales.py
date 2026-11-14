@@ -616,13 +616,23 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             key = (item["cogs_account_code"], item["inventory_account_code"])
             cost_groups[key] = cost_groups.get(key, Decimal("0.00")) + item["cost_total"]
         cogs_lines = []
+        # Keep expense posting aggregated by account, but split inventory credits
+        # by product and warehouse so the stock subledger can reconcile to GL.
         for (cogs_code, inventory_code), group_cost in sorted(cost_groups.items()):
             cogs_id = _account(conn, cogs_code, "expense")
+            cogs_lines.append((cogs_id, group_cost, 0, "تكلفة المبيعات - " + cogs_code))
+        inventory_groups = {}
+        for item in normalized:
+            if not item["product_id"] or item["cost_total"] <= 0:
+                continue
+            key = (item["inventory_account_code"], int(item["product_id"]), int(warehouse_id))
+            inventory_groups[key] = inventory_groups.get(key, Decimal("0.00")) + item["cost_total"]
+        for (inventory_code, product_id, wh_id), group_cost in sorted(inventory_groups.items()):
             inventory_id = _account(conn, inventory_code, "asset")
-            cogs_lines.extend([
-                (cogs_id, group_cost, 0, "تكلفة المبيعات - " + cogs_code),
-                (inventory_id, 0, group_cost, "تخفيض المخزون - " + inventory_code),
-            ])
+            cogs_lines.append((
+                inventory_id, 0, group_cost, "تخفيض المخزون - " + inventory_code,
+                {"stock_product_id": product_id, "stock_warehouse_id": wh_id},
+            ))
         cogs_journal_id = post_journal(
             conn, invoice_date, invoice_no + "-COGS", "تكلفة مبيعات " + invoice_no,
             cogs_lines, created_by, dimensions=dimensions
