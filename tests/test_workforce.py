@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+import shutil
 from pathlib import Path
 
 from flask import Flask
@@ -506,6 +507,53 @@ class WorkforceTests(unittest.TestCase):
             "reversal_date": "2026-12-02", "reason": "محاولة عكس ثانية"
         }, follow_redirects=True)
         self.assertIn("لا يمكن عكس قيد مرتبات غير مرحّل", response.get_data(as_text=True))
+
+    def test_legacy_unique_payroll_period_migrates_and_allows_replacement_after_reversal(self):
+        legacy_path = Path(self.temp.name) / "legacy-payroll.db"
+        shutil.copy2(self.db_path, legacy_path)
+        connection = sqlite3.connect(legacy_path)
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute("PRAGMA legacy_alter_table=ON")
+        connection.execute("ALTER TABLE payroll_runs RENAME TO payroll_runs_previous")
+        connection.execute("""CREATE TABLE payroll_runs(
+            id INTEGER PRIMARY KEY, period TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'draft', journal_entry_id INTEGER UNIQUE,
+            created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        connection.execute("""INSERT INTO payroll_runs(id,period,status,journal_entry_id,created_by)
+            VALUES(1,'2026-10','reversed',NULL,1)""")
+        connection.execute("DROP TABLE payroll_runs_previous")
+        connection.commit()
+        connection.close()
+
+        original_path = workforce.DB_PATH
+        try:
+            workforce.DB_PATH = legacy_path
+            workforce.initialize_workforce_schema()
+            connection = sqlite3.connect(legacy_path)
+            table_sql = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='payroll_runs'"
+            ).fetchone()[0]
+            index_sql = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND name='uq_payroll_runs_non_reversed_period'"
+            ).fetchone()[0]
+            self.assertNotIn("period TEXT NOT NULL UNIQUE", table_sql)
+            self.assertIn("WHERE status!='reversed'", index_sql)
+            self.assertEqual(
+                connection.execute("SELECT status FROM payroll_runs WHERE id=1").fetchone()[0],
+                "reversed",
+            )
+            connection.execute(
+                "INSERT INTO payroll_runs(id,period,status) VALUES(2,'2026-10','draft')"
+            )
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    "INSERT INTO payroll_runs(id,period,status) VALUES(3,'2026-10','draft')"
+                )
+            connection.rollback()
+            connection.close()
+        finally:
+            workforce.DB_PATH = original_path
 
     def test_workforce_backfill_migration_runs_once(self):
         conn = sqlite3.connect(self.db_path)
