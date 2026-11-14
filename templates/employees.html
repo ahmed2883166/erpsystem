@@ -44,8 +44,8 @@
 <form method="get" class="inline-form"><label>عدد السطور <select name="employees_per_page" onchange="this.form.submit()"><option value="50" {% if employees_page.per_page==50 %}selected{% endif %}>50</option><option value="100" {% if employees_page.per_page==100 %}selected{% endif %}>100</option></select></label></form>
 {% if employees_page.page>1 %}<a class="button secondary" href="{{ url_for('workforce.employees',employees_page=employees_page.page-1,employees_per_page=employees_page.per_page) }}">السابق</a>{% endif %}
 {% if employees_page.page<employees_page.pages %}<a class="button" href="{{ url_for('workforce.employees',employees_page=employees_page.page+1,employees_per_page=employees_page.per_page) }}">التالي</a>{% endif %}</div>
-<p class="muted">الإجازة بدون مرتب لا تُدرج في المسير. الموظف المستقيل أو المحال للمعاش يُدرج فقط إذا كان تاريخ انتهاء خدمته داخل شهر المسير، ويُحسب الأجر والبدلات المتكررة بنسبة أيام الخدمة على أساس 30 يومًا.</p></section>
-<section class="panel"><h3>إعداد أنواع الحوافز والمكافآت</h3><p>أنشئ حافزًا لمناسبة أو إنجاز أو مكافأة، ثم اختره للموظف عند إعداد المسير.</p>
+<p class="muted">الإجازة بدون مرتب لا تُدرج ضمن كشف المرتبات. الموظف المستقيل أو المحال للمعاش يُدرج فقط إذا كان تاريخ انتهاء خدمته داخل شهر المرتبات، ويُحسب الأجر والبدلات المتكررة بنسبة أيام الخدمة على أساس 30 يومًا.</p></section>
+<section class="panel"><h3>إعداد أنواع الحوافز والمكافآت</h3><p>أنشئ حافزًا لمناسبة أو إنجاز أو مكافأة، ثم اختره للموظف عند إعداد المرتبات.</p>
 <form method="post" action="{{url_for('workforce.add_incentive_rule')}}" class="form-grid">
 <label>اسم الحافز<input name="name" placeholder="حافز رمضان / مكافأة إنجاز / حافز إنتاج" required></label>
 <label>طريقة الحساب<select name="calculation_method"><option value="fixed">مبلغ مقطوع لكل موظف</option><option value="percentage_basic">نسبة من الراتب الأساسي</option><option value="per_day">قيمة يومية × عدد الأيام</option></select></label>
