@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import app as nexus_app
-from data_reset import PRESERVED_TABLES, clear_company_data
+from data_reset import DELETE_TABLES, PRESERVED_TABLES, clear_company_data
 
 
 class CompanyDataResetTests(unittest.TestCase):
@@ -92,10 +92,37 @@ class CompanyDataResetTests(unittest.TestCase):
             "NEXUS Test",
         )
         self.assertEqual(connection.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0], 1)
-        self.assertTrue(PRESERVED_TABLES.issubset(set(result["preserved_tables"])))
+        self.assertEqual(
+            set(result["preserved_tables"]),
+            PRESERVED_TABLES.intersection({
+                "users", "accounts", "company_settings", "currencies", "tax_rates",
+                "audit_log", "activity_profiles", "cash_flow_account_mappings",
+                "management_account_roles", "payroll_rule_sets", "payroll_tax_brackets",
+                "payroll_tax_tier_brackets", "fx_exchange_rates",
+            }),
+        )
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
         connection.close()
+
+    def test_reset_refuses_unknown_tables_without_deleting_any_data(self):
+        connection = self.open_database()
+        connection.execute("CREATE TABLE future_feature_records(id INTEGER PRIMARY KEY, value TEXT)")
+        connection.execute("INSERT INTO future_feature_records VALUES(1,'keep-me')")
+        connection.commit()
+        with self.assertRaisesRegex(RuntimeError, "جداول غير مصنفة"):
+            clear_company_data(connection)
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM future_feature_records").fetchone()[0], 1)
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM customers").fetchone()[0], 1)
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM sales_invoices").fetchone()[0], 1)
+        self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
+        connection.close()
+
+    def test_delete_allowlist_contains_known_operational_tables_only(self):
+        self.assertIn("sales_invoices", DELETE_TABLES)
+        self.assertIn("payroll_runs", DELETE_TABLES)
+        self.assertNotIn("future_feature_records", DELETE_TABLES)
+        self.assertTrue(PRESERVED_TABLES.isdisjoint(DELETE_TABLES))
 
     def _seed_route_database(self):
         connection = sqlite3.connect(self.db_path)
@@ -109,13 +136,13 @@ class CompanyDataResetTests(unittest.TestCase):
             );
             CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY, action TEXT);
             CREATE TABLE IF NOT EXISTS login_attempts(id INTEGER PRIMARY KEY, username TEXT, remote_addr TEXT, attempted_at TEXT);
-            CREATE TABLE IF NOT EXISTS sample_business_data(id INTEGER PRIMARY KEY, value TEXT);
+            CREATE TABLE IF NOT EXISTS customers(id INTEGER PRIMARY KEY, name TEXT);
         """)
         connection.execute(
             "INSERT OR REPLACE INTO users VALUES(1,'admin','admin',1,?)",
             (nexus_app.password_hash("RootSecret123!"),),
         )
-        connection.execute("INSERT OR REPLACE INTO sample_business_data VALUES(1,'must-clear')")
+        connection.execute("INSERT OR REPLACE INTO customers VALUES(1,'must-clear')")
         connection.commit()
         connection.close()
 
@@ -156,7 +183,7 @@ class CompanyDataResetTests(unittest.TestCase):
         backup.assert_called_once()
         audit.assert_called_once()
         connection = self.open_database()
-        self.assertEqual(connection.execute("SELECT COUNT(*) FROM sample_business_data").fetchone()[0], 0)
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM customers").fetchone()[0], 0)
         self.assertEqual(connection.execute("SELECT COUNT(*) FROM users WHERE username='admin'").fetchone()[0], 1)
         connection.close()
 
@@ -183,7 +210,7 @@ class CompanyDataResetTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         backup.assert_not_called()
         connection = self.open_database()
-        self.assertEqual(connection.execute("SELECT COUNT(*) FROM sample_business_data").fetchone()[0], 1)
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM customers").fetchone()[0], 1)
         connection.close()
 
 
@@ -226,7 +253,7 @@ class CompanyDataResetTests(unittest.TestCase):
         backup.assert_called_once()
         connection = self.open_database()
         self.assertEqual(
-            connection.execute("SELECT COUNT(*) FROM sample_business_data").fetchone()[0],
+            connection.execute("SELECT COUNT(*) FROM customers").fetchone()[0],
             0,
         )
         connection.close()
