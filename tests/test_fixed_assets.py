@@ -225,6 +225,22 @@ class FixedAssetDepreciationRevisionTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(tuple(revision), (10, 77, 78, "100.00", "53.57"))
 
+    def test_disposal_on_last_day_keeps_full_month_depreciation_without_reversal(self):
+        with patch("fixed_assets.post_journal") as post:
+            result = _reverse_full_period_depreciation_for_disposal(
+                self.conn, self.asset, "2026-02", "2026-02-28", 5
+            )
+        self.assertIsNone(result)
+        post.assert_not_called()
+        row = self.conn.execute(
+            "SELECT amount,journal_entry_id FROM asset_depreciations WHERE id=2"
+        ).fetchone()
+        self.assertEqual((row["amount"], row["journal_entry_id"]), ("100.00", 10))
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM asset_depreciation_revisions").fetchone()[0],
+            0,
+        )
+
     def test_later_posted_period_blocks_reversal_without_creating_journal(self):
         self.conn.execute(
             "INSERT INTO asset_depreciations(asset_id,period,amount,journal_entry_id) "
