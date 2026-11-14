@@ -45,6 +45,7 @@ class WorkforceExtrasTests(unittest.TestCase):
             "employee_statement.html": "{{ employee.full_name }}|{{ summary.net }}",
             "payroll.html": "{{ get_flashed_messages()|join('|') }}",
             "payroll_run.html": "run",
+            "friday_allowance.html": "friday",
         }.items():
             (template_dir / name).write_text(body, encoding="utf-8")
         self.app = Flask(__name__, template_folder=str(template_dir))
@@ -197,6 +198,67 @@ class WorkforceExtrasTests(unittest.TestCase):
             ("2026-11-02","absent","","","8.00"),
             ("2026-11-03","unpaid_leave","","","0.00"),
         ])
+
+
+    def test_friday_allowance_uses_basic_salary_only_and_posts_accrual_once(self):
+        conn=sqlite3.connect(self.db_path)
+        conn.executemany("""INSERT INTO accounts(id,code,name_ar,account_type,is_group,active)
+            VALUES(?,?,?,?,0,1)""",[
+            (1,"1000","الصندوق","asset"),
+            (2,"5200","مصروف أجور إضافية","expense"),
+            (3,"2200","أجور إضافية مستحقة","liability"),
+        ])
+        conn.execute("UPDATE employees SET friday_work_eligible=1,variable_salary='5000',insured_wage='8000' WHERE id=1")
+        conn.executemany("""INSERT INTO attendance_records(employee_id,attendance_date,status,check_in,check_out)
+            VALUES(1,? ,?,'08:00','16:00')""",[
+            ("2026-11-06","present"),("2026-11-13","present"),
+            ("2026-11-20","absent"),("2026-11-07","present"),
+        ])
+        conn.commit(); conn.close()
+        prepared=self.client.post("/hr/friday-allowance",data={
+            "period":"2026-11","expense_account_id":"2","payable_account_id":"3"
+        })
+        self.assertEqual(prepared.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        batch=conn.execute("SELECT id,status,total_amount FROM friday_allowance_batches WHERE period='2026-11'").fetchone()
+        line=conn.execute("""SELECT basic_salary_snapshot,attendance_days,amount
+            FROM friday_allowance_lines WHERE batch_id=?""",(batch[0],)).fetchone()
+        conn.close()
+        self.assertEqual(batch, (1,"draft","1333.33"))
+        self.assertEqual(line,("10000.00",2,"1333.33"))
+        posted=self.client.post("/hr/friday-allowance/1/post",data={})
+        self.assertEqual(posted.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        status,journal_id=conn.execute("SELECT status,journal_entry_id FROM friday_allowance_batches WHERE id=1").fetchone()
+        journal=conn.execute("SELECT reference,status,entry_date FROM journal_entries WHERE id=?",(journal_id,)).fetchone()
+        journal_lines=conn.execute("""SELECT account_id,debit,credit FROM journal_lines
+            WHERE entry_id=? ORDER BY id""",(journal_id,)).fetchall()
+        conn.close()
+        self.assertEqual(status,"posted")
+        self.assertEqual(journal,("FRIDAY-ALLOWANCE-2026-11","posted","2026-11-30"))
+        self.assertEqual(journal_lines,[(2,"1333.33","0"),(3,"0","1333.33")])
+        duplicate=self.client.post("/hr/friday-allowance/1/post",data={})
+        self.assertEqual(duplicate.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries WHERE reference='FRIDAY-ALLOWANCE-2026-11'").fetchone()[0],1)
+        conn.close()
+
+
+    def test_employee_friday_allowance_flag_is_saved_from_management_choice(self):
+        response=self.client.post("/hr/1/edit",data={
+            "employee_code":"E001","full_name":"Employee One","job_title":"محاسب","department":"الحسابات",
+            "hire_date":"2026-01-01","basic_salary":"10000","standard_hours":"208",
+            "variable_salary":"0","legal_category":"local","insurance_number":"INS-1",
+            "insured_wage":"8000","insurance_enabled":"1","address":"Tanta",
+            "national_id":"12345678901234","work_status":"permanent","raise_type":"fixed",
+            "raise_value":"0","raise_mode":"basic","raise_effective_date":"",
+            "overtime_rate_percent":"150","branch_id":"","cost_center_id":"","project_id":"",
+            "termination_date":"","friday_work_eligible":"1"
+        })
+        self.assertEqual(response.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT friday_work_eligible FROM employees WHERE id=1").fetchone()[0],1)
+        conn.close()
 
 
 if __name__ == "__main__":
