@@ -1970,10 +1970,10 @@ def salesperson_list():
     c = db()
     if request.method == "POST":
         try:
-            code = request.form.get("code", "").strip().upper()
             name = request.form.get("name", "").strip()
-            if not code or len(code) > 30 or not name or len(name) > 120:
-                raise ValueError("أدخل كودًا واسمًا صحيحين لمندوب المبيعات.")
+            if not name or len(name) > 120:
+                raise ValueError("أدخل اسمًا صحيحًا لمندوب المبيعات.")
+            code = next_code(c, "salesperson", "SLS", "salespersons", "code")
             c.execute("INSERT INTO salespersons(code,name) VALUES(?,?)", (code, name))
             c.commit()
             flash("تم إضافة مندوب المبيعات.", "success")
