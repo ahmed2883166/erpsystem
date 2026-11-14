@@ -75,6 +75,7 @@ class WorkforceTests(unittest.TestCase):
         response = self.client.post("/hr/payroll", data={
             "period": "2026-11", "basic_1": "12000", "allowances_1": "1500",
             "overtime_hours_1": "10", "overtime_amount_1": "750",
+            "overtime_override_reason_1": "اعتماد يدوي بعد مراجعة المشرف",
             "absent_hours_1": "2", "absence_deduction_1": "100",
             "other_deductions_1": "200", "tax_1": "500",
             "employee_ins_1": "300", "employer_ins_1": "400"
@@ -83,7 +84,7 @@ class WorkforceTests(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         line = conn.execute("SELECT gross_pay,net_pay FROM payroll_lines").fetchone()
         conn.close()
-        self.assertEqual(line, ("14250.00", "13150.00"))
+        self.assertEqual(line, ("15250.00", "14150.00"))
         conn = sqlite3.connect(self.db_path)
         manual_values = conn.execute(
             "SELECT basic_salary,allowances,taxable_income_tax,employee_insurance,employer_insurance,rule_set_id "
@@ -92,7 +93,7 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         # Even though the test setup seeded Egypt's automatic rule set, manual
         # amounts must remain unchanged and no statutory rule is snapshotted.
-        self.assertEqual(manual_values, ("12000.00", "1500.00", "500.00", "300.00", "400.00", None))
+        self.assertEqual(manual_values, ("12000.00", "2500.00", "500.00", "300.00", "400.00", None))
         response = self.client.post("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
@@ -112,8 +113,8 @@ class WorkforceTests(unittest.TestCase):
             "JOIN accounts a ON a.id=jl.account_id ORDER BY jl.id"
         ).fetchall()
         conn.close()
-        self.assertEqual(sum(float(x[1] or 0) for x in posted), 14650.0)
-        self.assertEqual(sum(float(x[2] or 0) for x in posted), 14650.0)
+        self.assertEqual(sum(float(x[1] or 0) for x in posted), 15650.0)
+        self.assertEqual(sum(float(x[2] or 0) for x in posted), 15650.0)
         self.assertTrue(any(x[0] == "1300" and x[2] == "200.00" for x in posted))
 
     def test_payroll_payment_supports_partial_and_full_settlement(self):
@@ -121,6 +122,7 @@ class WorkforceTests(unittest.TestCase):
         self.client.post("/hr/payroll", data={
             "period": "2026-11", "basic_1": "12000", "allowances_1": "1500",
             "overtime_hours_1": "10", "overtime_amount_1": "750",
+            "overtime_override_reason_1": "اعتماد يدوي بعد مراجعة المشرف",
             "absent_hours_1": "2", "absence_deduction_1": "100",
             "other_deductions_1": "200", "tax_1": "500",
             "employee_ins_1": "300", "employer_ins_1": "400"
@@ -137,7 +139,7 @@ class WorkforceTests(unittest.TestCase):
         })
         self.assertEqual(response.status_code, 302)
         response = self.client.post("/hr/payroll/1/payment", data={
-            "payment_date": "2026-12-01", "amount": "8150", "cash_account_id": "1"
+            "payment_date": "2026-12-01", "amount": "9150", "cash_account_id": "1"
         })
         self.assertEqual(response.status_code, 302)
         response = self.client.post("/hr/payroll/1/payment", data={
@@ -149,9 +151,9 @@ class WorkforceTests(unittest.TestCase):
         debit, credit = conn.execute("""SELECT SUM(debit),SUM(credit) FROM journal_lines
             WHERE entry_id IN (SELECT journal_entry_id FROM payroll_payments)""").fetchone()
         conn.close()
-        self.assertEqual(payments, [("5000.00",), ("8150.00",)])
-        self.assertAlmostEqual(debit, 13150.0, places=2)
-        self.assertAlmostEqual(credit, 13150.0, places=2)
+        self.assertEqual(payments, [("5000.00",), ("9150.00",)])
+        self.assertAlmostEqual(debit, 14150.0, places=2)
+        self.assertAlmostEqual(credit, 14150.0, places=2)
 
     def test_employee_loan_request_approval_disbursement_and_payroll_deduction(self):
         self.add_employee()
@@ -176,7 +178,7 @@ class WorkforceTests(unittest.TestCase):
         conn=sqlite3.connect(self.db_path)
         line=conn.execute("SELECT advance_deduction,loan_deduction,net_pay FROM payroll_lines").fetchone()
         conn.close()
-        self.assertEqual(line,("333.34","333.34","12366.66"))
+        self.assertEqual(line,("333.34","333.34","13366.66"))
         response=self.client.post("/hr/payroll/1/post",data={"salary_expense_account":"4",
             "employer_ins_expense_account":"3","salaries_payable_account":"5","tax_payable_account":"6",
             "insurance_payable_account":"7","advances_account":"8","other_deductions_account":"2"})
@@ -220,7 +222,7 @@ class WorkforceTests(unittest.TestCase):
         conn=sqlite3.connect(self.db_path)
         line=conn.execute("SELECT overtime_hours,overtime_amount,absent_hours,absence_deduction,net_pay FROM payroll_lines").fetchone()
         conn.close()
-        self.assertEqual(line,("2.00","150.00","4.00","866.67","9283.33"))
+        self.assertEqual(line,("2.00","150.00","4.00","866.67","10283.33"))
 
     def test_custody_issue_expense_and_full_settlement(self):
         self.add_employee()
@@ -296,7 +298,7 @@ class WorkforceTests(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         totals = conn.execute("SELECT SUM(CAST(gross_pay AS NUMERIC)),SUM(CAST(net_pay AS NUMERIC)) FROM payroll_lines").fetchone()
         conn.close()
-        self.assertEqual(totals, (22750, 21200))
+        self.assertEqual(totals, (23750, 22200))
         response = self.client.post("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
@@ -311,9 +313,9 @@ class WorkforceTests(unittest.TestCase):
         ).fetchall()
         conn.close()
         self.assertEqual(debit, credit)
-        self.assertEqual(debit, 23400)
-        self.assertIn((4, 22750, 100), totals_by_account)
-        self.assertIn((5, 0, 21200), totals_by_account)
+        self.assertEqual(debit, 24400)
+        self.assertIn((4, 23750, 100), totals_by_account)
+        self.assertIn((5, 0, 22200), totals_by_account)
 
     def test_employee_profile_fields_and_salary_raise_overtime_and_event_bonus(self):
         response = self.client.post("/hr", data={
@@ -364,6 +366,56 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         self.assertEqual(line, ("11000.00","1000.00","825.00","550.00","12875.00","حافز مناسبة"))
         self.assertEqual(per_day, ("300.00","8300.00","3"))
+
+    def test_payroll_raise_fixed_items_and_overtime_override_are_snapshotted(self):
+        self.add_employee()
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""UPDATE employees SET raise_type='percentage',raise_value='10',
+            raise_mode='basic',raise_effective_date='2026-11-01' WHERE id=1""")
+        conn.execute("""INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount)
+            VALUES(1,'خصم ثابت','deduction','250')""")
+        conn.commit()
+        conn.close()
+        response = self.client.post("/hr/payroll", data={
+            "period": "2026-11", "basic_1": "11000", "allowances_1": "500",
+            "overtime_hours_1": "10", "overtime_rate_percent_1": "150",
+            "overtime_amount_1": "700", "overtime_override_reason_1": "موافقة مدير التشغيل",
+            "other_deductions_1": "50", "tax_1": "0", "employee_ins_1": "0",
+            "employer_ins_1": "0", "absence_deduction_1": "0"
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        row = conn.execute("""SELECT basic_salary,salary_raise,allowances,overtime_calculated_amount,
+            overtime_amount,overtime_manual_override,overtime_override_reason,other_deductions,gross_pay,net_pay
+            FROM payroll_lines WHERE run_id=1""").fetchone()
+        conn.close()
+        self.assertEqual(row, ("11000.00","1000.00","1500.00","825.00","700.00",1,
+                               "موافقة مدير التشغيل","300.00","13200.00","12900.00"))
+
+    def test_manual_overtime_difference_requires_reason(self):
+        self.add_employee()
+        response = self.client.post("/hr/payroll", data={
+            "period": "2026-11", "basic_1": "10000", "allowances_1": "0",
+            "overtime_hours_1": "10", "overtime_rate_percent_1": "150",
+            "overtime_amount_1": "500", "other_deductions_1": "0",
+            "tax_1": "0", "employee_ins_1": "0", "employer_ins_1": "0",
+            "absence_deduction_1": "0"
+        }, follow_redirects=True)
+        self.assertIn("اكتب سبب اختلاف مبلغ الإضافي اليدوي", response.get_data(as_text=True))
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM payroll_runs").fetchone()[0], 0)
+        conn.close()
+
+    def test_workforce_backfill_migration_runs_once(self):
+        conn = sqlite3.connect(self.db_path)
+        first = conn.execute("SELECT applied_at FROM workforce_migrations WHERE migration_key='backfill_payroll_totals_v1'").fetchone()[0]
+        conn.close()
+        workforce.initialize_workforce_schema()
+        conn = sqlite3.connect(self.db_path)
+        rows = conn.execute("SELECT applied_at FROM workforce_migrations WHERE migration_key='backfill_payroll_totals_v1'").fetchall()
+        conn.close()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], first)
 
     def test_payroll_excludes_unpaid_leave_resigned_and_retired_employees(self):
         conn = sqlite3.connect(self.db_path)
