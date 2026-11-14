@@ -487,5 +487,30 @@ class StocktakeRouteTests(unittest.TestCase):
         self.assertNotIn("دفتر الأستاذ غير مهيأ".encode(), response.data)
 
 
+    def test_pending_document_cannot_be_reposted_from_stock_queue(self):
+        self._login()
+        conn = stock.get_db()
+        movement_id = conn.execute("""INSERT INTO stock_movements(
+            movement_no,movement_type,product_id,quantity,unit_cost,total_cost,
+            movement_date,accounting_status)
+            VALUES('PENDING-DOC','receipt',?,'2','5','10','2026-11-14','pending_document')""",
+            (self.product_id,)).lastrowid
+        conn.commit()
+        conn.close()
+
+        response = self.client.post(
+            "/stock/pending/" + str(movement_id) + "/resolve", data={}
+        )
+        self.assertEqual(response.status_code, 302)
+        conn = stock.get_db()
+        saved = conn.execute(
+            "SELECT accounting_status,journal_entry_id FROM stock_movements WHERE id=?",
+            (movement_id,)
+        ).fetchone()
+        self.assertEqual(saved["accounting_status"], "pending_document")
+        self.assertIsNone(saved["journal_entry_id"])
+        conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()
