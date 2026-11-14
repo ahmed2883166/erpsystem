@@ -1552,6 +1552,7 @@ def journal():
         "supplier_payments": ("purchase.payment_print", "payment_id", "id", "فتح سند سداد المورد"),
         "payroll_runs": ("workforce.payroll_run", "run_id", "id", "فتح كشف المرتبات"),
         "payroll_payments": ("workforce.payroll_run", "run_id", "run_id", "فتح كشف المرتبات"),
+        "payroll_reversals": ("workforce.payroll_run", "run_id", "run_id", "فتح كشف المرتبات وعكسها"),
         "employee_grants": ("workforce.print_employee_grant", "grant_id", "id", "فتح مستند المنحة"),
         "employee_grant_payments": ("workforce.print_employee_grant", "grant_id", "grant_id", "فتح مستند المنحة"),
         "asset_depreciations": ("assets.schedule", "asset_id", "asset_id", "فتح سجل الأصل"),
@@ -1563,21 +1564,26 @@ def journal():
         "SELECT name FROM sqlite_master WHERE type='table'"
     )}
     source_table_columns = {}
+    source_journal_columns = {}
     for category, names in source_tables.items():
         for table_name in names:
             if table_name in existing_tables:
                 cols = {row["name"] for row in connection.execute(
                     f'PRAGMA table_info("{table_name}")'
                 )}
-                if "journal_entry_id" in cols:
+                journal_col = ("journal_entry_id" if "journal_entry_id" in cols
+                               else "reversal_journal_entry_id" if "reversal_journal_entry_id" in cols
+                               else None)
+                if journal_col:
                     source_table_columns[table_name] = category
+                    source_journal_columns[table_name] = journal_col
     if source_filter not in (*source_tables.keys(), "general"):
         source_filter = ""
     filters, filter_params = [], []
     if source_filter == "general":
         if source_table_columns:
             exclusions = [
-                f'EXISTS(SELECT 1 FROM "{table_name}" src WHERE src.journal_entry_id=journal_entries.id)'
+                f'EXISTS(SELECT 1 FROM "{table_name}" src WHERE src."{source_journal_columns[table_name]}"=journal_entries.id)'
                 for table_name in source_table_columns
             ]
             filters = ["NOT (" + " OR ".join(exclusions) + ")"]
@@ -1588,7 +1594,7 @@ def journal():
                          if category == source_filter]
         if linked_tables:
             filters.append("(" + " OR ".join(
-                f'EXISTS(SELECT 1 FROM "{name}" src WHERE src.journal_entry_id=journal_entries.id)'
+                f'EXISTS(SELECT 1 FROM "{name}" src WHERE src."{source_journal_columns[name]}"=journal_entries.id)'
                 for name in linked_tables
             ) + ")")
         else:
@@ -1661,6 +1667,7 @@ def journal():
             doc_col = next((name for name in doc_columns if name in cols), "id")
             link_spec = source_link_specs.get(table_name)
             route_id_col = link_spec[2] if link_spec and link_spec[2] in cols else None
+            journal_col = source_journal_columns[table_name]
             select_parts = [f'"{doc_col}" AS document_ref']
             if route_id_col:
                 select_parts.append(f'"{route_id_col}" AS route_id')
@@ -1668,7 +1675,7 @@ def journal():
                 select_parts.append("NULL AS route_id")
             try:
                 linked = connection.execute(
-                    f'SELECT journal_entry_id, {", ".join(select_parts)} FROM "{table_name}" '
+                    f'SELECT "{journal_col}" AS journal_entry_id, {", ".join(select_parts)} FROM "{table_name}" '
                     f'WHERE journal_entry_id IN ({marks}) ORDER BY id',
                     entry_ids,
                 ).fetchall()
