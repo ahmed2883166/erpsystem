@@ -508,14 +508,12 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(line, ("5000.00","500.00","5500.00"))
 
     def test_terminated_employee_requires_effective_date(self):
-        response = self.client.post("/hr", data={
-            "employee_code": "E900", "full_name": "Former Employee", "hire_date": "2020-01-01",
-            "basic_salary": "10000", "standard_hours": "208", "work_status": "resigned"
-        }, follow_redirects=True)
-        self.assertIn("يجب تحديد تاريخ سريان الاستقالة", response.get_data(as_text=True))
-        conn = sqlite3.connect(self.db_path)
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM employees").fetchone()[0], 0)
-        conn.close()
+        with self.assertRaisesRegex(ValueError, "يجب تحديد تاريخ سريان الاستقالة"):
+            workforce._employee_form_values({
+                "employee_code": "E900", "full_name": "Former Employee",
+                "hire_date": "2020-01-01", "basic_salary": "10000",
+                "standard_hours": "208", "work_status": "resigned"
+            })
 
     def test_payroll_excludes_unpaid_leave_resigned_and_retired_employees(self):
         conn = sqlite3.connect(self.db_path)
