@@ -19,5 +19,9 @@
   <div class="table-wrap"><table><thead><tr><th>كود المخزن</th><th>المخزن</th><th>الحالة</th><th>قيمة طبقات التقييم</th></tr></thead><tbody>
   {% for w in warehouse_rows %}<tr><td>{{ w.code }}</td><td>{{ w.name }}</td><td>{{ 'نشط' if w.active else 'معطل / غير مرتبط' }}</td><td>{{ w.valuation|money }}</td></tr>{% else %}<tr><td colspan="4">لا توجد طبقات تقييم مرتبطة بمخازن.</td></tr>{% endfor %}
   </tbody></table></div>
+  <h3>تفصيل الأصناف داخل كل مخزن</h3>
+  <div class="table-wrap"><table><thead><tr><th>المخزن</th><th>كود الصنف</th><th>الصنف</th><th>حساب المخزون</th><th>الكمية</th><th>قيمة التقييم</th></tr></thead><tbody>
+  {% for p in warehouse_product_rows %}<tr><td>{{ p.warehouse_code }} - {{ p.warehouse_name }}</td><td>{{ p.sku }}</td><td>{{ p.name }}</td><td>{{ p.account_code }}</td><td>{{ p.qty }}</td><td>{{ p.value|money }}</td></tr>{% else %}<tr><td colspan="6">لا توجد أرصدة مخزنية تفصيلية.</td></tr>{% endfor %}
+  </tbody></table></div>
 </section>
 {% endblock %}
