@@ -389,7 +389,7 @@ class WorkforceTests(unittest.TestCase):
                         VALUES('حافز أيام','per_day','100')""")
         conn.commit()
         conn.close()
-        self.assertEqual(employee, ("Tanta","12345678901234","INS-3","permanent","percentage","10.00","basic"))
+        self.assertEqual(employee, ("Tanta","12345678901234","INS-3","permanent","percentage","10.00","basic"), response.get_data(as_text=True))
         response = self.client.post("/hr/payroll", data={
             "period": "2026-11", "basic_1": "10000", "allowances_1": "500",
             "overtime_hours_1": "10", "overtime_rate_percent_1": "150", "overtime_amount_1": "",
