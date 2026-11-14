@@ -906,10 +906,10 @@ def payroll():
             run_id = cur.lastrowid
             month_end = (date(start.year + (start.month == 12), 1 if start.month == 12 else start.month + 1, 1) - date.resolution)
             period_end = month_end.isoformat()
-            employees = c.execute("""SELECT * FROM employees WHERE active=1 AND (
-                work_status IN ('comprehensive_bonus','permanent') OR
+            employees = c.execute("""SELECT * FROM employees WHERE
+                (active=1 AND work_status IN ('comprehensive_bonus','permanent')) OR
                 (work_status IN ('resigned','retired') AND termination_date>=? AND termination_date<=?)
-                ) ORDER BY employee_code""", (period + "-01", period_end)).fetchall()
+                ORDER BY employee_code""", (period + "-01", period_end)).fetchall()
             if not employees:
                 raise ValueError("لا يوجد موظفون مستحقون للراتب في هذا الشهر حسب الموقف الوظيفي.")
             for e in employees:
@@ -1098,8 +1098,9 @@ def payroll():
     display_period = date.today().strftime("%Y-%m")
     # Show former employees in the input grid so final payroll can be prepared for any selected month.
     # POST includes them only in the month containing their termination date.
-    employee_rows = c.execute("""SELECT * FROM employees WHERE active=1
-        AND work_status IN ('comprehensive_bonus','permanent','resigned','retired')
+    employee_rows = c.execute("""SELECT * FROM employees WHERE
+        (active=1 AND work_status IN ('comprehensive_bonus','permanent')) OR
+        work_status IN ('resigned','retired')
         ORDER BY employee_code""").fetchall()
     employees = []
     for employee_row in employee_rows:
