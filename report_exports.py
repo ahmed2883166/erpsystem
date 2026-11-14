@@ -343,18 +343,30 @@ def register_report_exports(app, db_path, permissions):
                 filename = "nexus-stock-valuation.xlsx"
                 title = "تقييم وأرصدة المخزون"
             elif report == "fixed-assets":
+                from datetime import date as date_type
+                raw_as_of = request.args.get("as_of", "").strip()
+                try:
+                    as_of = date_type.fromisoformat(raw_as_of).isoformat() if raw_as_of else date_type.today().isoformat()
+                except ValueError:
+                    abort(400)
                 rows = conn.execute("""SELECT f.asset_code,f.asset_name,f.category,f.purchase_date,f.ready_date,
                   f.cost,f.residual_value,f.useful_life_months,f.depreciation_method,
-                  COALESCE(DECIMAL_SUM(d.amount),0) accumulated
-                  FROM fixed_assets f LEFT JOIN asset_depreciations d ON d.asset_id=f.id
-                  GROUP BY f.id ORDER BY f.asset_code""").fetchall()
+                  COALESCE((SELECT DECIMAL_SUM(d.amount)
+                    FROM asset_depreciations d
+                    JOIN journal_entries je ON je.id=d.journal_entry_id AND je.status='posted'
+                    WHERE d.asset_id=f.id AND je.entry_date<=?),0) accumulated
+                  FROM fixed_assets f
+                  LEFT JOIN asset_disposals x ON x.asset_id=f.id
+                  WHERE f.purchase_date<=? AND f.status<>'reversed'
+                    AND (x.disposal_date IS NULL OR x.disposal_date>?)
+                  ORDER BY f.asset_code""", (as_of, as_of, as_of)).fetchall()
                 headers = ["كود الأصل","اسم الأصل","الفئة","تاريخ الشراء","تاريخ الجاهزية",
                            "التكلفة","القيمة التخريدية","العمر بالشهور","طريقة الإهلاك","مجمع الإهلاك","صافي القيمة الدفترية"]
                 data = [[r["asset_code"],r["asset_name"],r["category"],r["purchase_date"],r["ready_date"],
                          Decimal(str(r["cost"])),Decimal(str(r["residual_value"])),r["useful_life_months"],r["depreciation_method"],
                          Decimal(str(r["accumulated"] or "0")),max(Decimal(str(r["cost"]))-Decimal(str(r["accumulated"] or "0")),Decimal(str(r["residual_value"])))] for r in rows]
-                filename = "nexus-fixed-assets.xlsx"
-                title = "سجل الأصول الثابتة"
+                filename = "nexus-fixed-assets-" + as_of + ".xlsx"
+                title = "سجل الأصول الثابتة كما في " + as_of
             elif report == "tax-report":
                 from tax_center import build_tax_report_snapshot
                 period = request.args.get("period", "").strip() or datetime.now().strftime("%Y-%m")
