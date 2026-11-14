@@ -54,6 +54,7 @@ class WorkforceExtrasTests(unittest.TestCase):
         self.app = Flask(__name__, template_folder=str(template_dir))
         self.app.secret_key = "test"
         self.app.instance_path = str(Path(self.temp.name) / "instance")
+        self.app.static_folder = str(Path(self.temp.name) / "static")
         self.app.register_blueprint(workforce.workforce_bp)
         self.client = self.app.test_client()
         with self.client.session_transaction() as session:
@@ -181,6 +182,28 @@ class WorkforceExtrasTests(unittest.TestCase):
         self.assertEqual(image_response.mimetype, "image/jpeg")
         self.assertEqual(image_response.headers.get("Cache-Control"), "private, no-store")
         self.assertIn(b"JFIF", image_response.data[:20])
+
+    def test_legacy_employee_photo_is_not_public_and_migrates_on_authenticated_view(self):
+        legacy_dir = Path(self.app.static_folder) / "uploads" / "employees"
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        legacy_file = legacy_dir / "legacy.png"
+        Image.new("RGB", (12, 12), "green").save(legacy_file, format="PNG")
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("UPDATE employees SET photo_path='uploads/employees/legacy.png' WHERE id=1")
+        conn.commit()
+        conn.close()
+
+        blocked = self.client.get("/static/uploads/employees/legacy.png")
+        self.assertEqual(blocked.status_code, 404)
+        viewed = self.client.get("/hr/1/photo")
+        self.assertEqual(viewed.status_code, 200)
+        self.assertEqual(viewed.mimetype, "image/jpeg")
+        self.assertFalse(legacy_file.exists())
+        conn = sqlite3.connect(self.db_path)
+        migrated = conn.execute("SELECT photo_path FROM employees WHERE id=1").fetchone()[0]
+        conn.close()
+        self.assertTrue(migrated.startswith("employees/"))
+        self.assertTrue(migrated.endswith(".jpg"))
 
     def test_employee_photo_rejects_fake_image_payload_even_with_image_extension(self):
         with self.app.app_context():
