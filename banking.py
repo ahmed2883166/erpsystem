@@ -14,6 +14,16 @@ bank_bp = Blueprint("bank", __name__, url_prefix="/bank")
 def db():
     return connect_database(DB_PATH, isolation_level=None)
 
+
+def expected_statement_amount(transaction, account_id):
+    """Return the signed bank-statement amount for one side of a ledger transaction."""
+    amount=Decimal(str(transaction["amount"])).quantize(Decimal("0.01"))
+    if transaction["bank_account_id"]==account_id:
+        return amount if transaction["transaction_type"]=="deposit" else -amount, "source"
+    if transaction["transaction_type"]=="transfer" and transaction["destination_bank_account_id"]==account_id:
+        return amount, "destination"
+    raise ValueError("الحركة الدفترية لا تخص حساب البنك المحدد.")
+
 def init_bank_schema():
     c = db()
     c.executescript("""
@@ -215,17 +225,7 @@ def statement_reconciliation():
                 tx=c.execute("SELECT * FROM bank_transactions WHERE id=?",(transaction_id,)).fetchone()
                 if not line or not tx: raise ValueError("سطر الكشف أو الحركة الدفترية غير موجود.")
                 if line["matched_transaction_id"]: raise ValueError("سطر كشف البنك تمت مطابقته بالفعل.")
-                side=None
-                expected=None
-                amount=Decimal(str(tx["amount"])).quantize(Decimal("0.01"))
-                if tx["bank_account_id"]==line["bank_account_id"]:
-                    side="source"
-                    expected=amount if tx["transaction_type"]=="deposit" else -amount
-                elif tx["transaction_type"]=="transfer" and tx["destination_bank_account_id"]==line["bank_account_id"]:
-                    side="destination"
-                    expected=amount
-                else:
-                    raise ValueError("الحركة الدفترية لا تخص حساب البنك المحدد في سطر الكشف.")
+                expected,side=expected_statement_amount(tx,line["bank_account_id"])
                 statement_amount=Decimal(str(line["signed_amount"])).quantize(Decimal("0.01"))
                 if expected!=statement_amount:
                     raise ValueError("المبلغ أو اتجاه الحركة غير متطابق. الإيداع موجب والسحب/العمولة/التحويل الصادر سالب.")
@@ -267,12 +267,7 @@ def statement_reconciliation():
             book_total=Decimal("0")
             for tx in txs:
                 amount=Decimal(str(tx["amount"])).quantize(Decimal("0.01"))
-                if tx["bank_account_id"]==account_id:
-                    signed=amount if tx["transaction_type"]=="deposit" else -amount
-                    side="source"
-                else:
-                    signed=amount
-                    side="destination"
+                signed,side=expected_statement_amount(tx,account_id)
                 book_total+=signed
                 book_rows.append(dict(tx, signed_amount=signed, side=side))
             statement_total=sum((Decimal(str(line["signed_amount"])) for line in lines),Decimal("0"))
