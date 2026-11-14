@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+from decimal import Decimal
+from unittest.mock import patch
 from pathlib import Path
 import stock
 
