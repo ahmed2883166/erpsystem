@@ -384,6 +384,26 @@ class StocktakeRouteTests(unittest.TestCase):
             setting_key TEXT PRIMARY KEY,setting_value TEXT)""")
         conn.execute("INSERT INTO company_settings VALUES('activity','industrial')")
         conn.execute("INSERT INTO company_settings VALUES('inventory_cost_method','fifo')")
+        conn.executemany(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group,active) VALUES(?,?, 'expense',0,1)",
+            [("5525","عجز مخزون مخصص للاختبار"),("6995","زيادة مخزون مخصصة للاختبار")],
+        )
+        profile_id = create_activity_profile(
+            conn, "industrial_stocktake_test", "صناعي بحسابات جرد مخصصة", "industrial"
+        )
+        profile_row = conn.execute(
+            "SELECT posting_accounts_json FROM activity_profiles WHERE id=?", (profile_id,)
+        ).fetchone()
+        custom_posting = json.loads(profile_row["posting_accounts_json"])
+        custom_posting["stocktake_shortage"] = "5525"
+        custom_posting["stocktake_surplus"] = "6995"
+        conn.execute(
+            "UPDATE activity_profiles SET posting_accounts_json=? WHERE id=?",
+            (json.dumps(custom_posting), profile_id),
+        )
+        conn.execute(
+            "INSERT INTO company_settings VALUES('activity_profile_code','industrial_stocktake_test')"
+        )
         conn.commit()
         conn.close()
 
@@ -410,8 +430,8 @@ class StocktakeRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         post.assert_called_once()
         journal_lines = post.call_args.args[4]
-        shortage_id = conn.execute("SELECT id FROM accounts WHERE code='5510'").fetchone()["id"]
-        surplus_id = conn.execute("SELECT id FROM accounts WHERE code='6990'").fetchone()["id"]
+        shortage_id = conn.execute("SELECT id FROM accounts WHERE code='5525'").fetchone()["id"]
+        surplus_id = conn.execute("SELECT id FROM accounts WHERE code='6995'").fetchone()["id"]
         inventory_id = conn.execute("SELECT id FROM accounts WHERE code='1130'").fetchone()["id"]
         self.assertEqual(
             [(line[0], Decimal(str(line[1])), Decimal(str(line[2]))) for line in journal_lines],
