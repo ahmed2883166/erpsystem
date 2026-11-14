@@ -35,7 +35,8 @@ class StocktakeRouteTests(unittest.TestCase):
         conn.execute("CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,account_type TEXT,is_group INTEGER,active INTEGER)")
         conn.executemany("INSERT INTO accounts(code,name_ar,account_type,is_group,active) VALUES(?,?,?,?,?)", [
             ("1130","مخزون","asset",0,1),
-            ("6990","فروق الجرد","expense",0,1),
+            ("5510","عجز وهالك مخزون","expense",0,1),
+            ("6990","فروق الجرد والزيادات","expense",0,1),
         ])
         conn.execute("""CREATE TABLE financial_years(
             id INTEGER PRIMARY KEY, year_name TEXT, start_date TEXT, end_date TEXT, status TEXT
@@ -363,7 +364,7 @@ class StocktakeRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
 
 
-    def test_stocktake_shortage_and_surplus_both_use_6990(self):
+    def test_stocktake_shortage_uses_5510_and_surplus_uses_6990(self):
         self._login()
         conn = stock.get_db()
         second_product = conn.execute(
@@ -409,15 +410,16 @@ class StocktakeRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         post.assert_called_once()
         journal_lines = post.call_args.args[4]
-        variance_id = conn.execute("SELECT id FROM accounts WHERE code='6990'").fetchone()["id"]
+        shortage_id = conn.execute("SELECT id FROM accounts WHERE code='5510'").fetchone()["id"]
+        surplus_id = conn.execute("SELECT id FROM accounts WHERE code='6990'").fetchone()["id"]
         inventory_id = conn.execute("SELECT id FROM accounts WHERE code='1130'").fetchone()["id"]
         self.assertEqual(
             [(line[0], Decimal(str(line[1])), Decimal(str(line[2]))) for line in journal_lines],
             [
-                (variance_id, Decimal("10.00"), Decimal("0")),
+                (shortage_id, Decimal("10.00"), Decimal("0")),
                 (inventory_id, Decimal("0"), Decimal("10.00")),
                 (inventory_id, Decimal("14.00"), Decimal("0")),
-                (variance_id, Decimal("0"), Decimal("14.00")),
+                (surplus_id, Decimal("0"), Decimal("14.00")),
             ],
         )
         movements = conn.execute("""SELECT movement_type,accounting_status,journal_entry_id,total_cost
