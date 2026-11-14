@@ -1255,6 +1255,27 @@ def reverse_payroll(run_id):
         c.execute("""INSERT INTO payroll_reversals(run_id,reversal_date,reason,
             reversal_journal_entry_id,created_by) VALUES(?,?,?,?,?)""",
             (run_id, reversal_date, reason, reversal_journal_id, session["user_id"]))
+        # Restore loan installments allocated by this payroll because its salary deduction is now reversed.
+        allocations = c.execute("""SELECT a.installment_id,a.amount,i.loan_id,i.paid_amount,i.due_amount
+            FROM payroll_loan_allocations a
+            JOIN payroll_lines pl ON pl.id=a.payroll_line_id
+            JOIN employee_loan_installments i ON i.id=a.installment_id
+            WHERE pl.run_id=? ORDER BY a.id""", (run_id,)).fetchall()
+        affected_loans = set()
+        for allocation in allocations:
+            restored_paid = max(Decimal("0"), D(allocation["paid_amount"]) - D(allocation["amount"]))
+            c.execute("UPDATE employee_loan_installments SET paid_amount=?,status='pending' WHERE id=?",
+                      (str(M(restored_paid)), allocation["installment_id"]))
+            affected_loans.add(int(allocation["loan_id"]))
+        for loan_id in affected_loans:
+            loan = c.execute("SELECT approved_amount FROM employee_loans WHERE id=?", (loan_id,)).fetchone()
+            if not loan:
+                continue
+            total_paid = M(sum((D(item["paid_amount"]) for item in c.execute(
+                "SELECT paid_amount FROM employee_loan_installments WHERE loan_id=?", (loan_id,)).fetchall()), Decimal("0")))
+            remaining = M(max(Decimal("0"), D(loan["approved_amount"]) - total_paid))
+            c.execute("UPDATE employee_loans SET remaining_balance=?,status=? WHERE id=?",
+                      (str(remaining), "closed" if remaining <= 0 else "active", loan_id))
         c.execute("UPDATE payroll_runs SET status='reversed' WHERE id=?", (run_id,))
         _audit(c, "payroll_run_reversed", reference + " reason=" + reason)
         c.commit()
