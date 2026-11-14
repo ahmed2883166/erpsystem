@@ -1687,6 +1687,11 @@ def new_bill():
                 receipt_allocations = _validate_supplier_receipt_allocations(
                     c, supplier, receipts, subtotal, request.form
                 )
+                inventory_lines = _validate_supplier_bill_inventory_lines(
+                    c, supplier, receipts, subtotal, request.form
+                )
+            else:
+                inventory_lines = []
             if tax:
                 ensure_detail_account(c,_activity_tax_roles(c)["input_vat"],"ضريبة مدخلات قابلة للخصم","asset","1100")
             no="BILL-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -1721,6 +1726,12 @@ def new_bill():
             for rid,amt in receipt_allocations:
                 c.execute("INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
                           (bid,rid,str(amt)))
+            for line_no, line in enumerate(inventory_lines, 1):
+                c.execute("""INSERT INTO supplier_bill_inventory_lines(
+                    bill_id,line_no,receipt_line_id,product_id,billed_quantity,invoice_unit_price,line_total
+                ) VALUES(?,?,?,?,?,?,?)""",
+                (bid,line_no,line["receipt_line_id"],line["product_id"],str(line["quantity"]),
+                 str(line["unit_price"]),str(line["line_total"])))
             c.commit()
             g.audit_created_record = ("supplier_bills", bid, None, None)
             c.close()
@@ -1732,9 +1743,10 @@ def new_bill():
     expense_accounts=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code").fetchall()
     asset_accounts=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=0 AND active=1 ORDER BY code").fetchall()
     receipts = _available_supplier_receipts(c, None)
+    receipt_lines = _supplier_receipt_line_rows(c, [row["id"] for row in receipts])
     dimension_options=active_dimension_options(c)
     c.close(); return render_template("purchase_bill_new.html",suppliers=su,receipts=receipts,
-        expense_accounts=expense_accounts,asset_accounts=asset_accounts,
+        receipt_lines=receipt_lines, expense_accounts=expense_accounts,asset_accounts=asset_accounts,
         dimension_options=dimension_options,today=date.today().isoformat())
 
 
