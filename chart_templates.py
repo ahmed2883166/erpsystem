@@ -173,6 +173,7 @@ def account_metadata_for(account_type, code, name_ar):
     }.get(account_type, "debit")
     if account_type == "asset" and any(term in name for term in (
         "مجمع الإهلاك", "مجمع إطفاء", "مخصص خسائر ائتمانية",
+        "مخصص انخفاض قيمة", "مجمع انخفاض قيمة",
     )):
         normal_balance = "credit"
     elif account_type == "revenue" and any(term in name for term in (
@@ -209,6 +210,8 @@ def account_metadata_for(account_type, code, name_ar):
         account_subtype = "customer_advance"
     elif any(term in name for term in ("مجمع الإهلاك", "مجمع إطفاء")):
         account_subtype = "accumulated_depreciation_or_amortization"
+    elif any(term in name for term in ("مخصص انخفاض قيمة", "مجمع انخفاض قيمة")):
+        account_subtype = "impairment_allowance"
     elif "مخزون" in name:
         account_subtype = "inventory"
     elif any(term in name for term in ("عميل", "عملاء", "مرضى", "ذمم مدينة")):
@@ -315,6 +318,8 @@ _COMMON_ACTIVITY_ACCOUNTS = [
     ("1250", "أصول حق الاستخدام", "asset", "1200", 0),
     ("1260", "الأصول غير الملموسة", "asset", "1200", 1),
     ("1261", "برامج وتراخيص وأنظمة", "asset", "1260", 0),
+    ("1262", "الشهرة", "asset", "1260", 0),
+    ("1268", "مخصص انخفاض قيمة الشهرة", "asset", "1260", 0),
     ("1269", "مجمع إطفاء الأصول غير الملموسة", "asset", "1260", 0),
     ("1270", "استثمارات طويلة الأجل", "asset", "1200", 0),
     # Current liabilities, accruals and GRNI.
