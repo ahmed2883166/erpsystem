@@ -42,7 +42,7 @@
 <details class="nav-group">
 <summary><span>🧑‍💼 الموظفون والرواتب</span><small>شؤون العاملين والاستحقاقات</small></summary>
 <div class="nav-links">
-<a href="{{ url_for('workforce.employees') }}">ملفات الموظفين والبدلات</a><a href="{{ url_for('workforce.salary_changes') }}">العلاوات والزيادات الجماعية</a><a href="{{ url_for('workforce.salary_history') }}">سجل تاريخ الأجور</a><a href="{{ url_for('workforce.payroll') }}">مسير الرواتب</a>
+<a href="{{ url_for('workforce.employees') }}">ملفات الموظفين والبدلات</a><a href="{{ url_for('workforce.attendance') }}">الحضور والانصراف</a><a href="{{ url_for('workforce.leaves') }}">الإجازات والأرصدة</a><a href="{{ url_for('workforce.salary_changes') }}">العلاوات والزيادات الجماعية</a><a href="{{ url_for('workforce.salary_history') }}">سجل تاريخ الأجور</a><a href="{{ url_for('workforce.employee_loans') }}">السلف والقروض</a><a href="{{ url_for('workforce.payroll') }}">المرتبات</a>
 <a href="{{ url_for('payroll_compliance.rules') }}">قواعد الضرائب والتأمينات</a><a href="{{ url_for('payroll_compliance.report') }}">تقرير الضرائب والتأمينات</a><a href="{{ url_for('payroll_compliance.payments') }}">سداد الالتزامات</a><a href="{{ url_for('workforce.custody') }}">عهد الموظفين</a>
 </div></details>
 {% endif %}
@@ -96,6 +96,41 @@
  if(token){document.querySelectorAll('form[method="post" i],form:not([method])').forEach(form=>{
    if(!form.querySelector('input[name="csrf_token"]')){const input=document.createElement('input');input.type='hidden';input.name='csrf_token';input.value=token;form.appendChild(input);}
  });}
+})();
+(function(){
+ const aside=document.querySelector('aside');
+ if(!aside)return;
+ const storageKey='nexus-sidebar-state-v1';
+ const groups=[...aside.querySelectorAll('details.nav-group')];
+ const path=window.location.pathname;
+ const currentLink=[...aside.querySelectorAll('nav a[href]')].find(a=>{
+   try{return new URL(a.href,window.location.origin).pathname===path;}catch(_){return false;}
+ });
+ if(currentLink){
+   const parent=currentLink.closest('details.nav-group');
+   if(parent)parent.open=true;
+   currentLink.classList.add('active');
+ }
+ let saved={};
+ try{saved=JSON.parse(sessionStorage.getItem(storageKey)||'{}')||{};}catch(_){}
+ if(Number.isFinite(saved.scrollTop))requestAnimationFrame(()=>{aside.scrollTop=saved.scrollTop;});
+ groups.forEach((group,index)=>{
+   if(!currentLink || !group.contains(currentLink)){
+     if(Array.isArray(saved.openGroups) && typeof saved.openGroups[index]==='boolean')group.open=saved.openGroups[index];
+   }
+ });
+ const persist=()=>{
+   try{sessionStorage.setItem(storageKey,JSON.stringify({
+     scrollTop:aside.scrollTop,
+     openGroups:groups.map(group=>group.open)
+   }));}catch(_){}
+ };
+ aside.addEventListener('scroll',persist,{passive:true});
+ groups.forEach(group=>group.addEventListener('toggle',persist));
+ aside.querySelectorAll('a[href]').forEach(link=>{
+   link.addEventListener('click',()=>persist());
+ });
+ window.addEventListener('pagehide',persist);
 })();
 (function(){const root=document.documentElement;const saved=localStorage.getItem('nexus-theme')||'dark';root.dataset.theme=saved;const btn=document.getElementById('themeToggle');if(btn){btn.addEventListener('click',()=>{const next=root.dataset.theme==='dark'?'light':'dark';root.dataset.theme=next;localStorage.setItem('nexus-theme',next);btn.textContent=next==='dark'?'◐ المظهر الداكن':'☀ المظهر الفاتح';});btn.textContent=saved==='dark'?'◐ المظهر الداكن':'☀ المظهر الفاتح';}})();
 (function(){
