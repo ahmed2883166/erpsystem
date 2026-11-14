@@ -28,8 +28,8 @@
     <div class="stat"><span>إجمالي الأجر قبل الخصومات</span><strong>{{ totals.gross_pay }}</strong></div>
     <div class="stat"><span>إجمالي تكلفة الأجر على الشركة</span><strong>{{ totals.employer_total_cost }}</strong></div>
     <div class="stat"><span>صافي مستحق الموظفين</span><strong>{{ totals.net_pay }}</strong></div>
-    <div class="stat"><span>إجمالي ما تم صرفه للمسيرات</span><strong>{% if totals.paid_amount is not none %}{{ totals.paid_amount }}{% else %}غير موزع على الموظف{% endif %}</strong></div>
-    <div class="stat"><span>المتبقي للمسيرات</span><strong>{% if totals.remaining_payable is not none %}{{ totals.remaining_payable }}{% else %}غير موزع على الموظف{% endif %}</strong></div>
+    <div class="stat"><span>إجمالي ما تم صرفه للمسيرات</span><strong>{{ totals.paid_amount }}<small>الدفعات القديمة غير الموزعة: {{totals.unallocated_legacy_payments}}</small></strong></div>
+    <div class="stat"><span>المتبقي للمسيرات</span><strong>{{ totals.remaining_payable }}</strong></div>
     <div class="stat"><span>تأمينات تتحملها الشركة</span><strong>{{ totals.employer_insurance }}</strong></div>
   </div>
 </section>
@@ -44,7 +44,7 @@
         <th>السلف المستردة</th><th>قسط القرض</th><th>خصومات أخرى</th>
         <th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th>
         <th>إجمالي خصومات الموظف</th><th>تكلفة الأجر على الشركة</th>
-        <th>صافي المستحق</th><th>القسيمة</th>
+        <th>صافي المستحق</th><th>تم صرفه</th><th>المتبقي</th><th>كشف الموظف</th><th>القسيمة</th>
       </tr></thead>
       <tbody>
       {% for r in rows %}
@@ -54,11 +54,12 @@
           <td>{{ r.overtime_amount }}</td><td>{{ r.gross_pay }}</td><td>{{ r.absence_deduction }}</td>
           <td>{{ r.manual_advance_deduction }}</td><td>{{ r.loan_deduction }}</td><td>{{ r.other_deductions }}</td>
           <td>{{ r.taxable_income_tax }}</td><td>{{ r.employee_insurance }}</td><td>{{ r.employer_insurance }}</td>
-          <td>{{ r.employee_deductions }}</td><td>{{ r.employer_total_cost }}</td><td><strong>{{ r.net_pay }}</strong></td>
+          <td>{{ r.employee_deductions }}</td><td>{{ r.employer_total_cost }}</td><td><strong>{{ r.net_pay }}</strong></td><td>{{r.paid_amount}}</td><td>{{r.remaining_payable}}</td>
+          <td><a href="{{url_for('workforce.employee_financial_statement',employee_id=r.employee_id,month_from=month_from,month_to=month_to)}}">كشف الموظف</a></td>
           <td><a href="{{ url_for('report_exports.export_report_excel', report='payroll-payslip', run_id=r.run_id, employee_id=r.employee_id).replace('/excel','/pdf') }}">PDF</a> · <a href="{{ url_for('report_exports.export_report_excel', report='payroll-payslip', run_id=r.run_id, employee_id=r.employee_id) }}">Excel</a></td>
         </tr>
       {% else %}
-        <tr><td colspan="21">لا توجد مسيرات مرحلة مطابقة للفلاتر المختارة.</td></tr>
+        <tr><td colspan="24">لا توجد مسيرات مرحلة مطابقة للفلاتر المختارة.</td></tr>
       {% endfor %}
       </tbody>
       {% if rows %}
@@ -68,11 +69,11 @@
         <th>{{ totals.absence_deduction }}</th><th>{{ totals.manual_advance_deduction }}</th><th>{{ totals.loan_deduction }}</th>
         <th>{{ totals.other_deductions }}</th><th>{{ totals.taxable_income_tax }}</th><th>{{ totals.employee_insurance }}</th>
         <th>{{ totals.employer_insurance }}</th><th>{{ totals.employee_deductions }}</th><th>{{ totals.employer_total_cost }}</th>
-        <th>{{ totals.net_pay }}</th><th></th>
+        <th>{{ totals.net_pay }}</th><th>{{totals.paid_amount}}</th><th>{{totals.remaining_payable}}</th><th></th><th></th>
       </tr></tfoot>
       {% endif %}
     </table>
   </div>
-  <p class="muted">حصة الموظف بالتأمينات والضريبة والسلف والخصومات تقلل صافي المستحق. حصة الشركة بالتأمينات تكلفة إضافية على الشركة ولا تخصم من الموظف. إجمالي المدفوع والمتبقي يظهران عند عرض كل الموظفين؛ لأن حركات الصرف الحالية مرتبطة بمسير الرواتب ككل ولا تحدد حصة كل موظف.</p>
+  <p class="muted">حصة الموظف بالتأمينات والضريبة والسلف والخصومات تقلل صافي المستحق. حصة الشركة بالتأمينات تكلفة إضافية على الشركة ولا تخصم من الموظف. يظهر المدفوع والمتبقي لكل موظف من التوزيعات المسجلة. الدفعات القديمة غير الموزعة تظهر منفصلة ولا تُنسب إلى موظف بالتخمين.</p>
 </section>
 {% endblock %}
