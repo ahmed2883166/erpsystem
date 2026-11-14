@@ -100,6 +100,30 @@ class JournalAndLedgerFilterTests(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertLess(html.index('href="/journal/1"'), html.index('href="/journal/2"'))
 
+    def test_journal_source_filter_and_origin_reference(self):
+        conn = connect_database(self.db_path)
+        conn.execute("""CREATE TABLE sales_invoices(
+            id INTEGER PRIMARY KEY, invoice_no TEXT, journal_entry_id INTEGER
+        )""")
+        conn.execute("INSERT INTO sales_invoices(id,invoice_no,journal_entry_id) VALUES(1,'SI-2026-001',2)")
+        conn.commit()
+        conn.close()
+
+        response = self.client.get("/journal?source=sales")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("مبيعات وتحصيلات", html)
+        self.assertIn("SI-2026-001", html)
+        self.assertIn("INV-RENT", html)
+        self.assertNotIn("OPEN-1", html)
+        self.assertNotIn("RCPT-3", html)
+
+        manual = self.client.get("/journal?source=general")
+        self.assertEqual(manual.status_code, 200)
+        manual_html = manual.get_data(as_text=True)
+        self.assertIn("OPEN-1", manual_html)
+        self.assertNotIn("INV-RENT", manual_html)
+
     def test_journal_detail_displays_the_posted_entry_lines(self):
         response = self.client.get("/journal/2")
         self.assertEqual(response.status_code, 200)
