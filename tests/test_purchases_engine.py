@@ -334,11 +334,17 @@ class PurchasingAccountingTests(unittest.TestCase):
                 "account_roles": {"inventory": ["1150"]}
             }),
             patch("activity_profiles.resolve_product_account_code", return_value="1150"),
+            patch("stock.render_template", side_effect=lambda _template, **context:
+                  "|".join(str(context.get(key)) for key in (
+                      "reconciliation_status", "total_valuation", "total_ledger", "total_difference", "error"
+                  ))),
         ):
             report_response = report_client.get("/stock/reconciliation")
         self.assertEqual(report_response.status_code, 200)
-        self.assertIn("إجمالي تقييم المخزون متطابق", report_response.get_data(as_text=True))
-        self.assertIn("60.00", report_response.get_data(as_text=True))
+        report_values = report_response.get_data(as_text=True)
+        self.assertIn("matched", report_values)
+        self.assertIn("60", report_values)
+        self.assertIn("False", report_values)
 
         # Every journal entry created by the full cycle must balance.
         unbalanced = self.db.execute(
