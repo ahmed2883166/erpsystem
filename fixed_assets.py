@@ -372,6 +372,7 @@ def schedule(asset_id):
     disposal=c.execute("SELECT * FROM asset_disposals WHERE asset_id=?",(asset_id,)).fetchone()
     accounts=c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
     posted={x["period"]:Decimal(x["amount"]) for x in rows}
+    posted_entry_ids={x["period"]:x["journal_entry_id"] for x in rows}
     accumulated=sum(posted.values(),Decimal("0"))
     c.close()
     cost,residual=Decimal(asset["cost"]),Decimal(asset["residual_value"])
@@ -393,7 +394,8 @@ def schedule(asset_id):
         except ValueError:
             break
         actual=posted.get(period)
-        schedule_rows.append({"period":period,"planned":planned,"actual":actual,"posted":period in posted})
+        schedule_rows.append({"period":period,"planned":planned,"actual":actual,"posted":period in posted,
+                             "journal_entry_id":posted_entry_ids.get(period)})
         cumulative += actual if actual is not None else planned
     return render_template("asset_schedule.html",asset=asset,rows=rows,schedule_rows=schedule_rows,accumulated=accumulated,
       net=(Decimal("0") if asset["status"]=="disposed" else max(cost-accumulated,residual)),
