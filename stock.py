@@ -244,6 +244,9 @@ def initialize_stock_schema():
       ("purchase_order_lines",(("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
       ("goods_receipt_lines",(("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
     ):
+        table_exists=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone()
+        if not table_exists:
+            continue
         existing={row["name"] for row in c.execute("PRAGMA table_info("+table+")")}
         for name,declaration in fields:
             if name not in existing: c.execute("ALTER TABLE "+table+" ADD COLUMN "+name+" "+declaration)
