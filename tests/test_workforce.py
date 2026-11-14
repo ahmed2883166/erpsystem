@@ -568,7 +568,7 @@ class WorkforceTests(unittest.TestCase):
               "title":"قرار مكرر","employee_scope":"permanent","calculation_type":"fixed",
               "calculation_base":"basic","calculation_value":"500","treatment":"basic"}
         self.client.post("/hr/salary-changes",data={**data,"confirm":"1"})
-        response=self.client.post("/hr/salary-changes",data={**data,"confirm":"1"},follow_redirects=True)
+        self.client.post("/hr/salary-changes",data={**data,"confirm":"1"},follow_redirects=True)
         conn=sqlite3.connect(self.db_path)
         basic=conn.execute("SELECT basic_salary FROM employees WHERE id=1").fetchone()[0]
         count=conn.execute("SELECT COUNT(*) FROM employee_salary_history").fetchone()[0]
