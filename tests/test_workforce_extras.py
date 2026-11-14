@@ -118,6 +118,24 @@ class WorkforceExtrasTests(unittest.TestCase):
         self.assertIn("Employee One", response.get_data(as_text=True))
 
 
+    def test_employee_edit_persists_basic_variable_and_insured_wages_separately(self):
+        response=self.client.post("/hr/1/edit",data={
+            "employee_code":"E001","full_name":"Employee One","job_title":"محاسب","department":"الحسابات",
+            "hire_date":"2026-01-01","basic_salary":"12000","standard_hours":"208",
+            "variable_salary":"1800","legal_category":"local","insurance_number":"INS-1",
+            "insured_wage":"9500","insurance_enabled":"1","address":"Tanta",
+            "national_id":"12345678901234","work_status":"permanent","raise_type":"fixed",
+            "raise_value":"0","raise_mode":"basic","raise_effective_date":"",
+            "overtime_rate_percent":"150","branch_id":"","cost_center_id":"","project_id":"",
+            "termination_date":""
+        })
+        self.assertEqual(response.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        wages=conn.execute("SELECT basic_salary,variable_salary,insured_wage FROM employees WHERE id=1").fetchone()
+        conn.close()
+        self.assertEqual(wages,("12000.00","1800.00","9500.00"))
+
+
     def test_independent_employee_grant_snapshots_calculation_and_posts_two_journals(self):
         conn=sqlite3.connect(self.db_path)
         conn.executemany("""INSERT INTO accounts(id,code,name_ar,account_type,is_group,active)
