@@ -1463,7 +1463,7 @@ def valuation_reconciliation():
             warehouse_rows.append({"code":"—","name":"طبقات غير مرتبطة بمخزن","active":0,"valuation":unassigned_value})
         warehouse_product_rows=[]
         warehouse_names={row["id"]:row for row in warehouse_records}
-        for (warehouse_id,product_id,account_code),bucket in sorted(
+        for (warehouse_id,_product_id,account_code),bucket in sorted(
             warehouse_product_totals.items(),key=lambda item:(
                 warehouse_names[item[0][0]]["code"] if item[0][0] in warehouse_names else "ZZZ",
                 item[1]["sku"]
