@@ -62,7 +62,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
         conn.close()
         self.patches = [
             patch.object(nexus_app, "db", side_effect=lambda: connect_database(self.db_path)),
-            patch.object(nexus_app, "linked_operational_source", return_value=None),
+            patch.object(nexus_app, "linked_operational_source", wraps=linked_operational_source),
             patch.object(nexus_app, "log_change", return_value=None),
         ]
         for item in self.patches:
@@ -125,6 +125,24 @@ class JournalReversalProtectionTests(unittest.TestCase):
                 "INSERT INTO payroll_reversals(reversal_journal_entry_id) VALUES(2)"
             )
             self.assertEqual(linked_operational_source(conn, 2), "payroll_reversals")
+
+    def test_generic_reversal_blocks_module_owned_reversal_journal(self):
+        with connect_database(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE payroll_reversals(
+                    id INTEGER PRIMARY KEY, reversal_journal_entry_id INTEGER
+                )
+            """)
+            conn.execute(
+                "INSERT INTO payroll_reversals(reversal_journal_entry_id) VALUES(2)"
+            )
+        response = self.client.post(
+            "/journal/2/reverse",
+            data={"reversal_date": "2026-01-05", "reversal_reason": "محاولة عكس قيد عكس المرتبات"},
+        )
+        self.assertEqual(response.status_code, 302)
+        with connect_database(self.db_path) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 4)
 
     def test_original_journal_cannot_be_reversed_twice(self):
         response = self.client.post(
