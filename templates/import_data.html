@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}استيراد البيانات | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <h2>استيراد البيانات من Excel / CSV</h2>
+  <p class="muted">ارفع الملف، ثم اربط أعمدة Excel بحقول البرنامج. الأعمدة التي تختار لها «تجاهل» لن تدخل في الاستيراد.</p>
+</header>
+<section class="panel">
+  <h3>1. اختيار نوع البيانات والملف</h3>
+  <form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="upload">
+    <label>البيانات المطلوب استيرادها
+      <select name="dataset" required>
+        {% for key, item in datasets.items() %}<option value="{{ key }}" {% if stage and stage.dataset == key %}selected{% endif %}>{{ item.label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>ملف Excel أو CSV
+      <input type="file" name="file" accept=".xlsx,.csv" required>
+    </label>
+    <p class="muted">الصيغ المدعومة: XLSX وCSV · الحد الأقصى 10 ميجابايت و10,000 صف. يتم استخدام أول ورقة نشطة في ملف Excel.</p>
+    <button type="submit">رفع الملف وقراءة الأعمدة</button>
+  </form>
+</section>
+{% if stage %}
+<section class="panel">
+  <h3>2. مطابقة الأعمدة</h3>
+  <p>الملف: <strong>{{ stage.filename }}</strong> · عدد الأعمدة: {{ stage.headers|length }} · عدد الصفوف: {{ stage.rows|length }}</p>
+  <p class="muted">اختر عمود المصدر لكل حقل. لا يمكن ربط عمود واحد بأكثر من حقل. الحقول الإلزامية مميزة بعلامة *.</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="confirm">
+    <input type="hidden" name="token" value="{{ token }}">
+    {% for field in datasets[stage.dataset].fields %}
+      <label>{{ field.label }}{% if field.required %} *{% endif %}
+        <select name="map_{{ field.key }}" {% if field.required %}required{% endif %}>
+          <option value="">تجاهل / غير مربوط</option>
+          {% for header in stage.headers %}
+            <option value="{{ loop.index0 }}" {% if mapping and mapping.get('map_' ~ field.key) == (loop.index0|string) %}selected{% endif %}>{{ header }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    {% endfor %}
+    <h4>معاينة أول 10 صفوف</h4>
+    <div class="table-wrap"><table>
+      <thead><tr>{% for header in stage.headers %}<th>{{ header }}</th>{% endfor %}</tr></thead>
+      <tbody>{% for row in stage.rows[:10] %}<tr>{% for value in row %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+    </table></div>
+    <div class="actions">
+      <button type="submit">تأكيد المطابقة وبدء الاستيراد</button>
+    </div>
+  </form>
+  <form method="post" class="no-print">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="cancel">
+    <button type="submit" class="secondary">إلغاء الاستيراد</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}
