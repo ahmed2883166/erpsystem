@@ -1,4 +1,5 @@
 import io
+import io
 import sqlite3
 import tempfile
 import unittest
@@ -398,7 +399,7 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         conn.close()
         response = self.client.get("/reports/export/fixed-assets/excel?as_of=2026-03-31")
         self.assertEqual(response.status_code, 200)
-        workbook = load_workbook(response.data, data_only=True)
+        workbook = load_workbook(io.BytesIO(response.data), data_only=True)
         sheet = workbook.active
         self.assertEqual(sheet["J5"].value, 25)
         self.assertEqual(sheet["K5"].value, 975)
