@@ -83,6 +83,17 @@ class ManagementDashboardTests(unittest.TestCase):
                                  "code": "4710"}}, disposal_loss_ids={11})["revenue"],
             Decimal("0"),
         )
+        from management_dashboard import dashboard_period_balances
+        period_balances = dashboard_period_balances(
+            self.conn, "2026-11-01", "2026-11-30",
+            "2026-10-01", "2026-10-31", exclude_closing_entries=True,
+        )[0]
+        self.assertIn(11, period_balances)
+        self.assertEqual(period_balances[11]["debit"], Decimal("54.44"))
+        self.assertEqual(
+            income_figures(period_balances, disposal_loss_ids={11})["revenue"],
+            Decimal("445.56"),
+        )
         snapshot = build_management_snapshot(
             self.conn, date(2026,11,1), date(2026,11,30)
         )
