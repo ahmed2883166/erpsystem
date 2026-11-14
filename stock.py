@@ -1260,7 +1260,19 @@ def movements():
                 c.execute("UPDATE stock_movements SET accounting_status='pending_document' WHERE id=?", (mid,))
             elif kind=="issue":
                 post_issue_journal(c,mid,movement_no,product,movement_date,total,session.get("user_id"),issue_purpose)
-            c.commit(); g.audit_created_record = ("stock_movements", mid, None, None); flash(f"تم ترحيل الحركة {movement_no}.", "success")
+            c.commit()
+            g.audit_created_record = ("stock_movements", mid, None, None)
+            saved_status=c.execute("SELECT accounting_status FROM stock_movements WHERE id=?",(mid,)).fetchone()["accounting_status"]
+            if saved_status=="posted":
+                flash(f"تم حفظ الحركة {movement_no} وترحيل قيدها المحاسبي.","success")
+            elif saved_status=="pending_purpose":
+                flash(f"تم حفظ الحركة {movement_no}، لكنها معلقة حتى تحدد غرض الصرف من شاشة الحركات المعلقة.","warning")
+            elif saved_status=="pending_setup":
+                flash(f"تم حفظ الحركة {movement_no} دون ترحيل؛ راجع حسابات المخزون والمصروف في ملف النشاط.","warning")
+            elif saved_status=="pending_document":
+                flash(f"تم حفظ الحركة {movement_no} وربطها بالمخزون؛ استكمل مستند الشراء/المرتجع الأصلي لإتمام القيد.","warning")
+            else:
+                flash(f"تم حفظ الحركة {movement_no}.","success")
         except (ValueError,InvalidOperation,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e), "error")
         finally: c.close()
