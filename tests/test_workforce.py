@@ -48,6 +48,9 @@ class WorkforceTests(unittest.TestCase):
         (template_dir / "payroll_run.html").write_text(
             "{{ get_flashed_messages()|join('|') }}", encoding="utf-8"
         )
+        (template_dir / "payroll_payslip.html").write_text(
+            "{{ slip.full_name }}|{{ slip.net_pay }}|{{ slip.manual_advance_deduction }}", encoding="utf-8"
+        )
         (template_dir / "salary_changes.html").write_text("salary changes", encoding="utf-8")
         (template_dir / "salary_history.html").write_text("salary history", encoding="utf-8")
         (template_dir / "form2_salary.html").write_text(
@@ -86,6 +89,30 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Employee One|12500.00", response.get_data(as_text=True))
 
+    def test_individual_payslip_is_available_only_after_posting(self):
+        self.add_employee()
+        self.client.post("/hr/payroll", data={
+            "period": "2026-11", "basic_1": "12000", "allowances_1": "1500",
+            "overtime_hours_1": "0", "overtime_amount_1": "",
+            "absent_hours_1": "0", "absence_deduction_1": "0",
+            "advance_1": "200", "other_deductions_1": "100", "tax_1": "500",
+            "employee_ins_1": "300", "employer_ins_1": "400"
+        })
+        draft = self.client.get("/hr/payroll/1/employee/1/payslip", follow_redirects=True)
+        self.assertIn("القسيمة النهائية متاحة بعد ترحيل المسير فقط", draft.get_data(as_text=True))
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("UPDATE payroll_runs SET status='posted' WHERE id=1")
+        conn.commit()
+        conn.close()
+        response = self.client.get("/hr/payroll/1/employee/1/payslip")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Employee One|", response.get_data(as_text=True))
+
+    def test_individual_payslip_rejects_employee_not_in_run(self):
+        self.add_employee()
+        response = self.client.get("/hr/payroll/999/employee/1/payslip", follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("قسيمة الراتب غير موجودة", response.get_data(as_text=True))
     def test_payroll_calculation_and_posting(self):
         self.add_employee()
         response = self.client.post("/hr/payroll", data={
