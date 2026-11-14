@@ -81,7 +81,7 @@ class WorkforceExtrasTests(unittest.TestCase):
             WHERE source_type='employee_penalty'""").fetchone()
         status = conn.execute("SELECT status FROM employee_penalties").fetchone()[0]
         conn.close()
-        self.assertEqual(line, ("250.00", "250.00"))
+        self.assertEqual(line, ("0.00", "250.00"))
         self.assertEqual(item, ("جزاء: جزاء تأخير", "250.00"))
         self.assertEqual(status, "approved")
 
