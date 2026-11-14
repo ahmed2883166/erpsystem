@@ -311,7 +311,9 @@ def _dimension_options(c):
 
 
 def _validate_employee_dimensions(c, values):
-    for value, table, label in zip(values[-3:], ("branches","cost_centers","projects"),
+    # The final four values are branch, cost center, project, and termination date.
+    # Validate only the three dimension IDs; the termination date is not a project ID.
+    for value, table, label in zip(values[-4:-1], ("branches","cost_centers","projects"),
                                    ("الفرع","مركز التكلفة","المشروع")):
         if value is None:
             continue
