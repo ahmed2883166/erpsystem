@@ -28,11 +28,14 @@ def _rounded(value):
 
 
 def _ratio(numerator, denominator):
-    return _rounded(numerator / denominator) if denominator else None
+    # Ratios with zero or negative bases are not meaningful for management
+    # analysis (for example, negative total assets caused by a credit balance
+    # in an asset account). Keep the underlying balances visible for review.
+    return _rounded(numerator / denominator) if denominator > 0 else None
 
 
 def _percent(numerator, denominator):
-    return _rounded(numerator * Decimal("100") / denominator) if denominator else None
+    return _rounded(numerator * Decimal("100") / denominator) if denominator > 0 else None
 
 
 def _change(current, previous):
@@ -443,6 +446,17 @@ def build_management_snapshot(conn, start, end, dimensions=None):
         ratios["inventory_days"] + ratios["collection_days"] - ratios["payment_days"]
         if all(ratios[key] is not None for key in ("inventory_days","collection_days","payment_days")) else None
     )
+    negative_asset_accounts = []
+    for account_id, item in as_of.items():
+        if item["type"] == "asset" and not item["is_group"]:
+            balance = item["debit"] - item["credit"]
+            if balance < 0:
+                negative_asset_accounts.append({
+                    "id": account_id, "code": item["code"], "name": item["name"],
+                    "balance": balance,
+                })
+    negative_asset_accounts.sort(key=lambda item: item["balance"])
+
     details = []
     for role in ("cash", "receivables", "payables", "inventory"):
         for account_id in sorted(roles[role]):
@@ -476,6 +490,8 @@ def build_management_snapshot(conn, start, end, dimensions=None):
         "total_assets": assets,
         "total_liabilities": liabilities,
         "total_equity": equity,
+        "total_equity_after_profit": equity + cumulative["net_profit"],
+        "negative_asset_accounts": negative_asset_accounts,
         "revenue_accounts": _top_accounts(current_balances, "revenue", "credit"),
         "expense_accounts": _top_accounts(current_balances, "expense", "debit"),
         "account_details": details,
