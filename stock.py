@@ -1094,7 +1094,7 @@ def edit_warehouse(warehouse_id):
             branch_id=request.form.get("branch_id",type=int)
             branch=c.execute("SELECT name_ar FROM branches WHERE id=? AND active=1",(branch_id,)).fetchone() if branch_id else None
             if branch_id and not branch: raise ValueError("اختر فرعًا موجودًا ونشطًا.")
-            if (branch_id or None)!=(warehouse["branch_id"] or None) and c.execute(
+            if warehouse["branch_id"] and (branch_id or None)!=(warehouse["branch_id"] or None) and c.execute(
                 "SELECT 1 FROM stock_movements WHERE source_warehouse_id=? OR target_warehouse_id=? LIMIT 1",
                 (warehouse_id,warehouse_id)
             ).fetchone():
