@@ -861,8 +861,23 @@ def payroll():
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as e:
             c.rollback()
             flash(str(e) or "تعذر إنشاء مسير الرواتب.", "error")
-    employees = c.execute("""SELECT * FROM employees WHERE active=1
+    employee_rows = c.execute("""SELECT * FROM employees WHERE active=1
         AND work_status IN ('comprehensive_bonus','permanent') ORDER BY employee_code""").fetchall()
+    employees = []
+    for employee_row in employee_rows:
+        employee = dict(employee_row)
+        fixed_rows = c.execute("""SELECT item_name,item_type,amount FROM employee_pay_items
+            WHERE employee_id=? AND active=1 ORDER BY id""", (employee["id"],)).fetchall()
+        employee["fixed_allowance_total"] = M(sum(
+            (D(x["amount"]) for x in fixed_rows if x["item_type"] == "allowance"), Decimal("0")))
+        employee["fixed_deduction_total"] = M(sum(
+            (D(x["amount"]) for x in fixed_rows if x["item_type"] == "deduction"), Decimal("0")))
+        employee["fixed_pay_items_summary"] = "، ".join(
+            x["item_name"] + ": " + str(M(x["amount"])) +
+            (" بدل" if x["item_type"] == "allowance" else " خصم")
+            for x in fixed_rows
+        )
+        employees.append(employee)
     incentive_rules = c.execute("SELECT * FROM payroll_incentive_rules WHERE active=1 ORDER BY name").fetchall()
     today_period = date.today().strftime("%Y-%m")
     runs_page = fetch_page(c,"SELECT * FROM payroll_runs ORDER BY period DESC,id DESC",
