@@ -50,7 +50,8 @@ def initialize_workforce_schema():
       raise_type TEXT NOT NULL DEFAULT 'fixed', raise_value TEXT NOT NULL DEFAULT '0',
       raise_mode TEXT NOT NULL DEFAULT 'basic', raise_effective_date TEXT NOT NULL DEFAULT '',
       overtime_rate_percent TEXT NOT NULL DEFAULT '150',
-      branch_id INTEGER, cost_center_id INTEGER, project_id INTEGER, photo_path TEXT NOT NULL DEFAULT ''
+      branch_id INTEGER, cost_center_id INTEGER, project_id INTEGER, photo_path TEXT NOT NULL DEFAULT '',
+      termination_date TEXT NOT NULL DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS employee_pay_items(
       id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id),
@@ -208,6 +209,7 @@ def initialize_workforce_schema():
         "raise_effective_date": "TEXT NOT NULL DEFAULT ''",
         "overtime_rate_percent": "TEXT NOT NULL DEFAULT '150'",
         "photo_path": "TEXT NOT NULL DEFAULT ''",
+        "termination_date": "TEXT NOT NULL DEFAULT ''",
     }.items():
         if name not in employee_cols:
             c.execute("ALTER TABLE employees ADD COLUMN " + name + " " + definition)
@@ -307,8 +309,15 @@ def _employee_form_values(form):
     raise_mode = form.get("raise_mode", "basic").strip().lower()
     overtime_rate = D(form.get("overtime_rate_percent", "150"))
     effective_date = form.get("raise_effective_date", "").strip()
+    termination_date = form.get("termination_date", "").strip()
     if effective_date:
         date.fromisoformat(effective_date)
+    if termination_date:
+        date.fromisoformat(termination_date)
+    if work_status in {"resigned", "retired"} and not termination_date:
+        raise ValueError("يجب تحديد تاريخ سريان الاستقالة أو بلوغ المعاش.")
+    if work_status not in {"resigned", "retired"}:
+        termination_date = ""
     if (salary < 0 or hours <= 0 or insured_wage < 0 or not legal_category
         or work_status not in {"comprehensive_bonus", "permanent", "unpaid_leave", "resigned", "retired"}
         or raise_type not in {"fixed", "percentage"} or raise_mode not in {"basic", "allowance"}
@@ -324,7 +333,7 @@ def _employee_form_values(form):
         work_status, raise_type, str(raise_value), raise_mode, effective_date,
         str(overtime_rate),
         form.get("branch_id") or None, form.get("cost_center_id") or None,
-        form.get("project_id") or None,
+        form.get("project_id") or None, termination_date,
     )
 
 
@@ -366,7 +375,7 @@ def _salary_change_preview(c, form):
         or calc_type not in {"fixed","percentage"} or calc_base not in {"basic","insured_wage"}
         or treatment not in {"basic","allowance"}):
         raise ValueError("أكمل رقم القرار واسمه وتواريخه وحدد نطاق الموظفين وقاعدة الحساب والمعالجة وقيمة موجبة.")
-    where = "active=1"
+    where = "active=1 AND work_status NOT IN ('resigned','retired')"
     params = []
     if scope != "all_active":
         where += " AND work_status=?"
@@ -475,8 +484,9 @@ def employees():
             c.execute("""INSERT INTO employees(employee_code,full_name,job_title,department,hire_date,basic_salary,
                 standard_hours,legal_category,insurance_number,insured_wage,insurance_enabled,address,national_id,
                 work_status,raise_type,raise_value,raise_mode,raise_effective_date,overtime_rate_percent,
-                branch_id,cost_center_id,project_id,photo_path)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (*values, photo_path or ""))
+                branch_id,cost_center_id,project_id,termination_date,photo_path)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (*values, photo_path or ""))
             _audit(c, "employee_created", values[0])
             c.commit()
             flash("تم إضافة الموظف وحفظ بياناته الوظيفية والأجرية.", "success")
@@ -519,13 +529,13 @@ def edit_employee(employee_id):
                 c.execute("""UPDATE employees SET employee_code=?,full_name=?,job_title=?,department=?,hire_date=?,
                     basic_salary=?,standard_hours=?,legal_category=?,insurance_number=?,insured_wage=?,insurance_enabled=?,
                     address=?,national_id=?,work_status=?,raise_type=?,raise_value=?,raise_mode=?,
-                    raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=?,photo_path=? WHERE id=?""",
+                    raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=?,termination_date=?,photo_path=? WHERE id=?""",
                     (*values, photo_path, employee_id))
             else:
                 c.execute("""UPDATE employees SET employee_code=?,full_name=?,job_title=?,department=?,hire_date=?,
                     basic_salary=?,standard_hours=?,legal_category=?,insurance_number=?,insured_wage=?,insurance_enabled=?,
                     address=?,national_id=?,work_status=?,raise_type=?,raise_value=?,raise_mode=?,
-                    raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=? WHERE id=?""",
+                    raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=?,termination_date=? WHERE id=?""",
                     (*values, employee_id))
             _audit(c, "employee_updated", values[0])
             c.commit()
@@ -882,8 +892,12 @@ def payroll():
             cur = c.execute("INSERT INTO payroll_runs(period,status,created_by) VALUES(?,'draft',?)",
                             (period, session["user_id"]))
             run_id = cur.lastrowid
-            employees = c.execute("""SELECT * FROM employees WHERE active=1
-                AND work_status IN ('comprehensive_bonus','permanent') ORDER BY employee_code""").fetchall()
+            month_end = (date(start.year + (start.month == 12), 1 if start.month == 12 else start.month + 1, 1) - date.resolution)
+            period_end = month_end.isoformat()
+            employees = c.execute("""SELECT * FROM employees WHERE active=1 AND (
+                work_status IN ('comprehensive_bonus','permanent') OR
+                (work_status IN ('resigned','retired') AND termination_date>=? AND termination_date<=?)
+                ) ORDER BY employee_code""", (period + "-01", period_end)).fetchall()
             if not employees:
                 raise ValueError("لا يوجد موظفون مستحقون للراتب في هذا الشهر حسب الموقف الوظيفي.")
             for e in employees:
@@ -910,6 +924,14 @@ def payroll():
                         raise_amount = proposed_raise
                 if basic_salary <= 0:
                     raise ValueError("الراتب الأساسي للموظف " + e["full_name"] + " يجب أن يكون أكبر من صفر.")
+                monthly_basic_salary = basic_salary
+                payroll_days = 30
+                if e["work_status"] in {"resigned", "retired"}:
+                    end_date = date.fromisoformat(e["termination_date"])
+                    payroll_days = min(30, max(0, (end_date - start).days + 1))
+                    if payroll_days <= 0:
+                        raise ValueError("تاريخ انتهاء الخدمة لا يقع ضمن شهر المسير للموظف " + e["full_name"] + ".")
+                payroll_factor = Decimal(payroll_days) / Decimal("30")
                 fixed_items = c.execute("""SELECT item_name,item_type,amount FROM employee_pay_items
                     WHERE employee_id=? AND active=1 ORDER BY id""", (e["id"],)).fetchall()
                 fixed_allowances = M(sum((D(x["amount"]) for x in fixed_items if x["item_type"] == "allowance"), Decimal("0")))
@@ -931,7 +953,7 @@ def payroll():
                 overtime_override_reason = request.form.get("overtime_override_reason_" + str(e["id"]), "").strip()
                 if overtime_rate < 0 or overtime_rate > 500:
                     raise ValueError("نسبة الإضافي يجب أن تكون بين صفر و500.")
-                overtime_calculated_amount = M(D(overtime_hours) * basic_salary / D(e["standard_hours"]) * overtime_rate / Decimal("100"))
+                overtime_calculated_amount = M(D(overtime_hours) * monthly_basic_salary / D(e["standard_hours"]) * overtime_rate / Decimal("100"))
                 overtime_manual_override = bool(overtime_raw) and M(overtime_raw) != overtime_calculated_amount
                 if overtime_manual_override and not overtime_override_reason:
                     raise ValueError("اكتب سبب اختلاف مبلغ الإضافي اليدوي عن المحسوب للموظف " + e["full_name"] + ".")
@@ -979,7 +1001,18 @@ def payroll():
                         if incentive_days <= 0:
                             raise ValueError("أدخل عدد أيام الحافز للموظف " + e["full_name"] + ".")
                         event_incentive = M(incentive_value * incentive_days)
+                if incentive_method == "fixed" and payroll_days < 30:
+                    event_incentive = M(event_incentive * payroll_factor)
+                # Percentage incentives use the prorated basic; per-day incentives follow entered eligible days.
+                if incentive_method == "percentage_basic" and payroll_days < 30:
+                    event_incentive = M(monthly_basic_salary * payroll_factor * D(incentive_rule["calculation_value"]) / Decimal("100"))
                 incentives = M(M(request.form.get("incentives_" + str(e["id"]), "0")) + event_incentive)
+                # Prorate monthly salary and recurring allowances for a mid-month termination.
+                # Loan installments remain contractual amounts and are not prorated by service days.
+                if payroll_days < 30:
+                    basic_salary = M(monthly_basic_salary * payroll_factor)
+                    allowances = M(allowances * payroll_factor)
+                    raise_amount = M(raise_amount * payroll_factor)
                 manual_advance_deduction = M(request.form.get("advance_" + str(e["id"]), "0"))
                 due_installments = c.execute("""SELECT i.due_amount,i.paid_amount
                     FROM employee_loan_installments i JOIN employee_loans l ON l.id=i.loan_id
@@ -1050,8 +1083,14 @@ def payroll():
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as e:
             c.rollback()
             flash(str(e) or "تعذر إنشاء مسير الرواتب.", "error")
-    employee_rows = c.execute("""SELECT * FROM employees WHERE active=1
-        AND work_status IN ('comprehensive_bonus','permanent') ORDER BY employee_code""").fetchall()
+    display_period = date.today().strftime("%Y-%m")
+    display_start = date.fromisoformat(display_period + "-01")
+    display_end = (date(display_start.year + (display_start.month == 12),
+                         1 if display_start.month == 12 else display_start.month + 1, 1) - date.resolution).isoformat()
+    employee_rows = c.execute("""SELECT * FROM employees WHERE active=1 AND (
+        work_status IN ('comprehensive_bonus','permanent') OR
+        (work_status IN ('resigned','retired') AND termination_date>=? AND termination_date<=?)
+        ) ORDER BY employee_code""", (display_period + "-01", display_end)).fetchall()
     employees = []
     for employee_row in employee_rows:
         employee = dict(employee_row)
@@ -1068,7 +1107,7 @@ def payroll():
         )
         employees.append(employee)
     incentive_rules = c.execute("SELECT * FROM payroll_incentive_rules WHERE active=1 ORDER BY name").fetchall()
-    today_period = date.today().strftime("%Y-%m")
+    today_period = display_period
     runs_page = fetch_page(c,"SELECT * FROM payroll_runs ORDER BY period DESC,id DESC",
         "SELECT COUNT(*) FROM payroll_runs",
         page=request.args.get("runs_page",1,type=int),
