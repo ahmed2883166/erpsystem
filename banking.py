@@ -461,7 +461,7 @@ def statement_reconciliation():
         c.close()
         return render_template("bank_reconciliation.html",accounts=accounts,account_id=account_id,
             lines=lines,book_rows=book_rows,statement_total=statement_total,book_total=book_total,
-            difference=statement_total-book_total,matched_count=matched_count,
+            difference=(statement_total-book_total) if lines else None,matched_count=matched_count,
             opening_balance=opening_balance,closing_balance=closing_balance,
             expected_closing_balance=expected_closing_balance,closing_difference=closing_difference,
             balances_entered=balances_entered,opening_ledger_balance=opening_ledger_balance,
