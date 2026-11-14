@@ -1740,8 +1740,8 @@ def create_employee_grant():
         if method not in {"fixed","percentage_basic","per_day"}: raise ValueError("طريقة حساب المنحة غير صحيحة.")
         value = M(request.form.get("calculation_value","0"))
         days_count = D(request.form.get("days_count","0"))
-        if value<=0 or days_count<0 or (method=="per_day" and days_count<=0):
-            raise ValueError("أدخل قيمة موجبة للمنحة وحدد عدد الأيام عند اختيار طريقة الأيام.")
+        if (method!="per_day" and value<=0) or days_count<0 or (method=="per_day" and days_count<=0):
+            raise ValueError("أدخل نسبة أو مبلغًا موجبًا، وحدد عدد الأيام عند اختيار طريقة الأيام.")
         expense_id=int(request.form["expense_account_id"]); payable_id=int(request.form["payable_account_id"])
         expense=c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(expense_id,)).fetchone()
         payable=c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(payable_id,)).fetchone()
