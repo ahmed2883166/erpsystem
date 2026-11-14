@@ -70,6 +70,19 @@ class ManagementDashboardTests(unittest.TestCase):
             );
             INSERT INTO asset_disposals VALUES(1,'2026-11-14',11,'-54.44');
         """)
+        disposal_rows = self.conn.execute(
+            "SELECT DISTINCT gain_loss_account_id FROM asset_disposals "
+            "WHERE disposal_date>=? AND disposal_date<=? AND CAST(gain_loss_amount AS NUMERIC)<0",
+            ("2026-11-01", "2026-11-30"),
+        ).fetchall()
+        self.assertEqual({row["gain_loss_account_id"] for row in disposal_rows}, {11})
+        from management_dashboard import income_figures
+        self.assertEqual(
+            income_figures({11: {"id": 11, "type": "revenue", "is_group": False,
+                                 "debit": Decimal("54.44"), "credit": Decimal("0"),
+                                 "code": "4710"}}, disposal_loss_ids={11})["revenue"],
+            Decimal("0"),
+        )
         snapshot = build_management_snapshot(
             self.conn, date(2026,11,1), date(2026,11,30)
         )
