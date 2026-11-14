@@ -116,11 +116,11 @@ ACTIVITY_ACCOUNT_ROLES = {
 # Posting accounts follow each chart. Industrial activity is deliberately limited to
 # purchasing, selling, and storing goods; it has no manufacturing or production cycle.
 ACTIVITY_POSTING_ACCOUNTS = {
-    "commercial": {"ar": "1130", "revenue": "4100", "vat": "2130", "inventory": "1150", "cogs": "5100", "purchase_inventory": "1150", "supplier_ap": "2110", "input_vat": "1165"},
-    "service": {"ar": "1120", "revenue": "4100", "vat": "2130", "inventory": None, "cogs": None, "purchase_inventory": None, "supplier_ap": "2100", "input_vat": "1165"},
-    "medical": {"ar": "1130", "revenue": "4100", "vat": "2130", "inventory": "1150", "cogs": "5300", "purchase_inventory": "1150", "supplier_ap": "2100", "input_vat": "1165"},
-    "restaurant": {"ar": "1130", "revenue": "4100", "vat": "2130", "inventory": "1140", "cogs": "5100", "purchase_inventory": "1140", "supplier_ap": "2100", "input_vat": "1165"},
-    "industrial": {"ar": "1120", "revenue": "4100", "vat": "2130", "inventory": "1130", "cogs": "5400", "purchase_inventory": "1130", "supplier_ap": "2100", "input_vat": "1165"},
+    "commercial": {"ar": "1130", "revenue": "4100", "vat": "2130", "inventory": "1150", "cogs": "5100", "purchase_inventory": "1150", "supplier_ap": "2110", "input_vat": "1165", "stocktake_shortage": "5510", "stocktake_surplus": "6990"},
+    "service": {"ar": "1120", "revenue": "4100", "vat": "2130", "inventory": None, "cogs": None, "purchase_inventory": None, "supplier_ap": "2100", "input_vat": "1165", "stocktake_shortage": "5510", "stocktake_surplus": "6990"},
+    "medical": {"ar": "1130", "revenue": "4100", "vat": "2130", "inventory": "1150", "cogs": "5300", "purchase_inventory": "1150", "supplier_ap": "2100", "input_vat": "1165", "stocktake_shortage": "5510", "stocktake_surplus": "6990"},
+    "restaurant": {"ar": "1130", "revenue": "4100", "vat": "2130", "inventory": "1140", "cogs": "5100", "purchase_inventory": "1140", "supplier_ap": "2100", "input_vat": "1165", "stocktake_shortage": "5510", "stocktake_surplus": "6990"},
+    "industrial": {"ar": "1120", "revenue": "4100", "vat": "2130", "inventory": "1130", "cogs": "5400", "purchase_inventory": "1130", "supplier_ap": "2100", "input_vat": "1165", "stocktake_shortage": "5510", "stocktake_surplus": "6990"},
 }
 
 # Retained earnings is resolved through the same activity account-role mapping.
