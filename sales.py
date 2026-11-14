@@ -2064,7 +2064,9 @@ def invoice_print(invoice_id):
     if not invoice:
         c.close()
         abort(404)
-    raw_lines = c.execute("""SELECT l.*,p.sku,p.name_ar product_name,p.uom
+    product_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_products)").fetchall()}
+    product_uom_expr = "p.uom" if "uom" in product_columns else "'' AS uom"
+    raw_lines = c.execute(f"""SELECT l.*,p.sku,p.name_ar product_name,{product_uom_expr}
         FROM sales_invoice_lines l LEFT JOIN stock_products p ON p.id=l.product_id
         WHERE l.invoice_id=? ORDER BY l.id""", (invoice_id,)).fetchall()
     lines=[]
