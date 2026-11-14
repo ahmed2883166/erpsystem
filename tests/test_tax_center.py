@@ -136,14 +136,22 @@ class TaxCenterTests(unittest.TestCase):
             with patch("income_statement.build_income_statement", return_value={
                 "revenue_total": 120000, "cogs_total": 45000, "gross_profit": 75000,
                 "operating_expense_total": 25000, "net_profit": 50000,
-            }) as build_statement:
+            }) as build_statement, patch("financial_planning.build_balance_sheet_snapshot", return_value={
+                "total_assets": 200000, "total_liabilities": 90000,
+                "equity_before_profit": 60000, "total_equity": 110000,
+                "balance_difference": 0, "balanced": True, "negative_asset_accounts": [],
+            }) as build_balance:
                 snapshot = tax_center.build_tax_report_snapshot(conn, "2026-11")
             build_statement.assert_called_once_with(conn, "2026-01-01", "2026-12-31")
+            build_balance.assert_called_once_with(conn, "2026-12-31")
         finally:
             conn.close()
         prep = snapshot["saudi_preparation"]
         self.assertTrue(prep["available"])
         self.assertEqual(prep["net_profit"], 50000)
+        self.assertEqual(prep["total_assets"], 200000)
+        self.assertEqual(prep["total_liabilities"], 90000)
+        self.assertTrue(prep["balance_sheet_balanced"])
         self.assertIsNone(prep["zakat_or_income_tax"])
         self.assertIn("لم يتم احتساب", prep["notice"])
 
