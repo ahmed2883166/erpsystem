@@ -944,6 +944,7 @@ def payroll():
                     if payroll_days <= 0:
                         raise ValueError("تاريخ انتهاء الخدمة لا يقع ضمن شهر المسير للموظف " + e["full_name"] + ".")
                 payroll_factor = Decimal(payroll_days) / Decimal("30")
+                employee_period_end = e["termination_date"] if e["work_status"] in {"resigned", "retired"} else period_end
                 fixed_items = c.execute("""SELECT item_name,item_type,amount FROM employee_pay_items
                     WHERE employee_id=? AND active=1 ORDER BY id""", (e["id"],)).fetchall()
                 fixed_allowances = M(sum((D(x["amount"]) for x in fixed_items if x["item_type"] == "allowance"), Decimal("0")))
@@ -956,7 +957,7 @@ def payroll():
                 if request.form.get("use_attendance_data") == "1":
                     attendance_rows = c.execute("""SELECT absence_hours,approved_overtime_hours
                         FROM attendance_records WHERE employee_id=? AND attendance_date>=? AND attendance_date<=?""",
-                        (e["id"],period+"-01",(date(start.year + (start.month==12), 1 if start.month==12 else start.month+1, 1)-date.resolution).isoformat())).fetchall()
+                        (e["id"],period+"-01",employee_period_end)).fetchall()
                     attendance_absent_hours = M(sum((D(x["absence_hours"]) for x in attendance_rows),Decimal("0")))
                     attendance_overtime_hours = M(sum((D(x["approved_overtime_hours"]) for x in attendance_rows),Decimal("0")))
                     overtime_hours = attendance_overtime_hours
@@ -979,13 +980,13 @@ def payroll():
                     unpaid_requests = c.execute("""SELECT r.start_date,r.end_date,r.days FROM employee_leave_requests r
                         JOIN leave_types t ON t.id=r.leave_type_id
                         WHERE r.employee_id=? AND r.status='approved' AND t.is_paid=0
-                        AND r.start_date<=? AND r.end_date>=?""",(e["id"],month_end,period+"-01")).fetchall()
+                        AND r.start_date<=? AND r.end_date>=?""",(e["id"],employee_period_end,period+"-01")).fetchall()
                     unpaid_days = Decimal("0")
                     for leave_row in unpaid_requests:
                         leave_start=date.fromisoformat(leave_row["start_date"])
                         leave_end=date.fromisoformat(leave_row["end_date"])
                         overlap_start=max(leave_start,start)
-                        overlap_end=min(leave_end,date.fromisoformat(month_end))
+                        overlap_end=min(leave_end,date.fromisoformat(employee_period_end))
                         total_days=Decimal((leave_end-leave_start).days+1)
                         overlap_days=Decimal((overlap_end-overlap_start).days+1)
                         unpaid_days += D(leave_row["days"])*overlap_days/total_days
