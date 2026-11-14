@@ -92,6 +92,7 @@ def initialize_workforce_schema():
       taxable_income_tax TEXT NOT NULL, employee_insurance TEXT NOT NULL,
       employer_insurance TEXT NOT NULL, gross_pay TEXT NOT NULL, net_pay TEXT NOT NULL,
       incentives TEXT NOT NULL DEFAULT '0', advance_deduction TEXT NOT NULL DEFAULT '0',
+      penalty_deduction TEXT NOT NULL DEFAULT '0',
       total_entitlements TEXT NOT NULL DEFAULT '0', total_deductions TEXT NOT NULL DEFAULT '0',
       salary_raise TEXT NOT NULL DEFAULT '0', overtime_rate_percent TEXT NOT NULL DEFAULT '150',
       incentive_rule_id INTEGER, incentive_name TEXT NOT NULL DEFAULT '',
@@ -242,6 +243,7 @@ def initialize_workforce_schema():
         "loan_deduction": "TEXT NOT NULL DEFAULT '0'",
         "incentives": "TEXT NOT NULL DEFAULT '0'",
         "advance_deduction": "TEXT NOT NULL DEFAULT '0'",
+        "penalty_deduction": "TEXT NOT NULL DEFAULT '0'",
         "total_entitlements": "TEXT NOT NULL DEFAULT '0'",
         "total_deductions": "TEXT NOT NULL DEFAULT '0'",
         "salary_raise": "TEXT NOT NULL DEFAULT '0'",
@@ -748,7 +750,7 @@ def payroll_report():
                l.overtime_hours,l.overtime_rate_percent,l.overtime_amount,l.gross_pay,
                l.absent_hours,l.absence_deduction,l.advance_deduction,
                COALESCE(l.loan_deduction,'0') AS loan_deduction,l.other_deductions,
-               l.taxable_income_tax,l.employee_insurance,l.employer_insurance,
+               COALESCE(l.penalty_deduction,'0') AS penalty_deduction,l.taxable_income_tax,l.employee_insurance,l.employer_insurance,
                l.total_entitlements,l.total_deductions,l.net_pay
         FROM payroll_lines l
         JOIN payroll_runs r ON r.id=l.run_id
@@ -779,7 +781,7 @@ def payroll_report():
         row["manual_advance_deduction"] = M(max(Decimal("0"), D(row["advance_deduction"]) - loan))
         row["employee_deductions"] = M(
             D(row["absence_deduction"]) + row["manual_advance_deduction"] + loan
-            + D(row["other_deductions"]) + D(row["taxable_income_tax"])
+            + D(row["other_deductions"]) + D(row["penalty_deduction"]) + D(row["taxable_income_tax"])
             + D(row["employee_insurance"])
         )
         row["employer_total_cost"] = M(
@@ -790,7 +792,7 @@ def payroll_report():
         "SELECT id,employee_code,full_name FROM employees ORDER BY employee_code"
     ).fetchall()
     fields = ("basic_salary","salary_raise","allowances","incentives","overtime_amount","gross_pay",
-              "absence_deduction","manual_advance_deduction","loan_deduction","other_deductions",
+              "absence_deduction","manual_advance_deduction","loan_deduction","other_deductions","penalty_deduction",
               "taxable_income_tax","employee_insurance","employer_insurance","employee_deductions",
               "employer_total_cost","net_pay","paid_amount","remaining_payable")
     totals = {key: M(sum((D(row[key]) for row in rows), Decimal("0"))) for key in fields}
