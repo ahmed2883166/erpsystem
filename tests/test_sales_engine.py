@@ -46,7 +46,7 @@ class SalesIntegrationTests(unittest.TestCase):
             ("4100", "المبيعات", "revenue"), ("4200", "مردودات ومسموحات المبيعات", "revenue"),
             ("5100", "تكلفة المبيعات", "expense")
         ]:
-            self.db.execute("INSERT INTO accounts(code,name_ar,account_type) VALUES(?,?,?)", (code,name,typ))
+            self.db.execute("INSERT OR IGNORE INTO accounts(code,name_ar,account_type) VALUES(?,?,?)", (code,name,typ))
         self.db.execute("INSERT INTO customers(code,name) VALUES('C1','عميل اختبار')")
         self.customer_id = self.db.execute("SELECT id FROM customers").fetchone()["id"]
         self.db.execute("INSERT INTO stock_products(sku,name_ar) VALUES('P1','صنف اختبار')")
