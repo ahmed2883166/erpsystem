@@ -114,6 +114,8 @@ class JournalAndLedgerFilterTests(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertIn("مبيعات وتحصيلات", html)
         self.assertIn("SI-2026-001", html)
+        self.assertIn('href="/sales/invoices/1/print"', html)
+        self.assertIn("فتح فاتورة البيع", html)
         self.assertIn("INV-RENT", html)
         self.assertNotIn("OPEN-1", html)
         self.assertNotIn("RCPT-3", html)
@@ -123,6 +125,29 @@ class JournalAndLedgerFilterTests(unittest.TestCase):
         manual_html = manual.get_data(as_text=True)
         self.assertIn("OPEN-1", manual_html)
         self.assertNotIn("INV-RENT", manual_html)
+
+    def test_payroll_payment_opens_its_parent_payroll_run(self):
+        conn = connect_database(self.db_path)
+        conn.executescript("""
+            CREATE TABLE payroll_runs(
+                id INTEGER PRIMARY KEY, period TEXT, journal_entry_id INTEGER
+            );
+            CREATE TABLE payroll_payments(
+                id INTEGER PRIMARY KEY, run_id INTEGER, payment_date TEXT,
+                reference TEXT, journal_entry_id INTEGER
+            );
+            INSERT INTO payroll_runs VALUES(7,'2026-01',NULL);
+            INSERT INTO payroll_payments VALUES(9,7,'2026-01-31','PAY-2026-01-01',3);
+        """)
+        conn.commit()
+        conn.close()
+
+        response = self.client.get("/journal?source=payroll")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("PAY-2026-01-01", html)
+        self.assertIn('href="/hr/payroll/7"', html)
+        self.assertIn("فتح كشف المرتبات", html)
 
     def test_journal_detail_displays_the_posted_entry_lines(self):
         response = self.client.get("/journal/2")
