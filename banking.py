@@ -62,7 +62,8 @@ def init_bank_schema():
       description TEXT NOT NULL DEFAULT '',
       bank_reference TEXT NOT NULL DEFAULT '',
       matched_transaction_id INTEGER REFERENCES bank_transactions(id),
-      matched_side TEXT CHECK(matched_side IN ('source','destination')),
+      matched_journal_line_id INTEGER REFERENCES journal_lines(id),
+      matched_side TEXT CHECK(matched_side IN ('source','destination','ledger')),
       matched_at TEXT,
       matched_by INTEGER,
       created_by INTEGER,
@@ -73,6 +74,9 @@ def init_bank_schema():
     CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_statement_tx_side
       ON bank_statement_lines(matched_transaction_id,matched_side)
       WHERE matched_transaction_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_statement_journal_line
+      ON bank_statement_lines(matched_journal_line_id)
+      WHERE matched_journal_line_id IS NOT NULL;
     CREATE TABLE IF NOT EXISTS bank_statement_balances(
       id INTEGER PRIMARY KEY,
       bank_account_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -85,6 +89,12 @@ def init_bank_schema():
       UNIQUE(bank_account_id,period_start,period_end)
     );
     """)
+    statement_columns={row["name"] for row in c.execute("PRAGMA table_info(bank_statement_lines)")}
+    if "matched_journal_line_id" not in statement_columns:
+        c.execute("ALTER TABLE bank_statement_lines ADD COLUMN matched_journal_line_id INTEGER REFERENCES journal_lines(id)")
+    c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_statement_journal_line
+        ON bank_statement_lines(matched_journal_line_id)
+        WHERE matched_journal_line_id IS NOT NULL""")
     c.close()
 
 def require(permission="manage"):
@@ -259,27 +269,34 @@ def statement_reconciliation():
                 return redirect(url_for("bank.statement_reconciliation",account_id=account_id,start_date=period_start,end_date=period_end))
             if action=="match":
                 line_id=request.form.get("line_id",type=int)
-                transaction_id=request.form.get("transaction_id",type=int)
+                journal_line_id=request.form.get("journal_line_id",type=int)
                 line=c.execute("SELECT * FROM bank_statement_lines WHERE id=?",(line_id,)).fetchone()
-                tx=c.execute("SELECT * FROM bank_transactions WHERE id=?",(transaction_id,)).fetchone()
-                if not line or not tx: raise ValueError("سطر الكشف أو الحركة الدفترية غير موجود.")
-                if line["matched_transaction_id"]: raise ValueError("سطر كشف البنك تمت مطابقته بالفعل.")
-                expected,side=expected_statement_amount(tx,line["bank_account_id"])
+                journal_line=c.execute("""SELECT jl.id,jl.account_id,jl.debit,jl.credit,je.id entry_id,
+                    je.reference,je.description,je.entry_date
+                    FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                    WHERE jl.id=? AND je.status='posted'""",(journal_line_id,)).fetchone()
+                if not line or not journal_line: raise ValueError("سطر الكشف أو سطر الأستاذ غير موجود أو غير مرحّل.")
+                if line["matched_transaction_id"] or line["matched_journal_line_id"]:
+                    raise ValueError("سطر كشف البنك تمت مطابقته بالفعل.")
+                if journal_line["account_id"]!=line["bank_account_id"]:
+                    raise ValueError("سطر الأستاذ لا يخص حساب البنك المحدد.")
+                expected=(Decimal(str(journal_line["debit"] or "0"))-
+                          Decimal(str(journal_line["credit"] or "0"))).quantize(Decimal("0.01"))
                 statement_amount=Decimal(str(line["signed_amount"])).quantize(Decimal("0.01"))
                 if expected!=statement_amount:
-                    raise ValueError("المبلغ أو اتجاه الحركة غير متطابق. الإيداع موجب والسحب/العمولة/التحويل الصادر سالب.")
-                already=c.execute("""SELECT 1 FROM bank_statement_lines
-                    WHERE matched_transaction_id=? AND matched_side=? LIMIT 1""",(transaction_id,side)).fetchone()
-                if already: raise ValueError("هذا الطرف من الحركة الدفترية تمت مطابقته من قبل.")
-                c.execute("""UPDATE bank_statement_lines SET matched_transaction_id=?,matched_side=?,
+                    raise ValueError("المبلغ أو اتجاه الحركة غير متطابق؛ المدين موجب والدائن سالب في كشف البنك.")
+                already=c.execute("SELECT 1 FROM bank_statement_lines WHERE matched_journal_line_id=? LIMIT 1",
+                                  (journal_line_id,)).fetchone()
+                if already: raise ValueError("سطر الأستاذ تمت مطابقته مع سطر كشف آخر بالفعل.")
+                c.execute("""UPDATE bank_statement_lines SET matched_journal_line_id=?,matched_side='ledger',
                     matched_at=?,matched_by=? WHERE id=?""",
-                    (transaction_id,side,datetime.now().isoformat(timespec="seconds"),session.get("user_id"),line_id))
+                    (journal_line_id,datetime.now().isoformat(timespec="seconds"),session.get("user_id"),line_id))
                 c.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
                     VALUES(?,?,?,?)""",(session.get("user_id"),"bank_statement_match",
-                    f"مطابقة سطر كشف #{line_id} مع الحركة {tx['transaction_no']} ({side})",
+                    f"مطابقة سطر كشف #{line_id} مع سطر الأستاذ #{journal_line_id} بالقيد #{journal_line['entry_id']}",
                     datetime.now().isoformat(timespec="seconds")))
                 c.commit()
-                flash("تمت مطابقة سطر كشف البنك مع الحركة الدفترية بعد التحقق من الحساب والمبلغ والاتجاه.","success")
+                flash("تمت مطابقة سطر كشف البنك مع سطر الأستاذ بعد التحقق من الحساب والمبلغ والاتجاه.","success")
                 return redirect(url_for("bank.statement_reconciliation",account_id=line["bank_account_id"]))
             raise ValueError("الإجراء المطلوب غير معروف.")
         account_id=request.args.get("account_id",type=int)
@@ -294,23 +311,27 @@ def statement_reconciliation():
         period_start=request.args.get("start_date",today.replace(day=1).isoformat())
         period_end=request.args.get("end_date",today.isoformat())
         if account_id:
-            lines=c.execute("""SELECT l.*,t.transaction_no FROM bank_statement_lines l
+            lines=c.execute("""SELECT l.*,COALESCE(t.transaction_no,'قيد #'||mje.id) transaction_no
+                FROM bank_statement_lines l
                 LEFT JOIN bank_transactions t ON t.id=l.matched_transaction_id
+                LEFT JOIN journal_lines mjl ON mjl.id=l.matched_journal_line_id
+                LEFT JOIN journal_entries mje ON mje.id=mjl.entry_id
                 WHERE l.bank_account_id=? AND l.statement_date BETWEEN ? AND ?
                 ORDER BY l.statement_date,l.id""",(account_id,period_start,period_end)).fetchall()
-            txs=c.execute("""SELECT * FROM bank_transactions
-                WHERE (bank_account_id=? OR destination_bank_account_id=?)
-                  AND transaction_date BETWEEN ? AND ?
-                ORDER BY transaction_date,id""",(account_id,account_id,period_start,period_end)).fetchall()
+            gl_lines=c.execute("""SELECT jl.id journal_line_id,je.id entry_id,je.entry_date transaction_date,
+                je.reference transaction_no,je.description,jl.memo,jl.debit,jl.credit
+                FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                WHERE jl.account_id=? AND je.status='posted' AND je.entry_date BETWEEN ? AND ?
+                ORDER BY je.entry_date,je.id,jl.id""",(account_id,period_start,period_end)).fetchall()
             book_rows=[]
             book_total=Decimal("0")
-            for tx in txs:
-                amount=Decimal(str(tx["amount"])).quantize(Decimal("0.01"))
-                signed,side=expected_statement_amount(tx,account_id)
+            for gl_line in gl_lines:
+                signed=(Decimal(str(gl_line["debit"] or "0"))-
+                        Decimal(str(gl_line["credit"] or "0"))).quantize(Decimal("0.01"))
                 book_total+=signed
-                book_rows.append(dict(tx, signed_amount=signed, side=side))
+                book_rows.append(dict(gl_line,signed_amount=signed))
             statement_total=sum((Decimal(str(line["signed_amount"])) for line in lines),Decimal("0"))
-            matched_count=sum(1 for line in lines if line["matched_transaction_id"])
+            matched_count=sum(1 for line in lines if line["matched_transaction_id"] or line["matched_journal_line_id"])
             balances=c.execute("""SELECT opening_balance,closing_balance FROM bank_statement_balances
                 WHERE bank_account_id=? AND period_start=? AND period_end=?""",
                 (account_id,period_start,period_end)).fetchone()
