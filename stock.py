@@ -1545,9 +1545,13 @@ def resolve_pending_movement(movement_id):
         else:
             raise ValueError("نوع الحركة لا يدعم المعالجة اليدوية من شاشة الحركات المعلقة.")
         conn.commit()
-        flash("تمت معالجة الحركة وترحيل قيدها المحاسبي." if conn.execute(
-            "SELECT accounting_status FROM stock_movements WHERE id=?",(movement_id,)).fetchone()["accounting_status"]=="posted"
-            else "تم حفظ الحركة؛ ما زالت تحتاج إلى استكمال الإعدادات.", "success")
+        final_status = conn.execute(
+            "SELECT accounting_status FROM stock_movements WHERE id=?", (movement_id,)
+        ).fetchone()["accounting_status"]
+        if final_status == "posted":
+            flash("تمت معالجة الحركة وترحيل قيدها المحاسبي.", "success")
+        else:
+            flash("لم تُرحّل الحركة؛ ما زالت معلقة بسبب نقص إعدادات الحسابات. راجع ملف النشاط وربط الحسابات ثم أعد المحاولة.", "warning")
     except (ValueError, sqlite3.Error) as exc:
         conn.rollback()
         flash(str(exc),"error")
