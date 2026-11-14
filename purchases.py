@@ -81,7 +81,9 @@ def init_purchase_schema():
       credit_note_id INTEGER NOT NULL REFERENCES supplier_credit_notes(id) ON DELETE CASCADE,
       product_id INTEGER NOT NULL REFERENCES stock_products(id),
       warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
-      quantity TEXT NOT NULL, unit_cost TEXT NOT NULL, total_cost TEXT NOT NULL
+      quantity TEXT NOT NULL, unit_cost TEXT NOT NULL, total_cost TEXT NOT NULL,
+      entered_quantity TEXT, uom_id INTEGER REFERENCES stock_uoms(id), uom_key TEXT,
+      entered_uom_name TEXT, conversion_factor TEXT NOT NULL DEFAULT '1'
     );
     CREATE TABLE IF NOT EXISTS supplier_payments(
       id INTEGER PRIMARY KEY, payment_no TEXT NOT NULL UNIQUE, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
@@ -1422,7 +1424,8 @@ def new_credit_note():
             product_ids=request.form.getlist("product_id")
             warehouse_ids=request.form.getlist("warehouse_id")
             quantities=request.form.getlist("quantity")
-            if not product_ids or not (len(product_ids)==len(warehouse_ids)==len(quantities)):
+            uom_keys=request.form.getlist("uom_key")
+            if not product_ids or not (len(product_ids)==len(warehouse_ids)==len(quantities)==len(uom_keys)):
                 raise ValueError("أضف صنفًا واحدًا على الأقل وحدد المخزن والكمية لكل صنف.")
             c.execute("BEGIN IMMEDIATE")
             bill=c.execute("SELECT * FROM supplier_bills WHERE id=? AND supplier_id=? AND status='posted'",(bill_id,supplier)).fetchone()
@@ -1447,9 +1450,12 @@ def new_credit_note():
             method_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
             method=method_row["setting_value"] if method_row else "average"
             line_data=[]; movement_ids=[]; subtotal=Decimal("0")
-            for raw_pid,raw_wh,raw_qty in zip(product_ids,warehouse_ids,quantities):
+            for raw_pid,raw_wh,raw_qty,raw_uom_key in zip(product_ids,warehouse_ids,quantities,uom_keys):
                 product_id=int(raw_pid); warehouse_id=int(raw_wh)
-                qty=q4(Decimal(raw_qty))
+                entered_qty=Decimal(raw_qty)
+                conversion_factor,entered_uom_name=product_uom_factor(c,product_id,raw_uom_key or None,"purchase")
+                uom_id,stored_uom_name=product_uom_storage(c,product_id,raw_uom_key or None)
+                qty=q4(entered_qty*conversion_factor)
                 if qty<=0: raise ValueError("كمية المرتجع يجب أن تكون أكبر من صفر.")
                 product=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(product_id,)).fetchone()
                 warehouse=c.execute("SELECT id FROM stock_warehouses WHERE id=? AND active=1",(warehouse_id,)).fetchone()
@@ -1464,7 +1470,10 @@ def new_credit_note():
                     raise ValueError("الصنف والمخزن المحددان غير موجودين ضمن استلامات فاتورة المورد الأصلية.")
                 cost,allocations=consume_layers(c,product_id,warehouse_id,qty,method)
                 subtotal+=cost
-                line_data.append((product_id,warehouse_id,qty,cost))
+                line_data.append({"product_id":product_id,"warehouse_id":warehouse_id,"quantity":qty,
+                    "cost":cost,"entered_quantity":entered_qty,"uom_id":uom_id,"uom_key":raw_uom_key,
+                    "entered_uom_name":entered_uom_name or stored_uom_name,
+                    "conversion_factor":conversion_factor})
                 for lot_id,allocated_qty,unit_cost,allocated_total in allocations:
                     movement_no="SUPRET-"+datetime.now().strftime("%Y%m%d%H%M%S%f")+"-"+uuid.uuid4().hex[:5].upper()
                     cur=c.execute("""INSERT INTO stock_movements(
@@ -1489,10 +1498,15 @@ def new_credit_note():
               (credit_no,supplier,bill_id,request.form["credit_date"],supplier_credit_no,reason,
                str(subtotal),str(tax_rate),str(tax),str(total),session["user_id"]))
             note_id=cur.lastrowid
-            for product_id,warehouse_id,qty,cost in line_data:
+            for item in line_data:
                 c.execute("""INSERT INTO supplier_credit_note_lines(
-                  credit_note_id,product_id,warehouse_id,quantity,unit_cost,total_cost) VALUES(?,?,?,?,?,?)""",
-                  (note_id,product_id,warehouse_id,str(qty),str(money(cost/qty)),str(cost)))
+                  credit_note_id,product_id,warehouse_id,quantity,unit_cost,total_cost,
+                  entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
+                  VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                  (note_id,item["product_id"],item["warehouse_id"],str(item["quantity"]),
+                   str(money(item["cost"]/item["quantity"])),str(item["cost"]),
+                   str(item["entered_quantity"]),item["uom_id"],item["uom_key"],
+                   item["entered_uom_name"],str(item["conversion_factor"])))
             journal_lines=[(ap_id,total,0,"تخفيض مديونية المورد بإشعار دائن"),
                            (inventory_id,0,subtotal,"إخراج مخزون مرتجع للمورد")]
             if tax:
@@ -1519,6 +1533,7 @@ def new_credit_note():
       ORDER BY b.bill_date DESC,b.id DESC""").fetchall()
     bills=[b for b in bills if Decimal(b["total_amount"])>Decimal(b["credited_amount"] or "0")]
     products=c.execute("SELECT id,sku,name_ar,uom FROM stock_products WHERE active=1 AND product_type!='service' ORDER BY name_ar").fetchall()
+    products=[dict(p,uom_options=product_uom_options(c,p["id"])) for p in products]
     warehouses=c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     c.close()
     return render_template("purchase_credit_note_new.html",suppliers=suppliers,bills=bills,products=products,warehouses=warehouses,today=date.today().isoformat())
