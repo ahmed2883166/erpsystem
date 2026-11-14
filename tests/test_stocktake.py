@@ -145,11 +145,39 @@ class StocktakeRouteTests(unittest.TestCase):
             VALUES('AFTER-COUNT','receipt',?,?, '1','5','5','2026-11-11')""",
             (self.product_id,self.warehouse_id))
         conn.commit()
+        # The creator cannot approve their own count; a second user performs
+        # the independent approval attempt so the movement-cutoff guard is tested.
+        with self.client.session_transaction() as session:
+            session["user_id"] = 8
+            session["username"] = "reviewer"
         response = self.client.post("/stock/counts/" + str(header["id"]) + "/approve")
         self.assertEqual(response.status_code, 302)
         status = conn.execute("SELECT status FROM stocktakes WHERE id=?", (header["id"],)).fetchone()["status"]
         self.assertEqual(status, "counted")
         conn.close()
+
+    def test_stocktake_creator_cannot_approve_own_count(self):
+        self._login()
+        self.client.post("/stock/counts", data={
+            "warehouse_id": str(self.warehouse_id), "count_date": "2026-11-11",
+        })
+        conn = stock.get_db()
+        header = conn.execute("SELECT * FROM stocktakes").fetchone()
+        line = conn.execute("SELECT * FROM stocktake_lines").fetchone()
+        conn.close()
+        self.client.post("/stock/counts/" + str(header["id"]), data={
+            "counted_" + str(line["id"]): "10", "cost_" + str(line["id"]): "5",
+        })
+        response = self.client.post(
+            "/stock/counts/" + str(header["id"]) + "/approve", follow_redirects=True
+        )
+        self.assertIn("نفس المستخدم الذي أنشأه", response.get_data(as_text=True))
+        conn = stock.get_db()
+        status = conn.execute(
+            "SELECT status FROM stocktakes WHERE id=?", (header["id"],)
+        ).fetchone()["status"]
+        conn.close()
+        self.assertEqual(status, "counted")
 
     def test_stocktake_creation_is_blocked_in_closed_financial_year(self):
         self._login()
