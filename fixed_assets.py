@@ -14,6 +14,12 @@ assets_bp = Blueprint("assets", __name__, url_prefix="/assets")
 
 M = Decimal("0.01")
 
+ASSET_DISPOSAL_TYPES = {
+    "sale": "بيع", "damage": "تلف", "theft": "سرقة",
+    "obsolete": "تقادم", "donation": "تبرع",
+    "retirement": "استغناء نهائي", "other": "أخرى",
+}
+
 def db():
     return connect_database(DB_PATH, isolation_level=None)
 
@@ -71,6 +77,11 @@ def initialize_assets_schema():
         asset_id INTEGER NOT NULL UNIQUE REFERENCES fixed_assets(id),
         PRIMARY KEY(bill_id,asset_id)
     )""")
+    disposal_columns = {row["name"] for row in c.execute("PRAGMA table_info(asset_disposals)")}
+    if "disposal_type" not in disposal_columns:
+        c.execute("ALTER TABLE asset_disposals ADD COLUMN disposal_type TEXT NOT NULL DEFAULT 'other'")
+    if "document_number" not in disposal_columns:
+        c.execute("ALTER TABLE asset_disposals ADD COLUMN document_number TEXT NOT NULL DEFAULT ''")
     c.execute("CREATE INDEX IF NOT EXISTS idx_fixed_asset_bill_links_bill ON fixed_asset_supplier_bill_links(bill_id)")
     c.execute("""CREATE TABLE IF NOT EXISTS fixed_asset_journal_lines(
         journal_line_id INTEGER PRIMARY KEY REFERENCES journal_lines(id),
@@ -291,6 +302,30 @@ def _asset_period_amount(asset, accumulated, period, cutoff_date=None):
     if amount <= 0:
         raise ValueError("لا توجد قيمة قابلة للإهلاك في هذه الفترة.")
     return amount
+
+
+def _asset_disposal_journal_lines(asset, cost, accumulated, proceeds, vat,
+                                  proceeds_account_id, output_vat_account_id,
+                                  gain_loss_account_id, gain_loss):
+    """Build balanced disposal lines without zero-value cash or reserve lines."""
+    lines = []
+    if proceeds > 0:
+        lines.append((proceeds_account_id, proceeds, 0,
+                      "متحصلات استبعاد الأصل " + asset["asset_name"]))
+    if accumulated > 0:
+        lines.append((asset["accum_account_id"], accumulated, 0,
+                      "إقفال مجمع إهلاك " + asset["asset_name"]))
+    lines.append((asset["asset_account_id"], 0, cost,
+                  "استبعاد تكلفة الأصل " + asset["asset_name"]))
+    if vat > 0:
+        lines.append((output_vat_account_id, 0, vat, "ضريبة مخرجات بيع الأصل"))
+    if gain_loss > 0:
+        lines.append((gain_loss_account_id, 0, gain_loss,
+                      "ربح استبعاد الأصل " + asset["asset_name"]))
+    elif gain_loss < 0:
+        lines.append((gain_loss_account_id, -gain_loss, 0,
+                      "خسارة استبعاد الأصل " + asset["asset_name"]))
+    return lines
 
 
 def _post_asset_depreciation(conn, asset, period, user_id, cutoff_date=None):
@@ -603,8 +638,18 @@ def dispose(asset_id):
         proceeds=Decimal(request.form.get("proceeds_amount","0"))
         vat=Decimal(request.form.get("output_vat_amount","0"))
         reason=request.form.get("reason","").strip()
+        disposal_type=request.form.get("disposal_type","").strip()
+        document_number=request.form.get("document_number","").strip()
+        if disposal_type not in ASSET_DISPOSAL_TYPES:
+            raise ValueError("اختر سبب الاستبعاد من القائمة.")
+        if len(document_number)>100 or len(reason)>1000:
+            raise ValueError("رقم المستند أو الملاحظات أطول من المسموح.")
         if not proceeds.is_finite() or not vat.is_finite() or proceeds<0 or vat<0 or vat>proceeds:
             raise ValueError("قيمة المتحصلات والضريبة غير صحيحة؛ يجب ألا تتجاوز الضريبة إجمالي المتحصلات.")
+        if disposal_type=="sale" and proceeds<=0:
+            raise ValueError("في حالة البيع يجب إدخال قيمة متحصلات أكبر من صفر.")
+        if vat and disposal_type!="sale":
+            raise ValueError("ضريبة المخرجات تُستخدم عند بيع الأصل فقط.")
         if vat and not output_vat_account_id:
             raise ValueError("اختر حساب ضريبة المخرجات عند إدخال ضريبة على بيع الأصل.")
         c.execute("BEGIN IMMEDIATE")
@@ -649,25 +694,20 @@ def dispose(asset_id):
         nbv=max(cost-accumulated,Decimal(asset["residual_value"]))
         net_proceeds=proceeds-vat
         gain_loss=net_proceeds-nbv
-        lines=[
-            (proceeds_account_id,proceeds,0,"متحصلات استبعاد الأصل "+asset["asset_name"]),
-            (asset["accum_account_id"],accumulated,0,"إقفال مجمع إهلاك "+asset["asset_name"]),
-            (asset["asset_account_id"],0,cost,"استبعاد تكلفة الأصل "+asset["asset_name"]),
-        ]
-        if vat:
-            lines.append((output_vat_account_id,0,vat,"ضريبة مخرجات بيع الأصل"))
-        if gain_loss>0:
-            lines.append((gain_loss_account_id,0,gain_loss,"ربح استبعاد الأصل "+asset["asset_name"]))
-        elif gain_loss<0:
-            lines.append((gain_loss_account_id,-gain_loss,0,"خسارة استبعاد الأصل "+asset["asset_name"]))
+        lines=_asset_disposal_journal_lines(
+            asset,cost,accumulated,proceeds,vat,proceeds_account_id,
+            output_vat_account_id,gain_loss_account_id,gain_loss
+        )
         entry=post_journal(c,disposal_date,"ASSET-DISPOSAL-"+str(asset_id),
             "استبعاد الأصل "+asset["asset_code"],lines,session["user_id"])
         cur=c.execute("""INSERT INTO asset_disposals(asset_id,disposal_date,proceeds_account_id,
             proceeds_amount,output_vat_account_id,output_vat_amount,gain_loss_account_id,
-            gain_loss_amount,net_book_value,journal_entry_id,reason,created_by)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            gain_loss_amount,net_book_value,journal_entry_id,reason,created_by,
+            disposal_type,document_number)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (asset_id,disposal_date,proceeds_account_id,str(proceeds),output_vat_account_id,
-             str(vat),gain_loss_account_id,str(gain_loss),str(nbv),entry,reason,session["user_id"]))
+             str(vat),gain_loss_account_id,str(gain_loss),str(nbv),entry,reason,
+             session["user_id"],disposal_type,document_number))
         c.execute("UPDATE fixed_assets SET status='disposed' WHERE id=?",(asset_id,))
         g.audit_created_record=("asset_disposals",cur.lastrowid,None,None)
         c.commit()
