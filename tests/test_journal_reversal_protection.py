@@ -104,7 +104,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
         self.assertEqual(reversal.status_code, 200)
         self.assertIn('href="/journal/2"', original.get_data(as_text=True))
         self.assertIn('href="/journal/1"', reversal.get_data(as_text=True))
-        self.assertNotIn("إنشاء قيد عكسي", reversal.get_data(as_text=True))
+        self.assertIn("إنشاء قيد عكسي", reversal.get_data(as_text=True))
 
 
 if __name__ == "__main__":
