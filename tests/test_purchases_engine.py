@@ -318,6 +318,26 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.assertEqual(layer_value, Decimal("60.00"))
         self.assertEqual(Decimal(str(inventory_gl)), layer_value)
 
+        # Exercise the actual inventory-vs-GL reconciliation screen against
+        # the same isolated database and require a matched result.
+        report_app = Flask(__name__)
+        report_app.secret_key = "test"
+        report_app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
+        report_app.register_blueprint(stock.stock_bp)
+        report_client = report_app.test_client()
+        with report_client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "admin"
+        with patch("activity_profiles.active_posting_accounts", return_value={"inventory": "1150"}), \\
+             patch("activity_profiles.get_active_activity_profile", return_value={
+                 "account_roles": {"inventory": ["1150"]}
+             }), \\
+             patch("activity_profiles.resolve_product_account_code", return_value="1150"):
+            report_response = report_client.get("/stock/reconciliation")
+        self.assertEqual(report_response.status_code, 200)
+        self.assertIn("إجمالي تقييم المخزون متطابق", report_response.get_data(as_text=True))
+        self.assertIn("60.00", report_response.get_data(as_text=True))
+
         # Every journal entry created by the full cycle must balance.
         unbalanced = self.db.execute(
             """SELECT je.id,SUM(CAST(jl.debit AS NUMERIC)) debit,
