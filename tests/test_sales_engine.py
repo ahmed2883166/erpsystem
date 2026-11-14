@@ -2233,7 +2233,10 @@ class SalesIntegrationTests(unittest.TestCase):
         ).fetchall()
         self.assertEqual([(row["lot_id"], Decimal(row["quantity"])) for row in movements],
                          [(row["lot_id"], Decimal(row["quantity"])) for row in original_lots])
-        self.assertEqual(credit["total_cost"], Decimal("70.00"))
+        expected_return_cost = sum(
+            (Decimal(row["cost_total"]) for row in original_lots), Decimal("0")
+        )
+        self.assertEqual(credit["total_cost"], expected_return_cost)
 
 
 if __name__ == "__main__":
