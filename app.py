@@ -540,9 +540,25 @@ def _operational_audit_snapshot(endpoint, view_args, created_record=None):
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (child_table,)
             ).fetchone()
             if child_exists:
+                child_info = connection.execute(
+                    f'PRAGMA table_info("{child_table}")'
+                ).fetchall()
+                # Some operational detail tables use a composite primary key
+                # and intentionally have no id column. Order by declared PK.
+                primary_columns = sorted(
+                    (column for column in child_info if int(column["pk"] or 0) > 0),
+                    key=lambda column: int(column["pk"]),
+                )
+                order_columns = [column["name"] for column in primary_columns]
+                if not order_columns and child_info:
+                    order_columns = [child_info[0]["name"]]
+                order_sql = (
+                    " ORDER BY " + ",".join('"' + name.replace('"', '""') + '"' for name in order_columns)
+                    if order_columns else ""
+                )
                 snapshot["details"] = [
                     dict(item) for item in connection.execute(
-                        f"SELECT * FROM {child_table} WHERE {child_key}=? ORDER BY id",
+                        f'SELECT * FROM "{child_table}" WHERE "{child_key}"=?{order_sql}',
                         (record_id,),
                     ).fetchall()
                 ]
