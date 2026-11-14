@@ -160,7 +160,7 @@ class CashFlowReportTests(unittest.TestCase):
         self.assertEqual(snapshot["indirect_reconciliation"], financial_planning.Decimal("0"))
         self.assertEqual(snapshot["reconciliation_difference"], financial_planning.Decimal("0"))
 
-    def test_indirect_method_includes_mapped_operating_current_assets_and_liabilities(self):
+    def test_indirect_method_infers_unmapped_current_assets_and_liabilities(self):
         conn = financial_planning._connect()
         conn.execute("ALTER TABLE accounts ADD COLUMN parent_id INTEGER")
         conn.executemany(
