@@ -2422,6 +2422,205 @@ def export_data(format):
     return "Unsupported format", 400
 
 
+
+IMPORT_DATASETS = {
+    "accounts": {
+        "label": "دليل الحسابات",
+        "permission": "accounts.manage",
+        "fields": [
+            {"key": "code", "label": "كود الحساب", "required": True},
+            {"key": "name_ar", "label": "اسم الحساب", "required": True},
+            {"key": "account_type", "label": "نوع الحساب", "required": True},
+        ],
+    },
+}
+
+def _import_stage_dir():
+    path = DATA_DIR / "import_staging"
+    path.mkdir(parents=True, exist_ok=True)
+    cutoff = datetime.now().timestamp() - 12 * 60 * 60
+    for item in path.glob("*.json"):
+        try:
+            if item.stat().st_mtime < cutoff:
+                item.unlink()
+        except OSError:
+            pass
+    return path
+
+
+def _read_import_upload(upload):
+    filename = (upload.filename or "").lower()
+    raw = upload.stream.read(10 * 1024 * 1024 + 1)
+    if len(raw) > 10 * 1024 * 1024:
+        raise ValueError("حجم الملف أكبر من الحد المسموح (10 ميجابايت).")
+    if not raw:
+        raise ValueError("الملف فارغ.")
+    if filename.endswith(".csv"):
+        try:
+            decoded = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            decoded = raw.decode("cp1256")
+        sample = decoded[:8192]
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+        except csv.Error:
+            dialect = csv.excel
+        reader = csv.reader(io.StringIO(decoded), dialect)
+        values = list(reader)
+    elif filename.endswith(".xlsx"):
+        from openpyxl import load_workbook
+        workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        sheet = workbook.active
+        values = list(sheet.iter_rows(values_only=True))
+        workbook.close()
+    else:
+        raise ValueError("اختر ملف Excel بصيغة XLSX أو CSV.")
+    if len(values) < 2:
+        raise ValueError("يجب أن يحتوي الملف على صف عناوين وصف بيانات واحد على الأقل.")
+    headers = []
+    for index, value in enumerate(values[0]):
+        label = str(value).strip() if value is not None else ""
+        label = label or f"عمود {index + 1}"
+        if label in headers:
+            label = f"{label} ({index + 1})"
+        headers.append(label)
+    if len(headers) > 100:
+        raise ValueError("الملف يحتوي على أكثر من 100 عمود.")
+    rows = []
+    for raw_row in values[1:10001]:
+        row = list(raw_row[:len(headers)])
+        row += [None] * (len(headers) - len(row))
+        if any(value is not None and str(value).strip() for value in row):
+            rows.append([str(value).strip() if value is not None else "" for value in row])
+    if len(rows) > 10000:
+        raise ValueError("الملف يتجاوز الحد المسموح وهو 10,000 صف.")
+    if not rows:
+        raise ValueError("لا توجد صفوف بيانات للاستيراد.")
+    return headers, rows
+
+
+@app.route("/data/import", methods=["GET", "POST"])
+@requires("import_export.manage")
+def import_data_wizard():
+    stage_dir = _import_stage_dir()
+    if request.method == "GET":
+        return render_template("import_data.html", datasets=IMPORT_DATASETS)
+    action = request.form.get("action", "upload")
+    token = session.get("import_stage_token")
+    if action == "upload":
+        upload = request.files.get("file")
+        dataset = request.form.get("dataset", "accounts")
+        config = IMPORT_DATASETS.get(dataset)
+        if not config:
+            flash("نوع البيانات المطلوب استيراده غير متاح.", "error")
+            return redirect(url_for("import_data_wizard"))
+        if config["permission"] not in set(session.get("permissions", PERMISSIONS.get(session.get("role"), set()))):
+            flash("لا تملك صلاحية استيراد هذا النوع من البيانات.", "error")
+            return redirect(url_for("dashboard"))
+        try:
+            headers, rows = _read_import_upload(upload)
+            token = uuid.uuid4().hex
+            payload = {"dataset": dataset, "filename": Path(upload.filename).name,
+                       "headers": headers, "rows": rows}
+            (stage_dir / (token + ".json")).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            session["import_stage_token"] = token
+            return render_template("import_data.html", datasets=IMPORT_DATASETS, stage=payload, token=token)
+        except (ValueError, UnicodeDecodeError, OSError) as exc:
+            flash(str(exc) or "تعذر قراءة الملف.", "error")
+            return redirect(url_for("import_data_wizard"))
+    if action == "confirm":
+        submitted_token = request.form.get("token", "")
+        if not token or submitted_token != token or not token.isalnum() or len(token) != 32:
+            flash("انتهت صلاحية ملف الاستيراد. ارفع الملف مرة أخرى.", "error")
+            return redirect(url_for("import_data_wizard"))
+        stage_file = stage_dir / (token + ".json")
+        try:
+            payload = json.loads(stage_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            session.pop("import_stage_token", None)
+            flash("ملف المعاينة غير موجود أو انتهت صلاحيته. ارفع الملف مرة أخرى.", "error")
+            return redirect(url_for("import_data_wizard"))
+        dataset = payload.get("dataset")
+        config = IMPORT_DATASETS.get(dataset)
+        if not config or config["permission"] not in set(session.get("permissions", PERMISSIONS.get(session.get("role"), set()))):
+            flash("لا تملك صلاحية استيراد هذا النوع من البيانات.", "error")
+            return redirect(url_for("dashboard"))
+        headers, rows = payload["headers"], payload["rows"]
+        mapping = {}
+        used_columns = set()
+        for field in config["fields"]:
+            selected = request.form.get("map_" + field["key"], "")
+            if selected == "":
+                if field["required"]:
+                    flash("يجب ربط الحقول الإلزامية قبل الاستيراد.", "error")
+                    return render_template("import_data.html", datasets=IMPORT_DATASETS, stage=payload, token=token, mapping=request.form)
+                mapping[field["key"]] = None
+                continue
+            try:
+                column_index = int(selected)
+            except (TypeError, ValueError):
+                column_index = -1
+            if column_index < 0 or column_index >= len(headers) or column_index in used_columns:
+                flash("اختيار الأعمدة غير صحيح أو تم ربط العمود بأكثر من حقل.", "error")
+                return render_template("import_data.html", datasets=IMPORT_DATASETS, stage=payload, token=token, mapping=request.form)
+            used_columns.add(column_index)
+            mapping[field["key"]] = column_index
+        allowed_types = {"asset", "liability", "equity", "revenue", "expense"}
+        arabic_types = {"أصل": "asset", "الأصول": "asset", "التزام": "liability", "الالتزامات": "liability",
+                        "حقوق ملكية": "equity", "حقوق الملكية": "equity", "إيراد": "revenue", "الإيرادات": "revenue",
+                        "مصروف": "expense", "المصروفات": "expense"}
+        connection = db()
+        inserted = skipped = 0
+        errors = []
+        try:
+            connection.execute("BEGIN")
+            for row_number, source_row in enumerate(rows, start=2):
+                values = {key: (source_row[index] if index is not None else "") for key, index in mapping.items()}
+                code = str(values.get("code", "")).strip()
+                name = str(values.get("name_ar", "")).strip()
+                raw_type = str(values.get("account_type", "")).strip().lower()
+                account_type = arabic_types.get(raw_type, raw_type)
+                if not code or not name or account_type not in allowed_types:
+                    skipped += 1
+                    if len(errors) < 20:
+                        errors.append({"row": row_number, "reason": "كود الحساب أو اسمه أو نوعه غير صحيح."})
+                    continue
+                try:
+                    connection.execute("INSERT INTO accounts(code,name_ar,account_type) VALUES(?,?,?)",
+                                       (code, name, account_type))
+                    inserted += 1
+                except sqlite3.IntegrityError:
+                    skipped += 1
+                    if len(errors) < 20:
+                        errors.append({"row": row_number, "reason": "كود الحساب موجود بالفعل أو توجد مخالفة لقيد فريد."})
+            ensure_account_metadata(connection)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        log("accounts_imported", f"source={payload.get('filename')}; inserted={inserted}; skipped={skipped}")
+        try:
+            stage_file.unlink()
+        except OSError:
+            pass
+        session.pop("import_stage_token", None)
+        return render_template("import_data_result.html", inserted=inserted, skipped=skipped, errors=errors,
+                               total=len(rows), source_name=payload.get("filename"))
+    if action == "cancel":
+        if token and token.isalnum() and len(token) == 32:
+            try:
+                (stage_dir / (token + ".json")).unlink()
+            except OSError:
+                pass
+        session.pop("import_stage_token", None)
+        flash("تم إلغاء عملية الاستيراد ولم تُضف أي بيانات.", "info")
+        return redirect(url_for("import_data_wizard"))
+    flash("طلب الاستيراد غير معروف.", "error")
+    return redirect(url_for("import_data_wizard"))
+
+
 @app.route("/data/import/accounts", methods=["POST"])
 @requires("import_export.manage")
 def import_accounts():
