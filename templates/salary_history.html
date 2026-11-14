@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}سجل تاريخ الأجور | NEXUS ERP{% endblock %}
+{% block content %}
+<header><h2>سجل تاريخ الأجور</h2><p>مرجع تاريخي للزيادات المعتمدة، مع إمكانية معرفة الأساسي قبل وبعد كل قرار.</p>
+<p><a class="button" href="{{url_for('workforce.salary_changes')}}">إدارة العلاوات والزيادات الجماعية</a></p></header>
+<section class="panel"><form method="get" class="form-grid"><label>الموظف<select name="employee_id"><option value="">كل الموظفين</option>{% for e in employees %}<option value="{{e.id}}" {% if selected_employee==e.id %}selected{% endif %}>{{e.employee_code}} - {{e.full_name}}</option>{% endfor %}</select></label><button type="submit">عرض السجل</button></form>
+<div style="overflow-x:auto"><table><tr><th>تاريخ السريان</th><th>الموظف</th><th>رقم القرار</th><th>القرار</th><th>الأساسي قبل</th><th>قيمة الزيادة</th><th>الأساسي بعد</th><th>المعالجة</th></tr>
+{% for r in rows %}<tr><td>{{r.effective_date}}</td><td>{{r.employee_code}} - {{r.full_name}}</td><td>{{r.decision_no}}</td><td>{{r.title}}</td><td>{{r.old_basic_salary}}</td><td>{{r.increase_amount}}</td><td>{{r.new_basic_salary}}</td><td>{{'تضاف للأساسي' if r.treatment=='basic' else 'بدل مستقل'}}</td></tr>
+{% else %}<tr><td colspan="8">لا توجد زيادات مسجلة حسب الاختيار الحالي.</td></tr>{% endfor %}</table></div></section>
+{% endblock %}
