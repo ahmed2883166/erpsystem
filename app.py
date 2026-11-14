@@ -1514,7 +1514,7 @@ def journal():
             return redirect(url_for("journal"))
         except (ValueError, TypeError, OverflowError) as exc:
             connection.rollback()
-            flash(str(exc) or "بيانات القيد غير صحيحة.", "error")
+            flash(safe_error_message(exc, "بيانات القيد غير صحيحة."), "error")
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
     status_filter = request.args.get("status", "").strip()
@@ -1890,7 +1890,7 @@ def analytic_dimensions_settings():
             return redirect(url_for("analytic_dimensions_settings"))
         except (ValueError, sqlite3.IntegrityError) as exc:
             connection.rollback()
-            flash(str(exc) or "تعذر إضافة البُعد. تأكد من عدم تكرار الكود.", "error")
+            flash(safe_error_message(exc, "تعذر إضافة البُعد. تأكد من عدم تكرار الكود."), "error")
     options = active_dimension_options(connection)
     connection.close()
     return render_template("analytic_dimensions.html", options=options)
@@ -1935,7 +1935,7 @@ def management_account_mapping():
             return redirect(url_for("management_account_mapping"))
         except (ValueError, sqlite3.Error) as exc:
             connection.rollback()
-            flash(str(exc) or "تعذر حفظ ربط الحسابات.", "error")
+            flash(safe_error_message(exc, "تعذر حفظ ربط الحسابات."), "error")
     roles = load_management_account_roles(connection)
     accounts = connection.execute(
         "SELECT id,code,name_ar,account_type FROM accounts WHERE is_group=0 AND active=1 ORDER BY code"
@@ -2988,7 +2988,7 @@ def import_data_wizard():
             session["import_stage_token"] = token
             return render_template("import_data.html", datasets=IMPORT_DATASETS, stage=payload, token=token)
         except (ValueError, UnicodeDecodeError, OSError) as exc:
-            flash(str(exc) or "تعذر قراءة الملف.", "error")
+            flash(safe_error_message(exc, "تعذر قراءة الملف."), "error")
             return redirect(url_for("import_data_wizard"))
         except Exception:
             app.logger.exception("Excel/CSV import preview failed.")
@@ -3402,7 +3402,7 @@ def backup_settings():
             return redirect(url_for("backup_settings"))
         except (ValueError, TypeError) as exc:
             connection.rollback()
-            flash(str(exc) or "راجع إعدادات النسخ الاحتياطي.", "error")
+            flash(safe_error_message(exc, "راجع إعدادات النسخ الاحتياطي."), "error")
     settings = {row["setting_key"]: row["setting_value"] for row in connection.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key LIKE 'backup_%'")}
     connection.close()
