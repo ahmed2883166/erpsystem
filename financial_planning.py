@@ -1367,8 +1367,16 @@ def build_balance_sheet_snapshot(conn, as_of):
     liabilities=totals["liability"]
     equity=totals["equity"]
     total_equity=equity+net_profit
+    negative_asset_accounts = [
+        {"id": item["id"], "code": item["code"], "name_ar": item["name_ar"],
+         "balance": item["balance"]}
+        for item in accounts.values()
+        if not item["is_group"] and item["account_type"] == "asset" and item["balance"] < 0
+    ]
+    negative_asset_accounts.sort(key=lambda item: item["balance"])
     return {"sections":sections,"total_assets":assets,"total_liabilities":liabilities,
             "equity_before_profit":equity,"net_profit":net_profit,"total_equity":total_equity,
+            "negative_asset_accounts":negative_asset_accounts,
             "balance_difference":assets-liabilities-total_equity,
             "balanced":assets==liabilities+total_equity,"as_of":as_of}
 
