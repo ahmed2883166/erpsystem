@@ -302,6 +302,9 @@ def initialize_stock_schema():
     if "entered_uom_name" not in movement_columns:
         c.execute("ALTER TABLE stock_movements ADD COLUMN entered_uom_name TEXT")
 
+    # Re-run after stock master tables exist so journal_lines receives the
+    # nullable operational stock references on both fresh and upgraded DBs.
+    initialize_analytic_dimensions_schema(c)
     c.close()
 
 
