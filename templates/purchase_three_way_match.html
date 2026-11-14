@@ -7,7 +7,7 @@
 <thead><tr><th>أمر الشراء</th><th>المورد</th><th>الصنف</th><th>الكمية المطلوبة</th><th>المستلمة</th><th>المفوترة</th><th>غير المفوتر</th><th>سعر الأمر</th><th>متوسط تكلفة الاستلام</th><th>متوسط سعر الفاتورة</th><th>فرق السعر</th><th>الحالة</th></tr></thead>
 <tbody>
 {% for r in rows %}
-<tr class="status-row {% if r.match_status=='مطابق' %}status-approved{% elif r.match_status in ['فرق سعر','فوترة جزئية','استلام جزئي','مستلم ولم يفوتر'] %}status-partial{% else %}status-draft{% endif %}">
+<tr class="status-row {% if r.match_status=='مطابق' %}status-approved{% elif r.match_status in ['فرق سعر','فوترة جزئية','استلام جزئي','مستلم ولم يفوتر','فاتورة قديمة بلا تفاصيل صنف','مطابقة غير مكتملة - فواتير قديمة'] %}status-partial{% else %}status-draft{% endif %}">
 <td>{{ r.po_no }}</td><td>{{ r.supplier_name }}</td><td>{{ r.sku }} — {{ r.product_name }}</td>
 <td>{{ r.ordered_quantity }} {{ r.uom }}</td><td>{{ r.received_quantity }} {{ r.uom }}</td>
 <td>{{ r.billed_quantity }} {{ r.uom }}</td><td>{{ r.unbilled_quantity }} {{ r.uom }}</td>
@@ -24,6 +24,6 @@
 {% if page.page>1 %}<a class="button secondary" href="{{ url_for('purchase.three_way_match',page=page.page-1,per_page=page.per_page) }}">السابق</a>{% endif %}
 {% if page.page<page.pages %}<a class="button" href="{{ url_for('purchase.three_way_match',page=page.page+1,per_page=page.per_page) }}">التالي</a>{% endif %}
 </div>
-<p class="muted">تنبيه: الفواتير القديمة التي أُنشئت قبل تسجيل بنود الفاتورة ستظهر كغير مفوترة في المقارنة التفصيلية؛ لا يتم اختراع كميات أو أسعار لها، ويمكن استكمال التفاصيل فقط في الفواتير التي ما زالت مسودة أو مرفوضة.</p>
+<p class="muted">تنبيه: الفواتير القديمة التي لا تحتوي على تفاصيل صنف تظهر بحالة مستقلة حتى لا تُعامل خطأً كأنها غير مفوترة. لا يتم اختراع كميات أو أسعار لها؛ ويمكن استكمال التفاصيل فقط في الفواتير التي ما زالت مسودة أو مرفوضة.</p>
 </section>
 {% endblock %}
