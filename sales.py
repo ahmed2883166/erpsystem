@@ -2072,8 +2072,8 @@ def invoice_print(invoice_id):
     lines=[]
     for row in raw_lines:
         item=dict(row)
-        item["display_quantity"]=row["entered_quantity"] or row["quantity"]
-        item["display_uom"]=row["entered_uom_name"] or row["uom"] or ""
+        item["display_quantity"]=item.get("entered_quantity") or item.get("quantity") or "0"
+        item["display_uom"]=item.get("entered_uom_name") or item.get("uom") or ""
         try:
             item["display_unit_price"]=(Decimal(str(row["line_total"]))/Decimal(str(item["display_quantity"]))).quantize(CENT,rounding=ROUND_HALF_UP)
         except (TypeError,InvalidOperation,ZeroDivisionError):
