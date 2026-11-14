@@ -130,7 +130,7 @@ class FixedAssetDisposalJournalTests(unittest.TestCase):
     def test_sale_with_gain_and_output_vat_posts_cash_asset_accumulated_and_gain(self):
         lines = _asset_disposal_journal_lines(
             self.asset, Decimal("100000"), Decimal("30000"), Decimal("92000"),
-            Decimal("12000"), 20, 30, 40, Decimal("50000")
+            Decimal("12000"), 20, 30, 40, Decimal("10000")
         )
         self.assertEqual([line[:3] for line in lines], [
             (20, Decimal("92000"), 0), (11, Decimal("30000"), 0),
