@@ -149,6 +149,10 @@ def _build_saudi_tax_preparation(conn, period, summary):
         "gross_profit": Decimal("0"), "operating_expense_total": Decimal("0"),
         "net_profit": Decimal("0"), "output_vat": summary["output_vat"],
         "input_vat": summary["input_vat"], "net_vat": summary["net_vat"],
+        "total_assets": Decimal("0"), "total_liabilities": Decimal("0"),
+        "equity_before_profit": Decimal("0"), "total_equity": Decimal("0"),
+        "balance_difference": Decimal("0"), "balance_sheet_balanced": False,
+        "negative_asset_accounts": [],
         "zakat_or_income_tax": None,
         "notice": "بيانات محاسبية مساندة فقط؛ لم يتم احتساب وعاء الزكاة أو ضريبة الدخل أو الضريبة المستحقة.",
     }
