@@ -1,6 +1,14 @@
 """Shared NEXUS ERP posting, integrity checks, and operational reconciliation."""
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from datetime import datetime, date
+import sqlite3
+
+def safe_error_message(exc, fallback="تعذر إتمام العملية بسبب خطأ في البيانات. لم يتم حفظ أي تغييرات."):
+    """Keep raw SQLite/SQL details out of user-facing flash messages."""
+    if isinstance(exc, sqlite3.Error):
+        return fallback
+    return str(exc)
+
 
 CENT = Decimal("0.01")
 
