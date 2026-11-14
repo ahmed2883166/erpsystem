@@ -1229,8 +1229,9 @@ def movements():
                     if not lot: raise ValueError("التشغيلة غير مسجلة.")
                     if lot["expiry_date"] and date.fromisoformat(lot["expiry_date"])<date.today(): raise ValueError("لا يمكن صرف تشغيلة منتهية الصلاحية.")
                     lot_id=lot["id"]
-                method_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
-                method=method_row["setting_value"] if method_row else "average"
+                settings_table = c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'").fetchone()
+                method_row = c.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone() if settings_table else None
+                method = method_row["setting_value"] if method_row else "average"
                 if kind in {"issue","scrap","relocate","transfer"} and source_location_id and not c.execute("SELECT 1 FROM stock_locations WHERE id=? AND warehouse_id=? AND active=1",(source_location_id,src)).fetchone():
                     raise ValueError("موقع المصدر لا يتبع المخزن المحدد.")
                 total,allocations=consume_layers(c,product["id"],src,qty,method,lot_id,source_location_id)
