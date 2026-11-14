@@ -743,7 +743,7 @@ def download_employee_template():
     guide.append(["الحقل","التعليمات"])
     guide.append(["الحالة الوظيفية","مثبت أو مكافأة شاملة أو إجازة بدون مرتب أو استقالة أو معاش"])
     guide.append(["نشط","نعم أو لا؛ يحدد إذا كان ملف الموظف نشطًا بالنظام"])
-    guide.append(["الأساسي والمتغير","أرقام غير سالبة. المتغير يُحمّل افتراضيًا في خانة البدلات عند إعداد المسير"])
+    guide.append(["الأساسي والمتغير","أرقام غير سالبة. المتغير يُحمّل افتراضيًا في خانة البدلات عند إعداد المرتبات"])
     output = io.BytesIO()
     workbook.save(output)
     output.seek(0)
@@ -942,7 +942,7 @@ def payroll():
                     end_date = date.fromisoformat(e["termination_date"])
                     payroll_days = min(30, max(0, (end_date - start).days + 1))
                     if payroll_days <= 0:
-                        raise ValueError("تاريخ انتهاء الخدمة لا يقع ضمن شهر المسير للموظف " + e["full_name"] + ".")
+                        raise ValueError("تاريخ انتهاء الخدمة لا يقع ضمن شهر المرتبات للموظف " + e["full_name"] + ".")
                 payroll_factor = Decimal(payroll_days) / Decimal("30")
                 employee_period_end = e["termination_date"] if e["work_status"] in {"resigned", "retired"} else period_end
                 fixed_items = c.execute("""SELECT item_name,item_type,amount FROM employee_pay_items
