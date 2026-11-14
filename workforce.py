@@ -328,6 +328,7 @@ def _validate_employee_dimensions(c, values):
 
 def _employee_form_values(form):
     salary = M(form.get("basic_salary"))
+    variable_salary = M(form.get("variable_salary", "0"))
     hours = D(form.get("standard_hours", "208"))
     insured_wage = M(form.get("insured_wage", "0"))
     legal_category = form.get("legal_category", "local").strip().lower()
@@ -346,7 +347,7 @@ def _employee_form_values(form):
         raise ValueError("يجب تحديد تاريخ سريان الاستقالة أو بلوغ المعاش.")
     if work_status not in {"resigned", "retired"}:
         termination_date = ""
-    if (salary < 0 or hours <= 0 or insured_wage < 0 or not legal_category
+    if (salary < 0 or variable_salary < 0 or hours <= 0 or insured_wage < 0 or not legal_category
         or work_status not in {"comprehensive_bonus", "permanent", "unpaid_leave", "resigned", "retired"}
         or raise_type not in {"fixed", "percentage"} or raise_mode not in {"basic", "allowance"}
         or raise_value < 0 or overtime_rate < 0 or overtime_rate > 500):
@@ -354,7 +355,7 @@ def _employee_form_values(form):
     return (
         form.get("employee_code", "").strip(), form["full_name"].strip(),
         form.get("job_title", "").strip(), form.get("department", "").strip(),
-        form.get("hire_date") or date.today().isoformat(), str(salary), str(hours),
+        form.get("hire_date") or date.today().isoformat(), str(salary), str(hours), str(variable_salary),
         legal_category, form.get("insurance_number", "").strip(), str(insured_wage),
         int(form.get("insurance_enabled", "1") == "1"),
         form.get("address", "").strip(), form.get("national_id", "").strip(),
@@ -511,10 +512,10 @@ def employees():
             _validate_employee_dimensions(c, values)
             photo_path = _save_employee_photo(request.files.get("photo"))
             c.execute("""INSERT INTO employees(employee_code,full_name,job_title,department,hire_date,basic_salary,
-                standard_hours,legal_category,insurance_number,insured_wage,insurance_enabled,address,national_id,
+                standard_hours,variable_salary,legal_category,insurance_number,insured_wage,insurance_enabled,address,national_id,
                 work_status,raise_type,raise_value,raise_mode,raise_effective_date,overtime_rate_percent,
                 branch_id,cost_center_id,project_id,termination_date,photo_path)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (*values, photo_path or ""))
             _audit(c, "employee_created", values[0])
             c.commit()
@@ -556,13 +557,13 @@ def edit_employee(employee_id):
             photo_path = _save_employee_photo(request.files.get("photo"))
             if photo_path:
                 c.execute("""UPDATE employees SET employee_code=?,full_name=?,job_title=?,department=?,hire_date=?,
-                    basic_salary=?,standard_hours=?,legal_category=?,insurance_number=?,insured_wage=?,insurance_enabled=?,
+                    basic_salary=?,standard_hours=?,variable_salary=?,legal_category=?,insurance_number=?,insured_wage=?,insurance_enabled=?,
                     address=?,national_id=?,work_status=?,raise_type=?,raise_value=?,raise_mode=?,
                     raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=?,termination_date=?,photo_path=? WHERE id=?""",
                     (*values, photo_path, employee_id))
             else:
                 c.execute("""UPDATE employees SET employee_code=?,full_name=?,job_title=?,department=?,hire_date=?,
-                    basic_salary=?,standard_hours=?,legal_category=?,insurance_number=?,insured_wage=?,insurance_enabled=?,
+                    basic_salary=?,standard_hours=?,variable_salary=?,legal_category=?,insurance_number=?,insured_wage=?,insurance_enabled=?,
                     address=?,national_id=?,work_status=?,raise_type=?,raise_value=?,raise_mode=?,
                     raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=?,termination_date=? WHERE id=?""",
                     (*values, employee_id))
