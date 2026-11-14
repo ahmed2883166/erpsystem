@@ -28,11 +28,18 @@ def linked_operational_source(connection, entry_id):
         columns = {row[1] for row in connection.execute(
             "PRAGMA table_info(" + quoted + ")"
         )}
-        if "journal_entry_id" not in columns:
-            continue
-        if connection.execute(
-            "SELECT 1 FROM " + quoted + " WHERE journal_entry_id=? LIMIT 1",
-            (entry_id,),
-        ).fetchone():
-            return table_name
+        # Operational modules use both the canonical name and qualified
+        # names such as reversal_journal_entry_id / cancel_journal_entry_id.
+        # Every such link must protect its document state from generic reversal.
+        journal_columns = sorted(
+            column for column in columns
+            if column == "journal_entry_id" or column.endswith("_journal_entry_id")
+        )
+        for column in journal_columns:
+            quoted_column = '"' + column.replace('"', '""') + '"'
+            if connection.execute(
+                "SELECT 1 FROM " + quoted + " WHERE " + quoted_column + "=? LIMIT 1",
+                (entry_id,),
+            ).fetchone():
+                return table_name
     return None
