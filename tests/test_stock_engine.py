@@ -204,5 +204,53 @@ class StockValuationTests(unittest.TestCase):
         post.assert_not_called()
 
 
+    def test_current_qty_is_scoped_to_warehouse_and_lot(self):
+        second_wh=self.db.execute(
+            "INSERT INTO stock_warehouses(code,name_ar) VALUES('W-QTY-2','مخزن كمية 2')"
+        ).lastrowid
+        lot_a=self.db.execute(
+            "INSERT INTO stock_lots(product_id,lot_number) VALUES(?,'LOT-A')",
+            (self.product_id,)
+        ).lastrowid
+        lot_b=self.db.execute(
+            "INSERT INTO stock_lots(product_id,lot_number) VALUES(?,'LOT-B')",
+            (self.product_id,)
+        ).lastrowid
+
+        movements=[
+            ("QTY-R-A","receipt",None,self.warehouse_id,lot_a,"10.1250"),
+            ("QTY-R-B","receipt",None,second_wh,lot_a,"100"),
+            ("QTY-I-A","issue",self.warehouse_id,None,lot_a,"2.0250"),
+            ("QTY-S-B","scrap",self.warehouse_id,None,lot_b,"1"),
+            ("QTY-T-A","transfer",self.warehouse_id,second_wh,lot_a,"3.1000"),
+            ("QTY-R-NULL","receipt",None,self.warehouse_id,None,"7"),
+        ]
+        for no,kind,source,target,lot,qty in movements:
+            self.db.execute(
+                """INSERT INTO stock_movements(
+                    movement_no,movement_type,product_id,source_warehouse_id,
+                    target_warehouse_id,lot_id,quantity,unit_cost,total_cost,movement_date)
+                   VALUES(?,?,?,?,?,?,?,'1',?,'2026-11-15')""",
+                (no,kind,self.product_id,source,target,lot,qty,qty)
+            )
+
+        self.assertEqual(
+            stock.current_qty(self.db,self.product_id,self.warehouse_id,lot_a),
+            Decimal("4.0000")
+        )
+        self.assertEqual(
+            stock.current_qty(self.db,self.product_id,second_wh,lot_a),
+            Decimal("103.1000")
+        )
+        self.assertEqual(
+            stock.current_qty(self.db,self.product_id,self.warehouse_id,lot_b),
+            Decimal("-1")
+        )
+        self.assertEqual(
+            stock.current_qty(self.db,self.product_id,self.warehouse_id),
+            Decimal("7")
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
