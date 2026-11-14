@@ -7,7 +7,7 @@
 <label>اسم المنحة <select name="grant_type_id" required>{% for t in grant_types %}<option value="{{t.id}}">{{t.name}}</option>{% endfor %}</select></label>
 <label>تاريخ المنحة <input type="date" name="grant_date" value="{{today}}" required></label>
 <label>طريقة الحساب <select name="calculation_method" id="grantMethod" required><option value="percentage_basic">نسبة من الأساسي</option><option value="per_day">عدد أيام من الأساسي</option><option value="fixed">مبلغ مقطوع لكل موظف</option></select></label>
-<label>النسبة / المبلغ <input type="number" name="calculation_value" min="0.01" step="0.01" required></label>
+<label id="grantValue">النسبة / المبلغ <input type="number" name="calculation_value" min="0" step="0.01" value="0"></label>
 <label id="grantDays">عدد الأيام <input type="number" name="days_count" min="0.01" step="0.01" value="1"></label>
 <label>حساب مصروف المنح <select name="expense_account_id" required>{% for a in accounts if a.account_type=='expense' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
 <label>حساب المنح المستحقة <select name="payable_account_id" required>{% for a in accounts if a.account_type=='liability' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
@@ -33,6 +33,6 @@
 {% endblock %}
 {% block scripts %}<script>
 const method=document.getElementById('grantMethod'),days=document.getElementById('grantDays');
-function updateGrantDays(){days.hidden=method.value!=='per_day';}
+function updateGrantDays(){days.hidden=method.value!=='per_day';document.getElementById('grantValue').hidden=method.value==='per_day';}
 method.addEventListener('change',updateGrantDays);updateGrantDays();
 </script>{% endblock %}
