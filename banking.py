@@ -63,7 +63,7 @@ def init_bank_schema():
       bank_reference TEXT NOT NULL DEFAULT '',
       matched_transaction_id INTEGER REFERENCES bank_transactions(id),
       matched_journal_line_id INTEGER REFERENCES journal_lines(id),
-      matched_side TEXT CHECK(matched_side IN ('source','destination','ledger')),
+      matched_side TEXT CHECK(matched_side IN ('source','destination')),
       matched_at TEXT,
       matched_by INTEGER,
       created_by INTEGER,
@@ -74,9 +74,6 @@ def init_bank_schema():
     CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_statement_tx_side
       ON bank_statement_lines(matched_transaction_id,matched_side)
       WHERE matched_transaction_id IS NOT NULL;
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_statement_journal_line
-      ON bank_statement_lines(matched_journal_line_id)
-      WHERE matched_journal_line_id IS NOT NULL;
     CREATE TABLE IF NOT EXISTS bank_statement_balances(
       id INTEGER PRIMARY KEY,
       bank_account_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -288,7 +285,7 @@ def statement_reconciliation():
                 already=c.execute("SELECT 1 FROM bank_statement_lines WHERE matched_journal_line_id=? LIMIT 1",
                                   (journal_line_id,)).fetchone()
                 if already: raise ValueError("سطر الأستاذ تمت مطابقته مع سطر كشف آخر بالفعل.")
-                c.execute("""UPDATE bank_statement_lines SET matched_journal_line_id=?,matched_side='ledger',
+                c.execute("""UPDATE bank_statement_lines SET matched_journal_line_id=?,
                     matched_at=?,matched_by=? WHERE id=?""",
                     (journal_line_id,datetime.now().isoformat(timespec="seconds"),session.get("user_id"),line_id))
                 c.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
