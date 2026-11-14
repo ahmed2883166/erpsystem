@@ -2520,7 +2520,7 @@ IMPORT_DATASETS = {
             {"key": "purchase_price", "label": "سعر الشراء", "required": False},
             {"key": "sale_price", "label": "سعر البيع", "required": False},
         ],
-    },,
+    },
     "opening_balances": {
         "label": "الأرصدة الافتتاحية (عملاء / موردون / مخزون)", "permission": "journal.manage",
         "fields": [
