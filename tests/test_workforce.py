@@ -288,6 +288,7 @@ class WorkforceTests(unittest.TestCase):
         response = self.client.post("/hr/payroll", data={
             "period": "2026-11",
             "basic_1": "12000", "allowances_1": "1500", "overtime_amount_1": "750",
+            "overtime_override_reason_1": "اعتماد يدوي بعد مراجعة المشرف",
             "absence_deduction_1": "100", "other_deductions_1": "200",
             "tax_1": "500", "employee_ins_1": "300", "employer_ins_1": "400",
             "basic_2": "8000", "allowances_2": "500", "overtime_amount_2": "0",
