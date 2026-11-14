@@ -2016,10 +2016,10 @@ def approve_count(stocktake_id):
         ).fetchone() if surplus_code else None
         if (not shortage_account or shortage_account["is_group"] or not shortage_account["active"]
                 or shortage_account["account_type"] != "expense"):
-            raise ValueError("يجب تفعيل الحساب التفصيلي 5510 (عجز وهالك المخزون) من نوع مصروف قبل اعتماد الجرد.")
+            raise ValueError("يجب ضبط حساب عجز المخزون في ملف النشاط كحساب مصروف تفصيلي نشط قبل اعتماد الجرد.")
         if (not surplus_account or surplus_account["is_group"] or not surplus_account["active"]
                 or surplus_account["account_type"] != "expense"):
-            raise ValueError("يجب تفعيل الحساب التفصيلي 6990 (فروق الجرد والزيادات) من نوع مصروف قبل اعتماد الجرد.")
+            raise ValueError("يجب ضبط حساب زيادة المخزون في ملف النشاط كحساب مصروف تفصيلي نشط قبل اعتماد الجرد.")
         journal_lines, movement_ids = [], []
         for line in lines:
             product_inventory_code = resolve_product_account_code(
