@@ -37,7 +37,7 @@
 <td>{{{'comprehensive_bonus':'مكافأة شاملة','permanent':'مثبت','unpaid_leave':'إجازة بدون مرتب','resigned':'استقالة','retired':'معاش'}.get(e.work_status,'مثبت')}}</td>
 <td>{{e.job_title}}</td><td>{{e.department}}</td><td>{{e.basic_salary}}</td><td>{{e.variable_salary or '0'}}</td>
 
-<td>{{e.overtime_rate_percent}}%</td><td><a href="{{url_for('workforce.edit_employee',employee_id=e.id)}}">تعديل الملف</a> | <a target="_blank" href="{{url_for('workforce.employee_form_2_salary',employee_id=e.id)}}">استمارة 2 مرتبات</a></td></tr>
+<td>{{e.overtime_rate_percent}}%</td><td><a href="{{url_for('workforce.edit_employee',employee_id=e.id)}}">تعديل الملف</a> | <a target="_blank" href="{{url_for('workforce.employee_form_2_salary',employee_id=e.id)}}">استمارة 2 مرتبات</a> | <a href="{{url_for('workforce.employee_financial_statement',employee_id=e.id)}}">كشف حساب الموظف</a></td></tr>
 {% else %}<tr><td colspan="13">لا يوجد موظفون.</td></tr>{% endfor %}</table></div>
 <div class="actions pagination"><span class="muted">إجمالي الموظفين: {{ employees_page.total }} — الصفحة {{ employees_page.page }} من {{ employees_page.pages }}</span>
 <form method="get" class="inline-form"><label>عدد السطور <select name="employees_per_page" onchange="this.form.submit()"><option value="50" {% if employees_page.per_page==50 %}selected{% endif %}>50</option><option value="100" {% if employees_page.per_page==100 %}selected{% endif %}>100</option></select></label></form>
