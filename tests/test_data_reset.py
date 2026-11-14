@@ -119,6 +119,18 @@ class CompanyDataResetTests(unittest.TestCase):
         connection.commit()
         connection.close()
 
+    def test_root_admin_can_open_backup_settings_and_find_reset_section(self):
+        self._seed_route_database()
+        client = nexus_app.app.test_client()
+        with client.session_transaction() as session:
+            session.update(user_id=1, username="admin", role="admin", permissions=[])
+        with patch.object(nexus_app, "db", side_effect=self.open_database):
+            response = client.get("/backup/settings")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn('id="reset-data"', html)
+        self.assertIn("تصفير البرنامج بالكامل", html)
+
     def test_reset_route_requires_root_admin_password_and_creates_backup_first(self):
         self._seed_route_database()
         client = nexus_app.app.test_client()
