@@ -765,7 +765,16 @@ def payroll_report():
         paid_by_run[run_key] = paid_by_run.get(run_key, Decimal("0")) + D(payment["amount"])
     rows = [dict(row) for row in rows]
     run_net_pay = {}
+    allocated_total_by_run = {}
     for row in rows:
+        allocated = Decimal("0")
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'").fetchone():
+            allocated = sum((D(x["amount"]) for x in c.execute(
+                "SELECT amount FROM payroll_payment_allocations WHERE payroll_line_id=?",
+                (row["id"],)).fetchall()),Decimal("0"))
+        row["paid_amount"] = M(allocated)
+        row["remaining_payable"] = M(max(Decimal("0"),D(row["net_pay"])-allocated))
+        allocated_total_by_run[row["run_id"]] = allocated_total_by_run.get(row["run_id"],Decimal("0")) + allocated
         loan = D(row["loan_deduction"])
         row["manual_advance_deduction"] = M(max(Decimal("0"), D(row["advance_deduction"]) - loan))
         row["employee_deductions"] = M(
@@ -783,23 +792,14 @@ def payroll_report():
     fields = ("basic_salary","salary_raise","allowances","incentives","overtime_amount","gross_pay",
               "absence_deduction","manual_advance_deduction","loan_deduction","other_deductions",
               "taxable_income_tax","employee_insurance","employer_insurance","employee_deductions",
-              "employer_total_cost","net_pay")
+              "employer_total_cost","net_pay","paid_amount","remaining_payable")
     totals = {key: M(sum((D(row[key]) for row in rows), Decimal("0"))) for key in fields}
-    if employee_id:
-        # Payroll payments are recorded against the whole run, not individual employees.
-        # Never present a run-level payment as if it were paid to the selected employee.
-        totals["paid_amount"] = None
-        totals["remaining_payable"] = None
-    else:
-        selected_run_ids = set(run_net_pay)
-        totals["paid_amount"] = M(sum(
-            (paid_by_run.get(run_id, Decimal("0")) for run_id in selected_run_ids),
-            Decimal("0")
-        ))
-        totals["remaining_payable"] = M(sum(
-            (max(Decimal("0"), run_net_pay[run_id] - paid_by_run.get(run_id, Decimal("0")))
-             for run_id in selected_run_ids), Decimal("0")
-        ))
+    # Legacy run-level payments are deliberately not attributed to employees.
+    # Report them separately so old records remain visible without fabricated allocations.
+    selected_run_ids = set(run_net_pay)
+    totals["unallocated_legacy_payments"] = M(sum(
+        (max(Decimal("0"),paid_by_run.get(run_id,Decimal("0"))-allocated_total_by_run.get(run_id,Decimal("0")))
+         for run_id in selected_run_ids),Decimal("0")))
     c.close()
     return render_template("payroll_report.html", rows=rows, totals=totals,
                            employees=employee_options, month_from=month_from,
