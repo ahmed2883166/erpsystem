@@ -97,6 +97,32 @@ class JournalReversalProtectionTests(unittest.TestCase):
             )
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 5)
 
+    def test_reversal_of_reversal_is_terminal_and_cannot_be_reversed_again(self):
+        first = self.client.post(
+            "/journal/2/reverse",
+            data={"reversal_date": "2026-01-05", "reversal_reason": "إلغاء العكس الخاطئ"},
+        )
+        self.assertEqual(first.status_code, 302)
+        with connect_database(self.db_path) as conn:
+            counter = conn.execute(
+                "SELECT id FROM journal_entries WHERE reference='REV-2'"
+            ).fetchone()
+            self.assertIsNotNone(counter)
+            counter_id = counter["id"]
+        detail = self.client.get(f"/journal/{counter_id}")
+        self.assertEqual(detail.status_code, 200)
+        self.assertNotIn(f'action="/journal/{counter_id}/reverse"', detail.get_data(as_text=True))
+        second = self.client.post(
+            f"/journal/{counter_id}/reverse",
+            data={"reversal_date": "2026-01-06", "reversal_reason": "محاولة عكس عكس العكسي"},
+        )
+        self.assertEqual(second.status_code, 302)
+        with connect_database(self.db_path) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 5)
+            self.assertIsNone(conn.execute(
+                "SELECT id FROM journal_entries WHERE reference=?", (f"REV-{counter_id}",)
+            ).fetchone())
+
     def test_reversing_asset_acquisition_reversal_reactivates_asset_register(self):
         response = self.client.post(
             "/journal/4/reverse",
