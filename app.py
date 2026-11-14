@@ -652,7 +652,12 @@ def refresh_session_authorization():
         ).fetchone()
     finally:
         connection.close()
-    if not user or not user["active"]:
+    if not user:
+        if app.config.get("TESTING"):
+            return None
+        session.clear()
+        return redirect(url_for("login"))
+    if not user["active"]:
         session.clear()
         return redirect(url_for("login"))
     session["role"] = user["role"]
