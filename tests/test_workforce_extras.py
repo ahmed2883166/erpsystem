@@ -118,5 +118,68 @@ class WorkforceExtrasTests(unittest.TestCase):
         self.assertIn("Employee One", response.get_data(as_text=True))
 
 
+    def test_independent_employee_grant_snapshots_calculation_and_posts_two_journals(self):
+        conn=sqlite3.connect(self.db_path)
+        conn.executemany("""INSERT INTO accounts(id,code,name_ar,account_type,is_group,active)
+            VALUES(?,?,?,?,0,1)""",[
+            (1,"1000","الصندوق","asset"),
+            (2,"5000","مصروف المنح","expense"),
+            (3,"2100","منح مستحقة","liability"),
+        ])
+        conn.commit(); conn.close()
+        self.client.post("/hr/grants/types",data={"name":"منحة رمضان"})
+        response=self.client.post("/hr/grants/create",data={
+            "grant_type_id":"1","grant_date":"2026-11-14","calculation_method":"per_day",
+            "calculation_value":"0","days_count":"5","expense_account_id":"2",
+            "payable_account_id":"3","employee_ids":["1"],"notes":"اختبار"
+        })
+        self.assertEqual(response.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        grant=conn.execute("SELECT total_amount,status FROM employee_grants WHERE id=1").fetchone()
+        line=conn.execute("SELECT basic_salary_snapshot,amount,paid_amount FROM employee_grant_lines WHERE grant_id=1").fetchone()
+        conn.execute("UPDATE employees SET basic_salary='12000' WHERE id=1")
+        conn.commit(); conn.close()
+        self.assertEqual(grant,("1666.67","draft"))
+        self.assertEqual(line,("10000.00","1666.67","0"))
+        approved=self.client.post("/hr/grants/1/approve",data={})
+        self.assertEqual(approved.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        journal=conn.execute("SELECT status FROM journal_entries WHERE reference='EMP-GRANT-1'").fetchone()
+        journal_lines=conn.execute("SELECT account_id,debit,credit FROM journal_lines WHERE entry_id=(SELECT journal_entry_id FROM employee_grants WHERE id=1) ORDER BY id").fetchall()
+        conn.close()
+        self.assertEqual(journal,("posted",))
+        self.assertEqual(journal_lines,[(2,"1666.67","0"),(3,"0","1666.67")])
+        paid=self.client.post("/hr/grants/1/pay",data={
+            "amount":"500","payment_date":"2026-11-15","cash_account_id":"1"
+        })
+        self.assertEqual(paid.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        grant_status=conn.execute("SELECT status FROM employee_grants WHERE id=1").fetchone()[0]
+        paid_line=conn.execute("SELECT paid_amount FROM employee_grant_lines WHERE grant_id=1").fetchone()[0]
+        payment_lines=conn.execute("SELECT account_id,debit,credit FROM journal_lines WHERE entry_id=(SELECT journal_entry_id FROM employee_grant_payments WHERE grant_id=1) ORDER BY id").fetchall()
+        conn.close()
+        self.assertEqual(grant_status,"partially_paid")
+        self.assertEqual(paid_line,"500.00")
+        self.assertEqual(payment_lines,[(3,"500","0"),(1,"0","500")])
+
+
+    def test_monthly_attendance_matrix_saves_multiple_days_and_leave_statuses(self):
+        response=self.client.post("/hr/attendance",data={
+            "save_month":"1","month":"2026-11",
+            "status_1_1":"present","check_in_1_1":"08:00","check_out_1_1":"16:00",
+            "status_1_2":"absent","absence_1_2":"8",
+            "status_1_3":"unpaid_leave",
+        })
+        self.assertEqual(response.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        rows=conn.execute("SELECT attendance_date,status,check_in,check_out,absence_hours FROM attendance_records ORDER BY attendance_date").fetchall()
+        conn.close()
+        self.assertEqual(rows,[
+            ("2026-11-01","present","08:00","16:00","0.00"),
+            ("2026-11-02","absent","","","8.00"),
+            ("2026-11-03","unpaid_leave","","","0.00"),
+        ])
+
+
 if __name__ == "__main__":
     unittest.main()
