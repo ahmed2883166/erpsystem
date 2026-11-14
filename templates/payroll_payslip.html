@@ -3,13 +3,13 @@
 {% block content %}
 <header class="no-print">
   <h2>قسيمة راتب تفصيلية</h2>
-  <p><a href="{{ url_for('workforce.payroll_run', run_id=slip.run_id) }}">العودة إلى تفاصيل المسير</a></p>
+  <p><a href="{{ url_for('workforce.payroll_run', run_id=slip.run_id) }}">العودة إلى تفاصيل المرتبات</a></p>
   <button type="button" onclick="window.print()">طباعة / حفظ PDF</button>
 </header>
 <section class="panel payslip">
   <div class="payslip-heading">
     <div><h2>NEXUS ERP</h2><h3>قسيمة راتب شهر {{slip.period}}</h3></div>
-    <div><strong>رقم الموظف:</strong> {{slip.employee_code}}<br><strong>حالة المسير:</strong> {{'مرحّل' if slip.status=='posted' else 'معكوس'}}</div>
+    <div><strong>رقم الموظف:</strong> {{slip.employee_code}}<br><strong>حالة المرتبات:</strong> {{'مرحّل' if slip.status=='posted' else 'معكوس'}}</div>
   </div>
   <h3>بيانات الموظف</h3>
   <table>
@@ -51,11 +51,11 @@
   <h3>بيانات إضافية</h3>
   <table>
     <tr><th>حصة الشركة في التأمينات (لا تخصم من صافي الموظف)</th><td>{{slip.employer_insurance}}</td></tr>
-    <tr><th>إجمالي الاستحقاقات المحاسبي للمسير</th><td>{{slip.total_entitlements}}</td></tr>
-    <tr><th>إجمالي الاستقطاعات المحاسبي للمسير</th><td>{{slip.total_deductions}}</td></tr>
+    <tr><th>إجمالي الاستحقاقات المحاسبي للمرتبات</th><td>{{slip.total_entitlements}}</td></tr>
+    <tr><th>إجمالي الاستقطاعات المحاسبي للمرتبات</th><td>{{slip.total_deductions}}</td></tr>
     <tr><th>مراجعة الإضافي اليدوي</th><td>{% if slip.overtime_manual_override %}تم اعتماد مبلغ يدوي — السبب: {{slip.overtime_override_reason}}{% else %}لم يتم إجراء تعديل يدوي{% endif %}</td></tr>
   </table>
-  <p class="muted">هذه القسيمة مستخرجة من بيانات مسير الرواتب المحفوظة والمرحّلة. أي دفعات صرف مسجلة على مستوى المسير لا تُنسب لموظف بعينه في هذه القسيمة.</p>
+  <p class="muted">هذه القسيمة مستخرجة من بيانات المرتبات المحفوظة والمرحّلة. أي دفعات صرف مسجلة على مستوى المرتبات لا تُنسب لموظف بعينه في هذه القسيمة.</p>
   <p class="payslip-signatures">توقيع الموظف: .................................... <span>اعتماد شؤون العاملين: ....................................</span></p>
 </section>
 <style>
