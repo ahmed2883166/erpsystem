@@ -738,9 +738,23 @@ def products():
             sale_price=money(dec(request.form.get("sale_price","0"),"سعر البيع"))
             if purchase_price<0 or sale_price<0:
                 raise ValueError("الأسعار لا يمكن أن تكون سالبة.")
+            product_type = request.form.get("product_type","goods").strip()
+            if product_type == "goods":
+                from activity_profiles import active_posting_accounts, resolve_product_account_code
+                default_inventory = active_posting_accounts(c).get("inventory")
+                inventory_code = resolve_product_account_code(c, None, "inventory", default_inventory)
+                inventory = c.execute(
+                    "SELECT code,is_group,active,account_type FROM accounts WHERE code=?",
+                    (inventory_code,)
+                ).fetchone() if inventory_code else None
+                if (not inventory or inventory["is_group"] or not inventory["active"]
+                        or inventory["account_type"] != "asset"):
+                    raise ValueError(
+                        "لا يمكن إنشاء صنف من نوع بضاعة في النشاط الخدمي قبل ضبط حساب مخزون تفصيلي نشط من نوع أصل في ملف النشاط."
+                    )
             c.execute("""INSERT INTO stock_products(sku,name_ar,category,category_id,product_type,uom,base_uom_id,barcode,track_lot,track_expiry,purchase_price,sale_price)
               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(sku,name,category["name_ar"] if category else "",category_id,
-              request.form.get("product_type","goods"),uom,base_uom_id,request.form.get("barcode","").strip() or None,
+              product_type,uom,base_uom_id,request.form.get("barcode","").strip() or None,
               int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),
               str(purchase_price),str(sale_price)))
             c.commit(); flash("تم حفظ الصنف.", "success")
