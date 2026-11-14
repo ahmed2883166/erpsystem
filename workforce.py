@@ -2187,9 +2187,11 @@ def attendance():
         by_employee.setdefault(record["employee_id"], {})[int(record["attendance_date"][-2:])] = dict(record)
     grid = [{"employee":e,"days":[by_employee.get(e["id"],{}).get(day,{}) for day in range(1,days_count+1)]}
             for e in employees]
+    friday_days = [day for day in range(1,days_count+1)
+                   if date(month_start.year,month_start.month,day).weekday()==4]
     c.close()
     return render_template("attendance.html",employees=employees,records=[],selected_date=selected_date,
-        selected_month=selected_month,days=range(1,days_count+1),grid=grid,
+        selected_month=selected_month,days=range(1,days_count+1),friday_days=friday_days,grid=grid,
         status_labels={"present":"حاضر","absent":"غائب","permission":"إذن","holiday":"عطلة",
         "annual_leave":"إجازة سنوية","sick_leave":"إجازة مرضية","unpaid_leave":"إجازة بدون مرتب"})
 
