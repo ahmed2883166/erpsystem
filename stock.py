@@ -1414,6 +1414,129 @@ def reports():
         slow_rows=slow_rows,expiry_alerts=expiry_alerts,turnover_days=90)
 
 
+@stock_bp.route("/reconciliation")
+@stock_permission("stock.view")
+def valuation_reconciliation():
+    """Compare current remaining valuation layers with posted inventory GL balances."""
+    conn = get_db()
+    try:
+        from activity_profiles import active_posting_accounts, resolve_product_account_code
+        posting = active_posting_accounts(conn)
+        default_inventory = posting.get("inventory")
+        if not default_inventory:
+            raise ValueError("لا يوجد حساب مخزون مضبوط في ملف النشاط الحالي.")
+        products = conn.execute("SELECT id,sku,name_ar FROM stock_products WHERE active=1 ORDER BY sku").fetchall()
+        valuation_by_code = {}
+        for product in products:
+            code = resolve_product_account_code(conn, product["id"], "inventory", default_inventory)
+            if not code:
+                raise ValueError("تعذر تحديد حساب المخزون للصنف " + product["sku"] + ".")
+            layers = conn.execute("""SELECT qty_remaining,unit_cost,value_remaining
+                FROM stock_valuation_layers WHERE product_id=? AND CAST(qty_remaining AS REAL)>0""",
+                (product["id"],)).fetchall()
+            value = sum((D(str(row["value_remaining"])) if row["value_remaining"] not in (None, "")
+                         else D(str(row["qty_remaining"] or "0")) * D(str(row["unit_cost"] or "0"))
+                         for row in layers), D("0"))
+            valuation_by_code[code] = valuation_by_code.get(code, D("0")) + value
+        account_rows = conn.execute("""SELECT id,code,name_ar FROM accounts
+            WHERE active=1 AND is_group=0 AND code IN (
+                SELECT DISTINCT code FROM accounts WHERE code IS NOT NULL
+            ) ORDER BY code""").fetchall()
+        inventory_codes = set(valuation_by_code)
+        inventory_codes.add(default_inventory)
+        accounts = {row["code"]: row for row in account_rows if row["code"] in inventory_codes}
+        missing = sorted(inventory_codes - set(accounts))
+        if missing:
+            raise ValueError("حسابات المخزون التالية غير موجودة أو غير نشطة: " + "، ".join(missing))
+        gl_by_account = {code: D("0") for code in inventory_codes}
+        journal_tables = {row["name"] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('journal_entries','journal_lines')"
+        )}
+        if journal_tables != {"journal_entries", "journal_lines"}:
+            raise ValueError("دفتر الأستاذ غير مهيأ؛ لا يمكن إجراء المطابقة.")
+        gl_rows = conn.execute("""SELECT a.code,jl.debit,jl.credit
+            FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+            JOIN accounts a ON a.id=jl.account_id
+            WHERE je.status='posted' AND a.code IN (%s)""" %
+            ",".join("?" for _ in inventory_codes), tuple(sorted(inventory_codes))).fetchall()
+        for row in gl_rows:
+            gl_by_account[row["code"]] += D(str(row["debit"] or "0")) - D(str(row["credit"] or "0"))
+        rows = []
+        for code in sorted(inventory_codes):
+            account = accounts[code]
+            valuation = valuation_by_code.get(code, D("0"))
+            ledger = gl_by_account.get(code, D("0"))
+            rows.append({"code":code,"name":account["name_ar"],"valuation":valuation,
+                         "ledger":ledger,"difference":valuation-ledger})
+        total_valuation = sum((row["valuation"] for row in rows), D("0"))
+        total_ledger = sum((row["ledger"] for row in rows), D("0"))
+        return render_template("stock_reconciliation.html", rows=rows,
+            total_valuation=total_valuation,total_ledger=total_ledger,
+            total_difference=total_valuation-total_ledger)
+    except (ValueError, sqlite3.Error) as exc:
+        flash(str(exc), "error")
+        return render_template("stock_reconciliation.html", rows=[],
+            total_valuation=D("0"),total_ledger=D("0"),total_difference=D("0"),error=True)
+    finally:
+        conn.close()
+
+
+@stock_bp.route("/pending")
+@stock_permission("stock.manage")
+def pending_movements():
+    conn = get_db()
+    rows = conn.execute("""SELECT m.*,p.sku,p.name_ar,
+        s.name_ar source_name,t.name_ar target_name
+        FROM stock_movements m JOIN stock_products p ON p.id=m.product_id
+        LEFT JOIN stock_warehouses s ON s.id=m.source_warehouse_id
+        LEFT JOIN stock_warehouses t ON t.id=m.target_warehouse_id
+        WHERE m.accounting_status IN ('pending_purpose','pending_setup','pending_document')
+        ORDER BY m.id""").fetchall()
+    conn.close()
+    return render_template("stock_pending_movements.html", rows=rows)
+
+
+@stock_bp.route("/pending/<int:movement_id>/resolve", methods=["POST"])
+@stock_permission("stock.manage")
+def resolve_pending_movement(movement_id):
+    conn = get_db()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        movement = conn.execute("""SELECT m.*,p.id product_id,p.name_ar,p.sku
+            FROM stock_movements m JOIN stock_products p ON p.id=m.product_id WHERE m.id=?""",
+            (movement_id,)).fetchone()
+        if not movement or movement["accounting_status"] not in ("pending_purpose","pending_setup","pending_document"):
+            raise ValueError("الحركة غير موجودة أو لم تعد معلقة.")
+        if movement["accounting_status"] == "pending_document":
+            raise ValueError("هذه الحركة مرتبطة بمستند شراء/مرتجع؛ يجب إكمالها من شاشة المستند الأصلي حتى لا ينشأ قيد مكرر.")
+        purpose = movement["issue_purpose"]
+        if movement["accounting_status"] == "pending_purpose":
+            purpose = request.form.get("issue_purpose", "").strip()
+            if purpose not in {"sale","internal"}:
+                raise ValueError("حدد غرض الصرف: تكلفة مبيعات أو استخدام داخلي.")
+            conn.execute("UPDATE stock_movements SET issue_purpose=? WHERE id=?",(purpose,movement_id))
+        if movement["movement_type"] == "issue":
+            if purpose not in {"sale","internal"}:
+                raise ValueError("لا يمكن استكمال الصرف قبل تحديد غرضه.")
+            post_issue_journal(conn,movement_id,movement["movement_no"],movement,
+                movement["movement_date"],movement["total_cost"],session.get("user_id"),purpose)
+        elif movement["movement_type"] == "scrap":
+            post_scrap_journal(conn,movement_id,movement["movement_no"],movement,
+                movement["movement_date"],movement["total_cost"],session.get("user_id"))
+        else:
+            raise ValueError("نوع الحركة لا يدعم المعالجة اليدوية من شاشة الحركات المعلقة.")
+        conn.commit()
+        flash("تمت معالجة الحركة وترحيل قيدها المحاسبي." if conn.execute(
+            "SELECT accounting_status FROM stock_movements WHERE id=?",(movement_id,)).fetchone()["accounting_status"]=="posted"
+            else "تم حفظ الحركة؛ ما زالت تحتاج إلى استكمال الإعدادات.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        conn.rollback()
+        flash(str(exc),"error")
+    finally:
+        conn.close()
+    return redirect(url_for("stock.pending_movements"))
+
+
 @stock_bp.route("/barcode")
 @stock_permission("stock.view")
 def barcode_lookup():
