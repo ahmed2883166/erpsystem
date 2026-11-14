@@ -452,7 +452,7 @@ class StocktakeRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         conn = stock.get_db()
         created = conn.execute(
-            "SELECT product_type FROM stock_products WHERE sku='SERVICE-GOODS-1'"
+            "SELECT product_type FROM stock_products WHERE sku LIKE 'ITM-%' ORDER BY id DESC LIMIT 1"
         ).fetchone()
         self.assertIsNotNone(created)
         self.assertEqual(created["product_type"], "goods")
