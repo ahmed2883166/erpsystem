@@ -1,21 +1,26 @@
 {% extends "base.html" %}
 {% block title %}مطابقة تقييم المخزون مع الأستاذ | NEXUS ERP{% endblock %}
 {% block content %}
-<header><div><h2>مطابقة تقييم المخزون مع دفتر الأستاذ</h2><p class="muted">مقارنة قيمة طبقات التقييم المتبقية بأرصدة حسابات المخزون المرحلة حتى الآن.</p></div><a class="btn secondary" href="{{ url_for('stock.reports') }}">تقارير المخزون</a></header>
+<header><div><h2>تقرير المطابقة الرسمي لتقييم المخزون مع دفتر الأستاذ</h2><p class="muted">تقرير رقابي يربط إجمالي تقييم المخزون بحسابات الرقابة في الأستاذ، ويعرض تفصيل الأصناف والمخازن كمساند للمراجعة.</p><p class="muted">تاريخ ووقت إعداد التقرير: {{ report_generated_at }}</p></div><a class="btn secondary" href="{{ url_for('stock.reports') }}">تقارير المخزون</a></header>
+{% if not error %}<section class="panel">
+  {% if reconciliation_status == 'matched' %}<p class="status success">نتيجة المطابقة: إجمالي تقييم المخزون متطابق مع أرصدة حسابات المخزون في الأستاذ حتى وقت إعداد التقرير.</p>
+  {% else %}<p class="status danger">نتيجة المطابقة: توجد فروق تحتاج مراجعة بين تقييم المخزون وحسابات الأستاذ.</p>{% endif %}
+  <p>عدد الحسابات المتطابقة: <strong>{{ matched_account_count }}</strong> — عدد الحسابات التي تحتاج مراجعة: <strong>{{ difference_account_count }}</strong></p>
+</section>{% endif %}
 <section class="panel">
 <div class="grid grid-3">
 <div class="metric"><span>قيمة طبقات التقييم</span><strong>{{ total_valuation|money }}</strong></div>
 <div class="metric"><span>رصيد حسابات المخزون بالأستاذ</span><strong>{{ total_ledger|money }}</strong></div>
 <div class="metric"><span>إجمالي الفرق (التقييم - الأستاذ)</span><strong>{{ total_difference|money }}</strong></div>
 </div>
-<p class="muted">رصيد الأستاذ = إجمالي المدين ناقص إجمالي الدائن للقيود المرحلة. التقرير يعرض الرصيد الحالي؛ لا يُستخدم لإعادة بناء أرصدة تاريخية بأثر رجعي.</p>
+<p class="muted">رصيد الأستاذ = إجمالي المدين ناقص إجمالي الدائن للقيود المرحلة. هذه هي المطابقة المحاسبية الرسمية على مستوى حساب الرقابة، وتعرض الأرصدة الحالية حتى وقت إعداد التقرير؛ لا يُستخدم لإعادة بناء أرصدة تاريخية بأثر رجعي.</p>
 <div class="table-wrap"><table><thead><tr><th>الحساب</th><th>اسم الحساب</th><th>طبقات التقييم</th><th>دفتر الأستاذ</th><th>الفرق</th><th>الحالة</th></tr></thead><tbody>
-{% for row in rows %}<tr><td>{{ row.code }}</td><td>{{ row.name }}</td><td>{{ row.valuation|money }}</td><td>{{ row.ledger|money }}</td><td>{{ row.difference|money }}</td><td>{% if row.difference == 0 %}<span class="status success">متطابق</span>{% else %}<span class="status danger">يحتاج مراجعة</span>{% endif %}</td></tr>{% else %}<tr><td colspan="6">لا توجد بيانات مطابقة للعرض.</td></tr>{% endfor %}
+{% for row in rows %}<tr><td>{{ row.code }}</td><td>{{ row.name }}</td><td>{{ row.valuation|money }}</td><td>{{ row.ledger|money }}</td><td>{{ row.difference|money }}</td><td>{% if row.status == 'matched' %}<span class="status success">متطابق</span>{% else %}<span class="status danger">يحتاج مراجعة</span>{% endif %}</td></tr>{% else %}<tr><td colspan="6">لا توجد بيانات مطابقة للعرض.</td></tr>{% endfor %}
 </tbody></table></div>
 </section>
 <section class="panel">
   <h3>توزيع قيمة المخزون حسب المخزن</h3>
-  <p class="muted">هذا التفصيل يوضح أين توجد قيمة طبقات التقييم. المطابقة المحاسبية الرسمية تظل على مستوى حساب الأستاذ؛ لا ننسب رصيد الأستاذ إلى مخزن بعينه ما لم تكن قيود المخزون تحمل بُعد مخزن موثقًا.</p>
+  <p class="status warning">تنبيه محاسبي: لا يحتوي دفتر الأستاذ الحالي على بُعد مخزن وصنف في سطور القيود. لذلك لا يجوز توزيع رصيد الحساب على مخازن أو أصناف بالتقدير. المطابقة الرسمية هنا على مستوى حساب الأستاذ، أما الجداول التالية فهي كشف تفصيلي لقيمة المخزون حسب المخزن والصنف، وليست ادعاءً بمطابقة أستاذ مستقلة لكل مخزن.</p>
   <div class="table-wrap"><table><thead><tr><th>كود المخزن</th><th>المخزن</th><th>الحالة</th><th>قيمة طبقات التقييم</th></tr></thead><tbody>
   {% for w in warehouse_rows %}<tr><td>{{ w.code }}</td><td>{{ w.name }}</td><td>{{ 'نشط' if w.active else 'معطل / غير مرتبط' }}</td><td>{{ w.valuation|money }}</td></tr>{% else %}<tr><td colspan="4">لا توجد طبقات تقييم مرتبطة بمخازن.</td></tr>{% endfor %}
   </tbody></table></div>
