@@ -869,14 +869,21 @@ def warehouses():
         try:
             code=request.form.get("code","").strip(); name=request.form.get("name_ar","").strip()
             if not code or not name: raise ValueError("كود واسم المخزن مطلوبان.")
-            c.execute("INSERT INTO stock_warehouses(code,name_ar,branch) VALUES(?,?,?)",(code,name,request.form.get("branch","").strip()))
-            c.commit(); flash("تم حفظ المخزن.", "success")
+            branch_id=request.form.get("branch_id",type=int)
+            branch=c.execute("SELECT name_ar FROM branches WHERE id=? AND active=1",(branch_id,)).fetchone() if branch_id else None
+            if branch_id and not branch: raise ValueError("اختر فرعًا موجودًا ونشطًا.")
+            c.execute("INSERT INTO stock_warehouses(code,name_ar,branch,branch_id) VALUES(?,?,?,?)",
+                      (code,name,branch["name_ar"] if branch else "",branch_id))
+            c.commit(); flash("تم حفظ المخزن وربطه بالفرع المحدد.", "success")
         except (ValueError,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود المخزن مستخدم بالفعل.", "error")
         finally: c.close()
         return redirect(url_for("stock.warehouses"))
-    rows=c.execute("SELECT * FROM stock_warehouses ORDER BY code").fetchall(); c.close()
-    return render_template("stock_warehouses.html",rows=rows)
+    rows=c.execute("""SELECT w.*,b.code branch_code,b.name_ar branch_name
+        FROM stock_warehouses w LEFT JOIN branches b ON b.id=w.branch_id ORDER BY w.code""").fetchall()
+    branches=c.execute("SELECT id,code,name_ar FROM branches WHERE active=1 ORDER BY code").fetchall()
+    c.close()
+    return render_template("stock_warehouses.html",rows=rows,branches=branches)
 
 
 @stock_bp.route("/locations", methods=["GET", "POST"])
@@ -1045,10 +1052,15 @@ def edit_warehouse(warehouse_id):
         try:
             code=request.form.get("code","").strip(); name=request.form.get("name_ar","").strip()
             if not code or not name: raise ValueError("كود واسم المخزن مطلوبان.")
-            c.execute("UPDATE stock_warehouses SET code=?,name_ar=?,branch=? WHERE id=?",(code,name,request.form.get("branch","").strip(),warehouse_id))
-            c.commit(); c.close(); flash("تم تعديل المخزن.","success"); return redirect(url_for("stock.warehouses"))
+            branch_id=request.form.get("branch_id",type=int)
+            branch=c.execute("SELECT name_ar FROM branches WHERE id=? AND active=1",(branch_id,)).fetchone() if branch_id else None
+            if branch_id and not branch: raise ValueError("اختر فرعًا موجودًا ونشطًا.")
+            c.execute("UPDATE stock_warehouses SET code=?,name_ar=?,branch=?,branch_id=? WHERE id=?",
+                      (code,name,branch["name_ar"] if branch else "",branch_id,warehouse_id))
+            c.commit(); c.close(); flash("تم تعديل المخزن وربطه بالفرع المحدد.","success"); return redirect(url_for("stock.warehouses"))
         except (ValueError,sqlite3.IntegrityError) as e: c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود المخزن مستخدم بالفعل.","error")
-    c.close(); return render_template("stock_warehouse_edit.html",warehouse=warehouse)
+    branches=c.execute("SELECT id,code,name_ar FROM branches WHERE active=1 ORDER BY code").fetchall()
+    c.close(); return render_template("stock_warehouse_edit.html",warehouse=warehouse,branches=branches)
 
 
 @stock_bp.route("/warehouses/<int:warehouse_id>/delete",methods=["POST"])
@@ -1059,20 +1071,47 @@ def delete_warehouse(warehouse_id):
     else:
         used = None
         checks = [
-            ("SELECT 1 FROM stock_movements WHERE source_warehouse_id=? OR target_warehouse_id=? LIMIT 1",(warehouse_id,warehouse_id),"حركات المخزون"),
-            ("SELECT 1 FROM stock_valuation_layers WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"طبقات تقييم المخزون"),
-            ("SELECT 1 FROM goods_receipts WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"استلامات المشتريات"),
-            ("SELECT 1 FROM sales_invoices WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"فواتير البيع")
+            ("stock_movements","SELECT 1 FROM stock_movements WHERE source_warehouse_id=? OR target_warehouse_id=? LIMIT 1",(warehouse_id,warehouse_id),"حركات المخزون"),
+            ("stock_valuation_layers","SELECT 1 FROM stock_valuation_layers WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"طبقات تقييم المخزون"),
+            ("stock_locations","SELECT 1 FROM stock_locations WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"مواقع التخزين والأدوار"),
+            ("stock_product_locations","SELECT 1 FROM stock_product_locations WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"توزيعات المواقع الافتراضية للأصناف"),
+            ("stocktakes","SELECT 1 FROM stocktakes WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"جرد المخزون"),
+            ("goods_receipts","SELECT 1 FROM goods_receipts WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"استلامات المشتريات"),
+            ("sales_invoices","SELECT 1 FROM sales_invoices WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"فواتير البيع"),
+            ("stock_warehouse_product_settings","SELECT 1 FROM stock_warehouse_product_settings WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"إعدادات حدود إعادة الطلب")
         ]
-        for query, params, label in checks:
-            if c.execute(query,params).fetchone():
+        existing_tables={row["name"] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        for table, query, params, label in checks:
+            if table in existing_tables and c.execute(query,params).fetchone():
                 used=label
                 break
         if used: flash("لا يمكن حذف المخزن لوجود "+used+" مرتبطة به.","error")
         else:
             try: c.execute("DELETE FROM stock_warehouses WHERE id=?",(warehouse_id,)); c.commit(); flash("تم حذف المخزن.","success")
-            except sqlite3.IntegrityError: c.rollback(); flash("لا يمكن حذف المخزن لوجود مستند مرتبط به.","error")
+            except sqlite3.IntegrityError:
+                c.rollback()
+                foreign_refs=[]
+                for table,label in (("stock_locations","مواقع التخزين"),("stock_product_locations","توزيعات الأصناف"),("stock_warehouse_product_settings","إعدادات إعادة الطلب")):
+                    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone() and c.execute(f"SELECT 1 FROM {table} WHERE warehouse_id=? LIMIT 1",(warehouse_id,)).fetchone():
+                        foreign_refs.append(label)
+                flash("تعذر حذف المخزن بسبب ارتباطه بـ: "+("، ".join(foreign_refs) if foreign_refs else "سجل مرتبط بجدول آخر")+"؛ استخدم التعطيل بدل الحذف.","error")
     c.close(); return redirect(url_for("stock.warehouses"))
+
+
+@stock_bp.route("/warehouses/<int:warehouse_id>/toggle-active",methods=["POST"])
+@stock_permission("stock.manage")
+def toggle_warehouse_active(warehouse_id):
+    c=get_db()
+    warehouse=c.execute("SELECT id,name_ar,active FROM stock_warehouses WHERE id=?",(warehouse_id,)).fetchone()
+    if not warehouse:
+        flash("المخزن غير موجود.","error")
+    else:
+        new_active=0 if warehouse["active"] else 1
+        c.execute("UPDATE stock_warehouses SET active=? WHERE id=?",(new_active,warehouse_id))
+        c.commit()
+        flash(("تم تفعيل" if new_active else "تم تعطيل")+" المخزن "+warehouse["name_ar"]+" دون حذف حركاته أو أرصدته.","success")
+    c.close()
+    return redirect(url_for("stock.warehouses"))
 
 
 @stock_bp.route("/movements", methods=["GET","POST"])
