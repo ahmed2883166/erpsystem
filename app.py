@@ -376,6 +376,7 @@ def initialize_database():
     initialize_aging_schema()
     initialize_quotes_schema()
     initialize_tax_schema()
+    workforce_extras.create_workforce_safety_backup()
     initialize_workforce_schema()
     workforce_extras.initialize_workforce_extras_schema()
     initialize_payroll_compliance_schema()
