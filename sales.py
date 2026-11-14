@@ -15,6 +15,7 @@ from accounting_core import post_journal
 from database import connect_database, fetch_page
 from stock import consume_layers, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
+from code_sequences import next_code
 
 sales_bp = Blueprint("sales", __name__, url_prefix="/sales")
 
@@ -1887,9 +1888,10 @@ def customer_list():
             credit_limit = Decimal(request.form.get("credit_limit", "0") or "0")
             discount_type, discount_value = _customer_discount_input(request.form)
             if not credit_limit.is_finite() or credit_limit < 0: raise ValueError("الحد الائتماني يجب أن يكون صفرًا أو أكبر.")
+            customer_code = next_code(c, "customer", "CUS", "customers", "code")
             c.execute("""INSERT INTO customers(code,name,tax_number,phone,email,address,credit_limit,discount_type,discount_value)
                          VALUES(?,?,?,?,?,?,?,?,?)""",
-                      (request.form["code"].strip(), request.form["name"].strip(),
+                      (customer_code, request.form["name"].strip(),
                        request.form.get("tax_number", "").strip(), request.form.get("phone", "").strip(),
                        request.form.get("email", "").strip(), request.form.get("address", "").strip(),
                        str(credit_limit), discount_type, str(discount_value)))
