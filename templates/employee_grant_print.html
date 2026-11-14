@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block title %}كشف منحة | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>كشف استحقاق منحة: {{grant.grant_name_snapshot}}</h2><p>تاريخ المنحة: {{grant.grant_date}} · رقم الكشف: {{grant.id}}</p></header>
+<section class="panel">
+<table><thead><tr><th>م</th><th>كود الموظف</th><th>اسم الموظف</th>{% if show_basic %}<th>الراتب الأساسي</th>{% endif %}<th>قيمة المنحة المستحقة</th><th>التوقيع</th></tr></thead><tbody>
+{% for line in lines %}<tr><td>{{loop.index}}</td><td>{{line.employee_code_snapshot}}</td><td>{{line.employee_name_snapshot}}</td>{% if show_basic %}<td>{{line.basic_salary_snapshot}}</td>{% endif %}<td>{{line.amount}}</td><td style="min-width:140px;height:48px"></td></tr>{% endfor %}
+<tr><th colspan="{{4 if show_basic else 3}}">الإجمالي</th><th>{{grant.total_amount}}</th><th></th></tr>
+</tbody></table>
+<p>طريقة الحساب: {{ {'fixed':'مبلغ مقطوع','percentage_basic':'نسبة من الراتب الأساسي','per_day':'عدد أيام من الراتب الأساسي'}.get(grant.calculation_method,grant.calculation_method) }}
+{% if grant.calculation_method=='percentage_basic' %} · النسبة: {{grant.calculation_value}}%{% elif grant.calculation_method=='per_day' %} · الأيام: {{grant.days_count}} · اليوم = الأساسي ÷ 30{% else %} · القيمة: {{grant.calculation_value}}{% endif %}</p>
+<div class="no-print"><button type="button" onclick="window.print()">طباعة / PDF</button></div>
+</section>{% endblock %}
