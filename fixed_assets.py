@@ -72,7 +72,55 @@ def initialize_assets_schema():
         PRIMARY KEY(bill_id,asset_id)
     )""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_fixed_asset_bill_links_bill ON fixed_asset_supplier_bill_links(bill_id)")
+    c.execute("""CREATE TABLE IF NOT EXISTS fixed_asset_journal_lines(
+        journal_line_id INTEGER PRIMARY KEY REFERENCES journal_lines(id),
+        entry_id INTEGER NOT NULL REFERENCES journal_entries(id),
+        asset_name TEXT NOT NULL, category TEXT NOT NULL DEFAULT '',
+        ready_date TEXT NOT NULL, cost TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        fixed_asset_id INTEGER UNIQUE REFERENCES fixed_assets(id),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_fixed_asset_journal_pending ON fixed_asset_journal_lines(status,entry_id)")
     c.close()
+
+
+def register_assets_from_journal_lines(conn, entry_id, line_details, actor_id):
+    """Stage fixed assets from posted debit journal lines; never posts a second purchase entry."""
+    if not line_details:
+        return []
+    posted = conn.execute(
+        "SELECT id,account_id,debit,credit FROM journal_lines WHERE entry_id=? ORDER BY id",
+        (entry_id,),
+    ).fetchall()
+    if len(posted) != len(line_details):
+        raise ValueError("تعذر مطابقة بيانات الأصول مع سطور القيد المرحّل.")
+    created = []
+    entry = conn.execute("SELECT entry_date FROM journal_entries WHERE id=? AND status='posted'", (entry_id,)).fetchone()
+    if not entry:
+        raise ValueError("لا يمكن تسجيل أصل من قيد غير مرحّل.")
+    for line, detail in zip(posted, line_details):
+        if not detail:
+            continue
+        if Decimal(str(line["debit"] or "0")) <= 0 or Decimal(str(line["credit"] or "0")) != 0:
+            raise ValueError("يجب أن يكون سطر الأصل مدينًا فقط.")
+        account = conn.execute(
+            "SELECT account_type,is_group,active FROM accounts WHERE id=?", (line["account_id"],)
+        ).fetchone()
+        if not account or account["account_type"] != "asset" or account["is_group"] or not account["active"]:
+            raise ValueError("اختر حساب أصل ثابت تفصيليًا ونشطًا في سطر الشراء.")
+        name = str(detail.get("asset_name", "")).strip()
+        category = str(detail.get("category", "")).strip()
+        ready = date.fromisoformat(str(detail.get("ready_date", entry["entry_date"]))).isoformat()
+        if not name or len(name) > 200 or ready < entry["entry_date"]:
+            raise ValueError("اسم الأصل مطلوب وتاريخ الجاهزية لا يسبق تاريخ قيد الشراء.")
+        cost = Decimal(str(line["debit"]))
+        conn.execute("""INSERT INTO fixed_asset_journal_lines(
+            journal_line_id,entry_id,asset_name,category,ready_date,cost,status
+        ) VALUES(?,?,?,?,?,?,'pending')""",
+            (line["id"], entry_id, name, category, ready, str(cost)))
+        created.append(line["id"])
+    return created
 
 
 def _validate_dedicated_accum_account(conn, account_id):
@@ -332,6 +380,14 @@ def index():
             return redirect(url_for("assets.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود الأصل مستخدم أو توجد بيانات غير صحيحة.","error")
+    pending_assets=c.execute("""SELECT p.*,je.entry_date,je.reference,
+        a.code account_code,a.name_ar account_name
+        FROM fixed_asset_journal_lines p
+        JOIN journal_entries je ON je.id=p.entry_id
+        JOIN journal_lines jl ON jl.id=p.journal_line_id
+        JOIN accounts a ON a.id=jl.account_id
+        WHERE p.status='pending' AND je.status='posted'
+        ORDER BY je.entry_date,p.journal_line_id""").fetchall()
     assets=c.execute("""SELECT f.*,a.code asset_code_gl,a.name_ar asset_account_name,
       aa.code accum_account_code,aa.name_ar accum_account_name,
       ea.code expense_account_code,ea.name_ar expense_account_name,
@@ -360,8 +416,72 @@ def index():
           AND NOT EXISTS (SELECT 1 FROM journal_lines jl WHERE jl.account_id=a.id)
         ORDER BY a.code""").fetchall()
     c.close()
-    return render_template("fixed_assets.html",assets=assets,asset_accounts=asset_accounts,
+    return render_template("fixed_assets.html",assets=assets,pending_assets=pending_assets,asset_accounts=asset_accounts,
         accum_accounts=accum_accounts,expense_accounts=expense_accounts,today=date.today().isoformat())
+
+@assets_bp.route("/journal-pending/<int:journal_line_id>/configure", methods=["POST"])
+@require(write=True)
+def configure_journal_asset(journal_line_id):
+    c=db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        pending=c.execute("""SELECT p.*,je.entry_date,jl.account_id,a.account_type,a.is_group,a.active
+            FROM fixed_asset_journal_lines p
+            JOIN journal_entries je ON je.id=p.entry_id
+            JOIN journal_lines jl ON jl.id=p.journal_line_id
+            JOIN accounts a ON a.id=jl.account_id
+            WHERE p.journal_line_id=? AND p.status='pending' AND je.status='posted'""",
+            (journal_line_id,)).fetchone()
+        if not pending:
+            raise ValueError("الأصل غير موجود في قائمة الأصول المنتظرة أو تم تجهيزه بالفعل.")
+        if pending["account_type"]!="asset" or pending["is_group"] or not pending["active"]:
+            raise ValueError("حساب تكلفة الأصل المرتبط بقيد الشراء لم يعد حساب أصل تفصيليًا نشطًا.")
+        residual=Decimal(request.form.get("residual_value","0"))
+        cost=Decimal(str(pending["cost"]))
+        life=int(request.form.get("useful_life_months","0"))
+        method=request.form.get("depreciation_method","straight_line")
+        rate=Decimal(request.form.get("annual_rate","0"))
+        ready=date.fromisoformat(pending["ready_date"]).isoformat()
+        if residual<0 or residual>=cost or life<=0:
+            raise ValueError("تحقق من القيمة التخريدية والعمر الإنتاجي.")
+        if method not in {"straight_line","declining_balance"}:
+            raise ValueError("طريقة الإهلاك غير صحيحة.")
+        if method=="declining_balance" and not (Decimal("0")<rate<=Decimal("100")):
+            raise ValueError("معدل الإهلاك السنوي يجب أن يكون أكبر من صفر ولا يتجاوز 100%.")
+        accum_id=int(request.form["accum_account_id"])
+        expense_id=int(request.form["expense_account_id"])
+        _validate_dedicated_accum_account(c,accum_id)
+        for aid,expected in ((accum_id,"asset"),(expense_id,"expense")):
+            row=c.execute("SELECT account_type,is_group,active FROM accounts WHERE id=?",(aid,)).fetchone()
+            if not row or row["account_type"]!=expected or row["is_group"] or not row["active"]:
+                raise ValueError("اختر حساب مجمع إهلاك ومصروف إهلاك تفصيليين ونشطين.")
+        if accum_id==pending["account_id"]:
+            raise ValueError("حساب مجمع الإهلاك يجب أن يختلف عن حساب تكلفة الأصل.")
+        code=next_code(c,"fixed_asset","AST","fixed_assets","asset_code")
+        cur=c.execute("""INSERT INTO fixed_assets(
+            asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,
+            useful_life_months,depreciation_method,annual_rate,asset_account_id,
+            accum_account_id,expense_account_id,notes,created_by
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (code,pending["asset_name"],pending["category"],pending["entry_date"],ready,
+             str(cost),str(residual),life,method,str(rate),pending["account_id"],
+             accum_id,expense_id,"تم الربط تلقائيًا بقيد الشراء رقم "+str(pending["entry_id"]),
+             session["user_id"]))
+        asset_id=cur.lastrowid
+        c.execute("UPDATE fixed_asset_journal_lines SET status='configured',fixed_asset_id=? WHERE journal_line_id=? AND status='pending'",
+                  (asset_id,journal_line_id))
+        if c.execute("SELECT changes()").fetchone()[0]!=1:
+            raise ValueError("تم تجهيز الأصل بالفعل؛ أعد تحميل الصفحة.")
+        g.audit_created_record=("fixed_assets",asset_id,None,None)
+        c.commit()
+        flash("تم تجهيز الأصل وربطه بقيد الشراء دون إنشاء قيد تكلفة جديد.", "success")
+    except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc) if isinstance(exc,ValueError) else "تعذر تجهيز الأصل؛ راجع الحسابات والبيانات.", "error")
+    finally:
+        c.close()
+    return redirect(url_for("assets.index"))
+
 
 @assets_bp.route("/<int:asset_id>/schedule")
 @require()
