@@ -89,6 +89,7 @@ def initialize_workforce_extras_schema():
             line_id = row["id"]
             legacy = [
                 ("earning","الراتب الأساسي","basic_salary"),
+                ("information","العلاوة المطبقة (بيان تاريخي)","salary_raise"),
                 ("earning","البدلات (إجمالي تاريخي)","allowances"),
                 ("earning","الحوافز (إجمالي تاريخي)","incentives"),
                 ("earning","الإضافي","overtime_amount"),
