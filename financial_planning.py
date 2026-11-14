@@ -1709,11 +1709,31 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
             disposal_gain_loss=Decimal(str(disposal_row["amount"] or "0"))
     disposal_adjustment=-disposal_gain_loss
 
-    receivables_ids = roles.get("receivables", set())
-    inventory_ids = roles.get("inventory", set())
-    payables_ids = roles.get("payables", set())
-    current_asset_ids = roles.get("current_assets", set())
-    current_liability_ids = roles.get("current_liabilities", set())
+    receivables_ids = set(roles.get("receivables", set()))
+    inventory_ids = set(roles.get("inventory", set()))
+    payables_ids = set(roles.get("payables", set()))
+    current_asset_ids = set(roles.get("current_assets", set()))
+    current_liability_ids = set(roles.get("current_liabilities", set()))
+
+    # The cash-flow mapping screen classifies non-cash accounts as operating,
+    # investing or financing. For the indirect method, explicitly mapped
+    # operating assets/liabilities are also working-capital accounts; include
+    # them in balance-change adjustments instead of silently omitting them.
+    mapping_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_flow_account_mappings'"
+    ).fetchone()
+    if mapping_table:
+        mapped_operating = conn.execute(
+            """SELECT m.account_id,a.account_type FROM cash_flow_account_mappings m
+               JOIN accounts a ON a.id=m.account_id
+               WHERE m.category='operating' AND a.is_group=0"""
+        ).fetchall()
+        for mapped in mapped_operating:
+            if mapped["account_type"] == "asset":
+                current_asset_ids.add(mapped["account_id"])
+            elif mapped["account_type"] == "liability":
+                current_liability_ids.add(mapped["account_id"])
+
     other_current_asset_ids = current_asset_ids-cash_ids-receivables_ids-inventory_ids
     other_current_liability_ids = current_liability_ids-payables_ids
 
