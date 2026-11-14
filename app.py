@@ -2270,9 +2270,28 @@ def reverse_journal(entry_id):
         reversal_parent_id = int(original_reference[4:])
     elif str(original["description"] or "").startswith("قيد عكسي للقيد رقم "):
         import re
-        legacy_match = re.match(r"قيد عكسي للقيد رقم (\\d+)", str(original["description"] or ""))
+        legacy_match = re.match(r"قيد عكسي للقيد رقم (\d+)", str(original["description"] or ""))
         if legacy_match:
             reversal_parent_id = int(legacy_match.group(1))
+    # Permit one reversal of a reversal to restore the original accounting
+    # effect, but keep that restoration terminal. A third-level reversal can
+    # desynchronize linked subledgers (for example, fixed-asset status).
+    if reversal_parent_id is not None:
+        reversal_parent = connection.execute(
+            "SELECT reference,description FROM journal_entries WHERE id=?",
+            (reversal_parent_id,),
+        ).fetchone()
+        if reversal_parent and (
+            str(reversal_parent["reference"] or "").startswith("REV-")
+            or str(reversal_parent["description"] or "").startswith("قيد عكسي للقيد رقم ")
+        ):
+            connection.close()
+            flash(
+                "هذا القيد هو عكسٌ لقيد عكسي بالفعل. تم إيقاف سلسلة العكس هنا؛ "
+                "إذا احتجت تصحيحًا إضافيًا أنشئ قيد تسوية مستقلًا مع توضيح السبب.",
+                "error",
+            )
+            return redirect(url_for("journal_detail", entry_id=entry_id))
     # Refuse a second reversal even if an old record was created without the expected reference.
     existing_reversal = connection.execute(
         "SELECT id FROM journal_entries WHERE reference=? AND status='posted' LIMIT 1",
