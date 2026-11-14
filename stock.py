@@ -1546,14 +1546,24 @@ def valuation_reconciliation():
                          "ledger":ledger,"difference":valuation-ledger})
         total_valuation = sum((row["valuation"] for row in rows), D("0"))
         total_ledger = sum((row["ledger"] for row in rows), D("0"))
+        total_difference = total_valuation-total_ledger
+        for row in rows:
+            row["status"] = "matched" if row["difference"].quantize(D("0.01")) == D("0.00") else "review"
+        matched_account_count = sum(1 for row in rows if row["status"] == "matched")
+        difference_account_count = len(rows)-matched_account_count
+        reconciliation_status = "matched" if total_difference.quantize(D("0.01")) == D("0.00") else "review"
         return render_template("stock_reconciliation.html", rows=rows, warehouse_rows=warehouse_rows,
             warehouse_product_rows=warehouse_product_rows,
             total_valuation=total_valuation,total_ledger=total_ledger,
-            total_difference=total_valuation-total_ledger)
+            total_difference=total_difference,matched_account_count=matched_account_count,
+            difference_account_count=difference_account_count,reconciliation_status=reconciliation_status,
+            report_generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     except (ValueError, sqlite3.Error) as exc:
         flash(str(exc), "error")
         return render_template("stock_reconciliation.html", rows=[], warehouse_rows=[], warehouse_product_rows=[],
-            total_valuation=D("0"),total_ledger=D("0"),total_difference=D("0"),error=True)
+            total_valuation=D("0"),total_ledger=D("0"),total_difference=D("0"),
+            matched_account_count=0,difference_account_count=0,reconciliation_status="error",
+            report_generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),error=True)
     finally:
         conn.close()
 
