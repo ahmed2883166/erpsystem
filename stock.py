@@ -1956,6 +1956,8 @@ def approve_count(stocktake_id):
         stocktake = c.execute("SELECT * FROM stocktakes WHERE id=?", (stocktake_id,)).fetchone()
         if not stocktake or stocktake["status"] != "counted":
             raise ValueError("يجب حفظ العد أولًا، ولا يمكن اعتماد أمر غير جاهز للمراجعة.")
+        if int(stocktake["created_by"] or 0) == int(session.get("user_id") or 0):
+            raise ValueError("لا يجوز اعتماد الجرد بواسطة نفس المستخدم الذي أنشأه. اطلب مراجعة واعتماد مستخدم آخر.")
         ensure_stock_date_open(c, stocktake["count_date"], "تاريخ الجرد")
         lines = c.execute("""SELECT l.*,p.sku,p.name_ar FROM stocktake_lines l
             JOIN stock_products p ON p.id=l.product_id WHERE l.stocktake_id=? ORDER BY p.sku,l.location_id,l.lot_id""",
