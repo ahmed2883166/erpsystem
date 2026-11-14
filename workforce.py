@@ -189,6 +189,29 @@ def initialize_workforce_schema():
     c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('annual','إجازة سنوية',1,1)")
     c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('unpaid','إجازة بدون أجر',0,0)")
     c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('sick','إجازة مرضية',1,0)")
+    # Allow a reversed payroll period to be prepared again while keeping only one
+    # non-reversed payroll run per period. Preserve run IDs and all linked history.
+    payroll_runs_sql = c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='payroll_runs'").fetchone()
+    if payroll_runs_sql and "period TEXT NOT NULL UNIQUE" in (payroll_runs_sql["sql"] or ""):
+        c.execute("PRAGMA foreign_keys=OFF")
+        try:
+            c.execute("BEGIN IMMEDIATE")
+            c.execute("""CREATE TABLE payroll_runs_rebuilt(
+                id INTEGER PRIMARY KEY, period TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft',
+                journal_entry_id INTEGER UNIQUE, created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""")
+            c.execute("""INSERT INTO payroll_runs_rebuilt(id,period,status,journal_entry_id,created_by,created_at)
+                SELECT id,period,status,journal_entry_id,created_by,created_at FROM payroll_runs""")
+            c.execute("DROP TABLE payroll_runs")
+            c.execute("ALTER TABLE payroll_runs_rebuilt RENAME TO payroll_runs")
+            c.execute("CREATE UNIQUE INDEX uq_payroll_runs_non_reversed_period ON payroll_runs(period) WHERE status!='reversed'")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_payroll_period ON payroll_runs(period)")
+            c.commit()
+        except Exception:
+            c.rollback()
+            raise
+        finally:
+            c.execute("PRAGMA foreign_keys=ON")
     employee_cols = {r["name"] for r in c.execute("PRAGMA table_info(employees)")}
     for name in ("branch_id", "cost_center_id", "project_id"):
         if name not in employee_cols:
