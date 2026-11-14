@@ -367,7 +367,7 @@ def product_uom_options(c, product_id):
     base=c.execute("SELECT category_id,factor_to_base FROM stock_uoms WHERE id=?",(product["base_uom_id"],)).fetchone()
     if not base:
         return []
-    rows=c.execute("""SELECT id,custom_name name_ar,code,uom_id,factor_to_base,is_base,purchase_enabled,sales_enabled
+    rows=c.execute("""SELECT id,custom_name name_ar,custom_code code,uom_id,factor_to_base,is_base,purchase_enabled,sales_enabled
         FROM stock_product_uoms WHERE product_id=? AND active=1 ORDER BY is_base DESC,custom_name""",(product_id,)).fetchall()
     result=[dict(row,id="P:"+str(row["id"])) for row in rows]
     # Standard units from the same dimension are available automatically as conversions.
