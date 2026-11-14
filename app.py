@@ -143,7 +143,7 @@ PERMISSION_LABELS = {
     "purchases.manage": "إدارة المشتريات وإشعارات المورد",
     "sales.view": "عرض المبيعات والعملاء",
     "sales.manage": "إدارة المبيعات",
-    "sales.approve": "اعتماد أوامر البيع (مع منع اعتماد المنشئ لأمره)",
+    "sales.approve": "اعتماد الخصومات التي تتجاوز حد الشركة وأوامر البيع (مع منع الاعتماد الذاتي)",
     "assets.view": "عرض الأصول الثابتة",
     "assets.manage": "إدارة الأصول الثابتة",
     "quotes.view": "عرض عروض الأسعار",
@@ -844,7 +844,23 @@ def company_setup():
             flash("طريقة تقييم المخزون غير صحيحة.", "error")
             connection.close()
             return redirect(url_for("company_setup"))
+        current_discount_limit = connection.execute(
+            "SELECT setting_value FROM company_settings WHERE setting_key='sales_discount_limit_percent'"
+        ).fetchone()
+        discount_limit_value = request.form.get(
+            "sales_discount_limit_percent",
+            current_discount_limit["setting_value"] if current_discount_limit else "10",
+        ).strip()
+        try:
+            discount_limit_number = float(discount_limit_value)
+            if not 0 <= discount_limit_number <= 100:
+                raise ValueError()
+        except ValueError:
+            flash("حد خصم المبيعات يجب أن يكون رقمًا من 0 إلى 100.", "error")
+            connection.close()
+            return redirect(url_for("company_setup"))
         settings_values = {
+            "sales_discount_limit_percent": str(discount_limit_number),
             "inventory_cost_method": inventory_cost_method,
             "company_name": request.form.get("company_name", "").strip(),
             "company_address": request.form.get("company_address", "").strip()[:300],
@@ -868,7 +884,7 @@ def company_setup():
             row["setting_key"]: row["setting_value"]
             for row in connection.execute(
                 "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
-                "('company_name','tax_country','tax_regime','activity','base_currency','default_vat_rate','inventory_cost_method','company_address','company_phone','company_email','company_website')"
+                "('company_name','tax_country','tax_regime','activity','base_currency','default_vat_rate','inventory_cost_method','company_address','company_phone','company_email','company_website','sales_discount_limit_percent')"
             ).fetchall()
         }
         uploaded_logo = request.files.get("company_logo")
@@ -938,6 +954,7 @@ def company_setup():
         flash("تم حفظ إعدادات الشركة والعملات والنظام الضريبي.", "success")
         return redirect(url_for("company_setup"))
     settings = {row["setting_key"]: row["setting_value"] for row in connection.execute("SELECT * FROM company_settings")}
+    settings.setdefault("sales_discount_limit_percent", "10")
     currencies = connection.execute("SELECT * FROM currencies ORDER BY code").fetchall()
     has_entries = connection.execute("SELECT 1 FROM journal_entries LIMIT 1").fetchone() is not None
     connection.close()
@@ -2009,6 +2026,27 @@ def approval_inbox():
                     })
 
         if "sales.approve" in permissions:
+            approval_table = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sales_discount_approval_requests'"
+            ).fetchone()
+            if approval_table:
+                for row in connection.execute("""
+                    SELECT r.id,r.request_no,r.invoice_date,r.discount_amount,r.created_by,
+                           c.name AS counterparty
+                    FROM sales_discount_approval_requests r
+                    JOIN customers c ON c.id=r.customer_id
+                    WHERE r.status='pending'
+                    ORDER BY r.created_at DESC,r.id DESC
+                """).fetchall():
+                    own = row["created_by"] == actor_id
+                    items.append({
+                        "kind": "طلب اعتماد خصم مبيعات", "number": row["request_no"],
+                        "date": row["invoice_date"], "counterparty": row["counterparty"],
+                        "amount": row["discount_amount"],
+                        "href": url_for("sales.discount_approval", request_id=row["id"]),
+                        "can_act": not own,
+                        "blocked_reason": "لا يجوز اعتماد طلب الخصم الذي أنشأته بنفسك." if own else "",
+                    })
             for row in connection.execute("""
                 SELECT so.id,so.order_no AS document_no,so.order_date AS document_date,
                        c.name AS counterparty,so.created_by

@@ -5,6 +5,7 @@ issued through delivery notes are costed and posted once; their later invoices o
 recognize receivables, revenue and VAT.
 """
 from app_paths import DB_PATH
+import json
 import sqlite3
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -133,6 +134,27 @@ def init_sales_schema():
       ON customer_advance_reversals(reversal_date,source_type);
     CREATE INDEX IF NOT EXISTS idx_sales_invoice_customer ON sales_invoices(customer_id,invoice_date);
     CREATE INDEX IF NOT EXISTS idx_sales_receipts_invoice ON customer_receipts(invoice_id,receipt_date);
+    CREATE TABLE IF NOT EXISTS sales_discount_approval_requests(
+      id INTEGER PRIMARY KEY,
+      request_no TEXT NOT NULL UNIQUE,
+      customer_id INTEGER NOT NULL REFERENCES customers(id),
+      invoice_date TEXT NOT NULL,
+      due_date TEXT NOT NULL,
+      gross_subtotal TEXT NOT NULL,
+      discount_amount TEXT NOT NULL,
+      discount_percent TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      created_by INTEGER,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','approved','rejected')),
+      reviewed_by INTEGER,
+      reviewed_at TEXT,
+      decision_reason TEXT NOT NULL DEFAULT '',
+      invoice_id INTEGER REFERENCES sales_invoices(id),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_sales_discount_approval_status
+      ON sales_discount_approval_requests(status,created_at,id);
     """)
     line_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoice_lines)")}
     for name, definition in (("entered_quantity","TEXT"),("uom_id","TEXT"),("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'")):
@@ -244,6 +266,7 @@ def require(permission):
                 return redirect(url_for("login"))
             allowed = {
                 "sales.manage": {"admin", "accountant"},
+                "sales.approve": {"admin"},
                 "sales.view": {"admin", "accountant", "viewer"},
             }
             if (permission not in set(session["permissions"])) if "permissions" in session else (session.get("role") not in allowed.get(permission, set())):
@@ -2066,6 +2089,85 @@ def new_invoice():
                     items.append({"product_id": int(pid) if pid else None, "quantity": qty,
                                   "unit_price": selected_price, "uom_id":uom_id,
                                   "description": desc, "tax_rate": line_rate, "tax_treatment": treatment})
+            due_date = request.form.get("due_date") or request.form["invoice_date"]
+            if due_date < request.form["invoice_date"]:
+                raise ValueError("تاريخ الاستحقاق لا يمكن أن يسبق تاريخ الفاتورة.")
+
+            # Check the configured discount ceiling before post_invoice consumes stock
+            # or creates accounting entries. Above-limit invoices are saved as drafts
+            # for approval; no inventory or GL transaction is created at this stage.
+            customer_for_discount = c.execute(
+                "SELECT discount_type,discount_value FROM customers WHERE id=? AND active=1",
+                (int(request.form["customer_id"]),)
+            ).fetchone()
+            if not customer_for_discount:
+                raise ValueError("العميل غير موجود أو غير نشط.")
+            gross_subtotal = sum(
+                (Decimal(str(item["quantity"])) * Decimal(str(item["unit_price"]))
+                 for item in items), Decimal("0.00")
+            ).quantize(CENT, rounding=ROUND_HALF_UP)
+            discount_type = str(customer_for_discount["discount_type"] or "none").lower()
+            discount_value = Decimal(str(customer_for_discount["discount_value"] or "0"))
+            if discount_type == "percent":
+                discount_amount = (gross_subtotal * discount_value / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
+            elif discount_type == "fixed":
+                discount_amount = discount_value.quantize(CENT, rounding=ROUND_HALF_UP)
+            elif discount_type == "none":
+                discount_amount = Decimal("0.00")
+            else:
+                raise ValueError("نوع خصم العميل غير صحيح.")
+            discount_percent = (
+                (discount_amount * Decimal("100") / gross_subtotal).quantize(CENT, rounding=ROUND_HALF_UP)
+                if gross_subtotal > 0 else Decimal("0.00")
+            )
+            limit_row = c.execute(
+                "SELECT setting_value FROM company_settings WHERE setting_key='sales_discount_limit_percent'"
+            ).fetchone()
+            discount_limit = Decimal(str(limit_row["setting_value"] if limit_row else "10"))
+            if not discount_limit.is_finite() or discount_limit < 0 or discount_limit > 100:
+                raise ValueError("حد خصم المبيعات في إعدادات الشركة غير صحيح.")
+            if (discount_amount > 0 and discount_amount < gross_subtotal
+                    and discount_percent > discount_limit):
+                payload = {
+                    "customer_id": int(request.form["customer_id"]),
+                    "invoice_date": request.form["invoice_date"],
+                    "due_date": due_date,
+                    "warehouse_id": request.form.get("warehouse_id", type=int),
+                    "items": items,
+                    "tax_rate": request.form.get("tax_rate", "0"),
+                    "dimensions": {
+                        key: request.form.get(key) for key in
+                        ("branch_id", "cost_center_id", "project_id", "salesperson_id")
+                    },
+                    "sales_channel": request.form.get("sales_channel", "default"),
+                    "credit_override": bool(session.get("role") == "admin" and request.form.get("credit_override") == "1"),
+                }
+                c.execute("BEGIN IMMEDIATE")
+                request_no = "SDR-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+                cursor = c.execute(
+                    """INSERT INTO sales_discount_approval_requests(
+                         request_no,customer_id,invoice_date,due_date,gross_subtotal,
+                         discount_amount,discount_percent,payload_json,created_by)
+                       VALUES(?,?,?,?,?,?,?,?,?)""",
+                    (request_no, payload["customer_id"], payload["invoice_date"], due_date,
+                     str(gross_subtotal), str(discount_amount), str(discount_percent),
+                     json.dumps(payload, ensure_ascii=False), session["user_id"])
+                )
+                c.commit()
+                request_id = cursor.lastrowid
+                c.close()
+                from app import log
+                log("sales_discount_approval_requested", request_no,
+                    entity_type="sales_discount_approval_request", entity_id=request_id,
+                    after_values={"discount_amount": str(discount_amount),
+                                  "discount_percent": str(discount_percent),
+                                  "limit_percent": str(discount_limit)})
+                flash(
+                    f"تم إرسال طلب الخصم {request_no} لاعتماد المدير. الخصم {discount_percent}% والحد المسموح {discount_limit}%. لم تُرحّل الفاتورة ولم تُخصم أي كمية من المخزون.",
+                    "warning"
+                )
+                return redirect(url_for("sales.index"))
+
             c.execute("BEGIN IMMEDIATE")
             result = post_invoice(c, int(request.form["customer_id"]), request.form["invoice_date"],
                                   request.form.get("warehouse_id", type=int), items,
@@ -2073,9 +2175,6 @@ def new_invoice():
                                   allow_credit_override=(session.get("role") == "admin" and request.form.get("credit_override") == "1"),
                                   dimensions=request.form,
                                   sales_channel=request.form.get("sales_channel", "default"))
-            due_date = request.form.get("due_date") or request.form["invoice_date"]
-            if due_date < request.form["invoice_date"]:
-                raise ValueError("تاريخ الاستحقاق لا يمكن أن يسبق تاريخ الفاتورة.")
             c.execute("UPDATE sales_invoices SET due_date=? WHERE id=?", (due_date, result["invoice_id"]))
             c.commit()
             g.audit_created_record = ("sales_invoices", result["invoice_id"], "sales_invoice_lines", "invoice_id")
@@ -2109,6 +2208,91 @@ def new_invoice():
                            warehouses=warehouses, settings=settings, dimension_options=dimension_options,
                            today=date.today().isoformat())
 
+
+
+
+
+
+@sales_bp.route("/discount-approvals/<int:request_id>", methods=["GET", "POST"])
+@require("sales.approve")
+def discount_approval(request_id):
+    c = db()
+    row = c.execute(
+        """SELECT r.*,cu.code customer_code,cu.name customer_name
+           FROM sales_discount_approval_requests r
+           JOIN customers cu ON cu.id=r.customer_id WHERE r.id=?""",
+        (request_id,),
+    ).fetchone()
+    if not row:
+        c.close()
+        abort(404)
+    if request.method == "POST":
+        try:
+            if row["status"] != "pending":
+                raise ValueError("تم اتخاذ قرار على طلب الخصم بالفعل.")
+            if row["created_by"] == session.get("user_id"):
+                raise ValueError("لا يجوز اعتماد أو رفض طلب الخصم الذي أنشأته بنفسك.")
+            action = request.form.get("action", "")
+            reason = request.form.get("reason", "").strip()
+            if action not in {"approve", "reject"}:
+                raise ValueError("قرار الاعتماد غير صحيح.")
+            if action == "reject" and not reason:
+                raise ValueError("سبب رفض الخصم مطلوب.")
+            c.execute("BEGIN IMMEDIATE")
+            current = c.execute(
+                "SELECT * FROM sales_discount_approval_requests WHERE id=? AND status='pending'",
+                (request_id,),
+            ).fetchone()
+            if not current:
+                raise ValueError("تمت معالجة طلب الخصم بواسطة مستخدم آخر.")
+            if action == "reject":
+                c.execute(
+                    """UPDATE sales_discount_approval_requests
+                       SET status='rejected',reviewed_by=?,reviewed_at=?,decision_reason=?
+                       WHERE id=? AND status='pending'""",
+                    (session["user_id"], datetime.now().isoformat(timespec="seconds"), reason, request_id),
+                )
+                c.commit()
+                from app import log
+                log("sales_discount_approval_rejected", current["request_no"],
+                    entity_type="sales_discount_approval_request", entity_id=request_id,
+                    before_values={"status": "pending"}, after_values={"status": "rejected"},
+                    reason=reason)
+                flash("تم رفض طلب الخصم. لم يتم إنشاء فاتورة أو قيد أو حركة مخزون.", "success")
+                return redirect(url_for("approval_inbox"))
+            payload = json.loads(current["payload_json"])
+            result = post_invoice(
+                c, int(payload["customer_id"]), payload["invoice_date"],
+                payload.get("warehouse_id"), payload["items"], payload.get("tax_rate", "0"),
+                session["user_id"], allow_credit_override=bool(payload.get("credit_override")),
+                dimensions=payload.get("dimensions") or {},
+                sales_channel=payload.get("sales_channel", "default"),
+            )
+            c.execute("UPDATE sales_invoices SET due_date=? WHERE id=?",
+                      (payload.get("due_date") or payload["invoice_date"], result["invoice_id"]))
+            changed = c.execute(
+                """UPDATE sales_discount_approval_requests
+                   SET status='approved',reviewed_by=?,reviewed_at=?,decision_reason=?,invoice_id=?
+                   WHERE id=? AND status='pending'""",
+                (session["user_id"], datetime.now().isoformat(timespec="seconds"), reason,
+                 result["invoice_id"], request_id),
+            ).rowcount
+            if changed != 1:
+                raise ValueError("تعذر تثبيت قرار الاعتماد؛ لم يتم ترحيل الفاتورة.")
+            c.commit()
+            g.audit_created_record = ("sales_invoices", result["invoice_id"], "sales_invoice_lines", "invoice_id")
+            from app import log
+            log("sales_discount_approval_approved", current["request_no"],
+                entity_type="sales_discount_approval_request", entity_id=request_id,
+                before_values={"status": "pending"}, after_values={"status": "approved", "invoice_id": result["invoice_id"]},
+                reason=reason)
+            flash("تم اعتماد الخصم وترحيل الفاتورة وقيدها وحركة المخزون مرة واحدة.", "success")
+            return redirect(url_for("sales.invoice_print", invoice_id=result["invoice_id"]))
+        except (ValueError, InvalidOperation, KeyError, TypeError, sqlite3.Error) as exc:
+            c.rollback()
+            flash(safe_error_message(exc, "تعذر معالجة طلب الخصم. لم يتم حفظ أي تغييرات."), "error")
+    c.close()
+    return render_template("sales_discount_approval.html", request_row=row)
 
 
 @sales_bp.route("/invoices/<int:invoice_id>/print")

@@ -44,6 +44,12 @@ applyLocalization();
       {% for c in currencies %}<option value="{{ c.code }}" {% if settings.get('base_currency','SAR')==c.code %}selected{% endif %}>{{ c.code }} - {{ c.name_ar }}</option>{% endfor %}
     </select></div>
   </div>
+  <h3 style="margin-top:24px">حدود خصم المبيعات</h3>
+  <div><label>أقصى خصم دون موافقة المدير (%)</label>
+    <input type="number" name="sales_discount_limit_percent" min="0" max="100" step="0.01"
+           value="{{ settings.get('sales_discount_limit_percent','10') }}" required>
+    <p class="muted">أي خصم أعلى من هذا الحد يُرسل لمركز الموافقات. لا تُرحّل الفاتورة ولا تُخصم الكمية من المخزون قبل اعتماد مدير مخوّل.</p>
+  </div>
   <h3 style="margin-top:24px">تقييم المخزون</h3>
   <label>طريقة تقييم تكلفة المخزون</label>
   <select name="inventory_cost_method">
