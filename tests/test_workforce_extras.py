@@ -178,7 +178,7 @@ class WorkforceExtrasTests(unittest.TestCase):
         conn.close()
         self.assertEqual(grant_status,"partially_paid")
         self.assertEqual(paid_line,"500.00")
-        self.assertEqual(payment_lines,[(3,"500.00","0"),(1,"0","500.00")])
+        self.assertEqual(payment_lines,[(3,"500.00","0.00"),(1,"0.00","500.00")])
 
 
     def test_monthly_attendance_matrix_saves_multiple_days_and_leave_statuses(self):
