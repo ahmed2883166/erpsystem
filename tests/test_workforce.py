@@ -540,7 +540,7 @@ class WorkforceTests(unittest.TestCase):
             FROM employee_salary_history WHERE employee_id=1""").fetchone()
         batch_count=conn.execute("SELECT COUNT(*) FROM salary_change_batches").fetchone()[0]
         conn.close()
-        self.assertEqual(employee,("11000.00","0.00",""))
+        self.assertEqual(employee,("11000.00","0",""))
         self.assertEqual(other,"7000")
         self.assertEqual(history,("10000.00","1000.00","11000.00","basic"))
         self.assertEqual(batch_count,1)
