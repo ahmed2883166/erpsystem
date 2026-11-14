@@ -2022,10 +2022,12 @@ def approve_count(stocktake_id):
                      str(cost / qty),str(cost),stocktake["count_date"],"عجز جرد فعلي",session.get("user_id")))
                 movement_ids.append(cur.lastrowid)
                 if cost > 0:
-                    journal_lines.extend([(variance_account["id"],cost,0,"عجز جرد - " + line["name_ar"]),
-                                          (product_inventory["id"],0,cost,"تخفيض مخزون - " + line["name_ar]",
-                                           {"stock_product_id": int(line["product_id"]),
-                                            "stock_warehouse_id": int(stocktake["warehouse_id"])})])
+                    journal_lines.append((variance_account["id"],cost,0,"عجز جرد - " + line["name_ar"]))
+                    journal_lines.append((
+                        product_inventory["id"],0,cost,"تخفيض مخزون - " + line["name_ar"],
+                        {"stock_product_id": int(line["product_id"]),
+                         "stock_warehouse_id": int(stocktake["warehouse_id"])}
+                    ))
                 c.execute("UPDATE stocktake_lines SET variance_value=? WHERE id=?", (str(-cost),line["id"]))
             else:
                 unit_cost = D(str(line["counted_unit_cost"] or "0"))
