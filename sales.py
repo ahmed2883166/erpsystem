@@ -559,11 +559,13 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             movement_no = invoice_no + "-" + str(index)
             move = conn.execute(
                 """INSERT INTO stock_movements(movement_no,movement_type,product_id,source_warehouse_id,
-                   quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,issue_purpose)
-                   VALUES(?,'issue',?,?,?,?,?,?,?,?, 'pending', 'sale')""",
+                   quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,issue_purpose,
+                   entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name)
+                   VALUES(?,'issue',?,?,?,?,?,?,?,?, 'pending', 'sale',?,?,?,?)""",
                 (movement_no, item["product_id"], warehouse_id, str(item["quantity"]),
                  str((item["cost_total"] / item["quantity"]).quantize(CENT)), str(item["cost_total"]),
-                 invoice_date, "صرف مبيعات " + invoice_no, created_by)
+                 invoice_date, "صرف مبيعات " + invoice_no, created_by,
+                 str(item["entered_quantity"]),item["uom_id"],item["uom_key"],item["entered_uom_name"])
             )
             movement_id = move.lastrowid
         order_line_id = item.get("sales_order_line_id")
