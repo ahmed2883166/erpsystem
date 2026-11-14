@@ -1,12 +1,54 @@
 {% extends "base.html" %}{% block title %}الحضور والانصراف | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>الحضور والانصراف</h2><p>سجل يومي للحضور والغياب وساعات الإضافي المعتمدة. يمكن تعديل سجل الموظف لليوم نفسه دون إنشاء تكرار.</p><p><a href="{{url_for('workforce.employees')}}">شؤون الموظفين</a> · <a href="{{url_for('workforce.leaves')}}">الإجازات والأرصدة</a></p></header>
-<section class="panel"><form method="get"><label>تاريخ العمل <input type="date" name="attendance_date" value="{{selected_date}}" required></label><button type="submit">عرض اليوم</button></form>
-<form method="post" class="form-grid"><label>التاريخ <input type="date" name="attendance_date" value="{{selected_date}}" required></label>
+<header><h2>الحضور والانصراف - كشف شهري</h2><p>سجل حضور جميع الموظفين في شاشة واحدة. اختر حالة كل يوم، ويمكن إدخال وقت الحضور والانصراف عند الحاجة.</p><p><a href="{{url_for('workforce.employees')}}">شؤون الموظفين</a> · <a href="{{url_for('workforce.leaves')}}">الإجازات والأرصدة</a></p></header>
+<section class="panel">
+<form method="get" class="form-grid">
+<label>الشهر <input type="month" name="month" value="{{selected_month}}" required></label>
+<button type="submit">عرض الشهر</button>
+</form>
+</section>
+<section class="panel">
+<h3>مصفوفة الحضور لشهر {{selected_month}}</h3>
+<p class="muted">اترك الخانة فارغة إذا لم يتم تسجيل اليوم بعد. تغيير الحالة يحفظ السجل الموجود بدل إنشاء سجل مكرر. أيام الشهر تتغير تلقائيًا حسب الشهر والسنة.</p>
+<form method="post">
+<input type="hidden" name="save_month" value="1"><input type="hidden" name="month" value="{{selected_month}}">
+<div style="overflow:auto;max-width:100%">
+<table class="attendance-matrix" style="min-width:1100px">
+<thead><tr><th style="position:sticky;right:0;background:var(--panel,#202a36);z-index:2">كود الموظف / الاسم</th>
+{% for day in days %}<th style="min-width:90px">{{day}}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for row in grid %}<tr><th style="position:sticky;right:0;background:var(--panel,#202a36);z-index:1;text-align:right">{{row.employee.employee_code}}<br>{{row.employee.full_name}}</th>
+{% for record in row.days %}<td style="vertical-align:top;min-width:90px">
+<select name="status_{{row.employee.id}}_{{loop.index}}" aria-label="حالة {{row.employee.full_name}} يوم {{loop.index}}" style="width:100%;min-width:84px">
+<option value="">—</option>
+<option value="present" {% if record.get('status')=='present' %}selected{% endif %}>حاضر</option>
+<option value="absent" {% if record.get('status')=='absent' %}selected{% endif %}>غائب</option>
+<option value="permission" {% if record.get('status')=='permission' %}selected{% endif %}>إذن</option>
+<option value="holiday" {% if record.get('status')=='holiday' %}selected{% endif %}>عطلة</option>
+<option value="annual_leave" {% if record.get('status')=='annual_leave' %}selected{% endif %}>سنوية</option>
+<option value="sick_leave" {% if record.get('status')=='sick_leave' %}selected{% endif %}>مرضية</option>
+<option value="unpaid_leave" {% if record.get('status')=='unpaid_leave' %}selected{% endif %}>بدون أجر</option>
+</select>
+<details><summary style="font-size:11px;cursor:pointer">التوقيت</summary>
+<input type="time" name="check_in_{{row.employee.id}}_{{loop.index}}" value="{{record.get('check_in','')}}" title="الحضور" style="width:100%">
+<input type="time" name="check_out_{{row.employee.id}}_{{loop.index}}" value="{{record.get('check_out','')}}" title="الانصراف" style="width:100%">
+<input type="number" name="absence_{{row.employee.id}}_{{loop.index}}" min="0" max="24" step="0.25" value="{{record.get('absence_hours','0')}}" title="ساعات الغياب" placeholder="غياب" style="width:100%">
+<input type="number" name="overtime_{{row.employee.id}}_{{loop.index}}" min="0" max="24" step="0.25" value="{{record.get('approved_overtime_hours','0')}}" title="إضافي معتمد" placeholder="إضافي" style="width:100%">
+</details>
+</td>{% endfor %}</tr>
+{% else %}<tr><td colspan="{{days|length+1}}">لا يوجد موظفون نشطون.</td></tr>{% endfor %}
+</tbody></table></div>
+<div class="actions"><button type="submit">حفظ مصفوفة الشهر بالكامل</button></div>
+</form>
+</section>
+<section class="panel">
+<h3>إدخال يوم واحد / تعديل سجل سريع</h3>
+<form method="post" class="form-grid">
+<label>التاريخ <input type="date" name="attendance_date" value="{{selected_date}}" required></label>
 <label>الموظف <select name="employee_id" required>{% for e in employees %}<option value="{{e.id}}">{{e.employee_code}} - {{e.full_name}}</option>{% endfor %}</select></label>
-<label>الحالة <select name="status"><option value="present">حاضر</option><option value="absent">غائب</option><option value="permission">إذن</option><option value="holiday">عطلة</option></select></label>
+<label>الحالة <select name="status"><option value="present">حاضر</option><option value="absent">غائب</option><option value="permission">إذن</option><option value="holiday">عطلة</option><option value="annual_leave">إجازة سنوية</option><option value="sick_leave">إجازة مرضية</option><option value="unpaid_leave">إجازة بدون مرتب</option></select></label>
 <label>وقت الحضور <input type="time" name="check_in"></label><label>وقت الانصراف <input type="time" name="check_out"></label>
 <label>ساعات الغياب <input type="number" name="absence_hours" min="0" max="24" step="0.25" value="0"></label>
 <label>إضافي معتمد (ساعات) <input type="number" name="approved_overtime_hours" min="0" max="24" step="0.25" value="0"></label>
-<label style="grid-column:1/-1">ملاحظات <input name="notes" maxlength="300"></label><button type="submit">حفظ / تحديث سجل اليوم</button></form></section>
-<section class="panel"><h3>سجلات يوم {{selected_date}}</h3><div style="overflow-x:auto"><table><tr><th>كود الموظف</th><th>الموظف</th><th>الحالة</th><th>الحضور</th><th>الانصراف</th><th>غياب (ساعات)</th><th>إضافي معتمد</th><th>ملاحظات</th></tr>
-{% for r in records %}<tr><td>{{r.employee_code}}</td><td>{{r.full_name}}</td><td>{{{'present':'حاضر','absent':'غائب','permission':'إذن','holiday':'عطلة'}.get(r.status,r.status)}}</td><td>{{r.check_in or '-'}}</td><td>{{r.check_out or '-'}}</td><td>{{r.absence_hours}}</td><td>{{r.approved_overtime_hours}}</td><td>{{r.notes}}</td></tr>{% else %}<tr><td colspan="8">لا توجد سجلات لهذا اليوم.</td></tr>{% endfor %}</table></div></section>{% endblock %}
+<label style="grid-column:1/-1">ملاحظات <input name="notes" maxlength="300"></label><button type="submit">حفظ / تحديث سجل اليوم</button></form>
+</section>
+{% endblock %}
