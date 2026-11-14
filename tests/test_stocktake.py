@@ -353,7 +353,7 @@ class StocktakeRouteTests(unittest.TestCase):
             (second_product,self.warehouse_id,second_receipt))
         conn.execute("""CREATE TABLE company_settings(
             setting_key TEXT PRIMARY KEY,setting_value TEXT)""")
-        conn.execute("INSERT INTO company_settings VALUES('activity','commercial')")
+        conn.execute("INSERT INTO company_settings VALUES('activity','industrial')")
         conn.execute("INSERT INTO company_settings VALUES('inventory_cost_method','fifo')")
         conn.commit()
         conn.close()
