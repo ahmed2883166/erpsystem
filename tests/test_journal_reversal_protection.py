@@ -31,6 +31,15 @@ class JournalReversalProtectionTests(unittest.TestCase):
                 id INTEGER PRIMARY KEY, year_name TEXT, opening_entry_id INTEGER,
                 closing_entry_id INTEGER, status TEXT, start_date TEXT, end_date TEXT
             );
+            CREATE TABLE fixed_assets(id INTEGER PRIMARY KEY, status TEXT);
+            CREATE TABLE asset_depreciations(asset_id INTEGER);
+            CREATE TABLE asset_disposals(asset_id INTEGER);
+            CREATE TABLE fixed_asset_journal_lines(
+                journal_line_id INTEGER PRIMARY KEY, entry_id INTEGER,
+                status TEXT, fixed_asset_id INTEGER
+            );
+            INSERT INTO fixed_assets(id,status) VALUES(1,'reversed');
+            INSERT INTO fixed_asset_journal_lines VALUES(10,3,'reversed',1);
             INSERT INTO accounts(id,code,name_ar,account_type) VALUES
                 (1,'1110','الصندوق','asset'),(2,'4100','الإيرادات','revenue');
             INSERT INTO journal_entries VALUES
@@ -86,6 +95,23 @@ class JournalReversalProtectionTests(unittest.TestCase):
                 [(1, "100.00", "0.00"), (2, "0.00", "100.00")],
             )
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 5)
+
+    def test_reversing_asset_acquisition_reversal_reactivates_asset_register(self):
+        response = self.client.post(
+            "/journal/4/reverse",
+            data={"reversal_date": "2026-01-05", "reversal_reason": "إعادة تفعيل شراء الأصل"},
+        )
+        self.assertEqual(response.status_code, 302)
+        with connect_database(self.db_path) as conn:
+            asset = conn.execute("SELECT status FROM fixed_assets WHERE id=1").fetchone()
+            link = conn.execute(
+                "SELECT status FROM fixed_asset_journal_lines WHERE journal_line_id=10"
+            ).fetchone()
+            self.assertEqual(asset["status"], "active")
+            self.assertEqual(link["status"], "configured")
+            self.assertIsNotNone(conn.execute(
+                "SELECT id FROM journal_entries WHERE reference='REV-4'"
+            ).fetchone())
 
     def test_original_journal_cannot_be_reversed_twice(self):
         response = self.client.post(
