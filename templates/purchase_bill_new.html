@@ -55,7 +55,21 @@
 <div><label>حساب مصروف الإهلاك</label><select name="asset_expense_account_id[]" required><option value="">اختر</option>{% for a in expense_accounts %}<option value="{{a.id}}" {% if a.code == '6810' %}selected{% endif %}>{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></div>
 </div><button type="button" class="btn secondary remove-asset-line">حذف الأصل من الفاتورة</button></div></template>
 </fieldset>
-<fieldset id="inventory-fields"><legend>إيصالات GRNI المطابقة – للأصناف المخزنية فقط</legend><p class="muted">عند وجود خصم من المورد، خصص كامل القيمة المتاحة من إيصال الاستلام حتى لو كان صافي الفاتورة أقل. مثال: إيصال 360 جنيه وفاتورة صافي 340 جنيه؛ أدخل تخصيصًا بقيمة 360، وسيُقفل GRNI بالكامل ويُوزع فرق الخصم 20 تلقائيًا على تكلفة المخزون المتبقي وتكلفة الأصناف التي صُرفت بالفعل. لا تدخل 340 فقط؛ لأن ذلك يُعد تسوية جزئية ويُبقي 20 جنيه في GRNI.</p>{% for r in receipts %}<div class="form-row"><label><input type="checkbox" name="receipt_id" value="{{ r.id }}" {% if selected_receipt_ids is defined and r.id in selected_receipt_ids %}checked{% endif %}> {{ r.receipt_no }} — {{ r.supplier_name }} — إجمالي {{ r.total_value }} — متاح {{ r.available_amount }}</label><input name="receipt_amount_{{ r.id }}" type="number" min="0.01" max="{{ r.available_amount }}" step="0.01" value="{{ receipt_allocations[r.id] if receipt_allocations is defined and r.id in receipt_allocations else r.available_amount }}" aria-label="قيمة التخصيص من الإيصال {{ r.receipt_no }}"></div>{% else %}<p>لا توجد إيصالات غير مفوترة متاحة.</p>{% endfor %}</fieldset><script>
+<fieldset id="inventory-fields"><legend>إيصالات GRNI المطابقة – للأصناف المخزنية فقط</legend><p class="muted">عند وجود خصم من المورد، خصص كامل القيمة المتاحة من إيصال الاستلام حتى لو كان صافي الفاتورة أقل. مثال: إيصال 360 جنيه وفاتورة صافي 340 جنيه؛ أدخل تخصيصًا بقيمة 360، وسيُقفل GRNI بالكامل ويُوزع فرق الخصم 20 تلقائيًا على تكلفة المخزون المتبقي وتكلفة الأصناف التي صُرفت بالفعل. لا تدخل 340 فقط؛ لأن ذلك يُعد تسوية جزئية ويُبقي 20 جنيه في GRNI.</p>{% for r in receipts %}<div class="form-row"><label><input type="checkbox" name="receipt_id" value="{{ r.id }}" {% if selected_receipt_ids is defined and r.id in selected_receipt_ids %}checked{% endif %}> {{ r.receipt_no }} — {{ r.supplier_name }} — إجمالي {{ r.total_value }} — متاح {{ r.available_amount }}</label><input name="receipt_amount_{{ r.id }}" type="number" min="0.01" max="{{ r.available_amount }}" step="0.01" value="{{ receipt_allocations[r.id] if receipt_allocations is defined and r.id in receipt_allocations else r.available_amount }}" aria-label="قيمة التخصيص من الإيصال {{ r.receipt_no }}"></div>{% else %}<p>لا توجد إيصالات غير مفوترة متاحة.</p>{% endfor %}
+<p class="muted">أدخل الكميات والأسعار الموجودة في فاتورة المورد لكل بند مستلم. اترك الكمية فارغة إذا لم يتضمن المورد هذا البند. الكميات والأسعار هنا بوحدة الصنف الأساسية، ومجموع البنود يجب أن يساوي صافي الفاتورة قبل الضريبة.</p>
+<div class="table-wrap"><table><thead><tr><th>الإيصال</th><th>المورد</th><th>أمر الشراء</th><th>الصنف</th><th>المستلم</th><th>سعر أمر الشراء</th><th>تكلفة الاستلام</th><th>كمية الفاتورة</th><th>سعر الفاتورة</th></tr></thead><tbody>
+{% for line in receipt_lines %}
+{% set saved = existing_invoice_lines.get(line.receipt_line_id) if existing_invoice_lines is defined else none %}
+<tr>
+<td>{{ line.receipt_no }}</td><td>{{ line.supplier_name }}</td><td>{{ line.po_no or 'استلام مباشر' }}</td>
+<td>{{ line.sku }} — {{ line.product_name }}</td><td>{{ line.received_quantity }} {{ line.uom }}</td>
+<td>{{ line.ordered_unit_price if line.ordered_unit_price is not none else '—' }}</td><td>{{ line.received_unit_cost }}</td>
+<td><input name="invoice_quantity_{{ line.receipt_line_id }}" type="number" min="0.0001" step="0.0001" value="{{ saved.billed_quantity if saved else '' }}" aria-label="كمية الفاتورة للصنف {{ line.product_name }}"></td>
+<td><input name="invoice_unit_price_{{ line.receipt_line_id }}" type="number" min="0" step="0.0001" value="{{ saved.invoice_unit_price if saved else line.received_unit_cost }}" aria-label="سعر الفاتورة للصنف {{ line.product_name }}"></td>
+</tr>
+{% else %}<tr><td colspan="9">لا توجد بنود استلام متاحة للمطابقة.</td></tr>{% endfor %}
+</tbody></table></div>
+</fieldset><script>
 function toggleBillKind(){
   const kind=document.getElementById('bill-kind').value;
   const asset=document.getElementById('asset-fields');
