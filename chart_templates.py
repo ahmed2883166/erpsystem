@@ -125,6 +125,7 @@ ACTIVITY_POSTING_ACCOUNTS = {
 # Retained earnings is resolved through the same activity account-role mapping.
 for _activity_roles in ACTIVITY_ACCOUNT_ROLES.values():
     _activity_roles["retained_earnings"] = ("3200",)
+    _activity_roles["interbranch_transfers"] = ("1185",)
 
 # Codes referenced by posting, tax, and subledger role mappings must remain stable.
 # 2190 is also the GRNI control account used by the purchasing receipt/bill flow.
@@ -140,6 +141,12 @@ ACTIVITY_TAX_ACCOUNT_ROLES = {
     activity: {"output_vat": "2130", "input_vat": "1165"}
     for activity in ACTIVITY_POSTING_ACCOUNTS
 }
+
+# Operational stock accounts are present in every activity chart template.
+for _posting_accounts in ACTIVITY_POSTING_ACCOUNTS.values():
+    _posting_accounts["interbranch_transfer"] = "1185"
+    _posting_accounts["stock_scrap_expense"] = "6990"
+    _posting_accounts["internal_stock_use"] = "6991"
 
 _CONTROL_ROLE_NAMES = {"cash", "receivables", "payables", "inventory", "customer_advances"}
 CONTROL_ACCOUNT_CODES = frozenset(
@@ -274,6 +281,9 @@ def ensure_account_metadata(conn):
 # posted journal links are preserved by the explicit, idempotent VAT migration below.
 _COMMON_ACTIVITY_ACCOUNTS = [
     ("1165", "ضريبة قيمة مضافة مدخلات قابلة للخصم", "asset", "1100", 0),
+    ("1185", "حساب تسوية تحويلات المخزون بين الفروع", "asset", "1100", 0),
+    ("6990", "مصروف إعدام وهالك المخزون", "expense", "6000", 0),
+    ("6991", "مصروف استخدام داخلي من المخزون", "expense", "6000", 0),
     ("2160", "دفعات مقدمة من العملاء", "liability", "2000", 0),
     ("1240", "أصول ثابتة إضافية", "asset", "1200", 1),
     ("1241", "مباني وتحسينات", "asset", "1240", 0),
