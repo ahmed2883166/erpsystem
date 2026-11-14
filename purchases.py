@@ -1043,6 +1043,7 @@ def _supplier_grni_price_variance_lines(c, receipt_rows, discount_amount, matche
                 layer_discount = money("0")
             elif layer["id"] == remaining_layers[-1]["id"]:
                 layer_discount = layer_discount_left
+                layer_discount_left = money("0")
             else:
                 layer_discount = money(remaining_value_discount * layer_qty / remaining_layer_qty)
                 layer_discount_left = money(layer_discount_left - layer_discount)
