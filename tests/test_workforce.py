@@ -508,6 +508,40 @@ class WorkforceTests(unittest.TestCase):
         }, follow_redirects=True)
         self.assertIn("لا يمكن عكس قيد مرتبات غير مرحّل", response.get_data(as_text=True))
 
+        # A corrected payroll run for the same month must post with a new
+        # run-scoped reference while preserving the original and reversal.
+        self.client.post("/hr/payroll", data={
+            "period": "2026-11", "basic_1": "10500", "allowances_1": "0",
+            "overtime_hours_1": "0", "overtime_amount_1": "",
+            "absence_deduction_1": "0", "other_deductions_1": "0",
+            "tax_1": "0", "employee_ins_1": "0", "employer_ins_1": "0"
+        })
+        conn = sqlite3.connect(self.db_path)
+        replacement_run_id = conn.execute(
+            "SELECT id FROM payroll_runs WHERE status='draft' AND period='2026-11'"
+        ).fetchone()[0]
+        conn.close()
+        response = self.client.post(f"/hr/payroll/{replacement_run_id}/post", data={
+            "salary_expense_account": "4", "employer_ins_expense_account": "3",
+            "salaries_payable_account": "5", "tax_payable_account": "6",
+            "insurance_payable_account": "7", "advances_account": "2",
+            "other_deductions_account": "2"
+        }, follow_redirects=True)
+        self.assertNotIn("UNIQUE constraint failed", response.get_data(as_text=True))
+        conn = sqlite3.connect(self.db_path)
+        replacement = conn.execute(
+            "SELECT journal_entry_id,status FROM payroll_runs WHERE id=?",
+            (replacement_run_id,)
+        ).fetchone()
+        refs = conn.execute(
+            "SELECT reference FROM journal_entries WHERE id IN (?,?) ORDER BY id",
+            (original_id, replacement[0])
+        ).fetchall()
+        conn.close()
+        self.assertEqual(replacement[1], "posted")
+        self.assertEqual(len(refs), 2)
+        self.assertNotEqual(refs[0][0], refs[1][0])
+
     def test_legacy_unique_payroll_period_migrates_and_allows_replacement_after_reversal(self):
         legacy_path = Path(self.temp.name) / "legacy-payroll.db"
         shutil.copy2(self.db_path, legacy_path)
