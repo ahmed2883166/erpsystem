@@ -13,4 +13,11 @@
 {% for row in rows %}<tr><td>{{ row.code }}</td><td>{{ row.name }}</td><td>{{ row.valuation|money }}</td><td>{{ row.ledger|money }}</td><td>{{ row.difference|money }}</td><td>{% if row.difference == 0 %}<span class="status success">متطابق</span>{% else %}<span class="status danger">يحتاج مراجعة</span>{% endif %}</td></tr>{% else %}<tr><td colspan="6">لا توجد بيانات مطابقة للعرض.</td></tr>{% endfor %}
 </tbody></table></div>
 </section>
+<section class="panel">
+  <h3>توزيع قيمة المخزون حسب المخزن</h3>
+  <p class="muted">هذا التفصيل يوضح أين توجد قيمة طبقات التقييم. المطابقة المحاسبية الرسمية تظل على مستوى حساب الأستاذ؛ لا ننسب رصيد الأستاذ إلى مخزن بعينه ما لم تكن قيود المخزون تحمل بُعد مخزن موثقًا.</p>
+  <div class="table-wrap"><table><thead><tr><th>كود المخزن</th><th>المخزن</th><th>الحالة</th><th>قيمة طبقات التقييم</th></tr></thead><tbody>
+  {% for w in warehouse_rows %}<tr><td>{{ w.code }}</td><td>{{ w.name }}</td><td>{{ 'نشط' if w.active else 'معطل / غير مرتبط' }}</td><td>{{ w.valuation|money }}</td></tr>{% else %}<tr><td colspan="4">لا توجد طبقات تقييم مرتبطة بمخازن.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
 {% endblock %}
