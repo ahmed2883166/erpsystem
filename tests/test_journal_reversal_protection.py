@@ -53,6 +53,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
         self.patches = [
             patch.object(nexus_app, "db", side_effect=lambda: connect_database(self.db_path)),
             patch.object(nexus_app, "linked_operational_source", return_value=None),
+            patch.object(nexus_app, "log_change", return_value=None),
         ]
         for item in self.patches:
             item.start()
@@ -84,6 +85,27 @@ class JournalReversalProtectionTests(unittest.TestCase):
         with connect_database(self.db_path) as conn:
             count = conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
         self.assertEqual(count, 4)
+
+    def test_reversal_journal_can_be_reversed_once_and_restores_original_balances(self):
+        response = self.client.post(
+            "/journal/2/reverse",
+            data={"reversal_date": "2026-01-05", "reversal_reason": "إلغاء القيد العكسي الخاطئ"},
+        )
+        self.assertEqual(response.status_code, 302)
+        with connect_database(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT id,reference,description FROM journal_entries WHERE reference='REV-2'"
+            ).fetchone()
+            self.assertIsNotNone(row)
+            lines = conn.execute(
+                "SELECT account_id,debit,credit FROM journal_lines WHERE entry_id=? ORDER BY id",
+                (row["id"],),
+            ).fetchall()
+            self.assertEqual(
+                [(x["account_id"], x["debit"], x["credit"]) for x in lines],
+                [(1, "100.00", "0"), (2, "0", "100.00")],
+            )
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 5)
 
     def test_journal_detail_links_original_and_reversal(self):
         original = self.client.get("/journal/1")
