@@ -1990,6 +1990,23 @@ def approval_inbox():
                     "can_act": not own,
                     "blocked_reason": "لا يجوز اعتماد أو رفض المستند الذي أنشأته أو أرسلته للمراجعة." if own else "",
                 })
+            request_table = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='purchase_requests'"
+            ).fetchone()
+            if request_table:
+                for row in connection.execute("""
+                    SELECT request_no,request_date,department,purpose,created_by,submitted_by
+                    FROM purchase_requests WHERE status='pending_approval'
+                    ORDER BY request_date DESC,id DESC
+                """).fetchall():
+                    own = row["created_by"] == actor_id or row["submitted_by"] == actor_id
+                    items.append({
+                        "kind": "طلب شراء داخلي", "number": row["request_no"],
+                        "date": row["request_date"],
+                        "counterparty": row["department"] or row["purpose"],
+                        "href": url_for("purchase.purchase_requests"), "can_act": not own,
+                        "blocked_reason": "لا يجوز اعتماد أو رفض الطلب الذي أنشأته أو أرسلته للمراجعة." if own else "",
+                    })
 
         if "sales.approve" in permissions:
             for row in connection.execute("""
