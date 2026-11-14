@@ -2425,12 +2425,62 @@ def export_data(format):
 
 IMPORT_DATASETS = {
     "accounts": {
-        "label": "دليل الحسابات",
-        "permission": "accounts.manage",
+        "label": "دليل الحسابات", "permission": "accounts.manage",
         "fields": [
             {"key": "code", "label": "كود الحساب", "required": True},
             {"key": "name_ar", "label": "اسم الحساب", "required": True},
             {"key": "account_type", "label": "نوع الحساب", "required": True},
+        ],
+    },
+    "employees": {
+        "label": "الموظفون", "permission": "workforce.manage",
+        "fields": [
+            {"key": "employee_code", "label": "كود الموظف", "required": True},
+            {"key": "full_name", "label": "اسم الموظف", "required": True},
+            {"key": "hire_date", "label": "تاريخ التعيين (YYYY-MM-DD)", "required": True},
+            {"key": "basic_salary", "label": "الراتب الأساسي", "required": True},
+            {"key": "job_title", "label": "الوظيفة", "required": False},
+            {"key": "department", "label": "الإدارة / القسم", "required": False},
+            {"key": "address", "label": "العنوان", "required": False},
+            {"key": "national_id", "label": "الرقم القومي", "required": False},
+            {"key": "work_status", "label": "حالة العمل", "required": False},
+        ],
+    },
+    "customers": {
+        "label": "العملاء", "permission": "sales.manage",
+        "fields": [
+            {"key": "code", "label": "كود العميل", "required": True},
+            {"key": "name", "label": "اسم العميل", "required": True},
+            {"key": "tax_number", "label": "الرقم الضريبي", "required": False},
+            {"key": "phone", "label": "الهاتف", "required": False},
+            {"key": "email", "label": "البريد الإلكتروني", "required": False},
+            {"key": "address", "label": "العنوان", "required": False},
+            {"key": "credit_limit", "label": "حد الائتمان", "required": False},
+        ],
+    },
+    "suppliers": {
+        "label": "الموردون", "permission": "purchases.manage",
+        "fields": [
+            {"key": "code", "label": "كود المورد", "required": True},
+            {"key": "name", "label": "اسم المورد", "required": True},
+            {"key": "tax_number", "label": "الرقم الضريبي", "required": False},
+            {"key": "phone", "label": "الهاتف", "required": False},
+            {"key": "email", "label": "البريد الإلكتروني", "required": False},
+            {"key": "address", "label": "العنوان", "required": False},
+        ],
+    },
+    "products": {
+        "label": "الأصناف / المنتجات", "permission": "stock.manage",
+        "fields": [
+            {"key": "sku", "label": "كود الصنف (SKU)", "required": True},
+            {"key": "name_ar", "label": "اسم الصنف", "required": True},
+            {"key": "product_type", "label": "نوع الصنف (goods/service/consumable)", "required": False},
+            {"key": "category", "label": "التصنيف", "required": False},
+            {"key": "uom", "label": "وحدة القياس", "required": False},
+            {"key": "barcode", "label": "الباركود", "required": False},
+            {"key": "min_qty", "label": "حد إعادة الطلب", "required": False},
+            {"key": "purchase_price", "label": "سعر الشراء", "required": False},
+            {"key": "sale_price", "label": "سعر البيع", "required": False},
         ],
     },
 }
@@ -2574,10 +2624,6 @@ def import_data_wizard():
                 return render_template("import_data.html", datasets=IMPORT_DATASETS, stage=payload, token=token, mapping=request.form)
             used_columns.add(column_index)
             mapping[field["key"]] = column_index
-        allowed_types = {"asset", "liability", "equity", "revenue", "expense"}
-        arabic_types = {"أصل": "asset", "الأصول": "asset", "التزام": "liability", "الالتزامات": "liability",
-                        "حقوق ملكية": "equity", "حقوق الملكية": "equity", "إيراد": "revenue", "الإيرادات": "revenue",
-                        "مصروف": "expense", "المصروفات": "expense"}
         connection = db()
         inserted = skipped = 0
         errors = []
@@ -2585,31 +2631,89 @@ def import_data_wizard():
             connection.execute("BEGIN")
             for row_number, source_row in enumerate(rows, start=2):
                 values = {key: (source_row[index] if index is not None else "") for key, index in mapping.items()}
-                code = str(values.get("code", "")).strip()
-                name = str(values.get("name_ar", "")).strip()
-                raw_type = str(values.get("account_type", "")).strip().lower()
-                account_type = arabic_types.get(raw_type, raw_type)
-                if not code or not name or account_type not in allowed_types:
+                clean = {key: str(value or "").strip() for key, value in values.items()}
+                reason = ""
+                try:
+                    if dataset == "accounts":
+                        allowed_types = {"asset", "liability", "equity", "revenue", "expense"}
+                        arabic_types = {"أصل": "asset", "الأصول": "asset", "التزام": "liability", "الالتزامات": "liability",
+                            "حقوق ملكية": "equity", "حقوق الملكية": "equity", "إيراد": "revenue", "الإيرادات": "revenue",
+                            "مصروف": "expense", "المصروفات": "expense"}
+                        account_type = arabic_types.get(clean["account_type"].lower(), clean["account_type"].lower())
+                        if not clean["code"] or not clean["name_ar"] or account_type not in allowed_types:
+                            raise ValueError("كود الحساب أو اسمه أو نوعه غير صحيح.")
+                        connection.execute("INSERT INTO accounts(code,name_ar,account_type) VALUES(?,?,?)",
+                            (clean["code"], clean["name_ar"], account_type))
+                    elif dataset == "employees":
+                        if not clean["employee_code"] or not clean["full_name"] or not clean["hire_date"]:
+                            raise ValueError("كود الموظف والاسم وتاريخ التعيين حقول إلزامية.")
+                        date.fromisoformat(clean["hire_date"])
+                        salary = Decimal(clean["basic_salary"])
+                        if not salary.is_finite() or salary < 0:
+                            raise ValueError("الراتب الأساسي يجب أن يكون رقمًا غير سالب.")
+                        status = clean.get("work_status") or "permanent"
+                        if status not in {"permanent", "comprehensive_bonus", "unpaid_leave", "resigned", "retired"}:
+                            raise ValueError("حالة العمل غير معروفة.")
+                        connection.execute("""INSERT INTO employees
+                            (employee_code,full_name,job_title,department,hire_date,basic_salary,address,national_id,work_status)
+                            VALUES(?,?,?,?,?,?,?,?,?)""",
+                            (clean["employee_code"], clean["full_name"], clean.get("job_title",""),
+                             clean.get("department",""), clean["hire_date"], str(salary),
+                             clean.get("address",""), clean.get("national_id",""), status))
+                    elif dataset in {"customers", "suppliers"}:
+                        if not clean["code"] or not clean["name"]:
+                            raise ValueError("الكود والاسم حقول إلزامية.")
+                        if dataset == "customers":
+                            limit = Decimal(clean.get("credit_limit") or "0")
+                            if not limit.is_finite() or limit < 0:
+                                raise ValueError("حد الائتمان يجب أن يكون رقمًا غير سالب.")
+                            connection.execute("""INSERT INTO customers
+                                (code,name,tax_number,phone,email,address,credit_limit)
+                                VALUES(?,?,?,?,?,?,?)""",
+                                (clean["code"],clean["name"],clean.get("tax_number",""),clean.get("phone",""),
+                                 clean.get("email",""),clean.get("address",""),str(limit)))
+                        else:
+                            connection.execute("""INSERT INTO suppliers
+                                (code,name,tax_number,phone,email,address) VALUES(?,?,?,?,?,?)""",
+                                (clean["code"],clean["name"],clean.get("tax_number",""),clean.get("phone",""),
+                                 clean.get("email",""),clean.get("address","")))
+                    elif dataset == "products":
+                        if not clean["sku"] or not clean["name_ar"]:
+                            raise ValueError("كود الصنف والاسم حقول إلزامية.")
+                        product_type = clean.get("product_type") or "goods"
+                        if product_type not in {"goods", "service", "consumable"}:
+                            raise ValueError("نوع الصنف يجب أن يكون goods أو service أو consumable.")
+                        min_qty = Decimal(clean.get("min_qty") or "0")
+                        purchase_price = Decimal(clean.get("purchase_price") or "0")
+                        sale_price = Decimal(clean.get("sale_price") or "0")
+                        if any(not v.is_finite() or v < 0 for v in (min_qty,purchase_price,sale_price)):
+                            raise ValueError("الكميات والأسعار يجب أن تكون أرقامًا غير سالبة.")
+                        connection.execute("""INSERT INTO stock_products
+                            (sku,name_ar,category,product_type,uom,barcode,min_qty,purchase_price,sale_price)
+                            VALUES(?,?,?,?,?,?,?,?,?)""",
+                            (clean["sku"],clean["name_ar"],clean.get("category",""),product_type,
+                             clean.get("uom") or "قطعة",clean.get("barcode") or None,str(min_qty),
+                             str(purchase_price),str(sale_price)))
+                    else:
+                        raise ValueError("وجهة الاستيراد غير مدعومة.")
+                    inserted += 1
+                except (ValueError, InvalidOperation) as exc:
                     skipped += 1
                     if len(errors) < 20:
-                        errors.append({"row": row_number, "reason": "كود الحساب أو اسمه أو نوعه غير صحيح."})
-                    continue
-                try:
-                    connection.execute("INSERT INTO accounts(code,name_ar,account_type) VALUES(?,?,?)",
-                                       (code, name, account_type))
-                    inserted += 1
+                        errors.append({"row": row_number, "reason": str(exc) or "قيمة غير صحيحة."})
                 except sqlite3.IntegrityError:
                     skipped += 1
                     if len(errors) < 20:
-                        errors.append({"row": row_number, "reason": "كود الحساب موجود بالفعل أو توجد مخالفة لقيد فريد."})
-            ensure_account_metadata(connection)
+                        errors.append({"row": row_number, "reason": "الكود أو الباركود مكرر أو توجد مخالفة لقيد فريد."})
+            if dataset == "accounts":
+                ensure_account_metadata(connection)
             connection.commit()
         except Exception:
             connection.rollback()
             raise
         finally:
             connection.close()
-        log("accounts_imported", f"source={payload.get('filename')}; inserted={inserted}; skipped={skipped}")
+        log(dataset + "_imported", f"source={payload.get('filename')}; inserted={inserted}; skipped={skipped}")
         try:
             stage_file.unlink()
         except OSError:
