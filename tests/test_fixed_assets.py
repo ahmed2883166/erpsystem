@@ -4,7 +4,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from fixed_assets import (_asset_period_amount, _post_asset_depreciation,
-                          _validate_dedicated_accum_account)
+                          _validate_dedicated_accum_account, register_assets_from_journal_lines)
 
 
 class FixedAssetDepreciationCalculationTests(unittest.TestCase):
@@ -118,6 +118,66 @@ class FixedAssetDepreciationCalculationTests(unittest.TestCase):
     def test_period_after_useful_life_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "انتهى العمر"):
             _asset_period_amount(self.asset, Decimal("0"), "2031-02")
+
+
+class JournalLinkedAssetRegistrationTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        self.conn.executescript("""
+            CREATE TABLE journal_entries(id INTEGER PRIMARY KEY, entry_date TEXT, status TEXT);
+            CREATE TABLE accounts(id INTEGER PRIMARY KEY, account_type TEXT, is_group INTEGER, active INTEGER);
+            CREATE TABLE journal_lines(id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
+                debit TEXT, credit TEXT);
+            CREATE TABLE fixed_asset_journal_lines(
+                journal_line_id INTEGER PRIMARY KEY, entry_id INTEGER, asset_name TEXT,
+                category TEXT, ready_date TEXT, cost TEXT, status TEXT, fixed_asset_id INTEGER
+            );
+            INSERT INTO journal_entries VALUES(40,'2026-11-14','posted');
+            INSERT INTO accounts VALUES(10,'asset',0,1);
+            INSERT INTO journal_lines VALUES(100,40,10,'25000.00','0');
+        """)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_posted_debit_asset_line_is_staged_at_exact_journal_cost(self):
+        result = register_assets_from_journal_lines(
+            self.conn, 40,
+            [{"asset_name":"سيارة نقل","category":"سيارات","ready_date":"2026-11-20"}],
+            7,
+        )
+        row = self.conn.execute(
+            "SELECT * FROM fixed_asset_journal_lines WHERE journal_line_id=100"
+        ).fetchone()
+        self.assertEqual(result, [100])
+        self.assertEqual(row["cost"], "25000.00")
+        self.assertEqual(row["status"], "pending")
+        self.assertEqual(row["entry_id"], 40)
+
+    def test_credit_line_cannot_be_registered_as_fixed_asset(self):
+        self.conn.execute(
+            "UPDATE journal_lines SET debit='0',credit='25000' WHERE id=100"
+        )
+        with self.assertRaisesRegex(ValueError, "مدينًا فقط"):
+            register_assets_from_journal_lines(
+                self.conn, 40,
+                [{"asset_name":"سيارة نقل","ready_date":"2026-11-20"}],
+                7,
+            )
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM fixed_asset_journal_lines").fetchone()[0],
+            0,
+        )
+
+    def test_inactive_or_non_asset_account_is_rejected(self):
+        self.conn.execute("UPDATE accounts SET account_type='expense' WHERE id=10")
+        with self.assertRaisesRegex(ValueError, "حساب أصل ثابت"):
+            register_assets_from_journal_lines(
+                self.conn, 40,
+                [{"asset_name":"سيارة نقل","ready_date":"2026-11-20"}],
+                7,
+            )
 
 
 if __name__ == "__main__":
