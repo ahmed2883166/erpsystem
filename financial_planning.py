@@ -1394,9 +1394,11 @@ def balance_sheet():
     conn=_connect()
     try:
         snapshot=build_balance_sheet_snapshot(conn,as_of.isoformat())
+        currency_row=conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
+        base_currency=currency_row["setting_value"] if currency_row else ""
     finally:
         conn.close()
-    return render_template("balance_sheet.html",s=snapshot)
+    return render_template("balance_sheet.html",s=snapshot,base_currency=base_currency)
 
 
 def build_cash_flow_snapshot(conn, start, end):
