@@ -475,15 +475,19 @@ class StocktakeRouteTests(unittest.TestCase):
             id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit TEXT,credit TEXT,memo TEXT)""")
         inventory_id = conn.execute("SELECT id FROM accounts WHERE code='1150'").fetchone()["id"]
         conn.execute("INSERT INTO journal_entries(id,entry_date,reference,description,status) VALUES(1,'2026-01-01','OPEN','رصيد افتتاحي','posted')")
-        conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(1,?,'50','0','مخزون افتتاحي')",
+        conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(1,?,'55','0','مخزون افتتاحي')",
                      (inventory_id,))
+        # A zero-quantity layer with a residual value must remain visible in valuation.
+        conn.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,source_movement_id,
+            qty_in,qty_remaining,unit_cost,value_remaining) VALUES(?,?,(SELECT id FROM stock_movements WHERE movement_no='OPEN-1'),
+            '1','0','5','5')""", (self.product_id,self.warehouse_id))
         conn.commit()
         conn.close()
 
         response = self.client.get("/stock/reconciliation")
         self.assertEqual(response.status_code, 200)
         self.assertIn("1150".encode(), response.data)
-        self.assertIn("50".encode(), response.data)
+        self.assertIn("55".encode(), response.data)
         self.assertNotIn("دفتر الأستاذ غير مهيأ".encode(), response.data)
 
 
