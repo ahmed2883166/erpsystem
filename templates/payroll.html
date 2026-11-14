@@ -2,14 +2,14 @@
 <header><h2>مسير الرواتب</h2><p>إدخال الراتب والبدلات والعلاوة المسجلة في ملف الموظف، وحوافز المناسبات والإضافي بنسبته وطريقة حسابه.</p><p class="muted">أقساط السلف النشطة تُحسب تلقائيًا حسب جدول الاستحقاق ضمن خصم السلف؛ لا تدخل القسط يدويًا مرة أخرى.</p><p><a href="{{url_for('workforce.employee_loans')}}">إدارة طلبات وسجل سلف الموظفين</a></p>
 <p><a href="{{ url_for('workforce.payroll_report') }}">تقرير مستحقات وتفاصيل رواتب الموظفين</a></p></header>
 <section class="panel"><h3>إنشاء مسير شهري</h3>
-<div class="flash success">وضع الرواتب: إدخال يدوي بالكامل. القواعد الضريبية والتأمينية المحفوظة لا تُطبّق تلقائيًا ولا تستبدل القيم التي تدخلها هنا. المحاسب مسؤول عن إدخال المبالغ المعتمدة ومراجعتها قبل ترحيل المسير.</div>
+<div class="flash success">تُحمّل البدلات والاستقطاعات الثابتة النشطة من ملف الموظف تلقائيًا. لا تُدخلها مرة أخرى ضمن البنود اليدوية. الحساب التلقائي للضريبة والتأمينات مفعّل افتراضيًا، ويمكن للمحاسب مراجعة القيم قبل حفظ المسير.</div>
 <p><a href="{{url_for('payroll_compliance.report')}}">تقرير الضرائب والتأمينات</a> · <a href="{{url_for('payroll_compliance.payments')}}">سداد الالتزامات</a>.</p>
 <form method="post"><label>الشهر <input type="month" name="period" value="{{today}}" required></label>
-<p class="muted">تُطبق العلاوة المسجلة في ملف الموظف تلقائيًا إذا كان تاريخ سريانها في أول الشهر أو قبله. الإضافي = ساعات الإضافي × (الأساسي ÷ ساعات العمل القياسية) × نسبة الإضافي. يمكنك ترك قيمة الإضافي فارغة ليحسبها النظام أو إدخال قيمة يدوية. الحافز المختار يُحسب كمبلغ ثابت أو كنسبة من الأساسي أو قيمة يومية × عدد الأيام.</p>
+<p class="muted">تُطبق العلاوة المسجلة تلقائيًا على الراتب الأساسي الأصلي فقط؛ إذا أدخلت الراتب بعد العلاوة فلن يضيفها النظام مرة ثانية. البدلات والخصومات الثابتة النشطة تُضاف تلقائيًا. الإضافي = الساعات × (الأساسي ÷ ساعات العمل القياسية) × النسبة؛ وإذا أدخلت مبلغًا يدويًا يجب كتابة سبب التعديل لحفظه في سجل المسير.</p>
 <label class="inline-check"><input type="checkbox" name="auto_calculate_statutory" value="1" checked> احسب تلقائيًا ضريبة المرتبات وتأمين الموظف وتأمين الشركة وفق قواعد الدولة وفئة كل موظف السارية على شهر المسير</label>
 <p class="muted">عند تفعيل الخيار، يجب أن تكون القواعد والشرائح الضريبية والتأمينية مكتملة ومراجعة. عند عدم تفعيله تظل القيم اليدوية هي المعتمدة.</p>
-<div style="overflow-x:auto"><table><tr><th>الموظف</th><th>الأساسي قبل العلاوة</th><th>البدلات</th><th>نوع الحافز</th><th>أيام الحافز</th><th>حافز يدوي إضافي</th><th>ساعات إضافي</th><th>نسبة الإضافي %</th><th>قيمة الإضافي (اتركها فارغة للحساب)</th><th>ساعات غياب</th><th>خصم الغياب</th><th>السلف</th><th>خصومات أخرى</th><th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th></tr>
-{% for e in employees %}<tr><td>{{e.employee_code}} - {{e.full_name}}<br><small>الأساسي المسجل: {{e.basic_salary}} | العلاوة: {{e.raise_value}} {{'%' if e.raise_type=='percentage' else 'مبلغ'}}</small></td>
+<div style="overflow-x:auto"><table><tr><th>الموظف</th><th>الأساسي قبل العلاوة</th><th>البدلات</th><th>نوع الحافز</th><th>أيام الحافز</th><th>حافز يدوي إضافي</th><th>ساعات إضافي</th><th>نسبة الإضافي %</th><th>قيمة الإضافي (اتركها فارغة للحساب)</th><th>سبب تعديل الإضافي اليدوي</th><th>ساعات غياب</th><th>خصم الغياب</th><th>السلف</th><th>خصومات أخرى</th><th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th></tr>
+{% for e in employees %}<tr><td>{{e.employee_code}} - {{e.full_name}}<br><small>الأساسي المسجل: {{e.basic_salary}} | العلاوة: {{e.raise_value}} {{'%' if e.raise_type=='percentage' else 'مبلغ'}}</small>{% if e.fixed_pay_items_summary %}<br><small>بنود ثابتة تُضاف تلقائيًا: {{e.fixed_pay_items_summary}}</small>{% endif %}</td>
 <td><input type="number" min="0.01" step="0.01" name="basic_{{e.id}}" value="{{e.basic_salary}}" required></td>
 <td><input type="number" min="0" step="0.01" name="allowances_{{e.id}}" value="{{e.variable_salary or '0'}}" required></td>
 <td><select name="incentive_rule_{{e.id}}"><option value="">بدون حافز مناسبة</option>{% for rule in incentive_rules %}<option value="{{rule.id}}">{{rule.name}} — {{'مبلغ ثابت' if rule.calculation_method=='fixed' else 'نسبة من الأساسي' if rule.calculation_method=='percentage_basic' else 'قيمة يومية'}}</option>{% endfor %}</select></td>
@@ -18,6 +18,7 @@
 <td><input type="number" min="0" step="0.01" name="overtime_hours_{{e.id}}" value="0"></td>
 <td><input type="number" min="0" max="500" step="0.01" name="overtime_rate_percent_{{e.id}}" value="{{e.overtime_rate_percent}}"></td>
 <td><input type="number" min="0" step="0.01" name="overtime_amount_{{e.id}}" value="" placeholder="تلقائي"></td>
+<td><input type="text" name="overtime_override_reason_{{e.id}}" value="" placeholder="مطلوب عند التعديل"></td>
 <td><input type="number" min="0" step="0.01" name="absent_hours_{{e.id}}" value="0"></td>
 <td><input type="number" min="0" step="0.01" name="absence_deduction_{{e.id}}" value="0" required></td>
 <td><input type="number" min="0" step="0.01" name="advance_{{e.id}}" value="0" required></td>
