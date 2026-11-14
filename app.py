@@ -3064,6 +3064,12 @@ def edit_user(user_id):
         else:
             try:
                 selected = normalize_user_permissions(request.form.getlist("permissions"))
+                if user["role"] == "admin":
+                    protected_admin_permissions = normalize_user_permissions(PERMISSIONS["admin"])
+                    requested_active = 1 if request.form.get("active") == "yes" else 0
+                    if (role != "admin" or requested_active != 1
+                            or not set(protected_admin_permissions).issubset(selected)):
+                        raise ValueError("لا يمكن تغيير دور مدير النظام أو تعطيل حسابه أو تقليص صلاحياته الأساسية.")
                 if user_id == session.get("user_id"):
                     current_permissions = stored_user_permissions(user["permissions_json"], user["role"])
                     requested_active = 1 if request.form.get("active") == "yes" else 0
