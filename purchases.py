@@ -1022,25 +1022,30 @@ def _supplier_grni_price_variance_lines(c, receipt_rows, discount_amount, matche
         # by remaining quantity and put any cent-rounding residual on the last
         # valuation layer so the layers reconcile exactly to the journal.
         layer_rows = item["layers"]
+        remaining_layers = [
+            layer for layer in layer_rows
+            if Decimal(str(layer["qty_remaining"])) > 0
+        ]
         layer_discount_left = remaining_value_discount
         remaining_layer_qty = sum(
-            (Decimal(str(layer["qty_remaining"])) for layer in layer_rows),
+            (Decimal(str(layer["qty_remaining"])) for layer in remaining_layers),
             Decimal("0"),
         )
-        for layer_index, layer in enumerate(layer_rows):
+        remaining_layer_ids = {int(layer["id"]) for layer in remaining_layers}
+        for layer in layer_rows:
             layer_qty = Decimal(str(layer["qty_remaining"]))
             old_value = (
                 Decimal(str(layer["value_remaining"]))
                 if layer["value_remaining"] not in (None, "")
                 else layer_qty * Decimal(str(layer["unit_cost"]))
             )
-            if layer_index == len(layer_rows) - 1:
+            if int(layer["id"]) not in remaining_layer_ids:
+                layer_discount = money("0")
+            elif layer["id"] == remaining_layers[-1]["id"]:
                 layer_discount = layer_discount_left
-            elif remaining_layer_qty > 0:
+            else:
                 layer_discount = money(remaining_value_discount * layer_qty / remaining_layer_qty)
                 layer_discount_left = money(layer_discount_left - layer_discount)
-            else:
-                layer_discount = money("0")
             new_layer_value = money(old_value - layer_discount)
             if new_layer_value < 0:
                 raise ValueError("توزيع خصم المورد تجاوز قيمة إحدى طبقات المخزون.")
@@ -1049,6 +1054,8 @@ def _supplier_grni_price_variance_lines(c, receipt_rows, discount_amount, matche
                    SET unit_cost=?,value_remaining=? WHERE id=?""",
                 (str(new_unit_cost), str(new_layer_value), layer["id"]),
             )
+        if layer_discount_left != 0:
+            raise ValueError("تعذر توزيع خصم المورد بالكامل على طبقات المخزون المتبقية.")
         c.execute(
             "UPDATE stock_movements SET unit_cost=?,total_cost=? WHERE id=?",
             (str(new_unit_cost), str(net_line_cost), item["movement"]["id"]),
