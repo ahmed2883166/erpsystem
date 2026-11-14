@@ -679,13 +679,35 @@ def q4(n):
 
 
 def current_qty(c, product_id, warehouse_id, lot_id=None):
-    sql = """SELECT COALESCE(SUM(CAST(quantity AS REAL) *
-      CASE WHEN movement_type='receipt' THEN 1 WHEN movement_type IN ('issue','scrap') THEN -1
-      WHEN movement_type='transfer' AND target_warehouse_id=? THEN 1
-      WHEN movement_type='transfer' AND source_warehouse_id=? THEN -1 ELSE 0 END),0) q
-      FROM stock_movements WHERE product_id=?"""
-    row = c.execute(sql, (warehouse_id, warehouse_id, product_id)).fetchone()
-    return D(str(row["q"] or 0))
+    """Return the exact on-hand quantity for one product/warehouse/lot.
+
+    Movement quantities are stored as decimal strings, so aggregate them with
+    Decimal in Python rather than SQLite REAL arithmetic.
+    """
+    rows = c.execute(
+        """SELECT movement_type,source_warehouse_id,target_warehouse_id,lot_id,quantity
+           FROM stock_movements
+           WHERE product_id=?
+             AND ((movement_type='receipt' AND target_warehouse_id=?)
+               OR (movement_type IN ('issue','scrap') AND source_warehouse_id=?)
+               OR (movement_type='transfer' AND
+                   (source_warehouse_id=? OR target_warehouse_id=?)))
+             AND lot_id IS ?""",
+        (product_id, warehouse_id, warehouse_id, warehouse_id, warehouse_id, lot_id)
+    ).fetchall()
+    balance = D("0")
+    for row in rows:
+        qty = D(str(row["quantity"] or "0"))
+        if row["movement_type"] == "receipt" and row["target_warehouse_id"] == warehouse_id:
+            balance += qty
+        elif row["movement_type"] in ("issue", "scrap") and row["source_warehouse_id"] == warehouse_id:
+            balance -= qty
+        elif row["movement_type"] == "transfer":
+            if row["target_warehouse_id"] == warehouse_id:
+                balance += qty
+            if row["source_warehouse_id"] == warehouse_id:
+                balance -= qty
+    return balance
 
 
 def available_layers(c, product_id, warehouse_id, lot_id=None, location_id=None):
