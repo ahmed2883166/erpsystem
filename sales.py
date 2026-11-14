@@ -2027,9 +2027,20 @@ def invoice_print(invoice_id):
     if not invoice:
         c.close()
         abort(404)
-    lines = c.execute("""SELECT l.*,p.sku,p.name_ar product_name
+    raw_lines = c.execute("""SELECT l.*,p.sku,p.name_ar product_name,p.uom
         FROM sales_invoice_lines l LEFT JOIN stock_products p ON p.id=l.product_id
         WHERE l.invoice_id=? ORDER BY l.id""", (invoice_id,)).fetchall()
+    lines=[]
+    for row in raw_lines:
+        item=dict(row)
+        item["display_quantity"]=row["entered_quantity"] or row["quantity"]
+        try:
+            factor,item["display_uom"]=product_uom_factor(c,row["product_id"],row["uom_id"])
+            item["display_unit_price"]=(Decimal(str(row["line_total"]))/Decimal(str(item["display_quantity"]))).quantize(CENT,rounding=ROUND_HALF_UP)
+        except (ValueError,TypeError,InvalidOperation,ZeroDivisionError):
+            item["display_uom"]=row["uom"] or ""
+            item["display_unit_price"]=row["unit_price"]
+        lines.append(item)
     settings = {r["setting_key"]:r["setting_value"] for r in c.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
         "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
