@@ -1285,6 +1285,8 @@ def edit_bill(bill_id):
                 if receipts:
                     raise ValueError("فاتورة الأصل الثابت لا تُربط بإيصالات استلام مخزني.")
                 asset_lines = validate_asset_bill_lines(c, request.form, bill_date, subtotal)
+                # Preserve the first asset's details in legacy header columns.
+                asset_data = dict(asset_lines[0])
                 supplier_ap_account(c)
             else:
                 if not receipts:
