@@ -87,6 +87,119 @@ class PurchasingAccountingTests(unittest.TestCase):
             "SELECT COUNT(*) FROM supplier_bill_receipts WHERE receipt_id=?", (receipt_id,)
         ).fetchone()[0], 2)
 
+    def test_two_partial_goods_receipts_create_fifo_layers_and_balanced_grni_entries(self):
+        purchases.init_purchase_schema()
+        self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1150','مخزون','asset',0)"
+        )
+        self.db.execute("INSERT INTO company_settings(setting_key,setting_value) VALUES('activity','commercial')")
+        supplier_id = self.db.execute(
+            "INSERT INTO suppliers(code,name) VALUES('SUP-FIFO-CYCLE','مورد دورة مخزون')"
+        ).lastrowid
+        warehouse_id = self.db.execute(
+            "INSERT INTO stock_warehouses(code,name_ar) VALUES('W-FIFO-CYCLE','مخزن دورة مخزون')"
+        ).lastrowid
+        product_id = self.db.execute(
+            "INSERT INTO stock_products(sku,name_ar) VALUES('FIFO-CYCLE-1','صنف دورة مخزون')"
+        ).lastrowid
+        po_id = self.db.execute(
+            """INSERT INTO purchase_orders(po_no,supplier_id,order_date,status,created_by)
+               VALUES('PO-FIFO-CYCLE',?,'2026-11-15','approved',1)""",
+            (supplier_id,),
+        ).lastrowid
+        po_line_id = self.db.execute(
+            """INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price)
+               VALUES(?,?, '10','11')""",
+            (po_id, product_id),
+        ).lastrowid
+
+        app = Flask(__name__)
+        app.secret_key = "test"
+        app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
+        app.register_blueprint(purchases.purchase_bp)
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "admin"
+
+        for quantity, unit_cost, expected_status in (
+            ("4", "10", "partially_received"),
+            ("6", "12", "received"),
+        ):
+            response = client.post("/purchases/receipts/new", data={
+                "supplier_id": str(supplier_id),
+                "product_id": str(product_id),
+                "warehouse_id": str(warehouse_id),
+                "po_id": str(po_id),
+                "receipt_date": "2026-11-15",
+                "quantity": quantity,
+                "unit_cost": unit_cost,
+            })
+            self.assertEqual(response.status_code, 302)
+            self.assertEqual(
+                self.db.execute("SELECT status FROM purchase_orders WHERE id=?", (po_id,)).fetchone()[0],
+                expected_status,
+            )
+
+        receipts = self.db.execute(
+            "SELECT total_value,journal_entry_id FROM goods_receipts WHERE po_id=? ORDER BY id",
+            (po_id,),
+        ).fetchall()
+        self.assertEqual([Decimal(row["total_value"]) for row in receipts],
+                         [Decimal("40.00"), Decimal("72.00")])
+        self.assertTrue(all(row["journal_entry_id"] for row in receipts))
+        for receipt in receipts:
+            rows = self.db.execute(
+                """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
+                   JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=?""",
+                (receipt["journal_entry_id"],),
+            ).fetchall()
+            debit = sum((Decimal(row["debit"]) for row in rows), Decimal("0"))
+            credit = sum((Decimal(row["credit"]) for row in rows), Decimal("0"))
+            self.assertEqual(debit, credit)
+            self.assertEqual(debit, Decimal(receipt["total_value"]))
+
+        movement_rows = self.db.execute(
+            """SELECT movement_type,accounting_status,journal_entry_id,quantity,total_cost
+               FROM stock_movements WHERE product_id=? ORDER BY id""",
+            (product_id,),
+        ).fetchall()
+        self.assertEqual(len(movement_rows), 2)
+        self.assertTrue(all(row["movement_type"] == "receipt" and
+                            row["accounting_status"] == "posted" and row["journal_entry_id"]
+                            for row in movement_rows))
+        layers = self.db.execute(
+            """SELECT qty_in,qty_remaining,unit_cost FROM stock_valuation_layers
+               WHERE product_id=? ORDER BY id""",
+            (product_id,),
+        ).fetchall()
+        self.assertEqual(
+            [(Decimal(row["qty_in"]), Decimal(row["qty_remaining"]), Decimal(row["unit_cost"]))
+             for row in layers],
+            [(Decimal("4"), Decimal("4"), Decimal("10")),
+             (Decimal("6"), Decimal("6"), Decimal("12"))],
+        )
+
+        fifo_cost, allocations = stock.consume_layers(
+            self.db, product_id, warehouse_id, Decimal("5"), "fifo"
+        )
+        self.assertEqual(fifo_cost, Decimal("52.00"))
+        self.assertEqual(
+            [(allocation[1], allocation[2]) for allocation in allocations],
+            [(Decimal("4"), Decimal("10")), (Decimal("1"), Decimal("12"))],
+        )
+        remaining = self.db.execute(
+            """SELECT qty_remaining FROM stock_valuation_layers
+               WHERE product_id=? ORDER BY id""",
+            (product_id,),
+        ).fetchall()
+        self.assertEqual([Decimal(row["qty_remaining"]) for row in remaining],
+                         [Decimal("0"), Decimal("5")])
+        self.assertEqual(
+            Decimal(stock.current_qty(self.db, product_id, warehouse_id)),
+            Decimal("5"),
+        )
+
     def test_multi_line_purchase_order_stays_partial_until_every_line_is_received(self):
         purchases.init_purchase_schema()
         self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-MULTI-RECV','مورد متعدد')")
