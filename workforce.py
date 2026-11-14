@@ -1695,13 +1695,25 @@ def employee_grants():
     employees = c.execute("""SELECT id,employee_code,full_name,basic_salary,work_status FROM employees
         WHERE active=1 AND work_status NOT IN ('unpaid_leave','resigned','retired') ORDER BY employee_code""").fetchall()
     accounts = _accounts(c)
-    grants = c.execute("""SELECT g.*,t.name AS grant_type_name,
-        (SELECT COALESCE(SUM(p.amount),0) FROM employee_grant_payments p WHERE p.grant_id=g.id) AS paid_total
-        FROM employee_grants g JOIN employee_grant_types t ON t.id=g.grant_type_id ORDER BY g.id DESC LIMIT 100""").fetchall()
+    grant_rows = c.execute("""SELECT g.*,t.name AS grant_type_name
+        FROM employee_grants g JOIN employee_grant_types t ON t.id=g.grant_type_id
+        ORDER BY g.id DESC LIMIT 100""").fetchall()
+    grants = []
     grant_lines = {}
-    for grant in grants:
-        grant_lines[grant["id"]] = c.execute("SELECT * FROM employee_grant_lines WHERE grant_id=? ORDER BY employee_code_snapshot",
+    for row in grant_rows:
+        grant = dict(row)
+        paid_total = M(sum((D(x["amount"]) for x in c.execute(
+            "SELECT amount FROM employee_grant_payments WHERE grant_id=?", (grant["id"],)).fetchall()), Decimal("0")))
+        grant["paid_total"] = str(paid_total)
+        grant["outstanding_total"] = str(M(D(grant["total_amount"])-paid_total))
+        line_rows = c.execute("SELECT * FROM employee_grant_lines WHERE grant_id=? ORDER BY employee_code_snapshot",
             (grant["id"],)).fetchall()
+        grant_lines[grant["id"]] = []
+        for line in line_rows:
+            item = dict(line)
+            item["remaining_amount"] = str(M(D(item["amount"])-D(item["paid_amount"])))
+            grant_lines[grant["id"]].append(item)
+        grants.append(grant)
     c.close()
     return render_template("employee_grants.html",grant_types=grant_types,employees=employees,accounts=accounts,
                            grants=grants,grant_lines=grant_lines,today=date.today().isoformat())
