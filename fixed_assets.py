@@ -104,6 +104,7 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
     if not rows:
         raise ValueError("فاتورة الأصل لا تحتوي على أصول.")
     codes=set()
+    used_accum_accounts=set()
     total=Decimal("0")
     prepared=[]
     purchase_date=date.fromisoformat(bill["bill_date"]).isoformat()
@@ -137,6 +138,16 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
                 raise ValueError("أحد حسابات الأصل غير صالح أو غير نشط: " + code)
         if row["asset_account_id"]==row["accum_account_id"]:
             raise ValueError("حساب التكلفة ومجمع الإهلاك يجب أن يختلفا: " + code)
+        accum_id=row["accum_account_id"]
+        if accum_id in used_accum_accounts or conn.execute(
+            "SELECT 1 FROM fixed_assets WHERE accum_account_id=? LIMIT 1", (accum_id,)
+        ).fetchone():
+            raise ValueError("يجب تخصيص حساب مجمع إهلاك مستقل لكل أصل في فاتورة المورد: " + code)
+        if conn.execute(
+            "SELECT 1 FROM journal_lines WHERE account_id=? LIMIT 1", (accum_id,)
+        ).fetchone():
+            raise ValueError("حساب مجمع الإهلاك يحتوي على حركات سابقة ولا يصلح لأصل جديد: " + code)
+        used_accum_accounts.add(accum_id)
         total+=cost
         prepared.append((code,name,str(row["asset_category"] or ""),purchase_date,ready_date,
                          str(cost),str(residual),life,method,str(annual_rate),
