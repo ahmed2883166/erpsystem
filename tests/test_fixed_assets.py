@@ -3,7 +3,8 @@ import unittest
 from decimal import Decimal
 from unittest.mock import patch
 
-from fixed_assets import _asset_period_amount, _post_asset_depreciation
+from fixed_assets import (_asset_period_amount, _post_asset_depreciation,
+                          _validate_dedicated_accum_account)
 
 
 class FixedAssetDepreciationCalculationTests(unittest.TestCase):
@@ -65,6 +66,11 @@ class FixedAssetDepreciationCalculationTests(unittest.TestCase):
         self.assertEqual(amount, Decimal("100.00"))
         self.assertEqual(entry_id, 55)
         self.assertEqual(post.call_args.args[1], "2026-01-31")
+        journal_lines = post.call_args.args[4]
+        self.assertEqual(journal_lines[0][0], 12)
+        self.assertEqual(journal_lines[0][1:3], (Decimal("100.00"), 0))
+        self.assertEqual(journal_lines[1][0], 11)
+        self.assertEqual(journal_lines[1][1:3], (0, Decimal("100.00")))
         row = conn.execute(
             "SELECT period,amount,journal_entry_id FROM asset_depreciations"
         ).fetchone()
@@ -86,6 +92,23 @@ class FixedAssetDepreciationCalculationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "الفترة السابقة"):
                 _post_asset_depreciation(conn, asset, "2026-02", 9)
         post.assert_not_called()
+        conn.close()
+
+    def test_dedicated_accumulated_depreciation_account_rejects_reuse(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript("""
+            CREATE TABLE fixed_assets(id INTEGER PRIMARY KEY, accum_account_id INTEGER);
+            CREATE TABLE journal_lines(id INTEGER PRIMARY KEY, account_id INTEGER);
+        """)
+        _validate_dedicated_accum_account(conn, 22)
+        conn.execute("INSERT INTO fixed_assets(accum_account_id) VALUES(22)")
+        with self.assertRaisesRegex(ValueError, "مستخدم لأصل آخر"):
+            _validate_dedicated_accum_account(conn, 22)
+        conn.execute("DELETE FROM fixed_assets")
+        conn.execute("INSERT INTO journal_lines(account_id) VALUES(22)")
+        with self.assertRaisesRegex(ValueError, "حركات سابقة"):
+            _validate_dedicated_accum_account(conn, 22)
         conn.close()
 
     def test_period_before_ready_date_is_rejected(self):
