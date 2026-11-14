@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import banking
 
-from banking import signed_ledger_amount
+from banking import signed_ledger_amount, opening_reconciliation_state, count_same_amount_candidates
 
 
 class BankStatementAmountTests(unittest.TestCase):
@@ -49,6 +49,51 @@ class BankStatementAmountTests(unittest.TestCase):
             check.close()
             self.assertIn("matched_journal_line_id",columns)
             self.assertIn("idx_bank_statement_journal_line",indexes)
+
+
+
+
+class BankOpeningReconciliationTests(unittest.TestCase):
+    def test_missing_statement_balances_do_not_create_zero_balance_difference(self):
+        state=opening_reconciliation_state(None,Decimal("125.00"),Decimal("30.00"))
+        self.assertFalse(state["balances_entered"])
+        self.assertIsNone(state["opening_balance"])
+        self.assertIsNone(state["expected_closing_balance"])
+        self.assertIsNone(state["closing_difference"])
+        self.assertFalse(state["opening_ready"])
+
+    def test_opening_difference_blocks_closing_difference_until_reviewed(self):
+        balances={"opening_balance":"1000.00","closing_balance":"1200.00",
+                  "opening_reviewed":0,"opening_review_note":""}
+        state=opening_reconciliation_state(balances,Decimal("900.00"),Decimal("200.00"))
+        self.assertEqual(state["opening_difference"],Decimal("100.00"))
+        self.assertFalse(state["opening_ready"])
+        self.assertIsNone(state["closing_difference"])
+
+    def test_matching_opening_balance_allows_closing_calculation(self):
+        balances={"opening_balance":"1000.00","closing_balance":"1200.00",
+                  "opening_reviewed":0,"opening_review_note":""}
+        state=opening_reconciliation_state(balances,Decimal("1000.00"),Decimal("150.00"))
+        self.assertTrue(state["opening_ready"])
+        self.assertEqual(state["expected_closing_balance"],Decimal("1150.00"))
+        self.assertEqual(state["closing_difference"],Decimal("50.00"))
+
+    def test_reviewed_opening_difference_is_visible_and_documented(self):
+        balances={"opening_balance":"1000.00","closing_balance":"1200.00",
+                  "opening_reviewed":1,"opening_review_note":"شيكات معلقة من الشهر السابق"}
+        state=opening_reconciliation_state(balances,Decimal("900.00"),Decimal("200.00"))
+        self.assertTrue(state["opening_ready"])
+        self.assertEqual(state["closing_difference"],Decimal("100.00"))
+        self.assertIn("شيكات",state["opening_review_note"])
+
+    def test_ambiguous_candidates_count_by_signed_amount_not_debit_credit_shape(self):
+        rows=[
+            {"debit":"100.00","credit":"0"},
+            {"debit":"150.00","credit":"50.00"},
+            {"debit":"0","credit":"100.00"},
+        ]
+        self.assertEqual(count_same_amount_candidates(rows,Decimal("100.00")),2)
+        self.assertEqual(count_same_amount_candidates(rows,Decimal("-100.00")),1)
 
 
 if __name__ == "__main__":
