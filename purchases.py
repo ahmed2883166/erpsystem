@@ -644,16 +644,16 @@ def delete_supplier(supplier_id):
 def purchase_requests():
     c = db()
     rows = c.execute("""
-        SELECT r.*,p.sku,p.name_ar AS product_name,u.full_name AS creator_name,
+        SELECT r.*,p.sku,p.name_ar AS product_name,
                po.po_no AS converted_po_no
         FROM purchase_requests r
         JOIN stock_products p ON p.id=r.product_id
-        LEFT JOIN users u ON u.id=r.created_by
         LEFT JOIN purchase_orders po ON po.id=r.converted_to_po_id
         ORDER BY r.id DESC
     """).fetchall()
+    suppliers = c.execute("SELECT id,name FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     c.close()
-    return render_template("purchase_requests.html", requests=rows)
+    return render_template("purchase_requests.html", requests=rows, suppliers=suppliers)
 
 
 @purchase_bp.route("/requests/new", methods=["GET", "POST"])
