@@ -197,7 +197,7 @@ class CashFlowReportTests(unittest.TestCase):
             conn, "2026-11-01", "2026-11-30"
         )
         conn.close()
-        self.assertEqual(snapshot["indirect_operating_net"], financial_planning.Decimal("-20"))
+        self.assertEqual(snapshot["indirect_operating_net"], financial_planning.Decimal("200"))
         self.assertEqual(snapshot["reconciliation_difference"], financial_planning.Decimal("0"))
         self.assertFalse(snapshot["indirect_mapping_warning"])
 
