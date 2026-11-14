@@ -84,6 +84,11 @@ def init_bank_schema():
     statement_columns={row["name"] for row in c.execute("PRAGMA table_info(bank_statement_lines)")}
     if "matched_journal_line_id" not in statement_columns:
         c.execute("ALTER TABLE bank_statement_lines ADD COLUMN matched_journal_line_id INTEGER REFERENCES journal_lines(id)")
+    balance_columns={row["name"] for row in c.execute("PRAGMA table_info(bank_statement_balances)")}
+    if "opening_reviewed" not in balance_columns:
+        c.execute("ALTER TABLE bank_statement_balances ADD COLUMN opening_reviewed INTEGER NOT NULL DEFAULT 0")
+    if "opening_review_note" not in balance_columns:
+        c.execute("ALTER TABLE bank_statement_balances ADD COLUMN opening_review_note TEXT NOT NULL DEFAULT ''")
     c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_statement_journal_line
         ON bank_statement_lines(matched_journal_line_id)
         WHERE matched_journal_line_id IS NOT NULL""")
@@ -273,6 +278,7 @@ def statement_reconciliation():
                     VALUES(?,?,?,?,?,?)
                     ON CONFLICT(bank_account_id,period_start,period_end) DO UPDATE SET
                     opening_balance=excluded.opening_balance,closing_balance=excluded.closing_balance,
+                    opening_reviewed=0,opening_review_note='',
                     created_by=excluded.created_by,updated_at=CURRENT_TIMESTAMP""",
                     (account_id,period_start,period_end,str(opening),str(closing),session.get("user_id")))
                 c.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
@@ -281,6 +287,26 @@ def statement_reconciliation():
                     datetime.now().isoformat(timespec="seconds")))
                 c.commit()
                 flash("تم حفظ رصيد بداية ونهاية كشف البنك للفترة.","success")
+                return redirect(url_for("bank.statement_reconciliation",account_id=account_id,start_date=period_start,end_date=period_end))
+            if action=="confirm_opening":
+                account_id=request.form.get("bank_account_id",type=int)
+                period_start=request.form.get("start_date","").strip()
+                period_end=request.form.get("end_date","").strip()
+                note=request.form.get("opening_review_note","").strip()
+                date.fromisoformat(period_start); date.fromisoformat(period_end)
+                if period_end<period_start: raise ValueError("تاريخ نهاية الفترة لا يجوز أن يسبق بدايتها.")
+                if len(note)<10: raise ValueError("اكتب سببًا واضحًا لمراجعة فرق الرصيد الافتتاحي (10 أحرف على الأقل).")
+                c.execute("BEGIN IMMEDIATE")
+                updated=c.execute("""UPDATE bank_statement_balances SET opening_reviewed=1,opening_review_note=?,updated_at=CURRENT_TIMESTAMP
+                    WHERE bank_account_id=? AND period_start=? AND period_end=?""",
+                    (note,account_id,period_start,period_end)).rowcount
+                if not updated: raise ValueError("احفظ أرصدة كشف البنك أولًا قبل اعتماد مراجعة الرصيد الافتتاحي.")
+                c.execute("""INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,?)""",
+                    (session.get("user_id"),"bank_opening_balance_review",
+                     f"مراجعة فرق رصيد افتتاحي للبنك {account_id} للفترة {period_start} إلى {period_end}: {note}",
+                     datetime.now().isoformat(timespec="seconds")))
+                c.commit()
+                flash("تم تسجيل مراجعة فرق الرصيد الافتتاحي. راجع العناصر القائمة قبل اعتماد التسوية النهائية.","warning")
                 return redirect(url_for("bank.statement_reconciliation",account_id=account_id,start_date=period_start,end_date=period_end))
             if action=="match":
                 line_id=request.form.get("line_id",type=int)
@@ -299,6 +325,19 @@ def statement_reconciliation():
                 statement_amount=Decimal(str(line["signed_amount"])).quantize(Decimal("0.01"))
                 if expected!=statement_amount:
                     raise ValueError("المبلغ أو اتجاه الحركة غير متطابق؛ المدين موجب والدائن سالب في كشف البنك.")
+                period_start=request.form.get("start_date","").strip()
+                period_end=request.form.get("end_date","").strip()
+                date.fromisoformat(period_start); date.fromisoformat(period_end)
+                if not (period_start<=journal_line["entry_date"]<=period_end):
+                    raise ValueError("القيد المختار خارج فترة التسوية الحالية.")
+                possible=c.execute("""SELECT COUNT(*) FROM journal_lines jl
+                    JOIN journal_entries je ON je.id=jl.entry_id
+                    WHERE jl.account_id=? AND je.status='posted' AND je.entry_date BETWEEN ? AND ?
+                    AND jl.debit=? AND jl.credit=?""",
+                    (line["bank_account_id"],period_start,period_end,
+                     str(journal_line["debit"]),str(journal_line["credit"]))).fetchone()[0]
+                if possible>1 and request.form.get("confirm_multiple")!="1":
+                    raise ValueError(f"يوجد {possible} قيود بنفس المبلغ والاتجاه. راجع رقم القيد والتاريخ والبيان، ثم أكد أنك اخترت القيد الصحيح.")
                 already=c.execute("SELECT 1 FROM bank_statement_lines WHERE matched_journal_line_id=? LIMIT 1",
                                   (journal_line_id,)).fetchone()
                 if already: raise ValueError("سطر الأستاذ تمت مطابقته مع سطر كشف آخر بالفعل.")
@@ -307,12 +346,12 @@ def statement_reconciliation():
                     (journal_line_id,datetime.now().isoformat(timespec="seconds"),session.get("user_id"),line_id))
                 c.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
                     VALUES(?,?,?,?)""",(session.get("user_id"),"bank_statement_match",
-                    f"مطابقة سطر كشف #{line_id} مع سطر الأستاذ #{journal_line_id} بالقيد #{journal_line['entry_id']}",
+                    f"مطابقة سطر كشف #{line_id} مع سطر الأستاذ #{journal_line_id} بالقيد #{journal_line['entry_id']}؛ عدد القيود المحتملة بنفس المبلغ والاتجاه: {possible}",
                     datetime.now().isoformat(timespec="seconds")))
                 c.commit()
                 flash("تمت مطابقة سطر كشف البنك مع سطر الأستاذ بعد التحقق من الحساب والمبلغ والاتجاه.","success")
                 return redirect(url_for("bank.statement_reconciliation",account_id=line["bank_account_id"],
-                    start_date=request.form.get("start_date") or None,end_date=request.form.get("end_date") or None))
+                    start_date=period_start,end_date=period_end))
             raise ValueError("الإجراء المطلوب غير معروف.")
         account_id=request.args.get("account_id",type=int)
         accounts=c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
@@ -357,23 +396,39 @@ def statement_reconciliation():
             lines=candidate_lines
             statement_total=sum((Decimal(str(line["signed_amount"])) for line in lines),Decimal("0"))
             matched_count=sum(1 for line in lines if line["matched_transaction_id"] or line["matched_journal_line_id"])
-            balances=c.execute("""SELECT opening_balance,closing_balance FROM bank_statement_balances
-                WHERE bank_account_id=? AND period_start=? AND period_end=?""",
+            balances=c.execute("""SELECT opening_balance,closing_balance,opening_reviewed,opening_review_note
+                FROM bank_statement_balances WHERE bank_account_id=? AND period_start=? AND period_end=?""",
                 (account_id,period_start,period_end)).fetchone()
-            opening_balance=Decimal(str(balances["opening_balance"])) if balances else Decimal("0")
-            closing_balance=Decimal(str(balances["closing_balance"])) if balances else Decimal("0")
-            expected_closing_balance=opening_balance+book_total
-            closing_difference=closing_balance-expected_closing_balance
+            balances_entered=balances is not None
+            opening_balance=Decimal(str(balances["opening_balance"])) if balances else None
+            closing_balance=Decimal(str(balances["closing_balance"])) if balances else None
+            opening_ledger_balance=Decimal("0")
+            opening_rows=c.execute("""SELECT jl.debit,jl.credit FROM journal_lines jl
+                JOIN journal_entries je ON je.id=jl.entry_id
+                WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<?""",
+                (account_id,period_start)).fetchall()
+            for opening_row in opening_rows:
+                opening_ledger_balance+=signed_ledger_amount(opening_row["debit"],opening_row["credit"])
+            opening_difference=(opening_balance-opening_ledger_balance) if balances_entered else None
+            opening_reviewed=bool(balances["opening_reviewed"]) if balances else False
+            opening_review_note=balances["opening_review_note"] if balances else ""
+            expected_closing_balance=(opening_balance+book_total) if balances_entered else None
+            opening_ready=bool(balances_entered and (opening_difference==0 or opening_reviewed))
+            closing_difference=(closing_balance-expected_closing_balance) if opening_ready else None
         else:
             lines=[]; book_rows=[]; statement_total=Decimal("0"); book_total=Decimal("0"); matched_count=0
-            opening_balance=Decimal("0"); closing_balance=Decimal("0")
-            expected_closing_balance=Decimal("0"); closing_difference=Decimal("0")
+            balances_entered=False; opening_balance=None; closing_balance=None; opening_ledger_balance=Decimal("0")
+            opening_difference=None; opening_reviewed=False; opening_review_note=""; opening_ready=False
+            expected_closing_balance=None; closing_difference=None
         c.close()
         return render_template("bank_reconciliation.html",accounts=accounts,account_id=account_id,
             lines=lines,book_rows=book_rows,statement_total=statement_total,book_total=book_total,
             difference=statement_total-book_total,matched_count=matched_count,
             opening_balance=opening_balance,closing_balance=closing_balance,
             expected_closing_balance=expected_closing_balance,closing_difference=closing_difference,
+            balances_entered=balances_entered,opening_ledger_balance=opening_ledger_balance,
+            opening_difference=opening_difference,opening_reviewed=opening_reviewed,
+            opening_review_note=opening_review_note,opening_ready=opening_ready,
             start_date=period_start,end_date=period_end,today=today.isoformat())
     except (ValueError,InvalidOperation,sqlite3.Error) as exc:
         c.rollback()
