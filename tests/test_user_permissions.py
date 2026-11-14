@@ -189,6 +189,34 @@ class UserPermissionRouteTests(unittest.TestCase):
         conn.close()
         self.assertEqual(count, 0)
 
+    def test_admin_account_cannot_be_demoted_disabled_or_stripped_of_core_permissions(self):
+        conn = sqlite3.connect(nexus.DB_PATH)
+        conn.execute(
+            """INSERT INTO users
+               (id,username,full_name,role,active,permissions_json,password_hash,created_at)
+               VALUES(2,'second.admin','مدير ثان','admin',1,?,'hash','2026-01-01')""",
+            (json.dumps(["users.manage"]),),
+        )
+        conn.commit()
+        conn.close()
+        with self.client.session_transaction() as session:
+            session.update(user_id=1, username="admin", full_name="مدير",
+                           role="admin", permissions=["users.manage"])
+        response = self.client.post("/users/2/edit", data={
+            "username": "second.admin", "full_name": "مدير ثان", "role": "viewer",
+            "active": "yes", "permissions": ["reports.view"],
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("لا يمكن تغيير دور مدير النظام", response.get_data(as_text=True))
+        conn = sqlite3.connect(nexus.DB_PATH)
+        role, active, raw_permissions = conn.execute(
+            "SELECT role,active,permissions_json FROM users WHERE id=2"
+        ).fetchone()
+        conn.close()
+        self.assertEqual(role, "admin")
+        self.assertEqual(active, 1)
+        self.assertEqual(raw_permissions, json.dumps(["users.manage"]))
+
     def test_user_cannot_change_own_role_or_permissions_even_with_admin_page_access(self):
         with self.client.session_transaction() as session:
             session.update(user_id=1, username="admin", full_name="مدير",
