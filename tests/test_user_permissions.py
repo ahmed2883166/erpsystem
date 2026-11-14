@@ -19,7 +19,8 @@ class UserPermissionRouteTests(unittest.TestCase):
         conn = sqlite3.connect(nexus.DB_PATH)
         conn.execute("""CREATE TABLE users(
             id INTEGER PRIMARY KEY, username TEXT, full_name TEXT, role TEXT,
-            active INTEGER, permissions_json TEXT, password_hash TEXT, created_at TEXT
+            active INTEGER, permissions_json TEXT, password_hash TEXT, created_at TEXT,
+            must_change_password INTEGER NOT NULL DEFAULT 0
         )""")
         conn.execute("""INSERT INTO users
             (id,username,full_name,role,active,permissions_json,password_hash,created_at)
@@ -216,6 +217,39 @@ class UserPermissionRouteTests(unittest.TestCase):
         self.assertEqual(role, "admin")
         self.assertEqual(active, 1)
         self.assertEqual(raw_permissions, json.dumps(["users.manage"]))
+
+    def test_permission_changes_take_effect_on_the_next_request(self):
+        with self.client.session_transaction() as session:
+            session.update(user_id=1, username="admin", full_name="مدير",
+                           role="admin", permissions=["users.manage"])
+        conn = sqlite3.connect(nexus.DB_PATH)
+        conn.execute(
+            "UPDATE users SET role='viewer',permissions_json=? WHERE id=1",
+            (json.dumps(["reports.view"]),),
+        )
+        conn.commit()
+        conn.close()
+
+        response = self.client.get("/users")
+        self.assertEqual(response.status_code, 302)
+        with self.client.session_transaction() as session:
+            self.assertEqual(session["role"], "viewer")
+            self.assertEqual(session["permissions"], ["reports.view"])
+
+    def test_deactivated_user_session_is_cleared_on_the_next_request(self):
+        with self.client.session_transaction() as session:
+            session.update(user_id=1, username="admin", full_name="مدير",
+                           role="admin", permissions=["users.manage"])
+        conn = sqlite3.connect(nexus.DB_PATH)
+        conn.execute("UPDATE users SET active=0 WHERE id=1")
+        conn.commit()
+        conn.close()
+
+        response = self.client.get("/users")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/login", response.headers["Location"])
+        with self.client.session_transaction() as session:
+            self.assertNotIn("user_id", session)
 
     def test_user_cannot_change_own_role_or_permissions_even_with_admin_page_access(self):
         with self.client.session_transaction() as session:
