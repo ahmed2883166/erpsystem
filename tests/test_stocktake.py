@@ -507,6 +507,8 @@ class StocktakeRouteTests(unittest.TestCase):
         self.assertEqual(queue.status_code, 200)
         self.assertIn(b"PENDING-PURPOSE", queue.data)
         self.assertIn(b"PENDING-SETUP", queue.data)
+        self.assertIn(b'href="/stock/reconciliation"', queue.data)
+        self.assertIn(b'href="/stock/pending"', queue.data)
 
         def fake_post_issue(conn, movement_id, movement_no, product, movement_date,
                             total_cost, created_by, purpose, dimensions=None):
