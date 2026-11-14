@@ -341,7 +341,11 @@ def resolve_product_account_code(conn, product_id, role, default_code=None):
 
 
 def active_posting_accounts(conn):
-    return get_active_activity_profile(conn)["posting_accounts"]
+    profile = get_active_activity_profile(conn)
+    posting = dict(profile["posting_accounts"])
+    if profile["base_activity"] == "industrial":
+        posting.update(inventory="1130", purchase_inventory="1130", cogs="5400")
+    return posting
 
 
 def active_tax_roles(conn):
