@@ -1556,6 +1556,8 @@ def journal():
         "employee_grant_payments": ("workforce.print_employee_grant", "grant_id", "grant_id", "فتح مستند المنحة"),
         "asset_depreciations": ("assets.schedule", "asset_id", "asset_id", "فتح سجل الأصل"),
         "asset_disposals": ("assets.schedule", "asset_id", "asset_id", "فتح سجل الأصل"),
+        "stocktakes": ("stock.count_detail", "stocktake_id", "id", "فتح مستند الجرد"),
+        "friday_allowance_batches": ("workforce.friday_allowance", "period", "period", "فتح كشف بدل الجمعة"),
     }
     existing_tables = {row["name"] for row in connection.execute(
         "SELECT name FROM sqlite_master WHERE type='table'"
