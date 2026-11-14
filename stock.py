@@ -1600,10 +1600,14 @@ def resolve_pending_movement(movement_id):
         final_status = conn.execute(
             "SELECT accounting_status FROM stock_movements WHERE id=?", (movement_id,)
         ).fetchone()["accounting_status"]
-        conn.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
-            VALUES(?,?,?,?)""",(session.get("user_id"),"stock_pending_movement_processed",
-            f"معالجة الحركة المعلقة {movement['movement_no']}؛ الحالة النهائية: {final_status}؛ غرض الصرف: {purpose or 'غير محدد'}",
-            datetime.now().isoformat(timespec="seconds")))
+        audit_table=conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='audit_log'"
+        ).fetchone()
+        if audit_table:
+            conn.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
+                VALUES(?,?,?,?)""",(session.get("user_id"),"stock_pending_movement_processed",
+                f"معالجة الحركة المعلقة {movement['movement_no']}؛ الحالة النهائية: {final_status}؛ غرض الصرف: {purpose or 'غير محدد'}",
+                datetime.now().isoformat(timespec="seconds")))
         conn.commit()
         if final_status == "posted":
             flash("تمت معالجة الحركة وترحيل قيدها المحاسبي.", "success")
