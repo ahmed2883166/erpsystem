@@ -5,6 +5,8 @@ from pathlib import Path
 
 from flask import Flask
 
+import app as nexus_app
+
 import sales
 import purchases
 import receivables
