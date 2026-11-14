@@ -1,9 +1,12 @@
 import sqlite3
 import tempfile
+import io
 import unittest
 from pathlib import Path
 
 from flask import Flask
+from PIL import Image
+from werkzeug.datastructures import FileStorage
 import workforce
 import workforce_extras
 import payroll_compliance
@@ -50,6 +53,7 @@ class WorkforceExtrasTests(unittest.TestCase):
             (template_dir / name).write_text(body, encoding="utf-8")
         self.app = Flask(__name__, template_folder=str(template_dir))
         self.app.secret_key = "test"
+        self.app.instance_path = str(Path(self.temp.name) / "instance")
         self.app.register_blueprint(workforce.workforce_bp)
         self.client = self.app.test_client()
         with self.client.session_transaction() as session:
@@ -136,6 +140,54 @@ class WorkforceExtrasTests(unittest.TestCase):
         conn.close()
         self.assertEqual(wages,("12000.00","1800.00","9500.00"))
 
+
+    def test_employee_photo_is_decoded_private_and_replaced_safely(self):
+        first_buffer = io.BytesIO()
+        Image.new("RGB", (16, 12), "red").save(first_buffer, format="PNG")
+        with self.app.app_context():
+            first_path = workforce._save_employee_photo(
+                FileStorage(stream=io.BytesIO(first_buffer.getvalue()), filename="profile.png")
+            )
+            first_file = Path(self.app.instance_path) / "uploads" / first_path
+            self.assertTrue(first_file.is_file())
+            self.assertFalse(str(first_file).startswith(str(Path(self.app.static_folder).resolve())))
+
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("UPDATE employees SET photo_path=? WHERE id=1", (first_path,))
+        conn.commit()
+        conn.close()
+
+        second_buffer = io.BytesIO()
+        Image.new("RGB", (20, 20), "blue").save(second_buffer, format="PNG")
+        response = self.client.post("/hr/1/edit", data={
+            "employee_code":"E001","full_name":"Employee One","job_title":"محاسب","department":"الحسابات",
+            "hire_date":"2026-01-01","basic_salary":"12000","standard_hours":"208",
+            "variable_salary":"1800","legal_category":"local","insurance_number":"INS-1",
+            "insured_wage":"9500","insurance_enabled":"1","address":"Tanta",
+            "national_id":"12345678901234","work_status":"permanent","raise_type":"fixed",
+            "raise_value":"0","raise_mode":"basic","raise_effective_date":"",
+            "overtime_rate_percent":"150","branch_id":"","cost_center_id":"","project_id":"",
+            "termination_date":"",
+            "photo":(io.BytesIO(second_buffer.getvalue()), "new-profile.png"),
+        }, content_type="multipart/form-data")
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        second_path = conn.execute("SELECT photo_path FROM employees WHERE id=1").fetchone()[0]
+        conn.close()
+        self.assertNotEqual(second_path, first_path)
+        self.assertFalse(first_file.exists())
+        image_response = self.client.get("/hr/1/photo")
+        self.assertEqual(image_response.status_code, 200)
+        self.assertEqual(image_response.mimetype, "image/jpeg")
+        self.assertEqual(image_response.headers.get("Cache-Control"), "private, no-store")
+        self.assertIn(b"JFIF", image_response.data[:20])
+
+    def test_employee_photo_rejects_fake_image_payload_even_with_image_extension(self):
+        with self.app.app_context():
+            with self.assertRaisesRegex(ValueError, "تعذر قراءة الصورة"):
+                workforce._save_employee_photo(
+                    FileStorage(stream=io.BytesIO(b"not-an-image"), filename="fake.jpg")
+                )
 
     def test_independent_employee_grant_snapshots_calculation_and_posts_two_journals(self):
         conn=sqlite3.connect(self.db_path)
