@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal
+from code_sequences import next_code
 
 assets_bp = Blueprint("assets", __name__, url_prefix="/assets")
 
@@ -287,8 +288,9 @@ def index():
             purchase_date=date.fromisoformat(request.form["purchase_date"]).isoformat()
             ready_date=date.fromisoformat(request.form["ready_date"]).isoformat()
             if ready_date < purchase_date: raise ValueError("تاريخ الجاهزية لا يمكن أن يسبق تاريخ الشراء.")
-            if not request.form["asset_code"].strip() or not request.form["asset_name"].strip():
-                raise ValueError("كود الأصل واسم الأصل حقول إلزامية.")
+            if not request.form["asset_name"].strip():
+                raise ValueError("اسم الأصل حقل إلزامي.")
+            asset_code = next_code(c, "fixed_asset", "AST", "fixed_assets", "asset_code")
             method=request.form["depreciation_method"]
             if method not in {"straight_line","declining_balance"}: raise ValueError("طريقة الإهلاك غير صحيحة.")
             ids=[int(request.form[k]) for k in ("asset_account_id","accum_account_id","expense_account_id")]
@@ -303,7 +305,7 @@ def index():
             if method=="declining_balance" and not (Decimal("0") < Decimal(request.form.get("annual_rate","0")) <= Decimal("100")): raise ValueError("معدل الإهلاك السنوي يجب أن يكون أكبر من صفر ولا يتجاوز 100%.")
             asset_cursor = c.execute("""INSERT INTO fixed_assets(asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,useful_life_months,depreciation_method,annual_rate,total_units,asset_account_id,accum_account_id,expense_account_id,notes,created_by)
               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-              (request.form["asset_code"].strip(),request.form["asset_name"].strip(),request.form.get("category","").strip(),
+              (asset_code,request.form["asset_name"].strip(),request.form.get("category","").strip(),
                purchase_date,ready_date,str(cost),str(residual),life,method,
                request.form.get("annual_rate","0"),request.form.get("total_units","0"),*ids,request.form.get("notes",""),session["user_id"]))
             asset_id = asset_cursor.lastrowid
