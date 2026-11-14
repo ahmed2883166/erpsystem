@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}كشف حساب الموظف | NEXUS ERP{% endblock %}
+{% block content %}
+<header class="no-print"><h2>كشف حساب الموظف المالي</h2><p>{{employee.employee_code}} — {{employee.full_name}}</p><button type="button" onclick="window.print()">طباعة / حفظ PDF</button> <a class="button secondary" href="{{url_for('workforce.payroll_report',employee_id=employee.id)}}">تقرير المرتبات</a></header>
+<section class="panel">
+<form method="get" class="form-grid no-print">
+<label>من شهر<input type="month" name="month_from" value="{{month_from}}"></label>
+<label>إلى شهر<input type="month" name="month_to" value="{{month_to}}"></label>
+<button type="submit">عرض الفترة</button>
+</form>
+<div class="stats-grid">
+<div class="stat"><span>إجمالي الأجر قبل الخصومات</span><strong>{{summary.gross}}</strong></div>
+<div class="stat"><span>صافي المستحق</span><strong>{{summary.net}}</strong></div>
+<div class="stat"><span>ما تم صرفه للموظف والموزع عليه</span><strong>{{summary.paid}}</strong></div>
+<div class="stat"><span>المتبقي وفق التوزيعات</span><strong>{{summary.remaining}}</strong></div>
+<div class="stat"><span>تأمينات الشركة</span><strong>{{summary.employer_insurance}}</strong></div>
+</div>
+</section>
+<section class="panel"><h3>تفاصيل كل شهر وبنود الاستحقاق والاستقطاع</h3>
+{% for l in lines %}
+<h4>{{l.period}} — {{'مرحّل' if l.run_status=='posted' else 'معكوس'}}</h4>
+<table><tr><th>نوع البند</th><th>البيان</th><th>المبلغ</th><th>المصدر</th></tr>
+{% for item in details[l.id] %}<tr><td>{{{'earning':'استحقاق','deduction':'استقطاع','employer_cost':'تكلفة الشركة','information':'معلومة'}.get(item.section,item.section)}}</td><td>{{item.item_name}}</td><td>{{item.amount}}</td><td>{{'بيانات تاريخية مجمعة' if item.source_type=='legacy_aggregate' else item.source_type}}</td></tr>{% endfor %}
+<tr><th colspan="2">إجمالي الأجر</th><th>{{l.gross_pay}}</th><td></td></tr><tr><th colspan="2">صافي المستحق</th><th>{{l.net_pay}}</th><td></td></tr>
+<tr><td colspan="4"><a href="{{url_for('workforce.payroll_employee_payslip',run_id=l.run_id,employee_id=employee.id)}}">عرض / طباعة قسيمة المرتب</a> · <a href="{{url_for('journal_detail',entry_id=l.journal_entry_id)}}">القيد المحاسبي رقم {{l.journal_entry_id}}</a></td></tr>
+</table>
+<h5>دفعات الصرف المنسوبة لهذا الشهر</h5>
+<table><tr><th>تاريخ الصرف</th><th>المبلغ</th><th>المرجع</th><th>القيد</th></tr>
+{% for p in paid_by_line[l.id] %}<tr><td>{{p.payment_date}}</td><td>{{p.amount}}</td><td>{{p.reference}}</td><td>{{p.journal_entry_id}}</td></tr>{% else %}<tr><td colspan="4">لا توجد دفعات موزعة على الموظف لهذا الشهر.</td></tr>{% endfor %}</table>
+{% else %}<p>لا توجد مسيرات مرحلة في الفترة المحددة.</p>{% endfor %}
+</section>
+<section class="panel"><h3>سجل الجزاءات</h3><table><tr><th>التاريخ</th><th>شهر الخصم</th><th>السبب</th><th>المبلغ</th><th>الحالة</th></tr>
+{% for p in penalties %}<tr><td>{{p.penalty_date}}</td><td>{{p.effective_period}}</td><td>{{p.reason}}</td><td>{{p.amount}}</td><td>{{p.status}}</td></tr>{% else %}<tr><td colspan="5">لا توجد جزاءات خلال الفترة.</td></tr>{% endfor %}</table></section>
+{% if unallocated %}<section class="panel"><h3>دفعات قديمة غير موزعة على موظف بعينه</h3><p class="muted">هذه دفعات سُجلت قبل تفعيل التوزيع الفردي. لا ننسبها تلقائيًا للموظف حتى لا نعرض معلومة غير مؤكدة.</p><table><tr><th>الشهر</th><th>التاريخ</th><th>المبلغ الإجمالي للمسير</th><th>المرجع</th></tr>{% for p in unallocated %}<tr><td>{{p.period}}</td><td>{{p.payment_date}}</td><td>{{p.amount}}</td><td>{{p.reference}}</td></tr>{% endfor %}</table></section>{% endif %}
+<style>@media print{aside,.global-search,.global-report-actions,.theme-toggle,.no-print{display:none!important}main{margin:0!important;padding:0!important}.panel{break-inside:avoid}body{background:#fff!important;color:#000!important}}</style>
+{% endblock %}
