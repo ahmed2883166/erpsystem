@@ -20,9 +20,14 @@ def create_workforce_safety_backup():
     db_path = Path(workforce.DB_PATH)
     if not db_path.exists() or db_path.stat().st_size == 0:
         return None
+    check = sqlite3.connect(str(db_path))
+    try:
+        upgraded = check.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='employee_penalties'").fetchone()
+    finally:
+        check.close()
+    if upgraded:
+        return None
     marker = db_path.parent / ".nexus-workforce-schema-backup-v1"
-    if marker.exists():
-        return marker.read_text(encoding="utf-8").strip()
     backup_dir = db_path.parent / "migration_backups"
     archive = create_backup_archive(db_path, backup_dir, keep_count=20)
     marker.write_text(archive.name, encoding="utf-8")
