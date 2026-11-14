@@ -489,6 +489,8 @@ class StocktakeRouteTests(unittest.TestCase):
 
     def test_pending_purpose_and_setup_can_be_resolved_from_stock_queue(self):
         self._login()
+        with self.client.session_transaction() as session:
+            session["permissions"] = ["stock.manage", "stock.view"]
         conn = stock.get_db()
         pending_purpose_id = conn.execute("""INSERT INTO stock_movements(
             movement_no,movement_type,product_id,source_warehouse_id,quantity,unit_cost,
