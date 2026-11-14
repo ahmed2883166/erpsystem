@@ -83,7 +83,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
             ).fetchall()
             self.assertEqual(
                 [(x["account_id"], x["debit"], x["credit"]) for x in lines],
-                [(1, "100.00", "0"), (2, "0", "100.00")],
+                [(1, "100.00", "0.00"), (2, "0.00", "100.00")],
             )
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 5)
 
