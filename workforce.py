@@ -1920,6 +1920,159 @@ def print_employee_grant(grant_id):
                            show_basic=grant["calculation_method"]!="fixed")
 
 
+@workforce_bp.route("/hr/friday-allowance", methods=["GET", "POST"])
+@_role("admin", "accountant")
+def friday_allowance():
+    c = _db()
+    if request.method == "POST":
+        try:
+            period = request.form.get("period", "").strip()
+            month_start = date.fromisoformat(period + "-01")
+            if period != month_start.strftime("%Y-%m"):
+                raise ValueError("حدد شهرًا صحيحًا لبدل الجمعة.")
+            next_month = date(month_start.year + (1 if month_start.month == 12 else 0),
+                              1 if month_start.month == 12 else month_start.month + 1, 1)
+            month_end = next_month - date.resolution
+            expense_account_id = int(request.form["expense_account_id"])
+            payable_account_id = int(request.form["payable_account_id"])
+            expense_account = c.execute("""SELECT id,account_type,is_group,active FROM accounts WHERE id=?""",
+                                        (expense_account_id,)).fetchone()
+            payable_account = c.execute("""SELECT id,account_type,is_group,active FROM accounts WHERE id=?""",
+                                        (payable_account_id,)).fetchone()
+            if (not expense_account or not expense_account["active"] or expense_account["is_group"]
+                or expense_account["account_type"] != "expense"):
+                raise ValueError("اختر حساب مصروف أجور إضافية تفصيليًا ونشطًا.")
+            if (not payable_account or not payable_account["active"] or payable_account["is_group"]
+                or payable_account["account_type"] != "liability"):
+                raise ValueError("اختر حساب أجور إضافية مستحقة تفصيليًا ونشطًا.")
+            c.execute("BEGIN IMMEDIATE")
+            existing = c.execute("SELECT * FROM friday_allowance_batches WHERE period=?", (period,)).fetchone()
+            if existing and existing["status"] == "posted":
+                raise ValueError("تم ترحيل بدل الجمعة لهذا الشهر بالفعل ولا يمكن إعادة تكوينه.")
+            if existing:
+                batch_id = existing["id"]
+                c.execute("DELETE FROM friday_allowance_lines WHERE batch_id=?", (batch_id,))
+                c.execute("""UPDATE friday_allowance_batches SET expense_account_id=?,payable_account_id=?,
+                    total_amount='0' WHERE id=? AND status='draft'""",
+                    (expense_account_id,payable_account_id,batch_id))
+            else:
+                c.execute("""INSERT INTO friday_allowance_batches(period,expense_account_id,payable_account_id,
+                    total_amount,created_by) VALUES(?,?,?,'0',?)""",
+                    (period,expense_account_id,payable_account_id,session["user_id"]))
+                batch_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+            eligible = c.execute("""SELECT e.id,e.employee_code,e.full_name,e.basic_salary,
+                    e.branch_id,e.cost_center_id,e.project_id,COUNT(a.id) AS attendance_days
+                FROM employees e JOIN attendance_records a ON a.employee_id=e.id
+                WHERE e.active=1 AND e.friday_work_eligible=1
+                  AND a.status='present' AND strftime('%w',a.attendance_date)='5'
+                  AND a.attendance_date>=? AND a.attendance_date<?
+                  AND e.hire_date<=a.attendance_date
+                  AND (e.work_status NOT IN ('resigned','retired')
+                       OR e.termination_date>=a.attendance_date)
+                GROUP BY e.id ORDER BY e.employee_code""",
+                (month_start.isoformat(),next_month.isoformat())).fetchall()
+            if not eligible:
+                raise ValueError("لا يوجد موظفون مستحقون لديهم حضور مسجل في أيام الجمعة خلال هذا الشهر.")
+            total = Decimal("0")
+            for employee in eligible:
+                basic = M(employee["basic_salary"])
+                days = int(employee["attendance_days"])
+                amount = M(basic / Decimal("30") * Decimal("2") * Decimal(days))
+                if amount <= 0:
+                    continue
+                total += amount
+                c.execute("""INSERT INTO friday_allowance_lines(batch_id,employee_id,employee_code_snapshot,
+                    employee_name_snapshot,basic_salary_snapshot,attendance_days,amount,branch_id,cost_center_id,project_id)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    (batch_id,employee["id"],employee["employee_code"],employee["full_name"],str(basic),
+                     days,str(amount),employee["branch_id"],employee["cost_center_id"],employee["project_id"]))
+            total = M(total)
+            if total <= 0:
+                raise ValueError("إجمالي بدل الجمعة يساوي صفرًا؛ راجع الرواتب وأيام الحضور.")
+            c.execute("UPDATE friday_allowance_batches SET total_amount=? WHERE id=?",
+                      (str(total),batch_id))
+            _audit(c,"friday_allowance_prepared",period+" batch="+str(batch_id)+" total="+str(total))
+            c.commit()
+            flash("تم إعداد كشف بدل الجمعة للمراجعة. لم يتم ترحيل أي قيد حتى الآن.","success")
+        except (ValueError,KeyError,sqlite3.Error) as exc:
+            c.rollback()
+            flash(str(exc) or "تعذر إعداد كشف بدل الجمعة.","error")
+        c.close()
+        return redirect(url_for("workforce.friday_allowance",period=request.form.get("period","")))
+    selected_period = request.args.get("period",date.today().strftime("%Y-%m"))
+    try:
+        selected_start = date.fromisoformat(selected_period+"-01")
+        if selected_start.strftime("%Y-%m") != selected_period:
+            raise ValueError()
+    except ValueError:
+        selected_start = date.today().replace(day=1)
+        selected_period = selected_start.strftime("%Y-%m")
+    batches = c.execute("""SELECT b.*,ea.code AS expense_code,ea.name_ar AS expense_name,
+        pa.code AS payable_code,pa.name_ar AS payable_name
+        FROM friday_allowance_batches b JOIN accounts ea ON ea.id=b.expense_account_id
+        JOIN accounts pa ON pa.id=b.payable_account_id ORDER BY b.period DESC LIMIT 24""").fetchall()
+    batch_lines = {}
+    for batch in batches:
+        batch_lines[batch["id"]] = c.execute("""SELECT * FROM friday_allowance_lines
+            WHERE batch_id=? ORDER BY employee_code_snapshot""",(batch["id"],)).fetchall()
+    expense_accounts = c.execute("""SELECT id,code,name_ar FROM accounts
+        WHERE active=1 AND is_group=0 AND account_type='expense' ORDER BY code""").fetchall()
+    payable_accounts = c.execute("""SELECT id,code,name_ar FROM accounts
+        WHERE active=1 AND is_group=0 AND account_type='liability' ORDER BY code""").fetchall()
+    c.close()
+    return render_template("friday_allowance.html",batches=batches,batch_lines=batch_lines,
+        expense_accounts=expense_accounts,payable_accounts=payable_accounts,selected_period=selected_period)
+
+
+@workforce_bp.route("/hr/friday-allowance/<int:batch_id>/post", methods=["POST"])
+@_role("admin", "accountant")
+def post_friday_allowance(batch_id):
+    c = _db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        batch = c.execute("SELECT * FROM friday_allowance_batches WHERE id=?",(batch_id,)).fetchone()
+        if not batch or batch["status"] != "draft":
+            raise ValueError("كشف بدل الجمعة غير موجود أو سبق ترحيله.")
+        lines = c.execute("""SELECT * FROM friday_allowance_lines WHERE batch_id=?
+            ORDER BY employee_code_snapshot""",(batch_id,)).fetchall()
+        total = M(sum((D(line["amount"]) for line in lines),Decimal("0")))
+        if not lines or total <= 0 or total != M(batch["total_amount"]):
+            raise ValueError("تفاصيل بدل الجمعة لا تطابق إجمالي الكشف. أعد تكوين الكشف قبل الترحيل.")
+        expense_account = c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",
+                                     (batch["expense_account_id"],)).fetchone()
+        payable_account = c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",
+                                    (batch["payable_account_id"],)).fetchone()
+        if (not expense_account or not expense_account["active"] or expense_account["is_group"]
+            or expense_account["account_type"]!="expense"):
+            raise ValueError("حساب مصروف الأجور الإضافية غير صالح.")
+        if (not payable_account or not payable_account["active"] or payable_account["is_group"]
+            or payable_account["account_type"]!="liability"):
+            raise ValueError("حساب الأجور الإضافية المستحقة غير صالح.")
+        period_start = date.fromisoformat(batch["period"]+"-01")
+        next_month = date(period_start.year+(1 if period_start.month==12 else 0),
+                          1 if period_start.month==12 else period_start.month+1,1)
+        accrual_date = (next_month-date.resolution).isoformat()
+        journal_lines = []
+        for line in lines:
+            dims = {key:line[key] for key in ("branch_id","cost_center_id","project_id")}
+            journal_lines.append((batch["expense_account_id"],M(line["amount"]),0,
+                "بدل عمل أيام الجمعة - "+line["employee_code_snapshot"]+" "+line["employee_name_snapshot"],dims))
+        journal_lines.append((batch["payable_account_id"],0,total,"إجمالي بدل العمل أيام الجمعة المستحق"))
+        reference = "FRIDAY-ALLOWANCE-"+batch["period"]
+        journal_id = post_journal(c,accrual_date,reference,
+            "استحقاق بدل العمل أيام الجمعة عن "+batch["period"],journal_lines,session["user_id"])
+        c.execute("UPDATE friday_allowance_batches SET status='posted',journal_entry_id=? WHERE id=? AND status='draft'",
+                  (journal_id,batch_id))
+        _audit(c,"friday_allowance_posted",batch["period"]+" journal="+str(journal_id)+" total="+str(total))
+        c.commit()
+        flash("تم ترحيل بدل الجمعة وإنشاء قيد مصروف أجور إضافية إلى أجور إضافية مستحقة.","success")
+    except (ValueError,KeyError,sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc) or "تعذر ترحيل بدل الجمعة.","error")
+    c.close()
+    return redirect(url_for("workforce.friday_allowance"))
+
+
 @workforce_bp.route("/hr/attendance", methods=["GET", "POST"])
 @_role("admin", "accountant")
 def attendance():
