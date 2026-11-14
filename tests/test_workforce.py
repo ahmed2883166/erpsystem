@@ -513,5 +513,68 @@ class WorkforceTests(unittest.TestCase):
         self.assertGreater(float(row[4]), 0)
         self.assertGreater(float(row[5]), 0)
 
+
+    def test_collective_salary_decision_preview_then_apply_and_preserve_history(self):
+        self.add_employee()
+        conn=sqlite3.connect(self.db_path)
+        conn.execute("UPDATE employees SET insured_wage='8000' WHERE id=1")
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,work_status)
+            VALUES('E002','Employee Two','2026-01-01','7000','200','comprehensive_bonus')""")
+        conn.commit(); conn.close()
+        data={"decision_no":"DEC-2027-01","decision_date":"2027-01-01","effective_date":"2027-01-01",
+              "title":"علاوة دورية 2027","employee_scope":"permanent","calculation_type":"percentage",
+              "calculation_base":"basic","calculation_value":"10","treatment":"basic","notes":"قرار إداري"}
+        preview=self.client.post("/hr/salary-changes",data=data)
+        self.assertEqual(preview.status_code,200)
+        conn=sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT basic_salary FROM employees WHERE id=1").fetchone()[0],"10000")
+        conn.close()
+        applied=self.client.post("/hr/salary-changes",data={**data,"confirm":"1"})
+        self.assertEqual(applied.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        employee=conn.execute("SELECT basic_salary,raise_value,raise_effective_date FROM employees WHERE id=1").fetchone()
+        other=conn.execute("SELECT basic_salary FROM employees WHERE id=2").fetchone()[0]
+        history=conn.execute("""SELECT old_basic_salary,increase_amount,new_basic_salary,treatment
+            FROM employee_salary_history WHERE employee_id=1""").fetchone()
+        batch_count=conn.execute("SELECT COUNT(*) FROM salary_change_batches").fetchone()[0]
+        conn.close()
+        self.assertEqual(employee,("11000.00","0.00",""))
+        self.assertEqual(other,"7000")
+        self.assertEqual(history,("10000.00","1000.00","11000.00","basic"))
+        self.assertEqual(batch_count,1)
+
+    def test_collective_salary_decision_can_create_recurring_allowance_from_insured_wage(self):
+        self.add_employee()
+        conn=sqlite3.connect(self.db_path)
+        conn.execute("UPDATE employees SET insured_wage='8000' WHERE id=1")
+        conn.commit(); conn.close()
+        data={"decision_no":"DEC-ALLOW-01","decision_date":"2027-01-01","effective_date":"2027-01-01",
+              "title":"علاوة منفصلة","employee_scope":"permanent","calculation_type":"percentage",
+              "calculation_base":"insured_wage","calculation_value":"10","treatment":"allowance"}
+        response=self.client.post("/hr/salary-changes",data={**data,"confirm":"1"})
+        self.assertEqual(response.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        basic=conn.execute("SELECT basic_salary FROM employees WHERE id=1").fetchone()[0]
+        item=conn.execute("SELECT item_name,amount,item_type,active FROM employee_pay_items WHERE employee_id=1 ORDER BY id DESC LIMIT 1").fetchone()
+        history=conn.execute("SELECT old_basic_salary,increase_amount,new_basic_salary,treatment FROM employee_salary_history").fetchone()
+        conn.close()
+        self.assertEqual(basic,"10000")
+        self.assertEqual(item,("علاوة منفصلة (DEC-ALLOW-01)","800.00","allowance",1))
+        self.assertEqual(history,("10000.00","800.00","10000.00","allowance"))
+
+    def test_duplicate_salary_decision_number_is_rejected_without_double_increase(self):
+        self.add_employee()
+        data={"decision_no":"DUP-1","decision_date":"2027-01-01","effective_date":"2027-01-01",
+              "title":"قرار مكرر","employee_scope":"permanent","calculation_type":"fixed",
+              "calculation_base":"basic","calculation_value":"500","treatment":"basic"}
+        self.client.post("/hr/salary-changes",data={**data,"confirm":"1"})
+        response=self.client.post("/hr/salary-changes",data={**data,"confirm":"1"},follow_redirects=True)
+        conn=sqlite3.connect(self.db_path)
+        basic=conn.execute("SELECT basic_salary FROM employees WHERE id=1").fetchone()[0]
+        count=conn.execute("SELECT COUNT(*) FROM employee_salary_history").fetchone()[0]
+        conn.close()
+        self.assertEqual(basic,"10500.00")
+        self.assertEqual(count,1)
+
 if __name__ == "__main__":
     unittest.main()
