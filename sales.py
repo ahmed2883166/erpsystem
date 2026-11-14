@@ -2140,6 +2140,11 @@ def new_invoice():
                         ("branch_id", "cost_center_id", "project_id", "salesperson_id")
                     },
                     "sales_channel": request.form.get("sales_channel", "default"),
+                    "discount_override": {
+                        "discount_type": discount_type,
+                        "discount_value": str(discount_value),
+                        "discount_amount": str(discount_amount),
+                    },
                     "credit_override": bool(session.get("role") == "admin" and request.form.get("credit_override") == "1"),
                 }
                 c.execute("BEGIN IMMEDIATE")
@@ -2266,6 +2271,7 @@ def discount_approval(request_id):
                 payload.get("warehouse_id"), payload["items"], payload.get("tax_rate", "0"),
                 session["user_id"], allow_credit_override=bool(payload.get("credit_override")),
                 dimensions=payload.get("dimensions") or {},
+                discount_override=payload.get("discount_override"),
                 sales_channel=payload.get("sales_channel", "default"),
             )
             c.execute("UPDATE sales_invoices SET due_date=? WHERE id=?",
