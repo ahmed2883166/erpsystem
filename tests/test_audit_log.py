@@ -11,6 +11,7 @@ import report_exports as report_exports_module
 
 class AuditLogTests(unittest.TestCase):
     def setUp(self):
+        nexus_app.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
         self.temp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp.name) / "audit.db"
         self.connection = sqlite3.connect(self.db_path)
