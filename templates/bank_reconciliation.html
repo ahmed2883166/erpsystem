@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}التسوية البنكية | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <div><h2>التسوية البنكية ومطابقة كشف الحساب</h2><p class="muted">أدخل سطور كشف البنك، ثم طابق كل سطر مع حركة دفترية على الحساب نفسه وبنفس المبلغ والاتجاه. التحويل بين حسابين يظهر كطرف صادر وطرف وارد.</p></div>
+  <a class="btn secondary" href="{{ url_for('bank.index') }}">العودة للخزائن والبنوك</a>
+</header>
+<section class="panel">
+  <form method="get" class="form-grid">
+    <label>حساب البنك
+      <select name="account_id" required>{% for a in accounts %}<option value="{{ a.id }}" {% if account_id==a.id %}selected{% endif %}>{{ a.code }} - {{ a.name_ar }}</option>{% endfor %}</select>
+    </label>
+    <label>من تاريخ<input type="date" name="start_date" value="{{ start_date }}" required></label>
+    <label>إلى تاريخ<input type="date" name="end_date" value="{{ end_date }}" required></label>
+    <button type="submit">عرض الفترة</button>
+  </form>
+</section>
+{% if account_id %}
+<section class="panel">
+  <h3>ملخص الفترة</h3>
+  <div class="grid grid-3">
+    <div class="metric"><span>صافي حركة كشف البنك</span><strong>{{ statement_total|money }}</strong></div>
+    <div class="metric"><span>صافي الحركة الدفترية</span><strong>{{ book_total|money }}</strong></div>
+    <div class="metric"><span>الفرق (الكشف - الدفاتر)</span><strong>{{ difference|money }}</strong></div>
+  </div>
+  <p class="muted">عدد سطور الكشف المطابقة: {{ matched_count }} من {{ lines|length }}. الفرق هنا يقارن صافي حركات الفترة المدخلة؛ لا يمثل رصيد الإقفال إلا بعد إدخال جميع سطور الفترة وافتتاحيتها/إقفالها من كشف البنك.</p>
+</section>
+<section class="panel">
+  <h3>إضافة سطر من كشف البنك</h3>
+  <form method="post" class="form-grid">
+    <input type="hidden" name="action" value="add_line">
+    <input type="hidden" name="bank_account_id" value="{{ account_id }}">
+    <label>تاريخ الحركة<input type="date" name="statement_date" value="{{ today }}" required></label>
+    <label>المبلغ بإشارة الكشف<input type="number" name="signed_amount" step="0.01" required placeholder="الإيداع موجب والسحب سالب"></label>
+    <label>مرجع البنك<input name="bank_reference" placeholder="رقم العملية / المرجع"></label>
+    <label>البيان<input name="description"></label>
+    <button type="submit">إضافة سطر الكشف</button>
+  </form>
+</section>
+<section class="panel">
+  <h3>سطور كشف البنك</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>التاريخ</th><th>المبلغ</th><th>البيان</th><th>المرجع</th><th>الحالة</th><th>مطابقة مع حركة دفترية</th></tr></thead>
+    <tbody>
+    {% for l in lines %}
+      <tr>
+        <td>{{ l.statement_date }}</td><td>{{ l.signed_amount|money }}</td><td>{{ l.description }}</td><td>{{ l.bank_reference }}</td>
+        <td>{{ ('مطابق مع ' ~ l.transaction_no) if l.matched_transaction_id else 'غير مطابق' }}</td>
+        <td>
+        {% if not l.matched_transaction_id %}
+          <form method="post" class="inline-form">
+            <input type="hidden" name="action" value="match"><input type="hidden" name="line_id" value="{{ l.id }}">
+            <select name="transaction_id" required><option value="">اختر حركة دفترية</option>
+              {% for tx in book_rows %}<option value="{{ tx.id }}">{{ tx.transaction_no }} — {{ tx.transaction_date }} — {{ tx.signed_amount|money }} — {{ tx.description }}</option>{% endfor %}
+            </select><button class="secondary">مطابقة</button>
+          </form>
+        {% else %}<span class="muted">تمت المطابقة</span>{% endif %}
+        </td>
+      </tr>
+    {% else %}<tr><td colspan="6">لا توجد سطور كشف للفترة المحددة.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
+<section class="panel">
+  <h3>الحركات الدفترية على الحساب خلال الفترة</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>التاريخ</th><th>رقم الحركة</th><th>البيان</th><th>اتجاه الحساب</th><th>المبلغ بإشارة الكشف</th></tr></thead>
+    <tbody>{% for tx in book_rows %}
+      <tr><td>{{ tx.transaction_date }}</td><td>{{ tx.transaction_no }}</td><td>{{ tx.description }}</td><td>{{ 'وارد' if tx.signed_amount>0 else 'صادر' }}</td><td>{{ tx.signed_amount|money }}</td></tr>
+    {% else %}<tr><td colspan="5">لا توجد حركات دفترية على الحساب خلال الفترة.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+{% endblock %}
