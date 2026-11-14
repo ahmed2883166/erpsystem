@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from flask import Flask
@@ -126,6 +127,25 @@ class TaxCenterTests(unittest.TestCase):
         self.assertTrue(snapshot["ledger_reconciliation"]["available"])
         self.assertEqual(snapshot["ledger_reconciliation"]["output_difference"], 0)
         self.assertEqual(snapshot["ledger_reconciliation"]["input_difference"], 0)
+
+    def test_saudi_annual_tax_workpaper_uses_accounting_profit_without_calculating_tax(self):
+        conn = tax_center._db()
+        try:
+            conn.execute("UPDATE company_settings SET setting_value='SA' WHERE setting_key='tax_country'")
+            conn.commit()
+            with patch("income_statement.build_income_statement", return_value={
+                "revenue_total": 120000, "cogs_total": 45000, "gross_profit": 75000,
+                "operating_expense_total": 25000, "net_profit": 50000,
+            }) as build_statement:
+                snapshot = tax_center.build_tax_report_snapshot(conn, "2026-11")
+            build_statement.assert_called_once_with(conn, "2026-01-01", "2026-12-31")
+        finally:
+            conn.close()
+        prep = snapshot["saudi_preparation"]
+        self.assertTrue(prep["available"])
+        self.assertEqual(prep["net_profit"], 50000)
+        self.assertIsNone(prep["zakat_or_income_tax"])
+        self.assertIn("لم يتم احتساب", prep["notice"])
 
     def test_posted_purchase_tax_classification_is_locked(self):
         self.login()
