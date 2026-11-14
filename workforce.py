@@ -52,7 +52,8 @@ def initialize_workforce_schema():
       raise_mode TEXT NOT NULL DEFAULT 'basic', raise_effective_date TEXT NOT NULL DEFAULT '',
       overtime_rate_percent TEXT NOT NULL DEFAULT '150',
       branch_id INTEGER, cost_center_id INTEGER, project_id INTEGER, photo_path TEXT NOT NULL DEFAULT '',
-      termination_date TEXT NOT NULL DEFAULT ''
+      termination_date TEXT NOT NULL DEFAULT '',
+      friday_work_eligible INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS employee_pay_items(
       id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id),
@@ -164,6 +165,23 @@ def initialize_workforce_schema():
       UNIQUE(employee_id,attendance_date)
     );
     CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance_records(attendance_date,employee_id);
+    CREATE TABLE IF NOT EXISTS friday_allowance_batches(
+      id INTEGER PRIMARY KEY, period TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','posted')),
+      expense_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      payable_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      total_amount TEXT NOT NULL DEFAULT '0', journal_entry_id INTEGER UNIQUE,
+      created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS friday_allowance_lines(
+      id INTEGER PRIMARY KEY, batch_id INTEGER NOT NULL REFERENCES friday_allowance_batches(id) ON DELETE CASCADE,
+      employee_id INTEGER NOT NULL REFERENCES employees(id),
+      employee_code_snapshot TEXT NOT NULL, employee_name_snapshot TEXT NOT NULL,
+      basic_salary_snapshot TEXT NOT NULL, attendance_days INTEGER NOT NULL,
+      amount TEXT NOT NULL, branch_id INTEGER, cost_center_id INTEGER, project_id INTEGER,
+      UNIQUE(batch_id,employee_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_friday_allowance_batch ON friday_allowance_lines(batch_id,employee_code_snapshot);
     CREATE TABLE IF NOT EXISTS employee_grant_types(
       id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -297,6 +315,8 @@ def initialize_workforce_schema():
     }.items():
         if name not in employee_cols:
             c.execute("ALTER TABLE employees ADD COLUMN " + name + " " + definition)
+    if "friday_work_eligible" not in employee_cols:
+        c.execute("ALTER TABLE employees ADD COLUMN friday_work_eligible INTEGER NOT NULL DEFAULT 0")
     payroll_cols = {r["name"] for r in c.execute("PRAGMA table_info(payroll_lines)")}
     for name, definition in {
         "loan_deduction": "TEXT NOT NULL DEFAULT '0'",
@@ -422,6 +442,7 @@ def _employee_form_values(form):
         str(overtime_rate),
         form.get("branch_id") or None, form.get("cost_center_id") or None,
         form.get("project_id") or None, termination_date,
+        int(form.get("friday_work_eligible", "0") == "1"),
     )
 
 
@@ -573,8 +594,8 @@ def employees():
             c.execute("""INSERT INTO employees(employee_code,full_name,job_title,department,hire_date,basic_salary,
                 standard_hours,variable_salary,legal_category,insurance_number,insured_wage,insurance_enabled,address,national_id,
                 work_status,raise_type,raise_value,raise_mode,raise_effective_date,overtime_rate_percent,
-                branch_id,cost_center_id,project_id,termination_date,photo_path)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                branch_id,cost_center_id,project_id,termination_date,friday_work_eligible,photo_path)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (*values, photo_path or ""))
             _audit(c, "employee_created", values[0])
             c.commit()
@@ -618,13 +639,13 @@ def edit_employee(employee_id):
                 c.execute("""UPDATE employees SET employee_code=?,full_name=?,job_title=?,department=?,hire_date=?,
                     basic_salary=?,standard_hours=?,variable_salary=?,legal_category=?,insurance_number=?,insured_wage=?,insurance_enabled=?,
                     address=?,national_id=?,work_status=?,raise_type=?,raise_value=?,raise_mode=?,
-                    raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=?,termination_date=?,photo_path=? WHERE id=?""",
+                    raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=?,termination_date=?,friday_work_eligible=?,photo_path=? WHERE id=?""",
                     (*values, photo_path, employee_id))
             else:
                 c.execute("""UPDATE employees SET employee_code=?,full_name=?,job_title=?,department=?,hire_date=?,
                     basic_salary=?,standard_hours=?,variable_salary=?,legal_category=?,insurance_number=?,insured_wage=?,insurance_enabled=?,
                     address=?,national_id=?,work_status=?,raise_type=?,raise_value=?,raise_mode=?,
-                    raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=?,termination_date=? WHERE id=?""",
+                    raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=?,termination_date=?,friday_work_eligible=? WHERE id=?""",
                     (*values, employee_id))
             _audit(c, "employee_updated", values[0])
             c.commit()
