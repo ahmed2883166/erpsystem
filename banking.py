@@ -337,8 +337,10 @@ def statement_reconciliation():
                 WHERE l.bank_account_id=? AND l.statement_date BETWEEN ? AND ?
                 ORDER BY l.statement_date,l.id""",(account_id,period_start,period_end)).fetchall()
             gl_lines=c.execute("""SELECT jl.id journal_line_id,je.id entry_id,je.entry_date transaction_date,
-                je.reference transaction_no,je.description,jl.memo,jl.debit,jl.credit
+                je.reference transaction_no,je.description,jl.memo,jl.debit,jl.credit,
+                sl.id matched_statement_line_id
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                LEFT JOIN bank_statement_lines sl ON sl.matched_journal_line_id=jl.id
                 WHERE jl.account_id=? AND je.status='posted' AND je.entry_date BETWEEN ? AND ?
                 ORDER BY je.entry_date,je.id,jl.id""",(account_id,period_start,period_end)).fetchall()
             book_rows=[]
@@ -352,7 +354,7 @@ def statement_reconciliation():
                 statement_row=dict(statement_line)
                 statement_amount=Decimal(str(statement_row["signed_amount"])).quantize(Decimal("0.01"))
                 statement_row["candidates"]=[book_row for book_row in book_rows
-                    if book_row["signed_amount"]==statement_amount]
+                    if not book_row["matched_statement_line_id"] and book_row["signed_amount"]==statement_amount]
                 candidate_lines.append(statement_row)
             lines=candidate_lines
             statement_total=sum((Decimal(str(line["signed_amount"])) for line in lines),Decimal("0"))
