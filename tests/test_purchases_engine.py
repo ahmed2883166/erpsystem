@@ -406,7 +406,7 @@ class PurchasingAccountingTests(unittest.TestCase):
 
     def test_restaurant_goods_receipt_posts_inventory_by_product_category(self):
         purchases.init_purchase_schema()
-        self.db.execute("UPDATE company_settings SET setting_value='restaurant' WHERE setting_key='activity'")
+        self.db.execute("INSERT INTO company_settings(setting_key,setting_value) VALUES('activity','restaurant')")
         self.db.executemany(
             "INSERT INTO accounts(code,name_ar,account_type,is_group,active) VALUES(?,?,?,0,1)",
             [
