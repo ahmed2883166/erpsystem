@@ -1556,7 +1556,7 @@ def valuation_reconciliation():
             if not code:
                 raise ValueError("تعذر تحديد حساب المخزون للصنف " + product["sku"] + ".")
             layers = conn.execute("""SELECT warehouse_id,qty_remaining,unit_cost,value_remaining
-                FROM stock_valuation_layers WHERE product_id=? AND CAST(qty_remaining AS REAL)>0""",
+                FROM stock_valuation_layers WHERE product_id=? AND (CAST(COALESCE(qty_remaining,'0') AS REAL)<>0 OR CAST(COALESCE(value_remaining,'0') AS REAL)<>0)""",
                 (product["id"],)).fetchall()
             value = D("0")
             for layer in layers:
