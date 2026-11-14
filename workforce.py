@@ -157,7 +157,7 @@ def initialize_workforce_schema():
     );
     CREATE TABLE IF NOT EXISTS attendance_records(
       id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id),
-      attendance_date TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('present','absent','permission','holiday')),
+      attendance_date TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('present','absent','permission','holiday','annual_leave','sick_leave','unpaid_leave')),
       check_in TEXT NOT NULL DEFAULT '', check_out TEXT NOT NULL DEFAULT '',
       absence_hours TEXT NOT NULL DEFAULT '0', approved_overtime_hours TEXT NOT NULL DEFAULT '0',
       notes TEXT NOT NULL DEFAULT '', recorded_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -191,6 +191,31 @@ def initialize_workforce_schema():
     c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('annual','إجازة سنوية',1,1)")
     c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('unpaid','إجازة بدون أجر',0,0)")
     c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('sick','إجازة مرضية',1,0)")
+    attendance_sql = c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='attendance_records'").fetchone()
+    if attendance_sql and "'annual_leave'" not in (attendance_sql["sql"] or ""):
+        c.execute("PRAGMA foreign_keys=OFF")
+        try:
+            c.execute("BEGIN IMMEDIATE")
+            c.execute("""CREATE TABLE attendance_records_rebuilt(
+                id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id),
+                attendance_date TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('present','absent','permission','holiday','annual_leave','sick_leave','unpaid_leave')),
+                check_in TEXT NOT NULL DEFAULT '', check_out TEXT NOT NULL DEFAULT '',
+                absence_hours TEXT NOT NULL DEFAULT '0', approved_overtime_hours TEXT NOT NULL DEFAULT '0',
+                notes TEXT NOT NULL DEFAULT '', recorded_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(employee_id,attendance_date))""")
+            c.execute("""INSERT INTO attendance_records_rebuilt
+                SELECT id,employee_id,attendance_date,status,check_in,check_out,absence_hours,
+                       approved_overtime_hours,notes,recorded_by,created_at FROM attendance_records""")
+            c.execute("DROP TABLE attendance_records")
+            c.execute("ALTER TABLE attendance_records_rebuilt RENAME TO attendance_records")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance_records(attendance_date,employee_id)")
+            c.commit()
+        except Exception:
+            c.rollback()
+            raise
+        finally:
+            c.execute("PRAGMA foreign_keys=ON")
     # Allow a reversed payroll period to be prepared again while keeping only one
     # non-reversed payroll run per period. Preserve run IDs and all linked history.
     payroll_runs_sql = c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='payroll_runs'").fetchone()
@@ -1639,11 +1664,57 @@ def attendance():
         date.fromisoformat(selected_date)
     except ValueError:
         selected_date = date.today().isoformat()
+    if request.method == "POST" and request.form.get("save_month") == "1":
+        try:
+            selected_month = request.form.get("month", date.today().strftime("%Y-%m"))
+            month_start = date.fromisoformat(selected_month + "-01")
+            next_month = date(month_start.year + (1 if month_start.month == 12 else 0),
+                              1 if month_start.month == 12 else month_start.month + 1, 1)
+            days_count = (next_month-month_start).days
+            allowed = {"present","absent","permission","holiday","annual_leave","sick_leave","unpaid_leave",""}
+            employee_ids = [int(x["id"]) for x in c.execute("SELECT id FROM employees WHERE active=1").fetchall()]
+            c.execute("BEGIN IMMEDIATE")
+            for employee_id in employee_ids:
+                for day_number in range(1,days_count+1):
+                    status = request.form.get(f"status_{employee_id}_{day_number}","").strip()
+                    if status not in allowed:
+                        raise ValueError("حالة حضور غير صحيحة.")
+                    if not status:
+                        continue
+                    day_date = date(month_start.year,month_start.month,day_number).isoformat()
+                    check_in = request.form.get(f"check_in_{employee_id}_{day_number}","").strip()
+                    check_out = request.form.get(f"check_out_{employee_id}_{day_number}","").strip()
+                    for tm in (check_in,check_out):
+                        if tm: datetime.strptime(tm,"%H:%M")
+                    if check_in and check_out and check_out<=check_in:
+                        raise ValueError("وقت الانصراف يجب أن يكون بعد وقت الحضور.")
+                    absence = D(request.form.get(f"absence_{employee_id}_{day_number}","0"))
+                    overtime = D(request.form.get(f"overtime_{employee_id}_{day_number}","0"))
+                    if min(absence,overtime)<0 or absence>24 or overtime>24:
+                        raise ValueError("ساعات الغياب أو الإضافي خارج النطاق.")
+                    if status=="absent" and absence<=0: absence=Decimal("8")
+                    if status!="absent": absence=Decimal("0")
+                    c.execute("""INSERT INTO attendance_records(employee_id,attendance_date,status,check_in,check_out,
+                        absence_hours,approved_overtime_hours,notes,recorded_by) VALUES(?,?,?,?,?,?,?,?,?)
+                        ON CONFLICT(employee_id,attendance_date) DO UPDATE SET status=excluded.status,
+                        check_in=excluded.check_in,check_out=excluded.check_out,absence_hours=excluded.absence_hours,
+                        approved_overtime_hours=excluded.approved_overtime_hours,notes=excluded.notes,
+                        recorded_by=excluded.recorded_by""",
+                        (employee_id,day_date,status,check_in,check_out,str(M(absence)),str(M(overtime)),
+                         request.form.get(f"notes_{employee_id}_{day_number}","").strip(),session["user_id"]))
+            _audit(c,"attendance_month_saved",selected_month)
+            c.commit()
+            flash("تم حفظ مصفوفة الحضور للشهر المحدد.", "success")
+        except (ValueError,KeyError,sqlite3.Error) as exc:
+            c.rollback()
+            flash(str(exc) or "تعذر حفظ مصفوفة الحضور.", "error")
+        c.close()
+        return redirect(url_for("workforce.attendance",month=request.form.get("month",date.today().strftime("%Y-%m"))))
     if request.method == "POST":
         try:
             employee_id = int(request.form["employee_id"])
             status = request.form.get("status","present")
-            if status not in {"present","absent","permission","holiday"}:
+            if status not in {"present","absent","permission","holiday","annual_leave","sick_leave","unpaid_leave"}:
                 raise ValueError("حالة الحضور غير صحيحة.")
             check_in = request.form.get("check_in","").strip()
             check_out = request.form.get("check_out","").strip()
@@ -1679,12 +1750,28 @@ def attendance():
             flash(str(exc) or "تعذر حفظ سجل الحضور.","error")
         c.close()
         return redirect(url_for("workforce.attendance",attendance_date=selected_date))
+    selected_month = request.values.get("month", selected_date[:7])
+    try:
+        month_start = date.fromisoformat(selected_month + "-01")
+    except ValueError:
+        month_start = date.today().replace(day=1)
+        selected_month = month_start.strftime("%Y-%m")
+    next_month = date(month_start.year + (1 if month_start.month == 12 else 0),
+                      1 if month_start.month == 12 else month_start.month + 1, 1)
+    days_count = (next_month-month_start).days
     employees = c.execute("SELECT id,employee_code,full_name FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
-    records = c.execute("""SELECT a.*,e.employee_code,e.full_name FROM attendance_records a
-        JOIN employees e ON e.id=a.employee_id WHERE a.attendance_date=? ORDER BY e.employee_code""",
-        (selected_date,)).fetchall()
+    month_records = c.execute("SELECT * FROM attendance_records WHERE attendance_date>=? AND attendance_date<? ORDER BY employee_id,attendance_date",
+        (month_start.isoformat(),next_month.isoformat())).fetchall()
+    by_employee = {}
+    for record in month_records:
+        by_employee.setdefault(record["employee_id"], {})[int(record["attendance_date"][-2:])] = dict(record)
+    grid = [{"employee":e,"days":[by_employee.get(e["id"],{}).get(day,{}) for day in range(1,days_count+1)]}
+            for e in employees]
     c.close()
-    return render_template("attendance.html",employees=employees,records=records,selected_date=selected_date)
+    return render_template("attendance.html",employees=employees,records=[],selected_date=selected_date,
+        selected_month=selected_month,days=range(1,days_count+1),grid=grid,
+        status_labels={"present":"حاضر","absent":"غائب","permission":"إذن","holiday":"عطلة",
+        "annual_leave":"إجازة سنوية","sick_leave":"إجازة مرضية","unpaid_leave":"إجازة بدون مرتب"})
 
 
 @workforce_bp.route("/hr/leaves", methods=["GET", "POST"])
