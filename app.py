@@ -2693,7 +2693,7 @@ def import_data_wizard():
                         if record_type == "customer":
                             customer = connection.execute("SELECT * FROM customers WHERE code=? AND active=1",
                                 (clean.get("customer_code", ""),)).fetchone()
-                            amount = Decimal(clean.get("amount", ""))
+                            amount = Decimal(clean.get("amount", "")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                             if not customer or not amount.is_finite() or amount <= 0:
                                 raise ValueError("تأكد من كود العميل النشط والمبلغ الموجب.")
                             ar_code = posting.get("ar")
@@ -2723,7 +2723,7 @@ def import_data_wizard():
                         elif record_type == "supplier":
                             supplier = connection.execute("SELECT * FROM suppliers WHERE code=? AND active=1",
                                 (clean.get("supplier_code", ""),)).fetchone()
-                            amount = Decimal(clean.get("amount", ""))
+                            amount = Decimal(clean.get("amount", "")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                             if not supplier or not amount.is_finite() or amount <= 0:
                                 raise ValueError("تأكد من كود المورد النشط والمبلغ الموجب.")
                             ap_code = posting.get("supplier_ap")
@@ -2751,8 +2751,8 @@ def import_data_wizard():
                                 (clean.get("sku", ""),)).fetchone()
                             warehouse = connection.execute("SELECT * FROM stock_warehouses WHERE code=? AND active=1",
                                 (clean.get("warehouse_code", ""),)).fetchone()
-                            qty = Decimal(clean.get("quantity", ""))
-                            unit_cost = Decimal(clean.get("unit_cost", ""))
+                            qty = Decimal(clean.get("quantity", "")).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+                            unit_cost = Decimal(clean.get("unit_cost", "")).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
                             if not product or not warehouse or not qty.is_finite() or not unit_cost.is_finite() or qty <= 0 or unit_cost < 0:
                                 raise ValueError("تأكد من كود الصنف والمخزن والكمية الموجبة والتكلفة غير السالبة.")
                             amount = (qty * unit_cost).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
