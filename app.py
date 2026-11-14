@@ -2132,7 +2132,7 @@ def journal_detail(entry_id):
         connection.close()
         flash("القيد المحاسبي غير موجود.", "error")
         return redirect(url_for("trial_balance"))
-    # Resolve the two-way relationship using the immutable REV-{original_id} reference.
+    # Reversal chains are linked by immutable REV-{source_entry_id} references.
     reversal_entry = connection.execute(
         "SELECT id,entry_date,reference,description FROM journal_entries "
         "WHERE reference=? AND status='posted' ORDER BY id LIMIT 1",
@@ -2254,19 +2254,25 @@ def accounting_period_state(period_id):
 @requires("journal.manage")
 def reverse_journal(entry_id):
     connection = db()
+    # Serialize reversal checks and posting so two simultaneous requests cannot
+    # create duplicate reversals for the same journal.
+    connection.execute("BEGIN IMMEDIATE")
     original = connection.execute("SELECT * FROM journal_entries WHERE id=? AND status='posted'", (entry_id,)).fetchone()
     if not original:
         connection.close()
         flash("لا يمكن عكس قيد غير موجود أو غير مرحّل.", "error")
         return redirect(url_for("trial_balance"))
-    # A reversal is a terminal correction document: it must never itself be reversed.
+    # Reversals may themselves be reversed once. Each document is linked by
+    # REV-{entry_id}; this creates an auditable chain instead of editing history.
     original_reference = str(original["reference"] or "")
-    if (original_reference.startswith("REV-") and original_reference[4:].isdigit()) or str(
-        original["description"] or ""
-    ).startswith("قيد عكسي للقيد رقم "):
-        connection.close()
-        flash("ممنوع عكس القيد العكسي. إذا كان هناك خطأ، أنشئ قيد تسوية جديدًا موضحًا سبب التصحيح.", "error")
-        return redirect(url_for("journal_detail", entry_id=entry_id))
+    reversal_parent_id = None
+    if original_reference.startswith("REV-") and original_reference[4:].isdigit():
+        reversal_parent_id = int(original_reference[4:])
+    elif str(original["description"] or "").startswith("قيد عكسي للقيد رقم "):
+        import re
+        legacy_match = re.match(r"قيد عكسي للقيد رقم (\\d+)", str(original["description"] or ""))
+        if legacy_match:
+            reversal_parent_id = int(legacy_match.group(1))
     # Refuse a second reversal even if an old record was created without the expected reference.
     existing_reversal = connection.execute(
         "SELECT id FROM journal_entries WHERE reference=? AND status='posted' LIMIT 1",
@@ -2294,6 +2300,29 @@ def reverse_journal(entry_id):
         connection.close()
         flash("هذا قيد افتتاح أو إقفال مرتبط بسنة مالية؛ استخدم إجراء العكس من شاشة إدارة السنوات المالية حتى تُحدّث حالة السنة والارتباطات بأمان.", "error")
         return redirect(url_for("planning.financial_years"))
+    # If this is the reversal of a fixed-asset acquisition reversal, reinstate
+    # the original asset only after checking that no depreciation/disposal exists.
+    reinstated_asset_rows = []
+    if reversal_parent_id is not None and connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fixed_asset_journal_lines'"
+    ).fetchone():
+        reinstated_asset_rows = connection.execute("""
+            SELECT p.journal_line_id,p.status,p.fixed_asset_id
+            FROM fixed_asset_journal_lines p WHERE p.entry_id=?
+        """, (reversal_parent_id,)).fetchall()
+        for asset_link in reinstated_asset_rows:
+            if asset_link["status"] == "reversed" and asset_link["fixed_asset_id"]:
+                asset_id = asset_link["fixed_asset_id"]
+                has_depreciation = connection.execute(
+                    "SELECT 1 FROM asset_depreciations WHERE asset_id=? LIMIT 1", (asset_id,)
+                ).fetchone()
+                has_disposal = connection.execute(
+                    "SELECT 1 FROM asset_disposals WHERE asset_id=? LIMIT 1", (asset_id,)
+                ).fetchone()
+                if has_depreciation or has_disposal:
+                    connection.close()
+                    flash("لا يمكن إعادة تفعيل الأصل بعكس القيد العكسي لوجود إهلاك أو استبعاد. استخدم تسوية الأصل المعتمدة.", "error")
+                    return redirect(url_for("journal_detail", entry_id=entry_id))
     # A journal line tagged as a fixed-asset acquisition must also update
     # its asset-register link when reversed. Once depreciation/disposal exists,
     # the acquisition cannot be reversed as a plain journal entry.
@@ -2370,6 +2399,19 @@ def reverse_journal(entry_id):
                         "UPDATE fixed_assets SET status='reversed' WHERE id=?",
                         (asset_link["fixed_asset_id"],),
                     )
+        if reinstated_asset_rows:
+            for asset_link in reinstated_asset_rows:
+                if asset_link["status"] == "reversed":
+                    connection.execute(
+                        "UPDATE fixed_asset_journal_lines SET status=? WHERE journal_line_id=?",
+                        ("configured" if asset_link["fixed_asset_id"] else "pending",
+                         asset_link["journal_line_id"]),
+                    )
+                    if asset_link["fixed_asset_id"]:
+                        connection.execute(
+                            "UPDATE fixed_assets SET status='active' WHERE id=? AND status='reversed'",
+                            (asset_link["fixed_asset_id"],),
+                        )
         connection.commit()
         reversal_entry = connection.execute(
             "SELECT id,entry_date,reference,description,status FROM journal_entries WHERE id=?",
