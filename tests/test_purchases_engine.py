@@ -196,12 +196,14 @@ class PurchasingAccountingTests(unittest.TestCase):
             (product_id, warehouse_id),
         )
         remaining = self.db.execute(
-            """SELECT qty_remaining FROM stock_valuation_layers
+            """SELECT qty_remaining,value_remaining FROM stock_valuation_layers
                WHERE product_id=? ORDER BY id""",
             (product_id,),
         ).fetchall()
         self.assertEqual([Decimal(row["qty_remaining"]) for row in remaining],
                          [Decimal("0"), Decimal("5")])
+        self.assertEqual([Decimal(row["value_remaining"]) for row in remaining],
+                         [Decimal("0.00"), Decimal("60.00")])
         self.assertEqual(
             Decimal(stock.current_qty(self.db, product_id, warehouse_id)),
             Decimal("5"),
