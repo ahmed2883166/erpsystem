@@ -6,6 +6,7 @@ from pathlib import Path
 from flask import Flask
 import workforce
 import workforce_extras
+import payroll_compliance
 
 
 class WorkforceExtrasTests(unittest.TestCase):
@@ -13,7 +14,9 @@ class WorkforceExtrasTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp.name) / "nexus-extras.db"
         self.original_path = workforce.DB_PATH
+        self.original_compliance_path = payroll_compliance.DB_PATH
         workforce.DB_PATH = self.db_path
+        payroll_compliance.DB_PATH = self.db_path
         conn = sqlite3.connect(self.db_path)
         conn.executescript("""
             CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,account_type TEXT,
@@ -26,6 +29,7 @@ class WorkforceExtrasTests(unittest.TestCase):
         conn.commit()
         conn.close()
         workforce.initialize_workforce_schema()
+        payroll_compliance.initialize_payroll_compliance_schema()
         workforce_extras.initialize_workforce_extras_schema()
         conn = sqlite3.connect(self.db_path)
         conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours)
@@ -51,6 +55,7 @@ class WorkforceExtrasTests(unittest.TestCase):
 
     def tearDown(self):
         workforce.DB_PATH = self.original_path
+        payroll_compliance.DB_PATH = self.original_compliance_path
         self.temp.cleanup()
 
     def test_penalty_requires_approval_and_is_snapshotted_in_payroll(self):
