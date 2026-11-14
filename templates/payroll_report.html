@@ -41,7 +41,7 @@
         <th>الشهر</th><th>كود الموظف</th><th>اسم الموظف</th><th>القسم</th>
         <th>الأساسي</th><th>العلاوة</th><th>البدلات</th><th>الحوافز</th>
         <th>الإضافي</th><th>إجمالي الأجر</th><th>خصم الغياب</th>
-        <th>السلف المستردة</th><th>قسط القرض</th><th>خصومات أخرى</th>
+        <th>السلف المستردة</th><th>قسط القرض</th><th>خصومات أخرى</th><th>الجزاءات</th>
         <th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th>
         <th>إجمالي خصومات الموظف</th><th>تكلفة الأجر على الشركة</th>
         <th>صافي المستحق</th><th>تم صرفه</th><th>المتبقي</th><th>كشف الموظف</th><th>القسيمة</th>
@@ -52,14 +52,14 @@
           <td>{{ r.period }}</td><td>{{ r.employee_code }}</td><td>{{ r.full_name }}</td><td>{{ r.department or '-' }}</td>
           <td>{{ r.basic_salary }}</td><td>{{ r.salary_raise }}</td><td>{{ r.allowances }}</td><td>{{ r.incentives }}</td>
           <td>{{ r.overtime_amount }}</td><td>{{ r.gross_pay }}</td><td>{{ r.absence_deduction }}</td>
-          <td>{{ r.manual_advance_deduction }}</td><td>{{ r.loan_deduction }}</td><td>{{ r.other_deductions }}</td>
+          <td>{{ r.manual_advance_deduction }}</td><td>{{ r.loan_deduction }}</td><td>{{ r.other_deductions }}</td><td>{{r.penalty_deduction}}</td>
           <td>{{ r.taxable_income_tax }}</td><td>{{ r.employee_insurance }}</td><td>{{ r.employer_insurance }}</td>
           <td>{{ r.employee_deductions }}</td><td>{{ r.employer_total_cost }}</td><td><strong>{{ r.net_pay }}</strong></td><td>{{r.paid_amount}}</td><td>{{r.remaining_payable}}</td>
           <td><a href="{{url_for('workforce.employee_financial_statement',employee_id=r.employee_id,month_from=month_from,month_to=month_to)}}">كشف الموظف</a></td>
           <td><a href="{{ url_for('report_exports.export_report_excel', report='payroll-payslip', run_id=r.run_id, employee_id=r.employee_id).replace('/excel','/pdf') }}">PDF</a> · <a href="{{ url_for('report_exports.export_report_excel', report='payroll-payslip', run_id=r.run_id, employee_id=r.employee_id) }}">Excel</a></td>
         </tr>
       {% else %}
-        <tr><td colspan="24">لا توجد مسيرات مرحلة مطابقة للفلاتر المختارة.</td></tr>
+        <tr><td colspan="25">لا توجد مسيرات مرحلة مطابقة للفلاتر المختارة.</td></tr>
       {% endfor %}
       </tbody>
       {% if rows %}
@@ -67,7 +67,7 @@
         <th>{{ totals.basic_salary }}</th><th>{{ totals.salary_raise }}</th><th>{{ totals.allowances }}</th>
         <th>{{ totals.incentives }}</th><th>{{ totals.overtime_amount }}</th><th>{{ totals.gross_pay }}</th>
         <th>{{ totals.absence_deduction }}</th><th>{{ totals.manual_advance_deduction }}</th><th>{{ totals.loan_deduction }}</th>
-        <th>{{ totals.other_deductions }}</th><th>{{ totals.taxable_income_tax }}</th><th>{{ totals.employee_insurance }}</th>
+        <th>{{ totals.other_deductions }}</th><th>{{totals.penalty_deduction}}</th><th>{{ totals.taxable_income_tax }}</th><th>{{ totals.employee_insurance }}</th>
         <th>{{ totals.employer_insurance }}</th><th>{{ totals.employee_deductions }}</th><th>{{ totals.employer_total_cost }}</th>
         <th>{{ totals.net_pay }}</th><th>{{totals.paid_amount}}</th><th>{{totals.remaining_payable}}</th><th></th><th></th>
       </tr></tfoot>
