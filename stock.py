@@ -729,9 +729,12 @@ def uoms():
                 is_base=int(request.form.get("is_base")=="on")
                 category=c.execute("SELECT id FROM stock_uom_categories WHERE id=? AND active=1",(category_id,)).fetchone()
                 if not category or not code or not name or factor<=0: raise ValueError("أدخل المجموعة والكود والاسم ومعامل تحويل أكبر من صفر.")
+                existing_base=c.execute("SELECT 1 FROM stock_uoms WHERE category_id=? AND is_base=1 AND active=1",(category_id,)).fetchone()
                 if is_base and factor!=1: raise ValueError("وحدة الأساس يجب أن يكون معاملها 1.")
-                if is_base and c.execute("SELECT 1 FROM stock_uoms WHERE category_id=? AND is_base=1 AND active=1",(category_id,)).fetchone():
+                if is_base and existing_base:
                     raise ValueError("يوجد بالفعل وحدة أساس نشطة لهذه المجموعة.")
+                if not is_base and not existing_base:
+                    raise ValueError("أضف وحدة الأساس أولًا لهذه المجموعة بمعامل تحويل يساوي 1.")
                 c.execute("INSERT INTO stock_uoms(category_id,code,name_ar,factor_to_base,is_base) VALUES(?,?,?,?,?)",
                     (category_id,code,name,str(factor),is_base))
                 flash("تم حفظ وحدة القياس.","success")
