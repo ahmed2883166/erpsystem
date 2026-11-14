@@ -44,6 +44,25 @@ def init_bank_schema():
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_cash_accounts_kind_active ON cash_accounts(kind,active);
+    CREATE TABLE IF NOT EXISTS bank_statement_lines(
+      id INTEGER PRIMARY KEY,
+      bank_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      statement_date TEXT NOT NULL,
+      signed_amount TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      bank_reference TEXT NOT NULL DEFAULT '',
+      matched_transaction_id INTEGER REFERENCES bank_transactions(id),
+      matched_side TEXT CHECK(matched_side IN ('source','destination')),
+      matched_at TEXT,
+      matched_by INTEGER,
+      created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_bank_statement_account_date
+      ON bank_statement_lines(bank_account_id,statement_date,id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_statement_tx_side
+      ON bank_statement_lines(matched_transaction_id,matched_side)
+      WHERE matched_transaction_id IS NOT NULL;
     """)
     c.close()
 
@@ -153,6 +172,123 @@ def reconcile(transaction_id):
     return redirect(url_for("bank.index"))
 
 
+
+
+
+@bank_bp.route("/reconciliation", methods=["GET", "POST"])
+@require()
+def statement_reconciliation():
+    c=db()
+    try:
+        if request.method=="POST":
+            action=request.form.get("action","add_line")
+            if action=="add_line":
+                account_id=request.form.get("bank_account_id",type=int)
+                statement_date=request.form.get("statement_date","").strip()
+                amount=Decimal(request.form.get("signed_amount","")).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)
+                reference=request.form.get("bank_reference","").strip()
+                description=request.form.get("description","").strip()
+                if amount==0: raise ValueError("قيمة حركة كشف البنك لا يمكن أن تكون صفرًا.")
+                date.fromisoformat(statement_date)
+                account=c.execute("""SELECT a.id FROM accounts a
+                    WHERE a.id=? AND a.account_type='asset' AND a.is_group=0 AND a.active=1
+                    AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.kind='bank' AND ca.active=1)
+                      OR lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%')""",
+                    (account_id,)).fetchone()
+                if not account: raise ValueError("اختر حساب بنك نشطًا من سجل الخزائن والبنوك.")
+                duplicate=c.execute("""SELECT id FROM bank_statement_lines
+                    WHERE bank_account_id=? AND statement_date=? AND signed_amount=? AND bank_reference=?""",
+                    (account_id,statement_date,str(amount),reference)).fetchone()
+                if duplicate: raise ValueError("سطر كشف البنك موجود بالفعل بنفس الحساب والتاريخ والمبلغ والمرجع.")
+                cur=c.execute("""INSERT INTO bank_statement_lines(
+                    bank_account_id,statement_date,signed_amount,description,bank_reference,created_by)
+                    VALUES(?,?,?,?,?,?)""",
+                    (account_id,statement_date,str(amount),description,reference,session.get("user_id")))
+                c.commit()
+                g.audit_created_record=("bank_statement_lines",cur.lastrowid,None,None)
+                flash("تمت إضافة سطر كشف البنك للمطابقة.","success")
+                return redirect(url_for("bank.statement_reconciliation",account_id=account_id))
+            if action=="match":
+                line_id=request.form.get("line_id",type=int)
+                transaction_id=request.form.get("transaction_id",type=int)
+                line=c.execute("SELECT * FROM bank_statement_lines WHERE id=?",(line_id,)).fetchone()
+                tx=c.execute("SELECT * FROM bank_transactions WHERE id=?",(transaction_id,)).fetchone()
+                if not line or not tx: raise ValueError("سطر الكشف أو الحركة الدفترية غير موجود.")
+                if line["matched_transaction_id"]: raise ValueError("سطر كشف البنك تمت مطابقته بالفعل.")
+                side=None
+                expected=None
+                amount=Decimal(str(tx["amount"])).quantize(Decimal("0.01"))
+                if tx["bank_account_id"]==line["bank_account_id"]:
+                    side="source"
+                    expected=amount if tx["transaction_type"]=="deposit" else -amount
+                elif tx["transaction_type"]=="transfer" and tx["destination_bank_account_id"]==line["bank_account_id"]:
+                    side="destination"
+                    expected=amount
+                else:
+                    raise ValueError("الحركة الدفترية لا تخص حساب البنك المحدد في سطر الكشف.")
+                statement_amount=Decimal(str(line["signed_amount"])).quantize(Decimal("0.01"))
+                if expected!=statement_amount:
+                    raise ValueError("المبلغ أو اتجاه الحركة غير متطابق. الإيداع موجب والسحب/العمولة/التحويل الصادر سالب.")
+                already=c.execute("""SELECT 1 FROM bank_statement_lines
+                    WHERE matched_transaction_id=? AND matched_side=? LIMIT 1""",(transaction_id,side)).fetchone()
+                if already: raise ValueError("هذا الطرف من الحركة الدفترية تمت مطابقته من قبل.")
+                c.execute("""UPDATE bank_statement_lines SET matched_transaction_id=?,matched_side=?,
+                    matched_at=?,matched_by=? WHERE id=?""",
+                    (transaction_id,side,datetime.now().isoformat(timespec="seconds"),session.get("user_id"),line_id))
+                c.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
+                    VALUES(?,?,?,?)""",(session.get("user_id"),"bank_statement_match",
+                    f"مطابقة سطر كشف #{line_id} مع الحركة {tx['transaction_no']} ({side})",
+                    datetime.now().isoformat(timespec="seconds")))
+                c.commit()
+                flash("تمت مطابقة سطر كشف البنك مع الحركة الدفترية بعد التحقق من الحساب والمبلغ والاتجاه.","success")
+                return redirect(url_for("bank.statement_reconciliation",account_id=line["bank_account_id"]))
+            raise ValueError("الإجراء المطلوب غير معروف.")
+        account_id=request.args.get("account_id",type=int)
+        accounts=c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
+            WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
+            AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.kind='bank' AND ca.active=1)
+              OR lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%')
+            ORDER BY a.code""").fetchall()
+        if account_id is None and accounts:
+            account_id=accounts[0]["id"]
+        today=date.today()
+        period_start=request.args.get("start_date",today.replace(day=1).isoformat())
+        period_end=request.args.get("end_date",today.isoformat())
+        if account_id:
+            lines=c.execute("""SELECT l.*,t.transaction_no FROM bank_statement_lines l
+                LEFT JOIN bank_transactions t ON t.id=l.matched_transaction_id
+                WHERE l.bank_account_id=? AND l.statement_date BETWEEN ? AND ?
+                ORDER BY l.statement_date,l.id""",(account_id,period_start,period_end)).fetchall()
+            txs=c.execute("""SELECT * FROM bank_transactions
+                WHERE (bank_account_id=? OR destination_bank_account_id=?)
+                  AND transaction_date BETWEEN ? AND ?
+                ORDER BY transaction_date,id""",(account_id,account_id,period_start,period_end)).fetchall()
+            book_rows=[]
+            book_total=Decimal("0")
+            for tx in txs:
+                amount=Decimal(str(tx["amount"])).quantize(Decimal("0.01"))
+                if tx["bank_account_id"]==account_id:
+                    signed=amount if tx["transaction_type"]=="deposit" else -amount
+                    side="source"
+                else:
+                    signed=amount
+                    side="destination"
+                book_total+=signed
+                book_rows.append(dict(tx, signed_amount=signed, side=side))
+            statement_total=sum((Decimal(str(line["signed_amount"])) for line in lines),Decimal("0"))
+            matched_count=sum(1 for line in lines if line["matched_transaction_id"])
+        else:
+            lines=[]; book_rows=[]; statement_total=Decimal("0"); book_total=Decimal("0"); matched_count=0
+        c.close()
+        return render_template("bank_reconciliation.html",accounts=accounts,account_id=account_id,
+            lines=lines,book_rows=book_rows,statement_total=statement_total,book_total=book_total,
+            difference=statement_total-book_total,matched_count=matched_count,
+            start_date=period_start,end_date=period_end,today=today.isoformat())
+    except (ValueError,InvalidOperation,sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc),"error")
+        c.close()
+        return redirect(url_for("bank.statement_reconciliation"))
 
 @bank_bp.route("/accounts", methods=["GET", "POST"])
 @require()
