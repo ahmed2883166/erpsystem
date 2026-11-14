@@ -1060,7 +1060,7 @@ def payroll():
                         snapshot_item("information","العلاوة المطبقة (مدرجة ضمن الأساسي/البدلات)",raise_amount,
                                       "salary_raise",e["id"],15)
                     for fixed_item in fixed_items:
-                        item_amount = M(D(fixed_item["amount"]) * payroll_factor)
+                        item_amount = M(D(fixed_item["amount"]) * payroll_factor) if fixed_item["item_type"] == "allowance" else M(fixed_item["amount"])
                         if fixed_item["item_type"] == "allowance":
                             snapshot_item("earning",fixed_item["item_name"],item_amount,"employee_pay_item",None,20)
                         else:
