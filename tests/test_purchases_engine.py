@@ -261,12 +261,15 @@ class PurchasingAccountingTests(unittest.TestCase):
                JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=?""",
             (bill_entry_id,),
         ).fetchall()
-        bill_totals = {
-            row["code"]: (Decimal(row["debit"]), Decimal(row["credit"]))
-            for row in bill_lines
-        }
-        self.assertEqual(bill_totals["2190"], (Decimal("112.00"), Decimal("0")))
-        self.assertEqual(bill_totals["2110"], (Decimal("0"), Decimal("112.00")))
+        bill_totals = {}
+        for row in bill_lines:
+            debit, credit = bill_totals.get(row["code"], (Decimal("0"), Decimal("0")))
+            bill_totals[row["code"]] = (
+                debit + Decimal(row["debit"]),
+                credit + Decimal(row["credit"]),
+            )
+        self.assertEqual(bill_totals["2190"], (Decimal("112.00"), Decimal("0.00")))
+        self.assertEqual(bill_totals["2110"], (Decimal("0.00"), Decimal("112.00")))
 
         app2 = Flask(__name__)
         app2.secret_key = "test"
