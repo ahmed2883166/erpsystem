@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}استمارة ٢ مرتبات | NEXUS ERP{% endblock %}
+{% block content %}
+<style>
+.salary-form-sheet{max-width:900px;margin:24px auto;padding:34px;border:1px solid #777;background:#fff;color:#111;font-family:Arial,sans-serif}
+.salary-form-sheet h2,.salary-form-sheet h3{text-align:center;margin:8px 0}
+.salary-form-sheet .form-subtitle{text-align:center;margin:0 0 28px}
+.salary-form-sheet table{width:100%;border-collapse:collapse;margin:20px 0}
+.salary-form-sheet th,.salary-form-sheet td{border:1px solid #333;padding:14px;text-align:right}
+.salary-form-sheet th{width:32%;background:#f2f2f2}
+.salary-form-sheet .signatures{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:70px;text-align:center}
+.salary-form-actions{max-width:900px;margin:12px auto;display:flex;gap:10px}
+@media print{body{background:#fff!important}.salary-form-sheet{margin:0 auto;border:0;max-width:none;padding:10mm}.salary-form-actions,header,.sidebar,nav{display:none!important}}
+</style>
+<div class="salary-form-actions">
+<button type="button" onclick="window.print()">طباعة الاستمارة</button>
+<a class="button secondary" href="{{url_for('workforce.employees')}}">العودة للموظفين</a>
+</div>
+<section class="salary-form-sheet" dir="rtl">
+<h2>استمارة رقم (٢) - بيان بيانات الأجر</h2>
+<p class="form-subtitle">بيان بيانات الموظف والأجر التأميني والشامل</p>
+<table>
+<tr><th>اسم الموظف</th><td>{{e.full_name}}</td></tr>
+<tr><th>الرقم التأميني</th><td>{{e.insurance_number or '................................'}}</td></tr>
+<tr><th>الرقم القومي</th><td>{{e.national_id or '................................'}}</td></tr>
+<tr><th>الأجر التأميني</th><td>{{'{:,.2f}'.format(insured_wage)}} جنيه</td></tr>
+<tr><th>الأجر الشامل</th><td>{{'{:,.2f}'.format(insured_wage)}} جنيه</td></tr>
+</table>
+<p>أقر بصحة البيانات الموضحة أعلاه، وتم إعداد هذا البيان وفق البيانات المسجلة بملف الموظف في النظام.</p>
+<div class="signatures">
+<div>توقيع الموظف<br><br>....................................</div>
+<div>اعتماد شؤون العاملين / المسؤول المختص<br><br>....................................</div>
+</div>
+<p style="margin-top:35px">تاريخ الطباعة: {{print_date}}</p>
+<p style="font-size:12px;text-align:center;margin-top:25px">نموذج داخلي للطباعة والمراجعة، ولا يُعد بديلاً عن النموذج الرسمي الصادر عن الهيئة القومية للتأمين الاجتماعي إذا كان مطلوبًا.</p>
+</section>
+{% endblock %}
