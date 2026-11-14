@@ -662,5 +662,46 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(basic,"10000")
         self.assertEqual(count,0)
 
+    def test_collective_raise_defaults_to_all_active_including_unpaid_leave(self):
+        self.add_employee()
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,work_status)
+            VALUES('E002','Comprehensive Bonus','2026-01-01','8000','200','comprehensive_bonus')""")
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,work_status)
+            VALUES('E003','Unpaid Leave','2026-01-01','6000','200','unpaid_leave')""")
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,work_status,termination_date)
+            VALUES('E004','Resigned','2026-01-01','5000','200','resigned','2026-10-31')""")
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,work_status,active)
+            VALUES('E005','Inactive','2026-01-01','4000','200','permanent',0)""")
+        conn.commit()
+        conn.close()
+        data = {
+            "decision_no": "ALL-ACTIVE-01", "decision_date": "2026-11-01",
+            "effective_date": "2026-11-01", "title": "علاوة لجميع النشطين",
+            "calculation_type": "percentage", "calculation_base": "basic",
+            "calculation_value": "10", "treatment": "basic"
+        }
+        preview = self.client.post("/hr/salary-changes", data=data)
+        self.assertEqual(preview.status_code, 200)
+        page = preview.get_data(as_text=True)
+        self.assertIn("Comprehensive Bonus", page)
+        self.assertIn("Unpaid Leave", page)
+        self.assertNotIn(">Resigned<", page)
+        self.assertNotIn(">Inactive<", page)
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM salary_change_batches").fetchone()[0], 0)
+        conn.close()
+        applied = self.client.post("/hr/salary-changes", data={**data, "confirm": "1"})
+        self.assertEqual(applied.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        salaries = conn.execute("SELECT employee_code,basic_salary FROM employees ORDER BY employee_code").fetchall()
+        history = conn.execute("SELECT COUNT(*) FROM employee_salary_history").fetchone()[0]
+        conn.close()
+        self.assertEqual(salaries, [
+            ("E001", "11000.00"), ("E002", "8800.00"), ("E003", "6600.00"),
+            ("E004", "5000"), ("E005", "4000")
+        ])
+        self.assertEqual(history, 3)
+
 if __name__ == "__main__":
     unittest.main()
