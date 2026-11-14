@@ -61,6 +61,74 @@ def _editor(fn):
     return wrapped
 
 
+def _party_tax_number_expr(conn, table, alias):
+    """Use party tax identifiers when the installed schema has the optional column."""
+    columns = {row["name"] for row in conn.execute(f'PRAGMA table_info("{table}")')}
+    return f"COALESCE({alias}.tax_number,'')" if "tax_number" in columns else "''"
+
+
+def _tax_ledger_reconciliation(conn, summary):
+    """Compare posted VAT document totals with posted GL movement; read-only."""
+    result = {
+        "available": False, "output_account": "", "input_account": "",
+        "output_ledger": Decimal("0"), "input_ledger": Decimal("0"),
+        "output_report": summary["output_vat"],
+        "input_report": sum((Decimal(str(row["tax_amount"])) for row in []), Decimal("0")),
+        "output_difference": Decimal("0"), "input_difference": Decimal("0"),
+        "issues": [],
+    }
+    tables = {row["name"] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if not {"accounts", "journal_entries", "journal_lines"}.issubset(tables):
+        result["issues"].append("تعذر إجراء المطابقة: جداول الأستاذ العام غير متاحة.")
+        return result
+    try:
+        from activity_profiles import active_tax_roles
+        roles = active_tax_roles(conn)
+    except (ImportError, ValueError, KeyError, TypeError):
+        result["issues"].append("تعذر تحديد حسابات ضريبة المدخلات والمخرجات من ملف النشاط.")
+        return result
+    result["input_report"] = summary.get("purchase_tax_total", Decimal("0"))
+    register = False
+    from accounting_core import register_decimal_aggregates
+    register_decimal_aggregates(conn)
+    for role, target in (("output_vat", "output"), ("input_vat", "input")):
+        code = roles.get(role) if isinstance(roles, dict) else None
+        if isinstance(code, (list, tuple)):
+            codes = [str(x) for x in code if x]
+        else:
+            codes = [str(code)] if code else []
+        if not codes:
+            result["issues"].append("لم يتم تحديد حساب دفتر الأستاذ لدور " + role + ".")
+            continue
+        placeholders = ",".join("?" for _ in codes)
+        rows = conn.execute(f"""
+            SELECT a.code,
+                   COALESCE(DECIMAL_SUM(jl.debit),0) debit,
+                   COALESCE(DECIMAL_SUM(jl.credit),0) credit
+            FROM accounts a
+            LEFT JOIN journal_lines jl ON jl.account_id=a.id
+            LEFT JOIN journal_entries je ON je.id=jl.entry_id
+                 AND je.status='posted' AND je.entry_date>=? AND je.entry_date<?
+            WHERE a.code IN ({placeholders})
+            GROUP BY a.id,a.code
+        """, (summary["period_start"], summary["period_end"], *codes)).fetchall()
+        debit = sum((Decimal(str(r["debit"] or "0")) for r in rows), Decimal("0"))
+        credit = sum((Decimal(str(r["credit"] or "0")) for r in rows), Decimal("0"))
+        ledger_value = credit-debit if target == "output" else debit-credit
+        result[target+"_account"] = ", ".join(codes)
+        result[target+"_ledger"] = ledger_value
+        report_value = result[target+"_report"]
+        result[target+"_difference"] = ledger_value-report_value
+        if abs(result[target+"_difference"]) > Decimal("0.02"):
+            result["issues"].append(
+                f"فرق مطابقة {('المخرجات' if target == 'output' else 'المدخلات')}: "
+                f"{result[target+'_difference']:.2f}"
+            )
+    result["available"] = True
+    return result
+
+
 def _period(value):
     try:
         start = date.fromisoformat(value + "-01")
@@ -73,8 +141,9 @@ def _period(value):
 
 def build_tax_report_snapshot(conn, period_value):
     period, start, end = _period(period_value)
-    sales = conn.execute("""
-        SELECT i.id, i.invoice_no document_no, i.invoice_date document_date, c.name party_name, COALESCE(c.tax_number,'') party_tax_number,
+    customer_tax_number = _party_tax_number_expr(conn, "customers", "c")
+    sales = conn.execute(f"""
+        SELECT i.id, i.invoice_no document_no, i.invoice_date document_date, c.name party_name, {customer_tax_number} party_tax_number,
                i.subtotal taxable_base, i.tax_rate tax_rate,
                i.tax_amount tax_amount, i.total_amount total_amount,
                COALESCE(i.tax_treatment,'standard') tax_treatment,
@@ -119,8 +188,9 @@ def build_tax_report_snapshot(conn, period_value):
                 "tax_reference": "", "tax_notes": notes,
                 "document_type": "إشعار دائن",
             })
-    purchases = conn.execute("""
-        SELECT b.id, b.bill_no document_no, b.bill_date document_date, s.name party_name, COALESCE(s.tax_number,'') party_tax_number,
+    supplier_tax_number = _party_tax_number_expr(conn, "suppliers", "s")
+    purchases = conn.execute(f"""
+        SELECT b.id, b.bill_no document_no, b.bill_date document_date, s.name party_name, {supplier_tax_number} party_tax_number,
                b.subtotal taxable_base, b.tax_rate tax_rate,
                b.tax_amount tax_amount, b.total_amount total_amount,
                COALESCE(b.tax_treatment,'standard') tax_treatment,
@@ -169,9 +239,13 @@ def build_tax_report_snapshot(conn, period_value):
         "sales_exempt": sum((Decimal(str(r["taxable_base"])) for r in exempt_sales), Decimal("0")),
         "sales_outside": sum((Decimal(str(r["taxable_base"])) for r in outside_sales), Decimal("0")),
         "purchase_base": sum((Decimal(str(r["taxable_base"])) for r in purchases), Decimal("0")),
+        "purchase_tax_total": sum((Decimal(str(r["tax_amount"])) for r in purchases), Decimal("0")),
         "output_vat": output_vat, "input_vat": input_vat,
         "non_deductible_input": non_deductible_input, "net_vat": output_vat-input_vat,
     }
+    summary["period_start"] = start.isoformat()
+    summary["period_end"] = end.isoformat()
+    ledger_reconciliation = _tax_ledger_reconciliation(conn, summary)
     # Advisory data-quality checks. These never modify posted documents or journals.
     quality_issues = []
     company_tax_number = (settings.get("tax_number") or "").strip()
@@ -211,6 +285,7 @@ def build_tax_report_snapshot(conn, period_value):
         "summary": summary, "inconsistent_sales": inconsistent_sales,
         "inconsistent_purchases": inconsistent_purchases,
         "quality_issues": quality_issues,
+        "ledger_reconciliation": ledger_reconciliation,
     }
 
 
