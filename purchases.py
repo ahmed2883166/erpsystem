@@ -10,7 +10,7 @@ from functools import wraps
 from datetime import date, datetime
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, money
-from stock import consume_layers, q4, make_lot
+from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 
 purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
@@ -103,6 +103,13 @@ def init_purchase_schema():
     # suppliers now exists: install the supplier_id column on journal lines
     # through the same additive migration used by the other analytical dimensions.
     initialize_analytic_dimensions_schema(c)
+    for table, fields in (
+        ("purchase_order_lines",(("entered_quantity","TEXT"),("uom_id","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
+        ("goods_receipt_lines",(("entered_quantity","TEXT"),("uom_id","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
+    ):
+        existing={row["name"] for row in c.execute("PRAGMA table_info("+table+")")}
+        for name,declaration in fields:
+            if name not in existing: c.execute("ALTER TABLE "+table+" ADD COLUMN "+name+" "+declaration)
     order_columns = {row["name"] for row in c.execute("PRAGMA table_info(purchase_orders)")}
     for name, declaration in (
         ("submitted_by", "INTEGER"), ("submitted_at", "TEXT"),
@@ -613,18 +620,22 @@ def new_order():
     if request.method=="POST":
         try:
             supplier=int(request.form["supplier_id"]); product=int(request.form["product_id"])
-            qty=Decimal(request.form["quantity"]); price=money(request.form["unit_price"])
-            if qty<=0 or price<0: raise ValueError("الكمية والسعر غير صحيحين.")
+            entered_qty=Decimal(request.form["quantity"]); entered_price=money(request.form["unit_price"])
+            if entered_qty<=0 or entered_price<0: raise ValueError("الكمية والسعر غير صحيحين.")
+            factor,uom_name=product_uom_factor(c,product,request.form.get("uom_id"),"purchase")
+            qty=q4(entered_qty*factor); price=money(entered_price/factor)
             c.execute("BEGIN IMMEDIATE")
             no="PO-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             cur=c.execute("INSERT INTO purchase_orders(po_no,supplier_id,order_date,expected_date,notes,created_by) VALUES(?,?,?,?,?,?)",
               (no,supplier,request.form["order_date"],request.form.get("expected_date") or None,request.form.get("notes",""),session["user_id"]))
-            c.execute("INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price) VALUES(?,?,?,?)",(cur.lastrowid,product,str(qty),str(price)))
+            c.execute("""INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price,entered_quantity,uom_id,conversion_factor)
+              VALUES(?,?,?,?,?,?,?)""",(cur.lastrowid,product,str(qty),str(price),str(entered_qty),request.form.get("uom_id"),str(factor)))
             c.commit(); flash(f"تم إنشاء أمر الشراء {no}.","success"); return redirect(url_for("purchase.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     products=c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
-    c.close(); return render_template("purchase_order_new.html",suppliers=su,products=products,today=date.today().isoformat())
+    product_uoms={p["id"]:product_uom_options(c,p["id"]) for p in products}
+    c.close(); return render_template("purchase_order_new.html",suppliers=su,products=products,product_uoms=product_uoms,today=date.today().isoformat())
 
 
 @purchase_bp.route("/orders/<int:order_id>/submit", methods=["POST"])
@@ -687,18 +698,21 @@ def edit_order(order_id):
     if request.method=="POST":
         try:
             supplier=int(request.form["supplier_id"]); product=int(request.form["product_id"])
-            qty=Decimal(request.form["quantity"]); price=money(request.form["unit_price"])
-            if qty<=0 or price<0: raise ValueError("الكمية والسعر غير صحيحين.")
+            entered_qty=Decimal(request.form["quantity"]); entered_price=money(request.form["unit_price"])
+            if entered_qty<=0 or entered_price<0: raise ValueError("الكمية والسعر غير صحيحين.")
+            factor,uom_name=product_uom_factor(c,product,request.form.get("uom_id"),"purchase")
+            qty=q4(entered_qty*factor); price=money(entered_price/factor)
             c.execute("""UPDATE purchase_orders SET supplier_id=?,order_date=?,expected_date=?,notes=?,status='draft',
               rejected_by=NULL,rejected_at=NULL,rejection_reason=NULL WHERE id=?""",
               (supplier,request.form["order_date"],request.form.get("expected_date") or None,request.form.get("notes",""),order_id))
-            c.execute("UPDATE purchase_order_lines SET product_id=?,quantity=?,unit_price=? WHERE id=?",
-              (product,str(qty),str(price),order["line_id"]))
+            c.execute("""UPDATE purchase_order_lines SET product_id=?,quantity=?,unit_price=?,entered_quantity=?,uom_id=?,conversion_factor=? WHERE id=?""",
+              (product,str(qty),str(price),str(entered_qty),request.form.get("uom_id"),str(factor),order["line_id"]))
             c.commit(); c.close(); flash("تم تعديل أمر الشراء.","success"); return redirect(url_for("purchase.index"))
         except (ValueError,InvalidOperation,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
     suppliers=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     products=c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
-    c.close(); return render_template("purchase_order_edit.html",order=order,suppliers=suppliers,products=products)
+    product_uoms={p["id"]:product_uom_options(c,p["id"]) for p in products}
+    c.close(); return render_template("purchase_order_edit.html",order=order,suppliers=suppliers,products=products,product_uoms=product_uoms)
 
 
 
@@ -752,8 +766,10 @@ def new_receipt():
         try:
             supplier=int(request.form["supplier_id"]); product=int(request.form["product_id"]); wh=int(request.form["warehouse_id"])
             po_id=int(request.form["po_id"]) if request.form.get("po_id") else None
-            qty=Decimal(request.form["quantity"]); unit=money(request.form["unit_cost"]); total=money(qty*unit)
-            if qty<=0 or unit<0: raise ValueError("الكمية أو التكلفة غير صحيحة.")
+            entered_qty=Decimal(request.form["quantity"]); entered_unit=money(request.form["unit_cost"])
+            if entered_qty<=0 or entered_unit<0: raise ValueError("الكمية أو التكلفة غير صحيحة.")
+            factor,uom_name=product_uom_factor(c,product,request.form.get("uom_id"),"purchase")
+            qty=q4(entered_qty*factor); unit=money(entered_unit/factor); total=money(entered_qty*entered_unit)
             c.execute("BEGIN IMMEDIATE")
             dimensions = validate_journal_dimensions(c, {**request.form, "supplier_id": supplier})
             product_row=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(product,)).fetchone()
@@ -794,8 +810,9 @@ def new_receipt():
               (no,po_id,supplier,wh,request.form["receipt_date"],str(total),session["user_id"],
                dimensions["branch_id"],dimensions["cost_center_id"],dimensions["project_id"]))
             rid=cur.lastrowid
-            c.execute("INSERT INTO goods_receipt_lines(receipt_id,po_line_id,product_id,quantity,unit_cost,total_cost,location_id) VALUES(?,?,?,?,?,?,?)",
-                      (rid,po_line_id,product,str(qty),str(unit),str(total),location_id))
+            c.execute("""INSERT INTO goods_receipt_lines(receipt_id,po_line_id,product_id,quantity,unit_cost,total_cost,location_id,entered_quantity,uom_id,conversion_factor)
+                      VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                      (rid,po_line_id,product,str(qty),str(unit),str(total),location_id,str(entered_qty),request.form.get("uom_id"),str(factor)))
             if po_id:
                 received_total=Decimal(po_line["received_qty"])+qty
                 new_status="received" if received_total==Decimal(po_line["quantity"]) else "partially_received"
@@ -817,10 +834,11 @@ def new_receipt():
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     wh=c.execute("SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     pr=c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
+    product_uoms={p["id"]:product_uom_options(c,p["id"]) for p in pr}
     orders=c.execute("SELECT id,po_no,supplier_id,status FROM purchase_orders WHERE status IN ('approved','partially_received') ORDER BY id DESC").fetchall()
     locations=c.execute("SELECT id,warehouse_id,code,name_ar,location_type FROM stock_locations WHERE active=1 ORDER BY warehouse_id,code").fetchall()
     dimension_options=active_dimension_options(c)
-    c.close(); return render_template("purchase_receipt_new.html",suppliers=su,warehouses=wh,products=pr,orders=orders,locations=locations,dimension_options=dimension_options,today=date.today().isoformat())
+    c.close(); return render_template("purchase_receipt_new.html",suppliers=su,warehouses=wh,products=pr,product_uoms=product_uoms,orders=orders,locations=locations,dimension_options=dimension_options,today=date.today().isoformat())
 
 def _supplier_receipt_available_amount(c, receipt_id, exclude_bill_id=None):
     params = [receipt_id]
