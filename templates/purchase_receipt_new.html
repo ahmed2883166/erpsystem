@@ -20,5 +20,5 @@
 (function(){const product=document.getElementById('receiptProduct'),price=document.getElementById('receiptUnitCost'),warehouse=document.querySelector('[name="warehouse_id"]'),location=document.getElementById('receiptLocation');
 function updatePrice(){const opt=product.options[product.selectedIndex];const u=document.getElementById('receiptUom');let first=null;for(const o of u.options){o.hidden=o.dataset.product!==product.value;if(!o.hidden&&!first)first=o;}if(first)u.value=first.value;if(opt){const factor=Number(first&&first.dataset.factor||1);price.value=(Number(opt.dataset.purchasePrice||0)*factor).toFixed(2);}}
 function filterLocations(){const wid=warehouse.value;for(const opt of location.options){if(!opt.value)continue;opt.hidden=opt.dataset.warehouse!==wid;if(opt.hidden&&opt.selected)location.value='';}}
-product.addEventListener('change',updatePrice);warehouse.addEventListener('change',filterLocations);updatePrice();filterLocations();})();
+product.addEventListener('change',updatePrice);document.getElementById('receiptUom').addEventListener('change',updatePrice);warehouse.addEventListener('change',filterLocations);updatePrice();filterLocations();})();
 </script>{% endblock %}
