@@ -12,6 +12,7 @@ from income_statement import (build_income_statement, normalize_income_statement
 
 class IncomeStatementRouteTests(unittest.TestCase):
     def setUp(self):
+        nexus_app.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
         self.temp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp.name) / "income.db"
         conn = sqlite3.connect(self.db_path)
