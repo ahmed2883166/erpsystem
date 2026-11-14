@@ -136,8 +136,15 @@ class JournalAndLedgerFilterTests(unittest.TestCase):
                 id INTEGER PRIMARY KEY, run_id INTEGER, payment_date TEXT,
                 reference TEXT, journal_entry_id INTEGER
             );
+            CREATE TABLE payroll_reversals(
+                id INTEGER PRIMARY KEY, run_id INTEGER, reversal_date TEXT,
+                reason TEXT, reversal_journal_entry_id INTEGER
+            );
             INSERT INTO payroll_runs VALUES(7,'2026-01',NULL);
             INSERT INTO payroll_payments VALUES(9,7,'2026-01-31','PAY-2026-01-01',3);
+            INSERT INTO journal_entries VALUES
+                (5,'2026-01-31','PAY-REV-01','Payroll reversal','posted','general',1,'2026-01-31');
+            INSERT INTO payroll_reversals VALUES(11,7,'2026-01-31','تصحيح',5);
         """)
         conn.commit()
         conn.close()
@@ -148,6 +155,7 @@ class JournalAndLedgerFilterTests(unittest.TestCase):
         self.assertIn("PAY-2026-01-01", html)
         self.assertIn('href="/hr/payroll/7"', html)
         self.assertIn("فتح كشف المرتبات", html)
+        self.assertIn("PAY-REV-01", html)
 
     def test_journal_detail_displays_the_posted_entry_lines(self):
         response = self.client.get("/journal/2")
