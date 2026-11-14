@@ -1128,36 +1128,16 @@ def edit_warehouse(warehouse_id):
 @stock_bp.route("/warehouses/<int:warehouse_id>/delete",methods=["POST"])
 @stock_permission("stock.manage")
 def delete_warehouse(warehouse_id):
-    c=get_db(); warehouse=c.execute("SELECT * FROM stock_warehouses WHERE id=?",(warehouse_id,)).fetchone()
-    if not warehouse: flash("المخزن غير موجود.","error")
+    # Permanent deletion is intentionally disabled: warehouse history, balances,
+    # counts and reorder settings must remain auditable. Use the active toggle.
+    c=get_db()
+    warehouse=c.execute("SELECT id,name_ar FROM stock_warehouses WHERE id=?",(warehouse_id,)).fetchone()
+    c.close()
+    if not warehouse:
+        flash("المخزن غير موجود.","error")
     else:
-        used = None
-        checks = [
-            ("stock_movements","SELECT 1 FROM stock_movements WHERE source_warehouse_id=? OR target_warehouse_id=? LIMIT 1",(warehouse_id,warehouse_id),"حركات المخزون"),
-            ("stock_valuation_layers","SELECT 1 FROM stock_valuation_layers WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"طبقات تقييم المخزون"),
-            ("stock_locations","SELECT 1 FROM stock_locations WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"مواقع التخزين والأدوار"),
-            ("stock_product_locations","SELECT 1 FROM stock_product_locations WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"توزيعات المواقع الافتراضية للأصناف"),
-            ("stocktakes","SELECT 1 FROM stocktakes WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"جرد المخزون"),
-            ("goods_receipts","SELECT 1 FROM goods_receipts WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"استلامات المشتريات"),
-            ("sales_invoices","SELECT 1 FROM sales_invoices WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"فواتير البيع"),
-            ("stock_warehouse_product_settings","SELECT 1 FROM stock_warehouse_product_settings WHERE warehouse_id=? LIMIT 1",(warehouse_id,),"إعدادات حدود إعادة الطلب")
-        ]
-        existing_tables={row["name"] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        for table, query, params, label in checks:
-            if table in existing_tables and c.execute(query,params).fetchone():
-                used=label
-                break
-        if used: flash("لا يمكن حذف المخزن لوجود "+used+" مرتبطة به.","error")
-        else:
-            try: c.execute("DELETE FROM stock_warehouses WHERE id=?",(warehouse_id,)); c.commit(); flash("تم حذف المخزن.","success")
-            except sqlite3.IntegrityError:
-                c.rollback()
-                foreign_refs=[]
-                for table,label in (("stock_locations","مواقع التخزين"),("stock_product_locations","توزيعات الأصناف"),("stock_warehouse_product_settings","إعدادات إعادة الطلب")):
-                    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone() and c.execute(f"SELECT 1 FROM {table} WHERE warehouse_id=? LIMIT 1",(warehouse_id,)).fetchone():
-                        foreign_refs.append(label)
-                flash("تعذر حذف المخزن بسبب ارتباطه بـ: "+("، ".join(foreign_refs) if foreign_refs else "سجل مرتبط بجدول آخر")+"؛ استخدم التعطيل بدل الحذف.","error")
-    c.close(); return redirect(url_for("stock.warehouses"))
+        flash("الحذف النهائي للمخازن غير متاح حفاظًا على الأرصدة والحركات والتقارير التاريخية. استخدم التعطيل بدل الحذف.","error")
+    return redirect(url_for("stock.warehouses"))
 
 
 @stock_bp.route("/warehouses/<int:warehouse_id>/toggle-active",methods=["POST"])
