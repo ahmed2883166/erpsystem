@@ -900,9 +900,136 @@ def _validate_supplier_receipt_allocations(c, supplier_id, receipt_ids, subtotal
             raise ValueError("قيمة التخصيص تتجاوز المتبقي غير المفوتر من إيصال الاستلام.")
         allocations.append((receipt_id, amount))
         total_allocated = money(total_allocated + amount)
-    if total_allocated != money(subtotal):
-        raise ValueError("مجموع تخصيصات إيصالات GRNI يجب أن يساوي صافي فاتورة المورد.")
+    if total_allocated < money(subtotal):
+        raise ValueError("مجموع تخصيصات إيصالات GRNI أقل من صافي فاتورة المورد.")
+    if total_allocated > money(subtotal):
+        # A lower supplier invoice is treated as a purchase-price discount only
+        # when the selected receipts are fully settled. A partial allocation
+        # remains an unbilled GRNI balance and must not be called a discount.
+        for receipt_id, amount in allocations:
+            available = _supplier_receipt_available_amount(c, receipt_id, exclude_bill_id)
+            if amount != available:
+                raise ValueError(
+                    "فرق سعر المورد لا يُعتمد كخصم إلا عند تسوية كامل قيمة إيصالات GRNI المحددة."
+                )
     return allocations
+
+
+def _supplier_grni_price_variance_lines(c, receipt_rows, discount_amount, matched_total):
+    """Reduce inventory/COGS for a supplier discount against fully settled GRNI."""
+    if discount_amount <= 0:
+        return []
+    from activity_profiles import resolve_product_account_code
+
+    posting = _activity_posting_accounts(c)
+    default_inventory = posting.get("purchase_inventory")
+    default_cogs = posting.get("cogs")
+    source_lines = []
+    for receipt in receipt_rows:
+        header = c.execute(
+            "SELECT receipt_no,warehouse_id FROM goods_receipts WHERE id=?",
+            (receipt["receipt_id"],),
+        ).fetchone()
+        if not header:
+            raise ValueError("إيصال GRNI غير موجود أثناء تسوية فرق السعر.")
+        receipt_lines = c.execute(
+            "SELECT * FROM goods_receipt_lines WHERE receipt_id=? ORDER BY id",
+            (receipt["receipt_id"],),
+        ).fetchall()
+        if not receipt_lines:
+            raise ValueError("إيصال GRNI لا يحتوي على تفاصيل أصناف يمكن تسوية تكلفتها.")
+        for line in receipt_lines:
+            movement_rows = c.execute(
+                """SELECT * FROM stock_movements
+                   WHERE movement_type='receipt' AND product_id=?
+                     AND target_warehouse_id=? AND notes=?
+                   ORDER BY id""",
+                (line["product_id"], header["warehouse_id"],
+                 "استلام مشتريات " + header["receipt_no"]),
+            ).fetchall()
+            if len(movement_rows) != 1:
+                raise ValueError(
+                    "تعذر تحديد حركة استلام واحدة مؤكدة للصنف داخل إيصال GRNI؛ "
+                    "لم يتم ترحيل خصم المورد حتى لا تختلف تكلفة المخزون عن الدفاتر."
+                )
+            movement = movement_rows[0]
+            layers = c.execute(
+                "SELECT id,qty_in,qty_remaining,unit_cost FROM stock_valuation_layers WHERE source_movement_id=? ORDER BY id",
+                (movement["id"],),
+            ).fetchall()
+            if not layers:
+                raise ValueError("لا توجد طبقة تقييم مرتبطة بإيصال GRNI؛ راجع مطابقة المخزون قبل ترحيل الخصم.")
+            qty_in = sum((Decimal(str(row["qty_in"])) for row in layers), Decimal("0"))
+            qty_remaining = sum((Decimal(str(row["qty_remaining"])) for row in layers), Decimal("0"))
+            line_qty = Decimal(str(line["quantity"]))
+            if qty_in != line_qty or qty_remaining < 0 or qty_remaining > qty_in:
+                raise ValueError("كمية طبقات التقييم لا تطابق كمية إيصال GRNI؛ لم يتم ترحيل فرق السعر.")
+            gross = money(line["total_cost"])
+            if gross <= 0:
+                raise ValueError("تكلفة سطر إيصال GRNI غير صالحة لتسوية الخصم.")
+            source_lines.append({
+                "line": line, "movement": movement, "layers": layers,
+                "qty_in": qty_in, "qty_remaining": qty_remaining,
+                "gross": gross, "warehouse_id": header["warehouse_id"],
+            })
+
+    source_total = money(sum((item["gross"] for item in source_lines), Decimal("0")))
+    if source_total != money(matched_total):
+        raise ValueError(
+            "إجمالي تفاصيل إيصالات GRNI لا يطابق القيمة المسواة؛ راجع تفاصيل الاستلام قبل ترحيل الخصم."
+        )
+
+    remaining_discount = money(discount_amount)
+    journal_lines = []
+    for index, item in enumerate(source_lines):
+        if index == len(source_lines) - 1:
+            line_discount = remaining_discount
+        else:
+            line_discount = money(discount_amount * item["gross"] / source_total)
+            remaining_discount = money(remaining_discount - line_discount)
+        if line_discount <= 0:
+            continue
+        net_line_cost = money(item["gross"] - line_discount)
+        new_unit_cost = q4(net_line_cost / item["qty_in"])
+        consumed_qty = item["qty_in"] - item["qty_remaining"]
+        consumed_discount = money(line_discount * consumed_qty / item["qty_in"])
+        remaining_value_discount = money(line_discount - consumed_discount)
+        product_id = int(item["line"]["product_id"])
+        warehouse_id = int(item["warehouse_id"])
+        inventory_code = resolve_product_account_code(
+            c, product_id, "inventory", default_inventory
+        )
+        cogs_code = resolve_product_account_code(
+            c, product_id, "cogs", default_cogs
+        )
+        inventory_id = account(c, inventory_code, "asset")
+        cogs_id = account(c, cogs_code, "expense")
+        if remaining_value_discount > 0:
+            journal_lines.append((
+                inventory_id, 0, remaining_value_discount,
+                "خصم سعر شراء يخفض قيمة المخزون",
+                {"stock_product_id": product_id, "stock_warehouse_id": warehouse_id},
+            ))
+        if consumed_discount > 0:
+            journal_lines.append((
+                cogs_id, 0, consumed_discount,
+                "خصم سعر شراء يخفض تكلفة الأصناف المصروفة",
+            ))
+        c.execute(
+            "UPDATE stock_valuation_layers SET unit_cost=? WHERE source_movement_id=?",
+            (str(new_unit_cost), item["movement"]["id"]),
+        )
+        c.execute(
+            "UPDATE stock_movements SET unit_cost=?,total_cost=? WHERE id=?",
+            (str(new_unit_cost), str(net_line_cost), item["movement"]["id"]),
+        )
+        c.execute(
+            "UPDATE goods_receipt_lines SET unit_cost=?,total_cost=? WHERE id=?",
+            (str(new_unit_cost), str(net_line_cost), item["line"]["id"]),
+        )
+    if remaining_discount != 0:
+        raise ValueError("تعذر توزيع خصم المورد بالكامل على تفاصيل إيصالات GRNI.")
+    return journal_lines
 
 
 def _available_supplier_receipts(c, supplier_id, exclude_bill_id=None):
@@ -1055,6 +1182,7 @@ def post_supplier_bill(c, bill_id, actor_id):
         if not receipt_rows:
             raise ValueError("لا توجد استلامات مرتبطة بفاتورة الأصناف.")
         matched_total = money("0")
+        grni = account(c, "2190", "liability")
         for receipt in receipt_rows:
             if receipt["supplier_id"] != bill["supplier_id"] or receipt["status"] != "posted":
                 raise ValueError("يوجد إيصال استلام غير صالح أو لا يتبع المورد.")
@@ -1067,13 +1195,26 @@ def post_supplier_bill(c, bill_id, actor_id):
             if amount > available_before_this_bill:
                 raise ValueError("تجاوزت تخصيصات فواتير المورد قيمة إيصال GRNI المتاحة.")
             matched_total = money(matched_total + amount)
-            grni = account(c, "2190", "liability")
-            journal_lines.extend([
-                (grni, amount, 0, "تسوية GRNI"),
-                (ap, 0, amount, "إثبات المورد"),
-            ])
-        if matched_total != subtotal:
-            raise ValueError("مجموع تسويات إيصالات GRNI لا يطابق صافي فاتورة المورد.")
+            journal_lines.append((grni, amount, 0, "تسوية GRNI"))
+        if matched_total < subtotal:
+            raise ValueError("مجموع تسويات إيصالات GRNI أقل من صافي فاتورة المورد.")
+        price_discount = money(matched_total - subtotal)
+        if price_discount:
+            for receipt in receipt_rows:
+                allocated = money(receipt["matched_amount"])
+                available_before_this_bill = _supplier_receipt_available_amount(
+                    c, receipt["receipt_id"], exclude_bill_id=bill_id
+                )
+                if allocated != available_before_this_bill:
+                    raise ValueError(
+                        "لا يمكن اعتبار الفرق خصم مورد إلا بعد تسوية كامل قيمة إيصالات GRNI المحددة."
+                    )
+            journal_lines.extend(
+                _supplier_grni_price_variance_lines(
+                    c, receipt_rows, price_discount, matched_total
+                )
+            )
+        journal_lines.append((ap, 0, subtotal, "إثبات المورد"))
     elif bill["bill_kind"] == "expense":
         expense_id = bill["expense_account_id"]
         expense = c.execute("SELECT account_type,is_group,active FROM accounts WHERE id=?", (expense_id,)).fetchone()
