@@ -2465,6 +2465,8 @@ IMPORT_DATASETS = {
             {"key": "code", "label": "كود الحساب", "required": True},
             {"key": "name_ar", "label": "اسم الحساب", "required": True},
             {"key": "account_type", "label": "نوع الحساب", "required": True},
+            {"key": "parent_code", "label": "كود الحساب الأب (اختياري للجذر)", "required": False},
+            {"key": "is_group", "label": "حساب تجميعي؟ (1/0)", "required": False},
         ],
     },
     "employees": {
@@ -2826,10 +2828,27 @@ def import_data_wizard():
                             "حقوق ملكية": "equity", "حقوق الملكية": "equity", "إيراد": "revenue", "الإيرادات": "revenue",
                             "مصروف": "expense", "المصروفات": "expense"}
                         account_type = arabic_types.get(clean["account_type"].lower(), clean["account_type"].lower())
-                        if not clean["code"] or not clean["name_ar"] or account_type not in allowed_types:
+                        code, name = clean["code"], clean["name_ar"]
+                        if not code or not name or account_type not in allowed_types:
                             raise ValueError("كود الحساب أو اسمه أو نوعه غير صحيح.")
-                        connection.execute("INSERT INTO accounts(code,name_ar,account_type) VALUES(?,?,?)",
-                            (clean["code"], clean["name_ar"], account_type))
+                        if connection.execute("SELECT 1 FROM accounts WHERE code=?", (code,)).fetchone():
+                            raise ValueError(f"كود الحساب {code} موجود بالفعل.")
+                        parent_id = None
+                        parent_code = clean.get("parent_code", "")
+                        if parent_code:
+                            parent = connection.execute("SELECT id,account_type,is_group,active FROM accounts WHERE code=?",
+                                (parent_code,)).fetchone()
+                            if not parent or not parent["active"] or not parent["is_group"]:
+                                raise ValueError(f"الحساب الأب {parent_code} غير موجود أو غير نشط أو ليس حسابًا تجميعيًا.")
+                            if parent["account_type"] != account_type:
+                                raise ValueError("نوع الحساب يجب أن يطابق نوع الحساب الأب.")
+                            parent_id = int(parent["id"])
+                        group_raw = clean.get("is_group", "").strip().lower()
+                        is_group = 1 if group_raw in {"1", "true", "yes", "نعم", "تجميعي", "مجموعة"} else 0
+                        if group_raw and group_raw not in {"1", "0", "true", "false", "yes", "no", "نعم", "لا", "تجميعي", "مجموعة", "تفصيلي"}:
+                            raise ValueError("قيمة حقل الحساب التجميعي غير صحيحة؛ استخدم 1 أو 0.")
+                        connection.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
+                            (code, name, account_type, parent_id, is_group))
                     elif dataset == "employees":
                         if not clean["employee_code"] or not clean["full_name"] or not clean["hire_date"]:
                             raise ValueError("كود الموظف والاسم وتاريخ التعيين حقول إلزامية.")
@@ -3224,5 +3243,8 @@ if os.environ.get("NEXUS_SKIP_DB_INIT", "0").strip() != "1":
 
 if __name__ == "__main__":
     from waitress import serve
-    serve(app, host=os.environ.get("HOST", "0.0.0.0"), port=int(os.environ.get("PORT", 5000)),
+    requested_host = os.environ.get("HOST", "127.0.0.1").strip()
+    if requested_host not in {"127.0.0.1", "::1", "localhost"} and os.environ.get("NEXUS_ALLOW_LAN", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+        raise RuntimeError("LAN binding is disabled by default. Set NEXUS_ALLOW_LAN=1 explicitly after changing the default admin password and configuring HTTPS.")
+    serve(app, host=requested_host, port=int(os.environ.get("PORT", 5000)),
           threads=max(2, int(os.environ.get("NEXUS_THREADS", "8"))))
