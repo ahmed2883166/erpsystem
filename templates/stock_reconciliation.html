@@ -19,6 +19,26 @@
 </tbody></table></div>
 </section>
 <section class="panel">
+  <h3>مطابقة الأستاذ حسب الصنف والمخزن</h3>
+  <p class="muted">هذا الجزء يقارن طبقات تقييم المخزون مع سطور الأستاذ التي تحمل بُعد الصنف والمخزن فعليًا. الأرصدة التي لا تحمل البُعدين لا تدخل في المقارنة التفصيلية وتظهر أدناه كأرصدة تاريخية غير موزعة.</p>
+  <div class="grid grid-3">
+    <div class="metric"><span>إجمالي الأستاذ الموزع بأبعاد</span><strong>{{ detail_tagged_total|money }}</strong></div>
+    <div class="metric"><span>تفاصيل متطابقة</span><strong>{{ detail_matched_count }}</strong></div>
+    <div class="metric"><span>تفاصيل تحتاج مراجعة</span><strong>{{ detail_difference_count }}</strong></div>
+  </div>
+  <div class="table-wrap"><table><thead><tr><th>المخزن</th><th>كود الصنف</th><th>الصنف</th><th>حساب المخزون</th><th>الكمية</th><th>قيمة الطبقات</th><th>رصيد الأستاذ المعلّم</th><th>الفرق</th><th>الحالة</th></tr></thead><tbody>
+  {% for p in detail_rows %}<tr><td>{{ p.warehouse_code }} - {{ p.warehouse_name }}</td><td>{{ p.sku }}</td><td>{{ p.name }}</td><td>{{ p.account_code }}</td><td>{{ p.qty }}</td><td>{{ p.value|money }}</td><td>{{ p.ledger|money }}</td><td>{{ p.difference|money }}</td><td>{% if p.status == 'matched' %}<span class="status success">متطابق</span>{% else %}<span class="status danger">يحتاج مراجعة</span>{% endif %}</td></tr>{% else %}<tr><td colspan="9">لا توجد أرصدة تفصيلية تحمل أبعاد الصنف والمخزن حتى الآن.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+<section class="panel">
+  <h3>الأرصدة التاريخية غير الموزعة</h3>
+  <p class="status warning">هذه أرصدة حسابات مخزون في الأستاذ لا تحمل بُعد الصنف والمخزن. لن يتم توزيعها بالتقدير أو تغييرها آليًا؛ ستظل منفصلة لحين ربطها بمصدر مستندي مؤكد.</p>
+  <p>إجمالي الرصيد غير الموزع: <strong>{{ unallocated_total|money }}</strong></p>
+  <div class="table-wrap"><table><thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>الرصيد غير الموزع</th></tr></thead><tbody>
+  {% for row in unallocated_rows %}<tr><td>{{ row.code }}</td><td>{{ row.name }}</td><td>{{ row.ledger|money }}</td></tr>{% else %}<tr><td colspan="3">لا توجد أرصدة غير موزعة في الحسابات المحددة.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+<section class="panel">
   <h3>توزيع قيمة المخزون حسب المخزن</h3>
   <p class="status warning">تنبيه محاسبي: لا يحتوي دفتر الأستاذ الحالي على بُعد مخزن وصنف في سطور القيود. لذلك لا يجوز توزيع رصيد الحساب على مخازن أو أصناف بالتقدير. المطابقة الرسمية هنا على مستوى حساب الأستاذ، أما الجداول التالية فهي كشف تفصيلي لقيمة المخزون حسب المخزن والصنف، وليست ادعاءً بمطابقة أستاذ مستقلة لكل مخزن.</p>
   <div class="table-wrap"><table><thead><tr><th>كود المخزن</th><th>المخزن</th><th>الحالة</th><th>قيمة طبقات التقييم</th></tr></thead><tbody>
