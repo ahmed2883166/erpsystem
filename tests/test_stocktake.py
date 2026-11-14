@@ -459,5 +459,33 @@ class StocktakeRouteTests(unittest.TestCase):
         conn.close()
 
 
+    def test_valuation_reconciliation_compares_remaining_layer_to_posted_gl(self):
+        self._login()
+        with self.client.session_transaction() as session:
+            session["permissions"] = ["stock.manage", "stock.view"]
+        conn = stock.get_db()
+        conn.execute("INSERT INTO accounts(code,name_ar,account_type,is_group,active) VALUES('1150','مخزون بضاعة','asset',0,1)")
+        initialize_activity_profiles_schema(conn)
+        conn.execute("""CREATE TABLE company_settings(
+            setting_key TEXT PRIMARY KEY,setting_value TEXT)""")
+        conn.execute("INSERT INTO company_settings VALUES('activity','commercial')")
+        conn.execute("""CREATE TABLE journal_entries(
+            id INTEGER PRIMARY KEY,entry_date TEXT,reference TEXT,description TEXT,status TEXT)""")
+        conn.execute("""CREATE TABLE journal_lines(
+            id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit TEXT,credit TEXT,memo TEXT)""")
+        inventory_id = conn.execute("SELECT id FROM accounts WHERE code='1150'").fetchone()["id"]
+        conn.execute("INSERT INTO journal_entries(id,entry_date,reference,description,status) VALUES(1,'2026-01-01','OPEN','رصيد افتتاحي','posted')")
+        conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(1,?,'50','0','مخزون افتتاحي')",
+                     (inventory_id,))
+        conn.commit()
+        conn.close()
+
+        response = self.client.get("/stock/reconciliation")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("1150".encode(), response.data)
+        self.assertIn("50".encode(), response.data)
+        self.assertNotIn("دفتر الأستاذ غير مهيأ".encode(), response.data)
+
+
 if __name__ == "__main__":
     unittest.main()
