@@ -51,6 +51,11 @@ class UserPermissionRouteTests(unittest.TestCase):
         self.assertIn("admin", response.get_data(as_text=True))
 
     def test_viewer_cannot_open_or_post_user_permission_edit(self):
+        conn = sqlite3.connect(nexus.DB_PATH)
+        conn.execute("UPDATE users SET role='viewer',permissions_json=? WHERE id=1",
+                     (json.dumps(["reports.view"]),))
+        conn.commit()
+        conn.close()
         with self.client.session_transaction() as session:
             session.update(user_id=1, username="admin", full_name="مدير",
                            role="viewer", permissions=["reports.view"])
@@ -177,6 +182,11 @@ class UserPermissionRouteTests(unittest.TestCase):
         self.assertNotIn("sales.manage", approval_only)
 
     def test_non_admin_cannot_manage_custom_roles_even_if_users_manage_is_granted(self):
+        conn = sqlite3.connect(nexus.DB_PATH)
+        conn.execute("UPDATE users SET role='accountant',permissions_json=? WHERE id=1",
+                     (json.dumps(["users.manage"]),))
+        conn.commit()
+        conn.close()
         with self.client.session_transaction() as session:
             session.update(user_id=1, username="admin", full_name="مدير",
                            role="accountant", permissions=["users.manage"])
