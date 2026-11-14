@@ -19,6 +19,38 @@ def signed_ledger_amount(debit, credit):
     """Convert a posted bank-ledger line to statement direction: debit positive, credit negative."""
     return (Decimal(str(debit or "0"))-Decimal(str(credit or "0"))).quantize(Decimal("0.01"))
 
+def opening_reconciliation_state(balances, ledger_opening, book_total):
+    """Return an explicit, safe bank opening/closing reconciliation state."""
+    ledger_opening = Decimal(str(ledger_opening or "0")).quantize(Decimal("0.01"))
+    book_total = Decimal(str(book_total or "0")).quantize(Decimal("0.01"))
+    if balances is None:
+        return {
+            "balances_entered": False, "opening_balance": None, "closing_balance": None,
+            "opening_ledger_balance": ledger_opening, "opening_difference": None,
+            "opening_reviewed": False, "opening_review_note": "", "opening_ready": False,
+            "expected_closing_balance": None, "closing_difference": None,
+        }
+    opening = Decimal(str(balances["opening_balance"])).quantize(Decimal("0.01"))
+    closing = Decimal(str(balances["closing_balance"])).quantize(Decimal("0.01"))
+    opening_difference = opening - ledger_opening
+    reviewed = bool(balances["opening_reviewed"])
+    ready = opening_difference == 0 or reviewed
+    expected = opening + book_total
+    return {
+        "balances_entered": True, "opening_balance": opening, "closing_balance": closing,
+        "opening_ledger_balance": ledger_opening, "opening_difference": opening_difference,
+        "opening_reviewed": reviewed, "opening_review_note": balances["opening_review_note"] or "",
+        "opening_ready": ready, "expected_closing_balance": expected,
+        "closing_difference": closing - expected if ready else None,
+    }
+
+
+def count_same_amount_candidates(rows, amount):
+    """Count posted bank-ledger rows matching the statement signed amount."""
+    target = Decimal(str(amount)).quantize(Decimal("0.01"))
+    return sum(1 for row in rows if signed_ledger_amount(row["debit"], row["credit"]) == target)
+
+
 def init_bank_schema():
     c = db()
     c.executescript("""
@@ -336,8 +368,7 @@ def statement_reconciliation():
                     JOIN journal_entries je ON je.id=jl.entry_id
                     WHERE jl.account_id=? AND je.status='posted' AND je.entry_date BETWEEN ? AND ?""",
                     (line["bank_account_id"],period_start,period_end)).fetchall()
-                possible=sum(1 for candidate in possible_rows
-                    if signed_ledger_amount(candidate["debit"],candidate["credit"])==expected)
+                possible=count_same_amount_candidates(possible_rows,expected)
                 if possible>1 and request.form.get("confirm_multiple")!="1":
                     raise ValueError(f"يوجد {possible} قيود بنفس المبلغ والاتجاه. راجع رقم القيد والتاريخ والبيان، ثم أكد أنك اخترت القيد الصحيح.")
                 already=c.execute("SELECT 1 FROM bank_statement_lines WHERE matched_journal_line_id=? LIMIT 1",
@@ -401,22 +432,23 @@ def statement_reconciliation():
             balances=c.execute("""SELECT opening_balance,closing_balance,opening_reviewed,opening_review_note
                 FROM bank_statement_balances WHERE bank_account_id=? AND period_start=? AND period_end=?""",
                 (account_id,period_start,period_end)).fetchone()
-            balances_entered=balances is not None
-            opening_balance=Decimal(str(balances["opening_balance"])) if balances else None
-            closing_balance=Decimal(str(balances["closing_balance"])) if balances else None
-            opening_ledger_balance=Decimal("0")
             opening_rows=c.execute("""SELECT jl.debit,jl.credit FROM journal_lines jl
                 JOIN journal_entries je ON je.id=jl.entry_id
                 WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<?""",
                 (account_id,period_start)).fetchall()
-            for opening_row in opening_rows:
-                opening_ledger_balance+=signed_ledger_amount(opening_row["debit"],opening_row["credit"])
-            opening_difference=(opening_balance-opening_ledger_balance) if balances_entered else None
-            opening_reviewed=bool(balances["opening_reviewed"]) if balances else False
-            opening_review_note=balances["opening_review_note"] if balances else ""
-            expected_closing_balance=(opening_balance+book_total) if balances_entered else None
-            opening_ready=bool(balances_entered and (opening_difference==0 or opening_reviewed))
-            closing_difference=(closing_balance-expected_closing_balance) if opening_ready else None
+            opening_ledger_balance=sum((signed_ledger_amount(row["debit"],row["credit"])
+                for row in opening_rows),Decimal("0"))
+            reconciliation_state=opening_reconciliation_state(balances,opening_ledger_balance,book_total)
+            balances_entered=reconciliation_state["balances_entered"]
+            opening_balance=reconciliation_state["opening_balance"]
+            closing_balance=reconciliation_state["closing_balance"]
+            opening_ledger_balance=reconciliation_state["opening_ledger_balance"]
+            opening_difference=reconciliation_state["opening_difference"]
+            opening_reviewed=reconciliation_state["opening_reviewed"]
+            opening_review_note=reconciliation_state["opening_review_note"]
+            expected_closing_balance=reconciliation_state["expected_closing_balance"]
+            opening_ready=reconciliation_state["opening_ready"]
+            closing_difference=reconciliation_state["closing_difference"]
         else:
             lines=[]; book_rows=[]; statement_total=Decimal("0"); book_total=Decimal("0"); matched_count=0
             balances_entered=False; opening_balance=None; closing_balance=None; opening_ledger_balance=Decimal("0")
