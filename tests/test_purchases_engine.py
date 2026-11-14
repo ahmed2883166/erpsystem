@@ -829,5 +829,64 @@ class PurchasingAccountingTests(unittest.TestCase):
             )
 
 
+    def test_supplier_invoice_lines_match_receipt_quantities_and_block_duplicate_billing(self):
+        from werkzeug.datastructures import MultiDict
+        purchases.init_purchase_schema()
+        self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-MATCH','مورد المطابقة')")
+        supplier_id = self.db.execute("SELECT id FROM suppliers WHERE code='SUP-MATCH'").fetchone()["id"]
+        self.db.execute("INSERT INTO stock_warehouses(code,name_ar) VALUES('W-MATCH','مخزن المطابقة')")
+        warehouse_id = self.db.execute("SELECT id FROM stock_warehouses WHERE code='W-MATCH'").fetchone()["id"]
+        self.db.execute("INSERT INTO stock_products(id,sku,name_ar) VALUES(91,'MATCH-ITEM','صنف المطابقة')")
+        self.db.execute("""INSERT INTO purchase_orders(po_no,supplier_id,order_date,status,created_by)
+            VALUES('PO-MATCH',?,'2026-11-14','approved',2)""", (supplier_id,))
+        po_id = self.db.execute("SELECT id FROM purchase_orders WHERE po_no='PO-MATCH'").fetchone()["id"]
+        self.db.execute("""INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price)
+            VALUES(?,91,'5','10')""", (po_id,))
+        po_line_id = self.db.execute("SELECT id FROM purchase_order_lines WHERE po_id=?", (po_id,)).fetchone()["id"]
+        self.db.execute("""INSERT INTO goods_receipts(receipt_no,supplier_id,warehouse_id,receipt_date,
+            status,total_value) VALUES('GR-MATCH',?,?,'2026-11-14','posted','30')""",
+            (supplier_id, warehouse_id))
+        receipt_id = self.db.execute("SELECT id FROM goods_receipts WHERE receipt_no='GR-MATCH'").fetchone()["id"]
+        self.db.execute("""INSERT INTO goods_receipt_lines(receipt_id,po_line_id,product_id,quantity,unit_cost,total_cost)
+            VALUES(?,?,91,'3','10','30')""", (receipt_id, po_line_id))
+        receipt_line_id = self.db.execute(
+            "SELECT id FROM goods_receipt_lines WHERE receipt_id=?", (receipt_id,)
+        ).fetchone()["id"]
+        self.db.commit()
+
+        form = MultiDict({
+            "invoice_quantity_" + str(receipt_line_id): "2",
+            "invoice_unit_price_" + str(receipt_line_id): "10"
+        })
+        lines = purchases._validate_supplier_bill_inventory_lines(
+            self.db, supplier_id, [receipt_id], purchases.money("20"), form
+        )
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["line_total"], purchases.money("20"))
+
+        self.db.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,
+            subtotal,tax_rate,tax_amount,total_amount,status)
+            VALUES('BILL-MATCH',?,'2026-11-14','INV-MATCH','20','0','0','20','draft')""",
+            (supplier_id,))
+        bill_id = self.db.execute("SELECT id FROM supplier_bills WHERE bill_no='BILL-MATCH'").fetchone()["id"]
+        self.db.execute("""INSERT INTO supplier_bill_inventory_lines(
+            bill_id,line_no,receipt_line_id,product_id,billed_quantity,invoice_unit_price,line_total
+        ) VALUES(?,1,?,91,'2','10','20')""", (bill_id, receipt_line_id))
+        self.db.commit()
+
+        with self.assertRaisesRegex(ValueError, "تتجاوز الكمية المستلمة"):
+            purchases._validate_supplier_bill_inventory_lines(
+                self.db, supplier_id, [receipt_id], purchases.money("20"), form
+            )
+        with self.assertRaisesRegex(ValueError, "مجموع بنود فاتورة المورد"):
+            purchases._validate_supplier_bill_inventory_lines(
+                self.db, supplier_id, [receipt_id], purchases.money("11"),
+                MultiDict({
+                    "invoice_quantity_" + str(receipt_line_id): "1",
+                    "invoice_unit_price_" + str(receipt_line_id): "10"
+                })
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
