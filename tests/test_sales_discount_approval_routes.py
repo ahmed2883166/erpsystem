@@ -112,7 +112,7 @@ class SalesDiscountApprovalRouteTests(unittest.TestCase):
 
     def test_invoice_discount_rejection_does_not_post_invoice_or_create_invoice(self):
         request_id = self._add_request()
-        with patch.object(sales, "db", return_value=self.connection), \
+        with patch.object(sales, "db", side_effect=self._connect), \
              patch.object(sales, "post_invoice") as post, \
              patch.object(nexus, "log"):
             self._login()
