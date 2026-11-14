@@ -189,8 +189,16 @@ def init_sales_schema():
       product_id INTEGER REFERENCES stock_products(id), description TEXT NOT NULL,
       quantity TEXT NOT NULL, unit_price TEXT NOT NULL, line_total TEXT NOT NULL,
       tax_rate TEXT NOT NULL, tax_treatment TEXT NOT NULL, tax_amount TEXT NOT NULL,
-      cost_total TEXT NOT NULL DEFAULT '0', stock_movement_id INTEGER REFERENCES stock_movements(id)
+      cost_total TEXT NOT NULL DEFAULT '0', stock_movement_id INTEGER REFERENCES stock_movements(id),
+      entered_quantity TEXT, uom_id INTEGER REFERENCES stock_uoms(id), uom_key TEXT,
+      entered_uom_name TEXT, conversion_factor TEXT NOT NULL DEFAULT '1'
     )""")
+    credit_line_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_credit_note_lines)")}
+    for name, definition in (("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),
+                             ("uom_key","TEXT"),("entered_uom_name","TEXT"),
+                             ("conversion_factor","TEXT NOT NULL DEFAULT '1'")):
+        if name not in credit_line_columns:
+            c.execute("ALTER TABLE sales_credit_note_lines ADD COLUMN " + name + " " + definition)
     c.execute("""CREATE TABLE IF NOT EXISTS sales_credit_note_line_lots(
       id INTEGER PRIMARY KEY, credit_note_line_id INTEGER NOT NULL REFERENCES sales_credit_note_lines(id),
       lot_id INTEGER REFERENCES stock_lots(id), quantity TEXT NOT NULL,
@@ -682,7 +690,20 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         ).fetchone()
         if not original:
             raise ValueError("أحد بنود الإشعار لا ينتمي إلى فاتورة البيع المحددة.")
-        qty = Decimal(str(item["quantity"]))
+        entered_qty = Decimal(str(item["quantity"]))
+        product_id_for_uom = original["product_id"]
+        uom_key = str(item.get("uom_key") or "")
+        if product_id_for_uom and uom_key:
+            conversion_factor, entered_uom_name = product_uom_factor(conn, product_id_for_uom, uom_key, "sales")
+            uom_id, stored_uom_name = product_uom_storage(conn, product_id_for_uom, uom_key)
+        elif product_id_for_uom:
+            conversion_factor, entered_uom_name = product_uom_factor(conn, product_id_for_uom, None, "sales")
+            uom_id, stored_uom_name = product_uom_storage(conn, product_id_for_uom, None)
+        else:
+            conversion_factor, entered_uom_name, uom_id, stored_uom_name = Decimal("1"), "", None, ""
+        if not conversion_factor.is_finite() or conversion_factor <= 0:
+            raise ValueError("معامل تحويل وحدة المرتجع غير صحيح.")
+        qty = entered_qty * conversion_factor
         sold_qty = Decimal(original["quantity"])
         if not qty.is_finite() or qty <= 0:
             raise ValueError("كمية الإشعار يجب أن تكون أكبر من صفر.")
@@ -784,7 +805,10 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
             conn, product_id, "cogs", codes.get("cogs")
         ) if product_id else None
         normalized.append({
-            "original": original, "quantity": qty, "unit_price": unit_price,
+            "original": original, "quantity": qty, "entered_quantity": entered_qty,
+            "uom_id": uom_id, "uom_key": uom_key or (str(original["uom_key"]) if original["uom_key"] else ""),
+            "entered_uom_name": entered_uom_name or stored_uom_name or original["entered_uom_name"] or "",
+            "conversion_factor": conversion_factor, "unit_price": unit_price,
             "line_total": line_value, "tax_rate": tax_rate,
             "tax_treatment": treatment, "tax_amount": line_tax,
             "cost_total": line_cost, "lot_allocations": lot_allocations,
@@ -833,10 +857,13 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         credit_line_cursor = conn.execute(
             """INSERT INTO sales_credit_note_lines(credit_note_id,invoice_line_id,product_id,
                description,quantity,unit_price,line_total,tax_rate,tax_treatment,tax_amount,
-               cost_total,stock_movement_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)""",
+               cost_total,stock_movement_id,entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?)""",
             (credit_id, original["id"], product_id, original["description"], str(item["quantity"]),
              str(item["unit_price"]), str(item["line_total"]), str(item["tax_rate"]),
-             item["tax_treatment"], str(item["tax_amount"]), str(item["cost_total"])),
+             item["tax_treatment"], str(item["tax_amount"]), str(item["cost_total"]),
+             str(item["entered_quantity"]), item["uom_id"], item["uom_key"],
+             item["entered_uom_name"], str(item["conversion_factor"])),
         )
         credit_line_id = credit_line_cursor.lastrowid
         if product_id:
@@ -2102,6 +2129,7 @@ def new_credit_note():
             for line in lines:
                 item = dict(line)
                 item["credited_qty"] = str(prior_by_line.get(line["id"], Decimal("0")))
+                item["uom_options"] = product_uom_options(c, line["product_id"]) if line["product_id"] else []
                 enriched_lines.append(item)
             lines = enriched_lines
     if request.method == "POST":
@@ -2111,7 +2139,9 @@ def new_credit_note():
             selected = []
             for line_id, qty in zip(request.form.getlist("invoice_line_id"), request.form.getlist("return_quantity")):
                 if qty and Decimal(qty) > 0:
-                    selected.append({"invoice_line_id": int(line_id), "quantity": qty})
+                    uom_key = request.form.getlist("return_uom_key")
+                selected.append({"invoice_line_id": int(line_id), "quantity": qty,
+                                 "uom_key": uom_key[len(selected)] if len(uom_key) > len(selected) else ""})
             c.execute("BEGIN IMMEDIATE")
             result = post_credit_note(
                 c, invoice_id, request.form["credit_date"], request.form.get("reason", ""),
