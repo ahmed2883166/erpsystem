@@ -134,6 +134,9 @@ def init_sales_schema():
     CREATE INDEX IF NOT EXISTS idx_sales_receipts_invoice ON customer_receipts(invoice_id,receipt_date);
     """)
     line_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoice_lines)")}
+    for name, definition in (("entered_quantity","TEXT"),("uom_id","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'")):
+        if name not in line_columns:
+            c.execute("ALTER TABLE sales_invoice_lines ADD COLUMN "+name+" "+definition)
     for name, definition in {
         "tax_rate": "TEXT NOT NULL DEFAULT '0'",
         "tax_treatment": "TEXT NOT NULL DEFAULT 'standard'",
