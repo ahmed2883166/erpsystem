@@ -7,7 +7,6 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal
-from code_sequences import next_code
 from chart_templates import ensure_account_metadata
 
 bank_bp = Blueprint("bank", __name__, url_prefix="/bank")
@@ -175,11 +174,17 @@ def cash_accounts():
                 raise ValueError("اختر عملة نشطة في إعدادات العملات.")
             if mode=="new":
                 parent_id=request.form.get("parent_id",type=int)
-                parent=c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(parent_id,)).fetchone()
-                if not parent or parent["account_type"]!="asset" or not parent["is_group"] or not parent["active"]:
-                    raise ValueError("لإنشاء حساب أستاذ جديد اختر مجموعة أصول نشطة.")
-                prefix="CA" if kind=="cash" else "BK"
-                code=next_code(c,"cash_ledger_"+kind,prefix,"accounts","code")
+                parent=c.execute("SELECT id,code,account_type,is_group,active FROM accounts WHERE id=?",(parent_id,)).fetchone()
+                if not parent or parent["account_type"]!="asset" or not parent["is_group"] or not parent["active"] or not str(parent["code"]).startswith("11") or not str(parent["code"]).isdigit():
+                    raise ValueError("لإنشاء خزنة أو بنك اختر مجموعة الأصول المتداولة النقدية (مثل 1100) حتى يظهر الحساب في التصنيف الصحيح بالقوائم المالية.")
+                code=None
+                for sequence in range(1,1000):
+                    candidate=str(parent["code"])+f"{sequence:03d}"
+                    if not c.execute("SELECT 1 FROM accounts WHERE code=?",(candidate,)).fetchone():
+                        code=candidate
+                        break
+                if not code:
+                    raise ValueError("تعذر توليد كود حساب فرعي جديد تحت المجموعة المختارة.")
                 account_name=("خزنة - " if kind=="cash" else "بنك - ")+name
                 cur=c.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group,active) VALUES(?,?,'asset',?,0,1)",
                               (code,account_name,parent_id))
