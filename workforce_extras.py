@@ -241,3 +241,63 @@ def employee_financial_statement(employee_id):
     return render_template("employee_statement.html",employee=employee,lines=lines,details=details,
         paid_by_line=paid_by_line,penalties=penalties,summary=summary,
         month_from=month_from,month_to=month_to,unallocated=unallocated)
+
+@workforce_bp.route("/hr/payroll/<int:run_id>/payment/<int:payment_id>/allocate", methods=["GET","POST"])
+@_role("admin","accountant")
+def allocate_legacy_payroll_payment(run_id, payment_id):
+    c = _db()
+    payment = c.execute("SELECT * FROM payroll_payments WHERE id=? AND run_id=?",
+                        (payment_id,run_id)).fetchone()
+    run = c.execute("SELECT * FROM payroll_runs WHERE id=?",(run_id,)).fetchone()
+    if not payment or not run:
+        c.close()
+        flash("دفعة المرتبات غير موجودة.","error")
+        return redirect(url_for("workforce.payroll_run",run_id=run_id))
+    existing = c.execute("""SELECT a.*,e.employee_code,e.full_name
+        FROM payroll_payment_allocations a
+        JOIN payroll_lines l ON l.id=a.payroll_line_id
+        JOIN employees e ON e.id=l.employee_id
+        WHERE a.payment_id=? ORDER BY e.employee_code""",(payment_id,)).fetchall()
+    if request.method == "POST":
+        try:
+            if existing:
+                raise ValueError("هذه الدفعة موزعة بالفعل؛ لا يمكن استبدال توزيعها التاريخي من هذه الشاشة.")
+            c.execute("BEGIN IMMEDIATE")
+            lines = c.execute("""SELECT id,employee_id,net_pay FROM payroll_lines
+                WHERE run_id=? ORDER BY id""",(run_id,)).fetchall()
+            total = Decimal("0")
+            inserts = []
+            for line in lines:
+                amount = M(request.form.get("allocation_"+str(line["id"]),"0"))
+                already = M(sum((D(x["amount"]) for x in c.execute(
+                    "SELECT amount FROM payroll_payment_allocations WHERE payroll_line_id=?",
+                    (line["id"],)).fetchall()),Decimal("0")))
+                if amount < 0 or amount > M(D(line["net_pay"])-already):
+                    raise ValueError("توزيع الدفعة يتجاوز صافي المستحق المتبقي لأحد الموظفين.")
+                total += amount
+                if amount:
+                    inserts.append((payment_id,line["id"],str(amount)))
+            if M(total) != M(payment["amount"]):
+                raise ValueError("يجب أن يساوي مجموع التوزيعات قيمة الدفعة القديمة بالضبط.")
+            for item in inserts:
+                c.execute("""INSERT INTO payroll_payment_allocations(payment_id,payroll_line_id,amount)
+                    VALUES(?,?,?)""",item)
+            _audit(c,"payroll_payment_allocated",str(payment_id)+" amount="+str(M(total)))
+            c.commit()
+            flash("تم توزيع الدفعة القديمة على الموظفين دون إنشاء قيد جديد أو تعديل القيد الأصلي.","success")
+            c.close()
+            return redirect(url_for("workforce.payroll_run",run_id=run_id))
+        except (ValueError,sqlite3.Error) as exc:
+            c.rollback()
+            flash(str(exc),"error")
+    lines = c.execute("""SELECT l.id,l.net_pay,e.employee_code,e.full_name
+        FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
+        WHERE l.run_id=? ORDER BY e.employee_code""",(run_id,)).fetchall()
+    allocated_by_line = {}
+    for line in lines:
+        allocated_by_line[line["id"]] = M(sum((D(x["amount"]) for x in c.execute(
+            "SELECT amount FROM payroll_payment_allocations WHERE payroll_line_id=?",
+            (line["id"],)).fetchall()),Decimal("0")))
+    c.close()
+    return render_template("payroll_payment_allocation.html",payment=payment,run=run,
+        lines=lines,existing=existing,allocated_by_line=allocated_by_line)
