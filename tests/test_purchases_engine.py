@@ -200,7 +200,7 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.assertEqual(posted["status"], "posted")
         self.assertEqual(posted["journal_entry_id"], entry_id)
         self.assertEqual(entry_id, 77)
-        with self.assertRaisesRegex(ValueError, "قبل اعتمادها"):
+        with self.assertRaisesRegex(ValueError, "مرحّلة بالفعل"):
             purchases.post_supplier_bill(self.db, bill_id, 30)
         self.db.rollback()
 
