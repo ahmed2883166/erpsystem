@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}طلبات الشراء الداخلية | NEXUS ERP{% endblock %}
+{% block content %}
+<header><h2>طلبات الشراء الداخلية</h2><p>الطلب المعتمد لا يؤثر على المخزون أو الحسابات. التحويل ينشئ أمر شراء مسودة يخضع لدورة الاعتماد الحالية.</p></header>
+<section class="panel">
+{% if 'purchases.manage' in permissions %}<a class="button" href="{{ url_for('purchase.new_purchase_request') }}">طلب جديد</a>{% endif %}
+<table>
+<thead><tr><th>رقم الطلب</th><th>التاريخ</th><th>القسم</th><th>الصنف</th><th>الكمية</th><th>الغرض</th><th>الحالة</th><th>الإجراءات</th></tr></thead>
+<tbody>
+{% for r in requests %}
+<tr>
+<td>{{ r.request_no }}</td><td>{{ r.request_date }}</td><td>{{ r.department or '—' }}</td>
+<td>{{ r.sku }} — {{ r.product_name }}</td><td>{{ r.quantity }}</td><td>{{ r.purpose }}</td>
+<td>{% if r.status=='draft' %}مسودة{% elif r.status=='pending_approval' %}بانتظار الاعتماد{% elif r.status=='approved' %}معتمد{% elif r.status=='rejected' %}مرفوض{% elif r.status=='converted' %}تحول إلى {{ r.converted_po_no or 'أمر شراء' }}{% else %}{{ r.status }}{% endif %}</td>
+<td><div class="table-actions">
+{% if r.status in ['draft','rejected'] and 'purchases.manage' in permissions %}
+<form method="post" action="{{ url_for('purchase.submit_purchase_request',request_id=r.id) }}"><button>إرسال للاعتماد</button></form>
+{% elif r.status=='pending_approval' and 'purchases.approve' in permissions %}
+{% if r.created_by != session.get('user_id') and r.submitted_by != session.get('user_id') %}
+<form method="post" action="{{ url_for('purchase.approve_purchase_request',request_id=r.id) }}"><input name="reason" placeholder="ملاحظة الاعتماد"><button>اعتماد</button></form>
+<form method="post" action="{{ url_for('purchase.reject_purchase_request',request_id=r.id) }}"><input name="reason" placeholder="سبب الرفض (5 أحرف)" minlength="5" required><button class="danger">رفض</button></form>
+{% else %}<span class="muted">لا يمكنك اعتماد طلبك بنفسك</span>{% endif %}
+{% elif r.status=='approved' and 'purchases.manage' in permissions %}
+<form method="post" action="{{ url_for('purchase.convert_purchase_request',request_id=r.id) }}">
+<label>المورد</label><select name="supplier_id" required>{% for s in suppliers %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select>
+<label>سعر الوحدة الفعلي</label><input type="number" name="unit_price" min="0" step="0.01" value="{{ r.estimated_unit_price }}" required>
+<button>تحويل إلى أمر شراء</button></form>
+{% endif %}
+</div></td></tr>
+{% else %}<tr><td colspan="8">لا توجد طلبات شراء داخلية.</td></tr>{% endfor %}
+</tbody></table>
+</section>
+{% endblock %}
