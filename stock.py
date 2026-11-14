@@ -1984,8 +1984,19 @@ def approve_count(stocktake_id):
         if (not variance_account or variance_account["is_group"] or not variance_account["active"]
                 or variance_account["account_type"] != "expense"):
             raise ValueError("يجب تفعيل الحساب التفصيلي 6990 (فروق الجرد) من نوع مصروف قبل اعتماد الجرد.")
+        from activity_profiles import resolve_product_account_code
         journal_lines, movement_ids = [], []
         for line in lines:
+            product_inventory_code = resolve_product_account_code(
+                c, line["product_id"], "inventory", inventory_code
+            )
+            product_inventory = c.execute(
+                "SELECT id,is_group,active,account_type FROM accounts WHERE code=?",
+                (product_inventory_code,)
+            ).fetchone() if product_inventory_code else None
+            if (not product_inventory or product_inventory["is_group"] or
+                    not product_inventory["active"] or product_inventory["account_type"] != "asset"):
+                raise ValueError("حساب مخزون الصنف " + line["sku"] + " غير مضبوط كحساب أصول تفصيلي نشط.")
             snapshot = D(str(line["snapshot_qty"]))
             scope_location = line["location_id"] if line["location_id"] is not None else 0
             scope_lot = line["lot_id"] if line["lot_id"] is not None else 0
@@ -2012,7 +2023,9 @@ def approve_count(stocktake_id):
                 movement_ids.append(cur.lastrowid)
                 if cost > 0:
                     journal_lines.extend([(variance_account["id"],cost,0,"عجز جرد - " + line["name_ar"]),
-                                          (inventory["id"],0,cost,"تخفيض مخزون - " + line["name_ar"])])
+                                          (product_inventory["id"],0,cost,"تخفيض مخزون - " + line["name_ar]",
+                                           {"stock_product_id": int(line["product_id"]),
+                                            "stock_warehouse_id": int(stocktake["warehouse_id"])})])
                 c.execute("UPDATE stocktake_lines SET variance_value=? WHERE id=?", (str(-cost),line["id"]))
             else:
                 unit_cost = D(str(line["counted_unit_cost"] or "0"))
@@ -2032,7 +2045,9 @@ def approve_count(stocktake_id):
                     (line["product_id"],stocktake["warehouse_id"],line["location_id"],line["lot_id"],
                      movement_id,str(variance),str(variance),str(unit_cost),str(cost)))
                 movement_ids.append(movement_id)
-                journal_lines.extend([(inventory["id"],cost,0,"زيادة مخزون - " + line["name_ar"]),
+                journal_lines.extend([(product_inventory["id"],cost,0,"زيادة مخزون - " + line["name_ar"],
+                                      {"stock_product_id": int(line["product_id"]),
+                                       "stock_warehouse_id": int(stocktake["warehouse_id"])}),
                                       (variance_account["id"],0,cost,"زيادة مخزون - عكس مصروف فروق الجرد - " + line["name_ar"])])
                 c.execute("UPDATE stocktake_lines SET variance_value=? WHERE id=?", (str(cost),line["id"]))
         journal_id = None
