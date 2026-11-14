@@ -1147,10 +1147,11 @@ def _supplier_receipt_line_rows(c, receipt_ids):
         SELECT gl.id AS receipt_line_id,gl.receipt_id,gl.po_line_id,gl.product_id,
                gl.quantity AS received_quantity,gl.unit_cost AS received_unit_cost,
                gl.total_cost AS received_total_cost,r.supplier_id,r.status AS receipt_status,
-               r.receipt_no,p.sku,p.name_ar AS product_name,p.uom,
+               r.receipt_no,s.name AS supplier_name,p.sku,p.name_ar AS product_name,p.uom,
                po.po_no,pol.unit_price AS ordered_unit_price
         FROM goods_receipt_lines gl
         JOIN goods_receipts r ON r.id=gl.receipt_id
+        JOIN suppliers s ON s.id=r.supplier_id
         JOIN stock_products p ON p.id=gl.product_id
         LEFT JOIN purchase_order_lines pol ON pol.id=gl.po_line_id
         LEFT JOIN purchase_orders po ON po.id=pol.po_id
@@ -1892,10 +1893,6 @@ def edit_bill(bill_id):
     existing_allocations = {row["receipt_id"]: money(row["matched_amount"]) for row in c.execute(
         "SELECT receipt_id,matched_amount FROM supplier_bill_receipts WHERE bill_id=?", (bill_id,)).fetchall()}
     selected_receipt_ids = set(existing_allocations)
-    receipt_line_ids = [row["id"] for row in c.execute(
-        "SELECT id FROM goods_receipt_lines WHERE receipt_id IN (" +
-        ",".join("?" for _ in receipts) + ")",
-        [row["id"] for row in receipts]).fetchall()] if receipts else []
     receipt_lines = _supplier_receipt_line_rows(c, [row["id"] for row in receipts])
     existing_invoice_lines = {
         row["receipt_line_id"]: row for row in c.execute(
