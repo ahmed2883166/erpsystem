@@ -362,11 +362,15 @@ def statement_reconciliation():
                 period_start=request.form.get("start_date","").strip()
                 period_end=request.form.get("end_date","").strip()
                 date.fromisoformat(period_start); date.fromisoformat(period_end)
+                if not (period_start<=line["statement_date"]<=period_end):
+                    raise ValueError("سطر كشف البنك خارج فترة التسوية الحالية.")
                 if not (period_start<=journal_line["entry_date"]<=period_end):
                     raise ValueError("القيد المختار خارج فترة التسوية الحالية.")
                 possible_rows=c.execute("""SELECT jl.debit,jl.credit FROM journal_lines jl
                     JOIN journal_entries je ON je.id=jl.entry_id
-                    WHERE jl.account_id=? AND je.status='posted' AND je.entry_date BETWEEN ? AND ?""",
+                    LEFT JOIN bank_statement_lines matched ON matched.matched_journal_line_id=jl.id
+                    WHERE jl.account_id=? AND je.status='posted' AND je.entry_date BETWEEN ? AND ?
+                      AND matched.id IS NULL""",
                     (line["bank_account_id"],period_start,period_end)).fetchall()
                 possible=count_same_amount_candidates(possible_rows,expected)
                 if possible>1 and request.form.get("confirm_multiple")!="1":
