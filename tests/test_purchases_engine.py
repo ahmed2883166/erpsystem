@@ -298,11 +298,14 @@ class PurchasingAccountingTests(unittest.TestCase):
             ],
         )
         layer = self.db.execute(
-            "SELECT qty_remaining,unit_cost FROM stock_valuation_layers WHERE source_movement_id=?",
+            "SELECT qty_remaining,unit_cost,value_remaining FROM stock_valuation_layers WHERE source_movement_id=?",
             (movement_id,),
         ).fetchone()
         self.assertEqual(Decimal(layer["qty_remaining"]), Decimal("5"))
         self.assertEqual(Decimal(layer["unit_cost"]), Decimal("34"))
+        # The remaining five units must carry the discounted IAS 2 value,
+        # not the pre-discount value left behind in value_remaining.
+        self.assertEqual(Decimal(layer["value_remaining"]), Decimal("170.00"))
         movement = self.db.execute(
             "SELECT unit_cost,total_cost FROM stock_movements WHERE id=?", (movement_id,)
         ).fetchone()
