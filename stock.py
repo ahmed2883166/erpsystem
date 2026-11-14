@@ -291,8 +291,6 @@ def product_uom_factor(c, product_id, uom_id, purpose=None):
     if not unit or unit["category_id"]!=base["category_id"]:
         raise ValueError("وحدة الحركة يجب أن تكون من نفس مجموعة وحدة الصنف.")
     factor=D(str(unit["factor_to_base"]))/D(str(base["factor_to_base"]))
-    if purpose=="purchase" or purpose=="sales":
-        raise ValueError("الوحدة المختارة غير مفعلة لهذا الصنف؛ أضفها من إعدادات وحدات الصنف.")
     return factor,unit["name_ar"]
 
 
