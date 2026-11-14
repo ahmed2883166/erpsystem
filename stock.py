@@ -1427,6 +1427,7 @@ def valuation_reconciliation():
         products = conn.execute("SELECT id,sku,name_ar FROM stock_products WHERE active=1 ORDER BY sku").fetchall()
         valuation_by_code = {}
         valuation_by_warehouse = {}
+        warehouse_product_totals = {}
         for product in products:
             code = resolve_product_account_code(conn, product["id"], "inventory", default_inventory)
             if not code:
@@ -1441,6 +1442,13 @@ def valuation_reconciliation():
                 value += layer_value
                 warehouse_id = layer["warehouse_id"]
                 valuation_by_warehouse[warehouse_id] = valuation_by_warehouse.get(warehouse_id, D("0")) + layer_value
+                key=(warehouse_id,product["id"],code)
+                product_bucket=warehouse_product_totals.setdefault(key,{
+                    "sku":product["sku"],"name":product["name_ar"],"account_code":code,
+                    "qty":D("0"),"value":D("0")
+                })
+                product_bucket["qty"]+=D(str(layer["qty_remaining"] or "0"))
+                product_bucket["value"]+=layer_value
             valuation_by_code[code] = valuation_by_code.get(code, D("0")) + value
         warehouse_rows = []
         warehouse_records = conn.execute("SELECT id,code,name_ar,active FROM stock_warehouses ORDER BY code").fetchall()
@@ -1453,6 +1461,21 @@ def valuation_reconciliation():
         unassigned_value = valuation_by_warehouse.get(None, D("0"))
         if unassigned_value:
             warehouse_rows.append({"code":"—","name":"طبقات غير مرتبطة بمخزن","active":0,"valuation":unassigned_value})
+        warehouse_product_rows=[]
+        warehouse_names={row["id"]:row for row in warehouse_records}
+        for (warehouse_id,product_id,account_code),bucket in sorted(
+            warehouse_product_totals.items(),key=lambda item:(
+                warehouse_names[item[0][0]]["code"] if item[0][0] in warehouse_names else "ZZZ",
+                item[1]["sku"]
+            )
+        ):
+            warehouse=warehouse_names.get(warehouse_id)
+            warehouse_product_rows.append({
+                "warehouse_code":warehouse["code"] if warehouse else "—",
+                "warehouse_name":warehouse["name_ar"] if warehouse else "غير مرتبط بمخزن",
+                "sku":bucket["sku"],"name":bucket["name"],"account_code":account_code,
+                "qty":bucket["qty"],"value":bucket["value"]
+            })
         account_rows = conn.execute("""SELECT id,code,name_ar FROM accounts
             WHERE active=1 AND is_group=0 AND code IN (
                 SELECT DISTINCT code FROM accounts WHERE code IS NOT NULL
@@ -1486,11 +1509,12 @@ def valuation_reconciliation():
         total_valuation = sum((row["valuation"] for row in rows), D("0"))
         total_ledger = sum((row["ledger"] for row in rows), D("0"))
         return render_template("stock_reconciliation.html", rows=rows, warehouse_rows=warehouse_rows,
+            warehouse_product_rows=warehouse_product_rows,
             total_valuation=total_valuation,total_ledger=total_ledger,
             total_difference=total_valuation-total_ledger)
     except (ValueError, sqlite3.Error) as exc:
         flash(str(exc), "error")
-        return render_template("stock_reconciliation.html", rows=[], warehouse_rows=[],
+        return render_template("stock_reconciliation.html", rows=[], warehouse_rows=[], warehouse_product_rows=[],
             total_valuation=D("0"),total_ledger=D("0"),total_difference=D("0"),error=True)
     finally:
         conn.close()
