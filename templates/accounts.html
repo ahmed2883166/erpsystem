@@ -1,5 +1,17 @@
 {% extends 'base.html' %}
 {% block title %}دليل الحسابات | NEXUS ERP{% endblock %}
+{% block styles %}<style>
+.accounts-tree .account-group{background:rgba(100,116,139,.07);font-weight:600}
+.accounts-tree .account-detail td:first-child{padding-right:18px}
+.account-parent-path{display:block;color:var(--muted,#64748b);font-size:.78em;font-weight:400}
+.account-tree-toolbar{align-items:flex-start;gap:12px;flex-wrap:wrap}
+.account-tree-toolbar .table-actions{flex-wrap:wrap}
+.account-tree-toolbar input,.account-tree-toolbar select{min-width:145px}
+.accounts-tree thead{position:sticky;top:0;z-index:2}
+.accounts-tree .tree-toggle{min-width:28px;padding:2px 7px;margin-left:6px}
+.account-legend{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+@media(max-width:800px){.accounts-layout{display:flex;flex-direction:column}.accounts-tree{min-width:850px}.account-tree-toolbar .table-actions{width:100%}.account-tree-toolbar input{flex:1}}
+</style>{% endblock %}
 {% block content %}
 <header class="no-print">
   <div><h2>دليل الحسابات الهرمي</h2><p class="muted">عرض متدرج يوضح الحسابات الرئيسية والفروع التابعة لها.</p></div>
@@ -12,7 +24,7 @@
 <div class="account-legend no-print">
   <span><i class="legend-dot group-dot"></i> حساب رئيسي / مجموعة</span>
   <span><i class="legend-dot detail-dot"></i> حساب فرعي تفصيلي</span>
-  <span class="muted">الحساب الرئيسي لا يستقبل قيودًا مباشرة.</span>
+  <span class="muted">الحساب الرئيسي لا يستقبل قيودًا مباشرة.</span><span class="muted">المجموعة: {{ accounts|selectattr("is_group")|list|length }} · التفصيلي: {{ accounts|rejectattr("is_group")|list|length }}</span>
 </div>
 <div class="grid accounts-layout">
   {% if 'accounts.manage' in permissions %}<section class="panel no-print">
@@ -28,7 +40,7 @@
     <hr><h3>استيراد الحسابات</h3><p class="muted">استخدم أداة الاستيراد لمطابقة أعمدة Excel أو CSV مع حقول دليل الحسابات وتجاهل الأعمدة غير المطلوبة.</p><a class="btn secondary" href="{{ url_for('import_data_wizard') }}">فتح أداة استيراد البيانات</a>
   </section>{% endif %}
   <section class="panel print-area">
-    <div class="section-heading account-tree-toolbar"><div><h3>شجرة الحسابات</h3><p class="muted">عدد الحسابات: {{ accounts|length }} · افتح أي مستوى لرؤية الفروع التابعة له.</p></div><div class="table-actions no-print"><input id="accountTreeSearch" type="search" placeholder="ابحث بالكود أو اسم الحساب" aria-label="بحث في شجرة الحسابات"><button type="button" class="secondary" id="expandAccountTree">فتح الكل</button><button type="button" class="secondary" id="collapseAccountTree">إغلاق الكل</button><span class="pill">NEXUS ERP</span></div></div>
+    <div class="section-heading account-tree-toolbar"><div><h3>شجرة الحسابات</h3><p class="muted">عدد الحسابات: {{ accounts|length }} · افتح أي مستوى لرؤية الفروع التابعة له.</p></div><div class="table-actions no-print"><input id="accountTreeSearch" type="search" placeholder="ابحث بالكود أو اسم الحساب" aria-label="بحث في شجرة الحسابات"><select id="accountTypeFilter" aria-label="تصفية نوع الحساب"><option value="">كل أنواع الحسابات</option><option value="asset">الأصول</option><option value="liability">الالتزامات</option><option value="equity">حقوق الملكية</option><option value="revenue">الإيرادات</option><option value="expense">المصروفات</option></select><select id="accountStatusFilter" aria-label="تصفية حالة الحساب"><option value="">كل الحالات</option><option value="1">نشط</option><option value="0">موقوف</option></select><button type="button" class="secondary" id="expandAccountTree">فتح الكل</button><button type="button" class="secondary" id="collapseAccountTree">إغلاق الكل</button><span class="pill">NEXUS ERP</span></div></div>
     <div class="table-wrap">
       <table class="accounts-tree">
         <thead><tr><th>كود الحساب</th><th>اسم الحساب ومستواه</th><th>النوع</th><th>التصنيف</th><th>الرصيد الطبيعي</th><th>القائمة المالية</th><th>الحالة</th>{% if 'accounts.manage' in permissions %}<th class="no-print">الإجراءات</th>{% endif %}</tr></thead>
@@ -39,13 +51,13 @@
             <tr class="account-section-row"><td colspan="{{ 8 if 'accounts.manage' in permissions else 7 }}">{{ {'asset':'الأصول','liability':'الالتزامات','equity':'حقوق الملكية','revenue':'الإيرادات','expense':'المصروفات والتكاليف'}.get(a.account_type,a.account_type) }}</td></tr>
             {% set ns.last_type = a.account_type %}
           {% endif %}
-          <tr class="account-row {% if a.is_group %}account-group{% else %}account-detail{% endif %}" data-id="{{ a.id }}" data-parent="{{ a.parent_id or '' }}" data-group="{{ a.is_group }}" data-depth="{{ a.depth }}" {% if a.depth > 0 %}hidden{% endif %}>
+          <tr class="account-row {% if a.is_group %}account-group{% else %}account-detail{% endif %}" data-id="{{ a.id }}" data-parent="{{ a.parent_id or '' }}" data-group="{{ a.is_group }}" data-depth="{{ a.depth }}" data-type="{{ a.account_type }}" data-active="{{ 1 if a.active else 0 }}" {% if a.depth > 0 %}hidden{% endif %}>
             <td><span class="account-code">{{ a.code }}</span></td>
             <td>
               <div class="account-name" style="padding-right:{{ a.depth * 26 }}px">
                 {% if a.has_children %}<button type="button" class="tree-toggle secondary" data-id="{{ a.id }}" aria-expanded="false" title="فتح وإغلاق الفروع">+</button>
                 {% elif a.is_group %}<span class="tree-spacer"></span>{% else %}<span class="branch-mark">└</span>{% endif %}
-                <span>{{ a.name_ar }}</span>
+                <span>{{ a.name_ar }}{% if a.parent_code %}<small class="account-parent-path">يتبع {{ a.parent_code }}</small>{% endif %}</span>
                 {% if a.depth == 0 %}<span class="level-tag">رئيسي</span>{% else %}<span class="level-tag">مستوى {{ a.depth + 1 }}</span>{% endif %}
               </div>
             </td>
@@ -65,22 +77,54 @@
 {% endblock %}
 {% block scripts %}
 <script>
-const type=document.getElementById('accountType'),parent=document.getElementById('parentAccount');
-if(type&&parent){function filterParents(){for(const o of parent.options){if(o.value)o.hidden=o.dataset.type!==type.value;if(o.selected&&o.hidden)parent.value='';}}type.addEventListener('change',filterParents);filterParents();}
-const accountRows=[...document.querySelectorAll('.account-row')];
-function descendants(id){const children=accountRows.filter(r=>r.dataset.parent===String(id));for(const child of children){child.hidden=true;const b=child.querySelector('.tree-toggle');if(b){b.textContent='+';b.setAttribute('aria-expanded','false');}descendants(child.dataset.id);}}
-function openAll(){accountRows.forEach(r=>r.hidden=false);document.querySelectorAll('.tree-toggle').forEach(b=>{b.textContent='−';b.setAttribute('aria-expanded','true');});}
-function closeAll(){accountRows.filter(r=>Number(r.dataset.depth)>0).forEach(r=>r.hidden=true);document.querySelectorAll('.tree-toggle').forEach(b=>{b.textContent='+';b.setAttribute('aria-expanded','false');});}
-document.querySelectorAll('.tree-toggle').forEach(btn=>btn.addEventListener('click',()=>{const id=btn.dataset.id,open=btn.getAttribute('aria-expanded')==='true';if(open){descendants(id);btn.textContent='+';btn.setAttribute('aria-expanded','false');}else{accountRows.filter(r=>r.dataset.parent===id).forEach(r=>r.hidden=false);btn.textContent='−';btn.setAttribute('aria-expanded','true');}}));
-document.getElementById('expandAccountTree')?.addEventListener('click',openAll);
-document.getElementById('collapseAccountTree')?.addEventListener('click',closeAll);
-document.getElementById('accountTreeSearch')?.addEventListener('input',event=>{
- const q=event.target.value.trim().toLocaleLowerCase('ar');if(!q){closeAll();return;}
- accountRows.forEach(r=>r.hidden=true);const byId=new Map(accountRows.map(r=>[r.dataset.id,r]));
- accountRows.filter(r=>(r.textContent||'').toLocaleLowerCase('ar').includes(q)).forEach(r=>{
-  r.hidden=false;let parent=byId.get(r.dataset.parent);
-  while(parent){parent.hidden=false;const b=parent.querySelector('.tree-toggle');if(b){b.textContent='−';b.setAttribute('aria-expanded','true');}parent=byId.get(parent.dataset.parent);}
- });
-});
+(()=> {
+ const rows=[...document.querySelectorAll('.account-row')];
+ const byId=new Map(rows.map(r=>[r.dataset.id,r]));
+ const search=document.getElementById('accountTreeSearch');
+ const typeFilter=document.getElementById('accountTypeFilter');
+ const statusFilter=document.getElementById('accountStatusFilter');
+ const expanded=new Set();
+ const children=id=>rows.filter(r=>r.dataset.parent===String(id));
+ function ancestors(row, visible) {
+   let parent=byId.get(row.dataset.parent);
+   while(parent){visible.add(parent);expanded.add(parent.dataset.id);parent=byId.get(parent.dataset.parent);}
+ }
+ function paint() {
+   const q=(search?.value||'').trim().toLocaleLowerCase('ar');
+   const type=typeFilter?.value||'', status=statusFilter?.value||'';
+   const visible=new Set();
+   const matches=rows.filter(r=>
+     (!type||r.dataset.type===type) &&
+     (!status||r.dataset.active===status) &&
+     (!q||(r.textContent||'').toLocaleLowerCase('ar').includes(q))
+   );
+   if(q||type||status) {
+     matches.forEach(r=>{visible.add(r);ancestors(r,visible);});
+   } else {
+     rows.filter(r=>!r.dataset.parent).forEach(r=>visible.add(r));
+     rows.forEach(r=>{if(expanded.has(r.dataset.parent))visible.add(r);});
+   }
+   rows.forEach(r=>{
+     r.hidden=!visible.has(r);
+     const btn=r.querySelector('.tree-toggle');
+     if(btn){const open=expanded.has(r.dataset.id);btn.textContent=open?'−':'+';btn.setAttribute('aria-expanded',String(open));}
+   });
+ }
+ function expandAll(){rows.filter(r=>r.dataset.group==='true').forEach(r=>expanded.add(r.dataset.id));paint();}
+ function collapseAll(){expanded.clear();paint();}
+ document.querySelectorAll('.tree-toggle').forEach(btn=>btn.addEventListener('click',()=>{
+   const id=btn.dataset.id;
+   if(expanded.has(id)) {
+     const remove=[id];
+     while(remove.length){const current=remove.pop();expanded.delete(current);children(current).forEach(ch=>remove.push(ch.dataset.id));}
+   } else expanded.add(id);
+   paint();
+ }));
+ document.getElementById('expandAccountTree')?.addEventListener('click',expandAll);
+ document.getElementById('collapseAccountTree')?.addEventListener('click',collapseAll);
+ [search,typeFilter,statusFilter].forEach(el=>el?.addEventListener('input',paint));
+ [typeFilter,statusFilter].forEach(el=>el?.addEventListener('change',paint));
+ paint();
+})();
 </script>
 {% endblock %}
