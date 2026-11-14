@@ -509,8 +509,8 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
     if not expense_id or not inventory or inventory["is_group"] or not inventory["active"] or inventory["account_type"] != "asset":
         reason=(f"تعذر ترحيل الصرف: راجع حساب المصروف {expense_code or 'غير محدد'} "
                 f"وحساب المخزون {inventory_code or 'غير محدد'}؛ يجب أن يكونا حسابين تفصيليين نشطين بالنوع الصحيح.")
-        c.execute("UPDATE stock_movements SET accounting_status='pending_setup',accounting_note=? WHERE id=?",
-                  (reason,movement_id))
+        c.execute("UPDATE stock_movements SET accounting_status='pending_setup' WHERE id=?", (movement_id,))
+        set_stock_accounting_note(c,movement_id,reason)
         return None
     amount = money(D(str(total_cost)))
     if amount <= 0:
