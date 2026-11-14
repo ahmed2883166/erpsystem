@@ -74,7 +74,7 @@ class WorkforceExtrasTests(unittest.TestCase):
             "tax_1": "0", "employee_ins_1": "0", "employer_ins_1": "0",
             "incentives_1": "0",
         })
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 302, response.get_data(as_text=True))
         conn = sqlite3.connect(self.db_path)
         line = conn.execute("SELECT other_deductions,penalty_deduction FROM payroll_lines").fetchone()
         item = conn.execute("""SELECT item_name,amount FROM payroll_line_items
@@ -85,26 +85,16 @@ class WorkforceExtrasTests(unittest.TestCase):
         self.assertEqual(item, ("جزاء: جزاء تأخير", "250.00"))
         self.assertEqual(status, "approved")
 
-    def test_full_month_unpaid_leave_has_no_pay_or_bonus(self):
+    def test_full_month_unpaid_leave_is_not_added_to_payroll(self):
         conn = sqlite3.connect(self.db_path)
         conn.execute("UPDATE employees SET work_status='unpaid_leave' WHERE id=1")
         conn.commit()
         conn.close()
-        response = self.client.post("/hr/payroll", data={
-            "period": "2026-11", "basic_1": "10000", "allowances_1": "1000",
-            "overtime_hours_1": "8", "overtime_amount_1": "",
-            "overtime_rate_percent_1": "150", "incentives_1": "500",
-            "absent_hours_1": "0", "absence_deduction_1": "0",
-            "advance_1": "200", "other_deductions_1": "100",
-            "tax_1": "300", "employee_ins_1": "200", "employer_ins_1": "250",
-        })
-        self.assertEqual(response.status_code, 302)
+        response = self.client.post("/hr/payroll", data={"period":"2026-11"}, follow_redirects=True)
+        self.assertIn("لا يوجد موظفون مستحقون", response.get_data(as_text=True))
         conn = sqlite3.connect(self.db_path)
-        line = conn.execute("""SELECT basic_salary,allowances,overtime_amount,incentives,
-            other_deductions,taxable_income_tax,employee_insurance,employer_insurance,net_pay
-            FROM payroll_lines WHERE run_id=1""").fetchone()
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM payroll_runs").fetchone()[0],0)
         conn.close()
-        self.assertEqual(line, ("0.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00"))
 
     def test_employee_statement_keeps_historical_and_unallocated_payments_distinct(self):
         conn = sqlite3.connect(self.db_path)
