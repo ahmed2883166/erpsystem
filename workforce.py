@@ -743,7 +743,7 @@ def payroll_report():
         where.append("l.employee_id=?")
         params.append(employee_id)
     rows = c.execute("""
-        SELECT r.id AS run_id,r.period,e.id AS employee_id,e.employee_code,e.full_name,e.department,
+        SELECT r.id AS run_id,l.id AS payroll_line_id,r.period,e.id AS employee_id,e.employee_code,e.full_name,e.department,
                l.basic_salary,l.salary_raise,l.allowances,l.incentives,l.incentive_name,
                l.overtime_hours,l.overtime_rate_percent,l.overtime_amount,l.gross_pay,
                l.absent_hours,l.absence_deduction,l.advance_deduction,
@@ -771,7 +771,7 @@ def payroll_report():
         if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'").fetchone():
             allocated = sum((D(x["amount"]) for x in c.execute(
                 "SELECT amount FROM payroll_payment_allocations WHERE payroll_line_id=?",
-                (row["id"],)).fetchall()),Decimal("0"))
+                (row["payroll_line_id"],)).fetchall()),Decimal("0"))
         row["paid_amount"] = M(allocated)
         row["remaining_payable"] = M(max(Decimal("0"),D(row["net_pay"])-allocated))
         allocated_total_by_run[row["run_id"]] = allocated_total_by_run.get(row["run_id"],Decimal("0")) + allocated
