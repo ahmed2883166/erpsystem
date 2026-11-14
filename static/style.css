@@ -278,3 +278,25 @@ th,td{padding:8px 10px}
   aside{position:relative;inset:auto;width:100%;height:auto;max-height:none;overflow:visible}
   main{width:100%;height:auto;min-height:0;max-width:none;margin:0;overflow:visible}
 }
+
+
+/* Consistent, readable tables and feedback messages across all screens */
+main .panel{min-width:0}
+main .panel>table{min-width:620px}
+main .table-wrap table{min-width:620px}
+main th{background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 9%,var(--surface2)),var(--surface2));color:var(--text);font-weight:800}
+main td{font-variant-numeric:tabular-nums}
+main tbody tr:nth-child(even):not(.total):not(.financial-subtotal):not(.financial-net):not(.status-paid):not(.status-partial):not(.status-unpaid):not(.status-cancelled):not(.status-draft):not(.status-approved):not(.status-received) td{background:color-mix(in srgb,var(--surface2) 48%,var(--surface))}
+main .total td{font-weight:800;border-top:1px solid var(--line)}
+main .financial-performance-table table{min-width:700px;font-size:14.5px}
+main .financial-performance-table th,main .financial-performance-table td{padding:15px 18px}
+main .financial-subtotal td{background:color-mix(in srgb,var(--accent) 8%,var(--surface))!important;font-weight:800}
+main .financial-net td{background:color-mix(in srgb,var(--accent) 14%,var(--surface))!important;font-size:15px;font-weight:900}
+main .financial-performance-table td:not(:first-child){white-space:nowrap;font-variant-numeric:tabular-nums}
+.flash{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;border:1px solid transparent;box-shadow:0 3px 12px rgba(15,23,42,.05);line-height:1.8}
+.flash-label{white-space:nowrap}
+.flash.error{background:color-mix(in srgb,#dc2626 10%,var(--surface));color:color-mix(in srgb,#991b1b 90%,var(--text));border-color:color-mix(in srgb,#dc2626 30%,var(--line))}
+.flash.success{background:color-mix(in srgb,#16a34a 10%,var(--surface));color:color-mix(in srgb,#166534 90%,var(--text));border-color:color-mix(in srgb,#16a34a 28%,var(--line))}
+.flash.warning{background:color-mix(in srgb,#d97706 12%,var(--surface));color:color-mix(in srgb,#92400e 90%,var(--text));border-color:color-mix(in srgb,#d97706 30%,var(--line))}
+@media(max-width:850px){main .panel>table,main .table-wrap table{min-width:620px}.financial-performance-table{max-width:100%}}
+@media print{main .panel>table,main .table-wrap table{min-width:0!important}.flash{display:none!important}}
