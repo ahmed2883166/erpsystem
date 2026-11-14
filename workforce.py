@@ -1116,6 +1116,12 @@ def payroll_run(run_id):
     payments = c.execute("""SELECT p.*,a.code AS account_code,a.name_ar AS account_name
         FROM payroll_payments p JOIN accounts a ON a.id=p.cash_account_id
         WHERE p.run_id=? ORDER BY p.payment_date,p.id""", (run_id,)).fetchall()
+    line_paid = {}
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'").fetchone():
+        for payroll_row in rows:
+            line_paid[payroll_row["id"]] = M(sum((D(x["amount"]) for x in c.execute(
+                "SELECT amount FROM payroll_payment_allocations WHERE payroll_line_id=?",
+                (payroll_row["id"],)).fetchall()),Decimal("0")))
     reversal = c.execute("""SELECT r.*,j.reference FROM payroll_reversals r
         JOIN journal_entries j ON j.id=r.reversal_journal_entry_id WHERE r.run_id=?""",
         (run_id,)).fetchone()
@@ -1147,7 +1153,8 @@ def payroll_run(run_id):
                            payment_accounts=payment_accounts, payments=payments, reversal=reversal,
                            can_reverse=(run["status"] == "posted" and paid_amount == 0 and reversal is None),
                            paid_amount=paid_amount, remaining_payable=remaining_payable,
-                           today=date.today().isoformat(), totals=totals, period_end=period_end)
+                           today=date.today().isoformat(), totals=totals, period_end=period_end,
+                           line_paid=line_paid)
 
 
 
