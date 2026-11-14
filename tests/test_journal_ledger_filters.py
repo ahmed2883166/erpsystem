@@ -9,6 +9,7 @@ from database import connect_database
 
 class JournalAndLedgerFilterTests(unittest.TestCase):
     def setUp(self):
+        nexus_app.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
         self.temp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp.name) / "filters.db"
         conn = connect_database(self.db_path)
