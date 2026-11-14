@@ -3,8 +3,9 @@ import unittest
 from decimal import Decimal
 from unittest.mock import patch
 
-from fixed_assets import (_asset_period_amount, _post_asset_depreciation,
-                          _validate_dedicated_accum_account, register_assets_from_journal_lines)
+from fixed_assets import (_asset_disposal_journal_lines, _asset_period_amount,
+                          _post_asset_depreciation, _validate_dedicated_accum_account,
+                          register_assets_from_journal_lines)
 
 
 class FixedAssetDepreciationCalculationTests(unittest.TestCase):
@@ -118,6 +119,46 @@ class FixedAssetDepreciationCalculationTests(unittest.TestCase):
     def test_period_after_useful_life_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "انتهى العمر"):
             _asset_period_amount(self.asset, Decimal("0"), "2031-02")
+
+
+
+
+class FixedAssetDisposalJournalTests(unittest.TestCase):
+    def setUp(self):
+        self.asset = {"asset_name": "سيارة نقل", "asset_account_id": 10, "accum_account_id": 11}
+
+    def test_sale_with_gain_and_output_vat_posts_cash_asset_accumulated_and_gain(self):
+        lines = _asset_disposal_journal_lines(
+            self.asset, Decimal("100000"), Decimal("30000"), Decimal("92000"),
+            Decimal("12000"), 20, 30, 40, Decimal("50000")
+        )
+        self.assertEqual([line[:3] for line in lines], [
+            (20, Decimal("92000"), 0), (11, Decimal("30000"), 0),
+            (10, 0, Decimal("100000")), (30, 0, Decimal("12000")),
+            (40, 0, Decimal("10000")),
+        ])
+        debit = sum((Decimal(str(line[1])) for line in lines), Decimal("0"))
+        credit = sum((Decimal(str(line[2])) for line in lines), Decimal("0"))
+        self.assertEqual(debit, credit)
+
+    def test_disposal_without_proceeds_does_not_create_zero_cash_line(self):
+        lines = _asset_disposal_journal_lines(
+            self.asset, Decimal("100000"), Decimal("30000"), Decimal("0"),
+            Decimal("0"), 20, None, 40, Decimal("-70000")
+        )
+        self.assertEqual([line[0] for line in lines], [11, 10, 40])
+        debit = sum((Decimal(str(line[1])) for line in lines), Decimal("0"))
+        credit = sum((Decimal(str(line[2])) for line in lines), Decimal("0"))
+        self.assertEqual(debit, credit)
+
+    def test_sale_at_loss_is_balanced_and_records_loss_as_debit(self):
+        lines = _asset_disposal_journal_lines(
+            self.asset, Decimal("100000"), Decimal("30000"), Decimal("60000"),
+            Decimal("0"), 20, None, 40, Decimal("-10000")
+        )
+        self.assertEqual(lines[-1][:3], (40, Decimal("10000"), 0))
+        self.assertEqual(sum((Decimal(str(x[1])) for x in lines), Decimal("0")),
+                         sum((Decimal(str(x[2])) for x in lines), Decimal("0")))
 
 
 class JournalLinkedAssetRegistrationTests(unittest.TestCase):
