@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from functools import wraps
 from datetime import date, datetime
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
-from accounting_core import post_journal, money
+from accounting_core import post_journal, money, safe_error_message
 from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 from code_sequences import next_code
@@ -548,7 +548,7 @@ def resolve_integrity_issue(issue_id):
         flash("تم إغلاق حالة المراجعة وتسجيل المستخدم وتاريخ الحل.", "success")
     except (ValueError, sqlite3.Error) as exc:
         c.rollback()
-        flash(str(exc), "error")
+        flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
         c.close()
     return redirect(url_for("purchase.integrity_issues"))
@@ -641,7 +641,7 @@ def new_order():
             c.execute("""INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price,entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
               VALUES(?,?,?,?,?,?,?,?,?)""",(cur.lastrowid,product,str(qty),str(price),str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,str(factor)))
             c.commit(); flash(f"تم إنشاء أمر الشراء {no}.","success"); return redirect(url_for("purchase.index"))
-        except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
+        except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     products=c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     product_uoms={p["id"]:product_uom_options(c,p["id"]) for p in products}
@@ -658,7 +658,7 @@ def submit_order(order_id):
         flash("تم إرسال أمر الشراء للمراجعة والاعتماد.", "success")
     except (ValueError, sqlite3.Error) as exc:
         c.rollback()
-        flash(str(exc), "error")
+        flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
         c.close()
     return redirect(url_for("purchase.index"))
@@ -674,7 +674,7 @@ def approve_order(order_id):
         flash("تم اعتماد أمر الشراء. أصبح الاستلام مسموحًا.", "success")
     except (ValueError, sqlite3.Error) as exc:
         c.rollback()
-        flash(str(exc), "error")
+        flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
         c.close()
     return redirect(url_for("purchase.index"))
@@ -690,7 +690,7 @@ def reject_order(order_id):
         flash("تم رفض أمر الشراء وإعادته للتعديل مع حفظ سبب الرفض.", "success")
     except (ValueError, sqlite3.Error) as exc:
         c.rollback()
-        flash(str(exc), "error")
+        flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
         c.close()
     return redirect(url_for("purchase.index"))
@@ -721,7 +721,7 @@ def edit_order(order_id):
             c.execute("""UPDATE purchase_order_lines SET product_id=?,quantity=?,unit_price=?,entered_quantity=?,uom_id=?,uom_key=?,entered_uom_name=?,conversion_factor=? WHERE id=?""",
               (product,str(qty),str(price),str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,str(factor),order["line_id"]))
             c.commit(); c.close(); flash("تم تعديل أمر الشراء.","success"); return redirect(url_for("purchase.index"))
-        except (ValueError,InvalidOperation,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
+        except (ValueError,InvalidOperation,sqlite3.Error) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     suppliers=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     products=c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     product_uoms={p["id"]:product_uom_options(c,p["id"]) for p in products}
@@ -857,7 +857,7 @@ def new_receipt():
             c.execute("UPDATE goods_receipts SET journal_entry_id=? WHERE id=?",(eid,rid))
             c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?",(eid,mid))
             c.commit(); g.audit_created_record = ("goods_receipts", rid, "goods_receipt_lines", "receipt_id"); flash(f"تم الاستلام وترحيل قيد GRNI رقم {no}.","success"); return redirect(url_for("purchase.index"))
-        except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
+        except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     wh=c.execute("SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     pr=c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
@@ -1367,7 +1367,7 @@ def new_bill():
             flash(f"تم إنشاء مسودة فاتورة المورد {no}. أرسلها للمراجعة قبل الترحيل.","success")
             return redirect(url_for("purchase.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
-            c.rollback(); flash(str(e),"error")
+            c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     expense_accounts=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code").fetchall()
     asset_accounts=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=0 AND active=1 ORDER BY code").fetchall()
@@ -1495,7 +1495,7 @@ def edit_bill(bill_id):
             return redirect(url_for("purchase.index"))
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
             c.rollback()
-            flash(str(exc), "error")
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
             bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
 
     suppliers = c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
@@ -1524,7 +1524,7 @@ def submit_bill(bill_id):
         submit_supplier_bill(c,bill_id,session["user_id"]); c.commit()
         flash("تم إرسال فاتورة المورد للمراجعة والاعتماد.","success")
     except (ValueError,sqlite3.Error) as exc:
-        c.rollback(); flash(str(exc),"error")
+        c.rollback(); flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     finally: c.close()
     return redirect(url_for("purchase.index"))
 
@@ -1537,7 +1537,7 @@ def approve_bill(bill_id):
         approve_supplier_bill(c,bill_id,session["user_id"],request.form.get("reason","")); c.commit()
         flash("تم اعتماد فاتورة المورد. أصبحت جاهزة للترحيل بواسطة المحاسب.","success")
     except (ValueError,sqlite3.Error) as exc:
-        c.rollback(); flash(str(exc),"error")
+        c.rollback(); flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     finally: c.close()
     return redirect(url_for("purchase.index"))
 
@@ -1550,7 +1550,7 @@ def reject_bill(bill_id):
         reject_supplier_bill(c,bill_id,session["user_id"],request.form.get("reason","")); c.commit()
         flash("تم رفض فاتورة المورد مع حفظ سبب الرفض.","success")
     except (ValueError,sqlite3.Error) as exc:
-        c.rollback(); flash(str(exc),"error")
+        c.rollback(); flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     finally: c.close()
     return redirect(url_for("purchase.index"))
 
@@ -1565,7 +1565,7 @@ def post_bill(bill_id):
         flash(f"تم ترحيل فاتورة المورد وربطها بالقيد رقم {entry_id}.","success")
         return redirect(url_for("purchase.bill_print",bill_id=bill_id))
     except (ValueError,sqlite3.Error) as exc:
-        c.rollback(); flash(str(exc),"error")
+        c.rollback(); flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     finally: c.close()
     return redirect(url_for("purchase.index"))
 
@@ -1739,7 +1739,7 @@ def new_credit_note():
             return redirect(url_for("purchase.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
             c.rollback()
-            flash(str(e),"error")
+            flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     suppliers=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     bills=c.execute("""SELECT b.id,b.bill_no,b.supplier_id,b.bill_date,b.total_amount,b.credited_amount,s.name supplier_name
       FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
@@ -1785,7 +1785,7 @@ def new_payment():
                 if remaining<=0: break
             if remaining>0: raise ValueError("المبلغ أكبر من مديونية الفواتير المفتوحة؛ لا يتم تسجيل دفعة مقدمة تلقائيًا.")
             c.commit(); g.audit_created_record = ("supplier_payments", payment_id, "supplier_payment_allocations", "payment_id"); flash(f"تم تسجيل السداد {no} وتوزيعه على أقدم الفواتير.","success"); return redirect(url_for("purchase.index"))
-        except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
+        except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     cash=c.execute("""SELECT * FROM accounts WHERE active=1 AND is_group=0 AND account_type='asset'
       AND (lower(name_ar) LIKE '%صندوق%' OR lower(name_ar) LIKE '%بنك%' OR lower(name_ar) LIKE '%نقد%' OR lower(name_ar) LIKE '%نقاط البيع%'
