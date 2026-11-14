@@ -2132,6 +2132,19 @@ def journal_detail(entry_id):
         connection.close()
         flash("القيد المحاسبي غير موجود.", "error")
         return redirect(url_for("trial_balance"))
+    # Resolve the two-way relationship using the immutable REV-{original_id} reference.
+    reversal_entry = connection.execute(
+        "SELECT id,entry_date,reference,description FROM journal_entries "
+        "WHERE reference=? AND status='posted' ORDER BY id LIMIT 1",
+        (f"REV-{entry_id}",),
+    ).fetchone()
+    original_entry = None
+    ref_text = str(entry["reference"] or "")
+    if ref_text.startswith("REV-") and ref_text[4:].isdigit():
+        original_entry = connection.execute(
+            "SELECT id,entry_date,reference,description FROM journal_entries WHERE id=?",
+            (int(ref_text[4:]),),
+        ).fetchone()
     lines = connection.execute("""SELECT jl.*,a.code account_code,a.name_ar account_name
         FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
         WHERE jl.entry_id=? ORDER BY jl.id""", (entry_id,)).fetchall()
@@ -2142,7 +2155,9 @@ def journal_detail(entry_id):
     totals = {"debit":Decimal(str(totals_row["debit"] or "0")),
               "credit":Decimal(str(totals_row["credit"] or "0"))}
     connection.close()
-    return render_template("journal_detail.html", entry=entry, lines=lines, totals=totals, today=datetime.now().date().isoformat())
+    return render_template("journal_detail.html", entry=entry, lines=lines, totals=totals,
+        reversal_entry=reversal_entry, original_entry=original_entry,
+        today=datetime.now().date().isoformat())
 
 
 @app.route("/accounting/periods", methods=["GET", "POST"])
@@ -2244,6 +2259,23 @@ def reverse_journal(entry_id):
         connection.close()
         flash("لا يمكن عكس قيد غير موجود أو غير مرحّل.", "error")
         return redirect(url_for("trial_balance"))
+    # A reversal is a terminal correction document: it must never itself be reversed.
+    original_reference = str(original["reference"] or "")
+    if (original_reference.startswith("REV-") and original_reference[4:].isdigit()) or str(
+        original["description"] or ""
+    ).startswith("قيد عكسي للقيد رقم "):
+        connection.close()
+        flash("ممنوع عكس القيد العكسي. إذا كان هناك خطأ، أنشئ قيد تسوية جديدًا موضحًا سبب التصحيح.", "error")
+        return redirect(url_for("journal_detail", entry_id=entry_id))
+    # Refuse a second reversal even if an old record was created without the expected reference.
+    existing_reversal = connection.execute(
+        "SELECT id FROM journal_entries WHERE reference=? AND status='posted' LIMIT 1",
+        (f"REV-{entry_id}",),
+    ).fetchone()
+    if existing_reversal:
+        connection.close()
+        flash(f"هذا القيد تم عكسه بالفعل بالقيد رقم {existing_reversal['id']}. لا يمكن عكسه مرة أخرى.", "warning")
+        return redirect(url_for("journal_detail", entry_id=entry_id))
     # Financial-year opening/closing journals must use their dedicated
     # reversal workflow so the year pointers and status remain consistent.
     has_financial_year_schema = connection.execute(
