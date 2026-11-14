@@ -295,6 +295,8 @@ def statement_reconciliation():
                 note=request.form.get("opening_review_note","").strip()
                 date.fromisoformat(period_start); date.fromisoformat(period_end)
                 if period_end<period_start: raise ValueError("تاريخ نهاية الفترة لا يجوز أن يسبق بدايتها.")
+                if request.form.get("confirm_opening_review")!="1":
+                    raise ValueError("أكد صراحة أنك راجعت فرق الرصيد الافتتاحي قبل تسجيل المراجعة.")
                 if len(note)<10: raise ValueError("اكتب سببًا واضحًا لمراجعة فرق الرصيد الافتتاحي (10 أحرف على الأقل).")
                 c.execute("BEGIN IMMEDIATE")
                 updated=c.execute("""UPDATE bank_statement_balances SET opening_reviewed=1,opening_review_note=?,updated_at=CURRENT_TIMESTAMP
@@ -330,12 +332,12 @@ def statement_reconciliation():
                 date.fromisoformat(period_start); date.fromisoformat(period_end)
                 if not (period_start<=journal_line["entry_date"]<=period_end):
                     raise ValueError("القيد المختار خارج فترة التسوية الحالية.")
-                possible=c.execute("""SELECT COUNT(*) FROM journal_lines jl
+                possible_rows=c.execute("""SELECT jl.debit,jl.credit FROM journal_lines jl
                     JOIN journal_entries je ON je.id=jl.entry_id
-                    WHERE jl.account_id=? AND je.status='posted' AND je.entry_date BETWEEN ? AND ?
-                    AND jl.debit=? AND jl.credit=?""",
-                    (line["bank_account_id"],period_start,period_end,
-                     str(journal_line["debit"]),str(journal_line["credit"]))).fetchone()[0]
+                    WHERE jl.account_id=? AND je.status='posted' AND je.entry_date BETWEEN ? AND ?""",
+                    (line["bank_account_id"],period_start,period_end)).fetchall()
+                possible=sum(1 for candidate in possible_rows
+                    if signed_ledger_amount(candidate["debit"],candidate["credit"])==expected)
                 if possible>1 and request.form.get("confirm_multiple")!="1":
                     raise ValueError(f"يوجد {possible} قيود بنفس المبلغ والاتجاه. راجع رقم القيد والتاريخ والبيان، ثم أكد أنك اخترت القيد الصحيح.")
                 already=c.execute("SELECT 1 FROM bank_statement_lines WHERE matched_journal_line_id=? LIMIT 1",
