@@ -385,6 +385,17 @@ def register_report_exports(app, db_path, permissions):
                     ["ملخص", "", "", "مدخلات غير قابلة للخصم", "", "", "", summary["non_deductible_input"], "", ""],
                     ["ملخص", "", "", "صافي الضريبة الرقابي", "", "", "", summary["net_vat"], "", ""],
                 ])
+                saudi = snapshot.get("saudi_preparation")
+                if saudi:
+                    data.extend([
+                        ["السعودية - ملف سنوي", "", "", "السنة المالية", saudi["year"], "", "", "", "", ""],
+                        ["السعودية - ملف سنوي", "", "", "الإيرادات المحاسبية", saudi["revenue_total"], "", "", "", "", ""],
+                        ["السعودية - ملف سنوي", "", "", "تكلفة المبيعات", saudi["cogs_total"], "", "", "", "", ""],
+                        ["السعودية - ملف سنوي", "", "", "مجمل الربح", saudi["gross_profit"], "", "", "", "", ""],
+                        ["السعودية - ملف سنوي", "", "", "المصروفات التشغيلية", saudi["operating_expense_total"], "", "", "", "", ""],
+                        ["السعودية - ملف سنوي", "", "", "صافي الربح المحاسبي", saudi["net_profit"], "", "", "", "", ""],
+                        ["السعودية - ملف سنوي", "", "", saudi["notice"], "", "", "", "", "", ""],
+                    ])
                 ledger = snapshot.get("ledger_reconciliation", {})
                 if ledger.get("available"):
                     data.extend([
