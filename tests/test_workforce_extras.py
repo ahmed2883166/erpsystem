@@ -166,7 +166,7 @@ class WorkforceExtrasTests(unittest.TestCase):
         journal_lines=conn.execute("SELECT account_id,debit,credit FROM journal_lines WHERE entry_id=(SELECT journal_entry_id FROM employee_grants WHERE id=1) ORDER BY id").fetchall()
         conn.close()
         self.assertEqual(journal,("posted",))
-        self.assertEqual(journal_lines,[(2,"1666.67","0"),(3,"0","1666.67")])
+        self.assertEqual(journal_lines,[(2,"1666.67","0.00"),(3,"0.00","1666.67")])
         paid=self.client.post("/hr/grants/1/pay",data={
             "amount":"500","payment_date":"2026-11-15","cash_account_id":"1"
         })
