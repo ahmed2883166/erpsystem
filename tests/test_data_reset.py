@@ -11,6 +11,7 @@ from data_reset import PRESERVED_TABLES, clear_company_data
 
 class CompanyDataResetTests(unittest.TestCase):
     def setUp(self):
+        nexus_app.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
         self.temp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp.name) / "reset.db"
         connection = sqlite3.connect(self.db_path)
