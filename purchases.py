@@ -10,7 +10,7 @@ from functools import wraps
 from datetime import date, datetime
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, money
-from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options
+from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 
 purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
@@ -104,8 +104,8 @@ def init_purchase_schema():
     # through the same additive migration used by the other analytical dimensions.
     initialize_analytic_dimensions_schema(c)
     for table, fields in (
-        ("purchase_order_lines",(("entered_quantity","TEXT"),("uom_id","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
-        ("goods_receipt_lines",(("entered_quantity","TEXT"),("uom_id","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
+        ("purchase_order_lines",(("entered_quantity","TEXT"),("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
+        ("goods_receipt_lines",(("entered_quantity","TEXT"),("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
     ):
         existing={row["name"] for row in c.execute("PRAGMA table_info("+table+")")}
         for name,declaration in fields:
@@ -624,12 +624,13 @@ def new_order():
             if entered_qty<=0 or entered_price<0: raise ValueError("الكمية والسعر غير صحيحين.")
             factor,uom_name=product_uom_factor(c,product,request.form.get("uom_id"),"purchase")
             qty=q4(entered_qty*factor); price=entered_price/factor
+            stored_uom_id,entered_uom_name=product_uom_storage(c,product,request.form.get("uom_id"))
             c.execute("BEGIN IMMEDIATE")
             no="PO-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             cur=c.execute("INSERT INTO purchase_orders(po_no,supplier_id,order_date,expected_date,notes,created_by) VALUES(?,?,?,?,?,?)",
               (no,supplier,request.form["order_date"],request.form.get("expected_date") or None,request.form.get("notes",""),session["user_id"]))
-            c.execute("""INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price,entered_quantity,uom_id,conversion_factor)
-              VALUES(?,?,?,?,?,?,?)""",(cur.lastrowid,product,str(qty),str(price),str(entered_qty),request.form.get("uom_id"),str(factor)))
+            c.execute("""INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price,entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
+              VALUES(?,?,?,?,?,?,?,?,?)""",(cur.lastrowid,product,str(qty),str(price),str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,str(factor)))
             c.commit(); flash(f"تم إنشاء أمر الشراء {no}.","success"); return redirect(url_for("purchase.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
@@ -688,7 +689,7 @@ def reject_order(order_id):
 @purchase_bp.route("/orders/<int:order_id>/edit",methods=["GET","POST"])
 @require("purchases.manage")
 def edit_order(order_id):
-    c=db(); order=c.execute("""SELECT p.*,l.id line_id,l.product_id,l.quantity,l.unit_price,l.entered_quantity,l.uom_id,l.conversion_factor
+    c=db(); order=c.execute("""SELECT p.*,l.id line_id,l.product_id,l.quantity,l.unit_price,l.entered_quantity,l.uom_id,l.uom_key,l.entered_uom_name,l.conversion_factor
       FROM purchase_orders p LEFT JOIN purchase_order_lines l ON l.po_id=p.id WHERE p.id=?""",(order_id,)).fetchone()
     if not order:
         c.close(); flash("أمر الشراء غير موجود.","error"); return redirect(url_for("purchase.index"))
@@ -704,11 +705,12 @@ def edit_order(order_id):
             if entered_qty<=0 or entered_price<0: raise ValueError("الكمية والسعر غير صحيحين.")
             factor,uom_name=product_uom_factor(c,product,request.form.get("uom_id"),"purchase")
             qty=q4(entered_qty*factor); price=entered_price/factor
+            stored_uom_id,entered_uom_name=product_uom_storage(c,product,request.form.get("uom_id"))
             c.execute("""UPDATE purchase_orders SET supplier_id=?,order_date=?,expected_date=?,notes=?,status='draft',
               rejected_by=NULL,rejected_at=NULL,rejection_reason=NULL WHERE id=?""",
               (supplier,request.form["order_date"],request.form.get("expected_date") or None,request.form.get("notes",""),order_id))
-            c.execute("""UPDATE purchase_order_lines SET product_id=?,quantity=?,unit_price=?,entered_quantity=?,uom_id=?,conversion_factor=? WHERE id=?""",
-              (product,str(qty),str(price),str(entered_qty),request.form.get("uom_id"),str(factor),order["line_id"]))
+            c.execute("""UPDATE purchase_order_lines SET product_id=?,quantity=?,unit_price=?,entered_quantity=?,uom_id=?,uom_key=?,entered_uom_name=?,conversion_factor=? WHERE id=?""",
+              (product,str(qty),str(price),str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,str(factor),order["line_id"]))
             c.commit(); c.close(); flash("تم تعديل أمر الشراء.","success"); return redirect(url_for("purchase.index"))
         except (ValueError,InvalidOperation,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
     suppliers=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
@@ -738,11 +740,11 @@ def order_print(order_id):
         item = dict(row)
         item["line_total"] = Decimal(str(row["quantity"])) * Decimal(str(row["unit_price"]))
         item["display_quantity"] = row["entered_quantity"] or row["quantity"]
+        item["display_uom"] = row["entered_uom_name"] or row["uom"]
         try:
-            factor, item["display_uom"] = product_uom_factor(c,row["product_id"],row["uom_id"])
+            factor, _ = product_uom_factor(c,row["product_id"],row["uom_key"])
             item["display_unit_price"] = Decimal(str(row["unit_price"]))*factor
         except (ValueError,TypeError):
-            item["display_uom"] = row["uom"]
             item["display_unit_price"] = Decimal(str(row["unit_price"]))
         order_total += item["line_total"]
         lines.append(item)
@@ -779,6 +781,7 @@ def new_receipt():
             if entered_qty<=0 or entered_unit<0: raise ValueError("الكمية أو التكلفة غير صحيحة.")
             factor,uom_name=product_uom_factor(c,product,request.form.get("uom_id"),"purchase")
             qty=q4(entered_qty*factor); unit=entered_unit/factor; total=money(entered_qty*entered_unit)
+            stored_uom_id,entered_uom_name=product_uom_storage(c,product,request.form.get("uom_id"))
             c.execute("BEGIN IMMEDIATE")
             dimensions = validate_journal_dimensions(c, {**request.form, "supplier_id": supplier})
             product_row=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(product,)).fetchone()
@@ -819,9 +822,9 @@ def new_receipt():
               (no,po_id,supplier,wh,request.form["receipt_date"],str(total),session["user_id"],
                dimensions["branch_id"],dimensions["cost_center_id"],dimensions["project_id"]))
             rid=cur.lastrowid
-            c.execute("""INSERT INTO goods_receipt_lines(receipt_id,po_line_id,product_id,quantity,unit_cost,total_cost,location_id,entered_quantity,uom_id,conversion_factor)
-                      VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                      (rid,po_line_id,product,str(qty),str(unit),str(total),location_id,str(entered_qty),request.form.get("uom_id"),str(factor)))
+            c.execute("""INSERT INTO goods_receipt_lines(receipt_id,po_line_id,product_id,quantity,unit_cost,total_cost,location_id,entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
+                      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                      (rid,po_line_id,product,str(qty),str(unit),str(total),location_id,str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,str(factor)))
             if po_id:
                 received_total=Decimal(po_line["received_qty"])+qty
                 new_status="received" if received_total==Decimal(po_line["quantity"]) else "partially_received"
