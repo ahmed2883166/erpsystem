@@ -4,12 +4,29 @@ All historical payroll and journal records are retained. This module only adds
 new tables/columns and records snapshots for newly prepared payroll runs.
 """
 import sqlite3
+from pathlib import Path
 from datetime import date
 from decimal import Decimal
 
 from flask import flash, redirect, render_template, request, session, url_for
 
+import workforce
+from backup_scheduler import create_backup_archive
 from workforce import workforce_bp, _db, _role, D, M, _audit
+
+
+def create_workforce_safety_backup():
+    """Take one verified online SQLite snapshot before workforce schema upgrades."""
+    db_path = Path(workforce.DB_PATH)
+    if not db_path.exists() or db_path.stat().st_size == 0:
+        return None
+    marker = db_path.parent / ".nexus-workforce-schema-backup-v1"
+    if marker.exists():
+        return marker.read_text(encoding="utf-8").strip()
+    backup_dir = db_path.parent / "migration_backups"
+    archive = create_backup_archive(db_path, backup_dir, keep_count=20)
+    marker.write_text(archive.name, encoding="utf-8")
+    return str(archive)
 
 
 def initialize_workforce_extras_schema():
