@@ -37,7 +37,7 @@ class WorkforceExtrasTests(unittest.TestCase):
         for name, body in {
             "employee_penalties.html": "{{ rows|length }}",
             "employee_statement.html": "{{ employee.full_name }}|{{ summary.net }}",
-            "payroll.html": "payroll",
+            "payroll.html": "{{ get_flashed_messages()|join('|') }}",
             "payroll_run.html": "run",
         }.items():
             (template_dir / name).write_text(body, encoding="utf-8")
