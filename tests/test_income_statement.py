@@ -151,6 +151,33 @@ class IncomeStatementRouteTests(unittest.TestCase):
         migrated.close()
         self.assertTrue({"address", "phone", "email", "tax_number"}.issubset(branch_columns))
 
+    def test_asset_disposal_loss_is_reported_as_expense_not_negative_revenue(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        register_decimal_aggregates(conn)
+        conn.execute(
+            "INSERT INTO accounts VALUES(6,'4710','خسارة استبعاد أصول','revenue',0,1)"
+        )
+        conn.execute(
+            "INSERT INTO journal_entries(id,entry_date,status,entry_type) VALUES(11,'2026-11-13','posted','general')"
+        )
+        conn.execute(
+            "INSERT INTO journal_lines VALUES(15,11,6,'910','0')"
+        )
+        conn.executescript("""
+            CREATE TABLE asset_disposals(
+                id INTEGER PRIMARY KEY, disposal_date TEXT,
+                gain_loss_account_id INTEGER, gain_loss_amount TEXT
+            );
+            INSERT INTO asset_disposals VALUES(1,'2026-11-13',6,'-910');
+        """)
+        snapshot = build_income_statement(conn, "2026-11-01", "2026-11-30")
+        conn.close()
+        self.assertEqual(snapshot["revenue_total"], Decimal("900"))
+        loss = next(row for row in snapshot["operating_expense_rows"] if row["code"] == "4710")
+        self.assertEqual(loss["balance"], Decimal("910"))
+        self.assertEqual(loss["account_type"], "expense")
+
     def test_income_statement_compares_with_same_period_previous_year(self):
         response = self.client.get(
             "/reports/income-statement?date_from=2026-11-01&date_to=2026-11-30&compare=previous_year"
