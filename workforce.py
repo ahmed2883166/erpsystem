@@ -54,6 +54,24 @@ def initialize_workforce_schema():
       item_name TEXT NOT NULL, item_type TEXT NOT NULL CHECK(item_type IN ('allowance','deduction')),
       amount TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS salary_change_batches(
+      id INTEGER PRIMARY KEY, decision_no TEXT NOT NULL UNIQUE, decision_date TEXT NOT NULL,
+      effective_date TEXT NOT NULL, title TEXT NOT NULL, employee_scope TEXT NOT NULL,
+      calculation_type TEXT NOT NULL CHECK(calculation_type IN ('fixed','percentage')),
+      calculation_base TEXT NOT NULL CHECK(calculation_base IN ('basic','insured_wage')),
+      calculation_value TEXT NOT NULL, treatment TEXT NOT NULL CHECK(treatment IN ('basic','allowance')),
+      notes TEXT NOT NULL DEFAULT '', created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS employee_salary_history(
+      id INTEGER PRIMARY KEY, batch_id INTEGER NOT NULL REFERENCES salary_change_batches(id),
+      employee_id INTEGER NOT NULL REFERENCES employees(id), effective_date TEXT NOT NULL,
+      old_basic_salary TEXT NOT NULL, increase_amount TEXT NOT NULL, new_basic_salary TEXT NOT NULL,
+      calculation_base_amount TEXT NOT NULL, treatment TEXT NOT NULL,
+      allowance_item_id INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(batch_id,employee_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_salary_history_employee_date
+      ON employee_salary_history(employee_id,effective_date,id);
     CREATE TABLE IF NOT EXISTS workforce_migrations(
       migration_key TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -304,6 +322,121 @@ def _employee_form_values(form):
         form.get("branch_id") or None, form.get("cost_center_id") or None,
         form.get("project_id") or None,
     )
+
+
+
+def _salary_change_preview(c, form):
+    decision_no = form.get("decision_no", "").strip()
+    decision_date = form.get("decision_date", "").strip()
+    effective_date = form.get("effective_date", "").strip()
+    title = form.get("title", "").strip()
+    scope = form.get("employee_scope", "permanent").strip()
+    calc_type = form.get("calculation_type", "fixed").strip()
+    calc_base = form.get("calculation_base", "basic").strip()
+    treatment = form.get("treatment", "basic").strip()
+    value = M(form.get("calculation_value", "0"))
+    date.fromisoformat(decision_date)
+    date.fromisoformat(effective_date)
+    if (not decision_no or not title or value <= 0
+        or scope not in {"all_active","permanent","comprehensive_bonus","unpaid_leave","resigned","retired"}
+        or calc_type not in {"fixed","percentage"} or calc_base not in {"basic","insured_wage"}
+        or treatment not in {"basic","allowance"}):
+        raise ValueError("أكمل رقم القرار واسمه وتواريخه وحدد نطاق الموظفين وقاعدة الحساب والمعالجة وقيمة موجبة.")
+    where = "active=1"
+    params = []
+    if scope != "all_active":
+        where += " AND work_status=?"
+        params.append(scope)
+    employees = c.execute("SELECT id,employee_code,full_name,basic_salary,insured_wage,work_status FROM employees WHERE "
+                          + where + " ORDER BY employee_code", params).fetchall()
+    if not employees:
+        raise ValueError("لا يوجد موظفون نشطون ضمن الفئة المحددة.")
+    preview = []
+    for emp in employees:
+        old_basic = M(emp["basic_salary"])
+        basis = old_basic if calc_base == "basic" else M(emp["insured_wage"])
+        amount = M(basis * value / Decimal("100")) if calc_type == "percentage" else value
+        new_basic = M(old_basic + amount) if treatment == "basic" else old_basic
+        if amount <= 0:
+            raise ValueError("نتجت زيادة صفرية للموظف " + emp["full_name"] + ". راجع أجر أساس الحساب.")
+        preview.append({"id":emp["id"],"code":emp["employee_code"],"name":emp["full_name"],
+                        "old":old_basic,"basis":basis,"amount":amount,"new":new_basic,
+                        "status":emp["work_status"]})
+    return {"decision_no":decision_no,"decision_date":decision_date,"effective_date":effective_date,
+            "title":title,"scope":scope,"calc_type":calc_type,"calc_base":calc_base,
+            "value":value,"treatment":treatment,"notes":form.get("notes","").strip(),
+            "employees":preview}
+
+
+@workforce_bp.route("/hr/salary-changes", methods=["GET","POST"])
+@_role("admin","accountant")
+def salary_changes():
+    c = _db()
+    preview = None
+    error = ""
+    if request.method == "POST":
+        try:
+            preview = _salary_change_preview(c, request.form)
+            if request.form.get("confirm") == "1":
+                c.execute("BEGIN IMMEDIATE")
+                c.execute("""INSERT INTO salary_change_batches(decision_no,decision_date,effective_date,title,
+                    employee_scope,calculation_type,calculation_base,calculation_value,treatment,notes,created_by)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                    (preview["decision_no"],preview["decision_date"],preview["effective_date"],preview["title"],
+                     preview["scope"],preview["calc_type"],preview["calc_base"],str(preview["value"]),
+                     preview["treatment"],preview["notes"],session.get("user_id")))
+                batch_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+                for item in preview["employees"]:
+                    allowance_item_id = None
+                    if preview["treatment"] == "basic":
+                        c.execute("UPDATE employees SET basic_salary=? WHERE id=?",
+                                  (str(item["new"]),item["id"]))
+                        # Clear legacy one-off raise settings to prevent re-applying this increase in payroll.
+                        c.execute("""UPDATE employees SET raise_type='fixed',raise_value='0',
+                            raise_mode='basic',raise_effective_date='' WHERE id=?""",(item["id"],))
+                    else:
+                        c.execute("""INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount,active)
+                            VALUES(?,?,'allowance',?,1)""",
+                            (item["id"],preview["title"]+" ("+preview["decision_no"]+")",str(item["amount"])))
+                        allowance_item_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    c.execute("""INSERT INTO employee_salary_history(batch_id,employee_id,effective_date,
+                        old_basic_salary,increase_amount,new_basic_salary,calculation_base_amount,treatment,allowance_item_id)
+                        VALUES(?,?,?,?,?,?,?,?,?)""",
+                        (batch_id,item["id"],preview["effective_date"],str(item["old"]),str(item["amount"]),
+                         str(item["new"]),str(item["basis"]),preview["treatment"],allowance_item_id))
+                _audit(c,"salary_change_batch_approved",
+                       preview["decision_no"]+" | "+preview["title"]+" | employees="+str(len(preview["employees"])))
+                c.commit()
+                flash("تم اعتماد القرار وتحديث "+str(len(preview["employees"]))+" موظفًا، وحفظ سجل تاريخي لكل موظف.","success")
+                c.close()
+                return redirect(url_for("workforce.salary_changes"))
+        except (ValueError,KeyError,sqlite3.IntegrityError) as exc:
+            c.rollback()
+            error = str(exc) or "تعذر حفظ قرار الزيادة. تأكد من عدم تكرار رقم القرار."
+            preview = None
+    batches = c.execute("""SELECT b.*,COUNT(h.id) employee_count
+        FROM salary_change_batches b LEFT JOIN employee_salary_history h ON h.batch_id=b.id
+        GROUP BY b.id ORDER BY b.effective_date DESC,b.id DESC LIMIT 100""").fetchall()
+    c.close()
+    return render_template("salary_changes.html",preview=preview,error=error,batches=batches,today=date.today().isoformat())
+
+
+@workforce_bp.route("/hr/salary-history", methods=["GET"])
+@_role("admin","accountant")
+def salary_history():
+    c = _db()
+    employee_id = request.args.get("employee_id",type=int)
+    employees = c.execute("SELECT id,employee_code,full_name FROM employees ORDER BY employee_code").fetchall()
+    where, params = ("WHERE h.employee_id=?","") if employee_id else ("","")
+    if employee_id:
+        params = (employee_id,)
+    rows = c.execute("""SELECT h.*,e.employee_code,e.full_name,b.decision_no,b.title,b.calculation_type,
+        b.calculation_base,b.calculation_value,b.decision_date,b.notes
+        FROM employee_salary_history h JOIN employees e ON e.id=h.employee_id
+        JOIN salary_change_batches b ON b.id=h.batch_id """+where+
+        " ORDER BY h.effective_date DESC,e.employee_code,h.id DESC",params).fetchall()
+    c.close()
+    return render_template("salary_history.html",employees=employees,rows=rows,selected_employee=employee_id)
 
 
 @workforce_bp.route("/hr", methods=["GET", "POST"])
