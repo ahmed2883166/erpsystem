@@ -544,5 +544,41 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.assertIsNone(bill["journal_entry_id"])
 
 
+    def test_supplier_return_package_conversion_respects_purchase_unit_permission(self):
+        base_unit = self.db.execute(
+            "SELECT id FROM stock_uoms WHERE code='PCS'"
+        ).fetchone()["id"]
+        product_id = self.db.execute(
+            "INSERT INTO stock_products(sku,name_ar,base_uom_id) VALUES('RET-UOM-1','صنف مرتجع',?)",
+            (base_unit,),
+        ).lastrowid
+        package_id = self.db.execute(
+            """INSERT INTO stock_product_uoms(
+                 product_id,custom_code,custom_name,factor_to_base,is_base,
+                 purchase_enabled,sales_enabled)
+               VALUES(?,?,?,?,0,1,0)""",
+            (product_id, "CASE12", "كرتونة 12 قطعة", "12"),
+        ).lastrowid
+
+        factor, unit_name = purchases.product_uom_factor(
+            self.db, product_id, "P:" + str(package_id), "purchase"
+        )
+        stored_unit_id, stored_name = purchases.product_uom_storage(
+            self.db, product_id, "P:" + str(package_id)
+        )
+        self.assertEqual(factor, Decimal("12"))
+        self.assertEqual(unit_name, "كرتونة 12 قطعة")
+        self.assertIsNone(stored_unit_id)
+        self.assertEqual(stored_name, "كرتونة 12 قطعة")
+
+        self.db.execute(
+            "UPDATE stock_product_uoms SET purchase_enabled=0 WHERE id=?", (package_id,)
+        )
+        with self.assertRaisesRegex(ValueError, "غير مفعلة للمشتريات"):
+            purchases.product_uom_factor(
+                self.db, product_id, "P:" + str(package_id), "purchase"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
