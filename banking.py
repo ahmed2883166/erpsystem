@@ -150,9 +150,8 @@ def index():
                 if not counter_id: raise ValueError("حدد الحساب المقابل للحركة.")
                 counter=c.execute("SELECT id,code,name_ar,is_group,active FROM accounts WHERE id=?",(counter_id,)).fetchone()
                 if not counter or counter["is_group"] or not counter["active"]: raise ValueError("الحساب المقابل يجب أن يكون تفصيليًا ونشطًا.")
-                if c.execute("SELECT 1 FROM cash_accounts WHERE account_id=?",(counter_id,)).fetchone() or (
-                    any(term in (counter["name_ar"] or "") for term in ("صندوق","بنك","بنوك","مصرف"))
-                    or counter["code"] in {"1110","1120","1121","1122"}
+                if c.execute("SELECT 1 FROM cash_accounts WHERE account_id=?",(counter_id,)).fetchone() or any(
+                    term in (counter["name_ar"] or "") for term in ("صندوق","بنك","بنوك","مصرف")
                 ):
                     raise ValueError("الحساب المقابل خزنة أو بنك؛ استخدم نوع الحركة تحويل بين الخزائن والبنوك حتى يظهر الطرفان في دفترهما دون تكرار.")
                 registry=c.execute("SELECT branch_id FROM cash_accounts WHERE account_id=? AND active=1",(bank_id,)).fetchone()
