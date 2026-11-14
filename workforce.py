@@ -14,7 +14,7 @@ from werkzeug.utils import secure_filename
 from werkzeug.datastructures import FileStorage
 from pathlib import Path
 from PIL import Image, ImageOps, UnidentifiedImageError
-from accounting_core import post_journal
+from accounting_core import post_journal, safe_error_message
 from code_sequences import next_code
 
 workforce_bp = Blueprint("workforce", __name__)
@@ -1257,7 +1257,11 @@ def payroll():
             return redirect(url_for("workforce.payroll_run", run_id=run_id))
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as e:
             c.rollback()
-            flash(str(e) or "تعذر إعداد المرتبات.", "error")
+            error_text = str(e)
+            if isinstance(e, sqlite3.IntegrityError) and "payroll_runs.period" in error_text:
+                flash("يوجد مسير مرتبات مسجل بالفعل لهذا الشهر. افتح المسير الموجود أو راجع حالته قبل إنشاء مسير جديد.", "error")
+            else:
+                flash(safe_error_message(e, "تعذر إعداد المرتبات بسبب تعارض في البيانات. لم يتم حفظ المسير."), "error")
     display_period = date.today().strftime("%Y-%m")
     # Show former employees in the input grid so final payroll can be prepared for any selected month.
     # POST includes them only in the month containing their termination date.
