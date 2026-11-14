@@ -1924,10 +1924,13 @@ def count_detail(stocktake_id):
         return redirect(url_for("stock.counts"))
     if request.method == "POST":
         try:
-            if stocktake["status"] not in ("draft", "counted"):
+            c.execute("BEGIN IMMEDIATE")
+            # Re-read status and lines after acquiring the write lock. The page
+            # may have been opened before another user approved this stocktake.
+            stocktake = c.execute("SELECT * FROM stocktakes WHERE id=?", (stocktake_id,)).fetchone()
+            if not stocktake or stocktake["status"] not in ("draft", "counted"):
                 raise ValueError("لا يمكن تعديل جرد تم اعتماده.")
             lines = c.execute("SELECT id,snapshot_qty FROM stocktake_lines WHERE stocktake_id=?", (stocktake_id,)).fetchall()
-            c.execute("BEGIN IMMEDIATE")
             ensure_stock_date_open(c, stocktake["count_date"], "تاريخ الجرد")
             for line in lines:
                 raw = request.form.get("counted_" + str(line["id"]), "").strip()
