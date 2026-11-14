@@ -12,6 +12,7 @@ from flask import Blueprint, flash, redirect, render_template, request, session,
 from accounting_core import post_journal, money
 from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
+from code_sequences import next_code
 
 purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
 
@@ -559,8 +560,9 @@ def suppliers():
     c=db()
     if request.method=="POST":
         try:
+            supplier_code = next_code(c, "supplier", "SUP", "suppliers", "code")
             c.execute("INSERT INTO suppliers(code,name,tax_number,phone,email,address) VALUES(?,?,?,?,?,?)",
-              (request.form["code"].strip(),request.form["name"].strip(),request.form.get("tax_number","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("address","").strip()))
+              (supplier_code,request.form["name"].strip(),request.form.get("tax_number","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("address","").strip()))
             c.commit(); flash("تم حفظ المورد.","success")
         except sqlite3.IntegrityError: c.rollback(); flash("كود المورد مستخدم بالفعل.","error")
     suppliers_page = fetch_page(c,"SELECT * FROM suppliers ORDER BY name",
