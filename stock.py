@@ -10,7 +10,7 @@ import sqlite3
 import uuid
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
-from datetime import date
+from datetime import date, datetime
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, money
 from analytic_dimensions import initialize_analytic_dimensions_schema
