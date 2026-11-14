@@ -4,7 +4,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from fixed_assets import (_asset_disposal_journal_lines, _asset_period_amount,
-                          _post_asset_depreciation, _validate_dedicated_accum_account,
+                          _post_asset_depreciation, _reverse_full_period_depreciation_for_disposal,\n                          _validate_dedicated_accum_account,
                           register_assets_from_journal_lines)
 
 
@@ -159,6 +159,86 @@ class FixedAssetDisposalJournalTests(unittest.TestCase):
         self.assertEqual(lines[-1][:3], (40, Decimal("10000"), 0))
         self.assertEqual(sum((Decimal(str(x[1])) for x in lines), Decimal("0")),
                          sum((Decimal(str(x[2])) for x in lines), Decimal("0")))
+
+
+class FixedAssetDepreciationRevisionTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        self.conn.executescript("""
+            CREATE TABLE asset_depreciations(
+                id INTEGER PRIMARY KEY, asset_id INTEGER, period TEXT, amount TEXT,
+                journal_entry_id INTEGER UNIQUE, posted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(asset_id,period)
+            );
+            CREATE TABLE journal_entries(
+                id INTEGER PRIMARY KEY, reference TEXT, status TEXT, entry_date TEXT
+            );
+            CREATE TABLE journal_lines(
+                id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
+                debit TEXT, credit TEXT, memo TEXT
+            );
+            CREATE TABLE asset_depreciation_revisions(
+                id INTEGER PRIMARY KEY, depreciation_id INTEGER UNIQUE,
+                original_journal_entry_id INTEGER, reversal_journal_entry_id INTEGER UNIQUE,
+                replacement_journal_entry_id INTEGER UNIQUE, original_amount TEXT,
+                replacement_amount TEXT, disposal_date TEXT, reason TEXT, created_by INTEGER
+            );
+            INSERT INTO asset_depreciations(id,asset_id,period,amount,journal_entry_id)
+                VALUES(1,1,'2026-01','100.00',9),(2,1,'2026-02','100.00',10);
+            INSERT INTO journal_entries VALUES(10,'DEP-1-2026-02','posted','2026-02-28');
+            INSERT INTO journal_lines VALUES(1,10,30,'100.00','0','مصروف إهلاك');
+            INSERT INTO journal_lines VALUES(2,10,40,'0','100.00','مجمع إهلاك');
+        """)
+        self.asset = {
+            "id": 1, "asset_code": "AST-001", "asset_name": "سيارة",
+            "ready_date": "2026-01-01", "cost": "1200",
+            "residual_value": "0", "useful_life_months": 12,
+            "depreciation_method": "straight_line", "annual_rate": "0",
+            "expense_account_id": 30, "accum_account_id": 40,
+        }
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_full_month_posting_is_reversed_and_replaced_by_daily_amount(self):
+        with patch("fixed_assets.post_journal", side_effect=[77, 78]) as post:
+            result = _reverse_full_period_depreciation_for_disposal(
+                self.conn, self.asset, "2026-02", "2026-02-15", 5
+            )
+        self.assertEqual(result, (Decimal("53.57"), 77, 78))
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(post.call_args_list[0].args[2], "ASSET-DEP-REV-2")
+        self.assertEqual(post.call_args_list[0].args[4], [
+            (30, "0", "100.00", "عكس إهلاك أصل قبل إعادة احتسابه: مصروف إهلاك"),
+            (40, "100.00", "0", "عكس إهلاك أصل قبل إعادة احتسابه: مجمع إهلاك"),
+        ])
+        row = self.conn.execute(
+            "SELECT amount,journal_entry_id FROM asset_depreciations WHERE id=2"
+        ).fetchone()
+        self.assertEqual((row["amount"], row["journal_entry_id"]), ("53.57", 78))
+        revision = self.conn.execute(
+            "SELECT original_journal_entry_id,reversal_journal_entry_id,"
+            "replacement_journal_entry_id,original_amount,replacement_amount "
+            "FROM asset_depreciation_revisions WHERE depreciation_id=2"
+        ).fetchone()
+        self.assertEqual(tuple(revision), (10, 77, 78, "100.00", "53.57"))
+
+    def test_later_posted_period_blocks_reversal_without_creating_journal(self):
+        self.conn.execute(
+            "INSERT INTO asset_depreciations(asset_id,period,amount,journal_entry_id) "
+            "VALUES(1,'2026-03','100.00',11)"
+        )
+        with patch("fixed_assets.post_journal") as post:
+            with self.assertRaisesRegex(ValueError, "إهلاك لاحق مرحّل"):
+                _reverse_full_period_depreciation_for_disposal(
+                    self.conn, self.asset, "2026-02", "2026-02-15", 5
+                )
+        post.assert_not_called()
+        self.assertEqual(
+            self.conn.execute("SELECT amount FROM asset_depreciations WHERE id=2").fetchone()[0],
+            "100.00",
+        )
 
 
 class JournalLinkedAssetRegistrationTests(unittest.TestCase):
