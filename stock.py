@@ -1094,6 +1094,11 @@ def edit_warehouse(warehouse_id):
             branch_id=request.form.get("branch_id",type=int)
             branch=c.execute("SELECT name_ar FROM branches WHERE id=? AND active=1",(branch_id,)).fetchone() if branch_id else None
             if branch_id and not branch: raise ValueError("اختر فرعًا موجودًا ونشطًا.")
+            if (branch_id or None)!=(warehouse["branch_id"] or None) and c.execute(
+                "SELECT 1 FROM stock_movements WHERE source_warehouse_id=? OR target_warehouse_id=? LIMIT 1",
+                (warehouse_id,warehouse_id)
+            ).fetchone():
+                raise ValueError("لا يمكن تغيير فرع مخزن له حركات تاريخية؛ حتى لا تتغير دلالة تقارير الفروع. أنشئ مخزنًا جديدًا أو نفّذ إعادة تصنيف محاسبية موثقة.")
             c.execute("UPDATE stock_warehouses SET code=?,name_ar=?,branch=?,branch_id=? WHERE id=?",
                       (code,name,branch["name_ar"] if branch else "",branch_id,warehouse_id))
             c.commit(); c.close(); flash("تم تعديل المخزن وربطه بالفرع المحدد.","success"); return redirect(url_for("stock.warehouses"))
