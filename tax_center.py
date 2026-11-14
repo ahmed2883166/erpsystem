@@ -74,7 +74,7 @@ def _period(value):
 def build_tax_report_snapshot(conn, period_value):
     period, start, end = _period(period_value)
     sales = conn.execute("""
-        SELECT i.id, i.invoice_no document_no, i.invoice_date document_date, c.name party_name,
+        SELECT i.id, i.invoice_no document_no, i.invoice_date document_date, c.name party_name, COALESCE(c.tax_number,'') party_tax_number,
                i.subtotal taxable_base, i.tax_rate tax_rate,
                i.tax_amount tax_amount, i.total_amount total_amount,
                COALESCE(i.tax_treatment,'standard') tax_treatment,
@@ -120,7 +120,7 @@ def build_tax_report_snapshot(conn, period_value):
                 "document_type": "إشعار دائن",
             })
     purchases = conn.execute("""
-        SELECT b.id, b.bill_no document_no, b.bill_date document_date, s.name party_name,
+        SELECT b.id, b.bill_no document_no, b.bill_date document_date, s.name party_name, COALESCE(s.tax_number,'') party_tax_number,
                b.subtotal taxable_base, b.tax_rate tax_rate,
                b.tax_amount tax_amount, b.total_amount total_amount,
                COALESCE(b.tax_treatment,'standard') tax_treatment,
@@ -174,11 +174,45 @@ def build_tax_report_snapshot(conn, period_value):
         "output_vat": output_vat, "input_vat": input_vat,
         "non_deductible_input": non_deductible_input, "net_vat": output_vat-input_vat,
     }
+    # Advisory data-quality checks. These never modify posted documents or journals.
+    quality_issues = []
+    company_tax_number = (settings.get("tax_number") or "").strip()
+    country = settings.get("tax_country", "EG")
+    if not company_tax_number:
+        quality_issues.append({"severity": "warning", "document": "بيانات الشركة",
+                               "issue": "الرقم الضريبي للشركة غير مسجل"})
+    elif country == "EG" and not (company_tax_number.isdigit() and len(company_tax_number) == 9):
+        quality_issues.append({"severity": "warning", "document": "بيانات الشركة",
+                               "issue": "الرقم الضريبي المصري لا يطابق الشكل المتوقع (9 أرقام)"})
+    elif country == "SA" and not (company_tax_number.isdigit() and len(company_tax_number) == 15):
+        quality_issues.append({"severity": "warning", "document": "بيانات الشركة",
+                               "issue": "رقم التسجيل الضريبي السعودي لا يطابق الشكل المتوقع (15 رقمًا)"})
+    for kind, rows in (("مبيعات", sales), ("مشتريات", purchases)):
+        for row in rows:
+            doc = f"{kind} {row['document_no']} - {row['document_date']}"
+            if not (row.get("party_tax_number") or "").strip():
+                quality_issues.append({"severity": "warning", "document": doc,
+                                       "issue": "الرقم الضريبي للطرف غير مسجل"})
+            base = Decimal(str(row["taxable_base"] or "0"))
+            rate = Decimal(str(row["tax_rate"] or "0"))
+            actual_tax = Decimal(str(row["tax_amount"] or "0"))
+            expected_tax = (base * rate / Decimal("100")).quantize(Decimal("0.01"))
+            if abs(expected_tax - actual_tax) > Decimal("0.02"):
+                quality_issues.append({"severity": "error", "document": doc,
+                                       "issue": f"فرق بين الضريبة المحسوبة والمسجلة: {actual_tax - expected_tax}"})
+            expected_total = Decimal(str(row["total_amount"] or "0"))
+            if abs((base + actual_tax) - expected_total) > Decimal("0.02"):
+                quality_issues.append({"severity": "error", "document": doc,
+                                       "issue": "الإجمالي لا يساوي الوعاء الضريبي مضافًا إليه الضريبة"})
+    for row in inconsistent_sales + inconsistent_purchases:
+        quality_issues.append({"severity": "error", "document": str(row["document_no"]),
+                               "issue": "التصنيف الضريبي لا يتفق مع قيمة/نسبة الضريبة"})
     return {
         "period": period, "settings": settings, "sales": sales,
         "sales_credits": sales_credits, "purchases": purchases,
         "summary": summary, "inconsistent_sales": inconsistent_sales,
         "inconsistent_purchases": inconsistent_purchases,
+        "quality_issues": quality_issues,
     }
 
 
