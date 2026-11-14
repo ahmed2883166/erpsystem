@@ -192,6 +192,8 @@ def validate_activity_profile(conn, profile):
             "inventory": "asset", "cogs": "expense",
             "purchase_inventory": "asset", "supplier_ap": "liability",
             "input_vat": "asset",
+            "stocktake_shortage": "expense",
+            "stocktake_surplus": "expense",
         },
         "tax_roles": {"output_vat": "liability", "input_vat": "asset"},
         "account_roles": {
