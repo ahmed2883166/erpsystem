@@ -337,6 +337,7 @@ def product_uom_options(c, product_id):
         factor=D(str(unit["factor_to_base"]))/D(str(base["factor_to_base"]))
         result.append({"id":"U:"+str(unit["id"]),"name_ar":unit["name_ar"],"code":unit["code"],
             "factor_to_base":str(factor),"purchase_enabled":1,"sales_enabled":1,"is_base":int(unit["id"]==product["base_uom_id"])})
+    result.sort(key=lambda item:(not bool(item.get("is_base")),item["name_ar"]))
     return result
 
 
