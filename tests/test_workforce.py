@@ -379,7 +379,7 @@ class WorkforceTests(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         employee = conn.execute(
             "SELECT address,national_id,insurance_number,work_status,raise_type,raise_value,raise_mode "
-            "FROM employees WHERE employee_code='E003'"
+            "FROM employees WHERE employee_code LIKE 'EMP-%' ORDER BY id DESC LIMIT 1"
         ).fetchone()
         conn.execute("""INSERT INTO payroll_incentive_rules(name,calculation_method,calculation_value)
                         VALUES('حافز مناسبة','percentage_basic','5')""")
