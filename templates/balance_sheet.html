@@ -1,22 +1,76 @@
 {% extends "base.html" %}
 {% block title %}قائمة المركز المالي | NEXUS ERP{% endblock %}
 {% block content %}
-<header><div><h2>قائمة المركز المالي (الميزانية العمومية)</h2><p class="muted">أرصدة الحسابات المرحلة حتى التاريخ المحدد، مع إظهار نتيجة النشاط ضمن حقوق الملكية.</p></div><div class="table-actions no-print"><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='balance-sheet', as_of=s.as_of) }}">تصدير Excel</a><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='balance-sheet', as_of=s.as_of).replace('/excel','/pdf') }}">تحميل PDF</a></div></header>
-<section class="panel no-print"><form method="get" class="report-filter"><label>كما في تاريخ<input type="date" name="as_of" value="{{ s.as_of }}" required></label><button>عرض الميزانية</button></form></section>
-<section class="panel"><h3>ملخص المركز المالي</h3><div class="table-wrap"><table class="financial-summary-table"><thead><tr><th>البند</th><th>الرصيد</th></tr></thead><tbody>
-<tr class="financial-subtotal"><td>إجمالي الأصول</td><td>{{ '%.2f'|format(s.total_assets) }}</td></tr>
-<tr><td>إجمالي الالتزامات</td><td>{{ '%.2f'|format(s.total_liabilities) }}</td></tr>
-<tr><td>حقوق الملكية قبل نتيجة النشاط</td><td>{{ '%.2f'|format(s.equity_before_profit) }}</td></tr>
-<tr><td>نتيجة النشاط المتراكمة</td><td>{{ '%.2f'|format(s.net_profit) }}</td></tr>
-<tr class="financial-subtotal"><td>حقوق الملكية بعد نتيجة النشاط</td><td>{{ '%.2f'|format(s.total_equity) }}</td></tr>
-</tbody></table></div></section>
-{% if s.negative_asset_accounts %}<section class="panel"><h3 class="danger">تنبيه: أرصدة دائنة في حسابات الأصول</h3><p class="muted">هذه الحسابات تعرض أرصدة سالبة ضمن الأصول. راجع طبيعة الرصيد والتصنيف المحاسبي؛ لا يعيد النظام تصنيفها تلقائيًا.</p><div class="table-wrap"><table><thead><tr><th>الكود</th><th>الحساب</th><th>الرصيد</th><th>كشف الحساب</th></tr></thead><tbody>
-{% for item in s.negative_asset_accounts %}<tr><td>{{ item.code }}</td><td>{{ item.name_ar }}</td><td class="danger">{{ '%.2f'|format(item.balance) }}</td><td><a href="{{ url_for('ledger', account_id=item.id, date_to=s.as_of) }}">فتح الحساب</a></td></tr>{% endfor %}
-</tbody></table></div></section>{% endif %}
-{% for kind,title,total in [('asset','الأصول',s.total_assets),('liability','الالتزامات',s.total_liabilities),('equity','حقوق الملكية',s.equity_before_profit)] %}
-<section class="panel"><h3>{{ title }}</h3><div class="table-wrap"><table><thead><tr><th>كود الحساب</th><th>الحساب</th><th>الرصيد</th></tr></thead><tbody>{% for a in s.sections[kind] %}<tr class="{% if a.is_group %}account-group{% endif %}"><td>{{ a.code }}</td><td><span style="padding-right:{{ a.depth*22 }}px">{{ a.name_ar }}{% if a.is_group %} — إجمالي مجموعة{% endif %}</span></td><td>{{ '%.2f'|format(a.display_balance) }}</td></tr>{% else %}<tr><td colspan="3">لا توجد حسابات.</td></tr>{% endfor %}<tr class="total"><td colspan="2">إجمالي {{ title }}</td><td>{{ '%.2f'|format(total) }}</td></tr></tbody></table></div>
-{% if kind=='equity' %}<p>يضاف صافي ربح / (خسارة) النشاط المتراكم: <b>{{ '%.2f'|format(s.net_profit) }}</b></p><p><b>إجمالي حقوق الملكية بعد نتيجة النشاط: {{ '%.2f'|format(s.total_equity) }}</b></p>{% endif %}
+<header class="report-page-header no-print">
+  <div><h2>قائمة المركز المالي</h2><p class="muted">عرض تفصيلي للأصول والالتزامات وحقوق الملكية كما في التاريخ المحدد</p></div>
+  <div class="table-actions">
+    <button type="button" class="secondary" onclick="window.print()">طباعة / حفظ PDF</button>
+    <a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='balance-sheet', as_of=s.as_of) }}">تصدير Excel</a>
+    <a class="btn" href="{{ url_for('report_exports.export_report_excel', report='balance-sheet', as_of=s.as_of).replace('/excel','/pdf') }}">تحميل PDF منسق</a>
+  </div>
+</header>
+
+<section class="panel balance-filter no-print">
+  <form method="get" class="report-filter">
+    <label>تاريخ قائمة المركز المالي<input type="date" name="as_of" value="{{ s.as_of }}" required></label>
+    <button type="submit">تحديث التقرير</button>
+  </form>
 </section>
-{% endfor %}
-<section class="panel"><h3>فحص المعادلة المحاسبية</h3><p>الأصول = الالتزامات + حقوق الملكية + نتيجة النشاط</p><h2>{% if s.balanced %}<span class="success">متوازنة ✓</span>{% else %}<span class="danger">يوجد فرق: {{ '%.2f'|format(s.balance_difference) }}</span>{% endif %}</h2><p class="muted">التقرير يعرض أرصدة دفتر الأستاذ فقط. يجب مراجعة الحسابات الختامية، التسويات، الاستحقاقات والتصنيفات قبل اعتماد القوائم الرسمية.</p></section>
+
+<div class="balance-report" dir="rtl">
+  <div class="balance-report-heading">
+    <div class="balance-report-brand"><span class="balance-brand-mark">N</span><div><strong>NEXUS ERP</strong><small>التقارير المالية والإدارية</small></div></div>
+    <div class="balance-report-title"><h1>قائمة المركز المالي</h1><p>كما في {{ s.as_of }}</p></div>
+    <div class="balance-report-meta"><span>العملة الأساسية</span><strong>{{ base_currency|default('') }}</strong><span>تاريخ التقرير</span><strong>{{ s.as_of }}</strong></div>
+  </div>
+
+  <div class="balance-kpis">
+    <div><span>إجمالي الأصول</span><strong>{{ '%.2f'|format(s.total_assets) }}</strong></div>
+    <div><span>إجمالي الالتزامات</span><strong>{{ '%.2f'|format(s.total_liabilities) }}</strong></div>
+    <div><span>إجمالي حقوق الملكية</span><strong>{{ '%.2f'|format(s.total_equity) }}</strong></div>
+  </div>
+
+  {% if s.negative_asset_accounts %}
+  <div class="balance-warning no-print"><strong>تنبيه مراجعة</strong><span>توجد أرصدة دائنة في حسابات مصنفة كأصول. راجع طبيعة الرصيد والتصنيف المحاسبي؛ لا يعيد النظام تصنيفها تلقائيًا.</span>
+    <div class="table-wrap"><table><thead><tr><th>الكود</th><th>الحساب</th><th>الرصيد</th><th>الإجراء</th></tr></thead><tbody>
+    {% for item in s.negative_asset_accounts %}<tr><td>{{ item.code }}</td><td>{{ item.name_ar }}</td><td class="numeric danger">{{ '%.2f'|format(item.balance) }}</td><td><a href="{{ url_for('ledger', account_id=item.id, date_to=s.as_of) }}">كشف الحساب</a></td></tr>{% endfor %}
+    </tbody></table></div>
+  </div>
+  {% endif %}
+
+  <div class="balance-statement">
+    {% for kind,title,total in [('asset','الأصول',s.total_assets),('liability','الالتزامات',s.total_liabilities),('equity','حقوق الملكية',s.equity_before_profit)] %}
+    <section class="balance-section">
+      <div class="balance-section-title"><span>{{ '%02d'|format(loop.index) }}</span><h2>{{ title }}</h2><strong>{{ '%.2f'|format(total) }}</strong></div>
+      <table class="balance-detail-table">
+        <thead><tr><th class="code-col">كود الحساب</th><th>اسم الحساب / التصنيف</th><th class="amount-col">الرصيد</th></tr></thead>
+        <tbody>
+        {% for a in s.sections[kind] %}
+          <tr class="{% if a.is_group %}account-group{% endif %}">
+            <td class="account-code">{{ a.code }}</td>
+            <td><span class="balance-account-name {% if a.is_group %}is-group{% endif %}" style="--account-depth:{{ a.depth }}">{{ a.name_ar }}{% if a.is_group %}<small>إجمالي مجموعة</small>{% endif %}</span></td>
+            <td class="numeric">{{ '%.2f'|format(a.display_balance) }}</td>
+          </tr>
+        {% else %}<tr><td colspan="3" class="empty-state">لا توجد حسابات ضمن هذا القسم.</td></tr>{% endfor %}
+        </tbody>
+        <tfoot><tr><td colspan="2">إجمالي {{ title }}</td><td class="numeric">{{ '%.2f'|format(total) }}</td></tr></tfoot>
+      </table>
+      {% if kind=='equity' %}
+      <div class="balance-profit-line"><span>صافي ربح / (خسارة) النشاط المتراكمة</span><strong class="numeric">{{ '%.2f'|format(s.net_profit) }}</strong></div>
+      <div class="balance-grand-total"><span>إجمالي حقوق الملكية بعد نتيجة النشاط</span><strong class="numeric">{{ '%.2f'|format(s.total_equity) }}</strong></div>
+      {% endif %}
+    </section>
+    {% endfor %}
+  </div>
+
+  <section class="balance-equation">
+    <div><span>فحص المعادلة المحاسبية</span><strong>الأصول = الالتزامات + حقوق الملكية</strong></div>
+    <div class="balance-equation-result {% if s.balanced %}is-balanced{% else %}is-unbalanced{% endif %}">
+      <strong>{% if s.balanced %}متوازنة{% else %}يوجد فرق{% endif %}</strong>
+      <b>{{ '%.2f'|format(s.balance_difference) }}</b>
+    </div>
+  </section>
+  <p class="balance-disclaimer">هذا التقرير يعرض أرصدة دفتر الأستاذ حتى التاريخ المحدد. يجب مراجعة التسويات والاستحقاقات والتصنيفات المحاسبية قبل اعتماد القوائم المالية رسميًا.</p>
+  <footer class="balance-report-footer"><span>NEXUS ERP · تقرير مالي</span><span>صفحة قائمة المركز المالي · {{ s.as_of }}</span></footer>
+</div>
 {% endblock %}
