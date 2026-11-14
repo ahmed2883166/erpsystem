@@ -705,18 +705,36 @@ def register_report_exports(app, db_path, permissions):
                 ])
             widths = [(page_size[0] - 24*mm) / max(1, len(headers))] * len(headers)
             table = Table(table_data, colWidths=widths, repeatRows=1, hAlign="RIGHT")
-            table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#167D8D")),
+            table_commands = [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#17365D" if report == "balance-sheet" else "#167D8D")),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
                 ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#B7C3CC")),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F3F6F8")]),
-                ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ]))
+                ("LEFTPADDING", (0, 0), (-1, -1), 5 if report == "balance-sheet" else 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5 if report == "balance-sheet" else 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 6 if report == "balance-sheet" else 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6 if report == "balance-sheet" else 4),
+            ]
+            if report == "balance-sheet":
+                for row_index, source_row in enumerate(data, start=1):
+                    category = str(source_row[0] or "")
+                    if category in {"الأصول", "الالتزامات", "حقوق الملكية"}:
+                        table_commands.extend([
+                            ("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#EAF0F6")),
+                            ("FONTNAME", (0, row_index), (-1, row_index), "NexusArabic"),
+                        ])
+                    elif category == "الإجمالي":
+                        table_commands.extend([
+                            ("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#E4F0F1")),
+                            ("FONTNAME", (0, row_index), (-1, row_index), "NexusArabic"),
+                        ])
+                    elif category == "النتيجة":
+                        table_commands.append(("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#EAF4EE")))
+                    elif category == "المطابقة":
+                        table_commands.append(("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#F1F4F7")))
+            table.setStyle(TableStyle(table_commands))
             story.append(table)
             document.build(story)
             output.seek(0)
