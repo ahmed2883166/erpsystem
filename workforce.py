@@ -692,13 +692,13 @@ def export_employees_excel():
     from openpyxl.styles import Font, PatternFill, Alignment
     c = _db()
     rows = c.execute("""SELECT employee_code,full_name,address,national_id,insurance_number,
-        basic_salary,variable_salary,work_status,active FROM employees ORDER BY employee_code""").fetchall()
+        basic_salary,variable_salary,work_status,active,termination_date FROM employees ORDER BY employee_code""").fetchall()
     c.close()
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Employees"
     headers = ["كود الموظف","اسم الموظف","العنوان","الرقم القومي","رقم التأمين",
-               "الأساسي","المتغير","الحالة الوظيفية","نشط"]
+               "الأساسي","المتغير","الحالة الوظيفية","نشط","تاريخ انتهاء الخدمة"]
     sheet.append(headers)
     status_labels = {"permanent":"مثبت","comprehensive_bonus":"مكافأة شاملة",
                      "unpaid_leave":"إجازة بدون مرتب","resigned":"استقالة","retired":"معاش"}
@@ -706,7 +706,7 @@ def export_employees_excel():
         sheet.append([row["employee_code"],row["full_name"],row["address"],row["national_id"],
                       row["insurance_number"],D(row["basic_salary"]),
                       D(row["variable_salary"]),status_labels.get(row["work_status"],row["work_status"]),
-                      "نعم" if row["active"] else "لا"])
+                      "نعم" if row["active"] else "لا",row["termination_date"] or ""])
     for cell in sheet[1]:
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor="244062")
