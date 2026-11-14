@@ -29,7 +29,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
             );
             CREATE TABLE financial_years(
                 id INTEGER PRIMARY KEY, year_name TEXT, opening_entry_id INTEGER,
-                closing_entry_id INTEGER, status TEXT
+                closing_entry_id INTEGER, status TEXT, start_date TEXT, end_date TEXT
             );
             INSERT INTO accounts(id,code,name_ar,account_type) VALUES
                 (1,'1110','الصندوق','asset'),(2,'4100','الإيرادات','revenue');
