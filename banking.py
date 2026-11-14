@@ -127,7 +127,7 @@ def index():
                     "SELECT 1 FROM branches WHERE id=? AND active=1",(registry["branch_id"],)
                 ).fetchone():
                     raise ValueError("الفرع المرتبط بالخزنة/البنك غير نشط؛ راجع ربط الحساب بالفرع قبل تسجيل الحركة.")
-                if not registry and not any(term in (r["name_ar"] or "") for term in ("صندوق","بنك","بنوك","مصرف")) and r["code"] not in {"1110","1120","1121","1122"}:
+                if not registry and not any(term in (r["name_ar"] or "") for term in ("صندوق","بنك","بنوك","مصرف")):
                     raise ValueError("الحساب غير معرف كخزنة أو بنك. أضفه أولًا من شاشة إدارة الخزائن والبنوك.")
                 return aid
             valid_account(bank_id)
@@ -177,7 +177,7 @@ def index():
         UNION ALL
         SELECT a.id,a.code,a.name_ar,'bank',a.name_ar,NULL
         FROM accounts a WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
-          AND (lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%' OR a.code IN ('1110','1120','1121','1122'))
+          AND (lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%' OR lower(a.name_ar) LIKE '%صندوق%')
           AND NOT EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id)
         ORDER BY code""").fetchall()
     all_accounts=c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
