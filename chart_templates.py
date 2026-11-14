@@ -409,6 +409,17 @@ def ensure_common_activity_accounts(conn):
                           "account_type": account_type, "is_group": int(is_group)}
 
 
+def migrate_legacy_duplicate_account_labels(conn, activity):
+    """Rename only known legacy labels; preserve account IDs, balances and journal links."""
+    if activity == "service":
+        conn.execute(
+            """UPDATE accounts SET name_ar=?
+               WHERE code='2110' AND account_type='liability' AND is_group=0
+                 AND name_ar='مصروفات مستحقة - التزامات تشغيلية'""",
+            ("مصروفات مستحقة - حساب تاريخي (تُحفظ أرصدته السابقة)",),
+        )
+
+
 def ensure_activity_chart_accounts(conn, activity):
     """Append missing accounts from the selected chart without altering legacy accounts."""
     chart = CHARTS.get(activity, CHARTS["commercial"])
