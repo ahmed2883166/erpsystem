@@ -160,6 +160,47 @@ class CashFlowReportTests(unittest.TestCase):
         self.assertEqual(snapshot["indirect_reconciliation"], financial_planning.Decimal("0"))
         self.assertEqual(snapshot["reconciliation_difference"], financial_planning.Decimal("0"))
 
+    def test_indirect_method_includes_mapped_operating_current_assets_and_liabilities(self):
+        conn = financial_planning._connect()
+        conn.executemany(
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group) VALUES(?,?,?,?,0)",
+            [
+                (9,"1260","تأمينات لدى الغير","asset"),
+                (10,"2150","مصروفات مستحقة","liability"),
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO cash_flow_account_mappings(account_id,category) VALUES(?,'operating')",
+            [(9,), (10,)],
+        )
+        conn.execute(
+            "INSERT INTO journal_entries VALUES(6,'2026-11-20','posted')"
+        )
+        conn.executemany(
+            "INSERT INTO journal_lines VALUES(?,?,?,?,?)",
+            [
+                (11,6,9,"100","0"),
+                (12,6,1,"0","100"),
+            ],
+        )
+        conn.execute(
+            "INSERT INTO journal_entries VALUES(7,'2026-11-21','posted')"
+        )
+        conn.executemany(
+            "INSERT INTO journal_lines VALUES(?,?,?,?,?)",
+            [
+                (13,7,1,"80","0"),
+                (14,7,10,"0","80"),
+            ],
+        )
+        snapshot = financial_planning.build_cash_flow_indirect_snapshot(
+            conn, "2026-11-01", "2026-11-30"
+        )
+        conn.close()
+        self.assertEqual(snapshot["indirect_operating_net"], financial_planning.Decimal("-20"))
+        self.assertEqual(snapshot["reconciliation_difference"], financial_planning.Decimal("0"))
+        self.assertFalse(snapshot["indirect_mapping_warning"])
+
     def test_fixed_asset_depreciation_account_is_added_back_in_indirect_method(self):
         conn = financial_planning._connect()
         conn.execute("CREATE TABLE fixed_assets(id INTEGER PRIMARY KEY, expense_account_id INTEGER)")
