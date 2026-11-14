@@ -162,7 +162,7 @@ class IncomeStatementRouteTests(unittest.TestCase):
             "INSERT INTO journal_entries(id,entry_date,status,entry_type) VALUES(11,'2026-11-13','posted','general')"
         )
         conn.execute(
-            "INSERT INTO journal_lines VALUES(15,11,6,'910','0')"
+            "INSERT INTO journal_lines(id,entry_id,account_id,debit,credit) VALUES(15,11,6,'910','0')"
         )
         conn.executescript("""
             CREATE TABLE asset_disposals(
