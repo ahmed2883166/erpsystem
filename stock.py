@@ -221,6 +221,33 @@ def initialize_stock_schema():
     c.execute("""UPDATE stock_products SET base_uom_id=(
         SELECT id FROM stock_uoms WHERE name_ar=stock_products.uom ORDER BY is_base DESC LIMIT 1
         ) WHERE base_uom_id IS NULL AND EXISTS(SELECT 1 FROM stock_uoms WHERE name_ar=stock_products.uom)""")
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS stock_product_uoms(
+      id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES stock_products(id),
+      uom_id INTEGER REFERENCES stock_uoms(id), custom_code TEXT NOT NULL,
+      custom_name TEXT NOT NULL, factor_to_base TEXT NOT NULL,
+      is_base INTEGER NOT NULL DEFAULT 0, purchase_enabled INTEGER NOT NULL DEFAULT 1,
+      sales_enabled INTEGER NOT NULL DEFAULT 1, active INTEGER NOT NULL DEFAULT 1,
+      UNIQUE(product_id,custom_code), UNIQUE(product_id,uom_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_stock_product_uoms_product ON stock_product_uoms(product_id,active);
+    """)
+    # Ensure every linked product has a product-specific base unit mapping.
+    for product in c.execute("SELECT id,base_uom_id FROM stock_products WHERE base_uom_id IS NOT NULL").fetchall():
+        unit=c.execute("SELECT code,name_ar FROM stock_uoms WHERE id=?",(product["base_uom_id"],)).fetchone()
+        if unit:
+            c.execute("""INSERT OR IGNORE INTO stock_product_uoms
+                (product_id,uom_id,custom_code,custom_name,factor_to_base,is_base,purchase_enabled,sales_enabled)
+                VALUES(?,?,?,?, '1',1,1,1)""",
+                (product["id"],product["base_uom_id"],unit["code"],unit["name_ar"]))
+    for table, fields in (
+      ("purchase_order_lines",(("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
+      ("goods_receipt_lines",(("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
+    ):
+        existing={row["name"] for row in c.execute("PRAGMA table_info("+table+")")}
+        for name,declaration in fields:
+            if name not in existing: c.execute("ALTER TABLE "+table+" ADD COLUMN "+name+" "+declaration)
+
     movement_columns={row["name"] for row in c.execute("PRAGMA table_info(stock_movements)")}
     if "entered_quantity" not in movement_columns:
         c.execute("ALTER TABLE stock_movements ADD COLUMN entered_quantity TEXT")
@@ -228,6 +255,60 @@ def initialize_stock_schema():
         c.execute("ALTER TABLE stock_movements ADD COLUMN entered_uom_id INTEGER REFERENCES stock_uoms(id)")
 
     c.close()
+
+
+
+def product_uom_factor(c, product_id, uom_id, purpose=None):
+    """Return the exact multiplier converting one selected product unit to base stock units."""
+    product=c.execute("SELECT id,base_uom_id,uom FROM stock_products WHERE id=? AND active=1",(product_id,)).fetchone()
+    if not product:
+        raise ValueError("الصنف غير موجود أو غير نشط.")
+    if not product["base_uom_id"]:
+        if uom_id in (None, ""):
+            return D("1"), product["uom"]
+        raise ValueError("الصنف غير مربوط بوحدة قياس أساسية من الدليل؛ حدّث بياناته أولًا.")
+    base=c.execute("SELECT category_id,factor_to_base,name_ar FROM stock_uoms WHERE id=? AND active=1",(product["base_uom_id"],)).fetchone()
+    if not base:
+        raise ValueError("وحدة الصنف الأساسية غير نشطة.")
+    if uom_id in (None, ""):
+        uom_id=product["base_uom_id"]
+    package=c.execute("""SELECT custom_name,factor_to_base,purchase_enabled,sales_enabled
+        FROM stock_product_uoms WHERE product_id=? AND id=? AND active=1""",(product_id,uom_id)).fetchone()
+    if package:
+        if purpose=="purchase" and not package["purchase_enabled"]:
+            raise ValueError("وحدة التعبئة غير مفعلة للمشتريات لهذا الصنف.")
+        if purpose=="sales" and not package["sales_enabled"]:
+            raise ValueError("وحدة التعبئة غير مفعلة للمبيعات لهذا الصنف.")
+        return D(str(package["factor_to_base"])), package["custom_name"]
+    unit=c.execute("SELECT category_id,factor_to_base,name_ar FROM stock_uoms WHERE id=? AND active=1",(uom_id,)).fetchone()
+    if not unit or unit["category_id"]!=base["category_id"]:
+        raise ValueError("وحدة الحركة يجب أن تكون من نفس مجموعة وحدة الصنف.")
+    factor=D(str(unit["factor_to_base"]))/D(str(base["factor_to_base"]))
+    if purpose=="purchase" or purpose=="sales":
+        raise ValueError("الوحدة المختارة غير مفعلة لهذا الصنف؛ أضفها من إعدادات وحدات الصنف.")
+    return factor,unit["name_ar"]
+
+
+def product_uom_options(c, product_id):
+    product=c.execute("SELECT base_uom_id FROM stock_products WHERE id=?",(product_id,)).fetchone()
+    if not product or not product["base_uom_id"]:
+        return []
+    base=c.execute("SELECT category_id,factor_to_base FROM stock_uoms WHERE id=?",(product["base_uom_id"],)).fetchone()
+    if not base:
+        return []
+    rows=c.execute("""SELECT id,custom_name name_ar,code,factor_to_base,purchase_enabled,sales_enabled
+        FROM stock_product_uoms WHERE product_id=? AND active=1 ORDER BY is_base DESC,custom_name""",(product_id,)).fetchall()
+    result=[dict(row) for row in rows]
+    # Standard units from the same dimension are available automatically as conversions.
+    standard=c.execute("SELECT id,name_ar,code,factor_to_base FROM stock_uoms WHERE category_id=? AND active=1",(base["category_id"],)).fetchall()
+    known={row["uom_id"] for row in c.execute("SELECT uom_id FROM stock_product_uoms WHERE product_id=? AND uom_id IS NOT NULL",(product_id,)).fetchall()}
+    for unit in standard:
+        if unit["id"] in known:
+            continue
+        factor=D(str(unit["factor_to_base"]))/D(str(base["factor_to_base"]))
+        result.append({"id":unit["id"],"name_ar":unit["name_ar"],"code":unit["code"],
+            "factor_to_base":str(factor),"purchase_enabled":1,"sales_enabled":1,"is_base":int(unit["id"]==product["base_uom_id"])})
+    return result
 
 
 def post_scrap_journal(c, movement_id, movement_no, product, movement_date, total_cost, created_by):
