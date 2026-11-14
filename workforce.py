@@ -337,6 +337,8 @@ def _salary_change_preview(c, form):
     value = M(form.get("calculation_value", "0"))
     date.fromisoformat(decision_date)
     date.fromisoformat(effective_date)
+    if date.fromisoformat(effective_date) > date.today():
+        raise ValueError("لا تعتمد القرار قبل تاريخ سريانه. يمكن معاينة القرار، ثم اعتماده في يوم السريان أو بعده حتى لا تُصرف الزيادة مبكرًا.")
     if (not decision_no or not title or value <= 0
         or scope not in {"all_active","permanent","comprehensive_bonus","unpaid_leave","resigned","retired"}
         or calc_type not in {"fixed","percentage"} or calc_base not in {"basic","insured_wage"}
