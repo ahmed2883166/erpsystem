@@ -1502,7 +1502,7 @@ def resolve_pending_movement(movement_id):
     conn = get_db()
     try:
         conn.execute("BEGIN IMMEDIATE")
-        movement = conn.execute("""SELECT m.*,p.id product_id,p.name_ar,p.sku
+        movement = conn.execute("""SELECT m.*,p.id product_id,p.id id,p.name_ar,p.sku
             FROM stock_movements m JOIN stock_products p ON p.id=m.product_id WHERE m.id=?""",
             (movement_id,)).fetchone()
         if not movement or movement["accounting_status"] not in ("pending_purpose","pending_setup","pending_document"):
