@@ -386,7 +386,7 @@ def _salary_change_preview(c, form):
     decision_date = form.get("decision_date", "").strip()
     effective_date = form.get("effective_date", "").strip()
     title = form.get("title", "").strip()
-    scope = form.get("employee_scope", "permanent").strip()
+    scope = form.get("employee_scope", "all_active").strip()
     calc_type = form.get("calculation_type", "fixed").strip()
     calc_base = form.get("calculation_base", "basic").strip()
     treatment = form.get("treatment", "basic").strip()
