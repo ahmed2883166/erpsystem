@@ -23,7 +23,25 @@
     <div class="metric"><span>صافي الحركة الدفترية</span><strong>{{ book_total|money }}</strong></div>
     <div class="metric"><span>الفرق (الكشف - الدفاتر)</span><strong>{{ difference|money }}</strong></div>
   </div>
-  <p class="muted">عدد سطور الكشف المطابقة: {{ matched_count }} من {{ lines|length }}. الفرق هنا يقارن صافي حركات الفترة المدخلة؛ لا يمثل رصيد الإقفال إلا بعد إدخال جميع سطور الفترة وافتتاحيتها/إقفالها من كشف البنك.</p>
+  <p class="muted">عدد سطور الكشف المطابقة: {{ matched_count }} من {{ lines|length }}. الفرق الأول يقارن صافي حركات الفترة؛ والفرق الثاني أدناه يقارن رصيد الإقفال الفعلي بالرصيد الدفتري المتوقع بعد إضافة صافي الحركات إلى الرصيد الافتتاحي.</p>
+</section>
+<section class="panel">
+  <h3>أرصدة كشف البنك للفترة</h3>
+  <form method="post" class="form-grid">
+    <input type="hidden" name="action" value="save_balances">
+    <input type="hidden" name="bank_account_id" value="{{ account_id }}">
+    <input type="hidden" name="start_date" value="{{ start_date }}">
+    <input type="hidden" name="end_date" value="{{ end_date }}">
+    <label>الرصيد الافتتاحي حسب الكشف<input type="number" step="0.01" name="opening_balance" value="{{ opening_balance }}" required></label>
+    <label>الرصيد الختامي حسب الكشف<input type="number" step="0.01" name="closing_balance" value="{{ closing_balance }}" required></label>
+    <button type="submit">حفظ أرصدة الكشف</button>
+  </form>
+  <div class="grid grid-3">
+    <div class="metric"><span>الرصيد الافتتاحي</span><strong>{{ opening_balance|money }}</strong></div>
+    <div class="metric"><span>الرصيد الختامي بالكشف</span><strong>{{ closing_balance|money }}</strong></div>
+    <div class="metric"><span>الرصيد الدفتري المتوقع</span><strong>{{ expected_closing_balance|money }}</strong></div>
+  </div>
+  <p><strong>فرق رصيد الإقفال:</strong> {{ closing_difference|money }}</p>
 </section>
 <section class="panel">
   <h3>إضافة سطر من كشف البنك</h3>
