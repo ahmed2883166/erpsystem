@@ -2525,13 +2525,17 @@ def import_data_wizard():
         try:
             headers, rows = _read_import_upload(upload)
             token = uuid.uuid4().hex
-            payload = {"dataset": dataset, "filename": upload.filename.replace("\\\\", "/").split("/")[-1],
+            payload = {"dataset": dataset, "filename": upload.filename.replace("\\", "/").split("/")[-1],
                        "headers": headers, "rows": rows}
             (stage_dir / (token + ".json")).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             session["import_stage_token"] = token
             return render_template("import_data.html", datasets=IMPORT_DATASETS, stage=payload, token=token)
         except (ValueError, UnicodeDecodeError, OSError) as exc:
             flash(str(exc) or "تعذر قراءة الملف.", "error")
+            return redirect(url_for("import_data_wizard"))
+        except Exception:
+            app.logger.exception("Excel/CSV import preview failed.")
+            flash("تعذر قراءة الملف. تأكد من سلامة ملف Excel أو CSV ثم حاول مرة أخرى.", "error")
             return redirect(url_for("import_data_wizard"))
     if action == "confirm":
         submitted_token = request.form.get("token", "")
