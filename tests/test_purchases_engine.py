@@ -187,8 +187,14 @@ class PurchasingAccountingTests(unittest.TestCase):
                          "approved")
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
 
-        with patch("purchases.supplier_ap_account", return_value=99) as _ap_patch, patch("purchases.create_journal", return_value=77) as _journal_patch:
+        with patch("purchases.supplier_ap_account", return_value=99) as ap_patch, patch("purchases.create_journal", return_value=77) as journal_patch:
             entry_id = purchases.post_supplier_bill(self.db, bill_id, 30)
+        ap_patch.assert_called_once_with(self.db)
+        journal_patch.assert_called_once()
+        journal_args = journal_patch.call_args.args
+        self.assertIs(journal_args[0], self.db)
+        self.assertEqual(journal_args[1], "2026-11-13")
+        self.assertEqual(journal_args[2], "BILL-APP")
         self.db.commit()
         posted = self.db.execute("SELECT status,journal_entry_id FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
         self.assertEqual(posted["status"], "posted")
