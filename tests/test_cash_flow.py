@@ -162,17 +162,18 @@ class CashFlowReportTests(unittest.TestCase):
 
     def test_indirect_method_includes_mapped_operating_current_assets_and_liabilities(self):
         conn = financial_planning._connect()
+        conn.execute("ALTER TABLE accounts ADD COLUMN parent_id INTEGER")
         conn.executemany(
-            "INSERT INTO accounts(id,code,name_ar,account_type,is_group) VALUES(?,?,?,?,0)",
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group) VALUES(?,?,?,?,?)",
             [
-                (9,"1260","تأمينات لدى الغير","asset"),
-                (10,"2150","مصروفات مستحقة","liability"),
+                (7,"1100","الأصول المتداولة","asset",1),
+                (8,"2100","الالتزامات المتداولة","liability",1),
+                (9,"1260","تأمينات لدى الغير","asset",0),
+                (10,"2150","مصروفات مستحقة","liability",0),
             ],
         )
-        conn.executemany(
-            "INSERT INTO cash_flow_account_mappings(account_id,category) VALUES(?,'operating')",
-            [(9,), (10,)],
-        )
+        conn.execute("UPDATE accounts SET parent_id=7 WHERE id=9")
+        conn.execute("UPDATE accounts SET parent_id=8 WHERE id=10")
         conn.execute(
             "INSERT INTO journal_entries VALUES(6,'2026-11-20','posted')"
         )
