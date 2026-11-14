@@ -863,7 +863,7 @@ def payroll():
                         raise ValueError("تاريخ انتهاء الخدمة لا يقع ضمن شهر المرتبات للموظف " + e["full_name"] + ".")
                 payroll_factor = Decimal(payroll_days) / Decimal("30")
                 employee_period_end = e["termination_date"] if e["work_status"] in {"resigned", "retired"} else period_end
-                fixed_items = c.execute("""SELECT item_name,item_type,amount FROM employee_pay_items
+                fixed_items = c.execute("""SELECT id,item_name,item_type,amount FROM employee_pay_items
                     WHERE employee_id=? AND active=1 ORDER BY id""", (e["id"],)).fetchall()
                 fixed_allowances = M(sum((D(x["amount"]) for x in fixed_items if x["item_type"] == "allowance"), Decimal("0")))
                 fixed_deductions = M(sum((D(x["amount"]) for x in fixed_items if x["item_type"] == "deduction"), Decimal("0")))
@@ -1062,9 +1062,9 @@ def payroll():
                     for fixed_item in fixed_items:
                         item_amount = M(D(fixed_item["amount"]) * payroll_factor) if fixed_item["item_type"] == "allowance" else M(fixed_item["amount"])
                         if fixed_item["item_type"] == "allowance":
-                            snapshot_item("earning",fixed_item["item_name"],item_amount,"employee_pay_item",None,20)
+                            snapshot_item("earning",fixed_item["item_name"],item_amount,"employee_pay_item",fixed_item["id"],20)
                         else:
-                            snapshot_item("deduction",fixed_item["item_name"],item_amount,"employee_pay_item",None,70)
+                            snapshot_item("deduction",fixed_item["item_name"],item_amount,"employee_pay_item",fixed_item["id"],70)
                     manual_allowance = M(D(request.form.get("allowances_" + str(e["id"]), e["variable_salary"])) * payroll_factor)
                     snapshot_item("earning","بدلات / مستحقات متغيرة يدوية",manual_allowance,"payroll_input",None,30)
                     if raise_amount and e["raise_mode"] == "allowance":
