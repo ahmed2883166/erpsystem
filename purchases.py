@@ -623,7 +623,7 @@ def new_order():
             entered_qty=Decimal(request.form["quantity"]); entered_price=money(request.form["unit_price"])
             if entered_qty<=0 or entered_price<0: raise ValueError("الكمية والسعر غير صحيحين.")
             factor,uom_name=product_uom_factor(c,product,request.form.get("uom_id"),"purchase")
-            qty=q4(entered_qty*factor); price=money(entered_price/factor)
+            qty=q4(entered_qty*factor); price=entered_price/factor
             c.execute("BEGIN IMMEDIATE")
             no="PO-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             cur=c.execute("INSERT INTO purchase_orders(po_no,supplier_id,order_date,expected_date,notes,created_by) VALUES(?,?,?,?,?,?)",
@@ -769,7 +769,7 @@ def new_receipt():
             entered_qty=Decimal(request.form["quantity"]); entered_unit=money(request.form["unit_cost"])
             if entered_qty<=0 or entered_unit<0: raise ValueError("الكمية أو التكلفة غير صحيحة.")
             factor,uom_name=product_uom_factor(c,product,request.form.get("uom_id"),"purchase")
-            qty=q4(entered_qty*factor); unit=money(entered_unit/factor); total=money(entered_qty*entered_unit)
+            qty=q4(entered_qty*factor); unit=entered_unit/factor; total=money(entered_qty*entered_unit)
             c.execute("BEGIN IMMEDIATE")
             dimensions = validate_journal_dimensions(c, {**request.form, "supplier_id": supplier})
             product_row=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(product,)).fetchone()
