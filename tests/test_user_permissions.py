@@ -165,6 +165,16 @@ class UserPermissionRouteTests(unittest.TestCase):
         self.assertIn("role_updated", audit_actions)
         self.assertIn("role_deactivated", audit_actions)
 
+    def test_sales_manage_does_not_implicitly_grant_discount_approval(self):
+        permissions = nexus.normalize_user_permissions(["sales.manage"])
+        self.assertIn("sales.view", permissions)
+        self.assertIn("sales.manage", permissions)
+        self.assertNotIn("sales.approve", permissions)
+
+        approval_only = nexus.normalize_user_permissions(["sales.approve"])
+        self.assertIn("sales.approve", approval_only)
+        self.assertNotIn("sales.manage", approval_only)
+
     def test_non_admin_cannot_manage_custom_roles_even_if_users_manage_is_granted(self):
         with self.client.session_transaction() as session:
             session.update(user_id=1, username="admin", full_name="مدير",
