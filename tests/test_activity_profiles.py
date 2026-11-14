@@ -326,5 +326,74 @@ class ActivityProfileTests(unittest.TestCase):
         self.assertEqual(before, after)
 
 
+    def test_restaurant_issue_journal_uses_inventory_and_cogs_by_product_category(self):
+        from unittest.mock import patch
+        import stock
+
+        self.conn.execute("""CREATE TABLE company_settings(
+            setting_key TEXT PRIMARY KEY,setting_value TEXT)""")
+        self.conn.execute("INSERT INTO company_settings VALUES('activity','restaurant')")
+        self.conn.execute("""CREATE TABLE stock_categories(
+            id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT)""")
+        self.conn.execute("""CREATE TABLE stock_products(
+            id INTEGER PRIMARY KEY,sku TEXT,name_ar TEXT,category TEXT DEFAULT '',category_id INTEGER)""")
+        self.conn.execute("""CREATE TABLE stock_movements(
+            id INTEGER PRIMARY KEY,movement_no TEXT,journal_entry_id INTEGER,accounting_status TEXT)""")
+        self.conn.executemany("INSERT INTO accounts(code,name_ar,account_type,is_group,active) VALUES(?,?,?,?,?)", [
+            ("1140","مخزون غذاء","asset",0,1),("1150","مخزون مشروبات","asset",0,1),
+            ("1160","مخزون تعبئة","asset",0,1),("5100","تكلفة الغذاء","expense",0,1),
+            ("5200","تكلفة المشروبات","expense",0,1),("5400","تكلفة التعبئة","expense",0,1),
+        ])
+        categories = [
+            ("FOOD","غذاء"),("BEVERAGE","مشروبات"),("PACKAGING","تعبئة"),
+        ]
+        for code,name in categories:
+            self.conn.execute("INSERT INTO stock_categories(code,name_ar) VALUES(?,?)",(code,name))
+        category_ids = {row["code"]:row["id"] for row in self.conn.execute(
+            "SELECT id,code FROM stock_categories")}
+        products = {}
+        for index,(code,name) in enumerate(categories,1):
+            products[code] = self.conn.execute(
+                "INSERT INTO stock_products(sku,name_ar,category_id) VALUES(?,?,?)",
+                ("R-"+code,name,category_ids[code])
+            ).lastrowid
+        movement_ids = {}
+        for index,(code,name) in enumerate(categories,1):
+            movement_ids[code] = self.conn.execute(
+                "INSERT INTO stock_movements(movement_no,accounting_status) VALUES(?, 'pending')",
+                ("ISS-"+code,)
+            ).lastrowid
+
+        expected = {
+            "FOOD": ("5100","1140"),
+            "BEVERAGE": ("5200","1150"),
+            "PACKAGING": ("5400","1160"),
+        }
+        for code,_name in categories:
+            with patch("stock.post_journal",return_value=100+len(code)) as post:
+                result = stock.post_issue_journal(
+                    self.conn,movement_ids[code],"ISS-"+code,
+                    {"id":products[code],"name_ar":code},"2026-11-14",
+                    "100",7,"sale"
+                )
+            self.assertEqual(result,100+len(code))
+            lines = post.call_args.args[4]
+            expense_id = self.conn.execute(
+                "SELECT id FROM accounts WHERE code=?",(expected[code][0],)
+            ).fetchone()["id"]
+            inventory_id = self.conn.execute(
+                "SELECT id FROM accounts WHERE code=?",(expected[code][1],)
+            ).fetchone()["id"]
+            self.assertEqual([line[0] for line in lines],[expense_id,inventory_id])
+            self.assertEqual(lines[0][1:3],(stock.money("100"),0))
+            self.assertEqual(lines[1][1:3],(0,stock.money("100")))
+            saved = self.conn.execute(
+                "SELECT accounting_status,journal_entry_id FROM stock_movements WHERE id=?",
+                (movement_ids[code],)
+            ).fetchone()
+            self.assertEqual(saved["accounting_status"],"posted")
+            self.assertIsNotNone(saved["journal_entry_id"])
+
+
 if __name__ == "__main__":
     unittest.main()
