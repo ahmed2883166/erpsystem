@@ -112,14 +112,14 @@ class SharedAccountingCoreTests(unittest.TestCase):
             post_journal(self.db, "2026-11-09", "INV-5", "خطأ",
                          [(4, 100, 0, "مدين"), (2, 0, 100, "دائن")], 7)
 
-    def test_industrial_reconciliation_includes_all_inventory_accounts(self):
+    def test_industrial_reconciliation_uses_only_1130_inventory_control(self):
         snapshot = reconciliation_snapshot(self.db)
         self.assertEqual(snapshot["stock_value"], 80.0)
-        # GL = 50 debit on 1130 + 20 debit on 1150; other control accounts included as zero.
-        self.assertEqual(snapshot["gl_stock"], 70.0)
-        self.assertEqual(snapshot["stock_difference"], -10.0)
+        # Industrial v1 intentionally recognizes 1130 only; legacy 1150 balances are not silently reclassified.
+        self.assertEqual(snapshot["gl_stock"], 50.0)
+        self.assertEqual(snapshot["stock_difference"], -30.0)
         self.assertEqual(len(snapshot["unbalanced"]), 0)
-        self.assertEqual(snapshot["inventory_account_codes"], ["1130", "1140", "1150", "1160"])
+        self.assertEqual(snapshot["inventory_account_codes"], ["1130"])
 
     def test_sql_decimal_aggregates_preserve_text_precision(self):
         register_decimal_aggregates(self.db)
