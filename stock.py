@@ -685,12 +685,13 @@ def index():
         FROM stock_valuation_layers WHERE CAST(qty_remaining AS REAL)>0""").fetchall():
         key=(layer["warehouse_id"],layer["product_id"])
         warehouse_qty[key]=warehouse_qty.get(key,Decimal("0"))+Decimal(str(layer["qty_remaining"] or "0"))
-    for setting in c.execute("""SELECT s.product_id,s.warehouse_id,s.reorder_point
+    for setting in c.execute("""SELECT s.product_id,s.warehouse_id,s.reorder_point,s.min_qty
         FROM stock_warehouse_product_settings s
         JOIN stock_products p ON p.id=s.product_id AND p.active=1
         JOIN stock_warehouses w ON w.id=s.warehouse_id AND w.active=1""").fetchall():
         point=Decimal(str(setting["reorder_point"] or "0"))
-        if point>0 and warehouse_qty.get((setting["warehouse_id"],setting["product_id"]),Decimal("0"))<=point:
+        threshold=point if point>0 else Decimal(str(setting["min_qty"] or "0"))
+        if threshold>0 and warehouse_qty.get((setting["warehouse_id"],setting["product_id"]),Decimal("0"))<=threshold:
             reorder_alert_count+=1
     expiry_alert_count=0
     for lot in c.execute("""SELECT id,expiry_date FROM stock_lots WHERE expiry_date IS NOT NULL""").fetchall():
@@ -1344,12 +1345,13 @@ def reports():
         current=warehouse_totals.get((setting["product_id"],setting["warehouse_id"]),{"qty":Decimal("0"),"value":Decimal("0")})["qty"]
         point=Decimal(str(setting["reorder_point"] or "0"))
         minimum=Decimal(str(setting["min_qty"] or "0"))
+        threshold=point if point>0 else minimum
         suggested=Decimal(str(setting["reorder_qty"] or "0"))
-        if point>0 and current<=point:
-            if suggested<=0: suggested=max(minimum,point-current)
+        if threshold>0 and current<=threshold:
+            if suggested<=0: suggested=max(minimum,threshold-current)
             reorder_alerts.append({"sku":setting["sku"],"name_ar":setting["name_ar"],"uom":setting["uom"],
                 "warehouse_code":setting["warehouse_code"],"warehouse_name":setting["warehouse_name"],
-                "qty":current,"point":point,"minimum":minimum,"suggested":suggested})
+                "qty":current,"point":threshold,"minimum":minimum,"suggested":suggested})
     # 90-day turnover is cost of goods issued for sale divided by average inventory
     # value. Average stock is reconstructed from today's valuation and net stock movements.
     today=date.today()
