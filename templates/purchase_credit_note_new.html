@@ -1,48 +1,43 @@
 {% extends "base.html" %}
 {% block title %}إشعار دائن مشتريات | NEXUS ERP{% endblock %}
 {% block content %}
-<header><div><h2>إشعار دائن مشتريات / مرتجع مورد</h2><p class="muted">يخفض رصيد المورد والمخزون ويرد ضريبة المدخلات وفق معدل فاتورة المورد.</p></div></header>
+<header><div><h2>إشعار دائن مشتريات / مرتجع مورد</h2><p class="muted">اختر وحدة المرتجع؛ يتم تحويل الكمية إلى الوحدة الأساسية قبل خصمها من المخزون، مع حفظ وحدة الإدخال في المستند.</p></div></header>
 <div class="actions stock-shortcuts"><a class="button-link" href="{{ url_for('purchase.index') }}">العودة للمشتريات</a><a class="button-link" href="{{ url_for('stock.movements') }}">حركات المخزون</a></div>
-<section class="panel">
-<form method="post" id="supplierCreditForm">
+<section class="panel"><form method="post" id="supplierCreditForm">
 <div class="form-row">
 <div><label>المورد *</label><select name="supplier_id" id="creditSupplier" required><option value="">اختر المورد</option>{% for s in suppliers %}<option value="{{ s.id }}">{{ s.code }} — {{ s.name }}</option>{% endfor %}</select></div>
-<div><label>فاتورة المورد الأصلية *</label><select name="bill_id" id="creditBill" required><option value="">اختر المورد أولًا</option>{% for b in bills %}<option value="{{ b.id }}" data-supplier="{{ b.supplier_id }}" data-total="{{ b.total_amount }}" data-credited="{{ b.credited_amount }}">{{ b.bill_no }} — {{ b.supplier_name }} — {{ b.bill_date }} ({{ b.total_amount }})</option>{% endfor %}</select></div>
-<div><label>رقم إشعار المورد *</label><input name="supplier_credit_no" required></div>
-<div><label>تاريخ الإشعار *</label><input type="date" name="credit_date" value="{{ today }}" required></div>
+<div><label>فاتورة المورد الأصلية *</label><select name="bill_id" id="creditBill" required><option value="">اختر المورد أولًا</option>{% for b in bills %}<option value="{{ b.id }}" data-supplier="{{ b.supplier_id }}">{{ b.bill_no }} — {{ b.supplier_name }} — {{ b.bill_date }} ({{ b.total_amount }})</option>{% endfor %}</select></div>
+<div><label>رقم إشعار المورد *</label><input name="supplier_credit_no" required></div><div><label>تاريخ الإشعار *</label><input type="date" name="credit_date" value="{{ today }}" required></div>
 </div>
 <label>سبب المرتجع *</label><input name="reason" required maxlength="500" placeholder="مثال: بضاعة تالفة أو غير مطابقة">
-<h3>الأصناف المرتجعة</h3>
-<p class="muted">قيمة الإشعار تُحسب من تكلفة المخزون الفعلية حسب FIFO أو المتوسط المرجح، والضريبة تُحسب بمعدل فاتورة المورد الأصلية.</p>
-<div id="creditLines">
-<div class="credit-line form-row">
-<div><label>الصنف *</label><select name="product_id" required><option value="">اختر الصنف</option>{% for p in products %}<option value="{{ p.id }}">{{ p.sku }} — {{ p.name_ar }} ({{ p.uom }})</option>{% endfor %}</select></div>
+<h3>الأصناف المرتجعة</h3><p class="muted">قيمة الإشعار تُحسب من تكلفة المخزون الفعلية حسب FIFO أو المتوسط المرجح، والضريبة بمعدل فاتورة المورد.</p>
+<div id="creditLines"><div class="credit-line form-row">
+<div><label>الصنف *</label><select name="product_id" class="credit-product" required><option value="">اختر الصنف</option>{% for p in products %}<option value="{{ p.id }}">{{ p.sku }} — {{ p.name_ar }} ({{ p.uom }})</option>{% endfor %}</select></div>
 <div><label>المخزن *</label><select name="warehouse_id" required><option value="">اختر المخزن</option>{% for w in warehouses %}<option value="{{ w.id }}">{{ w.code }} — {{ w.name_ar }}</option>{% endfor %}</select></div>
+<div><label>وحدة المرتجع *</label><select name="uom_key" class="credit-uom" required><option value="">اختر الصنف أولًا</option>{% for p in products %}{% for u in p.uom_options %}<option data-product="{{ p.id }}" value="{{ u.id }}">{{ u.name_ar }}</option>{% endfor %}{% endfor %}</select></div>
 <div><label>الكمية المرتجعة *</label><input name="quantity" type="number" min="0.0001" step="0.0001" required></div>
 <div class="credit-line-actions"><label>&nbsp;</label><button type="button" class="danger remove-credit-line">حذف السطر</button></div>
-</div>
-</div>
+</div></div>
 <div class="actions"><button type="button" class="secondary" id="addCreditLine">+ إضافة صنف آخر</button><button type="submit">حفظ وترحيل إشعار الدائن</button></div>
-</form>
-</section>
-<template id="creditLineTemplate">
-<div class="credit-line form-row">
-<div><label>الصنف *</label><select name="product_id" required><option value="">اختر الصنف</option>{% for p in products %}<option value="{{ p.id }}">{{ p.sku }} — {{ p.name_ar }} ({{ p.uom }})</option>{% endfor %}</select></div>
+</form></section>
+<template id="creditLineTemplate"><div class="credit-line form-row">
+<div><label>الصنف *</label><select name="product_id" class="credit-product" required><option value="">اختر الصنف</option>{% for p in products %}<option value="{{ p.id }}">{{ p.sku }} — {{ p.name_ar }} ({{ p.uom }})</option>{% endfor %}</select></div>
 <div><label>المخزن *</label><select name="warehouse_id" required><option value="">اختر المخزن</option>{% for w in warehouses %}<option value="{{ w.id }}">{{ w.code }} — {{ w.name_ar }}</option>{% endfor %}</select></div>
+<div><label>وحدة المرتجع *</label><select name="uom_key" class="credit-uom" required><option value="">اختر الصنف أولًا</option>{% for p in products %}{% for u in p.uom_options %}<option data-product="{{ p.id }}" value="{{ u.id }}">{{ u.name_ar }}</option>{% endfor %}{% endfor %}</select></div>
 <div><label>الكمية المرتجعة *</label><input name="quantity" type="number" min="0.0001" step="0.0001" required></div>
 <div class="credit-line-actions"><label>&nbsp;</label><button type="button" class="danger remove-credit-line">حذف السطر</button></div>
-</div>
-</template>
+</div></template>
 {% endblock %}
-{% block scripts %}
-<script>
+{% block scripts %}<script>
 (() => {
  const supplier=document.getElementById('creditSupplier'), bill=document.getElementById('creditBill'), lines=document.getElementById('creditLines');
  const allBills=[...bill.options].slice(1);
  supplier.addEventListener('change',()=>{bill.value='';allBills.forEach(o=>o.hidden=!!supplier.value&&o.dataset.supplier!==supplier.value);});
+ function filterUnits(row){const product=row.querySelector('.credit-product').value, unit=row.querySelector('.credit-uom');unit.value='';[...unit.options].forEach(o=>{if(!o.dataset.product){o.hidden=!!product;}else{o.hidden=o.dataset.product!==product;}});const first=[...unit.options].find(o=>o.dataset.product===product);if(first)unit.value=first.value;}
+ lines.addEventListener('change',e=>{if(e.target.classList.contains('credit-product'))filterUnits(e.target.closest('.credit-line'));});
  document.getElementById('addCreditLine').addEventListener('click',()=>lines.append(document.getElementById('creditLineTemplate').content.cloneNode(true)));
  lines.addEventListener('click',e=>{if(e.target.classList.contains('remove-credit-line')){const rows=lines.querySelectorAll('.credit-line');if(rows.length>1)e.target.closest('.credit-line').remove();}});
  document.getElementById('supplierCreditForm').addEventListener('submit',e=>{if(!bill.value){e.preventDefault();alert('اختر فاتورة المورد الأصلية أولًا.');}});
+ document.querySelectorAll('.credit-line').forEach(filterUnits);
 })();
-</script>
-{% endblock %}
+</script>{% endblock %}
