@@ -155,9 +155,10 @@ def build_tax_report_snapshot(conn, period_value):
     # Group by the original line tax treatment so mixed-treatment invoices remain classified correctly.
     sales_credits = []
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sales_credit_notes'").fetchone():
-        credit_rows = conn.execute("""
+        credit_rows = conn.execute(f"""
             SELECT cn.id, cn.credit_note_no document_no, cn.credit_date document_date,
-                   c.name party_name, cl.line_total taxable_base, cl.tax_amount,
+                   c.name party_name, {customer_tax_number} party_tax_number,
+                   cl.line_total taxable_base, cl.tax_amount,
                    cl.tax_treatment, cn.reason tax_notes
             FROM sales_credit_notes cn
             JOIN sales_invoices i ON i.id=cn.invoice_id
@@ -169,17 +170,17 @@ def build_tax_report_snapshot(conn, period_value):
         grouped = {}
         for row in credit_rows:
             key = (row["id"], row["document_no"], row["document_date"],
-                   row["party_name"], row["tax_treatment"] or "standard", row["tax_notes"])
+                   row["party_name"], row["party_tax_number"], row["tax_treatment"] or "standard", row["tax_notes"])
             item = grouped.setdefault(key, {"taxable_base": Decimal("0"),
                                              "tax_amount": Decimal("0")})
             item["taxable_base"] += Decimal(row["taxable_base"] or "0")
             item["tax_amount"] += Decimal(row["tax_amount"] or "0")
         for key, amounts in grouped.items():
-            credit_id, doc_no, doc_date, party_name, treatment, notes = key
+            credit_id, doc_no, doc_date, party_name, party_tax_number, treatment, notes = key
             base, tax_value = amounts["taxable_base"], amounts["tax_amount"]
             sales_credits.append({
                 "id": credit_id, "document_no": doc_no, "document_date": doc_date,
-                "party_name": party_name, "taxable_base": -base,
+                "party_name": party_name, "party_tax_number": party_tax_number, "taxable_base": -base,
                 "tax_amount": -tax_value,
                 "tax_rate": (tax_value * Decimal("100") / base).quantize(Decimal("0.01"))
                             if base else Decimal("0"),
