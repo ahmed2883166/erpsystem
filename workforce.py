@@ -1141,7 +1141,10 @@ def payroll_run(run_id):
                         JOIN employees e ON e.id=l.employee_id WHERE l.run_id=? ORDER BY e.employee_code""", (run_id,)).fetchall()
     accounts = _accounts(c)
     payment_accounts = c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 AND account_type='asset' ORDER BY code").fetchall()
-    payments = c.execute("""SELECT p.*,a.code AS account_code,a.name_ar AS account_name
+    allocation_count_expr = "(SELECT COUNT(*) FROM payroll_payment_allocations pa WHERE pa.payment_id=p.id)" if c.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'").fetchone() else "0"
+    payments = c.execute("""SELECT p.*,a.code AS account_code,a.name_ar AS account_name,"""+
+        allocation_count_expr+""" AS allocation_count
         FROM payroll_payments p JOIN accounts a ON a.id=p.cash_account_id
         WHERE p.run_id=? ORDER BY p.payment_date,p.id""", (run_id,)).fetchall()
     line_paid = {}
