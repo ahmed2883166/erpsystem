@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import app as nexus_app
 from database import connect_database
+from security_controls import linked_operational_source
 
 
 class JournalReversalProtectionTests(unittest.TestCase):
@@ -112,6 +113,18 @@ class JournalReversalProtectionTests(unittest.TestCase):
             self.assertIsNotNone(conn.execute(
                 "SELECT id FROM journal_entries WHERE reference='REV-4'"
             ).fetchone())
+
+    def test_operational_reversal_link_is_detected(self):
+        with connect_database(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE payroll_reversals(
+                    id INTEGER PRIMARY KEY, reversal_journal_entry_id INTEGER
+                )
+            """)
+            conn.execute(
+                "INSERT INTO payroll_reversals(reversal_journal_entry_id) VALUES(2)"
+            )
+            self.assertEqual(linked_operational_source(conn, 2), "payroll_reversals")
 
     def test_original_journal_cannot_be_reversed_twice(self):
         response = self.client.post(
