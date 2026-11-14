@@ -175,6 +175,14 @@ class SalesIntegrationTests(unittest.TestCase):
             }
             self.assertEqual(posted[cogs_code], (Decimal("10"), Decimal("0")))
             self.assertEqual(posted[inventory_code], (Decimal("0"), Decimal("10")))
+            tagged_inventory = self.db.execute(
+                """SELECT jl.stock_product_id,jl.stock_warehouse_id
+                   FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+                   WHERE jl.entry_id=? AND a.code=?""",
+                (invoice["cogs_journal_entry_id"], inventory_code),
+            ).fetchone()
+            self.assertEqual(tagged_inventory["stock_product_id"], product_id)
+            self.assertEqual(tagged_inventory["stock_warehouse_id"], self.warehouse_id)
             self.assertEqual(invoice["total_cost"], Decimal("10.00"))
             movement = self.db.execute(
                 "SELECT accounting_status,journal_entry_id FROM stock_movements WHERE movement_no LIKE ?",
@@ -227,6 +235,14 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(Decimal(remaining), Decimal("3.0000"))
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 2)
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'").fetchone()[0], 1)
+        inventory_line = self.db.execute(
+            """SELECT jl.stock_product_id,jl.stock_warehouse_id
+               FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+               WHERE jl.entry_id=? AND a.code='1150'""",
+            (result["cogs_journal_entry_id"],),
+        ).fetchone()
+        self.assertEqual(inventory_line["stock_product_id"], self.product_id)
+        self.assertEqual(inventory_line["stock_warehouse_id"], self.warehouse_id)
 
     def test_restaurant_invoice_posts_to_selected_sales_channel(self):
         from chart_templates import ensure_activity_chart_accounts
