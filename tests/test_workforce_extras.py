@@ -25,6 +25,8 @@ class WorkforceExtrasTests(unittest.TestCase):
                 description TEXT,status TEXT,created_by INTEGER,created_at TEXT);
             CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,
                 debit TEXT DEFAULT '0',credit TEXT DEFAULT '0',memo TEXT);
+            CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT NOT NULL);
+            INSERT INTO company_settings VALUES('tax_country','EG');
         """)
         conn.commit()
         conn.close()
