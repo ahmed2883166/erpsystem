@@ -75,6 +75,18 @@ def initialize_assets_schema():
     c.close()
 
 
+def _validate_dedicated_accum_account(conn, account_id):
+    """Reject a reserve account already used by another asset or any posted journal."""
+    if conn.execute(
+        "SELECT 1 FROM fixed_assets WHERE accum_account_id=? LIMIT 1", (account_id,)
+    ).fetchone():
+        raise ValueError("حساب مجمع الإهلاك مستخدم لأصل آخر. خصص حسابًا تفصيليًا مستقلًا لهذا الأصل.")
+    if conn.execute(
+        "SELECT 1 FROM journal_lines WHERE account_id=? LIMIT 1", (account_id,)
+    ).fetchone():
+        raise ValueError("حساب مجمع الإهلاك يحتوي على حركات سابقة؛ لا تستخدمه لأصل جديد. أنشئ حسابًا تفصيليًا مستقلًا.")
+
+
 def create_asset_from_supplier_bill(conn, bill, actor_id):
     """Create one asset register row per supplier-bill asset line, without a second journal."""
     if bill["bill_kind"] != "asset":
@@ -139,14 +151,9 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
         if row["asset_account_id"]==row["accum_account_id"]:
             raise ValueError("حساب التكلفة ومجمع الإهلاك يجب أن يختلفا: " + code)
         accum_id=row["accum_account_id"]
-        if accum_id in used_accum_accounts or conn.execute(
-            "SELECT 1 FROM fixed_assets WHERE accum_account_id=? LIMIT 1", (accum_id,)
-        ).fetchone():
+        if accum_id in used_accum_accounts:
             raise ValueError("يجب تخصيص حساب مجمع إهلاك مستقل لكل أصل في فاتورة المورد: " + code)
-        if conn.execute(
-            "SELECT 1 FROM journal_lines WHERE account_id=? LIMIT 1", (accum_id,)
-        ).fetchone():
-            raise ValueError("حساب مجمع الإهلاك يحتوي على حركات سابقة ولا يصلح لأصل جديد: " + code)
+        _validate_dedicated_accum_account(conn, accum_id)
         used_accum_accounts.add(accum_id)
         total+=cost
         prepared.append((code,name,str(row["asset_category"] or ""),purchase_date,ready_date,
@@ -307,14 +314,7 @@ def index():
             ids=[int(request.form[k]) for k in ("asset_account_id","accum_account_id","expense_account_id")]
             if ids[0] == ids[1]:
                 raise ValueError("يجب أن يكون حساب تكلفة الأصل مختلفًا عن حساب مجمع الإهلاك.")
-            if c.execute(
-                "SELECT 1 FROM fixed_assets WHERE accum_account_id=? LIMIT 1", (ids[1],)
-            ).fetchone():
-                raise ValueError("حساب مجمع الإهلاك مستخدم لأصل آخر. خصص حسابًا تفصيليًا مستقلًا لهذا الأصل.")
-            if c.execute(
-                "SELECT 1 FROM journal_lines WHERE account_id=? LIMIT 1", (ids[1],)
-            ).fetchone():
-                raise ValueError("حساب مجمع الإهلاك يحتوي على حركات سابقة؛ لا تستخدمه لأصل جديد. أنشئ حسابًا تفصيليًا مستقلًا.")
+            _validate_dedicated_accum_account(c, ids[1])
             for aid in ids:
                 row=c.execute("SELECT is_group,active,account_type FROM accounts WHERE id=?",(aid,)).fetchone()
                 if not row or row["is_group"] or not row["active"]: raise ValueError("اختر حسابات تفصيلية نشطة.")
