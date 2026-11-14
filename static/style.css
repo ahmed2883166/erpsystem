@@ -300,3 +300,78 @@ main .financial-performance-table td:not(:first-child){white-space:nowrap;font-v
 .flash.warning{background:color-mix(in srgb,#d97706 12%,var(--surface));color:color-mix(in srgb,#92400e 90%,var(--text));border-color:color-mix(in srgb,#d97706 30%,var(--line))}
 @media(max-width:850px){main .panel>table,main .table-wrap table{min-width:620px}.financial-performance-table{max-width:100%}}
 @media print{main .panel>table,main .table-wrap table{min-width:0!important}.flash{display:none!important}}
+
+
+/* NEXUS ERP unified readable tables across all modules */
+:root{
+  --table-head:color-mix(in srgb,var(--accent) 8%,var(--surface2));
+  --table-stripe:color-mix(in srgb,var(--text) 2.2%,var(--surface));
+  --table-total:color-mix(in srgb,var(--accent) 10%,var(--surface));
+}
+.table-wrap{
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:var(--surface);
+  overflow:auto;
+  scrollbar-width:thin;
+}
+table{
+  width:100%;
+  min-width:640px;
+  border-collapse:separate;
+  border-spacing:0;
+  font-variant-numeric:tabular-nums;
+}
+thead th{
+  position:sticky;
+  top:0;
+  z-index:1;
+  background:var(--table-head);
+  color:var(--text);
+  font-weight:800;
+  padding:14px 16px;
+  border-bottom:2px solid var(--line);
+  white-space:nowrap;
+}
+tbody td{
+  padding:12px 16px;
+  border-bottom:1px solid var(--line);
+  vertical-align:middle;
+}
+tbody tr:nth-child(even) td{background:var(--table-stripe)}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:color-mix(in srgb,var(--accent) 7%,var(--surface))}
+td.numeric,th.numeric,.financial-summary-table td:last-child,
+.financial-performance-table td:not(:first-child){text-align:left;white-space:nowrap;direction:ltr}
+.financial-summary-table td:first-child,
+.financial-performance-table td:first-child{font-weight:600}
+.financial-subtotal td{
+  background:var(--table-total)!important;
+  font-weight:800;
+  border-top:1px solid color-mix(in srgb,var(--accent) 28%,var(--line));
+}
+.financial-net td,.total td{
+  background:color-mix(in srgb,var(--accent) 14%,var(--surface))!important;
+  font-weight:900;
+  border-top:2px solid var(--accent);
+  font-size:1.02em;
+}
+.financial-performance-table table{min-width:760px}
+.financial-performance-table th:first-child{min-width:245px}
+.financial-summary-table th:first-child{min-width:250px}
+.panel>h3{padding-bottom:10px;border-bottom:1px solid var(--line)}
+.panel h4{margin:22px 0 12px;padding-right:12px;border-right:3px solid var(--accent)}
+.table-wrap+.pagination,.pagination{align-items:center;justify-content:space-between;gap:12px;padding-top:14px}
+.pagination .inline-form{display:flex;align-items:center;gap:8px}
+.pagination .inline-form label{display:flex;align-items:center;gap:8px;margin:0}
+.pagination .inline-form select{width:auto;min-width:88px}
+@media(max-width:850px){
+  table{min-width:600px;font-size:13px}
+  thead th,tbody td{padding:10px 12px}
+  .financial-performance-table table{min-width:720px}
+}
+@media print{
+  .table-wrap{overflow:visible!important}
+  table{min-width:0!important}
+  thead th{position:static!important}
+}
