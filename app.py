@@ -2355,12 +2355,25 @@ def reverse_journal(entry_id):
     linked_source = linked_operational_source(connection, entry_id)
     if linked_source:
         connection.close()
+        source_labels = {
+            "sales_invoices": "المبيعات",
+            "sales_credit_notes": "إشعارات المبيعات",
+            "supplier_bills": "فواتير الموردين",
+            "supplier_credit_notes": "إشعارات الموردين",
+            "supplier_payments": "مدفوعات الموردين",
+            "stock_movements": "المخزون",
+            "payroll_runs": "المرتبات",
+            "payroll_reversals": "قيود عكس المرتبات",
+            "asset_depreciations": "إهلاك الأصول",
+            "asset_disposals": "استبعاد الأصول",
+            "bank_transactions": "حركات البنوك",
+        }
+        source_label = source_labels.get(linked_source, linked_source)
         flash(
-            f"تم منع عكس القيد المرتبط بمستند في {linked_source} لحماية ترابط الحسابات والمخزون. "
-            "تنبيه: إجراء الإلغاء/الإشعار غير متاح حاليًا لهذا النوع داخل NEXUS. "
-            "لا تعكس القيد يدويًا ولا تحذف المستند. صحح المستند بمستند تسوية معتمد خارج النظام "
-            "وسجل أثره في NEXUS وفق صلاحيات وإجراءات الشركة، أو اطلب من مسؤول النظام تنفيذ التصحيح "
-            "بعد توفير مسار تصحيح خاص بالموديول.",
+            f"تم منع عكس القيد المرتبط بمستند في موديول {source_label} من شاشة اليومية العامة "
+            "حتى لا تتغير الأرصدة دون تحديث حالة المستند والحركات المرتبطة به. "
+            "استخدم إجراء الإلغاء أو العكس من نفس الموديول. إذا لم يتوفر الإجراء المطلوب، "
+            "لا تنشئ قيدًا عكسيًا يدويًا؛ يلزم استكمال مسار التصحيح داخل الموديول أولًا.",
             "error",
         )
         return redirect(url_for("journal_detail", entry_id=entry_id))
