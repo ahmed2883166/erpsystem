@@ -68,9 +68,11 @@
         {% if not (l.matched_transaction_id or l.matched_journal_line_id) %}
           <form method="post" class="inline-form">
             <input type="hidden" name="action" value="match"><input type="hidden" name="line_id" value="{{ l.id }}">
-            <select name="journal_line_id" required><option value="">اختر حركة دفترية</option>
-              {% for tx in book_rows %}<option value="{{ tx.journal_line_id }}">{{ 'قيد #' ~ tx.entry_id }} — {{ tx.transaction_date }} — {{ tx.signed_amount|money }} — {{ tx.description }}{% if tx.memo %} — {{ tx.memo }}{% endif %}</option>{% endfor %}
+            {% if l.candidates %}
+            <select name="journal_line_id" required><option value="">اختر حركة دفترية بنفس المبلغ والاتجاه</option>
+              {% for tx in l.candidates %}<option value="{{ tx.journal_line_id }}">{{ 'قيد #' ~ tx.entry_id }} — {{ tx.transaction_date }} — {{ tx.signed_amount|money }} — {{ tx.description }}{% if tx.memo %} — {{ tx.memo }}{% endif %}</option>{% endfor %}
             </select><button class="secondary">مطابقة</button>
+            {% else %}<span class="muted">لا توجد حركة دفترية بنفس المبلغ والاتجاه ضمن الفترة.</span>{% endif %}
           </form>
         {% else %}<span class="muted">تمت المطابقة</span>{% endif %}
         </td>
