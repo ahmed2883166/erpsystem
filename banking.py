@@ -471,6 +471,10 @@ def toggle_cash_account(cash_account_id):
             raise ValueError("الخزنة أو البنك غير موجود.")
         active=0 if row["active"] else 1
         c.execute("UPDATE cash_accounts SET active=? WHERE id=?",(active,cash_account_id))
+        c.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
+            VALUES(?,?,?,?)""",(session.get("user_id"),"cash_account_activated" if active else "cash_account_deactivated",
+            ("تفعيل " if active else "تعطيل ")+row["name_ar"]+"؛ السجل والحركات التاريخية محفوظة.",
+            datetime.now().isoformat(timespec="seconds")))
         c.commit()
         flash(("تم تفعيل " if active else "تم تعطيل ")+row["name_ar"]+" مع الاحتفاظ بالحركات والرصيد التاريخي.","success")
     except (ValueError,sqlite3.Error) as exc:
