@@ -179,14 +179,14 @@ def dashboard_period_balances(conn, current_start, current_end, previous_start, 
 def income_figures(balances, direct_cost_codes=None, direct_cost_ids=None,
                    disposal_loss_ids=None):
     disposal_loss_ids = set(disposal_loss_ids or ())
-    revenue = sum((b["credit"] - b["debit"] for b in balances.values()
-                   if b["type"] == "revenue" and b["id"] not in disposal_loss_ids
+    revenue = sum((b["credit"] - b["debit"] for account_id, b in balances.items()
+                   if b["type"] == "revenue" and account_id not in disposal_loss_ids
                    and not b["is_group"]), Decimal("0"))
-    expenses = sum((b["debit"] - b["credit"] for b in balances.values()
-                    if (b["type"] == "expense" or b["id"] in disposal_loss_ids)
+    expenses = sum((b["debit"] - b["credit"] for account_id, b in balances.items()
+                    if (b["type"] == "expense" or account_id in disposal_loss_ids)
                     and not b["is_group"]), Decimal("0"))
-    direct_cost = sum((b["debit"] - b["credit"] for b in balances.values()
-                       if ((direct_cost_ids is not None and b["id"] in direct_cost_ids) or (direct_cost_ids is None and direct_cost_codes is not None and b["code"] in direct_cost_codes)) and not b["is_group"]), Decimal("0"))
+    direct_cost = sum((b["debit"] - b["credit"] for account_id, b in balances.items()
+                       if ((direct_cost_ids is not None and account_id in direct_cost_ids) or (direct_cost_ids is None and direct_cost_codes is not None and b["code"] in direct_cost_codes)) and not b["is_group"]), Decimal("0"))
     return {
         "revenue": revenue, "expenses": expenses, "cogs": direct_cost,
         "net_profit": revenue - expenses,
