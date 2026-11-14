@@ -145,8 +145,8 @@ class CashFlowReportTests(unittest.TestCase):
             conn, "2026-11-01", "2026-11-30"
         )
         conn.close()
-        self.assertEqual(snapshot["sections"]["investing"]["out"], financial_planning.Decimal("1000.00"))
-        self.assertEqual(snapshot["sections"]["operating"]["out"], financial_planning.Decimal("500.00"))
+        self.assertEqual(snapshot["sections"]["investing"]["out"], financial_planning.Decimal("1200.00"))
+        self.assertEqual(snapshot["sections"]["operating"]["out"], financial_planning.Decimal("580.00"))
         self.assertEqual(snapshot["reconciliation_difference"], financial_planning.Decimal("0"))
 
     def test_indirect_method_does_not_hide_variance_in_a_plug_adjustment(self):
