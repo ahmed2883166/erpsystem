@@ -2669,6 +2669,11 @@ def import_data_wizard():
                                    "مخزون": "inventory", "customer": "customer", "supplier": "supplier",
                                    "inventory": "inventory"}
                         record_type = aliases.get(record_type, record_type)
+                        required_permission = {"customer": "sales.manage", "supplier": "purchases.manage",
+                                               "inventory": "stock.manage"}.get(record_type)
+                        granted = set(session.get("permissions", PERMISSIONS.get(session.get("role"), set())))
+                        if not required_permission or required_permission not in granted:
+                            raise ValueError("لا تملك صلاحية تنفيذ نوع الرصيد الافتتاحي المحدد.")
                         ref = clean.get("reference", "")
                         entry_date = date.fromisoformat(clean.get("balance_date", "")).isoformat()
                         if not ref:
