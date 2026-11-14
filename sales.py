@@ -925,12 +925,21 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
             return_cost_groups[key] = return_cost_groups.get(key, Decimal("0.00")) + item["cost_total"]
         return_cost_lines = []
         for (inventory_code, cogs_code), group_cost in sorted(return_cost_groups.items()):
-            inventory_id = _account(conn, inventory_code, "asset")
             cogs_id = _account(conn, cogs_code, "expense")
-            return_cost_lines.extend([
-                (inventory_id, group_cost, 0, "إعادة تكلفة المرتجع للمخزون - " + inventory_code),
-                (cogs_id, 0, group_cost, "عكس تكلفة المبيعات - " + cogs_code),
-            ])
+            return_cost_lines.append((cogs_id, 0, group_cost, "عكس تكلفة المبيعات - " + cogs_code))
+        return_inventory_groups = {}
+        return_warehouse_id = int(invoice["warehouse_id"])
+        for item in normalized:
+            if not item["original"]["product_id"] or item["cost_total"] <= 0:
+                continue
+            key = (item["inventory_account_code"], int(item["original"]["product_id"]), return_warehouse_id)
+            return_inventory_groups[key] = return_inventory_groups.get(key, Decimal("0.00")) + item["cost_total"]
+        for (inventory_code, product_id, wh_id), group_cost in sorted(return_inventory_groups.items()):
+            inventory_id = _account(conn, inventory_code, "asset")
+            return_cost_lines.append((
+                inventory_id, group_cost, 0, "إعادة تكلفة المرتجع للمخزون - " + inventory_code,
+                {"stock_product_id": product_id, "stock_warehouse_id": wh_id},
+            ))
         cogs_journal_id = post_journal(
             conn, credit_date, credit_no + "-COGS", "عكس تكلفة المبيعات " + credit_no,
             return_cost_lines, created_by, dimensions=dimensions,
