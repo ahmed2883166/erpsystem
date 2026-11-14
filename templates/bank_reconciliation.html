@@ -21,33 +21,56 @@
   <div class="grid grid-3">
     <div class="metric"><span>صافي حركة كشف البنك</span><strong>{{ statement_total|money }}</strong></div>
     <div class="metric"><span>صافي الحركة الدفترية</span><strong>{{ book_total|money }}</strong></div>
-    <div class="metric"><span>الفرق (الكشف - الدفاتر)</span><strong>{{ difference|money }}</strong></div>
+    <div class="metric"><span>فرق صافي الحركات (الكشف - الدفاتر)</span><strong>{{ difference|money }}</strong></div>
   </div>
-  <p class="muted">عدد سطور الكشف المطابقة: {{ matched_count }} من {{ lines|length }}. الفرق الأول يقارن صافي حركات الفترة؛ والفرق الثاني أدناه يقارن رصيد الإقفال الفعلي بالرصيد الدفتري المتوقع بعد إضافة صافي الحركات إلى الرصيد الافتتاحي.</p>
+  <p class="muted">عدد سطور الكشف المطابقة: {{ matched_count }} من {{ lines|length }}. فرق صافي الحركات مستقل عن فرق رصيد الإقفال، ولا يُحسب فرق الإقفال قبل إدخال الأرصدة ومراجعة رصيد بداية الفترة.</p>
 </section>
 <section class="panel">
   <h3>أرصدة كشف البنك للفترة</h3>
+  {% if not balances_entered %}<p class="status warning">لم يتم إدخال رصيد بداية ونهاية كشف البنك لهذه الفترة. أدخل الرصيدين واحفظهما أولًا؛ لن يعرض النظام فرق رصيد الإقفال أو يعتبره صفرًا افتراضيًا.</p>{% endif %}
   <form method="post" class="form-grid">
     <input type="hidden" name="action" value="save_balances">
     <input type="hidden" name="bank_account_id" value="{{ account_id }}">
     <input type="hidden" name="start_date" value="{{ start_date }}">
     <input type="hidden" name="end_date" value="{{ end_date }}">
-    <label>الرصيد الافتتاحي حسب الكشف<input type="number" step="0.01" name="opening_balance" value="{{ opening_balance }}" required></label>
-    <label>الرصيد الختامي حسب الكشف<input type="number" step="0.01" name="closing_balance" value="{{ closing_balance }}" required></label>
+    <label>الرصيد الافتتاحي حسب الكشف<input type="number" step="0.01" name="opening_balance" value="{{ opening_balance if balances_entered else '' }}" required></label>
+    <label>الرصيد الختامي حسب الكشف<input type="number" step="0.01" name="closing_balance" value="{{ closing_balance if balances_entered else '' }}" required></label>
     <button type="submit">حفظ أرصدة الكشف</button>
   </form>
+  {% if balances_entered %}
   <div class="grid grid-3">
-    <div class="metric"><span>الرصيد الافتتاحي</span><strong>{{ opening_balance|money }}</strong></div>
-    <div class="metric"><span>الرصيد الختامي بالكشف</span><strong>{{ closing_balance|money }}</strong></div>
-    <div class="metric"><span>الرصيد الدفتري المتوقع</span><strong>{{ expected_closing_balance|money }}</strong></div>
+    <div class="metric"><span>افتتاحي كشف البنك</span><strong>{{ opening_balance|money }}</strong></div>
+    <div class="metric"><span>افتتاحي دفتر الأستاذ قبل الفترة</span><strong>{{ opening_ledger_balance|money }}</strong></div>
+    <div class="metric"><span>فرق الرصيد الافتتاحي</span><strong>{{ opening_difference|money }}</strong></div>
   </div>
-  <p><strong>فرق رصيد الإقفال:</strong> {{ closing_difference|money }}</p>
+  {% if opening_difference != 0 and not opening_reviewed %}
+    <p class="status warning">الرصيد الافتتاحي في الكشف لا يساوي رصيد دفتر الأستاذ قبل بداية الفترة. راجع الشيكات/التحويلات المعلقة من فترات سابقة؛ لن يُحسب فرق الإقفال النهائي حتى توثق المراجعة.</p>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="action" value="confirm_opening"><input type="hidden" name="bank_account_id" value="{{ account_id }}">
+      <input type="hidden" name="start_date" value="{{ start_date }}"><input type="hidden" name="end_date" value="{{ end_date }}">
+      <label>سبب فرق الرصيد الافتتاحي ومراجعته<textarea name="opening_review_note" required minlength="10" placeholder="مثال: شيكات صادرة لم تُصرف حتى تاريخ بداية الفترة..."></textarea></label>
+      <label><input type="checkbox" name="confirm_opening_review" value="1" required> أؤكد أنني راجعت الفرق وسبب اختلاف رصيد بداية الفترة</label>
+      <button type="submit">تسجيل مراجعة الرصيد الافتتاحي</button>
+    </form>
+  {% elif opening_reviewed and opening_difference != 0 %}
+    <p class="status warning">تم توثيق مراجعة فرق الرصيد الافتتاحي. الملاحظة: {{ opening_review_note }}</p>
+  {% else %}
+    <p class="status success">الرصيد الافتتاحي متطابق مع دفتر الأستاذ.</p>
+  {% endif %}
+  <div class="grid grid-2">
+    <div class="metric"><span>الرصيد الختامي حسب الكشف</span><strong>{{ closing_balance|money }}</strong></div>
+    <div class="metric"><span>الرصيد المتوقع (افتتاحي الكشف + حركة الدفاتر)</span><strong>{{ expected_closing_balance|money }}</strong></div>
+  </div>
+  {% if opening_ready %}<p><strong>فرق رصيد الإقفال:</strong> {{ closing_difference|money }}</p>
+  {% else %}<p class="status warning">فرق رصيد الإقفال غير متاح حتى تتم مراجعة الرصيد الافتتاحي.</p>{% endif %}
+  {% endif %}
 </section>
 <section class="panel">
   <h3>إضافة سطر من كشف البنك</h3>
   <form method="post" class="form-grid">
     <input type="hidden" name="action" value="add_line">
     <input type="hidden" name="bank_account_id" value="{{ account_id }}">
+    <input type="hidden" name="start_date" value="{{ start_date }}"><input type="hidden" name="end_date" value="{{ end_date }}">
     <label>تاريخ الحركة<input type="date" name="statement_date" value="{{ today }}" required></label>
     <label>المبلغ بإشارة الكشف<input type="number" name="signed_amount" step="0.01" required placeholder="الإيداع موجب والسحب سالب"></label>
     <label>مرجع البنك<input name="bank_reference" placeholder="رقم العملية / المرجع"></label>
@@ -68,10 +91,13 @@
         {% if not (l.matched_transaction_id or l.matched_journal_line_id) %}
           <form method="post" class="inline-form">
             <input type="hidden" name="action" value="match"><input type="hidden" name="line_id" value="{{ l.id }}">
+            <input type="hidden" name="start_date" value="{{ start_date }}"><input type="hidden" name="end_date" value="{{ end_date }}">
             {% if l.candidates %}
             <select name="journal_line_id" required><option value="">اختر حركة دفترية بنفس المبلغ والاتجاه</option>
               {% for tx in l.candidates %}<option value="{{ tx.journal_line_id }}">{{ 'قيد #' ~ tx.entry_id }} — {{ tx.transaction_date }} — {{ tx.signed_amount|money }} — {{ tx.description }}{% if tx.memo %} — {{ tx.memo }}{% endif %}</option>{% endfor %}
-            </select><button class="secondary">مطابقة</button>
+            </select>
+            {% if l.candidates|length > 1 %}<p class="status warning">تنبيه: يوجد {{ l.candidates|length }} قيود بنفس المبلغ والاتجاه. راجع رقم القيد والتاريخ والبيان قبل الاختيار.</p><label><input type="checkbox" name="confirm_multiple" value="1" required> أؤكد أنني اخترت القيد الصحيح بعد المراجعة</label>{% endif %}
+            <button class="secondary">مطابقة</button>
             {% else %}<span class="muted">لا توجد حركة دفترية بنفس المبلغ والاتجاه ضمن الفترة.</span>{% endif %}
           </form>
         {% else %}<span class="muted">تمت المطابقة</span>{% endif %}
