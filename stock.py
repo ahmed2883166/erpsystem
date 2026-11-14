@@ -516,10 +516,19 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
     if amount <= 0:
         c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
         return None
+    movement = c.execute(
+        "SELECT product_id,source_warehouse_id FROM stock_movements WHERE id=?", (movement_id,)
+    ).fetchone()
+    if not movement or int(movement["product_id"]) != int(product["id"]) or not movement["source_warehouse_id"]:
+        raise ValueError("تعذر تحديد الصنف والمخزن المصدر لحركة الصرف؛ لم يتم ترحيل القيد.")
+    stock_dims = {
+        "stock_product_id": int(movement["product_id"]),
+        "stock_warehouse_id": int(movement["source_warehouse_id"]),
+    }
     entry_id = post_journal(c,movement_date,movement_no,
         f"قيد آلي لصرف مخزون - {product['name_ar']}",
         [(expense_id,amount,0,expense_name),
-         (inventory["id"],0,amount,"تخفيض المخزون بتكلفة الصرف")],created_by,
+         (inventory["id"],0,amount,"تخفيض المخزون بتكلفة الصرف", stock_dims)],created_by,
         dimensions=dimensions)
     c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?", (entry_id, movement_id))
     set_stock_accounting_note(c,movement_id,None)
