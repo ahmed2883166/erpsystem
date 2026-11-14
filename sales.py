@@ -11,7 +11,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for, g
-from accounting_core import post_journal
+from accounting_core import post_journal, safe_error_message
 from database import connect_database, fetch_page
 from stock import consume_layers, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
@@ -1751,7 +1751,7 @@ def create_customer_advance_receipt():
         flash("تم تسجيل مقدم العميل وترحيل قيده بنجاح: " + result["receipt_no"], "success")
     except (ValueError, sqlite3.Error) as exc:
         c.rollback()
-        flash(str(exc), "error")
+        flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
         c.close()
     return redirect(url_for("sales.customer_advances"))
@@ -1786,7 +1786,7 @@ def allocate_customer_advance_route(advance_id):
         )
     except (ValueError, sqlite3.Error) as exc:
         c.rollback()
-        flash(str(exc), "error")
+        flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
         c.close()
     return redirect(url_for("sales.customer_advances"))
@@ -1810,7 +1810,7 @@ def reverse_customer_advance_route(source_type, source_id):
         flash("تم عكس العملية بقيد عكسي مرتبط دون حذف المستند أو القيد الأصلي.", "success")
     except (ValueError, sqlite3.Error) as exc:
         c.rollback()
-        flash(str(exc), "error")
+        flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
         c.close()
     return redirect(url_for("sales.customer_advances"))
@@ -1832,7 +1832,7 @@ def refund_customer_advance_route(advance_id):
         flash("تم رد مقدم العميل وترحيل القيد: " + result["refund_no"], "success")
     except (ValueError, sqlite3.Error) as exc:
         c.rollback()
-        flash(str(exc), "error")
+        flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
         c.close()
     return redirect(url_for("sales.customer_advances"))
@@ -1957,7 +1957,7 @@ def customer_list():
             flash("كود العميل مستخدم بالفعل.", "error")
         except (ValueError, InvalidOperation) as exc:
             c.rollback()
-            flash(str(exc), "error")
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     customers_page = fetch_page(c,"SELECT * FROM customers ORDER BY name",
         "SELECT COUNT(*) FROM customers",
         page=request.args.get("customers_page",1,type=int),
@@ -2088,7 +2088,7 @@ def new_invoice():
             return redirect(url_for("sales.invoice_print", invoice_id=result["invoice_id"]))
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
             c.rollback()
-            flash(str(exc), "error")
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     customers = c.execute("SELECT * FROM customers WHERE active=1 ORDER BY name").fetchall()
     exposure_by_customer = {}
     for invoice_row in c.execute(
@@ -2219,7 +2219,7 @@ def new_credit_note():
             return redirect(url_for("sales.index"))
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
             c.rollback()
-            flash(str(exc), "error")
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     invoices = c.execute(
         """SELECT i.id,i.invoice_no,i.invoice_date,i.total_amount,i.paid_amount,
                   COALESCE(i.credited_amount,'0') credited_amount,cu.name customer_name
@@ -2264,7 +2264,7 @@ def new_receipt():
             return redirect(url_for("sales.index"))
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
             c.rollback()
-            flash(str(exc), "error")
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     customers = c.execute("SELECT id,code,name FROM customers WHERE active=1 ORDER BY name").fetchall()
     raw_invoices = c.execute("""SELECT i.id,i.invoice_no,i.customer_id,i.invoice_date,i.due_date,
         i.total_amount,i.paid_amount,COALESCE(i.credited_amount,'0') credited_amount,c.name customer_name
@@ -2374,7 +2374,7 @@ def refund_credit_note(credit_note_id):
             return redirect(url_for("sales.index"))
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
             c.rollback()
-            flash(str(exc), "error")
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     from activity_profiles import active_account_role_ids
     cash_account_ids = sorted(active_account_role_ids(c).get("cash", set()))
     cash_accounts = []
@@ -2405,7 +2405,7 @@ def cancel_credit_note_route(credit_note_id):
         flash("تم إلغاء الإشعار الدائن بقيد عكسي رقم " + str(result["reversal_journal_id"]), "success")
     except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
         c.rollback()
-        flash(str(exc), "error")
+        flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
         c.close()
     return redirect(url_for("sales.index"))
