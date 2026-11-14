@@ -386,6 +386,30 @@ def _accounts(c):
     return c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
 
 
+def _employee_advance_account(c, account_id):
+    account = c.execute("""SELECT id,account_type,is_group,active FROM accounts
+        WHERE id=?""", (account_id,)).fetchone()
+    if not account or not account["active"] or account["is_group"] or account["account_type"] != "asset":
+        raise ValueError("اختر حساب سلف موظفين تفصيليًا ونشطًا من الأصول.")
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_accounts'").fetchone():
+        raise ValueError("سجل الخزائن والبنوك غير مهيأ؛ لا يمكن التحقق من حساب السلف.")
+    if c.execute("SELECT 1 FROM cash_accounts WHERE account_id=?", (account_id,)).fetchone():
+        raise ValueError("حساب سلف الموظفين لا يجوز أن يكون حساب بنك أو صندوق.")
+    return account["id"]
+
+
+def _cash_or_bank_account(c, account_id):
+    account = c.execute("""SELECT id,account_type,is_group,active FROM accounts
+        WHERE id=?""", (account_id,)).fetchone()
+    if not account or not account["active"] or account["is_group"] or account["account_type"] != "asset":
+        raise ValueError("اختر حساب بنك أو صندوق تفصيليًا ونشطًا.")
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_accounts'").fetchone():
+        raise ValueError("سجل الخزائن والبنوك غير مهيأ؛ لا يمكن التحقق من حساب الصرف.")
+    if not c.execute("SELECT 1 FROM cash_accounts WHERE account_id=? AND active=1", (account_id,)).fetchone():
+        raise ValueError("الحساب المختار غير مسجل كخزينة أو بنك نشط.")
+    return account["id"]
+
+
 def _dimension_options(c):
     tables = {row["name"] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     return {
@@ -1308,7 +1332,10 @@ def payroll_run(run_id):
     rows = c.execute("""SELECT l.*,e.employee_code,e.full_name,e.department FROM payroll_lines l
                         JOIN employees e ON e.id=l.employee_id WHERE l.run_id=? ORDER BY e.employee_code""", (run_id,)).fetchall()
     accounts = _accounts(c)
-    payment_accounts = c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 AND account_type='asset' ORDER BY code").fetchall()
+    payment_accounts = c.execute("""SELECT a.id,a.code,a.name_ar,a.account_type
+        FROM accounts a JOIN cash_accounts ca ON ca.account_id=a.id
+        WHERE a.active=1 AND a.is_group=0 AND a.account_type='asset' AND ca.active=1
+        ORDER BY a.code""").fetchall()
     allocation_count_expr = "(SELECT COUNT(*) FROM payroll_payment_allocations pa WHERE pa.payment_id=p.id)" if c.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'").fetchone() else "0"
     payments = c.execute("""SELECT p.*,a.code AS account_code,a.name_ar AS account_name,"""+
@@ -1439,11 +1466,18 @@ def post_payroll(run_id):
         other_deductions_account = int(request.form["other_deductions_account"])
         advances_account = int(request.form["advances_account"])
         total_loan_deduction = M(sum((D(x["loan_deduction"]) for x in rows),Decimal("0")))
+        if advance_deduction > 0:
+            _employee_advance_account(c, advances_account)
         if total_loan_deduction > 0:
-            advance_account = c.execute("SELECT id,code,account_type,is_group,active FROM accounts WHERE id=?",
-                                        (advances_account,)).fetchone()
-            if not advance_account or advance_account["code"] != "1171" or advance_account["account_type"] != "asset" or advance_account["is_group"] or not advance_account["active"]:
-                raise ValueError("خصم أقساط قروض الموظفين يتطلب حساب سلف العاملين 1171 نشطًا وتفصيليًا.")
+            loan_account_ids = {row["loan_account_id"] for row in c.execute("""SELECT DISTINCT l.loan_account_id
+                FROM employee_loans l
+                JOIN employee_loan_installments i ON i.loan_id=l.id
+                JOIN payroll_lines pl ON pl.employee_id=l.employee_id
+                WHERE pl.run_id=? AND l.status='active' AND i.due_period<=? AND i.status='pending'
+                  AND CAST(i.due_amount AS REAL)>CAST(i.paid_amount AS REAL)""",
+                (run_id, run["period"])).fetchall()}
+            if None in loan_account_ids or loan_account_ids != {advances_account}:
+                raise ValueError("اختر نفس حساب سلف الموظفين المسجل عند صرف القرض؛ لا يجوز ترحيل قسط القرض إلى حساب مختلف.")
         lines = []
         for payroll_line in rows:
             dims = {key: payroll_line[key] for key in ("branch_id", "cost_center_id", "project_id")}
@@ -1620,10 +1654,7 @@ def pay_payroll(run_id):
             raise ValueError("مبلغ الصرف يتجاوز صافي المرتبات المتبقي.")
         payment_date = date.fromisoformat(request.form.get("payment_date") or date.today().isoformat()).isoformat()
         cash_account_id = int(request.form["cash_account_id"])
-        account = c.execute("""SELECT id,code,account_type,is_group,active FROM accounts
-            WHERE id=?""", (cash_account_id,)).fetchone()
-        if not account or not account["active"] or account["is_group"] or account["account_type"] != "asset":
-            raise ValueError("اختر حساب بنك أو صندوق تفصيليًا ونشطًا من الأصول.")
+        _cash_or_bank_account(c, cash_account_id)
         reference = "PAYROLL-PAY-" + str(run_id) + "-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
         c.execute("BEGIN IMMEDIATE")
         # Recheck outstanding value inside the write transaction to prevent concurrent overpayment.
@@ -1701,11 +1732,17 @@ def employee_loans():
     loans = c.execute("""SELECT l.*,e.employee_code,e.full_name FROM employee_loans l
         JOIN employees e ON e.id=l.employee_id ORDER BY l.id DESC""").fetchall()
     employees = c.execute("SELECT id,employee_code,full_name FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
-    cash_accounts = c.execute("""SELECT id,code,name_ar FROM accounts WHERE active=1 AND is_group=0
-        AND account_type='asset' ORDER BY code""").fetchall()
+    cash_accounts = c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
+        JOIN cash_accounts ca ON ca.account_id=a.id
+        WHERE a.active=1 AND a.is_group=0 AND a.account_type='asset' AND ca.active=1
+        ORDER BY a.code""").fetchall()
+    loan_accounts = c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
+        WHERE a.active=1 AND a.is_group=0 AND a.account_type='asset'
+          AND NOT EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id)
+        ORDER BY a.code""").fetchall()
     c.close()
     return render_template("employee_loans.html",loans=loans,employees=employees,
-        cash_accounts=cash_accounts,today=date.today().strftime("%Y-%m"))
+        cash_accounts=cash_accounts,loan_accounts=loan_accounts,today=date.today().strftime("%Y-%m"))
 
 
 @workforce_bp.route("/hr/loans/<int:loan_id>/approve", methods=["POST"])
@@ -1764,13 +1801,11 @@ def disburse_employee_loan(loan_id):
             JOIN employees e ON e.id=l.employee_id WHERE l.id=?""",(loan_id,)).fetchone()
         if not loan or loan["status"] != "approved":
             raise ValueError("لا يمكن صرف إلا سلفة معتمدة لم تُصرف.")
-        asset = c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE code='1171'").fetchone()
-        if not asset or not asset["active"] or asset["is_group"] or asset["account_type"] != "asset":
-            raise ValueError("حساب سلف العاملين 1171 غير موجود أو غير نشط أو غير تفصيلي.")
+        loan_account_id = _employee_advance_account(c, int(request.form["loan_account_id"]))
         cash_id = int(request.form["cash_account_id"])
-        cash = c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(cash_id,)).fetchone()
-        if not cash or not cash["active"] or cash["is_group"] or cash["account_type"] != "asset" or cash_id == asset["id"]:
-            raise ValueError("اختر حساب بنك أو صندوق نشطًا وتفصيليًا.")
+        _cash_or_bank_account(c, cash_id)
+        if cash_id == loan_account_id:
+            raise ValueError("لا يجوز صرف السلفة من حساب السلف نفسه.")
         disb_date = date.fromisoformat(request.form.get("disbursement_date") or date.today().isoformat()).isoformat()
         amount = M(loan["approved_amount"])
         cents = int(amount * 100)
@@ -1778,7 +1813,7 @@ def disburse_employee_loan(loan_id):
         c.execute("BEGIN IMMEDIATE")
         journal = post_journal(c,disb_date,"EMP-LOAN-DISB-"+str(loan_id),
             "صرف سلفة للموظف "+loan["full_name"],
-            [(int(asset["id"]),amount,0,"إثبات سلفة موظف"),(cash_id,0,amount,"صرف سلفة من البنك/الصندوق")],
+            [(loan_account_id,amount,0,"إثبات سلفة موظف"),(cash_id,0,amount,"صرف سلفة من البنك/الصندوق")],
             session["user_id"])
         first = date.fromisoformat(loan["first_due_period"] + "-01")
         for idx in range(int(loan["installment_count"])):
@@ -1789,7 +1824,7 @@ def disburse_employee_loan(loan_id):
                       (loan_id,period,str(M(due))))
         c.execute("""UPDATE employee_loans SET status='active',remaining_balance=?,loan_account_id=?,
             disbursement_account_id=?,disbursement_date=?,journal_entry_id=? WHERE id=?""",
-            (str(amount),asset["id"],cash_id,disb_date,journal,loan_id))
+            (str(amount),loan_account_id,cash_id,disb_date,journal,loan_id))
         _audit(c,"employee_loan_disbursed",loan["loan_no"]+" journal="+str(journal))
         c.commit()
         flash("تم صرف السلفة وترحيل القيد وإنشاء جدول الأقساط.","success")

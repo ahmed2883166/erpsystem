@@ -33,6 +33,9 @@ class WorkforceTests(unittest.TestCase):
           INSERT INTO accounts VALUES(6,'2110','ضريبة مرتبات','liability',0,1);
           INSERT INTO accounts VALUES(7,'2120','تأمينات مستحقة','liability',0,1);
           CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL);
+          CREATE TABLE cash_accounts(id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL UNIQUE,
+            kind TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1);
+          INSERT INTO cash_accounts(account_id,kind,active) VALUES(1,'cash',1);
           INSERT INTO company_settings VALUES('tax_country','EG');
         """)
         conn.commit()
@@ -203,10 +206,32 @@ class WorkforceTests(unittest.TestCase):
         self.assertAlmostEqual(debit, 14150.0, places=2)
         self.assertAlmostEqual(credit, 14150.0, places=2)
 
+    def test_payroll_payment_rejects_asset_account_not_registered_as_cash_or_bank(self):
+        self.add_employee()
+        self.client.post("/hr/payroll", data={
+            "period":"2026-11","basic_1":"12000","allowances_1":"0",
+            "overtime_hours_1":"0","overtime_amount_1":"","absent_hours_1":"0",
+            "absence_deduction_1":"0","other_deductions_1":"0","tax_1":"0",
+            "employee_ins_1":"0","employer_ins_1":"0"
+        })
+        self.client.post("/hr/payroll/1/post", data={
+            "salary_expense_account":"4","employer_ins_expense_account":"3",
+            "salaries_payable_account":"5","tax_payable_account":"6",
+            "insurance_payable_account":"7","advances_account":"2",
+            "other_deductions_account":"2"
+        })
+        response = self.client.post("/hr/payroll/1/payment", data={
+            "payment_date":"2026-11-30","amount":"100","cash_account_id":"2"
+        }, follow_redirects=True)
+        self.assertIn("غير مسجل كخزينة أو بنك", response.get_data(as_text=True))
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM payroll_payments").fetchone()[0], 0)
+        conn.close()
+
     def test_employee_loan_request_approval_disbursement_and_payroll_deduction(self):
         self.add_employee()
         conn=sqlite3.connect(self.db_path)
-        conn.execute("INSERT INTO accounts VALUES(8,'1171','سلف العاملين','asset',0,1)")
+        conn.execute("INSERT INTO accounts VALUES(8,'1195','سلف الموظفين - حساب مخصص','asset',0,1)")
         conn.commit(); conn.close()
         self.client.post("/hr/loans",data={"employee_id":"1","requested_amount":"1000",
             "installment_count":"3","first_due_period":"2026-11","notes":"طلب سلفة"})
@@ -215,10 +240,14 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         self.client.post("/hr/loans/1/approve",data={"approved_amount":"1000",
             "installment_count":"3","first_due_period":"2026-11"})
-        self.client.post("/hr/loans/1/disburse",data={"cash_account_id":"1","disbursement_date":"2026-11-01"})
+        self.client.post("/hr/loans/1/disburse",data={"cash_account_id":"1","loan_account_id":"8","disbursement_date":"2026-11-01"})
         conn=sqlite3.connect(self.db_path)
         installments=conn.execute("SELECT due_period,due_amount FROM employee_loan_installments ORDER BY due_period").fetchall()
+        disbursed_account=conn.execute("SELECT loan_account_id FROM employee_loans WHERE id=1").fetchone()[0]
+        disbursed_debit=conn.execute("SELECT account_id FROM journal_lines WHERE entry_id=(SELECT journal_entry_id FROM employee_loans WHERE id=1) AND debit>'0'").fetchone()[0]
         conn.close()
+        self.assertEqual(disbursed_account,8)
+        self.assertEqual(disbursed_debit,8)
         self.assertEqual(installments,[("2026-11","333.34"),("2026-12","333.33"),("2027-01","333.33")])
         self.client.post("/hr/payroll",data={"period":"2026-11","basic_1":"12000","allowances_1":"1500",
             "overtime_hours_1":"0","overtime_amount_1":"","absent_hours_1":"0","absence_deduction_1":"0",
