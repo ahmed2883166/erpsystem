@@ -1491,6 +1491,70 @@ class SalesIntegrationTests(unittest.TestCase):
         ).fetchone()["id"]
         return quote_id, order["sales_order_id"], order_line_id
 
+    def test_discount_rejection_updates_request_and_sales_order_together(self):
+        self.db.execute(
+            "UPDATE customers SET discount_type='percent',discount_value='20' WHERE id=?",
+            (self.customer_id,),
+        )
+        self.db.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES('sales_discount_limit_percent','10')"
+        )
+        _, order_id, _ = self._create_accepted_quote_and_order("4")
+        request_id = self.db.execute(
+            "SELECT discount_approval_request_id FROM sales_orders WHERE id=?", (order_id,)
+        ).fetchone()["discount_approval_request_id"]
+        current = self.db.execute(
+            "SELECT * FROM sales_discount_approval_requests WHERE id=?", (request_id,)
+        ).fetchone()
+
+        self.db.execute("BEGIN IMMEDIATE")
+        sales.reject_discount_approval_request(
+            self.db, current, reviewer_id=2, reason="الخصم أعلى من السياسة المعتمدة", request_id=request_id
+        )
+        self.db.commit()
+
+        request_row = self.db.execute(
+            "SELECT status,reviewed_by,decision_reason FROM sales_discount_approval_requests WHERE id=?",
+            (request_id,),
+        ).fetchone()
+        order = self.db.execute(
+            "SELECT status,discount_approval_status,rejected_by,rejection_reason FROM sales_orders WHERE id=?",
+            (order_id,),
+        ).fetchone()
+        self.assertEqual(tuple(request_row), ("rejected", 2, "الخصم أعلى من السياسة المعتمدة"))
+        self.assertEqual(tuple(order), (
+            "rejected", "rejected", 2, "الخصم أعلى من السياسة المعتمدة"
+        ))
+
+    def test_stale_sales_order_discount_request_cannot_be_rejected(self):
+        self.db.execute(
+            "UPDATE customers SET discount_type='percent',discount_value='20' WHERE id=?",
+            (self.customer_id,),
+        )
+        self.db.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES('sales_discount_limit_percent','10')"
+        )
+        _, order_id, _ = self._create_accepted_quote_and_order("4")
+        request_id = self.db.execute(
+            "SELECT discount_approval_request_id FROM sales_orders WHERE id=?", (order_id,)
+        ).fetchone()["discount_approval_request_id"]
+        current = self.db.execute(
+            "SELECT * FROM sales_discount_approval_requests WHERE id=?", (request_id,)
+        ).fetchone()
+        self.db.execute("UPDATE sales_orders SET status='cancelled' WHERE id=?", (order_id,))
+        self.db.commit()
+
+        with self.assertRaisesRegex(ValueError, "لم يعد صالحًا"):
+            sales.reject_discount_approval_request(
+                self.db, current, reviewer_id=2, reason="رفض", request_id=request_id
+            )
+        self.assertEqual(
+            self.db.execute(
+                "SELECT status FROM sales_discount_approval_requests WHERE id=?", (request_id,)
+            ).fetchone()["status"],
+            "pending",
+        )
+
     def test_sales_order_discount_over_limit_requires_separate_approval_before_order_or_stock(self):
         quotations.DB_PATH = sales.DB_PATH
         quotations.initialize_quotes_schema()
