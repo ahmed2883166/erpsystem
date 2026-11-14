@@ -217,6 +217,10 @@ def initialize_stock_schema():
     product_columns={row["name"] for row in c.execute("PRAGMA table_info(stock_products)")}
     if "base_uom_id" not in product_columns:
         c.execute("ALTER TABLE stock_products ADD COLUMN base_uom_id INTEGER REFERENCES stock_uoms(id)")
+    # Link existing products to a matching seeded unit by label; unmatched legacy labels remain intact.
+    c.execute("""UPDATE stock_products SET base_uom_id=(
+        SELECT id FROM stock_uoms WHERE name_ar=stock_products.uom ORDER BY is_base DESC LIMIT 1
+        ) WHERE base_uom_id IS NULL AND EXISTS(SELECT 1 FROM stock_uoms WHERE name_ar=stock_products.uom)""")
     movement_columns={row["name"] for row in c.execute("PRAGMA table_info(stock_movements)")}
     if "entered_quantity" not in movement_columns:
         c.execute("ALTER TABLE stock_movements ADD COLUMN entered_quantity TEXT")
