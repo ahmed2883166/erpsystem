@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}نتيجة استيراد البيانات | NEXUS ERP{% endblock %}
+{% block content %}
+<header><h2>نتيجة الاستيراد</h2><p class="muted">الملف: {{ source_name }}</p></header>
+<section class="panel">
+  <div class="grid">
+    <div><h3>إجمالي الصفوف</h3><strong>{{ total }}</strong></div>
+    <div><h3>تم استيرادها</h3><strong>{{ inserted }}</strong></div>
+    <div><h3>تم تخطيها</h3><strong>{{ skipped }}</strong></div>
+  </div>
+  {% if skipped %}
+  <h3>أسباب التخطي (أول 20 حالة)</h3>
+  <div class="table-wrap"><table><thead><tr><th>رقم الصف</th><th>السبب</th></tr></thead><tbody>
+  {% for item in errors %}<tr><td>{{ item.row }}</td><td>{{ item.reason }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<p class="flash success">تم استيراد جميع الصفوف بنجاح.</p>{% endif %}
+  <a class="btn" href="{{ url_for('import_data_wizard') }}">استيراد ملف آخر</a>
+  <a class="btn secondary" href="{{ url_for('accounts') }}">العودة إلى دليل الحسابات</a>
+</section>
+{% endblock %}
