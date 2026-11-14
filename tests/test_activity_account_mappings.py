@@ -65,6 +65,7 @@ class ActivityAccountMappingTests(unittest.TestCase):
                 ensure_activity_chart_accounts(conn, activity)
                 expected = {
                     "1170": ("asset", 1), "1171": ("asset", 0),
+                    "1185": ("asset", 0), "6990": ("expense", 0), "6991": ("expense", 0),
                     "1180": ("asset", 0), "1250": ("asset", 0),
                     "1260": ("asset", 1), "1261": ("asset", 0),
                     "2170": ("liability", 1), "2190": ("liability", 0),
@@ -114,7 +115,7 @@ class ActivityAccountMappingTests(unittest.TestCase):
     def test_operational_mapping_codes_are_marked_immutable(self):
         from chart_templates import OPERATIONAL_ACCOUNT_CODES
 
-        self.assertTrue({"1110", "1130", "1165", "2130", "2190"}.issubset(
+        self.assertTrue({"1110", "1130", "1165", "2130", "2190", "1185", "6990", "6991"}.issubset(
             OPERATIONAL_ACCOUNT_CODES
         ))
 
