@@ -1484,12 +1484,11 @@ def new_credit_note():
                     cur=c.execute("""INSERT INTO stock_movements(
                       movement_no,movement_type,product_id,source_warehouse_id,lot_id,quantity,unit_cost,total_cost,
                       movement_date,notes,created_by,issue_purpose,accounting_status,
-                      entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name,conversion_factor)
-                      VALUES(?,'issue',?,?,?,?,?,?,?,?,?,'supplier_return','pending_document',?,?,?,?,?)""",
+                      entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name)
+                      VALUES(?,'issue',?,?,?,?,?,?,?,?,?,'supplier_return','pending_document',?,?,?,?)""",
                       (movement_no,product_id,warehouse_id,lot_id,str(allocated_qty),str(unit_cost),str(allocated_total),
                        request.form["credit_date"],"مرتجع مورد — "+supplier_credit_no,session["user_id"],
-                       str(allocated_qty/conversion_factor),uom_id,raw_uom_key,entered_uom_name or stored_uom_name,
-                       str(conversion_factor)))
+                       str(allocated_qty/conversion_factor),uom_id,raw_uom_key,entered_uom_name or stored_uom_name))
                     movement_ids.append(cur.lastrowid)
             subtotal=money(subtotal)
             if subtotal<=0: raise ValueError("قيمة المرتجع يجب أن تكون أكبر من صفر.")
