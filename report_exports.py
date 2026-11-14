@@ -379,11 +379,22 @@ def register_report_exports(app, db_path, permissions):
                     ["ملخص", "", "", "مبيعات معفاة", summary["sales_exempt"], "", "", "", "", ""],
                     ["ملخص", "", "", "مبيعات خارج النطاق", summary["sales_outside"], "", "", "", "", ""],
                     ["ملخص", "", "", "أساس المشتريات", summary["purchase_base"], "", "", "", "", ""],
+                    ["ملخص", "", "", "إجمالي ضريبة فواتير المشتريات", "", "", "", summary["purchase_tax_total"], "", ""],
                     ["ملخص", "", "", "ضريبة المخرجات", "", "", "", summary["output_vat"], "", ""],
                     ["ملخص", "", "", "ضريبة المدخلات القابلة للخصم", "", "", "", summary["input_vat"], "", ""],
                     ["ملخص", "", "", "مدخلات غير قابلة للخصم", "", "", "", summary["non_deductible_input"], "", ""],
                     ["ملخص", "", "", "صافي الضريبة الرقابي", "", "", "", summary["net_vat"], "", ""],
                 ])
+                ledger = snapshot.get("ledger_reconciliation", {})
+                if ledger.get("available"):
+                    data.extend([
+                        ["مطابقة الأستاذ", "", "", "حساب ضريبة المخرجات", ledger["output_account"], "", "", ledger["output_ledger"], "", ""],
+                        ["مطابقة الأستاذ", "", "", "فرق المخرجات", "", "", "", ledger["output_difference"], "", ""],
+                        ["مطابقة الأستاذ", "", "", "حساب ضريبة المدخلات", ledger["input_account"], "", "", ledger["input_ledger"], "", ""],
+                        ["مطابقة الأستاذ", "", "", "فرق المدخلات", "", "", "", ledger["input_difference"], "", ""],
+                    ])
+                for issue in ledger.get("issues", []):
+                    data.append(["مطابقة الأستاذ", "", "", issue, "", "", "", "", "", ""])
                 for issue in snapshot.get("quality_issues", []):
                     data.append(["فحص بيانات", "", issue["document"], issue["issue"],
                                  issue["severity"], "", "", "", "", ""])
