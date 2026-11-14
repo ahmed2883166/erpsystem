@@ -7,6 +7,7 @@ from chart_templates import (
     ACTIVITY_TAX_ACCOUNT_ROLES,
     CHARTS,
     migrate_vat_accounts,
+    migrate_legacy_duplicate_account_labels,
 )
 
 
@@ -33,6 +34,26 @@ class ActivityAccountMappingTests(unittest.TestCase):
         # are not hidden when new transactions move to the canonical control account.
         self.assertIn("2140", ACTIVITY_ACCOUNT_ROLES["commercial"]["current_liabilities"])
         self.assertIn("2120", ACTIVITY_ACCOUNT_ROLES["service"]["current_liabilities"])
+
+    def test_service_legacy_accrual_account_is_renamed_without_changing_history(self):
+        conn=sqlite3.connect(":memory:")
+        conn.row_factory=sqlite3.Row
+        conn.executescript("""
+            CREATE TABLE accounts(
+                id INTEGER PRIMARY KEY,code TEXT UNIQUE,name_ar TEXT,
+                account_type TEXT,is_group INTEGER DEFAULT 0
+            );
+            CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,account_id INTEGER);
+            INSERT INTO accounts(id,code,name_ar,account_type,is_group)
+                VALUES(7,'2110','مصروفات مستحقة - التزامات تشغيلية','liability',0);
+            INSERT INTO journal_lines(account_id) VALUES(7);
+        """)
+        migrate_legacy_duplicate_account_labels(conn,"service")
+        account=conn.execute("SELECT id,name_ar FROM accounts WHERE code='2110'").fetchone()
+        self.assertEqual(account["id"],7)
+        self.assertIn("حساب تاريخي",account["name_ar"])
+        self.assertEqual(conn.execute("SELECT account_id FROM journal_lines").fetchone()["account_id"],7)
+        conn.close()
 
     def test_posting_accounts_match_each_activity_chart(self):
         for activity, mapping in ACTIVITY_POSTING_ACCOUNTS.items():
