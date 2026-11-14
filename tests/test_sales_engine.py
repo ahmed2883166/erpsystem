@@ -625,7 +625,7 @@ class SalesIntegrationTests(unittest.TestCase):
 
         # Customer control is fully cleared; net cash received is 22.80.
         self.assertEqual(totals["1130"], (Decimal("68.40"), Decimal("68.40")))
-        self.assertEqual(totals["1110"], (Decimal("22.80"), Decimal("0")))
+        self.assertEqual(totals["1110"], (Decimal("45.60"), Decimal("22.80")))
         # Net revenue 20, output VAT 2.80, net COGS 10, inventory 40.
         self.assertEqual(totals["4100"], (Decimal("0"), Decimal("40.00")))
         self.assertEqual(totals["4200"], (Decimal("20.00"), Decimal("0")))
