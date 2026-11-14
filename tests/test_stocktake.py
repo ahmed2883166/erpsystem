@@ -384,6 +384,7 @@ class StocktakeRouteTests(unittest.TestCase):
             setting_key TEXT PRIMARY KEY,setting_value TEXT)""")
         conn.execute("INSERT INTO company_settings VALUES('activity','industrial')")
         conn.execute("INSERT INTO company_settings VALUES('inventory_cost_method','fifo')")
+        initialize_activity_profiles_schema(conn)
         conn.executemany(
             "INSERT INTO accounts(code,name_ar,account_type,is_group,active) VALUES(?,?, 'expense',0,1)",
             [("5525","عجز مخزون مخصص للاختبار"),("6995","زيادة مخزون مخصصة للاختبار")],
