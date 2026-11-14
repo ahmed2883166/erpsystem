@@ -7,6 +7,8 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal
+from code_sequences import next_code
+from chart_templates import ensure_account_metadata
 
 bank_bp = Blueprint("bank", __name__, url_prefix="/bank")
 
@@ -28,6 +30,21 @@ def init_bank_schema():
       created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_bank_tx_date ON bank_transactions(transaction_date,bank_account_id);
+    CREATE TABLE IF NOT EXISTS cash_accounts(
+      id INTEGER PRIMARY KEY,
+      kind TEXT NOT NULL CHECK(kind IN ('cash','bank')),
+      name_ar TEXT NOT NULL,
+      account_id INTEGER NOT NULL UNIQUE REFERENCES accounts(id),
+      branch_id INTEGER REFERENCES branches(id),
+      currency_code TEXT NOT NULL DEFAULT 'EGP' REFERENCES currencies(code),
+      bank_name TEXT NOT NULL DEFAULT '',
+      iban TEXT NOT NULL DEFAULT '',
+      active INTEGER NOT NULL DEFAULT 1,
+      opening_date TEXT NOT NULL,
+      created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_cash_accounts_kind_active ON cash_accounts(kind,active);
     """)
     c.close()
 
@@ -65,7 +82,11 @@ def index():
             if kind=="transfer":
                 valid_account(destination_id)
                 if destination_id==bank_id: raise ValueError("حساب التحويل المستفيد يجب أن يختلف عن حساب المصدر.")
-                lines=[(destination_id,amount,0,"تحويل وارد إلى البنك"),(bank_id,0,amount,"تحويل صادر من البنك")]
+                source_currency=c.execute("SELECT currency_code FROM cash_accounts WHERE account_id=? AND active=1",(bank_id,)).fetchone()
+                target_currency=c.execute("SELECT currency_code FROM cash_accounts WHERE account_id=? AND active=1",(destination_id,)).fetchone()
+                if source_currency and target_currency and source_currency["currency_code"]!=target_currency["currency_code"]:
+                    raise ValueError("لا يمكن تحويل نفس المبلغ بين خزنة/بنك بعملتين مختلفتين؛ استخدم قيد صرف عملة مستقلًا.")
+                lines=[(destination_id,amount,0,"تحويل وارد إلى حساب النقدية/البنك"),(bank_id,0,amount,"تحويل صادر من حساب النقدية/البنك")]
             else:
                 if not counter_id: raise ValueError("حدد الحساب المقابل للحركة.")
                 counter=c.execute("SELECT id,is_group,active FROM accounts WHERE id=?",(counter_id,)).fetchone()
@@ -84,7 +105,15 @@ def index():
             return redirect(url_for("bank.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
             c.rollback(); flash(str(e),"error")
-    accounts=c.execute("""SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=0 AND active=1 AND (lower(name_ar) LIKE '%بنك%' OR lower(name_ar) LIKE '%بنوك%' OR lower(name_ar) LIKE '%مصرف%' OR code IN ('1110','1120','1121','1122')) ORDER BY code""").fetchall()
+    accounts=c.execute("""SELECT a.id,a.code,a.name_ar,ca.kind,ca.name_ar display_name,ca.currency_code
+        FROM cash_accounts ca JOIN accounts a ON a.id=ca.account_id
+        WHERE ca.active=1 AND a.active=1
+        UNION ALL
+        SELECT a.id,a.code,a.name_ar,'bank',a.name_ar,NULL
+        FROM accounts a WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
+          AND (lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%' OR a.code IN ('1110','1120','1121','1122'))
+          AND NOT EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id)
+        ORDER BY code""").fetchall()
     all_accounts=c.execute("""SELECT id,code,name_ar FROM accounts WHERE is_group=0 AND active=1 ORDER BY code""").fetchall()
     bank_page = fetch_page(c,
         """SELECT t.*,a.code bank_code,a.name_ar bank_name FROM bank_transactions t
@@ -99,7 +128,8 @@ def index():
         FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
         LEFT JOIN journal_entries je ON je.id=jl.entry_id
         WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
-          AND (lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%' OR a.code IN ('1110','1120','1121','1122'))
+          AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.active=1)
+            OR lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%' OR a.code IN ('1110','1120','1121','1122'))
         GROUP BY a.id ORDER BY a.code""").fetchall()
     bank_balances=[dict(row,balance=Decimal(str(row["balance"] or "0"))) for row in bank_balances]
     c.close()
@@ -117,5 +147,91 @@ def reconcile(transaction_id):
     c.commit(); c.close()
     flash("تم تعليم الحركة كمطابقة مع كشف البنك.","success")
     return redirect(url_for("bank.index"))
+
+
+
+@bank_bp.route("/accounts", methods=["GET", "POST"])
+@require()
+def cash_accounts():
+    c=db()
+    if request.method=="POST":
+        try:
+            c.execute("BEGIN IMMEDIATE")
+            kind=request.form.get("kind","").strip()
+            name=request.form.get("name_ar","").strip()
+            mode=request.form.get("account_mode","existing")
+            if kind not in {"cash","bank"} or not name:
+                raise ValueError("حدد نوع الحساب واكتب اسم الخزنة أو البنك.")
+            branch_id=request.form.get("branch_id",type=int)
+            if branch_id and not c.execute("SELECT 1 FROM branches WHERE id=? AND active=1",(branch_id,)).fetchone():
+                raise ValueError("الفرع المحدد غير موجود أو غير نشط.")
+            currency=(request.form.get("currency_code") or "EGP").strip().upper()
+            if not c.execute("SELECT 1 FROM currencies WHERE code=? AND active=1",(currency,)).fetchone():
+                raise ValueError("اختر عملة نشطة في إعدادات العملات.")
+            if mode=="new":
+                parent_id=request.form.get("parent_id",type=int)
+                parent=c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(parent_id,)).fetchone()
+                if not parent or parent["account_type"]!="asset" or not parent["is_group"] or not parent["active"]:
+                    raise ValueError("لإنشاء حساب أستاذ جديد اختر مجموعة أصول نشطة.")
+                prefix="CA" if kind=="cash" else "BK"
+                code=next_code(c,"cash_ledger_"+kind,prefix,"accounts","code")
+                account_name=("خزنة - " if kind=="cash" else "بنك - ")+name
+                cur=c.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group,active) VALUES(?,?,'asset',?,0,1)",
+                              (code,account_name,parent_id))
+                account_id=cur.lastrowid
+                ensure_account_metadata(c)
+            elif mode=="existing":
+                account_id=request.form.get("account_id",type=int)
+                account=c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(account_id,)).fetchone()
+                if not account or account["account_type"]!="asset" or account["is_group"] or not account["active"]:
+                    raise ValueError("اربط الحساب بحساب أصول تفصيلي ونشط فقط.")
+            else:
+                raise ValueError("طريقة ربط حساب الأستاذ غير صحيحة.")
+            bank_name=request.form.get("bank_name","").strip() if kind=="bank" else ""
+            iban=request.form.get("iban","").strip() if kind=="bank" else ""
+            c.execute("""INSERT INTO cash_accounts(kind,name_ar,account_id,branch_id,currency_code,bank_name,iban,opening_date,created_by)
+                VALUES(?,?,?,?,?,?,?,?,?)""",(kind,name,account_id,branch_id,currency,bank_name,iban,
+                request.form.get("opening_date") or date.today().isoformat(),session.get("user_id")))
+            row_id=c.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+            c.commit()
+            g.audit_created_record=("cash_accounts",row_id,None,None)
+            flash("تم ربط الخزنة/البنك بحساب أستاذ مستقل. ستظهر حركاته في دفتر الحساب المرتبط.","success")
+            return redirect(url_for("bank.cash_accounts"))
+        except (ValueError,sqlite3.Error) as exc:
+            c.rollback()
+            flash(str(exc),"error")
+    rows=c.execute("""SELECT ca.*,a.code account_code,a.name_ar account_name,
+        b.code branch_code,b.name_ar branch_name
+        FROM cash_accounts ca JOIN accounts a ON a.id=ca.account_id
+        LEFT JOIN branches b ON b.id=ca.branch_id ORDER BY ca.kind,ca.name_ar""").fetchall()
+    groups=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=1 AND active=1 ORDER BY code").fetchall()
+    available=c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
+        WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
+        AND NOT EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id)
+        ORDER BY a.code""").fetchall()
+    branches=c.execute("SELECT id,code,name_ar FROM branches WHERE active=1 ORDER BY code").fetchall()
+    currencies=c.execute("SELECT code,name_ar FROM currencies WHERE active=1 ORDER BY code").fetchall()
+    c.close()
+    return render_template("cash_accounts.html",rows=rows,groups=groups,available=available,
+        branches=branches,currencies=currencies,today=date.today().isoformat())
+
+
+@bank_bp.route("/accounts/<int:cash_account_id>/toggle", methods=["POST"])
+@require()
+def toggle_cash_account(cash_account_id):
+    c=db()
+    try:
+        row=c.execute("SELECT id,name_ar,active FROM cash_accounts WHERE id=?",(cash_account_id,)).fetchone()
+        if not row:
+            raise ValueError("الخزنة أو البنك غير موجود.")
+        active=0 if row["active"] else 1
+        c.execute("UPDATE cash_accounts SET active=? WHERE id=?",(active,cash_account_id))
+        c.commit()
+        flash(("تم تفعيل " if active else "تم تعطيل ")+row["name_ar"]+" مع الاحتفاظ بالحركات والرصيد التاريخي.","success")
+    except (ValueError,sqlite3.Error) as exc:
+        c.rollback(); flash(str(exc),"error")
+    finally:
+        c.close()
+    return redirect(url_for("bank.cash_accounts"))
 
 if __name__=="__main__": init_bank_schema()
