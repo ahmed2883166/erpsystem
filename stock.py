@@ -1991,30 +1991,35 @@ def approve_count(stocktake_id):
             (stocktake["movement_cutoff_id"],stocktake["warehouse_id"],stocktake["warehouse_id"])).fetchone()
         if later_movement:
             raise ValueError("تم تسجيل حركة مخزنية بعد بدء الجرد. لا يمكن اعتماد المطابقة؛ أوقف الحركة وأنشئ أمر جرد جديد.")
-        activity_row = c.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
-        activity = activity_row["setting_value"] if activity_row else "commercial"
-        from chart_templates import ACTIVITY_POSTING_ACCOUNTS
-        inventory_code = ACTIVITY_POSTING_ACCOUNTS.get(activity, {}).get("inventory")
+        from activity_profiles import active_posting_accounts, get_active_activity_profile, resolve_product_account_code
+        profile = get_active_activity_profile(c)
+        posting = active_posting_accounts(c)
+        base_defaults = __import__("chart_templates").ACTIVITY_POSTING_ACCOUNTS.get(
+            profile["base_activity"], {}
+        )
+        inventory_code = posting.get("inventory")
         inventory = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?",
                               (inventory_code,)).fetchone() if inventory_code else None
         if not inventory or inventory["is_group"] or not inventory["active"] or inventory["account_type"] != "asset":
             raise ValueError("اضبط حساب المخزون كحساب أصول تفصيلي نشط قبل اعتماد الجرد.")
-        # Physical shortages are a direct inventory loss (5510). Verified
-        # surpluses remain a separate count-variance credit (6990), so a gain
-        # cannot be netted against shortage expense.
+        # Variance accounts are resolved from the selected activity profile.
+        # Older custom profiles inherit the safe base-activity defaults.
+        shortage_code = posting.get("stocktake_shortage") or base_defaults.get("stocktake_shortage")
+        surplus_code = posting.get("stocktake_surplus") or base_defaults.get("stocktake_surplus")
         shortage_account = c.execute(
-            "SELECT id,code,account_type,is_group,active FROM accounts WHERE code='5510'"
-        ).fetchone()
+            "SELECT id,code,account_type,is_group,active FROM accounts WHERE code=?",
+            (shortage_code,)
+        ).fetchone() if shortage_code else None
         surplus_account = c.execute(
-            "SELECT id,code,account_type,is_group,active FROM accounts WHERE code='6990'"
-        ).fetchone()
+            "SELECT id,code,account_type,is_group,active FROM accounts WHERE code=?",
+            (surplus_code,)
+        ).fetchone() if surplus_code else None
         if (not shortage_account or shortage_account["is_group"] or not shortage_account["active"]
                 or shortage_account["account_type"] != "expense"):
             raise ValueError("يجب تفعيل الحساب التفصيلي 5510 (عجز وهالك المخزون) من نوع مصروف قبل اعتماد الجرد.")
         if (not surplus_account or surplus_account["is_group"] or not surplus_account["active"]
                 or surplus_account["account_type"] != "expense"):
             raise ValueError("يجب تفعيل الحساب التفصيلي 6990 (فروق الجرد والزيادات) من نوع مصروف قبل اعتماد الجرد.")
-        from activity_profiles import resolve_product_account_code
         journal_lines, movement_ids = [], []
         for line in lines:
             product_inventory_code = resolve_product_account_code(
