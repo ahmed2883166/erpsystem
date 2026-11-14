@@ -54,6 +54,9 @@ def initialize_workforce_schema():
       item_name TEXT NOT NULL, item_type TEXT NOT NULL CHECK(item_type IN ('allowance','deduction')),
       amount TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS workforce_migrations(
+      migration_key TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS payroll_runs(
       id INTEGER PRIMARY KEY, period TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'draft',
       journal_entry_id INTEGER UNIQUE, created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -193,21 +196,30 @@ def initialize_workforce_schema():
         "incentive_name": "TEXT NOT NULL DEFAULT ''",
         "incentive_days": "TEXT NOT NULL DEFAULT '0'",
         "incentive_method": "TEXT NOT NULL DEFAULT ''",
+        "overtime_calculated_amount": "TEXT NOT NULL DEFAULT '0'",
+        "overtime_manual_override": "INTEGER NOT NULL DEFAULT 0",
+        "overtime_override_reason": "TEXT NOT NULL DEFAULT ''",
     }.items():
         if name not in payroll_cols:
             c.execute("ALTER TABLE payroll_lines ADD COLUMN " + name + " " + definition)
     # Backfill legacy payroll runs without changing their original net amounts.
-    legacy_rows = c.execute("""SELECT id,gross_pay,employer_insurance,employee_insurance,
-        taxable_income_tax,advance_deduction,other_deductions,absence_deduction
-        FROM payroll_lines WHERE total_entitlements='0' AND total_deductions='0'""").fetchall()
-    for row in legacy_rows:
-        employer = D(row["employer_insurance"])
-        entitlements = M(D(row["gross_pay"]) + employer)
-        deductions = M(employer + D(row["employee_insurance"]) + D(row["taxable_income_tax"])
-                       + D(row["advance_deduction"]) + D(row["other_deductions"])
-                       + D(row["absence_deduction"]))
-        c.execute("UPDATE payroll_lines SET total_entitlements=?,total_deductions=? WHERE id=?",
-                  (str(entitlements),str(deductions),row["id"]))
+    migration_key = "backfill_payroll_totals_v1"
+    already_migrated = c.execute(
+        "SELECT 1 FROM workforce_migrations WHERE migration_key=?", (migration_key,)
+    ).fetchone()
+    if not already_migrated:
+        legacy_rows = c.execute("""SELECT id,gross_pay,employer_insurance,employee_insurance,
+            taxable_income_tax,advance_deduction,other_deductions,absence_deduction
+            FROM payroll_lines WHERE total_entitlements='0' AND total_deductions='0'""").fetchall()
+        for row in legacy_rows:
+            employer = D(row["employer_insurance"])
+            entitlements = M(D(row["gross_pay"]) + employer)
+            deductions = M(employer + D(row["employee_insurance"]) + D(row["taxable_income_tax"])
+                           + D(row["advance_deduction"]) + D(row["other_deductions"])
+                           + D(row["absence_deduction"]))
+            c.execute("UPDATE payroll_lines SET total_entitlements=?,total_deductions=? WHERE id=?",
+                      (str(entitlements),str(deductions),row["id"]))
+        c.execute("INSERT INTO workforce_migrations(migration_key) VALUES(?)", (migration_key,))
     c.close()
 
 
@@ -694,13 +706,27 @@ def payroll():
                 basic_salary = M(basic_raw)
                 raise_amount = Decimal("0")
                 if e["raise_effective_date"] and e["raise_effective_date"] <= (period + "-01"):
-                    raise_amount = (M(basic_salary * D(e["raise_value"]) / Decimal("100"))
-                                    if e["raise_type"] == "percentage" else M(e["raise_value"]))
-                    if e["raise_mode"] == "basic":
+                    master_basic = M(e["basic_salary"])
+                    proposed_raise = (M(master_basic * D(e["raise_value"]) / Decimal("100"))
+                                      if e["raise_type"] == "percentage" else M(e["raise_value"]))
+                    expected_after_raise = M(master_basic + proposed_raise) if e["raise_mode"] == "basic" else master_basic
+                    # Apply only when the monthly form still contains the unchanged master salary.
+                    # If the user already entered the raised/current salary, never add it twice.
+                    if e["raise_mode"] == "basic" and basic_salary == master_basic:
+                        raise_amount = proposed_raise
                         basic_salary = M(basic_salary + raise_amount)
+                    elif e["raise_mode"] == "basic" and basic_salary == expected_after_raise:
+                        raise_amount = proposed_raise
+                    elif e["raise_mode"] == "allowance" and basic_salary == master_basic:
+                        raise_amount = proposed_raise
                 if basic_salary <= 0:
                     raise ValueError("الراتب الأساسي للموظف " + e["full_name"] + " يجب أن يكون أكبر من صفر.")
+                fixed_items = c.execute("""SELECT item_name,item_type,amount FROM employee_pay_items
+                    WHERE employee_id=? AND active=1 ORDER BY id""", (e["id"],)).fetchall()
+                fixed_allowances = M(sum((D(x["amount"]) for x in fixed_items if x["item_type"] == "allowance"), Decimal("0")))
+                fixed_deductions = M(sum((D(x["amount"]) for x in fixed_items if x["item_type"] == "deduction"), Decimal("0")))
                 allowances = M(request.form.get("allowances_" + str(e["id"]), e["variable_salary"]))
+                allowances = M(allowances + fixed_allowances)
                 if raise_amount and e["raise_mode"] == "allowance":
                     allowances = M(allowances + raise_amount)
                 overtime_hours = D(request.form.get("overtime_hours_" + str(e["id"]), "0"))
@@ -713,10 +739,14 @@ def payroll():
                     overtime_hours = attendance_overtime_hours
                 overtime_rate = D(request.form.get("overtime_rate_percent_" + str(e["id"]), e["overtime_rate_percent"]))
                 overtime_raw = request.form.get("overtime_amount_" + str(e["id"]), "").strip()
+                overtime_override_reason = request.form.get("overtime_override_reason_" + str(e["id"]), "").strip()
                 if overtime_rate < 0 or overtime_rate > 500:
                     raise ValueError("نسبة الإضافي يجب أن تكون بين صفر و500.")
-                overtime_amount = (M(D(overtime_hours) * basic_salary / D(e["standard_hours"]) * overtime_rate / Decimal("100"))
-                                   if not overtime_raw else M(overtime_raw))
+                overtime_calculated_amount = M(D(overtime_hours) * basic_salary / D(e["standard_hours"]) * overtime_rate / Decimal("100"))
+                overtime_manual_override = bool(overtime_raw)
+                if overtime_manual_override and not overtime_override_reason:
+                    raise ValueError("اكتب سبب تعديل مبلغ الإضافي يدويًا للموظف " + e["full_name"] + ".")
+                overtime_amount = M(overtime_raw) if overtime_manual_override else overtime_calculated_amount
                 absent_hours = D(request.form.get("absent_hours_" + str(e["id"]), "0"))
                 absence = M(request.form.get("absence_deduction_" + str(e["id"]), "0"))
                 if request.form.get("use_attendance_data") == "1":
@@ -770,6 +800,7 @@ def payroll():
                                          for i in due_installments),Decimal("0")))
                 advance_deduction = M(manual_advance_deduction + loan_deduction)
                 other_deductions = M(request.form.get("other_deductions_" + str(e["id"]), "0"))
+                other_deductions = M(other_deductions + fixed_deductions)
                 tax = M(request.form.get("tax_" + str(e["id"]), "0"))
                 emp_ins = M(request.form.get("employee_ins_" + str(e["id"]), "0"))
                 employer_ins = M(request.form.get("employer_ins_" + str(e["id"]), "0"))
@@ -811,15 +842,17 @@ def payroll():
                     overtime_amount,absent_hours,absence_deduction,other_deductions,taxable_income_tax,
                     employee_insurance,employer_insurance,gross_pay,net_pay,rule_set_id,taxable_annual,insured_wage,
                     incentives,advance_deduction,loan_deduction,total_entitlements,total_deductions,salary_raise,
-                    overtime_rate_percent,incentive_rule_id,incentive_name,incentive_days,incentive_method)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    overtime_rate_percent,incentive_rule_id,incentive_name,incentive_days,incentive_method,
+                    overtime_calculated_amount,overtime_manual_override,overtime_override_reason)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (run_id,e["id"],str(basic_salary),str(allowances),str(overtime_hours),str(overtime_amount),
                      str(absent_hours),str(absence),str(other_deductions),str(tax),str(emp_ins),
                      str(employer_ins),str(gross),str(net),
                      rule_set_id, str(taxable_annual), str(insured_wage),
                      str(incentives),str(advance_deduction),str(loan_deduction),str(total_entitlements),str(total_deductions),
                      str(raise_amount),str(overtime_rate),incentive_rule_id,incentive_name,
-                     str(incentive_days),incentive_method))
+                     str(incentive_days),incentive_method,str(overtime_calculated_amount),
+                     int(overtime_manual_override),overtime_override_reason))
             _audit(c, "payroll_draft_created", period)
             c.commit()
             g.audit_created_record = ("payroll_runs", run_id, "payroll_lines", "run_id")
