@@ -127,6 +127,34 @@ class AnalyticDimensionsTests(unittest.TestCase):
             2,
         )
 
+    def test_stock_dimensions_are_additive_and_can_be_line_specific(self):
+        self.conn.executescript("""
+            CREATE TABLE stock_products(id INTEGER PRIMARY KEY, sku TEXT, name_ar TEXT);
+            CREATE TABLE stock_warehouses(id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT);
+            INSERT INTO stock_products VALUES(7,'P-007','صنف اختبار');
+            INSERT INTO stock_warehouses VALUES(3,'WH-03','مخزن اختبار');
+        """)
+        initialize_analytic_dimensions_schema(self.conn)
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(journal_lines)")}
+        self.assertTrue({"stock_product_id", "stock_warehouse_id"}.issubset(columns))
+        entry_id = post_journal(
+            self.conn, "2026-11-07", "DIM-STOCK-001", "قيد مخزون",
+            [
+                (1, "100", "0", "مدين"),
+                (2, "0", "100", "دائن", {
+                    "stock_product_id": 7, "stock_warehouse_id": 3
+                }),
+            ], 1,
+        )
+        rows = self.conn.execute(
+            "SELECT stock_product_id,stock_warehouse_id FROM journal_lines WHERE entry_id=? ORDER BY id",
+            (entry_id,),
+        ).fetchall()
+        self.assertIsNone(rows[0]["stock_product_id"])
+        self.assertIsNone(rows[0]["stock_warehouse_id"])
+        self.assertEqual(rows[1]["stock_product_id"], 7)
+        self.assertEqual(rows[1]["stock_warehouse_id"], 3)
+
     def test_invalid_or_inactive_dimension_is_rejected(self):
         with self.assertRaises(ValueError):
             validate_journal_dimensions(self.conn, {"branch_id": "999"})
