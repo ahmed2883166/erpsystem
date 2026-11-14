@@ -169,6 +169,7 @@ def index():
     accounts=c.execute("""SELECT a.id,a.code,a.name_ar,ca.kind,ca.name_ar display_name,ca.currency_code
         FROM cash_accounts ca JOIN accounts a ON a.id=ca.account_id
         WHERE ca.active=1 AND a.active=1
+          AND ca.currency_code=(SELECT setting_value FROM company_settings WHERE setting_key='base_currency')
         UNION ALL
         SELECT a.id,a.code,a.name_ar,'bank',a.name_ar,NULL
         FROM accounts a WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
@@ -189,7 +190,8 @@ def index():
         FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
         LEFT JOIN journal_entries je ON je.id=jl.entry_id
         WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
-          AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.active=1)
+          AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.active=1
+              AND ca.currency_code=(SELECT setting_value FROM company_settings WHERE setting_key='base_currency'))
             OR lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%' OR a.code IN ('1110','1120','1121','1122'))
         GROUP BY a.id ORDER BY a.code""").fetchall()
     bank_balances=[dict(row,balance=Decimal(str(row["balance"] or "0"))) for row in bank_balances]
