@@ -3,11 +3,14 @@ from database import connect_database, fetch_page
 """Employee master, payroll preparation and employee custody workflows."""
 import sqlite3
 import io
+import os
+import uuid
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g, send_file
+from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g, send_file, current_app
+from werkzeug.utils import secure_filename
 from accounting_core import post_journal
 
 workforce_bp = Blueprint("workforce", __name__)
@@ -47,7 +50,7 @@ def initialize_workforce_schema():
       raise_type TEXT NOT NULL DEFAULT 'fixed', raise_value TEXT NOT NULL DEFAULT '0',
       raise_mode TEXT NOT NULL DEFAULT 'basic', raise_effective_date TEXT NOT NULL DEFAULT '',
       overtime_rate_percent TEXT NOT NULL DEFAULT '150',
-      branch_id INTEGER, cost_center_id INTEGER, project_id INTEGER
+      branch_id INTEGER, cost_center_id INTEGER, project_id INTEGER, photo_path TEXT NOT NULL DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS employee_pay_items(
       id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id),
@@ -204,6 +207,7 @@ def initialize_workforce_schema():
         "raise_mode": "TEXT NOT NULL DEFAULT 'basic'",
         "raise_effective_date": "TEXT NOT NULL DEFAULT ''",
         "overtime_rate_percent": "TEXT NOT NULL DEFAULT '150'",
+        "photo_path": "TEXT NOT NULL DEFAULT ''",
     }.items():
         if name not in employee_cols:
             c.execute("ALTER TABLE employees ADD COLUMN " + name + " " + definition)
