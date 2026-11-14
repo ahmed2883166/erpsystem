@@ -681,13 +681,13 @@ class WorkforceTests(unittest.TestCase):
             "calculation_type": "percentage", "calculation_base": "basic",
             "calculation_value": "10", "treatment": "basic"
         }
+        preview_conn = workforce._db()
+        preview_data = workforce._salary_change_preview(preview_conn, data)
+        preview_conn.close()
+        preview_names = [employee["name"] for employee in preview_data["employees"]]
+        self.assertEqual(preview_names, ["Employee One", "Comprehensive Bonus", "Unpaid Leave"])
         preview = self.client.post("/hr/salary-changes", data=data)
         self.assertEqual(preview.status_code, 200)
-        page = preview.get_data(as_text=True)
-        self.assertIn("Comprehensive Bonus", page)
-        self.assertIn("Unpaid Leave", page)
-        self.assertNotIn(">Resigned<", page)
-        self.assertNotIn(">Inactive<", page)
         conn = sqlite3.connect(self.db_path)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM salary_change_batches").fetchone()[0], 0)
         conn.close()
