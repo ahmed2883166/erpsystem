@@ -463,19 +463,27 @@ def post_scrap_journal(c, movement_id, movement_no, product, movement_date, tota
     if amount <= 0:
         c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
         return None
-    movement = c.execute(
-        "SELECT product_id,source_warehouse_id FROM stock_movements WHERE id=?", (movement_id,)
-    ).fetchone()
-    if not movement or int(movement["product_id"]) != int(product["id"]) or not movement["source_warehouse_id"]:
-        raise ValueError("تعذر تحديد الصنف والمخزن المصدر لحركة الإعدام؛ لم يتم ترحيل القيد.")
-    stock_dims = {
-        "stock_product_id": int(movement["product_id"]),
-        "stock_warehouse_id": int(movement["source_warehouse_id"]),
-    }
+    movement_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_movements)")}
+    journal_columns = {row["name"] for row in c.execute("PRAGMA table_info(journal_lines)")}
+    stock_dims = None
+    if {"product_id", "source_warehouse_id"}.issubset(movement_columns) and {
+        "stock_product_id", "stock_warehouse_id"
+    }.issubset(journal_columns):
+        movement = c.execute(
+            "SELECT product_id,source_warehouse_id FROM stock_movements WHERE id=?", (movement_id,)
+        ).fetchone()
+        if not movement or int(movement["product_id"]) != int(product["id"]) or not movement["source_warehouse_id"]:
+            raise ValueError("تعذر تحديد الصنف والمخزن المصدر لحركة الإعدام؛ لم يتم ترحيل القيد.")
+        stock_dims = {
+            "stock_product_id": int(movement["product_id"]),
+            "stock_warehouse_id": int(movement["source_warehouse_id"]),
+        }
+    inventory_line = (inventory["id"],0,amount,"تخفيض قيمة المخزون", stock_dims) if stock_dims else (
+        inventory["id"],0,amount,"تخفيض قيمة المخزون"
+    )
     entry_id = post_journal(c,movement_date,movement_no,
         f"قيد آلي لإعدام مخزون - {product['name_ar']}",
-        [(writeoff_id,amount,0,"خسائر تالف مخزون"),
-         (inventory["id"],0,amount,"تخفيض قيمة المخزون", stock_dims)],created_by)
+        [(writeoff_id,amount,0,"خسائر تالف مخزون"), inventory_line],created_by)
     c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?", (entry_id,movement_id))
     set_stock_accounting_note(c,movement_id,None)
     return entry_id
@@ -528,19 +536,27 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
     if amount <= 0:
         c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
         return None
-    movement = c.execute(
-        "SELECT product_id,source_warehouse_id FROM stock_movements WHERE id=?", (movement_id,)
-    ).fetchone()
-    if not movement or int(movement["product_id"]) != int(product["id"]) or not movement["source_warehouse_id"]:
-        raise ValueError("تعذر تحديد الصنف والمخزن المصدر لحركة الصرف؛ لم يتم ترحيل القيد.")
-    stock_dims = {
-        "stock_product_id": int(movement["product_id"]),
-        "stock_warehouse_id": int(movement["source_warehouse_id"]),
-    }
+    movement_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_movements)")}
+    journal_columns = {row["name"] for row in c.execute("PRAGMA table_info(journal_lines)")}
+    stock_dims = None
+    if {"product_id", "source_warehouse_id"}.issubset(movement_columns) and {
+        "stock_product_id", "stock_warehouse_id"
+    }.issubset(journal_columns):
+        movement = c.execute(
+            "SELECT product_id,source_warehouse_id FROM stock_movements WHERE id=?", (movement_id,)
+        ).fetchone()
+        if not movement or int(movement["product_id"]) != int(product["id"]) or not movement["source_warehouse_id"]:
+            raise ValueError("تعذر تحديد الصنف والمخزن المصدر لحركة الصرف؛ لم يتم ترحيل القيد.")
+        stock_dims = {
+            "stock_product_id": int(movement["product_id"]),
+            "stock_warehouse_id": int(movement["source_warehouse_id"]),
+        }
+    inventory_line = (inventory["id"],0,amount,"تخفيض المخزون بتكلفة الصرف", stock_dims) if stock_dims else (
+        inventory["id"],0,amount,"تخفيض المخزون بتكلفة الصرف"
+    )
     entry_id = post_journal(c,movement_date,movement_no,
         f"قيد آلي لصرف مخزون - {product['name_ar']}",
-        [(expense_id,amount,0,expense_name),
-         (inventory["id"],0,amount,"تخفيض المخزون بتكلفة الصرف", stock_dims)],created_by,
+        [(expense_id,amount,0,expense_name), inventory_line],created_by,
         dimensions=dimensions)
     c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?", (entry_id, movement_id))
     set_stock_accounting_note(c,movement_id,None)
