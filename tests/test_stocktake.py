@@ -29,6 +29,10 @@ class StocktakeRouteTests(unittest.TestCase):
             qty_in,qty_remaining,unit_cost,value_remaining) VALUES(?,?,?,'10','10','5','50')""",
             (self.product_id,self.warehouse_id,movement_id))
         conn.execute("CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,account_type TEXT,is_group INTEGER,active INTEGER)")
+        conn.executemany("INSERT INTO accounts(code,name_ar,account_type,is_group,active) VALUES(?,?,?,?,?)", [
+            ("1130","مخزون","asset",0,1),
+            ("6990","فروق الجرد","expense",0,1),
+        ])
         conn.execute("""CREATE TABLE financial_years(
             id INTEGER PRIMARY KEY, year_name TEXT, start_date TEXT, end_date TEXT, status TEXT
         )""")
