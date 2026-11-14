@@ -253,7 +253,8 @@ def statement_reconciliation():
                 if period_end<period_start: raise ValueError("تاريخ نهاية كشف البنك يجب ألا يسبق تاريخ بدايته.")
                 if not c.execute("""SELECT 1 FROM accounts a WHERE a.id=? AND a.account_type='asset'
                     AND a.is_group=0 AND a.active=1
-                    AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.kind='bank' AND ca.active=1)
+                    AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.kind='bank' AND ca.active=1
+                        AND ca.currency_code=(SELECT setting_value FROM company_settings WHERE setting_key='base_currency'))
                       OR lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%')""",
                     (account_id,)).fetchone():
                     raise ValueError("اختر حساب بنك تفصيليًا ونشطًا من سجل الخزائن والبنوك.")
