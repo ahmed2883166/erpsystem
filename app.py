@@ -2950,11 +2950,12 @@ def users():
 @app.route("/users/roles", methods=["POST"])
 @requires("users.manage")
 def manage_user_roles():
-    if session.get("role") != "admin":
-        flash("إدارة قوالب الأدوار المخصصة متاحة لمدير النظام فقط.", "error")
-        return redirect(url_for("users"))
     connection = db()
     initialize_roles_schema(connection)
+    if session.get("role") != "admin":
+        connection.close()
+        flash("إدارة قوالب الأدوار المخصصة متاحة لمدير النظام فقط.", "error")
+        return redirect(url_for("users"))
     action = request.form.get("action", "")
     role_key = request.form.get("role_key", "").strip()
     try:

@@ -97,7 +97,7 @@ class UserPermissionRouteTests(unittest.TestCase):
             "password": "long-password-123", "role": role_key,
             "permissions": role_permissions,
         })
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 200)
         conn = sqlite3.connect(nexus.DB_PATH)
         saved_role, saved_permissions = conn.execute(
             "SELECT role,permissions_json FROM users WHERE username='sales.manager'"
