@@ -2137,11 +2137,13 @@ def new_credit_note():
             if not invoice:
                 raise ValueError("فاتورة البيع غير موجودة.")
             selected = []
-            for line_id, qty in zip(request.form.getlist("invoice_line_id"), request.form.getlist("return_quantity")):
+            for line_id, qty, uom_key in zip(
+                request.form.getlist("invoice_line_id"),
+                request.form.getlist("return_quantity"),
+                request.form.getlist("return_uom_key"),
+            ):
                 if qty and Decimal(qty) > 0:
-                    uom_key = request.form.getlist("return_uom_key")
-                selected.append({"invoice_line_id": int(line_id), "quantity": qty,
-                                 "uom_key": uom_key[len(selected)] if len(uom_key) > len(selected) else ""})
+                    selected.append({"invoice_line_id": int(line_id), "quantity": qty, "uom_key": uom_key})
             c.execute("BEGIN IMMEDIATE")
             result = post_credit_note(
                 c, invoice_id, request.form["credit_date"], request.form.get("reason", ""),
