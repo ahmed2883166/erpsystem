@@ -1141,6 +1141,7 @@ def payroll_run(run_id):
         "tax": M(sum((D(x["taxable_income_tax"]) for x in rows), Decimal("0"))),
         "employee_insurance": M(sum((D(x["employee_insurance"]) for x in rows), Decimal("0"))),
         "employer_insurance": M(sum((D(x["employer_insurance"]) for x in rows), Decimal("0"))),
+        "penalty_deduction": M(sum((D(x["penalty_deduction"]) if "penalty_deduction" in x.keys() else Decimal("0") for x in rows), Decimal("0"))),
         "net_pay": M(sum((D(x["net_pay"]) for x in rows), Decimal("0"))),
     }
     remaining_payable = M(max(Decimal("0"), totals["net_pay"] - paid_amount))
