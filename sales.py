@@ -310,6 +310,26 @@ def _sales_account_codes(conn, activity):
     return codes
 
 
+def _sales_return_account(conn, activity, fallback_code):
+    """Resolve the activity's contra-revenue account for sales returns."""
+    candidates = conn.execute(
+        """SELECT id,code,account_type,is_group,active,name_ar FROM accounts
+           WHERE account_type='revenue' AND is_group=0 AND active=1
+             AND (name_ar LIKE '%مردود%' OR name_ar LIKE '%مسموحات%'
+                  OR name_ar LIKE '%خصومات%')
+           ORDER BY CASE
+             WHEN name_ar LIKE '%مردود%' THEN 0
+             WHEN name_ar LIKE '%مسموحات%' THEN 1
+             ELSE 2 END, code"""
+    ).fetchall()
+    if candidates:
+        return candidates[0]["id"]
+    # Older/custom charts may not yet contain a dedicated contra-revenue
+    # account. Preserve compatibility rather than creating a new account
+    # or changing an existing invoice's original revenue mapping.
+    return _account(conn, fallback_code, "revenue")
+
+
 def _sales_output_vat_account(conn, activity):
     from activity_profiles import active_tax_roles
     role_map = active_tax_roles(conn)
@@ -686,7 +706,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
     codes = _sales_account_codes(conn, activity)
     ar = _account(conn, codes["ar"], "asset")
     credit_revenue_code = invoice["revenue_account_code"] or codes["revenue"]
-    revenue = _account(conn, credit_revenue_code, "revenue")
+    revenue = _sales_return_account(conn, activity, credit_revenue_code)
     vat_account = None
 
     normalized = []
