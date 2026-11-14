@@ -970,13 +970,10 @@ def movements():
             if product["product_type"] == "service": raise ValueError("الخدمات لا تُدار كأصناف مخزنية.")
             entered_qty=q4(dec(request.form.get("quantity"),"الكمية"))
             if entered_qty<=0: raise ValueError("الكمية يجب أن تكون أكبر من صفر.")
-            entered_uom_id=request.form.get("uom_id",type=int)
+            entered_uom_id=request.form.get("uom_id") or None
             if product["base_uom_id"]:
-                base_uom=c.execute("SELECT id,category_id,factor_to_base FROM stock_uoms WHERE id=? AND active=1",(product["base_uom_id"],)).fetchone()
-                entered_uom=c.execute("SELECT id,category_id,factor_to_base FROM stock_uoms WHERE id=? AND active=1",(entered_uom_id,)).fetchone() if entered_uom_id else None
-                if not base_uom or not entered_uom or entered_uom["category_id"]!=base_uom["category_id"]:
-                    raise ValueError("وحدة الحركة يجب أن تكون من نفس مجموعة وحدة الصنف.")
-                qty=q4(entered_qty*D(str(entered_uom["factor_to_base"]))/D(str(base_uom["factor_to_base"])))
+                factor,_=product_uom_factor(c,product["id"],entered_uom_id)
+                qty=q4(entered_qty*factor)
             else:
                 if entered_uom_id: raise ValueError("الصنف القديم غير مربوط بدليل وحدات القياس؛ استخدم وحدته الحالية.")
                 qty=entered_qty
@@ -1052,7 +1049,7 @@ def movements():
         finally: c.close()
         return redirect(url_for("stock.movements"))
     products=c.execute("SELECT p.id,p.sku,p.name_ar,p.uom,p.base_uom_id,p.track_lot,p.track_expiry,u.category_id base_uom_category FROM stock_products p LEFT JOIN stock_uoms u ON u.id=p.base_uom_id WHERE p.active=1 ORDER BY p.name_ar").fetchall()
-    movement_uoms=c.execute("SELECT id,category_id,name_ar,factor_to_base FROM stock_uoms WHERE active=1 ORDER BY name_ar").fetchall()
+    product_uoms={p["id"]:product_uom_options(c,p["id"]) for p in products}
     warehouses=c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     locations=c.execute("SELECT id,warehouse_id,code,name_ar,location_type FROM stock_locations WHERE active=1 ORDER BY warehouse_id,code").fetchall()
     movement_page = max(1, request.args.get("movement_page", 1, type=int) or 1)
@@ -1068,7 +1065,7 @@ def movements():
       ORDER BY m.id DESC LIMIT ? OFFSET ?""",
       (movement_per_page, (movement_page - 1) * movement_per_page)).fetchall()
     c.close()
-    return render_template("stock_movements.html",products=products,movement_uoms=movement_uoms,warehouses=warehouses,locations=locations,rows=rows,
+    return render_template("stock_movements.html",products=products,product_uoms=product_uoms,warehouses=warehouses,locations=locations,rows=rows,
         movement_page=movement_page,movement_pages=movement_pages,movement_per_page=movement_per_page,
         movement_total=movement_total,today=date.today().isoformat())
 
