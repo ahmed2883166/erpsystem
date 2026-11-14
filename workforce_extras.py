@@ -228,7 +228,7 @@ def employee_financial_statement(employee_id):
         "paid":M(sum((D(a["amount"]) for line in lines for a in paid_by_line[line["id"]]),Decimal("0"))),
         "employer_insurance":M(sum((D(x["employer_insurance"]) for x in lines),Decimal("0"))),
     }
-    summary["remaining"] = M(summary["net"]-summary["paid"])
+    summary["remaining"] = M(max(Decimal("0"),summary["net"]-summary["paid"]))
     unallocated = c.execute("""SELECT p.period,pp.payment_date,pp.amount,pp.reference
         FROM payroll_payments pp JOIN payroll_runs p ON p.id=pp.run_id
         WHERE p.status IN ('posted','reversed')
