@@ -25,8 +25,7 @@
       <label class="checkline"><input type="checkbox" name="is_group" value="yes"> اجعل الحساب رئيسيًا تجميعيًا (لا يقبل قيودًا مباشرة). اتركه بدون تحديد إذا كان حسابًا فرعيًا تفصيليًا.</label>
       <button>حفظ الحساب</button>
     </form>
-    <hr><h3>استيراد حسابات CSV</h3>
-    <form action="{{ url_for('import_accounts') }}" method="post" enctype="multipart/form-data"><input type="file" name="file" accept=".csv" required><button>استيراد</button></form>
+    <hr><h3>استيراد الحسابات</h3><p class="muted">استخدم أداة الاستيراد لمطابقة أعمدة Excel أو CSV مع حقول دليل الحسابات وتجاهل الأعمدة غير المطلوبة.</p><a class="btn secondary" href="{{ url_for('import_data_wizard') }}">فتح أداة استيراد البيانات</a>
   </section>{% endif %}
   <section class="panel print-area">
     <div class="section-heading account-tree-toolbar"><div><h3>شجرة الحسابات</h3><p class="muted">عدد الحسابات: {{ accounts|length }} · افتح أي مستوى لرؤية الفروع التابعة له.</p></div><div class="table-actions no-print"><input id="accountTreeSearch" type="search" placeholder="ابحث بالكود أو اسم الحساب" aria-label="بحث في شجرة الحسابات"><button type="button" class="secondary" id="expandAccountTree">فتح الكل</button><button type="button" class="secondary" id="collapseAccountTree">إغلاق الكل</button><span class="pill">NEXUS ERP</span></div></div>
