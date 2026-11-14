@@ -54,6 +54,7 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.assertIn("supplier_bills", names)
         self.assertIn("supplier_payments", names)
         self.assertIn("supplier_payment_allocations", names)
+        self.assertIn("purchase_requests", names)
 
     def test_supplier_invoice_is_unique_and_receipt_can_be_allocated_partially(self):
         purchases.init_purchase_schema()
