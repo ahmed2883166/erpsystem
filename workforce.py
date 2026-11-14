@@ -371,7 +371,7 @@ def _salary_change_preview(c, form):
     if date.fromisoformat(effective_date) > date.today():
         raise ValueError("لا تعتمد القرار قبل تاريخ سريانه. يمكن معاينة القرار، ثم اعتماده في يوم السريان أو بعده حتى لا تُصرف الزيادة مبكرًا.")
     if (not decision_no or not title or value <= 0
-        or scope not in {"all_active","permanent","comprehensive_bonus","unpaid_leave","resigned","retired"}
+        or scope not in {"all_active","permanent","comprehensive_bonus","unpaid_leave"}
         or calc_type not in {"fixed","percentage"} or calc_base not in {"basic","insured_wage"}
         or treatment not in {"basic","allowance"}):
         raise ValueError("أكمل رقم القرار واسمه وتواريخه وحدد نطاق الموظفين وقاعدة الحساب والمعالجة وقيمة موجبة.")
@@ -584,6 +584,7 @@ def import_employees_excel():
             "address": ("العنوان", "address"),
             "national_id": ("الرقم القومي", "رقم قومي", "national_id"),
             "insurance_number": ("رقم التأمين", "رقم التأمين الاجتماعي", "insurance_number"),
+            "termination_date": ("تاريخ انتهاء الخدمة", "تاريخ الاستقالة", "تاريخ المعاش", "termination_date"),
             "basic_salary": ("الأساسي", "الراتب الأساسي", "basic_salary"),
             "variable_salary": ("المتغير", "الأجر المتغير", "variable_salary"),
             "work_status": ("الحالة الوظيفية", "work_status", "employment_status"),
@@ -630,6 +631,16 @@ def import_employees_excel():
             status = status_map.get(raw_status.lower(), status_map.get(raw_status))
             if not status:
                 raise ValueError(f"صف Excel رقم {excel_row}: الحالة الوظيفية غير معروفة ({raw_status}).")
+            termination_date = str(cell("termination_date", "")).strip()
+            if termination_date:
+                try:
+                    date.fromisoformat(termination_date)
+                except ValueError:
+                    raise ValueError(f"صف Excel رقم {excel_row}: تاريخ انتهاء الخدمة غير صحيح.")
+            if status in {"resigned", "retired"} and not termination_date:
+                raise ValueError(f"صف Excel رقم {excel_row}: يجب إدخال تاريخ انتهاء الخدمة للمستقيل أو المحال للمعاش.")
+            if status not in {"resigned", "retired"}:
+                termination_date = ""
             active_raw = str(cell("active", "1")).strip().lower()
             active = 0 if active_raw in ("0", "false", "no", "لا", "غير نشط", "موقوف", "متوقف") else 1
             parsed_rows.append({
@@ -637,6 +648,7 @@ def import_employees_excel():
                 "national_id": str(cell("national_id")).strip(),
                 "insurance_number": str(cell("insurance_number")).strip(),
                 "basic": str(basic), "variable": str(variable), "status": status, "active": active,
+                "termination_date": termination_date,
             })
         if not parsed_rows:
             raise ValueError("ملف Excel لا يحتوي على صفوف موظفين.")
@@ -647,16 +659,16 @@ def import_employees_excel():
             existing = c.execute("SELECT id FROM employees WHERE employee_code=?", (row["code"],)).fetchone()
             if existing:
                 c.execute("""UPDATE employees SET full_name=?,address=?,national_id=?,insurance_number=?,
-                    basic_salary=?,variable_salary=?,work_status=?,active=? WHERE id=?""",
+                    basic_salary=?,variable_salary=?,work_status=?,active=?,termination_date=? WHERE id=?""",
                     (row["name"],row["address"],row["national_id"],row["insurance_number"],
-                     row["basic"],row["variable"],row["status"],row["active"],existing["id"]))
+                     row["basic"],row["variable"],row["status"],row["active"],row["termination_date"],existing["id"]))
                 updated += 1
             else:
                 c.execute("""INSERT INTO employees(employee_code,full_name,address,national_id,insurance_number,
-                    basic_salary,variable_salary,work_status,active,hire_date)
-                    VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    basic_salary,variable_salary,work_status,active,hire_date,termination_date)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                     (row["code"],row["name"],row["address"],row["national_id"],row["insurance_number"],
-                     row["basic"],row["variable"],row["status"],row["active"],date.today().isoformat()))
+                     row["basic"],row["variable"],row["status"],row["active"],date.today().isoformat(),row["termination_date"]))
                 created += 1
         _audit(c, "employees_excel_import", f"created={created};updated={updated}")
         c.commit()
@@ -1084,13 +1096,11 @@ def payroll():
             c.rollback()
             flash(str(e) or "تعذر إنشاء مسير الرواتب.", "error")
     display_period = date.today().strftime("%Y-%m")
-    display_start = date.fromisoformat(display_period + "-01")
-    display_end = (date(display_start.year + (display_start.month == 12),
-                         1 if display_start.month == 12 else display_start.month + 1, 1) - date.resolution).isoformat()
-    employee_rows = c.execute("""SELECT * FROM employees WHERE active=1 AND (
-        work_status IN ('comprehensive_bonus','permanent') OR
-        (work_status IN ('resigned','retired') AND termination_date>=? AND termination_date<=?)
-        ) ORDER BY employee_code""", (display_period + "-01", display_end)).fetchall()
+    # Show former employees in the input grid so final payroll can be prepared for any selected month.
+    # POST includes them only in the month containing their termination date.
+    employee_rows = c.execute("""SELECT * FROM employees WHERE active=1
+        AND work_status IN ('comprehensive_bonus','permanent','resigned','retired')
+        ORDER BY employee_code""").fetchall()
     employees = []
     for employee_row in employee_rows:
         employee = dict(employee_row)
