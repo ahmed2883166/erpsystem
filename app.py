@@ -2477,6 +2477,8 @@ def _read_import_upload(upload):
         raise ValueError("اختر ملف Excel بصيغة XLSX أو CSV.")
     if len(values) < 2:
         raise ValueError("يجب أن يحتوي الملف على صف عناوين وصف بيانات واحد على الأقل.")
+    if len(values) > 10001:
+        raise ValueError("الملف يتجاوز الحد المسموح وهو 10,000 صف بيانات.")
     headers = []
     for index, value in enumerate(values[0]):
         label = str(value).strip() if value is not None else ""
@@ -2509,6 +2511,9 @@ def import_data_wizard():
     token = session.get("import_stage_token")
     if action == "upload":
         upload = request.files.get("file")
+        if not upload or not upload.filename:
+            flash("اختر ملف Excel أو CSV أولًا.", "error")
+            return redirect(url_for("import_data_wizard"))
         dataset = request.form.get("dataset", "accounts")
         config = IMPORT_DATASETS.get(dataset)
         if not config:
@@ -2520,7 +2525,7 @@ def import_data_wizard():
         try:
             headers, rows = _read_import_upload(upload)
             token = uuid.uuid4().hex
-            payload = {"dataset": dataset, "filename": Path(upload.filename).name,
+            payload = {"dataset": dataset, "filename": upload.filename.replace("\\\\", "/").split("/")[-1],
                        "headers": headers, "rows": rows}
             (stage_dir / (token + ".json")).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             session["import_stage_token"] = token
