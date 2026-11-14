@@ -739,9 +739,11 @@ def order_print(order_id):
         item["line_total"] = Decimal(str(row["quantity"])) * Decimal(str(row["unit_price"]))
         item["display_quantity"] = row["entered_quantity"] or row["quantity"]
         try:
-            _, item["display_uom"] = product_uom_factor(c,row["product_id"],row["uom_id"])
+            factor, item["display_uom"] = product_uom_factor(c,row["product_id"],row["uom_id"])
+            item["display_unit_price"] = Decimal(str(row["unit_price"]))*factor
         except (ValueError,TypeError):
             item["display_uom"] = row["uom"]
+            item["display_unit_price"] = Decimal(str(row["unit_price"]))
         order_total += item["line_total"]
         lines.append(item)
     settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
