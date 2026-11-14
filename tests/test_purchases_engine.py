@@ -204,6 +204,121 @@ class PurchasingAccountingTests(unittest.TestCase):
             purchases.post_supplier_bill(self.db, bill_id, 30)
         self.db.rollback()
 
+    def test_supplier_price_discount_clears_grni_and_reduces_remaining_stock_and_cogs(self):
+        purchases.init_purchase_schema()
+        self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1150','مخزون','asset',0)"
+        )
+        self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('5100','تكلفة المبيعات','expense',0)"
+        )
+        self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-PRICE','مورد خصم سعر')")
+        supplier_id = self.db.execute(
+            "SELECT id FROM suppliers WHERE code='SUP-PRICE'"
+        ).fetchone()["id"]
+        self.db.execute("INSERT INTO stock_warehouses(code,name_ar) VALUES('W-PRICE','مخزن الخصم')")
+        warehouse_id = self.db.execute(
+            "SELECT id FROM stock_warehouses WHERE code='W-PRICE'"
+        ).fetchone()["id"]
+        self.db.execute("INSERT INTO stock_products(id,sku,name_ar) VALUES(501,'PRICE-ITEM','صنف خصم سعر')")
+        self.db.execute(
+            """INSERT INTO goods_receipts(receipt_no,supplier_id,warehouse_id,receipt_date,total_value)
+               VALUES('GR-PRICE',?,?,'2026-11-10','360')""",
+            (supplier_id, warehouse_id),
+        )
+        receipt_id = self.db.execute(
+            "SELECT id FROM goods_receipts WHERE receipt_no='GR-PRICE'"
+        ).fetchone()["id"]
+        self.db.execute(
+            """INSERT INTO goods_receipt_lines(receipt_id,product_id,quantity,unit_cost,total_cost)
+               VALUES(?,501,'10','36','360')""",
+            (receipt_id,),
+        )
+        self.db.execute(
+            """INSERT INTO stock_movements(
+                 movement_no,movement_type,product_id,target_warehouse_id,quantity,unit_cost,
+                 total_cost,movement_date,notes,accounting_status)
+               VALUES('PUR-GR-PRICE','receipt',501,?,'10','36','360','2026-11-10',
+                      'استلام مشتريات GR-PRICE','posted')""",
+            (warehouse_id,),
+        )
+        movement_id = self.db.execute(
+            "SELECT id FROM stock_movements WHERE movement_no='PUR-GR-PRICE'"
+        ).fetchone()["id"]
+        self.db.execute(
+            """INSERT INTO stock_valuation_layers(
+                 product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost)
+               VALUES(501,?,?,'10','5','36')""",
+            (warehouse_id, movement_id),
+        )
+        self.db.execute(
+            """INSERT INTO supplier_bills(
+                 bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,subtotal,
+                 tax_rate,tax_amount,total_amount,created_by,status,bill_kind)
+               VALUES('BILL-PRICE',?,'2026-11-11','2026-12-11','INV-PRICE',
+                      '340','0','0','340',1,'approved','inventory')""",
+            (supplier_id,),
+        )
+        bill_id = self.db.execute(
+            "SELECT id FROM supplier_bills WHERE bill_no='BILL-PRICE'"
+        ).fetchone()["id"]
+        self.db.execute(
+            "INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
+            (bill_id, receipt_id, "360"),
+        )
+        self.db.commit()
+
+        allocation = purchases._validate_supplier_receipt_allocations(
+            self.db, supplier_id, [receipt_id], purchases.money("340"),
+            {"receipt_amount_" + str(receipt_id): "360"},
+        )
+        self.assertEqual(allocation, [(receipt_id, purchases.money("360"))])
+
+        with patch("purchases.supplier_ap_account", return_value=99), \
+             patch("purchases._activity_posting_accounts", return_value={
+                 "supplier_ap": "2110", "purchase_inventory": "1150", "cogs": "5100"
+             }), \
+             patch("activity_profiles.resolve_product_account_code",
+                   side_effect=lambda _c, _p, role, default: "1150" if role == "inventory" else "5100"), \
+             patch("purchases.create_journal", return_value=777) as journal:
+            entry_id = purchases.post_supplier_bill(self.db, bill_id, 2)
+
+        self.assertEqual(entry_id, 777)
+        journal_lines = journal.call_args.args[4]
+        self.assertEqual(
+            [(line[0], Decimal(str(line[1])), Decimal(str(line[2]))) for line in journal_lines],
+            [
+                (self.db.execute("SELECT id FROM accounts WHERE code='2190'").fetchone()["id"],
+                 Decimal("360"), Decimal("0")),
+                (self.db.execute("SELECT id FROM accounts WHERE code='1150'").fetchone()["id"],
+                 Decimal("0"), Decimal("10.00")),
+                (self.db.execute("SELECT id FROM accounts WHERE code='5100'").fetchone()["id"],
+                 Decimal("0"), Decimal("10.00")),
+                (99, Decimal("0"), Decimal("340")),
+            ],
+        )
+        layer = self.db.execute(
+            "SELECT qty_remaining,unit_cost FROM stock_valuation_layers WHERE source_movement_id=?",
+            (movement_id,),
+        ).fetchone()
+        self.assertEqual(Decimal(layer["qty_remaining"]), Decimal("5"))
+        self.assertEqual(Decimal(layer["unit_cost"]), Decimal("34"))
+        movement = self.db.execute(
+            "SELECT unit_cost,total_cost FROM stock_movements WHERE id=?", (movement_id,)
+        ).fetchone()
+        self.assertEqual((Decimal(movement["unit_cost"]), Decimal(movement["total_cost"])),
+                         (Decimal("34"), Decimal("340")))
+        receipt_line = self.db.execute(
+            "SELECT unit_cost,total_cost FROM goods_receipt_lines WHERE receipt_id=?",
+            (receipt_id,),
+        ).fetchone()
+        self.assertEqual((Decimal(receipt_line["unit_cost"]), Decimal(receipt_line["total_cost"])),
+                         (Decimal("34"), Decimal("340")))
+        self.assertEqual(
+            purchases._supplier_receipt_available_amount(self.db, receipt_id),
+            purchases.money("0"),
+        )
+
     def test_asset_supplier_bill_posts_ppe_and_creates_linked_asset_record(self):
         purchases.init_purchase_schema()
         fixed_assets.initialize_assets_schema()
