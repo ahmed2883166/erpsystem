@@ -2720,7 +2720,7 @@ def import_data_wizard():
             pass
         session.pop("import_stage_token", None)
         return render_template("import_data_result.html", inserted=inserted, skipped=skipped, errors=errors,
-                               total=len(rows), source_name=payload.get("filename"))
+                               total=len(rows), source_name=payload.get("filename"), dataset=dataset)
     if action == "cancel":
         if token and token.isalnum() and len(token) == 32:
             try:
