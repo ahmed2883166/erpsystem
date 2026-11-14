@@ -3,6 +3,7 @@
 {% if session.user_id %}
 <aside><h1>NEXUS <small>ERP</small></h1><p class="user">{{ session.full_name }}<br><small>{{ session.role }}</small></p><nav>
 {% if 'reports.view' in permissions %}<a class="nav-home" href="{{ url_for('dashboard') }}">⌂ الرئيسية</a>{% endif %}
+{% if 'import_export.manage' in permissions %}<a class="nav-home" href="{{ url_for('import_data_wizard') }}">⇧ استيراد البيانات من Excel / CSV</a>{% endif %}
 
 {% if 'stock.view' in permissions or 'stock.manage' in permissions %}
 <details class="nav-group" open>
