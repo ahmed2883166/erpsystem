@@ -489,6 +489,79 @@ def index():
         bill_page=bill_page,payments_page=payments_page,credit_notes_page=credit_notes_page,
         today=date.today().isoformat())
 
+@purchase_bp.route("/three-way-match")
+@require("purchases.view")
+def three_way_match():
+    c = db()
+    query = """
+        SELECT po.po_no,po.order_date,po.status AS order_status,
+               s.name AS supplier_name,p.sku,p.name_ar AS product_name,p.uom,
+               pol.id AS po_line_id,pol.quantity AS ordered_quantity,
+               pol.unit_price AS ordered_unit_price,
+               COALESCE(rec.received_quantity,'0') AS received_quantity,
+               rec.received_value,
+               COALESCE(inv.billed_quantity,'0') AS billed_quantity,
+               inv.billed_value
+        FROM purchase_order_lines pol
+        JOIN purchase_orders po ON po.id=pol.po_id
+        JOIN suppliers s ON s.id=po.supplier_id
+        JOIN stock_products p ON p.id=pol.product_id
+        LEFT JOIN (
+            SELECT gl.po_line_id,SUM(CAST(gl.quantity AS REAL)) AS received_quantity,
+                   SUM(CAST(gl.total_cost AS REAL)) AS received_value
+            FROM goods_receipt_lines gl
+            JOIN goods_receipts gr ON gr.id=gl.receipt_id
+            WHERE gr.status='posted' AND gl.po_line_id IS NOT NULL
+            GROUP BY gl.po_line_id
+        ) rec ON rec.po_line_id=pol.id
+        LEFT JOIN (
+            SELECT gl.po_line_id,SUM(CAST(bl.billed_quantity AS REAL)) AS billed_quantity,
+                   SUM(CAST(bl.line_total AS REAL)) AS billed_value
+            FROM supplier_bill_inventory_lines bl
+            JOIN supplier_bills sb ON sb.id=bl.bill_id
+            JOIN goods_receipt_lines gl ON gl.id=bl.receipt_line_id
+            WHERE sb.status IN ('draft','pending_approval','approved','posted')
+              AND gl.po_line_id IS NOT NULL
+            GROUP BY gl.po_line_id
+        ) inv ON inv.po_line_id=pol.id
+        ORDER BY po.order_date DESC,po.id DESC,pol.id
+    """
+    page = fetch_page(c, query, "SELECT COUNT(*) FROM purchase_order_lines",
+        page=request.args.get("page",1,type=int),
+        per_page=request.args.get("per_page",50,type=int))
+    rows = []
+    for raw in page["rows"]:
+        row = dict(raw)
+        ordered = Decimal(str(row["ordered_quantity"] or "0"))
+        received = Decimal(str(row["received_quantity"] or "0"))
+        billed = Decimal(str(row["billed_quantity"] or "0"))
+        ordered_price = Decimal(str(row["ordered_unit_price"] or "0"))
+        received_value = Decimal(str(row["received_value"] or "0"))
+        billed_value = Decimal(str(row["billed_value"] or "0"))
+        row["received_unit_price"] = (received_value / received) if received else None
+        row["invoice_unit_price"] = (billed_value / billed) if billed else None
+        row["unbilled_quantity"] = received - billed
+        row["quantity_gap"] = received - billed
+        row["price_gap"] = (row["invoice_unit_price"] - ordered_price) if billed else None
+        if received == 0:
+            row["match_status"] = "لم يتم الاستلام"
+        elif billed == 0:
+            row["match_status"] = "مستلم ولم يفوتر"
+        elif billed > received:
+            row["match_status"] = "كمية مفوترة أكبر من المستلم"
+        elif billed < received:
+            row["match_status"] = "فوترة جزئية"
+        elif row["price_gap"] is not None and abs(row["price_gap"]) >= Decimal("0.01"):
+            row["match_status"] = "فرق سعر"
+        elif received < ordered:
+            row["match_status"] = "استلام جزئي"
+        else:
+            row["match_status"] = "مطابق"
+        rows.append(row)
+    c.close()
+    return render_template("purchase_three_way_match.html", rows=rows, page=page)
+
+
 @purchase_bp.route("/integrity")
 @require("purchases.view")
 def integrity_issues():
@@ -1183,7 +1256,7 @@ def _validate_supplier_bill_inventory_lines(c, supplier_id, receipt_ids, subtota
             SELECT COALESCE(SUM(x.billed_quantity), '0')
             FROM supplier_bill_inventory_lines x
             JOIN supplier_bills b ON b.id=x.bill_id
-            WHERE x.receipt_line_id=? AND b.status<>'cancelled'
+            WHERE x.receipt_line_id=? AND b.status IN ('draft','pending_approval','approved','posted')
         """
         params = [receipt_line_id]
         if exclude_bill_id is not None:
