@@ -2132,7 +2132,7 @@ def new_credit_note():
             for line in lines:
                 item = dict(line)
                 item["credited_qty"] = str(prior_by_line.get(line["id"], Decimal("0")))
-                item["uom_options"] = product_uom_options(c, line["product_id"]) if line["product_id"] else []
+                item["uom_options"] = [u for u in product_uom_options(c, line["product_id"]) if u.get("sales_enabled", 1)] if line["product_id"] else []
                 if line["product_id"] and not item["uom_options"]:
                     product_unit = c.execute("SELECT uom FROM stock_products WHERE id=?", (line["product_id"],)).fetchone()
                     item["uom_options"] = [{"id":"", "name_ar": product_unit["uom"], "is_base":1}] if product_unit else []
