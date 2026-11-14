@@ -1180,6 +1180,50 @@ def payroll_run(run_id):
                            today=date.today().isoformat(), totals=totals, period_end=period_end)
 
 
+
+@workforce_bp.route("/hr/payroll/<int:run_id>/employee/<int:employee_id>/payslip", methods=["GET"])
+@_role("admin", "accountant", "viewer")
+def payroll_employee_payslip(run_id, employee_id):
+    """Printable employee payslip based exclusively on the saved payroll snapshot."""
+    c = _db()
+    row = c.execute("""
+        SELECT r.id AS run_id,r.period,r.status,
+               e.id AS employee_id,e.employee_code,e.full_name,e.job_title,e.department,
+               e.hire_date,e.insurance_number,
+               l.*
+        FROM payroll_runs r
+        JOIN payroll_lines l ON l.run_id=r.id
+        JOIN employees e ON e.id=l.employee_id
+        WHERE r.id=? AND e.id=?
+    """, (run_id, employee_id)).fetchone()
+    if not row:
+        c.close()
+        flash("قسيمة الراتب غير موجودة لهذا الموظف والمسير المحدد.", "error")
+        return redirect(url_for("workforce.payroll"))
+    if row["status"] not in {"posted", "reversed"}:
+        c.close()
+        flash("القسيمة النهائية متاحة بعد ترحيل المسير فقط.", "error")
+        return redirect(url_for("workforce.payroll_run", run_id=run_id))
+
+    data = dict(row)
+    loan_deduction = M(data.get("loan_deduction") or "0")
+    total_advance = M(data.get("advance_deduction") or "0")
+    data["loan_deduction"] = loan_deduction
+    data["manual_advance_deduction"] = M(max(Decimal("0"), total_advance - loan_deduction))
+    data["employee_deductions"] = M(
+        D(data["absence_deduction"]) + total_advance + D(data["other_deductions"])
+        + D(data["taxable_income_tax"]) + D(data["employee_insurance"])
+    )
+    data["net_pay"] = M(data["net_pay"])
+    data["total_entitlements"] = M(data["total_entitlements"])
+    data["total_deductions"] = M(data["total_deductions"])
+    data["gross_pay"] = M(data["gross_pay"])
+    # Payments are tracked at payroll-run level; do not attribute a run payment
+    # to one employee when the system has no employee-level allocation record.
+    c.close()
+    return render_template("payroll_payslip.html", slip=data)
+
+
 @workforce_bp.route("/hr/payroll/<int:run_id>/post", methods=["POST"])
 @_role("admin", "accountant")
 def post_payroll(run_id):
