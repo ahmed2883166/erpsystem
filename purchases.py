@@ -954,7 +954,8 @@ def _supplier_grni_price_variance_lines(c, receipt_rows, discount_amount, matche
                 )
             movement = movement_rows[0]
             layers = c.execute(
-                "SELECT id,qty_in,qty_remaining,unit_cost FROM stock_valuation_layers WHERE source_movement_id=? ORDER BY id",
+                """SELECT id,qty_in,qty_remaining,unit_cost,value_remaining
+                   FROM stock_valuation_layers WHERE source_movement_id=? ORDER BY id""",
                 (movement["id"],),
             ).fetchall()
             if not layers:
@@ -1016,10 +1017,38 @@ def _supplier_grni_price_variance_lines(c, receipt_rows, discount_amount, matche
                 cogs_id, 0, consumed_discount,
                 "خصم سعر شراء يخفض تكلفة الأصناف المصروفة",
             ))
-        c.execute(
-            "UPDATE stock_valuation_layers SET unit_cost=? WHERE source_movement_id=?",
-            (str(new_unit_cost), item["movement"]["id"]),
+        # Keep the authoritative remaining layer value in sync with the
+        # IAS 2 discount allocation.  Distribute the remaining-stock portion
+        # by remaining quantity and put any cent-rounding residual on the last
+        # valuation layer so the layers reconcile exactly to the journal.
+        layer_rows = item["layers"]
+        layer_discount_left = remaining_value_discount
+        remaining_layer_qty = sum(
+            (Decimal(str(layer["qty_remaining"])) for layer in layer_rows),
+            Decimal("0"),
         )
+        for layer_index, layer in enumerate(layer_rows):
+            layer_qty = Decimal(str(layer["qty_remaining"]))
+            old_value = (
+                Decimal(str(layer["value_remaining"]))
+                if layer["value_remaining"] not in (None, "")
+                else layer_qty * Decimal(str(layer["unit_cost"]))
+            )
+            if layer_index == len(layer_rows) - 1:
+                layer_discount = layer_discount_left
+            elif remaining_layer_qty > 0:
+                layer_discount = money(remaining_value_discount * layer_qty / remaining_layer_qty)
+                layer_discount_left = money(layer_discount_left - layer_discount)
+            else:
+                layer_discount = money("0")
+            new_layer_value = money(old_value - layer_discount)
+            if new_layer_value < 0:
+                raise ValueError("توزيع خصم المورد تجاوز قيمة إحدى طبقات المخزون.")
+            c.execute(
+                """UPDATE stock_valuation_layers
+                   SET unit_cost=?,value_remaining=? WHERE id=?""",
+                (str(new_unit_cost), str(new_layer_value), layer["id"]),
+            )
         c.execute(
             "UPDATE stock_movements SET unit_cost=?,total_cost=? WHERE id=?",
             (str(new_unit_cost), str(net_line_cost), item["movement"]["id"]),
