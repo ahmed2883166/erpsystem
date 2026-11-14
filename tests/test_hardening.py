@@ -1,7 +1,7 @@
 import sqlite3
 import unittest
 
-from accounting_core import post_journal
+from accounting_core import post_journal, safe_error_message
 
 
 class JournalHardeningTests(unittest.TestCase):
@@ -31,6 +31,18 @@ class JournalHardeningTests(unittest.TestCase):
 
     def tearDown(self):
         self.db.close()
+
+    def test_raw_database_errors_are_not_exposed_to_users(self):
+        message = safe_error_message(
+            sqlite3.OperationalError("no such column: id"),
+            "تعذر حفظ المستند. راجع البيانات ثم أعد المحاولة.",
+        )
+        self.assertEqual(message, "تعذر حفظ المستند. راجع البيانات ثم أعد المحاولة.")
+        self.assertNotIn("no such column", message)
+        self.assertEqual(
+            safe_error_message(ValueError("الحساب غير صالح.")),
+            "الحساب غير صالح.",
+        )
 
     def test_invalid_date_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "تاريخ القيد"):
