@@ -243,6 +243,11 @@ class ActivityProfileTests(unittest.TestCase):
         )
         self.assertEqual(resolve_product_account_code(self.conn, 999, "inventory", "1150"), "1130")
         self.assertEqual(resolve_product_account_code(self.conn, 999, "cogs", "5100"), "5400")
+        from activity_profiles import active_posting_accounts
+        posting = active_posting_accounts(self.conn)
+        self.assertEqual(posting["inventory"], "1130")
+        self.assertEqual(posting["purchase_inventory"], "1130")
+        self.assertEqual(posting["cogs"], "5400")
 
     def test_unknown_product_category_keeps_configured_default_account(self):
         from activity_profiles import resolve_product_account_code
