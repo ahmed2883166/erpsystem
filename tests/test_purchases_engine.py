@@ -289,12 +289,12 @@ class PurchasingAccountingTests(unittest.TestCase):
             [(line[0], Decimal(str(line[1])), Decimal(str(line[2]))) for line in journal_lines],
             [
                 (self.db.execute("SELECT id FROM accounts WHERE code='2190'").fetchone()["id"],
-                 Decimal("360"), Decimal("0")),
+                 Decimal("360.00"), Decimal("0")),
+                (99, Decimal("0"), Decimal("340.00")),
                 (self.db.execute("SELECT id FROM accounts WHERE code='1150'").fetchone()["id"],
                  Decimal("0"), Decimal("10.00")),
                 (self.db.execute("SELECT id FROM accounts WHERE code='5100'").fetchone()["id"],
                  Decimal("0"), Decimal("10.00")),
-                (99, Decimal("0"), Decimal("340")),
             ],
         )
         layer = self.db.execute(
