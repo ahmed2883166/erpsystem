@@ -166,6 +166,13 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.db.execute("""INSERT INTO goods_receipts(receipt_no,supplier_id,warehouse_id,receipt_date,total_value)
             VALUES('GR-BILL-APP',? ,?,'2026-11-13','100')""", (supplier_id, warehouse_id))
         receipt_id = self.db.execute("SELECT id FROM goods_receipts WHERE receipt_no='GR-BILL-APP'").fetchone()["id"]
+        self.db.execute("INSERT INTO stock_products(id,sku,name_ar) VALUES(92,'BILL-APP-ITEM','صنف فاتورة الاعتماد')")
+        self.db.execute("""INSERT INTO goods_receipt_lines(
+            receipt_id,product_id,quantity,unit_cost,total_cost
+        ) VALUES(?,92,'10','10','100')""", (receipt_id,))
+        receipt_line_id = self.db.execute(
+            "SELECT id FROM goods_receipt_lines WHERE receipt_id=?", (receipt_id,)
+        ).fetchone()["id"]
         self.db.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,
             subtotal,tax_rate,tax_amount,total_amount,created_by,status,bill_kind)
             VALUES('BILL-APP',?,'2026-11-13','2026-12-13','INV-APP','100','0','0','100',10,'draft','inventory')""",
@@ -173,6 +180,9 @@ class PurchasingAccountingTests(unittest.TestCase):
         bill_id = self.db.execute("SELECT id FROM supplier_bills WHERE bill_no='BILL-APP'").fetchone()["id"]
         self.db.execute("INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
                         (bill_id, receipt_id, "100"))
+        self.db.execute("""INSERT INTO supplier_bill_inventory_lines(
+            bill_id,line_no,receipt_line_id,product_id,billed_quantity,invoice_unit_price,line_total
+        ) VALUES(?,1,?,92,'10','10','100')""", (bill_id, receipt_line_id))
         self.db.commit()
 
         purchases.submit_supplier_bill(self.db, bill_id, 10)
