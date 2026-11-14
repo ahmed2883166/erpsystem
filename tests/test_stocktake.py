@@ -181,6 +181,126 @@ class StocktakeRouteTests(unittest.TestCase):
             flashes = session.get("_flashes", [])
         self.assertTrue(any("الفترة المحاسبية مغلقة" in message for _category, message in flashes))
 
+    def test_interbranch_transfer_full_flow_journal_stock_and_branch_analytics(self):
+        self._login()
+        conn = stock.get_db()
+        source_branch = conn.execute(
+            "INSERT INTO branches(code,name_ar) VALUES('BR-SRC','فرع المصدر')"
+        ).lastrowid
+        target_branch = conn.execute(
+            "INSERT INTO branches(code,name_ar) VALUES('BR-DST','فرع الوجهة')"
+        ).lastrowid
+        conn.execute("UPDATE stock_warehouses SET branch_id=? WHERE id=?",
+                     (source_branch,self.warehouse_id))
+        conn.execute("INSERT INTO stock_warehouses(code,name_ar,branch_id) VALUES('W-DST','مخزن الوجهة',?)",
+                     (target_branch,))
+        target_warehouse = conn.execute(
+            "SELECT id FROM stock_warehouses WHERE code='W-DST'"
+        ).fetchone()["id"]
+        conn.execute("INSERT INTO stock_warehouses(code,name_ar,branch_id) VALUES('W-SAME','مخزن نفس الفرع',?)",
+                     (source_branch,))
+        same_branch_warehouse = conn.execute(
+            "SELECT id FROM stock_warehouses WHERE code='W-SAME'"
+        ).fetchone()["id"]
+
+        conn.execute("""INSERT INTO accounts(code,name_ar,account_type,is_group,active)
+            VALUES('1185','تسوية تحويلات المخزون بين الفروع','asset',0,1)""")
+        conn.executescript("""
+            CREATE TABLE journal_entries(
+                id INTEGER PRIMARY KEY,entry_date TEXT NOT NULL,reference TEXT NOT NULL UNIQUE,
+                description TEXT NOT NULL,status TEXT NOT NULL,created_by INTEGER,created_at TEXT NOT NULL
+            );
+            CREATE TABLE journal_lines(
+                id INTEGER PRIMARY KEY,entry_id INTEGER NOT NULL,account_id INTEGER NOT NULL,
+                debit TEXT NOT NULL,credit TEXT NOT NULL,memo TEXT NOT NULL DEFAULT '',
+                branch_id INTEGER
+            );
+        """)
+        conn.commit()
+        conn.close()
+
+        def transfer(source, target, quantity, note):
+            response = self.client.post("/stock/movements", data={
+                "movement_type": "transfer", "product_id": str(self.product_id),
+                "quantity": str(quantity), "source_warehouse_id": str(source),
+                "target_warehouse_id": str(target), "movement_date": "2026-11-14",
+                "notes": note,
+            })
+            self.assertEqual(response.status_code, 302)
+
+        # Source has 10 units at 5 each. Transfer 4 units: value 20.
+        transfer(self.warehouse_id,target_warehouse,4,"تحويل بين فرعين")
+        conn = stock.get_db()
+        first = conn.execute("""SELECT * FROM stock_movements
+            WHERE movement_type='transfer' ORDER BY id DESC LIMIT 1""").fetchone()
+        self.assertEqual(first["accounting_status"],"posted")
+        self.assertIsNotNone(first["journal_entry_id"])
+        self.assertEqual(Decimal(first["total_cost"]),Decimal("20.00"))
+
+        source_qty = sum((Decimal(x["qty_remaining"]) for x in conn.execute(
+            "SELECT qty_remaining FROM stock_valuation_layers WHERE warehouse_id=?",
+            (self.warehouse_id,))),Decimal("0"))
+        target_qty = sum((Decimal(x["qty_remaining"]) for x in conn.execute(
+            "SELECT qty_remaining FROM stock_valuation_layers WHERE warehouse_id=?",
+            (target_warehouse,))),Decimal("0"))
+        self.assertEqual(source_qty,Decimal("6"))
+        self.assertEqual(target_qty,Decimal("4"))
+
+        first_lines = conn.execute("""SELECT jl.debit,jl.credit,jl.branch_id
+            FROM journal_lines jl WHERE jl.entry_id=? ORDER BY jl.id""",
+            (first["journal_entry_id"],)).fetchall()
+        self.assertEqual(len(first_lines),2)
+        branch_net = {source_branch:Decimal("0"),target_branch:Decimal("0")}
+        for line in first_lines:
+            branch_net[line["branch_id"]] += Decimal(line["debit"])-Decimal(line["credit"])
+        self.assertEqual(branch_net[target_branch],Decimal("20"))
+        self.assertEqual(branch_net[source_branch],Decimal("-20"))
+        self.assertEqual(sum(branch_net.values()),Decimal("0"))
+
+        # Reverse the same quantity: branch balances return to zero and stock returns.
+        transfer(target_warehouse,self.warehouse_id,4,"عكس التحويل بين الفرعين")
+        conn = stock.get_db()
+        movements = conn.execute("""SELECT * FROM stock_movements
+            WHERE movement_type='transfer' ORDER BY id""").fetchall()
+        self.assertEqual(len(movements),2)
+        self.assertTrue(all(m["accounting_status"]=="posted" for m in movements))
+        self.assertEqual(len({m["journal_entry_id"] for m in movements}),2)
+        source_qty = sum((Decimal(x["qty_remaining"]) for x in conn.execute(
+            "SELECT qty_remaining FROM stock_valuation_layers WHERE warehouse_id=?",
+            (self.warehouse_id,))),Decimal("0"))
+        target_qty = sum((Decimal(x["qty_remaining"]) for x in conn.execute(
+            "SELECT qty_remaining FROM stock_valuation_layers WHERE warehouse_id=?",
+            (target_warehouse,))),Decimal("0"))
+        self.assertEqual(source_qty,Decimal("10"))
+        self.assertEqual(target_qty,Decimal("0"))
+        total_stock_value = sum((Decimal(x["value_remaining"]) for x in conn.execute(
+            "SELECT value_remaining FROM stock_valuation_layers")),Decimal("0"))
+        self.assertEqual(total_stock_value,Decimal("50.00"))
+
+        # Trial-balance control: account 1185 is balanced in total; analytical net by branch is zero.
+        totals = conn.execute("""SELECT SUM(CAST(jl.debit AS NUMERIC)) debit,
+            SUM(CAST(jl.credit AS NUMERIC)) credit
+            FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+            WHERE a.code='1185'""").fetchone()
+        self.assertEqual(Decimal(str(totals["debit"])),Decimal("40.00"))
+        self.assertEqual(Decimal(str(totals["credit"])),Decimal("40.00"))
+        branch_rows = conn.execute("""SELECT jl.branch_id,
+            SUM(CAST(jl.debit AS NUMERIC))-SUM(CAST(jl.credit AS NUMERIC)) net
+            FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+            WHERE a.code='1185' GROUP BY jl.branch_id""").fetchall()
+        self.assertEqual({row["branch_id"]:Decimal(str(row["net"])) for row in branch_rows},
+                         {source_branch:Decimal("0"),target_branch:Decimal("0")})
+
+        # A transfer between warehouses of the same branch moves stock without a GL journal.
+        transfer(self.warehouse_id,same_branch_warehouse,1,"تحويل داخلي داخل نفس الفرع")
+        conn = stock.get_db()
+        same = conn.execute("""SELECT * FROM stock_movements
+            WHERE movement_type='transfer' ORDER BY id DESC LIMIT 1""").fetchone()
+        self.assertEqual(same["accounting_status"],"not_required")
+        self.assertIsNone(same["journal_entry_id"])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0],2)
+        conn.close()
+
     def test_stocktake_approval_is_blocked_if_year_closed_after_count(self):
         self._login()
         self.client.post("/stock/counts", data={
