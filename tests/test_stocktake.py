@@ -2,6 +2,7 @@ import os
 from decimal import Decimal
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 os.environ.setdefault("NEXUS_SECRET_KEY", "unit-test-secret-key-which-is-long-enough-123")
@@ -330,6 +331,72 @@ class StocktakeRouteTests(unittest.TestCase):
             session.update(user_id=7, username="viewer", role="viewer", permissions=["stock.view"])
         response = self.client.get("/stock/counts")
         self.assertEqual(response.status_code, 302)
+
+
+    def test_stocktake_shortage_and_surplus_both_use_6990(self):
+        self._login()
+        conn = stock.get_db()
+        second_product = conn.execute(
+            "INSERT INTO stock_products(sku,name_ar) VALUES('P2','صنف زيادة')"
+        ).lastrowid
+        second_receipt = conn.execute("""INSERT INTO stock_movements(
+            movement_no,movement_type,product_id,target_warehouse_id,quantity,unit_cost,
+            total_cost,movement_date)
+            VALUES('OPEN-2','receipt',?,?,'10','5','50','2026-01-01')""",
+            (second_product,self.warehouse_id)).lastrowid
+        conn.execute("""INSERT INTO stock_valuation_layers(
+            product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,
+            unit_cost,value_remaining)
+            VALUES(?,?,?,'10','10','5','50')""",
+            (second_product,self.warehouse_id,second_receipt))
+        conn.execute("""CREATE TABLE company_settings(
+            setting_key TEXT PRIMARY KEY,setting_value TEXT)""")
+        conn.execute("INSERT INTO company_settings VALUES('activity','commercial')")
+        conn.execute("INSERT INTO company_settings VALUES('inventory_cost_method','fifo')")
+        conn.commit()
+        conn.close()
+
+        self.client.post("/stock/counts", data={
+            "warehouse_id": str(self.warehouse_id), "count_date": "2026-11-11",
+        })
+        conn = stock.get_db()
+        header = conn.execute("SELECT * FROM stocktakes").fetchone()
+        lines = conn.execute("SELECT * FROM stocktake_lines ORDER BY product_id").fetchall()
+        self.assertEqual(len(lines), 2)
+        counts = {lines[0]["id"]: "8", lines[1]["id"]: "12"}
+        response = self.client.post("/stock/counts/" + str(header["id"]), data={
+            **{"counted_" + str(line_id): qty for line_id, qty in counts.items()},
+            **{"cost_" + str(line["id"]): "7" for line in lines},
+        })
+        self.assertEqual(response.status_code, 302)
+
+        with patch("stock.post_journal", return_value=777) as post:
+            response = self.client.post("/stock/counts/" + str(header["id"]) + "/approve")
+        self.assertEqual(response.status_code, 302)
+        post.assert_called_once()
+        journal_lines = post.call_args.args[4]
+        variance_id = conn.execute("SELECT id FROM accounts WHERE code='6990'").fetchone()["id"]
+        inventory_id = conn.execute("SELECT id FROM accounts WHERE code='1130'").fetchone()["id"]
+        self.assertEqual(
+            [(line[0], Decimal(str(line[1])), Decimal(str(line[2]))) for line in journal_lines],
+            [
+                (variance_id, Decimal("10.00"), Decimal("0")),
+                (inventory_id, Decimal("0"), Decimal("10.00")),
+                (inventory_id, Decimal("14.00"), Decimal("0")),
+                (variance_id, Decimal("0"), Decimal("14.00")),
+            ],
+        )
+        movements = conn.execute("""SELECT movement_type,accounting_status,journal_entry_id,total_cost
+            FROM stock_movements WHERE movement_no LIKE 'STK-%' OR notes IN ('عجز جرد فعلي','زيادة جرد فعلي')
+            ORDER BY id DESC LIMIT 2""").fetchall()
+        self.assertEqual(len(movements), 2)
+        self.assertTrue(all(row["accounting_status"] == "posted" for row in movements))
+        self.assertTrue(all(row["journal_entry_id"] == 777 for row in movements))
+        header = conn.execute("SELECT status,journal_entry_id FROM stocktakes WHERE id=?",
+                              (header["id"],)).fetchone()
+        self.assertEqual(header["status"], "approved")
+        self.assertEqual(header["journal_entry_id"], 777)
+        conn.close()
 
 
 if __name__ == "__main__":
