@@ -86,8 +86,15 @@ class SalesDiscountApprovalRouteTests(unittest.TestCase):
 
     def test_invoice_discount_approval_posts_invoice_once_and_links_decision(self):
         request_id = self._add_request()
+        def fake_post_invoice(*args, **kwargs):
+            conn = self._connect()
+            conn.execute("INSERT INTO sales_invoices(id,due_date) VALUES(71,NULL)")
+            conn.commit()
+            conn.close()
+            return {"invoice_id": 71, "invoice_no": "INV-71"}
+
         with patch.object(sales, "db", side_effect=self._connect), \
-             patch.object(sales, "post_invoice", return_value={"invoice_id": 71, "invoice_no": "INV-71"}) as post, \
+             patch.object(sales, "post_invoice", side_effect=fake_post_invoice) as post, \
              patch.object(nexus, "log"):
             self._login()
             response = self.client.post(
@@ -169,7 +176,8 @@ class SalesDiscountApprovalRouteTests(unittest.TestCase):
                 f"/sales/discount-approvals/{request_id}",
                 data={"action": "approve", "reason": "محاولة اعتماد ذاتي"},
             )
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("لا يجوز اعتماد أو رفض طلب الخصم الذي أنشأته بنفسك", response.get_data(as_text=True))
         self.assertEqual(
             self.connection.execute(
                 "SELECT status,reviewed_by FROM sales_discount_approval_requests WHERE id=?",
