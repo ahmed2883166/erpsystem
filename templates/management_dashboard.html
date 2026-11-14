@@ -100,52 +100,61 @@
 
 <section class="panel">
   <h3>المركز المالي حتى {{ date_to }}</h3>
-  <div class="stat-grid">
-    <div class="stat-card"><small>النقدية والبنوك</small><strong>{{ money(s.cash) }}</strong></div>
-    <div class="stat-card"><small>أرصدة العملاء / المدينين</small><strong>{{ money(s.receivables) }}</strong></div>
-    <div class="stat-card"><small>أرصدة الموردين</small><strong>{{ money(s.payables) }}</strong></div>
-    <div class="stat-card"><small>قيمة المخزون</small><strong>{{ money(s.inventory) }}</strong></div>
-    <div class="stat-card"><small>إجمالي الأصول</small><strong>{{ money(s.total_assets) }}</strong></div>
-    <div class="stat-card"><small>إجمالي الالتزامات</small><strong>{{ money(s.total_liabilities) }}</strong></div>
-    <div class="stat-card"><small>حقوق الملكية</small><strong>{{ money(s.total_equity) }}</strong></div>
-    <div class="stat-card"><small>رأس المال العامل</small><strong>{{ money(s.working_capital) }}</strong></div>
-    <div class="stat-card"><small>نسبة السيولة الجارية</small><strong>{{ ratio(s.current_ratio) }}</strong></div>
-    <div class="stat-card"><small>نسبة السيولة السريعة</small><strong>{{ ratio(s.quick_ratio) }}</strong></div>
-    <div class="stat-card"><small>فحص المعادلة المحاسبية</small><strong>{% if s.balance_ok is none %}<span class="muted">غير متاح مع فلتر تحليلي جزئي</span>{% elif s.balance_ok %}<span class="success">متوازنة ✓</span>{% else %}<span class="danger">تحتاج مراجعة</span>{% endif %}</strong></div>
-  </div>
-  <p class="muted">يتم تحديد الحسابات من شاشة «ربط حسابات لوحة الإدارة»، ويمكنك اختيار الحسابات التفصيلية الفعلية حتى لو كانت أكواد شجرة الحسابات مختلفة.</p>
+  <div class="table-wrap"><table class="financial-summary-table">
+    <thead><tr><th>البند</th><th>الرصيد</th></tr></thead><tbody>
+      <tr><td>النقدية والبنوك</td><td>{{ money(s.cash) }}</td></tr>
+      <tr><td>أرصدة العملاء / المدينين</td><td>{{ money(s.receivables) }}</td></tr>
+      <tr><td>أرصدة الموردين</td><td>{{ money(s.payables) }}</td></tr>
+      <tr><td>قيمة المخزون</td><td>{{ money(s.inventory) }}</td></tr>
+      <tr class="financial-subtotal"><td>إجمالي الأصول</td><td>{{ money(s.total_assets) }}</td></tr>
+      <tr><td>إجمالي الالتزامات</td><td>{{ money(s.total_liabilities) }}</td></tr>
+      <tr><td>حقوق الملكية قبل نتيجة النشاط</td><td>{{ money(s.total_equity) }}</td></tr>
+      <tr><td>نتيجة النشاط المتراكمة</td><td>{{ money(s.total_equity_after_profit - s.total_equity) }}</td></tr>
+      <tr class="financial-subtotal"><td>حقوق الملكية بعد نتيجة النشاط</td><td>{{ money(s.total_equity_after_profit) }}</td></tr>
+      <tr><td>رأس المال العامل</td><td>{{ money(s.working_capital) }}</td></tr>
+      <tr><td>نسبة السيولة الجارية</td><td>{{ ratio(s.current_ratio) }}</td></tr>
+      <tr><td>نسبة السيولة السريعة</td><td>{{ ratio(s.quick_ratio) }}</td></tr>
+      <tr><td>فحص المعادلة المحاسبية</td><td>{% if s.balance_ok is none %}<span class="muted">غير متاح مع فلتر تحليلي جزئي</span>{% elif s.balance_ok %}<span class="success">متوازنة ✓</span>{% else %}<span class="danger">تحتاج مراجعة</span>{% endif %}</td></tr>
+    </tbody></table></div>
+  {% if s.negative_asset_accounts %}
+    <p class="danger"><strong>تنبيه: توجد أرصدة دائنة في حسابات مصنفة كأصول.</strong> لا يتم إعادة تصنيفها تلقائيًا؛ راجع طبيعة الرصيد وربط الحساب.</p>
+    <div class="table-wrap"><table><thead><tr><th>كود الحساب</th><th>الحساب</th><th>الرصيد السالب</th><th>كشف الحساب</th></tr></thead><tbody>
+      {% for item in s.negative_asset_accounts %}<tr><td>{{ item.code }}</td><td>{{ item.name }}</td><td class="danger">{{ money(item.balance) }}</td><td><a href="{{ url_for('ledger', account_id=item.id, date_to=date_to) }}">فتح الحساب</a></td></tr>{% endfor %}
+    </tbody></table></div>
+  {% endif %}
+  <p class="muted">يتم تحديد الحسابات من شاشة «ربط حسابات لوحة الإدارة»، ويمكنك اختيار الحسابات التفصيلية الفعلية حتى لو كانت أكواد شجرة الحسابات مختلفة. حقوق الملكية المعروضة بعد نتيجة النشاط تشمل الربح أو الخسارة المتراكمة.</p>
 </section>
 
 <section class="panel">
   <h3>النسب والمؤشرات المالية الشاملة</h3>
   <p class="muted">تعتمد مؤشرات العائد والكفاءة على أرصدة أول وآخر الفترة، ومؤشرات السيولة والمديونية على أرصدة نهاية الفترة. الأيام محسوبة على طول الفترة المحددة.</p>
   <h4>أولًا: نسب الربحية والعائد</h4>
-  <div class="stat-grid">
-    <div class="stat-card"><small>هامش مجمل الربح</small><strong>{{ percent(s.ratios.gross_margin) }}</strong></div>
-    <div class="stat-card"><small>هامش صافي الربح</small><strong>{{ percent(s.ratios.net_profit_margin) }}</strong></div>
-    <div class="stat-card"><small>العائد على الأصول ROA</small><strong>{{ percent(s.ratios.return_on_assets) }}</strong></div>
-    <div class="stat-card"><small>العائد على حقوق الملكية ROE</small><strong>{{ percent(s.ratios.return_on_equity) }}</strong></div>
-  </div>
+  <div class="table-wrap"><table class="financial-summary-table"><thead><tr><th>المؤشر</th><th>القيمة</th></tr></thead><tbody>
+    <tr><td>هامش مجمل الربح</td><td>{{ percent(s.ratios.gross_margin) }}</td></tr>
+    <tr><td>هامش صافي الربح</td><td>{{ percent(s.ratios.net_profit_margin) }}</td></tr>
+    <tr><td>العائد على الأصول ROA</td><td>{{ percent(s.ratios.return_on_assets) }}</td></tr>
+    <tr><td>العائد على حقوق الملكية ROE</td><td>{{ percent(s.ratios.return_on_equity) }}</td></tr>
+  </tbody></table></div>
   <h4>ثانيًا: نسب السيولة والهيكل التمويلي</h4>
-  <div class="stat-grid">
-    <div class="stat-card"><small>السيولة الجارية</small><strong>{{ ratio(s.ratios.current_ratio) }}</strong></div>
-    <div class="stat-card"><small>السيولة السريعة</small><strong>{{ ratio(s.ratios.quick_ratio) }}</strong></div>
-    <div class="stat-card"><small>نسبة النقدية</small><strong>{{ ratio(s.ratios.cash_ratio) }}</strong></div>
-    <div class="stat-card"><small>إجمالي الالتزامات إلى الأصول</small><strong>{{ percent(s.ratios.debt_ratio) }}</strong></div>
-    <div class="stat-card"><small>الديون إلى حقوق الملكية</small><strong>{{ ratio(s.ratios.debt_to_equity) }}</strong></div>
-    <div class="stat-card"><small>حقوق الملكية إلى الأصول</small><strong>{{ percent(s.ratios.equity_ratio) }}</strong></div>
-  </div>
+  <div class="table-wrap"><table class="financial-summary-table"><thead><tr><th>المؤشر</th><th>القيمة</th></tr></thead><tbody>
+    <tr><td>السيولة الجارية</td><td>{{ ratio(s.ratios.current_ratio) }}</td></tr>
+    <tr><td>السيولة السريعة</td><td>{{ ratio(s.ratios.quick_ratio) }}</td></tr>
+    <tr><td>نسبة النقدية</td><td>{{ ratio(s.ratios.cash_ratio) }}</td></tr>
+    <tr><td>إجمالي الالتزامات إلى الأصول</td><td>{{ percent(s.ratios.debt_ratio) }}</td></tr>
+    <tr><td>الديون إلى حقوق الملكية</td><td>{{ ratio(s.ratios.debt_to_equity) }}</td></tr>
+    <tr><td>حقوق الملكية إلى الأصول</td><td>{{ percent(s.ratios.equity_ratio) }}</td></tr>
+  </tbody></table></div>
   <h4>ثالثًا: نسب النشاط والكفاءة التشغيلية</h4>
-  <div class="stat-grid">
-    <div class="stat-card"><small>معدل دوران الأصول</small><strong>{{ ratio(s.ratios.asset_turnover) }}</strong></div>
-    <div class="stat-card"><small>معدل دوران المخزون</small><strong>{{ ratio(s.ratios.inventory_turnover) }}</strong></div>
-    <div class="stat-card"><small>أيام التخزين DIO</small><strong>{{ '%.1f يوم'|format(s.ratios.inventory_days) if s.ratios.inventory_days is not none else '—' }}</strong></div>
-    <div class="stat-card"><small>معدل دوران العملاء</small><strong>{{ ratio(s.ratios.receivables_turnover) }}</strong></div>
-    <div class="stat-card"><small>أيام التحصيل DSO</small><strong>{{ '%.1f يوم'|format(s.ratios.collection_days) if s.ratios.collection_days is not none else '—' }}</strong></div>
-    <div class="stat-card"><small>معدل دوران الموردين</small><strong>{{ ratio(s.ratios.payables_turnover) }}</strong></div>
-    <div class="stat-card"><small>أيام السداد DPO</small><strong>{{ '%.1f يوم'|format(s.ratios.payment_days) if s.ratios.payment_days is not none else '—' }}</strong></div>
-    <div class="stat-card"><small>دورة التحويل النقدي CCC</small><strong>{{ '%.1f يوم'|format(s.ratios.cash_conversion_cycle) if s.ratios.cash_conversion_cycle is not none else '—' }}</strong></div>
-  </div>
+  <div class="table-wrap"><table class="financial-summary-table"><thead><tr><th>المؤشر</th><th>القيمة</th></tr></thead><tbody>
+    <tr><td>معدل دوران الأصول</td><td>{{ ratio(s.ratios.asset_turnover) }}</td></tr>
+    <tr><td>معدل دوران المخزون</td><td>{{ ratio(s.ratios.inventory_turnover) }}</td></tr>
+    <tr><td>أيام التخزين DIO</td><td>{{ '%.1f يوم'|format(s.ratios.inventory_days) if s.ratios.inventory_days is not none else '—' }}</td></tr>
+    <tr><td>معدل دوران العملاء</td><td>{{ ratio(s.ratios.receivables_turnover) }}</td></tr>
+    <tr><td>أيام التحصيل DSO</td><td>{{ '%.1f يوم'|format(s.ratios.collection_days) if s.ratios.collection_days is not none else '—' }}</td></tr>
+    <tr><td>معدل دوران الموردين</td><td>{{ ratio(s.ratios.payables_turnover) }}</td></tr>
+    <tr><td>أيام السداد DPO</td><td>{{ '%.1f يوم'|format(s.ratios.payment_days) if s.ratios.payment_days is not none else '—' }}</td></tr>
+    <tr><td>دورة التحويل النقدي CCC</td><td>{{ '%.1f يوم'|format(s.ratios.cash_conversion_cycle) if s.ratios.cash_conversion_cycle is not none else '—' }}</td></tr>
+  </tbody></table></div>
   <p class="muted">تنبيه: دوران الموردين محسوب باستخدام تكلفة المبيعات كبديل تقريبي للمشتريات عند عدم توفر صافي المشتريات. لا تُعرض النسبة عند عدم توفر متوسط الرصيد أو المقام صفرًا.</p>
 </section>
 
@@ -153,7 +162,11 @@
   <h3>توقع الرصيد النقدي — الأسابيع الثمانية القادمة</h3>
   <p class="muted">يعتمد على النقدية والبنوك المرتبطة، والفواتير المرحلة المفتوحة حسب الاستحقاق. المتأخر يُدرج في الأسبوع الأول. رصيد الرواتب المستحق يُدرج في الأسبوع الأول إذا كان حساب الالتزام معرفًا باسم واضح للرواتب.</p>
   {% if s.cash_forecast.warning %}<p class="danger"><strong>تحذير: الرصيد المتوقع ينخفض عن الحد الأدنى المحدد.</strong></p>{% endif %}
-  <div class="stat-grid"><div class="stat-card"><small>الرصيد الحالي</small><strong>{{ money(s.cash_forecast.opening) }}</strong></div><div class="stat-card"><small>الحد الأدنى</small><strong>{{ money(s.cash_forecast.minimum) }}</strong></div><div class="stat-card"><small>الرواتب المستحقة المدرجة</small><strong>{{ money(s.cash_forecast.payroll_due) }}</strong></div></div>
+  <div class="table-wrap"><table class="financial-summary-table"><thead><tr><th>المؤشر</th><th>القيمة</th></tr></thead><tbody>
+    <tr><td>الرصيد الحالي</td><td>{{ money(s.cash_forecast.opening) }}</td></tr>
+    <tr><td>الحد الأدنى للنقدية</td><td>{{ money(s.cash_forecast.minimum) }}</td></tr>
+    <tr><td>الرواتب المستحقة المدرجة</td><td>{{ money(s.cash_forecast.payroll_due) }}</td></tr>
+  </tbody></table></div>
   <form method="post" action="{{ url_for('management_minimum_cash') }}" class="report-filter no-print"><label>الحد الأدنى للنقدية<input type="number" min="0" step="0.01" name="minimum_cash_balance" value="{{ s.cash_forecast.minimum }}" required></label><button type="submit">حفظ الحد الأدنى</button></form>
   <div class="table-wrap"><table><thead><tr><th>الأسبوع</th><th>أول الأسبوع</th><th>مقبوضات متوقعة</th><th>مدفوعات مستحقة</th><th>صافي الحركة</th><th>الرصيد المتوقع</th></tr></thead><tbody>{% for w in s.cash_forecast.weeks %}<tr><td>{{ w.label }}</td><td>{{ money(w.opening) }}</td><td>{{ money(w.receipts) }}</td><td>{{ money(w.payments) }}</td><td>{{ money(w.net) }}</td><td class="{{ 'danger' if s.cash_forecast.minimum > 0 and w.closing < s.cash_forecast.minimum else '' }}">{{ money(w.closing) }}</td></tr>{% endfor %}</tbody></table></div>
 </section>
