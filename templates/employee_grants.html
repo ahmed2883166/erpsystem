@@ -5,7 +5,7 @@
 {% if grant_types %}<p class="muted">المنح المعرفة: {% for t in grant_types %}{{t.name}}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}</section>
 <section class="panel"><h3>إعداد كشف منحة جديد</h3><form method="post" action="{{url_for('workforce.create_employee_grant')}}" class="form-grid">
 <label>اسم المنحة <select name="grant_type_id" required>{% for t in grant_types %}<option value="{{t.id}}">{{t.name}}</option>{% endfor %}</select></label>
-<label>تاريخ المنحة <input type="date" name="grant_date" required></label>
+<label>تاريخ المنحة <input type="date" name="grant_date" value="{{today}}" required></label>
 <label>طريقة الحساب <select name="calculation_method" id="grantMethod" required><option value="percentage_basic">نسبة من الأساسي</option><option value="per_day">عدد أيام من الأساسي</option><option value="fixed">مبلغ مقطوع لكل موظف</option></select></label>
 <label>النسبة / المبلغ <input type="number" name="calculation_value" min="0.01" step="0.01" required></label>
 <label id="grantDays">عدد الأيام <input type="number" name="days_count" min="0.01" step="0.01" value="1"></label>
@@ -20,6 +20,8 @@
 <td>{{{'fixed':'مبلغ مقطوع','percentage_basic':'نسبة من الأساسي','per_day':'عدد أيام من الأساسي'}.get(g.calculation_method,g.calculation_method)}}</td>
 <td>{{g.total_amount}}</td><td>{{g.paid_total}}</td><td>{{(g.total_amount|float)-(g.paid_total|float)}}</td>
 <td>{{{'draft':'مسودة','approved':'معتمدة','partially_paid':'مدفوع جزئيًا','paid':'مدفوعة بالكامل'}.get(g.status,g.status)}}</td><td>
+<details><summary>مراجعة الموظفين والمبالغ</summary><table><tr><th>كود الموظف</th><th>اسم الموظف</th>{% if g.calculation_method!='fixed' %}<th>الراتب الأساسي</th>{% endif %}<th>الاستحقاق</th><th>المدفوع</th><th>المتبقي</th></tr>
+{% for line in grant_lines[g.id] %}<tr><td>{{line.employee_code_snapshot}}</td><td>{{line.employee_name_snapshot}}</td>{% if g.calculation_method!='fixed' %}<td>{{line.basic_salary_snapshot}}</td>{% endif %}<td>{{line.amount}}</td><td>{{line.paid_amount}}</td><td>{{(line.amount|float)-(line.paid_amount|float)}}</td></tr>{% endfor %}</table></details>
 <a href="{{url_for('workforce.print_employee_grant',grant_id=g.id)}}" target="_blank">كشف الطباعة</a>
 {% if g.status=='draft' %}<form method="post" action="{{url_for('workforce.approve_employee_grant',grant_id=g.id)}}" style="display:inline"><button type="submit">اعتماد وترحيل</button></form>{% endif %}
 {% if g.status in ['approved','partially_paid'] %}<details><summary>تسجيل صرف</summary><form method="post" action="{{url_for('workforce.pay_employee_grant',grant_id=g.id)}}" class="form-grid">
