@@ -832,9 +832,9 @@ def new_receipt():
                 c.execute("UPDATE purchase_orders SET status=? WHERE id=?",(new_status,po_id))
             # Stock ledger + valuation layer are updated in the same DB transaction.
             move_no="PUR-"+no
-            movement=c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,target_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status)
-              VALUES(?,'receipt',?,?,?,?,?,?,?,?,?,?, 'pending_document')""",
-              (move_no,product,wh,location_id,lot_id,str(qty),str(unit),str(total),request.form["receipt_date"],"استلام مشتريات "+no,session["user_id"]))
+            movement=c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,target_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name)
+              VALUES(?,'receipt',?,?,?,?,?,?,?,?,?,?, 'pending_document',?,?,?,?)""",
+              (move_no,product,wh,location_id,lot_id,str(qty),str(unit),str(total),request.form["receipt_date"],"استلام مشتريات "+no,session["user_id"],str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name))
             mid=movement.lastrowid
             c.execute("INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost) VALUES(?,?,?,?,?,?,?,?)",
               (product,wh,location_id,lot_id,mid,str(qty),str(qty),str(unit)))
