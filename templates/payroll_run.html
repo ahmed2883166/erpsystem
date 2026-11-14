@@ -10,7 +10,7 @@
 <input type="hidden" name="allocation_mode" value="manual">
 <div style="grid-column:1/-1"><strong>توزيع مبلغ الدفعة على الموظفين</strong><p class="muted">أدخل المبلغ الذي استلمه كل موظف في هذه الدفعة. يجب أن يساوي مجموع التوزيعات مبلغ الدفعة. الدفعات القديمة غير الموزعة تظل كما هي ولا تُنسب تلقائيًا.</p>
 <table><tr><th>الموظف</th><th>صافي المستحق</th><th>سبق صرفه له</th><th>المتبقي</th><th>المبلغ في هذه الدفعة</th></tr>
-{% for r in rows %}<tr><td>{{r.employee_code}} - {{r.full_name}}</td><td>{{r.net_pay}}</td><td>{{line_paid.get(r.id,0)}}</td><td>{{r.net_pay|float - line_paid.get(r.id,0)|float}}</td><td><input type="number" name="allocation_{{r.id}}" min="0" max="{{r.net_pay|float - line_paid.get(r.id,0)|float}}" step="0.01" value="0"></td></tr>{% endfor %}</table></div>
+{% for r in rows %}<tr><td>{{r.employee_code}} - {{r.full_name}}<br><small><a href="{{url_for('workforce.employee_financial_statement',employee_id=r.employee_id)}}">كشف حساب الموظف</a></small></td><td>{{r.net_pay}}</td><td>{{line_paid.get(r.id,0)}}</td><td>{{r.net_pay|float - line_paid.get(r.id,0)|float}}</td><td><input type="number" name="allocation_{{r.id}}" min="0" max="{{r.net_pay|float - line_paid.get(r.id,0)|float}}" step="0.01" value="0"></td></tr>{% endfor %}</table></div>
 <button type="submit">صرف الدفعة وتوزيعها على الموظفين وترحيل القيد</button></form>
 {% else %}<p class="muted">تم سداد كامل صافي المرتبات لهذه المرتبات.</p>{% endif %}
 <h4>سجل دفعات الصرف</h4><table><tr><th>التاريخ</th><th>المبلغ</th><th>الحساب</th><th>رقم القيد</th><th>المرجع</th></tr>
