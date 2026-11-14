@@ -31,8 +31,9 @@
       <select name="branch_id"><option value="">بدون فرع محدد</option>{% for b in branches %}<option value="{{ b.id }}">{{ b.code }} - {{ b.name_ar }}</option>{% endfor %}</select>
     </label>
     <label>العملة
-      <select name="currency_code" required>{% for c in currencies %}<option value="{{ c.code }}" {% if c.code=='EGP' %}selected{% endif %}>{{ c.code }} - {{ c.name_ar }}</option>{% endfor %}</select>
+      <select name="currency_code" required>{% for c in currencies %}<option value="{{ c.code }}" selected>{{ c.code }} - {{ c.name_ar }}</option>{% endfor %}</select>
     </label>
+    <p class="muted">تُرحّل حركات الخزائن والبنوك حاليًا بالعملة الأساسية للشركة فقط؛ لن نسمح بتسجيل عملة أجنبية قبل إضافة سعر الصرف ومعالجة فروق العملة حتى لا تظهر أرصدة مضللة.</p>
     <div id="bankDetails" hidden>
       <label>اسم البنك</label><input name="bank_name">
       <label>رقم الحساب / IBAN</label><input name="iban" dir="ltr">
