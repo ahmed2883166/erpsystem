@@ -296,6 +296,14 @@ def index():
             ids=[int(request.form[k]) for k in ("asset_account_id","accum_account_id","expense_account_id")]
             if ids[0] == ids[1]:
                 raise ValueError("يجب أن يكون حساب تكلفة الأصل مختلفًا عن حساب مجمع الإهلاك.")
+            if c.execute(
+                "SELECT 1 FROM fixed_assets WHERE accum_account_id=? LIMIT 1", (ids[1],)
+            ).fetchone():
+                raise ValueError("حساب مجمع الإهلاك مستخدم لأصل آخر. خصص حسابًا تفصيليًا مستقلًا لهذا الأصل.")
+            if c.execute(
+                "SELECT 1 FROM journal_lines WHERE account_id=? LIMIT 1", (ids[1],)
+            ).fetchone():
+                raise ValueError("حساب مجمع الإهلاك يحتوي على حركات سابقة؛ لا تستخدمه لأصل جديد. أنشئ حسابًا تفصيليًا مستقلًا.")
             for aid in ids:
                 row=c.execute("SELECT is_group,active,account_type FROM accounts WHERE id=?",(aid,)).fetchone()
                 if not row or row["is_group"] or not row["active"]: raise ValueError("اختر حسابات تفصيلية نشطة.")
@@ -314,10 +322,14 @@ def index():
         except (ValueError,InvalidOperation,KeyError,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود الأصل مستخدم أو توجد بيانات غير صحيحة.","error")
     assets=c.execute("""SELECT f.*,a.code asset_code_gl,a.name_ar asset_account_name,
+      aa.code accum_account_code,aa.name_ar accum_account_name,
+      ea.code expense_account_code,ea.name_ar expense_account_name,
       COALESCE(f.supplier_bill_id,l.bill_id) linked_supplier_bill_id,
       sb.bill_no supplier_bill_no,sb.supplier_invoice_no,
       COALESCE((SELECT DECIMAL_SUM(d.amount) FROM asset_depreciations d WHERE d.asset_id=f.id),0) accumulated
       FROM fixed_assets f JOIN accounts a ON a.id=f.asset_account_id
+      JOIN accounts aa ON aa.id=f.accum_account_id
+      JOIN accounts ea ON ea.id=f.expense_account_id
       LEFT JOIN fixed_asset_supplier_bill_links l ON l.asset_id=f.id
       LEFT JOIN supplier_bills sb ON sb.id=COALESCE(f.supplier_bill_id,l.bill_id)
       ORDER BY f.asset_code""").fetchall()
@@ -328,8 +340,17 @@ def index():
                 Decimal(row["residual_value"]))))
         for row in assets]
     accounts=c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
+    asset_accounts=[row for row in accounts if row["account_type"]=="asset"]
+    expense_accounts=[row for row in accounts if row["account_type"]=="expense"]
+    accum_accounts=c.execute("""SELECT a.id,a.code,a.name_ar,a.account_type
+        FROM accounts a
+        WHERE a.active=1 AND a.is_group=0 AND a.account_type='asset'
+          AND NOT EXISTS (SELECT 1 FROM fixed_assets f WHERE f.accum_account_id=a.id)
+          AND NOT EXISTS (SELECT 1 FROM journal_lines jl WHERE jl.account_id=a.id)
+        ORDER BY a.code""").fetchall()
     c.close()
-    return render_template("fixed_assets.html",assets=assets,accounts=accounts,today=date.today().isoformat())
+    return render_template("fixed_assets.html",assets=assets,asset_accounts=asset_accounts,
+        accum_accounts=accum_accounts,expense_accounts=expense_accounts,today=date.today().isoformat())
 
 @assets_bp.route("/<int:asset_id>/schedule")
 @require()
