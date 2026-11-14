@@ -1195,9 +1195,8 @@ def post_supplier_bill(c, bill_id, actor_id):
             if amount > available_before_this_bill:
                 raise ValueError("تجاوزت تخصيصات فواتير المورد قيمة إيصال GRNI المتاحة.")
             matched_total = money(matched_total + amount)
-            journal_lines.append((grni, amount, 0, "تسوية GRNI"))
         if matched_total < subtotal:
-            raise ValueError("مجموع تسويات إيصالات GRNI أقل من صافي فاتورة المورد.")
+            raise ValueError("مجموع تسويات إيصالات GRNI لا يطابق صافي فاتورة المورد؛ القيمة أقل من المطلوب.")
         price_discount = money(matched_total - subtotal)
         if price_discount:
             for receipt in receipt_rows:
@@ -1209,12 +1208,24 @@ def post_supplier_bill(c, bill_id, actor_id):
                     raise ValueError(
                         "لا يمكن اعتبار الفرق خصم مورد إلا بعد تسوية كامل قيمة إيصالات GRNI المحددة."
                     )
+        remaining_ap = subtotal
+        for index, receipt in enumerate(receipt_rows):
+            amount = money(receipt["matched_amount"])
+            if index == len(receipt_rows) - 1:
+                ap_share = remaining_ap
+            else:
+                ap_share = money(subtotal * amount / matched_total)
+                remaining_ap = money(remaining_ap - ap_share)
+            journal_lines.extend([
+                (grni, amount, 0, "تسوية GRNI"),
+                (ap, 0, ap_share, "إثبات المورد"),
+            ])
+        if price_discount:
             journal_lines.extend(
                 _supplier_grni_price_variance_lines(
                     c, receipt_rows, price_discount, matched_total
                 )
             )
-        journal_lines.append((ap, 0, subtotal, "إثبات المورد"))
     elif bill["bill_kind"] == "expense":
         expense_id = bill["expense_account_id"]
         expense = c.execute("SELECT account_type,is_group,active FROM accounts WHERE id=?", (expense_id,)).fetchone()
