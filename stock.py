@@ -680,9 +680,17 @@ def index():
         if layer["lot_id"] is not None:
             lot_qty[layer["lot_id"]]=lot_qty.get(layer["lot_id"],Decimal("0"))+quantity
     reorder_alert_count=0
-    for product in c.execute("SELECT id,reorder_point FROM stock_products WHERE active=1").fetchall():
-        point=Decimal(str(product["reorder_point"] or "0"))
-        if point>0 and product_qty.get(product["id"],Decimal("0"))<=point:
+    warehouse_qty={}
+    for layer in c.execute("""SELECT warehouse_id,product_id,qty_remaining
+        FROM stock_valuation_layers WHERE CAST(qty_remaining AS REAL)>0""").fetchall():
+        key=(layer["warehouse_id"],layer["product_id"])
+        warehouse_qty[key]=warehouse_qty.get(key,Decimal("0"))+Decimal(str(layer["qty_remaining"] or "0"))
+    for setting in c.execute("""SELECT s.product_id,s.warehouse_id,s.reorder_point
+        FROM stock_warehouse_product_settings s
+        JOIN stock_products p ON p.id=s.product_id AND p.active=1
+        JOIN stock_warehouses w ON w.id=s.warehouse_id AND w.active=1""").fetchall():
+        point=Decimal(str(setting["reorder_point"] or "0"))
+        if point>0 and warehouse_qty.get((setting["warehouse_id"],setting["product_id"]),Decimal("0"))<=point:
             reorder_alert_count+=1
     expiry_alert_count=0
     for lot in c.execute("""SELECT id,expiry_date FROM stock_lots WHERE expiry_date IS NOT NULL""").fetchall():
@@ -939,6 +947,23 @@ def product_locations():
         try:
             product_id = request.form.get("product_id", type=int)
             warehouse_id = request.form.get("warehouse_id", type=int)
+            if request.form.get("action") == "save_reorder":
+                product_ok=c.execute("SELECT 1 FROM stock_products WHERE id=? AND active=1",(product_id,)).fetchone()
+                warehouse_ok=c.execute("SELECT 1 FROM stock_warehouses WHERE id=? AND active=1",(warehouse_id,)).fetchone()
+                minimum=q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))
+                point=q4(dec(request.form.get("reorder_point","0"),"نقطة إعادة الطلب"))
+                reorder=q4(dec(request.form.get("reorder_qty","0"),"كمية إعادة الطلب"))
+                if not product_ok or not warehouse_ok: raise ValueError("اختر صنفًا ومخزنًا نشطين.")
+                if min(minimum,point,reorder)<0: raise ValueError("حدود المخزون لا يمكن أن تكون سالبة.")
+                c.execute("""INSERT INTO stock_warehouse_product_settings
+                    (product_id,warehouse_id,min_qty,reorder_point,reorder_qty)
+                    VALUES(?,?,?,?,?) ON CONFLICT(product_id,warehouse_id) DO UPDATE SET
+                    min_qty=excluded.min_qty,reorder_point=excluded.reorder_point,
+                    reorder_qty=excluded.reorder_qty,updated_at=CURRENT_TIMESTAMP""",
+                    (product_id,warehouse_id,str(minimum),str(point),str(reorder)))
+                c.commit()
+                flash("تم حفظ حدود إعادة الطلب للصنف في هذا المخزن فقط.","success")
+                return redirect(url_for("stock.product_locations"))
             location_id = request.form.get("location_id", type=int)
             valid = c.execute("""SELECT 1 FROM stock_locations WHERE id=? AND warehouse_id=? AND active=1""",
                               (location_id, warehouse_id)).fetchone()
@@ -970,9 +995,12 @@ def product_locations():
         FROM stock_product_locations m JOIN stock_products p ON p.id=m.product_id LEFT JOIN stock_categories sc ON sc.id=p.category_id
         JOIN stock_warehouses w ON w.id=m.warehouse_id JOIN stock_locations l ON l.id=m.location_id
         ORDER BY w.code,p.sku""").fetchall()
+    reorder_settings=c.execute("""SELECT s.*,p.sku,p.name_ar product_name,w.code warehouse_code,w.name_ar warehouse_name
+        FROM stock_warehouse_product_settings s JOIN stock_products p ON p.id=s.product_id
+        JOIN stock_warehouses w ON w.id=s.warehouse_id ORDER BY w.code,p.sku""").fetchall()
     c.close()
     return render_template("stock_product_locations.html", products=products, warehouses=warehouses,
-                           locations=locations, rows=rows)
+                           locations=locations, rows=rows,reorder_settings=reorder_settings)
 
 
 @stock_bp.route("/products/<int:product_id>/edit", methods=["GET","POST"])
@@ -1306,18 +1334,22 @@ def reports():
       FROM stock_movements m JOIN stock_products p ON p.id=m.product_id
       LEFT JOIN stock_warehouses w ON w.id=COALESCE(m.target_warehouse_id,m.source_warehouse_id)
       ORDER BY m.id DESC LIMIT 100""").fetchall()
-    # Reorder alerts compare total available stock across all warehouses with each
-    # product's configured reorder point; no stock or accounting records are changed.
+    # Reorder alerts are evaluated independently for each active warehouse.
     reorder_alerts=[]
-    for product in products:
-        current=product_totals.get(product["id"],{"qty":Decimal("0"),"value":Decimal("0")})["qty"]
-        point=Decimal(str(product["reorder_point"] or "0")) if "reorder_point" in product.keys() else Decimal("0")
-        minimum=Decimal(str(c.execute("SELECT min_qty FROM stock_products WHERE id=?",(product["id"],)).fetchone()["min_qty"] or "0"))
+    for setting in c.execute("""SELECT s.*,p.sku,p.name_ar,p.uom,w.code warehouse_code,w.name_ar warehouse_name
+        FROM stock_warehouse_product_settings s
+        JOIN stock_products p ON p.id=s.product_id AND p.active=1
+        JOIN stock_warehouses w ON w.id=s.warehouse_id AND w.active=1
+        ORDER BY w.code,p.sku""").fetchall():
+        current=warehouse_totals.get((setting["product_id"],setting["warehouse_id"]),{"qty":Decimal("0"),"value":Decimal("0")})["qty"]
+        point=Decimal(str(setting["reorder_point"] or "0"))
+        minimum=Decimal(str(setting["min_qty"] or "0"))
+        suggested=Decimal(str(setting["reorder_qty"] or "0"))
         if point>0 and current<=point:
-            suggested=Decimal(str(c.execute("SELECT reorder_qty FROM stock_products WHERE id=?",(product["id"],)).fetchone()["reorder_qty"] or "0"))
             if suggested<=0: suggested=max(minimum,point-current)
-            reorder_alerts.append({"sku":product["sku"],"name_ar":product["name_ar"],"uom":product["uom"],
-                "qty":current,"point":point,"suggested":suggested})
+            reorder_alerts.append({"sku":setting["sku"],"name_ar":setting["name_ar"],"uom":setting["uom"],
+                "warehouse_code":setting["warehouse_code"],"warehouse_name":setting["warehouse_name"],
+                "qty":current,"point":point,"minimum":minimum,"suggested":suggested})
     # 90-day turnover is cost of goods issued for sale divided by average inventory
     # value. Average stock is reconstructed from today's valuation and net stock movements.
     today=date.today()
