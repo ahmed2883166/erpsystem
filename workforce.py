@@ -765,7 +765,7 @@ def add_incentive_rule():
                      VALUES(?,?,?)""", (name, method, str(value)))
         _audit(c, "payroll_incentive_rule_created", name)
         c.commit()
-        flash("تم حفظ نوع الحافز ويمكن اختياره في مسير الرواتب.", "success")
+        flash("تم حفظ نوع الحافز ويمكن اختياره عند إعداد المرتبات.", "success")
     except (ValueError, sqlite3.Error) as exc:
         c.rollback()
         flash(str(exc) or "تعذر حفظ الحافز.", "error")
@@ -1091,11 +1091,11 @@ def payroll():
             _audit(c, "payroll_draft_created", period)
             c.commit()
             g.audit_created_record = ("payroll_runs", run_id, "payroll_lines", "run_id")
-            flash("تم إنشاء مسير الرواتب كمسودة. راجع البنود ثم رحّله.", "success")
+            flash("تم حفظ المرتبات كمسودة. راجع البنود ثم اعتمدها.", "success")
             return redirect(url_for("workforce.payroll_run", run_id=run_id))
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as e:
             c.rollback()
-            flash(str(e) or "تعذر إنشاء مسير الرواتب.", "error")
+            flash(str(e) or "تعذر إعداد المرتبات.", "error")
     display_period = date.today().strftime("%Y-%m")
     # Show former employees in the input grid so final payroll can be prepared for any selected month.
     # POST includes them only in the month containing their termination date.
@@ -1137,7 +1137,7 @@ def payroll_run(run_id):
     run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
     if not run:
         c.close()
-        flash("مسير الرواتب غير موجود.", "error")
+        flash("بيانات المرتبات غير موجودة.", "error")
         return redirect(url_for("workforce.payroll"))
     rows = c.execute("""SELECT l.*,e.employee_code,e.full_name,e.department FROM payroll_lines l
                         JOIN employees e ON e.id=l.employee_id WHERE l.run_id=? ORDER BY e.employee_code""", (run_id,)).fetchall()
@@ -1198,11 +1198,11 @@ def payroll_employee_payslip(run_id, employee_id):
     """, (run_id, employee_id)).fetchone()
     if not row:
         c.close()
-        flash("قسيمة الراتب غير موجودة لهذا الموظف والمسير المحدد.", "error")
+        flash("قسيمة الراتب غير موجودة لهذا الموظف في هذه المرتبات.", "error")
         return redirect(url_for("workforce.payroll"))
     if row["status"] not in {"posted", "reversed"}:
         c.close()
-        flash("القسيمة النهائية متاحة بعد ترحيل المسير فقط.", "error")
+        flash("القسيمة النهائية متاحة بعد اعتماد وترحيل المرتبات فقط.", "error")
         return redirect(url_for("workforce.payroll_run", run_id=run_id))
 
     data = dict(row)
@@ -1231,12 +1231,12 @@ def post_payroll(run_id):
     try:
         run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         if not run or run["status"] != "draft":
-            raise ValueError("المسير غير موجود أو تم ترحيله بالفعل.")
+            raise ValueError("بيانات المرتبات غير موجودة أو تم ترحيلها بالفعل.")
         rows = c.execute("""SELECT l.*,e.branch_id,e.cost_center_id,e.project_id,e.full_name,e.employee_code
             FROM payroll_lines l JOIN employees e ON e.id=l.employee_id WHERE l.run_id=?
             ORDER BY e.employee_code""", (run_id,)).fetchall()
         if not rows:
-            raise ValueError("لا توجد تفاصيل في مسير الرواتب.")
+            raise ValueError("لا توجد تفاصيل للمرتبات.")
         salary_expense = int(request.form["salary_expense_account"])
         salaries_payable = int(request.form["salaries_payable_account"])
         tax_payable = int(request.form["tax_payable_account"])
@@ -1280,7 +1280,7 @@ def post_payroll(run_id):
         ])
         c.execute("BEGIN IMMEDIATE")
         journal_id = post_journal(c, run["period"] + "-01", "PAYROLL-" + run["period"],
-                                  "مسير مرتبات شهر " + run["period"], lines, session["user_id"])
+                                  "مرتبات شهر " + run["period"], lines, session["user_id"])
         for payroll_line in rows:
             left = D(payroll_line["loan_deduction"])
             if left <= 0:
@@ -1314,7 +1314,7 @@ def post_payroll(run_id):
         c.execute("UPDATE payroll_runs SET status='posted',journal_entry_id=? WHERE id=?", (journal_id, run_id))
         _audit(c, "payroll_posted", run["period"] + " journal=" + str(journal_id))
         c.commit()
-        flash("تم ترحيل مسير المرتبات وإنشاء القيد المحاسبي.", "success")
+        flash("تم ترحيل المرتبات وإنشاء القيد المحاسبي.", "success")
     except (ValueError, KeyError, sqlite3.Error) as e:
         c.rollback()
         flash(str(e), "error")
@@ -1330,16 +1330,16 @@ def reverse_payroll(run_id):
         c.execute("BEGIN IMMEDIATE")
         run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         if not run or run["status"] != "posted" or not run["journal_entry_id"]:
-            raise ValueError("لا يمكن عكس مسير غير مرحّل أو سبق عكسه.")
+            raise ValueError("لا يمكن عكس قيد مرتبات غير مرحّل أو سبق عكسه.")
         if c.execute("SELECT 1 FROM payroll_reversals WHERE run_id=?", (run_id,)).fetchone():
-            raise ValueError("تم عكس هذا المسير من قبل.")
+            raise ValueError("تم عكس قيد المرتبات هذا من قبل.")
         payments = c.execute("SELECT COUNT(*) FROM payroll_payments WHERE run_id=?", (run_id,)).fetchone()[0]
         if payments:
-            raise ValueError("لا يمكن عكس مسير له دفعات صرف مسجلة. سوِّ الدفعات أولًا ثم راجع حسابات الموظفين.")
+            raise ValueError("لا يمكن عكس قيد المرتبات مع وجود دفعات صرف مسجلة. سوِّ الدفعات أولًا ثم راجع حسابات الموظفين.")
         reversal_date = date.fromisoformat(request.form.get("reversal_date") or date.today().isoformat()).isoformat()
         reason = request.form.get("reason", "").strip()
         if not reason:
-            raise ValueError("سبب عكس المسير مطلوب ويجب توثيقه.")
+            raise ValueError("سبب عكس قيد المرتبات مطلوب ويجب توثيقه.")
         available_columns = {row["name"] for row in c.execute("PRAGMA table_info(journal_lines)").fetchall()}
         dimension_keys = ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id", "supplier_id")
         selected_dimensions = [key for key in dimension_keys if key in available_columns]
@@ -1360,7 +1360,7 @@ def reverse_payroll(run_id):
         reference = "PAYROLL-REV-" + str(run_id)
         reversal_journal_id = post_journal(
             c, reversal_date, reference,
-            "عكس مسير مرتبات " + run["period"] + " — " + reason,
+            "عكس مرتبات شهر " + run["period"] + " — " + reason,
             reversal_lines, session["user_id"]
         )
         c.execute("""INSERT INTO payroll_reversals(run_id,reversal_date,reason,
@@ -1369,7 +1369,7 @@ def reverse_payroll(run_id):
         c.execute("UPDATE payroll_runs SET status='reversed' WHERE id=?", (run_id,))
         _audit(c, "payroll_run_reversed", reference + " reason=" + reason)
         c.commit()
-        flash("تم إنشاء قيد عكسي مستقل للمسير. القيد الأصلي وتفاصيل المرتبات لم يتم حذفهما أو تعديلهما.", "success")
+        flash("تم إنشاء قيد عكسي مستقل للمرتبات. القيد الأصلي وتفاصيل المرتبات لم يتم حذفها أو تعديلها.", "success")
     except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
         c.rollback()
         flash(str(exc), "error")
@@ -1384,10 +1384,10 @@ def pay_payroll(run_id):
     try:
         run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         if not run or run["status"] != "posted":
-            raise ValueError("لا يمكن صرف مرتب لمسير غير مرحّل.")
+            raise ValueError("لا يمكن صرف المرتبات قبل ترحيلها.")
         rows = c.execute("SELECT net_pay FROM payroll_lines WHERE run_id=?", (run_id,)).fetchall()
         if not rows:
-            raise ValueError("لا توجد تفاصيل في المسير.")
+            raise ValueError("لا توجد تفاصيل للمرتبات.")
         net_payable = M(sum((D(row["net_pay"]) for row in rows), Decimal("0")))
         paid = M(sum((D(row["amount"]) for row in c.execute(
             "SELECT amount FROM payroll_payments WHERE run_id=?", (run_id,)).fetchall()), Decimal("0")))
@@ -1410,7 +1410,7 @@ def pay_payroll(run_id):
         if amount > net_payable - paid_now:
             raise ValueError("مبلغ الصرف يتجاوز صافي المرتبات المتبقي بعد احتساب الدفعات الأخرى.")
         journal_id = post_journal(c, payment_date, reference,
-            "صرف مرتبات مسير " + run["period"],
+            "صرف مرتبات شهر " + run["period"],
             [(int(c.execute("""SELECT jl.account_id FROM journal_lines jl
                 WHERE jl.entry_id=? AND jl.memo='صافي مستحقات الموظفين' AND jl.credit>0
                 ORDER BY jl.id LIMIT 1""", (run["journal_entry_id"],)).fetchone()[0]),
