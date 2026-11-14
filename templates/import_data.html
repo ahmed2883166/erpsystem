@@ -27,6 +27,17 @@
   <h3>2. مطابقة الأعمدة</h3>
   <p>الملف: <strong>{{ stage.filename }}</strong> · عدد الأعمدة: {{ stage.headers|length }} · عدد الصفوف: {{ stage.rows|length }}</p>
   <p class="muted">اختر عمود المصدر لكل حقل. لا يمكن ربط عمود واحد بأكثر من حقل. الحقول الإلزامية مميزة بعلامة *.</p>
+  {% if stage.dataset == "opening_balances" %}
+  <div class="flash info">
+    <strong>تعليمات ملف الأرصدة الافتتاحية:</strong>
+    استخدم قيمة نوع الرصيد customer أو supplier أو inventory (أو عميل / مورد / مخزون).
+    لكل صف أدخل مرجع المستند الأصلي وتاريخ الرصيد. العميل يحتاج customer_code وamount،
+    والمورد يحتاج supplier_code وamount، والمخزون يحتاج sku وwarehouse_code وquantity وunit_cost.
+    استخدم تاريخًا داخل سنة مالية مفتوحة. سيُنشأ مستند افتتاحي وقيد متوازن تلقائيًا لكل صف مقبول،
+    ويُستخدم حساب الأرصدة الافتتاحية المحدد في ملف النشاط مقابل الحسابات الرقابية.
+    لن تُحسب ضريبة على مستندات الأرصدة الافتتاحية.
+  </div>
+  {% endif %}
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="action" value="confirm">
