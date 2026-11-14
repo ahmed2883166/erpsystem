@@ -55,6 +55,18 @@ def initialize_assets_schema():
       posted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(asset_id,period)
     );
     CREATE INDEX IF NOT EXISTS idx_asset_depreciation_period ON asset_depreciations(period,asset_id);
+    CREATE TABLE IF NOT EXISTS asset_depreciation_revisions(
+      id INTEGER PRIMARY KEY,
+      depreciation_id INTEGER NOT NULL UNIQUE REFERENCES asset_depreciations(id),
+      original_journal_entry_id INTEGER NOT NULL REFERENCES journal_entries(id),
+      reversal_journal_entry_id INTEGER NOT NULL UNIQUE REFERENCES journal_entries(id),
+      replacement_journal_entry_id INTEGER NOT NULL UNIQUE REFERENCES journal_entries(id),
+      original_amount TEXT NOT NULL, replacement_amount TEXT NOT NULL,
+      disposal_date TEXT NOT NULL, reason TEXT NOT NULL,
+      created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_asset_depreciation_revisions_date
+      ON asset_depreciation_revisions(disposal_date,depreciation_id);
     CREATE TABLE IF NOT EXISTS asset_disposals(
       id INTEGER PRIMARY KEY, asset_id INTEGER NOT NULL UNIQUE REFERENCES fixed_assets(id),
       disposal_date TEXT NOT NULL, proceeds_account_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -328,13 +340,16 @@ def _asset_disposal_journal_lines(asset, cost, accumulated, proceeds, vat,
     return lines
 
 
-def _post_asset_depreciation(conn, asset, period, user_id, cutoff_date=None):
-    """Post one asset's depreciation exactly once, within the caller transaction."""
-    if conn.execute(
-        "SELECT 1 FROM asset_depreciations WHERE asset_id=? AND period=?",
+def _post_asset_depreciation(conn, asset, period, user_id, cutoff_date=None, replace_existing=False):
+    """Post one asset's depreciation exactly once, or replace it after an audited reversal."""
+    existing = conn.execute(
+        "SELECT id,amount,journal_entry_id FROM asset_depreciations WHERE asset_id=? AND period=?",
         (asset["id"], period),
-    ).fetchone():
+    ).fetchone()
+    if existing and not replace_existing:
         raise ValueError(f"تم تسجيل إهلاك الأصل {asset['asset_code']} عن الفترة {period} بالفعل.")
+    if replace_existing and not existing:
+        raise ValueError("لا يوجد إهلاك مرحّل يمكن إعادة احتسابه لهذه الفترة.")
     first_day = date.fromisoformat(period + "-01")
     ready = date.fromisoformat(asset["ready_date"])
     offset = (first_day.year - ready.year) * 12 + first_day.month - ready.month
@@ -347,10 +362,13 @@ def _post_asset_depreciation(conn, asset, period, user_id, cutoff_date=None):
             raise ValueError(
                 f"لا يمكن ترحيل {period} للأصل {asset['asset_code']} قبل ترحيل الفترة السابقة {previous_month}."
             )
+    accumulated_query = "SELECT amount FROM asset_depreciations WHERE asset_id=?"
+    params = [asset["id"]]
+    if replace_existing:
+        accumulated_query += " AND period<>?"
+        params.append(period)
     accumulated = sum(
-        (Decimal(str(row["amount"])) for row in conn.execute(
-            "SELECT amount FROM asset_depreciations WHERE asset_id=?", (asset["id"],)
-        ).fetchall()),
+        (Decimal(str(row["amount"])) for row in conn.execute(accumulated_query, params).fetchall()),
         Decimal("0"),
     )
     amount = _asset_period_amount(asset, accumulated, period, cutoff_date=cutoff_date)
@@ -359,18 +377,100 @@ def _post_asset_depreciation(conn, asset, period, user_id, cutoff_date=None):
         calendar.monthrange(first_day.year, first_day.month)[1]
     ).isoformat()
     reference = "DEP-" + str(asset["id"]) + "-" + period
+    if replace_existing:
+        reference += "-DISPOSAL-" + str(cutoff_date)
     entry = post_journal(
-        conn, entry_date, reference, "إهلاك الأصل " + asset["asset_code"],
+        conn, entry_date, reference,
+        "إهلاك الأصل " + asset["asset_code"] + (" حتى تاريخ الاستبعاد" if replace_existing else ""),
         [
             (asset["expense_account_id"], amount, 0, "مصروف إهلاك " + asset["asset_name"]),
             (asset["accum_account_id"], 0, amount, "مجمع إهلاك " + asset["asset_name"]),
         ], user_id,
     )
-    conn.execute(
-        "INSERT INTO asset_depreciations(asset_id,period,amount,journal_entry_id) VALUES(?,?,?,?)",
-        (asset["id"], period, str(amount), entry),
-    )
+    if replace_existing:
+        conn.execute(
+            "UPDATE asset_depreciations SET amount=?,journal_entry_id=?,posted_at=CURRENT_TIMESTAMP WHERE id=?",
+            (str(amount), entry, existing["id"]),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO asset_depreciations(asset_id,period,amount,journal_entry_id) VALUES(?,?,?,?)",
+            (asset["id"], period, str(amount), entry),
+        )
     return amount, entry
+
+
+def _reverse_full_period_depreciation_for_disposal(conn, asset, period, disposal_date, user_id):
+    """Reverse a full-month depreciation and replace it with a daily prorated entry."""
+    posted = conn.execute(
+        "SELECT id,amount,journal_entry_id FROM asset_depreciations WHERE asset_id=? AND period=?",
+        (asset["id"], period),
+    ).fetchone()
+    if not posted:
+        return None
+    cutoff = date.fromisoformat(disposal_date)
+    last_day = calendar.monthrange(cutoff.year, cutoff.month)[1]
+    if cutoff.day == last_day:
+        return None
+    later = conn.execute(
+        "SELECT period FROM asset_depreciations WHERE asset_id=? AND period>? ORDER BY period LIMIT 1",
+        (asset["id"], period),
+    ).fetchone()
+    if later:
+        raise ValueError(
+            f"لا يمكن تعديل إهلاك {period} لوجود إهلاك لاحق مرحّل عن {later['period']}. "
+            "يجب معالجة الفترات اللاحقة بالعكس المتتابع أولًا."
+        )
+    if conn.execute(
+        "SELECT 1 FROM asset_depreciation_revisions WHERE depreciation_id=?",
+        (posted["id"],),
+    ).fetchone():
+        raise ValueError("سبق تعديل إهلاك هذه الفترة. راجع سجل تعديلات الإهلاك قبل إعادة المحاولة.")
+    original = conn.execute(
+        "SELECT id,reference,status FROM journal_entries WHERE id=?",
+        (posted["journal_entry_id"],),
+    ).fetchone()
+    expected_reference = "DEP-" + str(asset["id"]) + "-" + period
+    if not original or original["status"] != "posted" or original["reference"] != expected_reference:
+        raise ValueError("تعذر التحقق من قيد الإهلاك الأصلي؛ لم يتم إجراء أي تعديل.")
+    original_lines = conn.execute(
+        "SELECT account_id,debit,credit,memo FROM journal_lines WHERE entry_id=? ORDER BY id",
+        (posted["journal_entry_id"],),
+    ).fetchall()
+    if len(original_lines) < 2:
+        raise ValueError("قيد الإهلاك الأصلي غير مكتمل؛ لا يمكن عكسه بأمان.")
+    reversal_reference = "ASSET-DEP-REV-" + str(posted["id"])
+    if conn.execute(
+        "SELECT 1 FROM journal_entries WHERE reference=? AND status='posted'",
+        (reversal_reference,),
+    ).fetchone():
+        raise ValueError("يوجد قيد عكسي سابق للإهلاك دون سجل تعديل مكتمل؛ يلزم فحصه يدويًا.")
+    reversal_lines = [
+        (line["account_id"], line["credit"], line["debit"],
+         "عكس إهلاك أصل قبل إعادة احتسابه: " + str(line["memo"] or ""))
+        for line in original_lines
+    ]
+    reversal_entry = post_journal(
+        conn, disposal_date, reversal_reference,
+        f"عكس إهلاك الأصل {asset['asset_code']} لإعادة احتسابه حتى تاريخ الاستبعاد",
+        reversal_lines, user_id,
+    )
+    replacement_amount, replacement_entry = _post_asset_depreciation(
+        conn, asset, period, user_id, cutoff_date=disposal_date, replace_existing=True
+    )
+    conn.execute(
+        """INSERT INTO asset_depreciation_revisions(
+            depreciation_id,original_journal_entry_id,reversal_journal_entry_id,
+            replacement_journal_entry_id,original_amount,replacement_amount,
+            disposal_date,reason,created_by
+        ) VALUES(?,?,?,?,?,?,?,?,?)""",
+        (posted["id"], posted["journal_entry_id"], reversal_entry,
+         replacement_entry, str(posted["amount"]), str(replacement_amount),
+         disposal_date, "إعادة احتساب الإهلاك اليومي حتى تاريخ بيع/استبعاد الأصل",
+         user_id),
+    )
+    return replacement_amount, reversal_entry, replacement_entry
+
 
 @assets_bp.route("/", methods=["GET","POST"])
 @require()
@@ -527,6 +627,11 @@ def schedule(asset_id):
     if not asset: c.close(); flash("الأصل غير موجود.","error"); return redirect(url_for("assets.index"))
     rows=c.execute("SELECT * FROM asset_depreciations WHERE asset_id=? ORDER BY period",(asset_id,)).fetchall()
     disposal=c.execute("SELECT * FROM asset_disposals WHERE asset_id=?",(asset_id,)).fetchone()
+    depreciation_revisions=c.execute(
+        "SELECT * FROM asset_depreciation_revisions WHERE depreciation_id IN "
+        "(SELECT id FROM asset_depreciations WHERE asset_id=?) ORDER BY disposal_date,id",
+        (asset_id,),
+    ).fetchall()
     accounts=c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
     posted={x["period"]:Decimal(x["amount"]) for x in rows}
     posted_entry_ids={x["period"]:x["journal_entry_id"] for x in rows}
@@ -557,6 +662,7 @@ def schedule(asset_id):
     return render_template("asset_schedule.html",asset=asset,rows=rows,schedule_rows=schedule_rows,accumulated=accumulated,
       net=(Decimal("0") if asset["status"]=="disposed" else max(cost-accumulated,residual)),
       depreciable=depreciable,accounts=accounts,disposal=disposal,
+      depreciation_revisions=depreciation_revisions,
       disposal_type_labels=ASSET_DISPOSAL_TYPES)
 
 @assets_bp.route("/<int:asset_id>/depreciate",methods=["POST"])
@@ -669,26 +775,26 @@ def dispose(asset_id):
         if output_vat_account_id:
             checked_account(output_vat_account_id,{"liability"},"حساب ضريبة المخرجات")
         period=disposal_date[:7]
-        already_depreciated=c.execute("SELECT 1 FROM asset_depreciations WHERE asset_id=? AND period=?",
+        already_depreciated=c.execute("SELECT id,amount,journal_entry_id FROM asset_depreciations WHERE asset_id=? AND period=?",
                                        (asset_id,period)).fetchone()
-        if already_depreciated:
-            last_day=calendar.monthrange(date.fromisoformat(disposal_date).year,
-                                         date.fromisoformat(disposal_date).month)[1]
-            if date.fromisoformat(disposal_date).day != last_day:
-                raise ValueError("تم ترحيل إهلاك شهر الاستبعاد بالكامل؛ لا يمكن استبعاد الأصل في منتصف الشهر دون عكس القيد. استخدم تاريخ آخر يوم بالشهر أو عالج القيد بعكس معتمد.")
-        else:
-            ready=date.fromisoformat(asset["ready_date"])
-            disposal_period=date.fromisoformat(period+"-01")
-            offset=(disposal_period.year-ready.year)*12+disposal_period.month-ready.month
-            final_offset=int(asset["useful_life_months"])-(1 if ready.day==1 else 0)
-            accumulated_before=sum((Decimal(str(x["amount"])) for x in c.execute(
-                "SELECT amount FROM asset_depreciations WHERE asset_id=?",(asset_id,)).fetchall()),Decimal("0"))
-            remaining_before=Decimal(asset["cost"])-Decimal(asset["residual_value"])-accumulated_before
-            if offset>final_offset and remaining_before>0:
-                raise ValueError("لا يمكن استبعاد الأصل قبل استكمال فترات الإهلاك السابقة؛ راجع جدول الإهلاك.")
-            if offset<=final_offset and remaining_before>0:
-                # Recognize depreciation only through the actual disposal date.
-                _amount,_entry=_post_asset_depreciation(c,asset,period,session["user_id"],cutoff_date=disposal_date)
+        ready=date.fromisoformat(asset["ready_date"])
+        disposal_period=date.fromisoformat(period+"-01")
+        offset=(disposal_period.year-ready.year)*12+disposal_period.month-ready.month
+        final_offset=int(asset["useful_life_months"])-(1 if ready.day==1 else 0)
+        accumulated_before=sum((Decimal(str(x["amount"])) for x in c.execute(
+            "SELECT amount FROM asset_depreciations WHERE asset_id=? AND period<>?",(asset_id,period)).fetchall()),Decimal("0"))
+        remaining_before=Decimal(asset["cost"])-Decimal(asset["residual_value"])-accumulated_before
+        if offset>final_offset and remaining_before>0:
+            raise ValueError("لا يمكن استبعاد الأصل قبل استكمال فترات الإهلاك السابقة؛ راجع جدول الإهلاك.")
+        if offset<=final_offset and remaining_before>0:
+            if already_depreciated:
+                _reverse_full_period_depreciation_for_disposal(
+                    c,asset,period,disposal_date,session["user_id"]
+                )
+            else:
+                _amount,_entry=_post_asset_depreciation(
+                    c,asset,period,session["user_id"],cutoff_date=disposal_date
+                )
         accumulated=sum((Decimal(str(x["amount"])) for x in c.execute(
             "SELECT amount FROM asset_depreciations WHERE asset_id=?",(asset_id,)).fetchall()),Decimal("0"))
         cost=Decimal(asset["cost"])
