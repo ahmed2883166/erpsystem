@@ -16,8 +16,6 @@
 <option value="comprehensive_bonus" {% if request.form.get('employee_scope')=='comprehensive_bonus' %}selected{% endif %}>مكافأة شاملة</option>
 <option value="all_active" {% if request.form.get('employee_scope')=='all_active' %}selected{% endif %}>كل الموظفين النشطين</option>
 <option value="unpaid_leave" {% if request.form.get('employee_scope')=='unpaid_leave' %}selected{% endif %}>إجازة بدون مرتب</option>
-<option value="resigned" {% if request.form.get('employee_scope')=='resigned' %}selected{% endif %}>مستقيل</option>
-<option value="retired" {% if request.form.get('employee_scope')=='retired' %}selected{% endif %}>معاش</option>
 </select></label>
 <label>طريقة الزيادة<select name="calculation_type"><option value="fixed" {% if request.form.get('calculation_type','fixed')=='fixed' %}selected{% endif %}>مبلغ ثابت</option><option value="percentage" {% if request.form.get('calculation_type')=='percentage' %}selected{% endif %}>نسبة مئوية</option></select></label>
 <label>أساس حساب النسبة<select name="calculation_base"><option value="basic" {% if request.form.get('calculation_base','basic')=='basic' %}selected{% endif %}>الراتب الأساسي</option><option value="insured_wage" {% if request.form.get('calculation_base')=='insured_wage' %}selected{% endif %}>أجر الاشتراك التأميني</option></select></label>
