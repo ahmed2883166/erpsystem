@@ -43,7 +43,8 @@ class SalesIntegrationTests(unittest.TestCase):
         for code, name, typ in [
             ("1110", "الصندوق", "asset"), ("1120", "البنك", "asset"), ("1130", "العملاء", "asset"), ("2160", "دفعات مقدمة من العملاء", "liability"),
             ("1150", "المخزون", "asset"), ("2130", "ضريبة مخرجات", "liability"),
-            ("4100", "المبيعات", "revenue"), ("5100", "تكلفة المبيعات", "expense")
+            ("4100", "المبيعات", "revenue"), ("4200", "مردودات ومسموحات المبيعات", "revenue"),
+            ("5100", "تكلفة المبيعات", "expense")
         ]:
             self.db.execute("INSERT INTO accounts(code,name_ar,account_type) VALUES(?,?,?)", (code,name,typ))
         self.db.execute("INSERT INTO customers(code,name) VALUES('C1','عميل اختبار')")
@@ -514,7 +515,7 @@ class SalesIntegrationTests(unittest.TestCase):
             (credit["journal_entry_id"],),
         ).fetchall()
         amounts = {row["code"]: (Decimal(row["debit"]), Decimal(row["credit"])) for row in credit_lines}
-        self.assertEqual(amounts["4100"], (Decimal("20.00"), Decimal("0")))
+        self.assertEqual(amounts["4200"], (Decimal("20.00"), Decimal("0")))
         self.assertEqual(amounts["2130"], (Decimal("2.80"), Decimal("0")))
         self.assertEqual(amounts["1130"], (Decimal("0"), Decimal("22.80")))
 
@@ -569,7 +570,7 @@ class SalesIntegrationTests(unittest.TestCase):
                 debit + Decimal(str(row["debit"] or "0")),
                 credit + Decimal(str(row["credit"] or "0")),
             )
-        self.assertEqual(credit_totals["4100"][0], Decimal("180"))
+        self.assertEqual(credit_totals["4200"][0], Decimal("180"))
         self.assertEqual(credit_totals["2130"][0], Decimal("25.2"))
         self.assertEqual(credit_totals["1130"][1], Decimal("205.2"))
         cogs_rows = self.db.execute(
