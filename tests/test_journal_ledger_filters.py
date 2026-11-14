@@ -81,6 +81,25 @@ class JournalAndLedgerFilterTests(unittest.TestCase):
         self.assertIn('href="/journal/2"', html)
         self.assertIn("عرض القيد", html)
 
+    def test_journal_sort_order_is_by_entry_number_and_can_be_reversed(self):
+        ascending = self.client.get("/journal?sort_order=asc")
+        self.assertEqual(ascending.status_code, 200)
+        html_asc = ascending.get_data(as_text=True)
+        self.assertLess(html_asc.index('href="/journal/1"'), html_asc.index('href="/journal/2"'))
+        self.assertLess(html_asc.index('href="/journal/2"'), html_asc.index('href="/journal/3"'))
+        self.assertIn('name="sort_order"', html_asc)
+
+        descending = self.client.get("/journal?sort_order=desc")
+        self.assertEqual(descending.status_code, 200)
+        html_desc = descending.get_data(as_text=True)
+        self.assertLess(html_desc.index('href="/journal/3"'), html_desc.index('href="/journal/2"'))
+        self.assertLess(html_desc.index('href="/journal/2"'), html_desc.index('href="/journal/1"'))
+
+    def test_invalid_journal_sort_order_falls_back_to_ascending(self):
+        response = self.client.get("/journal?sort_order=unexpected")
+        html = response.get_data(as_text=True)
+        self.assertLess(html.index('href="/journal/1"'), html.index('href="/journal/2"'))
+
     def test_journal_detail_displays_the_posted_entry_lines(self):
         response = self.client.get("/journal/2")
         self.assertEqual(response.status_code, 200)
