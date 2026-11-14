@@ -87,6 +87,43 @@ class PurchasingAccountingTests(unittest.TestCase):
             "SELECT COUNT(*) FROM supplier_bill_receipts WHERE receipt_id=?", (receipt_id,)
         ).fetchone()[0], 2)
 
+    def test_multi_line_purchase_order_stays_partial_until_every_line_is_received(self):
+        purchases.init_purchase_schema()
+        self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-MULTI-RECV','مورد متعدد')")
+        supplier_id = self.db.execute(
+            "SELECT id FROM suppliers WHERE code='SUP-MULTI-RECV'"
+        ).fetchone()["id"]
+        self.db.execute("INSERT INTO stock_products(id,sku,name_ar) VALUES(901,'PO-MULTI-A','صنف أ')")
+        self.db.execute("INSERT INTO stock_products(id,sku,name_ar) VALUES(902,'PO-MULTI-B','صنف ب')")
+        self.db.execute("""INSERT INTO purchase_orders(po_no,supplier_id,order_date,created_by,status)
+                           VALUES('PO-MULTI-RECV',?,'2026-11-15',1,'approved')""", (supplier_id,))
+        po_id = self.db.execute(
+            "SELECT id FROM purchase_orders WHERE po_no='PO-MULTI-RECV'"
+        ).fetchone()["id"]
+        self.db.executemany(
+            "INSERT INTO purchase_order_lines(po_id,product_id,quantity,received_qty,unit_price) VALUES(?,?,?,?,?)",
+            [(po_id, 901, "5", "5", "10"), (po_id, 902, "8", "0", "20")],
+        )
+        self.db.commit()
+
+        status = purchases.refresh_purchase_order_receipt_status(self.db, po_id)
+        self.assertEqual(status, "partially_received")
+        self.assertEqual(
+            self.db.execute("SELECT status FROM purchase_orders WHERE id=?", (po_id,)).fetchone()[0],
+            "partially_received",
+        )
+
+        self.db.execute(
+            "UPDATE purchase_order_lines SET received_qty='8' WHERE po_id=? AND product_id=902",
+            (po_id,),
+        )
+        status = purchases.refresh_purchase_order_receipt_status(self.db, po_id)
+        self.assertEqual(status, "received")
+        self.assertEqual(
+            self.db.execute("SELECT status FROM purchase_orders WHERE id=?", (po_id,)).fetchone()[0],
+            "received",
+        )
+
     def test_purchase_order_requires_independent_approval_before_receipt(self):
         purchases.init_purchase_schema()
         self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-APP','مورد اعتماد')")

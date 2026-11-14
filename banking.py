@@ -51,6 +51,17 @@ def count_same_amount_candidates(rows, amount):
     return sum(1 for row in rows if signed_ledger_amount(row["debit"], row["credit"]) == target)
 
 
+def save_statement_line_match(c, line_id, journal_line_id, matched_at, matched_by):
+    """Claim an unmatched statement line exactly once, even if callers race."""
+    updated = c.execute("""UPDATE bank_statement_lines
+        SET matched_journal_line_id=?,matched_at=?,matched_by=?
+        WHERE id=? AND matched_transaction_id IS NULL
+          AND matched_journal_line_id IS NULL""",
+        (journal_line_id, matched_at, matched_by, line_id)).rowcount
+    if updated != 1:
+        raise ValueError("سطر كشف البنك تمت مطابقته بالفعل أو لم يعد متاحًا للمطابقة.")
+
+
 def init_bank_schema():
     c = db()
     c.executescript("""
@@ -343,6 +354,8 @@ def statement_reconciliation():
                 flash("تم تسجيل مراجعة فرق الرصيد الافتتاحي. راجع العناصر القائمة قبل اعتماد التسوية النهائية.","warning")
                 return redirect(url_for("bank.statement_reconciliation",account_id=account_id,start_date=period_start,end_date=period_end))
             if action=="match":
+                # Lock before reading either row; competing requests re-check after the lock.
+                c.execute("BEGIN IMMEDIATE")
                 line_id=request.form.get("line_id",type=int)
                 journal_line_id=request.form.get("journal_line_id",type=int)
                 line=c.execute("SELECT * FROM bank_statement_lines WHERE id=?",(line_id,)).fetchone()
@@ -378,9 +391,10 @@ def statement_reconciliation():
                 already=c.execute("SELECT 1 FROM bank_statement_lines WHERE matched_journal_line_id=? LIMIT 1",
                                   (journal_line_id,)).fetchone()
                 if already: raise ValueError("سطر الأستاذ تمت مطابقته مع سطر كشف آخر بالفعل.")
-                c.execute("""UPDATE bank_statement_lines SET matched_journal_line_id=?,
-                    matched_at=?,matched_by=? WHERE id=?""",
-                    (journal_line_id,datetime.now().isoformat(timespec="seconds"),session.get("user_id"),line_id))
+                save_statement_line_match(
+                    c, line_id, journal_line_id,
+                    datetime.now().isoformat(timespec="seconds"), session.get("user_id")
+                )
                 c.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
                     VALUES(?,?,?,?)""",(session.get("user_id"),"bank_statement_match",
                     f"مطابقة سطر كشف #{line_id} مع سطر الأستاذ #{journal_line_id} بالقيد #{journal_line['entry_id']}؛ عدد القيود المحتملة بنفس المبلغ والاتجاه: {possible}",

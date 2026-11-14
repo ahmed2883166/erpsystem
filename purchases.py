@@ -1099,6 +1099,26 @@ def delete_order(order_id):
         except sqlite3.IntegrityError: c.rollback(); flash("لا يمكن حذف أمر الشراء لوجود مستند مرتبط به.","error")
     c.close(); return redirect(url_for("purchase.index"))
 
+def refresh_purchase_order_receipt_status(c, po_id):
+    """Derive the PO header status from every line after a goods receipt."""
+    rows = c.execute(
+        "SELECT quantity,received_qty FROM purchase_order_lines WHERE po_id=? ORDER BY id",
+        (po_id,),
+    ).fetchall()
+    if not rows:
+        raise ValueError("أمر الشراء لا يحتوي على أصناف قابلة للاستلام.")
+    quantities = [(Decimal(str(row["quantity"])), Decimal(str(row["received_qty"] or "0")))
+                  for row in rows]
+    if all(received >= ordered for ordered, received in quantities):
+        status = "received"
+    elif any(received > 0 for _, received in quantities):
+        status = "partially_received"
+    else:
+        status = "approved"
+    c.execute("UPDATE purchase_orders SET status=? WHERE id=?", (status, po_id))
+    return status
+
+
 @purchase_bp.route("/receipts/new",methods=["GET","POST"])
 @require("purchases.manage")
 def new_receipt():
@@ -1157,9 +1177,8 @@ def new_receipt():
                       (rid,po_line_id,product,str(qty),str(unit),str(total),location_id,str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,str(factor)))
             if po_id:
                 received_total=Decimal(po_line["received_qty"])+qty
-                new_status="received" if received_total==Decimal(po_line["quantity"]) else "partially_received"
                 c.execute("UPDATE purchase_order_lines SET received_qty=? WHERE id=?",(str(received_total),po_line_id))
-                c.execute("UPDATE purchase_orders SET status=? WHERE id=?",(new_status,po_id))
+                refresh_purchase_order_receipt_status(c, po_id)
             # Stock ledger + valuation layer are updated in the same DB transaction.
             move_no="PUR-"+no
             movement=c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,target_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name)

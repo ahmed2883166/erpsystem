@@ -95,6 +95,18 @@ def _account(c, account_id):
     return row["id"]
 
 
+def update_open_fx_balance(c, transaction_id, expected_balance, remaining_foreign, remaining_base):
+    """Update an FX balance only if it is still the balance used by the calculation."""
+    remaining = D(remaining_foreign)
+    status = "settled" if remaining == 0 else "open"
+    updated = c.execute("""UPDATE fx_transactions
+        SET balance_foreign=?,balance_base=?,status=?
+        WHERE id=? AND status='open' AND balance_foreign=?""",
+        (str(remaining), str(remaining_base), status, transaction_id, str(expected_balance))).rowcount
+    if updated != 1:
+        raise ValueError("تغير رصيد المعاملة أثناء التسوية؛ أعد تحميل الصفحة وحاول مرة أخرى.")
+
+
 def _rate(c, currency, rate_date, supplied=None):
     if supplied is not None and str(supplied).strip():
         rate = D(supplied)
@@ -203,6 +215,8 @@ def create_transaction():
 def settle(transaction_id):
     c = _db()
     try:
+        # Acquire the SQLite write lock before reading the remaining balance.
+        c.execute("BEGIN IMMEDIATE")
         t = c.execute("SELECT * FROM fx_transactions WHERE id=? AND status='open'", (transaction_id,)).fetchone()
         if not t:
             raise ValueError("المعاملة غير موجودة أو تمت تسويتها.")
@@ -227,7 +241,6 @@ def settle(transaction_id):
             lines.append((gain_account,0,diff,"أرباح فروق عملة محققة"))
         elif diff < 0:
             lines.append((loss_account,-diff,0,"خسائر فروق عملة محققة"))
-        c.execute("BEGIN IMMEDIATE")
         ref = "FX-SETTLE-" + str(transaction_id) + "-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
         jid = post_journal(c,settle_date,ref,"تسوية معاملة عملة أجنبية "+t["reference"],lines,session["user_id"])
         remaining_foreign = D(t["balance_foreign"])-amount
@@ -235,8 +248,9 @@ def settle(transaction_id):
         c.execute("""INSERT INTO fx_settlements(transaction_id,settlement_date,foreign_amount,rate,base_amount,
             carrying_amount,fx_difference,journal_entry_id,created_by) VALUES(?,?,?,?,?,?,?,?,?)""",
             (transaction_id,settle_date,str(amount),str(rate),str(cash),str(carrying),str(diff),jid,session["user_id"]))
-        c.execute("UPDATE fx_transactions SET balance_foreign=?,balance_base=?,status=? WHERE id=?",
-                  (str(remaining_foreign),str(remaining_base),"settled" if remaining_foreign==0 else "open",transaction_id))
+        update_open_fx_balance(
+            c, transaction_id, t["balance_foreign"], remaining_foreign, remaining_base
+        )
         _audit(c, "fx_transaction_settled", t["reference"] + " foreign=" + str(amount) + " diff=" + str(diff))
         c.commit()
         flash("تم تسجيل التحصيل/السداد وإثبات فرق العملة المحقق.", "success")

@@ -46,6 +46,24 @@ class CurrencyCenterTests(unittest.TestCase):
         currency_center.DB_PATH = self.original_path
         self.temp.cleanup()
 
+    def test_stale_fx_balance_cannot_overwrite_a_newer_settlement(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("""INSERT INTO fx_transactions(
+            reference,party_type,party_name,currency_code,transaction_date,
+            original_foreign,balance_foreign,original_rate,original_base,balance_base,
+            party_account_id,counterpart_account_id,status
+        ) VALUES('STALE-FX','receivable','Customer','USD','2026-11-01',
+                 '100','30','50','5000','1500',2,3,'open')""")
+        conn.commit()
+        with self.assertRaisesRegex(ValueError, "تغير رصيد المعاملة"):
+            currency_center.update_open_fx_balance(conn, 1, "100", "0", "0.00")
+        state = conn.execute(
+            "SELECT balance_foreign,balance_base,status FROM fx_transactions WHERE id=1"
+        ).fetchone()
+        self.assertEqual(tuple(state), ("30", "1500", "open"))
+        conn.close()
+
     def test_receivable_settlement_and_period_end_revaluation(self):
         response = self.client.post("/currencies/transactions", data={
             "party_type": "receivable", "reference": "INV-USD-1", "party_name": "Foreign Customer",

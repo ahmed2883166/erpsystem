@@ -11,6 +11,23 @@ from banking import signed_ledger_amount, opening_reconciliation_state, count_sa
 
 
 class BankStatementAmountTests(unittest.TestCase):
+    def test_statement_line_can_only_be_claimed_once(self):
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute("""CREATE TABLE bank_statement_lines(
+            id INTEGER PRIMARY KEY, matched_transaction_id INTEGER,
+            matched_journal_line_id INTEGER, matched_at TEXT, matched_by INTEGER
+        )""")
+        connection.execute("INSERT INTO bank_statement_lines(id) VALUES(1)")
+        banking.save_statement_line_match(connection, 1, 10, "2026-11-15T10:00:00", 1)
+        with self.assertRaisesRegex(ValueError, "تمت مطابقته"):
+            banking.save_statement_line_match(connection, 1, 11, "2026-11-15T10:01:00", 2)
+        row = connection.execute(
+            "SELECT matched_journal_line_id,matched_by FROM bank_statement_lines WHERE id=1"
+        ).fetchone()
+        self.assertEqual((row["matched_journal_line_id"], row["matched_by"]), (10, 1))
+        connection.close()
+
     def test_debit_is_positive_in_bank_statement_direction(self):
         self.assertEqual(signed_ledger_amount("125.50", "0"), Decimal("125.50"))
 
