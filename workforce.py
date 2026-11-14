@@ -11,6 +11,7 @@ from functools import wraps
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g, send_file, send_from_directory, current_app
 from werkzeug.utils import secure_filename
+from werkzeug.datastructures import FileStorage
 from pathlib import Path
 from PIL import Image, ImageOps, UnidentifiedImageError
 from accounting_core import post_journal
@@ -614,6 +615,13 @@ def salary_history():
     return render_template("salary_history.html",employees=employees,rows=rows,selected_employee=employee_id)
 
 
+@workforce_bp.before_app_request
+def _block_public_employee_photo_files():
+    # Legacy uploads may still exist under static/. They must never be served directly.
+    if request.path.startswith("/static/uploads/employees/"):
+        return "Not found", 404
+
+
 @workforce_bp.route("/hr/<int:employee_id>/photo", methods=["GET"])
 @_role("admin", "accountant", "viewer")
 def employee_photo(employee_id):
@@ -624,6 +632,29 @@ def employee_photo(employee_id):
         return "Not found", 404
     relative = str(employee["photo_path"]).replace("\\", "/")
     parts = relative.split("/")
+    if len(parts) == 2 and parts[0] == "uploads" and parts[1] and parts[1] == Path(parts[1]).name:
+        legacy_file = Path(current_app.static_folder) / "uploads" / "employees" / parts[1]
+        if legacy_file.is_file():
+            try:
+                with legacy_file.open("rb") as old_stream:
+                    migrated_path = _save_employee_photo(FileStorage(stream=old_stream, filename=parts[1]))
+                c = _db()
+                c.execute("UPDATE employees SET photo_path=? WHERE id=? AND photo_path=?",
+                          (migrated_path, employee_id, relative))
+                if c.execute("SELECT changes()").fetchone()[0] != 1:
+                    raise RuntimeError("Employee photo reference changed during migration.")
+                c.commit()
+                c.close()
+                _delete_employee_photo(relative)
+                legacy_file.unlink(missing_ok=True)
+                relative = migrated_path
+                parts = relative.split("/")
+            except (OSError, ValueError, sqlite3.Error, RuntimeError):
+                try:
+                    c.close()
+                except Exception:
+                    pass
+                return "Not found", 404
     if len(parts) != 2 or parts[0] != "employees" or not parts[1].endswith(".jpg"):
         return "Not found", 404
     response = send_from_directory(_employee_photo_directory(), parts[1], mimetype="image/jpeg", max_age=0)
