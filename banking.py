@@ -327,6 +327,14 @@ def statement_reconciliation():
                         Decimal(str(gl_line["credit"] or "0"))).quantize(Decimal("0.01"))
                 book_total+=signed
                 book_rows.append(dict(gl_line,signed_amount=signed))
+            candidate_lines=[]
+            for statement_line in lines:
+                statement_row=dict(statement_line)
+                statement_amount=Decimal(str(statement_row["signed_amount"])).quantize(Decimal("0.01"))
+                statement_row["candidates"]=[book_row for book_row in book_rows
+                    if book_row["signed_amount"]==statement_amount]
+                candidate_lines.append(statement_row)
+            lines=candidate_lines
             statement_total=sum((Decimal(str(line["signed_amount"])) for line in lines),Decimal("0"))
             matched_count=sum(1 for line in lines if line["matched_transaction_id"] or line["matched_journal_line_id"])
             balances=c.execute("""SELECT opening_balance,closing_balance FROM bank_statement_balances
