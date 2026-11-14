@@ -1554,6 +1554,7 @@ def journal():
                     source_table_columns[table_name] = category
     if source_filter not in (*source_tables.keys(), "general"):
         source_filter = ""
+    filters, filter_params = [], []
     if source_filter == "general":
         if source_table_columns:
             exclusions = [
