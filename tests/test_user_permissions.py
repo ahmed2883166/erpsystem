@@ -52,16 +52,18 @@ class UserPermissionRouteTests(unittest.TestCase):
 
     def test_viewer_cannot_open_or_post_user_permission_edit(self):
         conn = sqlite3.connect(nexus.DB_PATH)
-        conn.execute("UPDATE users SET role='viewer',permissions_json=? WHERE id=1",
-                     (json.dumps(["reports.view"]),))
+        conn.execute("""INSERT INTO users
+            (id,username,full_name,role,active,permissions_json,password_hash,created_at)
+            VALUES(2,'viewer','مستخدم عرض','viewer',1,?,'hash','2026-01-01')""",
+            (json.dumps(["reports.view"]),))
         conn.commit()
         conn.close()
         with self.client.session_transaction() as session:
-            session.update(user_id=1, username="admin", full_name="مدير",
+            session.update(user_id=2, username="viewer", full_name="مستخدم عرض",
                            role="viewer", permissions=["reports.view"])
         response = self.client.post("/users/1/edit", data={
-            "username": "admin", "full_name": "مدير", "role": "admin",
-            "active": "yes", "permissions": ["users.manage"],
+            "username": "admin", "full_name": "مدير", "role": "viewer",
+            "active": "yes", "permissions": ["reports.view"],
         })
         self.assertEqual(response.status_code, 302)
         conn = sqlite3.connect(nexus.DB_PATH)
