@@ -32,13 +32,14 @@
   العلاوات والزيادات تُدار بقرار جماعي من شاشة <a href="{{url_for('workforce.salary_changes')}}">العلاوات والزيادات الجماعية</a>، ويمكن تطبيقها على كل الموظفين النشطين أو فئة محددة بعد معاينة الأثر واعتماد القرار.
 </div>
 <label>نسبة الإضافي الافتراضية %<input type="number" min="0" max="500" step="0.01" name="overtime_rate_percent" value="150"></label>
+<label style="grid-column:1/-1"><input type="checkbox" name="friday_work_eligible" value="1"> يستحق بدل العمل أيام الجمعة (بموافقة الإدارة)</label>
 <button type="submit">حفظ الموظف</button></form></section>
-<section class="panel"><h3>سجل الموظفين</h3><div style="overflow-x:auto"><table><tr><th>الصورة</th><th>الكود</th><th>الاسم</th><th>الرقم القومي</th><th>رقم التأمين</th><th>العنوان</th><th>الموقف</th><th>الوظيفة</th><th>الإدارة</th><th>الأساسي</th><th>المتغير الشهري</th><th>أجر التأمين</th><th>الإضافي %</th><th>إجراء</th></tr>
+<section class="panel"><h3>سجل الموظفين</h3><div style="overflow-x:auto"><table><tr><th>الصورة</th><th>الكود</th><th>الاسم</th><th>الرقم القومي</th><th>رقم التأمين</th><th>العنوان</th><th>الموقف</th><th>الوظيفة</th><th>الإدارة</th><th>الأساسي</th><th>المتغير الشهري</th><th>أجر التأمين</th><th>الإضافي %</th><th>بدل الجمعة</th><th>إجراء</th></tr>
 {% for e in employees %}<tr><td>{% if e.photo_path %}<img src="{{url_for('static',filename=e.photo_path)}}" alt="صورة {{e.full_name}}" style="width:48px;height:48px;object-fit:cover;border-radius:50%">{% else %}-{% endif %}</td><td>{{e.employee_code}}</td><td>{{e.full_name}}</td><td>{{e.national_id or '-'}}</td><td>{{e.insurance_number or '-'}}</td><td>{{e.address or '-'}}</td>
 <td>{{{'comprehensive_bonus':'مكافأة شاملة','permanent':'مثبت','unpaid_leave':'إجازة بدون مرتب','resigned':'استقالة','retired':'معاش'}.get(e.work_status,'مثبت')}}</td>
 <td>{{e.job_title}}</td><td>{{e.department}}</td><td>{{e.basic_salary}}</td><td>{{e.variable_salary or '0'}}</td><td>{{e.insured_wage or '0'}}</td>
-<td>{{e.overtime_rate_percent}}%</td><td><a href="{{url_for('workforce.edit_employee',employee_id=e.id)}}">تعديل الملف</a> | <a target="_blank" href="{{url_for('workforce.employee_form_2_salary',employee_id=e.id)}}">استمارة 2 مرتبات</a> | <a href="{{url_for('workforce.employee_financial_statement',employee_id=e.id)}}">كشف حساب الموظف</a></td></tr>
-{% else %}<tr><td colspan="14">لا يوجد موظفون.</td></tr>{% endfor %}</table></div>
+<td>{{e.overtime_rate_percent}}%</td><td>{{'نعم' if e.friday_work_eligible else 'لا'}}</td><td><a href="{{url_for('workforce.edit_employee',employee_id=e.id)}}">تعديل الملف</a> | <a target="_blank" href="{{url_for('workforce.employee_form_2_salary',employee_id=e.id)}}">استمارة 2 مرتبات</a> | <a href="{{url_for('workforce.employee_financial_statement',employee_id=e.id)}}">كشف حساب الموظف</a></td></tr>
+{% else %}<tr><td colspan="15">لا يوجد موظفون.</td></tr>{% endfor %}</table></div>
 <div class="actions pagination"><span class="muted">إجمالي الموظفين: {{ employees_page.total }} — الصفحة {{ employees_page.page }} من {{ employees_page.pages }}</span>
 <form method="get" class="inline-form"><label>عدد السطور <select name="employees_per_page" onchange="this.form.submit()"><option value="50" {% if employees_page.per_page==50 %}selected{% endif %}>50</option><option value="100" {% if employees_page.per_page==100 %}selected{% endif %}>100</option></select></label></form>
 {% if employees_page.page>1 %}<a class="button secondary" href="{{ url_for('workforce.employees',employees_page=employees_page.page-1,employees_per_page=employees_page.per_page) }}">السابق</a>{% endif %}
