@@ -55,7 +55,14 @@
     <tr><th>إجمالي الاستقطاعات المحاسبي للمرتبات</th><td>{{slip.total_deductions}}</td></tr>
     <tr><th>مراجعة الإضافي اليدوي</th><td>{% if slip.overtime_manual_override %}تم اعتماد مبلغ يدوي — السبب: {{slip.overtime_override_reason}}{% else %}لم يتم إجراء تعديل يدوي{% endif %}</td></tr>
   </table>
-  <p class="muted">هذه القسيمة مستخرجة من بيانات المرتبات المحفوظة والمرحّلة. أي دفعات صرف مسجلة على مستوى المرتبات لا تُنسب لموظف بعينه في هذه القسيمة.</p>
+  <h3>تفصيل كل بند محفوظ وقت إعداد المرتبات</h3>
+  <table><tr><th>التصنيف</th><th>البيان</th><th>المبلغ</th></tr>
+  {% for item in detail_items %}<tr><td>{{{'earning':'استحقاق','deduction':'استقطاع','employer_cost':'تكلفة الشركة','information':'معلومة'}.get(item.section,item.section)}}</td><td>{{item.item_name}}</td><td>{{item.amount}}</td></tr>{% else %}<tr><td colspan="3">لا توجد تفاصيل بندية محفوظة لهذا المسير القديم؛ المعروض أعلاه هو الملخص التاريخي المتاح.</td></tr>{% endfor %}</table>
+  <h3>دفعات الصرف المنسوبة لهذا الموظف</h3>
+  <table><tr><th>التاريخ</th><th>المبلغ</th><th>المرجع</th><th>رقم القيد</th></tr>
+  {% for p in payments %}<tr><td>{{p.payment_date}}</td><td>{{p.amount}}</td><td>{{p.reference}}</td><td>{{p.journal_entry_id}}</td></tr>{% else %}<tr><td colspan="4">لا توجد دفعات موزعة على الموظف. قد تكون دفعات المسير القديمة غير موزعة فرديًا.</td></tr>{% endfor %}</table>
+  <p>ما تم صرفه للموظف: <strong>{{slip.paid_amount}}</strong> — المتبقي وفق التوزيع: <strong>{{slip.remaining_amount}}</strong></p>
+  <p class="muted">هذه القسيمة مستخرجة من بيانات المرتبات المحفوظة والمرحّلة. لا يتم نسب دفعة مسير إجمالية لموظف بعينه دون توزيع موثق.</p>
   <p class="payslip-signatures">توقيع الموظف: .................................... <span>اعتماد شؤون العاملين: ....................................</span></p>
 </section>
 <style>
