@@ -19,7 +19,7 @@ from chart_templates import (CHARTS, ACTIVITY_LABELS, OPERATIONAL_ACCOUNT_CODES,
 from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
 from sales import sales_bp, init_sales_schema
-from accounting_core import post_journal, reconciliation_snapshot
+from accounting_core import post_journal, reconciliation_snapshot, safe_error_message
 from banking import bank_bp, init_bank_schema
 from fixed_assets import assets_bp, initialize_assets_schema, register_assets_from_journal_lines
 from receivables import aging_bp, initialize_aging_schema
@@ -727,7 +727,7 @@ def license_page():
             flash("تم تفعيل NEXUS ERP بنجاح.","success")
             return redirect(url_for("about"))
         except RuntimeError as exc:
-            flash(str(exc),"error")
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     return render_template("license.html",license_info=current_license_status())
 
 
@@ -1021,7 +1021,7 @@ def activity_profiles():
                 raise ValueError("العملية المطلوبة غير معروفة.")
         except (ValueError, TypeError, sqlite3.IntegrityError) as exc:
             connection.rollback()
-            flash(str(exc), "error")
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
         connection.close()
         return redirect(url_for("activity_profiles"))
     profiles = list_activity_profiles(connection, True)
@@ -1087,7 +1087,7 @@ def accounts():
             flash("رمز الحساب مستخدم بالفعل.", "error")
         except ValueError as exc:
             connection.rollback()
-            flash(str(exc), "error")
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     raw_rows = connection.execute("SELECT * FROM accounts ORDER BY code").fetchall()
     by_id = {row["id"]: dict(row) for row in raw_rows}
     def account_depth(row, seen=None):
@@ -2078,7 +2078,7 @@ def income_statement():
         try:
             selected_dimensions = validate_journal_dimensions(connection, raw_dimensions) if any(raw_dimensions.values()) else {}
         except ValueError as exc:
-            flash(str(exc), "error")
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
             return redirect(url_for("income_statement", date_from=date_from, date_to=date_to, compare=compare_mode))
         dimension_options = active_dimension_options(connection)
         statement = build_income_statement(connection, date_from, date_to, selected_dimensions)
@@ -2115,7 +2115,7 @@ def expense_analysis():
         try:
             selected_dimensions = validate_journal_dimensions(connection, raw_dimensions) if any(raw_dimensions.values()) else {}
         except ValueError as exc:
-            flash(str(exc), "error")
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
             return redirect(url_for("expense_analysis", date_from=date_from, date_to=date_to))
         dimension_options = active_dimension_options(connection)
         report = build_expense_analysis(connection, date_from, date_to, selected_dimensions)
@@ -2686,7 +2686,7 @@ def users():
         except sqlite3.IntegrityError:
             flash("اسم المستخدم مستخدم بالفعل.", "error")
         except ValueError as exc:
-            flash(str(exc), "error")
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     rows = connection.execute("SELECT id,username,full_name,role,active,created_at,permissions_json FROM users ORDER BY id").fetchall()
     connection.close()
     return render_template("users.html", users=rows, role_permissions={role: sorted(values) for role, values in PERMISSIONS.items()}, default_permissions=sorted(PERMISSIONS.get("admin", set())), all_permissions=ALL_PERMISSIONS, permission_labels=PERMISSION_LABELS)
@@ -2732,7 +2732,7 @@ def edit_user(user_id):
             except sqlite3.IntegrityError:
                 connection.rollback(); flash("اسم المستخدم مستخدم بالفعل.","error")
             except ValueError as exc:
-                connection.rollback(); flash(str(exc),"error")
+                connection.rollback(); flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     selected_permissions = set(stored_user_permissions(user["permissions_json"] if "permissions_json" in user.keys() else None, user["role"]))
     connection.close(); return render_template("user_edit.html",user=user,roles=PERMISSIONS,all_permissions=ALL_PERMISSIONS,permission_labels=PERMISSION_LABELS,selected_permissions=selected_permissions)
 
