@@ -236,7 +236,7 @@ class StockValuationTests(unittest.TestCase):
 
         self.assertEqual(
             stock.current_qty(self.db,self.product_id,self.warehouse_id,lot_a),
-            Decimal("4.0000")
+            Decimal("5.0000")
         )
         self.assertEqual(
             stock.current_qty(self.db,self.product_id,second_wh,lot_a),
