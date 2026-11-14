@@ -404,7 +404,7 @@ def index():
       ORDER BY f.asset_code""").fetchall()
     assets=[dict(row,
         accumulated=Decimal(str(row["accumulated"] or "0")),
-        net_book_value=(Decimal("0") if row["status"]=="disposed" else
+        net_book_value=(Decimal("0") if row["status"] in {"disposed","reversed"} else
             max(Decimal(row["cost"])-Decimal(str(row["accumulated"] or "0")),
                 Decimal(row["residual_value"]))))
         for row in assets]
