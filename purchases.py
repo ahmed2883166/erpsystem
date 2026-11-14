@@ -1457,7 +1457,6 @@ def new_credit_note():
             inventory_code=activity_inventory_code(c)
             if not inventory_code:
                 raise ValueError("النشاط الحالي لا يملك حساب مخزون معرفًا.")
-            inventory_id=account(c,inventory_code,"asset")
             ap_id=supplier_ap_account(c)
             tax_rate=Decimal(bill["tax_rate"] or "0")
             method_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
