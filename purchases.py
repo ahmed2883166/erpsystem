@@ -984,6 +984,7 @@ def _supplier_grni_price_variance_lines(c, receipt_rows, discount_amount, matche
     for index, item in enumerate(source_lines):
         if index == len(source_lines) - 1:
             line_discount = remaining_discount
+            remaining_discount = money("0")
         else:
             line_discount = money(discount_amount * item["gross"] / source_total)
             remaining_discount = money(remaining_discount - line_discount)
