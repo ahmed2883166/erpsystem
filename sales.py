@@ -880,10 +880,13 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
                 unit_cost = part_cost / part_qty
                 movement = conn.execute(
                     """INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,target_location_id,
-                       lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,issue_purpose)
-                       VALUES(?,'receipt',?,?,?,?,?,?,?,?,?,?, 'pending','sales_return')""",
+                       lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,issue_purpose,
+                       entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name,conversion_factor)
+                       VALUES(?,'receipt',?,?,?,?,?,?,?,?,?,?, 'pending','sales_return',?,?,?,?,?)""",
                     (movement_no, product_id, warehouse_id, return_location_id, lot_part["lot_id"], str(part_qty), str(unit_cost),
-                     str(part_cost), credit_date, "مرتجع مبيعات بموجب " + credit_no, created_by),
+                     str(part_cost), credit_date, "مرتجع مبيعات بموجب " + credit_no, created_by,
+                     str(lot_part["quantity"] / item["conversion_factor"]), item["uom_id"], item["uom_key"],
+                     item["entered_uom_name"], str(item["conversion_factor"])),
                 )
                 movement_id = movement.lastrowid
                 conn.execute(
