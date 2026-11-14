@@ -3,7 +3,7 @@
 <section class="panel"><form method="post" enctype="multipart/form-data" class="form-grid">
 <label>كود الموظف<input name="employee_code" value="{{e.employee_code}}" required></label><label>اسم الموظف<input name="full_name" value="{{e.full_name}}" required></label>
 <label>تغيير صورة الموظف (اختياري)<input type="file" name="photo" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"></label>
-{% if e.photo_path %}<div><img src="{{url_for('static',filename=e.photo_path)}}" alt="صورة الموظف" style="width:100px;height:100px;object-fit:cover;border-radius:8px"></div>{% endif %}
+{% if e.photo_path %}<div><img src="{{url_for('workforce.employee_photo',employee_id=e.id)}}" alt="صورة الموظف" style="width:100px;height:100px;object-fit:cover;border-radius:8px"></div>{% endif %}
 <label>الرقم القومي<input name="national_id" value="{{e.national_id}}" maxlength="20"></label><label>رقم التأمين الاجتماعي<input name="insurance_number" value="{{e.insurance_number}}"></label>
 <label>العنوان<input name="address" value="{{e.address}}"></label><label>الوظيفة<input name="job_title" value="{{e.job_title}}"></label>
 <label>الإدارة / المسمى الإداري<input name="department" value="{{e.department}}"></label>
