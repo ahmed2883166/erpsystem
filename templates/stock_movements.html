@@ -9,7 +9,8 @@ function refresh(){filter(sl,src);filter(tl,kind.value==='relocate'?src:dst);}
 src.addEventListener('change',refresh);dst.addEventListener('change',refresh);kind.addEventListener('change',refresh);refresh();
 const productSelect=document.querySelector('[name="product_id"]'),uomSelect=document.getElementById('movementUom');
 const productData={{ products|map(attribute='base_uom_category')|list|tojson }};
-function refreshUoms(){const p=productSelect.selectedIndex;const category=productData[p];let first=null;for(const option of uomSelect.options){if(!option.value)continue;option.hidden=String(option.dataset.category)!==String(category)||category===null||category===undefined;if(!option.hidden&&!first)first=option;}if(first)uomSelect.value=first.value;else uomSelect.value='';}
+const productBaseIds={{ products|map(attribute='base_uom_id')|list|tojson }};
+function refreshUoms(){const p=productSelect.selectedIndex;const category=productData[p],baseId=productBaseIds[p];let first=null;for(const option of uomSelect.options){if(!option.value)continue;option.hidden=String(option.dataset.category)!==String(category)||category===null||category===undefined;if(!option.hidden&&option.value===String(baseId))first=option;}if(first)uomSelect.value=first.value;else uomSelect.value='';}
 productSelect.addEventListener('change',refreshUoms);refreshUoms();
 })();
 </script>{% endblock %}
