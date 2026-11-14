@@ -743,9 +743,9 @@ def payroll():
                 if overtime_rate < 0 or overtime_rate > 500:
                     raise ValueError("نسبة الإضافي يجب أن تكون بين صفر و500.")
                 overtime_calculated_amount = M(D(overtime_hours) * basic_salary / D(e["standard_hours"]) * overtime_rate / Decimal("100"))
-                overtime_manual_override = bool(overtime_raw)
+                overtime_manual_override = bool(overtime_raw) and M(overtime_raw) != overtime_calculated_amount
                 if overtime_manual_override and not overtime_override_reason:
-                    raise ValueError("اكتب سبب تعديل مبلغ الإضافي يدويًا للموظف " + e["full_name"] + ".")
+                    raise ValueError("اكتب سبب اختلاف مبلغ الإضافي اليدوي عن المحسوب للموظف " + e["full_name"] + ".")
                 overtime_amount = M(overtime_raw) if overtime_manual_override else overtime_calculated_amount
                 absent_hours = D(request.form.get("absent_hours_" + str(e["id"]), "0"))
                 absence = M(request.form.get("absence_deduction_" + str(e["id"]), "0"))
