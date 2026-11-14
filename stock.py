@@ -1446,17 +1446,33 @@ def valuation_reconciliation():
             raise ValueError("لا يوجد حساب مخزون مضبوط في ملف النشاط الحالي.")
         products = conn.execute("SELECT id,sku,name_ar FROM stock_products WHERE active=1 ORDER BY sku").fetchall()
         valuation_by_code = {}
+        valuation_by_warehouse = {}
         for product in products:
             code = resolve_product_account_code(conn, product["id"], "inventory", default_inventory)
             if not code:
                 raise ValueError("تعذر تحديد حساب المخزون للصنف " + product["sku"] + ".")
-            layers = conn.execute("""SELECT qty_remaining,unit_cost,value_remaining
+            layers = conn.execute("""SELECT warehouse_id,qty_remaining,unit_cost,value_remaining
                 FROM stock_valuation_layers WHERE product_id=? AND CAST(qty_remaining AS REAL)>0""",
                 (product["id"],)).fetchall()
-            value = sum((D(str(row["value_remaining"])) if row["value_remaining"] not in (None, "")
-                         else D(str(row["qty_remaining"] or "0")) * D(str(row["unit_cost"] or "0"))
-                         for row in layers), D("0"))
+            value = D("0")
+            for layer in layers:
+                layer_value = (D(str(layer["value_remaining"])) if layer["value_remaining"] not in (None, "")
+                               else D(str(layer["qty_remaining"] or "0")) * D(str(layer["unit_cost"] or "0")))
+                value += layer_value
+                warehouse_id = layer["warehouse_id"]
+                valuation_by_warehouse[warehouse_id] = valuation_by_warehouse.get(warehouse_id, D("0")) + layer_value
             valuation_by_code[code] = valuation_by_code.get(code, D("0")) + value
+        warehouse_rows = []
+        warehouse_records = conn.execute("SELECT id,code,name_ar,active FROM stock_warehouses ORDER BY code").fetchall()
+        for warehouse in warehouse_records:
+            warehouse_rows.append({
+                "code": warehouse["code"], "name": warehouse["name_ar"],
+                "active": warehouse["active"],
+                "valuation": valuation_by_warehouse.get(warehouse["id"], D("0"))
+            })
+        unassigned_value = valuation_by_warehouse.get(None, D("0"))
+        if unassigned_value:
+            warehouse_rows.append({"code":"—","name":"طبقات غير مرتبطة بمخزن","active":0,"valuation":unassigned_value})
         account_rows = conn.execute("""SELECT id,code,name_ar FROM accounts
             WHERE active=1 AND is_group=0 AND code IN (
                 SELECT DISTINCT code FROM accounts WHERE code IS NOT NULL
@@ -1489,12 +1505,12 @@ def valuation_reconciliation():
                          "ledger":ledger,"difference":valuation-ledger})
         total_valuation = sum((row["valuation"] for row in rows), D("0"))
         total_ledger = sum((row["ledger"] for row in rows), D("0"))
-        return render_template("stock_reconciliation.html", rows=rows,
+        return render_template("stock_reconciliation.html", rows=rows, warehouse_rows=warehouse_rows,
             total_valuation=total_valuation,total_ledger=total_ledger,
             total_difference=total_valuation-total_ledger)
     except (ValueError, sqlite3.Error) as exc:
         flash(str(exc), "error")
-        return render_template("stock_reconciliation.html", rows=[],
+        return render_template("stock_reconciliation.html", rows=[], warehouse_rows=[],
             total_valuation=D("0"),total_ledger=D("0"),total_difference=D("0"),error=True)
     finally:
         conn.close()
