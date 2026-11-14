@@ -829,7 +829,7 @@ def payroll():
             month_end = (date(start.year + (start.month == 12), 1 if start.month == 12 else start.month + 1, 1) - date.resolution)
             period_end = month_end.isoformat()
             employees = c.execute("""SELECT * FROM employees WHERE
-                (active=1 AND work_status IN ('comprehensive_bonus','permanent','unpaid_leave')) OR
+                (active=1 AND work_status IN ('comprehensive_bonus','permanent')) OR
                 (work_status IN ('resigned','retired') AND termination_date>=? AND termination_date<=?)
                 ORDER BY employee_code""", (period + "-01", period_end)).fetchall()
             if not employees:
@@ -859,7 +859,7 @@ def payroll():
                 if basic_salary <= 0:
                     raise ValueError("الراتب الأساسي للموظف " + e["full_name"] + " يجب أن يكون أكبر من صفر.")
                 monthly_basic_salary = basic_salary
-                payroll_days = 0 if e["work_status"] == "unpaid_leave" else 30
+                payroll_days = 30
                 if e["work_status"] in {"resigned", "retired"}:
                     end_date = date.fromisoformat(e["termination_date"])
                     payroll_days = min(30, max(0, (end_date - start).days + 1))
@@ -917,7 +917,7 @@ def payroll():
                     # Payroll uses a transparent 30-day divisor for approved unpaid leave.
                     unpaid_days = min(Decimal("30"),unpaid_days)
                     absence = M(absent_hours*basic_salary/D(e["standard_hours"]) +
-                                unpaid_days*(basic_salary+allowances)/Decimal("30"))
+                                unpaid_days*basic_salary/Decimal("30"))
                 incentive_rule_id_raw = request.form.get("incentive_rule_" + str(e["id"]), "").strip()
                 incentive_days = D(request.form.get("incentive_days_" + str(e["id"]), "0"))
                 incentive_name = ""
@@ -954,7 +954,7 @@ def payroll():
                 if payroll_days < 30:
                     basic_salary = M(monthly_basic_salary * payroll_factor)
                     allowances = M(allowances * payroll_factor)
-                    raise_amount = M(raise_amount if e["work_status"] == "unpaid_leave" else raise_amount * payroll_factor)
+                    raise_amount = M(raise_amount * payroll_factor)
                 manual_advance_deduction = M(request.form.get("advance_" + str(e["id"]), "0"))
                 due_installments = c.execute("""SELECT i.due_amount,i.paid_amount
                     FROM employee_loan_installments i JOIN employee_loans l ON l.id=i.loan_id
@@ -998,28 +998,6 @@ def payroll():
                     rule_set_id = automatic["rule_set_id"]
                     taxable_annual = automatic["taxable_annual"]
                     insured_wage = automatic["insured_wage"]
-                if e["work_status"] == "unpaid_leave":
-                    # A full-month unpaid-leave status preserves the payroll record and salary history,
-                    # but produces no salary, allowances, bonuses, deductions or loan collection.
-                    basic_salary = Decimal("0")
-                    allowances = Decimal("0")
-                    overtime_hours = Decimal("0")
-                    overtime_amount = Decimal("0")
-                    overtime_calculated_amount = Decimal("0")
-                    overtime_manual_override = False
-                    overtime_override_reason = ""
-                    absent_hours = Decimal("0")
-                    absence = Decimal("0")
-                    incentives = Decimal("0")
-                    manual_advance_deduction = Decimal("0")
-                    fixed_deductions = Decimal("0")
-                    other_deductions = Decimal("0")
-                    tax = Decimal("0")
-                    emp_ins = Decimal("0")
-                    employer_ins = Decimal("0")
-                    penalty_rows = []
-                    penalty_deduction = Decimal("0")
-                    gross = Decimal("0")
                 # Collect scheduled loan installments only up to the employee's available net pay.
                 # Any unpaid remainder stays on the installment and rolls forward to later payrolls.
                 fixed_deductions = M(employer_ins + emp_ins + tax + manual_advance_deduction + other_deductions + absence + penalty_deduction)
@@ -1075,7 +1053,7 @@ def payroll():
                     snapshot_item("earning","بدلات / مستحقات متغيرة يدوية",manual_allowance,"payroll_input",None,30)
                     if raise_amount and e["raise_mode"] == "allowance":
                         snapshot_item("earning","علاوة مستقلة",M(raise_amount * payroll_factor),"salary_raise",e["id"],35)
-                    manual_incentive = M("0" if e["work_status"] == "unpaid_leave" else request.form.get("incentives_" + str(e["id"]),"0"))
+                    manual_incentive = M(request.form.get("incentives_" + str(e["id"]),"0"))
                     snapshot_item("earning","حافز يدوي إضافي",manual_incentive,"payroll_input",None,40)
                     snapshot_item("earning",incentive_name or "حافز مناسبة",event_incentive,"incentive_rule",incentive_rule_id,45)
                     snapshot_item("earning","عمل إضافي",overtime_amount,"attendance_or_manual",None,50)
@@ -1104,7 +1082,7 @@ def payroll():
     # Show former employees in the input grid so final payroll can be prepared for any selected month.
     # POST includes them only in the month containing their termination date.
     employee_rows = c.execute("""SELECT * FROM employees WHERE
-        (active=1 AND work_status IN ('comprehensive_bonus','permanent','unpaid_leave')) OR
+        (active=1 AND work_status IN ('comprehensive_bonus','permanent')) OR
         work_status IN ('resigned','retired')
         ORDER BY employee_code""").fetchall()
     employees = []
