@@ -272,8 +272,15 @@ def product_uom_factor(c, product_id, uom_id, purpose=None):
         raise ValueError("وحدة الصنف الأساسية غير نشطة.")
     if uom_id in (None, ""):
         uom_id=product["base_uom_id"]
-    package=c.execute("""SELECT custom_name,factor_to_base,purchase_enabled,sales_enabled
-        FROM stock_product_uoms WHERE product_id=? AND id=? AND active=1""",(product_id,uom_id)).fetchone()
+    raw_id=str(uom_id)
+    if raw_id.startswith("P:"):
+        package_id=int(raw_id[2:])
+        package=c.execute("""SELECT custom_name,factor_to_base,purchase_enabled,sales_enabled
+            FROM stock_product_uoms WHERE product_id=? AND id=? AND active=1""",(product_id,package_id)).fetchone()
+    else:
+        package=None
+        if raw_id.startswith("U:"): uom_id=int(raw_id[2:])
+        else: uom_id=int(uom_id)
     if package:
         if purpose=="purchase" and not package["purchase_enabled"]:
             raise ValueError("وحدة التعبئة غير مفعلة للمشتريات لهذا الصنف.")
@@ -298,7 +305,7 @@ def product_uom_options(c, product_id):
         return []
     rows=c.execute("""SELECT id,custom_name name_ar,code,factor_to_base,purchase_enabled,sales_enabled
         FROM stock_product_uoms WHERE product_id=? AND active=1 ORDER BY is_base DESC,custom_name""",(product_id,)).fetchall()
-    result=[dict(row) for row in rows]
+    result=[dict(row,id="P:"+str(row["id"])) for row in rows]
     # Standard units from the same dimension are available automatically as conversions.
     standard=c.execute("SELECT id,name_ar,code,factor_to_base FROM stock_uoms WHERE category_id=? AND active=1",(base["category_id"],)).fetchall()
     known={row["uom_id"] for row in c.execute("SELECT uom_id FROM stock_product_uoms WHERE product_id=? AND uom_id IS NOT NULL",(product_id,)).fetchall()}
@@ -306,7 +313,7 @@ def product_uom_options(c, product_id):
         if unit["id"] in known:
             continue
         factor=D(str(unit["factor_to_base"]))/D(str(base["factor_to_base"]))
-        result.append({"id":unit["id"],"name_ar":unit["name_ar"],"code":unit["code"],
+        result.append({"id":"U:"+str(unit["id"]),"name_ar":unit["name_ar"],"code":unit["code"],
             "factor_to_base":str(factor),"purchase_enabled":1,"sales_enabled":1,"is_base":int(unit["id"]==product["base_uom_id"])})
     return result
 
@@ -644,6 +651,38 @@ def products():
     return render_template("stock_products.html",rows=rows,categories=categories,uoms=uoms,search=q,
         category_filter=category_filter,products_page=products_page)
 
+
+
+@stock_bp.route("/product-uoms", methods=["GET","POST"])
+@stock_permission("stock.manage")
+def product_uoms():
+    c=get_db()
+    if request.method=="POST":
+        try:
+            product_id=request.form.get("product_id",type=int)
+            name=request.form.get("unit_name","").strip()
+            code=request.form.get("unit_code","").strip().upper()
+            factor=dec(request.form.get("factor_to_base",""),"معامل التحويل")
+            product=c.execute("""SELECT p.id,p.base_uom_id,u.category_id FROM stock_products p
+                JOIN stock_uoms u ON u.id=p.base_uom_id WHERE p.id=? AND p.active=1""",(product_id,)).fetchone()
+            if not product: raise ValueError("اختر صنفًا نشطًا مرتبطًا بوحدة أساسية.")
+            if not name or not code or factor<=0: raise ValueError("اسم وكود الوحدة ومعامل تحويل أكبر من صفر مطلوبة.")
+            if factor==1: raise ValueError("معامل الوحدة الإضافية يجب أن يختلف عن 1؛ وحدة الأساس موجودة تلقائيًا.")
+            c.execute("""INSERT INTO stock_product_uoms(product_id,custom_code,custom_name,factor_to_base,
+                purchase_enabled,sales_enabled) VALUES(?,?,?,?,?,?)""",
+                (product_id,code,name,str(factor),int(request.form.get("purchase_enabled")=="on"),
+                 int(request.form.get("sales_enabled")=="on")))
+            c.commit(); flash("تمت إضافة وحدة التعبئة الخاصة بالصنف.","success")
+        except (ValueError,sqlite3.IntegrityError) as exc:
+            c.rollback(); flash(str(exc) if isinstance(exc,ValueError) else "كود الوحدة مستخدم لهذا الصنف بالفعل.","error")
+        finally: c.close()
+        return redirect(url_for("stock.product_uoms"))
+    products=c.execute("""SELECT p.id,p.sku,p.name_ar,p.uom FROM stock_products p
+        WHERE p.active=1 AND p.base_uom_id IS NOT NULL ORDER BY p.name_ar""").fetchall()
+    rows=c.execute("""SELECT x.*,p.sku,p.name_ar product_name FROM stock_product_uoms x
+        JOIN stock_products p ON p.id=x.product_id ORDER BY p.name_ar,x.custom_name""").fetchall()
+    c.close()
+    return render_template("stock_product_uoms.html",products=products,rows=rows)
 
 
 @stock_bp.route("/uoms", methods=["GET","POST"])
