@@ -48,6 +48,8 @@ class WorkforceTests(unittest.TestCase):
         (template_dir / "payroll_run.html").write_text(
             "{{ get_flashed_messages()|join('|') }}", encoding="utf-8"
         )
+        (template_dir / "salary_changes.html").write_text("salary changes", encoding="utf-8")
+        (template_dir / "salary_history.html").write_text("salary history", encoding="utf-8")
         self.app = Flask(__name__, template_folder=str(template_dir))
         self.app.secret_key = "test"
         self.app.register_blueprint(workforce.workforce_bp)
