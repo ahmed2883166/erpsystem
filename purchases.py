@@ -672,12 +672,18 @@ def new_purchase_request():
             product = c.execute("SELECT id FROM stock_products WHERE id=? AND active=1", (product_id,)).fetchone()
             if not product:
                 raise ValueError("الصنف غير موجود أو غير نشط.")
-            if quantity <= 0 or estimated_price < 0:
-                raise ValueError("الكمية يجب أن تكون أكبر من صفر والسعر التقديري لا يقل عن صفر.")
+            if not quantity.is_finite() or not estimated_price.is_finite() or quantity <= 0 or estimated_price < 0:
+                raise ValueError("الكمية يجب أن تكون رقمًا موجبًا صالحًا والسعر التقديري لا يقل عن صفر.")
             if not purpose or len(purpose) < 5:
                 raise ValueError("اكتب الغرض من الطلب بوضوح (5 أحرف على الأقل).")
             if not request_date:
                 raise ValueError("تاريخ الطلب مطلوب.")
+            try:
+                date.fromisoformat(request_date)
+                if required_date:
+                    date.fromisoformat(required_date)
+            except ValueError:
+                raise ValueError("صيغة تاريخ الطلب أو الاحتياج غير صحيحة.")
             if required_date and required_date < request_date:
                 raise ValueError("تاريخ الاحتياج لا يمكن أن يسبق تاريخ الطلب.")
             c.execute("BEGIN IMMEDIATE")
@@ -798,8 +804,8 @@ def convert_purchase_request(request_id):
             raise ValueError("لا يمكن تحويل الطلب إلا إذا كان معتمدًا وغير محول سابقًا.")
         if not supplier or not row["product_active"]:
             raise ValueError("المورد أو الصنف غير نشط أو غير موجود.")
-        if unit_price < 0:
-            raise ValueError("سعر الوحدة لا يمكن أن يكون سالبًا.")
+        if not unit_price.is_finite() or unit_price < 0:
+            raise ValueError("سعر الوحدة يجب أن يكون رقمًا صالحًا ولا يمكن أن يكون سالبًا.")
         po_no = "PO-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
         cur = c.execute("""INSERT INTO purchase_orders(
             po_no,supplier_id,order_date,expected_date,notes,created_by
