@@ -1,4 +1,5 @@
 import sqlite3
+from decimal import Decimal
 import tempfile
 import unittest
 from pathlib import Path
