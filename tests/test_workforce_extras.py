@@ -236,7 +236,7 @@ class WorkforceExtrasTests(unittest.TestCase):
         conn.close()
         self.assertEqual(status,"posted")
         self.assertEqual(journal,("FRIDAY-ALLOWANCE-2026-11","posted","2026-11-30"))
-        self.assertEqual(journal_lines,[(2,"1333.33","0"),(3,"0","1333.33")])
+        self.assertEqual(journal_lines,[(2,"1333.33","0.00"),(3,"0.00","1333.33")])
         duplicate=self.client.post("/hr/friday-allowance/1/post",data={})
         self.assertEqual(duplicate.status_code,302)
         conn=sqlite3.connect(self.db_path)
