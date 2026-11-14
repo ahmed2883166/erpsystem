@@ -1567,6 +1567,8 @@ def valuation_reconciliation():
         )}
         if journal_tables != {"journal_entries", "journal_lines"}:
             raise ValueError("دفتر الأستاذ غير مهيأ؛ لا يمكن إجراء المطابقة.")
+        journal_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")}
+        has_stock_dimensions = {"stock_product_id", "stock_warehouse_id"}.issubset(journal_columns)
         gl_rows = conn.execute("""SELECT a.code,jl.debit,jl.credit
             FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
             JOIN accounts a ON a.id=jl.account_id
@@ -1574,6 +1576,49 @@ def valuation_reconciliation():
             ",".join("?" for _ in inventory_codes), tuple(sorted(inventory_codes))).fetchall()
         for row in gl_rows:
             gl_by_account[row["code"]] += D(str(row["debit"] or "0")) - D(str(row["credit"] or "0"))
+
+        tagged_gl = {}
+        tagged_by_code = {code: D("0") for code in inventory_codes}
+        if has_stock_dimensions:
+            tagged_rows = conn.execute("""SELECT a.code,jl.stock_product_id,jl.stock_warehouse_id,
+                    jl.debit,jl.credit
+                FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                JOIN accounts a ON a.id=jl.account_id
+                WHERE je.status='posted' AND a.code IN (%s)
+                  AND jl.stock_product_id IS NOT NULL AND jl.stock_warehouse_id IS NOT NULL""" %
+                ",".join("?" for _ in inventory_codes), tuple(sorted(inventory_codes))).fetchall()
+            for line in tagged_rows:
+                balance = D(str(line["debit"] or "0")) - D(str(line["credit"] or "0"))
+                key = (line["code"], int(line["stock_product_id"]), int(line["stock_warehouse_id"]))
+                tagged_gl[key] = tagged_gl.get(key, D("0")) + balance
+                tagged_by_code[line["code"]] = tagged_by_code.get(line["code"], D("0")) + balance
+        product_by_id = {int(row["id"]): row for row in products}
+        warehouse_by_id = {int(row["id"]): row for row in warehouse_records}
+        detailed_scopes = set(warehouse_product_totals)
+        detailed_scopes.update((wh_id, product_id, code) for code, product_id, wh_id in tagged_gl)
+        detail_rows = []
+        detail_tagged_total = D("0")
+        for warehouse_id, product_id, code in sorted(detailed_scopes, key=lambda x: (str(x[2]), x[0] or 0, x[1] or 0)):
+            bucket = warehouse_product_totals.get((warehouse_id, product_id, code), {})
+            product = product_by_id.get(product_id)
+            warehouse = warehouse_by_id.get(warehouse_id)
+            valuation = bucket.get("value", D("0"))
+            ledger = tagged_gl.get((code, product_id, warehouse_id), D("0"))
+            detail_tagged_total += ledger
+            detail_rows.append({
+                "warehouse_code": warehouse["code"] if warehouse else "—",
+                "warehouse_name": warehouse["name_ar"] if warehouse else "غير مرتبط بمخزن",
+                "sku": bucket.get("sku", product["sku"] if product else "صنف غير معروف"),
+                "name": bucket.get("name", product["name_ar"] if product else "صنف غير معروف"),
+                "account_code": code, "qty": bucket.get("qty", D("0")),
+                "value": valuation, "ledger": ledger, "difference": valuation-ledger,
+                "status": "matched" if (valuation-ledger).quantize(D("0.01")) == D("0.00") else "review",
+            })
+        unallocated_by_account = {
+            code: gl_by_account.get(code, D("0")) - tagged_by_code.get(code, D("0"))
+            for code in inventory_codes
+        }
+        unallocated_total = sum(unallocated_by_account.values(), D("0"))
         rows = []
         for code in sorted(inventory_codes):
             account = accounts[code]
@@ -1589,8 +1634,15 @@ def valuation_reconciliation():
         matched_account_count = sum(1 for row in rows if row["status"] == "matched")
         difference_account_count = len(rows)-matched_account_count
         reconciliation_status = "matched" if total_difference.quantize(D("0.01")) == D("0.00") else "review"
+        detail_matched_count = sum(1 for row in detail_rows if row["status"] == "matched")
+        detail_difference_count = len(detail_rows) - detail_matched_count
+        unallocated_rows = [{"code": code, "name": accounts[code]["name_ar"],
+            "ledger": value} for code, value in sorted(unallocated_by_account.items()) if value != 0]
         return render_template("stock_reconciliation.html", rows=rows, warehouse_rows=warehouse_rows,
-            warehouse_product_rows=warehouse_product_rows,
+            warehouse_product_rows=warehouse_product_rows, detail_rows=detail_rows,
+            unallocated_rows=unallocated_rows, unallocated_total=unallocated_total,
+            detail_tagged_total=detail_tagged_total, detail_matched_count=detail_matched_count,
+            detail_difference_count=detail_difference_count,
             total_valuation=total_valuation,total_ledger=total_ledger,
             total_difference=total_difference,matched_account_count=matched_account_count,
             difference_account_count=difference_account_count,reconciliation_status=reconciliation_status,
@@ -1598,6 +1650,8 @@ def valuation_reconciliation():
     except (ValueError, sqlite3.Error) as exc:
         flash(str(exc), "error")
         return render_template("stock_reconciliation.html", rows=[], warehouse_rows=[], warehouse_product_rows=[],
+            detail_rows=[],unallocated_rows=[],unallocated_total=D("0"),detail_tagged_total=D("0"),
+            detail_matched_count=0,detail_difference_count=0,
             total_valuation=D("0"),total_ledger=D("0"),total_difference=D("0"),
             matched_account_count=0,difference_account_count=0,reconciliation_status="error",
             report_generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),error=True)
