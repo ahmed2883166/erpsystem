@@ -246,7 +246,7 @@ def statement_reconciliation():
                 if not account: raise ValueError("اختر حساب بنك نشطًا من سجل الخزائن والبنوك.")
                 duplicate=c.execute("""SELECT id FROM bank_statement_lines
                     WHERE bank_account_id=? AND statement_date=? AND signed_amount=? AND bank_reference=?""",
-                    (account_id,statement_date,str(amount),reference)).fetchone()
+                    (account_id,statement_date,str(amount),reference)).fetchone() if reference else None
                 if duplicate: raise ValueError("سطر كشف البنك موجود بالفعل بنفس الحساب والتاريخ والمبلغ والمرجع.")
                 cur=c.execute("""INSERT INTO bank_statement_lines(
                     bank_account_id,statement_date,signed_amount,description,bank_reference,created_by)
