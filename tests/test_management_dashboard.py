@@ -92,14 +92,14 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(period_balances[11]["debit"], Decimal("54.44"))
         self.assertEqual(
             income_figures(period_balances, disposal_loss_ids={11})["revenue"],
-            Decimal("445.56"),
+            Decimal("500"),
         )
         snapshot = build_management_snapshot(
             self.conn, date(2026,11,1), date(2026,11,30)
         )
-        self.assertEqual(snapshot["current"]["revenue"], Decimal("445.56"))
+        self.assertEqual(snapshot["current"]["revenue"], Decimal("500"))
         self.assertEqual(snapshot["current"]["cogs"], Decimal("310"))
-        self.assertEqual(snapshot["current"]["net_profit"], Decimal("-18.88"))
+        self.assertEqual(snapshot["current"]["net_profit"], Decimal("35.56"))
         self.assertNotIn(11, {row["id"] for row in snapshot["revenue_accounts"]})
         self.assertIn(11, {row["id"] for row in snapshot["expense_accounts"]})
 
