@@ -26,21 +26,18 @@
 <label>الفئة القانونية للموظف<input name="legal_category" value="local" required></label>
 <label>أجر الاشتراك التأميني (صفر = إجمالي الراتب)<input type="number" step="0.01" min="0" name="insured_wage" value="0"></label>
 <label>خاضع للتأمينات الاجتماعية<select name="insurance_enabled"><option value="1" selected>نعم</option><option value="0">لا</option></select></label>
-<div class="panel" style="grid-column:1/-1"><h4>العلاوة الدورية / الشخصية</h4>
-<label>نوع العلاوة<select name="raise_type"><option value="fixed">مبلغ مقطوع</option><option value="percentage">نسبة من الأساسي</option></select></label>
-<label>قيمة العلاوة أو نسبتها<input type="number" min="0" step="0.01" name="raise_value" value="0"></label>
-<label>طريقة إضافة العلاوة<select name="raise_mode"><option value="basic">تضاف إلى الراتب الأساسي</option><option value="allowance">تظهر كبند مستقل ضمن البدلات</option></select></label>
-<label>تاريخ سريان العلاوة<input type="date" name="raise_effective_date"></label>
-<p class="muted">تُطبق العلاوة تلقائيًا على المسير إذا كان تاريخ سريانها في أول الشهر أو قبله. اختيار «ضمن البدلات» لا يغيّر الأساسي.</p></div>
+<div class="notice" style="grid-column:1/-1">
+  العلاوات والزيادات تُدار بقرار جماعي من شاشة <a href="{{url_for('workforce.salary_changes')}}">العلاوات والزيادات الجماعية</a>، ويمكن تطبيقها على كل الموظفين النشطين أو فئة محددة بعد معاينة الأثر واعتماد القرار.
+</div>
 <label>نسبة الإضافي الافتراضية %<input type="number" min="0" max="500" step="0.01" name="overtime_rate_percent" value="150"></label>
 <button type="submit">حفظ الموظف</button></form></section>
-<section class="panel"><h3>سجل الموظفين</h3><div style="overflow-x:auto"><table><tr><th>الصورة</th><th>الكود</th><th>الاسم</th><th>الرقم القومي</th><th>رقم التأمين</th><th>العنوان</th><th>الموقف</th><th>الوظيفة</th><th>الإدارة</th><th>الأساسي</th><th>المتغير الشهري</th><th>العلاوة</th><th>الإضافي %</th><th>إجراء</th></tr>
+<section class="panel"><h3>سجل الموظفين</h3><div style="overflow-x:auto"><table><tr><th>الصورة</th><th>الكود</th><th>الاسم</th><th>الرقم القومي</th><th>رقم التأمين</th><th>العنوان</th><th>الموقف</th><th>الوظيفة</th><th>الإدارة</th><th>الأساسي</th><th>المتغير الشهري</th><th>الإضافي %</th><th>إجراء</th></tr>
 {% for e in employees %}<tr><td>{% if e.photo_path %}<img src="{{url_for('static',filename=e.photo_path)}}" alt="صورة {{e.full_name}}" style="width:48px;height:48px;object-fit:cover;border-radius:50%">{% else %}-{% endif %}</td><td>{{e.employee_code}}</td><td>{{e.full_name}}</td><td>{{e.national_id or '-'}}</td><td>{{e.insurance_number or '-'}}</td><td>{{e.address or '-'}}</td>
 <td>{{{'comprehensive_bonus':'مكافأة شاملة','permanent':'مثبت','unpaid_leave':'إجازة بدون مرتب','resigned':'استقالة','retired':'معاش'}.get(e.work_status,'مثبت')}}</td>
 <td>{{e.job_title}}</td><td>{{e.department}}</td><td>{{e.basic_salary}}</td><td>{{e.variable_salary or '0'}}</td>
-<td>{{e.raise_value}} {{'%' if e.raise_type=='percentage' else 'جنيه'}} / {{'أساسي' if e.raise_mode=='basic' else 'بدلات'}}</td>
+
 <td>{{e.overtime_rate_percent}}%</td><td><a href="{{url_for('workforce.edit_employee',employee_id=e.id)}}">تعديل الملف</a> | <a target="_blank" href="{{url_for('workforce.employee_form_2_salary',employee_id=e.id)}}">استمارة 2 مرتبات</a></td></tr>
-{% else %}<tr><td colspan="14">لا يوجد موظفون.</td></tr>{% endfor %}</table></div>
+{% else %}<tr><td colspan="13">لا يوجد موظفون.</td></tr>{% endfor %}</table></div>
 <div class="actions pagination"><span class="muted">إجمالي الموظفين: {{ employees_page.total }} — الصفحة {{ employees_page.page }} من {{ employees_page.pages }}</span>
 <form method="get" class="inline-form"><label>عدد السطور <select name="employees_per_page" onchange="this.form.submit()"><option value="50" {% if employees_page.per_page==50 %}selected{% endif %}>50</option><option value="100" {% if employees_page.per_page==100 %}selected{% endif %}>100</option></select></label></form>
 {% if employees_page.page>1 %}<a class="button secondary" href="{{ url_for('workforce.employees',employees_page=employees_page.page-1,employees_per_page=employees_page.per_page) }}">السابق</a>{% endif %}
