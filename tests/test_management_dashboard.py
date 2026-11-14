@@ -46,6 +46,39 @@ class ManagementDashboardTests(unittest.TestCase):
     def tearDown(self):
         self.conn.close()
 
+    def test_dashboard_reclassifies_asset_disposal_loss_and_uses_statement_section_for_cogs(self):
+        self.conn.execute("ALTER TABLE accounts ADD COLUMN statement_section TEXT")
+        self.conn.execute(
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group,active,statement_section) "
+            "VALUES(10,'5200','تكلفة مباشرة إضافية','expense',0,1,'direct_costs')"
+        )
+        self.conn.execute(
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) "
+            "VALUES(11,'4710','خسارة استبعاد أصل','revenue',0,1)"
+        )
+        self.conn.execute(
+            "INSERT INTO journal_entries(id,entry_date,status) VALUES(60,'2026-11-14','posted')"
+        )
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(60,?,?,?)",
+            [(10, "10", "0"), (11, "54.44", "0")],
+        )
+        self.conn.executescript("""
+            CREATE TABLE asset_disposals(
+                id INTEGER PRIMARY KEY, disposal_date TEXT,
+                gain_loss_account_id INTEGER, gain_loss_amount TEXT
+            );
+            INSERT INTO asset_disposals VALUES(1,'2026-11-14',11,'-54.44');
+        """)
+        snapshot = build_management_snapshot(
+            self.conn, date(2026,11,1), date(2026,11,30)
+        )
+        self.assertEqual(snapshot["current"]["revenue"], Decimal("445.56"))
+        self.assertEqual(snapshot["current"]["cogs"], Decimal("310"))
+        self.assertEqual(snapshot["current"]["net_profit"], Decimal("-18.88"))
+        self.assertNotIn(11, {row["id"] for row in snapshot["revenue_accounts"]})
+        self.assertIn(11, {row["id"] for row in snapshot["expense_accounts"]})
+
     def test_period_results_and_comparison(self):
         s=build_management_snapshot(self.conn,date(2026,11,1),date(2026,11,30))
         self.assertEqual(s["current"]["revenue"],Decimal("500"))
