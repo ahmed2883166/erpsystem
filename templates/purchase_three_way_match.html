@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}المطابقة الثلاثية للمشتريات | NEXUS ERP{% endblock %}
+{% block content %}
+<header><h2>المطابقة الثلاثية للمشتريات</h2><p>مقارنة أمر الشراء مع الكمية المستلمة وفواتير المورد المسجلة على كل بند. الفروقات هنا للمراجعة ولا تنشئ قيودًا تلقائية.</p></header>
+<section class="panel">
+<table>
+<thead><tr><th>أمر الشراء</th><th>المورد</th><th>الصنف</th><th>الكمية المطلوبة</th><th>المستلمة</th><th>المفوترة</th><th>غير المفوتر</th><th>سعر الأمر</th><th>متوسط تكلفة الاستلام</th><th>متوسط سعر الفاتورة</th><th>فرق السعر</th><th>الحالة</th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr class="status-row {% if r.match_status=='مطابق' %}status-approved{% elif r.match_status in ['فرق سعر','فوترة جزئية','استلام جزئي','مستلم ولم يفوتر'] %}status-partial{% else %}status-draft{% endif %}">
+<td>{{ r.po_no }}</td><td>{{ r.supplier_name }}</td><td>{{ r.sku }} — {{ r.product_name }}</td>
+<td>{{ r.ordered_quantity }} {{ r.uom }}</td><td>{{ r.received_quantity }} {{ r.uom }}</td>
+<td>{{ r.billed_quantity }} {{ r.uom }}</td><td>{{ r.unbilled_quantity }} {{ r.uom }}</td>
+<td>{{ r.ordered_unit_price|money }}</td>
+<td>{% if r.received_unit_price is not none %}{{ r.received_unit_price|money }}{% else %}—{% endif %}</td>
+<td>{% if r.invoice_unit_price is not none %}{{ r.invoice_unit_price|money }}{% else %}—{% endif %}</td>
+<td>{% if r.price_gap is not none %}{{ r.price_gap|money }}{% else %}—{% endif %}</td>
+<td>{{ r.match_status }}</td>
+</tr>
+{% else %}<tr><td colspan="12">لا توجد بنود أوامر شراء لعرضها.</td></tr>{% endfor %}
+</tbody></table>
+<div class="actions pagination">
+<span class="muted">إجمالي البنود: {{ page.total }} — الصفحة {{ page.page }} من {{ page.pages }}</span>
+{% if page.page>1 %}<a class="button secondary" href="{{ url_for('purchase.three_way_match',page=page.page-1,per_page=page.per_page) }}">السابق</a>{% endif %}
+{% if page.page<page.pages %}<a class="button" href="{{ url_for('purchase.three_way_match',page=page.page+1,per_page=page.per_page) }}">التالي</a>{% endif %}
+</div>
+<p class="muted">تنبيه: الفواتير القديمة التي أُنشئت قبل تسجيل بنود الفاتورة ستظهر كغير مفوترة في المقارنة التفصيلية؛ لا يتم اختراع كميات أو أسعار لها، ويمكن استكمال التفاصيل فقط في الفواتير التي ما زالت مسودة أو مرفوضة.</p>
+</section>
+{% endblock %}
