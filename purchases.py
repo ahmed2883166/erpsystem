@@ -1036,10 +1036,10 @@ def post_supplier_bill(c, bill_id, actor_id):
     bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
     if not bill:
         raise ValueError("فاتورة المورد غير موجودة.")
+    if bill["journal_entry_id"] is not None or bill["status"] == "posted":
+        raise ValueError("فاتورة المورد مرحّلة بالفعل؛ لا تعِد ترحيلها.")
     if bill["status"] != "approved":
         raise ValueError("لا يمكن ترحيل فاتورة المورد قبل اعتمادها.")
-    if bill["journal_entry_id"] is not None:
-        raise ValueError("فاتورة المورد مرحّلة بالفعل.")
     dimensions = validate_journal_dimensions(c, {
         "branch_id": bill["branch_id"], "cost_center_id": bill["cost_center_id"],
         "project_id": bill["project_id"], "supplier_id": bill["supplier_id"],
