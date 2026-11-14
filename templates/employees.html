@@ -20,6 +20,7 @@
 <label>المشروع <select name="project_id"><option value="">غير محدد</option>{% for d in dimensions.projects %}<option value="{{d.id}}">{{d.code}} - {{d.name_ar}}</option>{% endfor %}</select></label>
 <label>تاريخ التعيين<input type="date" name="hire_date" required></label>
 <label>الموقف من العمل<select name="work_status"><option value="permanent">مثبت</option><option value="comprehensive_bonus">مكافأة شاملة</option><option value="unpaid_leave">إجازة بدون مرتب</option><option value="resigned">استقالة</option><option value="retired">معاش</option></select></label>
+<label>تاريخ سريان الاستقالة / المعاش (إلزامي عند الاختيار)<input type="date" name="termination_date"></label>
 <label>الراتب الأساسي<input type="number" step="0.01" min="0" name="basic_salary" required></label>
 <label>ساعات العمل القياسية شهريًا<input type="number" step="0.01" min="1" name="standard_hours" value="208" required></label>
 <label>الفئة القانونية للموظف<input name="legal_category" value="local" required></label>
@@ -44,7 +45,7 @@
 <form method="get" class="inline-form"><label>عدد السطور <select name="employees_per_page" onchange="this.form.submit()"><option value="50" {% if employees_page.per_page==50 %}selected{% endif %}>50</option><option value="100" {% if employees_page.per_page==100 %}selected{% endif %}>100</option></select></label></form>
 {% if employees_page.page>1 %}<a class="button secondary" href="{{ url_for('workforce.employees',employees_page=employees_page.page-1,employees_per_page=employees_page.per_page) }}">السابق</a>{% endif %}
 {% if employees_page.page<employees_page.pages %}<a class="button" href="{{ url_for('workforce.employees',employees_page=employees_page.page+1,employees_per_page=employees_page.per_page) }}">التالي</a>{% endif %}</div>
-<p class="muted">الموظف في إجازة بدون مرتب أو مستقيل أو على المعاش لا يظهر تلقائيًا ضمن المسير الشهري. يمكن تعديل حالته من ملفه الوظيفي.</p></section>
+<p class="muted">الإجازة بدون مرتب لا تُدرج في المسير. الموظف المستقيل أو المحال للمعاش يُدرج فقط إذا كان تاريخ انتهاء خدمته داخل شهر المسير، ويُحسب الأجر والبدلات المتكررة بنسبة أيام الخدمة على أساس 30 يومًا.</p></section>
 <section class="panel"><h3>إعداد أنواع الحوافز والمكافآت</h3><p>أنشئ حافزًا لمناسبة أو إنجاز أو مكافأة، ثم اختره للموظف عند إعداد المسير.</p>
 <form method="post" action="{{url_for('workforce.add_incentive_rule')}}" class="form-grid">
 <label>اسم الحافز<input name="name" placeholder="حافز رمضان / مكافأة إنجاز / حافز إنتاج" required></label>
