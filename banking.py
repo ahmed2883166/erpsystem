@@ -123,6 +123,10 @@ def index():
                     raise ValueError("الخزنة أو البنك معطل؛ فعّله أولًا قبل تسجيل حركة جديدة.")
                 if registry and registry["currency_code"]!=base_currency:
                     raise ValueError("حسابات الخزائن والبنوك في هذه النسخة تُرحّل بالعملة الأساسية فقط؛ لا تسجل حركة بعملة أجنبية قبل تفعيل معالجة فروق وأسعار الصرف.")
+                if registry and registry["branch_id"] and not c.execute(
+                    "SELECT 1 FROM branches WHERE id=? AND active=1",(registry["branch_id"],)
+                ).fetchone():
+                    raise ValueError("الفرع المرتبط بالخزنة/البنك غير نشط؛ راجع ربط الحساب بالفرع قبل تسجيل الحركة.")
                 if not registry and not any(term in (r["name_ar"] or "") for term in ("صندوق","بنك","بنوك","مصرف")) and r["code"] not in {"1110","1120","1121","1122"}:
                     raise ValueError("الحساب غير معرف كخزنة أو بنك. أضفه أولًا من شاشة إدارة الخزائن والبنوك.")
                 return aid
