@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from decimal import Decimal
 
 import app as nexus_app
 from accounting_core import register_decimal_aggregates
