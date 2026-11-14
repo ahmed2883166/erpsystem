@@ -148,8 +148,13 @@ def index():
                        (bank_id,0,amount,"تحويل صادر من حساب النقدية/البنك",source_dimensions)]
             else:
                 if not counter_id: raise ValueError("حدد الحساب المقابل للحركة.")
-                counter=c.execute("SELECT id,is_group,active FROM accounts WHERE id=?",(counter_id,)).fetchone()
+                counter=c.execute("SELECT id,code,name_ar,is_group,active FROM accounts WHERE id=?",(counter_id,)).fetchone()
                 if not counter or counter["is_group"] or not counter["active"]: raise ValueError("الحساب المقابل يجب أن يكون تفصيليًا ونشطًا.")
+                if c.execute("SELECT 1 FROM cash_accounts WHERE account_id=?",(counter_id,)).fetchone() or (
+                    any(term in (counter["name_ar"] or "") for term in ("صندوق","بنك","بنوك","مصرف"))
+                    or counter["code"] in {"1110","1120","1121","1122"}
+                ):
+                    raise ValueError("الحساب المقابل خزنة أو بنك؛ استخدم نوع الحركة تحويل بين الخزائن والبنوك حتى يظهر الطرفان في دفترهما دون تكرار.")
                 registry=c.execute("SELECT branch_id FROM cash_accounts WHERE account_id=? AND active=1",(bank_id,)).fetchone()
                 branch_dimensions={"branch_id":registry["branch_id"]} if registry and registry["branch_id"] else {}
                 if kind in ("deposit",): lines=[(bank_id,amount,0,"إيداع بنكي",branch_dimensions),(counter_id,0,amount,"الحساب المقابل",branch_dimensions)]
@@ -176,7 +181,10 @@ def index():
           AND (lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%' OR a.code IN ('1110','1120','1121','1122'))
           AND NOT EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id)
         ORDER BY code""").fetchall()
-    all_accounts=c.execute("""SELECT id,code,name_ar FROM accounts WHERE is_group=0 AND active=1 ORDER BY code""").fetchall()
+    all_accounts=c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
+        WHERE a.is_group=0 AND a.active=1
+          AND NOT EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id)
+        ORDER BY a.code""").fetchall()
     bank_page = fetch_page(c,
         """SELECT t.*,a.code bank_code,a.name_ar bank_name FROM bank_transactions t
            JOIN accounts a ON a.id=t.bank_account_id ORDER BY t.transaction_date DESC,t.id DESC""",
