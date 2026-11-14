@@ -328,11 +328,13 @@ class PurchasingAccountingTests(unittest.TestCase):
         with report_client.session_transaction() as session:
             session["user_id"] = 1
             session["role"] = "admin"
-        with patch("activity_profiles.active_posting_accounts", return_value={"inventory": "1150"}), \\
-             patch("activity_profiles.get_active_activity_profile", return_value={
-                 "account_roles": {"inventory": ["1150"]}
-             }), \\
-             patch("activity_profiles.resolve_product_account_code", return_value="1150"):
+        with (
+            patch("activity_profiles.active_posting_accounts", return_value={"inventory": "1150"}),
+            patch("activity_profiles.get_active_activity_profile", return_value={
+                "account_roles": {"inventory": ["1150"]}
+            }),
+            patch("activity_profiles.resolve_product_account_code", return_value="1150"),
+        ):
             report_response = report_client.get("/stock/reconciliation")
         self.assertEqual(report_response.status_code, 200)
         self.assertIn("إجمالي تقييم المخزون متطابق", report_response.get_data(as_text=True))
