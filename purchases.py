@@ -102,6 +102,11 @@ def init_purchase_schema():
       ON supplier_bill_receipts(receipt_id);
     CREATE INDEX IF NOT EXISTS idx_purchase_receipts_supplier ON goods_receipts(supplier_id,receipt_date);
     """)
+    credit_line_columns={row["name"] for row in c.execute("PRAGMA table_info(supplier_credit_note_lines)")}
+    for name,declaration in (("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),
+        ("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'")):
+        if name not in credit_line_columns:
+            c.execute("ALTER TABLE supplier_credit_note_lines ADD COLUMN "+name+" "+declaration)
     # suppliers now exists: install the supplier_id column on journal lines
     # through the same additive migration used by the other analytical dimensions.
     initialize_analytic_dimensions_schema(c)
