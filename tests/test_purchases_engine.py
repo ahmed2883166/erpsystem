@@ -209,6 +209,122 @@ class PurchasingAccountingTests(unittest.TestCase):
             Decimal("5"),
         )
 
+        # Post the real COGS journal for the FIFO issue, then clear GRNI with
+        # a supplier invoice and record a partial payment against that invoice.
+        self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('2110','الموردون','liability',0)"
+        )
+        self.db.execute(
+            "INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('5100','تكلفة المبيعات','expense',0)"
+        )
+        movement_id = self.db.execute(
+            "SELECT id FROM stock_movements WHERE movement_no='FIFO-CYCLE-ISSUE'"
+        ).fetchone()["id"]
+        with patch("activity_profiles.active_posting_accounts", return_value={
+            "inventory": "1150", "cogs": "5100", "supplier_ap": "2110",
+            "purchase_inventory": "1150",
+        }), patch("activity_profiles.resolve_product_account_code",
+                 side_effect=lambda _c, _p, role, default: "5100" if role == "cogs" else "1150"):
+            stock.post_issue_journal(
+                self.db, movement_id, "FIFO-CYCLE-ISSUE",
+                {"id": product_id, "name_ar": "صنف دورة مخزون"},
+                "2026-11-15", Decimal("52"), 1, "sale",
+            )
+
+        receipt_ids = [row["id"] for row in self.db.execute(
+            "SELECT id FROM goods_receipts WHERE po_id=? ORDER BY id", (po_id,)
+        )]
+        bill_id = self.db.execute(
+            """INSERT INTO supplier_bills(
+                bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,
+                subtotal,tax_rate,tax_amount,total_amount,created_by,status,bill_kind
+            ) VALUES('BILL-FIFO-CYCLE',?,'2026-11-15','2026-12-15','INV-FIFO-CYCLE',
+                     '112','0','0','112',1,'approved','inventory')""",
+            (supplier_id,),
+        ).lastrowid
+        for receipt_id, amount in zip(receipt_ids, ("40", "72")):
+            self.db.execute(
+                "INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
+                (bill_id, receipt_id, amount),
+            )
+        self.db.commit()
+        with patch("purchases._activity_posting_accounts", return_value={
+            "inventory": "1150", "cogs": "5100", "supplier_ap": "2110",
+            "purchase_inventory": "1150",
+        }):
+            bill_entry_id = purchases.post_supplier_bill(self.db, bill_id, 1)
+        self.db.commit()
+
+        # Supplier invoice: debit GRNI 112 / credit AP 112.
+        bill_lines = self.db.execute(
+            """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
+               JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=?""",
+            (bill_entry_id,),
+        ).fetchall()
+        bill_totals = {
+            row["code"]: (Decimal(row["debit"]), Decimal(row["credit"]))
+            for row in bill_lines
+        }
+        self.assertEqual(bill_totals["2190"], (Decimal("112.00"), Decimal("0")))
+        self.assertEqual(bill_totals["2110"], (Decimal("0"), Decimal("112.00")))
+
+        app2 = Flask(__name__)
+        app2.secret_key = "test"
+        app2.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
+        app2.register_blueprint(purchases.purchase_bp)
+        payment_client = app2.test_client()
+        with payment_client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "admin"
+        with patch("purchases._activity_posting_accounts", return_value={
+            "inventory": "1150", "cogs": "5100", "supplier_ap": "2110",
+            "purchase_inventory": "1150",
+        }):
+            payment_response = payment_client.post("/purchases/payments/new", data={
+                "supplier_id": str(supplier_id),
+                "amount": "50",
+                "cash_account_id": str(self.db.execute(
+                    "SELECT id FROM accounts WHERE code='1110'"
+                ).fetchone()["id"]),
+                "payment_date": "2026-11-15",
+                "reference": "PARTIAL-FIFO-CYCLE",
+            })
+        self.assertEqual(payment_response.status_code, 302)
+        bill = self.db.execute(
+            "SELECT paid_amount,status FROM supplier_bills WHERE id=?", (bill_id,)
+        ).fetchone()
+        self.assertEqual(bill["status"], "posted")
+        self.assertEqual(Decimal(bill["paid_amount"]), Decimal("50.00"))
+        allocation = self.db.execute(
+            "SELECT amount FROM supplier_payment_allocations WHERE bill_id=?", (bill_id,)
+        ).fetchone()
+        self.assertEqual(Decimal(allocation["amount"]), Decimal("50.00"))
+
+        # Inventory subledger 5 units / 60.00 must equal posted GL inventory 60.00.
+        inventory_gl = self.db.execute(
+            """SELECT COALESCE(SUM(CAST(jl.debit AS NUMERIC)-CAST(jl.credit AS NUMERIC)),0)
+               FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+               JOIN accounts a ON a.id=jl.account_id
+               WHERE je.status='posted' AND a.code='1150'"""
+        ).fetchone()[0]
+        layer_value = sum((Decimal(row["value_remaining"]) for row in self.db.execute(
+            "SELECT value_remaining FROM stock_valuation_layers WHERE product_id=?",
+            (product_id,),
+        )), Decimal("0"))
+        self.assertEqual(Decimal(str(inventory_gl)), Decimal("60"))
+        self.assertEqual(layer_value, Decimal("60.00"))
+        self.assertEqual(Decimal(str(inventory_gl)), layer_value)
+
+        # Every journal entry created by the full cycle must balance.
+        unbalanced = self.db.execute(
+            """SELECT je.id,SUM(CAST(jl.debit AS NUMERIC)) debit,
+                      SUM(CAST(jl.credit AS NUMERIC)) credit
+               FROM journal_entries je JOIN journal_lines jl ON jl.entry_id=je.id
+               GROUP BY je.id
+               HAVING ABS(SUM(CAST(jl.debit AS NUMERIC))-SUM(CAST(jl.credit AS NUMERIC)))>0.005"""
+        ).fetchall()
+        self.assertEqual(unbalanced, [])
+
     def test_multi_line_purchase_order_stays_partial_until_every_line_is_received(self):
         purchases.init_purchase_schema()
         self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-MULTI-RECV','مورد متعدد')")
