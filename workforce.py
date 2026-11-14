@@ -952,6 +952,18 @@ def payroll():
                 advance_deduction = M(manual_advance_deduction + loan_deduction)
                 other_deductions = M(request.form.get("other_deductions_" + str(e["id"]), "0"))
                 other_deductions = M(other_deductions + fixed_deductions)
+                penalty_rows = []
+                penalty_deduction = Decimal("0")
+                if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='employee_penalties'").fetchone():
+                    penalty_rows = c.execute("""SELECT id,amount,duration_days,reason FROM employee_penalties
+                        WHERE employee_id=? AND effective_period=? AND status='approved' ORDER BY id""",
+                        (e["id"],period)).fetchall()
+                    for penalty in penalty_rows:
+                        penalty_amount = M(penalty["amount"] or "0")
+                        if penalty_amount <= 0 and D(penalty["duration_days"]) > 0:
+                            penalty_amount = M(basic_salary * D(penalty["duration_days"]) / Decimal("30"))
+                        penalty_deduction = M(penalty_deduction + penalty_amount)
+                other_deductions = M(other_deductions + penalty_deduction)
                 tax = M(request.form.get("tax_" + str(e["id"]), "0"))
                 emp_ins = M(request.form.get("employee_ins_" + str(e["id"]), "0"))
                 employer_ins = M(request.form.get("employer_ins_" + str(e["id"]), "0"))
@@ -1004,6 +1016,48 @@ def payroll():
                      str(raise_amount),str(overtime_rate),incentive_rule_id,incentive_name,
                      str(incentive_days),incentive_method,str(overtime_calculated_amount),
                      int(overtime_manual_override),overtime_override_reason))
+                payroll_line_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+                if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_line_items'").fetchone():
+                    c.execute("UPDATE payroll_lines SET penalty_deduction=? WHERE id=?",
+                              (str(penalty_deduction),payroll_line_id))
+                    def snapshot_item(section, item_name, amount, source_type="payroll_input", source_id=None, sort_order=0):
+                        value = M(amount)
+                        if value:
+                            c.execute("""INSERT INTO payroll_line_items
+                                (payroll_line_id,section,item_name,amount,source_type,source_id,sort_order)
+                                VALUES(?,?,?,?,?,?,?)""",
+                                (payroll_line_id,section,item_name,str(value),source_type,source_id,sort_order))
+                    snapshot_item("earning","الراتب الأساسي",basic_salary,"employee_salary",e["id"],10)
+                    if raise_amount:
+                        snapshot_item("information","العلاوة المطبقة (مدرجة ضمن الأساسي/البدلات)",raise_amount,
+                                      "salary_raise",e["id"],15)
+                    for fixed_item in fixed_items:
+                        item_amount = M(D(fixed_item["amount"]) * payroll_factor)
+                        if fixed_item["item_type"] == "allowance":
+                            snapshot_item("earning",fixed_item["item_name"],item_amount,"employee_pay_item",None,20)
+                        else:
+                            snapshot_item("deduction",fixed_item["item_name"],item_amount,"employee_pay_item",None,70)
+                    manual_allowance = M(D(request.form.get("allowances_" + str(e["id"]), e["variable_salary"])) * payroll_factor)
+                    snapshot_item("earning","بدلات / مستحقات متغيرة يدوية",manual_allowance,"payroll_input",None,30)
+                    if raise_amount and e["raise_mode"] == "allowance":
+                        snapshot_item("earning","علاوة مستقلة",M(raise_amount * payroll_factor),"salary_raise",e["id"],35)
+                    manual_incentive = M(request.form.get("incentives_" + str(e["id"]),"0"))
+                    snapshot_item("earning","حافز يدوي إضافي",manual_incentive,"payroll_input",None,40)
+                    snapshot_item("earning",incentive_name or "حافز مناسبة",event_incentive,"incentive_rule",incentive_rule_id,45)
+                    snapshot_item("earning","عمل إضافي",overtime_amount,"attendance_or_manual",None,50)
+                    snapshot_item("deduction","خصم الغياب والإجازة بدون أجر",absence,"attendance_leave",None,60)
+                    snapshot_item("deduction","سلفة / دفعة مقدمة يدوية",manual_advance_deduction,"payroll_input",None,75)
+                    snapshot_item("deduction","أقساط السلف والقروض",loan_deduction,"loan_installments",None,80)
+                    for penalty in penalty_rows:
+                        penalty_amount = M(penalty["amount"] or "0")
+                        if penalty_amount <= 0 and D(penalty["duration_days"]) > 0:
+                            penalty_amount = M(basic_salary * D(penalty["duration_days"]) / Decimal("30"))
+                        snapshot_item("deduction","جزاء: "+penalty["reason"],penalty_amount,"employee_penalty",penalty["id"],85)
+                    manual_other = M(max(Decimal("0"),D(other_deductions)-fixed_deductions-penalty_deduction))
+                    snapshot_item("deduction","خصومات أخرى يدوية",manual_other,"payroll_input",None,90)
+                    snapshot_item("deduction","ضريبة المرتبات",tax,"payroll_compliance",None,100)
+                    snapshot_item("deduction","حصة الموظف في التأمينات",emp_ins,"payroll_compliance",None,110)
+                    snapshot_item("employer_cost","حصة الشركة في التأمينات",employer_ins,"payroll_compliance",None,120)
             _audit(c, "payroll_draft_created", period)
             c.commit()
             g.audit_created_record = ("payroll_runs", run_id, "payroll_lines", "run_id")
@@ -1134,10 +1188,19 @@ def payroll_employee_payslip(run_id, employee_id):
     data["total_entitlements"] = M(data["total_entitlements"])
     data["total_deductions"] = M(data["total_deductions"])
     data["gross_pay"] = M(data["gross_pay"])
-    # Payments are tracked at payroll-run level; do not attribute a run payment
-    # to one employee when the system has no employee-level allocation record.
+    detail_items = []
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_line_items'").fetchone():
+        detail_items = c.execute("""SELECT * FROM payroll_line_items WHERE payroll_line_id=?
+            ORDER BY section,sort_order,id""",(row["id"],)).fetchall()
+    payments = []
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'").fetchone():
+        payments = c.execute("""SELECT a.amount,p.payment_date,p.reference,p.journal_entry_id
+            FROM payroll_payment_allocations a JOIN payroll_payments p ON p.id=a.payment_id
+            WHERE a.payroll_line_id=? ORDER BY p.payment_date,p.id""",(row["id"],)).fetchall()
+    data["paid_amount"] = M(sum((D(p["amount"]) for p in payments),Decimal("0")))
+    data["remaining_amount"] = M(max(Decimal("0"),D(data["net_pay"])-data["paid_amount"]))
     c.close()
-    return render_template("payroll_payslip.html", slip=data)
+    return render_template("payroll_payslip.html", slip=data, detail_items=detail_items,payments=payments)
 
 
 @workforce_bp.route("/hr/payroll/<int:run_id>/post", methods=["POST"])
@@ -1227,6 +1290,11 @@ def post_payroll(run_id):
             balance = M(max(Decimal("0"),D(loan["approved_amount"])-paid))
             c.execute("UPDATE employee_loans SET remaining_balance=?,status=? WHERE id=?",
                       (str(balance),"closed" if balance<=0 else "active",loan["id"]))
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='employee_penalties'").fetchone():
+            for payroll_line in rows:
+                c.execute("""UPDATE employee_penalties SET status='deducted',payroll_line_id=?,decided_by=COALESCE(decided_by,?)
+                    WHERE employee_id=? AND effective_period=? AND status='approved'""",
+                    (payroll_line["id"],session["user_id"],payroll_line["employee_id"],run["period"]))
         c.execute("UPDATE payroll_runs SET status='posted',journal_entry_id=? WHERE id=?", (journal_id, run_id))
         _audit(c, "payroll_posted", run["period"] + " journal=" + str(journal_id))
         c.commit()
@@ -1303,6 +1371,10 @@ def reverse_payroll(run_id):
             remaining = M(max(Decimal("0"), D(loan["approved_amount"]) - total_paid))
             c.execute("UPDATE employee_loans SET remaining_balance=?,status=? WHERE id=?",
                       (str(remaining), "closed" if remaining <= 0 else "active", loan_id))
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='employee_penalties'").fetchone():
+            c.execute("""UPDATE employee_penalties SET status='approved',payroll_line_id=NULL
+                WHERE payroll_line_id IN (SELECT id FROM payroll_lines WHERE run_id=?) AND status='deducted'""",
+                (run_id,))
         c.execute("UPDATE payroll_runs SET status='reversed' WHERE id=?", (run_id,))
         _audit(c, "payroll_run_reversed", reference + " reason=" + reason)
         c.commit()
@@ -1358,6 +1430,25 @@ def pay_payroll(run_id):
             journal_entry_id,reference,notes,created_by) VALUES(?,?,?,?,?,?,?,?)""",
             (run_id,payment_date,str(amount),cash_account_id,journal_id,reference,
              request.form.get("notes","").strip(),session["user_id"]))
+        payment_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+        if request.form.get("allocation_mode") == "manual":
+            allocation_rows = c.execute("SELECT id,employee_id,net_pay FROM payroll_lines WHERE run_id=? ORDER BY id",(run_id,)).fetchall()
+            allocation_total = Decimal("0")
+            pending_allocations = []
+            for line in allocation_rows:
+                allocation = M(request.form.get("allocation_" + str(line["id"]),"0"))
+                already = M(sum((D(x["amount"]) for x in c.execute(
+                    "SELECT amount FROM payroll_payment_allocations WHERE payroll_line_id=?",(line["id"],)).fetchall()),Decimal("0")))
+                if allocation < 0 or allocation > M(D(line["net_pay"])-already):
+                    raise ValueError("توزيع الصرف على الموظف يتجاوز صافي مستحقه المتبقي.")
+                allocation_total += allocation
+                if allocation:
+                    pending_allocations.append((payment_id,line["id"],str(allocation)))
+            if M(allocation_total) != amount:
+                raise ValueError("يجب أن يساوي مجموع توزيعات الموظفين مبلغ دفعة الصرف بالضبط.")
+            for allocation in pending_allocations:
+                c.execute("""INSERT INTO payroll_payment_allocations(payment_id,payroll_line_id,amount)
+                    VALUES(?,?,?)""",allocation)
         _audit(c, "payroll_payment_posted", reference + " amount=" + str(amount))
         c.commit()
         flash("تم صرف دفعة المرتبات وترحيل قيدها بنجاح.", "success")
