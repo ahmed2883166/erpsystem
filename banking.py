@@ -72,9 +72,14 @@ def index():
             amount=Decimal(request.form["amount"]).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)
             if amount<=0: raise ValueError("المبلغ يجب أن يكون أكبر من صفر.")
             def valid_account(aid):
-                r=c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(aid,)).fetchone()
+                r=c.execute("SELECT id,code,name_ar,account_type,is_group,active FROM accounts WHERE id=?",(aid,)).fetchone()
                 if not r or r["account_type"]!="asset" or r["is_group"] or not r["active"]:
                     raise ValueError("اختر حساب بنك/نقد تفصيليًا ونشطًا.")
+                registry=c.execute("SELECT active FROM cash_accounts WHERE account_id=?",(aid,)).fetchone()
+                if registry and not registry["active"]:
+                    raise ValueError("الخزنة أو البنك معطل؛ فعّله أولًا قبل تسجيل حركة جديدة.")
+                if not registry and not any(term in (r["name_ar"] or "") for term in ("صندوق","بنك","بنوك","مصرف")) and r["code"] not in {"1110","1120","1121","1122"}:
+                    raise ValueError("الحساب غير معرف كخزنة أو بنك. أضفه أولًا من شاشة إدارة الخزائن والبنوك.")
                 return aid
             valid_account(bank_id)
             counter_id=int(request.form["counter_account_id"]) if request.form.get("counter_account_id") else None
