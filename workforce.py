@@ -865,6 +865,7 @@ def payroll():
                     WHERE employee_id=? AND active=1 ORDER BY id""", (e["id"],)).fetchall()
                 fixed_allowances = M(sum((D(x["amount"]) for x in fixed_items if x["item_type"] == "allowance"), Decimal("0")))
                 fixed_deductions = M(sum((D(x["amount"]) for x in fixed_items if x["item_type"] == "deduction"), Decimal("0")))
+                fixed_pay_deductions = fixed_deductions
                 allowances = M(request.form.get("allowances_" + str(e["id"]), e["variable_salary"]))
                 allowances = M(allowances + fixed_allowances)
                 if raise_amount and e["raise_mode"] == "allowance":
@@ -967,7 +968,6 @@ def payroll():
                         if penalty_amount <= 0 and D(penalty["duration_days"]) > 0:
                             penalty_amount = M(basic_salary * D(penalty["duration_days"]) / Decimal("30"))
                         penalty_deduction = M(penalty_deduction + penalty_amount)
-                other_deductions = M(other_deductions + penalty_deduction)
                 tax = M(request.form.get("tax_" + str(e["id"]), "0"))
                 emp_ins = M(request.form.get("employee_ins_" + str(e["id"]), "0"))
                 employer_ins = M(request.form.get("employer_ins_" + str(e["id"]), "0"))
@@ -1014,14 +1014,14 @@ def payroll():
                     gross = Decimal("0")
                 # Collect scheduled loan installments only up to the employee's available net pay.
                 # Any unpaid remainder stays on the installment and rolls forward to later payrolls.
-                fixed_deductions = M(employer_ins + emp_ins + tax + manual_advance_deduction + other_deductions + absence)
+                fixed_deductions = M(employer_ins + emp_ins + tax + manual_advance_deduction + other_deductions + absence + penalty_deduction)
                 available_for_loan = M(max(Decimal("0"),gross + employer_ins - fixed_deductions))
                 loan_due_total = M(sum((max(Decimal("0"),D(i["due_amount"])-D(i["paid_amount"]))
                                         for i in due_installments),Decimal("0")))
                 loan_deduction = min(loan_due_total,available_for_loan)
                 advance_deduction = M(manual_advance_deduction + loan_deduction)
                 total_entitlements = M(gross + employer_ins)
-                total_deductions = M(employer_ins + emp_ins + tax + advance_deduction + other_deductions + absence)
+                total_deductions = M(employer_ins + emp_ins + tax + advance_deduction + other_deductions + absence + penalty_deduction)
                 net = M(total_entitlements - total_deductions)
                 if min(basic_salary, allowances, overtime_hours, overtime_amount, absent_hours,
                        absence, incentives, advance_deduction, other_deductions, tax, emp_ins,
@@ -1079,7 +1079,7 @@ def payroll():
                         if penalty_amount <= 0 and D(penalty["duration_days"]) > 0:
                             penalty_amount = M(basic_salary * D(penalty["duration_days"]) / Decimal("30"))
                         snapshot_item("deduction","جزاء: "+penalty["reason"],penalty_amount,"employee_penalty",penalty["id"],85)
-                    manual_other = M(max(Decimal("0"),D(other_deductions)-fixed_deductions-penalty_deduction))
+                    manual_other = M(max(Decimal("0"),D(other_deductions)-fixed_pay_deductions))
                     snapshot_item("deduction","خصومات أخرى يدوية",manual_other,"payroll_input",None,90)
                     snapshot_item("deduction","ضريبة المرتبات",tax,"payroll_compliance",None,100)
                     snapshot_item("deduction","حصة الموظف في التأمينات",emp_ins,"payroll_compliance",None,110)
@@ -1216,6 +1216,7 @@ def payroll_employee_payslip(run_id, employee_id):
     data["manual_advance_deduction"] = M(max(Decimal("0"), total_advance - loan_deduction))
     data["employee_deductions"] = M(
         D(data["absence_deduction"]) + total_advance + D(data["other_deductions"])
+        + D(data.get("penalty_deduction") or "0")
         + D(data["taxable_income_tax"]) + D(data["employee_insurance"])
     )
     data["net_pay"] = M(data["net_pay"])
@@ -1261,6 +1262,7 @@ def post_payroll(run_id):
         emp_ins = sum((D(x["employee_insurance"]) for x in rows), Decimal("0"))
         employer_ins = sum((D(x["employer_insurance"]) for x in rows), Decimal("0"))
         other_deductions = sum((D(x["other_deductions"]) for x in rows), Decimal("0"))
+        penalty_deduction = sum((D(x["penalty_deduction"]) if "penalty_deduction" in x.keys() else Decimal("0") for x in rows), Decimal("0"))
         advance_deduction = sum((D(x["advance_deduction"]) for x in rows), Decimal("0"))
         absence_deduction = sum((D(x["absence_deduction"]) for x in rows), Decimal("0"))
         other_deductions_account = int(request.form["other_deductions_account"])
@@ -1288,6 +1290,7 @@ def post_payroll(run_id):
             (salaries_payable, 0, M(net), "صافي مستحقات الموظفين"),
             (advances_account, 0, M(advance_deduction), "استرداد سلف العاملين"),
             (other_deductions_account, 0, M(other_deductions), "الحساب المقابل للخصومات الأخرى"),
+            (other_deductions_account, 0, M(penalty_deduction), "جزاءات الموظفين"),
             (tax_payable, 0, M(tax), "ضريبة مرتبات مستحقة"),
             (insurance_payable, 0, M(emp_ins + employer_ins), "تأمينات اجتماعية مستحقة"),
         ])
