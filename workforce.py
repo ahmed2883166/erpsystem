@@ -1274,7 +1274,7 @@ def payroll_employee_payslip(run_id, employee_id):
         return redirect(url_for("workforce.payroll"))
     if row["status"] not in {"posted", "reversed"}:
         c.close()
-        flash("القسيمة النهائية متاحة بعد ترحيل المسير فقط (بعد اعتماد وترحيل المرتبات).", "error")
+        flash("القسيمة النهائية متاحة بعد ترحيل المرتبات فقط (بعد اعتماد وترحيل المرتبات).", "error")
         return redirect(url_for("workforce.payroll_run", run_id=run_id))
 
     data = dict(row)
@@ -1420,12 +1420,12 @@ def reverse_payroll(run_id):
         c.execute("BEGIN IMMEDIATE")
         run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         if not run or run["status"] != "posted" or not run["journal_entry_id"]:
-            raise ValueError("لا يمكن عكس مسير غير مرحّل. لا يمكن عكس قيد مرتبات غير مرحّل أو سبق عكسه.")
+            raise ValueError("لا يمكن عكس قيد مرتبات غير مرحّل. لا يمكن عكس قيد مرتبات غير مرحّل أو سبق عكسه.")
         if c.execute("SELECT 1 FROM payroll_reversals WHERE run_id=?", (run_id,)).fetchone():
             raise ValueError("تم عكس قيد المرتبات هذا من قبل.")
         payments = c.execute("SELECT COUNT(*) FROM payroll_payments WHERE run_id=?", (run_id,)).fetchone()[0]
         if payments:
-            raise ValueError("لا يمكن عكس مسير له دفعات صرف مسجلة. لا يمكن عكس قيد المرتبات مع وجود دفعات صرف مسجلة؛ سوِّ الدفعات أولًا ثم راجع حسابات الموظفين.")
+            raise ValueError("لا يمكن عكس قيد المرتبات مع وجود دفعات صرف مسجلة. لا يمكن عكس قيد المرتبات مع وجود دفعات صرف مسجلة؛ سوِّ الدفعات أولًا ثم راجع حسابات الموظفين.")
         reversal_date = date.fromisoformat(request.form.get("reversal_date") or date.today().isoformat()).isoformat()
         reason = request.form.get("reason", "").strip()
         if not reason:
