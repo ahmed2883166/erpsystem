@@ -376,9 +376,44 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
 
 
 
+    def test_fixed_assets_export_uses_as_of_date_and_only_posted_depreciation(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.executescript("""
+            ALTER TABLE fixed_assets ADD COLUMN status TEXT NOT NULL DEFAULT 'active';
+            ALTER TABLE asset_depreciations ADD COLUMN period TEXT;
+            ALTER TABLE asset_depreciations ADD COLUMN journal_entry_id INTEGER;
+            CREATE TABLE asset_disposals(asset_id INTEGER PRIMARY KEY, disposal_date TEXT);
+            INSERT INTO fixed_assets(
+                id,asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,
+                useful_life_months,depreciation_method,status
+            ) VALUES
+                (1,'FA-01','جهاز اختبار','أجهزة','2026-01-01','2026-01-02','1000','100',36,'straight_line','active');
+            INSERT INTO journal_entries(id,entry_date,status,reference,description)
+                VALUES(20,'2026-02-28','posted','DEP-1-2026-02','إهلاك مرحل'),
+                      (21,'2026-04-30','draft','DEP-1-2026-04','إهلاك غير مرحل');
+            INSERT INTO asset_depreciations(id,asset_id,amount,period,journal_entry_id)
+                VALUES(1,1,'25','2026-02',20),(2,1,'30','2026-04',21);
+        """)
+        conn.commit()
+        conn.close()
+        response = self.client.get("/reports/export/fixed-assets/excel?as_of=2026-03-31")
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(response.data, data_only=True)
+        sheet = workbook.active
+        self.assertEqual(sheet["J5"].value, 25)
+        self.assertEqual(sheet["K5"].value, 975)
+
+    def test_fixed_assets_export_rejects_invalid_as_of_date(self):
+        response = self.client.get("/reports/export/fixed-assets/excel?as_of=not-a-date")
+        self.assertEqual(response.status_code, 400)
+
     def test_pdf_exports_cover_remaining_report_types(self):
         conn = sqlite3.connect(self.db_path)
         conn.executescript("""
+            ALTER TABLE fixed_assets ADD COLUMN status TEXT NOT NULL DEFAULT 'active';
+            ALTER TABLE asset_depreciations ADD COLUMN period TEXT;
+            ALTER TABLE asset_depreciations ADD COLUMN journal_entry_id INTEGER;
+            CREATE TABLE asset_disposals(asset_id INTEGER PRIMARY KEY, disposal_date TEXT);
             INSERT INTO accounts(id,code,name_ar,account_type) VALUES
                 (4,'1120','البنك','asset');
             INSERT INTO journal_entries(id,entry_date,status,entry_type,reference,description)
@@ -388,9 +423,14 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
             INSERT INTO stock_products VALUES(1,'P-01','صنف اختبار','قطعة',1);
             INSERT INTO stock_warehouses VALUES(1,'WH-1','المخزن الرئيسي');
             INSERT INTO stock_valuation_layers VALUES(1,1,1,'2','20','10');
-            INSERT INTO fixed_assets VALUES
-                (1,'FA-01','جهاز اختبار','أجهزة','2026-01-01','2026-01-02','1000','100',36,'straight_line');
-            INSERT INTO asset_depreciations VALUES(1,1,'25');
+            INSERT INTO fixed_assets(
+                id,asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,
+                useful_life_months,depreciation_method,status
+            ) VALUES(1,'FA-01','جهاز اختبار','أجهزة','2026-01-01','2026-01-02','1000','100',36,'straight_line','active');
+            INSERT INTO journal_entries(id,entry_date,status,reference,description)
+                VALUES(20,'2026-02-28','posted','DEP-1-2026-02','إهلاك اختبار');
+            INSERT INTO asset_depreciations(id,asset_id,amount,period,journal_entry_id)
+                VALUES(1,1,'25','2026-02',20);
             INSERT INTO supplier_bills(
                 id,bill_no,bill_date,supplier_id,total_amount,paid_amount,status,due_date
             ) VALUES(2,'B-AGING','2026-05-01',1,'120','20','posted','2026-05-10');
