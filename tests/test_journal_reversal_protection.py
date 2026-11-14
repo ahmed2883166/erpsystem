@@ -66,27 +66,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
             item.stop()
         self.temp.cleanup()
 
-    def test_reversal_of_reversal_is_blocked_by_server(self):
-        response = self.client.post(
-            "/journal/2/reverse",
-            data={"reversal_date": "2026-01-05", "reversal_reason": "محاولة عكس عكسي"},
-        )
-        self.assertEqual(response.status_code, 302)
-        with connect_database(self.db_path) as conn:
-            count = conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
-        self.assertEqual(count, 4)
-
-    def test_original_journal_cannot_be_reversed_twice(self):
-        response = self.client.post(
-            "/journal/1/reverse",
-            data={"reversal_date": "2026-01-05", "reversal_reason": "محاولة عكس مكرر"},
-        )
-        self.assertEqual(response.status_code, 302)
-        with connect_database(self.db_path) as conn:
-            count = conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
-        self.assertEqual(count, 4)
-
-    def test_reversal_journal_can_be_reversed_once_and_restores_original_balances(self):
+    def test_reversal_of_reversal_restores_original_balances(self):
         response = self.client.post(
             "/journal/2/reverse",
             data={"reversal_date": "2026-01-05", "reversal_reason": "إلغاء القيد العكسي الخاطئ"},
@@ -94,7 +74,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         with connect_database(self.db_path) as conn:
             row = conn.execute(
-                "SELECT id,reference,description FROM journal_entries WHERE reference='REV-2'"
+                "SELECT id FROM journal_entries WHERE reference='REV-2'"
             ).fetchone()
             self.assertIsNotNone(row)
             lines = conn.execute(
@@ -106,6 +86,16 @@ class JournalReversalProtectionTests(unittest.TestCase):
                 [(1, "100.00", "0"), (2, "0", "100.00")],
             )
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 5)
+
+    def test_original_journal_cannot_be_reversed_twice(self):
+        response = self.client.post(
+            "/journal/1/reverse",
+            data={"reversal_date": "2026-01-05", "reversal_reason": "محاولة عكس مكرر"},
+        )
+        self.assertEqual(response.status_code, 302)
+        with connect_database(self.db_path) as conn:
+            count = conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
+        self.assertEqual(count, 4)
 
     def test_journal_detail_links_original_and_reversal(self):
         original = self.client.get("/journal/1")
