@@ -305,6 +305,59 @@ def initialize_stock_schema():
     # Re-run after stock master tables exist so journal_lines receives the
     # nullable operational stock references on both fresh and upgraded DBs.
     initialize_analytic_dimensions_schema(c)
+    # Conservative historical backfill: only journals linked to exactly one
+    # stock movement, with one matching inventory-control line, are attributable.
+    journal_columns = {row["name"] for row in c.execute("PRAGMA table_info(journal_lines)")}
+    if {"stock_product_id", "stock_warehouse_id"}.issubset(journal_columns):
+        from activity_profiles import active_posting_accounts, resolve_product_account_code
+        try:
+            posting = active_posting_accounts(c)
+            default_inventory = posting.get("inventory")
+            if default_inventory:
+                candidates = c.execute("""SELECT m.id,m.journal_entry_id,m.movement_type,
+                        m.product_id,m.source_warehouse_id,m.target_warehouse_id
+                    FROM stock_movements m
+                    WHERE m.journal_entry_id IS NOT NULL
+                      AND m.movement_type IN ('receipt','issue','scrap')
+                      AND (m.movement_type='receipt' AND m.target_warehouse_id IS NOT NULL
+                           OR m.movement_type IN ('issue','scrap') AND m.source_warehouse_id IS NOT NULL)
+                      AND NOT EXISTS (SELECT 1 FROM journal_lines jl
+                        WHERE jl.entry_id=m.journal_entry_id
+                          AND (jl.stock_product_id IS NOT NULL OR jl.stock_warehouse_id IS NOT NULL))
+                    ORDER BY m.id""").fetchall()
+                for movement in candidates:
+                    movement_count = c.execute(
+                        "SELECT COUNT(*) FROM stock_movements WHERE journal_entry_id=?",
+                        (movement["journal_entry_id"],)
+                    ).fetchone()[0]
+                    if movement_count != 1:
+                        continue
+                    product = c.execute("SELECT id FROM stock_products WHERE id=?", (movement["product_id"],)).fetchone()
+                    if not product:
+                        continue
+                    code = resolve_product_account_code(c, movement["product_id"], "inventory", default_inventory)
+                    account = c.execute(
+                        "SELECT id FROM accounts WHERE code=? AND active=1 AND is_group=0", (code,)
+                    ).fetchone() if code else None
+                    warehouse_id = movement["target_warehouse_id"] if movement["movement_type"] == "receipt" else movement["source_warehouse_id"]
+                    if not account or not c.execute(
+                        "SELECT 1 FROM stock_warehouses WHERE id=?", (warehouse_id,)
+                    ).fetchone():
+                        continue
+                    matching_lines = c.execute("""SELECT id FROM journal_lines
+                        WHERE entry_id=? AND account_id=? AND stock_product_id IS NULL
+                          AND stock_warehouse_id IS NULL""",
+                        (movement["journal_entry_id"], account["id"])
+                    ).fetchall()
+                    if len(matching_lines) != 1:
+                        continue
+                    c.execute("""UPDATE journal_lines SET stock_product_id=?,stock_warehouse_id=?
+                        WHERE id=? AND stock_product_id IS NULL AND stock_warehouse_id IS NULL""",
+                        (movement["product_id"], warehouse_id, matching_lines[0]["id"]))
+        except (ValueError, sqlite3.Error):
+            # A profile/account mapping that cannot be resolved is not grounds
+            # to guess; the balance remains explicitly unallocated in the report.
+            pass
     c.close()
 
 
