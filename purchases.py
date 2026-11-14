@@ -81,6 +81,20 @@ def init_purchase_schema():
       bill_id INTEGER NOT NULL REFERENCES supplier_bills(id), receipt_id INTEGER NOT NULL REFERENCES goods_receipts(id),
       matched_amount TEXT NOT NULL, PRIMARY KEY(bill_id,receipt_id)
     );
+    CREATE TABLE IF NOT EXISTS supplier_bill_inventory_lines(
+      id INTEGER PRIMARY KEY,
+      bill_id INTEGER NOT NULL REFERENCES supplier_bills(id) ON DELETE CASCADE,
+      line_no INTEGER NOT NULL,
+      receipt_line_id INTEGER NOT NULL REFERENCES goods_receipt_lines(id),
+      product_id INTEGER NOT NULL REFERENCES stock_products(id),
+      billed_quantity TEXT NOT NULL,
+      invoice_unit_price TEXT NOT NULL,
+      line_total TEXT NOT NULL,
+      UNIQUE(bill_id,line_no)
+    );
+    CREATE INDEX IF NOT EXISTS idx_supplier_bill_inventory_receipt_line
+      ON supplier_bill_inventory_lines(receipt_line_id);
+
     CREATE TABLE IF NOT EXISTS supplier_credit_notes(
       id INTEGER PRIMARY KEY, credit_no TEXT NOT NULL UNIQUE,
       supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
@@ -1122,6 +1136,106 @@ def _validate_supplier_receipt_allocations(c, supplier_id, receipt_ids, subtotal
                     "فرق سعر المورد لا يُعتمد كخصم إلا عند تسوية كامل قيمة إيصالات GRNI المحددة."
                 )
     return allocations
+
+
+def _supplier_receipt_line_rows(c, receipt_ids):
+    receipt_ids = list(dict.fromkeys(int(value) for value in receipt_ids))
+    if not receipt_ids:
+        return []
+    placeholders = ",".join("?" for _ in receipt_ids)
+    return c.execute(f"""
+        SELECT gl.id AS receipt_line_id,gl.receipt_id,gl.po_line_id,gl.product_id,
+               gl.quantity AS received_quantity,gl.unit_cost AS received_unit_cost,
+               gl.total_cost AS received_total_cost,r.supplier_id,r.status AS receipt_status,
+               r.receipt_no,p.sku,p.name_ar AS product_name,p.uom,
+               po.po_no,pol.unit_price AS ordered_unit_price
+        FROM goods_receipt_lines gl
+        JOIN goods_receipts r ON r.id=gl.receipt_id
+        JOIN stock_products p ON p.id=gl.product_id
+        LEFT JOIN purchase_order_lines pol ON pol.id=gl.po_line_id
+        LEFT JOIN purchase_orders po ON po.id=pol.po_id
+        WHERE gl.receipt_id IN ({placeholders})
+        ORDER BY r.receipt_date,r.id,gl.id
+    """, receipt_ids).fetchall()
+
+
+def _validate_supplier_bill_inventory_lines(c, supplier_id, receipt_ids, subtotal, form,
+                                            exclude_bill_id=None):
+    """Validate invoice quantities/prices against selected posted receipt lines."""
+    rows = _supplier_receipt_line_rows(c, receipt_ids)
+    allowed = {}
+    for row in rows:
+        if row["supplier_id"] != supplier_id or row["receipt_status"] != "posted":
+            raise ValueError("يوجد بند استلام لا يتبع المورد أو لم يتم ترحيله.")
+        allowed[row["receipt_line_id"]] = row
+    lines = []
+    total = money("0")
+    for receipt_line_id, row in allowed.items():
+        raw_quantity = (form.get("invoice_quantity_" + str(receipt_line_id)) or "").strip()
+        if not raw_quantity:
+            continue
+        quantity = Decimal(raw_quantity)
+        unit_price = money(form.get("invoice_unit_price_" + str(receipt_line_id), ""))
+        if not quantity.is_finite() or quantity <= 0 or not unit_price.is_finite() or unit_price < 0:
+            raise ValueError("كمية وسعر بند فاتورة المورد غير صالحين.")
+        already_billed_sql = """
+            SELECT COALESCE(SUM(x.billed_quantity), '0')
+            FROM supplier_bill_inventory_lines x
+            JOIN supplier_bills b ON b.id=x.bill_id
+            WHERE x.receipt_line_id=? AND b.status<>'cancelled'
+        """
+        params = [receipt_line_id]
+        if exclude_bill_id is not None:
+            already_billed_sql += " AND x.bill_id<>?"
+            params.append(exclude_bill_id)
+        already_billed = Decimal(str(c.execute(already_billed_sql, params).fetchone()[0] or "0"))
+        received = Decimal(str(row["received_quantity"]))
+        if quantity > received - already_billed:
+            raise ValueError(
+                "كمية الفاتورة للصنف " + row["product_name"] +
+                " تتجاوز الكمية المستلمة غير المفوترة في الإيصال " + row["receipt_no"] + "."
+            )
+        line_total = money(quantity * unit_price)
+        total = money(total + line_total)
+        lines.append({
+            "receipt_line_id": receipt_line_id, "product_id": row["product_id"],
+            "quantity": quantity, "unit_price": unit_price, "line_total": line_total,
+        })
+    if not lines:
+        raise ValueError("أدخل كمية وسعرًا لفاتورة المورد في بند استلام واحد على الأقل.")
+    if total != money(subtotal):
+        raise ValueError("مجموع بنود فاتورة المورد لا يساوي صافي الفاتورة قبل الضريبة.")
+    return lines
+
+
+def _validate_saved_supplier_bill_inventory_lines(c, bill):
+    rows = c.execute("""
+        SELECT x.*,gl.quantity AS received_quantity,r.supplier_id,r.status AS receipt_status,
+               b.supplier_id AS bill_supplier_id
+        FROM supplier_bill_inventory_lines x
+        JOIN goods_receipt_lines gl ON gl.id=x.receipt_line_id
+        JOIN goods_receipts r ON r.id=gl.receipt_id
+        JOIN supplier_bills b ON b.id=x.bill_id
+        WHERE x.bill_id=? ORDER BY x.line_no
+    """, (bill["id"],)).fetchall()
+    if not rows:
+        raise ValueError("فاتورة الأصناف تحتاج تفاصيل كمية وسعر لكل بند استلام قبل إرسالها للاعتماد.")
+    total = money("0")
+    for row in rows:
+        if row["supplier_id"] != bill["supplier_id"] or row["bill_supplier_id"] != bill["supplier_id"] or row["receipt_status"] != "posted":
+            raise ValueError("تفاصيل فاتورة المورد مرتبطة بإيصال غير صالح.")
+        qty = Decimal(str(row["billed_quantity"]))
+        total = money(total + money(row["line_total"]))
+        already = Decimal(str(c.execute("""
+            SELECT COALESCE(SUM(x.billed_quantity),'0')
+            FROM supplier_bill_inventory_lines x JOIN supplier_bills b ON b.id=x.bill_id
+            WHERE x.receipt_line_id=? AND b.status<>'cancelled' AND x.bill_id<>?
+        """, (row["receipt_line_id"], bill["id"])).fetchone()[0] or "0"))
+        if qty <= 0 or qty > Decimal(str(row["received_quantity"])) - already:
+            raise ValueError("كمية الفاتورة تجاوزت الكمية المستلمة غير المفوترة.")
+    if total != money(bill["subtotal"]):
+        raise ValueError("مجموع بنود فاتورة المورد لا يساوي صافي الفاتورة.")
+    return rows
 
 
 def _supplier_grni_price_variance_lines(c, receipt_rows, discount_amount, matched_total):
