@@ -329,6 +329,24 @@ def _employee_form_values(form):
 
 
 
+
+def _save_employee_photo(upload):
+    if not upload or not upload.filename:
+        return None
+    extension = os.path.splitext(secure_filename(upload.filename))[1].lower()
+    if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
+        raise ValueError("صورة الموظف يجب أن تكون JPG أو PNG أو WEBP.")
+    content = upload.stream.read(5 * 1024 * 1024 + 1)
+    if not content or len(content) > 5 * 1024 * 1024:
+        raise ValueError("حجم صورة الموظف يجب ألا يتجاوز 5 ميجابايت.")
+    filename = uuid.uuid4().hex + extension
+    relative_path = os.path.join("uploads", "employees", filename)
+    absolute_dir = os.path.join(current_app.static_folder, "uploads", "employees")
+    os.makedirs(absolute_dir, exist_ok=True)
+    with open(os.path.join(absolute_dir, filename), "wb") as photo_file:
+        photo_file.write(content)
+    return relative_path.replace(os.sep, "/")
+
 def _salary_change_preview(c, form):
     decision_no = form.get("decision_no", "").strip()
     decision_date = form.get("decision_date", "").strip()
@@ -453,11 +471,12 @@ def employees():
         try:
             values = _employee_form_values(request.form)
             _validate_employee_dimensions(c, values)
+            photo_path = _save_employee_photo(request.files.get("photo"))
             c.execute("""INSERT INTO employees(employee_code,full_name,job_title,department,hire_date,basic_salary,
                 standard_hours,legal_category,insurance_number,insured_wage,insurance_enabled,address,national_id,
                 work_status,raise_type,raise_value,raise_mode,raise_effective_date,overtime_rate_percent,
-                branch_id,cost_center_id,project_id)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", values)
+                branch_id,cost_center_id,project_id,photo_path)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (*values, photo_path or ""))
             _audit(c, "employee_created", values[0])
             c.commit()
             flash("تم إضافة الموظف وحفظ بياناته الوظيفية والأجرية.", "success")
