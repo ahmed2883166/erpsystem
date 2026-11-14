@@ -1,6 +1,6 @@
-{% extends "base.html" %}{% block title %}تفاصيل مسير الرواتب | NEXUS ERP{% if run.status=='posted' %}
+{% extends "base.html" %}{% block title %}تفاصيل المرتبات | NEXUS ERP{% if run.status=='posted' %}
 <section class="panel"><h3>صرف صافي المرتبات</h3>
-<p>صافي المسير: <strong>{{totals.net_pay}}</strong> · ما تم صرفه: <strong>{{paid_amount}}</strong> · المتبقي: <strong>{{remaining_payable}}</strong></p>
+<p>صافي المرتبات: <strong>{{totals.net_pay}}</strong> · ما تم صرفه: <strong>{{paid_amount}}</strong> · المتبقي: <strong>{{remaining_payable}}</strong></p>
 {% if remaining_payable > 0 %}
 <form method="post" action="{{url_for('workforce.pay_payroll',run_id=run.id)}}" class="form-grid">
 <label>تاريخ الصرف <input type="date" name="payment_date" value="{{today}}" required></label>
@@ -8,20 +8,20 @@
 <label>حساب البنك أو الصندوق <select name="cash_account_id" required>{% for a in payment_accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
 <label>مرجع التحويل / ملاحظات <input name="notes" maxlength="250"></label>
 <button type="submit">صرف المرتب وترحيل القيد</button></form>
-{% else %}<p class="muted">تم سداد كامل صافي المرتبات لهذا المسير.</p>{% endif %}
+{% else %}<p class="muted">تم سداد كامل صافي المرتبات لهذه المرتبات.</p>{% endif %}
 <h4>سجل دفعات الصرف</h4><table><tr><th>التاريخ</th><th>المبلغ</th><th>الحساب</th><th>رقم القيد</th><th>المرجع</th></tr>
 {% for p in payments %}<tr><td>{{p.payment_date}}</td><td>{{p.amount}}</td><td>{{p.account_code}} - {{p.account_name}}</td><td>{{p.journal_entry_id}}</td><td>{{p.reference}}</td></tr>{% else %}<tr><td colspan="5">لم يتم صرف أي دفعة بعد.</td></tr>{% endfor %}</table>
 </section>{% endif %}
 {% endblock %}{% block content %}
-<header><h2>مسير الرواتب {{run.period}}</h2><p>الحالة: {{'مرحّل' if run.status=='posted' else 'معكوس' if run.status=='reversed' else 'مسودة'}} | رقم القيد: {{run.journal_entry_id or '-'}}</p><p><a href="{{url_for('report_exports.export_report_excel', report='payroll', run_id=run.id)}}">تصدير المسير إلى Excel</a> | <a href="{{url_for('report_exports.export_report_excel', report='payroll', run_id=run.id).replace('/excel','/pdf') }}">تحميل PDF</a> | <a href="{{url_for('expense_analysis', date_from=run.period+'-01', date_to=period_end)}}">تحليل المصروفات حسب الفرع ومركز التكلفة والمشروع</a></p></header>
+<header><h2>المرتبات عن شهر {{run.period}}</h2><p>الحالة: {{'مرحّل' if run.status=='posted' else 'معكوس' if run.status=='reversed' else 'مسودة'}} | رقم القيد: {{run.journal_entry_id or '-'}}</p><p><a href="{{url_for('report_exports.export_report_excel', report='payroll', run_id=run.id)}}">تصدير المرتبات إلى Excel</a> | <a href="{{url_for('report_exports.export_report_excel', report='payroll', run_id=run.id).replace('/excel','/pdf') }}">تحميل PDF</a> | <a href="{{url_for('expense_analysis', date_from=run.period+'-01', date_to=period_end)}}">تحليل المصروفات حسب الفرع ومركز التكلفة والمشروع</a></p></header>
 {% if reversal %}
-<section class="panel"><h3>سجل عكس المسير</h3><p>تم عكس المسير بتاريخ {{reversal.reversal_date}} بقيد رقم {{reversal.reversal_journal_entry_id}} ({{reversal.reference}}).</p><p>السبب: {{reversal.reason}}</p><p class="muted">تم الاحتفاظ بالقيد الأصلي والمسير الأصلي دون حذف أو تعديل.</p></section>
+<section class="panel"><h3>سجل عكس المرتبات</h3><p>تم عكس المرتبات بتاريخ {{reversal.reversal_date}} بقيد رقم {{reversal.reversal_journal_entry_id}} ({{reversal.reference}}).</p><p>السبب: {{reversal.reason}}</p><p class="muted">تم الاحتفاظ بالقيد الأصلي وبيانات المرتبات الأصلية دون حذف أو تعديل.</p></section>
 {% elif can_reverse %}
-<section class="panel"><h3>عكس المسير المرحّل</h3><p class="muted">ينشئ النظام قيدًا عكسيًا مستقلًا مع الاحتفاظ بالقيد الأصلي. لا يمكن عكس المسير إذا كان له أي دفعة صرف مسجلة؛ يجب تسوية الدفعات أولًا.</p>
+<section class="panel"><h3>عكس قيد المرتبات المرحّل</h3><p class="muted">ينشئ النظام قيدًا عكسيًا مستقلًا مع الاحتفاظ بالقيد الأصلي. لا يمكن عكس قيد المرتبات إذا كان له أي دفعة صرف مسجلة؛ يجب تسوية الدفعات أولًا.</p>
 <form method="post" action="{{url_for('workforce.reverse_payroll',run_id=run.id)}}" class="form-grid">
 <label>تاريخ القيد العكسي <input type="date" name="reversal_date" value="{{today}}" required></label>
 <label>سبب العكس <input type="text" name="reason" maxlength="250" required></label>
-<button type="submit">إنشاء قيد عكسي للمسير</button></form></section>
+<button type="submit">إنشاء قيد عكسي للمرتبات</button></form></section>
 {% endif %}
 <section class="panel"><h3>تفاصيل مستحقات وخصومات الموظفين</h3><div style="overflow-x:auto"><table><tr><th>الموظف</th><th>أساسي بعد العلاوة</th><th>قيمة العلاوة</th><th>بدلات</th><th>الحافز</th><th>أيام الحافز</th><th>نسبة الإضافي</th><th>الإضافي المحسوب</th><th>الإضافي المعتمد</th><th>تعديل يدوي / السبب</th><th>خصم غياب</th><th>إجمالي الاستحقاقات</th><th>السلف</th><th>خصومات أخرى</th><th>ضريبة</th><th>تأمين موظف</th><th>تأمين شركة</th><th>صافي المستحق</th><th>قسيمة PDF</th></tr>
 {% for r in rows %}<tr><td>{{r.employee_code}} - {{r.full_name}}</td><td>{{r.basic_salary}}</td><td>{{r.salary_raise}}</td><td>{{r.allowances}}</td><td>{{r.incentives}}{% if r.incentive_name %}<br><small>{{r.incentive_name}} ({{r.incentive_method}})</small>{% endif %}</td><td>{{r.incentive_days}}</td><td>{{r.overtime_rate_percent}}%</td><td>{{r.overtime_calculated_amount}}</td><td>{{r.overtime_amount}}</td><td>{% if r.overtime_manual_override %}نعم — {{r.overtime_override_reason}}{% else %}لا{% endif %}</td><td>{{r.absence_deduction}}</td><td>{{r.total_entitlements}}</td><td>{{r.advance_deduction}}</td><td>{{r.other_deductions}}</td><td>{{r.taxable_income_tax}}</td><td>{{r.employee_insurance}}</td><td>{{r.employer_insurance}}</td><td><strong>{{r.net_pay}}</strong></td><td>{% if run.status in ['posted','reversed'] %}<a href="{{url_for('workforce.payroll_employee_payslip',run_id=run.id,employee_id=r.employee_id)}}">عرض / طباعة القسيمة</a><br><small><a href="{{url_for('report_exports.export_report_excel', report='payroll-payslip', run_id=run.id, employee_id=r.employee_id).replace('/excel','/pdf')}}">PDF التصدير</a></small>{% else %}بعد الترحيل{% endif %}</td></tr>{% endfor %}
@@ -41,5 +41,5 @@
 <tr><th>الإجمالي</th><th>{{totals.gross_pay + totals.employer_insurance}}</th><th>{{totals.net_pay + totals.other_deductions + totals.advance_deduction + totals.tax + totals.employee_insurance + totals.employer_insurance + totals.absence_deduction}}</th></tr></table><form method="post" action="{{url_for('workforce.post_payroll',run_id=run.id)}}" class="form-grid">
 {% for field,label in [('salary_expense_account','مصروف الأجور والمرتبات'),('employer_ins_expense_account','مصروف حصة الشركة بالتأمينات'),('salaries_payable_account','رواتب مستحقة للموظفين'),('tax_payable_account','ضريبة مرتبات مستحقة'),('insurance_payable_account','تأمينات اجتماعية مستحقة'),('advances_account','حساب سلف العاملين المستردة'),('other_deductions_account','الحساب المقابل للخصومات الأخرى (جزاءات/تسويات)')] %}
 <label>{{label}}<select name="{{field}}" required>{% for a in accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}} ({{a.account_type}})</option>{% endfor %}</select></label>{% endfor %}
-<button type="submit">اعتماد وترحيل المسير</button></form></section>{% endif %}
+<button type="submit">اعتماد وترحيل المرتبات</button></form></section>{% endif %}
 {% endblock %}
