@@ -15,14 +15,9 @@ def db():
     return connect_database(DB_PATH, isolation_level=None)
 
 
-def expected_statement_amount(transaction, account_id):
-    """Return the signed bank-statement amount for one side of a ledger transaction."""
-    amount=Decimal(str(transaction["amount"])).quantize(Decimal("0.01"))
-    if transaction["bank_account_id"]==account_id:
-        return amount if transaction["transaction_type"]=="deposit" else -amount, "source"
-    if transaction["transaction_type"]=="transfer" and transaction["destination_bank_account_id"]==account_id:
-        return amount, "destination"
-    raise ValueError("الحركة الدفترية لا تخص حساب البنك المحدد.")
+def signed_ledger_amount(debit, credit):
+    """Convert a posted bank-ledger line to statement direction: debit positive, credit negative."""
+    return (Decimal(str(debit or "0"))-Decimal(str(credit or "0"))).quantize(Decimal("0.01"))
 
 def init_bank_schema():
     c = db()
@@ -277,8 +272,7 @@ def statement_reconciliation():
                     raise ValueError("سطر كشف البنك تمت مطابقته بالفعل.")
                 if journal_line["account_id"]!=line["bank_account_id"]:
                     raise ValueError("سطر الأستاذ لا يخص حساب البنك المحدد.")
-                expected=(Decimal(str(journal_line["debit"] or "0"))-
-                          Decimal(str(journal_line["credit"] or "0"))).quantize(Decimal("0.01"))
+                expected=signed_ledger_amount(journal_line["debit"],journal_line["credit"])
                 statement_amount=Decimal(str(line["signed_amount"])).quantize(Decimal("0.01"))
                 if expected!=statement_amount:
                     raise ValueError("المبلغ أو اتجاه الحركة غير متطابق؛ المدين موجب والدائن سالب في كشف البنك.")
@@ -323,8 +317,7 @@ def statement_reconciliation():
             book_rows=[]
             book_total=Decimal("0")
             for gl_line in gl_lines:
-                signed=(Decimal(str(gl_line["debit"] or "0"))-
-                        Decimal(str(gl_line["credit"] or "0"))).quantize(Decimal("0.01"))
+                signed=signed_ledger_amount(gl_line["debit"],gl_line["credit"])
                 book_total+=signed
                 book_rows.append(dict(gl_line,signed_amount=signed))
             candidate_lines=[]
