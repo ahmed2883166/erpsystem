@@ -15,7 +15,7 @@ from functools import wraps
 import uuid
 
 from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for, has_request_context, g
-from chart_templates import (CHARTS, ACTIVITY_LABELS, OPERATIONAL_ACCOUNT_CODES, seed_activity_chart, ensure_activity_chart_accounts, migrate_vat_accounts, ensure_account_metadata)
+from chart_templates import (CHARTS, ACTIVITY_LABELS, OPERATIONAL_ACCOUNT_CODES, seed_activity_chart, ensure_activity_chart_accounts, migrate_vat_accounts, ensure_account_metadata, migrate_legacy_duplicate_account_labels)
 from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
 from sales import sales_bp, init_sales_schema
@@ -341,6 +341,7 @@ def initialize_database():
     # Move legacy non-VAT uses of 2130 without changing account IDs or posted journal links.
     migrate_vat_accounts(connection, selected_activity)
     ensure_activity_chart_accounts(connection, selected_activity)
+    migrate_legacy_duplicate_account_labels(connection, selected_activity)
     ensure_account_metadata(connection)
     # SQLite CREATE TABLE IF NOT EXISTS does not change a legacy REAL
     # declaration. Rebuild journal_lines once with TEXT amount columns so
