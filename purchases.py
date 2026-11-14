@@ -29,6 +29,21 @@ def init_purchase_schema():
       email TEXT NOT NULL DEFAULT '', address TEXT NOT NULL DEFAULT '',
       active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS purchase_requests(
+      id INTEGER PRIMARY KEY, request_no TEXT NOT NULL UNIQUE,
+      request_date TEXT NOT NULL, required_date TEXT,
+      department TEXT NOT NULL DEFAULT '', purpose TEXT NOT NULL,
+      product_id INTEGER NOT NULL REFERENCES stock_products(id),
+      quantity TEXT NOT NULL, estimated_unit_price TEXT NOT NULL DEFAULT '0',
+      status TEXT NOT NULL DEFAULT 'draft',
+      created_by INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      submitted_by INTEGER, submitted_at TEXT,
+      approved_by INTEGER, approved_at TEXT, approval_reason TEXT,
+      rejected_by INTEGER, rejected_at TEXT, rejection_reason TEXT,
+      converted_to_po_id INTEGER REFERENCES purchase_orders(id), converted_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_purchase_requests_status_date
+      ON purchase_requests(status, request_date, id);
     CREATE TABLE IF NOT EXISTS purchase_orders(
       id INTEGER PRIMARY KEY, po_no TEXT NOT NULL UNIQUE, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
       order_date TEXT NOT NULL, expected_date TEXT, status TEXT NOT NULL DEFAULT 'draft',
@@ -128,6 +143,7 @@ def init_purchase_schema():
         if name not in order_columns:
             c.execute("ALTER TABLE purchase_orders ADD COLUMN " + name + " " + declaration)
     c.execute("CREATE INDEX IF NOT EXISTS idx_purchase_orders_approval ON purchase_orders(status, created_at, id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_purchase_requests_creator ON purchase_requests(created_by, status, id)")
     bill_columns = {row["name"] for row in c.execute("PRAGMA table_info(supplier_bills)")}
     if "credited_amount" not in bill_columns:
         c.execute("ALTER TABLE supplier_bills ADD COLUMN credited_amount TEXT NOT NULL DEFAULT '0'")
@@ -621,6 +637,193 @@ def delete_supplier(supplier_id):
             try: c.execute("DELETE FROM suppliers WHERE id=?",(supplier_id,)); c.commit(); flash("تم حذف المورد.","success")
             except sqlite3.IntegrityError: c.rollback(); flash("لا يمكن حذف المورد لوجود مستند مرتبط به.","error")
     c.close(); return redirect(url_for("purchase.suppliers"))
+
+
+@purchase_bp.route("/requests")
+@require("purchases.view")
+def purchase_requests():
+    c = db()
+    rows = c.execute("""
+        SELECT r.*,p.sku,p.name_ar AS product_name,u.full_name AS creator_name,
+               po.po_no AS converted_po_no
+        FROM purchase_requests r
+        JOIN stock_products p ON p.id=r.product_id
+        LEFT JOIN users u ON u.id=r.created_by
+        LEFT JOIN purchase_orders po ON po.id=r.converted_to_po_id
+        ORDER BY r.id DESC
+    """).fetchall()
+    c.close()
+    return render_template("purchase_requests.html", requests=rows)
+
+
+@purchase_bp.route("/requests/new", methods=["GET", "POST"])
+@require("purchases.manage")
+def new_purchase_request():
+    c = db()
+    if request.method == "POST":
+        try:
+            product_id = int(request.form["product_id"])
+            quantity = Decimal(request.form["quantity"])
+            estimated_price = money(request.form.get("estimated_unit_price", "0"))
+            purpose = (request.form.get("purpose") or "").strip()
+            department = (request.form.get("department") or "").strip()
+            request_date = (request.form.get("request_date") or "").strip()
+            required_date = (request.form.get("required_date") or "").strip() or None
+            product = c.execute("SELECT id FROM stock_products WHERE id=? AND active=1", (product_id,)).fetchone()
+            if not product:
+                raise ValueError("الصنف غير موجود أو غير نشط.")
+            if quantity <= 0 or estimated_price < 0:
+                raise ValueError("الكمية يجب أن تكون أكبر من صفر والسعر التقديري لا يقل عن صفر.")
+            if not purpose or len(purpose) < 5:
+                raise ValueError("اكتب الغرض من الطلب بوضوح (5 أحرف على الأقل).")
+            if not request_date:
+                raise ValueError("تاريخ الطلب مطلوب.")
+            if required_date and required_date < request_date:
+                raise ValueError("تاريخ الاحتياج لا يمكن أن يسبق تاريخ الطلب.")
+            c.execute("BEGIN IMMEDIATE")
+            request_no = "PR-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+            c.execute("""INSERT INTO purchase_requests(
+                request_no,request_date,required_date,department,purpose,product_id,
+                quantity,estimated_unit_price,status,created_by
+            ) VALUES(?,?,?,?,?,?,?,?,'draft',?)""",
+                (request_no,request_date,required_date,department,purpose,product_id,
+                 str(quantity),str(estimated_price),session["user_id"]))
+            c.commit()
+            flash(f"تم إنشاء طلب الشراء الداخلي {request_no}.", "success")
+            return redirect(url_for("purchase.purchase_requests"))
+        except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
+            c.rollback()
+            flash(safe_error_message(exc, "تعذر حفظ طلب الشراء. لم يتم حفظ أي تغييرات."), "error")
+    products = c.execute("SELECT id,sku,name_ar,uom FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
+    c.close()
+    return render_template("purchase_request_new.html", products=products, today=date.today().isoformat())
+
+
+@purchase_bp.route("/requests/<int:request_id>/submit", methods=["POST"])
+@require("purchases.manage")
+def submit_purchase_request(request_id):
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute("SELECT * FROM purchase_requests WHERE id=?", (request_id,)).fetchone()
+        if not row:
+            raise ValueError("طلب الشراء غير موجود.")
+        if row["status"] not in {"draft", "rejected"}:
+            raise ValueError("لا يمكن إرسال الطلب من حالته الحالية.")
+        c.execute("""UPDATE purchase_requests SET status='pending_approval',
+            submitted_by=?,submitted_at=CURRENT_TIMESTAMP,approved_by=NULL,approved_at=NULL,
+            approval_reason=NULL,rejected_by=NULL,rejected_at=NULL,rejection_reason=NULL
+            WHERE id=?""", (session["user_id"], request_id))
+        c.commit()
+        flash("تم إرسال طلب الشراء للاعتماد.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(safe_error_message(exc, "تعذر إرسال الطلب."), "error")
+    finally:
+        c.close()
+    return redirect(url_for("purchase.purchase_requests"))
+
+
+@purchase_bp.route("/requests/<int:request_id>/approve", methods=["POST"])
+@require("purchases.approve")
+def approve_purchase_request(request_id):
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute("SELECT * FROM purchase_requests WHERE id=?", (request_id,)).fetchone()
+        if not row or row["status"] != "pending_approval":
+            raise ValueError("طلب الشراء غير موجود أو ليس بانتظار الاعتماد.")
+        if row["created_by"] == session["user_id"] or row["submitted_by"] == session["user_id"]:
+            raise ValueError("لا يجوز اعتماد طلب أنشأته أو أرسلته للمراجعة بنفسك.")
+        if row["created_by"] is None or row["submitted_by"] is None:
+            raise ValueError("بيانات منشئ أو مرسل الطلب غير مكتملة.")
+        c.execute("""UPDATE purchase_requests SET status='approved',approved_by=?,
+            approved_at=CURRENT_TIMESTAMP,approval_reason=?
+            WHERE id=? AND status='pending_approval'""",
+            (session["user_id"], (request.form.get("reason") or "").strip(), request_id))
+        if c.execute("SELECT changes()").fetchone()[0] != 1:
+            raise ValueError("تغيرت حالة الطلب؛ أعد تحميل الصفحة.")
+        c.commit()
+        flash("تم اعتماد طلب الشراء الداخلي.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(safe_error_message(exc, "تعذر اعتماد الطلب."), "error")
+    finally:
+        c.close()
+    return redirect(url_for("purchase.purchase_requests"))
+
+
+@purchase_bp.route("/requests/<int:request_id>/reject", methods=["POST"])
+@require("purchases.approve")
+def reject_purchase_request(request_id):
+    c = db()
+    try:
+        reason = (request.form.get("reason") or "").strip()
+        if len(reason) < 5:
+            raise ValueError("سبب الرفض مطلوب (5 أحرف على الأقل).")
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute("SELECT * FROM purchase_requests WHERE id=?", (request_id,)).fetchone()
+        if not row or row["status"] != "pending_approval":
+            raise ValueError("طلب الشراء غير موجود أو ليس بانتظار الاعتماد.")
+        if row["created_by"] == session["user_id"] or row["submitted_by"] == session["user_id"]:
+            raise ValueError("لا يجوز رفض طلب أنشأته أو أرسلته للمراجعة بنفسك.")
+        c.execute("""UPDATE purchase_requests SET status='rejected',rejected_by=?,
+            rejected_at=CURRENT_TIMESTAMP,rejection_reason=?
+            WHERE id=? AND status='pending_approval'""", (session["user_id"],reason,request_id))
+        if c.execute("SELECT changes()").fetchone()[0] != 1:
+            raise ValueError("تغيرت حالة الطلب؛ أعد تحميل الصفحة.")
+        c.commit()
+        flash("تم رفض الطلب مع حفظ السبب.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(safe_error_message(exc, "تعذر رفض الطلب."), "error")
+    finally:
+        c.close()
+    return redirect(url_for("purchase.purchase_requests"))
+
+
+@purchase_bp.route("/requests/<int:request_id>/convert", methods=["POST"])
+@require("purchases.manage")
+def convert_purchase_request(request_id):
+    c = db()
+    try:
+        supplier_id = int(request.form["supplier_id"])
+        unit_price = money(request.form["unit_price"])
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute("""SELECT r.*,p.active AS product_active
+            FROM purchase_requests r JOIN stock_products p ON p.id=r.product_id
+            WHERE r.id=?""", (request_id,)).fetchone()
+        supplier = c.execute("SELECT id FROM suppliers WHERE id=? AND active=1", (supplier_id,)).fetchone()
+        if not row or row["status"] != "approved" or row["converted_to_po_id"]:
+            raise ValueError("لا يمكن تحويل الطلب إلا إذا كان معتمدًا وغير محول سابقًا.")
+        if not supplier or not row["product_active"]:
+            raise ValueError("المورد أو الصنف غير نشط أو غير موجود.")
+        if unit_price < 0:
+            raise ValueError("سعر الوحدة لا يمكن أن يكون سالبًا.")
+        po_no = "PO-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+        cur = c.execute("""INSERT INTO purchase_orders(
+            po_no,supplier_id,order_date,expected_date,notes,created_by
+        ) VALUES(?,?,?,?,?,?)""",
+            (po_no,supplier_id,date.today().isoformat(),row["required_date"],
+             "من طلب الشراء الداخلي " + row["request_no"] + " — " + row["purpose"],
+             session["user_id"]))
+        po_id = cur.lastrowid
+        c.execute("""INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price)
+            VALUES(?,?,?,?)""", (po_id,row["product_id"],row["quantity"],str(unit_price)))
+        c.execute("""UPDATE purchase_requests SET status='converted',
+            converted_to_po_id=?,converted_at=CURRENT_TIMESTAMP
+            WHERE id=? AND status='approved' AND converted_to_po_id IS NULL""", (po_id,request_id))
+        if c.execute("SELECT changes()").fetchone()[0] != 1:
+            raise ValueError("تم تحويل الطلب بواسطة مستخدم آخر؛ لم يتم إنشاء أمر إضافي.")
+        c.commit()
+        flash(f"تم تحويل الطلب إلى أمر الشراء {po_no}. يجب إرسال أمر الشراء للمراجعة كالمعتاد.", "success")
+    except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(safe_error_message(exc, "تعذر تحويل الطلب. لم يتم إنشاء أمر شراء."), "error")
+    finally:
+        c.close()
+    return redirect(url_for("purchase.purchase_requests"))
+
 
 @purchase_bp.route("/orders/new",methods=["GET","POST"])
 @require("purchases.manage")
