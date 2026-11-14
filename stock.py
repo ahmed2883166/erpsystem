@@ -736,16 +736,13 @@ def products():
             if category_id and not category: raise ValueError("مجموعة الصنف غير صحيحة.")
             purchase_price=money(dec(request.form.get("purchase_price","0"),"سعر الشراء"))
             sale_price=money(dec(request.form.get("sale_price","0"),"سعر البيع"))
-            reorder_point=q4(dec(request.form.get("reorder_point","0"),"نقطة إعادة الطلب"))
-            reorder_qty=q4(dec(request.form.get("reorder_qty","0"),"كمية إعادة الطلب"))
-            min_qty=q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))
-            if purchase_price<0 or sale_price<0 or min(reorder_point,reorder_qty,min_qty)<0:
-                raise ValueError("الأسعار والكميات لا يمكن أن تكون سالبة.")
-            c.execute("""INSERT INTO stock_products(sku,name_ar,category,category_id,product_type,uom,base_uom_id,barcode,track_lot,track_expiry,min_qty,purchase_price,sale_price,reorder_point,reorder_qty)
-              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(sku,name,category["name_ar"] if category else "",category_id,
+            if purchase_price<0 or sale_price<0:
+                raise ValueError("الأسعار لا يمكن أن تكون سالبة.")
+            c.execute("""INSERT INTO stock_products(sku,name_ar,category,category_id,product_type,uom,base_uom_id,barcode,track_lot,track_expiry,purchase_price,sale_price)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(sku,name,category["name_ar"] if category else "",category_id,
               request.form.get("product_type","goods"),uom,base_uom_id,request.form.get("barcode","").strip() or None,
               int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),
-              str(min_qty),str(purchase_price),str(sale_price),str(reorder_point),str(reorder_qty)))
+              str(purchase_price),str(sale_price)))
             c.commit(); flash("تم حفظ الصنف.", "success")
         except (ValueError,sqlite3.IntegrityError) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود الصنف أو الباركود مستخدم بالفعل.", "error")
@@ -1049,13 +1046,10 @@ def edit_product(product_id):
             if category_id and not category: raise ValueError("مجموعة الصنف غير صحيحة.")
             purchase_price = money(dec(request.form.get("purchase_price", product["purchase_price"] or "0"), "سعر الشراء"))
             sale_price = money(dec(request.form.get("sale_price", product["sale_price"] or "0"), "سعر البيع"))
-            min_qty=q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))
-            reorder_point=q4(dec(request.form.get("reorder_point","0"),"نقطة إعادة الطلب"))
-            reorder_qty=q4(dec(request.form.get("reorder_qty","0"),"كمية إعادة الطلب"))
-            if purchase_price < 0 or sale_price < 0 or min(min_qty,reorder_point,reorder_qty)<0:
-                raise ValueError("الأسعار والكميات لا يمكن أن تكون سالبة.")
-            c.execute("""UPDATE stock_products SET sku=?,name_ar=?,category=?,category_id=?,product_type=?,uom=?,base_uom_id=?,barcode=?,track_lot=?,track_expiry=?,min_qty=?,purchase_price=?,sale_price=?,reorder_point=?,reorder_qty=? WHERE id=?""",
-              (sku,name,category["name_ar"] if category else "",category_id,request.form.get("product_type","goods"),uom,base_uom_id,request.form.get("barcode","").strip() or None,int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),str(min_qty),str(purchase_price),str(sale_price),str(reorder_point),str(reorder_qty),product_id))
+            if purchase_price < 0 or sale_price < 0:
+                raise ValueError("الأسعار لا يمكن أن تكون سالبة.")
+            c.execute("""UPDATE stock_products SET sku=?,name_ar=?,category=?,category_id=?,product_type=?,uom=?,base_uom_id=?,barcode=?,track_lot=?,track_expiry=?,purchase_price=?,sale_price=? WHERE id=?""",
+              (sku,name,category["name_ar"] if category else "",category_id,request.form.get("product_type","goods"),uom,base_uom_id,request.form.get("barcode","").strip() or None,int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),str(purchase_price),str(sale_price),product_id))
             if (base_uom_id or None)!=(product["base_uom_id"] or None):
                 base_unit=c.execute("SELECT code,name_ar FROM stock_uoms WHERE id=? AND active=1",(base_uom_id,)).fetchone()
                 if not base_unit: raise ValueError("وحدة الأساس الجديدة غير نشطة.")
