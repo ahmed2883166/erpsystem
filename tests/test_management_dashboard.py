@@ -177,8 +177,8 @@ class ManagementDashboardTests(unittest.TestCase):
         self.conn.execute("UPDATE company_settings SET setting_value='industrial' WHERE setting_key='activity'")
         initialize_management_dashboard_schema(self.conn, 'industrial')
         s=build_management_snapshot(self.conn,date(2026,11,1),date(2026,11,30))
-        # Industrial chart: 1130 is raw-material inventory, so the 200 debit is stock.
-        self.assertEqual(s["inventory"],Decimal("380"))
+        # Industrial v1 uses 1130 only; balances in legacy 1140/1150/1160 accounts are excluded.
+        self.assertEqual(s["inventory"],Decimal("200"))
         self.assertEqual(s["receivables"],Decimal("0"))
 
     def test_legacy_default_roles_are_reseeded_for_industrial_activity(self):
@@ -193,13 +193,13 @@ class ManagementDashboardTests(unittest.TestCase):
         roles = load_management_account_roles(self.conn)
         self.assertEqual(roles["cash"], {1})
         self.assertEqual(roles["receivables"], {2})
-        self.assertEqual(roles["inventory"], {3, 4, 10, 11})
+        self.assertEqual(roles["inventory"], {3})
         snapshot = build_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
         self.assertEqual(snapshot["cash"], Decimal("1350"))
         self.assertEqual(snapshot["receivables"], Decimal("0"))
-        self.assertEqual(snapshot["inventory"], Decimal("380"))
+        self.assertEqual(snapshot["inventory"], Decimal("200"))
 
-    def test_industrial_chart_roles_separate_customers_and_all_inventory_classes(self):
+    def test_industrial_chart_roles_use_one_stock_control_and_separate_customers(self):
         self.conn.execute("INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) VALUES"
                           "(10,'1140','إنتاج تحت التشغيل','asset',0,1),"
                           "(11,'1160','قطع الغيار','asset',0,1)")
@@ -212,9 +212,8 @@ class ManagementDashboardTests(unittest.TestCase):
         snapshot=build_management_snapshot(self.conn,date(2026,11,1),date(2026,11,30))
         self.assertEqual(snapshot["cash"],Decimal("1350"))
         self.assertEqual(snapshot["receivables"],Decimal("25"))
-        self.assertEqual(snapshot["inventory"],Decimal("480"))
-        self.assertEqual(snapshot["account_roles"]["inventory"],
-                         {3,4,10,11})
+        self.assertEqual(snapshot["inventory"],Decimal("200"))
+        self.assertEqual(snapshot["account_roles"]["inventory"], {3})
 
     def test_medical_chart_roles_include_insurance_receivables_and_lab_stock(self):
         self.conn.execute("INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) VALUES"
