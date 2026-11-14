@@ -6,7 +6,7 @@
 {% set document_title = 'أمر شراء' %}{% set document_number = order.po_no %}{% set document_date = order.order_date %}
 {% include "partials/print_brand_header.html" %}
 <div class="form-row"><div><b>المورد:</b> {{ order.supplier_name }} ({{ order.supplier_code }})</div><div><b>الرقم الضريبي:</b> {{ order.supplier_tax_number or '—' }}</div><div><b>التسليم المتوقع:</b> {{ order.expected_date or '—' }}</div><div><b>الحالة:</b> {{ order.status }}</div></div>
-<div class="table-wrap"><table><thead><tr><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead><tbody>{% for x in lines %}<tr><td>{{ x.sku }} — {{ x.product_name }}</td><td>{{ x.quantity }}</td><td>{{ x.uom or "" }}</td><td>{{ x.unit_price|money }}</td><td>{{ x.line_total|money }}</td></tr>{% else %}<tr><td colspan="5">لا توجد بنود.</td></tr>{% endfor %}</tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead><tbody>{% for x in lines %}<tr><td>{{ x.sku }} — {{ x.product_name }}</td><td>{{ x.display_quantity }}</td><td>{{ x.display_uom or "" }}</td><td>{{ x.display_unit_price|money }}</td><td>{{ x.line_total|money }}</td></tr>{% else %}<tr><td colspan="5">لا توجد بنود.</td></tr>{% endfor %}</tbody></table></div>
 <h3>إجمالي أمر الشراء: {{ order_total|money }} {{ settings.get('base_currency','') }}</h3>
 {% if order.notes %}<p><b>ملاحظات:</b> {{ order.notes }}</p>{% endif %}
 <p class="muted">أمر الشراء مستند طلب/اعتماد، ولا يثبت استلام البضاعة أو ترحيل فاتورة المورد.</p>
