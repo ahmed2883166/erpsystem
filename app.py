@@ -618,7 +618,10 @@ def requires(permission):
             if "user_id" not in session:
                 return redirect(url_for("login"))
             effective = set(session.get("permissions", PERMISSIONS.get(session.get("role"), set())))
-            if permission not in effective:
+            is_root_admin_backup_access = (
+                session.get("role") == "admin" and permission == "backup.manage"
+            )
+            if permission not in effective and not is_root_admin_backup_access:
                 flash("لا تملك الصلاحية المطلوبة.", "error")
                 return redirect(url_for("dashboard"))
             return view(*args, **kwargs)
