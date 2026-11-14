@@ -13,6 +13,7 @@ from functools import wraps
 from datetime import date
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, money
+from analytic_dimensions import initialize_analytic_dimensions_schema
 
 stock_bp = Blueprint("stock", __name__, url_prefix="/stock")
 
@@ -28,6 +29,7 @@ def get_db():
 def initialize_stock_schema():
     DB_PATH.parent.mkdir(exist_ok=True)
     c = get_db()
+    initialize_analytic_dimensions_schema(c)
     c.executescript("""
     CREATE TABLE IF NOT EXISTS stock_products(
       id INTEGER PRIMARY KEY, sku TEXT NOT NULL UNIQUE, name_ar TEXT NOT NULL,
@@ -44,7 +46,7 @@ def initialize_stock_schema():
     );
     CREATE TABLE IF NOT EXISTS stock_warehouses(
       id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name_ar TEXT NOT NULL,
-      branch TEXT NOT NULL DEFAULT '', active INTEGER NOT NULL DEFAULT 1
+      branch TEXT NOT NULL DEFAULT '', branch_id INTEGER REFERENCES branches(id), active INTEGER NOT NULL DEFAULT 1
     );
     CREATE TABLE IF NOT EXISTS stock_locations(
       id INTEGER PRIMARY KEY, warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
@@ -89,6 +91,14 @@ def initialize_stock_schema():
     CREATE INDEX IF NOT EXISTS idx_stock_layers_product_wh ON stock_valuation_layers(product_id,warehouse_id,id);
     """)
     # Additive migrations preserve all existing stock and product data.
+    warehouse_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_warehouses)")}
+    if "branch_id" not in warehouse_columns:
+        c.execute("ALTER TABLE stock_warehouses ADD COLUMN branch_id INTEGER REFERENCES branches(id)")
+    # Link legacy free-text branch labels only when an exact branch name/code match exists.
+    c.execute("""UPDATE stock_warehouses SET branch_id=(
+        SELECT id FROM branches WHERE lower(name_ar)=lower(stock_warehouses.branch)
+           OR lower(code)=lower(stock_warehouses.branch) ORDER BY id LIMIT 1
+        ) WHERE branch_id IS NULL AND TRIM(COALESCE(branch,''))<>''""")
     product_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_products)")}
     if "category_id" not in product_columns:
         c.execute("ALTER TABLE stock_products ADD COLUMN category_id INTEGER REFERENCES stock_categories(id)")
@@ -116,6 +126,34 @@ def initialize_stock_schema():
     layer_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_valuation_layers)")}
     if "location_id" not in layer_columns:
         c.execute("ALTER TABLE stock_valuation_layers ADD COLUMN location_id INTEGER REFERENCES stock_locations(id)")
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS stock_warehouse_product_settings(
+      product_id INTEGER NOT NULL REFERENCES stock_products(id),
+      warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
+      min_qty TEXT NOT NULL DEFAULT '0', reorder_point TEXT NOT NULL DEFAULT '0',
+      reorder_qty TEXT NOT NULL DEFAULT '0', updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(product_id,warehouse_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_stock_wh_product_reorder ON stock_warehouse_product_settings(warehouse_id,reorder_point,product_id);
+    CREATE TRIGGER IF NOT EXISTS trg_stock_product_locations_same_wh_insert
+    BEFORE INSERT ON stock_product_locations
+    WHEN NOT EXISTS(SELECT 1 FROM stock_locations l WHERE l.id=NEW.location_id
+      AND l.warehouse_id=NEW.warehouse_id AND l.active=1)
+    BEGIN SELECT RAISE(ABORT,'موقع الصنف الافتراضي يجب أن يكون نشطًا ويتبع نفس المخزن.'); END;
+    CREATE TRIGGER IF NOT EXISTS trg_stock_product_locations_same_wh_update
+    BEFORE UPDATE OF warehouse_id,location_id ON stock_product_locations
+    WHEN NOT EXISTS(SELECT 1 FROM stock_locations l WHERE l.id=NEW.location_id
+      AND l.warehouse_id=NEW.warehouse_id AND l.active=1)
+    BEGIN SELECT RAISE(ABORT,'موقع الصنف الافتراضي يجب أن يكون نشطًا ويتبع نفس المخزن.'); END;
+    """)
+    # Carry legacy product-level reorder thresholds forward as initial per-warehouse settings.
+    c.execute("""INSERT OR IGNORE INTO stock_warehouse_product_settings
+        (product_id,warehouse_id,min_qty,reorder_point,reorder_qty)
+        SELECT p.id,w.id,p.min_qty,COALESCE(p.reorder_point,'0'),COALESCE(p.reorder_qty,'0')
+        FROM stock_products p CROSS JOIN stock_warehouses w
+        WHERE p.active=1 AND (CAST(COALESCE(p.min_qty,'0') AS REAL)>0
+          OR CAST(COALESCE(p.reorder_point,'0') AS REAL)>0
+          OR CAST(COALESCE(p.reorder_qty,'0') AS REAL)>0)""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_stock_locations_wh_parent ON stock_locations(warehouse_id,parent_id,active)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_stock_layers_location ON stock_valuation_layers(location_id,product_id)")
     # One summarized COGS journal may cover multiple stock issue movements.
