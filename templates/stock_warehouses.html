@@ -3,7 +3,7 @@
 <div class="actions stock-shortcuts"><a class="button-link" href="{{ url_for('stock.index') }}">لوحة المخزون</a><a class="button-link" href="{{ url_for('stock.products') }}">الأصناف</a><a class="button-link" href="{{ url_for('stock.locations') }}">تقسيم الأدوار والمواقع</a><a class="button-link" href="{{ url_for('stock.product_locations') }}">توزيع الأصناف وحدود الطلب</a><a class="button-link" href="{{ url_for('stock.movements') }}">حركة مخزون جديدة</a><a class="button-link" href="{{ url_for('stock.reports') }}">التقارير</a></div>
 <div class="grid">
 <section class="panel"><h3>إضافة مخزن</h3><form method="post">
-<label>كود المخزن *</label><input name="code" required>
+<label>كود المخزن</label><small>يُنشأ تلقائيًا عند الحفظ</small>
 <label>اسم المخزن *</label><input name="name_ar" required>
 <label>الفرع المرتبط</label><select name="branch_id"><option value="">بدون فرع محدد</option>{% for b in branches %}<option value="{{ b.id }}">{{ b.code }} - {{ b.name_ar }}</option>{% endfor %}</select>
 <button>حفظ المخزن</button></form><p class="muted">يجب تعريف الفروع أولًا من الإعدادات ← الأبعاد التحليلية.</p></section>
