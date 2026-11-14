@@ -527,6 +527,104 @@ class SalesIntegrationTests(unittest.TestCase):
             )
         self.db.rollback()
 
+    def test_sales_invoice_collection_partial_return_and_refund_reconcile_gl_stock_and_trial_balance(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "2", "unit_price": "20",
+              "tax_rate": "14", "tax_treatment": "standard"}], "14", 1,
+        )
+        self.db.commit()
+
+        cash_id = self.db.execute(
+            "SELECT id FROM accounts WHERE code='1110'"
+        ).fetchone()["id"]
+        self.db.execute("BEGIN IMMEDIATE")
+        receipt = sales.post_customer_receipt(
+            self.db, invoice["invoice_id"], "2026-11-11", "45.60", cash_id, 1,
+            "SALE-E2E-RECEIPT",
+        )
+        line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?",
+            (invoice["invoice_id"],),
+        ).fetchone()["id"]
+        credit = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-12", "مرتجع جزئي بعد التحصيل",
+            [{"invoice_line_id": line_id, "quantity": "1"}], 1,
+        )
+        refund = sales.post_customer_refund(
+            self.db, credit["credit_note_id"], "2026-11-13", "22.80", cash_id, 1,
+        )
+        self.db.commit()
+
+        self.assertEqual(receipt["amount"], Decimal("45.60"))
+        self.assertEqual(credit["total_amount"], Decimal("22.80"))
+        self.assertEqual(credit["total_cost"], Decimal("10.00"))
+        self.assertEqual(refund["amount"], Decimal("22.80"))
+
+        invoice_row = self.db.execute(
+            "SELECT total_amount,paid_amount,credited_amount,status FROM sales_invoices WHERE id=?",
+            (invoice["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(Decimal(invoice_row["total_amount"]), Decimal("45.60"))
+        self.assertEqual(Decimal(invoice_row["paid_amount"]), Decimal("45.60"))
+        self.assertEqual(Decimal(invoice_row["credited_amount"]), Decimal("22.80"))
+
+        # After selling two units and returning one, four units worth 40 remain.
+        stock_qty = sum((Decimal(row["qty_remaining"]) for row in self.db.execute(
+            "SELECT qty_remaining FROM stock_valuation_layers WHERE product_id=?",
+            (self.product_id,),
+        )), Decimal("0"))
+        stock_value = sum((Decimal(row["value_remaining"]) for row in self.db.execute(
+            "SELECT value_remaining FROM stock_valuation_layers WHERE product_id=?",
+            (self.product_id,),
+        )), Decimal("0"))
+        self.assertEqual(stock_qty, Decimal("4.0000"))
+        self.assertEqual(stock_value, Decimal("40.00"))
+
+        # Calculate posted GL by account after invoice, collection, credit note and refund.
+        totals = {}
+        for row in self.db.execute(
+            """SELECT a.code,a.account_type,jl.debit,jl.credit
+               FROM journal_lines jl
+               JOIN journal_entries je ON je.id=jl.entry_id
+               JOIN accounts a ON a.id=jl.account_id
+               WHERE je.status='posted'"""
+        ):
+            debit, credit_amount = totals.get(
+                row["code"], (Decimal("0"), Decimal("0"))
+            )
+            totals[row["code"]] = (
+                debit + Decimal(str(row["debit"] or "0")),
+                credit_amount + Decimal(str(row["credit"] or "0")),
+            )
+
+        # Customer control is fully cleared; net cash received is 22.80.
+        self.assertEqual(totals["1130"], (Decimal("68.40"), Decimal("68.40")))
+        self.assertEqual(totals["1110"], (Decimal("22.80"), Decimal("0")))
+        # Net revenue 20, output VAT 2.80, net COGS 10, inventory 40.
+        self.assertEqual(totals["4100"], (Decimal("0"), Decimal("40.00")))
+        self.assertEqual(totals["4200"], (Decimal("20.00"), Decimal("0")))
+        self.assertEqual(totals["2130"], (Decimal("2.80"), Decimal("5.60")))
+        self.assertEqual(totals["5100"], (Decimal("20.00"), Decimal("10.00")))
+        self.assertEqual(totals["1150"], (Decimal("50.00"), Decimal("10.00")))
+
+        inventory_gl = totals["1150"][0] - totals["1150"][1]
+        self.assertEqual(inventory_gl, stock_value)
+        trial_balance_debit = sum((value[0] for value in totals.values()), Decimal("0"))
+        trial_balance_credit = sum((value[1] for value in totals.values()), Decimal("0"))
+        self.assertEqual(trial_balance_debit, trial_balance_credit)
+
+        unbalanced_entries = self.db.execute(
+            """SELECT je.id FROM journal_entries je
+               JOIN journal_lines jl ON jl.entry_id=je.id
+               WHERE je.status='posted'
+               GROUP BY je.id
+               HAVING ABS(SUM(CAST(jl.debit AS NUMERIC))-
+                          SUM(CAST(jl.credit AS NUMERIC)))>0.005"""
+        ).fetchall()
+        self.assertEqual(unbalanced_entries, [])
+
     def test_discounted_invoice_credit_notes_reverse_net_sales_and_tax_exactly(self):
         self.db.execute(
             "UPDATE customers SET discount_type='percent',discount_value='10' WHERE id=?",
