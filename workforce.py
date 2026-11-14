@@ -350,7 +350,7 @@ def _employee_form_values(form):
         or raise_value < 0 or overtime_rate < 0 or overtime_rate > 500):
         raise ValueError("راجع الراتب وساعات العمل والحالة الوظيفية والعلاوة ونسبة الإضافي.")
     return (
-        form["employee_code"].strip(), form["full_name"].strip(),
+        form.get("employee_code", "").strip(), form["full_name"].strip(),
         form.get("job_title", "").strip(), form.get("department", "").strip(),
         form.get("hire_date") or date.today().isoformat(), str(salary), str(hours),
         legal_category, form.get("insurance_number", "").strip(), str(insured_wage),
