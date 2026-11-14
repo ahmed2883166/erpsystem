@@ -1541,6 +1541,22 @@ def journal():
         "friday": "بدل عمل الجمعة", "inventory": "المخزون",
         "banking": "البنوك", "assets": "الأصول الثابتة",
     }
+    # Direct, read-only destinations for source documents that have a dedicated
+    # display/print route. Tables without a detail screen remain labelled but
+    # do not receive a misleading generic action.
+    source_link_specs = {
+        "sales_invoices": ("sales.invoice_print", "invoice_id", "id", "فتح فاتورة البيع"),
+        "customer_receipts": ("sales.single_receipt_print", "receipt_id", "id", "فتح سند القبض"),
+        "customer_receipt_batches": ("sales.receipt_print", "receipt_id", "id", "فتح سند القبض المجمع"),
+        "supplier_bills": ("purchase.bill_print", "bill_id", "id", "فتح فاتورة المورد"),
+        "supplier_payments": ("purchase.payment_print", "payment_id", "id", "فتح سند سداد المورد"),
+        "payroll_runs": ("workforce.payroll_run", "run_id", "id", "فتح كشف المرتبات"),
+        "payroll_payments": ("workforce.payroll_run", "run_id", "run_id", "فتح كشف المرتبات"),
+        "employee_grants": ("workforce.print_employee_grant", "grant_id", "id", "فتح مستند المنحة"),
+        "employee_grant_payments": ("workforce.print_employee_grant", "grant_id", "grant_id", "فتح مستند المنحة"),
+        "asset_depreciations": ("assets.schedule", "asset_id", "asset_id", "فتح سجل الأصل"),
+        "asset_disposals": ("assets.schedule", "asset_id", "asset_id", "فتح سجل الأصل"),
+    }
     existing_tables = {row["name"] for row in connection.execute(
         "SELECT name FROM sqlite_master WHERE type='table'"
     )}
@@ -1641,9 +1657,16 @@ def journal():
                 f'PRAGMA table_info("{table_name}")'
             )}
             doc_col = next((name for name in doc_columns if name in cols), "id")
+            link_spec = source_link_specs.get(table_name)
+            route_id_col = link_spec[2] if link_spec and link_spec[2] in cols else None
+            select_parts = [f'"{doc_col}" AS document_ref']
+            if route_id_col:
+                select_parts.append(f'"{route_id_col}" AS route_id')
+            else:
+                select_parts.append("NULL AS route_id")
             try:
                 linked = connection.execute(
-                    f'SELECT journal_entry_id, "{doc_col}" AS document_ref FROM "{table_name}" '
+                    f'SELECT journal_entry_id, {", ".join(select_parts)} FROM "{table_name}" '
                     f'WHERE journal_entry_id IN ({marks}) ORDER BY id',
                     entry_ids,
                 ).fetchall()
@@ -1651,11 +1674,21 @@ def journal():
                 continue
             for link in linked:
                 if link["journal_entry_id"] not in origin_by_entry:
-                    origin_by_entry[link["journal_entry_id"]] = {
+                    origin = {
                         "source": source_labels[category],
                         "source_key": category,
                         "source_ref": str(link["document_ref"] or "—"),
+                        "origin_url": None,
+                        "origin_action": None,
                     }
+                    if link_spec and link["route_id"] is not None:
+                        endpoint, route_arg, _route_col, action_label = link_spec
+                        try:
+                            origin["origin_url"] = url_for(endpoint, **{route_arg: int(link["route_id"])})
+                            origin["origin_action"] = action_label
+                        except (TypeError, ValueError):
+                            pass
+                    origin_by_entry[link["journal_entry_id"]] = origin
     entries = []
     for row in raw_entries:
         item = dict(row)
@@ -1665,9 +1698,11 @@ def journal():
         else:
             ref = str(row["reference"] or "")
             if ref.startswith("MAN-") or ref.startswith("REV-") or row["entry_type"] if "entry_type" in row.keys() else False:
-                item.update(source="قيود يومية / تسويات", source_key="general", source_ref=ref or "—")
+                item.update(source="قيود يومية / تسويات", source_key="general", source_ref=ref or "—",
+                            origin_url=None, origin_action=None)
             else:
-                item.update(source="قيد غير مرتبط بمستند معروف", source_key="general", source_ref=ref or "—")
+                item.update(source="قيد غير مرتبط بمستند معروف", source_key="general", source_ref=ref or "—",
+                            origin_url=None, origin_action=None)
         entries.append(item)
     connection.close()
     return render_template("journal.html", accounts=accounts_list, entries=entries,
