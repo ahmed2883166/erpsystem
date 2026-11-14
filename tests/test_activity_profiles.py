@@ -159,7 +159,7 @@ class ActivityProfileTests(unittest.TestCase):
         profile = get_active_activity_profile(self.conn)
         roles = active_account_role_ids(self.conn)
         advance_id = self.conn.execute("SELECT id FROM accounts WHERE code='2160'").fetchone()["id"]
-        self.assertEqual(profile["account_roles"]["customer_advances"], ["2120", "2160"])
+        self.assertEqual(profile["account_roles"]["customer_advances"], ["2160"])
         self.assertIn(advance_id, roles["customer_advances"])
         self.assertIn(advance_id, roles["current_liabilities"])
 
@@ -170,9 +170,9 @@ class ActivityProfileTests(unittest.TestCase):
         self.assertTrue({"2140", "2160"}.issubset(commercial))
         self.assertTrue({"2120", "2160"}.issubset(service))
         self.assertEqual(set(ACTIVITY_ACCOUNT_ROLES["commercial"]["customer_advances"]),
-                         {"2140", "2160"})
+                         {"2160"})
         self.assertEqual(set(ACTIVITY_ACCOUNT_ROLES["service"]["customer_advances"]),
-                         {"2120", "2160"})
+                         {"2160"})
         self.assertEqual(set(ACTIVITY_ACCOUNT_ROLES["service"]["cash"]), {"1110", "1111"})
         self.assertIn(("1111", "البنوك", "asset", "1100", 0), CHARTS["service"])
 
