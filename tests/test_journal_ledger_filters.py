@@ -78,6 +78,17 @@ class JournalAndLedgerFilterTests(unittest.TestCase):
         self.assertNotIn("RCPT-3", html)
         self.assertNotIn("DRAFT-4", html)
         self.assertIn("إجمالي القيود: 1", html)
+        self.assertIn('href="/journal/2"', html)
+        self.assertIn("عرض القيد", html)
+
+    def test_journal_detail_displays_the_posted_entry_lines(self):
+        response = self.client.get("/journal/2")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("Monthly rent", html)
+        self.assertIn("1110", html)
+        self.assertIn("Office rent", html)
+        self.assertIn("50.00", html)
 
     def test_journal_search_includes_line_memos_and_account_filter(self):
         memo_response = self.client.get("/journal?q=Office+rent&status=posted")
