@@ -126,6 +126,29 @@ class CashFlowReportTests(unittest.TestCase):
             {"4100", "6100"},
         )
 
+    def test_supplier_payment_allocated_to_asset_bill_is_investing_cash_outflow(self):
+        conn = financial_planning._connect()
+        conn.execute("ALTER TABLE journal_entries ADD COLUMN reference TEXT")
+        conn.execute("INSERT INTO accounts(id,code,name_ar,account_type,is_group) VALUES(8,'2100','الموردون','liability',0)")
+        conn.execute("INSERT INTO journal_entries(id,entry_date,status,reference) VALUES(6,'2026-11-20','posted','PAY-ASSET-MIX')")
+        conn.execute("INSERT INTO journal_lines(id,entry_id,account_id,debit,credit) VALUES(11,6,8,'1500','0')")
+        conn.execute("INSERT INTO journal_lines(id,entry_id,account_id,debit,credit) VALUES(12,6,1,'0','1500')")
+        conn.executescript("""
+            CREATE TABLE supplier_bills(id INTEGER PRIMARY KEY,bill_kind TEXT);
+            CREATE TABLE supplier_payments(id INTEGER PRIMARY KEY,journal_entry_id INTEGER);
+            CREATE TABLE supplier_payment_allocations(payment_id INTEGER,bill_id INTEGER,amount TEXT);
+            INSERT INTO supplier_bills VALUES(1,'asset'),(2,'expense');
+            INSERT INTO supplier_payments VALUES(1,6);
+            INSERT INTO supplier_payment_allocations VALUES(1,1,'1000'),(1,2,'500');
+        """)
+        snapshot = financial_planning.build_cash_flow_snapshot(
+            conn, "2026-11-01", "2026-11-30"
+        )
+        conn.close()
+        self.assertEqual(snapshot["sections"]["investing"]["out"], financial_planning.Decimal("1000.00"))
+        self.assertEqual(snapshot["sections"]["operating"]["out"], financial_planning.Decimal("500.00"))
+        self.assertEqual(snapshot["reconciliation_difference"], financial_planning.Decimal("0"))
+
     def test_indirect_method_does_not_hide_variance_in_a_plug_adjustment(self):
         conn = financial_planning._connect()
         snapshot = financial_planning.build_cash_flow_indirect_snapshot(
