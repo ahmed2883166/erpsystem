@@ -188,6 +188,13 @@ class PurchasingAccountingTests(unittest.TestCase):
             [(allocation[1], allocation[2]) for allocation in allocations],
             [(Decimal("4"), Decimal("10")), (Decimal("1"), Decimal("12"))],
         )
+        self.db.execute(
+            """INSERT INTO stock_movements(
+                movement_no,movement_type,product_id,source_warehouse_id,quantity,
+                unit_cost,total_cost,movement_date,accounting_status)
+               VALUES('FIFO-CYCLE-ISSUE','issue',?,?, '5','10.4','52','2026-11-15','posted')""",
+            (product_id, warehouse_id),
+        )
         remaining = self.db.execute(
             """SELECT qty_remaining FROM stock_valuation_layers
                WHERE product_id=? ORDER BY id""",
