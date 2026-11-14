@@ -1525,7 +1525,8 @@ def journal():
     # schema-aware so older databases without a module table remain supported.
     source_tables = {
         "sales": ("sales_invoices", "customer_receipts", "customer_receipt_batches",
-                  "sales_credit_notes", "customer_refunds", "customer_advance_receipts"),
+                  "sales_credit_notes", "customer_refunds", "customer_advance_receipts",
+                  "customer_advance_refunds", "customer_advance_reversals"),
         "purchases": ("supplier_bills", "goods_receipts", "supplier_payments", "supplier_credit_notes"),
         "payroll": ("payroll_runs", "payroll_payments", "payroll_reversals"),
         "incentives": ("employee_grants", "employee_grant_payments"),
