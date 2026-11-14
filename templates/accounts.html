@@ -110,7 +110,7 @@
      if(btn){const open=expanded.has(r.dataset.id);btn.textContent=open?'−':'+';btn.setAttribute('aria-expanded',String(open));}
    });
  }
- function expandAll(){rows.filter(r=>r.dataset.group==='true').forEach(r=>expanded.add(r.dataset.id));paint();}
+ function expandAll(){rows.filter(r=>r.dataset.group==='1'||r.dataset.group==='true').forEach(r=>expanded.add(r.dataset.id));paint();}
  function collapseAll(){expanded.clear();paint();}
  document.querySelectorAll('.tree-toggle').forEach(btn=>btn.addEventListener('click',()=>{
    const id=btn.dataset.id;
