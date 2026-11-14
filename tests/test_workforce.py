@@ -50,6 +50,9 @@ class WorkforceTests(unittest.TestCase):
         )
         (template_dir / "salary_changes.html").write_text("salary changes", encoding="utf-8")
         (template_dir / "salary_history.html").write_text("salary history", encoding="utf-8")
+        (template_dir / "form2_salary.html").write_text(
+            "{{ e.full_name }}|{{ insured_wage }}", encoding="utf-8"
+        )
         self.app = Flask(__name__, template_folder=str(template_dir))
         self.app.secret_key = "test"
         self.app.register_blueprint(workforce.workforce_bp)
@@ -71,6 +74,17 @@ class WorkforceTests(unittest.TestCase):
                         VALUES(1,'بدل انتقال','allowance','1000')""")
         conn.commit()
         conn.close()
+
+    
+    def test_employee_form_2_print_view_uses_insured_wage_for_both_amounts(self):
+        self.add_employee()
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("UPDATE employees SET insurance_number='INS-123', national_id='12345678901234', insured_wage='12500' WHERE id=1")
+        conn.commit()
+        conn.close()
+        response = self.client.get("/hr/1/form-2-salary")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Employee One|12500.00", response.get_data(as_text=True))
 
     def test_payroll_calculation_and_posting(self):
         self.add_employee()
