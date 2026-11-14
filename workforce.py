@@ -823,7 +823,7 @@ def payroll():
             month_end = (date(start.year + (start.month == 12), 1 if start.month == 12 else start.month + 1, 1) - date.resolution)
             period_end = month_end.isoformat()
             employees = c.execute("""SELECT * FROM employees WHERE
-                (active=1 AND work_status IN ('comprehensive_bonus','permanent')) OR
+                (active=1 AND work_status IN ('comprehensive_bonus','permanent','unpaid_leave')) OR
                 (work_status IN ('resigned','retired') AND termination_date>=? AND termination_date<=?)
                 ORDER BY employee_code""", (period + "-01", period_end)).fetchall()
             if not employees:
@@ -853,7 +853,7 @@ def payroll():
                 if basic_salary <= 0:
                     raise ValueError("الراتب الأساسي للموظف " + e["full_name"] + " يجب أن يكون أكبر من صفر.")
                 monthly_basic_salary = basic_salary
-                payroll_days = 30
+                payroll_days = 0 if e["work_status"] == "unpaid_leave" else 30
                 if e["work_status"] in {"resigned", "retired"}:
                     end_date = date.fromisoformat(e["termination_date"])
                     payroll_days = min(30, max(0, (end_date - start).days + 1))
@@ -972,7 +972,7 @@ def payroll():
                 rule_set_id = None
                 taxable_annual = Decimal("0")
                 insured_wage = Decimal("0")
-                if request.form.get("auto_calculate_statutory") == "1":
+                if request.form.get("auto_calculate_statutory") == "1" and e["work_status"] != "unpaid_leave":
                     from payroll_compliance import calculate_payroll_deductions
                     automatic = calculate_payroll_deductions(
                         c, e, gross, period,
@@ -986,6 +986,28 @@ def payroll():
                     rule_set_id = automatic["rule_set_id"]
                     taxable_annual = automatic["taxable_annual"]
                     insured_wage = automatic["insured_wage"]
+                if e["work_status"] == "unpaid_leave":
+                    # A full-month unpaid-leave status preserves the payroll record and salary history,
+                    # but produces no salary, allowances, bonuses, deductions or loan collection.
+                    basic_salary = Decimal("0")
+                    allowances = Decimal("0")
+                    overtime_hours = Decimal("0")
+                    overtime_amount = Decimal("0")
+                    overtime_calculated_amount = Decimal("0")
+                    overtime_manual_override = False
+                    overtime_override_reason = ""
+                    absent_hours = Decimal("0")
+                    absence = Decimal("0")
+                    incentives = Decimal("0")
+                    manual_advance_deduction = Decimal("0")
+                    fixed_deductions = Decimal("0")
+                    other_deductions = Decimal("0")
+                    tax = Decimal("0")
+                    emp_ins = Decimal("0")
+                    employer_ins = Decimal("0")
+                    penalty_rows = []
+                    penalty_deduction = Decimal("0")
+                    gross = Decimal("0")
                 # Collect scheduled loan installments only up to the employee's available net pay.
                 # Any unpaid remainder stays on the installment and rolls forward to later payrolls.
                 fixed_deductions = M(employer_ins + emp_ins + tax + manual_advance_deduction + other_deductions + absence)
@@ -1070,7 +1092,7 @@ def payroll():
     # Show former employees in the input grid so final payroll can be prepared for any selected month.
     # POST includes them only in the month containing their termination date.
     employee_rows = c.execute("""SELECT * FROM employees WHERE
-        (active=1 AND work_status IN ('comprehensive_bonus','permanent')) OR
+        (active=1 AND work_status IN ('comprehensive_bonus','permanent','unpaid_leave')) OR
         work_status IN ('resigned','retired')
         ORDER BY employee_code""").fetchall()
     employees = []
@@ -1300,9 +1322,10 @@ def post_payroll(run_id):
                       (str(balance),"closed" if balance<=0 else "active",loan["id"]))
         if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='employee_penalties'").fetchone():
             for payroll_line in rows:
-                c.execute("""UPDATE employee_penalties SET status='deducted',payroll_line_id=?,decided_by=COALESCE(decided_by,?)
-                    WHERE employee_id=? AND effective_period=? AND status='approved'""",
-                    (payroll_line["id"],session["user_id"],payroll_line["employee_id"],run["period"]))
+                if "penalty_deduction" in payroll_line.keys() and D(payroll_line["penalty_deduction"]) > 0:
+                    c.execute("""UPDATE employee_penalties SET status='deducted',payroll_line_id=?,decided_by=COALESCE(decided_by,?)
+                        WHERE employee_id=? AND effective_period=? AND status='approved'""",
+                        (payroll_line["id"],session["user_id"],payroll_line["employee_id"],run["period"]))
         c.execute("UPDATE payroll_runs SET status='posted',journal_entry_id=? WHERE id=?", (journal_id, run_id))
         _audit(c, "payroll_posted", run["period"] + " journal=" + str(journal_id))
         c.commit()
