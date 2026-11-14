@@ -1502,6 +1502,7 @@ def journal():
     date_to = request.args.get("date_to", "").strip()
     status_filter = request.args.get("status", "").strip()
     entry_type_filter = request.args.get("entry_type", "").strip()
+    source_filter = request.args.get("source", "").strip()
     account_filter = request.args.get("account_id", type=int)
     search_query = request.args.get("q", "").strip()[:100]
     for value in (date_from, date_to):
@@ -1520,7 +1521,60 @@ def journal():
         status_filter = ""
     if entry_type_filter not in ("general", "year_end_closing", "year_end_closing_reversal"):
         entry_type_filter = ""
-    filters, filter_params = [], []
+    # Resolve journal origins from their owning operational documents. This is
+    # schema-aware so older databases without a module table remain supported.
+    source_tables = {
+        "sales": ("sales_invoices", "customer_receipts", "customer_receipt_batches",
+                  "sales_credit_notes", "customer_refunds", "customer_advance_receipts"),
+        "purchases": ("supplier_bills", "goods_receipts", "supplier_payments", "supplier_credit_notes"),
+        "payroll": ("payroll_runs", "payroll_payments", "payroll_reversals"),
+        "incentives": ("employee_grants", "employee_grant_payments"),
+        "friday": ("friday_allowance_batches",),
+        "inventory": ("stock_movements", "stocktakes", "stocktake_batches"),
+        "banking": ("bank_transactions",),
+        "assets": ("asset_depreciations", "asset_disposals"),
+    }
+    source_labels = {
+        "sales": "مبيعات وتحصيلات", "purchases": "مشتريات وموردين",
+        "payroll": "المرتبات", "incentives": "حوافز ومنح",
+        "friday": "بدل عمل الجمعة", "inventory": "المخزون",
+        "banking": "البنوك", "assets": "الأصول الثابتة",
+    }
+    existing_tables = {row["name"] for row in connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )}
+    source_table_columns = {}
+    for category, names in source_tables.items():
+        for table_name in names:
+            if table_name in existing_tables:
+                cols = {row["name"] for row in connection.execute(
+                    f'PRAGMA table_info("{table_name}")'
+                )}
+                if "journal_entry_id" in cols:
+                    source_table_columns[table_name] = category
+    if source_filter not in (*source_tables.keys(), "general"):
+        source_filter = ""
+    if source_filter == "general":
+        if source_table_columns:
+            exclusions = [
+                f'EXISTS(SELECT 1 FROM "{table_name}" src WHERE src.journal_entry_id=journal_entries.id)'
+                for table_name in source_table_columns
+            ]
+            filters = ["NOT (" + " OR ".join(exclusions) + ")"]
+        else:
+            filters = []
+    elif source_filter:
+        linked_tables = [name for name, category in source_table_columns.items()
+                         if category == source_filter]
+        if linked_tables:
+            filters.append("(" + " OR ".join(
+                f'EXISTS(SELECT 1 FROM "{name}" src WHERE src.journal_entry_id=journal_entries.id)'
+                for name in linked_tables
+            ) + ")")
+        else:
+            # A missing module schema must never return misleading results.
+            filters.append("1=0")
+    filter_params = []
     if date_from:
         filters.append("entry_date>=?"); filter_params.append(date_from)
     if date_to:
@@ -1568,18 +1622,59 @@ def journal():
     ).fetchone()[0]
     journal_pages = max(1, (journal_total + journal_per_page - 1) // journal_per_page)
     journal_page = min(journal_page, journal_pages)
-    entries = connection.execute(
+    raw_entries = connection.execute(
         "SELECT * FROM journal_entries WHERE " + where_sql +
         f" ORDER BY id {sort_sql} LIMIT ? OFFSET ?",
         (*filter_params, journal_per_page, (journal_page - 1) * journal_per_page),
     ).fetchall()
+    # Attach a readable origin and document reference to each visible journal.
+    entry_ids = [row["id"] for row in raw_entries]
+    origin_by_entry = {}
+    if entry_ids:
+        marks = ",".join("?" for _ in entry_ids)
+        doc_columns = ("invoice_no", "bill_no", "receipt_no", "payment_no",
+                       "batch_no", "grant_no", "reference", "period", "document_no")
+        for table_name, category in source_table_columns.items():
+            cols = {row["name"] for row in connection.execute(
+                f'PRAGMA table_info("{table_name}")'
+            )}
+            doc_col = next((name for name in doc_columns if name in cols), "id")
+            try:
+                linked = connection.execute(
+                    f'SELECT journal_entry_id, "{doc_col}" AS document_ref FROM "{table_name}" '
+                    f'WHERE journal_entry_id IN ({marks}) ORDER BY id',
+                    entry_ids,
+                ).fetchall()
+            except sqlite3.Error:
+                continue
+            for link in linked:
+                if link["journal_entry_id"] not in origin_by_entry:
+                    origin_by_entry[link["journal_entry_id"]] = {
+                        "source": source_labels[category],
+                        "source_key": category,
+                        "source_ref": str(link["document_ref"] or "—"),
+                    }
+    entries = []
+    for row in raw_entries:
+        item = dict(row)
+        origin = origin_by_entry.get(row["id"])
+        if origin:
+            item.update(origin)
+        else:
+            ref = str(row["reference"] or "")
+            if ref.startswith("MAN-") or ref.startswith("REV-") or row["entry_type"] if "entry_type" in row.keys() else False:
+                item.update(source="قيود يومية / تسويات", source_key="general", source_ref=ref or "—")
+            else:
+                item.update(source="قيد غير مرتبط بمستند معروف", source_key="general", source_ref=ref or "—")
+        entries.append(item)
     connection.close()
     return render_template("journal.html", accounts=accounts_list, entries=entries,
         today=datetime.now().date().isoformat(), dimension_options=dimension_options,
         journal_page=journal_page, journal_pages=journal_pages,
         journal_per_page=journal_per_page, journal_total=journal_total,
         date_from=date_from, date_to=date_to, status_filter=status_filter,
-        entry_type_filter=entry_type_filter, account_filter=account_filter, search_query=search_query,
+        entry_type_filter=entry_type_filter, source_filter=source_filter,
+        source_labels=source_labels, account_filter=account_filter, search_query=search_query,
         sort_order=sort_order)
 
 
