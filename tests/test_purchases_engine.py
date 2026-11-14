@@ -107,11 +107,11 @@ class PurchasingAccountingTests(unittest.TestCase):
                VALUES('PO-FIFO-CYCLE',?,'2026-11-15','approved',1)""",
             (supplier_id,),
         ).lastrowid
-        po_line_id = self.db.execute(
+        self.db.execute(
             """INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price)
                VALUES(?,?, '10','11')""",
             (po_id, product_id),
-        ).lastrowid
+        )
 
         app = Flask(__name__)
         app.secret_key = "test"
