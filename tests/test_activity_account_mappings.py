@@ -126,6 +126,17 @@ class ActivityAccountMappingTests(unittest.TestCase):
         self.assertEqual(mapping["inventory"], "1130")
         self.assertEqual(mapping["vat"], "2130")
 
+    def test_industrial_v1_chart_has_no_manufacturing_accounts(self):
+        chart = {row[0]: row for row in CHARTS["industrial"]}
+        self.assertEqual(set(ACTIVITY_ACCOUNT_ROLES["industrial"]["inventory"]), {"1130"})
+        self.assertEqual(ACTIVITY_POSTING_ACCOUNTS["industrial"]["purchase_inventory"], "1130")
+        self.assertEqual(ACTIVITY_POSTING_ACCOUNTS["industrial"]["inventory"], "1130")
+        self.assertEqual(ACTIVITY_POSTING_ACCOUNTS["industrial"]["cogs"], "5400")
+        self.assertTrue({"1140", "1150", "1160"}.isdisjoint(chart))
+        self.assertEqual(chart["5400"][1], "تكلفة البضاعة المباعة")
+        self.assertFalse(any("إنتاج" in row[1] or "تصنيع" in row[1] for row in CHARTS["industrial"]))
+
+
     def test_tax_accounts_are_resolved_by_role_for_every_activity(self):
         self.assertEqual(set(ACTIVITY_TAX_ACCOUNT_ROLES), set(CHARTS))
         for activity, roles in ACTIVITY_TAX_ACCOUNT_ROLES.items():
