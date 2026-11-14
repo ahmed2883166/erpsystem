@@ -312,8 +312,24 @@ def _sales_account_codes(conn, activity):
 
 def _sales_return_account(conn, activity, fallback_code):
     """Resolve the activity's contra-revenue account for sales returns."""
+    activity_return_codes = {
+        "commercial": "4200",
+        "service": "4300",
+        "medical": "4500",
+        "restaurant": "4500",
+        "industrial": "4200",
+    }
+    preferred_code = activity_return_codes.get(activity)
+    if preferred_code:
+        preferred = conn.execute(
+            """SELECT id FROM accounts WHERE code=? AND account_type='revenue'
+               AND is_group=0 AND active=1""",
+            (preferred_code,),
+        ).fetchone()
+        if preferred:
+            return preferred["id"]
     candidates = conn.execute(
-        """SELECT id,code,account_type,is_group,active,name_ar FROM accounts
+        """SELECT id,name_ar FROM accounts
            WHERE account_type='revenue' AND is_group=0 AND active=1
              AND (name_ar LIKE '%مردود%' OR name_ar LIKE '%مسموحات%'
                   OR name_ar LIKE '%خصومات%')
