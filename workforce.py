@@ -912,6 +912,9 @@ def payroll_run(run_id):
     payments = c.execute("""SELECT p.*,a.code AS account_code,a.name_ar AS account_name
         FROM payroll_payments p JOIN accounts a ON a.id=p.cash_account_id
         WHERE p.run_id=? ORDER BY p.payment_date,p.id""", (run_id,)).fetchall()
+    reversal = c.execute("""SELECT r.*,j.reference FROM payroll_reversals r
+        JOIN journal_entries j ON j.id=r.reversal_journal_entry_id WHERE r.run_id=?""",
+        (run_id,)).fetchone()
     paid_amount = M(sum((D(p["amount"]) for p in payments), Decimal("0")))
     totals = {
         "basic_salary": M(sum((D(x["basic_salary"]) for x in rows), Decimal("0"))),
@@ -937,7 +940,8 @@ def payroll_run(run_id):
     period_end = (next_month - date.resolution).isoformat()
     c.close()
     return render_template("payroll_run.html", run=run, rows=rows, accounts=accounts,
-                           payment_accounts=payment_accounts, payments=payments,
+                           payment_accounts=payment_accounts, payments=payments, reversal=reversal,
+                           can_reverse=(run["status"] == "posted" and paid_amount == 0 and reversal is None),
                            paid_amount=paid_amount, remaining_payable=remaining_payable,
                            today=date.today().isoformat(), totals=totals, period_end=period_end)
 
