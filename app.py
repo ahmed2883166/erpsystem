@@ -2262,6 +2262,33 @@ def reverse_journal(entry_id):
         connection.close()
         flash("هذا قيد افتتاح أو إقفال مرتبط بسنة مالية؛ استخدم إجراء العكس من شاشة إدارة السنوات المالية حتى تُحدّث حالة السنة والارتباطات بأمان.", "error")
         return redirect(url_for("planning.financial_years"))
+    # A journal line tagged as a fixed-asset acquisition must also update
+    # its asset-register link when reversed. Once depreciation/disposal exists,
+    # the acquisition cannot be reversed as a plain journal entry.
+    asset_link_exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fixed_asset_journal_lines'"
+    ).fetchone()
+    linked_asset_rows = []
+    if asset_link_exists:
+        linked_asset_rows = connection.execute("""
+            SELECT p.journal_line_id,p.status,p.fixed_asset_id,f.status asset_status
+            FROM fixed_asset_journal_lines p
+            LEFT JOIN fixed_assets f ON f.id=p.fixed_asset_id
+            WHERE p.entry_id=?
+        """, (entry_id,)).fetchall()
+    for asset_link in linked_asset_rows:
+        if asset_link["fixed_asset_id"]:
+            asset_id = asset_link["fixed_asset_id"]
+            has_depreciation = connection.execute(
+                "SELECT 1 FROM asset_depreciations WHERE asset_id=? LIMIT 1", (asset_id,)
+            ).fetchone()
+            has_disposal = connection.execute(
+                "SELECT 1 FROM asset_disposals WHERE asset_id=? LIMIT 1", (asset_id,)
+            ).fetchone()
+            if has_depreciation or has_disposal or asset_link["asset_status"] != "active":
+                connection.close()
+                flash("لا يمكن عكس قيد شراء أصل تم بدء إهلاكه أو استبعاده. استخدم إجراء استبعاد/تسوية الأصل المعتمد أولًا.", "error")
+                return redirect(url_for("journal_detail", entry_id=entry_id))
     # A journal linked from an operational document must be reversed through
     # that document's own workflow (credit note, stock return, payment reversal, etc.).
     linked_source = linked_operational_source(connection, entry_id)
@@ -2300,6 +2327,17 @@ def reverse_journal(entry_id):
         reversal_id = post_journal(connection, reversal_date, reference,
             f"قيد عكسي للقيد رقم {entry_id}: {original['description']} — السبب: {reversal_reason}",
             reverse_lines, session["user_id"])
+        if linked_asset_rows:
+            for asset_link in linked_asset_rows:
+                connection.execute(
+                    "UPDATE fixed_asset_journal_lines SET status='reversed' WHERE journal_line_id=?",
+                    (asset_link["journal_line_id"],),
+                )
+                if asset_link["fixed_asset_id"]:
+                    connection.execute(
+                        "UPDATE fixed_assets SET status='reversed' WHERE id=?",
+                        (asset_link["fixed_asset_id"],),
+                    )
         connection.commit()
         reversal_entry = connection.execute(
             "SELECT id,entry_date,reference,description,status FROM journal_entries WHERE id=?",
