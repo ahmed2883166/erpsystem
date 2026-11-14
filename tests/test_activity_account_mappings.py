@@ -88,7 +88,8 @@ class ActivityAccountMappingTests(unittest.TestCase):
                     self.assertEqual((row["account_type"], row["is_group"]),
                                      (account_type, is_group), code)
                 expected_parents = {
-                    "1171": "1170", "1261": "1260", "2171": "2170",
+                    "1171": "1170", "1185": "1100", "6990": "6000", "6991": "6000",
+                    "1261": "1260", "2171": "2170",
                     "2231": "2230", "4710": "4700", "5510": "5500",
                     "6810": "6800", "7241": "7240",
                     "1191": "1190", "5610": "5600", "5650": "5600",
