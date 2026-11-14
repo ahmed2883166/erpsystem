@@ -281,7 +281,7 @@ th,td{padding:8px 10px}
 
 
 /* Consistent, readable tables and feedback messages across all screens */
-main .panel{min-width:0}
+main .panel{min-width:0;overflow-x:auto}
 main .panel>table{min-width:620px}
 main .table-wrap table{min-width:620px}
 main th{background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 9%,var(--surface2)),var(--surface2));color:var(--text);font-weight:800}
