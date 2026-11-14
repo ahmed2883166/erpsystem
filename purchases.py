@@ -512,6 +512,7 @@ def three_way_match():
     line_ids = [row["po_line_id"] for row in rows]
     received_totals = {}
     billed_totals = {}
+    legacy_bill_counts = {}
     if line_ids:
         placeholders = ",".join("?" for _ in line_ids)
         for item in c.execute(f"""
@@ -536,6 +537,20 @@ def three_way_match():
             total = billed_totals.setdefault(key, {"quantity": Decimal("0"), "value": Decimal("0")})
             total["quantity"] += Decimal(str(item["billed_quantity"] or "0"))
             total["value"] += money(item["line_total"] or "0")
+        for item in c.execute(f"""
+            SELECT gl.po_line_id,COUNT(DISTINCT sb.id) AS legacy_count
+            FROM supplier_bill_receipts alloc
+            JOIN supplier_bills sb ON sb.id=alloc.bill_id
+            JOIN goods_receipt_lines gl ON gl.receipt_id=alloc.receipt_id
+            WHERE sb.status IN ('draft','pending_approval','approved','posted')
+              AND gl.po_line_id IN ({placeholders})
+              AND NOT EXISTS (
+                  SELECT 1 FROM supplier_bill_inventory_lines detail
+                  WHERE detail.bill_id=sb.id
+              )
+            GROUP BY gl.po_line_id
+        """, line_ids).fetchall():
+            legacy_bill_counts[item["po_line_id"]] = item["legacy_count"]
     for row in rows:
         ordered = Decimal(str(row["ordered_quantity"] or "0"))
         ordered_price = Decimal(str(row["ordered_unit_price"] or "0"))
@@ -549,8 +564,13 @@ def three_way_match():
         row["received_unit_price"] = (received_value / received_qty) if received_qty else None
         row["invoice_unit_price"] = (billed_value / billed_qty) if billed_qty else None
         row["price_gap"] = (row["invoice_unit_price"] - ordered_price) if billed_qty else None
+        row["legacy_bill_count"] = legacy_bill_counts.get(row["po_line_id"], 0)
         if received_qty == 0:
             row["match_status"] = "لم يتم الاستلام"
+        elif row["legacy_bill_count"] and billed_qty == 0:
+            row["match_status"] = "فاتورة قديمة بلا تفاصيل صنف"
+        elif row["legacy_bill_count"]:
+            row["match_status"] = "مطابقة غير مكتملة - فواتير قديمة"
         elif billed_qty == 0:
             row["match_status"] = "مستلم ولم يفوتر"
         elif billed_qty > received_qty:
