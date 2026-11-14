@@ -44,6 +44,18 @@ def initialize_analytic_dimensions_schema(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_branch ON journal_lines(branch_id,entry_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_cost_center ON journal_lines(cost_center_id,entry_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_project ON journal_lines(project_id,entry_id)")
+    # Operational stock dimensions are separate from analytical dimensions.
+    stock_tables = {row["name"] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('stock_products','stock_warehouses')"
+    )}
+    if "stock_products" in stock_tables:
+        if "stock_product_id" not in columns:
+            conn.execute("ALTER TABLE journal_lines ADD COLUMN stock_product_id INTEGER REFERENCES stock_products(id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_stock_product ON journal_lines(stock_product_id,account_id,entry_id)")
+    if "stock_warehouses" in stock_tables:
+        if "stock_warehouse_id" not in columns:
+            conn.execute("ALTER TABLE journal_lines ADD COLUMN stock_warehouse_id INTEGER REFERENCES stock_warehouses(id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_stock_warehouse ON journal_lines(stock_warehouse_id,account_id,entry_id)")
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customers'").fetchone():
         if "customer_id" not in columns:
             conn.execute("ALTER TABLE journal_lines ADD COLUMN customer_id INTEGER REFERENCES customers(id)")
