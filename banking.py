@@ -251,7 +251,8 @@ def statement_reconciliation():
                 c.commit()
                 g.audit_created_record=("bank_statement_lines",cur.lastrowid,None,None)
                 flash("تمت إضافة سطر كشف البنك للمطابقة.","success")
-                return redirect(url_for("bank.statement_reconciliation",account_id=account_id))
+                return redirect(url_for("bank.statement_reconciliation",account_id=account_id,
+                    start_date=request.form.get("start_date") or None,end_date=request.form.get("end_date") or None))
             if action=="save_balances":
                 account_id=request.form.get("bank_account_id",type=int)
                 period_start=request.form.get("start_date","").strip()
@@ -267,13 +268,13 @@ def statement_reconciliation():
                       OR lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%')""",
                     (account_id,)).fetchone():
                     raise ValueError("اختر حساب بنك تفصيليًا ونشطًا من سجل الخزائن والبنوك.")
+                c.execute("BEGIN IMMEDIATE")
                 c.execute("""INSERT INTO bank_statement_balances(bank_account_id,period_start,period_end,opening_balance,closing_balance,created_by)
                     VALUES(?,?,?,?,?,?)
                     ON CONFLICT(bank_account_id,period_start,period_end) DO UPDATE SET
                     opening_balance=excluded.opening_balance,closing_balance=excluded.closing_balance,
                     created_by=excluded.created_by,updated_at=CURRENT_TIMESTAMP""",
                     (account_id,period_start,period_end,str(opening),str(closing),session.get("user_id")))
-                c.commit()
                 c.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
                     VALUES(?,?,?,?)""",(session.get("user_id"),"bank_statement_balance",
                     f"حفظ رصيد افتتاحي وختامي لكشف البنك للحساب {account_id} للفترة {period_start} إلى {period_end}",
@@ -310,7 +311,8 @@ def statement_reconciliation():
                     datetime.now().isoformat(timespec="seconds")))
                 c.commit()
                 flash("تمت مطابقة سطر كشف البنك مع سطر الأستاذ بعد التحقق من الحساب والمبلغ والاتجاه.","success")
-                return redirect(url_for("bank.statement_reconciliation",account_id=line["bank_account_id"]))
+                return redirect(url_for("bank.statement_reconciliation",account_id=line["bank_account_id"],
+                    start_date=request.form.get("start_date") or None,end_date=request.form.get("end_date") or None))
             raise ValueError("الإجراء المطلوب غير معروف.")
         account_id=request.args.get("account_id",type=int)
         accounts=c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
@@ -421,9 +423,14 @@ def cash_accounts():
                 ensure_account_metadata(c)
             elif mode=="existing":
                 account_id=request.form.get("account_id",type=int)
-                account=c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(account_id,)).fetchone()
+                account=c.execute("SELECT id,code,account_type,is_group,active FROM accounts WHERE id=?",(account_id,)).fetchone()
                 if not account or account["account_type"]!="asset" or account["is_group"] or not account["active"]:
                     raise ValueError("اربط الحساب بحساب أصول تفصيلي ونشط فقط.")
+                from activity_profiles import active_account_role_ids
+                cash_role_ids=active_account_role_ids(c).get("cash", set())
+                already_registered=c.execute("SELECT 1 FROM cash_accounts WHERE account_id=?",(account_id,)).fetchone()
+                if account_id not in cash_role_ids and not already_registered and not str(account["code"]).startswith(("110","111","112")):
+                    raise ValueError("الحساب المحدد ليس ضمن حسابات النقدية/البنوك المعتمدة. اختر حسابًا من دور النقدية في ملف النشاط أو أنشئ حسابًا تحت مجموعة النقدية.")
             else:
                 raise ValueError("طريقة ربط حساب الأستاذ غير صحيحة.")
             bank_name=request.form.get("bank_name","").strip() if kind=="bank" else ""
@@ -462,10 +469,19 @@ def cash_accounts():
 def toggle_cash_account(cash_account_id):
     c=db()
     try:
-        row=c.execute("SELECT id,name_ar,active FROM cash_accounts WHERE id=?",(cash_account_id,)).fetchone()
+        c.execute("BEGIN IMMEDIATE")
+        row=c.execute("SELECT id,name_ar,active,account_id FROM cash_accounts WHERE id=?",(cash_account_id,)).fetchone()
         if not row:
             raise ValueError("الخزنة أو البنك غير موجود.")
         active=0 if row["active"] else 1
+        if not active:
+            balance_rows=c.execute("""SELECT jl.debit,jl.credit FROM journal_lines jl
+                JOIN journal_entries je ON je.id=jl.entry_id
+                WHERE jl.account_id=? AND je.status='posted'""",(row["account_id"],)).fetchall()
+            balance=sum((Decimal(str(item["debit"] or "0"))-Decimal(str(item["credit"] or "0"))
+                         for item in balance_rows),Decimal("0"))
+            if balance != 0:
+                raise ValueError(f"لا يمكن تعطيل {row['name_ar']} لأن رصيد دفتر الأستاذ الحالي {balance:.2f}. صفّر الرصيد أو حوّله إلى حساب نقدية آخر أولًا.")
         c.execute("UPDATE cash_accounts SET active=? WHERE id=?",(active,cash_account_id))
         c.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
             VALUES(?,?,?,?)""",(session.get("user_id"),"cash_account_activated" if active else "cash_account_deactivated",
