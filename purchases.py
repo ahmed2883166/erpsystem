@@ -956,7 +956,36 @@ def submit_supplier_bill(c, bill_id, actor_id):
     elif bill["bill_kind"] == "asset":
         if bill_receipts:
             raise ValueError("فاتورة الأصل الثابت لا يجوز ربطها بإيصالات استلام مخزني.")
-        validate_asset_bill_data(c, dict(bill), bill["bill_date"], money(bill["subtotal"]))
+        asset_line_exists = c.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='supplier_bill_asset_lines'"
+        ).fetchone()
+        asset_lines = c.execute(
+            "SELECT * FROM supplier_bill_asset_lines WHERE bill_id=? ORDER BY line_no",
+            (bill_id,),
+        ).fetchall() if asset_line_exists else []
+        if asset_lines:
+            validated_total = money("0")
+            for asset_line in asset_lines:
+                validated = {
+                    "asset_code": asset_line["asset_code"],
+                    "asset_name": asset_line["asset_name"],
+                    "asset_category": asset_line["asset_category"],
+                    "asset_ready_date": asset_line["ready_date"],
+                    "asset_residual_value": asset_line["residual_value"],
+                    "asset_useful_life_months": asset_line["useful_life_months"],
+                    "asset_depreciation_method": asset_line["depreciation_method"],
+                    "asset_annual_rate": asset_line["annual_rate"],
+                    "asset_account_id": asset_line["asset_account_id"],
+                    "asset_accum_account_id": asset_line["accum_account_id"],
+                    "asset_expense_account_id": asset_line["expense_account_id"],
+                }
+                validate_asset_bill_data(c, validated, bill["bill_date"], money(asset_line["cost"]))
+                validated_total = money(validated_total + money(asset_line["cost"]))
+            if validated_total != money(bill["subtotal"]):
+                raise ValueError("مجموع تكاليف الأصول لا يساوي صافي فاتورة المورد.")
+        else:
+            # Backward compatibility for older single-asset bills.
+            validate_asset_bill_data(c, dict(bill), bill["bill_date"], money(bill["subtotal"]))
     else:
         raise ValueError("نوع فاتورة المورد المخزن غير معروف.")
     c.execute("""UPDATE supplier_bills SET status='pending_approval',
@@ -1125,6 +1154,9 @@ def new_bill():
                 if receipts:
                     raise ValueError("فاتورة الأصل الثابت لا تُربط بإيصالات استلام مخزني.")
                 asset_lines=validate_asset_bill_lines(c,request.form,request.form["bill_date"],subtotal)
+                # Keep the first asset in legacy header fields for older screens,
+                # while the complete asset list remains in supplier_bill_asset_lines.
+                asset_data=dict(asset_lines[0])
                 supplier_ap_account(c)
             if bill_kind=="expense":
                 expense_account_id=int(request.form.get("expense_account_id","0"))
