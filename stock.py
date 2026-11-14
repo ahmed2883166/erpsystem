@@ -253,6 +253,10 @@ def initialize_stock_schema():
         c.execute("ALTER TABLE stock_movements ADD COLUMN entered_quantity TEXT")
     if "entered_uom_id" not in movement_columns:
         c.execute("ALTER TABLE stock_movements ADD COLUMN entered_uom_id INTEGER REFERENCES stock_uoms(id)")
+    if "entered_uom_key" not in movement_columns:
+        c.execute("ALTER TABLE stock_movements ADD COLUMN entered_uom_key TEXT")
+    if "entered_uom_name" not in movement_columns:
+        c.execute("ALTER TABLE stock_movements ADD COLUMN entered_uom_name TEXT")
 
     c.close()
 
@@ -294,6 +298,26 @@ def product_uom_factor(c, product_id, uom_id, purpose=None):
     return factor,unit["name_ar"]
 
 
+def product_uom_storage(c, product_id, uom_key):
+    """Resolve a UI unit token to its FK-safe global unit id and stable display name."""
+    if not uom_key:
+        product=c.execute("SELECT base_uom_id,uom FROM stock_products WHERE id=?",(product_id,)).fetchone()
+        return (product["base_uom_id"], product["uom"]) if product else (None,"")
+    raw=str(uom_key)
+    if raw.startswith("P:"):
+        row=c.execute("SELECT uom_id,custom_name FROM stock_product_uoms WHERE product_id=? AND id=? AND active=1",
+                      (product_id,int(raw[2:]))).fetchone()
+        if not row: raise ValueError("وحدة التعبئة المحددة غير موجودة أو موقوفة.")
+        return row["uom_id"],row["custom_name"]
+    if raw.startswith("U:"):
+        unit_id=int(raw[2:])
+    else:
+        unit_id=int(raw)
+    row=c.execute("SELECT id,name_ar FROM stock_uoms WHERE id=? AND active=1",(unit_id,)).fetchone()
+    if not row: raise ValueError("وحدة القياس المحددة غير موجودة أو غير نشطة.")
+    return row["id"],row["name_ar"]
+
+
 def product_uom_options(c, product_id):
     product=c.execute("SELECT base_uom_id FROM stock_products WHERE id=?",(product_id,)).fetchone()
     if not product or not product["base_uom_id"]:
@@ -301,7 +325,7 @@ def product_uom_options(c, product_id):
     base=c.execute("SELECT category_id,factor_to_base FROM stock_uoms WHERE id=?",(product["base_uom_id"],)).fetchone()
     if not base:
         return []
-    rows=c.execute("""SELECT id,custom_name name_ar,code,factor_to_base,is_base,purchase_enabled,sales_enabled
+    rows=c.execute("""SELECT id,custom_name name_ar,code,uom_id,factor_to_base,is_base,purchase_enabled,sales_enabled
         FROM stock_product_uoms WHERE product_id=? AND active=1 ORDER BY is_base DESC,custom_name""",(product_id,)).fetchall()
     result=[dict(row,id="P:"+str(row["id"])) for row in rows]
     # Standard units from the same dimension are available automatically as conversions.
@@ -973,13 +997,15 @@ def movements():
             if product["product_type"] == "service": raise ValueError("الخدمات لا تُدار كأصناف مخزنية.")
             entered_qty=q4(dec(request.form.get("quantity"),"الكمية"))
             if entered_qty<=0: raise ValueError("الكمية يجب أن تكون أكبر من صفر.")
-            entered_uom_id=request.form.get("uom_id") or None
+            entered_uom_key=request.form.get("uom_id") or None
             if product["base_uom_id"]:
-                factor,_=product_uom_factor(c,product["id"],entered_uom_id)
+                factor,_=product_uom_factor(c,product["id"],entered_uom_key)
                 qty=q4(entered_qty*factor)
+                entered_uom_id,entered_uom_name=product_uom_storage(c,product["id"],entered_uom_key)
             else:
-                if entered_uom_id: raise ValueError("الصنف القديم غير مربوط بدليل وحدات القياس؛ استخدم وحدته الحالية.")
+                if entered_uom_key: raise ValueError("الصنف القديم غير مربوط بدليل وحدات القياس؛ استخدم وحدته الحالية.")
                 qty=entered_qty
+                entered_uom_id,entered_uom_name=None,product["uom"]
             src=request.form.get("source_warehouse_id",type=int)
             dst=request.form.get("target_warehouse_id",type=int)
             if kind=="receipt" and not dst: raise ValueError("حدد مخزن الاستلام.")
@@ -1026,8 +1052,8 @@ def movements():
             if kind=="issue" and issue_purpose not in {"sale","internal"}:
                 raise ValueError("حدد غرض الصرف: تكلفة مبيعات أو استخدام داخلي.")
             cur=c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,source_warehouse_id,target_warehouse_id,
-              source_location_id,target_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,issue_purpose,entered_quantity,entered_uom_id)
-              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(movement_no,kind,product["id"],src,dst,source_location_id,target_location_id,lot_id,str(qty),str(unit_cost),str(total),movement_date,request.form.get("notes","").strip(),session.get("user_id"),issue_purpose,str(entered_qty),entered_uom_id))
+              source_location_id,target_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,issue_purpose,entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(movement_no,kind,product["id"],src,dst,source_location_id,target_location_id,lot_id,str(qty),str(unit_cost),str(total),movement_date,request.form.get("notes","").strip(),session.get("user_id"),issue_purpose,str(entered_qty),entered_uom_id,entered_uom_key,entered_uom_name))
             mid=cur.lastrowid
             if kind=="receipt":
                 c.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost)
