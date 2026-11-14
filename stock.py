@@ -389,7 +389,7 @@ def post_interbranch_transfer_journal(c, movement_id, movement_no, product, move
                                       total_cost, created_by, source_branch_id, target_branch_id):
     """Post branch-tagged inventory transfer clearing lines without changing consolidated stock value."""
     if not source_branch_id or not target_branch_id or source_branch_id == target_branch_id:
-        c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
+        c.execute("UPDATE stock_movements SET accounting_status='not_required',accounting_note=NULL WHERE id=?", (movement_id,))
         return None
     existing = c.execute("SELECT journal_entry_id FROM stock_movements WHERE id=?", (movement_id,)).fetchone()
     if existing and existing["journal_entry_id"]:
@@ -486,7 +486,8 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
         existing_expense = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (expense_code,)).fetchone()
         expense_id = existing_expense["id"] if existing_expense and not existing_expense["is_group"] and existing_expense["active"] and existing_expense["account_type"]=="expense" else None
     else:
-        c.execute("UPDATE stock_movements SET accounting_status='pending_purpose' WHERE id=?", (movement_id,))
+        c.execute("UPDATE stock_movements SET accounting_status='pending_purpose',accounting_note=? WHERE id=?",
+                  ("حدد غرض الصرف: تكلفة مبيعات أو استخدام داخلي قبل ترحيل القيد.",movement_id))
         return None
     if purpose == "sale":
         expense = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (expense_code,)).fetchone() if expense_code else None
@@ -1259,13 +1260,14 @@ def movements():
                             session.get("user_id"), source_branch_id, target_branch_id
                         )
                     else:
-                        c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (mid,))
+                        c.execute("UPDATE stock_movements SET accounting_status='not_required',accounting_note=NULL WHERE id=?", (mid,))
                 else:
                     # Bin relocation inside the same warehouse never changes GL.
                     c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (mid,))
             elif kind=="receipt":
                 # A receipt needs a supplier invoice or an explicit GRNI document before posting.
-                c.execute("UPDATE stock_movements SET accounting_status='pending_document' WHERE id=?", (mid,))
+                c.execute("UPDATE stock_movements SET accounting_status='pending_document',accounting_note=? WHERE id=?",
+                          ("استلام المخزون محفوظ؛ يجب استكمال فاتورة المورد أو مستند GRNI من شاشة المشتريات.",mid))
             elif kind=="issue":
                 post_issue_journal(c,mid,movement_no,product,movement_date,total,session.get("user_id"),issue_purpose)
             c.commit()
