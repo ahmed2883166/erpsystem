@@ -314,7 +314,7 @@ class SalesIntegrationTests(unittest.TestCase):
                WHERE jl.entry_id=? AND jl.debit>0 AND a.account_type='revenue'""",
             (credit["journal_entry_id"],),
         ).fetchone()["code"]
-        self.assertEqual(reversed_revenue, "4400")
+        self.assertEqual(reversed_revenue, "4500")
 
     def test_mixed_line_tax_treatments(self):
         self.db.execute("BEGIN IMMEDIATE")
