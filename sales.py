@@ -2260,12 +2260,23 @@ def discount_approval(request_id):
             if not current:
                 raise ValueError("تمت معالجة طلب الخصم بواسطة مستخدم آخر.")
             if action == "reject":
-                c.execute(
+                if current["request_type"] == "sales_order":
+                    order = c.execute(
+                        """SELECT id,status,discount_approval_request_id FROM sales_orders
+                           WHERE id=?""",
+                        (current["sales_order_id"],),
+                    ).fetchone()
+                    if (not order or order["status"] != "pending_approval"
+                            or order["discount_approval_request_id"] != request_id):
+                        raise ValueError("أمر البيع لم يعد صالحًا لرفض طلب الخصم.")
+                changed = c.execute(
                     """UPDATE sales_discount_approval_requests
                        SET status='rejected',reviewed_by=?,reviewed_at=?,decision_reason=?
                        WHERE id=? AND status='pending'""",
                     (session["user_id"], datetime.now().isoformat(timespec="seconds"), reason, request_id),
-                )
+                ).rowcount
+                if changed != 1:
+                    raise ValueError("تمت معالجة طلب الخصم بواسطة مستخدم آخر.")
                 if current["request_type"] == "sales_order":
                     c.execute(
                         """UPDATE sales_orders SET status='rejected',discount_approval_status='rejected',
@@ -2273,6 +2284,8 @@ def discount_approval(request_id):
                            WHERE id=? AND discount_approval_request_id=? AND status='pending_approval'""",
                         (reason, session["user_id"], current["sales_order_id"], request_id),
                     )
+                    if c.execute("SELECT changes()").fetchone()[0] != 1:
+                        raise ValueError("تعذر تثبيت رفض الخصم على أمر البيع.")
                 c.commit()
                 from app import log
                 log("sales_discount_approval_rejected", current["request_no"],
