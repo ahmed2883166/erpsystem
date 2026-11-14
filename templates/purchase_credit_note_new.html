@@ -14,7 +14,7 @@
 <div id="creditLines"><div class="credit-line form-row">
 <div><label>الصنف *</label><select name="product_id" class="credit-product" required><option value="">اختر الصنف</option>{% for p in products %}<option value="{{ p.id }}">{{ p.sku }} — {{ p.name_ar }} ({{ p.uom }})</option>{% endfor %}</select></div>
 <div><label>المخزن *</label><select name="warehouse_id" required><option value="">اختر المخزن</option>{% for w in warehouses %}<option value="{{ w.id }}">{{ w.code }} — {{ w.name_ar }}</option>{% endfor %}</select></div>
-<div><label>وحدة المرتجع *</label><select name="uom_key" class="credit-uom" required><option value="">اختر الصنف أولًا</option>{% for p in products %}{% for u in p.uom_options %}<option data-product="{{ p.id }}" value="{{ u.id }}">{{ u.name_ar }}</option>{% endfor %}{% endfor %}</select></div>
+<div><label>وحدة المرتجع *</label><select name="uom_key" class="credit-uom"><option value="">اختر الصنف أولًا</option>{% for p in products %}{% for u in p.uom_options %}<option data-product="{{ p.id }}" value="{{ u.id }}">{{ u.name_ar }}</option>{% endfor %}{% endfor %}</select></div>
 <div><label>الكمية المرتجعة *</label><input name="quantity" type="number" min="0.0001" step="0.0001" required></div>
 <div class="credit-line-actions"><label>&nbsp;</label><button type="button" class="danger remove-credit-line">حذف السطر</button></div>
 </div></div>
