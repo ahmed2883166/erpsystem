@@ -21,9 +21,9 @@
   <div class="grid grid-3">
     <div class="metric"><span>صافي حركة كشف البنك</span><strong>{{ statement_total|money }}</strong></div>
     <div class="metric"><span>صافي الحركة الدفترية</span><strong>{{ book_total|money }}</strong></div>
-    <div class="metric"><span>فرق صافي الحركات (الكشف - الدفاتر)</span><strong>{{ difference|money }}</strong></div>
+    {% if difference is not none %}<div class="metric"><span>فرق صافي الحركات (الكشف - الدفاتر)</span><strong>{{ difference|money }}</strong></div>{% else %}<div class="metric"><span>حالة المقارنة</span><strong>أدخل سطور كشف البنك أولًا</strong></div>{% endif %}
   </div>
-  <p class="muted">عدد سطور الكشف المطابقة: {{ matched_count }} من {{ lines|length }}. فرق صافي الحركات مستقل عن فرق رصيد الإقفال، ولا يُحسب فرق الإقفال قبل إدخال الأرصدة ومراجعة رصيد بداية الفترة.</p>
+  <p class="muted">عدد سطور الكشف المطابقة: {{ matched_count }} من {{ lines|length }}. لا يظهر فرق صافي الحركات قبل إدخال سطور كشف البنك. وفرق رصيد الإقفال لا يُحسب قبل إدخال الأرصدة ومراجعة رصيد بداية الفترة.</p>
 </section>
 <section class="panel">
   <h3>أرصدة كشف البنك للفترة</h3>
