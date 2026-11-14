@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block title %}مراجعة طلب خصم مبيعات | NEXUS ERP{% endblock %}
 {% block content %}
-<header><h2>مراجعة طلب خصم مبيعات</h2><a class="btn secondary" href="{{ url_for('approval_inbox') }}">العودة لمركز الموافقات</a></header>
+<header><h2>{% if request_row.request_type == 'sales_order' %}مراجعة خصم أمر بيع{% else %}مراجعة خصم فاتورة مبيعات{% endif %}</h2><a class="btn secondary" href="{{ url_for('approval_inbox') }}">العودة لمركز الموافقات</a></header>
 <section class="panel">
   <h3>{{ request_row.request_no }}</h3>
   <div class="form-grid">
     <div><strong>العميل</strong><p>{{ request_row.customer_code }} - {{ request_row.customer_name }}</p></div>
-    <div><strong>تاريخ الفاتورة</strong><p>{{ request_row.invoice_date }}</p></div>
+    <div><strong>{% if request_row.request_type == 'sales_order' %}تاريخ أمر البيع{% else %}تاريخ الفاتورة{% endif %}</strong><p>{{ request_row.invoice_date }}</p></div>
     <div><strong>إجمالي البنود قبل الخصم</strong><p>{{ request_row.gross_subtotal|money }}</p></div>
     <div><strong>قيمة الخصم</strong><p>{{ request_row.discount_amount|money }}</p></div>
     <div><strong>نسبة الخصم الفعلية</strong><p>{{ request_row.discount_percent }}%</p></div>
@@ -18,7 +18,7 @@
       <textarea name="reason" maxlength="500" rows="3"></textarea>
     </label>
     <div class="actions">
-      <button type="submit" name="action" value="approve">اعتماد الخصم وترحيل الفاتورة</button>
+      <button type="submit" name="action" value="approve">{% if request_row.request_type == 'sales_order' %}اعتماد الخصم ومتابعة اعتماد أمر البيع{% else %}اعتماد الخصم وترحيل الفاتورة{% endif %}</button>
       <button class="danger" type="submit" name="action" value="reject" onclick="return confirm('رفض طلب الخصم؟ لن يتم إنشاء الفاتورة أو أي قيد أو حركة مخزون.');">رفض الطلب</button>
     </div>
   </form>

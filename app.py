@@ -2032,6 +2032,7 @@ def approval_inbox():
             if approval_table:
                 for row in connection.execute("""
                     SELECT r.id,r.request_no,r.invoice_date,r.discount_amount,r.created_by,
+                           COALESCE(r.request_type,'invoice') AS request_type,
                            c.name AS counterparty
                     FROM sales_discount_approval_requests r
                     JOIN customers c ON c.id=r.customer_id
@@ -2040,16 +2041,25 @@ def approval_inbox():
                 """).fetchall():
                     own = row["created_by"] == actor_id
                     items.append({
-                        "kind": "طلب اعتماد خصم مبيعات", "number": row["request_no"],
+                        "kind": "طلب اعتماد خصم أمر بيع" if row["request_type"] == "sales_order" else "طلب اعتماد خصم فاتورة",
+                        "number": row["request_no"],
                         "date": row["invoice_date"], "counterparty": row["counterparty"],
                         "amount": row["discount_amount"],
                         "href": url_for("sales.discount_approval", request_id=row["id"]),
                         "can_act": not own,
                         "blocked_reason": "لا يجوز اعتماد طلب الخصم الذي أنشأته بنفسك." if own else "",
                     })
-            for row in connection.execute("""
+            sales_order_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(sales_orders)")
+            }
+            discount_status_expr = (
+                "COALESCE(so.discount_approval_status,'approved')"
+                if "discount_approval_status" in sales_order_columns else "'approved'"
+            )
+            for row in connection.execute(f"""
                 SELECT so.id,so.order_no AS document_no,so.order_date AS document_date,
-                       c.name AS counterparty,so.created_by
+                       c.name AS counterparty,so.created_by,
+                       {discount_status_expr} AS discount_approval_status
                 FROM sales_orders so JOIN customers c ON c.id=so.customer_id
                 WHERE so.status='pending_approval'
                 ORDER BY so.order_date DESC,so.id DESC
@@ -2059,8 +2069,11 @@ def approval_inbox():
                     "kind": "أمر بيع", "number": row["document_no"],
                     "date": row["document_date"], "counterparty": row["counterparty"],
                     "href": url_for("quotes.sales_order_view", order_id=row["id"]),
-                    "can_act": not own,
-                    "blocked_reason": "لا يجوز اعتماد أمر البيع بواسطة منشئه." if own else "",
+                    "can_act": not own and row["discount_approval_status"] == "approved",
+                    "blocked_reason": (
+                        "لا يجوز اعتماد أمر البيع بواسطة منشئه." if own else
+                        "يجب اعتماد خصم أمر البيع أولًا." if row["discount_approval_status"] != "approved" else ""
+                    ),
                 })
 
         if "budget.approve" in permissions:

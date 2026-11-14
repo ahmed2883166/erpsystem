@@ -2,6 +2,7 @@ from app_paths import DB_PATH
 from database import connect_database
 """Customer price lists and quotation workflow."""
 import sqlite3
+import json
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import date,datetime
 from functools import wraps
@@ -102,6 +103,8 @@ def initialize_quotes_schema():
   "cost_center_id":"INTEGER REFERENCES cost_centers(id)",
   "project_id":"INTEGER REFERENCES projects(id)",
   "salesperson_id":"INTEGER REFERENCES salespersons(id)",
+  "discount_approval_status":"TEXT NOT NULL DEFAULT 'approved'",
+  "discount_approval_request_id":"INTEGER",
  }.items():
   if name not in so_cols: c.execute(f"ALTER TABLE sales_orders ADD COLUMN {name} {definition}")
  sol_cols={r["name"] for r in c.execute("PRAGMA table_info(sales_order_lines)")}
@@ -209,18 +212,47 @@ def create_sales_order_from_quotation(conn, quote_id, created_by, warehouse_id=N
    dimensions.get("branch_id"),dimensions.get("cost_center_id"),dimensions.get("project_id"),
    dimensions.get("salesperson_id"),created_by,created_by))
  order_id=cur.lastrowid
+ limit_row=conn.execute(
+  "SELECT setting_value FROM company_settings WHERE setting_key='sales_discount_limit_percent'"
+ ).fetchone()
+ discount_limit=Decimal(str(limit_row["setting_value"] if limit_row else "10"))
+ if not discount_limit.is_finite() or discount_limit<0 or discount_limit>100:
+  raise ValueError("حد خصم المبيعات في إعدادات الشركة غير صحيح.")
+ discount_percent=((discount_amount*Decimal("100")/gross_subtotal).quantize(M,rounding=ROUND_HALF_UP)
+                   if gross_subtotal>0 else Decimal("0"))
+ discount_request_id=None
+ if discount_amount>0 and discount_percent>discount_limit:
+  request_no="SODR-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
+  request_payload={"request_type":"sales_order","sales_order_id":order_id}
+  request_cur=conn.execute(
+   """INSERT INTO sales_discount_approval_requests(
+      request_no,customer_id,invoice_date,due_date,gross_subtotal,discount_amount,
+      discount_percent,payload_json,created_by,request_type,sales_order_id)
+      VALUES(?,?,?,?,?,?,?,?,?,'sales_order',?)""",
+   (request_no,q["customer_id"],date.today().isoformat(),date.today().isoformat(),
+    str(gross_subtotal),str(discount_amount),str(discount_percent),
+    json.dumps(request_payload,ensure_ascii=False),created_by,order_id))
+  request_id=request_cur.lastrowid
+  discount_request_id=request_id
+  conn.execute(
+   """UPDATE sales_orders SET discount_approval_status='pending',
+      discount_approval_request_id=? WHERE id=?""",(request_id,order_id))
  conn.executemany(
   """INSERT INTO sales_order_lines(sales_order_id,quotation_line_id,product_id,description,
      ordered_qty,ordered_value,unit_price) VALUES(?,?,?,?,?,?,?)""",
   [(order_id,x["id"],x["product_id"],x["description"],x["quantity"],x["line_total"],x["unit_price"]) for x in lines])
  conn.execute("UPDATE quotations SET sales_order_id=? WHERE id=?",(order_id,quote_id))
- return {"sales_order_id":order_id,"order_no":order_no}
+ return {"sales_order_id":order_id,"order_no":order_no,
+         "discount_request_id":discount_request_id,"discount_percent":str(discount_percent),
+         "discount_limit":str(discount_limit)}
 
 
 def approve_sales_order(conn, order_id, approver_id):
  order=conn.execute("SELECT * FROM sales_orders WHERE id=?",(order_id,)).fetchone()
  if not order: raise ValueError("أمر البيع غير موجود.")
  if order["status"]!="pending_approval": raise ValueError("أمر البيع ليس في انتظار الاعتماد.")
+ if order["discount_approval_status"]!="approved":
+  raise ValueError("لا يمكن اعتماد أمر البيع قبل اعتماد الخصم الذي تجاوز حد الشركة.")
  if order["created_by"]==approver_id: raise ValueError("لا يجوز اعتماد أمر البيع بواسطة نفس منشئه.")
  activity=conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
  activity_code=activity["setting_value"] if activity else "commercial"
@@ -257,6 +289,8 @@ def reject_sales_order(conn, order_id, rejected_by, reason):
 def create_delivery_note(conn, order_id, delivery_date, lines, created_by, notes=""):
  order=conn.execute("SELECT * FROM sales_orders WHERE id=?",(order_id,)).fetchone()
  if not order: raise ValueError("أمر البيع غير موجود.")
+ if order["discount_approval_status"]!="approved":
+  raise ValueError("لا يمكن إنشاء إذن تسليم قبل اعتماد الخصم الذي تجاوز حد الشركة.")
  if order["status"] not in {"approved","partially_delivered","partially_invoiced"}:
   raise ValueError("لا يمكن إنشاء إذن تسليم قبل اعتماد أمر البيع أو بعد اكتمال التسليم.")
  ensure_stock_date_open(conn,delivery_date,"تاريخ إذن التسليم")
@@ -300,6 +334,8 @@ def post_delivery_note(conn, note_id, posted_by):
  if not note: raise ValueError("إذن التسليم غير موجود.")
  if note["status"]!="draft": raise ValueError("إذن التسليم تم ترحيله أو إلغاؤه بالفعل.")
  order=conn.execute("SELECT * FROM sales_orders WHERE id=?",(note["sales_order_id"],)).fetchone()
+ if order["discount_approval_status"]!="approved":
+  raise ValueError("لا يمكن ترحيل إذن التسليم قبل اعتماد الخصم الذي تجاوز حد الشركة.")
  if order["status"] not in {"approved","partially_delivered","partially_invoiced"}: raise ValueError("أمر البيع غير معتمد للتسليم.")
  ensure_stock_date_open(conn,note["delivery_date"],"تاريخ إذن التسليم")
  if note["delivery_date"]<order["order_date"]:
@@ -364,6 +400,8 @@ def post_delivery_note(conn, note_id, posted_by):
 def invoice_sales_order(conn, order_id, invoice_date, due_date, created_by, dimensions=None):
  order=conn.execute("SELECT * FROM sales_orders WHERE id=?",(order_id,)).fetchone()
  if not order: raise ValueError("أمر البيع غير موجود.")
+ if order["discount_approval_status"]!="approved":
+  raise ValueError("لا يمكن إصدار فاتورة قبل اعتماد الخصم الذي تجاوز حد الشركة.")
  if order["status"] not in {"approved","partially_delivered","delivered","partially_invoiced"}:
   raise ValueError("أمر البيع غير معتمد أو لا توجد كميات جاهزة للفوترة.")
  try:
@@ -545,6 +583,13 @@ def convert(quote_id):
   c.execute("UPDATE quotations SET status='converted_to_order' WHERE id=?",(quote_id,))
   g.audit_created_record=("sales_orders",result["sales_order_id"],"sales_order_lines","sales_order_id")
   c.commit()
+  if result.get("discount_request_id"):
+   from app import log
+   log("sales_order_discount_approval_requested",result["order_no"],
+       entity_type="sales_order",entity_id=result["sales_order_id"],
+       after_values={"discount_request_id":result["discount_request_id"],
+                     "discount_percent":result["discount_percent"],
+                     "limit_percent":result["discount_limit"]})
   flash("تم إنشاء أمر البيع "+result["order_no"]+" وإرساله للاعتماد الداخلي.","success")
   return redirect(url_for("quotes.sales_order_view",order_id=result["sales_order_id"]))
  except (ValueError,InvalidOperation,sqlite3.Error) as e:

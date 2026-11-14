@@ -156,6 +156,15 @@ def init_sales_schema():
     CREATE INDEX IF NOT EXISTS idx_sales_discount_approval_status
       ON sales_discount_approval_requests(status,created_at,id);
     """)
+    discount_request_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_discount_approval_requests)")}
+    for name, definition in {
+        "request_type": "TEXT NOT NULL DEFAULT 'invoice'",
+        "sales_order_id": "INTEGER",
+    }.items():
+        if name not in discount_request_columns:
+            c.execute(f"ALTER TABLE sales_discount_approval_requests ADD COLUMN {name} {definition}")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_sales_discount_order ON sales_discount_approval_requests(sales_order_id,status)")
+
     line_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoice_lines)")}
     for name, definition in (("entered_quantity","TEXT"),("uom_id","TEXT"),("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'")):
         if name not in line_columns:
@@ -2257,6 +2266,13 @@ def discount_approval(request_id):
                        WHERE id=? AND status='pending'""",
                     (session["user_id"], datetime.now().isoformat(timespec="seconds"), reason, request_id),
                 )
+                if current["request_type"] == "sales_order":
+                    c.execute(
+                        """UPDATE sales_orders SET status='rejected',discount_approval_status='rejected',
+                           rejection_reason=?,rejected_by=?,rejected_at=CURRENT_TIMESTAMP
+                           WHERE id=? AND discount_approval_request_id=? AND status='pending_approval'""",
+                        (reason, session["user_id"], current["sales_order_id"], request_id),
+                    )
                 c.commit()
                 from app import log
                 log("sales_discount_approval_rejected", current["request_no"],
@@ -2265,6 +2281,38 @@ def discount_approval(request_id):
                     reason=reason)
                 flash("تم رفض طلب الخصم. لم يتم إنشاء فاتورة أو قيد أو حركة مخزون.", "success")
                 return redirect(url_for("approval_inbox"))
+            if current["request_type"] == "sales_order":
+                order = c.execute(
+                    "SELECT id,status,discount_approval_request_id FROM sales_orders WHERE id=?",
+                    (current["sales_order_id"],),
+                ).fetchone()
+                if (not order or order["status"] != "pending_approval"
+                        or order["discount_approval_request_id"] != request_id):
+                    raise ValueError("أمر البيع لم يعد صالحًا لاعتماد الخصم.")
+                changed = c.execute(
+                    """UPDATE sales_discount_approval_requests
+                       SET status='approved',reviewed_by=?,reviewed_at=?,decision_reason=?
+                       WHERE id=? AND status='pending' AND request_type='sales_order'""",
+                    (session["user_id"], datetime.now().isoformat(timespec="seconds"), reason, request_id),
+                ).rowcount
+                if changed != 1:
+                    raise ValueError("تمت معالجة طلب الخصم بواسطة مستخدم آخر.")
+                c.execute(
+                    """UPDATE sales_orders SET discount_approval_status='approved'
+                       WHERE id=? AND discount_approval_request_id=? AND status='pending_approval'""",
+                    (current["sales_order_id"], request_id),
+                )
+                if c.execute("SELECT changes()").fetchone()[0] != 1:
+                    raise ValueError("تعذر تثبيت موافقة الخصم على أمر البيع.")
+                c.commit()
+                from app import log
+                log("sales_order_discount_approved", current["request_no"],
+                    entity_type="sales_order", entity_id=current["sales_order_id"],
+                    before_values={"discount_approval_status": "pending"},
+                    after_values={"discount_approval_status": "approved",
+                                  "discount_request_id": request_id}, reason=reason)
+                flash("تم اعتماد خصم أمر البيع. ما زال أمر البيع في انتظار الاعتماد التشغيلي المنفصل.", "success")
+                return redirect(url_for("quotes.sales_order_view", order_id=current["sales_order_id"]))
             payload = json.loads(current["payload_json"])
             result = post_invoice(
                 c, int(payload["customer_id"]), payload["invoice_date"],

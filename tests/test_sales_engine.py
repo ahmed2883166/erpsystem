@@ -1491,6 +1491,60 @@ class SalesIntegrationTests(unittest.TestCase):
         ).fetchone()["id"]
         return quote_id, order["sales_order_id"], order_line_id
 
+    def test_sales_order_discount_over_limit_requires_separate_approval_before_order_or_stock(self):
+        quotations.DB_PATH = sales.DB_PATH
+        quotations.initialize_quotes_schema()
+        self.db.execute(
+            "UPDATE customers SET discount_type='percent',discount_value='20' WHERE id=?",
+            (self.customer_id,),
+        )
+        self.db.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES('sales_discount_limit_percent','10')"
+        )
+        quote_id, order_id, order_line_id = self._create_accepted_quote_and_order("4")
+        order = self.db.execute(
+            "SELECT discount_approval_status,discount_approval_request_id,status FROM sales_orders WHERE id=?",
+            (order_id,),
+        ).fetchone()
+        self.assertEqual(order["discount_approval_status"], "pending")
+        self.assertEqual(order["status"], "pending_approval")
+        request_row = self.db.execute(
+            "SELECT request_type,sales_order_id,status FROM sales_discount_approval_requests WHERE id=?",
+            (order["discount_approval_request_id"],),
+        ).fetchone()
+        self.assertEqual(tuple(request_row), ("sales_order", order_id, "pending"))
+
+        with self.assertRaisesRegex(ValueError, "قبل اعتماد الخصم"):
+            quotations.approve_sales_order(self.db, order_id, approver_id=2)
+        with self.assertRaisesRegex(ValueError, "قبل اعتماد الخصم"):
+            quotations.create_delivery_note(
+                self.db, order_id, date.today().isoformat(),
+                [{"sales_order_line_id": order_line_id, "quantity": "1"}], created_by=2,
+            )
+        with self.assertRaisesRegex(ValueError, "قبل اعتماد الخصم"):
+            quotations.invoice_sales_order(
+                self.db, order_id, date.today().isoformat(), date.today().isoformat(), created_by=2,
+            )
+        self.assertEqual(
+            self.db.execute("SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'").fetchone()[0],
+            0,
+        )
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
+
+        self.db.execute(
+            "UPDATE sales_discount_approval_requests SET status='approved',reviewed_by=2 WHERE id=?",
+            (order["discount_approval_request_id"],),
+        )
+        self.db.execute(
+            "UPDATE sales_orders SET discount_approval_status='approved' WHERE id=?",
+            (order_id,),
+        )
+        quotations.approve_sales_order(self.db, order_id, approver_id=2)
+        self.assertEqual(
+            self.db.execute("SELECT status FROM sales_orders WHERE id=?", (order_id,)).fetchone()["status"],
+            "approved",
+        )
+
     def test_sales_order_partial_delivery_and_invoicing_never_issue_stock_twice(self):
         _, order_id, order_line_id = self._create_accepted_quote_and_order("4")
         base_date = date.today()
@@ -1679,6 +1733,10 @@ class SalesIntegrationTests(unittest.TestCase):
 
 
     def test_fixed_customer_discount_is_locked_and_allocated_once_across_partial_invoices(self):
+        # This test isolates discount allocation mechanics from the approval threshold.
+        self.db.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES('sales_discount_limit_percent','100')"
+        )
         self.db.execute(
             "UPDATE customers SET discount_type='fixed',discount_value='10' WHERE id=?",
             (self.customer_id,),
