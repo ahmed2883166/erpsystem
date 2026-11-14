@@ -1540,7 +1540,7 @@ def new_credit_note():
       ORDER BY b.bill_date DESC,b.id DESC""").fetchall()
     bills=[b for b in bills if Decimal(b["total_amount"])>Decimal(b["credited_amount"] or "0")]
     products=c.execute("SELECT id,sku,name_ar,uom FROM stock_products WHERE active=1 AND product_type!='service' ORDER BY name_ar").fetchall()
-    products=[dict(p,uom_options=product_uom_options(c,p["id"])) for p in products]
+    products=[dict(p,uom_options=(product_uom_options(c,p["id"]) or [{"id":"","name_ar":p["uom"],"is_base":1}])) for p in products]
     warehouses=c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     c.close()
     return render_template("purchase_credit_note_new.html",suppliers=suppliers,bills=bills,products=products,warehouses=warehouses,today=date.today().isoformat())
