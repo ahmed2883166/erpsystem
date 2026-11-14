@@ -688,7 +688,7 @@ def reject_order(order_id):
 @purchase_bp.route("/orders/<int:order_id>/edit",methods=["GET","POST"])
 @require("purchases.manage")
 def edit_order(order_id):
-    c=db(); order=c.execute("""SELECT p.*,l.id line_id,l.product_id,l.quantity,l.unit_price
+    c=db(); order=c.execute("""SELECT p.*,l.id line_id,l.product_id,l.quantity,l.unit_price,l.entered_quantity,l.uom_id,l.conversion_factor
       FROM purchase_orders p LEFT JOIN purchase_order_lines l ON l.po_id=p.id WHERE p.id=?""",(order_id,)).fetchone()
     if not order:
         c.close(); flash("أمر الشراء غير موجود.","error"); return redirect(url_for("purchase.index"))
@@ -737,6 +737,11 @@ def order_print(order_id):
     for row in raw_lines:
         item = dict(row)
         item["line_total"] = Decimal(str(row["quantity"])) * Decimal(str(row["unit_price"]))
+        item["display_quantity"] = row["entered_quantity"] or row["quantity"]
+        try:
+            _, item["display_uom"] = product_uom_factor(c,row["product_id"],row["uom_id"])
+        except (ValueError,TypeError):
+            item["display_uom"] = row["uom"]
         order_total += item["line_total"]
         lines.append(item)
     settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
