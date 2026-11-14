@@ -118,6 +118,8 @@ def initialize_stock_schema():
         c.execute("ALTER TABLE stock_movements ADD COLUMN journal_entry_id INTEGER")
     if "accounting_status" not in movement_columns:
         c.execute("ALTER TABLE stock_movements ADD COLUMN accounting_status TEXT NOT NULL DEFAULT 'pending'")
+    if "accounting_note" not in movement_columns:
+        c.execute("ALTER TABLE stock_movements ADD COLUMN accounting_note TEXT")
     if "issue_purpose" not in movement_columns:
         c.execute("ALTER TABLE stock_movements ADD COLUMN issue_purpose TEXT")
     if "source_location_id" not in movement_columns:
@@ -427,7 +429,8 @@ def post_scrap_journal(c, movement_id, movement_no, product, movement_date, tota
     from chart_templates import ACTIVITY_POSTING_ACCOUNTS
     default_inventory_code = ACTIVITY_POSTING_ACCOUNTS.get(activity, {}).get("inventory")
     if not default_inventory_code:
-        c.execute("UPDATE stock_movements SET accounting_status='pending_setup' WHERE id=?", (movement_id,))
+        c.execute("UPDATE stock_movements SET accounting_status='pending_setup',accounting_note=? WHERE id=?",
+                  ("النشاط الحالي لا يحتوي حساب مخزون؛ لا يمكن ترحيل الإعدام قبل ضبط ملف النشاط.",movement_id))
         return None
     from activity_profiles import resolve_product_account_code
     inventory_code = resolve_product_account_code(
@@ -440,10 +443,11 @@ def post_scrap_journal(c, movement_id, movement_no, product, movement_date, tota
     writeoff_id = writeoff["id"] if writeoff and not writeoff["is_group"] and writeoff["active"] and writeoff["account_type"]=="expense" else None
     if (not inventory or inventory["is_group"] or not inventory["active"]
             or inventory["account_type"] != "asset" or not writeoff_id):
-        raise ValueError(
-            f"لا يمكن ترحيل الإعدام قبل ضبط حساب المخزون {inventory_code} "
-            f"وحساب الهالك {writeoff_code} كحسابين تفصيليين نشطين بالنوع الصحيح."
-        )
+        reason=(f"تعذر ترحيل الإعدام: راجع حساب المخزون {inventory_code} "
+                f"وحساب الهالك {writeoff_code}؛ يجب أن يكونا حسابين تفصيليين نشطين بالنوع الصحيح.")
+        c.execute("UPDATE stock_movements SET accounting_status='pending_setup',accounting_note=? WHERE id=?",
+                  (reason,movement_id))
+        return None
     amount = money(D(str(total_cost)))
     if amount <= 0:
         c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
@@ -452,7 +456,7 @@ def post_scrap_journal(c, movement_id, movement_no, product, movement_date, tota
         f"قيد آلي لإعدام مخزون - {product['name_ar']}",
         [(writeoff_id,amount,0,"خسائر تالف مخزون"),
          (inventory["id"],0,amount,"تخفيض قيمة المخزون")],created_by)
-    c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?", (entry_id,movement_id))
+    c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted',accounting_note=NULL WHERE id=?", (entry_id,movement_id))
     return entry_id
 
 
@@ -493,7 +497,11 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
     )
     inventory = c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (inventory_code,)).fetchone() if inventory_code else None
     if not expense_id or not inventory or inventory["is_group"] or not inventory["active"] or inventory["account_type"] != "asset":
-        raise ValueError("لا يمكن ترحيل حركة الصرف قبل ضبط حساب المصروف وحساب المخزون كحسابين تفصيليين نشطين بالنوع الصحيح.")
+        reason=(f"تعذر ترحيل الصرف: راجع حساب المصروف {expense_code or 'غير محدد'} "
+                f"وحساب المخزون {inventory_code or 'غير محدد'}؛ يجب أن يكونا حسابين تفصيليين نشطين بالنوع الصحيح.")
+        c.execute("UPDATE stock_movements SET accounting_status='pending_setup',accounting_note=? WHERE id=?",
+                  (reason,movement_id))
+        return None
     amount = money(D(str(total_cost)))
     if amount <= 0:
         c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
@@ -503,7 +511,7 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
         [(expense_id,amount,0,expense_name),
          (inventory["id"],0,amount,"تخفيض المخزون بتكلفة الصرف")],created_by,
         dimensions=dimensions)
-    c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?", (entry_id, movement_id))
+    c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted',accounting_note=NULL WHERE id=?", (entry_id, movement_id))
     return entry_id
 
 
