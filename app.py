@@ -32,7 +32,7 @@ from party_reports import party_bp
 from management_dashboard import cached_management_snapshot, initialize_management_dashboard_schema
 from analytic_dimensions import initialize_analytic_dimensions_schema, active_dimension_options, validate_journal_dimensions
 from financial_planning import planning_bp, initialize_planning_schema
-from activity_profiles import (initialize_activity_profiles_schema, list_activity_profiles, create_activity_profile, create_specialized_activity_profile, SPECIALIZED_ACTIVITY_PRESETS, set_activity_profile_active, validate_activity_profile, update_custom_activity_profile)
+from activity_profiles import (initialize_activity_profiles_schema, list_activity_profiles, create_activity_profile, create_specialized_activity_profile, SPECIALIZED_ACTIVITY_PRESETS, set_activity_profile_active, validate_activity_profile, update_custom_activity_profile, get_active_activity_profile)
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
@@ -2483,6 +2483,22 @@ IMPORT_DATASETS = {
             {"key": "purchase_price", "label": "سعر الشراء", "required": False},
             {"key": "sale_price", "label": "سعر البيع", "required": False},
         ],
+    },,
+    "opening_balances": {
+        "label": "الأرصدة الافتتاحية (عملاء / موردون / مخزون)", "permission": "journal.manage",
+        "fields": [
+            {"key": "record_type", "label": "نوع الرصيد (customer / supplier / inventory)", "required": True},
+            {"key": "reference", "label": "مرجع المستند الأصلي", "required": True},
+            {"key": "balance_date", "label": "تاريخ الرصيد YYYY-MM-DD", "required": True},
+            {"key": "customer_code", "label": "كود العميل", "required": False},
+            {"key": "supplier_code", "label": "كود المورد", "required": False},
+            {"key": "sku", "label": "كود الصنف", "required": False},
+            {"key": "warehouse_code", "label": "كود المخزن", "required": False},
+            {"key": "due_date", "label": "تاريخ الاستحقاق YYYY-MM-DD", "required": False},
+            {"key": "quantity", "label": "الكمية (للمخزون)", "required": False},
+            {"key": "unit_cost", "label": "تكلفة الوحدة (للمخزون)", "required": False},
+            {"key": "amount", "label": "المبلغ (للعميل / المورد)", "required": False},
+        ],
     },
 }
 
@@ -2629,13 +2645,127 @@ def import_data_wizard():
         inserted = skipped = 0
         errors = []
         try:
-            connection.execute("BEGIN")
+            connection.execute("BEGIN IMMEDIATE")
             for row_number, source_row in enumerate(rows, start=2):
                 values = {key: (source_row[index] if index is not None else "") for key, index in mapping.items()}
                 clean = {key: str(value or "").strip() for key, value in values.items()}
-                reason = ""
+                connection.execute("SAVEPOINT import_row")
                 try:
-                    if dataset == "accounts":
+                    if dataset == "opening_balances":
+                        profile = get_active_activity_profile(connection)
+                        role_codes = profile.get("account_roles", {})
+                        posting = profile.get("posting_accounts", {})
+                        retained_codes = role_codes.get("retained_earnings", [])
+                        retained_code = retained_codes[0] if isinstance(retained_codes, (list, tuple)) and retained_codes else retained_codes
+                        record_type = clean.get("record_type", "").strip().lower()
+                        aliases = {"عميل": "customer", "عميل/عملاء": "customer", "مورد": "supplier",
+                                   "مخزون": "inventory", "customer": "customer", "supplier": "supplier",
+                                   "inventory": "inventory"}
+                        record_type = aliases.get(record_type, record_type)
+                        ref = clean.get("reference", "")
+                        entry_date = date.fromisoformat(clean.get("balance_date", "")).isoformat()
+                        if not ref:
+                            raise ValueError("مرجع المستند الأصلي مطلوب لتتبع الرصيد الافتتاحي.")
+                        if connection.execute("""SELECT 1 FROM accounting_periods
+                            WHERE locked=1 AND start_date<=? AND end_date>=? LIMIT 1""",
+                            (entry_date, entry_date)).fetchone():
+                            raise ValueError("تاريخ الرصيد يقع داخل فترة محاسبية مغلقة.")
+                        retained = connection.execute("SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
+                            (str(retained_code),)).fetchone()
+                        if not retained:
+                            raise ValueError("حساب الأرباح المحتجزة/الأرصدة الافتتاحية غير مضبوط في ملف النشاط.")
+                        amount = Decimal("0")
+                        journal_lines = []
+                        document_suffix = uuid.uuid4().hex[:10].upper()
+                        if record_type == "customer":
+                            customer = connection.execute("SELECT * FROM customers WHERE code=? AND active=1",
+                                (clean.get("customer_code", ""),)).fetchone()
+                            amount = Decimal(clean.get("amount", ""))
+                            if not customer or not amount.is_finite() or amount <= 0:
+                                raise ValueError("تأكد من كود العميل النشط والمبلغ الموجب.")
+                            ar_code = posting.get("ar")
+                            ar = connection.execute("SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
+                                (str(ar_code),)).fetchone()
+                            if not ar: raise ValueError("حساب العملاء المدينين غير مضبوط في ملف النشاط.")
+                            invoice_no = "OB-C-" + document_suffix
+                            due_date = clean.get("due_date") or entry_date
+                            if due_date: date.fromisoformat(due_date)
+                            cur = connection.execute("""INSERT INTO sales_invoices
+                                (invoice_no,customer_id,invoice_date,due_date,subtotal,tax_rate,tax_amount,
+                                 total_amount,paid_amount,status,created_by)
+                                VALUES(?,?,?,?,?,'0','0',?,'0','posted',?)""",
+                                (invoice_no, customer["id"], entry_date, due_date, str(amount), str(amount), session.get("user_id")))
+                            connection.execute("""INSERT INTO sales_invoice_lines
+                                (invoice_id,description,quantity,unit_price,line_total,cost_total)
+                                VALUES(?,?, '1', ?, ?, '0')""",
+                                (cur.lastrowid, "رصيد افتتاحي - " + ref, str(amount), str(amount)))
+                            journal_lines = [(ar["id"], amount, Decimal("0"), "رصيد عميل افتتاحي: " + customer["name"]),
+                                             (retained["id"], Decimal("0"), amount, "مقابل الأرصدة الافتتاحية")]
+                            journal_ref = "OPENING-CUSTOMER-" + document_suffix
+                            journal_id = post_journal(connection, entry_date, journal_ref,
+                                "إثبات رصيد افتتاحي للعميل " + customer["name"], journal_lines, session.get("user_id"))
+                            connection.execute("UPDATE sales_invoices SET journal_entry_id=? WHERE id=?",
+                                (journal_id, cur.lastrowid))
+                        elif record_type == "supplier":
+                            supplier = connection.execute("SELECT * FROM suppliers WHERE code=? AND active=1",
+                                (clean.get("supplier_code", ""),)).fetchone()
+                            amount = Decimal(clean.get("amount", ""))
+                            if not supplier or not amount.is_finite() or amount <= 0:
+                                raise ValueError("تأكد من كود المورد النشط والمبلغ الموجب.")
+                            ap_code = posting.get("supplier_ap")
+                            ap = connection.execute("SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
+                                (str(ap_code),)).fetchone()
+                            if not ap: raise ValueError("حساب الموردين الدائنين غير مضبوط في ملف النشاط.")
+                            bill_no = "OB-S-" + document_suffix
+                            due_date = clean.get("due_date") or entry_date
+                            if due_date: date.fromisoformat(due_date)
+                            cur = connection.execute("""INSERT INTO supplier_bills
+                                (bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,subtotal,tax_rate,
+                                 tax_amount,total_amount,paid_amount,status,created_by)
+                                VALUES(?,?,?,?,?,?,'0','0',?,'0','posted',?)""",
+                                (bill_no, supplier["id"], entry_date, due_date, ref, str(amount), str(amount), session.get("user_id")))
+                            journal_lines = [(retained["id"], amount, Decimal("0"), "مقابل الأرصدة الافتتاحية"),
+                                             (ap["id"], Decimal("0"), amount, "رصيد مورد افتتاحي: " + supplier["name"])]
+                            journal_ref = "OPENING-SUPPLIER-" + document_suffix
+                            journal_id = post_journal(connection, entry_date, journal_ref,
+                                "إثبات رصيد افتتاحي للمورد " + supplier["name"], journal_lines, session.get("user_id"))
+                            connection.execute("UPDATE supplier_bills SET journal_entry_id=? WHERE id=?",
+                                (journal_id, cur.lastrowid))
+                        elif record_type == "inventory":
+                            product = connection.execute("SELECT * FROM stock_products WHERE sku=? AND active=1",
+                                (clean.get("sku", ""),)).fetchone()
+                            warehouse = connection.execute("SELECT * FROM stock_warehouses WHERE code=? AND active=1",
+                                (clean.get("warehouse_code", ""),)).fetchone()
+                            qty = Decimal(clean.get("quantity", ""))
+                            unit_cost = Decimal(clean.get("unit_cost", ""))
+                            if not product or not warehouse or not qty.is_finite() or not unit_cost.is_finite() or qty <= 0 or unit_cost < 0:
+                                raise ValueError("تأكد من كود الصنف والمخزن والكمية الموجبة والتكلفة غير السالبة.")
+                            amount = (qty * unit_cost).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                            if amount <= 0: raise ValueError("قيمة المخزون الافتتاحي يجب أن تكون أكبر من صفر.")
+                            inv_code = posting.get("inventory")
+                            inv = connection.execute("SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
+                                (str(inv_code),)).fetchone()
+                            if not inv: raise ValueError("حساب المخزون غير مضبوط في ملف النشاط الحالي.")
+                            journal_ref = "OPENING-STOCK-" + document_suffix
+                            journal_id = post_journal(connection, entry_date, journal_ref,
+                                "إثبات مخزون افتتاحي: " + product["name_ar"],
+                                [(inv["id"], amount, Decimal("0"), "مخزون افتتاحي " + ref),
+                                 (retained["id"], Decimal("0"), amount, "مقابل الأرصدة الافتتاحية")],
+                                session.get("user_id"))
+                            movement_no = "OB-STK-" + document_suffix
+                            cur = connection.execute("""INSERT INTO stock_movements
+                                (movement_no,movement_type,product_id,target_warehouse_id,quantity,unit_cost,total_cost,
+                                 movement_date,notes,created_by,journal_entry_id,accounting_status)
+                                VALUES(?,'receipt',?,?,?,?,?,?,?,?,?,'posted')""",
+                                (movement_no, product["id"], warehouse["id"], str(qty), str(unit_cost), str(amount),
+                                 entry_date, "رصيد افتتاحي - " + ref, session.get("user_id"), journal_id))
+                            connection.execute("""INSERT INTO stock_valuation_layers
+                                (product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost,value_remaining)
+                                VALUES(?,?,?,?,?,?,?)""",
+                                (product["id"], warehouse["id"], cur.lastrowid, str(qty), str(qty), str(unit_cost), str(amount)))
+                        else:
+                            raise ValueError("نوع الرصيد يجب أن يكون customer أو supplier أو inventory.")
+                    elif dataset == "accounts":
                         allowed_types = {"asset", "liability", "equity", "revenue", "expense"}
                         arabic_types = {"أصل": "asset", "الأصول": "asset", "التزام": "liability", "الالتزامات": "liability",
                             "حقوق ملكية": "equity", "حقوق الملكية": "equity", "إيراد": "revenue", "الإيرادات": "revenue",
@@ -2703,14 +2833,14 @@ def import_data_wizard():
                     else:
                         raise ValueError("وجهة الاستيراد غير مدعومة.")
                     inserted += 1
-                except (ValueError, InvalidOperation) as exc:
+                    connection.execute("RELEASE SAVEPOINT import_row")
+                except (ValueError, InvalidOperation, sqlite3.IntegrityError) as exc:
+                    connection.execute("ROLLBACK TO SAVEPOINT import_row")
+                    connection.execute("RELEASE SAVEPOINT import_row")
                     skipped += 1
                     if len(errors) < 20:
-                        errors.append({"row": row_number, "reason": str(exc) or "قيمة غير صحيحة."})
-                except sqlite3.IntegrityError:
-                    skipped += 1
-                    if len(errors) < 20:
-                        errors.append({"row": row_number, "reason": "الكود أو الباركود مكرر أو توجد مخالفة لقيد فريد."})
+                        reason = str(exc) if isinstance(exc, (ValueError, InvalidOperation)) else "الكود أو المرجع مكرر أو توجد مخالفة لقيد فريد."
+                        errors.append({"row": row_number, "reason": reason or "قيمة غير صحيحة."})
             if dataset == "accounts":
                 ensure_account_metadata(connection)
             connection.commit()
