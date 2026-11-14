@@ -170,6 +170,16 @@ def validate_activity_profile(conn, profile):
         "SELECT code,account_type,is_group,active FROM accounts"
     )}
     errors = []
+    if profile["base_activity"] == "industrial":
+        fixed_posting = profile.get("posting_accounts") or {}
+        fixed_roles = profile.get("account_roles") or {}
+        if fixed_roles.get("inventory") != ["1130"]:
+            errors.append("النشاط الصناعي يستخدم حساب مخزون واحدًا فقط وهو 1130؛ لا يجوز ربط 1140 أو 1150 أو غيرهما بالمخزون.")
+        for key in ("inventory", "purchase_inventory"):
+            if fixed_posting.get(key) != "1130":
+                errors.append(f"حساب {key} للنشاط الصناعي يجب أن يكون 1130.")
+        if fixed_posting.get("cogs") != "5400":
+            errors.append("حساب تكلفة البضاعة المباعة للنشاط الصناعي يجب أن يكون 5400.")
     for code in sorted(required):
         row = existing.get(code)
         if not row:
@@ -303,6 +313,10 @@ def resolve_product_account_code(conn, product_id, role, default_code=None):
     """
     profile = get_active_activity_profile(conn)
     activity = profile["base_activity"]
+    # Industrial v1 is a trading/stock activity only: every stock and COGS
+    # posting is fixed to 1130/5400, even for custom profiles.
+    if activity == "industrial" and role in {"inventory", "cogs"}:
+        return {"inventory": "1130", "cogs": "5400"}[role]
     rules = PRODUCT_ACCOUNT_CATEGORY_RULES.get(activity, {}).get(role, {})
     account_codes = PRODUCT_CATEGORY_ACCOUNT_CODES.get(activity, {}).get(role, {})
     if not rules or not product_id:
@@ -383,6 +397,13 @@ def update_custom_activity_profile(conn, profile_id, account_roles_json,
     for mapping, template, label in expected:
         if not isinstance(mapping, dict) or set(mapping) != set(template):
             raise ValueError(f"مفاتيح {label} يجب أن تطابق مفاتيح النشاط الأساسي دون زيادة أو نقص.")
+    if base == "industrial":
+        if account_roles.get("inventory") != ["1130"]:
+            raise ValueError("النشاط الصناعي يستخدم حساب مخزون واحدًا فقط وهو 1130؛ لا يجوز ربط 1140 أو 1150 أو غيرهما بالمخزون.")
+        if posting_accounts.get("inventory") != "1130" or posting_accounts.get("purchase_inventory") != "1130":
+            raise ValueError("كل مشتريات وحركات مخزون النشاط الصناعي يجب أن تستخدم الحساب 1130.")
+        if posting_accounts.get("cogs") != "5400":
+            raise ValueError("تكلفة البضاعة المباعة للنشاط الصناعي يجب أن تستخدم الحساب 5400.")
     for role, values in account_roles.items():
         if not isinstance(values, list):
             raise ValueError(f"الدور {role} يجب أن يكون قائمة أكواد حسابات.")
