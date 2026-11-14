@@ -4,5 +4,6 @@ cryptography>=42,<47
 Flask-WTF>=1.2,<2.0
 waitress>=3.0,<4.0
 reportlab>=4.2,<5.0
+Pillow>=10.0,<13.0
 arabic-reshaper>=3.0,<4.0
 python-bidi>=0.6,<1.0
