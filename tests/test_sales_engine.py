@@ -2181,5 +2181,60 @@ class SalesIntegrationTests(unittest.TestCase):
         self.db.rollback()
 
 
+    def test_sales_return_restores_original_quantities_across_multiple_lots(self):
+        extra_move = self.db.execute(
+            """INSERT INTO stock_movements(
+                 movement_no,movement_type,product_id,target_warehouse_id,quantity,
+                 unit_cost,total_cost,movement_date)
+               VALUES('OPEN-LOT-2','receipt',?,?, '5','20','100','2026-11-10')""",
+            (self.product_id, self.warehouse_id),
+        ).lastrowid
+        self.db.execute(
+            """INSERT INTO stock_valuation_layers(
+                 product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost)
+               VALUES(?,?,?,'5','5','20')""",
+            (self.product_id, self.warehouse_id, extra_move),
+        )
+        self.db.commit()
+
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "6", "unit_price": "30"}],
+            "0", 1,
+        )
+        line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?", (invoice["invoice_id"],)
+        ).fetchone()["id"]
+        original_lots = self.db.execute(
+            "SELECT lot_id,quantity,cost_total FROM sales_invoice_line_lots WHERE invoice_line_id=? ORDER BY id",
+            (line_id,),
+        ).fetchall()
+        self.assertEqual(len(original_lots), 2)
+        self.assertEqual([Decimal(row["quantity"]) for row in original_lots],
+                         [Decimal("5"), Decimal("1")])
+
+        credit = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-11", "مرتجع من أكثر من تشغيلة",
+            [{"invoice_line_id": line_id, "quantity": "6"}], 1,
+        )
+        self.db.commit()
+        returned_lots = self.db.execute(
+            """SELECT lot_id,quantity FROM sales_credit_note_line_lots
+               WHERE credit_note_line_id=(SELECT id FROM sales_credit_note_lines WHERE credit_note_id=?)
+               ORDER BY id""",
+            (credit["credit_note_id"],),
+        ).fetchall()
+        self.assertEqual([(row["lot_id"], Decimal(row["quantity"])) for row in returned_lots],
+                         [(row["lot_id"], Decimal(row["quantity"])) for row in original_lots])
+        movements = self.db.execute(
+            """SELECT lot_id,quantity FROM stock_movements
+               WHERE movement_no LIKE 'SCN-%' ORDER BY id"""
+        ).fetchall()
+        self.assertEqual([(row["lot_id"], Decimal(row["quantity"])) for row in movements],
+                         [(row["lot_id"], Decimal(row["quantity"])) for row in original_lots])
+        self.assertEqual(credit["total_cost"], Decimal("70.00"))
+
+
 if __name__ == "__main__":
     unittest.main()
