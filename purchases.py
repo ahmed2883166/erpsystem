@@ -1180,7 +1180,7 @@ def new_bill():
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     expense_accounts=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code").fetchall()
     asset_accounts=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=0 AND active=1 ORDER BY code").fetchall()
-    receipts = _available_supplier_receipts(c)
+    receipts = _available_supplier_receipts(c, None)
     dimension_options=active_dimension_options(c)
     c.close(); return render_template("purchase_bill_new.html",suppliers=su,receipts=receipts,
         expense_accounts=expense_accounts,asset_accounts=asset_accounts,
