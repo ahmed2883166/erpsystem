@@ -514,10 +514,19 @@ def edit_employee(employee_id):
         try:
             values = _employee_form_values(request.form)
             _validate_employee_dimensions(c, values)
-            c.execute("""UPDATE employees SET employee_code=?,full_name=?,job_title=?,department=?,hire_date=?,
-                basic_salary=?,standard_hours=?,legal_category=?,insurance_number=?,insured_wage=?,insurance_enabled=?,
-                address=?,national_id=?,work_status=?,raise_type=?,raise_value=?,raise_mode=?,
-                raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=? WHERE id=?""", (*values, employee_id))
+            photo_path = _save_employee_photo(request.files.get("photo"))
+            if photo_path:
+                c.execute("""UPDATE employees SET employee_code=?,full_name=?,job_title=?,department=?,hire_date=?,
+                    basic_salary=?,standard_hours=?,legal_category=?,insurance_number=?,insured_wage=?,insurance_enabled=?,
+                    address=?,national_id=?,work_status=?,raise_type=?,raise_value=?,raise_mode=?,
+                    raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=?,photo_path=? WHERE id=?""",
+                    (*values, photo_path, employee_id))
+            else:
+                c.execute("""UPDATE employees SET employee_code=?,full_name=?,job_title=?,department=?,hire_date=?,
+                    basic_salary=?,standard_hours=?,legal_category=?,insurance_number=?,insured_wage=?,insurance_enabled=?,
+                    address=?,national_id=?,work_status=?,raise_type=?,raise_value=?,raise_mode=?,
+                    raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=? WHERE id=?""",
+                    (*values, employee_id))
             _audit(c, "employee_updated", values[0])
             c.commit()
             flash("تم تحديث ملف الموظف.", "success")
@@ -529,6 +538,20 @@ def edit_employee(employee_id):
     dimensions = _dimension_options(c)
     c.close()
     return render_template("employee_edit.html", e=employee, dimensions=dimensions)
+
+
+@workforce_bp.route("/hr/<int:employee_id>/form-2-salary", methods=["GET"])
+@_role("admin", "accountant", "viewer")
+def employee_form_2_salary(employee_id):
+    c = _db()
+    employee = c.execute("SELECT * FROM employees WHERE id=?", (employee_id,)).fetchone()
+    c.close()
+    if not employee:
+        flash("الموظف غير موجود.", "error")
+        return redirect(url_for("workforce.employees"))
+    insured_wage = M(employee["insured_wage"] or "0")
+    return render_template("form2_salary.html", e=employee, insured_wage=insured_wage,
+                           print_date=date.today().isoformat())
 
 
 @workforce_bp.route("/hr/import-excel", methods=["POST"])
