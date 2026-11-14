@@ -33,8 +33,8 @@ class TaxCenterTests(unittest.TestCase):
             id INTEGER PRIMARY KEY, bill_no TEXT, supplier_id INTEGER, bill_date TEXT,
             subtotal TEXT, tax_rate TEXT, tax_amount TEXT, total_amount TEXT, status TEXT);
           CREATE TABLE audit_log(id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT, created_at TEXT);
-          INSERT INTO customers VALUES(1,'Customer A');
-          INSERT INTO suppliers VALUES(1,'Supplier A');
+          INSERT INTO customers(id,name,tax_number) VALUES(1,'Customer A','123456789');
+          INSERT INTO suppliers(id,name,tax_number) VALUES(1,'Supplier A','123456789');
           INSERT INTO company_settings VALUES('tax_country','EG');
           INSERT INTO sales_invoices VALUES(1,'SI-1',1,'2026-11-05','1000','14','140','1140','posted');
           INSERT INTO sales_invoices VALUES(2,'SI-2',1,'2026-11-06','500','0','0','500','posted');
