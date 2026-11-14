@@ -129,6 +129,8 @@ class ActivityProfileTests(unittest.TestCase):
         taxes = active_tax_roles(self.conn)
         self.assertEqual(posting["ar"], "1120")
         self.assertEqual(posting["supplier_ap"], "2100")
+        self.assertEqual(posting["stocktake_shortage"], "5510")
+        self.assertEqual(posting["stocktake_surplus"], "6990")
         self.assertEqual(taxes["output_vat"], "2130")
         self.assertEqual(taxes["input_vat"], "1165")
         self.assertTrue(active_account_role_ids(self.conn)["cash"])
