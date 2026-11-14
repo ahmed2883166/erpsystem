@@ -521,7 +521,7 @@ class WorkforceTests(unittest.TestCase):
         conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,work_status)
             VALUES('E002','Employee Two','2026-01-01','7000','200','comprehensive_bonus')""")
         conn.commit(); conn.close()
-        data={"decision_no":"DEC-2027-01","decision_date":"2027-01-01","effective_date":"2027-01-01",
+        data={"decision_no":"DEC-2027-01","decision_date":"2026-11-01","effective_date":"2026-11-01",
               "title":"علاوة دورية 2027","employee_scope":"permanent","calculation_type":"percentage",
               "calculation_base":"basic","calculation_value":"10","treatment":"basic","notes":"قرار إداري"}
         preview=self.client.post("/hr/salary-changes",data=data)
@@ -548,7 +548,7 @@ class WorkforceTests(unittest.TestCase):
         conn=sqlite3.connect(self.db_path)
         conn.execute("UPDATE employees SET insured_wage='8000' WHERE id=1")
         conn.commit(); conn.close()
-        data={"decision_no":"DEC-ALLOW-01","decision_date":"2027-01-01","effective_date":"2027-01-01",
+        data={"decision_no":"DEC-ALLOW-01","decision_date":"2026-11-01","effective_date":"2026-11-01",
               "title":"علاوة منفصلة","employee_scope":"permanent","calculation_type":"percentage",
               "calculation_base":"insured_wage","calculation_value":"10","treatment":"allowance"}
         response=self.client.post("/hr/salary-changes",data={**data,"confirm":"1"})
@@ -564,7 +564,7 @@ class WorkforceTests(unittest.TestCase):
 
     def test_duplicate_salary_decision_number_is_rejected_without_double_increase(self):
         self.add_employee()
-        data={"decision_no":"DUP-1","decision_date":"2027-01-01","effective_date":"2027-01-01",
+        data={"decision_no":"DUP-1","decision_date":"2026-11-01","effective_date":"2026-11-01",
               "title":"قرار مكرر","employee_scope":"permanent","calculation_type":"fixed",
               "calculation_base":"basic","calculation_value":"500","treatment":"basic"}
         self.client.post("/hr/salary-changes",data={**data,"confirm":"1"})
@@ -575,6 +575,21 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         self.assertEqual(basic,"10500.00")
         self.assertEqual(count,1)
+
+
+    def test_salary_decision_cannot_be_applied_before_effective_date(self):
+        self.add_employee()
+        data={"decision_no":"FUTURE-1","decision_date":"2026-11-14","effective_date":"2026-12-01",
+              "title":"زيادة مستقبلية","employee_scope":"permanent","calculation_type":"fixed",
+              "calculation_base":"basic","calculation_value":"500","treatment":"basic"}
+        response=self.client.post("/hr/salary-changes",data={**data,"confirm":"1"},follow_redirects=True)
+        self.assertIn("لا تعتمد القرار قبل تاريخ سريانه",response.get_data(as_text=True))
+        conn=sqlite3.connect(self.db_path)
+        basic=conn.execute("SELECT basic_salary FROM employees WHERE id=1").fetchone()[0]
+        count=conn.execute("SELECT COUNT(*) FROM salary_change_batches").fetchone()[0]
+        conn.close()
+        self.assertEqual(basic,"10000")
+        self.assertEqual(count,0)
 
 if __name__ == "__main__":
     unittest.main()
