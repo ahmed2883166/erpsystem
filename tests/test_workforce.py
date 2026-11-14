@@ -489,6 +489,34 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0][0], first)
 
+    def test_midmonth_retirement_prorates_salary_and_recurring_allowance(self):
+        self.add_employee()
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("UPDATE employees SET work_status='retired',termination_date='2026-11-15' WHERE id=1")
+        conn.commit()
+        conn.close()
+        response = self.client.post("/hr/payroll", data={
+            "period": "2026-11", "basic_1": "10000", "allowances_1": "0",
+            "overtime_hours_1": "0", "overtime_amount_1": "",
+            "absence_deduction_1": "0", "other_deductions_1": "0",
+            "tax_1": "0", "employee_ins_1": "0", "employer_ins_1": "0"
+        })
+        self.assertEqual(response.status_code, 302, response.get_data(as_text=True))
+        conn = sqlite3.connect(self.db_path)
+        line = conn.execute("SELECT basic_salary,allowances,gross_pay FROM payroll_lines WHERE run_id=1").fetchone()
+        conn.close()
+        self.assertEqual(line, ("5000.00","500.00","5500.00"))
+
+    def test_terminated_employee_requires_effective_date(self):
+        response = self.client.post("/hr", data={
+            "employee_code": "E900", "full_name": "Former Employee", "hire_date": "2020-01-01",
+            "basic_salary": "10000", "standard_hours": "208", "work_status": "resigned"
+        }, follow_redirects=True)
+        self.assertIn("يجب تحديد تاريخ سريان الاستقالة", response.get_data(as_text=True))
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM employees").fetchone()[0], 0)
+        conn.close()
+
     def test_payroll_excludes_unpaid_leave_resigned_and_retired_employees(self):
         conn = sqlite3.connect(self.db_path)
         conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,work_status)
