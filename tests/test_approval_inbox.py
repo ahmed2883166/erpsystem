@@ -71,7 +71,8 @@ class ApprovalInboxTests(unittest.TestCase):
         self.assertIn("SO-1", html)
         self.assertIn("موازنة 2027", html)
         self.assertIn("لا يجوز اعتماد أو رفض المستند", html)
-        self.assertNotIn("PO-2</td>", html)
+        self.assertIn("PO-2", html)
+        self.assertEqual(html.count("فتح للمراجعة"), 4)
 
     def test_inbox_denies_users_without_approval_permissions(self):
         with self.client.session_transaction() as session:
