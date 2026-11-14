@@ -176,11 +176,15 @@ def dashboard_period_balances(conn, current_start, current_end, previous_start, 
             make_balances("asof_debit","asof_credit"),
             make_balances("opening_debit","opening_credit"))
 
-def income_figures(balances, direct_cost_codes=None, direct_cost_ids=None):
+def income_figures(balances, direct_cost_codes=None, direct_cost_ids=None,
+                   disposal_loss_ids=None):
+    disposal_loss_ids = set(disposal_loss_ids or ())
     revenue = sum((b["credit"] - b["debit"] for b in balances.values()
-                   if b["type"] == "revenue" and not b["is_group"]), Decimal("0"))
+                   if b["type"] == "revenue" and b["id"] not in disposal_loss_ids
+                   and not b["is_group"]), Decimal("0"))
     expenses = sum((b["debit"] - b["credit"] for b in balances.values()
-                    if b["type"] == "expense" and not b["is_group"]), Decimal("0"))
+                    if (b["type"] == "expense" or b["id"] in disposal_loss_ids)
+                    and not b["is_group"]), Decimal("0"))
     direct_cost = sum((b["debit"] - b["credit"] for b in balances.values()
                        if ((direct_cost_ids is not None and b["id"] in direct_cost_ids) or (direct_cost_ids is None and direct_cost_codes is not None and b["code"] in direct_cost_codes)) and not b["is_group"]), Decimal("0"))
     return {
@@ -316,10 +320,13 @@ def load_management_account_roles(conn):
     return result
 
 
-def _top_accounts(balances, account_type, value_key):
+def _top_accounts(balances, account_type, value_key, include_ids=None, exclude_ids=None):
+    include_ids = set(include_ids or ())
+    exclude_ids = set(exclude_ids or ())
     rows = []
     for account_id, item in balances.items():
-        if item["is_group"] or item["type"] != account_type:
+        effective_type = "expense" if account_id in include_ids else item["type"]
+        if item["is_group"] or effective_type != account_type or account_id in exclude_ids:
             continue
         value = item["credit"] - item["debit"] if value_key == "credit" else item["debit"] - item["credit"]
         if value:
@@ -404,9 +411,40 @@ def build_management_snapshot(conn, start, end, dimensions=None):
         previous_start.isoformat(), previous_end.isoformat(),
         dimensions=dimensions, exclude_closing_entries=True,
     )
-    current = income_figures(current_balances, direct_cost_ids=roles["direct_cost"])
-    previous = income_figures(previous_balances, direct_cost_ids=roles["direct_cost"])
-    cumulative = income_figures(as_of, direct_cost_ids=roles["direct_cost"])
+    account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+    direct_cost_ids = set(roles["direct_cost"])
+    if "statement_section" in account_columns:
+        direct_cost_ids.update(row["id"] for row in conn.execute(
+            "SELECT id FROM accounts WHERE is_group=0 AND statement_section='direct_costs'"
+        ).fetchall())
+
+    def disposal_loss_ids(date_from, date_to):
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_disposals'"
+        ).fetchone():
+            return set()
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(asset_disposals)")}
+        if not {"gain_loss_account_id", "gain_loss_amount", "disposal_date"}.issubset(columns):
+            return set()
+        return {
+            row["gain_loss_account_id"] for row in conn.execute(
+                """SELECT DISTINCT gain_loss_account_id FROM asset_disposals
+                   WHERE disposal_date>=? AND disposal_date<=?
+                     AND CAST(gain_loss_amount AS NUMERIC)<0
+                     AND gain_loss_account_id IS NOT NULL""",
+                (date_from, date_to),
+            ).fetchall()
+        }
+
+    current_disposal_losses = disposal_loss_ids(start.isoformat(), end.isoformat())
+    previous_disposal_losses = disposal_loss_ids(previous_start.isoformat(), previous_end.isoformat())
+    cumulative_disposal_losses = disposal_loss_ids("0001-01-01", end.isoformat())
+    current = income_figures(current_balances, direct_cost_ids=direct_cost_ids,
+                             disposal_loss_ids=current_disposal_losses)
+    previous = income_figures(previous_balances, direct_cost_ids=direct_cost_ids,
+                              disposal_loss_ids=previous_disposal_losses)
+    cumulative = income_figures(as_of, direct_cost_ids=direct_cost_ids,
+                                disposal_loss_ids=cumulative_disposal_losses)
     assets = _leaf_sum(as_of, "asset")
     liabilities = _leaf_sum(as_of, "liability")
     equity = _leaf_sum(as_of, "equity")
@@ -492,8 +530,10 @@ def build_management_snapshot(conn, start, end, dimensions=None):
         "total_equity": equity,
         "total_equity_after_profit": equity + cumulative["net_profit"],
         "negative_asset_accounts": negative_asset_accounts,
-        "revenue_accounts": _top_accounts(current_balances, "revenue", "credit"),
-        "expense_accounts": _top_accounts(current_balances, "expense", "debit"),
+         "revenue_accounts": _top_accounts(current_balances, "revenue", "credit",
+                                           exclude_ids=current_disposal_losses),
+        "expense_accounts": _top_accounts(current_balances, "expense", "debit",
+                                           include_ids=current_disposal_losses),
         "account_details": details,
         "account_roles": roles,
     }
