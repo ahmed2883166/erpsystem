@@ -1,6 +1,22 @@
 {% extends "base.html" %}{% block title %}المرتبات | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>المرتبات</h2><p>إدخال الراتب الأساسي والأجر التأميني والبدلات والعلاوات والإضافي والاستقطاعات. المنح والمكافآت الاستثنائية تُدار خارج كشف المرتبات.</p><p class="muted">أقساط السلف النشطة تُحسب تلقائيًا حسب جدول الاستحقاق ضمن خصم السلف؛ لا تدخل القسط يدويًا مرة أخرى.</p><p class="actions"><a class="button secondary" href="{{url_for('workforce.employee_loans')}}">إدارة طلبات وسجل سلف الموظفين</a> <a class="button secondary" href="{{url_for('workforce.pay_items')}}">الاستحقاقات والاستقطاعات</a> <a class="button secondary" href="{{url_for('workforce.salary_changes')}}">العلاوات والزيادات</a> <a class="button secondary" href="{{url_for('workforce.end_of_service')}}">مكافأة نهاية الخدمة</a></p>
-<p class="actions"><a class="button secondary" href="{{ url_for('workforce.payroll_report') }}">تقرير مستحقات وتفاصيل رواتب الموظفين</a> <a class="button secondary" href="{{ url_for('workforce.final_payroll') }}">المرتبات النهائية للموظفين المنتهية خدمتهم</a></p></header>
+<header><h2>المرتبات</h2><p>إدخال الراتب الأساسي والأجر التأميني والبدلات والعلاوات والإضافي والاستقطاعات. المنح والمكافآت الاستثنائية تُدار خارج كشف المرتبات.</p><p class="muted">أقساط السلف النشطة تُحسب تلقائيًا حسب جدول الاستحقاق ضمن خصم السلف؛ لا تدخل القسط يدويًا مرة أخرى.</p><div class="payroll-nav-groups no-print">
+<details class="payroll-nav-group" open><summary>تشغيل المرتبات</summary><div class="actions">
+<a class="button secondary" href="{{url_for('workforce.employee_loans')}}">إدارة السلف</a>
+<a class="button secondary" href="{{url_for('workforce.pay_items')}}">الاستحقاقات والاستقطاعات</a>
+<a class="button secondary" href="{{url_for('workforce.friday_allowance')}}">بدل الجمعة</a>
+<a class="button secondary" href="{{url_for('workforce.employee_grants')}}">المنح والمكافآت</a>
+</div></details>
+<details class="payroll-nav-group"><summary>التقارير والتسويات</summary><div class="actions">
+<a class="button secondary" href="{{ url_for('workforce.payroll_report') }}">تقرير المرتبات</a>
+<a class="button secondary" href="{{ url_for('workforce.final_payroll') }}">المرتبات النهائية</a>
+<a class="button secondary" href="{{url_for('workforce.end_of_service')}}">مكافأة نهاية الخدمة</a>
+</div></details>
+<details class="payroll-nav-group"><summary>الإعدادات والموظفون</summary><div class="actions">
+<a class="button secondary" href="{{url_for('workforce.salary_changes')}}">العلاوات والزيادات</a>
+<a class="button secondary" href="{{url_for('payroll_compliance.report')}}">الضرائب والتأمينات</a>
+<a class="button secondary" href="{{url_for('payroll_compliance.payments')}}">سداد الالتزامات</a>
+</div></details>
+</div></header>
 <section class="panel"><h3>إعداد مرتبات شهرية</h3>
 <div class="flash success">تُحمّل الاستحقاقات والاستقطاعات النشطة من شاشة الاستحقاقات والاستقطاعات تلقائيًا وتظهر هنا للمراجعة. لا تُدخلها مرة أخرى يدويًا. يمكن إدخال الأجر التأميني وحصة العامل وحصة الشركة والضريبة والدمغة يدويًا، أو تفعيل الحساب التلقائي عند الحاجة.</div>
 <p class="actions"><a class="button secondary" href="{{url_for('payroll_compliance.report')}}">تقرير الضرائب والتأمينات</a> <a class="button secondary" href="{{url_for('payroll_compliance.payments')}}">سداد الالتزامات</a></p>
