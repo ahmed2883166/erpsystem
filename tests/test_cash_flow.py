@@ -450,5 +450,23 @@ class CashFlowReportTests(unittest.TestCase):
         self.assertIn("الأنشطة التمويلية", body)
 
 
+    def test_direct_cash_flow_excludes_copied_opening_entry_inside_period(self):
+        conn=financial_planning._connect()
+        conn.executescript("""
+          CREATE TABLE financial_years(id INTEGER PRIMARY KEY,year_name TEXT,start_date TEXT,end_date TEXT,status TEXT,opening_entry_id INTEGER);
+          CREATE TABLE financial_year_journal_history(id INTEGER PRIMARY KEY,financial_year_id INTEGER,entry_kind TEXT,action TEXT,entry_id INTEGER,related_entry_id INTEGER);
+          INSERT INTO journal_entries VALUES(6,'2027-01-01','posted');
+          INSERT INTO journal_lines VALUES(11,6,1,'200','0');
+          INSERT INTO journal_lines VALUES(12,6,2,'0','200');
+          INSERT INTO financial_years VALUES(2,'2027','2027-01-01','2027-12-31','open',6);
+          INSERT INTO financial_year_journal_history(financial_year_id,entry_kind,action,entry_id)
+            VALUES(2,'opening','created',6);
+        """)
+        snapshot=financial_planning.build_cash_flow_snapshot(conn,"2027-01-01","2027-01-31")
+        conn.close()
+        self.assertEqual(snapshot["net_change"],financial_planning.Decimal("0"))
+        self.assertEqual(snapshot["closing"],snapshot["opening"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -249,13 +249,18 @@ def _opening_balance_mismatches(conn, cutoff_date, normalized):
         WHERE account_type IN ('asset','liability','equity') AND is_group=0""").fetchall()
     expected_balances = {row["id"]: Decimal("0") for row in account_rows}
     metadata = {row["id"]: row for row in account_rows}
-    rows = conn.execute("""SELECT jl.account_id,a.account_type,jl.debit,jl.credit
+    from management_dashboard import _copied_opening_entry_ids
+    excluded_openings = sorted(_copied_opening_entry_ids(conn, cutoff_date))
+    opening_exclusion = (" AND je.id NOT IN (" + ",".join("?" for _ in excluded_openings) + ")"
+                         if excluded_openings else "")
+    opening_params = (cutoff_date, *excluded_openings)
+    rows = conn.execute(f"""SELECT jl.account_id,a.account_type,jl.debit,jl.credit
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
-        WHERE je.status='posted' AND je.entry_date<=?
+        WHERE je.status='posted' AND je.entry_date<=?{opening_exclusion}
           AND a.account_type IN ('asset','liability','equity') AND a.is_group=0
-        ORDER BY jl.account_id,je.id,jl.id""", (cutoff_date,)).fetchall()
+        ORDER BY jl.account_id,je.id,jl.id""", opening_params).fetchall()
     for row in rows:
         account_id = row["account_id"]
         debit = Decimal(str(row["debit"] or "0"))
@@ -270,9 +275,9 @@ def _opening_balance_mismatches(conn, cutoff_date, normalized):
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
-        WHERE je.status='posted' AND je.entry_date<=?
+        WHERE je.status='posted' AND je.entry_date<=?{opening_exclusion}
           AND a.account_type IN ('revenue','expense') AND a.is_group=0""",
-        (cutoff_date,)).fetchall()
+        opening_params).fetchall()
     prior_net_result = Decimal("0")
     for row in pnl_rows:
         debit = Decimal(str(row["debit"] or "0"))
@@ -1547,13 +1552,18 @@ def build_cash_flow_snapshot(conn, start, end):
         sections = {k: {"in": Decimal("0"), "out": Decimal("0")} for k in ("operating", "investing", "financing")}
         journal_columns={row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
         reference_expr="COALESCE(je.reference,'')" if "reference" in journal_columns else "''"
+        copied_period_openings = sorted(_copied_opening_entry_ids(conn, end))
+        period_opening_exclusion = (
+            " AND je.id NOT IN (" + ",".join("?" for _ in copied_period_openings) + ")"
+            if copied_period_openings else ""
+        )
         entries = conn.execute(f"""SELECT je.id,{reference_expr} reference,
             COALESCE(DECIMAL_NET(CASE WHEN jl.account_id IN ({marks}) THEN jl.debit ELSE '0' END,
                                  CASE WHEN jl.account_id IN ({marks}) THEN jl.credit ELSE '0' END),0) cash_net
             FROM journal_entries je JOIN journal_lines jl ON jl.entry_id=je.id
-            WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
+            WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?{period_opening_exclusion}
             GROUP BY je.id ORDER BY je.entry_date,je.id""",
-            (*ids, *ids, start, end)).fetchall()
+            (*ids, *ids, start, end, *copied_period_openings)).fetchall()
         for entry in entries:
             net = Decimal(str(entry["cash_net"] or "0"))
             if not net:
