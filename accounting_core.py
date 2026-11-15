@@ -302,10 +302,14 @@ def reconciliation_snapshot(conn):
             gl_stock = Decimal("0")
             if ids:
                 marks = ",".join("?" for _ in ids)
+                from management_dashboard import _copied_opening_entry_ids
+                excluded_openings=sorted(_copied_opening_entry_ids(conn,date.today().isoformat()))
+                opening_exclusion=(" AND je.id NOT IN ("+",".join("?" for _ in excluded_openings)+")") if excluded_openings else ""
                 for row in conn.execute(
                     f"""SELECT jl.debit,jl.credit FROM journal_lines jl
                         JOIN journal_entries je ON je.id=jl.entry_id
-                        WHERE je.status='posted' AND jl.account_id IN ({marks})""", ids
+                        WHERE je.status='posted' AND jl.account_id IN ({marks}){opening_exclusion}""",
+                    (*ids,*excluded_openings)
                 ):
                     gl_stock += Decimal(str(row["debit"] or "0")) - Decimal(str(row["credit"] or "0"))
 
