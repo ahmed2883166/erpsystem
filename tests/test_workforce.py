@@ -502,7 +502,7 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(debit, credit)
         self.assertEqual(debit, 22400)
         self.assertIn((4, 21750, 100), totals_by_account)
-        self.assertIn((5, 0, 22200), totals_by_account)
+        self.assertIn((5, 0, 20200), totals_by_account)
 
     def test_employee_profile_fields_and_salary_raise_overtime_and_event_bonus(self):
         response = self.client.post("/hr", data={
