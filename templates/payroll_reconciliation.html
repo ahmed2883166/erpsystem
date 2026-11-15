@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}مراجعة المرتبات والقيود | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <h2>مراجعة تكرار المرتبات ومطابقة القيود</h2>
+  <p>مراجعة تاريخية للمرتبات المرحلة والمرتبات النهائية المعتمدة، دون تعديل أي كشف أو قيد.</p>
+  <p class="muted">تعتمد المطابقة على نسخة المرتبات المحفوظة وقت الترحيل، وليس بيانات الموظف الحالية. الكشوف المعكوسة تظهر كسجل تاريخي ولا تُحسب صرفًا قائمًا.</p>
+</header>
+<section class="panel">
+  <h3>تحديد الفترة</h3>
+  <form method="get" class="form-grid">
+    <label>من شهر <input type="month" name="month_from" value="{{month_from}}"></label>
+    <label>إلى شهر <input type="month" name="month_to" value="{{month_to}}"></label>
+    <div class="actions">
+      <button type="submit">مراجعة الفترة</button>
+      <a class="button secondary" href="{{url_for('workforce.payroll_reconciliation')}}">كل الفترات</a>
+      <a class="button secondary" href="{{url_for('workforce.payroll')}}">العودة للمرتبات</a>
+    </div>
+  </form>
+</section>
+<section class="panel">
+  <h3>ملخص المراجعة</h3>
+  <div class="stats-grid">
+    <div class="stat"><span>الكشوف التي تمت مراجعتها</span><strong>{{summary.runs}}</strong></div>
+    <div class="stat"><span>كشوف سليمة</span><strong>{{summary.clean}}</strong></div>
+    <div class="stat"><span>كشوف معكوسة تاريخيًا</span><strong>{{summary.reversed}}</strong></div>
+    <div class="stat"><span>كشوف تحتاج مراجعة</span><strong>{{summary.needs_review}}</strong></div>
+    <div class="stat"><span>ملاحظات التكرار/المطابقة</span><strong>{{summary.issues}}</strong></div>
+  </div>
+</section>
+<section class="panel">
+  <h3>نتائج مراجعة الكشوف</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>الشهر</th><th>رقم الكشف</th><th>عدد الموظفين</th><th>صافي المرتبات</th><th>رقم القيد</th><th>النتيجة</th><th>ملاحظات</th><th>التفاصيل</th></tr></thead>
+    <tbody>{% for r in runs %}
+      <tr><td>{{r.period}}</td><td>{{r.run_id}}</td><td>{{r.employee_count}}</td><td>{{r.net_total}}</td>
+      <td>{{r.journal_entry_id or '—'}}</td>
+      <td>{% if r.result=='سليم' %}<span class="status-badge success">{{r.result}}</span>{% elif r.result=='معكوس تاريخيًا' %}<span class="status-badge">{{r.result}}</span>{% else %}<span class="status-badge danger">{{r.result}}</span>{% endif %}</td>
+      <td>{{r.issue_count}}</td><td><a class="button secondary" href="{{url_for('workforce.payroll_run',run_id=r.run_id)}}">فتح الكشف</a></td></tr>
+    {% else %}<tr><td colspan="8">لا توجد كشوف مرتبات مرحلة في الفترة المحددة.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+<section class="panel">
+  <h3>الملاحظات التي تحتاج مراجعة</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>الشهر</th><th>رقم الكشف</th><th>الملاحظة</th></tr></thead>
+    <tbody>{% for issue in issues %}
+      <tr><td>{{issue.period}}</td><td>{{issue.run_id}}</td><td>{{issue.message}}</td></tr>
+    {% else %}<tr><td colspan="3">لم يتم رصد تكرار أو اختلاف في القيود ضمن البيانات والفترة المحددة.</td></tr>{% endfor %}</tbody>
+  </table></div>
+  <p class="muted">هذا التقرير تنبيهي للمدقق فقط. لا يقوم بحذف أو تعديل أو عكس أي قيد تلقائيًا، وأي تصحيح يجب أن يتم من خلال دورة التصحيح المعتمدة.</p>
+</section>
+{% endblock %}
