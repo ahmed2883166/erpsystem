@@ -20,7 +20,7 @@ def _db():
 def initialize_tax_schema():
     """Additive migration; never rewrites existing invoice values."""
     conn = _db()
-    for table in ("sales_invoices", "supplier_bills"):
+    for table in ("sales_invoices", "supplier_bills", "sales_credit_notes", "supplier_credit_notes"):
         cols = {r["name"] for r in conn.execute('PRAGMA table_info("' + table + '")')}
         if not cols:
             continue
@@ -29,11 +29,27 @@ def initialize_tax_schema():
             "tax_reference": "TEXT NOT NULL DEFAULT ''",
             "tax_notes": "TEXT NOT NULL DEFAULT ''",
         }
-        if table == "supplier_bills":
+        if table in {"supplier_bills", "supplier_credit_notes"}:
             additions["input_vat_deductible_percent"] = "TEXT NOT NULL DEFAULT '100'"
         for name, definition in additions.items():
             if name not in cols:
                 conn.execute('ALTER TABLE "' + table + '" ADD COLUMN "' + name + '" ' + definition)
+    conn.execute("""CREATE TABLE IF NOT EXISTS tax_document_reference_audit(
+        id INTEGER PRIMARY KEY,
+        document_kind TEXT NOT NULL,
+        document_id INTEGER NOT NULL,
+        action TEXT NOT NULL DEFAULT 'reference_updated',
+        old_reference TEXT NOT NULL DEFAULT '',
+        new_reference TEXT NOT NULL DEFAULT '',
+        old_notes TEXT NOT NULL DEFAULT '',
+        new_notes TEXT NOT NULL DEFAULT '',
+        old_deductible_percent TEXT,
+        new_deductible_percent TEXT,
+        actor_id INTEGER,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""")
+    conn.execute("""CREATE INDEX IF NOT EXISTS idx_tax_document_audit_document
+        ON tax_document_reference_audit(document_kind,document_id,created_at,id)""")
     conn.commit()
     conn.close()
 
@@ -252,8 +268,8 @@ def build_tax_report_snapshot(conn, period_value):
                 "tax_rate": (tax_value * Decimal("100") / base).quantize(Decimal("0.01"))
                             if base else Decimal("0"),
                 "total_amount": -(base + tax_value), "tax_treatment": treatment,
-                "tax_reference": "", "tax_notes": notes,
-                "document_type": "إشعار دائن",
+                "tax_reference": str(row["tax_reference"] or ""), "tax_notes": str(row["tax_notes"] or notes),
+                "document_type": "إشعار دائن", "document_kind": "sales_credit",
             })
     supplier_tax_number = _party_tax_number_expr(conn, "suppliers", "s")
     purchases = conn.execute(f"""
@@ -274,12 +290,12 @@ def build_tax_report_snapshot(conn, period_value):
         "tax_rate": Decimal(r["tax_rate"] or "0"),
         "total_amount": Decimal(r["total_amount"] or "0")
     } for r in sales]
-    sales = [{**r, "document_type": "فاتورة بيع"} for r in sales] + sales_credits
+    sales = [{**r, "document_type": "فاتورة بيع", "document_kind": "sale"} for r in sales] + sales_credits
     purchases = [{**dict(r), "taxable_base": Decimal(r["taxable_base"] or "0"),
                       "tax_rate": Decimal(r["tax_rate"] or "0"), "tax_amount": Decimal(r["tax_amount"] or "0"),
                       "total_amount": Decimal(r["total_amount"] or "0"),
                       "deductible_percent": Decimal(r["deductible_percent"] or "100"),
-                      "document_type": "فاتورة مشتريات"} for r in purchases]
+                      "document_type": "فاتورة مشتريات", "document_kind": "purchase"} for r in purchases]
     # Supplier credit notes reduce input VAT in their own posting period. The
     # deductible percentage and tax treatment are inherited from the source bill.
     purchase_credits = []
@@ -289,7 +305,7 @@ def build_tax_report_snapshot(conn, period_value):
                    s.name party_name, {supplier_tax_number} party_tax_number,
                    cn.subtotal taxable_base, cn.tax_rate, cn.tax_amount, cn.total_amount,
                    COALESCE(b.tax_treatment,'standard') tax_treatment,
-                   '' tax_reference, cn.reason tax_notes,
+                   COALESCE(cn.tax_reference,'') tax_reference, COALESCE(cn.tax_notes,cn.reason) tax_notes,
                    COALESCE(b.input_vat_deductible_percent,'100') deductible_percent
             FROM supplier_credit_notes cn
             JOIN supplier_bills b ON b.id=cn.bill_id
@@ -305,7 +321,7 @@ def build_tax_report_snapshot(conn, period_value):
                 "tax_amount": -Decimal(row["tax_amount"] or "0"),
                 "total_amount": -Decimal(row["total_amount"] or "0"),
                 "deductible_percent": Decimal(row["deductible_percent"] or "100"),
-                "document_type": "إشعار دائن للمورد",
+                "document_type": "إشعار دائن للمورد", "document_kind": "purchase_credit",
             })
             purchase_credits.append(item)
     purchases.extend(purchase_credits)
@@ -362,6 +378,9 @@ def build_tax_report_snapshot(conn, period_value):
             if not (row.get("party_tax_number") or "").strip():
                 quality_issues.append({"severity": "warning", "document": doc,
                                        "issue": "الرقم الضريبي للطرف غير مسجل"})
+            if not (row.get("tax_reference") or "").strip():
+                quality_issues.append({"severity": "warning", "document": doc,
+                                       "issue": "مرجع الفاتورة/الإشعار الإلكتروني أو المستند الضريبي غير مسجل"})
             base = Decimal(str(row["taxable_base"] or "0"))
             rate = Decimal(str(row["tax_rate"] or "0"))
             actual_tax = Decimal(str(row["tax_amount"] or "0"))
@@ -400,6 +419,69 @@ def tax_report():
     finally:
         conn.close()
     return render_template("tax_report.html", **snapshot, treatments=TREATMENTS)
+
+
+@tax_bp.route("/reports/tax/reference/<kind>/<int:document_id>", methods=["POST"])
+@_editor
+def update_document_reference(kind, document_id):
+    document_tables = {
+        "sale": ("sales_invoices", "فاتورة بيع", True),
+        "purchase": ("supplier_bills", "فاتورة مشتريات", True),
+        "sales_credit": ("sales_credit_notes", "إشعار دائن مبيعات", False),
+        "purchase_credit": ("supplier_credit_notes", "إشعار دائن مورد", False),
+    }
+    if kind not in document_tables:
+        flash("نوع المستند الضريبي غير صحيح.", "error")
+        return redirect(url_for("tax.tax_report"))
+    table, label, supports_deduction = document_tables[kind]
+    reference = str(request.form.get("tax_reference", "")).strip()[:200]
+    notes = str(request.form.get("tax_notes", "")).strip()[:500]
+    conn = _db()
+    try:
+        conn.execute("BEGIN")
+        row = conn.execute(
+            "SELECT * FROM " + table + " WHERE id=? AND status='posted'", (document_id,)
+        ).fetchone()
+        if not row:
+            conn.rollback()
+            flash("المستند غير موجود أو غير مرحل.", "error")
+            return redirect(url_for("tax.tax_report", period=request.form.get("period", "")))
+        old_reference = str(row["tax_reference"] or "")
+        old_notes = str(row["tax_notes"] or "")
+        old_percent = str(row["input_vat_deductible_percent"] or "100") if supports_deduction and kind == "purchase" else None
+        new_percent = old_percent
+        if supports_deduction and kind == "purchase":
+            raw_percent = str(request.form.get("deductible_percent", old_percent)).strip()
+            try:
+                percent = Decimal(raw_percent)
+            except Exception:
+                raise ValueError("نسبة خصم ضريبة المدخلات غير صحيحة.")
+            if not percent.is_finite() or percent < 0 or percent > 100:
+                raise ValueError("نسبة خصم ضريبة المدخلات يجب أن تكون من 0 إلى 100.")
+            new_percent = str(percent)
+            conn.execute(
+                "UPDATE supplier_bills SET tax_reference=?,tax_notes=?,input_vat_deductible_percent=? WHERE id=? AND status='posted'",
+                (reference, notes, new_percent, document_id)
+            )
+        else:
+            conn.execute(
+                "UPDATE " + table + " SET tax_reference=?,tax_notes=? WHERE id=? AND status='posted'",
+                (reference, notes, document_id)
+            )
+        conn.execute("""INSERT INTO tax_document_reference_audit(
+            document_kind,document_id,old_reference,new_reference,old_notes,new_notes,
+            old_deductible_percent,new_deductible_percent,actor_id
+        ) VALUES(?,?,?,?,?,?,?,?,?)""",
+        (kind, document_id, old_reference, reference, old_notes, notes,
+         old_percent, new_percent, session.get("user_id")))
+        conn.commit()
+        flash("تم حفظ مرجع المستند وملاحظاته في سجل مراجعة ضريبي مستقل، دون تغيير المبالغ أو القيود المرحلة.", "success")
+    except (sqlite3.Error, ValueError) as exc:
+        conn.rollback()
+        flash(str(exc) if isinstance(exc, ValueError) else "تعذر حفظ بيانات المراجعة الضريبية.", "error")
+    finally:
+        conn.close()
+    return redirect(url_for("tax.tax_report", period=request.form.get("period", "")))
 
 
 @tax_bp.route("/reports/tax/classify/<kind>/<int:document_id>", methods=["POST"])
