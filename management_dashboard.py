@@ -540,79 +540,66 @@ def build_management_snapshot(conn, start, end, dimensions=None):
 
 
 def cash_forecast(conn, today=None, weeks=8):
-    """Forecast posted customer/supplier balances with SQL aggregation and exact Decimal values."""
+    """Build an eight-week cash view from the shared documented forecast sources."""
+    from management_reports import build_cash_forecast
+
     today = today or date.today()
     weeks = max(1, min(int(weeks), 52))
+    horizon_days = weeks * 7
     roles = load_management_account_roles(conn)
     balances = account_balances(conn, date_to=today.isoformat())
     opening = _leaf_sum(balances, "asset", account_ids=roles["cash"])
-    inflows = [Decimal("0") for _ in range(weeks)]
-    outflows = [Decimal("0") for _ in range(weeks)]
+
     periods = []
     for index in range(weeks):
         start = today + timedelta(days=index * 7)
         end = start + timedelta(days=6)
-        periods.append({"label": start.strftime("%d/%m") + " - " + end.strftime("%d/%m")})
+        periods.append({
+            "label": start.strftime("%d/%m") + " - " + end.strftime("%d/%m"),
+            "receipts": Decimal("0"), "payments": Decimal("0"),
+        })
 
-    conn.create_function(
-        "DECIMAL_OUTSTANDING", 3,
-        lambda total, paid, credited: format(
-            max(Decimal("0"), _decimal(total) - _decimal(paid) - _decimal(credited)), "f"
-        ),
-    )
-
-    def load_due_buckets(table, invoice_date_column):
-        exists = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-        ).fetchone()
-        if not exists:
-            return []
-        columns = {row["name"] for row in conn.execute(f'PRAGMA table_info("{table}")')}
-        required = {"status", invoice_date_column, "total_amount", "paid_amount"}
-        if not required.issubset(columns):
-            return []
-        credited_expr = "COALESCE(credited_amount,'0')" if "credited_amount" in columns else "'0'"
-        due_expr = f"COALESCE(due_date,{invoice_date_column})" if "due_date" in columns else invoice_date_column
-        bucket_expr = f"""CASE WHEN {due_expr} < ? THEN 0
-            ELSE CAST((julianday({due_expr})-julianday(?))/7 AS INTEGER) END"""
-        return conn.execute(f"""SELECT {bucket_expr} bucket,
-            COALESCE(DECIMAL_SUM(DECIMAL_OUTSTANDING(total_amount,paid_amount,{credited_expr})),'0') amount
-            FROM "{table}"
-            WHERE status='posted' AND {invoice_date_column}<=?
-            GROUP BY bucket HAVING bucket < ?""",
-            (today.isoformat(), today.isoformat(), today.isoformat(), weeks)).fetchall()
-
-    for row in load_due_buckets("sales_invoices", "invoice_date"):
-        bucket = int(row["bucket"] or 0)
-        if 0 <= bucket < weeks:
-            inflows[bucket] = _decimal(row["amount"])
-    for row in load_due_buckets("supplier_bills", "bill_date"):
-        bucket = int(row["bucket"] or 0)
-        if 0 <= bucket < weeks:
-            outflows[bucket] = _decimal(row["amount"])
-
-    payroll_accounts = {
-        row["id"] for row in conn.execute(
-            "SELECT id,name_ar FROM accounts WHERE account_type='liability' AND is_group=0 AND active=1"
-        )
-        if any(term in (row["name_ar"] or "").lower()
-               for term in ("مرتبات", "رواتب", "salary", "payroll"))
+    source = build_cash_forecast(conn, today.isoformat(), horizon_days)
+    totals = {
+        "payroll_due": Decimal("0"),
+        "grants_due": Decimal("0"),
+        "other_commitments_due": Decimal("0"),
     }
-    payroll_due = max(Decimal("0"), _leaf_sum(
-        balances, "liability", account_ids=payroll_accounts
-    )) if payroll_accounts else Decimal("0")
-    outflows[0] += payroll_due
+    for item in source.get("items", []):
+        if "error" in item:
+            continue
+        due_date = date.fromisoformat(item["due_date"])
+        forecast_date = max(due_date, today)
+        bucket = (forecast_date - today).days // 7
+        if not 0 <= bucket < weeks:
+            continue
+        amount = _decimal(item.get("balance"))
+        kind = item.get("kind")
+        if kind == "customers":
+            periods[bucket]["receipts"] += amount
+        else:
+            periods[bucket]["payments"] += amount
+        if kind == "payroll":
+            totals["payroll_due"] += amount
+        elif kind == "employee_grants":
+            totals["grants_due"] += amount
+        elif kind == "cash_commitment":
+            totals["other_commitments_due"] += amount
 
     running = opening
     result = []
-    for index, period in enumerate(periods):
-        net = inflows[index] - outflows[index]
+    for period in periods:
+        receipts = period["receipts"]
+        payments = period["payments"]
+        net = receipts - payments
         start_balance = running
         running += net
         result.append({
-            **period, "opening":_rounded(start_balance), "receipts":_rounded(inflows[index]),
-            "payments":_rounded(outflows[index]), "net":_rounded(net), "closing":_rounded(running),
+            "label": period["label"], "opening": _rounded(start_balance),
+            "receipts": _rounded(receipts), "payments": _rounded(payments),
+            "net": _rounded(net), "closing": _rounded(running),
         })
+
     threshold_row = conn.execute(
         "SELECT setting_value FROM company_settings WHERE setting_key='minimum_cash_balance'"
     ).fetchone() if conn.execute(
@@ -620,10 +607,12 @@ def cash_forecast(conn, today=None, weeks=8):
     ).fetchone() else None
     threshold = _decimal(threshold_row["setting_value"]) if threshold_row else Decimal("0")
     return {
-        "opening":_rounded(opening), "weeks":result, "minimum":threshold,
-        "warning":any(item["closing"] < threshold for item in result) if threshold > 0 else False,
-        "payroll_due":_rounded(payroll_due),
+        "opening": _rounded(opening), "weeks": result, "minimum": threshold,
+        "warning": any(item["closing"] < threshold for item in result) if threshold > 0 else False,
+        **{key: _rounded(value) for key, value in totals.items()},
+        "errors": source.get("errors", []),
     }
+
 
 def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("3")):
     """Find unusual posted entries without per-entry or per-line SQL queries.
