@@ -50,7 +50,7 @@ class FixedAssetLifecycleFinancialReportTests(unittest.TestCase):
             CREATE TABLE asset_disposals(
                 id INTEGER PRIMARY KEY, asset_id INTEGER, disposal_date TEXT,
                 gain_loss_account_id INTEGER, gain_loss_amount TEXT,
-                journal_entry_id INTEGER
+                net_book_value TEXT, journal_entry_id INTEGER
             );
             INSERT INTO accounts VALUES
                 (1,'1110','البنك','asset',NULL,0,1,'current_assets',NULL),
@@ -169,9 +169,10 @@ class FixedAssetLifecycleFinancialReportTests(unittest.TestCase):
             )
             self.conn.execute(
                 "INSERT INTO asset_disposals"
-                "(id,asset_id,disposal_date,gain_loss_account_id,gain_loss_amount,journal_entry_id) "
-                "VALUES(?,?,?,?,?,?)",
-                (self.next_disposal_id, asset["id"], "2026-03-31", 5, str(gain_loss), entry_id),
+                "(id,asset_id,disposal_date,gain_loss_account_id,gain_loss_amount,net_book_value,journal_entry_id) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (self.next_disposal_id, asset["id"], "2026-03-31", 5,
+                 str(gain_loss), str(net_book_value), entry_id),
             )
             self.next_disposal_id += 1
 
@@ -211,6 +212,22 @@ class FixedAssetLifecycleFinancialReportTests(unittest.TestCase):
         self.assertEqual(balance["total_equity"], Decimal("9300"))
         self.assertTrue(balance["balanced"])
         self.assertEqual(balance["negative_asset_accounts"], [])
+        self.assertEqual(
+            [row["net_book_value"] for row in self.conn.execute(
+                "SELECT net_book_value FROM asset_disposals ORDER BY id"
+            )],
+            ["900", "900"],
+        )
+        cost_balance = self.conn.execute(
+            "SELECT DECIMAL_SUM(debit)-DECIMAL_SUM(credit) balance "
+            "FROM journal_lines WHERE account_id=2"
+        ).fetchone()["balance"]
+        accumulated_balance = self.conn.execute(
+            "SELECT DECIMAL_SUM(credit)-DECIMAL_SUM(debit) balance "
+            "FROM journal_lines WHERE account_id=3"
+        ).fetchone()["balance"]
+        self.assertEqual(Decimal(str(cost_balance)), Decimal("0"))
+        self.assertEqual(Decimal(str(accumulated_balance)), Decimal("0"))
 
         # Asset purchases and sale proceeds are investing cash flows; depreciation is non-cash.
         self.assertEqual(direct_cash["opening"], Decimal("10000"))
