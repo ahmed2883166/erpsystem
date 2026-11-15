@@ -107,6 +107,21 @@ def index():
     connection = connect_database(DB_PATH)
     try:
         checks = collect_health_checks(connection)
+        # Hide links the current user cannot open; the health checks themselves remain read-only.
+        is_admin = session.get("role") == "admin"
+        can_reports = is_admin or "reports.view" in permissions
+        can_stock = is_admin or "stock.view" in permissions
+        can_purchases = is_admin or "purchases.view" in permissions
+        restricted_links = {
+            "journal_balance": can_reports,
+            "journal_empty": can_reports,
+            "negative_stock_layers": can_stock,
+            "stock_gl_review": can_stock,
+            "purchase_integrity": can_purchases,
+        }
+        for item in checks:
+            if item["key"] in restricted_links and not restricted_links[item["key"]]:
+                item["href"] = None
         audit_count = 0
         if _has_table(connection, "audit_log"):
             audit_count = connection.execute(
