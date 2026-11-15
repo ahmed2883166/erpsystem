@@ -380,6 +380,8 @@ def initialize_database():
     connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at,id)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user_action ON audit_log(user_id,action,created_at)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_request_id ON audit_log(request_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_entity_created ON audit_log(entity_type,created_at,id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_outcome_created ON audit_log(outcome,created_at,id)")
     connection.executescript("""
         CREATE TRIGGER IF NOT EXISTS audit_log_block_update
         BEFORE UPDATE ON audit_log
