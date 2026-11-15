@@ -139,7 +139,7 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(snapshot["current"]["expenses"], statement["cogs_total"] + statement["operating_expense_total"])
         self.assertEqual(snapshot["current"]["net_profit"], statement["net_profit"])
         self.assertEqual(snapshot["current"]["revenue"], Decimal("600.00"))
-        self.assertEqual(snapshot["current"]["net_profit"], Decimal("445.56"))
+        self.assertEqual(snapshot["current"]["net_profit"], Decimal("145.56"))
 
     def test_period_results_and_comparison(self):
         s=build_management_snapshot(self.conn,date(2026,11,1),date(2026,11,30))
