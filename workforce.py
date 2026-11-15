@@ -1593,6 +1593,27 @@ def delete_payroll_run(run_id):
         line_ids=[int(x["id"]) for x in c.execute("SELECT id FROM payroll_lines WHERE run_id=?", (run_id,)).fetchall()]
         if line_ids:
             marks=",".join("?" for _ in line_ids)
+            allocations=c.execute("""SELECT a.amount,i.id AS installment_id,i.due_amount,
+                    i.paid_amount,i.loan_id
+                FROM payroll_loan_allocations a
+                JOIN employee_loan_installments i ON i.id=a.installment_id
+                WHERE a.payroll_line_id IN ("""+marks+")", line_ids).fetchall()
+            affected_loans=set()
+            for allocation in allocations:
+                restored=max(Decimal("0"),D(allocation["paid_amount"])-D(allocation["amount"]))
+                c.execute("UPDATE employee_loan_installments SET paid_amount=?,status=? WHERE id=?",
+                          (str(M(restored)),"paid" if restored>=D(allocation["due_amount"]) else "pending",
+                           allocation["installment_id"]))
+                affected_loans.add(int(allocation["loan_id"]))
+            for loan_id in affected_loans:
+                loan=c.execute("SELECT approved_amount FROM employee_loans WHERE id=?",(loan_id,)).fetchone()
+                if loan:
+                    paid_total=M(sum((D(x["paid_amount"]) for x in c.execute(
+                        "SELECT paid_amount FROM employee_loan_installments WHERE loan_id=?",(loan_id,)).fetchall()),
+                        Decimal("0")))
+                    balance=M(max(Decimal("0"),D(loan["approved_amount"])-paid_total))
+                    c.execute("UPDATE employee_loans SET remaining_balance=?,status=? WHERE id=?",
+                              (str(balance),"closed" if balance<=0 else "active",loan_id))
             c.execute("DELETE FROM payroll_loan_allocations WHERE payroll_line_id IN ("+marks+")", line_ids)
         for dependent_table in ("payroll_line_items","payroll_payment_allocations"):
             if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(dependent_table,)).fetchone():
