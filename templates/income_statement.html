@@ -22,7 +22,7 @@
 <section class="panel">
   <div class="report-title">
     <h3>قائمة الدخل</h3>
-    <p>{{ date_from }} — {{ date_to }}{% if comparison %} | مقارنة مع {{ compare_date_from }} — {{ compare_date_to }}{% endif %}</p>
+    <p>{{ date_from }} — {{ date_to }}{% if comparison %} | مقارنة مع {{ compare_date_from }} — {{ compare_date_to }}{% endif %}</p><p class="muted">يمكنك الضغط على كود أو اسم أي حساب لفتح دفتر الأستاذ بحركات الحساب داخل نفس الفترة. {% if compare_mode == "previous_year" %}المقارنة مع نفس الفترة من العام السابق.{% elif compare_mode == "previous_period" %}المقارنة مع الفترة السابقة المماثلة في عدد الأيام.{% else %}تم إيقاف المقارنة وعرض الفترة الحالية فقط.{% endif %}</p>
   </div>
 
   <h3>أولًا: الإيرادات</h3>
@@ -31,7 +31,7 @@
     <tbody>
     {% for row in revenue_rows %}
       {% if row.debit or row.credit or (comparison and row.previous_balance) %}
-      <tr><td>{{ row.code }}</td><td>{{ row.name_ar }}</td><td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.balance|money }}</td>{% if comparison %}<td>{{ row.previous_balance|money }}</td><td>{{ row.variance|money }}</td><td>{% if row.variance_percent is not none %}{{ row.variance_percent|money }}%{% else %}—{% endif %}</td>{% endif %}</tr>
+      <tr><td>{% if row.id is number %}<a href="{{ url_for('ledger', account_id=row.id, date_from=date_from, date_to=date_to) }}" title="عرض حركة الحساب في دفتر الأستاذ">{{ row.code }}</a>{% else %}{{ row.code }}{% endif %}</td><td>{% if row.id is number %}<a href="{{ url_for('ledger', account_id=row.id, date_from=date_from, date_to=date_to) }}" title="فتح دفتر الأستاذ للحساب">{{ row.name_ar }} ↗</a>{% else %}{{ row.name_ar }}{% endif %}</td><td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.balance|money }}</td>{% if comparison %}<td>{{ row.previous_balance|money }}</td><td>{{ row.variance|money }}</td><td>{% if row.variance_percent is not none %}{{ row.variance_percent|money }}%{% else %}—{% endif %}</td>{% endif %}</tr>
       {% endif %}
     {% else %}<tr><td colspan="{{ 8 if comparison else 5 }}">لا توجد حركات إيرادات مرحلة خلال الفترة.</td></tr>{% endfor %}
     </tbody>
@@ -44,7 +44,7 @@
     <tbody>
     {% for row in cogs_rows %}
       {% if row.debit or row.credit or (comparison and row.previous_balance) %}
-      <tr><td>{{ row.code }}</td><td>{{ row.name_ar }}</td><td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.balance|money }}</td>{% if comparison %}<td>{{ row.previous_balance|money }}</td><td>{{ row.variance|money }}</td><td>{% if row.variance_percent is not none %}{{ row.variance_percent|money }}%{% else %}—{% endif %}</td>{% endif %}</tr>
+      <tr><td>{% if row.id is number %}<a href="{{ url_for('ledger', account_id=row.id, date_from=date_from, date_to=date_to) }}" title="عرض حركة الحساب في دفتر الأستاذ">{{ row.code }}</a>{% else %}{{ row.code }}{% endif %}</td><td>{% if row.id is number %}<a href="{{ url_for('ledger', account_id=row.id, date_from=date_from, date_to=date_to) }}" title="فتح دفتر الأستاذ للحساب">{{ row.name_ar }} ↗</a>{% else %}{{ row.name_ar }}{% endif %}</td><td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.balance|money }}</td>{% if comparison %}<td>{{ row.previous_balance|money }}</td><td>{{ row.variance|money }}</td><td>{% if row.variance_percent is not none %}{{ row.variance_percent|money }}%{% else %}—{% endif %}</td>{% endif %}</tr>
       {% endif %}
     {% else %}<tr><td colspan="{{ 8 if comparison else 5 }}">لا توجد حركات تكلفة مباشرة خلال الفترة.</td></tr>{% endfor %}
     </tbody>
@@ -63,7 +63,7 @@
     <tbody>
     {% for row in operating_expense_rows %}
       {% if row.debit or row.credit or (comparison and row.previous_balance) %}
-      <tr><td>{{ row.code }}</td><td>{{ row.name_ar }}</td><td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.balance|money }}</td>{% if comparison %}<td>{{ row.previous_balance|money }}</td><td>{{ row.variance|money }}</td><td>{% if row.variance_percent is not none %}{{ row.variance_percent|money }}%{% else %}—{% endif %}</td>{% endif %}</tr>
+      <tr><td>{% if row.id is number %}<a href="{{ url_for('ledger', account_id=row.id, date_from=date_from, date_to=date_to) }}" title="عرض حركة الحساب في دفتر الأستاذ">{{ row.code }}</a>{% else %}{{ row.code }}{% endif %}</td><td>{% if row.id is number %}<a href="{{ url_for('ledger', account_id=row.id, date_from=date_from, date_to=date_to) }}" title="فتح دفتر الأستاذ للحساب">{{ row.name_ar }} ↗</a>{% else %}{{ row.name_ar }}{% endif %}</td><td>{{ row.debit|money }}</td><td>{{ row.credit|money }}</td><td>{{ row.balance|money }}</td>{% if comparison %}<td>{{ row.previous_balance|money }}</td><td>{{ row.variance|money }}</td><td>{% if row.variance_percent is not none %}{{ row.variance_percent|money }}%{% else %}—{% endif %}</td>{% endif %}</tr>
       {% endif %}
     {% else %}<tr><td colspan="{{ 8 if comparison else 5 }}">لا توجد مصروفات تشغيلية أو إدارية خلال الفترة.</td></tr>{% endfor %}
     </tbody>
