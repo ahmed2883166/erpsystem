@@ -2722,10 +2722,13 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(Decimal(customer_after["credited_amount"]), Decimal("22.80"))
 
         # Inventory valuation layers and inventory control account must agree.
-        layer_value = sum((Decimal(row["value_remaining"]) for row in self.db.execute(
-            "SELECT value_remaining FROM stock_valuation_layers WHERE product_id=?",
-            (self.product_id,),
-        )), Decimal("0"))
+        layer_value = sum((
+            Decimal(row["qty_remaining"]) * Decimal(row["unit_cost"])
+            for row in self.db.execute(
+                "SELECT qty_remaining,unit_cost FROM stock_valuation_layers WHERE product_id=?",
+                (self.product_id,),
+            )
+        ), Decimal("0"))
         inventory_gl = Decimal(str(self.db.execute(
             """SELECT COALESCE(SUM(CAST(jl.debit AS NUMERIC)-CAST(jl.credit AS NUMERIC)),0)
                FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
