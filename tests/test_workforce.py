@@ -156,6 +156,42 @@ class WorkforceTests(unittest.TestCase):
         page = self.client.get("/hr/pay-items")
         self.assertEqual(page.status_code,200)
 
+    def test_pay_item_catalog_reuses_names_and_deduplicates_employee_assignments(self):
+        self.add_employee()
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours)
+            VALUES('E002','Employee Two','2026-01-01','8000','200')""")
+        conn.commit()
+        conn.close()
+
+        response = self.client.post("/hr/pay-items/catalog", data={
+            "name": "علاوة", "item_type": "allowance"
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        catalog_id = conn.execute("""SELECT id FROM employee_pay_item_catalog
+            WHERE name='علاوة' AND item_type='allowance'""").fetchone()[0]
+        conn.close()
+
+        for amount in ("500", "650"):
+            response = self.client.post("/hr/pay-items", data={
+                "item_catalog_id": str(catalog_id), "amount": amount,
+                "employee_ids": ["1", "1", "2"]
+            })
+            self.assertEqual(response.status_code, 302)
+
+        conn = sqlite3.connect(self.db_path)
+        rows = conn.execute("""SELECT employee_id,item_name,item_type,amount FROM employee_pay_items
+            WHERE item_name='علاوة' ORDER BY employee_id""").fetchall()
+        catalog_count = conn.execute("""SELECT COUNT(*) FROM employee_pay_item_catalog
+            WHERE name='علاوة' AND item_type='allowance'""").fetchone()[0]
+        conn.close()
+        self.assertEqual(rows, [
+            (1, "علاوة", "allowance", "650.00"),
+            (2, "علاوة", "allowance", "650.00"),
+        ])
+        self.assertEqual(catalog_count, 1)
+
     def test_loan_installment_can_be_deferred_without_reducing_employee_balance(self):
         self.add_employee()
         conn = sqlite3.connect(self.db_path)
