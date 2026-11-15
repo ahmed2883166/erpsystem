@@ -66,6 +66,14 @@ class WorkforceExtrasTests(unittest.TestCase):
             session["user_id"] = 1
             session["role"] = "accountant"
 
+    def post_as_user(self, path, data=None, user_id=2, follow_redirects=False):
+        with self.client.session_transaction() as session:
+            session["user_id"] = user_id
+        response = self.client.post(path, data=data or {}, follow_redirects=follow_redirects)
+        with self.client.session_transaction() as session:
+            session["user_id"] = 1
+        return response
+
     def tearDown(self):
         workforce.DB_PATH = self.original_path
         payroll_compliance.DB_PATH = self.original_compliance_path
@@ -248,7 +256,7 @@ class WorkforceExtrasTests(unittest.TestCase):
         conn.commit(); conn.close()
         self.assertEqual(grant,("1666.67","draft"))
         self.assertEqual(line,("10000.00","1666.67","0"))
-        approved=self.client.post("/hr/grants/1/approve",data={})
+        approved=self.post_as_user("/hr/grants/1/approve",data={})
         self.assertEqual(approved.status_code,302)
         conn=sqlite3.connect(self.db_path)
         journal=conn.execute("SELECT status FROM journal_entries WHERE reference='EMP-GRANT-1'").fetchone()
@@ -315,7 +323,9 @@ class WorkforceExtrasTests(unittest.TestCase):
         conn.close()
         self.assertEqual(batch, (1,"draft","1333.33"))
         self.assertEqual(line,("10000.00",2,"1333.33"))
-        posted=self.client.post("/hr/friday-allowance/1/post",data={})
+        approved=self.post_as_user("/hr/friday-allowance/1/approve",data={"reason":"تمت مراجعة كشف الحضور"})
+        self.assertEqual(approved.status_code,302)
+        posted=self.post_as_user("/hr/friday-allowance/1/post",data={})
         self.assertEqual(posted.status_code,302)
         conn=sqlite3.connect(self.db_path)
         status,journal_id=conn.execute("SELECT status,journal_entry_id FROM friday_allowance_batches WHERE id=1").fetchone()
@@ -346,7 +356,7 @@ class WorkforceExtrasTests(unittest.TestCase):
         forecast=list_cash_commitments_forecast(forecast_conn,"2026-11-01","2026-12-31")
         self.assertEqual(forecast[0]["balance"],Decimal("1333.33"))
         forecast_conn.close()
-        duplicate=self.client.post("/hr/friday-allowance/1/post",data={})
+        duplicate=self.post_as_user("/hr/friday-allowance/1/post",data={})
         self.assertEqual(duplicate.status_code,302)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries WHERE reference='FRIDAY-ALLOWANCE-2026-11'").fetchone()[0],1)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM cash_commitments WHERE origin_type='friday_allowance_batch' AND origin_id=1").fetchone()[0],1)
