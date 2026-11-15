@@ -1352,7 +1352,7 @@ def payroll():
                         raise_amount = proposed_raise
                     elif e["raise_mode"] == "allowance" and basic_salary == master_basic:
                         raise_amount = proposed_raise
-                if basic_salary <= 0:
+                if basic_salary <= 0 and e["work_status"] != "unpaid_leave":
                     raise ValueError("الراتب الأساسي للموظف " + e["full_name"] + " يجب أن يكون أكبر من صفر.")
                 monthly_basic_salary = basic_salary
                 payroll_days = 30
