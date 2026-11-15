@@ -179,6 +179,51 @@ class IncomeStatementRouteTests(unittest.TestCase):
         self.assertEqual(loss["balance"], Decimal("910"))
         self.assertEqual(loss["account_type"], "expense")
 
+    def test_asset_disposal_gains_and_losses_are_split_even_on_one_shared_account(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        register_decimal_aggregates(conn)
+        conn.execute(
+            "INSERT INTO accounts VALUES(6,'4710','أرباح وخسائر استبعاد أصول','revenue',0,1)"
+        )
+        conn.executescript("""
+            ALTER TABLE journal_entries ADD COLUMN reference TEXT;
+            CREATE TABLE asset_disposals(
+                id INTEGER PRIMARY KEY, disposal_date TEXT,
+                gain_loss_account_id INTEGER, gain_loss_amount TEXT,
+                journal_entry_id INTEGER
+            );
+            INSERT INTO journal_entries(id,entry_date,status,entry_type,reference) VALUES
+                (11,'2026-11-13','posted','general','ASSET-DISPOSAL-1'),
+                (12,'2026-11-14','posted','general','ASSET-DISPOSAL-2'),
+                (13,'2026-11-15','posted','general','OTHER-REVENUE');
+            INSERT INTO journal_lines(id,entry_id,account_id,debit,credit) VALUES
+                (15,11,6,'100','0'),
+                (16,12,6,'0','300'),
+                (17,13,6,'0','50');
+            INSERT INTO asset_disposals VALUES
+                (1,'2026-11-13',6,'-100',11),
+                (2,'2026-11-14',6,'300',12);
+        """)
+        snapshot = build_income_statement(conn, "2026-11-01", "2026-11-30")
+        conn.close()
+
+        self.assertEqual(snapshot["revenue_total"], Decimal("1250"))
+        self.assertEqual(snapshot["cogs_total"], Decimal("200"))
+        self.assertEqual(snapshot["gross_profit"], Decimal("1050"))
+        self.assertEqual(snapshot["operating_expense_total"], Decimal("350"))
+        self.assertEqual(snapshot["net_profit"], Decimal("700"))
+        self.assertTrue(any(
+            row["name_ar"].startswith("ربح استبعاد أصل")
+            and row["balance"] == Decimal("300")
+            for row in snapshot["revenue_rows"]
+        ))
+        self.assertTrue(any(
+            row["name_ar"].startswith("خسارة استبعاد أصل")
+            and row["balance"] == Decimal("100")
+            for row in snapshot["operating_expense_rows"]
+        ))
+
     def test_income_statement_compares_with_same_period_previous_year(self):
         response = self.client.get(
             "/reports/income-statement?date_from=2026-11-01&date_to=2026-11-30&compare=previous_year"
