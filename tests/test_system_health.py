@@ -124,6 +124,47 @@ class SystemHealthTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_reports_backup_failure_and_recent_login_activity(self):
+        self.connection.executescript("""
+            CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL);
+            INSERT INTO company_settings VALUES('backup_enabled','1');
+            INSERT INTO company_settings VALUES('backup_last_status','failed');
+            INSERT INTO company_settings VALUES('backup_last_error','disk unavailable');
+            CREATE TABLE login_attempts(
+                id INTEGER PRIMARY KEY, username TEXT, remote_addr TEXT, attempted_at TEXT
+            );
+            INSERT INTO login_attempts(username,remote_addr,attempted_at)
+                VALUES('operator','192.0.2.10',datetime('now'));
+        """)
+        with self.app.test_request_context("/system/health"):
+            checks = system_health.collect_health_checks(self.connection)
+        by_key = {item["key"]: item for item in checks}
+        self.assertEqual(by_key["backup_readiness"]["severity"], "critical")
+        self.assertIn("disk unavailable", by_key["backup_readiness"]["detail"])
+        self.assertEqual(by_key["recent_login_attempts"]["count"], 1)
+        self.assertEqual(by_key["recent_login_attempts"]["severity"], "info")
+
+    def test_reports_pending_approvals_without_approving_them(self):
+        self.connection.execute("""
+            CREATE TABLE approval_requests(
+                id INTEGER PRIMARY KEY, status TEXT NOT NULL
+            )
+        """)
+        self.connection.executemany(
+            "INSERT INTO approval_requests(status) VALUES(?)",
+            [("pending",), ("approved",), ("requested",)],
+        )
+        self.connection.commit()
+        with self.app.test_request_context("/system/health"):
+            checks = system_health.collect_health_checks(self.connection)
+        pending = next(item for item in checks if item["key"] == "pending_approvals")
+        self.assertEqual(pending["count"], 2)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM approval_requests WHERE status IN ('pending','requested')"
+            ).fetchone()[0], 2
+        )
+
     def test_health_scan_is_read_only(self):
         tables = (
             "journal_entries", "journal_lines", "sales_invoices",
