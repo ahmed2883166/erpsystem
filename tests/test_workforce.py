@@ -85,11 +85,20 @@ class WorkforceTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             session["user_id"] = 1
             session["role"] = "accountant"
+            session["user_id"] = 1
 
     def tearDown(self):
         workforce.DB_PATH = self.original_path
         payroll_compliance.DB_PATH = self.original_compliance_path
         self.temp.cleanup()
+
+    def post_as_user(self, path, data=None, user_id=2, follow_redirects=False):
+        with self.client.session_transaction() as session:
+            session["user_id"] = user_id
+        response = self.client.post(path, data=data or {}, follow_redirects=follow_redirects)
+        with self.client.session_transaction() as session:
+            session["user_id"] = 1
+        return response
 
     def add_employee(self):
         conn = sqlite3.connect(self.db_path)
@@ -111,6 +120,7 @@ class WorkforceTests(unittest.TestCase):
             return
         with self.client.session_transaction() as session:
             session["role"] = "admin"
+            session["user_id"] = 2
         for line_id in line_ids:
             self.client.post(
                 f"/hr/payroll/{run_id}/salary-approval/{line_id}",
@@ -276,7 +286,7 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         self.client.post("/hr/loans",data={"employee_id":"1","requested_amount":"300",
             "installment_count":"1","first_due_period":"2026-11"})
-        self.client.post("/hr/loans/1/approve",data={"approved_amount":"300",
+        self.post_as_user("/hr/loans/1/approve",data={"approved_amount":"300",
             "installment_count":"1","first_due_period":"2026-11"})
         self.client.post("/hr/loans/1/disburse",data={"cash_account_id":"1","loan_account_id":"8",
             "disbursement_date":"2026-11-01"})
@@ -371,7 +381,7 @@ class WorkforceTests(unittest.TestCase):
         # amounts must remain unchanged and no statutory rule is snapshotted.
         self.assertEqual(manual_values, ("12000.00", "1000.00", "500.00", "300.00", "400.00", None))
         self.approve_pending_salary_changes(1)
-        response = self.client.post("/hr/payroll/1/post", data={
+        response = self.post_as_user("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
             "insurance_payable_account": "7", "advances_account": "2",
@@ -419,7 +429,7 @@ class WorkforceTests(unittest.TestCase):
             return connection
 
         with patch.object(workforce, "_db", side_effect=traced_db):
-            response = self.client.post("/hr/payroll/1/post", data={
+            response = self.post_as_user("/hr/payroll/1/post", data={
                 "salary_expense_account": "4", "employer_ins_expense_account": "3",
                 "salaries_payable_account": "5", "tax_payable_account": "6",
                 "insurance_payable_account": "7", "advances_account": "2",
@@ -447,7 +457,7 @@ class WorkforceTests(unittest.TestCase):
             "employee_ins_1": "300", "employer_ins_1": "400"
         })
         self.approve_pending_salary_changes(1)
-        self.client.post("/hr/payroll/1/post", data={
+        self.post_as_user("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
             "insurance_payable_account": "7", "advances_account": "2",
@@ -489,7 +499,7 @@ class WorkforceTests(unittest.TestCase):
             "employee_ins_1":"0","employer_ins_1":"0"
         })
         self.approve_pending_salary_changes(1)
-        self.client.post("/hr/payroll/1/post", data={
+        self.post_as_user("/hr/payroll/1/post", data={
             "salary_expense_account":"4","employer_ins_expense_account":"3",
             "salaries_payable_account":"5","tax_payable_account":"6",
             "insurance_payable_account":"7","advances_account":"2",
@@ -516,7 +526,7 @@ class WorkforceTests(unittest.TestCase):
         conn=sqlite3.connect(self.db_path)
         self.assertEqual(conn.execute("SELECT status FROM employee_loans").fetchone()[0],"requested")
         conn.close()
-        self.client.post("/hr/loans/1/approve",data={"approved_amount":"1000",
+        self.post_as_user("/hr/loans/1/approve",data={"approved_amount":"1000",
             "installment_count":"3","first_due_period":"2026-11"})
         self.client.post("/hr/loans/1/disburse",data={"cash_account_id":"1","loan_account_id":"8","disbursement_date":"2026-11-01"})
         conn=sqlite3.connect(self.db_path)
@@ -634,7 +644,7 @@ class WorkforceTests(unittest.TestCase):
             "employer_ins_1":"0"
         })
         self.approve_pending_salary_changes(1)
-        self.client.post("/hr/payroll/1/post", data={
+        self.post_as_user("/hr/payroll/1/post", data={
             "salary_expense_account":"4","employer_ins_expense_account":"3",
             "salaries_payable_account":"5","tax_payable_account":"6",
             "insurance_payable_account":"7","advances_account":"2",
@@ -655,7 +665,7 @@ class WorkforceTests(unittest.TestCase):
             "employer_ins_1":"0"
         })
         self.approve_pending_salary_changes(1)
-        self.client.post("/hr/payroll/1/post", data={
+        self.post_as_user("/hr/payroll/1/post", data={
             "salary_expense_account":"4","employer_ins_expense_account":"3",
             "salaries_payable_account":"5","tax_payable_account":"6",
             "insurance_payable_account":"7","advances_account":"2",
@@ -683,7 +693,7 @@ class WorkforceTests(unittest.TestCase):
             "employer_ins_1":"0"
         })
         self.approve_pending_salary_changes(1)
-        self.client.post("/hr/payroll/1/post", data={
+        self.post_as_user("/hr/payroll/1/post", data={
             "salary_expense_account":"4","employer_ins_expense_account":"3",
             "salaries_payable_account":"5","tax_payable_account":"6",
             "insurance_payable_account":"7","advances_account":"2",
@@ -805,7 +815,7 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         self.assertEqual(totals, (21750, 20200))
         self.approve_pending_salary_changes(1)
-        response = self.client.post("/hr/payroll/1/post", data={
+        response = self.post_as_user("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
             "insurance_payable_account": "7", "advances_account": "2",
@@ -928,7 +938,7 @@ class WorkforceTests(unittest.TestCase):
             "tax_1": "0", "employee_ins_1": "0", "employer_ins_1": "0"
         })
         self.approve_pending_salary_changes(1)
-        response = self.client.post("/hr/payroll/1/post", data={
+        response = self.post_as_user("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
             "insurance_payable_account": "7", "advances_account": "2",
@@ -1271,7 +1281,7 @@ class WorkforceTests(unittest.TestCase):
         printed=self.client.get("/hr/end-of-service/1/print")
         self.assertEqual(printed.status_code,200)
         self.assertIn("EOS-E001-20261115",printed.get_data(as_text=True))
-        approved=self.client.post("/hr/end-of-service/1/approve",data={
+        approved=self.post_as_user("/hr/end-of-service/1/approve",data={
             "expense_account_id":"4","payable_account_id":"5","stamp_payable_account_id":"6"
         })
         self.assertEqual(approved.status_code,302)
@@ -1321,7 +1331,7 @@ if __name__ == "__main__":
             "grant_date":"2026-11-15", "employee_scope":"permanent", "employee_ids":["1"]
         })
         self.assertEqual(response.status_code, 302)
-        response = self.client.post("/hr/grants/1/approve", follow_redirects=True)
+        response = self.post_as_user("/hr/grants/1/approve", follow_redirects=True)
         self.assertEqual(response.status_code, 200)
         conn = sqlite3.connect(self.db_path)
         state = conn.execute("SELECT status,journal_entry_id FROM employee_grants WHERE id=1").fetchone()
@@ -1331,7 +1341,7 @@ if __name__ == "__main__":
         self.assertIsNotNone(state[1])
         self.assertEqual(journal_count, 1)
 
-        response = self.client.post("/hr/grants/1/approve", follow_redirects=True)
+        response = self.post_as_user("/hr/grants/1/approve", follow_redirects=True)
         self.assertEqual(response.status_code, 200)
         self.assertIn("سبق اعتمادها", response.get_data(as_text=True))
         conn = sqlite3.connect(self.db_path)
