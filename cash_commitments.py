@@ -160,7 +160,7 @@ def list_cash_commitments_forecast(conn, as_of, end_date):
         return []
     rows = conn.execute(
         """SELECT c.* FROM cash_commitments c
-           WHERE c.status IN ('open','partially_paid')
+           WHERE c.status!='void'
              AND c.due_date>=? AND c.due_date<=?
            ORDER BY c.due_date,c.id""",
         (as_of,end_date),
