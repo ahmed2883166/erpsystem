@@ -100,6 +100,21 @@ class ManagementReportsTests(unittest.TestCase):
         self.assertTrue(all(row["last_movement_date"] == "2026-11-10" for row in report["rows"]))
         self.assertTrue(all(row["slow_moving"] is False for row in report["rows"]))
 
+    def test_missing_movement_table_does_not_claim_stock_is_slow_moving(self):
+        self.conn.execute("DROP TABLE stock_movements")
+        self.conn.execute(
+            """INSERT INTO stock_valuation_layers
+               (id,product_id,warehouse_id,source_movement_id,lot_id,
+                qty_remaining,unit_cost,created_at)
+               VALUES(20,1,1,NULL,NULL,'4','15','2026-01-01 08:00:00')"""
+        )
+        report = build_inventory_ageing(self.conn, "2026-11-15")
+        self.assertIsNone(report["rows"][0]["slow_moving"])
+        self.assertEqual(
+            report["rows"][0]["slow_moving_status"],
+            "لا توجد بيانات حركات كافية للتصنيف",
+        )
+
     def test_inventory_ageing_values_remaining_layers_by_age(self):
         old_date = (date(2026, 11, 15) - timedelta(days=100)).isoformat()
         recent_date = (date(2026, 11, 15) - timedelta(days=10)).isoformat()
