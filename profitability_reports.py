@@ -317,11 +317,13 @@ def build_profitability_report(conn, date_from, date_to):
             if row:
                 activity = dict(row)
     return {
-        "branches": branches, "cost_centers": cost_centers, "warehouses": warehouses,\n        "products": products,
+        "branches": branches, "cost_centers": cost_centers, "warehouses": warehouses,
+        "products": products,
         "availability": {
             "branches": branch_available,
             "cost_centers": cost_center_available,
-            "warehouses": warehouse_available,\n            "products": products_available,
+            "warehouses": warehouse_available,
+            "products": products_available,
         },
         "active_activity": activity,
         "date_from": date_from, "date_to": date_to,
