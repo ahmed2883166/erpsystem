@@ -10,6 +10,7 @@ from werkzeug.datastructures import FileStorage
 import workforce
 import workforce_extras
 import payroll_compliance
+from cash_commitments import initialize_cash_commitments_schema
 
 
 class WorkforceExtrasTests(unittest.TestCase):
@@ -31,6 +32,7 @@ class WorkforceExtrasTests(unittest.TestCase):
             CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT NOT NULL);
             INSERT INTO company_settings VALUES('tax_country','EG');
         """)
+        initialize_cash_commitments_schema(conn)
         conn.commit()
         conn.close()
         workforce.initialize_workforce_schema()
@@ -313,10 +315,15 @@ class WorkforceExtrasTests(unittest.TestCase):
         self.assertEqual(status,"posted")
         self.assertEqual(journal,("FRIDAY-ALLOWANCE-2026-11","posted","2026-11-30"))
         self.assertEqual(journal_lines,[(2,"1333.33","0.00"),(3,"0.00","1333.33")])
+        conn=sqlite3.connect(self.db_path)
+        commitment=conn.execute("""SELECT commitment_type,title,amount,due_date,origin_type,origin_id,payable_account_id
+            FROM cash_commitments""").fetchone()
+        self.assertEqual(commitment,("friday_overtime","بدل الجمعة - 2026-11","1333.33",
+            "2026-11-30","friday_allowance_batch",1,3))
         duplicate=self.client.post("/hr/friday-allowance/1/post",data={})
         self.assertEqual(duplicate.status_code,302)
-        conn=sqlite3.connect(self.db_path)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries WHERE reference='FRIDAY-ALLOWANCE-2026-11'").fetchone()[0],1)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM cash_commitments WHERE origin_type='friday_allowance_batch' AND origin_id=1").fetchone()[0],1)
         conn.close()
 
 
