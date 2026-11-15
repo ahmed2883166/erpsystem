@@ -1533,12 +1533,6 @@ if __name__ == "__main__":
         conn.row_factory = sqlite3.Row
         # General-ledger and trial-balance totals are sourced from the actual
         # posted journal lines, not from payroll input totals.
-        journal_totals = conn.execute("""
-            SELECT DECIMAL_SUM(debit) AS debit_total,
-                   DECIMAL_SUM(credit) AS credit_total
-            FROM journal_lines
-            WHERE entry_id=(SELECT journal_entry_id FROM payroll_runs WHERE id=1)
-        """)
         # Register the same exact-decimal aggregate used by financial reports.
         from accounting_core import register_decimal_aggregates
         register_decimal_aggregates(conn)
