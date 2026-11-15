@@ -95,6 +95,7 @@ def initialize_workforce_schema():
       absent_hours TEXT NOT NULL, absence_deduction TEXT NOT NULL, other_deductions TEXT NOT NULL,
       taxable_income_tax TEXT NOT NULL, employee_insurance TEXT NOT NULL,
       employer_insurance TEXT NOT NULL, gross_pay TEXT NOT NULL, net_pay TEXT NOT NULL,
+      stamp_duty TEXT NOT NULL DEFAULT '0',
       incentives TEXT NOT NULL DEFAULT '0', advance_deduction TEXT NOT NULL DEFAULT '0',
       penalty_deduction TEXT NOT NULL DEFAULT '0',
       total_entitlements TEXT NOT NULL DEFAULT '0', total_deductions TEXT NOT NULL DEFAULT '0',
@@ -323,6 +324,7 @@ def initialize_workforce_schema():
     payroll_cols = {r["name"] for r in c.execute("PRAGMA table_info(payroll_lines)")}
     for name, definition in {
         "loan_deduction": "TEXT NOT NULL DEFAULT '0'",
+        "stamp_duty": "TEXT NOT NULL DEFAULT '0'",
         "incentives": "TEXT NOT NULL DEFAULT '0'",
         "advance_deduction": "TEXT NOT NULL DEFAULT '0'",
         "penalty_deduction": "TEXT NOT NULL DEFAULT '0'",
@@ -1236,14 +1238,14 @@ def payroll():
                     raise ValueError("لا يمكن أن تكون الأجور أو الساعات أو الاستقطاعات أو صافي المرتب سالبة.")
                 c.execute("""INSERT INTO payroll_lines(run_id,employee_id,basic_salary,allowances,overtime_hours,
                     overtime_amount,absent_hours,absence_deduction,other_deductions,taxable_income_tax,
-                    employee_insurance,employer_insurance,gross_pay,net_pay,rule_set_id,taxable_annual,insured_wage,
+                    employee_insurance,employer_insurance,gross_pay,net_pay,stamp_duty,rule_set_id,taxable_annual,insured_wage,
                     incentives,advance_deduction,loan_deduction,total_entitlements,total_deductions,salary_raise,
                     overtime_rate_percent,incentive_rule_id,incentive_name,incentive_days,incentive_method,
                     overtime_calculated_amount,overtime_manual_override,overtime_override_reason)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (run_id,e["id"],str(basic_salary),str(allowances),str(overtime_hours),str(overtime_amount),
                      str(absent_hours),str(absence),str(other_deductions),str(tax),str(emp_ins),
-                     str(employer_ins),str(gross),str(net),
+                     str(employer_ins),str(gross),str(net),str(stamp_duty),
                      rule_set_id, str(taxable_annual), str(insured_wage),
                      str(incentives),str(advance_deduction),str(loan_deduction),str(total_entitlements),str(total_deductions),
                      str(raise_amount),str(overtime_rate),None,"",
