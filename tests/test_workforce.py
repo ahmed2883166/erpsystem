@@ -130,6 +130,48 @@ class WorkforceTests(unittest.TestCase):
             session["user_id"] = 1
 
     
+    def test_final_payroll_requires_independent_approval_and_payment(self):
+        self.add_employee()
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO employee_final_payrolls(
+            final_payroll_no,employee_id,period,termination_date,days_worked,
+            basic_salary_snapshot,allowances_snapshot,gross_pay,tax_deduction,
+            employee_insurance,employer_insurance,stamp_duty,other_deductions,net_pay,created_by
+        ) VALUES('FP-APPROVAL',1,'2026-11','2026-11-15',15,'10000','0','10000',
+                 '0','0','0','0','0','10000',1)""")
+        conn.commit()
+        conn.close()
+
+        approved = self.post_as_user("/hr/final-payroll/1/approve", data={
+            "salary_expense_account":"4", "employer_ins_expense_account":"3",
+            "salaries_payable_account":"5", "tax_payable_account":"6",
+            "insurance_payable_account":"7", "other_deductions_account":"2",
+        })
+        self.assertEqual(approved.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        status, approved_by, journal_id = conn.execute(
+            "SELECT status,approved_by,journal_entry_id FROM employee_final_payrolls WHERE id=1"
+        ).fetchone()
+        conn.close()
+        self.assertEqual(status, "approved")
+        self.assertEqual(approved_by, 2)
+        self.assertIsNotNone(journal_id)
+
+        blocked = self.post_as_user("/hr/final-payroll/1/pay", data={
+            "payment_date":"2026-11-20","amount":"10000","cash_account_id":"1"
+        })
+        self.assertIn("مختلف عن معتمد المرتب النهائي", blocked.get_data(as_text=True))
+        paid = self.client.post("/hr/final-payroll/1/pay", data={
+            "payment_date":"2026-11-20","amount":"10000","cash_account_id":"1"
+        })
+        self.assertEqual(paid.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        state = conn.execute(
+            "SELECT status FROM employee_final_payrolls WHERE id=1"
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(state, "paid")
+
     def test_workforce_approval_actions_block_their_own_creator(self):
         self.add_employee()
         conn = sqlite3.connect(self.db_path)
