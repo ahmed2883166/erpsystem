@@ -102,5 +102,24 @@ class StockReconciliationReportTests(unittest.TestCase):
         self.assertEqual(report["rows"][0]["status"], "review")
 
 
+    def test_reconciliation_excludes_copied_opening_entry_from_inventory_gl(self):
+        self.conn.execute("ALTER TABLE journal_entries ADD COLUMN entry_date TEXT")
+        self.conn.execute("UPDATE journal_entries SET entry_date='2026-12-31' WHERE id=1")
+        self.conn.execute("UPDATE journal_entries SET entry_date='2027-01-01' WHERE id=2")
+        self.conn.executescript("""
+            CREATE TABLE financial_years(id INTEGER PRIMARY KEY,year_name TEXT,start_date TEXT,end_date TEXT,status TEXT,opening_entry_id INTEGER);
+            CREATE TABLE financial_year_journal_history(id INTEGER PRIMARY KEY,financial_year_id INTEGER,entry_kind TEXT,action TEXT,entry_id INTEGER,related_entry_id INTEGER);
+            INSERT INTO financial_years VALUES(1,'2027','2027-01-01','2027-12-31','open',2);
+            INSERT INTO financial_year_journal_history(financial_year_id,entry_kind,action,entry_id)
+              VALUES(1,'opening','created',2);
+        """)
+        self.conn.execute("""INSERT INTO journal_lines(id,entry_id,account_id,debit,credit)
+            VALUES(10,1,1,'100','0'),(11,2,1,'100','0')""")
+        report=self.run_report()
+        self.assertEqual(report["total_valuation"],Decimal("100"))
+        self.assertEqual(report["total_ledger"],Decimal("100"))
+        self.assertEqual(report["total_difference"],Decimal("0"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1664,11 +1664,15 @@ def valuation_reconciliation():
             raise ValueError("دفتر الأستاذ غير مهيأ؛ لا يمكن إجراء المطابقة.")
         journal_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")}
         has_stock_dimensions = {"stock_product_id", "stock_warehouse_id"}.issubset(journal_columns)
-        gl_rows = conn.execute("""SELECT a.code,jl.debit,jl.credit
+        from management_dashboard import _copied_opening_entry_ids
+        copied_openings=sorted(_copied_opening_entry_ids(conn,date.today().isoformat()))
+        opening_exclusion=(" AND je.id NOT IN ("+",".join("?" for _ in copied_openings)+")") if copied_openings else ""
+        gl_rows = conn.execute(f"""SELECT a.code,jl.debit,jl.credit
             FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
             JOIN accounts a ON a.id=jl.account_id
-            WHERE je.status='posted' AND a.code IN (%s)""" %
-            ",".join("?" for _ in inventory_codes), tuple(sorted(inventory_codes))).fetchall()
+            WHERE je.status='posted' AND a.code IN (%s){opening_exclusion}""" %
+            ",".join("?" for _ in inventory_codes),
+            (*tuple(sorted(inventory_codes)),*copied_openings)).fetchall()
         for row in gl_rows:
             gl_by_account[row["code"]] += D(str(row["debit"] or "0")) - D(str(row["credit"] or "0"))
 
@@ -1679,9 +1683,10 @@ def valuation_reconciliation():
                     jl.debit,jl.credit
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                 JOIN accounts a ON a.id=jl.account_id
-                WHERE je.status='posted' AND a.code IN (%s)
+                WHERE je.status='posted' AND a.code IN (%s){opening_exclusion}
                   AND jl.stock_product_id IS NOT NULL AND jl.stock_warehouse_id IS NOT NULL""" %
-                ",".join("?" for _ in inventory_codes), tuple(sorted(inventory_codes))).fetchall()
+                ",".join("?" for _ in inventory_codes),
+                (*tuple(sorted(inventory_codes)),*copied_openings)).fetchall()
             for line in tagged_rows:
                 balance = D(str(line["debit"] or "0")) - D(str(line["credit"] or "0"))
                 key = (line["code"], int(line["stock_product_id"]), int(line["stock_warehouse_id"]))
