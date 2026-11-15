@@ -49,6 +49,7 @@ from income_statement import (build_income_statement, normalize_income_statement
                                closing_entries_exclusion_sql)
 from profitability_reports import build_profitability_report
 from management_reports import build_period_comparison, build_inventory_ageing, build_cash_forecast
+from decision_simulator import simulate_decision
 from cash_commitments import (initialize_cash_commitments_schema, create_cash_commitment,
                               record_cash_commitment_payment, void_cash_commitment, create_recurring_schedule,
                               generate_recurring_schedule_occurrences, deactivate_recurring_schedule,
@@ -2819,6 +2820,46 @@ def cash_commitments_register():
                                can_manage="cash_commitments.manage" in session.get("permissions", []))
     finally:
         connection.close()
+
+
+@app.route("/reports/decision-simulator", methods=["GET", "POST"])
+@requires("reports.view")
+def decision_simulator_report():
+    today = date.today()
+    default_start, default_end = today.replace(day=1), today
+    raw_start = request.values.get("date_from", "").strip()
+    raw_end = request.values.get("date_to", "").strip()
+    try:
+        start = date.fromisoformat(raw_start) if raw_start else default_start
+        end = date.fromisoformat(raw_end) if raw_end else default_end
+        if end < start:
+            raise ValueError("الفترة غير صحيحة.")
+    except ValueError:
+        flash("فترة المحاكاة غير صحيحة؛ تم استخدام الشهر الحالي.", "error")
+        start, end = default_start, default_end
+
+    field_names = (
+        "sales_volume_change_pct", "selling_price_change_pct",
+        "unit_cost_change_pct", "operating_expense_change_pct",
+        "additional_operating_expense",
+    )
+    defaults = {name: "0" for name in field_names}
+    values = {name: request.values.get(name, defaults[name]).strip() for name in field_names}
+    connection = db()
+    try:
+        statement = build_income_statement(connection, start.isoformat(), end.isoformat())
+        scenario = None
+        if request.method == "POST":
+            try:
+                scenario = simulate_decision(statement, **values)
+            except ValueError as exc:
+                flash(str(exc), "error")
+    finally:
+        connection.close()
+    return render_template(
+        "decision_simulator.html", statement=statement, scenario=scenario,
+        values=values, date_from=start.isoformat(), date_to=end.isoformat(),
+    )
 
 
 @app.route("/reports/cash-forecast")
