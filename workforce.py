@@ -1578,13 +1578,16 @@ def approve_final_payroll(final_id):
         expected = [
             (salary_expense, "expense"), (employer_expense, "expense"),
             (salaries_payable, "liability"), (tax_payable, "liability"),
-            (insurance_payable, "liability"), (other_account, "liability"),
+            (insurance_payable, "liability"),
         ]
         for account_id, account_type in expected:
             account = c.execute("""SELECT id,account_type,is_group,active FROM accounts
                 WHERE id=?""", (account_id,)).fetchone()
             if not account or not account["active"] or account["is_group"] or account["account_type"] != account_type:
                 raise ValueError("راجع الحسابات المختارة؛ يجب أن تكون تفصيلية ونشطة وبطبيعة الحساب المطلوبة.")
+        other_row = c.execute("SELECT id,is_group,active FROM accounts WHERE id=?", (other_account,)).fetchone()
+        if not other_row or not other_row["active"] or other_row["is_group"]:
+            raise ValueError("اختر حسابًا تفصيليًا ونشطًا مقابلًا للاستقطاعات الأخرى.")
         gross = M(row["gross_pay"])
         employer_ins = M(row["employer_insurance"])
         net = M(row["net_pay"])
