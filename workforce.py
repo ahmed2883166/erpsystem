@@ -529,14 +529,20 @@ def initialize_workforce_schema():
     c.close()
 
 
-def _role(*roles):
+def _role(*roles, permission=None):
     def deco(fn):
         @wraps(fn)
         def wrapped(*args, **kwargs):
             if "user_id" not in session:
                 return redirect(url_for("login"))
-            required = "workforce.manage" if request.method == "POST" else "workforce.view"
-            if (required not in set(session["permissions"])) if "permissions" in session else (session.get("role") not in roles):
+            required = permission if request.method == "POST" and permission else (
+                "workforce.manage" if request.method == "POST" else "workforce.view"
+            )
+            if "permissions" in session:
+                allowed = required in set(session["permissions"])
+            else:
+                allowed = session.get("role") in roles
+            if not allowed:
                 flash("لا تملك صلاحية تنفيذ هذه العملية.", "error")
                 return redirect(url_for("dashboard"))
             return fn(*args, **kwargs)
@@ -2045,7 +2051,7 @@ def reopen_final_payroll(final_id):
 
 
 @workforce_bp.route("/hr/final-payroll/<int:final_id>/approve", methods=["POST"])
-@_role("admin", "accountant")
+@_role("admin", "accountant", permission="workforce.approve")
 def approve_final_payroll(final_id):
     c = _db()
     try:
@@ -2213,7 +2219,7 @@ def save_payroll_settings():
 
 
 @workforce_bp.route("/hr/payroll/<int:run_id>/salary-approval/<int:line_id>", methods=["POST"])
-@_role("admin")
+@_role("admin", permission="workforce.approve")
 def approve_payroll_basic_salary_change(run_id, line_id):
     c = _db()
     if session.get("role") != "admin":
@@ -3171,7 +3177,7 @@ def employee_loans():
 
 
 @workforce_bp.route("/hr/loans/<int:loan_id>/approve", methods=["POST"])
-@_role("admin", "accountant")
+@_role("admin", "accountant", permission="workforce.approve")
 def approve_employee_loan(loan_id):
     c = _db()
     try:
@@ -3204,7 +3210,7 @@ def approve_employee_loan(loan_id):
 
 
 @workforce_bp.route("/hr/loans/<int:loan_id>/reject", methods=["POST"])
-@_role("admin", "accountant")
+@_role("admin", "accountant", permission="workforce.approve")
 def reject_employee_loan(loan_id):
     c = _db()
     try:
@@ -3503,7 +3509,7 @@ def delete_employee_grant(grant_id):
 
 
 @workforce_bp.route("/hr/grants/<int:grant_id>/approve", methods=["POST"])
-@_role("admin", "accountant")
+@_role("admin", "accountant", permission="workforce.approve")
 def approve_employee_grant(grant_id):
     c=_db()
     try:
@@ -3758,7 +3764,7 @@ def friday_allowance():
 
 
 @workforce_bp.route("/hr/friday-allowance/<int:batch_id>/approve", methods=["POST"])
-@_role("admin", "accountant")
+@_role("admin", "accountant", permission="workforce.approve")
 def approve_friday_allowance(batch_id):
     c = _db()
     try:
@@ -4374,7 +4380,7 @@ def delete_end_of_service_draft(settlement_id):
 
 
 @workforce_bp.route("/hr/end-of-service/<int:settlement_id>/approve", methods=["POST"])
-@_role("admin", "accountant")
+@_role("admin", "accountant", permission="workforce.approve")
 def approve_end_of_service(settlement_id):
     c=_db()
     try:
