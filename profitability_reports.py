@@ -37,6 +37,12 @@ def _grouped_gl_profitability(conn, date_from, date_to, dimension):
     account_columns = _columns(conn, "accounts")
     section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
     closing_filter = closing_entries_exclusion_sql(conn)
+    direct_cost_role = (
+        "EXISTS(SELECT 1 FROM management_account_roles mar "
+        "WHERE mar.account_id=a.id AND mar.role='direct_cost')"
+        if _table_exists(conn, "management_account_roles") else "0"
+    )
+    direct_cost_condition = f"({direct_cost_role} OR {section_expr}='direct_costs')"
     register_decimal_aggregates(conn)
     rows = conn.execute(
         f"""SELECT d.id,d.code,d.name_ar,
@@ -45,24 +51,16 @@ def _grouped_gl_profitability(conn, date_from, date_to, dimension):
              COALESCE(DECIMAL_SUM(CASE WHEN a.account_type='revenue'
                THEN jl.debit ELSE '0' END),'0') revenue_debit,
              COALESCE(DECIMAL_SUM(CASE WHEN a.account_type='expense'
-               AND (EXISTS(SELECT 1 FROM management_account_roles mar
-                           WHERE mar.account_id=a.id AND mar.role='direct_cost')
-                    OR {section_expr}='direct_costs')
+               AND ({direct_cost_condition})
                THEN jl.debit ELSE '0' END),'0') cogs_debit,
              COALESCE(DECIMAL_SUM(CASE WHEN a.account_type='expense'
-               AND (EXISTS(SELECT 1 FROM management_account_roles mar
-                           WHERE mar.account_id=a.id AND mar.role='direct_cost')
-                    OR {section_expr}='direct_costs')
+               AND ({direct_cost_condition})
                THEN jl.credit ELSE '0' END),'0') cogs_credit,
              COALESCE(DECIMAL_SUM(CASE WHEN a.account_type='expense'
-               AND NOT (EXISTS(SELECT 1 FROM management_account_roles mar
-                               WHERE mar.account_id=a.id AND mar.role='direct_cost')
-                        OR {section_expr}='direct_costs')
+               AND NOT ({direct_cost_condition})
                THEN jl.debit ELSE '0' END),'0') expense_debit,
              COALESCE(DECIMAL_SUM(CASE WHEN a.account_type='expense'
-               AND NOT (EXISTS(SELECT 1 FROM management_account_roles mar
-                               WHERE mar.account_id=a.id AND mar.role='direct_cost')
-                        OR {section_expr}='direct_costs')
+               AND NOT ({direct_cost_condition})
                THEN jl.credit ELSE '0' END),'0') expense_credit,
              COUNT(DISTINCT je.id) journal_count
            FROM journal_lines jl
