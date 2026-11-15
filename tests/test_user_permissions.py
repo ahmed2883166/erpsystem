@@ -187,6 +187,9 @@ class UserPermissionRouteTests(unittest.TestCase):
         self.assertIn("workforce.approve", nexus.PERMISSIONS["admin"])
         self.assertIn("workforce.approve", nexus.PERMISSIONS["accountant"])
         self.assertNotIn("workforce.approve", nexus.PERMISSIONS["viewer"])
+        self.assertIn("workforce.salary_approve", nexus.PERMISSIONS["admin"])
+        self.assertNotIn("workforce.salary_approve", nexus.PERMISSIONS["accountant"])
+        self.assertNotIn("workforce.salary_approve", nexus.PERMISSIONS["viewer"])
 
     def test_sales_manage_does_not_implicitly_grant_discount_approval(self):
         permissions = nexus.normalize_user_permissions(["sales.manage"])
