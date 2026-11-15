@@ -522,6 +522,147 @@ class PurchasingAccountingTests(unittest.TestCase):
         ).fetchall()
         self.assertEqual(unbalanced, [])
 
+        # Continue the same real purchase cycle through supplier return and cancellation.
+        receipt_lines = self.db.execute(
+            """SELECT gl.id,gl.quantity,gl.unit_cost,gl.total_cost
+               FROM goods_receipt_lines gl
+               JOIN goods_receipts gr ON gr.id=gl.receipt_id
+               WHERE gr.po_id=? ORDER BY gr.id""",
+            (po_id,),
+        ).fetchall()
+        self.assertEqual(len(receipt_lines), 2)
+        for line_no, receipt_line in enumerate(receipt_lines, 1):
+            self.db.execute(
+                """INSERT INTO supplier_bill_inventory_lines(
+                    bill_id,line_no,receipt_line_id,product_id,billed_quantity,invoice_unit_price,line_total
+                ) VALUES(?,?,?,?,?,?,?)""",
+                (bill_id,line_no,receipt_line["id"],product_id,
+                 receipt_line["quantity"],receipt_line["unit_cost"],receipt_line["total_cost"]),
+            )
+        self.db.commit()
+
+        return_app = Flask(__name__)
+        return_app.secret_key = "test"
+        return_app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
+        return_app.register_blueprint(purchases.purchase_bp)
+        return_client = return_app.test_client()
+        with return_client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "admin"
+        with (
+            patch("purchases._activity_posting_accounts", return_value={
+                "inventory": "1150", "cogs": "5100", "supplier_ap": "2110",
+                "purchase_inventory": "1150",
+            }),
+            patch("activity_profiles.resolve_product_account_code", return_value="1150"),
+            patch("purchases.validate_journal_dimensions", return_value={}),
+            patch("purchases._activity_tax_roles", return_value={"input_vat": "1165"}),
+        ):
+            return_response = return_client.post("/purchases/credit-notes/new", data={
+                "supplier_id": str(supplier_id),
+                "bill_id": str(bill_id),
+                "supplier_credit_no": "SUP-FIFO-CYCLE-RETURN",
+                "reason": "اختبار مرتجع بعد استلامات متعددة وسداد جزئي",
+                "credit_date": "2026-11-15",
+                "product_id": str(product_id),
+                "warehouse_id": str(warehouse_id),
+                "quantity": "2",
+                "uom_key": "",
+            })
+        self.assertEqual(return_response.status_code, 302)
+        credit_note = self.db.execute(
+            """SELECT id,status,journal_entry_id,total_amount
+               FROM supplier_credit_notes WHERE supplier_credit_no='SUP-FIFO-CYCLE-RETURN'"""
+        ).fetchone()
+        self.assertIsNotNone(credit_note)
+        self.assertEqual(credit_note["status"], "posted")
+        self.assertIsNotNone(credit_note["journal_entry_id"])
+        self.assertEqual(Decimal(credit_note["total_amount"]), Decimal("24.00"))
+        returned_movement = self.db.execute(
+            """SELECT m.id,m.quantity,m.total_cost,m.accounting_status,m.journal_entry_id
+               FROM stock_movements m
+               JOIN supplier_credit_note_layer_allocations a ON a.stock_movement_id=m.id
+               JOIN supplier_credit_note_lines l ON l.id=a.credit_note_line_id
+               WHERE l.credit_note_id=?""",
+            (credit_note["id"],),
+        ).fetchone()
+        self.assertEqual(
+            (Decimal(returned_movement["quantity"]), Decimal(returned_movement["total_cost"]),
+             returned_movement["accounting_status"], returned_movement["journal_entry_id"]),
+            (Decimal("2"), Decimal("24"), "posted", credit_note["journal_entry_id"]),
+        )
+        self.assertEqual(
+            Decimal(self.db.execute(
+                "SELECT credited_amount FROM supplier_bills WHERE id=?", (bill_id,)
+            ).fetchone()[0]),
+            Decimal("24.00"),
+        )
+
+        with (
+            patch("purchases._activity_posting_accounts", return_value={
+                "inventory": "1150", "cogs": "5100", "supplier_ap": "2110",
+                "purchase_inventory": "1150",
+            }),
+        ):
+            cancel_response = return_client.post(
+                f"/purchases/credit-notes/{credit_note['id']}/cancel",
+                data={
+                    "cancellation_date": "2026-11-15",
+                    "reason": "إلغاء اختبار المرتجع والتحقق من عكس المخزون والقيد",
+                },
+            )
+        self.assertEqual(cancel_response.status_code, 302)
+        cancelled = self.db.execute(
+            """SELECT status,cancel_journal_entry_id FROM supplier_credit_notes WHERE id=?""",
+            (credit_note["id"],),
+        ).fetchone()
+        self.assertEqual(cancelled["status"], "cancelled")
+        self.assertIsNotNone(cancelled["cancel_journal_entry_id"])
+        self.assertEqual(
+            Decimal(self.db.execute(
+                "SELECT credited_amount FROM supplier_bills WHERE id=?", (bill_id,)
+            ).fetchone()[0]),
+            Decimal("0"),
+        )
+        self.assertEqual(
+            Decimal(stock.current_qty(self.db, product_id, warehouse_id)),
+            Decimal("5"),
+        )
+        final_inventory_gl = self.db.execute(
+            """SELECT COALESCE(SUM(CAST(jl.debit AS NUMERIC)-CAST(jl.credit AS NUMERIC)),0)
+               FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+               JOIN accounts a ON a.id=jl.account_id
+               WHERE je.status='posted' AND a.code='1150'"""
+        ).fetchone()[0]
+        final_layer_value = sum((Decimal(row["value_remaining"]) for row in self.db.execute(
+            "SELECT value_remaining FROM stock_valuation_layers WHERE product_id=?",
+            (product_id,),
+        )), Decimal("0"))
+        self.assertEqual(Decimal(str(final_inventory_gl)), Decimal("60"))
+        self.assertEqual(final_layer_value, Decimal("60.00"))
+        self.assertEqual(Decimal(str(final_inventory_gl)), final_layer_value)
+        self.assertEqual(
+            self.db.execute(
+                """SELECT movement_type,accounting_status FROM stock_movements
+                   WHERE id=?""", (returned_movement["id"],)
+            ).fetchone()["movement_type"],
+            "issue",
+        )
+        self.assertEqual(
+            self.db.execute(
+                """SELECT COUNT(*) FROM stock_movements
+                   WHERE movement_type='receipt' AND journal_entry_id=?""",
+                (cancelled["cancel_journal_entry_id"],),
+            ).fetchone()[0],
+            1,
+        )
+        unbalanced_after_return = self.db.execute(
+            """SELECT je.id FROM journal_entries je JOIN journal_lines jl ON jl.entry_id=je.id
+               GROUP BY je.id
+               HAVING ABS(SUM(CAST(jl.debit AS NUMERIC))-SUM(CAST(jl.credit AS NUMERIC)))>0.005"""
+        ).fetchall()
+        self.assertEqual(unbalanced_after_return, [])
+
     def test_multi_line_purchase_order_stays_partial_until_every_line_is_received(self):
         purchases.init_purchase_schema()
         self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-MULTI-RECV','مورد متعدد')")
