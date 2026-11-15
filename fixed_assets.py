@@ -826,6 +826,38 @@ def dispose(asset_id):
     return redirect(url_for("assets.index"))
 
 
+def build_asset_reconciliation_rows(conn, as_of):
+    """Reconcile register balances once per GL account, even when assets share a cost account."""
+    assets=conn.execute("""SELECT f.id,f.asset_account_id,f.accum_account_id,f.cost
+        FROM fixed_assets f LEFT JOIN asset_disposals x ON x.asset_id=f.id
+        WHERE f.purchase_date<=? AND f.status<>'reversed'
+          AND (x.id IS NULL OR x.disposal_date>?)
+        ORDER BY f.asset_account_id,f.id""",(as_of,as_of)).fetchall()
+    expected={}
+    for asset in assets:
+        cost_key=(asset["asset_account_id"],"تكلفة الأصول")
+        accum_key=(asset["accum_account_id"],"مجمع الإهلاك")
+        expected[cost_key]=expected.get(cost_key,Decimal("0"))+Decimal(str(asset["cost"]))
+        depreciation=conn.execute("""SELECT d.amount FROM asset_depreciations d
+            JOIN journal_entries je ON je.id=d.journal_entry_id
+            WHERE d.asset_id=? AND je.status='posted' AND je.entry_date<=?""",
+            (asset["id"],as_of)).fetchall()
+        expected[accum_key]=expected.get(accum_key,Decimal("0"))+sum(
+            (Decimal(str(row["amount"])) for row in depreciation),Decimal("0"))
+    rows=[]
+    for (account_id,kind),register in sorted(expected.items(),key=lambda item:(item[0][0],item[0][1])):
+        gl=conn.execute("""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) balance
+            FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+            WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<=?""",
+            (account_id,as_of)).fetchone()
+        raw=Decimal(str(gl["balance"] or "0"))
+        gl_balance=raw if kind=="تكلفة الأصول" else -raw
+        account=conn.execute("SELECT code,name_ar FROM accounts WHERE id=?",(account_id,)).fetchone()
+        rows.append({"account_id":account_id,"code":account["code"],"name":account["name_ar"],
+            "kind":kind,"register":register,"gl":gl_balance,"difference":gl_balance-register})
+    return rows
+
+
 @assets_bp.route("/reconciliation")
 @require()
 def reconciliation():
@@ -835,38 +867,8 @@ def reconciliation():
     except ValueError:
         as_of=date.today().isoformat()
     c=db()
-    rows=[]
     try:
-        assets=c.execute("""SELECT f.id,f.asset_account_id,f.accum_account_id,f.cost,
-            x.disposal_date
-            FROM fixed_assets f LEFT JOIN asset_disposals x ON x.asset_id=f.id
-            WHERE f.purchase_date<=? AND f.status<>'reversed'
-              AND (x.id IS NULL OR x.disposal_date>?)
-            ORDER BY f.asset_account_id,f.accum_account_id,f.id""",(as_of,as_of)).fetchall()
-        grouped={}
-        for asset_row in assets:
-            key=(asset_row["asset_account_id"],asset_row["accum_account_id"])
-            item=grouped.setdefault(key,{"gross_cost":Decimal("0"),"accumulated":Decimal("0")})
-            item["gross_cost"]+=Decimal(str(asset_row["cost"]))
-            depreciation_rows=c.execute("""SELECT d.amount FROM asset_depreciations d
-                JOIN journal_entries je ON je.id=d.journal_entry_id
-                WHERE d.asset_id=? AND je.status='posted' AND je.entry_date<=?""",
-                (asset_row["id"],as_of)).fetchall()
-            item["accumulated"]+=sum((Decimal(str(x["amount"])) for x in depreciation_rows),Decimal("0"))
-        for (asset_account_id,accum_account_id),item in grouped.items():
-            for account_id,kind,expected in (
-                (asset_account_id,"تكلفة الأصول",item["gross_cost"]),
-                (accum_account_id,"مجمع الإهلاك",item["accumulated"]),
-            ):
-                gl=c.execute("""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) balance
-                    FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
-                    WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<=?""",
-                    (account_id,as_of)).fetchone()
-                raw=Decimal(str(gl["balance"] or "0"))
-                gl_balance=raw if kind=="تكلفة الأصول" else -raw
-                account=c.execute("SELECT code,name_ar FROM accounts WHERE id=?",(account_id,)).fetchone()
-                rows.append({"account_id":account_id,"code":account["code"],"name":account["name_ar"],
-                    "kind":kind,"register":expected,"gl":gl_balance,"difference":gl_balance-expected})
+        rows=build_asset_reconciliation_rows(c,as_of)
     finally:
         c.close()
     return render_template("asset_reconciliation.html",rows=rows,as_of=as_of,

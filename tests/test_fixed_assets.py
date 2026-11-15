@@ -393,5 +393,33 @@ class JournalLinkedAssetRegistrationTests(unittest.TestCase):
             )
 
 
+    def test_reconciliation_aggregates_shared_cost_account_once_across_assets(self):
+        import fixed_assets
+        conn=sqlite3.connect(":memory:")
+        conn.row_factory=sqlite3.Row
+        conn.executescript("""
+            CREATE TABLE fixed_assets(id INTEGER PRIMARY KEY,asset_account_id INTEGER,accum_account_id INTEGER,cost TEXT,purchase_date TEXT,status TEXT);
+            CREATE TABLE asset_disposals(id INTEGER PRIMARY KEY,asset_id INTEGER,disposal_date TEXT);
+            CREATE TABLE asset_depreciations(id INTEGER PRIMARY KEY,asset_id INTEGER,amount TEXT,journal_entry_id INTEGER);
+            CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT);
+            CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit TEXT,credit TEXT);
+            CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT);
+            INSERT INTO accounts VALUES(10,'1500','الأصول'),(11,'1591','مجمع الأصل الأول'),(12,'1592','مجمع الأصل الثاني');
+            INSERT INTO fixed_assets VALUES(1,10,11,'1000','2026-01-01','active'),(2,10,12,'2000','2026-01-01','active');
+            INSERT INTO asset_depreciations VALUES(1,1,'100',1),(2,2,'200',2);
+            INSERT INTO journal_entries VALUES(1,'2026-12-31','posted'),(2,'2026-12-31','posted');
+            INSERT INTO journal_lines VALUES
+              (1,1,10,'1000','0'),(2,1,11,'0','100'),
+              (3,2,10,'2000','0'),(4,2,12,'0','200');
+        """)
+        rows=fixed_assets.build_asset_reconciliation_rows(conn,"2026-12-31")
+        conn.close()
+        self.assertEqual(len(rows),3)
+        self.assertTrue(all(row["difference"]==Decimal("0") for row in rows))
+        cost=next(row for row in rows if row["kind"]=="تكلفة الأصول")
+        self.assertEqual(cost["register"],Decimal("3000"))
+        self.assertEqual(cost["gl"],Decimal("3000"))
+
+
 if __name__ == "__main__":
     unittest.main()
