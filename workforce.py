@@ -1885,7 +1885,9 @@ def payroll():
                 if salary_changed and not salary_change_reason:
                     raise ValueError("اكتب سبب تعديل الراتب الأساسي للموظف " + e["full_name"] + ".")
                 salary_approval_required = int(
-                    salary_changed and salary_variance_percent > salary_variance_limit
+                    salary_changed and (
+                        salary_reference <= 0 or salary_variance_percent > salary_variance_limit
+                    )
                 )
                 monthly_basic_salary = basic_salary
                 payroll_days = 30
