@@ -103,6 +103,27 @@ class SystemHealthTests(unittest.TestCase):
         self.assertEqual(by_key["missing_journal_supplier_bills"]["count"], 1)
         self.assertEqual(by_key["negative_stock_layers"]["count"], 1)
 
+    def test_partial_schema_does_not_crash_health_scan(self):
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.executescript("""
+            CREATE TABLE sales_invoices (
+                id INTEGER PRIMARY KEY, status TEXT, journal_entry_id INTEGER
+            );
+            INSERT INTO sales_invoices(status,journal_entry_id)
+                VALUES ('posted',NULL), ('draft',NULL);
+            CREATE TABLE stock_valuation_layers (id INTEGER PRIMARY KEY);
+        """)
+        try:
+            with self.app.test_request_context("/system/health"):
+                checks = system_health.collect_health_checks(connection)
+            by_key = {item["key"]: item for item in checks}
+            self.assertEqual(by_key["missing_journal_sales_invoices"]["count"], 1)
+            self.assertEqual(by_key["negative_stock_layers"]["severity"], "info")
+            self.assertEqual(by_key["negative_stock_layers"]["count"], 0)
+        finally:
+            connection.close()
+
     def test_health_scan_is_read_only(self):
         tables = (
             "journal_entries", "journal_lines", "sales_invoices",
