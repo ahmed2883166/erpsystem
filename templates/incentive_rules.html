@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}الحوافز والمكافآت | NEXUS ERP{% endblock %}
+{% block content %}
+<style>
+.incentive-page{display:grid;gap:18px}
+.incentive-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.incentive-heading h2{margin:0}
+.incentive-stats{display:flex;gap:12px;flex-wrap:wrap}
+.incentive-stat{padding:12px 16px;border:1px solid #dce3eb;border-radius:10px;background:var(--surface,#fff);min-width:150px}
+.incentive-stat strong{display:block;font-size:1.35rem;margin-top:4px}
+.incentive-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;align-items:end}
+.incentive-form label{display:grid;gap:6px;font-weight:600}
+.incentive-form input,.incentive-form select{width:100%;min-height:42px}
+.incentive-table-wrap{overflow-x:auto;border:1px solid #dce3eb;border-radius:10px}
+.incentive-table{width:100%;min-width:650px;border-collapse:collapse}
+.incentive-table th{background:#edf2f8;color:#26384d;padding:12px;text-align:center;border-bottom:2px solid #d2dbe6}
+.incentive-table td{padding:11px;text-align:center;border-bottom:1px solid #e7ebf0}
+.incentive-table tbody tr:nth-child(even){background:#f8fafc}
+.incentive-table tbody tr:hover{background:#eef6ff}
+@media(max-width:640px){.incentive-heading{align-items:flex-start}}
+</style>
+<div class="incentive-page">
+<section class="panel">
+<div class="incentive-heading"><div><h2>الحوافز والمكافآت</h2><p class="muted">إدارة أنواع الحوافز التي يمكن اختيارها لاحقًا عند إعداد المرتبات. هذه الشاشة مستقلة عن ملف الموظف.</p></div>
+<a class="button secondary" href="{{url_for('workforce.employees')}}">العودة لملفات الموظفين</a></div>
+<div class="incentive-stats">
+<div class="incentive-stat"><span class="muted">إجمالي أنواع الحوافز</span><strong>{{total_rules}}</strong></div>
+<div class="incentive-stat"><span class="muted">الأنواع النشطة</span><strong>{{active_rules}}</strong></div>
+<div class="incentive-stat"><span class="muted">الأنواع غير النشطة</span><strong>{{total_rules-active_rules}}</strong></div>
+</div>
+</section>
+<section class="panel">
+<h3>إضافة نوع حافز جديد</h3>
+<form method="post" action="{{url_for('workforce.add_incentive_rule')}}" class="incentive-form">
+<label>اسم الحافز<input name="name" placeholder="حافز رمضان / مكافأة إنجاز / حافز إنتاج" required maxlength="120"></label>
+<label>طريقة الحساب<select name="calculation_method" required>
+<option value="fixed">مبلغ مقطوع لكل موظف</option>
+<option value="percentage_basic">نسبة من الراتب الأساسي</option>
+<option value="per_day">قيمة يومية × عدد الأيام</option>
+</select></label>
+<label>القيمة أو النسبة<input type="number" name="calculation_value" min="0.01" step="0.01" required></label>
+<button type="submit">حفظ نوع الحافز</button>
+</form>
+<p class="muted">المبلغ المقطوع يُطبق كقيمة لكل موظف، والنسبة تُحسب من الأساسي، والقيمة اليومية تُضرب في عدد الأيام عند إعداد المرتبات.</p>
+</section>
+<section class="panel">
+<h3>أنواع الحوافز المسجلة</h3>
+<div class="incentive-table-wrap"><table class="incentive-table">
+<thead><tr><th>م</th><th>اسم الحافز</th><th>طريقة الحساب</th><th>القيمة / النسبة</th><th>الحالة</th></tr></thead>
+<tbody>{% for r in incentive_rules %}
+<tr><td>{{loop.index}}</td><td>{{r.name}}</td>
+<td>{{{'fixed':'مبلغ مقطوع لكل موظف','percentage_basic':'نسبة من الراتب الأساسي','per_day':'قيمة يومية × عدد الأيام'}.get(r.calculation_method,r.calculation_method)}}</td>
+<td>{{r.calculation_value}}{% if r.calculation_method=='percentage_basic' %}%{% endif %}</td>
+<td>{{'نشط' if r.active else 'غير نشط'}}</td></tr>
+{% else %}<tr><td colspan="5">لا توجد أنواع حوافز مسجلة حتى الآن.</td></tr>{% endfor %}</tbody>
+</table></div>
+</section>
+</div>
+{% endblock %}
