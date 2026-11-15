@@ -1833,9 +1833,12 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
         for row in conn.execute("SELECT account_id,category FROM cash_flow_account_mappings")
     } if mapping_table else {}
     for row in conn.execute(
-        "SELECT id,code,account_type FROM accounts WHERE is_group=0 AND account_type='liability'"
+        "SELECT id,code,name_ar,account_type FROM accounts WHERE is_group=0 AND account_type='liability'"
     ).fetchall():
-        if str(row["code"] or "").startswith("21") and configured_categories.get(row["id"], "operating") == "operating":
+        code = str(row["code"] or "")
+        name = str(row["name_ar"] or "")
+        is_current_liability = code.startswith("21") or "متداولة" in name
+        if is_current_liability and configured_categories.get(row["id"], "operating") == "operating":
             current_liability_ids.add(row["id"])
 
     other_current_asset_ids = current_asset_ids-cash_ids-receivables_ids-inventory_ids
