@@ -42,7 +42,7 @@
 {% for b in batches %}
 <section class="panel">
 <div class="actions" style="justify-content:space-between;align-items:center"><h3>كشف {{b.period}}</h3>
-<strong>{{'مرحّل محاسبيًا' if b.status=='posted' else 'مسودة للمراجعة'}}</strong></div>
+<strong>{% if b.status=='posted' %}مرحّل محاسبيًا{% elif b.approved_by %}معتمد — بانتظار الترحيل{% else %}مسودة — بانتظار الاعتماد{% endif %}</strong></div>
 <p>مصروف: {{b.expense_code}} - {{b.expense_name}} · المستحق: {{b.payable_code}} - {{b.payable_name}}</p>
 <div style="overflow-x:auto"><table>
 <tr><th>م</th><th>كود الموظف</th><th>اسم الموظف</th><th>الراتب الأساسي وقت الإعداد</th><th>عدد جمع الحضور</th><th>بدل الجمعة</th></tr>
@@ -51,9 +51,12 @@
 <tr><th colspan="5">الإجمالي</th><th>{{b.total_amount}}</th></tr></table></div>
 <div class="actions no-print">
 <button type="button" class="secondary" onclick="window.print()">طباعة الكشف / PDF</button>
-{% if b.status=='draft' %}
-<form method="post" action="{{url_for('workforce.post_friday_allowance',batch_id=b.id)}}" onsubmit="return confirm('سيتم ترحيل قيد مصروف أجور إضافية إلى أجور إضافية مستحقة. هل تريد المتابعة؟')"><button type="submit">اعتماد وإقفال وترحيل الكشف</button></form>
-<form method="post" action="{{url_for('workforce.delete_friday_allowance',batch_id=b.id)}}" onsubmit="return confirm('حذف مسودة بدل الجمعة المفتوحة؟ لن يمكن الحذف بعد الترحيل.')"><button type="submit" class="danger">حذف المسودة</button></form>
+{% if b.status=='draft' and not b.approved_by %}
+<form method="post" action="{{url_for('workforce.approve_friday_allowance',batch_id=b.id)}}" onsubmit="return confirm('سيتم اعتماد كشف بدل الجمعة. هل راجعت الموظفين والمبالغ والحسابات؟')"><label>ملاحظة الاعتماد <input name="reason" maxlength="500" placeholder="ملاحظة اختيارية"></label><button type="submit">اعتماد الكشف</button></form>
+<form method="post" action="{{url_for('workforce.delete_friday_allowance',batch_id=b.id)}}" onsubmit="return confirm('حذف مسودة بدل الجمعة غير المعتمدة؟')"><button type="submit" class="danger">حذف المسودة</button></form>
+{% elif b.status=='draft' and b.approved_by %}
+<span class="muted">اعتمد بواسطة المستخدم رقم {{b.approved_by}} في {{b.approved_at}}</span>
+<form method="post" action="{{url_for('workforce.post_friday_allowance',batch_id=b.id)}}" onsubmit="return confirm('سيتم ترحيل قيد مصروف أجور إضافية إلى أجور إضافية مستحقة. هل تريد المتابعة؟')"><button type="submit">ترحيل الكشف المعتمد</button></form>
 {% else %}<button type="button" class="secondary" disabled aria-disabled="true">مقفول — لا يمكن الحذف</button><span>رقم القيد: {{b.journal_entry_id}}</span>{% endif %}
 </div>
 </section>
