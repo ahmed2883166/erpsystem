@@ -1626,7 +1626,9 @@ def reports():
     c.close()
     return render_template("stock_reports.html",rows=rows,lots=lots,movements=movements,
         warehouse_rows=warehouse_rows,location_rows=location_rows,reorder_alerts=reorder_alerts,
-        slow_rows=slow_rows,expiry_alerts=expiry_alerts,turnover_days=90,\n        forecast_rows=forecast_rows,forecast_available=forecast_available,\n        forecast_days=forecast_days,target_cover_days=target_cover_days)
+        slow_rows=slow_rows,expiry_alerts=expiry_alerts,turnover_days=90,
+        forecast_rows=forecast_rows,forecast_available=forecast_available,
+        forecast_days=forecast_days,target_cover_days=target_cover_days)
 
 
 @stock_bp.route("/reconciliation")
