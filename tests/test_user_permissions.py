@@ -202,6 +202,77 @@ class UserPermissionRouteTests(unittest.TestCase):
         conn.close()
         self.assertEqual(count, 0)
 
+    def test_non_admin_user_manager_cannot_create_admin_or_grant_extra_permissions(self):
+        conn = sqlite3.connect(nexus.DB_PATH)
+        conn.execute(
+            "UPDATE users SET role='accountant',permissions_json=? WHERE id=1",
+            (json.dumps(["users.manage"]),),
+        )
+        conn.commit()
+        conn.close()
+        with self.client.session_transaction() as session:
+            session.update(user_id=1, username="admin", full_name="مدير",
+                           role="accountant", permissions=["users.manage"])
+
+        response = self.client.post("/users", data={
+            "username": "escalated", "full_name": "مستخدم بصلاحيات مدير",
+            "password": "long-password-123", "role": "admin",
+            "permissions": ["users.manage", "backup.manage"],
+        })
+        self.assertEqual(response.status_code, 200)
+        conn = sqlite3.connect(nexus.DB_PATH)
+        created = conn.execute(
+            "SELECT id FROM users WHERE username='escalated'"
+        ).fetchone()
+        conn.close()
+        self.assertIsNone(created)
+        self.assertIn("مدير النظام فقط", response.get_data(as_text=True))
+
+    def test_non_admin_user_manager_cannot_edit_or_delete_higher_privilege_users(self):
+        conn = sqlite3.connect(nexus.DB_PATH)
+        conn.execute(
+            "UPDATE users SET role='accountant',permissions_json=? WHERE id=1",
+            (json.dumps(["users.manage"]),),
+        )
+        conn.execute(
+            """INSERT INTO users
+               (id,username,full_name,role,active,permissions_json,password_hash,created_at)
+               VALUES(2,'privileged','مستخدم أعلى','viewer',1,?,'hash','2026-01-01')""",
+            (json.dumps(["reports.view", "backup.manage"]),),
+        )
+        conn.execute(
+            """INSERT INTO users
+               (id,username,full_name,role,active,permissions_json,password_hash,created_at)
+               VALUES(3,'protected-admin','مدير محمي','admin',1,?,'hash','2026-01-01')""",
+            (json.dumps(["users.manage"]),),
+        )
+        conn.commit()
+        conn.close()
+        with self.client.session_transaction() as session:
+            session.update(user_id=1, username="admin", full_name="مدير",
+                           role="accountant", permissions=["users.manage"])
+
+        edited = self.client.post("/users/2/edit", data={
+            "username": "privileged", "full_name": "مستخدم أعلى",
+            "role": "viewer", "active": "yes", "permissions": ["users.manage"],
+        })
+        self.assertEqual(edited.status_code, 302)
+        deleted = self.client.post("/users/3/delete")
+        self.assertEqual(deleted.status_code, 302)
+
+        conn = sqlite3.connect(nexus.DB_PATH)
+        target = conn.execute(
+            "SELECT role,active,permissions_json FROM users WHERE id=2"
+        ).fetchone()
+        protected_admin = conn.execute(
+            "SELECT role FROM users WHERE id=3"
+        ).fetchone()
+        conn.close()
+        self.assertEqual(target[0], "viewer")
+        self.assertEqual(target[1], 1)
+        self.assertEqual(target[2], json.dumps(["reports.view", "backup.manage"]))
+        self.assertEqual(protected_admin[0], "admin")
+
     def test_admin_account_cannot_be_demoted_disabled_or_stripped_of_core_permissions(self):
         conn = sqlite3.connect(nexus.DB_PATH)
         conn.execute(
