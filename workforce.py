@@ -1325,7 +1325,7 @@ def payroll():
             month_end = (date(start.year + (start.month == 12), 1 if start.month == 12 else start.month + 1, 1) - date.resolution)
             period_end = month_end.isoformat()
             employees = c.execute("""SELECT * FROM employees WHERE
-                (active=1 AND work_status IN ('comprehensive_bonus','permanent','temporary')) OR
+                (active=1 AND work_status IN ('comprehensive_bonus','permanent','temporary','unpaid_leave')) OR
                 (work_status IN ('resigned','retired') AND termination_date>=? AND termination_date<=?)
                 ORDER BY employee_code""", (period + "-01", period_end)).fetchall()
             if not employees:
@@ -1399,7 +1399,7 @@ def payroll():
                     raise ValueError("نسبة الإضافي يجب أن تكون بين صفر و500.")
                 overtime_calculated_amount = M(D(overtime_hours) * monthly_basic_salary / D(e["standard_hours"]) * overtime_rate / Decimal("100"))
                 overtime_manual_override = bool(overtime_raw) and M(overtime_raw) != overtime_calculated_amount
-                if overtime_manual_override and not overtime_override_reason:
+                if overtime_manual_override and not overtime_override_reason and e["work_status"] != "unpaid_leave":
                     raise ValueError("اكتب سبب اختلاف مبلغ الإضافي اليدوي عن المحسوب للموظف " + e["full_name"] + ".")
                 overtime_amount = M(overtime_raw) if overtime_manual_override else overtime_calculated_amount
                 absent_hours = D(request.form.get("absent_hours_" + str(e["id"]), "0"))
@@ -1489,6 +1489,24 @@ def payroll():
                 total_entitlements = M(gross + employer_ins)
                 total_deductions = M(employer_ins + emp_ins + tax + stamp_duty + advance_deduction + other_deductions + absence + penalty_deduction)
                 net = M(total_entitlements - total_deductions)
+                # A full-month unpaid-leave employment status is retained in the payroll
+                # snapshot for traceability, but generates no earnings, deductions,
+                # statutory charges, loan recovery, overtime, or incentives. Approved
+                # salary changes remain on the employee master for future paid periods.
+                if e["work_status"] == "unpaid_leave":
+                    basic_salary = monthly_basic_salary = allowances = raise_amount = Decimal("0")
+                    fixed_allowances = fixed_deductions = fixed_pay_deductions = Decimal("0")
+                    fixed_item_amounts = {key: Decimal("0") for key in fixed_item_amounts}
+                    overtime_hours = overtime_amount = overtime_calculated_amount = Decimal("0")
+                    overtime_manual_override = False
+                    absent_hours = absence = unpaid_days = Decimal("0")
+                    manual_advance_deduction = loan_deduction = advance_deduction = Decimal("0")
+                    other_deductions = penalty_deduction = Decimal("0")
+                    penalty_rows = []
+                    tax = stamp_duty = emp_ins = employer_ins = Decimal("0")
+                    gross = total_entitlements = total_deductions = net = Decimal("0")
+                    insured_wage = taxable_annual = Decimal("0")
+                    rule_set_id = None
                 if min(basic_salary, allowances, overtime_hours, overtime_amount, absent_hours,
                        absence, incentives, advance_deduction, other_deductions, tax, stamp_duty, emp_ins,
                        employer_ins, gross, total_entitlements, total_deductions, net) < 0:
@@ -1563,7 +1581,7 @@ def payroll():
     # Show former employees in the input grid so final payroll can be prepared for any selected month.
     # POST includes them only in the month containing their termination date.
     employee_rows = c.execute("""SELECT * FROM employees WHERE
-        (active=1 AND work_status IN ('comprehensive_bonus','permanent','temporary')) OR
+        (active=1 AND work_status IN ('comprehensive_bonus','permanent','temporary','unpaid_leave')) OR
         work_status IN ('resigned','retired')
         ORDER BY employee_code""").fetchall()
     employees = []
