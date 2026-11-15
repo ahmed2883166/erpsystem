@@ -981,7 +981,7 @@ def pay_items():
     employees = c.execute("""SELECT id,employee_code,full_name,work_status FROM employees
         WHERE active=1 ORDER BY work_status,employee_code""").fetchall()
     assignments = c.execute("""SELECT p.*,e.employee_code,e.full_name,e.work_status FROM employee_pay_items p
-        JOIN employees e ON e.id=p.employee_id WHERE p.active=1 ORDER BY p.item_type,p.item_name,e.employee_code""").fetchall()
+        JOIN employees e ON e.id=p.employee_id ORDER BY p.item_type,p.item_name,e.employee_code""").fetchall()
     grouped = {}
     for item in assignments:
         key = (item["item_type"],item["item_name"])
