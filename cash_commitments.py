@@ -118,13 +118,13 @@ def create_cash_commitment(conn, commitment_type, title, amount, due_date,
 
 def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
                                    journal_entry_id, reference="", notes="",
-                                   created_by=None):
+                                   created_by=None, payable_account_id=None):
     payment_date = date.fromisoformat(str(payment_date)).isoformat()
     amount = _amount(amount)
     conn.execute("BEGIN IMMEDIATE")
     try:
         commitment = conn.execute(
-            "SELECT id,amount,status FROM cash_commitments WHERE id=?", (commitment_id,)
+            "SELECT id,amount,status,payable_account_id FROM cash_commitments WHERE id=?", (commitment_id,)
         ).fetchone()
         if not commitment or commitment["status"] == "void":
             raise ValueError("الالتزام غير موجود أو ملغي.")
@@ -134,6 +134,26 @@ def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
         ).fetchone()
         if not journal:
             raise ValueError("يجب ربط الدفعة بقيد يومية مرحّل موجود.")
+        selected_payable_account = commitment["payable_account_id"] or payable_account_id
+        if not selected_payable_account:
+            raise ValueError("حدد حساب الالتزام المستحق قبل ربط دفعة السداد.")
+        if (commitment["payable_account_id"] is not None
+                and payable_account_id is not None
+                and int(commitment["payable_account_id"]) != int(payable_account_id)):
+            raise ValueError("حساب الالتزام لا يطابق الحساب المحدد.")
+        debit_rows = conn.execute(
+            """SELECT debit FROM journal_lines
+               WHERE entry_id=? AND account_id=?""",
+            (journal_entry_id,selected_payable_account),
+        ).fetchall()
+        payable_debit = sum((Decimal(str(row["debit"])) for row in debit_rows), Decimal("0"))
+        if payable_debit < amount:
+            raise ValueError("قيد السداد لا يحتوي على مدين كافٍ في حساب الالتزام المحدد.")
+        if commitment["payable_account_id"] is None:
+            conn.execute(
+                "UPDATE cash_commitments SET payable_account_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (selected_payable_account,commitment_id),
+            )
         paid = sum((Decimal(str(row["amount"])) for row in conn.execute(
             "SELECT amount FROM cash_commitment_payments WHERE commitment_id=?",
             (commitment_id,),
