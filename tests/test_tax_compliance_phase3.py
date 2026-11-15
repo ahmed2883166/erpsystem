@@ -32,6 +32,15 @@ class TaxInputTotalsTests(unittest.TestCase):
         self.assertEqual(deductible, Decimal("0"))
         self.assertEqual(non_deductible, Decimal("12.00"))
 
+    def test_invalid_deductible_percentage_is_not_claimed(self):
+        documents = [
+            {"tax_treatment": "standard", "tax_amount": "100.00", "deductible_percent": "125"},
+        ]
+        gross, deductible, non_deductible = calculate_tax_input_totals(documents)
+        self.assertEqual(gross, Decimal("100.00"))
+        self.assertEqual(deductible, Decimal("0"))
+        self.assertEqual(non_deductible, Decimal("100.00"))
+
     def test_partial_deductibility_is_split_without_losing_posted_tax(self):
         documents = [
             {"tax_treatment": "standard", "tax_amount": "15.01", "deductible_percent": "33.33"},
