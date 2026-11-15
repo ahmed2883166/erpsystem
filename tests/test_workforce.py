@@ -56,6 +56,8 @@ class WorkforceTests(unittest.TestCase):
             "{{ slip.full_name }}|{{ slip.net_pay }}|{{ slip.manual_advance_deduction }}", encoding="utf-8"
         )
         (template_dir / "employee_grants.html").write_text("{{ get_flashed_messages()|join('|') }}", encoding="utf-8")
+        (template_dir / "pay_items.html").write_text("{{ groups|length }}", encoding="utf-8")
+        (template_dir / "employee_loan_schedule.html").write_text("loan schedule", encoding="utf-8")
         (template_dir / "salary_changes.html").write_text("salary changes", encoding="utf-8")
         (template_dir / "salary_history.html").write_text("salary history", encoding="utf-8")
         (template_dir / "incentive_rules.html").write_text(
@@ -121,6 +123,53 @@ class WorkforceTests(unittest.TestCase):
         rows=conn.execute("SELECT employee_code_snapshot FROM employee_grant_lines WHERE grant_id=2").fetchall()
         self.assertEqual(rows,[("E002",)])
         conn.close()
+
+    def test_pay_items_screen_assigns_named_entitlements_and_deductions_to_selected_employees(self):
+        self.add_employee()
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,work_status)
+            VALUES('E002','Temporary Employee','2026-01-01','0','208','temporary')""")
+        conn.commit()
+        conn.close()
+        response = self.client.post("/hr/pay-items", data={
+            "item_name":"بدل انتقال", "item_type":"allowance", "amount":"750",
+            "employee_ids":["1","2"]
+        })
+        self.assertEqual(response.status_code,302)
+        response = self.client.post("/hr/pay-items", data={
+            "item_name":"خصم تأمين طبي", "item_type":"deduction", "amount":"100",
+            "employee_ids":["2"]
+        })
+        self.assertEqual(response.status_code,302)
+        conn = sqlite3.connect(self.db_path)
+        rows = conn.execute("""SELECT employee_id,item_name,item_type,amount FROM employee_pay_items
+            WHERE item_name IN ('بدل انتقال','خصم تأمين طبي') ORDER BY item_name,employee_id""").fetchall()
+        conn.close()
+        self.assertEqual(rows,[(1,"بدل انتقال","allowance","1000"),(1,"بدل انتقال","allowance","750"),
+                               (2,"بدل انتقال","allowance","750"),(2,"خصم تأمين طبي","deduction","100")])
+        page = self.client.get("/hr/pay-items")
+        self.assertEqual(page.status_code,200)
+
+    def test_loan_installment_can_be_deferred_without_reducing_employee_balance(self):
+        self.add_employee()
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("INSERT INTO accounts VALUES(8,'1195','سلف الموظفين - حساب مخصص','asset',0,1)")
+        conn.commit()
+        conn.close()
+        self.client.post("/hr/loans",data={"employee_id":"1","requested_amount":"300",
+            "installment_count":"1","first_due_period":"2026-11"})
+        self.client.post("/hr/loans/1/approve",data={"approved_amount":"300",
+            "installment_count":"1","first_due_period":"2026-11"})
+        self.client.post("/hr/loans/1/disburse",data={"cash_account_id":"1","loan_account_id":"8",
+            "disbursement_date":"2026-11-01"})
+        response = self.client.post("/hr/loans/1/installments/1/defer")
+        self.assertEqual(response.status_code,302)
+        conn = sqlite3.connect(self.db_path)
+        schedule = conn.execute("SELECT due_period,due_amount,paid_amount FROM employee_loan_installments ORDER BY due_period").fetchall()
+        balance = conn.execute("SELECT remaining_balance FROM employee_loans WHERE id=1").fetchone()[0]
+        conn.close()
+        self.assertEqual(schedule,[("2026-11","0","0"),("2026-12","300.00","0")])
+        self.assertEqual(balance,"300.00")
 
     def test_incentives_redirect_to_single_independent_grants_screen(self):
         response = self.client.get("/hr/incentives")
