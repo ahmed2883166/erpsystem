@@ -74,13 +74,22 @@ def build_inventory_ageing(conn, as_of):
     expiry_expr = "lot.expiry_date" if _exists(conn, "stock_lots") else "NULL"
     sku_expr = "p.sku" if "sku" in product_cols else "CAST(p.id AS TEXT)"
     name_expr = "p.name_ar" if "name_ar" in product_cols else "CAST(p.id AS TEXT)"
+    has_movements = _exists(conn, "stock_movements")
     last_movement_expr = (
         """(SELECT MAX(mv.movement_date) FROM stock_movements mv
              WHERE mv.product_id=l.product_id
                AND (mv.source_warehouse_id=l.warehouse_id
-                    OR mv.target_warehouse_id=l.warehouse_id))"""
-        if _exists(conn, "stock_movements") else "NULL"
+                    OR mv.target_warehouse_id=l.warehouse_id)
+               AND substr(mv.movement_date,1,10)<=?)"""
+        if has_movements else "NULL"
     )
+    layer_date_filter = f"{created_expr}<=?"
+    params = []
+    if created_expr == "?":
+        params.append(as_of)
+    params.append(as_of)
+    if has_movements:
+        params.append(as_of)
     rows = conn.execute(
         f"""SELECT l.product_id,l.warehouse_id,{sku_expr} sku,{name_expr} product_name,
                    w.code warehouse_code,w.name_ar warehouse_name,
@@ -92,12 +101,16 @@ def build_inventory_ageing(conn, as_of):
             JOIN stock_warehouses w ON w.id=l.warehouse_id
             {join_movement} {lot_join}
             WHERE CAST(l.qty_remaining AS NUMERIC)>0
+              AND {layer_date_filter}
             ORDER BY layer_date,product_name""",
-        (as_of,) if created_expr == "?" else (),
+        tuple(params),
     ).fetchall()
     cutoff = date.fromisoformat(as_of)
     buckets = {"0_30": Decimal("0"), "31_60": Decimal("0"),
                "61_90": Decimal("0"), "over_90": Decimal("0")}
+    expiry_totals = {"expired": Decimal("0"), "within_30": Decimal("0"),
+                     "within_90": Decimal("0"), "later": Decimal("0"),
+                     "no_expiry": Decimal("0")}
     result = []
     for row in rows:
         try:
@@ -109,6 +122,32 @@ def build_inventory_ageing(conn, as_of):
         value = qty * _d(row["unit_cost"])
         bucket = "0_30" if age <= 30 else "31_60" if age <= 60 else "61_90" if age <= 90 else "over_90"
         buckets[bucket] += value
+        expiry_status = "no_expiry"
+        expiry_days = None
+        if row["expiry_date"]:
+            try:
+                expiry_day = date.fromisoformat(str(row["expiry_date"])[:10])
+                expiry_days = (expiry_day - cutoff).days
+                if expiry_days < 0:
+                    expiry_status = "expired"
+                elif expiry_days <= 30:
+                    expiry_status = "within_30"
+                elif expiry_days <= 90:
+                    expiry_status = "within_90"
+                else:
+                    expiry_status = "later"
+            except (TypeError, ValueError):
+                expiry_status = "unknown"
+        if expiry_status in expiry_totals:
+            expiry_totals[expiry_status] += value
+        last_movement_age = None
+        if row["last_movement_date"]:
+            try:
+                last_movement_age = max(
+                    (cutoff - date.fromisoformat(str(row["last_movement_date"])[:10])).days, 0
+                )
+            except (TypeError, ValueError):
+                last_movement_age = None
         result.append({
             "product_id": row["product_id"], "warehouse_id": row["warehouse_id"],
             "sku": row["sku"], "product_name": row["product_name"],
@@ -116,14 +155,15 @@ def build_inventory_ageing(conn, as_of):
             "layer_date": row["layer_date"], "age_days": age, "quantity": qty,
             "unit_cost": _d(row["unit_cost"]), "value": value,
             "expiry_date": row["expiry_date"],
+            "expiry_status": expiry_status,
+            "expiry_days": expiry_days,
             "last_movement_date": row["last_movement_date"],
-            "slow_moving": (
-                (cutoff - date.fromisoformat(str(row["last_movement_date"])[:10])).days > 90
-                if row["last_movement_date"] else age > 90
-            ),
+            "last_movement_age_days": last_movement_age,
+            "slow_moving": last_movement_age > 90 if last_movement_age is not None else age > 90,
             "bucket": bucket,
         })
     return {"available": True, "rows": result, "totals": buckets,
+            "expiry_totals": expiry_totals,
             "total_value": sum(buckets.values(), Decimal("0")), "as_of": as_of}
 
 
