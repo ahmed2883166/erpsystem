@@ -39,9 +39,11 @@ class ManagementReportsTests(unittest.TestCase):
                 (4,'2026-09-05','posted','general'),
                 (5,'2026-09-06','posted','general'),
                 (6,'2026-09-07','posted','general');
+            INSERT INTO journal_entries VALUES (7,'2026-11-10','posted','general');
             INSERT INTO journal_lines VALUES
                 (1,1,1,'0','1000'),(2,2,2,'300','0'),(3,3,3,'100','0'),
-                (4,4,1,'0','800'),(5,5,2,'200','0'),(6,6,3,'100','0');
+                (4,4,1,'0','800'),(5,5,2,'200','0'),(6,6,3,'100','0'),
+                (7,7,4,'250','0'),(8,7,1,'0','250');
             CREATE TABLE stock_products(id INTEGER PRIMARY KEY,sku TEXT,name_ar TEXT);
             CREATE TABLE stock_warehouses(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT);
             CREATE TABLE stock_movements(id INTEGER PRIMARY KEY,product_id INTEGER,source_warehouse_id INTEGER,target_warehouse_id INTEGER,movement_date TEXT);
@@ -106,7 +108,7 @@ class ManagementReportsTests(unittest.TestCase):
             "2026-11-25", period_label="2026-10", currency_code="EGP", payable_account_id=4,
         )
         record_cash_commitment_payment(
-            self.conn, commitment_id, "2026-11-10", "250", 1
+            self.conn, commitment_id, "2026-11-10", "250", 7
         )
         report = build_cash_forecast(self.conn, "2026-11-15", 90)
         item = next(row for row in report["items"] if row["kind"] == "cash_commitment")
@@ -114,7 +116,7 @@ class ManagementReportsTests(unittest.TestCase):
         self.assertEqual(item["due_date"], "2026-11-25")
         self.assertEqual(report["payments"], Decimal("1000.00"))
         self.assertEqual(report["daily"][0]["other_commitments"], Decimal("1000.00"))
-        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 6)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 7)
 
     def test_period_comparison_calculates_variance(self):
         report = build_period_comparison(
