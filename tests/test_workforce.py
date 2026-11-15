@@ -145,8 +145,8 @@ class WorkforceTests(unittest.TestCase):
         rows = conn.execute("""SELECT employee_id,item_name,item_type,amount FROM employee_pay_items
             WHERE item_name IN ('بدل انتقال','خصم تأمين طبي') ORDER BY item_name,employee_id""").fetchall()
         conn.close()
-        self.assertEqual(rows,[(1,"بدل انتقال","allowance","1000"),(1,"بدل انتقال","allowance","750"),
-                               (2,"بدل انتقال","allowance","750"),(2,"خصم تأمين طبي","deduction","100")])
+        self.assertEqual(rows,[(1,"بدل انتقال","allowance","1000"),(1,"بدل انتقال","allowance","750.00"),
+                               (2,"بدل انتقال","allowance","750.00"),(2,"خصم تأمين طبي","deduction","100.00")])
         page = self.client.get("/hr/pay-items")
         self.assertEqual(page.status_code,200)
 
