@@ -51,6 +51,20 @@ def count_same_amount_candidates(rows, amount):
     return sum(1 for row in rows if signed_ledger_amount(row["debit"], row["credit"]) == target)
 
 
+def bank_opening_ledger_balance(conn, account_id, period_start):
+    """Return bank opening balance without later-year opening copies already represented in prior history."""
+    from datetime import timedelta
+    from management_dashboard import _copied_opening_entry_ids
+    cutoff=(date.fromisoformat(period_start)-timedelta(days=1)).isoformat()
+    excluded=sorted(_copied_opening_entry_ids(conn,cutoff))
+    exclusion=(" AND je.id NOT IN ("+",".join("?" for _ in excluded)+")") if excluded else ""
+    rows=conn.execute(f"""SELECT jl.debit,jl.credit FROM journal_lines jl
+        JOIN journal_entries je ON je.id=jl.entry_id
+        WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<?{exclusion}""",
+        (account_id,period_start,*excluded)).fetchall()
+    return sum((signed_ledger_amount(row["debit"],row["credit"]) for row in rows),Decimal("0.00"))
+
+
 def save_statement_line_match(c, line_id, journal_line_id, matched_at, matched_by):
     """Claim an unmatched statement line exactly once, even if callers race."""
     updated = c.execute("""UPDATE bank_statement_lines
@@ -450,12 +464,7 @@ def statement_reconciliation():
             balances=c.execute("""SELECT opening_balance,closing_balance,opening_reviewed,opening_review_note
                 FROM bank_statement_balances WHERE bank_account_id=? AND period_start=? AND period_end=?""",
                 (account_id,period_start,period_end)).fetchone()
-            opening_rows=c.execute("""SELECT jl.debit,jl.credit FROM journal_lines jl
-                JOIN journal_entries je ON je.id=jl.entry_id
-                WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<?""",
-                (account_id,period_start)).fetchall()
-            opening_ledger_balance=sum((signed_ledger_amount(row["debit"],row["credit"])
-                for row in opening_rows),Decimal("0"))
+            opening_ledger_balance=bank_opening_ledger_balance(c,account_id,period_start)
             reconciliation_state=opening_reconciliation_state(balances,opening_ledger_balance,book_total)
             balances_entered=reconciliation_state["balances_entered"]
             opening_balance=reconciliation_state["opening_balance"]

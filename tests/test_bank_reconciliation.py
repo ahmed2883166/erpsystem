@@ -116,5 +116,23 @@ class BankOpeningReconciliationTests(unittest.TestCase):
         self.assertEqual(count_same_amount_candidates(rows,Decimal("-100.00")),1)
 
 
+    def test_bank_opening_balance_excludes_copied_later_year_opening_entry(self):
+        conn=sqlite3.connect(":memory:")
+        conn.row_factory=sqlite3.Row
+        conn.executescript("""
+            CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT);
+            CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit TEXT,credit TEXT);
+            CREATE TABLE financial_years(id INTEGER PRIMARY KEY,year_name TEXT,start_date TEXT,end_date TEXT,status TEXT,opening_entry_id INTEGER);
+            CREATE TABLE financial_year_journal_history(id INTEGER PRIMARY KEY,financial_year_id INTEGER,entry_kind TEXT,action TEXT,entry_id INTEGER,related_entry_id INTEGER);
+            INSERT INTO journal_entries VALUES(1,'2026-12-31','posted'),(2,'2027-01-01','posted');
+            INSERT INTO journal_lines VALUES(1,1,10,'100','0'),(2,2,10,'100','0');
+            INSERT INTO financial_years VALUES(1,'2027','2027-01-01','2027-12-31','open',2);
+            INSERT INTO financial_year_journal_history(financial_year_id,entry_kind,action,entry_id)
+              VALUES(1,'opening','created',2);
+        """)
+        self.assertEqual(banking.bank_opening_ledger_balance(conn,10,"2027-02-01"),Decimal("100.00"))
+        conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()
