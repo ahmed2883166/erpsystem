@@ -97,6 +97,58 @@ def collect_health_checks(connection):
         add("negative_stock_layers", "فحص طبقات تقييم المخزون", "info", 0,
             "جدول طبقات التقييم غير متاح في قاعدة البيانات الحالية.", "/")
 
+    # Backup readiness: report persisted scheduler state without triggering a backup.
+    if _has_table(connection, "company_settings"):
+        backup_settings = {row["setting_key"]: row["setting_value"] for row in connection.execute(
+            "SELECT setting_key,setting_value FROM company_settings WHERE setting_key LIKE 'backup_%'"
+        )}
+        enabled = backup_settings.get("backup_enabled", "0") == "1"
+        last_status = (backup_settings.get("backup_last_status") or "").strip().lower()
+        last_run = (backup_settings.get("backup_last_run") or "").strip()
+        if not enabled:
+            add("backup_readiness", "النسخ الاحتياطي التلقائي", "high", 1,
+                "النسخ التلقائي غير مفعل. راجع الإعدادات وفعل الجدول بعد تحديد مجلد آمن.", "/settings/backup")
+        elif last_status == "failed":
+            add("backup_readiness", "النسخ الاحتياطي التلقائي", "critical", 1,
+                "آخر محاولة نسخ فشلت: " + (backup_settings.get("backup_last_error") or "لا يوجد وصف")[:240], "/settings/backup")
+        elif last_status == "success" and last_run:
+            add("backup_readiness", "النسخ الاحتياطي التلقائي", "info", 0,
+                "آخر نسخة ناجحة: " + last_run + " — تحقق دوريًا من إمكانية الاستعادة.", "/settings/backup")
+        else:
+            add("backup_readiness", "النسخ الاحتياطي التلقائي", "high", 1,
+                "لم تُسجل نسخة ناجحة حتى الآن أو لم تكتمل أول دورة نسخ.", "/settings/backup")
+    else:
+        add("backup_readiness", "النسخ الاحتياطي التلقائي", "info", 0,
+            "إعدادات النسخ الاحتياطي غير متاحة في قاعدة البيانات الحالية.", "/")
+
+    # Recent failed logins are a signal for review, not an automatic account lock.
+    if _has_table(connection, "login_attempts"):
+        attempt_columns = _columns(connection, "login_attempts")
+        if {"attempted_at", "username", "remote_addr"}.issubset(attempt_columns):
+            failed_logins = connection.execute(
+                "SELECT COUNT(*) FROM login_attempts WHERE attempted_at >= datetime('now','-24 hours')"
+            ).fetchone()[0]
+            add("recent_login_attempts", "محاولات الدخول خلال آخر 24 ساعة",
+                "high" if failed_logins >= 20 else "info", failed_logins,
+                "راجع أسماء المستخدمين وعناوين الشبكة وتوقيت المحاولات؛ لا يتم قفل أي حساب تلقائيًا من هذا التقرير.",
+                "/security/login-attempts")
+        else:
+            add("recent_login_attempts", "مراجعة محاولات الدخول", "info", 0,
+                "جدول محاولات الدخول لا يحتوي على جميع الحقول المطلوبة للفحص.", "/")
+    else:
+        add("recent_login_attempts", "مراجعة محاولات الدخول", "info", 0,
+            "سجل محاولات الدخول غير متاح في قاعدة البيانات الحالية.", "/")
+
+    # Count approval work waiting for a decision when the approval queue exists.
+    if _has_table(connection, "approval_requests"):
+        approval_columns = _columns(connection, "approval_requests")
+        if "status" in approval_columns:
+            pending_approvals = connection.execute(
+                "SELECT COUNT(*) FROM approval_requests WHERE lower(COALESCE(status,'')) IN ('pending','requested','submitted')"
+            ).fetchone()[0]
+            add("pending_approvals", "طلبات الموافقة المعلقة", "info", pending_approvals,
+                "راجع مركز الموافقات لتجنب تأخر المستندات؛ لا يتم اعتماد أي طلب تلقائيًا.", "/approvals")
+
     # Cross-check uses the existing detailed reconciliation page; this screen does not post fixes.
     checks.append({"key":"stock_gl_review","title":"مطابقة تقييم المخزون مع الأستاذ",
                    "severity":"info","count":None,"detail":"افتح تقرير المطابقة التفصيلي لمراجعة الفروق دون تعديل تلقائي.",
