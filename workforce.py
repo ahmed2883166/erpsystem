@@ -1257,6 +1257,211 @@ def toggle_pay_item(item_id):
     return redirect(url_for("workforce.pay_items"))
 
 
+
+@workforce_bp.route("/hr/payroll-reconciliation", methods=["GET"])
+@_role("admin", "accountant", "viewer")
+def payroll_reconciliation():
+    """Read-only audit of posted payroll snapshots, duplicate coverage and linked journals."""
+    c = _db()
+    month_from = request.args.get("month_from", "").strip()
+    month_to = request.args.get("month_to", "").strip()
+    for label, value in (("من شهر", month_from), ("إلى شهر", month_to)):
+        if value:
+            try:
+                parsed = date.fromisoformat(value + "-01")
+                if parsed.strftime("%Y-%m") != value:
+                    raise ValueError()
+            except ValueError:
+                c.close()
+                flash("صيغة الشهر غير صحيحة في حقل " + label + ".", "error")
+                return redirect(url_for("workforce.payroll_reconciliation"))
+    if month_from and month_to and month_from > month_to:
+        c.close()
+        flash("شهر البداية يجب ألا يتجاوز شهر النهاية.", "error")
+        return redirect(url_for("workforce.payroll_reconciliation"))
+
+    where = ["r.status IN ('posted','reversed')"]
+    params = []
+    if month_from:
+        where.append("r.period>=?")
+        params.append(month_from)
+    if month_to:
+        where.append("r.period<=?")
+        params.append(month_to)
+    runs = c.execute("""
+        SELECT r.id,r.period,r.status,r.journal_entry_id,
+               COUNT(l.id) AS employee_count,
+               COALESCE(SUM(CAST(l.net_pay AS NUMERIC)),0) AS net_total
+        FROM payroll_runs r LEFT JOIN payroll_lines l ON l.run_id=r.id
+        WHERE """ + " AND ".join(where) + """
+        GROUP BY r.id ORDER BY r.period DESC,r.id DESC
+    """, params).fetchall()
+
+    issues = []
+    reconciled = []
+    for run in runs:
+        run_issues = []
+        employee_duplicates = c.execute("""
+            SELECT e.employee_code,e.full_name,COUNT(*) AS occurrences
+            FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
+            WHERE l.run_id=? GROUP BY l.employee_id
+            HAVING COUNT(*)>1
+        """, (run["id"],)).fetchall()
+        for duplicate in employee_duplicates:
+            run_issues.append("تكرار الموظف داخل كشف المرتبات: " + duplicate["employee_code"] + " - " + duplicate["full_name"])
+
+        if run["status"] == "posted":
+            if not run["journal_entry_id"]:
+                run_issues.append("كشف مرحّل بدون رقم قيد محاسبي.")
+                journal = None
+            else:
+                journal = c.execute("""
+                    SELECT j.id,j.status,j.reference,
+                           COALESCE(SUM(CAST(l.debit AS NUMERIC)),0) AS debit_total,
+                           COALESCE(SUM(CAST(l.credit AS NUMERIC)),0) AS credit_total
+                    FROM journal_entries j LEFT JOIN journal_lines l ON l.entry_id=j.id
+                    WHERE j.id=? GROUP BY j.id
+                """, (run["journal_entry_id"],)).fetchone()
+                if not journal:
+                    run_issues.append("القيد المرتبط بكشف المرتبات غير موجود.")
+                else:
+                    expected_reference = "PAYROLL-" + run["period"] + "-RUN-" + str(run["id"])
+                    if journal["status"] != "posted":
+                        run_issues.append("حالة القيد المرتبط ليست مرحّلة.")
+                    if journal["reference"] != expected_reference:
+                        run_issues.append("مرجع القيد لا يطابق رقم كشف المرتبات.")
+                    debit_total = M(journal["debit_total"])
+                    credit_total = M(journal["credit_total"])
+                    if debit_total != credit_total:
+                        run_issues.append("القيد المحاسبي غير متوازن.")
+                    line_totals = c.execute("""
+                        SELECT
+                          COALESCE(SUM(CAST(gross_pay AS NUMERIC)),0) AS gross_total,
+                          COALESCE(SUM(CAST(absence_deduction AS NUMERIC)),0) AS absence_total,
+                          COALESCE(SUM(CAST(employer_insurance AS NUMERIC)),0) AS employer_ins_total,
+                          COALESCE(SUM(CAST(net_pay AS NUMERIC)),0) AS net_total,
+                          COALESCE(SUM(CAST(advance_deduction AS NUMERIC)),0) AS advance_total,
+                          COALESCE(SUM(CAST(other_deductions AS NUMERIC)),0) AS other_total,
+                          COALESCE(SUM(CAST(penalty_deduction AS NUMERIC)),0) AS penalty_total,
+                          COALESCE(SUM(CAST(taxable_income_tax AS NUMERIC)),0) AS tax_total,
+                          COALESCE(SUM(CAST(stamp_duty AS NUMERIC)),0) AS stamp_total,
+                          COALESCE(SUM(CAST(employee_insurance AS NUMERIC)),0) AS employee_ins_total
+                        FROM payroll_lines WHERE run_id=?
+                    """, (run["id"],)).fetchone()
+                    expected_debit = M(D(line_totals["gross_total"]) + D(line_totals["employer_ins_total"]))
+                    expected_credit = M(
+                        D(line_totals["net_total"]) + D(line_totals["absence_total"])
+                        + D(line_totals["advance_total"]) + D(line_totals["other_total"])
+                        + D(line_totals["penalty_total"]) + D(line_totals["tax_total"])
+                        + D(line_totals["stamp_total"]) + D(line_totals["employee_ins_total"])
+                        + D(line_totals["employer_ins_total"])
+                    )
+                    if debit_total != expected_debit or credit_total != expected_credit:
+                        run_issues.append(
+                            "إجمالي القيد لا يطابق ملخص كشف المرتبات "
+                            "(مدين " + str(debit_total) + " مقابل " + str(expected_debit)
+                            + "، دائن " + str(credit_total) + " مقابل " + str(expected_credit) + ")."
+                        )
+        else:
+            journal = None
+
+        if run_issues:
+            for message in run_issues:
+                issues.append({"period":run["period"],"run_id":run["id"],"message":message})
+        reconciled.append({
+            "period":run["period"],"run_id":run["id"],"status":run["status"],
+            "employee_count":run["employee_count"],"net_total":M(run["net_total"]),
+            "journal_entry_id":run["journal_entry_id"],
+            "result":"سليم" if not run_issues and run["status"]=="posted"
+                     else ("معكوس تاريخيًا" if run["status"]=="reversed" and not run_issues else "يحتاج مراجعة"),
+            "issue_count":len(run_issues)
+        })
+
+    duplicate_periods = c.execute("""
+        SELECT period,COUNT(*) AS run_count,GROUP_CONCAT(id,', ') AS run_ids
+        FROM payroll_runs WHERE status='posted'
+        """ + (" AND period>=?" if month_from else "") +
+        (" AND period<=?" if month_to else "") + """
+        GROUP BY period HAVING COUNT(*)>1 ORDER BY period DESC
+    """, ([month_from] if month_from else []) + ([month_to] if month_to else [])).fetchall()
+    for duplicate in duplicate_periods:
+        issues.append({"period":duplicate["period"],"run_id":"—",
+            "message":"أكثر من كشف مرتبات مرحّل لنفس الشهر: " + str(duplicate["run_ids"])})
+
+    duplicate_employees = c.execute("""
+        SELECT r.period,e.employee_code,e.full_name,COUNT(*) AS occurrences,
+               GROUP_CONCAT(r.id,', ') AS run_ids
+        FROM payroll_runs r
+        JOIN payroll_lines l ON l.run_id=r.id
+        JOIN employees e ON e.id=l.employee_id
+        WHERE r.status='posted'
+        """ + (" AND r.period>=?" if month_from else "") +
+        (" AND r.period<=?" if month_to else "") + """
+        GROUP BY r.period,l.employee_id HAVING COUNT(*)>1
+        ORDER BY r.period DESC,e.employee_code
+    """, ([month_from] if month_from else []) + ([month_to] if month_to else [])).fetchall()
+    for duplicate in duplicate_employees:
+        issues.append({"period":duplicate["period"],"run_id":duplicate["run_ids"],
+            "message":"تكرار صرف الموظف " + duplicate["employee_code"] + " - " +
+            duplicate["full_name"] + " في كشوف مرحّلة للشهر نفسه."})
+
+    overlap_rows = c.execute("""
+        SELECT r.period,r.id AS run_id,e.employee_code,e.full_name,
+               f.final_payroll_no,f.status AS final_status
+        FROM payroll_runs r
+        JOIN payroll_lines l ON l.run_id=r.id
+        JOIN employees e ON e.id=l.employee_id
+        JOIN employee_final_payrolls f
+          ON f.employee_id=e.id AND f.period=r.period AND f.status IN ('approved','paid')
+        WHERE r.status='posted'
+        """ + (" AND r.period>=?" if month_from else "") +
+        (" AND r.period<=?" if month_to else "") + """
+        ORDER BY r.period DESC,e.employee_code
+    """, ([month_from] if month_from else []) + ([month_to] if month_to else [])).fetchall()
+    for overlap in overlap_rows:
+        issues.append({"period":overlap["period"],"run_id":overlap["run_id"],
+            "message":"احتمال تكرار استحقاق بين المرتب الشهري والمرتب النهائي للموظف " +
+            overlap["employee_code"] + " - " + overlap["full_name"] +
+            " (كشف نهائي " + overlap["final_payroll_no"] + ")."})
+
+    duplicate_final = c.execute("""
+        SELECT period,e.employee_code,e.full_name,COUNT(*) AS occurrences,
+               GROUP_CONCAT(final_payroll_no,', ') AS final_numbers
+        FROM employee_final_payrolls f JOIN employees e ON e.id=f.employee_id
+        WHERE f.status IN ('approved','paid')
+        """ + (" AND period>=?" if month_from else "") +
+        (" AND period<=?" if month_to else "") + """
+        GROUP BY period,employee_id HAVING COUNT(*)>1
+        ORDER BY period DESC,e.employee_code
+    """, ([month_from] if month_from else []) + ([month_to] if month_to else [])).fetchall()
+    for duplicate in duplicate_final:
+        issues.append({"period":duplicate["period"],"run_id":"—",
+            "message":"أكثر من كشف مرتب نهائي معتمد للموظف " + duplicate["employee_code"] +
+            " - " + duplicate["full_name"] + ": " + duplicate["final_numbers"]})
+
+    journal_duplicates = c.execute("""
+        SELECT reference,COUNT(*) AS occurrences,GROUP_CONCAT(id,', ') AS journal_ids
+        FROM journal_entries WHERE reference LIKE 'PAYROLL-%'
+        GROUP BY reference HAVING COUNT(*)>1
+        ORDER BY reference
+    """).fetchall()
+    for duplicate in journal_duplicates:
+        issues.append({"period":"—","run_id":"—",
+            "message":"مرجع قيد مرتبات مكرر " + str(duplicate["reference"]) +
+            " (القيود " + str(duplicate["journal_ids"]) + ")."})
+
+    c.close()
+    summary = {
+        "runs":len(reconciled),
+        "clean":sum(1 for item in reconciled if item["result"]=="سليم"),
+        "reversed":sum(1 for item in reconciled if item["result"]=="معكوس تاريخيًا"),
+        "needs_review":sum(1 for item in reconciled if item["result"]=="يحتاج مراجعة"),
+        "issues":len(issues)
+    }
+    return render_template("payroll_reconciliation.html", runs=reconciled, issues=issues,
+        summary=summary, month_from=month_from, month_to=month_to)
+
+
 @workforce_bp.route("/hr/payroll-report", methods=["GET"])
 @_role("admin", "accountant", "viewer")
 def payroll_report():
