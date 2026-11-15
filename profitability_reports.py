@@ -196,6 +196,98 @@ def _warehouse_profitability(conn, date_from, date_to):
     return result, True
 
 
+
+
+def _product_profitability(conn, date_from, date_to):
+    """Calculate net product contribution from posted invoices and credit notes.
+
+    Invoice-level discounts are allocated proportionally to line revenue. VAT is
+    excluded. Posted credit-note lines reduce both revenue and returned COGS.
+    """
+    required_tables = (
+        "sales_invoices", "sales_invoice_lines", "sales_credit_notes",
+        "sales_credit_note_lines", "stock_products",
+    )
+    if not all(_table_exists(conn, table) for table in required_tables):
+        return [], False
+    invoice_columns = _columns(conn, "sales_invoice_lines")
+    credit_columns = _columns(conn, "sales_credit_note_lines")
+    header_columns = _columns(conn, "sales_invoices")
+    if not {"product_id", "line_total", "cost_total", "quantity"}.issubset(invoice_columns):
+        return [], False
+    if not {"product_id", "line_total", "cost_total", "quantity"}.issubset(credit_columns):
+        return [], False
+    if not {"subtotal", "discount_amount"}.issubset(header_columns):
+        return [], False
+
+    totals = {}
+    invoice_rows = conn.execute(
+        """SELECT l.product_id,l.description,l.quantity,l.line_total,l.cost_total,
+                  i.subtotal invoice_subtotal,i.discount_amount,
+                  p.sku,p.name_ar
+           FROM sales_invoice_lines l
+           JOIN sales_invoices i ON i.id=l.invoice_id
+           LEFT JOIN stock_products p ON p.id=l.product_id
+           WHERE i.status='posted' AND i.invoice_date>=? AND i.invoice_date<=?
+           ORDER BY i.id,l.id""",
+        (date_from, date_to),
+    ).fetchall()
+    for row in invoice_rows:
+        line_revenue = _amount(row["line_total"])
+        subtotal = _amount(row["invoice_subtotal"])
+        invoice_discount = _amount(row["discount_amount"])
+        allocated_discount = (
+            invoice_discount * line_revenue / subtotal if subtotal > 0 else Decimal("0")
+        )
+        key = row["product_id"] if row["product_id"] is not None else 0
+        item = totals.setdefault(key, {
+            "id": key or None, "sku": row["sku"] or "",
+            "name": row["name_ar"] or row["description"] or "صنف غير محدد",
+            "revenue": Decimal("0"), "cogs": Decimal("0"),
+            "quantity_sold": Decimal("0"), "quantity_returned": Decimal("0"),
+            "invoice_lines": 0, "credit_lines": 0,
+        })
+        item["revenue"] += line_revenue - allocated_discount
+        item["cogs"] += _amount(row["cost_total"])
+        item["quantity_sold"] += _amount(row["quantity"])
+        item["invoice_lines"] += 1
+
+    credit_rows = conn.execute(
+        """SELECT l.product_id,l.description,l.quantity,l.line_total,l.cost_total,
+                  p.sku,p.name_ar
+           FROM sales_credit_note_lines l
+           JOIN sales_credit_notes cn ON cn.id=l.credit_note_id
+           LEFT JOIN stock_products p ON p.id=l.product_id
+           WHERE cn.status='posted' AND cn.credit_date>=? AND cn.credit_date<=?
+           ORDER BY cn.id,l.id""",
+        (date_from, date_to),
+    ).fetchall()
+    for row in credit_rows:
+        key = row["product_id"] if row["product_id"] is not None else 0
+        item = totals.setdefault(key, {
+            "id": key or None, "sku": row["sku"] or "",
+            "name": row["name_ar"] or row["description"] or "صنف غير محدد",
+            "revenue": Decimal("0"), "cogs": Decimal("0"),
+            "quantity_sold": Decimal("0"), "quantity_returned": Decimal("0"),
+            "invoice_lines": 0, "credit_lines": 0,
+        })
+        item["revenue"] -= _amount(row["line_total"])
+        item["cogs"] -= _amount(row["cost_total"])
+        item["quantity_returned"] += _amount(row["quantity"])
+        item["credit_lines"] += 1
+
+    result = []
+    for item in totals.values():
+        item["gross_profit"] = item["revenue"] - item["cogs"]
+        item["margin_percent"] = (
+            item["gross_profit"] * Decimal("100") / item["revenue"]
+            if item["revenue"] else None
+        )
+        result.append(item)
+    result.sort(key=lambda row: (row["gross_profit"], row["sku"], row["name"]))
+    return result, True
+
+
 def build_profitability_report(conn, date_from, date_to):
     """Return profitability by branch, cost center/activity, and warehouse."""
     branches, branch_available = _grouped_gl_profitability(
@@ -225,11 +317,11 @@ def build_profitability_report(conn, date_from, date_to):
             if row:
                 activity = dict(row)
     return {
-        "branches": branches, "cost_centers": cost_centers, "warehouses": warehouses,
+        "branches": branches, "cost_centers": cost_centers, "warehouses": warehouses,\n        "products": products,
         "availability": {
             "branches": branch_available,
             "cost_centers": cost_center_available,
-            "warehouses": warehouse_available,
+            "warehouses": warehouse_available,\n            "products": products_available,
         },
         "active_activity": activity,
         "date_from": date_from, "date_to": date_to,
