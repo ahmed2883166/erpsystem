@@ -844,6 +844,7 @@ class WorkforceTests(unittest.TestCase):
         conn.commit(); conn.close()
         response = self.client.post("/hr/payroll", data={
             "period": "2026-11", "basic_1": "10000",
+            "basic_override_reason_1": "إدخال الراتب اليدوي المعتمد للاختبار",
             "overtime_hours_1": "10", "overtime_rate_percent_1": "150", "overtime_amount_1": "",
             "insured_wage_1": "9000", "stamp_duty_1": "25",
             "absence_deduction_1": "0", "other_deductions_1": "0", "advance_1": "0",
