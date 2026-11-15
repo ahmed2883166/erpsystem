@@ -58,7 +58,7 @@
   <form method="post" action="{{ url_for('quotes.create_delivery_note_route', order_id=order.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>تاريخ التسليم <input type="date" name="delivery_date" value="{{ today }}" required></label>
-    <table>
+    <div class="table-wrap"><table>
       <thead><tr><th>الصنف</th><th>متبقي للتسليم</th><th>الكمية في الإذن</th></tr></thead>
       <tbody>
       {% for line in lines if line.product_id and line.remaining_delivery > 0 %}
@@ -72,7 +72,7 @@
         </tr>
       {% endfor %}
       </tbody>
-    </table>
+    </table></div>
     <label>ملاحظات <textarea name="notes"></textarea></label>
     <button>حفظ إذن التسليم كمسودة</button>
   </form>
@@ -80,7 +80,7 @@
 {% endif %}
 <section class="panel">
   <h3>أذون التسليم</h3>
-  <table>
+  <div class="table-wrap"><table>
     <thead><tr><th>رقم الإذن</th><th>التاريخ</th><th>الحالة</th><th>إجراء</th></tr></thead>
     <tbody>
     {% for note in notes %}
@@ -99,7 +99,7 @@
       <tr><td colspan="4">لا توجد أذون تسليم.</td></tr>
     {% endfor %}
     </tbody>
-  </table>
+  </table></div>
 </section>
 {% if 'sales.manage' in permissions and order.status in ['approved','partially_delivered','delivered','partially_invoiced'] %}
 <section class="panel">
@@ -115,10 +115,10 @@
 {% endif %}
 <section class="panel">
   <h3>فواتير أمر البيع</h3>
-  <table><thead><tr><th>رقم الفاتورة</th><th>التاريخ</th><th>الإجمالي</th></tr></thead><tbody>
+  <div class="table-wrap"><table><thead><tr><th>رقم الفاتورة</th><th>التاريخ</th><th>الإجمالي</th></tr></thead><tbody>
   {% for invoice in invoices %}
     <tr><td><a href="{{ url_for('sales.invoice_print', invoice_id=invoice.id) }}">{{ invoice.invoice_no }}</a></td><td>{{ invoice.invoice_date }}</td><td>{{ invoice.total_amount }}</td></tr>
   {% else %}<tr><td colspan="3">لم تصدر فواتير بعد.</td></tr>{% endfor %}
-  </tbody></table>
+  </tbody></table></div>
 </section>
 {% endblock %}
