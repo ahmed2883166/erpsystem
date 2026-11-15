@@ -1,22 +1,21 @@
 {% extends "base.html" %}
 {% block title %}قسيمة راتب {{slip.full_name}} | NEXUS ERP{% endblock %}
 {% block content %}
-<header class="no-print">
+<header class="page-heading no-print"><div>
   <h2>قسيمة راتب تفصيلية</h2>
   <p><a class="button secondary" href="{{ url_for('workforce.payroll_run', run_id=slip.run_id) }}">العودة إلى تفاصيل المرتبات</a></p>
-  <button type="button" onclick="window.print()">طباعة / حفظ PDF</button>
-</header>
-<section class="panel payslip">
+  <button type="button" onclick="window.print()">طباعة / حفظ PDF</button></div></header>
+<section class="panel payslip print-document">
   <div class="payslip-heading">
     <div><h2>NEXUS ERP</h2><h3>قسيمة راتب شهر {{slip.period}}</h3></div>
     <div><strong>رقم الموظف:</strong> {{slip.employee_code}}<br><strong>حالة المرتبات:</strong> {{'مرحّل' if slip.status=='posted' else 'معكوس'}}</div>
   </div>
   <h3>بيانات الموظف</h3>
-  <table>
+  <div class="table-wrap"><table>
     <tr><th>اسم الموظف</th><td>{{slip.full_name}}</td><th>كود الموظف</th><td>{{slip.employee_code}}</td></tr>
     <tr><th>المسمى الوظيفي</th><td>{{slip.job_title or '-'}}</td><th>الإدارة / القسم</th><td>{{slip.department or '-'}}</td></tr>
     <tr><th>تاريخ التعيين</th><td>{{slip.hire_date or '-'}}</td><th>الرقم التأميني</th><td>{{slip.insurance_number or '-'}}</td></tr>
-  </table>
+  </table></div>
   <div class="payslip-columns">
     <div>
       <h3>الاستحقاقات</h3>
@@ -53,7 +52,7 @@
   <h3>بيانات إضافية</h3>
   <table>
     <tr><th>الأجر التأميني</th><td>{{slip.insured_wage}}</td></tr>
-    <tr><th>حصة الشركة في التأمينات (تضاف للاستحقاق وتخصم ضمن إجمالي الاستقطاع)</th><td>{{slip.employer_insurance}}</td></tr>
+    <tr><th>حصة الشركة في التأمينات (تكلفة على الشركة — لا تخصم من صافي الموظف)</th><td>{{slip.employer_insurance}}</td></tr>
     <tr><th>إجمالي الاستحقاقات المحاسبي للمرتبات</th><td>{{slip.total_entitlements}}</td></tr>
     <tr><th>إجمالي الاستقطاعات المحاسبي للمرتبات</th><td>{{slip.total_deductions}}</td></tr>
     <tr><th>مراجعة الإضافي اليدوي</th><td>{% if slip.overtime_manual_override %}تم اعتماد مبلغ يدوي — السبب: {{slip.overtime_override_reason}}{% else %}لم يتم إجراء تعديل يدوي{% endif %}</td></tr>
