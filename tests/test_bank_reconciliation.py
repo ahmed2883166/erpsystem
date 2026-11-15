@@ -134,5 +134,24 @@ class BankOpeningReconciliationTests(unittest.TestCase):
         conn.close()
 
 
+    def test_bank_transfer_is_reconciled_only_after_both_bank_sides_match(self):
+        conn=sqlite3.connect(":memory:")
+        conn.row_factory=sqlite3.Row
+        conn.executescript("""
+            CREATE TABLE bank_transactions(id INTEGER PRIMARY KEY,bank_account_id INTEGER,destination_bank_account_id INTEGER,journal_entry_id INTEGER,reconciled INTEGER);
+            CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER);
+            CREATE TABLE bank_statement_lines(id INTEGER PRIMARY KEY,matched_journal_line_id INTEGER);
+            INSERT INTO bank_transactions VALUES(1,10,20,50,0);
+            INSERT INTO journal_lines VALUES(100,50,10),(200,50,20);
+            INSERT INTO bank_statement_lines VALUES(1,100);
+        """)
+        self.assertTrue(banking.refresh_bank_transaction_reconciled(conn,50))
+        self.assertEqual(conn.execute("SELECT reconciled FROM bank_transactions WHERE id=1").fetchone()[0],0)
+        conn.execute("INSERT INTO bank_statement_lines VALUES(2,200)")
+        self.assertTrue(banking.refresh_bank_transaction_reconciled(conn,50))
+        self.assertEqual(conn.execute("SELECT reconciled FROM bank_transactions WHERE id=1").fetchone()[0],1)
+        conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()

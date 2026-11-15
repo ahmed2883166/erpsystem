@@ -51,6 +51,23 @@ def count_same_amount_candidates(rows, amount):
     return sum(1 for row in rows if signed_ledger_amount(row["debit"], row["credit"]) == target)
 
 
+def refresh_bank_transaction_reconciled(conn, entry_id):
+    """Mark a bank transaction reconciled only after every bank-side journal line is matched."""
+    tx=conn.execute("""SELECT id,bank_account_id,destination_bank_account_id
+        FROM bank_transactions WHERE journal_entry_id=?""",(entry_id,)).fetchone()
+    if not tx:
+        return False
+    bank_ids=sorted({int(x) for x in (tx["bank_account_id"],tx["destination_bank_account_id"]) if x is not None})
+    marks=",".join("?" for _ in bank_ids)
+    unmatched=conn.execute(f"""SELECT COUNT(*) FROM journal_lines jl
+        LEFT JOIN bank_statement_lines sl ON sl.matched_journal_line_id=jl.id
+        WHERE jl.entry_id=? AND jl.account_id IN ({marks}) AND sl.id IS NULL""",
+        (entry_id,*bank_ids)).fetchone()[0]
+    cur=conn.execute("UPDATE bank_transactions SET reconciled=? WHERE id=?",
+        (1 if int(unmatched or 0)==0 else 0,tx["id"]))
+    return cur.rowcount==1
+
+
 def bank_opening_ledger_balance(conn, account_id, period_start):
     """Return bank opening balance without later-year opening copies already represented in prior history."""
     from datetime import timedelta
@@ -409,6 +426,7 @@ def statement_reconciliation():
                     c, line_id, journal_line_id,
                     datetime.now().isoformat(timespec="seconds"), session.get("user_id")
                 )
+                refresh_bank_transaction_reconciled(c,journal_line["entry_id"])
                 c.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
                     VALUES(?,?,?,?)""",(session.get("user_id"),"bank_statement_match",
                     f"مطابقة سطر كشف #{line_id} مع سطر الأستاذ #{journal_line_id} بالقيد #{journal_line['entry_id']}؛ عدد القيود المحتملة بنفس المبلغ والاتجاه: {possible}",
