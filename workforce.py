@@ -344,9 +344,6 @@ def initialize_workforce_schema():
             "approved_by": "INTEGER", "approved_at": "TEXT",
             "approval_reason": "TEXT NOT NULL DEFAULT ''",
         },
-        "payroll_runs": {
-            "approved_by": "INTEGER", "approved_at": "TEXT",
-        },
     }.items():
         existing_columns = {row["name"] for row in c.execute(
             f'PRAGMA table_info("{table}")'
@@ -421,8 +418,13 @@ def initialize_workforce_schema():
         finally:
             c.execute("PRAGMA foreign_keys=ON")
     payroll_run_cols = {r["name"] for r in c.execute("PRAGMA table_info(payroll_runs)")}
-    if "posted_at" not in payroll_run_cols:
-        c.execute("ALTER TABLE payroll_runs ADD COLUMN posted_at TEXT")
+    for column, declaration in {
+        "posted_at": "TEXT",
+        "approved_by": "INTEGER",
+        "approved_at": "TEXT",
+    }.items():
+        if column not in payroll_run_cols:
+            c.execute(f"ALTER TABLE payroll_runs ADD COLUMN {column} {declaration}")
     employee_cols = {r["name"] for r in c.execute("PRAGMA table_info(employees)")}
     for name in ("branch_id", "cost_center_id", "project_id"):
         if name not in employee_cols:
