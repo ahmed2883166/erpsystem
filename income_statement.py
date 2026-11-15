@@ -180,7 +180,7 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
                     effective_type = "revenue" if amount > 0 else "expense"
                     value = abs(amount)
                     disposal_result_rows.append({
-                        "id": account_id,
+                        "id": "asset-disposal-" + str(disposal["id"]),
                         "code": disposal["code"] + "-D" + str(disposal["id"]),
                         "name_ar": (
                             "ربح استبعاد أصل - " if amount > 0 else "خسارة استبعاد أصل - "
