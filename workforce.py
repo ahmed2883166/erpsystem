@@ -861,26 +861,26 @@ def export_employees_excel():
     from openpyxl.styles import Font, PatternFill, Alignment
     c = _db()
     rows = c.execute("""SELECT employee_code,full_name,address,national_id,insurance_number,
-        basic_salary,variable_salary,work_status,active,termination_date FROM employees ORDER BY employee_code""").fetchall()
+        work_status,active,termination_date,job_title,department,hire_date FROM employees ORDER BY employee_code""").fetchall()
     c.close()
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Employees"
     headers = ["كود الموظف","اسم الموظف","العنوان","الرقم القومي","رقم التأمين",
-               "الأساسي","المتغير","الحالة الوظيفية","نشط","تاريخ انتهاء الخدمة"]
+               "الحالة الوظيفية","نشط","تاريخ انتهاء الخدمة","الوظيفة","الإدارة","تاريخ التعيين"]
     sheet.append(headers)
     status_labels = {"permanent":"مثبت","temporary":"مؤقت","comprehensive_bonus":"مكافأة شاملة",
                      "unpaid_leave":"إجازة بدون مرتب","resigned":"استقالة","retired":"معاش"}
     for row in rows:
         sheet.append([row["employee_code"],row["full_name"],row["address"],row["national_id"],
-                      row["insurance_number"],D(row["basic_salary"]),
-                      D(row["variable_salary"]),status_labels.get(row["work_status"],row["work_status"]),
-                      "نعم" if row["active"] else "لا",row["termination_date"] or ""])
+                      row["insurance_number"],status_labels.get(row["work_status"],row["work_status"]),
+                      "نعم" if row["active"] else "لا",row["termination_date"] or "",
+                      row["job_title"],row["department"],row["hire_date"]])
     for cell in sheet[1]:
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor="244062")
         cell.alignment = Alignment(horizontal="center")
-    for col, width in enumerate((18,30,38,20,20,16,16,22,12), start=1):
+    for col, width in enumerate((18,30,38,20,20,22,12,22,24,24,16), start=1):
         sheet.column_dimensions[chr(64+col)].width = width
     for row in sheet.iter_rows(min_row=2):
         for cell in row:
@@ -904,15 +904,15 @@ def download_employee_template():
     sheet = workbook.active
     sheet.title = "Employees"
     sheet.append(["كود الموظف","اسم الموظف","العنوان","الرقم القومي","رقم التأمين",
-                  "الأساسي","المتغير","الحالة الوظيفية","نشط"])
+                  "الحالة الوظيفية","نشط","تاريخ انتهاء الخدمة","الوظيفة","الإدارة","تاريخ التعيين"])
     sheet.freeze_panes = "A2"
-    for col, width in enumerate((18,30,38,20,20,16,16,22,12), start=1):
+    for col, width in enumerate((18,30,38,20,20,22,12,22,24,24,16), start=1):
         sheet.column_dimensions[chr(64+col)].width = width
     guide = workbook.create_sheet("تعليمات")
     guide.append(["الحقل","التعليمات"])
-    guide.append(["الحالة الوظيفية","مثبت أو مكافأة شاملة أو إجازة بدون مرتب أو استقالة أو معاش"])
+    guide.append(["الحالة الوظيفية","مثبت أو مؤقت أو مكافأة شاملة أو إجازة بدون مرتب أو استقالة أو معاش"])
     guide.append(["نشط","نعم أو لا؛ يحدد إذا كان ملف الموظف نشطًا بالنظام"])
-    guide.append(["الأساسي والمتغير","أرقام غير سالبة. المتغير يُحمّل افتراضيًا في خانة البدلات عند إعداد المرتبات"])
+    guide.append(["البيانات المالية","لا تُسجل هنا؛ تُدار من شاشات المرتبات والاستحقاقات والاستقطاعات والسلف"])
     output = io.BytesIO()
     workbook.save(output)
     output.seek(0)
