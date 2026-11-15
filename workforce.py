@@ -3609,6 +3609,8 @@ def friday_allowance():
             existing = c.execute("SELECT * FROM friday_allowance_batches WHERE period=?", (period,)).fetchone()
             if existing and existing["status"] == "posted":
                 raise ValueError("تم ترحيل بدل الجمعة لهذا الشهر بالفعل ولا يمكن إعادة تكوينه.")
+            if existing and existing["approved_by"] is not None:
+                raise ValueError("لا يمكن تعديل كشف بدل الجمعة بعد اعتماده؛ أنشئ مراجعة جديدة وفق الإجراء المعتمد.")
             if existing:
                 batch_id = existing["id"]
                 c.execute("DELETE FROM friday_allowance_lines WHERE batch_id=?", (batch_id,))
@@ -3721,6 +3723,59 @@ def friday_allowance():
         employees=eligible_employees)
 
 
+@workforce_bp.route("/hr/friday-allowance/<int:batch_id>/approve", methods=["POST"])
+@_role("admin", "accountant")
+def approve_friday_allowance(batch_id):
+    c = _db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        batch = c.execute(
+            "SELECT * FROM friday_allowance_batches WHERE id=?", (batch_id,)
+        ).fetchone()
+        if not batch or batch["status"] != "draft" or batch["journal_entry_id"]:
+            raise ValueError("لا يمكن اعتماد إلا مسودة بدل جمعة غير مرحلة.")
+        if batch["approved_by"] is not None:
+            raise ValueError("تم اعتماد كشف بدل الجمعة بالفعل.")
+        if batch["created_by"] is None or batch["created_by"] == session["user_id"]:
+            raise ValueError("لا يجوز اعتماد كشف بدل الجمعة بواسطة منشئه، أو دون بيانات منشئ موثقة.")
+        lines = c.execute(
+            "SELECT * FROM friday_allowance_lines WHERE batch_id=? ORDER BY employee_code_snapshot",
+            (batch_id,),
+        ).fetchall()
+        total = M(sum((D(line["amount"]) for line in lines), Decimal("0")))
+        if not lines or total <= 0 or total != M(batch["total_amount"]):
+            raise ValueError("تفاصيل بدل الجمعة لا تطابق إجمالي الكشف؛ لا يمكن اعتماده.")
+        for account_id, expected, label in (
+            (batch["expense_account_id"], "expense", "مصروف الأجور الإضافية"),
+            (batch["payable_account_id"], "liability", "الأجور الإضافية المستحقة"),
+        ):
+            account = c.execute(
+                "SELECT account_type,is_group,active FROM accounts WHERE id=?",
+                (account_id,),
+            ).fetchone()
+            if not account or not account["active"] or account["is_group"] or account["account_type"] != expected:
+                raise ValueError("حساب " + label + " غير صالح.")
+        reason = (request.form.get("reason") or "").strip()[:500]
+        changed = c.execute(
+            """UPDATE friday_allowance_batches
+               SET approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_reason=?
+               WHERE id=? AND status='draft' AND approved_by IS NULL AND journal_entry_id IS NULL""",
+            (session["user_id"], reason, batch_id),
+        ).rowcount
+        if changed != 1:
+            raise ValueError("تم اعتماد الكشف بواسطة مستخدم آخر؛ أعد تحميل الشاشة.")
+        _audit(c, "friday_allowance_approved",
+               "batch=" + str(batch_id) + " period=" + batch["period"] + " reason=" + reason)
+        c.commit()
+        flash("تم اعتماد كشف بدل الجمعة. أصبح جاهزًا للترحيل.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc) or "تعذر اعتماد كشف بدل الجمعة.", "error")
+    finally:
+        c.close()
+    return redirect(url_for("workforce.friday_allowance"))
+
+
 @workforce_bp.route("/hr/friday-allowance/<int:batch_id>/delete", methods=["POST"])
 @_role("admin", "accountant")
 def delete_friday_allowance(batch_id):
@@ -3728,8 +3783,8 @@ def delete_friday_allowance(batch_id):
     try:
         c.execute("BEGIN IMMEDIATE")
         batch = c.execute("SELECT * FROM friday_allowance_batches WHERE id=?", (batch_id,)).fetchone()
-        if not batch or batch["status"] != "draft" or batch["journal_entry_id"]:
-            raise ValueError("لا يمكن حذف بدل الجمعة بعد إغلاقه أو ترحيله. الحذف متاح للمسودة المفتوحة فقط.")
+        if not batch or batch["status"] != "draft" or batch["journal_entry_id"] or batch["approved_by"] is not None:
+            raise ValueError("لا يمكن حذف بدل الجمعة بعد اعتماده أو ترحيله. الحذف متاح للمسودة غير المعتمدة فقط.")
         c.execute("DELETE FROM friday_allowance_lines WHERE batch_id=?", (batch_id,))
         c.execute("DELETE FROM friday_allowance_batches WHERE id=? AND status='draft' AND journal_entry_id IS NULL", (batch_id,))
         if c.total_changes == 0:
@@ -3753,6 +3808,10 @@ def post_friday_allowance(batch_id):
         batch = c.execute("SELECT * FROM friday_allowance_batches WHERE id=?",(batch_id,)).fetchone()
         if not batch or batch["status"] != "draft":
             raise ValueError("كشف بدل الجمعة غير موجود أو سبق ترحيله.")
+        if batch["approved_by"] is None:
+            raise ValueError("يجب اعتماد كشف بدل الجمعة بواسطة مستخدم آخر قبل الترحيل.")
+        if batch["created_by"] is None or batch["created_by"] == session["user_id"]:
+            raise ValueError("لا يجوز ترحيل كشف بدل الجمعة بواسطة منشئه، أو دون بيانات منشئ موثقة.")
         lines = c.execute("""SELECT * FROM friday_allowance_lines WHERE batch_id=?
             ORDER BY employee_code_snapshot""",(batch_id,)).fetchall()
         total = M(sum((D(line["amount"]) for line in lines),Decimal("0")))
