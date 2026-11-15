@@ -1811,11 +1811,17 @@ def payroll():
                 overtime_hours = D(request.form.get("overtime_hours_" + str(e["id"]), "0"))
                 unpaid_days = Decimal("0")
                 if request.form.get("use_attendance_data") == "1":
-                    attendance_rows = c.execute("""SELECT absence_hours,approved_overtime_hours
+                    attendance_rows = c.execute("""SELECT status,absence_hours,approved_overtime_hours
                         FROM attendance_records WHERE employee_id=? AND attendance_date>=? AND attendance_date<=?""",
                         (e["id"],period+"-01",employee_period_end)).fetchall()
-                    attendance_absent_hours = M(sum((D(x["absence_hours"]) for x in attendance_rows),Decimal("0")))
-                    attendance_overtime_hours = M(sum((D(x["approved_overtime_hours"]) for x in attendance_rows),Decimal("0")))
+                    # Count absence hours only on days explicitly marked absent.
+                    # Hours entered against leave/present/holiday records must not create a second deduction.
+                    attendance_absent_hours = M(sum(
+                        (D(x["absence_hours"]) for x in attendance_rows if x["status"] == "absent"),
+                        Decimal("0")))
+                    attendance_overtime_hours = M(sum(
+                        (D(x["approved_overtime_hours"]) for x in attendance_rows),
+                        Decimal("0")))
                     overtime_hours = attendance_overtime_hours
                 overtime_rate = D(request.form.get("overtime_rate_percent_" + str(e["id"]), e["overtime_rate_percent"]))
                 overtime_raw = request.form.get("overtime_amount_" + str(e["id"]), "").strip()
@@ -2678,10 +2684,11 @@ def defer_loan_installment(loan_id, installment_id):
             raise ValueError("القسط غير موجود أو ليس قسطًا نشطًا قابلًا للتأجيل.")
         # Once the employee's payroll for this installment month is posted,
         # the installment has been used in an approved payroll and must not be changed.
-        locked_payroll = c.execute("""SELECT 1 FROM payroll_runs r
-            JOIN payroll_lines pl ON pl.run_id=r.id
-            WHERE r.period=? AND r.status='posted' AND pl.employee_id=? LIMIT 1""",
-            (installment["due_period"], installment["employee_id"])).fetchone()
+        locked_payroll = c.execute("""SELECT 1 FROM payroll_loan_allocations a
+            JOIN payroll_lines pl ON pl.id=a.payroll_line_id
+            JOIN payroll_runs r ON r.id=pl.run_id
+            WHERE a.installment_id=? AND r.status='posted' LIMIT 1""",
+            (installment_id,)).fetchone()
         if locked_payroll:
             raise ValueError("لا يمكن تعديل أو تأجيل قسط السلفة؛ تم اعتماد مرتب الموظف عن شهر " +
                              installment["due_period"] + ". يجب عكس كشف المرتبات وفق الإجراءات المحاسبية أولًا.")
@@ -2723,12 +2730,14 @@ def loan_schedule(loan_id):
         flash("السلفة غير موجودة.","error")
         return redirect(url_for("workforce.employee_loans"))
     installments = c.execute("SELECT * FROM employee_loan_installments WHERE loan_id=? ORDER BY due_period",(loan_id,)).fetchall()
-    locked_periods = {row["period"] for row in c.execute("""SELECT DISTINCT r.period
-        FROM payroll_runs r JOIN payroll_lines pl ON pl.run_id=r.id
+    locked_installment_ids = {int(row["installment_id"]) for row in c.execute("""SELECT DISTINCT a.installment_id
+        FROM payroll_loan_allocations a
+        JOIN payroll_lines pl ON pl.id=a.payroll_line_id
+        JOIN payroll_runs r ON r.id=pl.run_id
         WHERE pl.employee_id=? AND r.status='posted'""",(loan["employee_id"],)).fetchall()}
     c.close()
     return render_template("employee_loan_schedule.html",loan=loan,installments=installments,
-                           locked_periods=locked_periods)
+                           locked_installment_ids=locked_installment_ids)
 
 
 @workforce_bp.route("/hr/grants", methods=["GET"])
