@@ -589,3 +589,24 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  .table-wrap{margin-left:0;margin-right:0}
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
+
+
+/* Executive dashboard and page shortcut strips */
+.dashboard-page-header>div{display:flex;flex-direction:column;gap:2px}
+.dashboard-page-header p{margin:0;color:var(--muted)}
+.dashboard-kpis article{display:flex;flex-direction:column;gap:4px;justify-content:center;min-height:112px}
+.dashboard-kpis article>span{font-size:12px;font-weight:700;color:var(--muted)}
+.dashboard-kpis article>b{font-size:clamp(22px,2.4vw,30px);line-height:1.35}
+.dashboard-kpis article>b small{font-size:12px;color:var(--muted);font-weight:600}
+.dashboard-summary{background:linear-gradient(135deg,var(--surface),color-mix(in srgb,var(--accent) 5%,var(--surface)))}
+.dashboard-balance-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.dashboard-balance-row>div{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:15px 17px;background:var(--surface2);border:1px solid var(--line);border-radius:11px;min-width:0}
+.dashboard-balance-row span{font-size:13px;color:var(--muted);font-weight:700}
+.dashboard-balance-row strong{font-size:18px;direction:ltr;text-align:left;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.page-shortcuts{padding:2px 0}
+.page-shortcuts .button,.page-shortcuts .btn{min-height:40px}
+@media(max-width:560px){
+ .dashboard-balance-row{grid-template-columns:1fr}
+ .dashboard-balance-row>div{align-items:flex-start;flex-direction:column}
+ .dashboard-balance-row strong{text-align:right}
+}
