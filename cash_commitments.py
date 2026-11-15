@@ -292,7 +292,7 @@ def reverse_cash_commitment_payment(conn, payment_id, reversal_date,
     try:
         payment = conn.execute(
             """SELECT p.*,c.id commitment_id,c.amount commitment_amount,c.status commitment_status,
-                      c.title commitment_title
+                      c.title commitment_title,c.payable_account_id
                FROM cash_commitment_payments p
                JOIN cash_commitments c ON c.id=p.commitment_id
                WHERE p.id=?""",
@@ -313,6 +313,16 @@ def reverse_cash_commitment_payment(conn, payment_id, reversal_date,
         ).fetchall()
         if len(lines) < 2:
             raise ValueError("قيد السداد الأصلي لا يحتوي على سطور كافية للعكس.")
+        payable_debit = sum((
+            Decimal(str(line["debit"] or "0"))
+            for line in lines
+            if int(line["account_id"]) == int(payment["payable_account_id"] or 0)
+        ), Decimal("0"))
+        if payable_debit != Decimal(str(payment["amount"])):
+            raise ValueError(
+                "لا يمكن عكس السداد آليًا: مدين حساب الالتزام في القيد لا يساوي مبلغ الدفعة المسجلة. "
+                "يلزم مراجعة الربط المحاسبي أولًا."
+            )
         reverse_lines = [
             (line["account_id"], line["credit"], line["debit"],
              "عكس سداد التزام: " + str(line["memo"] or ""))
