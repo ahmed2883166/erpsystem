@@ -1385,6 +1385,8 @@ def payroll_reconciliation():
         for payment in payment_rows:
             payment_amount = M(payment["amount"])
             paid_total += payment_amount
+            if payment_amount <= 0:
+                run_issues.append("دفعة المرتبات رقم " + str(payment["id"]) + " تحتوي مبلغًا غير موجب.")
             if run["status"] == "reversed":
                 run_issues.append("تم تسجيل دفعة صرف على كشف مرتبات معكوس: دفعة " + str(payment["id"]) + ".")
             payment_journal = c.execute("""
@@ -1437,6 +1439,14 @@ def payroll_reconciliation():
             """, (run["id"],)).fetchall()
             if invalid_allocations:
                 run_issues.append("توجد توزيعات صرف مرتبطة بموظفين من كشف مرتبات آخر.")
+            invalid_amount_allocations = c.execute("""
+                SELECT a.id,a.amount FROM payroll_payment_allocations a
+                JOIN payroll_payments p ON p.id=a.payment_id
+                JOIN payroll_lines pl ON pl.id=a.payroll_line_id
+                WHERE p.run_id=? AND CAST(a.amount AS NUMERIC)<=0
+            """, (run["id"],)).fetchall()
+            if invalid_amount_allocations:
+                run_issues.append("توجد توزيعات صرف بمبالغ صفرية أو سالبة.")
             over_allocated_lines = c.execute("""
                 SELECT pl.id,e.employee_code,e.full_name,pl.net_pay,
                        SUM(CAST(a.amount AS NUMERIC)) AS allocated
