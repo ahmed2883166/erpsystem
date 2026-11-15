@@ -266,7 +266,7 @@ class WorkforceExtrasTests(unittest.TestCase):
         self.assertEqual(journal_lines,[(2,"1666.67","0.00"),(3,"0.00","1666.67")])
         blocked_payment=self.post_as_user("/hr/grants/1/pay",data={
             "amount":"500","payment_date":"2026-11-15","cash_account_id":"1"
-        })
+        },follow_redirects=True)
         self.assertIn("مختلف عن معتمدها",blocked_payment.get_data(as_text=True))
         paid=self.client.post("/hr/grants/1/pay",data={
             "amount":"500","payment_date":"2026-11-15","cash_account_id":"1"
