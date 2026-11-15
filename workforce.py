@@ -1197,13 +1197,14 @@ def payroll():
                             penalty_amount = M(basic_salary * D(penalty["duration_days"]) / Decimal("30"))
                         penalty_deduction = M(penalty_deduction + penalty_amount)
                 tax = M(request.form.get("tax_" + str(e["id"]), "0"))
+                stamp_duty = M(request.form.get("stamp_duty_" + str(e["id"]), "0"))
                 emp_ins = M(request.form.get("employee_ins_" + str(e["id"]), "0"))
                 employer_ins = M(request.form.get("employer_ins_" + str(e["id"]), "0"))
                 # Absence is a deduction, not part of gross wage.
                 gross = M(basic_salary + allowances + overtime_amount + incentives)
                 rule_set_id = None
                 taxable_annual = Decimal("0")
-                insured_wage = Decimal("0")
+                insured_wage = M(request.form.get("insured_wage_" + str(e["id"]), str(basic_salary)))
                 if request.form.get("auto_calculate_statutory") == "1" and e["work_status"] != "unpaid_leave":
                     from payroll_compliance import calculate_payroll_deductions
                     automatic = calculate_payroll_deductions(
@@ -1220,17 +1221,17 @@ def payroll():
                     insured_wage = automatic["insured_wage"]
                 # Collect scheduled loan installments only up to the employee's available net pay.
                 # Any unpaid remainder stays on the installment and rolls forward to later payrolls.
-                fixed_deductions = M(employer_ins + emp_ins + tax + manual_advance_deduction + other_deductions + absence + penalty_deduction)
+                fixed_deductions = M(employer_ins + emp_ins + tax + stamp_duty + manual_advance_deduction + other_deductions + absence + penalty_deduction)
                 available_for_loan = M(max(Decimal("0"),gross + employer_ins - fixed_deductions))
                 loan_due_total = M(sum((max(Decimal("0"),D(i["due_amount"])-D(i["paid_amount"]))
                                         for i in due_installments),Decimal("0")))
                 loan_deduction = min(loan_due_total,available_for_loan)
                 advance_deduction = M(manual_advance_deduction + loan_deduction)
                 total_entitlements = M(gross + employer_ins)
-                total_deductions = M(employer_ins + emp_ins + tax + advance_deduction + other_deductions + absence + penalty_deduction)
+                total_deductions = M(employer_ins + emp_ins + tax + stamp_duty + advance_deduction + other_deductions + absence + penalty_deduction)
                 net = M(total_entitlements - total_deductions)
                 if min(basic_salary, allowances, overtime_hours, overtime_amount, absent_hours,
-                       absence, incentives, advance_deduction, other_deductions, tax, emp_ins,
+                       absence, incentives, advance_deduction, other_deductions, tax, stamp_duty, emp_ins,
                        employer_ins, gross, total_entitlements, total_deductions, net) < 0:
                     raise ValueError("لا يمكن أن تكون الأجور أو الساعات أو الاستقطاعات أو صافي المرتب سالبة.")
                 c.execute("""INSERT INTO payroll_lines(run_id,employee_id,basic_salary,allowances,overtime_hours,
@@ -1284,7 +1285,8 @@ def payroll():
                         snapshot_item("deduction","جزاء: "+penalty["reason"],penalty_amount,"employee_penalty",penalty["id"],85)
                     manual_other = M(max(Decimal("0"),D(other_deductions)-fixed_pay_deductions))
                     snapshot_item("deduction","خصومات أخرى يدوية",manual_other,"payroll_input",None,90)
-                    snapshot_item("deduction","ضريبة المرتبات",tax,"payroll_compliance",None,100)
+                                        snapshot_item("deduction","ضريبة المرتبات",tax,"payroll_compliance",None,100)
+                    snapshot_item("deduction","الدمغة",stamp_duty,"payroll_input",None,105)
                     snapshot_item("deduction","حصة الموظف في التأمينات",emp_ins,"payroll_compliance",None,110)
                     snapshot_item("employer_cost","حصة الشركة في التأمينات",employer_ins,"payroll_compliance",None,120)
             _audit(c, "payroll_draft_created", period)
