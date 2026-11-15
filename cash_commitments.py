@@ -3,6 +3,7 @@
 Payments link to existing posted journal entries. This module never posts GL entries.
 """
 from datetime import date
+import calendar
 from decimal import Decimal, InvalidOperation
 
 COMMITMENT_TYPES = {"tax", "recurring_expense", "friday_overtime"}
@@ -58,6 +59,33 @@ def initialize_cash_commitments_schema(conn):
         );
         CREATE INDEX IF NOT EXISTS idx_cash_commitment_payments_commitment
             ON cash_commitment_payments(commitment_id,payment_date,id);
+        CREATE TABLE IF NOT EXISTS cash_commitment_schedules (
+            id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            amount TEXT NOT NULL,
+            currency_code TEXT NOT NULL DEFAULT '',
+            frequency TEXT NOT NULL CHECK(frequency IN ('monthly','quarterly','semiannual','annual')),
+            interval_months INTEGER NOT NULL CHECK(interval_months IN (1,3,6,12)),
+            anchor_day INTEGER NOT NULL CHECK(anchor_day BETWEEN 1 AND 31),
+            next_due_date TEXT NOT NULL,
+            end_date TEXT,
+            payable_account_id INTEGER,
+            active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+            notes TEXT NOT NULL DEFAULT '',
+            created_by INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS cash_commitment_schedule_occurrences (
+            id INTEGER PRIMARY KEY,
+            schedule_id INTEGER NOT NULL REFERENCES cash_commitment_schedules(id) ON DELETE RESTRICT,
+            due_date TEXT NOT NULL,
+            commitment_id INTEGER UNIQUE REFERENCES cash_commitments(id) ON DELETE RESTRICT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(schedule_id,due_date)
+        );
+        CREATE INDEX IF NOT EXISTS idx_cash_commitment_schedules_active
+            ON cash_commitment_schedules(active,next_due_date);
     """)
     conn.commit()
 
@@ -185,3 +213,125 @@ def list_cash_commitments_forecast(conn, as_of, end_date):
             "status":"متأخر" if row["due_date"] < as_of else "مستحق/متوقع",
         })
     return items
+
+
+_FREQUENCY_MONTHS = {
+    "monthly": 1,
+    "quarterly": 3,
+    "semiannual": 6,
+    "annual": 12,
+}
+
+
+def _advance_schedule_date(current_date, interval_months, anchor_day):
+    current = date.fromisoformat(str(current_date))
+    month_index = current.year * 12 + (current.month - 1) + int(interval_months)
+    year, month_zero = divmod(month_index, 12)
+    month = month_zero + 1
+    day = min(int(anchor_day), calendar.monthrange(year, month)[1])
+    return date(year, month, day).isoformat()
+
+
+def create_recurring_schedule(conn, title, amount, first_due_date, frequency,
+                              currency_code="", end_date=None, payable_account_id=None,
+                              notes="", created_by=None):
+    title = str(title or "").strip()
+    if not title:
+        raise ValueError("اسم المصروف الدوري مطلوب.")
+    amount = _amount(amount)
+    first_due_date = date.fromisoformat(str(first_due_date)).isoformat()
+    interval_months = _FREQUENCY_MONTHS.get(str(frequency))
+    if not interval_months:
+        raise ValueError("دورية المصروف غير صحيحة.")
+    normalized_end = date.fromisoformat(str(end_date)).isoformat() if end_date else None
+    if normalized_end and normalized_end < first_due_date:
+        raise ValueError("تاريخ نهاية التكرار يسبق أول استحقاق.")
+    cursor = conn.execute(
+        """INSERT INTO cash_commitment_schedules
+           (title,amount,currency_code,frequency,interval_months,anchor_day,
+            next_due_date,end_date,payable_account_id,notes,created_by)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+        (title,str(amount),str(currency_code or "").strip(),str(frequency),
+         interval_months,date.fromisoformat(first_due_date).day,first_due_date,
+         normalized_end,payable_account_id,str(notes or "").strip(),created_by),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def generate_recurring_schedule_occurrences(conn, schedule_id, through_date):
+    """Explicitly materialize scheduled expense occurrences; safe to repeat."""
+    through_date = date.fromisoformat(str(through_date)).isoformat()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        schedule = conn.execute(
+            "SELECT * FROM cash_commitment_schedules WHERE id=?", (schedule_id,)
+        ).fetchone()
+        if not schedule:
+            raise ValueError("جدول المصروف الدوري غير موجود.")
+        if not schedule["active"]:
+            raise ValueError("جدول المصروف الدوري متوقف.")
+        next_due = schedule["next_due_date"]
+        if schedule["end_date"] and next_due > schedule["end_date"]:
+            conn.execute(
+                "UPDATE cash_commitment_schedules SET active=0,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (schedule_id,),
+            )
+            conn.commit()
+            return 0
+        generated = 0
+        while next_due <= through_date and (
+            not schedule["end_date"] or next_due <= schedule["end_date"]
+        ):
+            existing = conn.execute(
+                """SELECT id FROM cash_commitment_schedule_occurrences
+                   WHERE schedule_id=? AND due_date=?""",
+                (schedule_id,next_due),
+            ).fetchone()
+            if not existing:
+                occurrence = conn.execute(
+                    """INSERT INTO cash_commitment_schedule_occurrences
+                       (schedule_id,due_date) VALUES(?,?)""",
+                    (schedule_id,next_due),
+                )
+                occurrence_id = occurrence.lastrowid
+                commitment = conn.execute(
+                    """INSERT INTO cash_commitments
+                       (commitment_type,title,period_label,amount,due_date,currency_code,
+                        payable_account_id,origin_type,origin_id,notes,created_by)
+                       VALUES('recurring_expense',?,?,?,?,?,?, 'recurring_schedule_occurrence',?,?,?)""",
+                    (schedule["title"],next_due[:7],schedule["amount"],next_due,
+                     schedule["currency_code"],schedule["payable_account_id"],
+                     occurrence_id,schedule["notes"],schedule["created_by"]),
+                )
+                conn.execute(
+                    "UPDATE cash_commitment_schedule_occurrences SET commitment_id=? WHERE id=?",
+                    (commitment.lastrowid,occurrence_id),
+                )
+                generated += 1
+            next_due = _advance_schedule_date(
+                next_due,schedule["interval_months"],schedule["anchor_day"]
+            )
+        conn.execute(
+            """UPDATE cash_commitment_schedules
+               SET next_due_date=?,active=CASE WHEN end_date IS NOT NULL AND ? > end_date
+                    THEN 0 ELSE active END,updated_at=CURRENT_TIMESTAMP
+               WHERE id=?""",
+            (next_due,next_due,schedule_id),
+        )
+        conn.commit()
+        return generated
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def deactivate_recurring_schedule(conn, schedule_id):
+    cursor = conn.execute(
+        """UPDATE cash_commitment_schedules SET active=0,updated_at=CURRENT_TIMESTAMP
+           WHERE id=? AND active=1""",
+        (schedule_id,),
+    )
+    conn.commit()
+    if not cursor.rowcount:
+        raise ValueError("جدول المصروف الدوري غير موجود أو متوقف بالفعل.")
