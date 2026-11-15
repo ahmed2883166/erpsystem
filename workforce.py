@@ -2084,6 +2084,14 @@ def payroll():
                     (str(salary_reference_snapshot), str(salary_variance_percent),
                      str(salary_variance_limit), salary_change_reason,
                      salary_approval_required, payroll_line_id))
+                if salary_changed:
+                    _audit(c, "payroll_basic_salary_changed",
+                           "run=" + str(run_id) + " employee=" + e["employee_code"] +
+                           " reference=" + str(salary_reference) +
+                           " entered=" + str(monthly_basic_salary) +
+                           " variance=" + str(salary_variance_percent) +
+                           "% limit=" + str(salary_variance_limit) +
+                           "% reason=" + salary_change_reason[:250])
                 if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_line_items'").fetchone():
                     c.execute("UPDATE payroll_lines SET penalty_deduction=? WHERE id=?",
                               (str(penalty_deduction),payroll_line_id))
