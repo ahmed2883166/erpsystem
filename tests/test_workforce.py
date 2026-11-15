@@ -130,6 +130,60 @@ class WorkforceTests(unittest.TestCase):
             session["user_id"] = 1
 
     
+    def test_workforce_approval_actions_block_their_own_creator(self):
+        self.add_employee()
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("INSERT INTO employee_grant_types(name) VALUES('منحة اختبار')")
+        conn.execute("""INSERT INTO employee_final_payrolls(
+            final_payroll_no,employee_id,period,termination_date,days_worked,
+            basic_salary_snapshot,gross_pay,net_pay,created_by
+        ) VALUES('FP-SELF',1,'2026-11','2026-11-15',15,'10000','5000','5000',1)""")
+        conn.execute("""INSERT INTO employee_loans(
+            loan_no,employee_id,request_date,requested_amount,first_due_period,created_by
+        ) VALUES('LOAN-SELF',1,'2026-11-15','1000','2026-12',1)""")
+        conn.execute("""INSERT INTO employee_grants(
+            grant_type_id,grant_name_snapshot,calculation_method,calculation_value,
+            expense_account_id,payable_account_id,grant_date,total_amount,created_by
+        ) VALUES(1,'منحة اختبار','fixed','500',3,5,'2026-11-15','500',1)""")
+        conn.execute("""INSERT INTO employee_end_of_service_settlements(
+            settlement_no,employee_id,termination_date,service_start_date,
+            gross_entitlement,net_payable,created_by
+        ) VALUES('EOS-SELF',1,'2026-11-15','2020-01-01','10000','10000',1)""")
+        conn.execute("""INSERT INTO friday_allowance_batches(
+            period,expense_account_id,payable_account_id,total_amount,created_by
+        ) VALUES('2026-11',4,5,'200',1)""")
+        conn.execute("INSERT INTO payroll_runs(period,status,created_by) VALUES('2026-11','draft',1)")
+        conn.commit()
+        conn.close()
+
+        self.client.post("/hr/loans/1/approve", data={
+            "approved_amount":"1000","installment_count":"1","first_due_period":"2026-12"
+        })
+        self.client.post("/hr/grants/1/approve", data={})
+        self.client.post("/hr/final-payroll/1/approve", data={})
+        self.client.post("/hr/end-of-service/1/approve", data={})
+        self.client.post("/hr/friday-allowance/1/approve", data={})
+        self.client.post("/hr/payroll/1/post", data={})
+
+        conn = sqlite3.connect(self.db_path)
+        states = {
+            "loan": conn.execute("SELECT status,approved_by FROM employee_loans WHERE id=1").fetchone(),
+            "grant": conn.execute("SELECT status,approved_by,journal_entry_id FROM employee_grants WHERE id=1").fetchone(),
+            "final": conn.execute("SELECT status,approved_by,journal_entry_id FROM employee_final_payrolls WHERE id=1").fetchone(),
+            "eos": conn.execute("SELECT status,approved_by,journal_entry_id FROM employee_end_of_service_settlements WHERE id=1").fetchone(),
+            "friday": conn.execute("SELECT status,approved_by,journal_entry_id FROM friday_allowance_batches WHERE id=1").fetchone(),
+            "payroll": conn.execute("SELECT status,approved_by,journal_entry_id FROM payroll_runs WHERE id=1").fetchone(),
+        }
+        journal_count = conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
+        conn.close()
+        self.assertEqual(states["loan"], ("requested", None))
+        self.assertEqual(states["grant"], ("draft", None, None))
+        self.assertEqual(states["final"], ("draft", None, None))
+        self.assertEqual(states["eos"], ("draft", None, None))
+        self.assertEqual(states["friday"], ("draft", None, None))
+        self.assertEqual(states["payroll"], ("draft", None, None))
+        self.assertEqual(journal_count, 0)
+
     def test_grant_selection_filters_by_employee_category_and_creates_review_lines(self):
         self.add_employee()
         conn=sqlite3.connect(self.db_path)
