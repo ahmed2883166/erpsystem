@@ -269,6 +269,42 @@ class CashFlowReportTests(unittest.TestCase):
         )
         self.assertEqual(adjustment["amount"], financial_planning.Decimal("80"))
 
+    def test_non_cash_provision_expense_is_offset_by_current_provision_liability(self):
+        conn = financial_planning._connect()
+        baseline = financial_planning.build_cash_flow_indirect_snapshot(
+            conn, "2026-11-01", "2026-11-30"
+        )
+        conn.executemany(
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group) VALUES(?,?,?,?,0)",
+            [
+                (7, "2250", "مخصص التزامات متداولة", "liability"),
+                (8, "6200", "مصروف تكوين مخصص", "expense"),
+            ],
+        )
+        conn.execute("INSERT INTO journal_entries VALUES(6,'2026-11-18','posted')")
+        conn.executemany(
+            "INSERT INTO journal_lines VALUES(?,?,?,?,?)",
+            [
+                (11, 6, 8, "40", "0"),
+                (12, 6, 7, "0", "40"),
+            ],
+        )
+        after = financial_planning.build_cash_flow_indirect_snapshot(
+            conn, "2026-11-01", "2026-11-30"
+        )
+        conn.close()
+
+        self.assertEqual(
+            after["net_profit"], baseline["net_profit"] - financial_planning.Decimal("40")
+        )
+        self.assertEqual(after["indirect_operating_net"], baseline["indirect_operating_net"])
+        provision_change = next(
+            item for item in after["indirect_items"]
+            if item["label"] == "التغير في الالتزامات المتداولة الأخرى"
+        )
+        self.assertEqual(provision_change["amount"], financial_planning.Decimal("40"))
+        self.assertEqual(after["reconciliation_difference"], financial_planning.Decimal("0"))
+
     def test_asset_disposal_cash_proceeds_are_classified_as_investing(self):
         conn = financial_planning._connect()
         conn.execute("ALTER TABLE journal_entries ADD COLUMN reference TEXT")
