@@ -61,7 +61,19 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
         self.conn.executemany(
             "INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) VALUES(?,?,?,?,0,1)",
             [(100,'2110','الموردون','liability'),(200,'1150','المخزون','asset'),
-             (300,'1170','ضريبة مدخلات','asset')]
+             (300,'1170','ضريبة مدخلات','asset'),(400,'3000','حقوق الملكية','equity')]
+        )
+        self.conn.execute(
+            """INSERT INTO journal_entries(
+                id,status,entry_date,reference,description,created_by,created_at
+            ) VALUES(9,'posted','2026-01-01','OPEN-STOCK','رصيد مخزون افتتاحي',1,'2026-01-01')"""
+        )
+        self.conn.executemany(
+            """INSERT INTO journal_lines(
+                id,entry_id,account_id,debit,credit,memo
+            ) VALUES(?,?,?, ?,?,?)""",
+            [(5,9,200,'230','0','رصيد المخزون الافتتاحي'),
+             (6,9,400,'0','230','حقوق الملكية الافتتاحية')]
         )
         self.conn.execute(
             """INSERT INTO journal_entries(
@@ -236,6 +248,20 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
                HAVING ABS(SUM(CAST(debit AS REAL))-SUM(CAST(credit AS REAL)))>0.005"""
         ).fetchall()
         self.assertEqual(unbalanced, [])
+        # The posted inventory GL control account must equal the valuation subledger.
+        inventory_gl = self.conn.execute(
+            """SELECT SUM(CAST(jl.debit AS REAL)-CAST(jl.credit AS REAL))
+               FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+               WHERE jl.account_id=200 AND je.status='posted'"""
+        ).fetchone()[0]
+        valuation_total = sum(
+            float(row[0]) for row in self.conn.execute(
+                "SELECT value_remaining FROM stock_valuation_layers"
+            ).fetchall()
+        )
+        self.assertEqual(inventory_gl, 230.0)
+        self.assertEqual(valuation_total, 230.0)
+        self.assertEqual(inventory_gl, valuation_total)
 
     def test_second_cancellation_is_rejected(self):
         self.conn.execute("UPDATE supplier_credit_notes SET status='cancelled' WHERE id=30")
