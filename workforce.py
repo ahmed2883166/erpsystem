@@ -535,7 +535,10 @@ def _salary_change_preview(c, form):
     decision_date = form.get("decision_date", "").strip()
     effective_date = form.get("effective_date", "").strip()
     title = form.get("title", "").strip()
-    selected_scopes = sorted(set(x.strip() for x in form.getlist("employee_scopes") if x.strip()))
+    scope_values = form.getlist("employee_scopes") if hasattr(form, "getlist") else form.get("employee_scopes", [])
+    if isinstance(scope_values, str):
+        scope_values = [scope_values]
+    selected_scopes = sorted(set(x.strip() for x in scope_values if str(x).strip()))
     if not selected_scopes:
         legacy_scope = form.get("employee_scope", "all_active").strip()
         selected_scopes = [legacy_scope]
@@ -2185,7 +2188,7 @@ def create_employee_grant():
                 WHERE id IN ({id_marks}) AND active=1 AND work_status IN ({status_marks})
                 ORDER BY employee_code""",(*ids,*statuses)).fetchall()
             if len(employees)!=len(ids):
-                raise ValueError("يوجد موظف غير نشط أو لا ينتمي إلى الفئات المحددة.")
+                raise ValueError("يوجد موظف غير نشط أو لا ينتمي إلى فئة الاستحقاق المحددة.")
         if not employees: raise ValueError("لا يوجد موظفون مستحقون للمنحة.")
         snapshots=[]
         for emp in employees:
