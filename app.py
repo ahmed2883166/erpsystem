@@ -14,7 +14,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 import uuid
 
-from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for, has_request_context, g
+from flask import Flask, abort, Response, flash, redirect, render_template, request, send_file, session, url_for, has_request_context, g
 from chart_templates import (CHARTS, ACTIVITY_LABELS, OPERATIONAL_ACCOUNT_CODES, seed_activity_chart, ensure_activity_chart_accounts, migrate_vat_accounts, ensure_account_metadata, migrate_legacy_duplicate_account_labels)
 from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
