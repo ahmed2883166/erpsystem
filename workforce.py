@@ -1466,8 +1466,12 @@ def payroll():
                 insured_wage = M(request.form.get("insured_wage_" + str(e["id"]), str(basic_salary)))
                 if request.form.get("auto_calculate_statutory") == "1" and e["work_status"] != "unpaid_leave":
                     from payroll_compliance import calculate_payroll_deductions
+                    statutory_employee = dict(e)
+                    # The monthly payroll input is authoritative for this run; do not
+                    # silently calculate insurance from a stale employee-master wage.
+                    statutory_employee["insured_wage"] = str(insured_wage)
                     automatic = calculate_payroll_deductions(
-                        c, e, gross, period,
+                        c, statutory_employee, gross, period,
                         taxable_gross_monthly=M(max(Decimal("0"), gross - absence))
                     )
                     if automatic is None:
