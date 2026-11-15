@@ -35,7 +35,7 @@ def _grouped_gl_profitability(conn, date_from, date_to, dimension):
         return [], False
 
     account_columns = _columns(conn, "accounts")
-    section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
+    section_expr = "a.statement_section" if "statement_section" in account_columns else "0"
     closing_filter = closing_entries_exclusion_sql(conn)
     direct_cost_role = (
         "EXISTS(SELECT 1 FROM management_account_roles mar "
