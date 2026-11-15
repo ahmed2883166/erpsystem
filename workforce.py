@@ -1460,6 +1460,8 @@ def payroll_reconciliation():
         reconciled.append({
             "period":run["period"],"run_id":run["id"],"status":run["status"],
             "employee_count":run["employee_count"],"net_total":M(run["net_total"]),
+            "paid_total":M(paid_total),
+            "remaining_total":M(max(Decimal("0"),M(run["net_total"])-M(paid_total))),
             "journal_entry_id":run["journal_entry_id"],
             "result":"سليم" if not run_issues and run["status"]=="posted"
                      else ("معكوس تاريخيًا" if run["status"]=="reversed" and not run_issues else "يحتاج مراجعة"),
@@ -1545,7 +1547,9 @@ def payroll_reconciliation():
         "clean":sum(1 for item in reconciled if item["result"]=="سليم"),
         "reversed":sum(1 for item in reconciled if item["result"]=="معكوس تاريخيًا"),
         "needs_review":sum(1 for item in reconciled if item["result"]=="يحتاج مراجعة"),
-        "issues":len(issues)
+        "issues":len(issues),
+        "paid_total":M(sum((D(item["paid_total"]) for item in reconciled),Decimal("0"))),
+        "remaining_total":M(sum((D(item["remaining_total"]) for item in reconciled),Decimal("0")))
     }
     return render_template("payroll_reconciliation.html", runs=reconciled, issues=issues,
         summary=summary, month_from=month_from, month_to=month_to)
