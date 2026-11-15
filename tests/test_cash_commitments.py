@@ -207,6 +207,7 @@ class CashCommitmentsTests(unittest.TestCase):
         self.conn.execute(
             "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(6,10,'200','0')"
         )
+        self.conn.commit()
         with self.assertRaisesRegex(ValueError, "قيد عكسي"):
             record_cash_commitment_payment(
                 self.conn, commitment_id, "2026-11-10", "200", 6
@@ -346,13 +347,13 @@ class CashCommitmentsTests(unittest.TestCase):
         from cash_commitments import sync_friday_allowance_commitments
         self._legacy_friday_schema()
         self.conn.execute(
-            "INSERT INTO journal_entries(id,status,reference,description) VALUES(5,'posted','REV-1','reversal')"
+            "INSERT INTO journal_entries(id,status,reference,description) VALUES(6,'posted','REV-1','reversal')"
         )
         result = sync_friday_allowance_commitments(self.conn)
         self.assertEqual(result["imported"], 0)
         self.assertEqual(result["skipped"][0]["reason"], "قيد الاستحقاق معكوس")
         self.conn.execute(
-            "INSERT INTO journal_entries(id,status,reference,description) VALUES(6,'posted','REV-5','restoration')"
+            "INSERT INTO journal_entries(id,status,reference,description) VALUES(7,'posted','REV-6','restoration')"
         )
         result = sync_friday_allowance_commitments(self.conn)
         self.assertEqual(result["imported"], 1)
