@@ -13,6 +13,7 @@
 <label>تاريخ التعيين<input type="date" name="hire_date" value="{{e.hire_date}}" required></label>
 <label>الموقف من العمل<select name="work_status"><option value="permanent" {{'selected' if e.work_status=='permanent'}}>مثبت</option><option value="temporary" {{'selected' if e.work_status=='temporary'}}>مؤقت</option><option value="comprehensive_bonus" {{'selected' if e.work_status=='comprehensive_bonus'}}>مكافأة شاملة</option><option value="unpaid_leave" {{'selected' if e.work_status=='unpaid_leave'}}>إجازة بدون مرتب</option><option value="resigned" {{'selected' if e.work_status=='resigned'}}>استقالة</option><option value="retired" {{'selected' if e.work_status=='retired'}}>معاش</option></select></label>
 <label>تاريخ سريان الاستقالة / المعاش<input type="date" name="termination_date" value="{{e.termination_date or ''}}"></label>
+<label>سبب تغيير الحالة الوظيفية<input name="employment_change_reason" placeholder="يُسجل عند تغيير الحالة"></label>
 <div class="notice" style="grid-column:1/-1">الأجر الأساسي والتأميني والبدلات والعلاوات والاستقطاعات تُدار من شاشات المرتبات والاستحقاقات والاستقطاعات.</div>
 <label>ساعات العمل القياسية شهريًا<input type="number" step="0.01" min="1" name="standard_hours" value="{{e.standard_hours}}" required></label>
 <label style="grid-column:1/-1"><input type="checkbox" name="friday_work_eligible" value="1" {% if e.friday_work_eligible %}checked{% endif %}> يستحق بدل العمل أيام الجمعة (بموافقة الإدارة)</label>
