@@ -1,8 +1,8 @@
 {% extends "base.html" %}{% block title %}السجل الوظيفي | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>السجل الوظيفي: {{employee.full_name}}</h2>
+<header class="page-heading"><div><h2>السجل الوظيفي: {{employee.full_name}}</h2>
 <p>الكود: {{employee.employee_code}} — الحالة الحالية:
 {{{'comprehensive_bonus':'مكافأة شاملة','permanent':'مثبت','temporary':'مؤقت','unpaid_leave':'إجازة بدون مرتب','resigned':'استقالة','retired':'معاش'}.get(employee.work_status,'غير محدد')}}</p>
-<a class="button secondary" href="{{url_for('workforce.employees')}}">العودة لقائمة الموظفين</a></header>
+<a class="button secondary" href="{{url_for('workforce.employees')}}">العودة لقائمة الموظفين</a></div></header>
 <section class="panel"><h3>تسجيل تغيير وظيفي</h3>
 <p class="muted">يُحفظ كل تغيير كسجل مستقل مع الحالة السابقة والجديدة وتاريخ السريان والسبب. لا يتم حذف أي كشف مرتبات أو قيد سابق.</p>
 <form method="post" class="form-grid">
@@ -14,12 +14,12 @@
 <label style="grid-column:1/-1">سبب التغيير<input name="reason" required maxlength="500" placeholder="مثال: قرار إجازة بدون مرتب أو قبول الاستقالة"></label>
 <button type="submit">حفظ التغيير وإضافته للسجل</button>
 </form></section>
-<section class="panel"><h3>تاريخ التغييرات الوظيفية</h3><div style="overflow-x:auto"><table>
+<section class="panel"><h3>تاريخ التغييرات الوظيفية</h3><div style="overflow-x:auto"><div class="table-wrap"><table>
 <thead><tr><th>تاريخ السريان</th><th>الحالة السابقة</th><th>الحالة الجديدة</th><th>السبب</th><th>تاريخ التسجيل</th></tr></thead><tbody>
 {% for h in history %}<tr><td>{{h.effective_date}}</td>
 <td>{{{'comprehensive_bonus':'مكافأة شاملة','permanent':'مثبت','temporary':'مؤقت','unpaid_leave':'إجازة بدون مرتب','resigned':'استقالة','retired':'معاش'}.get(h.from_status,'—')}}</td>
 <td>{{{'comprehensive_bonus':'مكافأة شاملة','permanent':'مثبت','temporary':'مؤقت','unpaid_leave':'إجازة بدون مرتب','resigned':'استقالة','retired':'معاش'}.get(h.to_status,h.to_status)}}</td>
 <td>{{h.reason}}</td><td>{{h.created_at}}</td></tr>
 {% else %}<tr><td colspan="5">لا توجد تغييرات مسجلة.</td></tr>{% endfor %}
-</tbody></table></div></section>
+</tbody></table></div></div></section>
 {% endblock %}
