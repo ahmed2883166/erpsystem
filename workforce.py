@@ -427,6 +427,7 @@ def initialize_workforce_schema():
         "overtime_override_reason": "TEXT NOT NULL DEFAULT ''",
         "basic_salary_reference": "TEXT NOT NULL DEFAULT '0'",
         "basic_salary_variance_percent": "TEXT NOT NULL DEFAULT '0'",
+        "basic_salary_variance_limit_percent": "TEXT NOT NULL DEFAULT '10'",
         "basic_salary_change_reason": "TEXT NOT NULL DEFAULT ''",
         "basic_salary_approval_required": "INTEGER NOT NULL DEFAULT 0",
         "basic_salary_approved_by": "INTEGER",
@@ -1845,6 +1846,7 @@ def payroll():
                 ORDER BY employee_code""").fetchall()
             if not employees:
                 raise ValueError("لا يوجد موظفون مستحقون للراتب في هذا الشهر حسب الموقف الوظيفي.")
+            salary_variance_limit = _payroll_basic_salary_variance_limit(c)
             for e in employees:
                 # Default to the employee master salary; monthly edits remain possible
                 # but are compared against the effective master value before snapshotting.
@@ -1870,16 +1872,20 @@ def payroll():
                 if basic_salary <= 0 and e["work_status"] != "unpaid_leave":
                     raise ValueError("الراتب الأساسي للموظف " + e["full_name"] + " يجب أن يكون أكبر من صفر.")
                 salary_change_reason = request.form.get("basic_override_reason_" + str(e["id"]), "").strip()
-                salary_difference = abs(M(basic_salary - salary_reference))
-                salary_variance_percent = (
-                    M(salary_difference * Decimal("100") / salary_reference)
-                    if salary_reference > 0 else (Decimal("100.00") if salary_difference else Decimal("0.00"))
-                )
+                if e["work_status"] == "unpaid_leave":
+                    salary_difference = Decimal("0")
+                    salary_variance_percent = Decimal("0.00")
+                else:
+                    salary_difference = abs(M(basic_salary - salary_reference))
+                    salary_variance_percent = (
+                        M(salary_difference * Decimal("100") / salary_reference)
+                        if salary_reference > 0 else (Decimal("100.00") if salary_difference else Decimal("0.00"))
+                    )
                 salary_changed = salary_difference > Decimal("0") and e["work_status"] != "unpaid_leave"
                 if salary_changed and not salary_change_reason:
                     raise ValueError("اكتب سبب تعديل الراتب الأساسي للموظف " + e["full_name"] + ".")
                 salary_approval_required = int(
-                    salary_changed and salary_variance_percent > _payroll_basic_salary_variance_limit(c)
+                    salary_changed and salary_variance_percent > salary_variance_limit
                 )
                 monthly_basic_salary = basic_salary
                 payroll_days = 30
@@ -2064,13 +2070,18 @@ def payroll():
                       "0","",str(overtime_calculated_amount),
                      int(overtime_manual_override),overtime_override_reason))
                 payroll_line_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
-                salary_reference_snapshot = M(salary_reference * payroll_factor) if payroll_days < 30 else salary_reference
+                salary_reference_snapshot = (
+                    Decimal("0") if e["work_status"] == "unpaid_leave"
+                    else (M(salary_reference * payroll_factor) if payroll_days < 30 else salary_reference)
+                )
                 c.execute("""UPDATE payroll_lines SET
                     basic_salary_reference=?,basic_salary_variance_percent=?,
-                    basic_salary_change_reason=?,basic_salary_approval_required=?
+                    basic_salary_variance_limit_percent=?,basic_salary_change_reason=?,
+                    basic_salary_approval_required=?
                     WHERE id=?""",
                     (str(salary_reference_snapshot), str(salary_variance_percent),
-                     salary_change_reason, salary_approval_required, payroll_line_id))
+                     str(salary_variance_limit), salary_change_reason,
+                     salary_approval_required, payroll_line_id))
                 if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_line_items'").fetchone():
                     c.execute("UPDATE payroll_lines SET penalty_deduction=? WHERE id=?",
                               (str(penalty_deduction),payroll_line_id))
