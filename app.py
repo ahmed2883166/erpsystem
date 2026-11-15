@@ -4,6 +4,8 @@ import hashlib
 import hmac
 import io
 import json
+import logging
+from logging.handlers import RotatingFileHandler
 import os
 import sqlite3
 import tempfile
@@ -65,6 +67,53 @@ from security_controls import login_attempts_exceeded, linked_operational_source
 
 
 app = Flask(__name__)
+
+
+def _configure_http_500_file_logging():
+    """Write full server-side HTTP 500 tracebacks to a dedicated rotating log."""
+    log_dir = DATA_DIR / "logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        if any(getattr(handler, "_nexus_http_500_handler", False)
+               for handler in app.logger.handlers):
+            return
+        handler = RotatingFileHandler(
+            log_dir / "http_500.log", maxBytes=2 * 1024 * 1024,
+            backupCount=5, encoding="utf-8", delay=True,
+        )
+        handler._nexus_http_500_handler = True
+        handler.setLevel(logging.ERROR)
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(message)s"
+        ))
+        app.logger.addHandler(handler)
+    except OSError:
+        # Logging must not prevent the ERP from starting if the log volume is unavailable.
+        app.logger.exception("Could not initialize the dedicated HTTP 500 log file.")
+
+
+_configure_http_500_file_logging()
+
+
+@app.errorhandler(500)
+def handle_internal_server_error(error):
+    """Log the original traceback privately and return a non-sensitive response."""
+    request_id = uuid.uuid4().hex
+    original = getattr(error, "original_exception", None)
+    log_message = "HTTP 500 request_id=%s method=%s path=%s"
+    log_args = (request_id, request.method, request.path)
+    if original is not None:
+        app.logger.error(
+            log_message, *log_args,
+            exc_info=(type(original), original, original.__traceback__),
+        )
+    else:
+        app.logger.error(log_message, *log_args, exc_info=True)
+
+    safe_message = "حدث خطأ داخلي. تم تسجيل رقم البلاغ، يرجى المحاولة لاحقًا."
+    if request.path.startswith("/api/") or request.accept_mimetypes.best == "application/json":
+        return {"error": safe_message, "request_id": request_id}, 500
+    return safe_message, 500
 
 @app.after_request
 def add_security_headers(response):
