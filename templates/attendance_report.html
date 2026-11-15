@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block title %}تقرير الغياب | NEXUS ERP{% endblock %}
 {% block content %}
-<header>
+<header class="page-heading"><div>
   <h2>تقرير غياب الموظفين خلال فترة</h2>
   <p>يعرض عدد أيام الغياب الفعلي وساعات الغياب لكل موظف خلال شهر أو أي فترة تحددها. الإجازة بدون مرتب والإذن يظهران في أعمدة منفصلة ولا يتم احتسابهما كغياب.</p>
   <p><a href="{{url_for('workforce.attendance')}}">العودة إلى مصفوفة الحضور والانصراف</a></p>
-</header>
+</div></header>
 <section class="panel">
   <form method="get" class="form-grid">
     <label>من تاريخ <input type="date" name="date_from" value="{{date_from}}" required></label>
@@ -34,7 +34,7 @@
 </section>
 <section class="panel">
   <div style="overflow-x:auto">
-    <table>
+    <div class="table-wrap"><table>
       <thead><tr><th>كود الموظف</th><th>اسم الموظف</th><th>القسم</th><th>أيام الحضور/التسجيل</th><th>عدد أيام الغياب</th><th>ساعات الغياب</th><th>إجازة بدون مرتب</th><th>أيام الأذونات</th></tr></thead>
       <tbody>
       {% for r in rows %}
@@ -44,7 +44,7 @@
       {% endfor %}
       </tbody>
       <tfoot><tr><th colspan="4">الإجمالي</th><th>{{totals.absent_days}}</th><th>{{totals.absent_hours}}</th><th>{{totals.unpaid_leave_days}}</th><th>{{totals.permission_days}}</th></tr></tfoot>
-    </table>
+    </table></div>
   </div>
 </section>
 {% endblock %}
