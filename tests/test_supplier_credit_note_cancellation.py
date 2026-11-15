@@ -11,7 +11,12 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript("""
             CREATE TABLE journal_entries(
-                id INTEGER PRIMARY KEY, status TEXT NOT NULL, entry_date TEXT NOT NULL
+                id INTEGER PRIMARY KEY, status TEXT NOT NULL, entry_date TEXT NOT NULL,
+                reference TEXT, description TEXT, created_by INTEGER, created_at TEXT
+            );
+            CREATE TABLE accounts(
+                id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT, account_type TEXT,
+                is_group INTEGER DEFAULT 0, active INTEGER DEFAULT 1
             );
             CREATE TABLE journal_lines(
                 id INTEGER PRIMARY KEY, entry_id INTEGER NOT NULL, account_id INTEGER NOT NULL,
@@ -53,16 +58,30 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
                 unit_cost TEXT NOT NULL, total_cost TEXT NOT NULL
             );
         """)
-        self.conn.execute("INSERT INTO journal_entries VALUES(10,'posted','2026-05-10')")
-        self.conn.execute(
-            "INSERT INTO journal_lines VALUES(1,10,200,'57','0','إشعار مورد',8,1,10)"
+        self.conn.executemany(
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) VALUES(?,?,?,?,0,1)",
+            [(100,'2110','الموردون','liability'),(200,'1150','المخزون','asset'),
+             (300,'1170','ضريبة مدخلات','asset')]
         )
-        self.conn.execute("INSERT INTO supplier_bills VALUES(20,'57')")
+        self.conn.execute(
+            """INSERT INTO journal_entries(
+                id,status,entry_date,reference,description,created_by,created_at
+            ) VALUES(10,'posted','2026-05-10','SCN-30','إشعار مورد',1,'2026-05-10')"""
+        )
+        self.conn.executemany(
+            """INSERT INTO journal_lines(
+                id,entry_id,account_id,debit,credit,memo,supplier_id,stock_product_id,stock_warehouse_id
+            ) VALUES(?,10,?,?,?,?,?,?,?)""",
+            [(1,100,'72','0','إشعار مورد',8,None,None),
+             (2,200,'0','52.5','مخزون مرتجع',8,1,10),
+             (3,300,'0','19.5','ضريبة مدخلات',8,None,None)]
+        )
+        self.conn.execute("INSERT INTO supplier_bills VALUES(20,'72')")
         self.conn.execute(
             """INSERT INTO supplier_credit_notes(
                 id,credit_no,supplier_id,bill_id,credit_date,supplier_credit_no,
                 total_amount,journal_entry_id,status
-            ) VALUES(30,'SCN-30',8,20,'2026-05-10','SUP-CN-30','57',10,'posted')"""
+            ) VALUES(30,'SCN-30',8,20,'2026-05-10','SUP-CN-30','72',10,'posted')"""
         )
         self.conn.execute("INSERT INTO stock_products VALUES(1)")
         self.conn.execute(
@@ -75,7 +94,7 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
         self.conn.execute(
             """INSERT INTO supplier_credit_note_lines(
                 id,credit_note_id,product_id,warehouse_id,quantity,total_cost
-            ) VALUES(40,30,1,10,'2.5','37.5')"""
+            ) VALUES(40,30,1,10,'3.5','52.5')"""
         )
         self.conn.execute(
             """INSERT INTO stock_movements(
@@ -85,16 +104,37 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
                      '2026-05-10','مرتجع مورد',1,10,'posted')"""
         )
         self.conn.execute(
+            """INSERT INTO stock_movements(
+                id,movement_no,movement_type,product_id,target_warehouse_id,quantity,
+                unit_cost,total_cost,movement_date,notes,accounting_status
+            ) VALUES(6,'PUR-6','receipt',1,10,'5','15','75',
+                     '2026-05-02','استلام أصلي 2','posted')"""
+        )
+        self.conn.execute(
+            """INSERT INTO stock_movements(
+                id,movement_no,movement_type,product_id,source_warehouse_id,lot_id,
+                quantity,unit_cost,total_cost,movement_date,notes,created_by,journal_entry_id,accounting_status
+            ) VALUES(51,'SUPRET-51','issue',1,10,8,'1','15','15',
+                     '2026-05-10','مرتجع مورد تشغيلة 2',1,10,'posted')"""
+        )
+        self.conn.execute(
             """INSERT INTO stock_valuation_layers(
                 id,product_id,warehouse_id,location_id,lot_id,source_movement_id,
                 qty_in,qty_remaining,unit_cost,value_remaining
             ) VALUES(60,1,10,3,7,5,'5','2.5','15','37.5')"""
         )
         self.conn.execute(
+            """INSERT INTO stock_valuation_layers(
+                id,product_id,warehouse_id,location_id,lot_id,source_movement_id,
+                qty_in,qty_remaining,unit_cost,value_remaining
+            ) VALUES(61,1,10,4,8,6,'5','4','15','60')"""
+        )
+        self.conn.execute(
             """INSERT INTO supplier_credit_note_layer_allocations(
                 id,credit_note_line_id,stock_movement_id,source_layer_id,lot_id,location_id,
                 quantity,unit_cost,total_cost
-            ) VALUES(70,40,50,60,7,3,'2.5','15','37.5')"""
+            ) VALUES(70,40,50,60,7,3,'2.5','15','37.5'),
+                     (71,40,51,61,8,4,'1','15','15')"""
         )
         self.conn.commit()
 
@@ -102,30 +142,31 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
         self.conn.close()
 
     def test_cancel_restores_same_cost_lot_and_location_and_reverses_bill_credit(self):
-        with patch.object(purchases, "post_journal", return_value=99) as post:
-            result = purchases.cancel_supplier_credit_note(
-                self.conn, 30, "2026-05-11", "إلغاء معتمد", 4
-            )
-        self.assertEqual(result["reversal_journal_id"], 99)
-        post.assert_called_once()
-        reversal_lines = post.call_args.args[4]
-        self.assertEqual(reversal_lines[0][1], 0)
-        self.assertEqual(reversal_lines[0][2], 57)
-        movement = self.conn.execute(
-            "SELECT * FROM stock_movements WHERE movement_no LIKE 'SUPCANCEL-%'"
-        ).fetchone()
-        self.assertEqual(movement["movement_type"], "receipt")
-        self.assertEqual(movement["target_warehouse_id"], 10)
-        self.assertEqual(movement["target_location_id"], 3)
-        self.assertEqual(movement["lot_id"], 7)
-        self.assertEqual(movement["quantity"], "2.5")
-        self.assertEqual(movement["total_cost"], "37.5")
-        layer = self.conn.execute(
-            "SELECT * FROM stock_valuation_layers WHERE source_movement_id=?",
-            (movement["id"],)
-        ).fetchone()
-        self.assertEqual(layer["qty_remaining"], "2.5")
-        self.assertEqual(layer["value_remaining"], "37.5")
+        result = purchases.cancel_supplier_credit_note(
+            self.conn, 30, "2026-05-11", "إلغاء معتمد", 4
+        )
+        self.assertEqual(result["reversal_journal_id"], 11)
+        reversal_lines = self.conn.execute(
+            "SELECT account_id,debit,credit FROM journal_lines WHERE entry_id=? ORDER BY account_id",
+            (result["reversal_journal_id"],)
+        ).fetchall()
+        self.assertEqual(
+            [(row["account_id"], row["debit"], row["credit"]) for row in reversal_lines],
+            [(100, "0", "72"), (200, "52.5", "0"), (300, "19.5", "0")]
+        )
+        restored = self.conn.execute(
+            """SELECT m.movement_type,m.target_warehouse_id,m.target_location_id,m.lot_id,
+                      m.quantity,m.total_cost,l.qty_remaining,l.value_remaining
+               FROM stock_movements m JOIN stock_valuation_layers l ON l.source_movement_id=m.id
+               WHERE m.movement_no LIKE 'SUPCANCEL-%' ORDER BY m.id"""
+        ).fetchall()
+        self.assertEqual(len(restored), 2)
+        self.assertEqual(
+            [(r["movement_type"],r["target_warehouse_id"],r["target_location_id"],r["lot_id"],
+              r["quantity"],r["total_cost"],r["qty_remaining"],r["value_remaining"]) for r in restored],
+            [("receipt",10,3,7,"2.5","37.5","2.5","37.5"),
+             ("receipt",10,4,8,"1","15","1","15")]
+        )
         original_move = self.conn.execute(
             "SELECT movement_type,accounting_status FROM stock_movements WHERE id=50"
         ).fetchone()
@@ -138,7 +179,7 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
                            THEN CAST(quantity AS REAL) ELSE 0 END)
                FROM stock_movements WHERE product_id=1"""
         ).fetchone()[0]
-        self.assertEqual(stock_balance, 5.0)
+        self.assertEqual(stock_balance, 10.0)
         self.assertEqual(
             self.conn.execute("SELECT credited_amount FROM supplier_bills WHERE id=20").fetchone()[0],
             "0.00"
@@ -146,7 +187,13 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
         note = self.conn.execute(
             "SELECT status,cancel_journal_entry_id,cancellation_reason FROM supplier_credit_notes WHERE id=30"
         ).fetchone()
-        self.assertEqual(tuple(note), ("cancelled", 99, "إلغاء معتمد"))
+        self.assertEqual(tuple(note), ("cancelled", 11, "إلغاء معتمد"))
+        unbalanced = self.conn.execute(
+            """SELECT entry_id,SUM(CAST(debit AS REAL))-SUM(CAST(credit AS REAL)) difference
+               FROM journal_lines GROUP BY entry_id
+               HAVING ABS(SUM(CAST(debit AS REAL))-SUM(CAST(credit AS REAL)))>0.005"""
+        ).fetchall()
+        self.assertEqual(unbalanced, [])
 
     def test_second_cancellation_is_rejected(self):
         self.conn.execute("UPDATE supplier_credit_notes SET status='cancelled' WHERE id=30")
