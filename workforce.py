@@ -871,7 +871,7 @@ def employee_employment_history(employee_id):
             c.execute("""INSERT INTO employee_employment_history
                 (employee_id,from_status,to_status,effective_date,reason,created_by)
                 VALUES(?,?,?,?,?,?)""",(employee_id,current["work_status"],status,effective_date,reason,session.get("user_id")))
-            _audit(c,"employee_employment_status_changed",f"{employee[\"employee_code\"]}: {current[\"work_status\"]} -> {status}; {effective_date}")
+            _audit(c,"employee_employment_status_changed",str(employee["employee_code"])+": "+str(current["work_status"])+" -> "+status+"; "+effective_date)
             c.commit()
             flash("تم تسجيل التغيير الوظيفي مع الاحتفاظ بالحالة السابقة وسجل المرتبات.", "success")
             c.close()
