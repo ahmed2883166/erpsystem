@@ -454,7 +454,7 @@ def _employee_form_values(form):
     if work_status not in {"resigned", "retired"}:
         termination_date = ""
     if (salary < 0 or variable_salary < 0 or hours <= 0 or insured_wage < 0 or not legal_category
-        or work_status not in {"comprehensive_bonus", "permanent", "unpaid_leave", "resigned", "retired"}
+        or work_status not in {"comprehensive_bonus", "permanent", "temporary", "unpaid_leave", "resigned", "retired"}
         or raise_type not in {"fixed", "percentage"} or raise_mode not in {"basic", "allowance"}
         or raise_value < 0 or overtime_rate < 0 or overtime_rate > 500):
         raise ValueError("راجع الراتب وساعات العمل والحالة الوظيفية والعلاوة ونسبة الإضافي.")
@@ -799,6 +799,43 @@ def employee_form_2_salary(employee_id):
                            print_date=date.today().isoformat())
 
 
+@workforce_bp.route("/hr/form-2-salary-report", methods=["GET"])
+@_role("admin", "accountant", "viewer")
+def employee_form_2_salary_report():
+    """Printable group report for employee wage/insurance data by employment category."""
+    scope = request.args.get("scope", "all")
+    scope_statuses = {
+        "all": ("permanent", "temporary", "comprehensive_bonus"),
+        "permanent": ("permanent",),
+        "temporary": ("temporary",),
+        "comprehensive_bonus": ("comprehensive_bonus",),
+    }
+    if scope not in scope_statuses:
+        scope = "all"
+    statuses = scope_statuses[scope]
+    placeholders = ",".join("?" for _ in statuses)
+    c = _db()
+    employees = c.execute(
+        f"""SELECT employee_code,full_name,national_id,insurance_number,address,job_title,
+                   department,hire_date,work_status,basic_salary,variable_salary,insured_wage,
+                   insurance_enabled,active
+            FROM employees WHERE work_status IN ({placeholders})
+            ORDER BY employee_code,full_name""", statuses
+    ).fetchall()
+    c.close()
+    totals = {
+        "count": len(employees),
+        "basic_salary": M(sum((D(e["basic_salary"]) for e in employees), Decimal("0"))),
+        "variable_salary": M(sum((D(e["variable_salary"]) for e in employees), Decimal("0"))),
+        "insured_wage": M(sum((D(e["insured_wage"]) for e in employees), Decimal("0"))),
+    }
+    labels = {"all": "كل الفئات", "permanent": "الموظفون المثبتون",
+              "temporary": "الموظفون المؤقتون", "comprehensive_bonus": "موظفو المكافأة الشاملة"}
+    return render_template("form2_salary_report.html", employees=employees, totals=totals,
+                           scope=scope, scope_label=labels[scope],
+                           print_date=date.today().isoformat())
+
+
 @workforce_bp.route("/hr/import-excel", methods=["POST"])
 @_role("admin", "accountant")
 def import_employees_excel():
@@ -1033,7 +1070,7 @@ def payroll():
             month_end = (date(start.year + (start.month == 12), 1 if start.month == 12 else start.month + 1, 1) - date.resolution)
             period_end = month_end.isoformat()
             employees = c.execute("""SELECT * FROM employees WHERE
-                (active=1 AND work_status IN ('comprehensive_bonus','permanent')) OR
+                (active=1 AND work_status IN ('comprehensive_bonus','permanent','temporary')) OR
                 (work_status IN ('resigned','retired') AND termination_date>=? AND termination_date<=?)
                 ORDER BY employee_code""", (period + "-01", period_end)).fetchall()
             if not employees:
@@ -1290,7 +1327,7 @@ def payroll():
     # Show former employees in the input grid so final payroll can be prepared for any selected month.
     # POST includes them only in the month containing their termination date.
     employee_rows = c.execute("""SELECT * FROM employees WHERE
-        (active=1 AND work_status IN ('comprehensive_bonus','permanent')) OR
+        (active=1 AND work_status IN ('comprehensive_bonus','permanent','temporary')) OR
         work_status IN ('resigned','retired')
         ORDER BY employee_code""").fetchall()
     employees = []
