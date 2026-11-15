@@ -55,6 +55,7 @@ class WorkforceTests(unittest.TestCase):
         (template_dir / "payroll_payslip.html").write_text(
             "{{ slip.full_name }}|{{ slip.net_pay }}|{{ slip.manual_advance_deduction }}", encoding="utf-8"
         )
+        (template_dir / "employee_grants.html").write_text("{{ get_flashed_messages()|join('|') }}", encoding="utf-8")
         (template_dir / "salary_changes.html").write_text("salary changes", encoding="utf-8")
         (template_dir / "salary_history.html").write_text("salary history", encoding="utf-8")
         (template_dir / "form2_salary.html").write_text(
