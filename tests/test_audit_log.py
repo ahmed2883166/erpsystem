@@ -388,5 +388,62 @@ class AuditLogTests(unittest.TestCase):
         self.assertIn('"quantity": "5"', row["after_values"])
 
 
+    def test_activity_monitor_shows_login_and_sensitive_change_events(self):
+        self.connection.executemany(
+            """INSERT INTO audit_log
+               (user_id,action,details,created_at,entity_type,entity_id,outcome,before_values,after_values)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            [
+                (17,"login","تسجيل دخول","2026-11-15T08:00:00+02:00","auth",None,"success",None,None),
+                (None,"login_failed","username=unknown","2026-11-15T08:10:00+02:00","auth",None,"failure",None,None),
+                (17,"account_updated","تعديل حساب","2026-11-15T08:20:00+02:00","account","10","success",'{"name":"قديم"}','{"name":"جديد"}'),
+            ],
+        )
+        self.connection.commit()
+        client = nexus_app.app.test_client()
+        with client.session_transaction() as session:
+            session.update(user_id=17, username="tester", role="viewer", permissions=["audit.view"])
+
+        def open_database():
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+
+        with patch.object(nexus_app, "db", side_effect=open_database):
+            response = client.get("/security/activity-monitor")
+            self.assertEqual(response.status_code, 200)
+            body = response.get_data(as_text=True)
+            self.assertIn("login_failed", body)
+            self.assertIn("account_updated", body)
+            response = client.get("/security/activity-monitor?category=login")
+            body = response.get_data(as_text=True)
+            self.assertIn("login_failed", body)
+            self.assertNotIn("account_updated", body)
+            response = client.get("/security/activity-monitor?category=changes")
+            body = response.get_data(as_text=True)
+            self.assertIn("account_updated", body)
+            self.assertNotIn("login_failed", body)
+
+    def test_logout_is_written_to_auth_audit_before_session_clear(self):
+        client = nexus_app.app.test_client()
+        with client.session_transaction() as session:
+            session.update(user_id=17, username="tester", role="viewer", permissions=["audit.view"])
+
+        def open_database():
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+
+        with patch.object(nexus_app, "db", side_effect=open_database):
+            response = client.get("/logout")
+        self.assertEqual(response.status_code, 302)
+        row = self.connection.execute(
+            "SELECT action,entity_type,outcome FROM audit_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        self.assertEqual(row["action"], "logout")
+        self.assertEqual(row["entity_type"], "auth")
+        self.assertEqual(row["outcome"], "success")
+
+
 if __name__ == "__main__":
     unittest.main()
