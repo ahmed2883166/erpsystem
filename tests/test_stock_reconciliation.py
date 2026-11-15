@@ -58,14 +58,6 @@ class StockReconciliationReportTests(unittest.TestCase):
                  }):
                 return stock.valuation_reconciliation.__wrapped__()
 
-    def add_line(self, line_id, entry_id, debit, credit, product_id=None, warehouse_id=None):
-        self.conn.execute(
-            """INSERT INTO journal_lines(
-                id,entry_id,account_id,debit,credit,stock_product_id,stock_warehouse_id
-            ) VALUES(?,?,1,?,?,?,?,?)""".replace("?,?,?,?,?,?,?", "?,?,?,?,?,?"),
-            (line_id, entry_id, str(debit), str(credit), product_id, warehouse_id),
-        )
-
     def test_unallocated_legacy_balance_is_not_falsely_matched_to_product_detail(self):
         self.conn.execute(
             """INSERT INTO journal_lines(
