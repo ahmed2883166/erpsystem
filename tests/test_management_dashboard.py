@@ -263,6 +263,54 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(snapshot["total_equity"], Decimal("1630"))
         self.assertTrue(snapshot["balance_ok"])
 
+    def test_dashboard_balance_sheet_excludes_copied_later_year_opening_entry(self):
+        from financial_planning import build_balance_sheet_snapshot
+
+        self.conn.execute("ALTER TABLE accounts ADD COLUMN parent_id INTEGER")
+        self.conn.execute(
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group,active,parent_id) "
+            "VALUES(20,'1198','أصل اختبار تاريخي','asset',0,1,NULL),"
+            "(21,'3198','حقوق ملكية اختبار تاريخي','equity',0,1,NULL)"
+        )
+        self.conn.execute(
+            "INSERT INTO journal_entries(id,entry_date,status) VALUES(79,'2026-12-31','posted')"
+        )
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(79,?,?,?)",
+            [(20, "200.00", "0"), (21, "0", "200.00")],
+        )
+        self.conn.execute(
+            "INSERT INTO journal_entries(id,entry_date,status) VALUES(81,'2027-01-01','posted')"
+        )
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(81,?,?,?)",
+            [(20, "200.00", "0"), (21, "0", "200.00")],
+        )
+        self.conn.executescript("""
+            CREATE TABLE financial_years(
+                id INTEGER PRIMARY KEY, year_name TEXT, start_date TEXT, end_date TEXT,
+                status TEXT, opening_entry_id INTEGER
+            );
+            CREATE TABLE financial_year_journal_history(
+                id INTEGER PRIMARY KEY, financial_year_id INTEGER, entry_kind TEXT,
+                action TEXT, entry_id INTEGER, related_entry_id INTEGER
+            );
+            INSERT INTO financial_years
+                VALUES(1,'2027','2027-01-01','2027-12-31','open',81);
+            INSERT INTO financial_year_journal_history
+                (financial_year_id,entry_kind,action,entry_id)
+                VALUES(1,'opening','created',81);
+        """)
+        dashboard = build_management_snapshot(
+            self.conn, date(2027,1,1), date(2027,1,31)
+        )
+        official = build_balance_sheet_snapshot(self.conn, "2027-01-31")
+        self.assertEqual(dashboard["total_assets"], official["total_assets"])
+        self.assertEqual(dashboard["total_liabilities"], official["total_liabilities"])
+        self.assertEqual(dashboard["total_equity_after_profit"], official["total_equity"])
+        self.assertTrue(dashboard["balance_ok"])
+        self.assertTrue(official["balanced"])
+
     def test_prior_year_closing_entry_is_included_in_next_year_opening_balances(self):
         from management_dashboard import dashboard_period_balances
 
