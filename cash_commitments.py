@@ -301,7 +301,7 @@ def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
         total_debit = sum((Decimal(str(row["debit"] or "0")) for row in journal_lines), Decimal("0"))
         total_credit = sum((Decimal(str(row["credit"] or "0")) for row in journal_lines), Decimal("0"))
         if payable_debit != amount:
-            raise ValueError("قيد السداد لا يحتوي على مدين كافٍ في حساب الالتزام يساوي مبلغ الدفعة تمامًا.")
+            raise ValueError("قيمة مدين حساب الالتزام يجب أن تساوي مبلغ الدفعة تمامًا، مع توفر مدين كافٍ.")
         if total_debit != amount or total_credit != amount:
             raise ValueError("يجب أن يكون قيد السداد مخصصًا لهذه الدفعة وحدها وبإجمالي مدين ودائن يساوي مبلغها.")
         if commitment["payable_account_id"] is None:
