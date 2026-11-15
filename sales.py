@@ -1040,10 +1040,17 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
 
 def _reverse_posted_journal(conn, entry_id, reversal_date, reference, description, created_by):
     original = conn.execute(
-        "SELECT status FROM journal_entries WHERE id=?", (entry_id,)
+        "SELECT status,entry_date FROM journal_entries WHERE id=?", (entry_id,)
     ).fetchone()
     if not original or original["status"] != "posted":
         raise ValueError("لا يمكن عكس قيد غير موجود أو غير مرحل.")
+    try:
+        requested_reversal_date = date.fromisoformat(str(reversal_date))
+        original_entry_date = date.fromisoformat(str(original["entry_date"]))
+    except (TypeError, ValueError):
+        raise ValueError("تاريخ القيد العكسي غير صحيح.")
+    if requested_reversal_date < original_entry_date:
+        raise ValueError("لا يمكن عكس القيد بتاريخ يسبق تاريخ القيد الأصلي.")
     dimension_keys = (
         "branch_id", "cost_center_id", "project_id", "customer_id",
         "salesperson_id", "supplier_id",
