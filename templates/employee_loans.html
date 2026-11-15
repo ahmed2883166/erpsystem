@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block title %}سلف وقروض الموظفين | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>سلف وقروض الموظفين</h2><p>طلب ثم موافقة ثم صرف محاسبي، مع جدول أقساط وخصم تلقائي من مسير الشهر.</p><p><a href="{{url_for('workforce.employees')}}">العودة إلى شؤون الموظفين</a></p></header>
+<header class="page-heading"><div><h2>سلف وقروض الموظفين</h2><p>طلب ثم موافقة ثم صرف محاسبي، مع جدول أقساط وخصم تلقائي من كشف المرتبات الشهري.</p><p><a href="{{url_for('workforce.employees')}}">العودة إلى شؤون الموظفين</a></p></div></header>
 <section class="panel"><h3>طلب سلفة جديد</h3><form method="post" class="form-grid">
 <label>الموظف<select name="employee_id" required>{% for e in employees %}<option value="{{e.id}}">{{e.employee_code}} - {{e.full_name}}</option>{% endfor %}</select></label>
 <label>المبلغ المطلوب<input type="number" name="requested_amount" min="0.01" step="0.01" required></label>
@@ -7,7 +7,7 @@
 <label>أول شهر خصم<input type="month" name="first_due_period" value="{{today}}" required></label>
 <label style="grid-column:1/-1">سبب الطلب / ملاحظات<input name="notes" maxlength="300"></label>
 <button type="submit">تسجيل الطلب</button></form></section>
-<section class="panel"><h3>سجل الطلبات والسلف</h3><div style="overflow-x:auto"><table>
+<section class="panel"><h3>سجل الطلبات والسلف</h3><div class="table-wrap"><table>
 <tr><th>المرجع</th><th>الموظف</th><th>المطلوب</th><th>المعتمد</th><th>الأقساط</th><th>الرصيد</th><th>الحالة</th><th>الإجراء</th></tr>
 {% for l in loans %}<tr><td>{{l.loan_no}}</td><td>{{l.employee_code}} - {{l.full_name}}</td><td>{{l.requested_amount}}</td><td>{{l.approved_amount}}</td><td>{{l.installment_count}}</td><td>{{l.remaining_balance}}</td><td>{{{'requested':'بانتظار الموافقة','approved':'معتمدة - بانتظار الصرف','active':'نشطة','closed':'مسددة','rejected':'مرفوضة'}.get(l.status,l.status)}}</td><td>
 {% if l.status=='requested' %}<form method="post" action="{{url_for('workforce.approve_employee_loan',loan_id=l.id)}}" class="form-grid">
