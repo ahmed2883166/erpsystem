@@ -6,7 +6,6 @@
 <section class="panel"><h3>بيانات الشركة</h3><p>{{ settings.get('company_name','NEXUS ERP') }} | الدولة: {{ settings.get('tax_country','غير محدد') }} | النظام: {{ settings.get('tax_regime','غير محدد') }} | الرقم الضريبي: {{ settings.get('tax_number','غير مسجل') }}</p></section>
 <section class="panel tax-summary-panel">
 <h3>ملخص الضريبة للفترة</h3>
-<p class="muted">القيم التالية ملخص رقابي للمستندات المرحلة خلال الشهر المحدد.</p>
 <div class="tax-summary-table-wrap">
 <table class="tax-summary-table">
 <thead><tr><th scope="col">البيان</th><th scope="col">القيمة</th></tr></thead>
@@ -23,19 +22,20 @@
 </div>
 </section>
 <style>
-.tax-summary-panel{margin-block:1rem}
+.tax-summary-panel{width:min(100%,540px);margin:10px 0;padding:10px 12px}
+.tax-summary-panel h3{margin:0 0 7px;font-size:1rem}
 .tax-summary-table-wrap{width:100%;overflow-x:auto}
-.tax-summary-table{width:100%;max-width:760px;margin-inline:auto;border-collapse:separate;border-spacing:0;border:1px solid var(--border-color,rgba(128,128,128,.25));border-radius:12px;overflow:hidden}
-.tax-summary-table th,.tax-summary-table td{padding:13px 16px;text-align:right;border-bottom:1px solid var(--border-color,rgba(128,128,128,.18))}
+.tax-summary-table{width:100%;margin:0;border-collapse:collapse;border:1px solid var(--border-color,rgba(128,128,128,.25));table-layout:fixed}
+.tax-summary-table th,.tax-summary-table td{padding:5px 9px;text-align:right;border:1px solid var(--border-color,rgba(128,128,128,.18));font-size:13px;line-height:1.25}
+.tax-summary-table th:first-child,.tax-summary-table td:first-child{width:72%}
 .tax-summary-table thead th{background:var(--table-header-bg,rgba(128,128,128,.12));font-weight:700}
 .tax-summary-table tbody tr:nth-child(even){background:rgba(128,128,128,.045)}
-.tax-summary-table tbody tr:last-child th,.tax-summary-table tbody tr:last-child td{border-bottom:0}
 .tax-summary-table .tax-amount{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;text-align:left}
 .tax-summary-table .tax-summary-separator td{border-top:2px solid var(--border-color,rgba(128,128,128,.28))}
 .tax-summary-table .tax-net-row{background:rgba(34,139,94,.10);font-weight:800}
 .tax-summary-table .tax-net-row th{color:var(--success-color,#23865d)}
-@media(max-width:600px){.tax-summary-table th,.tax-summary-table td{padding:10px 12px}}
-@media print{.tax-summary-table{max-width:100%;border-color:#999}.tax-summary-table .tax-net-row{background:#eee!important;color:#111!important}}
+@media(max-width:600px){.tax-summary-panel{width:100%;padding:8px}.tax-summary-table th,.tax-summary-table td{padding:5px 6px;font-size:12px}}
+@media print{.tax-summary-panel{width:100%;max-width:540px}.tax-summary-table{border-color:#999}.tax-summary-table .tax-net-row{background:#eee!important;color:#111!important}}
 </style>
 {% if settings.get('tax_country') == 'SA' and saudi_preparation %}<section class="panel"><h3>السعودية – ملف البيانات السنوي للزكاة وضريبة الدخل</h3><p>الفترة المحاسبية: {{ saudi_preparation.date_from }} إلى {{ saudi_preparation.date_to }}</p>{% if saudi_preparation.available %}<div class="stats-grid"><div class="stat-card"><small>الإيرادات المحاسبية</small><strong>{{ '%.2f'|format(saudi_preparation.revenue_total) }}</strong></div><div class="stat-card"><small>تكلفة المبيعات</small><strong>{{ '%.2f'|format(saudi_preparation.cogs_total) }}</strong></div><div class="stat-card"><small>مجمل الربح</small><strong>{{ '%.2f'|format(saudi_preparation.gross_profit) }}</strong></div><div class="stat-card"><small>المصروفات التشغيلية</small><strong>{{ '%.2f'|format(saudi_preparation.operating_expense_total) }}</strong></div><div class="stat-card"><small>صافي الربح المحاسبي</small><strong>{{ '%.2f'|format(saudi_preparation.net_profit) }}</strong></div></div>{% else %}<p>{{ saudi_preparation.notice }}</p>{% endif %}<h4>ملخص المركز المالي في نهاية السنة</h4><div class="stats-grid"><div class="stat-card"><small>إجمالي الأصول</small><strong>{{ '%.2f'|format(saudi_preparation.total_assets) }}</strong></div><div class="stat-card"><small>إجمالي الالتزامات</small><strong>{{ '%.2f'|format(saudi_preparation.total_liabilities) }}</strong></div><div class="stat-card"><small>حقوق الملكية قبل الربح</small><strong>{{ '%.2f'|format(saudi_preparation.equity_before_profit) }}</strong></div><div class="stat-card"><small>إجمالي حقوق الملكية بعد الربح</small><strong>{{ '%.2f'|format(saudi_preparation.total_equity) }}</strong></div><div class="stat-card"><small>فرق توازن المركز المالي</small><strong>{{ '%.2f'|format(saudi_preparation.balance_difference) }}</strong></div></div>{% if not saudi_preparation.balance_sheet_balanced %}<p class="alert alert-warning">تنبيه: قائمة المركز المالي غير متوازنة في تاريخ التقرير. راجع الحسابات ذات الأرصدة غير الطبيعية.</p>{% endif %}{% if saudi_preparation.negative_asset_accounts %}<h4>حسابات أصول بأرصدة سالبة</h4><ul>{% for account in saudi_preparation.negative_asset_accounts %}<li>{{ account.code }} - {{ account.name_ar }}: {{ '%.2f'|format(account.balance) }}</li>{% endfor %}</ul>{% endif %}<p><strong>ضريبة القيمة المضافة:</strong> مخرجات {{ '%.2f'|format(saudi_preparation.output_vat) }} | مدخلات قابلة للخصم {{ '%.2f'|format(saudi_preparation.input_vat) }} | صافي رقابي {{ '%.2f'|format(saudi_preparation.net_vat) }}</p><p>{{ saudi_preparation.notice }}</p><p>هذه الأرقام لا تمثل وعاءً زكويًا أو ضريبة دخل مستحقة؛ يلزم استكمال التسويات والفروقات النظامية ومراجعة المختص قبل الإقرار.</p></section>{% endif %}
 <section class="panel"><h3>مطابقة الضريبة مع الأستاذ العام</h3><p>مطابقة حركة الحسابات المرحلة خلال نفس الفترة مع إجماليات المستندات الضريبية. المطابقة للقراءة فقط ولا تنشئ قيود تسوية.</p>{% if ledger_reconciliation.available %}<table><thead><tr><th>البند</th><th>حساب الأستاذ</th><th>قيمة التقرير</th><th>حركة الأستاذ</th><th>الفرق</th></tr></thead><tbody><tr><td>ضريبة المخرجات</td><td>{{ ledger_reconciliation.output_account }}</td><td>{{ '%.2f'|format(ledger_reconciliation.output_report) }}</td><td>{{ '%.2f'|format(ledger_reconciliation.output_ledger) }}</td><td>{{ '%.2f'|format(ledger_reconciliation.output_difference) }}</td></tr><tr><td>ضريبة المدخلات</td><td>{{ ledger_reconciliation.input_account }}</td><td>{{ '%.2f'|format(ledger_reconciliation.input_report) }}</td><td>{{ '%.2f'|format(ledger_reconciliation.input_ledger) }}</td><td>{{ '%.2f'|format(ledger_reconciliation.input_difference) }}</td></tr></tbody></table>{% else %}<p>المطابقة غير متاحة: {{ ledger_reconciliation.issues|join('، ') }}</p>{% endif %}{% if ledger_reconciliation.issues %}<ul>{% for issue in ledger_reconciliation.issues %}<li>{{ issue }}</li>{% endfor %}</ul>{% endif %}</section>
