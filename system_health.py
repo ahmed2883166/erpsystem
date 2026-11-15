@@ -63,25 +63,36 @@ def collect_health_checks(connection):
         if _has_table(connection, table):
             cols = _columns(connection, table)
             if {"status", "journal_entry_id"}.issubset(cols):
-                missing = connection.execute(
-                    f"""SELECT COUNT(*) FROM {table} d
-                        LEFT JOIN journal_entries j ON j.id=d.journal_entry_id
-                        WHERE lower(COALESCE(d.status,''))='posted'
-                          AND (d.journal_entry_id IS NULL OR j.id IS NULL OR j.status<>'posted')"""
-                ).fetchone()[0]
+                if _has_table(connection, "journal_entries"):
+                    missing = connection.execute(
+                        f"""SELECT COUNT(*) FROM {table} d
+                            LEFT JOIN journal_entries j ON j.id=d.journal_entry_id
+                            WHERE lower(COALESCE(d.status,''))='posted'
+                              AND (d.journal_entry_id IS NULL OR j.id IS NULL OR j.status<>'posted')"""
+                    ).fetchone()[0]
+                else:
+                    # If the journal table is absent, every posted source document is unlinked.
+                    missing = connection.execute(
+                        f"""SELECT COUNT(*) FROM {table}
+                            WHERE lower(COALESCE(status,''))='posted'"""
+                    ).fetchone()[0]
                 add("missing_journal_"+table, "مستندات مرحلة دون قيد محاسبي سليم — "+label,
                     "high", missing, "مستند حالته مرحلة لكن القيد المرتبط مفقود أو غير مرحّل.",
                     href)
 
     # A safe stock check: identify negative remaining quantities in valuation layers.
     if _has_table(connection, "stock_valuation_layers"):
-        negative = connection.execute(
-            """SELECT COUNT(*) FROM stock_valuation_layers
-               WHERE CAST(qty_remaining AS REAL) < -0.000001"""
-        ).fetchone()[0]
-        add("negative_stock_layers", "طبقات تقييم بكميات سالبة", "high", negative,
-            "تحقق من حركة الصنف والطبقة قبل إجراء أي تسوية.",
-            url_for("stock.valuation_reconciliation") if _has_table(connection, "stock_products") else "/")
+        if "qty_remaining" in _columns(connection, "stock_valuation_layers"):
+            negative = connection.execute(
+                """SELECT COUNT(*) FROM stock_valuation_layers
+                   WHERE CAST(qty_remaining AS REAL) < -0.000001"""
+            ).fetchone()[0]
+            add("negative_stock_layers", "طبقات تقييم بكميات سالبة", "high", negative,
+                "تحقق من حركة الصنف والطبقة قبل إجراء أي تسوية.",
+                url_for("stock.valuation_reconciliation") if _has_table(connection, "stock_products") else "/")
+        else:
+            add("negative_stock_layers", "فحص طبقات تقييم المخزون", "info", 0,
+                "عمود الكمية المتبقية غير متاح في جدول طبقات التقييم.", "/")
     else:
         add("negative_stock_layers", "فحص طبقات تقييم المخزون", "info", 0,
             "جدول طبقات التقييم غير متاح في قاعدة البيانات الحالية.", "/")
