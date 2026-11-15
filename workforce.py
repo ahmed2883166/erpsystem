@@ -2052,8 +2052,8 @@ def approve_final_payroll(final_id):
         c.execute("BEGIN IMMEDIATE")
         row = c.execute("""SELECT f.*,e.full_name,e.employee_code FROM employee_final_payrolls f
             JOIN employees e ON e.id=f.employee_id WHERE f.id=?""", (final_id,)).fetchone()
-        if not row or row["status"] != "draft" or row["journal_entry_id"]:
-            raise ValueError("لا يمكن اعتماد إلا مسودة مرتب نهائي غير مرحلة.")
+        if not row or row["status"] != "draft" or row["journal_entry_id"] or row["approval_status"] != "pending":
+            raise ValueError("لا يمكن اعتماد إلا مسودة مرتب نهائي بانتظار المراجعة وغير مرحلة.")
         if row["created_by"] is None or row["created_by"] == session["user_id"]:
             raise ValueError("لا يجوز اعتماد المرتب النهائي بواسطة منشئه، أو دون بيانات منشئ موثقة.")
         salary_expense = int(request.form["salary_expense_account"])
@@ -2097,8 +2097,8 @@ def approve_final_payroll(final_id):
         journal_id = post_journal(c, row["termination_date"], reference,
             "اعتماد المرتب النهائي للموظف " + row["full_name"], lines, session["user_id"])
         c.execute("""UPDATE employee_final_payrolls SET status='approved',journal_entry_id=?,
-            approved_by=?,approved_at=CURRENT_TIMESTAMP
-            WHERE id=? AND status='draft' AND journal_entry_id IS NULL""",
+            approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_status='approved'
+            WHERE id=? AND status='draft' AND journal_entry_id IS NULL AND approval_status='pending'""",
             (journal_id, session["user_id"], final_id))
         if c.execute("SELECT changes()").fetchone()[0] != 1:
             raise ValueError("تعذر تثبيت اعتماد المرتب النهائي؛ راجع حالة الكشف.")
@@ -2829,8 +2829,8 @@ def post_payroll(run_id):
         # concurrent requests from both observing a draft and posting it twice.
         c.execute("BEGIN IMMEDIATE")
         run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
-        if not run or run["status"] != "draft":
-            raise ValueError("بيانات المرتبات غير موجودة أو تم ترحيلها بالفعل.")
+        if not run or run["status"] != "draft" or run["approval_status"] != "pending":
+            raise ValueError("كشف المرتبات غير موجود أو ليس بانتظار الاعتماد.")
         if run["created_by"] is None or run["created_by"] == session["user_id"]:
             raise ValueError("لا يجوز اعتماد وترحيل المرتبات بواسطة منشئ الكشف، أو دون بيانات منشئ موثقة.")
         rows = c.execute("""SELECT l.*,e.branch_id,e.cost_center_id,e.project_id,e.full_name,e.employee_code
@@ -2951,8 +2951,10 @@ def post_payroll(run_id):
                         WHERE employee_id=? AND effective_period=? AND status='approved'""",
                         (payroll_line["id"],session["user_id"],payroll_line["employee_id"],run["period"]))
         c.execute("""UPDATE payroll_runs SET status='posted',journal_entry_id=?,
-            approved_by=?,approved_at=CURRENT_TIMESTAMP,posted_at=CURRENT_TIMESTAMP
-            WHERE id=? AND status='draft'""", (journal_id,session["user_id"],run_id))
+            approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_status='approved',
+            posted_at=CURRENT_TIMESTAMP
+            WHERE id=? AND status='draft' AND approval_status='pending'""",
+            (journal_id,session["user_id"],run_id))
         if c.execute("SELECT changes()").fetchone()[0] != 1:
             raise ValueError("تم تغيير حالة كشف المرتبات؛ أعد تحميل الصفحة.")
         _audit(c, "payroll_posted", run["period"] + " journal=" + str(journal_id))
@@ -3508,7 +3510,8 @@ def approve_employee_grant(grant_id):
         # Lock before reading draft state so concurrent approvals cannot post twice.
         c.execute("BEGIN IMMEDIATE")
         grant=c.execute("SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
-        if not grant or grant["status"]!="draft": raise ValueError("المنحة غير موجودة أو سبق اعتمادها.")
+        if not grant or grant["status"]!="draft" or grant["approval_status"]!="pending":
+            raise ValueError("المنحة غير موجودة أو ليست بانتظار الاعتماد.")
         if grant["created_by"] is None or grant["created_by"] == session["user_id"]:
             raise ValueError("لا يجوز اعتماد المنحة بواسطة منشئها، أو دون بيانات منشئ موثقة.")
         lines=c.execute("SELECT * FROM employee_grant_lines WHERE grant_id=? ORDER BY id",(grant_id,)).fetchall()
@@ -3519,7 +3522,8 @@ def approve_employee_grant(grant_id):
             [(int(grant["expense_account_id"]),total,0,"مصروف المنح"),
              (int(grant["payable_account_id"]),0,total,"منح مستحقة للموظفين")],session["user_id"])
         c.execute("""UPDATE employee_grants SET status='approved',journal_entry_id=?,
-            approved_by=?,approved_at=CURRENT_TIMESTAMP WHERE id=? AND status='draft'""",
+            approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_status='approved'
+            WHERE id=? AND status='draft' AND approval_status='pending'""",
             (journal_id,session["user_id"],grant_id))
         if c.execute("SELECT changes()").fetchone()[0] != 1:
             raise ValueError("تعذر تثبيت اعتماد المنحة؛ أعد تحميل الشاشة.")
@@ -3764,8 +3768,8 @@ def approve_friday_allowance(batch_id):
         ).fetchone()
         if not batch or batch["status"] != "draft" or batch["journal_entry_id"]:
             raise ValueError("لا يمكن اعتماد إلا مسودة بدل جمعة غير مرحلة.")
-        if batch["approved_by"] is not None:
-            raise ValueError("تم اعتماد كشف بدل الجمعة بالفعل.")
+        if batch["approval_status"] != "pending" or batch["approved_by"] is not None:
+            raise ValueError("كشف بدل الجمعة ليس بانتظار الاعتماد.")
         if batch["created_by"] is None or batch["created_by"] == session["user_id"]:
             raise ValueError("لا يجوز اعتماد كشف بدل الجمعة بواسطة منشئه، أو دون بيانات منشئ موثقة.")
         lines = c.execute(
@@ -3788,8 +3792,9 @@ def approve_friday_allowance(batch_id):
         reason = (request.form.get("reason") or "").strip()[:500]
         changed = c.execute(
             """UPDATE friday_allowance_batches
-               SET approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_reason=?
-               WHERE id=? AND status='draft' AND approved_by IS NULL AND journal_entry_id IS NULL""",
+               SET approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_reason=?,approval_status='approved'
+               WHERE id=? AND status='draft' AND approval_status='pending'
+                 AND approved_by IS NULL AND journal_entry_id IS NULL""",
             (session["user_id"], reason, batch_id),
         ).rowcount
         if changed != 1:
@@ -3838,7 +3843,7 @@ def post_friday_allowance(batch_id):
         batch = c.execute("SELECT * FROM friday_allowance_batches WHERE id=?",(batch_id,)).fetchone()
         if not batch or batch["status"] != "draft":
             raise ValueError("كشف بدل الجمعة غير موجود أو سبق ترحيله.")
-        if batch["approved_by"] is None:
+        if batch["approved_by"] is None or batch["approval_status"] != "approved":
             raise ValueError("يجب اعتماد كشف بدل الجمعة بواسطة مستخدم آخر قبل الترحيل.")
         if batch["created_by"] is None or batch["created_by"] == session["user_id"]:
             raise ValueError("لا يجوز ترحيل كشف بدل الجمعة بواسطة منشئه، أو دون بيانات منشئ موثقة.")
@@ -4376,8 +4381,8 @@ def approve_end_of_service(settlement_id):
         c.execute("BEGIN IMMEDIATE")
         row=c.execute("""SELECT s.*,e.full_name,e.employee_code FROM employee_end_of_service_settlements s
             JOIN employees e ON e.id=s.employee_id WHERE s.id=?""",(settlement_id,)).fetchone()
-        if not row or row["status"]!="draft" or row["journal_entry_id"]:
-            raise ValueError("لا يمكن اعتماد إلا مسودة نهاية خدمة غير مرحلة.")
+        if not row or row["status"]!="draft" or row["journal_entry_id"] or row["approval_status"]!="pending":
+            raise ValueError("لا يمكن اعتماد إلا مسودة نهاية خدمة بانتظار المراجعة وغير مرحلة.")
         if row["created_by"] is None or row["created_by"] == session["user_id"]:
             raise ValueError("لا يجوز اعتماد تسوية نهاية الخدمة بواسطة منشئها، أو دون بيانات منشئ موثقة.")
         expense_id,payable_id=int(request.form["expense_account_id"]),int(request.form["payable_account_id"])
@@ -4402,7 +4407,8 @@ def approve_end_of_service(settlement_id):
         ref="EOS-POST-"+str(settlement_id)
         journal=post_journal(c,row["termination_date"],ref,"اعتماد مكافأة نهاية الخدمة للموظف "+row["full_name"],lines,session["user_id"])
         c.execute("""UPDATE employee_end_of_service_settlements SET status='approved',journal_entry_id=?,
-            approved_by=?,approved_at=CURRENT_TIMESTAMP WHERE id=? AND status='draft' AND journal_entry_id IS NULL""",
+            approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_status='approved'
+            WHERE id=? AND status='draft' AND journal_entry_id IS NULL AND approval_status='pending'""",
             (journal,session["user_id"],settlement_id))
         if c.execute("SELECT changes()").fetchone()[0]!=1: raise ValueError("تعذر تثبيت اعتماد التسوية.")
         _audit(c,"employee_end_of_service_approved",row["settlement_no"]+" journal="+str(journal))
