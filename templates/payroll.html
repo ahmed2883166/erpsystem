@@ -9,7 +9,7 @@
 <label class="inline-check"><input type="checkbox" name="use_attendance_data" value="1"> تحميل الحضور والانصراف والإجازات المعتمدة تلقائيًا إلى المرتبات</label>
 <label class="inline-check"><input type="checkbox" name="auto_calculate_statutory" value="1"> احسب تلقائيًا ضريبة المرتبات وتأمين الموظف وتأمين الشركة وفق قواعد الدولة وفئة كل موظف السارية على شهر المرتبات</label>
 <p class="muted">عند تفعيل الخيار، يجب أن تكون القواعد والشرائح الضريبية والتأمينية مكتملة ومراجعة. عند عدم تفعيله تظل القيم اليدوية هي المعتمدة.</p>
-<div style="overflow-x:auto"><table><tr><th>الموظف</th><th>الموقف / أيام الاستحقاق</th><th>الأساسي قبل العلاوة</th><th>الأجر التأميني</th><th>الاستحقاقات المرتبطة بالموظف</th><th>ساعات إضافي</th><th>نسبة الإضافي %</th><th>قيمة الإضافي (اتركها فارغة للحساب)</th><th>سبب تعديل الإضافي اليدوي</th><th>ساعات غياب</th><th>خصم الغياب</th><th>السلف</th><th>خصومات أخرى</th><th>الضريبة</th><th>الدمغة</th><th>حصة العامل</th><th>تأمين الشركة</th></tr>
+<div style="overflow-x:auto"><table><tr><th>الموظف</th><th>الموقف / أيام الاستحقاق</th><th>الأساسي قبل العلاوة</th><th>الأجر التأميني</th><th>الاستحقاقات المرتبطة بالموظف</th><th>ساعات إضافي</th><th>نسبة الإضافي %</th><th>قيمة الإضافي (اتركها فارغة للحساب)</th><th>سبب تعديل الإضافي اليدوي</th><th>ساعات غياب</th><th>خصم الغياب</th><th>أقساط السلف من الشاشة المستقلة</th><th>خصومات أخرى</th><th>الضريبة</th><th>الدمغة</th><th>حصة العامل</th><th>تأمين الشركة</th></tr>
 {% for e in employees %}<tr><td>{{e.employee_code}} - {{e.full_name}}<br><small>الأساسي المسجل: {{e.basic_salary}} | العلاوة: {{e.raise_value}} {{'%' if e.raise_type=='percentage' else 'مبلغ'}}</small>{% if e.fixed_pay_items %}<br><small>بنود مرتبطة من شاشة الاستحقاقات والاستقطاعات:</small>{% for item in e.fixed_pay_items %}<br><strong>{{item.item_name}}</strong> — {{'استحقاق' if item.item_type=='allowance' else 'استقطاع'}}: {{item.amount}}{% endfor %}{% else %}<br><small>لا توجد استحقاقات/استقطاعات مرتبطة.</small>{% endif %}</td>
 <td>{% if e.work_status in ['resigned','retired'] %}<strong>{{'استقالة' if e.work_status=='resigned' else 'معاش'}}</strong><br><small>آخر يوم: {{e.termination_date}} — يحتسب حتى هذا اليوم على أساس 30 يومًا</small>{% elif e.work_status=='unpaid_leave' %}<strong>إجازة بدون مرتب</strong><br><small>لا يُدرج ضمن كشف المرتبات لهذا الشهر</small>{% else %}على رأس العمل{% endif %}</td>
 <td><input type="number" min="0.01" step="0.01" name="basic_{{e.id}}" value="{{e.basic_salary}}" required></td>
@@ -21,7 +21,7 @@
 <td><input type="text" name="overtime_override_reason_{{e.id}}" value="" placeholder="مطلوب عند التعديل"></td>
 <td><input type="number" min="0" step="0.01" name="absent_hours_{{e.id}}" value="0"></td>
 <td><input type="number" min="0" step="0.01" name="absence_deduction_{{e.id}}" value="0" required></td>
-<td><input type="number" min="0" step="0.01" name="advance_{{e.id}}" value="0" required></td>
+<td>تُحمّل الأقساط المستحقة من شاشة السلف، ويمكن تأجيل قسط الشهر عند الحاجة</td>
 <td><input type="number" min="0" step="0.01" name="other_deductions_{{e.id}}" value="0" required></td>
 <td><input type="number" min="0" step="0.01" name="tax_{{e.id}}" value="0" required></td>
 <td><input type="number" min="0" step="0.01" name="stamp_duty_{{e.id}}" value="0" required></td>
