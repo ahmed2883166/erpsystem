@@ -31,6 +31,8 @@ class WorkforceExtrasTests(unittest.TestCase):
             CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,
                 debit TEXT DEFAULT '0',credit TEXT DEFAULT '0',memo TEXT);
             CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT NOT NULL);
+            CREATE TABLE cash_accounts(id INTEGER PRIMARY KEY,account_id INTEGER NOT NULL UNIQUE,
+                kind TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1);
             INSERT INTO company_settings VALUES('tax_country','EG');
         """)
         initialize_cash_commitments_schema(conn)
@@ -101,16 +103,18 @@ class WorkforceExtrasTests(unittest.TestCase):
         self.assertEqual(item, ("جزاء: جزاء تأخير", "250.00"))
         self.assertEqual(status, "approved")
 
-    def test_full_month_unpaid_leave_is_not_added_to_payroll(self):
+    def test_full_month_unpaid_leave_is_snapshotted_without_pay_or_deductions(self):
         conn = sqlite3.connect(self.db_path)
         conn.execute("UPDATE employees SET work_status='unpaid_leave' WHERE id=1")
         conn.commit()
         conn.close()
         response = self.client.post("/hr/payroll", data={"period":"2026-11"}, follow_redirects=True)
-        self.assertIn("لا يوجد موظفون مستحقون", response.get_data(as_text=True))
+        self.assertEqual(response.status_code, 200)
         conn = sqlite3.connect(self.db_path)
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM payroll_runs").fetchone()[0],0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM payroll_runs").fetchone()[0],1)
+        line = conn.execute("SELECT basic_salary,allowances,gross_pay,net_pay,total_entitlements,total_deductions FROM payroll_lines").fetchone()
         conn.close()
+        self.assertEqual(line, ("0","0","0","0","0","0"))
 
     def test_employee_statement_keeps_historical_and_unallocated_payments_distinct(self):
         conn = sqlite3.connect(self.db_path)
