@@ -11,7 +11,7 @@ from werkzeug.datastructures import FileStorage
 import workforce
 import workforce_extras
 import payroll_compliance
-from cash_commitments import initialize_cash_commitments_schema, list_cash_commitments_forecast
+from cash_commitments import initialize_cash_commitments_schema, list_cash_commitments_forecast, record_cash_commitment_payment
 
 
 class WorkforceExtrasTests(unittest.TestCase):
@@ -324,6 +324,13 @@ class WorkforceExtrasTests(unittest.TestCase):
         self.assertEqual(commitment,("friday_overtime","بدل الجمعة - 2026-11","1333.33",
             "2026-11-30","friday_allowance_batch",1,3))
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM cash_commitment_payments").fetchone()[0],0)
+        payment_conn=workforce._db()
+        with self.assertRaisesRegex(ValueError,"مدين كافٍ"):
+            record_cash_commitment_payment(
+                payment_conn,1,"2026-11-30","1333.33",journal_id,
+                payable_account_id=3,
+            )
+        payment_conn.close()
         forecast_conn=sqlite3.connect(self.db_path)
         forecast_conn.row_factory=sqlite3.Row
         forecast=list_cash_commitments_forecast(forecast_conn,"2026-11-01","2026-12-31")
