@@ -13,14 +13,14 @@
 .tax-scroll{overflow-x:auto}
 @media print{.no-print,header,nav,.sidebar{display:none!important}.panel{box-shadow:none!important;border:0!important}.tax-scroll{overflow:visible}.tax-report-table{font-size:9px;min-width:0}.tax-report-table th,.tax-report-table td{padding:4px 3px}}
 </style>
-<header><h2>تقرير ضرائب وتأمينات الموظفين</h2><p>يعرض المسيرات المرحلة فقط، ولا يضم المسودات.</p></header>
+<header><h2>تقرير ضرائب وتأمينات الموظفين</h2><p>يعرض كشوف المرتبات المرحلة فقط، ولا يضم المسودات.</p></header>
 <section class="panel no-print"><form method="get" class="form-grid"><label>الشهر<input type="month" name="period" value="{{period}}" required></label><button type="submit">عرض التقرير</button><button type="button" class="secondary" onclick="window.print()">طباعة التقرير</button></form></section>
 <section class="panel">
 <h3>ملخص الشهر {{period}}</h3>
 <div class="tax-scroll"><table class="tax-month-summary">
 <thead><tr><th style="width:55%">البيان</th><th>القيمة بالجنيه</th></tr></thead>
 <tbody>
-<tr><td>عدد الموظفين في المسيرات المرحلة</td><td class="amount">{{rows|length}}</td></tr>
+<tr><td>عدد الموظفين في كشوف المرتبات المرحلة</td><td class="amount">{{rows|length}}</td></tr>
 <tr><td>إجمالي الأجور قبل الاستقطاعات</td><td class="amount">{{totals.gross|money}}</td></tr>
 <tr><td>ضريبة المرتبات المستحقة</td><td class="amount">{{totals.tax|money}}</td></tr>
 <tr><td>حصة العامل في التأمينات الاجتماعية</td><td class="amount">{{totals.employee_insurance|money}}</td></tr>
@@ -33,5 +33,5 @@
 <p class="muted">حصة العامل تخصم من مستحقه، وحصة الشركة مصروف إضافي عليها. مجموع الحصتين يمثل التزام التأمينات الاجتماعية، ولا تُخلط حصة الشركة بصافي مستحق الموظف.</p>
 </section>
 <section class="panel"><h3>تفاصيل الموظفين</h3><div class="tax-scroll"><table class="tax-report-table"><thead><tr><th>الكود</th><th>الموظف</th><th>الفئة</th><th>الأجر</th><th>الدخل السنوي الخاضع</th><th>أجر التأمين</th><th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th><th>الصافي</th></tr></thead>
-<tbody>{% for r in rows %}<tr><td>{{r.employee_code}}</td><td>{{r.full_name}}</td><td>{{r.legal_category}}</td><td>{{r.gross_pay|money}}</td><td>{{r.taxable_annual|money}}</td><td>{{r.insured_wage|money}}</td><td>{{r.taxable_income_tax|money}}</td><td>{{r.employee_insurance|money}}</td><td>{{r.employer_insurance|money}}</td><td><strong>{{r.net_pay|money}}</strong></td></tr>{% else %}<tr><td colspan="10">لا توجد مسيرات مرحلة لهذا الشهر.</td></tr>{% endfor %}</tbody></table></div></section>
+<tbody>{% for r in rows %}<tr><td>{{r.employee_code}}</td><td>{{r.full_name}}</td><td>{{r.legal_category}}</td><td>{{r.gross_pay|money}}</td><td>{{r.taxable_annual|money}}</td><td>{{r.insured_wage|money}}</td><td>{{r.taxable_income_tax|money}}</td><td>{{r.employee_insurance|money}}</td><td>{{r.employer_insurance|money}}</td><td><strong>{{r.net_pay|money}}</strong></td></tr>{% else %}<tr><td colspan="10">لا توجد كشف المرتباتات مرحلة لهذا الشهر.</td></tr>{% endfor %}</tbody></table></div></section>
 {% endblock %}
