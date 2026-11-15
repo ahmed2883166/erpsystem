@@ -488,7 +488,7 @@ class WorkforceTests(unittest.TestCase):
         conn=sqlite3.connect(self.db_path)
         line=conn.execute("SELECT advance_deduction,loan_deduction,net_pay FROM payroll_lines").fetchone()
         conn.close()
-        self.assertEqual(line,("333.34","333.34","13366.66"))
+        self.assertEqual(line,("333.34","333.34","12366.66"))  # Duplicate active allowance is counted once.
         response=self.client.post("/hr/payroll/1/post",data={"salary_expense_account":"4",
             "employer_ins_expense_account":"3","salaries_payable_account":"5","tax_payable_account":"6",
             "insurance_payable_account":"7","advances_account":"8","other_deductions_account":"2"})
