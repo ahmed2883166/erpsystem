@@ -1026,3 +1026,30 @@ class WorkforceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_employee_grant_approval_posts_one_journal_and_rejects_repeat(self):
+        self.add_employee()
+        self.client.post("/hr/grants/types", data={"name":"منحة اعتماد اختبار"})
+        response = self.client.post("/hr/grants/create", data={
+            "grant_type_id":"1", "calculation_method":"fixed", "calculation_value":"500",
+            "days_count":"0", "expense_account_id":"3", "payable_account_id":"5",
+            "grant_date":"2026-11-15", "employee_scope":"permanent", "employee_ids":["1"]
+        })
+        self.assertEqual(response.status_code, 302)
+        response = self.client.post("/hr/grants/1/approve", follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        conn = sqlite3.connect(self.db_path)
+        state = conn.execute("SELECT status,journal_entry_id FROM employee_grants WHERE id=1").fetchone()
+        journal_count = conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
+        conn.close()
+        self.assertEqual(state[0], "approved")
+        self.assertIsNotNone(state[1])
+        self.assertEqual(journal_count, 1)
+
+        response = self.client.post("/hr/grants/1/approve", follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("سبق اعتمادها", response.get_data(as_text=True))
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 1)
+        conn.close()
