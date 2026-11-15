@@ -47,7 +47,8 @@ from income_statement import (build_income_statement, normalize_income_statement
                                closing_entries_exclusion_sql)
 from profitability_reports import build_profitability_report
 from management_reports import build_period_comparison, build_inventory_ageing, build_cash_forecast
-from cash_commitments import initialize_cash_commitments_schema
+from cash_commitments import (initialize_cash_commitments_schema, create_cash_commitment,
+                              record_cash_commitment_payment, void_cash_commitment)
 
 # Development/demo builds run locally without a licensing server. Set NEXUS_DEMO_MODE=0
 # explicitly in a commercial deployment to enforce the signed remote licensing flow.
@@ -128,9 +129,9 @@ app.register_blueprint(health_bp)
 # SECRET_KEY and session/CSRF settings are initialized above.
 
 PERMISSIONS = {
-    "admin": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "expenses.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "purchases.approve", "sales.manage", "sales.view", "sales.approve", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "budget.approve", "cashflow.view", "audit.view"},
-    "accountant": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "expenses.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view"},
-    "viewer": {"accounts.view", "currency.view", "reports.view", "expenses.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view", "bank.view", "tax.view", "workforce.view", "party.view", "budget.view", "cashflow.view"},
+    "admin": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "expenses.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "purchases.approve", "sales.manage", "sales.view", "sales.approve", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "budget.approve", "cashflow.view", "audit.view", "cash_commitments.view", "cash_commitments.manage"},
+    "accountant": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "expenses.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view", "cash_commitments.view", "cash_commitments.manage"},
+    "viewer": {"accounts.view", "currency.view", "reports.view", "expenses.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view", "bank.view", "tax.view", "workforce.view", "party.view", "budget.view", "cashflow.view", "cash_commitments.view"},
 }
 PERMISSION_LABELS = {
     "accounts.view": "عرض شجرة الحسابات",
@@ -165,6 +166,8 @@ PERMISSION_LABELS = {
     "budget.manage": "إنشاء وإعداد الموازنات وإرسالها للاعتماد",
     "budget.approve": "اعتماد أو رفض الموازنات (مع منع الاعتماد الذاتي)",
     "cashflow.view": "عرض قائمة التدفقات النقدية",
+    "cash_commitments.view": "عرض سجل الالتزامات النقدية",
+    "cash_commitments.manage": "إدارة الالتزامات النقدية وتسجيل السداد المرتبط بقيود مرحلة",
     "audit.view": "عرض سجل المراجعة والتدقيق",
     "party.view": "عرض كشوف العملاء والموردين",
 }
@@ -174,7 +177,7 @@ _PERMISSION_IMPLICATIONS = {
     "purchases.manage": "purchases.view", "sales.manage": "sales.view",
     "assets.manage": "assets.view", "quotes.manage": "quotes.view",
     "bank.manage": "bank.view", "tax.manage": "tax.view",
-    "workforce.manage": "workforce.view", "currency.manage": "currency.view", "budget.manage": "budget.view", "budget.approve": "budget.view",
+    "workforce.manage": "workforce.view", "currency.manage": "currency.view", "budget.manage": "budget.view", "budget.approve": "budget.view", "cash_commitments.manage": "cash_commitments.view",
 }
 
 def normalize_user_permissions(values):
@@ -2506,6 +2509,65 @@ def inventory_ageing_report():
         connection.close()
     return render_template("inventory_ageing.html", report=report,
         base_currency=settings.get("base_currency", ""))
+
+
+
+@app.route("/cash-commitments", methods=["GET", "POST"])
+@requires("cash_commitments.view")
+def cash_commitments_register():
+    connection = db()
+    try:
+        if request.method == "POST":
+            if "cash_commitments.manage" not in session.get("permissions", []):
+                abort(403)
+            action = request.form.get("action", "create")
+            try:
+                if action == "create":
+                    create_cash_commitment(
+                        connection,
+                        request.form.get("commitment_type", ""),
+                        request.form.get("title", ""),
+                        request.form.get("amount", ""),
+                        request.form.get("due_date", ""),
+                        period_label=request.form.get("period_label", ""),
+                        currency_code=request.form.get("currency_code", ""),
+                        notes=request.form.get("notes", ""),
+                        created_by=session.get("user_id"),
+                    )
+                    flash("تم تسجيل الالتزام بنجاح.", "success")
+                elif action == "payment":
+                    record_cash_commitment_payment(
+                        connection,
+                        int(request.form.get("commitment_id", "0")),
+                        request.form.get("payment_date", ""),
+                        request.form.get("amount", ""),
+                        int(request.form.get("journal_entry_id", "0")),
+                        reference=request.form.get("reference", ""),
+                        notes=request.form.get("notes", ""),
+                        created_by=session.get("user_id"),
+                    )
+                    flash("تم ربط الدفعة بقيد اليومية المرحّل.", "success")
+                elif action == "void":
+                    void_cash_commitment(connection, int(request.form.get("commitment_id", "0")))
+                    flash("تم إلغاء الالتزام المفتوح.", "success")
+                else:
+                    raise ValueError("الإجراء المطلوب غير معروف.")
+            except (ValueError, TypeError, sqlite3.IntegrityError) as exc:
+                flash(safe_error_message(exc, "تعذر حفظ العملية. لم يتم إجراء أي تغيير."), "error")
+            return redirect(url_for("cash_commitments_register"))
+        rows = connection.execute(
+            """SELECT c.*,
+                      COALESCE((SELECT SUM(CAST(p.amount AS NUMERIC))
+                                FROM cash_commitment_payments p
+                                WHERE p.commitment_id=c.id),0) paid_total
+               FROM cash_commitments c
+               ORDER BY CASE c.status WHEN 'open' THEN 0 WHEN 'partially_paid' THEN 1
+                    WHEN 'paid' THEN 2 ELSE 3 END, c.due_date DESC, c.id DESC"""
+        ).fetchall()
+        return render_template("cash_commitments.html", commitments=rows,
+                               can_manage="cash_commitments.manage" in session.get("permissions", []))
+    finally:
+        connection.close()
 
 
 @app.route("/reports/cash-forecast")
