@@ -88,7 +88,7 @@ document.getElementById('addAllPayEmployees').addEventListener('click',()=>{Arra
 document.getElementById('addSelectedPayEmployees').addEventListener('click',()=>addPayOptions(Array.from(payPicker.options)));
 document.getElementById('payItemDepartmentFilter').addEventListener('input',e=>{const q=e.target.value.trim().toLowerCase();Array.from(payPicker.options).forEach(o=>{o.hidden=!!q&&!(o.dataset.department||'').toLowerCase().includes(q);if(o.hidden)o.selected=false;});});
 payAmount.addEventListener('input',renderPaySelected);
-payCatalog.addEventListener('change',()=>{const option=payCatalog.selectedOptions[0];document.getElementById('payItemTypeLabel').value=option&&option.dataset.type==='allowance'?'استحقاق':'استقطاع';renderPaySelected();});
+payCatalog.addEventListener('change',()=>{const option=payCatalog.selectedOptions[0];document.getElementById('payItemTypeLabel').value=!option||!option.value?'اختر البند أولًا':(option.dataset.type==='allowance'?'استحقاق':'استقطاع');renderPaySelected();});
 renderPaySelected();
 </script>
 {% endblock %}
