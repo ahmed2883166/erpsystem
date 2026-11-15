@@ -73,8 +73,10 @@ renderFridaySelected();
 <tr><th colspan="5">الإجمالي</th><th>{{b.total_amount}}</th></tr></table></div>
 <div class="actions no-print">
 <button type="button" class="secondary" onclick="window.print()">طباعة الكشف / PDF</button>
-{% if b.status=='draft' %}<form method="post" action="{{url_for('workforce.post_friday_allowance',batch_id=b.id)}}" onsubmit="return confirm('سيتم ترحيل قيد مصروف أجور إضافية إلى أجور إضافية مستحقة. هل تريد المتابعة؟')"><button type="submit">اعتماد وترحيل القيد</button></form>
-{% else %}<span>رقم القيد: {{b.journal_entry_id}}</span>{% endif %}
+{% if b.status=='draft' %}
+<form method="post" action="{{url_for('workforce.post_friday_allowance',batch_id=b.id)}}" onsubmit="return confirm('سيتم ترحيل قيد مصروف أجور إضافية إلى أجور إضافية مستحقة. هل تريد المتابعة؟')"><button type="submit">اعتماد وترحيل القيد</button></form>
+<form method="post" action="{{url_for('workforce.delete_friday_allowance',batch_id=b.id)}}" onsubmit="return confirm('حذف مسودة بدل الجمعة المفتوحة؟ لن يمكن الحذف بعد الترحيل.')"><button type="submit" class="danger">حذف المسودة</button></form>
+{% else %}<span>رقم القيد: {{b.journal_entry_id}} — مغلق ولا يمكن حذفه</span>{% endif %}
 </div>
 </section>
 {% else %}<section class="panel"><p>لا توجد كشوف بدل جمعة حتى الآن.</p></section>{% endfor %}
