@@ -103,6 +103,44 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertNotIn(11, {row["id"] for row in snapshot["revenue_accounts"]})
         self.assertIn(11, {row["id"] for row in snapshot["expense_accounts"]})
 
+    def test_dashboard_income_matches_statement_when_disposal_account_has_unrelated_postings(self):
+        from income_statement import build_income_statement
+
+        self.conn.execute(
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) "
+            "VALUES(11,'4710','حساب أرباح وخسائر الاستبعاد','revenue',0,1)"
+        )
+        self.conn.executescript("""
+            CREATE TABLE asset_disposals(
+                id INTEGER PRIMARY KEY, disposal_date TEXT,
+                gain_loss_account_id INTEGER, gain_loss_amount TEXT,
+                journal_entry_id INTEGER
+            );
+            INSERT INTO journal_entries(id,entry_date,status) VALUES
+                (70,'2026-11-14','posted'), (71,'2026-11-15','posted');
+            -- Actual disposal loss posted to the shared revenue account.
+            INSERT INTO asset_disposals VALUES(1,'2026-11-14',11,'-54.44',70);
+        """)
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(?,?,?,?)",
+            [
+                (70, 11, "54.44", "0"),
+                (70, 1, "0", "54.44"),
+                # Unrelated ordinary revenue posted to the same account.
+                (71, 11, "0", "100.00"),
+                (71, 1, "100.00", "0"),
+            ],
+        )
+        statement = build_income_statement(self.conn, "2026-11-01", "2026-11-30")
+        snapshot = build_management_snapshot(
+            self.conn, date(2026,11,1), date(2026,11,30)
+        )
+        self.assertEqual(snapshot["current"]["revenue"], statement["revenue_total"])
+        self.assertEqual(snapshot["current"]["expenses"], statement["cogs_total"] + statement["operating_expense_total"])
+        self.assertEqual(snapshot["current"]["net_profit"], statement["net_profit"])
+        self.assertEqual(snapshot["current"]["revenue"], Decimal("600.00"))
+        self.assertEqual(snapshot["current"]["net_profit"], Decimal("445.56"))
+
     def test_period_results_and_comparison(self):
         s=build_management_snapshot(self.conn,date(2026,11,1),date(2026,11,30))
         self.assertEqual(s["current"]["revenue"],Decimal("500"))
