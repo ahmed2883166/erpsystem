@@ -831,7 +831,7 @@ def employee_form_2_salary_report():
     }
     labels = {"all": "كل الفئات", "permanent": "الموظفون المثبتون",
               "temporary": "الموظفون المؤقتون", "comprehensive_bonus": "موظفو المكافأة الشاملة"}
-    return render_template("form2_salary_report.html", employees=employees, totals=totals,
+    return render_template("form2_salary.html", employees=employees, totals=totals,
                            scope=scope, scope_label=labels[scope],
                            print_date=date.today().isoformat())
 
