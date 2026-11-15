@@ -1419,6 +1419,7 @@ def edit_account(account_id):
 def global_search():
     if "user_id" not in session:
         return redirect(url_for("login"))
+    effective_permissions = set(session.get("permissions", PERMISSIONS.get(session.get("role"), set())))
     q = request.args.get("q", "").strip()[:120]
     results = []
     if q:
@@ -1437,7 +1438,7 @@ def global_search():
         like = f"%{q}%"
 
         # Search journal entries, including their linked sales/purchase documents.
-        if exists("journal_entries"):
+        if "reports.view" in effective_permissions and exists("journal_entries"):
             journal_columns = columns("journal_entries")
             predicates = []
             args = []
@@ -1453,7 +1454,7 @@ def global_search():
                 )
                 args.append(like)
 
-            if exists("sales_invoices") and exists("customers"):
+            if "sales.view" in effective_permissions and exists("sales_invoices") and exists("customers"):
                 sales_invoice_columns = columns("sales_invoices")
                 if "journal_entry_id" in sales_invoice_columns:
                     predicates.append(
@@ -1464,7 +1465,7 @@ def global_search():
                     )
                     args.extend([like, like, like])
 
-            if exists("supplier_bills") and exists("suppliers"):
+            if "purchases.view" in effective_permissions and exists("supplier_bills") and exists("suppliers"):
                 supplier_bill_columns = columns("supplier_bills")
                 if "journal_entry_id" in supplier_bill_columns:
                     predicates.append(
@@ -1496,7 +1497,7 @@ def global_search():
                     })
 
         # Search customers and suppliers independently from journal search.
-        if exists("customers"):
+        if "sales.view" in effective_permissions and exists("customers"):
             customer_columns = columns("customers")
             searchable = [column for column in ("name", "code", "phone") if column in customer_columns]
             if searchable:
@@ -1512,7 +1513,7 @@ def global_search():
                         "url": url_for("sales.edit_customer", customer_id=row["id"]),
                     })
 
-        if exists("suppliers"):
+        if "purchases.view" in effective_permissions and exists("suppliers"):
             supplier_columns = columns("suppliers")
             searchable = [column for column in ("name", "code", "phone") if column in supplier_columns]
             if searchable:
@@ -1528,7 +1529,7 @@ def global_search():
                         "url": url_for("purchase.edit_supplier", supplier_id=row["id"]),
                     })
 
-        if exists("sales_invoices") and exists("customers"):
+        if "sales.view" in effective_permissions and exists("sales_invoices") and exists("customers"):
             for row in conn.execute(
                 """SELECT i.id,i.invoice_no,i.invoice_date,i.total_amount,c.name party
                    FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
@@ -1543,7 +1544,7 @@ def global_search():
                     "url": url_for("sales.invoice_print", invoice_id=row["id"]),
                 })
 
-        if exists("supplier_bills") and exists("suppliers"):
+        if "purchases.view" in effective_permissions and exists("supplier_bills") and exists("suppliers"):
             for row in conn.execute(
                 """SELECT b.id,b.bill_no,b.supplier_invoice_no,b.bill_date,b.total_amount,s.name party
                    FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
@@ -1562,7 +1563,7 @@ def global_search():
                     "url": url_for("purchase.bill_print", bill_id=row["id"]),
                 })
 
-        if exists("stock_products"):
+        if "stock.view" in effective_permissions and exists("stock_products"):
             for row in conn.execute(
                 """SELECT id,sku,name_ar,barcode,purchase_price,sale_price
                    FROM stock_products
@@ -1580,7 +1581,7 @@ def global_search():
                     "url": url_for("stock.edit_product", product_id=row["id"]),
                 })
 
-        if exists("accounts"):
+        if ({"accounts.view", "accounts.manage"} & effective_permissions) and exists("accounts"):
             for row in conn.execute(
                 "SELECT id,code,name_ar FROM accounts "
                 "WHERE code LIKE ? OR name_ar LIKE ? ORDER BY code LIMIT 20",
@@ -1593,7 +1594,7 @@ def global_search():
                     "url": url_for("accounts"),
                 })
 
-        if exists("company_settings"):
+        if "users.manage" in effective_permissions and exists("company_settings"):
             for row in conn.execute(
                 "SELECT setting_key,setting_value FROM company_settings "
                 "WHERE setting_value LIKE ? LIMIT 20",
