@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block title %}تعديل ملف الموظف | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>تعديل ملف الموظف: {{e.full_name}}</h2><p>تحديث البيانات الشخصية والوظيفية فقط. القيم المالية تُدار من شاشاتها المستقلة.</p></header>
+<header class="page-heading"><div><h2>تعديل ملف الموظف: {{e.full_name}}</h2><p>تحديث البيانات الشخصية والوظيفية فقط. القيم المالية تُدار من شاشاتها المستقلة.</p></div></header>
 <section class="panel"><form method="post" enctype="multipart/form-data" class="form-grid">
 <label>كود الموظف<input name="employee_code" value="{{e.employee_code}}" required></label><label>اسم الموظف<input name="full_name" value="{{e.full_name}}" required></label>
 <label>تغيير صورة الموظف (اختياري)<input type="file" name="photo" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"></label>
