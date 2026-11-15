@@ -7,7 +7,7 @@ import sqlite3
 import uuid
 from decimal import Decimal, InvalidOperation
 from functools import wraps
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, money, safe_error_message
 from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options, product_uom_storage
@@ -472,7 +472,7 @@ def _supplier_price_insights(conn, lookback_days=365):
         "SELECT name FROM sqlite_master WHERE type='table'")}
     if not set(required).issubset(present):
         return [], False
-    start=(date.today()-__import__("datetime").timedelta(days=lookback_days)).isoformat()
+    start=(date.today()-timedelta(days=lookback_days)).isoformat()
     rows=conn.execute("""SELECT bl.product_id,bl.billed_quantity,bl.invoice_unit_price,
             b.supplier_id,b.bill_date,b.id bill_id,s.name supplier_name,
             p.sku,p.name_ar
