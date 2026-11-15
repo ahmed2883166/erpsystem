@@ -236,6 +236,16 @@ class FixedAssetLifecycleFinancialReportTests(unittest.TestCase):
         self.assertEqual(direct_cash["sections"]["investing"]["in"], Decimal("1700"))
         self.assertEqual(direct_cash["reconciliation_difference"], Decimal("0"))
         self.assertEqual(indirect_cash["indirect_operating_net"], Decimal("0"))
+        indirect_depreciation = next(
+            item for item in indirect_cash["indirect_items"]
+            if item["label"] == "إضافة الإهلاك والمصروفات غير النقدية المحددة"
+        )
+        disposal_adjustment = next(
+            item for item in indirect_cash["indirect_items"]
+            if item["label"] == "استبعاد أرباح / خسائر بيع الأصول من الربح"
+        )
+        self.assertEqual(indirect_depreciation["amount"], Decimal("600"))
+        self.assertEqual(disposal_adjustment["amount"], Decimal("100"))
         self.assertEqual(indirect_cash["sections"]["investing"]["out"], Decimal("2400"))
         self.assertEqual(indirect_cash["sections"]["investing"]["in"], Decimal("1700"))
         self.assertEqual(indirect_cash["reconciliation_difference"], Decimal("0"))
