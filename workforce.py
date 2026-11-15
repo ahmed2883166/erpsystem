@@ -114,6 +114,22 @@ def initialize_workforce_schema():
       ON employee_end_of_service_settlements(employee_id,termination_date);
     CREATE INDEX IF NOT EXISTS idx_employee_employment_history
       ON employee_employment_history(employee_id,effective_date,id);
+    CREATE TABLE IF NOT EXISTS employee_final_payrolls(
+      id INTEGER PRIMARY KEY, final_payroll_no TEXT NOT NULL UNIQUE,
+      employee_id INTEGER NOT NULL REFERENCES employees(id), period TEXT NOT NULL,
+      termination_date TEXT NOT NULL, days_worked INTEGER NOT NULL,
+      basic_salary_snapshot TEXT NOT NULL, allowances_snapshot TEXT NOT NULL DEFAULT '0',
+      gross_pay TEXT NOT NULL, tax_deduction TEXT NOT NULL DEFAULT '0',
+      employee_insurance TEXT NOT NULL DEFAULT '0', employer_insurance TEXT NOT NULL DEFAULT '0',
+      stamp_duty TEXT NOT NULL DEFAULT '0', other_deductions TEXT NOT NULL DEFAULT '0',
+      net_pay TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft'
+        CHECK(status IN ('draft','approved','paid','cancelled')),
+      notes TEXT NOT NULL DEFAULT '', created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(employee_id,termination_date)
+    );
+    CREATE INDEX IF NOT EXISTS idx_employee_final_payroll_period
+      ON employee_final_payrolls(period,employee_id);
     CREATE TABLE IF NOT EXISTS payroll_runs(
       id INTEGER PRIMARY KEY, period TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'draft',
       journal_entry_id INTEGER UNIQUE, created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -1319,6 +1335,97 @@ def payroll_report():
                            month_to=month_to, selected_employee=employee_id)
 
 
+@workforce_bp.route("/hr/final-payroll", methods=["GET", "POST"])
+@_role("admin", "accountant")
+def final_payroll():
+    c = _db()
+    try:
+        if request.method == "POST":
+            employee_id = int(request.form.get("employee_id", "0"))
+            period = request.form.get("period", "").strip()
+            period_start = date.fromisoformat(period + "-01")
+            if period != period_start.strftime("%Y-%m"):
+                raise ValueError("شهر المرتب النهائي غير صحيح.")
+            next_month = date(period_start.year + (period_start.month == 12),
+                              1 if period_start.month == 12 else period_start.month + 1, 1)
+            period_end = next_month - date.resolution
+            employee = c.execute("SELECT * FROM employees WHERE id=?", (employee_id,)).fetchone()
+            if not employee or employee["work_status"] not in ("resigned", "retired") or not employee["termination_date"]:
+                raise ValueError("الموظف غير مسجل كمنتهية خدمته.")
+            termination = date.fromisoformat(employee["termination_date"])
+            if termination.strftime("%Y-%m") != period:
+                raise ValueError("شهر الكشف يجب أن يطابق شهر انتهاء خدمة الموظف.")
+            if termination < date.fromisoformat(employee["hire_date"]):
+                raise ValueError("تاريخ انتهاء الخدمة يسبق تاريخ التعيين.")
+            days_worked = (termination - period_start).days + 1
+            if days_worked < 1 or days_worked > (period_end - period_start).days + 1:
+                raise ValueError("عدد أيام العمل غير صحيح.")
+            basic_monthly = M(employee["basic_salary"])
+            allowances_monthly = M(sum((D(x["amount"]) for x in c.execute("""
+                SELECT p.amount FROM employee_pay_items p WHERE p.employee_id=? AND p.active=1
+                  AND p.item_type='allowance'
+                  AND p.id=(SELECT MAX(p2.id) FROM employee_pay_items p2
+                    WHERE p2.employee_id=p.employee_id AND p2.item_name=p.item_name
+                      AND p2.item_type=p.item_type AND p2.active=1)""", (employee_id,)).fetchall()), Decimal("0")))
+            basic_prorated = M(basic_monthly * Decimal(days_worked) / Decimal("30"))
+            allowances_prorated = M(allowances_monthly * Decimal(days_worked) / Decimal("30"))
+            gross = M(basic_prorated + allowances_prorated)
+            tax = M(request.form.get("tax_deduction", "0"))
+            employee_ins = M(request.form.get("employee_insurance", "0"))
+            employer_ins = M(request.form.get("employer_insurance", "0"))
+            stamp = M(request.form.get("stamp_duty", "0"))
+            other = M(request.form.get("other_deductions", "0"))
+            deductions = M(tax + employee_ins + stamp + other)
+            if min(tax, employee_ins, employer_ins, stamp, other) < 0 or deductions > gross:
+                raise ValueError("راجع الاستقطاعات؛ يجب ألا تكون سالبة أو تتجاوز إجمالي المستحق.")
+            net = M(gross - deductions)
+            final_no = "FINAL-" + employee["employee_code"] + "-" + termination.strftime("%Y%m%d")
+            c.execute("BEGIN IMMEDIATE")
+            c.execute("""INSERT INTO employee_final_payrolls
+                (final_payroll_no,employee_id,period,termination_date,days_worked,basic_salary_snapshot,
+                 allowances_snapshot,gross_pay,tax_deduction,employee_insurance,employer_insurance,
+                 stamp_duty,other_deductions,net_pay,notes,created_by)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (final_no,employee_id,period,termination.isoformat(),days_worked,str(basic_prorated),
+                 str(allowances_prorated),str(gross),str(tax),str(employee_ins),str(employer_ins),
+                 str(stamp),str(other),str(net),request.form.get("notes","").strip(),session["user_id"]))
+            _audit(c,"employee_final_payroll_draft_created",final_no+" net="+str(net))
+            c.commit()
+            flash("تم حفظ المرتب النهائي كمسودة مستقلة. لم يدخل في كشف المرتبات العادي ولم يتم اعتماده أو صرفه أو إنشاء قيد.", "success")
+            return redirect(url_for("workforce.final_payroll", period=period))
+
+        selected_period = request.args.get("period", date.today().strftime("%Y-%m"))
+        try:
+            period_start = date.fromisoformat(selected_period + "-01")
+            if period_start.strftime("%Y-%m") != selected_period:
+                raise ValueError()
+        except ValueError:
+            selected_period = date.today().strftime("%Y-%m")
+            period_start = date.fromisoformat(selected_period + "-01")
+        next_month = date(period_start.year + (period_start.month == 12),
+                          1 if period_start.month == 12 else period_start.month + 1, 1)
+        period_end = next_month - date.resolution
+        eligible = c.execute("""SELECT e.* FROM employees e WHERE e.work_status IN ('resigned','retired')
+            AND e.termination_date>=? AND e.termination_date<=?
+            AND NOT EXISTS (SELECT 1 FROM employee_final_payrolls f
+                WHERE f.employee_id=e.id AND f.termination_date=e.termination_date)
+            ORDER BY e.employee_code""", (period_start.isoformat(),period_end.isoformat())).fetchall()
+        rows = c.execute("""SELECT f.*,e.employee_code,e.full_name FROM employee_final_payrolls f
+            JOIN employees e ON e.id=f.employee_id WHERE f.period=? ORDER BY f.created_at DESC,f.id DESC""",
+            (selected_period,)).fetchall()
+        return render_template("final_payroll.html", employees=eligible, rows=rows,
+                               selected_period=selected_period)
+    except Exception as exc:
+        try:
+            c.rollback()
+        except Exception:
+            pass
+        flash(safe_error_message(exc), "error")
+        return redirect(url_for("workforce.final_payroll"))
+    finally:
+        c.close()
+
+
 @workforce_bp.route("/hr/payroll", methods=["GET", "POST"])
 @_role("admin", "accountant")
 def payroll():
@@ -1335,10 +1442,11 @@ def payroll():
             run_id = cur.lastrowid
             month_end = (date(start.year + (start.month == 12), 1 if start.month == 12 else start.month + 1, 1) - date.resolution)
             period_end = month_end.isoformat()
-            employees = c.execute("""SELECT * FROM employees WHERE
-                (active=1 AND work_status IN ('comprehensive_bonus','permanent','temporary','unpaid_leave')) OR
-                (work_status IN ('resigned','retired') AND termination_date>=? AND termination_date<=?)
-                ORDER BY employee_code""", (period + "-01", period_end)).fetchall()
+            # Resigned/retired employees are excluded from ordinary payroll.
+            # Their final-period salary is prepared separately in /hr/final-payroll.
+            employees = c.execute("""SELECT * FROM employees
+                WHERE active=1 AND work_status IN ('comprehensive_bonus','permanent','temporary','unpaid_leave')
+                ORDER BY employee_code""").fetchall()
             if not employees:
                 raise ValueError("لا يوجد موظفون مستحقون للراتب في هذا الشهر حسب الموقف الوظيفي.")
             for e in employees:
@@ -1593,11 +1701,9 @@ def payroll():
             else:
                 flash(safe_error_message(e, "تعذر إعداد المرتبات بسبب تعارض في البيانات. لم يتم حفظ كشف المرتبات."), "error")
     display_period = date.today().strftime("%Y-%m")
-    # Show former employees in the input grid so final payroll can be prepared for any selected month.
-    # POST includes them only in the month containing their termination date.
-    employee_rows = c.execute("""SELECT * FROM employees WHERE
-        (active=1 AND work_status IN ('comprehensive_bonus','permanent','temporary','unpaid_leave')) OR
-        work_status IN ('resigned','retired')
+    # Final-period employees are handled on the separate final-payroll screen.
+    employee_rows = c.execute("""SELECT * FROM employees
+        WHERE active=1 AND work_status IN ('comprehensive_bonus','permanent','temporary','unpaid_leave')
         ORDER BY employee_code""").fetchall()
     employees = []
     for employee_row in employee_rows:
