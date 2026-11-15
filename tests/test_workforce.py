@@ -1053,23 +1053,21 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0][0], first)
 
-    def test_midmonth_retirement_prorates_salary_and_recurring_allowance(self):
+    def test_retired_employee_is_excluded_from_regular_monthly_payroll(self):
         self.add_employee()
         conn = sqlite3.connect(self.db_path)
         conn.execute("UPDATE employees SET work_status='retired',termination_date='2026-11-15' WHERE id=1")
         conn.commit()
         conn.close()
-        response = self.client.post("/hr/payroll", data={
-            "period": "2026-11", "basic_1": "10000", "allowances_1": "0",
-            "overtime_hours_1": "0", "overtime_amount_1": "",
-            "absence_deduction_1": "0", "other_deductions_1": "0",
-            "tax_1": "0", "employee_ins_1": "0", "employer_ins_1": "0"
-        })
-        self.assertEqual(response.status_code, 302, response.get_data(as_text=True))
+        response = self.client.post("/hr/payroll", data={"period": "2026-11"}, follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("لا يوجد موظفون مستحقون", response.get_data(as_text=True))
         conn = sqlite3.connect(self.db_path)
-        line = conn.execute("SELECT basic_salary,allowances,gross_pay FROM payroll_lines WHERE run_id=1").fetchone()
+        run_count = conn.execute("SELECT COUNT(*) FROM payroll_runs").fetchone()[0]
+        line_count = conn.execute("SELECT COUNT(*) FROM payroll_lines").fetchone()[0]
         conn.close()
-        self.assertEqual(line, ("5000.00","500.00","5500.00"))
+        self.assertEqual(run_count, 0)
+        self.assertEqual(line_count, 0)
 
     def test_terminated_employee_requires_effective_date(self):
         with self.assertRaisesRegex(ValueError, "يجب تحديد تاريخ سريان الاستقالة"):
@@ -1079,21 +1077,24 @@ class WorkforceTests(unittest.TestCase):
                 "standard_hours": "208", "work_status": "resigned"
             })
 
-    def test_payroll_excludes_unpaid_leave_resigned_and_retired_employees(self):
+    def test_unpaid_leave_is_snapshotted_at_zero_and_terminated_staff_are_excluded(self):
         conn = sqlite3.connect(self.db_path)
         conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,work_status)
                         VALUES('E004','On Leave','2026-01-01','5000','200','unpaid_leave')""")
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,work_status,termination_date)
+                        VALUES('E005','Resigned','2026-01-01','6000','200','resigned','2026-10-31')""")
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,work_status,termination_date)
+                        VALUES('E006','Retired','2026-01-01','7000','200','retired','2026-10-31')""")
         conn.commit()
         conn.close()
-        response = self.client.post("/hr/payroll", data={"period":"2026-11"})
+        response = self.client.post("/hr/payroll", data={"period":"2026-11"}, follow_redirects=True)
         self.assertEqual(response.status_code, 200)
-        self.assertIn("لا يوجد موظفون مستحقون", response.get_data(as_text=True))
         conn = sqlite3.connect(self.db_path)
-        count = conn.execute("SELECT COUNT(*) FROM payroll_lines").fetchone()[0]
+        lines = conn.execute("SELECT employee_id,basic_salary,allowances,gross_pay,net_pay FROM payroll_lines").fetchall()
         run_count = conn.execute("SELECT COUNT(*) FROM payroll_runs").fetchone()[0]
         conn.close()
-        self.assertEqual(count, 0)
-        self.assertEqual(run_count, 0)
+        self.assertEqual(run_count, 1)
+        self.assertEqual(lines, [(1, "0", "0", "0", "0")])
 
     def test_optional_automatic_statutory_calculation_snapshots_rules(self):
         self.add_employee()
