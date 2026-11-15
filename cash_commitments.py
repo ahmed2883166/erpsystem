@@ -146,8 +146,8 @@ def create_cash_commitment(conn, commitment_type, title, amount, due_date,
     return cur.lastrowid
 
 
-def _journal_entry_effect_is_active(conn, journal_entry_id):
-    """Whether a posted journal still has its original accounting effect."""
+def _journal_entry_effect_is_active(conn, journal_entry_id, as_of=None):
+    """Whether a posted journal still has its original accounting effect at a date."""
     columns = {
         row[1] for row in conn.execute("PRAGMA table_info(journal_entries)")
     }
@@ -156,6 +156,8 @@ def _journal_entry_effect_is_active(conn, journal_entry_id):
         selected.append("reference")
     if "description" in columns:
         selected.append("description")
+    if "entry_date" in columns:
+        selected.append("entry_date")
     entry = conn.execute(
         "SELECT " + ",".join(selected) + " FROM journal_entries WHERE id=?",
         (journal_entry_id,),
@@ -163,6 +165,8 @@ def _journal_entry_effect_is_active(conn, journal_entry_id):
     if not entry or entry[0] != "posted":
         return False
     values = dict(zip(selected, tuple(entry)))
+    if as_of and values.get("entry_date") and values["entry_date"] > as_of:
+        return False
     reference = str(values.get("reference") or "")
     description = str(values.get("description") or "")
     if reference.startswith("REV-") or description.startswith("قيد عكسي للقيد رقم "):
@@ -176,9 +180,12 @@ def _journal_entry_effect_is_active(conn, journal_entry_id):
         reversal_params.append(f"قيد عكسي للقيد رقم {journal_entry_id}:%")
     if not reversal_conditions:
         return True
+    date_filter = " AND entry_date<=?" if as_of and "entry_date" in columns else ""
+    if date_filter:
+        reversal_params.append(as_of)
     reversal = conn.execute(
         "SELECT id FROM journal_entries WHERE status='posted' AND ("
-        + " OR ".join(reversal_conditions) + ") ORDER BY id LIMIT 1",
+        + " OR ".join(reversal_conditions) + ")" + date_filter + " ORDER BY id LIMIT 1",
         tuple(reversal_params),
     ).fetchone()
     if not reversal:
@@ -190,12 +197,27 @@ def _journal_entry_effect_is_active(conn, journal_entry_id):
     if "description" in columns:
         restored_conditions.append("description LIKE ?")
         restored_params.append(f"قيد عكسي للقيد رقم {int(reversal[0])}:%")
+    if date_filter:
+        restored_params.append(as_of)
     restored = conn.execute(
         "SELECT 1 FROM journal_entries WHERE status='posted' AND ("
-        + " OR ".join(restored_conditions) + ") LIMIT 1",
+        + " OR ".join(restored_conditions) + ")" + date_filter + " LIMIT 1",
         tuple(restored_params),
     ).fetchone()
     return restored is not None
+
+
+def _payment_effect_is_active(conn, payment, as_of=None):
+    reversal_id = payment["reversal_journal_entry_id"]
+    if reversal_id is not None:
+        reversal = conn.execute(
+            "SELECT status,entry_date FROM journal_entries WHERE id=?",
+            (reversal_id,),
+        ).fetchone()
+        if (reversal and reversal["status"] == "posted"
+                and (not as_of or not reversal["entry_date"] or reversal["entry_date"] <= as_of)):
+            return False
+    return _journal_entry_effect_is_active(conn, payment["journal_entry_id"], as_of)
 
 
 def cash_commitment_payment_summary(conn, commitment_id):
@@ -222,10 +244,7 @@ def cash_commitment_payment_summary(conn, commitment_id):
     effective = Decimal("0")
     details = []
     for payment in payments:
-        active = (
-            payment["reversal_journal_entry_id"] is None
-            and _journal_entry_effect_is_active(conn, payment["journal_entry_id"])
-        )
+        active = _payment_effect_is_active(conn, payment)
         if active:
             effective += Decimal(str(payment["amount"]))
         details.append({
@@ -439,8 +458,7 @@ def list_cash_commitments_forecast(conn, as_of, end_date):
         paid = sum((
             Decimal(str(payment["amount"]))
             for payment in payment_rows
-            if payment["reversal_journal_entry_id"] is None
-            and _journal_entry_effect_is_active(conn, payment["journal_entry_id"])
+            if _payment_effect_is_active(conn, payment, as_of)
         ), Decimal("0"))
         remaining = Decimal(str(row["amount"])) - paid
         if remaining <= 0:
