@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}أعمار المخزون والأصناف الراكدة | NEXUS ERP{% endblock %}
+{% block content %}
+<header class="report-header"><h2>أعمار المخزون والأصناف الراكدة</h2><p class="muted">القيمة محسوبة من الكميات المتبقية في طبقات التقييم حتى {{ report.as_of }}.</p></header>
+<section class="panel no-print"><form method="get" class="form-row"><label>حتى تاريخ<input type="date" name="as_of" value="{{ report.as_of }}"></label><button>عرض التقرير</button><button type="button" class="secondary" onclick="window.print()">طباعة</button></form></section>
+{% if not report.available %}<section class="panel"><p>بيانات طبقات تقييم المخزون غير متاحة في قاعدة البيانات الحالية.</p></section>{% else %}
+<section class="grid">
+{% for key,label in [('0_30','0–30 يوم'),('31_60','31–60 يوم'),('61_90','61–90 يوم'),('over_90','أكثر من 90 يوم')] %}
+<article class="panel"><small class="muted">{{ label }}</small><h2>{{ report.totals[key]|money }}</h2></article>
+{% endfor %}</section>
+<section class="panel"><h3>تفاصيل الطبقات والأصناف</h3><div class="table-wrap"><table><thead><tr><th>الصنف</th><th>المخزن</th><th>تاريخ الطبقة</th><th>العمر بالأيام</th><th>الكمية المتبقية</th><th>تكلفة الوحدة</th><th>القيمة</th><th>الصلاحية</th></tr></thead><tbody>
+{% for row in report.rows %}<tr><td>{{ row.sku }} - {{ row.product_name }}</td><td>{{ row.warehouse }}</td><td>{{ row.layer_date }}</td><td>{{ row.age_days }}</td><td>{{ row.quantity }}</td><td>{{ row.unit_cost|money }}</td><td>{{ row.value|money }}</td><td>{{ row.expiry_date or '—' }}</td></tr>{% else %}<tr><td colspan="8">لا توجد طبقات مخزون بكميات متبقية.</td></tr>{% endfor %}
+</tbody></table></div><p class="muted">التصنيف مبني على تاريخ إنشاء طبقة التقييم. لا يتم وصف الصنف بأنه راكد لمجرد قدم الطبقة إذا كانت هناك حركات لاحقة؛ راجع تاريخ آخر حركة قبل اتخاذ قرار التخفيض أو الإعدام.</p></section>
+{% endif %}
+{% endblock %}
