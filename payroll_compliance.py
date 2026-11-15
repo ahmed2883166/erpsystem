@@ -393,15 +393,20 @@ def rules():
           (SELECT COUNT(*) FROM payroll_tax_tier_brackets t WHERE t.rule_set_id=r.id) bracket_count
         FROM payroll_rule_sets r ORDER BY country_code,category_code,effective_from DESC
     """).fetchall()
+    # SQLite compound SELECTs only allow ORDER BY output columns/aliases.
+    # Put the UNION in a subquery so numeric sorting is legal and deterministic.
     brackets = conn.execute("""
-        SELECT b.id,b.rule_set_id,b.lower_bound,b.upper_bound,b.rate,
-               r.country_code,r.category_code,NULL AS income_max,'standard' AS bracket_kind
-        FROM payroll_tax_brackets b JOIN payroll_rule_sets r ON r.id=b.rule_set_id
-        UNION ALL
-        SELECT t.id,t.rule_set_id,t.lower_bound,t.upper_bound,t.rate,
-               r.country_code,r.category_code,t.income_max,'tier' AS bracket_kind
-        FROM payroll_tax_tier_brackets t JOIN payroll_rule_sets r ON r.id=t.rule_set_id
-        ORDER BY country_code,category_code,bracket_kind,CAST(lower_bound AS NUMERIC)
+        SELECT * FROM (
+            SELECT b.id,b.rule_set_id,b.lower_bound,b.upper_bound,b.rate,
+                   r.country_code,r.category_code,NULL AS income_max,'standard' AS bracket_kind
+            FROM payroll_tax_brackets b JOIN payroll_rule_sets r ON r.id=b.rule_set_id
+            UNION ALL
+            SELECT t.id,t.rule_set_id,t.lower_bound,t.upper_bound,t.rate,
+                   r.country_code,r.category_code,t.income_max,'tier' AS bracket_kind
+            FROM payroll_tax_tier_brackets t JOIN payroll_rule_sets r ON r.id=t.rule_set_id
+        ) AS all_brackets
+        ORDER BY country_code,category_code,bracket_kind,
+                 CAST(lower_bound AS NUMERIC),id
     """).fetchall()
     conn.close()
     return render_template("payroll_rules.html", rule_sets=rule_sets, brackets=brackets,
