@@ -586,5 +586,31 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(second["current"]["revenue"], Decimal("525"))
 
 
+    def test_unusual_journal_flags_unbalanced_entry(self):
+        self.conn.execute(
+            "INSERT INTO journal_entries(id,entry_date,status) VALUES(32,'2026-11-14','posted')"
+        )
+        self.conn.execute(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(32,9,'100','0')"
+        )
+        flagged = unusual_journal_entries(self.conn, date(2026,11,1), date(2026,11,30))
+        target = next(item for item in flagged if item["id"] == 32)
+        self.assertIn("القيد غير متوازن بين المدين والدائن", target["reasons"])
+
+    def test_unusual_journal_flags_identical_posted_entries(self):
+        for entry_id in (33, 34):
+            self.conn.execute(
+                "INSERT INTO journal_entries(id,entry_date,status) VALUES(?,'2026-11-14','posted')",
+                (entry_id,),
+            )
+            self.conn.executemany(
+                "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(?,?,?,?)",
+                [(entry_id, 9, "75.00", "0"), (entry_id, 1, "0", "75.00")],
+            )
+        flagged = unusual_journal_entries(self.conn, date(2026,11,1), date(2026,11,30))
+        target = next(item for item in flagged if item["id"] == 34)
+        self.assertTrue(any("قيد مطابق تمامًا" in reason for reason in target["reasons"]))
+
+
 if __name__ == "__main__":
     unittest.main()
