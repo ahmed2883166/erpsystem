@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}سجل الالتزامات النقدية | NEXUS ERP{% endblock %}
+{% block content %}
+<header class="report-header">
+  <h2>سجل الالتزامات النقدية</h2>
+  <p class="muted">تابع المبالغ المطلوب سدادها ومواعيدها. تسجيل الالتزام هنا لا ينشئ قيدًا محاسبيًا؛ عند السداد اربطه بقيد يومية مرحّل موجود.</p>
+</header>
+
+{% if can_manage %}
+<section class="panel">
+  <h3>إضافة التزام جديد</h3>
+  <form method="post" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="create">
+    <label>نوع الالتزام
+      <select name="commitment_type" required>
+        <option value="tax">ضرائب</option>
+        <option value="recurring_expense">مصروف دوري</option>
+        <option value="friday_overtime">بدل جمعة (تسجيل يدوي مؤقتًا)</option>
+      </select>
+    </label>
+    <label>اسم الالتزام<input name="title" maxlength="180" required placeholder="مثال: ضريبة القيمة المضافة"></label>
+    <label>المبلغ<input type="number" name="amount" min="0.01" step="0.01" required></label>
+    <label>تاريخ الاستحقاق<input type="date" name="due_date" required></label>
+    <label>الفترة / الشهر<input name="period_label" maxlength="80" placeholder="مثال: أكتوبر 2026"></label>
+    <label>العملة<input name="currency_code" maxlength="12" placeholder="مثال: EGP"></label>
+    <label class="full-width">ملاحظات<textarea name="notes" rows="2" maxlength="1000"></textarea></label>
+    <div class="full-width"><button type="submit">حفظ الالتزام</button></div>
+  </form>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h3>الالتزامات المسجلة</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>النوع</th><th>الالتزام</th><th>الفترة</th><th>الاستحقاق</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th>{% if can_manage %}<th>الإجراءات</th>{% endif %}</tr></thead>
+      <tbody>
+      {% for item in commitments %}
+        <tr>
+          <td>{{ {'tax':'ضرائب','recurring_expense':'مصروف دوري','friday_overtime':'بدل جمعة'}.get(item.commitment_type,item.commitment_type) }}</td>
+          <td>{{ item.title }}{% if item.notes %}<small class="muted">{{ item.notes }}</small>{% endif %}</td>
+          <td>{{ item.period_label or '—' }}</td>
+          <td>{{ item.due_date }}</td>
+          <td>{{ item.amount|money }} {{ item.currency_code }}</td>
+          <td>{{ item.paid_total|money }}</td>
+          <td>{{ ([item.amount|float - item.paid_total|float, 0]|max)|money }}</td>
+          <td>{{ {'open':'مفتوح','partially_paid':'مدفوع جزئيًا','paid':'مدفوع','void':'ملغي'}.get(item.status,item.status) }}</td>
+          {% if can_manage %}
+          <td>
+            {% if item.status in ['open','partially_paid'] %}
+            <details>
+              <summary>تسجيل سداد</summary>
+              <form method="post" class="form-grid">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="payment">
+                <input type="hidden" name="commitment_id" value="{{ item.id }}">
+                <label>تاريخ السداد<input type="date" name="payment_date" required></label>
+                <label>المبلغ<input type="number" name="amount" min="0.01" step="0.01" required></label>
+                <label>رقم قيد اليومية المرحّل<input type="number" name="journal_entry_id" min="1" required></label>
+                <label>مرجع السداد<input name="reference" maxlength="100"></label>
+                <button type="submit">ربط الدفعة بالقيد</button>
+              </form>
+            </details>
+            {% if item.status == 'open' %}
+            <form method="post" onsubmit="return confirm('هل تريد إلغاء هذا الالتزام؟');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="void">
+              <input type="hidden" name="commitment_id" value="{{ item.id }}">
+              <button type="submit" class="secondary">إلغاء</button>
+            </form>
+            {% endif %}
+            {% else %}—{% endif %}
+          </td>
+          {% endif %}
+        </tr>
+      {% else %}
+        <tr><td colspan="{{ 9 if can_manage else 8 }}">لا توجد التزامات مسجلة حتى الآن.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">مهم: أدخل رقم قيد سداد مرحّل بالفعل. النظام لا ينشئ قيدًا جديدًا من هذه الشاشة ولا يسمح بربط القيد نفسه بأكثر من دفعة.</p>
+</section>
+{% endblock %}
