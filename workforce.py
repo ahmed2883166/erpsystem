@@ -1381,6 +1381,7 @@ def payroll_run(run_id):
         "total_deductions": M(sum((D(x["total_deductions"]) for x in rows), Decimal("0"))),
         "other_deductions": M(sum((D(x["other_deductions"]) for x in rows), Decimal("0"))),
         "tax": M(sum((D(x["taxable_income_tax"]) for x in rows), Decimal("0"))),
+        "stamp_duty": M(sum((D(x["stamp_duty"]) if "stamp_duty" in x.keys() else Decimal("0") for x in rows), Decimal("0"))),
         "employee_insurance": M(sum((D(x["employee_insurance"]) for x in rows), Decimal("0"))),
         "employer_insurance": M(sum((D(x["employer_insurance"]) for x in rows), Decimal("0"))),
         "penalty_deduction": M(sum((D(x["penalty_deduction"]) if "penalty_deduction" in x.keys() else Decimal("0") for x in rows), Decimal("0"))),
@@ -1474,6 +1475,7 @@ def post_payroll(run_id):
         employer_ins_expense = int(request.form["employer_ins_expense_account"])
         net = sum((D(x["net_pay"]) for x in rows), Decimal("0"))
         tax = sum((D(x["taxable_income_tax"]) for x in rows), Decimal("0"))
+        stamp_duty = sum((D(x["stamp_duty"]) if "stamp_duty" in x.keys() else Decimal("0") for x in rows), Decimal("0"))
         emp_ins = sum((D(x["employee_insurance"]) for x in rows), Decimal("0"))
         employer_ins = sum((D(x["employer_insurance"]) for x in rows), Decimal("0"))
         other_deductions = sum((D(x["other_deductions"]) for x in rows), Decimal("0"))
@@ -1513,6 +1515,7 @@ def post_payroll(run_id):
             (other_deductions_account, 0, M(other_deductions), "الحساب المقابل للخصومات الأخرى"),
             (other_deductions_account, 0, M(penalty_deduction), "جزاءات الموظفين"),
             (tax_payable, 0, M(tax), "ضريبة مرتبات مستحقة"),
+            (tax_payable, 0, M(stamp_duty), "دمغة مستحقة على المرتبات"),
             (insurance_payable, 0, M(emp_ins + employer_ins), "تأمينات اجتماعية مستحقة"),
         ])
         c.execute("BEGIN IMMEDIATE")
