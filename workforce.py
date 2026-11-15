@@ -913,13 +913,8 @@ def download_employee_template():
 @workforce_bp.route("/hr/incentives", methods=["GET"])
 @_role("admin", "accountant", "viewer")
 def incentive_rules():
-    c = _db()
-    rules = c.execute("SELECT * FROM payroll_incentive_rules ORDER BY active DESC,name,id").fetchall()
-    total = len(rules)
-    active_count = sum(1 for rule in rules if rule["active"])
-    c.close()
-    return render_template("incentive_rules.html", incentive_rules=rules,
-                           total_rules=total, active_rules=active_count)
+    # Compatibility URL: incentive/grant setup is now managed in one independent-grants screen.
+    return redirect(url_for("workforce.employee_grants"))
 
 
 @workforce_bp.route("/hr/incentive-rules", methods=["POST"])
@@ -941,7 +936,7 @@ def add_incentive_rule():
         c.rollback()
         flash(str(exc) or "تعذر حفظ الحافز.", "error")
     c.close()
-    return redirect(url_for("workforce.incentive_rules"))
+    return redirect(url_for("workforce.employee_grants"))
 
 
 @workforce_bp.route("/hr/pay-items", methods=["POST"])
