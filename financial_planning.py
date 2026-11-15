@@ -1411,6 +1411,9 @@ def build_balance_sheet_snapshot(conn, as_of):
          "balance": item["balance"]}
         for item in accounts.values()
         if not item["is_group"] and item["account_type"] == "asset" and item["balance"] < 0
+        and item.get("account_subtype") not in {
+            "accumulated_depreciation_or_amortization", "impairment_allowance"
+        }
     ]
     negative_asset_accounts.sort(key=lambda item: item["balance"])
     return {"sections":sections,"total_assets":assets,"total_liabilities":liabilities,
