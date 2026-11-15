@@ -336,13 +336,30 @@ def initialize_workforce_schema():
     for table, additions in {
         "employee_final_payrolls": {
             "approved_by": "INTEGER", "approved_at": "TEXT",
+            "approval_status": "TEXT NOT NULL DEFAULT 'pending'",
+            "rejected_by": "INTEGER", "rejected_at": "TEXT",
+            "rejection_reason": "TEXT NOT NULL DEFAULT ''",
         },
         "employee_grants": {
             "approved_by": "INTEGER", "approved_at": "TEXT",
+            "approval_status": "TEXT NOT NULL DEFAULT 'pending'",
+            "rejected_by": "INTEGER", "rejected_at": "TEXT",
+            "rejection_reason": "TEXT NOT NULL DEFAULT ''",
+        },
+        "employee_end_of_service_settlements": {
+            "approval_status": "TEXT NOT NULL DEFAULT 'pending'",
+            "rejected_by": "INTEGER", "rejected_at": "TEXT",
+            "rejection_reason": "TEXT NOT NULL DEFAULT ''",
+        },
+        "employee_loans": {
+            "rejection_reason": "TEXT NOT NULL DEFAULT ''",
         },
         "friday_allowance_batches": {
             "approved_by": "INTEGER", "approved_at": "TEXT",
             "approval_reason": "TEXT NOT NULL DEFAULT ''",
+            "approval_status": "TEXT NOT NULL DEFAULT 'pending'",
+            "rejected_by": "INTEGER", "rejected_at": "TEXT",
+            "rejection_reason": "TEXT NOT NULL DEFAULT ''",
         },
     }.items():
         existing_columns = {row["name"] for row in c.execute(
@@ -422,6 +439,10 @@ def initialize_workforce_schema():
         "posted_at": "TEXT",
         "approved_by": "INTEGER",
         "approved_at": "TEXT",
+        "approval_status": "TEXT NOT NULL DEFAULT 'pending'",
+        "rejected_by": "INTEGER",
+        "rejected_at": "TEXT",
+        "rejection_reason": "TEXT NOT NULL DEFAULT ''",
     }.items():
         if column not in payroll_run_cols:
             c.execute(f"ALTER TABLE payroll_runs ADD COLUMN {column} {declaration}")
