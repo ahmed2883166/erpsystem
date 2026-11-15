@@ -639,6 +639,32 @@ class SalesIntegrationTests(unittest.TestCase):
         trial_balance_credit = sum((value[1] for value in totals.values()), Decimal("0"))
         self.assertEqual(trial_balance_debit, trial_balance_credit)
 
+        # Run the real financial-statement builders against the same posted
+        # sale/collection/return/refund ledger, not a hand-built report fixture.
+        from income_statement import build_income_statement
+        from financial_planning import build_balance_sheet_snapshot
+
+        self.db.execute("ALTER TABLE accounts ADD COLUMN statement_section TEXT")
+        self.db.execute(
+            "UPDATE accounts SET statement_section='direct_costs' WHERE code='5100'"
+        )
+        self.db.commit()
+        income = build_income_statement(self.db, "2026-11-10", "2026-11-30")
+        self.assertEqual(income["revenue_total"], Decimal("20.00"))
+        self.assertEqual(income["cogs_total"], Decimal("10.00"))
+        self.assertEqual(income["gross_profit"], Decimal("10.00"))
+        self.assertEqual(income["operating_expense_total"], Decimal("0"))
+        self.assertEqual(income["net_profit"], Decimal("10.00"))
+
+        position = build_balance_sheet_snapshot(self.db, "2026-11-30")
+        self.assertEqual(position["total_assets"], Decimal("62.80"))
+        self.assertEqual(position["total_liabilities"], Decimal("2.80"))
+        self.assertEqual(position["equity_before_profit"], Decimal("50.00"))
+        self.assertEqual(position["net_profit"], Decimal("10.00"))
+        self.assertEqual(position["total_equity"], Decimal("60.00"))
+        self.assertEqual(position["balance_difference"], Decimal("0.00"))
+        self.assertTrue(position["balanced"])
+
         unbalanced_entries = self.db.execute(
             """SELECT je.id FROM journal_entries je
                JOIN journal_lines jl ON jl.entry_id=je.id
