@@ -1,5 +1,5 @@
 {# Shared company and branch identity block for all printable business documents. #}
-<div class="document-brand" style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;border-bottom:2px solid #17365d;padding:12px 0;margin-bottom:18px">
+<div class="document-brand" role="group" aria-label="بيانات الشركة والمستند" style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;border-bottom:2px solid #17365d;padding:12px 0;margin-bottom:18px">
   <div style="display:flex;align-items:flex-start;gap:14px;min-width:55%">
     {% if settings.get('company_logo_data') %}<img src="{{ settings.get('company_logo_data') }}" alt="شعار الشركة" style="max-width:110px;max-height:85px;object-fit:contain">{% endif %}
     <div>
@@ -12,7 +12,7 @@
   </div>
   <div style="text-align:left;min-width:180px"><h3 style="margin:0 0 8px">{{ document_title }}</h3><strong>{{ document_number }}</strong><p>{{ document_date }}</p></div>
 </div>
-{% if branch %}<div class="branch-print-details" style="border:1px solid #d7dde5;padding:10px 12px;margin-bottom:16px;border-radius:6px">
+{% if branch %}<div class="branch-print-details" role="group" aria-label="بيانات الفرع" style="border:1px solid #d7dde5;padding:10px 12px;margin-bottom:16px;border-radius:6px">
   <strong>الفرع: {{ branch.name_ar }} ({{ branch.code }})</strong>
   <div>{% if branch.address %}العنوان: {{ branch.address }}{% endif %}{% if branch.phone %} · هاتف: {{ branch.phone }}{% endif %}</div>
   <div>{% if branch.email %}{{ branch.email }}{% endif %}{% if branch.tax_number %} · الرقم الضريبي للفرع: {{ branch.tax_number }}{% endif %}</div>
