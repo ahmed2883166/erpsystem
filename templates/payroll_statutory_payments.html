@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block title %}سداد ضرائب وتأمينات الموظفين | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>سداد ضريبة المرتبات والتأمينات الاجتماعية</h2><p>سجل سداد الالتزامات الناتجة عن مسيرات الرواتب المرحلة، مع قيد محاسبي تلقائي.</p></header>
-<section class="panel"><form method="get" class="form-grid"><label>فترة المسير<input type="month" name="period" value="{{period}}" required></label><button type="submit">عرض الفترة</button></form></section>
+<header><h2>سداد ضريبة المرتبات والتأمينات الاجتماعية</h2><p>سجل سداد الالتزامات الناتجة عن كشوف المرتبات الرواتب المرحلة، مع قيد محاسبي تلقائي.</p></header>
+<section class="panel"><form method="get" class="form-grid"><label>فترة كشف المرتبات<input type="month" name="period" value="{{period}}" required></label><button type="submit">عرض الفترة</button></form></section>
 <section class="panel"><h3>الالتزامات عن {{period}}</h3><table><tr><th>نوع الالتزام</th><th>المستحق</th><th>المسدد</th><th>المتبقي</th></tr>
 <tr><td>ضريبة المرتبات</td><td>{{obligations.salary_tax.due|money}}</td><td>{{obligations.salary_tax.paid|money}}</td><td>{{obligations.salary_tax.remaining|money}}</td></tr>
 <tr><td>التأمينات الاجتماعية (حصة الموظف والشركة)</td><td>{{obligations.social_insurance.due|money}}</td><td>{{obligations.social_insurance.paid|money}}</td><td>{{obligations.social_insurance.remaining|money}}</td></tr></table></section>
