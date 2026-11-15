@@ -19,6 +19,21 @@ def _amount(value):
     return result.quantize(Decimal("0.01"))
 
 
+
+def _validate_payable_account(conn, account_id, required=False):
+    if account_id in (None, ""):
+        if required:
+            raise ValueError("اختر حساب الالتزام المستحق.")
+        return None
+    row = conn.execute(
+        "SELECT account_type,is_group,active FROM accounts WHERE id=?",
+        (int(account_id),),
+    ).fetchone()
+    if not row or not row["active"] or row["is_group"] or row["account_type"] != "liability":
+        raise ValueError("حساب الالتزام يجب أن يكون حساب خصوم تفصيليًا ونشطًا.")
+    return int(account_id)
+
+
 def initialize_cash_commitments_schema(conn):
     """Idempotent additive migration; does not alter existing business tables."""
     conn.executescript("""
@@ -100,6 +115,7 @@ def create_cash_commitment(conn, commitment_type, title, amount, due_date,
         raise ValueError("اسم الالتزام مطلوب.")
     amount = _amount(amount)
     due_date = date.fromisoformat(str(due_date)).isoformat()
+    payable_account_id = _validate_payable_account(conn,payable_account_id,required=True)
     origin_type = str(origin_type or "").strip()
     if bool(origin_type) != (origin_id is not None):
         raise ValueError("مرجع المصدر يجب أن يحتوي النوع والمعرف معًا.")
@@ -134,7 +150,9 @@ def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
         ).fetchone()
         if not journal:
             raise ValueError("يجب ربط الدفعة بقيد يومية مرحّل موجود.")
-        selected_payable_account = commitment["payable_account_id"] or payable_account_id
+        selected_payable_account = _validate_payable_account(
+            conn,commitment["payable_account_id"] or payable_account_id,required=True
+        )
         if not selected_payable_account:
             raise ValueError("حدد حساب الالتزام المستحق قبل ربط دفعة السداد.")
         if (commitment["payable_account_id"] is not None
@@ -260,6 +278,7 @@ def create_recurring_schedule(conn, title, amount, first_due_date, frequency,
         raise ValueError("اسم المصروف الدوري مطلوب.")
     amount = _amount(amount)
     first_due_date = date.fromisoformat(str(first_due_date)).isoformat()
+    payable_account_id = _validate_payable_account(conn,payable_account_id,required=True)
     interval_months = _FREQUENCY_MONTHS.get(str(frequency))
     if not interval_months:
         raise ValueError("دورية المصروف غير صحيحة.")
