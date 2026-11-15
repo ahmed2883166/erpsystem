@@ -224,6 +224,27 @@ class IncomeStatementRouteTests(unittest.TestCase):
             for row in snapshot["operating_expense_rows"]
         ))
 
+    def test_provision_expense_is_included_in_operating_expenses(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        register_decimal_aggregates(conn)
+        conn.executescript("""
+            INSERT INTO accounts VALUES
+                (7,'6200','مصروف مخصص خسائر ائتمانية','expense',0,1);
+            INSERT INTO journal_entries(id,entry_date,status,entry_type)
+                VALUES(14,'2026-11-16','posted','general');
+            INSERT INTO journal_lines(id,entry_id,account_id,debit,credit)
+                VALUES(18,14,7,'80','0');
+        """)
+        snapshot = build_income_statement(conn, "2026-11-01", "2026-11-30")
+        conn.close()
+        self.assertEqual(snapshot["operating_expense_total"], Decimal("330"))
+        self.assertEqual(snapshot["net_profit"], Decimal("370"))
+        provision = next(
+            row for row in snapshot["operating_expense_rows"] if row["code"] == "6200"
+        )
+        self.assertEqual(provision["balance"], Decimal("80"))
+
     def test_income_statement_compares_with_same_period_previous_year(self):
         response = self.client.get(
             "/reports/income-statement?date_from=2026-11-01&date_to=2026-11-30&compare=previous_year"
