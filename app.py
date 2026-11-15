@@ -48,7 +48,8 @@ from income_statement import (build_income_statement, normalize_income_statement
 from profitability_reports import build_profitability_report
 from management_reports import build_period_comparison, build_inventory_ageing, build_cash_forecast
 from cash_commitments import (initialize_cash_commitments_schema, create_cash_commitment,
-                              record_cash_commitment_payment, void_cash_commitment, create_recurring_schedule,\n                              generate_recurring_schedule_occurrences, deactivate_recurring_schedule)
+                              record_cash_commitment_payment, void_cash_commitment, create_recurring_schedule,
+                              generate_recurring_schedule_occurrences, deactivate_recurring_schedule)
 
 # Development/demo builds run locally without a licensing server. Set NEXUS_DEMO_MODE=0
 # explicitly in a commercial deployment to enforce the signed remote licensing flow.
