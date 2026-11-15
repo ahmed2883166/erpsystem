@@ -192,6 +192,10 @@ class CashCommitmentsTests(unittest.TestCase):
         summary = cash_commitment_payment_summary(self.conn, commitment_id)
         self.assertEqual(summary["paid_total"], Decimal("0"))
         self.assertEqual(summary["status"], "open")
+        forecast_before_reversal = list_cash_commitments_forecast(
+            self.conn, "2026-11-14", "2026-12-15"
+        )
+        self.assertEqual(forecast_before_reversal, [])
         forecast = list_cash_commitments_forecast(
             self.conn, "2026-11-15", "2026-12-15"
         )
