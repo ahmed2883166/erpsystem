@@ -8,6 +8,9 @@ from cash_commitments import (
     record_cash_commitment_payment,
     void_cash_commitment,
     list_cash_commitments_forecast,
+    create_recurring_schedule,
+    generate_recurring_schedule_occurrences,
+    deactivate_recurring_schedule,
 )
 
 
@@ -104,6 +107,53 @@ class CashCommitmentsTests(unittest.TestCase):
             self.conn, "2026-11-21", "2026-12-15"
         )
         self.assertEqual(report_after_payment, [])
+
+
+    def test_recurring_schedule_generates_month_end_dates_once_only(self):
+        schedule_id = create_recurring_schedule(
+            self.conn, "إيجار المقر", "5000", "2026-01-31", "monthly",
+            currency_code="EGP",
+        )
+        self.assertEqual(
+            generate_recurring_schedule_occurrences(self.conn, schedule_id, "2026-03-31"),
+            3,
+        )
+        self.assertEqual(
+            generate_recurring_schedule_occurrences(self.conn, schedule_id, "2026-03-31"),
+            0,
+        )
+        self.assertEqual(
+            generate_recurring_schedule_occurrences(self.conn, schedule_id, "2026-04-30"),
+            1,
+        )
+        rows = self.conn.execute(
+            """SELECT c.due_date,c.amount FROM cash_commitment_schedule_occurrences o
+               JOIN cash_commitments c ON c.id=o.commitment_id
+               WHERE o.schedule_id=? ORDER BY c.due_date""",
+            (schedule_id,),
+        ).fetchall()
+        self.assertEqual(
+            [row["due_date"] for row in rows],
+            ["2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30"],
+        )
+        self.assertEqual([row["amount"] for row in rows], ["5000.00"] * 4)
+
+    def test_deactivating_schedule_preserves_existing_commitments(self):
+        schedule_id = create_recurring_schedule(
+            self.conn, "اشتراك سنوي", "1200", "2026-01-15", "annual",
+            currency_code="EGP",
+        )
+        self.assertEqual(
+            generate_recurring_schedule_occurrences(self.conn, schedule_id, "2026-01-15"),
+            1,
+        )
+        deactivate_recurring_schedule(self.conn, schedule_id)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM cash_commitments").fetchone()[0],
+            1,
+        )
+        with self.assertRaises(ValueError):
+            generate_recurring_schedule_occurrences(self.conn, schedule_id, "2027-01-15")
 
     def test_duplicate_source_reference_is_rejected(self):
         create_cash_commitment(
