@@ -120,6 +120,34 @@ def _closing_entry_condition(conn):
     return "1=1"
 
 
+def _copied_opening_entry_ids(conn, as_of):
+    """Return later-year opening copies (and their reversals) already represented by prior ledger history."""
+    tables = {row["name"] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name IN ('financial_years','financial_year_journal_history')"
+    )}
+    if tables != {"financial_years", "financial_year_journal_history"}:
+        return set()
+    rows = conn.execute("""
+        SELECT h.entry_id FROM financial_year_journal_history h
+        JOIN financial_years fy ON fy.id=h.financial_year_id
+        WHERE h.entry_kind='opening' AND h.action='created' AND fy.start_date<=?
+          AND EXISTS (SELECT 1 FROM journal_entries prior
+                      WHERE prior.status='posted' AND prior.entry_date<fy.start_date)
+    """, (as_of,)).fetchall()
+    excluded = {int(row["entry_id"]) for row in rows}
+    if excluded:
+        marks = ",".join("?" for _ in excluded)
+        reversals = conn.execute(
+            f"""SELECT entry_id FROM financial_year_journal_history
+                WHERE entry_kind='opening' AND action='reversed'
+                  AND related_entry_id IN ({marks})""",
+            tuple(sorted(excluded)),
+        ).fetchall()
+        excluded.update(int(row["entry_id"]) for row in reversals)
+    return excluded
+
+
 def dashboard_period_balances(conn, current_start, current_end, previous_start, previous_end,
                                dimensions=None, exclude_closing_entries=False):
     """Fetch current, previous and as-of balances in one exact grouped ledger scan.
@@ -139,6 +167,18 @@ def dashboard_period_balances(conn, current_start, current_end, previous_start, 
             dimension_conditions.append(f"jl.{key}=?")
             dimension_params.append(int(value))
     closing_filter = _closing_entry_condition(conn) if exclude_closing_entries else "1=1"
+    # Match the official balance-sheet treatment of copied opening entries.
+    opening_cutoff = (date.fromisoformat(current_start) - timedelta(days=1)).isoformat()
+    opening_excluded = sorted(_copied_opening_entry_ids(conn, opening_cutoff))
+    asof_excluded = sorted(_copied_opening_entry_ids(conn, current_end))
+    opening_exclusion_sql = (
+        " AND je.id NOT IN (" + ",".join("?" for _ in opening_excluded) + ")"
+        if opening_excluded else ""
+    )
+    asof_exclusion_sql = (
+        "je.id NOT IN (" + ",".join("?" for _ in asof_excluded) + ")"
+        if asof_excluded else "1=1"
+    )
     register_decimal_aggregates(conn)
     rows = conn.execute(f"""
         SELECT a.id,a.code,a.name_ar,a.account_type,a.is_group,
@@ -150,21 +190,26 @@ def dashboard_period_balances(conn, current_start, current_end, previous_start, 
             AND ({closing_filter}) THEN jl.debit ELSE '0' END),'0') previous_debit,
           COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date BETWEEN ? AND ?
             AND ({closing_filter}) THEN jl.credit ELSE '0' END),'0') previous_credit,
-          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date < ?
+          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date < ?${opening_exclusion_sql}
             THEN jl.debit ELSE '0' END),'0') opening_debit,
-          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date < ?
+          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date < ?${opening_exclusion_sql}
             THEN jl.credit ELSE '0' END),'0') opening_credit,
-          COALESCE(DECIMAL_SUM(jl.debit),'0') asof_debit,
-          COALESCE(DECIMAL_SUM(jl.credit),'0') asof_credit
+          COALESCE(DECIMAL_SUM(CASE WHEN ${asof_exclusion_sql}
+            THEN jl.debit ELSE '0' END),'0') asof_debit,
+          COALESCE(DECIMAL_SUM(CASE WHEN ${asof_exclusion_sql}
+            THEN jl.credit ELSE '0' END),'0') asof_credit
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
         WHERE je.status='posted' AND je.entry_date<=?
           {'AND ' + ' AND '.join(dimension_conditions) if dimension_conditions else ''}
         GROUP BY a.id,a.code,a.name_ar,a.account_type,a.is_group
-    """, (current_start,current_end,current_start,current_end,
-          previous_start,previous_end,previous_start,previous_end,current_start,current_start,
-          current_end,*dimension_params)).fetchall()
+    """, (
+        current_start,current_end,current_start,current_end,
+        previous_start,previous_end,previous_start,previous_end,
+        current_start,*opening_excluded,current_start,*opening_excluded,
+        *asof_excluded,*asof_excluded,current_end,*dimension_params,
+    )).fetchall()
 
     def make_balances(debit_key, credit_key):
         return {row["id"]: {
