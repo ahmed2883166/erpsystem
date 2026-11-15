@@ -415,8 +415,13 @@ def build_tax_report_snapshot(conn, period_value):
     for row in inconsistent_sales + inconsistent_purchases:
         quality_issues.append({"severity": "error", "document": str(row["document_no"]),
                                "issue": "التصنيف الضريبي لا يتفق مع قيمة/نسبة الضريبة"})
+    tax_audit = conn.execute("""SELECT document_kind,document_id,old_reference,new_reference,
+            old_deductible_percent,new_deductible_percent,actor_id,created_at
+        FROM tax_document_reference_audit
+        ORDER BY created_at DESC,id DESC LIMIT 100""").fetchall()
     return {
-        "period": period, "settings": settings, "tax_profile": tax_profile, "sales": sales,
+        "period": period, "settings": settings, "tax_profile": tax_profile,
+        "tax_audit": tax_audit, "sales": sales,
         "sales_credits": sales_credits, "purchases": purchases,
         "summary": summary, "inconsistent_sales": inconsistent_sales,
         "inconsistent_purchases": inconsistent_purchases,
