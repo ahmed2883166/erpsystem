@@ -389,5 +389,104 @@ class UserPermissionRouteTests(unittest.TestCase):
         self.assertEqual(permissions, '["users.manage"]')
 
 
+    def _seed_global_search_documents(self):
+        conn = sqlite3.connect(nexus.DB_PATH)
+        conn.executescript("""
+            CREATE TABLE journal_entries(
+                id INTEGER PRIMARY KEY, entry_date TEXT, reference TEXT, description TEXT
+            );
+            CREATE TABLE journal_lines(
+                id INTEGER PRIMARY KEY, entry_id INTEGER, memo TEXT
+            );
+            CREATE TABLE customers(
+                id INTEGER PRIMARY KEY, code TEXT, name TEXT, phone TEXT
+            );
+            CREATE TABLE sales_invoices(
+                id INTEGER PRIMARY KEY, customer_id INTEGER, invoice_no TEXT,
+                invoice_date TEXT, total_amount TEXT, journal_entry_id INTEGER
+            );
+            CREATE TABLE suppliers(
+                id INTEGER PRIMARY KEY, code TEXT, name TEXT, phone TEXT
+            );
+            CREATE TABLE supplier_bills(
+                id INTEGER PRIMARY KEY, supplier_id INTEGER, bill_no TEXT,
+                supplier_invoice_no TEXT, bill_date TEXT, total_amount TEXT,
+                journal_entry_id INTEGER
+            );
+            CREATE TABLE stock_products(
+                id INTEGER PRIMARY KEY, sku TEXT, name_ar TEXT, barcode TEXT,
+                purchase_price TEXT, sale_price TEXT
+            );
+            CREATE TABLE accounts(
+                id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT
+            );
+            CREATE TABLE company_settings(setting_key TEXT, setting_value TEXT);
+            INSERT INTO journal_entries VALUES(1,'2026-11-01','J-NEEDLE','needle journal');
+            INSERT INTO journal_lines VALUES(1,1,'needle memo');
+            INSERT INTO customers VALUES(1,'C-1','needle customer','01000000000');
+            INSERT INTO sales_invoices VALUES(1,1,'S-NEEDLE','2026-11-01','100','1');
+            INSERT INTO suppliers VALUES(1,'V-1','needle supplier','01100000000');
+            INSERT INTO supplier_bills VALUES(1,1,'P-NEEDLE','V-NEEDLE','2026-11-01','200',1);
+            INSERT INTO stock_products VALUES(1,'SKU-1','needle product','12345','10','15');
+            INSERT INTO accounts VALUES(1,'1111','needle account');
+            INSERT INTO company_settings VALUES('company_name','needle company');
+        """)
+        conn.commit()
+        conn.close()
+
+    def test_global_search_hides_modules_without_view_permission(self):
+        conn = sqlite3.connect(nexus.DB_PATH)
+        conn.execute(
+            """INSERT INTO users
+               (id,username,full_name,role,active,permissions_json,password_hash,created_at)
+               VALUES(2,'viewer-search','مستخدم تقارير','viewer',1,?,'hash','2026-01-01')""",
+            (json.dumps(["reports.view"]),),
+        )
+        conn.commit()
+        conn.close()
+        self._seed_global_search_documents()
+        with self.client.session_transaction() as session:
+            session.clear()
+            session.update(user_id=2, username="viewer-search", full_name="مستخدم تقارير",
+                           role="viewer", permissions=["reports.view"])
+        response = self.client.get("/search?q=needle")
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("قيد يومية", body)
+        self.assertNotIn("needle customer", body)
+        self.assertNotIn("needle supplier", body)
+        self.assertNotIn("S-NEEDLE", body)
+        self.assertNotIn("P-NEEDLE", body)
+        self.assertNotIn("needle product", body)
+        self.assertNotIn("needle account", body)
+        self.assertNotIn("needle company", body)
+
+    def test_global_search_returns_only_sales_documents_for_sales_viewer(self):
+        conn = sqlite3.connect(nexus.DB_PATH)
+        conn.execute(
+            """INSERT INTO users
+               (id,username,full_name,role,active,permissions_json,password_hash,created_at)
+               VALUES(3,'sales-search','مستخدم مبيعات','viewer',1,?,'hash','2026-01-01')""",
+            (json.dumps(["sales.view"]),),
+        )
+        conn.commit()
+        conn.close()
+        self._seed_global_search_documents()
+        with self.client.session_transaction() as session:
+            session.clear()
+            session.update(user_id=3, username="sales-search", full_name="مستخدم مبيعات",
+                           role="viewer", permissions=["sales.view"])
+        response = self.client.get("/search?q=needle")
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("needle customer", body)
+        self.assertIn("S-NEEDLE", body)
+        self.assertNotIn("needle supplier", body)
+        self.assertNotIn("P-NEEDLE", body)
+        self.assertNotIn("needle product", body)
+        self.assertNotIn("needle account", body)
+        self.assertNotIn("needle journal", body)
+
+
 if __name__ == "__main__":
     unittest.main()
