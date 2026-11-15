@@ -29,7 +29,7 @@ def initialize_tax_schema():
             "tax_reference": "TEXT NOT NULL DEFAULT ''",
             "tax_notes": "TEXT NOT NULL DEFAULT ''",
         }
-        if table in {"supplier_bills", "supplier_credit_notes"}:
+        if table == "supplier_bills":
             additions["input_vat_deductible_percent"] = "TEXT NOT NULL DEFAULT '100'"
         for name, definition in additions.items():
             if name not in cols:
