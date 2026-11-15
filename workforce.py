@@ -732,12 +732,10 @@ def employees():
     employee_options = c.execute("SELECT id,employee_code,full_name FROM employees ORDER BY employee_code").fetchall()
     items = c.execute("""SELECT p.*,e.employee_code,e.full_name FROM employee_pay_items p
                          JOIN employees e ON e.id=p.employee_id ORDER BY e.employee_code,p.id DESC""").fetchall()
-    incentive_rules = c.execute("SELECT * FROM payroll_incentive_rules ORDER BY active DESC,name").fetchall()
     dimensions = _dimension_options(c)
     c.close()
     return render_template("employees.html", employees=rows, employee_options=employee_options,
-                           employees_page=employees_page, items=items, incentive_rules=incentive_rules,
-                           dimensions=dimensions)
+                           employees_page=employees_page, items=items, dimensions=dimensions)
 
 
 @workforce_bp.route("/hr/<int:employee_id>/edit", methods=["GET", "POST"])
@@ -912,6 +910,18 @@ def download_employee_template():
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+@workforce_bp.route("/hr/incentives", methods=["GET"])
+@_role("admin", "accountant", "viewer")
+def incentive_rules():
+    c = _db()
+    rules = c.execute("SELECT * FROM payroll_incentive_rules ORDER BY active DESC,name,id").fetchall()
+    total = len(rules)
+    active_count = sum(1 for rule in rules if rule["active"])
+    c.close()
+    return render_template("incentive_rules.html", incentive_rules=rules,
+                           total_rules=total, active_rules=active_count)
+
+
 @workforce_bp.route("/hr/incentive-rules", methods=["POST"])
 @_role("admin", "accountant")
 def add_incentive_rule():
@@ -931,7 +941,7 @@ def add_incentive_rule():
         c.rollback()
         flash(str(exc) or "تعذر حفظ الحافز.", "error")
     c.close()
-    return redirect(url_for("workforce.employees"))
+    return redirect(url_for("workforce.incentive_rules"))
 
 
 @workforce_bp.route("/hr/pay-items", methods=["POST"])
