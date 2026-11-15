@@ -305,6 +305,48 @@ class FinancialPlanningTests(unittest.TestCase):
         self.assertEqual(snapshot["balance_difference"], Decimal("0"))
         self.assertTrue(snapshot["balanced"])
 
+    def test_contra_asset_balances_are_not_flagged_as_negative_assets(self):
+        self.conn.execute("ALTER TABLE accounts ADD COLUMN account_subtype TEXT")
+        self.conn.executemany(
+            """INSERT INTO accounts(id,code,name_ar,account_type,is_group,account_subtype)
+               VALUES(?,?,?,?,0,?)""",
+            [
+                (1, "1110", "الصندوق", "asset", "cash"),
+                (2, "1210", "الأصل الثابت", "asset", None),
+                (3, "1219", "مجمع الإهلاك", "asset", "accumulated_depreciation_or_amortization"),
+                (4, "1290", "مخصص انخفاض قيمة", "asset", "impairment_allowance"),
+                (5, "3100", "رأس المال", "equity", None),
+                (6, "6200", "مصروف إهلاك", "expense", None),
+                (7, "6210", "مصروف انخفاض قيمة", "expense", None),
+                (8, "2250", "مخصص التزامات", "liability", None),
+                (9, "6220", "مصروف مخصص", "expense", None),
+            ],
+        )
+        entries = [
+            (1, "2026-01-01", [(1, "1000", "0"), (5, "0", "1000")]),
+            (2, "2026-01-02", [(2, "500", "0"), (1, "0", "500")]),
+            (3, "2026-01-03", [(6, "50", "0"), (3, "0", "50")]),
+            (4, "2026-01-04", [(7, "30", "0"), (4, "0", "30")]),
+            (5, "2026-01-05", [(9, "20", "0"), (8, "0", "20")]),
+        ]
+        for entry_id, entry_date, lines in entries:
+            self.conn.execute(
+                "INSERT INTO journal_entries(id,entry_date,status) VALUES(?,?,'posted')",
+                (entry_id, entry_date),
+            )
+            for account_id, debit, credit in lines:
+                self.conn.execute(
+                    "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(?,?,?,?)",
+                    (entry_id, account_id, debit, credit),
+                )
+        snapshot = build_balance_sheet_snapshot(self.conn, "2026-01-31")
+        self.assertEqual(snapshot["total_assets"], Decimal("920"))
+        self.assertEqual(snapshot["total_liabilities"], Decimal("20"))
+        self.assertEqual(snapshot["net_profit"], Decimal("-100"))
+        self.assertEqual(snapshot["total_equity"], Decimal("900"))
+        self.assertTrue(snapshot["balanced"])
+        self.assertEqual(snapshot["negative_asset_accounts"], [])
+
     def test_each_activity_chart_has_unique_account_codes(self):
         for activity, rows in CHARTS.items():
             codes = [row[0] for row in rows]
