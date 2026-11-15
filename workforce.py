@@ -2041,6 +2041,15 @@ def pay_payroll(run_id):
         _cash_or_bank_account(c, cash_account_id)
         reference = "PAYROLL-PAY-" + str(run_id) + "-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
         c.execute("BEGIN IMMEDIATE")
+        # Re-read the payroll state after acquiring the write lock. A reversal may
+        # have completed after the initial page read but before this payment began.
+        run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+        if not run or run["status"] != "posted" or not run["journal_entry_id"]:
+            raise ValueError("لا يمكن صرف مرتبات تم عكسها أو لم تعد مرحّلة.")
+        rows = c.execute("SELECT net_pay FROM payroll_lines WHERE run_id=?", (run_id,)).fetchall()
+        if not rows:
+            raise ValueError("لا توجد تفاصيل للمرتبات.")
+        net_payable = M(sum((D(row["net_pay"]) for row in rows), Decimal("0")))
         # Recheck outstanding value inside the write transaction to prevent concurrent overpayment.
         paid_now = M(sum((D(row["amount"]) for row in c.execute(
             "SELECT amount FROM payroll_payments WHERE run_id=?", (run_id,)).fetchall()), Decimal("0")))
