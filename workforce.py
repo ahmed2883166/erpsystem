@@ -1572,6 +1572,34 @@ def cancel_final_payroll(final_id):
         c.close()
 
 
+@workforce_bp.route("/hr/final-payroll/<int:final_id>/reopen", methods=["POST"])
+@_role("admin", "accountant")
+def reopen_final_payroll(final_id):
+    c = _db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute("SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
+        if not row or row["status"] != "cancelled" or row["journal_entry_id"]:
+            raise ValueError("إعادة الفتح متاحة للمسودة الملغاة فقط بشرط عدم وجود قيد أو دفعات.")
+        if c.execute("SELECT 1 FROM employee_final_payroll_payments WHERE final_payroll_id=? LIMIT 1",
+                     (final_id,)).fetchone():
+            raise ValueError("لا يمكن إعادة فتح كشف مرتبط بدفعات صرف.")
+        c.execute("UPDATE employee_final_payrolls SET status='draft' WHERE id=? AND status='cancelled'",
+                  (final_id,))
+        if c.execute("SELECT changes()").fetchone()[0] != 1:
+            raise ValueError("لم تتم إعادة فتح المسودة.")
+        _audit(c, "employee_final_payroll_draft_reopened", row["final_payroll_no"])
+        c.commit()
+        flash("تمت إعادة فتح المسودة ويمكن تعديلها أو اعتمادها.", "success")
+        return redirect(url_for("workforce.final_payroll", period=row["period"]))
+    except Exception as exc:
+        c.rollback()
+        flash(safe_error_message(exc), "error")
+        return redirect(url_for("workforce.final_payroll"))
+    finally:
+        c.close()
+
+
 @workforce_bp.route("/hr/final-payroll/<int:final_id>/approve", methods=["POST"])
 @_role("admin", "accountant")
 def approve_final_payroll(final_id):
