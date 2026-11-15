@@ -2760,6 +2760,32 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(position["balance_difference"], Decimal("0.00"))
         self.assertTrue(position["balanced"])
 
+        # Exercise the real IAS 7 cash-flow builder against actual cash journals.
+        from management_dashboard import initialize_management_dashboard_schema
+        from financial_planning import build_cash_flow_snapshot
+        initialize_management_dashboard_schema(self.db, "commercial")
+        cash_flow = build_cash_flow_snapshot(self.db, "2026-11-10", "2026-11-30")
+        self.assertTrue(cash_flow["cash_mapping_available"])
+        self.assertTrue(cash_flow["cash_reconciles"])
+        self.assertEqual(cash_flow["opening"], Decimal("0"))
+        self.assertEqual(cash_flow["closing"], Decimal("6.80"))
+        self.assertEqual(cash_flow["net_change"], Decimal("6.80"))
+        self.assertEqual(cash_flow["reconciliation_difference"], Decimal("0"))
+        self.assertEqual(cash_flow["sections"]["operating"]["in"], Decimal("45.60"))
+        self.assertEqual(cash_flow["sections"]["operating"]["out"], Decimal("38.80"))
+
+        # Trial balance must balance across the complete integrated cycle.
+        trial_balance = self.db.execute(
+            """SELECT COALESCE(SUM(CAST(jl.debit AS NUMERIC)),0) debit,
+                      COALESCE(SUM(CAST(jl.credit AS NUMERIC)),0) credit
+               FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+               WHERE je.status='posted'"""
+        ).fetchone()
+        self.assertEqual(
+            Decimal(str(trial_balance["debit"])),
+            Decimal(str(trial_balance["credit"])),
+        )
+
         # Every posted journal entry in the full procure-to-sale cycle balances.
         unbalanced = self.db.execute(
             """SELECT je.id FROM journal_entries je JOIN journal_lines jl ON jl.entry_id=je.id
