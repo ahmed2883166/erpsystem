@@ -1331,7 +1331,8 @@ def payroll_report():
             D(row["gross_pay"]) - D(row["absence_deduction"]) + D(row["employer_insurance"])
         )
         run_net_pay[row["run_id"]] = run_net_pay.get(row["run_id"], Decimal("0")) + D(row["net_pay"])
-    final_where = ["1=1"]
+    # Only approved/paid final payrolls have been posted to accounting; drafts and cancelled records must not inflate historical payroll totals.
+    final_where = ["f.status IN ('approved','paid')"]
     final_params = []
     if month_from:
         final_where.append("f.period>=?")
