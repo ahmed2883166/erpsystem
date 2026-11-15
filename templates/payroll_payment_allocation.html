@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}توزيع دفعة مرتبات | NEXUS ERP{% endblock %}
 {% block content %}
-<header><h2>توزيع دفعة مرتبات على الموظفين</h2><p>المسير {{run.period}} — الدفعة {{payment.reference}} — {{payment.payment_date}}</p><p>قيمة الدفعة: <strong>{{payment.amount}}</strong></p><p class="muted">هذه العملية توزيع تحليلي فقط؛ لا تنشئ قيدًا جديدًا ولا تعدل القيد الأصلي أو قيمة الدفعة.</p></header>
+<header><h2>توزيع دفعة مرتبات على الموظفين</h2><p>كشف المرتبات {{run.period}} — الدفعة {{payment.reference}} — {{payment.payment_date}}</p><p>قيمة الدفعة: <strong>{{payment.amount}}</strong></p><p class="muted">هذه العملية توزيع تحليلي فقط؛ لا تنشئ قيدًا جديدًا ولا تعدل القيد الأصلي أو قيمة الدفعة.</p></header>
 <section class="panel">
 {% if existing %}
 <h3>التوزيع المحفوظ لهذه الدفعة</h3><table><tr><th>الموظف</th><th>المبلغ</th></tr>{% for a in existing %}<tr><td>{{a.employee_code}} - {{a.full_name}}</td><td>{{a.amount}}</td></tr>{% endfor %}</table>
