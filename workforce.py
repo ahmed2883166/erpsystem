@@ -972,12 +972,24 @@ def pay_items():
             if valid_ids != set(employee_ids):
                 raise ValueError("بعض الموظفين المختارين غير نشطين أو غير موجودين.")
             c.execute("BEGIN IMMEDIATE")
+            created_count = 0
+            updated_count = 0
             for employee_id in employee_ids:
-                c.execute("""INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount,active)
-                    VALUES(?,?,?,?,1)""", (employee_id,item_name,item_type,str(amount)))
-            _audit(c,"employee_pay_item_group_created",item_name+" | employees="+str(len(employee_ids)))
+                existing = c.execute("""SELECT id FROM employee_pay_items
+                    WHERE employee_id=? AND item_name=? AND item_type=?
+                    ORDER BY active DESC,id LIMIT 1""",(employee_id,item_name,item_type)).fetchone()
+                if existing:
+                    c.execute("UPDATE employee_pay_items SET amount=?,active=1 WHERE id=?",
+                              (str(amount),existing["id"]))
+                    updated_count += 1
+                else:
+                    c.execute("""INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount,active)
+                        VALUES(?,?,?,?,1)""", (employee_id,item_name,item_type,str(amount)))
+                    created_count += 1
+            _audit(c,"employee_pay_item_group_created",
+                   item_name+" | employees="+str(len(employee_ids))+" | created="+str(created_count)+" | updated="+str(updated_count))
             c.commit()
-            flash("تم ربط البند بـ "+str(len(employee_ids))+" موظفًا. سيظهر لكل موظف في كشف المرتبات.", "success")
+            flash("تم حفظ البند لـ "+str(len(employee_ids))+" موظفًا دون تكرار. جديد: "+str(created_count)+"، أعيد تفعيله/تحديثه: "+str(updated_count)+".", "success")
         except (ValueError, KeyError, sqlite3.Error) as exc:
             c.rollback()
             flash(str(exc) or "تعذر حفظ بند الاستحقاق/الاستقطاع.", "error")
