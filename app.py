@@ -3135,6 +3135,8 @@ def reverse_journal(entry_id):
         reversal_date = datetime.strptime(reversal_date_text, "%Y-%m-%d").date().isoformat()
         if reversal_date != reversal_date_text:
             raise ValueError("تاريخ القيد العكسي غير صحيح.")
+        if reversal_date < str(original["entry_date"]):
+            raise ValueError("لا يمكن عكس القيد بتاريخ يسبق تاريخ القيد الأصلي.")
         if not reversal_reason or len(reversal_reason) > 500:
             raise ValueError("اكتب سببًا للقيد العكسي (بحد أقصى 500 حرف).")
         reversal_id = post_journal(connection, reversal_date, reference,
