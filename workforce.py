@@ -1393,9 +1393,9 @@ def payroll():
             c.rollback()
             error_text = str(e)
             if isinstance(e, sqlite3.IntegrityError) and "payroll_runs.period" in error_text:
-                flash("يوجد مسير مرتبات مسجل بالفعل لهذا الشهر. افتح المسير الموجود أو راجع حالته قبل إنشاء مسير جديد.", "error")
+                flash("يوجد كشف مرتبات مسجل بالفعل لهذا الشهر. افتح الكشف الموجود أو راجع حالته قبل إنشاء كشف جديد.", "error")
             else:
-                flash(safe_error_message(e, "تعذر إعداد المرتبات بسبب تعارض في البيانات. لم يتم حفظ المسير."), "error")
+                flash(safe_error_message(e, "تعذر إعداد المرتبات بسبب تعارض في البيانات. لم يتم حفظ كشف المرتبات."), "error")
     display_period = date.today().strftime("%Y-%m")
     # Show former employees in the input grid so final payroll can be prepared for any selected month.
     # POST includes them only in the month containing their termination date.
