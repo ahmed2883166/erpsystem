@@ -290,6 +290,9 @@ class WorkforceTests(unittest.TestCase):
         conn=sqlite3.connect(self.db_path)
         conn.execute("INSERT INTO accounts VALUES(8,'1195','سلف الموظفين - حساب مخصص','asset',0,1)")
         conn.commit(); conn.close()
+        conn=sqlite3.connect(self.db_path)
+        conn.execute("INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount) VALUES(1,'بدل انتقال','allowance','1500')")
+        conn.commit(); conn.close()
         self.client.post("/hr/loans",data={"employee_id":"1","requested_amount":"1000",
             "installment_count":"3","first_due_period":"2026-11","notes":"طلب سلفة"})
         conn=sqlite3.connect(self.db_path)
@@ -306,7 +309,7 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(disbursed_account,8)
         self.assertEqual(disbursed_debit,8)
         self.assertEqual(installments,[("2026-11","333.34"),("2026-12","333.33"),("2027-01","333.33")])
-        self.client.post("/hr/payroll",data={"period":"2026-11","basic_1":"12000","allowances_1":"1500",
+        self.client.post("/hr/payroll",data={"period":"2026-11","basic_1":"12000",
             "overtime_hours_1":"0","overtime_amount_1":"","absent_hours_1":"0","absence_deduction_1":"0",
             "advance_1":"0","other_deductions_1":"0","tax_1":"500","employee_ins_1":"300","employer_ins_1":"400"})
         conn=sqlite3.connect(self.db_path)
@@ -478,9 +481,12 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         with self.client.session_transaction() as session:
             employee_creation_flashes = session.get("_flashes", [])
-        self.assertEqual(employee, ("Tanta","12345678901234","INS-3","permanent","percentage","10.00","basic"), employee_creation_flashes)
+        self.assertEqual(employee, ("Tanta","12345678901234","INS-3","permanent","fixed","0","basic"), employee_creation_flashes)
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount) VALUES(1,'بدل انتقال','allowance','500')")
+        conn.commit(); conn.close()
         response = self.client.post("/hr/payroll", data={
-            "period": "2026-11", "basic_1": "10000", "allowances_1": "500",
+            "period": "2026-11", "basic_1": "10000",
             "overtime_hours_1": "10", "overtime_rate_percent_1": "150", "overtime_amount_1": "",
             "insured_wage_1": "9000", "stamp_duty_1": "25",
             "absence_deduction_1": "0", "other_deductions_1": "0", "advance_1": "0",
@@ -501,7 +507,7 @@ class WorkforceTests(unittest.TestCase):
             "SELECT incentives,gross_pay,incentive_days FROM payroll_lines WHERE run_id=1 AND employee_id=2"
         ).fetchone()
         conn.close()
-        self.assertEqual(line, ("11000.00","1000.00","825.00","0","12325.00","", "9000.00", "25.00"))
+        self.assertEqual(line, ("10000.00","0","825.00","0","11325.00","", "9000.00", "25.00"))
         self.assertEqual(per_day, ("0","8000.00","0"))
 
     def test_payroll_raise_fixed_items_and_overtime_override_are_snapshotted(self):
@@ -511,10 +517,12 @@ class WorkforceTests(unittest.TestCase):
             raise_mode='basic',raise_effective_date='2026-11-01' WHERE id=1""")
         conn.execute("""INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount)
             VALUES(1,'خصم ثابت','deduction','250')""")
+        conn.execute("""INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount)
+            VALUES(1,'بدل انتقال','allowance','500')""")
         conn.commit()
         conn.close()
         response = self.client.post("/hr/payroll", data={
-            "period": "2026-11", "basic_1": "11000", "allowances_1": "500",
+            "period": "2026-11", "basic_1": "11000",
             "overtime_hours_1": "10", "overtime_rate_percent_1": "150",
             "overtime_amount_1": "700", "overtime_override_reason_1": "موافقة مدير التشغيل",
             "other_deductions_1": "50", "tax_1": "0", "employee_ins_1": "0",
@@ -526,13 +534,13 @@ class WorkforceTests(unittest.TestCase):
             overtime_amount,overtime_manual_override,overtime_override_reason,other_deductions,gross_pay,net_pay
             FROM payroll_lines WHERE run_id=1""").fetchone()
         conn.close()
-        self.assertEqual(row, ("11000.00","1000.00","1500.00","825.00","700.00",1,
-                               "موافقة مدير التشغيل","300.00","13200.00","12900.00"))
+        self.assertEqual(row, ("11000.00","1000.00","500.00","825.00","700.00",1,
+                               "موافقة مدير التشغيل","300.00","12200.00","11900.00"))
 
     def test_manual_overtime_difference_requires_reason(self):
         self.add_employee()
         response = self.client.post("/hr/payroll", data={
-            "period": "2026-11", "basic_1": "10000", "allowances_1": "0",
+            "period": "2026-11", "basic_1": "10000",
             "overtime_hours_1": "10", "overtime_rate_percent_1": "150",
             "overtime_amount_1": "500", "other_deductions_1": "0",
             "tax_1": "0", "employee_ins_1": "0", "employer_ins_1": "0",
