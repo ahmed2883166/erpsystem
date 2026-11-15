@@ -388,6 +388,14 @@ def initialize_workforce_schema():
             c.execute("UPDATE payroll_lines SET total_entitlements=?,total_deductions=? WHERE id=?",
                       (str(entitlements),str(deductions),row["id"]))
         c.execute("INSERT INTO workforce_migrations(migration_key) VALUES(?)", (migration_key,))
+    # Add a starting point for employees that existed before the history screen.
+    # This is an additive audit snapshot; it does not modify employee or payroll data.
+    c.execute("""INSERT INTO employee_employment_history
+        (employee_id,from_status,to_status,effective_date,reason)
+        SELECT e.id,'',e.work_status,COALESCE(NULLIF(e.hire_date,''),date('now')),
+               'تسجيل الحالة الحالية للملفات السابقة عند تفعيل السجل الوظيفي'
+        FROM employees e
+        WHERE NOT EXISTS (SELECT 1 FROM employee_employment_history h WHERE h.employee_id=e.id)""")
     c.close()
 
 
