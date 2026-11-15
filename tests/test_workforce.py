@@ -997,7 +997,7 @@ class WorkforceTests(unittest.TestCase):
         ).fetchone()[0]
         conn.close()
         self.approve_pending_salary_changes(replacement_run_id)
-        response = self.client.post(f"/hr/payroll/{replacement_run_id}/post", data={
+        response = self.post_as_user(f"/hr/payroll/{replacement_run_id}/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
             "insurance_payable_account": "7", "advances_account": "2",
