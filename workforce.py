@@ -2723,8 +2723,12 @@ def loan_schedule(loan_id):
         flash("السلفة غير موجودة.","error")
         return redirect(url_for("workforce.employee_loans"))
     installments = c.execute("SELECT * FROM employee_loan_installments WHERE loan_id=? ORDER BY due_period",(loan_id,)).fetchall()
+    locked_periods = {row["period"] for row in c.execute("""SELECT DISTINCT r.period
+        FROM payroll_runs r JOIN payroll_lines pl ON pl.run_id=r.id
+        WHERE pl.employee_id=? AND r.status='posted'""",(loan["employee_id"],)).fetchall()}
     c.close()
-    return render_template("employee_loan_schedule.html",loan=loan,installments=installments)
+    return render_template("employee_loan_schedule.html",loan=loan,installments=installments,
+                           locked_periods=locked_periods)
 
 
 @workforce_bp.route("/hr/grants", methods=["GET"])
