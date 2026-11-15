@@ -437,8 +437,6 @@ def build_management_snapshot(conn, start, end, dimensions=None):
             ).fetchall()
         }
 
-    current_disposal_losses = disposal_loss_ids(start.isoformat(), end.isoformat())
-    previous_disposal_losses = disposal_loss_ids(previous_start.isoformat(), previous_end.isoformat())
     cumulative_disposal_losses = disposal_loss_ids("0001-01-01", end.isoformat())
     # Use the exact same statement builder as the official income statement.
     # It splits linked asset-disposal journal lines from ordinary postings to
@@ -522,6 +520,26 @@ def build_management_snapshot(conn, start, end, dimensions=None):
                 continue
             value = item["debit"] - item["credit"] if item["type"] == "asset" else item["credit"] - item["debit"]
             details.append({"role": role, "id": account_id, "code": item["code"], "name": item["name"], "balance": value})
+    def statement_chart_rows(rows):
+        chart = []
+        for item in rows:
+            # Synthetic disposal rows have no standalone ledger account id;
+            # keep chart drill-down links restricted to real ledger accounts.
+            if not isinstance(item["id"], int) or not item["balance"]:
+                continue
+            chart.append({
+                "id": item["id"], "code": item["code"],
+                "name": item.get("name_ar", item.get("name", "")),
+                "value": item["balance"],
+            })
+        chart.sort(key=lambda item: abs(item["value"]), reverse=True)
+        maximum = max((abs(item["value"]) for item in chart), default=Decimal("0"))
+        for item in chart:
+            item["width"] = float(
+                (abs(item["value"]) * Decimal("100") / maximum).quantize(Decimal("0.1"))
+            ) if maximum else 0
+        return chart
+
     return {
         "activity": activity,
         "selected_dimensions": dimensions,
@@ -549,10 +567,10 @@ def build_management_snapshot(conn, start, end, dimensions=None):
         "total_equity": equity,
         "total_equity_after_profit": equity + cumulative["net_profit"],
         "negative_asset_accounts": negative_asset_accounts,
-         "revenue_accounts": _top_accounts(current_balances, "revenue", "credit",
-                                           exclude_ids=current_disposal_losses),
-        "expense_accounts": _top_accounts(current_balances, "expense", "debit",
-                                           include_ids=current_disposal_losses),
+         "revenue_accounts": statement_chart_rows(current_statement["revenue_rows"]),
+        "expense_accounts": statement_chart_rows(
+            current_statement["cogs_rows"] + current_statement["operating_expense_rows"]
+        ),
         "account_details": details,
         "account_roles": roles,
         "ratio_notes": {
