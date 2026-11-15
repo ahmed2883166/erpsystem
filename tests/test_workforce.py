@@ -521,6 +521,10 @@ class WorkforceTests(unittest.TestCase):
             "insurance_payable_account": "7", "advances_account": "2",
             "other_deductions_account": "2"
         })
+        blocked_payment = self.post_as_user("/hr/payroll/1/payment", data={
+            "payment_date": "2026-11-30", "amount": "5000", "cash_account_id": "1"
+        })
+        self.assertIn("مختلف عن معتمد كشف المرتبات", blocked_payment.get_data(as_text=True))
         response = self.client.post("/hr/payroll/1/payment", data={
             "payment_date": "2026-11-30", "amount": "5000", "cash_account_id": "1",
             "notes": "دفعة أولى"
