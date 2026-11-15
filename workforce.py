@@ -1119,8 +1119,14 @@ def payroll():
                 employee_period_end = e["termination_date"] if e["work_status"] in {"resigned", "retired"} else period_end
                 fixed_items = c.execute("""SELECT id,item_name,item_type,amount FROM employee_pay_items
                     WHERE employee_id=? AND active=1 ORDER BY id""", (e["id"],)).fetchall()
-                fixed_allowances = M(sum((D(x["amount"]) for x in fixed_items if x["item_type"] == "allowance"), Decimal("0")))
-                fixed_deductions = M(sum((D(x["amount"]) for x in fixed_items if x["item_type"] == "deduction"), Decimal("0")))
+                fixed_item_amounts = {}
+                for fixed_item in fixed_items:
+                    fixed_amount = M(request.form.get("pay_item_" + str(fixed_item["id"]), fixed_item["amount"]))
+                    if fixed_amount < 0:
+                        raise ValueError("لا يمكن أن يكون بند " + fixed_item["item_name"] + " سالبًا للموظف " + e["full_name"] + ".")
+                    fixed_item_amounts[fixed_item["id"]] = fixed_amount
+                fixed_allowances = M(sum((fixed_item_amounts[x["id"]] for x in fixed_items if x["item_type"] == "allowance"), Decimal("0")))
+                fixed_deductions = M(sum((fixed_item_amounts[x["id"]] for x in fixed_items if x["item_type"] == "deduction"), Decimal("0")))
                 fixed_pay_deductions = fixed_deductions
                 allowances = M(request.form.get("allowances_" + str(e["id"]), e["variable_salary"]))
                 allowances = M(allowances + fixed_allowances)
@@ -1267,13 +1273,15 @@ def payroll():
                         snapshot_item("information","العلاوة المطبقة (مدرجة ضمن الأساسي/البدلات)",raise_amount,
                                       "salary_raise",e["id"],15)
                     for fixed_item in fixed_items:
-                        item_amount = M(D(fixed_item["amount"]) * payroll_factor) if fixed_item["item_type"] == "allowance" else M(fixed_item["amount"])
+                        fixed_value = fixed_item_amounts[fixed_item["id"]]
+                        item_amount = M(fixed_value * payroll_factor) if fixed_item["item_type"] == "allowance" else fixed_value
                         if fixed_item["item_type"] == "allowance":
                             snapshot_item("earning",fixed_item["item_name"],item_amount,"employee_pay_item",fixed_item["id"],20)
                         else:
                             snapshot_item("deduction",fixed_item["item_name"],item_amount,"employee_pay_item",fixed_item["id"],70)
                     manual_allowance = M(D(request.form.get("allowances_" + str(e["id"]), e["variable_salary"])) * payroll_factor)
-                    snapshot_item("earning","بدلات / مستحقات متغيرة يدوية",manual_allowance,"payroll_input",None,30)
+                    manual_allowance_name = request.form.get("allowance_name_" + str(e["id"]), "بدلات / مستحقات متغيرة يدوية").strip()[:80] or "بدلات / مستحقات متغيرة يدوية"
+                    snapshot_item("earning",manual_allowance_name,manual_allowance,"payroll_input",None,30)
                     if raise_amount and e["raise_mode"] == "allowance":
                         snapshot_item("earning","علاوة مستقلة",M(raise_amount * payroll_factor),"salary_raise",e["id"],35)
                     snapshot_item("earning","عمل إضافي",overtime_amount,"attendance_or_manual",None,50)
@@ -1324,6 +1332,7 @@ def payroll():
             (" بدل" if x["item_type"] == "allowance" else " خصم")
             for x in fixed_rows
         )
+        employee["fixed_pay_items"] = [dict(x) for x in fixed_rows]
         employees.append(employee)
     today_period = display_period
     runs_page = fetch_page(c,"SELECT * FROM payroll_runs ORDER BY period DESC,id DESC",
