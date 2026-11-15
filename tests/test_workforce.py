@@ -9,6 +9,7 @@ from unittest.mock import patch
 from flask import Flask
 import payroll_compliance
 import workforce
+from income_statement import build_income_statement
 
 
 class WorkforceTests(unittest.TestCase):
@@ -1498,4 +1499,94 @@ if __name__ == "__main__":
         self.assertIn("سبق اعتمادها", response.get_data(as_text=True))
         conn = sqlite3.connect(self.db_path)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 1)
+        conn.close()
+
+
+    def test_payroll_posting_reconciles_across_payroll_ledger_trial_balance_and_income_statement(self):
+        self.add_employee()
+        created = self.client.post("/hr/payroll", data={
+            "period": "2026-11", "basic_1": "12000", "allowances_1": "1500",
+            "basic_override_reason_1": "سبب تعديل الراتب في الاختبار",
+            "overtime_hours_1": "10", "overtime_amount_1": "750",
+            "overtime_override_reason_1": "اعتماد يدوي بعد مراجعة المشرف",
+            "absent_hours_1": "2", "absence_deduction_1": "100",
+            "other_deductions_1": "200", "tax_1": "500",
+            "employee_ins_1": "300", "employer_ins_1": "400"
+        })
+        self.assertEqual(created.status_code, 302)
+        self.approve_pending_salary_changes(1)
+        posted = self.post_as_user("/hr/payroll/1/post", data={
+            "salary_expense_account": "4", "employer_ins_expense_account": "3",
+            "salaries_payable_account": "5", "tax_payable_account": "6",
+            "insurance_payable_account": "7", "advances_account": "2",
+            "other_deductions_account": "2"
+        })
+        self.assertEqual(posted.status_code, 302)
+
+        # The payroll reconciliation screen must accept the same posted journal.
+        reconciliation = self.client.get("/hr/payroll-reconciliation")
+        self.assertEqual(reconciliation.status_code, 200)
+        self.assertIn("سليم", reconciliation.get_data(as_text=True))
+        self.assertNotIn("يحتاج مراجعة", reconciliation.get_data(as_text=True))
+
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        # General-ledger and trial-balance totals are sourced from the actual
+        # posted journal lines, not from payroll input totals.
+        journal_totals = conn.execute("""
+            SELECT DECIMAL_SUM(debit) AS debit_total,
+                   DECIMAL_SUM(credit) AS credit_total
+            FROM journal_lines
+            WHERE entry_id=(SELECT journal_entry_id FROM payroll_runs WHERE id=1)
+        """)
+        # Register the same exact-decimal aggregate used by financial reports.
+        from accounting_core import register_decimal_aggregates
+        register_decimal_aggregates(conn)
+        journal_totals = conn.execute("""
+            SELECT DECIMAL_SUM(debit) AS debit_total,
+                   DECIMAL_SUM(credit) AS credit_total
+            FROM journal_lines
+            WHERE entry_id=(SELECT journal_entry_id FROM payroll_runs WHERE id=1)
+        """).fetchone()
+        self.assertEqual(Decimal(str(journal_totals["debit_total"])), Decimal("14150.00"))
+        self.assertEqual(Decimal(str(journal_totals["credit_total"])), Decimal("14150.00"))
+
+        trial_balance = conn.execute("""
+            SELECT a.id,a.code,
+                   DECIMAL_SUM(jl.debit) AS debit_total,
+                   DECIMAL_SUM(jl.credit) AS credit_total
+            FROM accounts a
+            JOIN journal_lines jl ON jl.account_id=a.id
+            JOIN journal_entries je ON je.id=jl.entry_id
+            WHERE je.status='posted' AND je.entry_date BETWEEN '2026-11-01' AND '2026-11-30'
+            GROUP BY a.id,a.code
+        """).fetchall()
+        tb_debits = sum((Decimal(str(row["debit_total"] or "0")) for row in trial_balance), Decimal("0"))
+        tb_credits = sum((Decimal(str(row["credit_total"] or "0")) for row in trial_balance), Decimal("0"))
+        self.assertEqual(tb_debits, Decimal("14150.00"))
+        self.assertEqual(tb_credits, Decimal("14150.00"))
+
+        salary_ledger = conn.execute("""
+            SELECT DECIMAL_SUM(jl.debit) AS debit_total,
+                   DECIMAL_SUM(jl.credit) AS credit_total
+            FROM journal_lines jl
+            JOIN journal_entries je ON je.id=jl.entry_id
+            WHERE jl.account_id=4 AND je.status='posted'
+              AND je.entry_date BETWEEN '2026-11-01' AND '2026-11-30'
+        """).fetchone()
+        salary_debit = Decimal(str(salary_ledger["debit_total"] or "0"))
+        salary_credit = Decimal(str(salary_ledger["credit_total"] or "0"))
+        self.assertEqual(salary_debit, Decimal("13750.00"))
+        self.assertEqual(salary_credit, Decimal("100.00"))
+        self.assertEqual(salary_debit - salary_credit, Decimal("13650.00"))
+
+        income_statement = build_income_statement(conn, "2026-11-01", "2026-11-30")
+        self.assertEqual(income_statement["revenue_total"], Decimal("0"))
+        self.assertEqual(income_statement["cogs_total"], Decimal("0"))
+        self.assertEqual(income_statement["operating_expense_total"], Decimal("14050.00"))
+        self.assertEqual(income_statement["net_profit"], Decimal("-14050.00"))
+        salary_expense = next(row for row in income_statement["operating_expense_rows"] if row["id"] == 4)
+        employer_insurance_expense = next(row for row in income_statement["operating_expense_rows"] if row["id"] == 3)
+        self.assertEqual(salary_expense["balance"], Decimal("13650.00"))
+        self.assertEqual(employer_insurance_expense["balance"], Decimal("400.00"))
         conn.close()
