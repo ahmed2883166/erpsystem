@@ -21,9 +21,18 @@ class CashCommitmentsTests(unittest.TestCase):
         self.conn.execute("""CREATE TABLE journal_entries(
             id INTEGER PRIMARY KEY, status TEXT NOT NULL
         )""")
+        self.conn.execute("""CREATE TABLE journal_lines(
+            id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
+            debit TEXT NOT NULL DEFAULT '0', credit TEXT NOT NULL DEFAULT '0'
+        )""")
         self.conn.executemany(
             "INSERT INTO journal_entries(id,status) VALUES(?,?)",
-            [(1, "posted"), (2, "draft"), (3, "posted")],
+            [(1, "posted"), (2, "draft"), (3, "posted"), (4, "posted")],
+        )
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(?,?,?,?)",
+            [(1,10,"200","0"),(1,20,"0","200"),
+             (3,10,"100","0"),(3,20,"0","100")],
         )
         initialize_cash_commitments_schema(self.conn)
 
@@ -33,7 +42,7 @@ class CashCommitmentsTests(unittest.TestCase):
     def _commitment(self, amount="1000", due="2026-11-25"):
         return create_cash_commitment(
             self.conn, "tax", "ضريبة قيمة مضافة", amount, due,
-            period_label="2026-10", currency_code="EGP",
+            period_label="2026-10", currency_code="EGP", payable_account_id=10,
         )
 
     def test_schema_initialization_is_idempotent(self):
@@ -66,6 +75,18 @@ class CashCommitmentsTests(unittest.TestCase):
             record_cash_commitment_payment(
                 self.conn, commitment_id, "2026-11-10", "100", 2
             )
+
+
+    def test_payment_requires_debit_to_the_commitment_liability_account(self):
+        commitment_id = self._commitment("100")
+        with self.assertRaisesRegex(ValueError, "مدين كافٍ"):
+            record_cash_commitment_payment(
+                self.conn, commitment_id, "2026-11-10", "100", 4
+            )
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM cash_commitment_payments").fetchone()[0],
+            0,
+        )
 
     def test_cannot_overpay_or_reuse_journal_entry(self):
         commitment_id = self._commitment("100")
