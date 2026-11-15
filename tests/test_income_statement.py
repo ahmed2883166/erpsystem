@@ -179,6 +179,27 @@ class IncomeStatementRouteTests(unittest.TestCase):
         self.assertEqual(loss["balance"], Decimal("910"))
         self.assertEqual(loss["account_type"], "expense")
 
+    def test_depreciation_expense_reduces_period_net_profit(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        register_decimal_aggregates(conn)
+        conn.executescript("""
+            INSERT INTO accounts VALUES
+                (7,'6300','مصروف إهلاك الأصول','expense',0,1);
+            INSERT INTO journal_entries(id,entry_date,status,entry_type)
+                VALUES(14,'2026-11-16','posted','general');
+            INSERT INTO journal_lines(id,entry_id,account_id,debit,credit)
+                VALUES(18,14,7,'100','0');
+        """)
+        snapshot = build_income_statement(conn, "2026-11-01", "2026-11-30")
+        conn.close()
+        self.assertEqual(snapshot["operating_expense_total"], Decimal("350"))
+        self.assertEqual(snapshot["net_profit"], Decimal("350"))
+        depreciation = next(
+            row for row in snapshot["operating_expense_rows"] if row["code"] == "6300"
+        )
+        self.assertEqual(depreciation["balance"], Decimal("100"))
+
     def test_asset_disposal_gains_and_losses_are_split_even_on_one_shared_account(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
