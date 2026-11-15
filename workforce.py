@@ -757,8 +757,7 @@ def edit_employee(employee_id):
             for index, column in ((5,"basic_salary"),(7,"variable_salary"),
                                   (8,"legal_category"),(10,"insured_wage"),(11,"insurance_enabled"),
                                   (15,"raise_type"),(16,"raise_value"),(17,"raise_mode"),
-                                  (18,"raise_effective_date"),(19,"overtime_rate_percent"),
-                                  (24,"friday_work_eligible")):
+                                  (18,"raise_effective_date"),(19,"overtime_rate_percent")):
                 values[index] = employee[column]
             values = tuple(values)
             _validate_employee_dimensions(c, values)
