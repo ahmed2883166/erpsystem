@@ -22,7 +22,9 @@
 <div class="actions" style="margin:10px 0">
 <button type="button" id="addAllGrantEmployees">إضافة جميع الموظفين المستحقين تلقائيًا</button>
 <button type="button" class="secondary" id="addSelectedGrantEmployees">إضافة الموظفين المحددين</button>
+<button type="button" id="calculateGrantPreview" class="secondary">احتساب</button>
 </div>
+<p id="grantCalculationStatus" class="muted">أدخل قاعدة المنحة واختر الموظفين، ثم اضغط «احتساب» لمراجعة المبالغ قبل إنشاء الكشف.</p>
 <label>اختر موظفين محددين
 <select id="grantEmployeePicker" multiple size="6" style="width:100%">
 {% for e in employees %}<option value="{{e.id}}" data-status="{{e.work_status}}" data-code="{{e.employee_code}}" data-name="{{e.full_name}}" data-basic="{{e.basic_salary}}">{{e.employee_code}} - {{e.full_name}} ({{'مثبت' if e.work_status=='permanent' else 'مكافأة شاملة'}}) — أساسي {{e.basic_salary}}</option>{% endfor %}
@@ -31,15 +33,15 @@
 </label>
 <div style="overflow-x:auto;margin-top:12px">
 <table id="grantSelectedTable">
-<thead><tr><th>الكود</th><th>اسم الموظف</th><th>الفئة</th><th>الراتب الأساسي</th><th>إجراء</th></tr></thead>
-<tbody id="grantSelectedBody"><tr id="grantEmptyRow"><td colspan="5">لم تتم إضافة موظفين بعد.</td></tr></tbody>
+<thead><tr><th>الكود</th><th>اسم الموظف</th><th>الفئة</th><th>الراتب الأساسي</th><th>مبلغ المنحة المحسوب</th><th>إجراء</th></tr></thead>
+<tbody id="grantSelectedBody"><tr id="grantEmptyRow"><td colspan="6">لم تتم إضافة موظفين بعد.</td></tr></tbody>
 </table>
 </div>
 <div id="grantSelectedInputs"></div>
 <small id="grantSelectedCount" class="muted">عدد الموظفين المختارين: 0</small>
 </div>
 <label style="grid-column:1/-1">ملاحظات <input name="notes" maxlength="300"></label>
-<button type="submit" {% if not grant_types %}disabled{% endif %}>إنشاء كشف المنحة للمراجعة</button></form></section>
+<button type="submit" id="createGrantDraft" {% if not grant_types %}disabled{% else %}disabled{% endif %}>إنشاء كشف المنحة للمراجعة بعد الاحتساب</button></form></section>
 <section class="panel"><h3>كشوف المنح</h3><div style="overflow-x:auto"><table><tr><th>رقم</th><th>المنحة</th><th>التاريخ</th><th>طريقة الحساب</th><th>إجمالي الاستحقاق</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th>الإجراءات</th></tr>
 {% for g in grants %}<tr><td>{{g.id}}</td><td>{{g.grant_name_snapshot}}</td><td>{{g.grant_date}}</td>
 <td>{{{'fixed':'مبلغ مقطوع','percentage_basic':'نسبة من الأساسي','per_day':'عدد أيام من الأساسي'}.get(g.calculation_method,g.calculation_method)}}</td>
@@ -67,6 +69,13 @@ const selectedBody=document.getElementById('grantSelectedBody');
 const hiddenInputs=document.getElementById('grantSelectedInputs');
 const selectedCount=document.getElementById('grantSelectedCount');
 const selectedEmployees=new Map();
+let grantPreviewReady=false;
+function invalidateGrantPreview(){
+  grantPreviewReady=false;
+  document.getElementById('createGrantDraft').disabled=true;
+  document.getElementById('grantCalculationStatus').textContent='تم تغيير البيانات؛ اضغط «احتساب» لتحديث المبالغ قبل إنشاء الكشف.';
+  selectedEmployees.forEach(employee=>employee.amount='—');
+}
 function scopeAllows(status){
   return grantScope.value==='all_eligible' ||
     (grantScope.value==='permanent' && status==='permanent') ||
@@ -83,17 +92,17 @@ function renderSelectedGrantEmployees(){
   hiddenInputs.innerHTML='';
   if(!selectedEmployees.size){
     const row=document.createElement('tr');
-    const cell=document.createElement('td');cell.colSpan=5;cell.textContent='لم تتم إضافة موظفين بعد.';
+    const cell=document.createElement('td');cell.colSpan=6;cell.textContent='لم تتم إضافة موظفين بعد.';
     row.appendChild(cell);selectedBody.appendChild(row);
   }
   selectedEmployees.forEach((employee,id)=>{
     const row=document.createElement('tr');
-    [employee.code,employee.name,employee.status==='permanent'?'مثبت':'مكافأة شاملة',employee.basic].forEach(value=>{
+    [employee.code,employee.name,employee.status==='permanent'?'مثبت':'مكافأة شاملة',employee.basic,employee.amount||'—'].forEach(value=>{
       const cell=document.createElement('td');cell.textContent=value;row.appendChild(cell);
     });
     const action=document.createElement('td');
     const remove=document.createElement('button');remove.type='button';remove.className='secondary';
-    remove.textContent='حذف';remove.addEventListener('click',()=>{selectedEmployees.delete(id);renderSelectedGrantEmployees();});
+    remove.textContent='حذف';remove.addEventListener('click',()=>{selectedEmployees.delete(id);invalidateGrantPreview();renderSelectedGrantEmployees();});
     action.appendChild(remove);row.appendChild(action);selectedBody.appendChild(row);
     const input=document.createElement('input');input.type='hidden';input.name='employee_ids';input.value=id;
     hiddenInputs.appendChild(input);
@@ -106,6 +115,7 @@ function addGrantOptions(options){
     selectedEmployees.set(option.value,{code:option.dataset.code,name:option.dataset.name,
       basic:option.dataset.basic,status:option.dataset.status});
   });
+  invalidateGrantPreview();
   renderSelectedGrantEmployees();
 }
 document.getElementById('addAllGrantEmployees').addEventListener('click',()=>{
@@ -113,11 +123,38 @@ document.getElementById('addAllGrantEmployees').addEventListener('click',()=>{
     selectedEmployees.set(option.value,{code:option.dataset.code,name:option.dataset.name,
       basic:option.dataset.basic,status:option.dataset.status});
   });
+  invalidateGrantPreview();
   renderSelectedGrantEmployees();
 });
 document.getElementById('addSelectedGrantEmployees').addEventListener('click',()=>addGrantOptions(Array.from(picker.options)));
 grantScope.addEventListener('change',()=>{
-  selectedEmployees.clear();refreshGrantPicker();renderSelectedGrantEmployees();
+  selectedEmployees.clear();invalidateGrantPreview();refreshGrantPicker();renderSelectedGrantEmployees();
 });
+function calculateGrantPreview(){
+  if(!selectedEmployees.size){alert('أضف موظفًا واحدًا على الأقل قبل الاحتساب.');return;}
+  const method=document.getElementById('grantMethod').value;
+  const value=Number(document.querySelector('[name="calculation_value"]').value||0);
+  const daysCount=Number(document.querySelector('[name="days_count"]').value||0);
+  if((method!=='per_day' && value<=0)||(method==='per_day' && daysCount<=0)){alert('أدخل قيمة موجبة أو عدد أيام صحيحًا قبل الاحتساب.');return;}
+  let total=0;
+  selectedEmployees.forEach(employee=>{
+    const basic=Number(employee.basic||0);
+    const amount=method==='fixed'?value:(method==='percentage_basic'?basic*value/100:basic/30*daysCount);
+    employee.amount=(Math.round((amount+Number.EPSILON)*100)/100).toFixed(2);
+    total+=amount;
+  });
+  grantPreviewReady=true;
+  document.getElementById('createGrantDraft').disabled=false;
+  document.getElementById('grantCalculationStatus').textContent='تم احتساب '+selectedEmployees.size+' موظفًا. إجمالي المنحة: '+(Math.round((total+Number.EPSILON)*100)/100).toFixed(2)+' — راجع المبالغ ثم أنشئ الكشف.';
+  renderSelectedGrantEmployees();
+}
+document.getElementById('calculateGrantPreview').addEventListener('click',calculateGrantPreview);
+['grantMethod','grantValue','grantDays'].forEach(id=>{
+  const element=document.getElementById(id);
+  element.addEventListener('change',invalidateGrantPreview);
+  const input=element.querySelector('input');
+  if(input) input.addEventListener('input',invalidateGrantPreview);
+});
+picker.addEventListener('change',invalidateGrantPreview);
 refreshGrantPicker();renderSelectedGrantEmployees();
 </script>{% endblock %}
