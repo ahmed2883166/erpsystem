@@ -849,7 +849,7 @@ def index():
         quantity=Decimal(str(item.get("qty") or "0"))
         if quantity <= 0:
             item["availability_label"]="غير متوفر"
-            item["availability_class"]="state-cancelled"
+            item["availability_class"]="state-unpaid"
         elif item["sku"] in low_stock_skus:
             item["availability_label"]="رصيد منخفض"
             item["availability_class"]="state-partial"
