@@ -2,7 +2,7 @@ from app_paths import DB_PATH
 from database import connect_database
 """Tax center: auditable VAT classification and monthly control report."""
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import sqlite3
 from functools import wraps
 
@@ -181,6 +181,28 @@ def _build_saudi_tax_preparation(conn, period, summary):
     return result
 
 
+
+def calculate_tax_input_totals(purchases):
+    """Return posted gross input VAT, recoverable input VAT and non-recoverable VAT.
+
+    Supplier credit notes are represented by negative tax amounts. This is an
+    accounting workpaper calculation only; it never changes posted documents.
+    """
+    gross = Decimal("0")
+    deductible = Decimal("0")
+    non_deductible = Decimal("0")
+    for row in purchases:
+        tax = Decimal(str(row.get("tax_amount") or "0"))
+        gross += tax
+        if row.get("tax_treatment", "standard") == "standard":
+            percent = Decimal(str(row.get("deductible_percent", "100") or "0"))
+            recoverable = tax * percent / Decimal("100")
+        else:
+            recoverable = Decimal("0")
+        deductible += recoverable
+        non_deductible += tax - recoverable
+    return gross, deductible, non_deductible
+
 def build_tax_report_snapshot(conn, period_value):
     period, start, end = _period(period_value)
     customer_tax_number = _party_tax_number_expr(conn, "customers", "c")
@@ -254,7 +276,37 @@ def build_tax_report_snapshot(conn, period_value):
     purchases = [{**dict(r), "taxable_base": Decimal(r["taxable_base"] or "0"),
                       "tax_rate": Decimal(r["tax_rate"] or "0"), "tax_amount": Decimal(r["tax_amount"] or "0"),
                       "total_amount": Decimal(r["total_amount"] or "0"),
-                      "deductible_percent": Decimal(r["deductible_percent"] or "100")} for r in purchases]
+                      "deductible_percent": Decimal(r["deductible_percent"] or "100"),
+                      "document_type": "فاتورة مشتريات"} for r in purchases]
+    # Supplier credit notes reduce input VAT in their own posting period. The
+    # deductible percentage and tax treatment are inherited from the source bill.
+    purchase_credits = []
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='supplier_credit_notes'").fetchone():
+        credit_rows = conn.execute(f"""
+            SELECT cn.id, cn.credit_no document_no, cn.credit_date document_date,
+                   s.name party_name, {supplier_tax_number} party_tax_number,
+                   cn.subtotal taxable_base, cn.tax_rate, cn.tax_amount, cn.total_amount,
+                   COALESCE(b.tax_treatment,'standard') tax_treatment,
+                   '' tax_reference, cn.reason tax_notes,
+                   COALESCE(b.input_vat_deductible_percent,'100') deductible_percent
+            FROM supplier_credit_notes cn
+            JOIN supplier_bills b ON b.id=cn.bill_id
+            JOIN suppliers s ON s.id=cn.supplier_id
+            WHERE cn.status='posted' AND cn.credit_date>=? AND cn.credit_date<?
+            ORDER BY cn.credit_date,cn.id
+        """, (start.isoformat(), end.isoformat())).fetchall()
+        for row in credit_rows:
+            item = dict(row)
+            item.update({
+                "taxable_base": -Decimal(row["taxable_base"] or "0"),
+                "tax_rate": Decimal(row["tax_rate"] or "0"),
+                "tax_amount": -Decimal(row["tax_amount"] or "0"),
+                "total_amount": -Decimal(row["total_amount"] or "0"),
+                "deductible_percent": Decimal(row["deductible_percent"] or "100"),
+                "document_type": "إشعار دائن للمورد",
+            })
+            purchase_credits.append(item)
+    purchases.extend(purchase_credits)
     settings = {r["setting_key"]: r["setting_value"] for r in conn.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
         "('company_name','tax_country','tax_regime','tax_number','base_currency')")}
@@ -267,12 +319,7 @@ def build_tax_report_snapshot(conn, period_value):
                           (Decimal(str(r["tax_rate"])) != 0 or Decimal(str(r["tax_amount"])) != 0)]
     inconsistent_purchases = [r for r in purchases if r["tax_treatment"] != "standard" and
                                Decimal(str(r["tax_amount"])) != 0]
-    deductible_input = sum((Decimal(str(r["tax_amount"])) * Decimal(str(r["deductible_percent"])) / Decimal("100")
-                            for r in purchases if r["tax_treatment"] == "standard"), Decimal("0"))
-    non_deductible_input = sum((
-        Decimal(str(r["tax_amount"])) if r["tax_treatment"] != "standard" else
-        Decimal(str(r["tax_amount"])) * (Decimal("100")-Decimal(str(r["deductible_percent"]))) / Decimal("100")
-        for r in purchases), Decimal("0"))
+    gross_input, deductible_input, non_deductible_input = calculate_tax_input_totals(purchases)
     # Keep the posted tax in the report; classification mismatches must be corrected by accounting documents.
     output_vat = sum((Decimal(str(r["tax_amount"])) for r in sales), Decimal("0"))
     input_vat = deductible_input
@@ -282,7 +329,8 @@ def build_tax_report_snapshot(conn, period_value):
         "sales_exempt": sum((Decimal(str(r["taxable_base"])) for r in exempt_sales), Decimal("0")),
         "sales_outside": sum((Decimal(str(r["taxable_base"])) for r in outside_sales), Decimal("0")),
         "purchase_base": sum((Decimal(str(r["taxable_base"])) for r in purchases), Decimal("0")),
-        "purchase_tax_total": sum((Decimal(str(r["tax_amount"])) for r in purchases), Decimal("0")),
+        "purchase_tax_total": gross_input,
+        "input_vat_posted": gross_input,
         "output_vat": output_vat, "input_vat": input_vat,
         "non_deductible_input": non_deductible_input, "net_vat": output_vat-input_vat,
     }
@@ -315,7 +363,7 @@ def build_tax_report_snapshot(conn, period_value):
             base = Decimal(str(row["taxable_base"] or "0"))
             rate = Decimal(str(row["tax_rate"] or "0"))
             actual_tax = Decimal(str(row["tax_amount"] or "0"))
-            expected_tax = (base * rate / Decimal("100")).quantize(Decimal("0.01"))
+            expected_tax = (base * rate / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             if abs(expected_tax - actual_tax) > Decimal("0.02"):
                 quality_issues.append({"severity": "error", "document": doc,
                                        "issue": f"فرق بين الضريبة المحسوبة والمسجلة: {actual_tax - expected_tax}"})
