@@ -1346,16 +1346,22 @@ def payroll_report():
         FROM employee_final_payrolls f JOIN employees e ON e.id=f.employee_id
         WHERE """ + " AND ".join(final_where) + """
         ORDER BY f.period DESC,e.employee_code""", final_params).fetchall()
-    final_paid_rows = c.execute("""SELECT p.final_payroll_id,SUM(CAST(p.amount AS REAL)) AS paid
+    final_paid_rows = c.execute("""SELECT p.final_payroll_id,p.amount
         FROM employee_final_payroll_payments p JOIN employee_final_payrolls f ON f.id=p.final_payroll_id
-        WHERE f.period>=? AND f.period<=? GROUP BY p.final_payroll_id""",
+        WHERE f.period>=? AND f.period<=?""",
         (month_from or "0000-01",month_to or "9999-12")).fetchall()
-    final_paid_map = {int(x["final_payroll_id"]): D(x["paid"] or 0) for x in final_paid_rows}
+    final_paid_map = {}
+    for payment_row in final_paid_rows:
+        key = int(payment_row["final_payroll_id"])
+        final_paid_map[key] = M(final_paid_map.get(key,Decimal("0")) + D(payment_row["amount"]))
     if employee_id:
-        final_paid_map = {int(x["final_payroll_id"]): D(x["paid"] or 0) for x in c.execute(
-            """SELECT p.final_payroll_id,SUM(CAST(p.amount AS REAL)) AS paid
-               FROM employee_final_payroll_payments p JOIN employee_final_payrolls f ON f.id=p.final_payroll_id
-               WHERE f.employee_id=? GROUP BY p.final_payroll_id""", (employee_id,)).fetchall()}
+        final_paid_rows = c.execute("""SELECT p.final_payroll_id,p.amount
+            FROM employee_final_payroll_payments p JOIN employee_final_payrolls f ON f.id=p.final_payroll_id
+            WHERE f.employee_id=?""", (employee_id,)).fetchall()
+        final_paid_map = {}
+        for payment_row in final_paid_rows:
+            key = int(payment_row["final_payroll_id"])
+            final_paid_map[key] = M(final_paid_map.get(key,Decimal("0")) + D(payment_row["amount"]))
     final_totals = {
         "gross_pay": M(sum((D(x["gross_pay"]) for x in final_rows if x["status"] != "cancelled"),Decimal("0"))),
         "net_pay": M(sum((D(x["net_pay"]) for x in final_rows if x["status"] != "cancelled"),Decimal("0"))),
@@ -1470,9 +1476,12 @@ def final_payroll():
         rows = [dict(x) for x in c.execute("""SELECT f.*,e.employee_code,e.full_name FROM employee_final_payrolls f
             JOIN employees e ON e.id=f.employee_id WHERE f.period=? ORDER BY f.created_at DESC,f.id DESC""",
             (selected_period,)).fetchall()]
-        paid_rows = c.execute("""SELECT final_payroll_id,SUM(CAST(amount AS REAL)) AS paid
-            FROM employee_final_payroll_payments GROUP BY final_payroll_id""").fetchall()
-        paid_map = {int(x["final_payroll_id"]): M(x["paid"] or 0) for x in paid_rows}
+        paid_rows = c.execute("""SELECT final_payroll_id,amount
+            FROM employee_final_payroll_payments ORDER BY id""").fetchall()
+        paid_map = {}
+        for payment_row in paid_rows:
+            key = int(payment_row["final_payroll_id"])
+            paid_map[key] = M(paid_map.get(key,Decimal("0")) + D(payment_row["amount"]))
         for item in rows:
             item["paid_amount"] = paid_map.get(int(item["id"]), Decimal("0"))
             item["remaining_amount"] = M(max(Decimal("0"),D(item["net_pay"])-item["paid_amount"]))
