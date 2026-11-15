@@ -165,7 +165,7 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
                         WHERE {' AND '.join(conditions)}
                           AND ad.disposal_date>=? AND ad.disposal_date<=?
                           AND CAST(ad.gain_loss_amount AS NUMERIC)<>0""",
-                    (*dimension_params, date_from, date_to),
+                    (date_from, date_to, *dimension_params, date_from, date_to),
                 ).fetchall()
                 for disposal in disposal_records:
                     amount = Decimal(str(disposal["gain_loss_amount"] or "0"))
