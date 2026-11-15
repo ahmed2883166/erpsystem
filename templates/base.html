@@ -1,13 +1,15 @@
 <!doctype html>
 <html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="csrf-token" content="{{ csrf_token() }}"><title>{% block title %}NEXUS ERP{% endblock %}</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head><body>
 {% if session.user_id %}
-<aside><h1>NEXUS <small>ERP</small></h1><p class="user">{{ session.full_name }}<br><small>{{ session.role }}</small></p><nav>
+<button type="button" class="mobile-nav-toggle secondary no-print" id="mobileNavToggle" aria-expanded="false" aria-controls="appSidebar">☰ القائمة</button>
+<div class="sidebar-backdrop no-print" id="sidebarBackdrop"></div>
+<aside id="appSidebar"><h1>NEXUS <small>ERP</small></h1><p class="user">{{ session.full_name }}<br><small>{{ session.role }}</small></p><nav>
 {% if 'reports.view' in permissions %}<a class="nav-home" href="{{ url_for('dashboard') }}">⌂ الرئيسية</a>{% endif %}
 {% if 'import_export.manage' in permissions %}<a class="nav-home" href="{{ url_for('import_data_wizard') }}">⇧ استيراد البيانات من Excel / CSV</a>{% endif %}
 {% if 'purchases.approve' in permissions or 'sales.approve' in permissions or 'budget.approve' in permissions %}<a class="nav-home" href="{{ url_for('approval_inbox') }}">✓ مركز الموافقات</a>{% endif %}
 
 {% if 'stock.view' in permissions or 'stock.manage' in permissions %}
-<details class="nav-group" open>
+<details class="nav-group">
 <summary><span>📦 المخازن والمخزون</span><small>إدارة الأصناف والأماكن والحركة</small></summary>
 <div class="nav-links">
 {% if 'stock.view' in permissions %}<a href="{{ url_for('stock.index') }}">لوحة المخزون</a>{% endif %}
@@ -18,7 +20,7 @@
 {% endif %}
 
 {% if 'purchases.view' in permissions %}
-<details class="nav-group" open>
+<details class="nav-group">
 <summary><span>🚚 الموردون والمشتريات</span><small>الموردون والفواتير والاستلامات</small></summary>
 <div class="nav-links">
 <a href="{{ url_for('purchase.index') }}">المشتريات وفواتير الموردين</a>
@@ -29,7 +31,7 @@
 {% endif %}
 
 {% if 'sales.view' in permissions %}
-<details class="nav-group" open>
+<details class="nav-group">
 <summary><span>👥 العملاء والمبيعات</span><small>العملاء والعروض والفواتير والتحصيل</small></summary>
 <div class="nav-links">
 <a href="{{ url_for('sales.index') }}">المبيعات وفواتير العملاء</a><a href="{{ url_for('sales.customer_advances') }}">دفعات العملاء المقدمة</a>
@@ -82,7 +84,7 @@
 </div></details>
 {% endif %}
 <a href="{{ url_for('change_password') }}">تغيير كلمة المرور</a><a href="{{ url_for('logout') }}">تسجيل الخروج</a>
-</nav></aside>
+</nav><button class="theme-toggle secondary" type="button" id="themeToggle">◐ المظهر</button></aside>
 {% endif %}
 <main>{% if session.user_id %}<form class="global-search no-print" method="get" action="{{ url_for('global_search') }}"><input name="q" value="{{ request.args.get('q','') }}" placeholder="بحث شامل: عميل، مورد، فاتورة، قيد، منتج، شركة..." aria-label="بحث شامل"><button type="submit">بحث</button></form>{% endif %}{% if session.user_id and license_info.status in ['trial','licensed'] %}<div class="license-strip">{% if license_info.status == 'trial' %}نسخة تجريبية: متبقي {{ license_info.days_remaining }} يومًا{% else %}نسخة مفعّلة{% endif %} · <a href="{{ url_for('about') }}">حول البرنامج</a> · <a href="{{ url_for('license_page') }}">الترخيص</a></div>{% endif %}{% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}" aria-live="{{ 'assertive' if category == 'error' else 'polite' }}"><strong class="flash-label">{{ {'success':'تم بنجاح','error':'تعذر إتمام العملية','warning':'تنبيه'}.get(category,'إشعار') }}</strong><span>{{ message }}</span></div>{% endfor %}{% endwith %}{% block content %}{% endblock %}</main>
 {% if session.user_id %}
@@ -92,7 +94,6 @@
   <button type="button" class="secondary" id="exportCurrentReportPdf" hidden>تنزيل PDF للشاشة</button>
 </div>
 {% endif %}
-<button class="theme-toggle secondary" type="button" id="themeToggle">◐ المظهر</button>
 <script>
 (function(){
  const token=document.querySelector('meta[name="csrf-token"]')?.content;
@@ -101,41 +102,32 @@
  });}
 })();
 (function(){
- const aside=document.querySelector('aside');
+ const aside=document.getElementById('appSidebar');
  if(!aside)return;
- const storageKey='nexus-sidebar-state-v1';
  const groups=[...aside.querySelectorAll('details.nav-group')];
  const path=window.location.pathname;
  const currentLink=[...aside.querySelectorAll('nav a[href]')].find(a=>{
    try{return new URL(a.href,window.location.origin).pathname===path;}catch(_){return false;}
  });
- if(currentLink){
-   const parent=currentLink.closest('details.nav-group');
-   if(parent)parent.open=true;
-   currentLink.classList.add('active');
- }
- let saved={};
- try{saved=JSON.parse(sessionStorage.getItem(storageKey)||'{}')||{};}catch(_){}
- if(Number.isFinite(saved.scrollTop))requestAnimationFrame(()=>{aside.scrollTop=saved.scrollTop;});
- groups.forEach((group,index)=>{
-   if(!currentLink || !group.contains(currentLink)){
-     if(Array.isArray(saved.openGroups) && typeof saved.openGroups[index]==='boolean')group.open=saved.openGroups[index];
-   }
- });
- const persist=()=>{
-   try{sessionStorage.setItem(storageKey,JSON.stringify({
-     scrollTop:aside.scrollTop,
-     openGroups:groups.map(group=>group.open)
-   }));}catch(_){}
- };
- aside.addEventListener('scroll',persist,{passive:true});
- groups.forEach(group=>group.addEventListener('toggle',persist));
- aside.querySelectorAll('a[href]').forEach(link=>{
-   link.addEventListener('click',()=>persist());
- });
- window.addEventListener('pagehide',persist);
+ groups.forEach(group=>{group.open=!!(currentLink&&group.contains(currentLink));});
+ if(currentLink){currentLink.classList.add('active');}
+ const toggle=document.getElementById('mobileNavToggle');
+ const backdrop=document.getElementById('sidebarBackdrop');
+ const close=()=>{document.body.classList.remove('sidebar-open');toggle?.setAttribute('aria-expanded','false');};
+ toggle?.addEventListener('click',()=>{const open=!document.body.classList.contains('sidebar-open');document.body.classList.toggle('sidebar-open',open);toggle.setAttribute('aria-expanded',String(open));});
+ backdrop?.addEventListener('click',close);
+ aside.querySelectorAll('nav a[href]').forEach(link=>link.addEventListener('click',close));
+ document.addEventListener('keydown',event=>{if(event.key==='Escape')close();});
 })();
 (function(){const root=document.documentElement;const saved=localStorage.getItem('nexus-theme')||'dark';root.dataset.theme=saved;const btn=document.getElementById('themeToggle');if(btn){btn.addEventListener('click',()=>{const next=root.dataset.theme==='dark'?'light':'dark';root.dataset.theme=next;localStorage.setItem('nexus-theme',next);btn.textContent=next==='dark'?'◐ المظهر الداكن':'☀ المظهر الفاتح';});btn.textContent=saved==='dark'?'◐ المظهر الداكن':'☀ المظهر الفاتح';}})();
+(function(){
+ const actions=document.querySelector('.global-report-actions');
+ if(!actions)return;
+ let pageHeader=document.querySelector('main header');
+ if(!pageHeader){pageHeader=document.createElement('header');pageHeader.className='page-actions-header no-print';document.querySelector('main')?.prepend(pageHeader);}
+ pageHeader.classList.add('has-report-actions');
+ pageHeader.appendChild(actions);
+})();
 (function(){
  const printAction=document.querySelector('.global-report-actions');
  const exportAction=document.getElementById('exportCurrentReport');
