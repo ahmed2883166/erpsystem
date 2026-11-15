@@ -55,6 +55,30 @@ class CashCommitmentsTests(unittest.TestCase):
             period_label="2026-10", currency_code="EGP", payable_account_id=10,
         )
 
+    def test_schema_migration_adds_reversal_link_to_legacy_payment_table(self):
+        legacy = sqlite3.connect(":memory:")
+        legacy.row_factory = sqlite3.Row
+        legacy.executescript("""
+            CREATE TABLE journal_entries(id INTEGER PRIMARY KEY);
+            CREATE TABLE cash_commitments(
+                id INTEGER PRIMARY KEY, status TEXT, due_date TEXT
+            );
+            CREATE TABLE cash_commitment_payments(
+                id INTEGER PRIMARY KEY, commitment_id INTEGER,
+                payment_date TEXT, amount TEXT, journal_entry_id INTEGER UNIQUE,
+                reference TEXT, notes TEXT, created_by INTEGER,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        initialize_cash_commitments_schema(legacy)
+        columns = {
+            row["name"] for row in legacy.execute(
+                "PRAGMA table_info(cash_commitment_payments)"
+            )
+        }
+        self.assertIn("reversal_journal_entry_id", columns)
+        legacy.close()
+
     def test_schema_initialization_is_idempotent(self):
         initialize_cash_commitments_schema(self.conn)
         self.assertIsNotNone(self.conn.execute(
