@@ -359,6 +359,15 @@ class ManagementDashboardTests(unittest.TestCase):
         target = next(x for x in flagged if x["id"] == 20)
         self.assertIn("قيد في آخر يومين من الفترة", target["reasons"])
 
+    def test_dashboard_discloses_period_return_and_proxy_turnover_ratio_bases(self):
+        snapshot = build_management_snapshot(
+            self.conn, date(2026,11,1), date(2026,11,30)
+        )
+        self.assertIn("غير مُسنَّن", snapshot["ratio_notes"]["return_on_assets"])
+        self.assertIn("إجمالي الإيرادات", snapshot["ratio_notes"]["receivables_turnover"])
+        self.assertIn("تكلفة المبيعات", snapshot["ratio_notes"]["payables_turnover"])
+        self.assertIn("تقديرية", snapshot["ratio_notes"]["cash_conversion_cycle"])
+
     def test_financial_ratios_are_suppressed_for_non_positive_denominators(self):
         from management_dashboard import _ratio, _percent
         self.assertIsNone(_ratio(Decimal("10"), Decimal("0")))
