@@ -207,6 +207,50 @@ class CashFlowReportTests(unittest.TestCase):
         self.assertNotIn("1260", remaining_unmapped)
         self.assertNotIn("2150", remaining_unmapped)
 
+    def test_indirect_cash_flow_excludes_copied_later_year_opening_entry(self):
+        conn = financial_planning._connect()
+        conn.execute(
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group) "
+            "VALUES(7,'2130','مستحقات تشغيلية','liability',0)"
+        )
+        conn.execute("INSERT INTO journal_entries VALUES(6,'2026-12-31','posted')")
+        conn.executemany(
+            "INSERT INTO journal_lines VALUES(?,?,?,?,?)",
+            [(11,6,1,"200","0"), (12,6,7,"0","200")],
+        )
+        conn.execute("INSERT INTO journal_entries VALUES(7,'2027-01-01','posted')")
+        conn.executemany(
+            "INSERT INTO journal_lines VALUES(?,?,?,?,?)",
+            [(13,7,1,"200","0"), (14,7,7,"0","200")],
+        )
+        conn.executescript("""
+            CREATE TABLE financial_years(
+                id INTEGER PRIMARY KEY, year_name TEXT, start_date TEXT, end_date TEXT,
+                status TEXT, opening_entry_id INTEGER
+            );
+            CREATE TABLE financial_year_journal_history(
+                id INTEGER PRIMARY KEY, financial_year_id INTEGER, entry_kind TEXT,
+                action TEXT, entry_id INTEGER, related_entry_id INTEGER
+            );
+            INSERT INTO financial_years
+                VALUES(1,'2027','2027-01-01','2027-12-31','open',7);
+            INSERT INTO financial_year_journal_history
+                (financial_year_id,entry_kind,action,entry_id)
+                VALUES(1,'opening','created',7);
+        """)
+        snapshot = financial_planning.build_cash_flow_indirect_snapshot(
+            conn, "2027-01-01", "2027-01-31"
+        )
+        conn.close()
+        other_liabilities = next(
+            item for item in snapshot["indirect_items"]
+            if item["label"] == "التغير في الالتزامات المتداولة الأخرى"
+        )
+        self.assertEqual(other_liabilities["amount"], financial_planning.Decimal("0"))
+        self.assertEqual(snapshot["indirect_operating_net"], financial_planning.Decimal("0"))
+        self.assertEqual(snapshot["indirect_reconciliation"], financial_planning.Decimal("0"))
+        self.assertEqual(snapshot["reconciliation_difference"], financial_planning.Decimal("0"))
+
     def test_unparented_payroll_payable_and_grni_are_included_in_indirect_working_capital(self):
         conn = financial_planning._connect()
         conn.executemany(
