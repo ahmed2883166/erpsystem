@@ -58,8 +58,8 @@ class WorkforceTests(unittest.TestCase):
         (template_dir / "employee_grants.html").write_text("{{ get_flashed_messages()|join('|') }}", encoding="utf-8")
         (template_dir / "salary_changes.html").write_text("salary changes", encoding="utf-8")
         (template_dir / "salary_history.html").write_text("salary history", encoding="utf-8")
-        (template_dir / "form2_salary.html").write_text(
-            "{{ e.full_name }}|{{ insured_wage }}", encoding="utf-8"
+        (template_dir / "form2_salary_report.html").write_text(
+            "{{ scope }}|{{ employees|length }}|{{ totals.insured_wage }}", encoding="utf-8"
         )
         self.app = Flask(__name__, template_folder=str(template_dir))
         self.app.secret_key = "test"
@@ -118,15 +118,28 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(rows,[("E002",)])
         conn.close()
 
-    def test_employee_form_2_print_view_uses_insured_wage_for_both_amounts(self):
+    def test_group_form_2_report_filters_employee_categories(self):
         self.add_employee()
         conn = sqlite3.connect(self.db_path)
         conn.execute("UPDATE employees SET insurance_number='INS-123', national_id='12345678901234', insured_wage='12500' WHERE id=1")
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,
+            work_status,insured_wage) VALUES('E002','Temporary Employee','2026-01-01','7000','200','temporary','7000')""")
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,
+            work_status,insured_wage) VALUES('E003','Comprehensive Employee','2026-01-01','8000','200','comprehensive_bonus','8000')""")
         conn.commit()
         conn.close()
-        response = self.client.get("/hr/1/form-2-salary")
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("Employee One|12500.00", response.get_data(as_text=True))
+        legacy = self.client.get("/hr/1/form-2-salary")
+        self.assertEqual(legacy.status_code, 302)
+        self.assertIn("scope=permanent", legacy.headers["Location"])
+        permanent = self.client.get("/hr/form-2-salary-report?scope=permanent")
+        self.assertEqual(permanent.status_code, 200)
+        self.assertIn("permanent|1|12500.00", permanent.get_data(as_text=True))
+        temporary = self.client.get("/hr/form-2-salary-report?scope=temporary")
+        self.assertEqual(temporary.status_code, 200)
+        self.assertIn("temporary|1|7000.00", temporary.get_data(as_text=True))
+        all_rows = self.client.get("/hr/form-2-salary-report?scope=all")
+        self.assertEqual(all_rows.status_code, 200)
+        self.assertIn("all|3|27500.00", all_rows.get_data(as_text=True))
 
     def test_individual_payslip_is_available_only_after_posting(self):
         self.add_employee()
