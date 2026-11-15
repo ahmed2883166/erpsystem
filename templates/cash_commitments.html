@@ -9,6 +9,7 @@
 {% if can_manage %}
 <section class="panel">
   <h3>إضافة التزام جديد</h3>
+  <p class="muted">سجّل كل استحقاق بتاريخ ومبلغ محددين. المصروف الدوري في هذه المرحلة يُسجّل كاستحقاق واحد؛ إنشاء المواعيد المتكررة تلقائيًا سيأتي بعد إضافة جدول تكرار يمنع التوليد المكرر. بدل الجمعة سيُربط لاحقًا بكشفه المعتمد حتى لا يظهر مرتين.</p>
   <form method="post" class="form-grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="action" value="create">
@@ -16,7 +17,6 @@
       <select name="commitment_type" required>
         <option value="tax">ضرائب</option>
         <option value="recurring_expense">مصروف دوري</option>
-        <option value="friday_overtime">بدل جمعة (تسجيل يدوي مؤقتًا)</option>
       </select>
     </label>
     <label>اسم الالتزام<input name="title" maxlength="180" required placeholder="مثال: ضريبة القيمة المضافة"></label>
