@@ -39,6 +39,7 @@ from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
 from app_paths import DATA_DIR, DB_PATH, BACKUP_DIR
 from backup_scheduler import create_backup_archive, next_backup_datetime, start_backup_scheduler
+from system_health import health_bp
 from backup_restore import extract_validated_backup, restore_database_with_rollback
 from data_reset import clear_company_data
 from income_statement import (build_income_statement, normalize_income_statement_period,
@@ -120,6 +121,7 @@ app.register_blueprint(payroll_compliance_bp)
 app.register_blueprint(currency_bp)
 app.register_blueprint(party_bp)
 app.register_blueprint(planning_bp)
+app.register_blueprint(health_bp)
 # SECRET_KEY and session/CSRF settings are initialized above.
 
 PERMISSIONS = {
