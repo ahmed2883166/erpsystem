@@ -332,6 +332,28 @@ def initialize_workforce_schema():
         c.execute("ALTER TABLE employee_end_of_service_settlements ADD COLUMN journal_entry_id INTEGER")
     c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_eos_journal_entry
         ON employee_end_of_service_settlements(journal_entry_id) WHERE journal_entry_id IS NOT NULL""")
+    # Additive approval metadata for maker-checker workflows; preserve existing rows.
+    for table, additions in {
+        "employee_final_payrolls": {
+            "approved_by": "INTEGER", "approved_at": "TEXT",
+        },
+        "employee_grants": {
+            "approved_by": "INTEGER", "approved_at": "TEXT",
+        },
+        "friday_allowance_batches": {
+            "approved_by": "INTEGER", "approved_at": "TEXT",
+            "approval_reason": "TEXT NOT NULL DEFAULT ''",
+        },
+        "payroll_runs": {
+            "approved_by": "INTEGER", "approved_at": "TEXT",
+        },
+    }.items():
+        existing_columns = {row["name"] for row in c.execute(
+            f'PRAGMA table_info("{table}")'
+        ).fetchall()}
+        for column, declaration in additions.items():
+            if column not in existing_columns:
+                c.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {declaration}')
     c.executescript("""
     CREATE TABLE IF NOT EXISTS employee_end_of_service_payments(
       id INTEGER PRIMARY KEY,
