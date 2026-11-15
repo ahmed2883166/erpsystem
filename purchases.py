@@ -115,6 +115,17 @@ def init_purchase_schema():
       entered_quantity TEXT, uom_id INTEGER REFERENCES stock_uoms(id), uom_key TEXT,
       entered_uom_name TEXT, conversion_factor TEXT NOT NULL DEFAULT '1'
     );
+    CREATE TABLE IF NOT EXISTS supplier_credit_note_layer_allocations(
+      id INTEGER PRIMARY KEY,
+      credit_note_line_id INTEGER NOT NULL REFERENCES supplier_credit_note_lines(id) ON DELETE CASCADE,
+      stock_movement_id INTEGER NOT NULL REFERENCES stock_movements(id),
+      source_layer_id INTEGER NOT NULL REFERENCES stock_valuation_layers(id),
+      lot_id INTEGER REFERENCES stock_lots(id),
+      location_id INTEGER REFERENCES stock_locations(id),
+      quantity TEXT NOT NULL, unit_cost TEXT NOT NULL, total_cost TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_supplier_credit_layer_line
+      ON supplier_credit_note_layer_allocations(credit_note_line_id);
     CREATE TABLE IF NOT EXISTS supplier_payments(
       id INTEGER PRIMARY KEY, payment_no TEXT NOT NULL UNIQUE, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
       payment_date TEXT NOT NULL, amount TEXT NOT NULL, cash_account_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -132,6 +143,15 @@ def init_purchase_schema():
       ON supplier_bill_receipts(receipt_id);
     CREATE INDEX IF NOT EXISTS idx_purchase_receipts_supplier ON goods_receipts(supplier_id,receipt_date);
     """)
+    credit_note_columns={row["name"] for row in c.execute("PRAGMA table_info(supplier_credit_notes)")}
+    for name,declaration in (
+        ("cancel_journal_entry_id","INTEGER"),
+        ("cancelled_by","INTEGER"),
+        ("cancelled_at","TEXT"),
+        ("cancellation_reason","TEXT"),
+    ):
+        if name not in credit_note_columns:
+            c.execute("ALTER TABLE supplier_credit_notes ADD COLUMN "+name+" "+declaration)
     credit_line_columns={row["name"] for row in c.execute("PRAGMA table_info(supplier_credit_note_lines)")}
     for name,declaration in (("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),
         ("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'")):
@@ -2142,6 +2162,134 @@ def _supplier_bill_returnable_quantity(c, bill_id, product_id, warehouse_id):
     )
 
 
+def _reverse_supplier_credit_journal(conn, entry_id, reversal_date, reference, description, created_by):
+    original=conn.execute("SELECT status,entry_date FROM journal_entries WHERE id=?",(entry_id,)).fetchone()
+    if not original or original["status"]!="posted":
+        raise ValueError("لا يمكن عكس قيد إشعار مورد غير موجود أو غير مرحل.")
+    try:
+        reversal_day=date.fromisoformat(str(reversal_date))
+        original_day=date.fromisoformat(str(original["entry_date"]))
+    except (TypeError,ValueError):
+        raise ValueError("تاريخ الإلغاء أو تاريخ القيد الأصلي غير صحيح.")
+    if reversal_day<original_day:
+        raise ValueError("تاريخ إلغاء إشعار المورد لا يمكن أن يسبق تاريخ الإشعار الأصلي.")
+    dimension_keys=("branch_id","cost_center_id","project_id","customer_id","salesperson_id","supplier_id")
+    available={row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")}
+    dimensions=[key for key in dimension_keys if key in available]
+    columns=["account_id","debit","credit","memo",*dimensions]
+    rows=conn.execute("SELECT "+",".join(columns)+" FROM journal_lines WHERE entry_id=? ORDER BY id",(entry_id,)).fetchall()
+    if not rows:
+        raise ValueError("قيد إشعار المورد لا يحتوي على تفاصيل قابلة للعكس.")
+    lines=[(row["account_id"],Decimal(str(row["credit"] or "0")),
+            Decimal(str(row["debit"] or "0")),"عكس: "+str(row["memo"] or ""),
+            {key:row[key] for key in dimensions}) for row in rows]
+    return post_journal(conn,reversal_date,reference,description,lines,created_by)
+
+
+def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason, created_by=None):
+    try:
+        date.fromisoformat(str(cancellation_date))
+    except (TypeError,ValueError):
+        raise ValueError("تاريخ الإلغاء غير صحيح.")
+    reason=str(reason or "").strip()
+    if not reason or len(reason)>500:
+        raise ValueError("سبب إلغاء إشعار المورد مطلوب وبحد أقصى 500 حرف.")
+    note=conn.execute(
+        "SELECT * FROM supplier_credit_notes WHERE id=? AND status='posted'",(credit_note_id,)
+    ).fetchone()
+    if not note:
+        raise ValueError("إشعار المورد غير موجود أو تم إلغاؤه بالفعل.")
+    if str(cancellation_date)<str(note["credit_date"]):
+        raise ValueError("تاريخ إلغاء إشعار المورد لا يمكن أن يسبق تاريخ الإشعار.")
+    allocations=conn.execute(
+        """SELECT a.*,m.movement_no,m.movement_type,m.accounting_status
+           FROM supplier_credit_note_layer_allocations a
+           JOIN stock_movements m ON m.id=a.stock_movement_id
+           JOIN supplier_credit_note_lines l ON l.id=a.credit_note_line_id
+           WHERE l.credit_note_id=? ORDER BY a.id""",(credit_note_id,)
+    ).fetchall()
+    line_count=conn.execute(
+        "SELECT COUNT(*) FROM supplier_credit_note_lines WHERE credit_note_id=?",(credit_note_id,)
+    ).fetchone()[0]
+    if not allocations or not line_count:
+        raise ValueError("لا يمكن إلغاء إشعار قديم لا يحتوي على روابط طبقات المخزون الأصلية؛ يلزم فحصه يدويًا.")
+    if any(row["movement_type"]!="issue" or row["accounting_status"]!="posted" for row in allocations):
+        raise ValueError("حركات مخزون إشعار المورد تغيرت بالفعل؛ لا يمكن تنفيذ الإلغاء مرة أخرى.")
+    reversal_id=_reverse_supplier_credit_journal(
+        conn,note["journal_entry_id"],cancellation_date,
+        "CANCEL-"+note["credit_no"],"إلغاء إشعار دائن مشتريات "+note["supplier_credit_no"],created_by
+    )
+    for allocation in allocations:
+        movement_no="SUPCANCEL-"+datetime.now().strftime("%Y%m%d%H%M%S%f")+"-"+uuid.uuid4().hex[:5].upper()
+        cur=conn.execute(
+            """INSERT INTO stock_movements(
+              movement_no,movement_type,product_id,target_warehouse_id,target_location_id,lot_id,
+              quantity,unit_cost,total_cost,movement_date,notes,created_by,journal_entry_id,accounting_status)
+              SELECT ?, 'receipt',l.product_id,nothing.warehouse_id,?, ?,?,?,?,?,?,?,?,'posted'
+              FROM supplier_credit_note_lines nothing
+              JOIN supplier_credit_notes n ON n.id=nothing.credit_note_id
+              JOIN stock_products l ON l.id=nothing.product_id
+              WHERE nothing.id=?""",
+            (movement_no,allocation["location_id"],allocation["lot_id"],allocation["quantity"],
+             allocation["unit_cost"],allocation["total_cost"],cancellation_date,
+             "إعادة مخزون عند إلغاء مرتجع المورد "+note["credit_no"],created_by,reversal_id,
+             allocation["credit_note_line_id"])
+        )
+        if cur.rowcount!=1:
+            raise ValueError("تعذر إنشاء حركة إعادة المخزون لإحدى طبقات المرتجع.")
+        conn.execute(
+            """INSERT INTO stock_valuation_layers(
+              product_id,warehouse_id,location_id,lot_id,source_movement_id,
+              qty_in,qty_remaining,unit_cost,value_remaining)
+              SELECT l.product_id,nothing.warehouse_id,?,?,?, ?,?,?,?
+              FROM supplier_credit_note_lines nothing
+              JOIN stock_products l ON l.id=nothing.product_id
+              WHERE nothing.id=?""",
+            (allocation["location_id"],allocation["lot_id"],cur.lastrowid,
+             allocation["quantity"],allocation["quantity"],allocation["unit_cost"],
+             allocation["total_cost"],allocation["credit_note_line_id"])
+        )
+        conn.execute(
+            "UPDATE stock_movements SET movement_type='cancelled_issue',accounting_status='reversed' WHERE id=?",
+            (allocation["stock_movement_id"],)
+        )
+    credited=Decimal(str(note["total_amount"] or "0"))
+    bill=conn.execute("SELECT credited_amount FROM supplier_bills WHERE id=?",(note["bill_id"],)).fetchone()
+    new_credited=Decimal(str(bill["credited_amount"] or "0"))-credited
+    if new_credited<0:
+        raise ValueError("رصيد الإشعارات الدائنة على فاتورة المورد غير متسق؛ راجع البيانات قبل الإلغاء.")
+    conn.execute("UPDATE supplier_bills SET credited_amount=? WHERE id=?",(str(money(new_credited)),note["bill_id"]))
+    conn.execute(
+        """UPDATE supplier_credit_notes SET status='cancelled',cancel_journal_entry_id=?,
+           cancelled_by=?,cancelled_at=CURRENT_TIMESTAMP,cancellation_reason=? WHERE id=?""",
+        (reversal_id,created_by,reason,credit_note_id)
+    )
+    return {"reversal_journal_id":reversal_id}
+
+
+@purchase_bp.route("/credit-notes/<int:credit_note_id>/cancel",methods=["POST"])
+@require("purchases.manage")
+def cancel_credit_note(credit_note_id):
+    if "permissions" in session and "stock.manage" not in set(session["permissions"]):
+        flash("يلزم امتلاك صلاحية إدارة المشتريات وإدارة المخزون لإلغاء مرتجع المورد.","error")
+        return redirect(url_for("purchase.index"))
+    c=db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        result=cancel_supplier_credit_note(
+            c,credit_note_id,request.form.get("cancellation_date") or date.today().isoformat(),
+            request.form.get("reason",""),session["user_id"]
+        )
+        c.commit()
+        flash("تم إلغاء إشعار المورد وإعادة المخزون بالقيد العكسي رقم "+str(result["reversal_journal_id"]),"success")
+    except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as exc:
+        c.rollback()
+        flash(safe_error_message(exc,"تعذر إلغاء إشعار المورد. لم يتم حفظ أي تغييرات."),"error")
+    finally:
+        c.close()
+    return redirect(url_for("purchase.index"))
+
+
 @purchase_bp.route("/credit-notes/new", methods=["GET","POST"])
 @require("purchases.manage")
 def new_credit_note():
@@ -2215,13 +2363,17 @@ def new_credit_note():
                   (bill_id,product_id,warehouse_id)).fetchone()
                 if not belongs_to_bill:
                     raise ValueError("الصنف والمخزن المحددان غير موجودين ضمن استلامات فاتورة المورد الأصلية.")
-                cost,allocations=consume_layers(c,product_id,warehouse_id,qty,method)
+                cost,allocations,layer_details=consume_layers(
+                c,product_id,warehouse_id,qty,method,include_layer_details=True
+            )
                 subtotal+=cost
                 line_data.append({"product_id":product_id,"warehouse_id":warehouse_id,"quantity":qty,
                     "cost":cost,"entered_quantity":entered_qty,"uom_id":uom_id,"uom_key":raw_uom_key,
                     "entered_uom_name":entered_uom_name or stored_uom_name,
-                    "conversion_factor":conversion_factor})
-                for lot_id,allocated_qty,unit_cost,allocated_total in allocations:
+                    "conversion_factor":conversion_factor,"layer_details":layer_details,
+                    "layer_allocations":[]})
+                for allocation_index,(lot_id,allocated_qty,unit_cost,allocated_total) in enumerate(allocations):
+                    layer_detail=layer_details[allocation_index]
                     movement_no="SUPRET-"+datetime.now().strftime("%Y%m%d%H%M%S%f")+"-"+uuid.uuid4().hex[:5].upper()
                     cur=c.execute("""INSERT INTO stock_movements(
                       movement_no,movement_type,product_id,source_warehouse_id,lot_id,quantity,unit_cost,total_cost,
@@ -2232,6 +2384,12 @@ def new_credit_note():
                        request.form["credit_date"],"مرتجع مورد — "+supplier_credit_no,session["user_id"],
                        str(allocated_qty/conversion_factor),uom_id,raw_uom_key,entered_uom_name or stored_uom_name))
                     movement_ids.append(cur.lastrowid)
+                    item["layer_allocations"].append({
+                        "movement_id":cur.lastrowid,"source_layer_id":layer_detail["layer_id"],
+                        "lot_id":layer_detail["lot_id"],"location_id":layer_detail["location_id"],
+                        "quantity":layer_detail["quantity"],"unit_cost":layer_detail["unit_cost"],
+                        "total_cost":layer_detail["total_cost"],
+                    })
             subtotal=money(subtotal)
             if subtotal<=0: raise ValueError("قيمة المرتجع يجب أن تكون أكبر من صفر.")
             tax=money(subtotal*tax_rate/Decimal("100"))
@@ -2248,7 +2406,7 @@ def new_credit_note():
                str(subtotal),str(tax_rate),str(tax),str(total),session["user_id"]))
             note_id=cur.lastrowid
             for item in line_data:
-                c.execute("""INSERT INTO supplier_credit_note_lines(
+                line_cur=c.execute("""INSERT INTO supplier_credit_note_lines(
                   credit_note_id,product_id,warehouse_id,quantity,unit_cost,total_cost,
                   entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
@@ -2256,6 +2414,14 @@ def new_credit_note():
                    str(money(item["cost"]/item["quantity"])),str(item["cost"]),
                    str(item["entered_quantity"]),item["uom_id"],item["uom_key"],
                    item["entered_uom_name"],str(item["conversion_factor"])))
+                credit_line_id=line_cur.lastrowid
+                for allocation in item["layer_allocations"]:
+                    c.execute("""INSERT INTO supplier_credit_note_layer_allocations(
+                      credit_note_line_id,stock_movement_id,source_layer_id,lot_id,location_id,
+                      quantity,unit_cost,total_cost) VALUES(?,?,?,?,?,?,?,?)""",
+                      (credit_line_id,allocation["movement_id"],allocation["source_layer_id"],
+                       allocation["lot_id"],allocation["location_id"],str(allocation["quantity"]),
+                       str(allocation["unit_cost"]),str(allocation["total_cost"])))
             journal_lines=[(ap_id,total,0,"تخفيض مديونية المورد بإشعار دائن")]
             from activity_profiles import resolve_product_account_code
             return_inventory_groups={}
