@@ -1,13 +1,63 @@
-{% extends "base.html" %}{% block title %}بدل العمل أيام الجمعة | NEXUS ERP{% endblock %}{% block content %}
+{% extends "base.html" %}{% block title %}بدل العمل أيام الجمعة | NEXUS ERP{% endblock %}
+{% block scripts %}<script>
+const fridayPicker=document.getElementById('fridayEmployeePicker');
+const fridayBody=document.getElementById('fridaySelectedBody');
+const fridayInputs=document.getElementById('fridaySelectedInputs');
+const fridayCount=document.getElementById('fridaySelectedCount');
+const fridaySelected=new Map();
+function renderFridaySelected(){
+  fridayBody.innerHTML='';fridayInputs.innerHTML='';
+  if(!fridaySelected.size){const row=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=6;cell.textContent='لم تتم إضافة موظفين بعد.';row.appendChild(cell);fridayBody.appendChild(row);}
+  fridaySelected.forEach((e,id)=>{
+    const row=document.createElement('tr');
+    [e.code,e.name,e.basic,e.days,e.amount].forEach(v=>{const cell=document.createElement('td');cell.textContent=v;row.appendChild(cell);});
+    const action=document.createElement('td');const remove=document.createElement('button');remove.type='button';remove.className='secondary';remove.textContent='حذف الموظف';
+    remove.addEventListener('click',()=>{fridaySelected.delete(id);renderFridaySelected();});action.appendChild(remove);row.appendChild(action);fridayBody.appendChild(row);
+    const hidden=document.createElement('input');hidden.type='hidden';hidden.name='employee_ids';hidden.value=id;fridayInputs.appendChild(hidden);
+  });
+  fridayCount.textContent='عدد الموظفين المختارين: '+fridaySelected.size;
+}
+function addFridayOptions(options){
+  options.forEach(o=>{if(o.selected)fridaySelected.set(o.value,{code:o.dataset.code,name:o.dataset.name,basic:o.dataset.basic,days:o.dataset.days,
+    amount:(Number(o.dataset.basic||0)/30*2*Number(o.dataset.days||0)).toFixed(2)});});
+  renderFridaySelected();
+}
+document.getElementById('addAllFridayEmployees').addEventListener('click',()=>{
+  Array.from(fridayPicker.options).forEach(o=>fridaySelected.set(o.value,{code:o.dataset.code,name:o.dataset.name,basic:o.dataset.basic,days:o.dataset.days,
+    amount:(Number(o.dataset.basic||0)/30*2*Number(o.dataset.days||0)).toFixed(2)}));
+  renderFridaySelected();
+});
+document.getElementById('addSelectedFridayEmployees').addEventListener('click',()=>addFridayOptions(Array.from(fridayPicker.options)));
+fridayPicker.addEventListener('change',()=>{});
+renderFridaySelected();
+</script>{% endblock %}{% block content %}
 <header><h2>بدل العمل أيام الجمعة</h2><p>يُحسب للموظفين الذين وافقت الإدارة على استحقاقهم، وفق أيام الجمعة المسجلة «حاضر» في مصفوفة الحضور.</p>
 <p><a href="{{url_for('workforce.employees')}}">ملفات الموظفين</a> · <a href="{{url_for('workforce.attendance')}}">الحضور والانصراف</a></p></header>
 <section class="panel">
 <h3>إعداد كشف الشهر</h3>
 <p class="muted">المعادلة: الراتب الأساسي ÷ 30 × 2 × عدد أيام الجمعة التي حضرها الموظف. الراتب المتغير وأجر التأمين لا يدخلان في الحساب.</p>
-<form method="post" class="form-grid">
+<form method="post" class="form-grid" id="fridayForm">
 <label>الشهر <input type="month" name="period" value="{{selected_period}}" required></label>
 <label>حساب مصروف الأجور الإضافية <select name="expense_account_id" required>{% for a in expense_accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
 <label>حساب الأجور الإضافية المستحقة <select name="payable_account_id" required>{% for a in payable_accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<div class="panel" style="grid-column:1/-1">
+<strong>اختيار الموظفين المستحقين</strong>
+<div class="actions" style="margin:10px 0">
+<button type="button" id="addAllFridayEmployees">إضافة كل المستحقين</button>
+<button type="button" class="secondary" id="addSelectedFridayEmployees">إضافة المحددين</button>
+</div>
+<label>قائمة الموظفين الذين لديهم حضور يوم جمعة في الشهر
+<select id="fridayEmployeePicker" multiple size="7" style="width:100%">
+{% for e in employees %}<option value="{{e.id}}" data-code="{{e.employee_code}}" data-name="{{e.full_name}}" data-basic="{{e.basic_salary}}" data-days="{{e.attendance_days}}">{{e.employee_code}} - {{e.full_name}} — أيام الجمعة: {{e.attendance_days}} — الأساسي: {{e.basic_salary}}</option>{% endfor %}
+</select></label>
+<div style="overflow-x:auto;margin-top:12px">
+<table class="friday-selected-table" style="width:100%;border-collapse:collapse">
+<thead><tr><th>كود الموظف</th><th>اسم الموظف</th><th>الراتب الأساسي</th><th>أيام الجمعة الحاضرة</th><th>البدل المحسوب</th><th>إجراء</th></tr></thead>
+<tbody id="fridaySelectedBody"><tr><td colspan="6">لم تتم إضافة موظفين بعد.</td></tr></tbody>
+</table></div>
+<div id="fridaySelectedInputs"></div>
+<p id="fridaySelectedCount" class="muted">عدد الموظفين المختارين: 0</p>
+</div>
 <button type="submit">إعداد / تحديث كشف الشهر للمراجعة</button></form>
 <p class="muted">يمكن إعادة تكوين الكشف طالما أنه مسودة فقط. بعد الترحيل يصبح ثابتًا ولا يمكن إعادة احتسابه أو تكرار قيده.</p>
 </section>
