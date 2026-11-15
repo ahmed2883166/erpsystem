@@ -425,6 +425,12 @@ def initialize_workforce_schema():
         "overtime_calculated_amount": "TEXT NOT NULL DEFAULT '0'",
         "overtime_manual_override": "INTEGER NOT NULL DEFAULT 0",
         "overtime_override_reason": "TEXT NOT NULL DEFAULT ''",
+        "basic_salary_reference": "TEXT NOT NULL DEFAULT '0'",
+        "basic_salary_variance_percent": "TEXT NOT NULL DEFAULT '0'",
+        "basic_salary_change_reason": "TEXT NOT NULL DEFAULT ''",
+        "basic_salary_approval_required": "INTEGER NOT NULL DEFAULT 0",
+        "basic_salary_approved_by": "INTEGER",
+        "basic_salary_approved_at": "TEXT",
     }.items():
         if name not in payroll_cols:
             c.execute("ALTER TABLE payroll_lines ADD COLUMN " + name + " " + definition)
@@ -1732,6 +1738,90 @@ def pay_final_payroll(final_id):
         c.close()
 
 
+def _payroll_basic_salary_variance_limit(c):
+    row = c.execute(
+        "SELECT setting_value FROM company_settings WHERE setting_key='payroll_basic_salary_variance_limit_percent'"
+    ).fetchone()
+    try:
+        limit = D(row["setting_value"]) if row else Decimal("10")
+    except (ValueError, TypeError, InvalidOperation):
+        limit = Decimal("10")
+    if limit < 0 or limit > 100:
+        limit = Decimal("10")
+    return limit
+
+
+@workforce_bp.route("/hr/payroll/settings", methods=["POST"])
+@_role("admin")
+def save_payroll_settings():
+    c = _db()
+    if session.get("role") != "admin":
+        c.close()
+        flash("اعتماد إعدادات المرتبات متاح لمدير النظام فقط.", "error")
+        return redirect(url_for("workforce.payroll"))
+    try:
+        limit = M(request.form.get("basic_salary_variance_limit_percent", "10"))
+        if limit < 0 or limit > 100:
+            raise ValueError("حد اختلاف الراتب يجب أن يكون بين صفر و100%.")
+        c.execute("""INSERT INTO company_settings(setting_key,setting_value)
+            VALUES('payroll_basic_salary_variance_limit_percent',?)
+            ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value""",
+            (str(limit),))
+        _audit(c, "payroll_basic_salary_variance_limit_updated", "limit=" + str(limit))
+        c.commit()
+        flash("تم حفظ حد اختلاف الراتب الأساسي بنجاح.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc) or "تعذر حفظ إعدادات المرتبات.", "error")
+    finally:
+        c.close()
+    return redirect(url_for("workforce.payroll"))
+
+
+@workforce_bp.route("/hr/payroll/<int:run_id>/salary-approval/<int:line_id>", methods=["POST"])
+@_role("admin")
+def approve_payroll_basic_salary_change(run_id, line_id):
+    c = _db()
+    if session.get("role") != "admin":
+        c.close()
+        flash("اعتماد فروق الراتب الأساسي متاح لمدير النظام فقط.", "error")
+        return redirect(url_for("workforce.payroll_run", run_id=run_id))
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        run = c.execute("SELECT status FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+        line = c.execute("""SELECT l.*,e.full_name,e.employee_code
+            FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
+            WHERE l.id=? AND l.run_id=?""", (line_id, run_id)).fetchone()
+        if not run or run["status"] != "draft" or not line:
+            raise ValueError("لا يمكن اعتماد تعديل راتب خارج مسودة مرتبات مفتوحة.")
+        if not line["basic_salary_approval_required"]:
+            raise ValueError("هذا التعديل لا يتطلب موافقة مدير.")
+        if line["basic_salary_approved_by"]:
+            raise ValueError("تم اعتماد تعديل الراتب بالفعل.")
+        approval_note = request.form.get("approval_note", "").strip()
+        if not approval_note:
+            raise ValueError("اكتب ملاحظة اعتماد المدير قبل الموافقة على تعديل الراتب.")
+        c.execute("""UPDATE payroll_lines
+            SET basic_salary_approved_by=?,basic_salary_approved_at=CURRENT_TIMESTAMP
+            WHERE id=? AND run_id=? AND basic_salary_approval_required=1
+              AND basic_salary_approved_by IS NULL""",
+            (session["user_id"], line_id, run_id))
+        if c.execute("SELECT changes()").fetchone()[0] != 1:
+            raise ValueError("تعذر تسجيل موافقة المدير؛ أعد تحميل الشاشة.")
+        _audit(c, "payroll_basic_salary_change_approved",
+               "run=" + str(run_id) + " employee=" + line["employee_code"] +
+               " variance=" + str(line["basic_salary_variance_percent"]) +
+               "% note=" + approval_note[:250])
+        c.commit()
+        flash("تم اعتماد تعديل الراتب الأساسي للموظف " + line["full_name"] + ".", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc) or "تعذر اعتماد تعديل الراتب.", "error")
+    finally:
+        c.close()
+    return redirect(url_for("workforce.payroll_run", run_id=run_id))
+
+
 @workforce_bp.route("/hr/payroll", methods=["GET", "POST"])
 @_role("admin", "accountant")
 def payroll():
@@ -1756,18 +1846,18 @@ def payroll():
             if not employees:
                 raise ValueError("لا يوجد موظفون مستحقون للراتب في هذا الشهر حسب الموقف الوظيفي.")
             for e in employees:
-                # Every payroll amount is entered on the monthly form. Employee master
-                # data and fixed pay items are not used to calculate this payroll.
+                # Default to the employee master salary; monthly edits remain possible
+                # but are compared against the effective master value before snapshotting.
+                master_basic = M(e["basic_salary"])
                 basic_raw = request.form.get("basic_" + str(e["id"]), "")
-                if basic_raw is None or not str(basic_raw).strip():
-                    raise ValueError("الراتب الأساسي للموظف " + e["full_name"] + " مطلوب ولا يجوز تركه فارغًا.")
-                basic_salary = M(basic_raw)
+                basic_salary = M(basic_raw) if basic_raw is not None and str(basic_raw).strip() else master_basic
                 raise_amount = Decimal("0")
+                salary_reference = master_basic
                 if e["raise_effective_date"] and e["raise_effective_date"] <= (period + "-01"):
-                    master_basic = M(e["basic_salary"])
                     proposed_raise = (M(master_basic * D(e["raise_value"]) / Decimal("100"))
                                       if e["raise_type"] == "percentage" else M(e["raise_value"]))
                     expected_after_raise = M(master_basic + proposed_raise) if e["raise_mode"] == "basic" else master_basic
+                    salary_reference = expected_after_raise if e["raise_mode"] == "basic" else master_basic
                     # Apply only when the monthly form still contains the unchanged master salary.
                     # If the user already entered the raised/current salary, never add it twice.
                     if e["raise_mode"] == "basic" and basic_salary == master_basic:
@@ -1779,6 +1869,18 @@ def payroll():
                         raise_amount = proposed_raise
                 if basic_salary <= 0 and e["work_status"] != "unpaid_leave":
                     raise ValueError("الراتب الأساسي للموظف " + e["full_name"] + " يجب أن يكون أكبر من صفر.")
+                salary_change_reason = request.form.get("basic_override_reason_" + str(e["id"]), "").strip()
+                salary_difference = abs(M(basic_salary - salary_reference))
+                salary_variance_percent = (
+                    M(salary_difference * Decimal("100") / salary_reference)
+                    if salary_reference > 0 else (Decimal("100.00") if salary_difference else Decimal("0.00"))
+                )
+                salary_changed = salary_difference > Decimal("0") and e["work_status"] != "unpaid_leave"
+                if salary_changed and not salary_change_reason:
+                    raise ValueError("اكتب سبب تعديل الراتب الأساسي للموظف " + e["full_name"] + ".")
+                salary_approval_required = int(
+                    salary_changed and salary_variance_percent > _payroll_basic_salary_variance_limit(c)
+                )
                 monthly_basic_salary = basic_salary
                 payroll_days = 30
                 if e["work_status"] in {"resigned", "retired"}:
@@ -1962,6 +2064,13 @@ def payroll():
                       "0","",str(overtime_calculated_amount),
                      int(overtime_manual_override),overtime_override_reason))
                 payroll_line_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+                salary_reference_snapshot = M(salary_reference * payroll_factor) if payroll_days < 30 else salary_reference
+                c.execute("""UPDATE payroll_lines SET
+                    basic_salary_reference=?,basic_salary_variance_percent=?,
+                    basic_salary_change_reason=?,basic_salary_approval_required=?
+                    WHERE id=?""",
+                    (str(salary_reference_snapshot), str(salary_variance_percent),
+                     salary_change_reason, salary_approval_required, payroll_line_id))
                 if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_line_items'").fetchone():
                     c.execute("UPDATE payroll_lines SET penalty_deduction=? WHERE id=?",
                               (str(penalty_deduction),payroll_line_id))
@@ -2039,9 +2148,10 @@ def payroll():
         page=request.args.get("runs_page",1,type=int),
         per_page=request.args.get("runs_per_page",50,type=int))
     runs = runs_page["rows"]
+    basic_salary_variance_limit = _payroll_basic_salary_variance_limit(c)
     c.close()
     return render_template("payroll.html", employees=employees, runs=runs, runs_page=runs_page,
-                           today=today_period)
+                           today=today_period, basic_salary_variance_limit=basic_salary_variance_limit)
 
 
 @workforce_bp.route("/hr/payroll/<int:run_id>", methods=["GET"])
@@ -2264,6 +2374,13 @@ def post_payroll(run_id):
             ORDER BY e.employee_code""", (run_id,)).fetchall()
         if not rows:
             raise ValueError("لا توجد تفاصيل للمرتبات.")
+        pending_salary_approvals = [
+            row for row in rows
+            if row["basic_salary_approval_required"] and not row["basic_salary_approved_by"]
+        ]
+        if pending_salary_approvals:
+            names = "، ".join(row["full_name"] for row in pending_salary_approvals[:5])
+            raise ValueError("لا يمكن ترحيل المرتبات قبل موافقة المدير على فروق الراتب الأساسي التي تجاوزت الحد المحدد: " + names)
         salary_expense = int(request.form["salary_expense_account"])
         salaries_payable = int(request.form["salaries_payable_account"])
         tax_payable = int(request.form["tax_payable_account"])
