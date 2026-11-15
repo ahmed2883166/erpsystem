@@ -90,6 +90,21 @@ class CashCommitmentsTests(unittest.TestCase):
             [],
         )
 
+    def test_future_dated_full_payment_does_not_hide_commitment_as_of_earlier_date(self):
+        commitment_id = self._commitment("100")
+        record_cash_commitment_payment(
+            self.conn, commitment_id, "2026-11-20", "100", 1
+        )
+        report = list_cash_commitments_forecast(
+            self.conn, "2026-11-15", "2026-12-15"
+        )
+        self.assertEqual(len(report), 1)
+        self.assertEqual(report[0]["balance"], Decimal("100.00"))
+        report_after_payment = list_cash_commitments_forecast(
+            self.conn, "2026-11-21", "2026-12-15"
+        )
+        self.assertEqual(report_after_payment, [])
+
     def test_duplicate_source_reference_is_rejected(self):
         create_cash_commitment(
             self.conn, "friday_overtime", "بدل جمعة", "150", "2026-11-30",
