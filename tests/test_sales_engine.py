@@ -857,6 +857,19 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(sum((Decimal(x["credit"]) for x in refund_lines), Decimal("0")), Decimal("50.00"))
 
     def test_credit_note_cancellation_posts_reversals_and_removes_returned_stock(self):
+        self.db.execute("INSERT INTO accounts(code,name_ar,account_type) VALUES('3000','حقوق الملكية','equity')")
+        inventory_id = self.db.execute("SELECT id FROM accounts WHERE code='1150'").fetchone()["id"]
+        equity_id = self.db.execute("SELECT id FROM accounts WHERE code='3000'").fetchone()["id"]
+        self.db.execute(
+            """INSERT INTO journal_entries(entry_date,reference,description,status,created_by,created_at)
+               VALUES('2026-01-01','OPEN-STOCK-SALES-CANCEL','رصيد مخزون افتتاحي','posted',1,'2026-01-01')"""
+        )
+        opening_id = self.db.execute("SELECT id FROM journal_entries WHERE reference='OPEN-STOCK-SALES-CANCEL'").fetchone()["id"]
+        self.db.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?)",
+            [(opening_id,inventory_id,'50','0','رصيد المخزون الافتتاحي'),
+             (opening_id,equity_id,'0','50','حقوق الملكية الافتتاحية')]
+        )
         self.db.execute("BEGIN IMMEDIATE")
         invoice = sales.post_invoice(
             self.db, self.customer_id, "2026-11-10", self.warehouse_id,
@@ -890,6 +903,38 @@ class SalesIntegrationTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(Decimal(layer["qty_remaining"]), Decimal("0"))
         self.assertEqual(Decimal(layer["value_remaining"]), Decimal("0"))
+        cancelled_movement = self.db.execute(
+            """SELECT movement_type,accounting_status FROM stock_movements
+               WHERE id=(SELECT stock_movement_id FROM sales_credit_note_lines WHERE credit_note_id=?)""",
+            (credit["credit_note_id"],)
+        ).fetchone()
+        self.assertEqual(tuple(cancelled_movement), ("cancelled_receipt", "reversed"))
+        self.assertEqual(
+            stock.current_qty(self.db, self.product_id, self.warehouse_id),
+            Decimal("3")
+        )
+        remaining_layer_value = sum(
+            (Decimal(row["value_remaining"] or "0") for row in self.db.execute(
+                "SELECT value_remaining FROM stock_valuation_layers WHERE product_id=?",
+                (self.product_id,)
+            ).fetchall()),
+            Decimal("0")
+        )
+        inventory_gl = self.db.execute(
+            """SELECT SUM(CAST(jl.debit AS NUMERIC)-CAST(jl.credit AS NUMERIC))
+               FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+               WHERE jl.account_id=? AND je.status='posted'""",
+            (inventory_id,)
+        ).fetchone()[0]
+        self.assertEqual(remaining_layer_value, Decimal("30.00"))
+        self.assertEqual(Decimal(str(inventory_gl)), Decimal("30"))
+        self.assertEqual(remaining_layer_value, Decimal(str(inventory_gl)))
+        unbalanced = self.db.execute(
+            """SELECT je.id FROM journal_entries je JOIN journal_lines jl ON jl.entry_id=je.id
+               GROUP BY je.id
+               HAVING ABS(SUM(CAST(jl.debit AS NUMERIC))-SUM(CAST(jl.credit AS NUMERIC)))>0.005"""
+        ).fetchall()
+        self.assertEqual(unbalanced, [])
 
     def test_insufficient_stock_rolls_back_invoice(self):
         self.db.execute("BEGIN IMMEDIATE")
