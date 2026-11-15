@@ -91,6 +91,14 @@ def initialize_workforce_schema():
     CREATE TABLE IF NOT EXISTS workforce_migrations(
       migration_key TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS employee_employment_history(
+      id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id),
+      from_status TEXT NOT NULL DEFAULT '', to_status TEXT NOT NULL,
+      effective_date TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
+      created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_employee_employment_history
+      ON employee_employment_history(employee_id,effective_date,id);
     CREATE TABLE IF NOT EXISTS payroll_runs(
       id INTEGER PRIMARY KEY, period TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'draft',
       journal_entry_id INTEGER UNIQUE, created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -750,6 +758,10 @@ def employees():
                 branch_id,cost_center_id,project_id,termination_date,friday_work_eligible,photo_path)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (*values, photo_path or ""))
+            employee_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+            c.execute("""INSERT INTO employee_employment_history
+                (employee_id,from_status,to_status,effective_date,reason,created_by)
+                VALUES(?,?,?,?,?,?)""",(employee_id,"",values[14],values[23] or values[4],"تسجيل الحالة عند إنشاء ملف الموظف",session.get("user_id")))
             _audit(c, "employee_created", values[0])
             c.commit()
             flash("تم إضافة الموظف وحفظ بياناته الوظيفية والأجرية.", "success")
@@ -791,6 +803,8 @@ def edit_employee(employee_id):
                 values[index] = employee[column]
             values = tuple(values)
             _validate_employee_dimensions(c, values)
+            old_work_status = employee["work_status"]
+            old_termination_date = employee["termination_date"] or ""
             new_photo_path = _save_employee_photo(request.files.get("photo"))
             old_photo_path = employee["photo_path"]
             photo_path = new_photo_path
@@ -806,6 +820,12 @@ def edit_employee(employee_id):
                     address=?,national_id=?,work_status=?,raise_type=?,raise_value=?,raise_mode=?,
                     raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=?,termination_date=?,friday_work_eligible=? WHERE id=?""",
                     (*values, employee_id))
+            if old_work_status != values[14] or old_termination_date != (values[23] or ""):
+                effective_date = values[23] or date.today().isoformat()
+                reason = request.form.get("employment_change_reason", "").strip() or "تعديل الحالة من ملف الموظف"
+                c.execute("""INSERT INTO employee_employment_history
+                    (employee_id,from_status,to_status,effective_date,reason,created_by)
+                    VALUES(?,?,?,?,?,?)""",(employee_id,old_work_status,values[14],effective_date,reason,session.get("user_id")))
             _audit(c, "employee_updated", values[0])
             c.commit()
             if new_photo_path:
@@ -820,6 +840,50 @@ def edit_employee(employee_id):
     dimensions = _dimension_options(c)
     c.close()
     return render_template("employee_edit.html", e=employee, dimensions=dimensions)
+
+
+@workforce_bp.route("/hr/<int:employee_id>/employment-history", methods=["GET", "POST"])
+@_role("admin", "accountant")
+def employee_employment_history(employee_id):
+    c = _db()
+    employee = c.execute("SELECT * FROM employees WHERE id=?", (employee_id,)).fetchone()
+    if not employee:
+        c.close()
+        flash("الموظف غير موجود.", "error")
+        return redirect(url_for("workforce.employees"))
+    if request.method == "POST":
+        try:
+            status = request.form.get("work_status", "").strip().lower()
+            effective_date = date.fromisoformat(request.form.get("effective_date", "")).isoformat()
+            reason = request.form.get("reason", "").strip()
+            allowed = {"permanent", "temporary", "comprehensive_bonus", "unpaid_leave", "resigned", "retired"}
+            if status not in allowed or not reason:
+                raise ValueError("اختر حالة وظيفية صحيحة واكتب سبب التغيير.")
+            termination_date = effective_date if status in {"resigned", "retired"} else ""
+            c.execute("BEGIN IMMEDIATE")
+            current = c.execute("SELECT work_status,termination_date FROM employees WHERE id=?", (employee_id,)).fetchone()
+            if not current:
+                raise ValueError("الموظف غير موجود.")
+            if current["work_status"] == status and (current["termination_date"] or "") == termination_date:
+                raise ValueError("الحالة المختارة مطابقة للحالة الحالية بالفعل.")
+            c.execute("UPDATE employees SET work_status=?,termination_date=? WHERE id=?",
+                      (status,termination_date,employee_id))
+            c.execute("""INSERT INTO employee_employment_history
+                (employee_id,from_status,to_status,effective_date,reason,created_by)
+                VALUES(?,?,?,?,?,?)""",(employee_id,current["work_status"],status,effective_date,reason,session.get("user_id")))
+            _audit(c,"employee_employment_status_changed",f"{employee[\"employee_code\"]}: {current[\"work_status\"]} -> {status}; {effective_date}")
+            c.commit()
+            flash("تم تسجيل التغيير الوظيفي مع الاحتفاظ بالحالة السابقة وسجل المرتبات.", "success")
+            c.close()
+            return redirect(url_for("workforce.employee_employment_history", employee_id=employee_id))
+        except (ValueError, sqlite3.Error) as exc:
+            c.rollback()
+            flash(str(exc) or "تعذر تسجيل التغيير الوظيفي.", "error")
+    history = c.execute("""SELECT * FROM employee_employment_history
+        WHERE employee_id=? ORDER BY effective_date DESC,id DESC""", (employee_id,)).fetchall()
+    c.close()
+    return render_template("employee_employment_history.html", employee=employee, history=history,
+        today=date.today().isoformat())
 
 
 @workforce_bp.route("/hr/<int:employee_id>/form-2-salary", methods=["GET"])
