@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import io
 import unittest
+from decimal import Decimal
 from pathlib import Path
 
 from flask import Flask
@@ -10,7 +11,7 @@ from werkzeug.datastructures import FileStorage
 import workforce
 import workforce_extras
 import payroll_compliance
-from cash_commitments import initialize_cash_commitments_schema
+from cash_commitments import initialize_cash_commitments_schema, list_cash_commitments_forecast
 
 
 class WorkforceExtrasTests(unittest.TestCase):
@@ -320,6 +321,9 @@ class WorkforceExtrasTests(unittest.TestCase):
             FROM cash_commitments""").fetchone()
         self.assertEqual(commitment,("friday_overtime","بدل الجمعة - 2026-11","1333.33",
             "2026-11-30","friday_allowance_batch",1,3))
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM cash_commitment_payments").fetchone()[0],0)
+        forecast=list_cash_commitments_forecast(conn,"2026-11-01","2026-12-31")
+        self.assertEqual(forecast[0]["balance"],Decimal("1333.33"))
         duplicate=self.client.post("/hr/friday-allowance/1/post",data={})
         self.assertEqual(duplicate.status_code,302)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries WHERE reference='FRIDAY-ALLOWANCE-2026-11'").fetchone()[0],1)
