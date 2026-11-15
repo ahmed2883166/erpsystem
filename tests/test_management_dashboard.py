@@ -148,6 +148,30 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(forecast["weeks"][2]["receipts"], Decimal("300.00"))
         self.assertEqual(forecast["weeks"][2]["payments"], Decimal("400.00"))
 
+    def test_dashboard_cash_forecast_includes_payroll_grants_and_other_commitments(self):
+        from unittest.mock import patch
+
+        source = {
+            "items": [
+                {"kind": "customers", "due_date": "2026-11-13", "balance": Decimal("100")},
+                {"kind": "suppliers", "due_date": "2026-11-19", "balance": Decimal("40")},
+                {"kind": "payroll", "due_date": "2026-11-26", "balance": Decimal("200")},
+                {"kind": "employee_grants", "due_date": "2026-11-28", "balance": Decimal("50")},
+                {"kind": "cash_commitment", "due_date": "2026-12-01", "balance": Decimal("30")},
+            ],
+            "errors": [],
+        }
+        with patch("management_reports.build_cash_forecast", return_value=source):
+            forecast = cash_forecast(self.conn, date(2026, 11, 11), 8)
+
+        self.assertEqual(forecast["weeks"][0]["receipts"], Decimal("100.00"))
+        self.assertEqual(forecast["weeks"][1]["payments"], Decimal("40.00"))
+        self.assertEqual(forecast["weeks"][2]["payments"], Decimal("250.00"))
+        self.assertEqual(forecast["weeks"][3]["payments"], Decimal("30.00"))
+        self.assertEqual(forecast["payroll_due"], Decimal("200.00"))
+        self.assertEqual(forecast["grants_due"], Decimal("50.00"))
+        self.assertEqual(forecast["other_commitments_due"], Decimal("30.00"))
+
     def test_management_snapshot_explicitly_excludes_closing_entries_from_period_totals(self):
         from unittest.mock import patch
         from management_dashboard import dashboard_period_balances as original
