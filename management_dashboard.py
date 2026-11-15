@@ -194,9 +194,9 @@ def dashboard_period_balances(conn, current_start, current_end, previous_start, 
             THEN jl.debit ELSE '0' END),'0') opening_debit,
           COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date < ?{opening_exclusion_sql}
             THEN jl.credit ELSE '0' END),'0') opening_credit,
-          COALESCE(DECIMAL_SUM(CASE WHEN ${asof_exclusion_sql}
+          COALESCE(DECIMAL_SUM(CASE WHEN {asof_exclusion_sql}
             THEN jl.debit ELSE '0' END),'0') asof_debit,
-          COALESCE(DECIMAL_SUM(CASE WHEN ${asof_exclusion_sql}
+          COALESCE(DECIMAL_SUM(CASE WHEN {asof_exclusion_sql}
             THEN jl.credit ELSE '0' END),'0') asof_credit
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
