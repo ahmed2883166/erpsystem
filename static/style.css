@@ -706,3 +706,25 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  .income-report-filter .report-actions>*{width:100%;min-width:0}
  .ledger-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+/* Party, bank and inventory reporting workspaces */
+.cash-account-layout{display:flex;flex-direction:column;gap:16px}
+.cash-account-layout>.panel{width:100%;min-width:0}
+.cash-account-create form{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.cash-account-create form>button,.cash-account-create form>.muted{grid-column:1/-1}
+.cash-account-register table{min-width:980px}
+.bank-reconciliation-filter .form-grid{align-items:end}
+.reconciliation-kpis{grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+.reconciliation-kpis article{min-width:0}
+.report-page-header{align-items:flex-start}
+.report-page-header>div:first-child{min-width:0;flex:1 1 320px}
+.report-page-header .table-actions{flex:0 1 auto}
+.report-page-header .table-actions>*{min-height:39px}
+.inventory-ageing .report-filter{align-items:end}
+@media(max-width:560px){
+ .cash-account-create form{grid-template-columns:minmax(0,1fr)}
+ .cash-account-create form>button,.cash-account-create form>.muted{grid-column:auto}
+ .cash-account-register table{min-width:980px}
+ .reconciliation-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .bank-reconciliation-filter .form-grid{grid-template-columns:minmax(0,1fr)}
+}
