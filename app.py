@@ -279,6 +279,26 @@ def user_permissions_storage(selected, role, role_permissions):
     defaults = normalize_user_permissions(role_permissions.get(role, []))
     return None if normalized == defaults else json.dumps(normalized, ensure_ascii=False)
 
+def assert_user_management_scope(target=None, requested_role=None, requested_permissions=None):
+    """Prevent non-admin user managers from granting or editing beyond their own authority."""
+    if session.get("role") == "admin":
+        return
+    actor_permissions = set(normalize_user_permissions(
+        session.get("permissions", role_default_permissions(session.get("role")))
+    ))
+    if target is not None:
+        target_role = target["role"]
+        target_permissions = set(stored_user_permissions(target["permissions_json"], target_role))
+        if target_role == "admin" or not target_permissions.issubset(actor_permissions):
+            raise ValueError("لا تملك صلاحية إدارة هذا المستخدم لأنه يملك صلاحيات أعلى من صلاحياتك.")
+    if requested_role == "admin":
+        raise ValueError("إنشاء أو إسناد دور مدير النظام متاح لمدير النظام فقط.")
+    if requested_permissions is not None:
+        requested = set(normalize_user_permissions(requested_permissions))
+        if not requested.issubset(actor_permissions):
+            raise ValueError("لا يمكنك منح مستخدم صلاحيات لا تملكها بنفسك.")
+
+
 register_report_exports(app, DB_PATH, PERMISSIONS)
 
 
@@ -3232,6 +3252,7 @@ def users():
             if role not in role_permissions:
                 raise ValueError("الدور المحدد غير صحيح أو غير نشط.")
             selected = normalize_user_permissions(request.form.getlist("permissions"))
+            assert_user_management_scope(requested_role=role, requested_permissions=selected)
             stored_permissions = user_permissions_storage(selected, role, role_permissions)
             username = request.form["username"].strip()
             connection.execute(
@@ -3257,6 +3278,16 @@ def users():
         except ValueError as exc:
             connection.rollback()
             flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
+    is_role_admin = session.get("role") == "admin"
+    actor_permissions = set(normalize_user_permissions(
+        session.get("permissions", role_default_permissions(session.get("role")))
+    ))
+    available_role_permissions = role_permissions if is_role_admin else {
+        key: values for key, values in role_permissions.items() if key != "admin"
+    }
+    available_permissions = list(ALL_PERMISSIONS) if is_role_admin else [
+        permission for permission in ALL_PERMISSIONS if permission in actor_permissions
+    ]
     rows = [dict(row) for row in connection.execute(
         "SELECT id,username,full_name,role,active,created_at,permissions_json FROM users ORDER BY id"
     ).fetchall()]
@@ -3265,10 +3296,10 @@ def users():
         row["effective_permissions"] = stored_user_permissions(row["permissions_json"], row["role"])
     connection.close()
     return render_template(
-        "users.html", users=rows, role_permissions=role_permissions, role_names=role_names,
-        custom_roles=custom_roles, is_role_admin=session.get("role") == "admin",
-        default_permissions=sorted(PERMISSIONS.get("admin", set())),
-        all_permissions=ALL_PERMISSIONS, permission_labels=PERMISSION_LABELS,
+        "users.html", users=rows, role_permissions=available_role_permissions, role_names=role_names,
+        custom_roles=custom_roles, is_role_admin=is_role_admin,
+        default_permissions=sorted(PERMISSIONS.get("admin", set())) if is_role_admin else sorted(actor_permissions),
+        all_permissions=available_permissions, permission_labels=PERMISSION_LABELS,
     )
 
 
@@ -3376,6 +3407,22 @@ def edit_user(user_id):
         flash("المستخدم غير موجود.", "error")
         return redirect(url_for("users"))
     role_permissions, role_names, _custom_roles = role_permissions_catalog(connection, include_role=user["role"])
+    try:
+        assert_user_management_scope(target=user)
+    except ValueError as exc:
+        connection.close()
+        flash(str(exc), "error")
+        return redirect(url_for("users"))
+    is_role_admin = session.get("role") == "admin"
+    actor_permissions = set(normalize_user_permissions(
+        session.get("permissions", role_default_permissions(session.get("role")))
+    ))
+    available_role_permissions = role_permissions if is_role_admin else {
+        key: values for key, values in role_permissions.items() if key != "admin"
+    }
+    available_permissions = list(ALL_PERMISSIONS) if is_role_admin else [
+        permission for permission in ALL_PERMISSIONS if permission in actor_permissions
+    ]
     if request.method == "POST":
         role = request.form.get("role")
         if role not in role_permissions:
@@ -3383,6 +3430,9 @@ def edit_user(user_id):
         else:
             try:
                 selected = normalize_user_permissions(request.form.getlist("permissions"))
+                assert_user_management_scope(
+                    target=user, requested_role=role, requested_permissions=selected
+                )
                 if user_id == session.get("user_id"):
                     current_permissions = stored_user_permissions(user["permissions_json"], user["role"])
                     requested_active = 1 if request.form.get("active") == "yes" else 0
@@ -3429,8 +3479,8 @@ def edit_user(user_id):
     selected_permissions = set(stored_user_permissions(user["permissions_json"], user["role"]))
     connection.close()
     return render_template(
-        "user_edit.html", user=user, roles=role_permissions, role_names=role_names,
-        all_permissions=ALL_PERMISSIONS, permission_labels=PERMISSION_LABELS,
+        "user_edit.html", user=user, roles=available_role_permissions, role_names=role_names,
+        all_permissions=available_permissions, permission_labels=PERMISSION_LABELS,
         selected_permissions=selected_permissions,
     )
 
