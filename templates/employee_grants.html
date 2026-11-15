@@ -25,15 +25,16 @@
 <button type="button" id="calculateGrantPreview" class="secondary">احتساب</button>
 </div>
 <p id="grantCalculationStatus" class="muted">أدخل قاعدة المنحة واختر الموظفين، ثم اضغط «احتساب» لمراجعة المبالغ قبل إنشاء الكشف.</p>
+<label>فلترة حسب الإدارة <input type="text" id="grantDepartmentFilter" placeholder="اكتب اسم الإدارة لعرض موظفيها"></label>
 <label>اختر موظفين محددين
 <select id="grantEmployeePicker" multiple size="6" style="width:100%">
-{% for e in employees %}<option value="{{e.id}}" data-status="{{e.work_status}}" data-code="{{e.employee_code}}" data-name="{{e.full_name}}" data-basic="{{e.basic_salary}}">{{e.employee_code}} - {{e.full_name}} ({{'مثبت' if e.work_status=='permanent' else 'مكافأة شاملة'}}) — أساسي {{e.basic_salary}}</option>{% endfor %}
+{% for e in employees %}<option value="{{e.id}}" data-status="{{e.work_status}}" data-code="{{e.employee_code}}" data-name="{{e.full_name}}" data-basic="{{e.basic_salary}}" data-department="{{e.department or ''}}">{{e.employee_code}} - {{e.full_name}} ({{'مثبت' if e.work_status=='permanent' else 'مكافأة شاملة'}}) — أساسي {{e.basic_salary}}</option>{% endfor %}
 </select>
 <small>اختيار الموظفين يكون حسب فئة الاستحقاق. المستقيل أو المحال للمعاش أو في إجازة بدون مرتب غير مؤهل.</small>
 </label>
 <div style="overflow-x:auto;margin-top:12px">
 <table id="grantSelectedTable">
-<thead><tr><th>الكود</th><th>اسم الموظف</th><th>الفئة</th><th>الراتب الأساسي</th><th>مبلغ المنحة المحسوب</th><th>إجراء</th></tr></thead>
+<thead><tr><th>الكود</th><th>اسم الموظف</th><th>الإدارة</th><th>الفئة</th><th>الراتب الأساسي</th><th>مبلغ المنحة المحسوب</th><th>إجراء</th></tr></thead>
 <tbody id="grantSelectedBody"><tr id="grantEmptyRow"><td colspan="6">لم تتم إضافة موظفين بعد.</td></tr></tbody>
 </table>
 </div>
@@ -90,8 +91,10 @@ function scopeAllows(status){
     (grantScope.value==='comprehensive_bonus' && status==='comprehensive_bonus');
 }
 function refreshGrantPicker(){
+  const departmentQuery=(document.getElementById('grantDepartmentFilter').value||'').trim().toLowerCase();
   Array.from(picker.options).forEach(option=>{
-    option.hidden=!scopeAllows(option.dataset.status);
+    const departmentMatches=!departmentQuery || (option.dataset.department||'').toLowerCase().includes(departmentQuery);
+    option.hidden=!scopeAllows(option.dataset.status) || !departmentMatches;
     if(option.hidden) option.selected=false;
   });
 }
@@ -100,12 +103,12 @@ function renderSelectedGrantEmployees(){
   hiddenInputs.innerHTML='';
   if(!selectedEmployees.size){
     const row=document.createElement('tr');
-    const cell=document.createElement('td');cell.colSpan=6;cell.textContent='لم تتم إضافة موظفين بعد.';
+    const cell=document.createElement('td');cell.colSpan=7;cell.textContent='لم تتم إضافة موظفين بعد.';
     row.appendChild(cell);selectedBody.appendChild(row);
   }
   selectedEmployees.forEach((employee,id)=>{
     const row=document.createElement('tr');
-    [employee.code,employee.name,employee.status==='permanent'?'مثبت':'مكافأة شاملة',employee.basic,employee.amount||'—'].forEach(value=>{
+    [employee.code,employee.name,employee.department||'-',employee.status==='permanent'?'مثبت':'مكافأة شاملة',employee.basic,employee.amount||'—'].forEach(value=>{
       const cell=document.createElement('td');cell.textContent=value;row.appendChild(cell);
     });
     const action=document.createElement('td');
@@ -121,20 +124,21 @@ function addGrantOptions(options){
   options.forEach(option=>{
     if(!option.selected || option.hidden || !scopeAllows(option.dataset.status)) return;
     selectedEmployees.set(option.value,{code:option.dataset.code,name:option.dataset.name,
-      basic:option.dataset.basic,status:option.dataset.status});
+      basic:option.dataset.basic,department:option.dataset.department,status:option.dataset.status});
   });
   invalidateGrantPreview();
   renderSelectedGrantEmployees();
 }
 document.getElementById('addAllGrantEmployees').addEventListener('click',()=>{
-  Array.from(picker.options).filter(option=>scopeAllows(option.dataset.status)).forEach(option=>{
+  Array.from(picker.options).filter(option=>!option.hidden).forEach(option=>{
     selectedEmployees.set(option.value,{code:option.dataset.code,name:option.dataset.name,
-      basic:option.dataset.basic,status:option.dataset.status});
+      basic:option.dataset.basic,department:option.dataset.department,status:option.dataset.status});
   });
   invalidateGrantPreview();
   renderSelectedGrantEmployees();
 });
 document.getElementById('addSelectedGrantEmployees').addEventListener('click',()=>addGrantOptions(Array.from(picker.options)));
+document.getElementById('grantDepartmentFilter').addEventListener('input',()=>{refreshGrantPicker();});
 grantScope.addEventListener('change',()=>{
   selectedEmployees.clear();invalidateGrantPreview();refreshGrantPicker();renderSelectedGrantEmployees();
 });
