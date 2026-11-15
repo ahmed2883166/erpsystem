@@ -465,11 +465,67 @@ def validate_asset_bill_data(c, form, bill_date, subtotal):
         "asset_expense_account_id": ids["asset_expense_account_id"],
     }
 
+def _supplier_price_insights(conn, lookback_days=365):
+    """Compare posted historical supplier prices by product using quantity-weighted averages."""
+    required=("supplier_bill_inventory_lines","supplier_bills","suppliers","stock_products")
+    present={row["name"] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if not set(required).issubset(present):
+        return [], False
+    start=(date.today()-__import__("datetime").timedelta(days=lookback_days)).isoformat()
+    rows=conn.execute("""SELECT bl.product_id,bl.billed_quantity,bl.invoice_unit_price,
+            b.supplier_id,b.bill_date,b.id bill_id,s.name supplier_name,
+            p.sku,p.name_ar
+        FROM supplier_bill_inventory_lines bl
+        JOIN supplier_bills b ON b.id=bl.bill_id
+        JOIN suppliers s ON s.id=b.supplier_id
+        LEFT JOIN stock_products p ON p.id=bl.product_id
+        WHERE b.status='posted' AND b.bill_date>=? AND b.bill_date<=?
+        ORDER BY b.bill_date DESC,b.id DESC,bl.id DESC""",
+        (start,date.today().isoformat())).fetchall()
+    grouped={}
+    for row in rows:
+        key=(row["product_id"],row["supplier_id"])
+        item=grouped.setdefault(key,{
+            "product_id":row["product_id"],"sku":row["sku"] or "",
+            "product_name":row["name_ar"] or "صنف غير معروف",
+            "supplier_id":row["supplier_id"],"supplier_name":row["supplier_name"],
+            "quantity":Decimal("0"),"weighted_value":Decimal("0"),
+            "latest_price":None,"latest_date":None,
+        })
+        qty=Decimal(str(row["billed_quantity"] or "0"))
+        price=Decimal(str(row["invoice_unit_price"] or "0"))
+        if qty>0 and price>=0:
+            item["quantity"]+=qty
+            item["weighted_value"]+=qty*price
+        if item["latest_price"] is None:
+            item["latest_price"]=price
+            item["latest_date"]=row["bill_date"]
+    by_product={}
+    for item in grouped.values():
+        item["weighted_average"]=(item["weighted_value"]/item["quantity"]) if item["quantity"] else Decimal("0")
+        item["change_percent"]=(
+            (item["latest_price"]-item["weighted_average"])*Decimal("100")/item["weighted_average"]
+            if item["weighted_average"] else None
+        )
+        by_product.setdefault(item["product_id"],[]).append(item)
+    result=[]
+    for suppliers_for_product in by_product.values():
+        suppliers_for_product.sort(key=lambda item:(item["latest_price"],item["supplier_name"]))
+        best_price=suppliers_for_product[0]["latest_price"]
+        for item in suppliers_for_product:
+            item["best_latest_price"]=item["latest_price"]==best_price
+            result.append(item)
+    result.sort(key=lambda item:(item["sku"],item["latest_price"],item["supplier_name"]))
+    return result, True
+
+
 @purchase_bp.route("/")
 @require("purchases.view")
 def index():
     c=db()
     suppliers=c.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
+    price_insights, price_insights_available = _supplier_price_insights(c)
     orders_page = fetch_page(c,
         """SELECT p.*,s.name supplier_name FROM purchase_orders p
            JOIN suppliers s ON s.id=p.supplier_id ORDER BY p.id DESC""",
@@ -507,6 +563,7 @@ def index():
     return render_template("purchases.html",suppliers=suppliers,orders=orders,receipts=receipts,bills=bills,
         payments=payments,credit_notes=credit_notes,orders_page=orders_page,receipts_page=receipts_page,
         bill_page=bill_page,payments_page=payments_page,credit_notes_page=credit_notes_page,
+        price_insights=price_insights,price_insights_available=price_insights_available,
         today=date.today().isoformat())
 
 @purchase_bp.route("/three-way-match")
