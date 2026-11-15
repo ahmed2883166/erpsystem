@@ -32,6 +32,7 @@
 <button type="submit" onclick="return confirm('اعتماد المرتب النهائي وترحيل قيده المحاسبي؟')">اعتماد وترحيل القيد</button>
 </form></details>
 {% else %}
+{% if r.status=='cancelled' and not r.journal_entry_id %}<form method="post" action="{{url_for('workforce.reopen_final_payroll',final_id=r.id)}}" onsubmit="return confirm('إعادة فتح المسودة الملغاة؟')"><button type="submit" class="secondary">إعادة فتح المسودة</button></form>{% endif %}
 {% if r.journal_entry_id %}<a href="{{url_for('journal_detail',entry_id=r.journal_entry_id)}}">عرض القيد {{r.journal_entry_id}}</a>{% endif %}
 {% if r.status in ['approved','paid'] %}
 <p>تم صرف: {{r.paid_amount}} — المتبقي: {{r.remaining_amount}}</p>
