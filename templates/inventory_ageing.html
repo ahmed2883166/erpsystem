@@ -8,8 +8,8 @@
 {% for key,label in [('0_30','0–30 يوم'),('31_60','31–60 يوم'),('61_90','61–90 يوم'),('over_90','أكثر من 90 يوم')] %}
 <article class="panel"><small class="muted">{{ label }}</small><h2>{{ report.totals[key]|money }}</h2></article>
 {% endfor %}</section>
-<section class="panel"><h3>تفاصيل الطبقات والأصناف</h3><div class="table-wrap"><table><thead><tr><th>الصنف</th><th>المخزن</th><th>تاريخ الطبقة</th><th>العمر بالأيام</th><th>الكمية المتبقية</th><th>تكلفة الوحدة</th><th>القيمة</th><th>الصلاحية</th></tr></thead><tbody>
-{% for row in report.rows %}<tr><td>{{ row.sku }} - {{ row.product_name }}</td><td>{{ row.warehouse }}</td><td>{{ row.layer_date }}</td><td>{{ row.age_days }}</td><td>{{ row.quantity }}</td><td>{{ row.unit_cost|money }}</td><td>{{ row.value|money }}</td><td>{{ row.expiry_date or '—' }}</td></tr>{% else %}<tr><td colspan="8">لا توجد طبقات مخزون بكميات متبقية.</td></tr>{% endfor %}
-</tbody></table></div><p class="muted">التصنيف مبني على تاريخ إنشاء طبقة التقييم. لا يتم وصف الصنف بأنه راكد لمجرد قدم الطبقة إذا كانت هناك حركات لاحقة؛ راجع تاريخ آخر حركة قبل اتخاذ قرار التخفيض أو الإعدام.</p></section>
+<section class="panel"><h3>تفاصيل الطبقات والأصناف</h3><div class="table-wrap"><table><thead><tr><th>الصنف</th><th>المخزن</th><th>تاريخ الطبقة</th><th>عمر الطبقة</th><th>آخر حركة</th><th>حالة الركود</th><th>الكمية المتبقية</th><th>تكلفة الوحدة</th><th>القيمة</th><th>الصلاحية</th></tr></thead><tbody>
+{% for row in report.rows %}<tr><td>{{ row.sku }} - {{ row.product_name }}</td><td>{{ row.warehouse }}</td><td>{{ row.layer_date }}</td><td>{{ row.age_days }}</td><td>{{ row.last_movement_date or 'غير مسجل' }}</td><td>{{ 'راكد أكثر من 90 يومًا' if row.slow_moving else 'له حركة حديثة' }}</td><td>{{ row.quantity }}</td><td>{{ row.unit_cost|money }}</td><td>{{ row.value|money }}</td><td>{{ row.expiry_date or '—' }}</td></tr>{% else %}<tr><td colspan="10">لا توجد طبقات مخزون بكميات متبقية.</td></tr>{% endfor %}
+</tbody></table></div><p class="muted">عمر الطبقة يوضح مدة بقاء الكمية الحالية. ويُصنف الصنف راكدًا إذا لم تُسجل له حركة في المخزن لأكثر من 90 يومًا؛ وعند غياب بيانات الحركات نستخدم عمر الطبقة كإشارة تحذيرية فقط.</p></section>
 {% endif %}
 {% endblock %}
