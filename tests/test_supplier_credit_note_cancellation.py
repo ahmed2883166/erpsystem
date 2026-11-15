@@ -66,6 +66,13 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
         )
         self.conn.execute("INSERT INTO stock_products VALUES(1)")
         self.conn.execute(
+            """INSERT INTO stock_movements(
+                id,movement_no,movement_type,product_id,target_warehouse_id,quantity,
+                unit_cost,total_cost,movement_date,notes,accounting_status
+            ) VALUES(5,'PUR-5','receipt',1,10,'5','15','75',
+                     '2026-05-01','استلام أصلي','posted')"""
+        )
+        self.conn.execute(
             """INSERT INTO supplier_credit_note_lines(
                 id,credit_note_id,product_id,warehouse_id,quantity,total_cost
             ) VALUES(40,30,1,10,'2.5','37.5')"""
@@ -122,7 +129,16 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
         original_move = self.conn.execute(
             "SELECT movement_type,accounting_status FROM stock_movements WHERE id=50"
         ).fetchone()
-        self.assertEqual(tuple(original_move), ("cancelled_issue", "reversed"))
+        self.assertEqual(tuple(original_move), ("issue", "posted"))
+        stock_balance = self.conn.execute(
+            """SELECT
+                SUM(CASE WHEN movement_type='receipt' AND target_warehouse_id=10
+                         THEN CAST(quantity AS REAL) ELSE 0 END)
+                - SUM(CASE WHEN movement_type IN ('issue','scrap') AND source_warehouse_id=10
+                           THEN CAST(quantity AS REAL) ELSE 0 END)
+               FROM stock_movements WHERE product_id=1"""
+        ).fetchone()[0]
+        self.assertEqual(stock_balance, 5.0)
         self.assertEqual(
             self.conn.execute("SELECT credited_amount FROM supplier_bills WHERE id=20").fetchone()[0],
             "0.00"
