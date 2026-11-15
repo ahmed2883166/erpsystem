@@ -246,14 +246,21 @@ def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
                 and payable_account_id is not None
                 and int(commitment["payable_account_id"]) != int(payable_account_id)):
             raise ValueError("حساب الالتزام لا يطابق الحساب المحدد.")
-        debit_rows = conn.execute(
-            """SELECT debit FROM journal_lines
-               WHERE entry_id=? AND account_id=?""",
-            (journal_entry_id,selected_payable_account),
+        journal_lines = conn.execute(
+            "SELECT account_id,debit,credit FROM journal_lines WHERE entry_id=?",
+            (journal_entry_id,),
         ).fetchall()
-        payable_debit = sum((Decimal(str(row["debit"])) for row in debit_rows), Decimal("0"))
+        payable_debit = sum((
+            Decimal(str(row["debit"] or "0"))
+            for row in journal_lines
+            if int(row["account_id"]) == selected_payable_account
+        ), Decimal("0"))
+        total_debit = sum((Decimal(str(row["debit"] or "0")) for row in journal_lines), Decimal("0"))
+        total_credit = sum((Decimal(str(row["credit"] or "0")) for row in journal_lines), Decimal("0"))
         if payable_debit != amount:
             raise ValueError("قيمة مدين حساب الالتزام في قيد السداد يجب أن تساوي مبلغ الدفعة تمامًا.")
+        if total_debit != amount or total_credit != amount:
+            raise ValueError("يجب أن يكون قيد السداد مخصصًا لهذه الدفعة وحدها وبإجمالي مدين ودائن يساوي مبلغها.")
         if commitment["payable_account_id"] is None:
             conn.execute(
                 "UPDATE cash_commitments SET payable_account_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -318,9 +325,12 @@ def reverse_cash_commitment_payment(conn, payment_id, reversal_date,
             for line in lines
             if int(line["account_id"]) == int(payment["payable_account_id"] or 0)
         ), Decimal("0"))
-        if payable_debit != Decimal(str(payment["amount"])):
+        total_debit = sum((Decimal(str(line["debit"] or "0")) for line in lines), Decimal("0"))
+        total_credit = sum((Decimal(str(line["credit"] or "0")) for line in lines), Decimal("0"))
+        payment_amount = Decimal(str(payment["amount"]))
+        if payable_debit != payment_amount or total_debit != payment_amount or total_credit != payment_amount:
             raise ValueError(
-                "لا يمكن عكس السداد آليًا: مدين حساب الالتزام في القيد لا يساوي مبلغ الدفعة المسجلة. "
+                "لا يمكن عكس السداد آليًا: القيد لا يطابق مبلغ الدفعة وحساب الالتزام وحدهما. "
                 "يلزم مراجعة الربط المحاسبي أولًا."
             )
         reverse_lines = [
