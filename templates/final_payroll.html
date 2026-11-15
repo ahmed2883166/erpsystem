@@ -19,7 +19,7 @@
 </form>
 {% else %}<p class="muted">لا يوجد موظفون انتهت خدمتهم خلال هذا الشهر، أو تم إعداد المرتب النهائي لهم بالفعل.</p>{% endif %}
 </section>
-<section class="panel"><h3>كشوف المرتبات النهائية لهذا الشهر</h3><div style="overflow-x:auto"><table>
+<section class="panel"><h3>كشوف المرتبات النهائية لهذا الشهر</h3><div style="overflow-x:auto"><div class="table-wrap"><table>
 <tr><th>رقم الكشف</th><th>الموظف</th><th>أيام العمل</th><th>الأساسي المستحق</th><th>البدلات</th><th>الإجمالي</th><th>الضريبة</th><th>تأمين الموظف</th><th>الدمغة</th><th>استقطاعات أخرى</th><th>الصافي</th><th>الحالة</th><th>الإجراءات</th></tr>
 {% for r in rows %}<tr><td>{{r.final_payroll_no}}</td><td>{{r.employee_code}} — {{r.full_name}}</td><td>{{r.days_worked}}</td><td>{{r.basic_salary_snapshot}}</td><td>{{r.allowances_snapshot}}</td><td>{{r.gross_pay}}</td><td>{{r.tax_deduction}}</td><td>{{r.employee_insurance}}</td><td>{{r.stamp_duty}}</td><td>{{r.other_deductions}}</td><td>{{r.net_pay}}</td><td>{{'مسودة' if r.status=='draft' else ('ملغاة' if r.status=='cancelled' else ('معتمد' if r.status=='approved' else ('مصروف' if r.status=='paid' else r.status)))}}</td><td>{% if r.status=='draft' %}
 <a class="button secondary" href="{{url_for('workforce.edit_final_payroll',final_id=r.id)}}">تعديل</a>
@@ -47,9 +47,9 @@
 </form></details>
 {% endif %}{% endif %}
 {% endif %}</td></tr>{% else %}<tr><td colspan="13">لا توجد مسودات لهذا الشهر.</td></tr>{% endfor %}
-</table></div></section>
-<section class="panel"><h3>سجل دفعات المرتبات النهائية</h3><div style="overflow-x:auto"><table>
+</table></div></div></section>
+<section class="panel"><h3>سجل دفعات المرتبات النهائية</h3><div style="overflow-x:auto"><div class="table-wrap"><table>
 <tr><th>التاريخ</th><th>رقم الكشف</th><th>المبلغ</th><th>الخزينة / البنك</th><th>القيد</th><th>المرجع</th></tr>
 {% for p in payment_history %}<tr><td>{{p.payment_date}}</td><td>{{p.final_payroll_id}}</td><td>{{p.amount}}</td><td>{{p.account_code}} - {{p.account_name}}</td><td><a href="{{url_for('journal_detail',entry_id=p.journal_entry_id)}}">{{p.journal_entry_id}}</a></td><td>{{p.reference}}</td></tr>{% else %}<tr><td colspan="6">لا توجد دفعات في هذا الشهر.</td></tr>{% endfor %}
-</table></div></section>
+</table></div></div></section>
 {% endblock %}
