@@ -1454,11 +1454,26 @@ def final_payroll():
             AND NOT EXISTS (SELECT 1 FROM payroll_runs r JOIN payroll_lines l ON l.run_id=r.id
                 WHERE r.period=? AND l.employee_id=e.id)
             ORDER BY e.employee_code""", (period_start.isoformat(),period_end.isoformat(),selected_period)).fetchall()
-        rows = c.execute("""SELECT f.*,e.employee_code,e.full_name FROM employee_final_payrolls f
+        rows = [dict(x) for x in c.execute("""SELECT f.*,e.employee_code,e.full_name FROM employee_final_payrolls f
             JOIN employees e ON e.id=f.employee_id WHERE f.period=? ORDER BY f.created_at DESC,f.id DESC""",
-            (selected_period,)).fetchall()
+            (selected_period,)).fetchall()]
+        paid_rows = c.execute("""SELECT final_payroll_id,SUM(CAST(amount AS REAL)) AS paid
+            FROM employee_final_payroll_payments GROUP BY final_payroll_id""").fetchall()
+        paid_map = {int(x["final_payroll_id"]): M(x["paid"] or 0) for x in paid_rows}
+        for item in rows:
+            item["paid_amount"] = paid_map.get(int(item["id"]), Decimal("0"))
+            item["remaining_amount"] = M(max(Decimal("0"),D(item["net_pay"])-item["paid_amount"]))
+        payment_history = c.execute("""SELECT p.*,a.code AS account_code,a.name_ar AS account_name
+            FROM employee_final_payroll_payments p JOIN accounts a ON a.id=p.cash_account_id
+            JOIN employee_final_payrolls f ON f.id=p.final_payroll_id
+            WHERE f.period=? ORDER BY p.payment_date,p.id""", (selected_period,)).fetchall()
+        payment_accounts = c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
+            JOIN cash_accounts ca ON ca.account_id=a.id
+            WHERE a.active=1 AND a.is_group=0 AND a.account_type='asset' AND ca.active=1
+            ORDER BY a.code""").fetchall()
         return render_template("final_payroll.html", employees=eligible, rows=rows,
-                               accounts=_accounts(c), selected_period=selected_period)
+                               accounts=_accounts(c), payment_accounts=payment_accounts,
+                               payment_history=payment_history, selected_period=selected_period)
     except Exception as exc:
         try:
             c.rollback()
@@ -1599,6 +1614,61 @@ def approve_final_payroll(final_id):
                row["final_payroll_no"] + " journal=" + str(journal_id))
         c.commit()
         flash("تم اعتماد المرتب النهائي وترحيل قيده المحاسبي.", "success")
+        return redirect(url_for("workforce.final_payroll", period=row["period"]))
+    except Exception as exc:
+        c.rollback()
+        flash(safe_error_message(exc), "error")
+        return redirect(url_for("workforce.final_payroll"))
+    finally:
+        c.close()
+
+
+@workforce_bp.route("/hr/final-payroll/<int:final_id>/pay", methods=["POST"])
+@_role("admin", "accountant")
+def pay_final_payroll(final_id):
+    c = _db()
+    try:
+        payment_date = date.fromisoformat(request.form.get("payment_date") or date.today().isoformat()).isoformat()
+        amount = M(request.form.get("amount", "0"))
+        if amount <= 0:
+            raise ValueError("مبلغ صرف المرتب النهائي يجب أن يكون أكبر من صفر.")
+        cash_id = int(request.form["cash_account_id"])
+        _cash_or_bank_account(c, cash_id)
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute("SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
+        if not row or row["status"] not in ("approved", "paid") or not row["journal_entry_id"]:
+            raise ValueError("يجب اعتماد المرتب النهائي وترحيل قيده قبل الصرف.")
+        paid = M(sum((D(x["amount"]) for x in c.execute(
+            "SELECT amount FROM employee_final_payroll_payments WHERE final_payroll_id=?",
+            (final_id,)).fetchall()), Decimal("0")))
+        outstanding = M(max(Decimal("0"), D(row["net_pay"]) - paid))
+        if amount > outstanding or outstanding <= 0:
+            raise ValueError("مبلغ الصرف يتجاوز صافي المرتب النهائي المتبقي.")
+        payable = c.execute("""SELECT account_id FROM journal_lines
+            WHERE entry_id=? AND memo='صافي المرتب النهائي المستحق' AND credit>0
+            ORDER BY id LIMIT 1""", (row["journal_entry_id"],)).fetchone()
+        if not payable:
+            raise ValueError("لم يتم العثور على حساب صافي المرتب المستحق في القيد الأصلي.")
+        reference = "FINAL-PAYROLL-PAY-" + str(final_id) + "-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+        journal_id = post_journal(c, payment_date, reference,
+            "صرف المرتب النهائي رقم " + row["final_payroll_no"],
+            [(int(payable["account_id"]), amount, 0, "تخفيض صافي المرتب النهائي المستحق"),
+             (cash_id, 0, amount, "صرف المرتب النهائي من البنك/الصندوق")],
+            session["user_id"])
+        c.execute("""INSERT INTO employee_final_payroll_payments
+            (final_payroll_id,payment_date,amount,cash_account_id,journal_entry_id,reference,notes,created_by)
+            VALUES(?,?,?,?,?,?,?,?)""",
+            (final_id,payment_date,str(amount),cash_id,journal_id,reference,
+             request.form.get("notes","").strip()[:250],session["user_id"]))
+        new_paid = M(paid + amount)
+        new_status = "paid" if new_paid >= D(row["net_pay"]) else "approved"
+        c.execute("UPDATE employee_final_payrolls SET status=? WHERE id=? AND status IN ('approved','paid')",
+                  (new_status,final_id))
+        _audit(c,"employee_final_payroll_payment",
+               row["final_payroll_no"] + " amount=" + str(amount) + " journal=" + str(journal_id))
+        c.commit()
+        flash("تم صرف دفعة المرتب النهائي وترحيل قيد السداد." if new_status=="paid"
+              else "تم تسجيل دفعة جزئية للمرتب النهائي وترحيل قيدها.", "success")
         return redirect(url_for("workforce.final_payroll", period=row["period"]))
     except Exception as exc:
         c.rollback()
