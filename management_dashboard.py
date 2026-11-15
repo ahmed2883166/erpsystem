@@ -536,6 +536,13 @@ def build_management_snapshot(conn, start, end, dimensions=None):
                                            include_ids=current_disposal_losses),
         "account_details": details,
         "account_roles": roles,
+        "ratio_notes": {
+            "return_on_assets": "العائد محسوب على نتيجة الفترة الحالية ومتوسط الأصول، وغير مُسنَّن.",
+            "return_on_equity": "العائد محسوب على نتيجة الفترة الحالية ومتوسط حقوق الملكية، وغير مُسنَّن.",
+            "receivables_turnover": "مؤشر تقريبي يستخدم إجمالي الإيرادات بدل المبيعات الآجلة لعدم توافر فصل موثوق لها في دفتر الأستاذ.",
+            "payables_turnover": "مؤشر تقريبي يستخدم تكلفة المبيعات بدل المشتريات الآجلة لعدم توافر فصل موثوق لها في دفتر الأستاذ.",
+            "cash_conversion_cycle": "دورة التحويل النقدي تقديرية وتعتمد على مؤشري التحصيل والسداد التقريبيين.",
+        },
     }
 
 
