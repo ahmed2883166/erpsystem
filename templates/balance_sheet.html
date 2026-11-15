@@ -10,7 +10,7 @@
   </div>
 </header>
 
-<section class="panel balance-filter no-print">
+<section class="panel balance-filter no-print"><h3>معايير التقرير</h3>
   <form method="get" class="report-filter">
     <label>تاريخ قائمة المركز المالي<input type="date" name="as_of" value="{{ s.as_of }}" required></label>
     <button type="submit">تحديث التقرير</button>
@@ -24,7 +24,7 @@
     <div class="balance-report-meta"><span>العملة الأساسية</span><strong>{{ base_currency|default('') }}</strong><span>تاريخ التقرير</span><strong>{{ s.as_of }}</strong></div>
   </div>
 
-  <div class="balance-kpis">
+  <div class="balance-kpis report-kpis">
     <div><span>إجمالي الأصول</span><strong>{{ '%.2f'|format(s.total_assets) }}</strong></div>
     <div><span>إجمالي الالتزامات</span><strong>{{ '%.2f'|format(s.total_liabilities) }}</strong></div>
     <div><span>إجمالي حقوق الملكية</span><strong>{{ '%.2f'|format(s.total_equity) }}</strong></div>
