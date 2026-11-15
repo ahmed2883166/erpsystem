@@ -132,7 +132,7 @@ app.register_blueprint(health_bp)
 # SECRET_KEY and session/CSRF settings are initialized above.
 
 PERMISSIONS = {
-    "admin": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "expenses.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "purchases.approve", "sales.manage", "sales.view", "sales.approve", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "budget.approve", "cashflow.view", "audit.view", "cash_commitments.view", "cash_commitments.manage"},
+    "admin": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "expenses.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "purchases.approve", "sales.manage", "sales.view", "sales.approve", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.approve", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "budget.approve", "cashflow.view", "audit.view", "cash_commitments.view", "cash_commitments.manage"},
     "accountant": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "expenses.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view", "cash_commitments.view", "cash_commitments.manage"},
     "viewer": {"accounts.view", "currency.view", "reports.view", "expenses.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view", "bank.view", "tax.view", "workforce.view", "party.view", "budget.view", "cashflow.view", "cash_commitments.view"},
 }
@@ -163,6 +163,7 @@ PERMISSION_LABELS = {
     "tax.manage": "إدارة مركز الضرائب",
     "workforce.view": "عرض الموظفين والرواتب",
     "workforce.manage": "إدارة الموظفين والرواتب",
+    "workforce.approve": "اعتماد أو رفض مستندات المرتبات والموارد البشرية (منفصل عن الإدخال والترحيل)",
     "currency.view": "عرض أسعار العملات وفروق الصرف",
     "currency.manage": "إدارة العملات وفروق الصرف",
     "budget.view": "عرض الموازنات ومقارنة الفعلي",
@@ -180,7 +181,7 @@ _PERMISSION_IMPLICATIONS = {
     "purchases.manage": "purchases.view", "sales.manage": "sales.view",
     "assets.manage": "assets.view", "quotes.manage": "quotes.view",
     "bank.manage": "bank.view", "tax.manage": "tax.view",
-    "workforce.manage": "workforce.view", "currency.manage": "currency.view", "budget.manage": "budget.view", "budget.approve": "budget.view", "cash_commitments.manage": "cash_commitments.view",
+    "workforce.manage": "workforce.view", "workforce.approve": "workforce.view", "currency.manage": "currency.view", "budget.manage": "budget.view", "budget.approve": "budget.view", "cash_commitments.manage": "cash_commitments.view",
 }
 
 def normalize_user_permissions(values):
@@ -2091,7 +2092,7 @@ def approval_inbox():
     if "user_id" not in session:
         return redirect(url_for("login"))
     permissions = set(session.get("permissions", PERMISSIONS.get(session.get("role"), set())))
-    approval_permissions = {"purchases.approve", "sales.approve", "budget.approve", "workforce.manage"}
+    approval_permissions = {"purchases.approve", "sales.approve", "budget.approve", "workforce.approve"}
     if not (permissions & approval_permissions):
         flash("لا تملك صلاحية مراجعة المستندات المعلقة.", "error")
         return redirect(url_for("dashboard"))
@@ -2148,7 +2149,7 @@ def approval_inbox():
                         "blocked_reason": "لا يجوز اعتماد أو رفض الطلب الذي أنشأته أو أرسلته للمراجعة." if own else "",
                     })
 
-        if "workforce.manage" in permissions:
+        if "workforce.approve" in permissions:
             def approval_table_exists(table_name):
                 return connection.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
