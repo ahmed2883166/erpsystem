@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block title %}كشف منحة | NEXUS ERP{% endblock %}{% block content %}
-<header class="page-heading"><div><h2>كشف استحقاق منحة: {{grant.grant_name_snapshot}}</h2><p>تاريخ المنحة: {{grant.grant_date}} · رقم الكشف: {{grant.id}}</p></div></header>
+<header class="page-heading no-print"><div><h2>كشف استحقاق منحة: {{grant.grant_name_snapshot}}</h2><p>تاريخ المنحة: {{grant.grant_date}} · رقم الكشف: {{grant.id}}</p></div></header>
 <section class="panel print-document">
 <div class="table-wrap"><table><thead><tr><th>م</th><th>كود الموظف</th><th>اسم الموظف</th>{% if show_basic %}<th>الراتب الأساسي</th>{% endif %}<th>قيمة المنحة المستحقة</th><th>التوقيع</th></tr></thead><tbody>
 {% for line in lines %}<tr><td>{{loop.index}}</td><td>{{line.employee_code_snapshot}}</td><td>{{line.employee_name_snapshot}}</td>{% if show_basic %}<td>{{line.basic_salary_snapshot}}</td>{% endif %}<td>{{line.amount}}</td><td style="min-width:140px;height:48px"></td></tr>{% endfor %}
