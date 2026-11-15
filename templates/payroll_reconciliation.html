@@ -25,19 +25,21 @@
     <div class="stat"><span>كشوف سليمة</span><strong>{{summary.clean}}</strong></div>
     <div class="stat"><span>كشوف معكوسة تاريخيًا</span><strong>{{summary.reversed}}</strong></div>
     <div class="stat"><span>كشوف تحتاج مراجعة</span><strong>{{summary.needs_review}}</strong></div>
+    <div class="stat"><span>إجمالي ما تم صرفه</span><strong>{{summary.paid_total}}</strong></div>
+    <div class="stat"><span>المتبقي على الموظفين</span><strong>{{summary.remaining_total}}</strong></div>
     <div class="stat"><span>ملاحظات التكرار/المطابقة</span><strong>{{summary.issues}}</strong></div>
   </div>
 </section>
 <section class="panel">
   <h3>نتائج مراجعة الكشوف</h3>
   <div class="table-wrap"><table>
-    <thead><tr><th>الشهر</th><th>رقم الكشف</th><th>عدد الموظفين</th><th>صافي المرتبات</th><th>رقم القيد</th><th>النتيجة</th><th>ملاحظات</th><th>التفاصيل</th></tr></thead>
+    <thead><tr><th>الشهر</th><th>رقم الكشف</th><th>عدد الموظفين</th><th>صافي المرتبات</th><th>المدفوع</th><th>المتبقي</th><th>رقم القيد</th><th>النتيجة</th><th>ملاحظات</th><th>التفاصيل</th></tr></thead>
     <tbody>{% for r in runs %}
       <tr><td>{{r.period}}</td><td>{{r.run_id}}</td><td>{{r.employee_count}}</td><td>{{r.net_total}}</td>
-      <td>{{r.journal_entry_id or '—'}}</td>
+      <td>{{r.paid_total}}</td><td>{{r.remaining_total}}</td><td>{{r.journal_entry_id or '—'}}</td>
       <td>{% if r.result=='سليم' %}<span class="status-badge success">{{r.result}}</span>{% elif r.result=='معكوس تاريخيًا' %}<span class="status-badge">{{r.result}}</span>{% else %}<span class="status-badge danger">{{r.result}}</span>{% endif %}</td>
       <td>{{r.issue_count}}</td><td><a class="button secondary" href="{{url_for('workforce.payroll_run',run_id=r.run_id)}}">فتح الكشف</a></td></tr>
-    {% else %}<tr><td colspan="8">لا توجد كشوف مرتبات مرحلة في الفترة المحددة.</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="10">لا توجد كشوف مرتبات مرحلة في الفترة المحددة.</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>
 <section class="panel">
