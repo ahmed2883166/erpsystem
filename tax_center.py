@@ -237,13 +237,19 @@ def build_tax_report_snapshot(conn, period_value):
     # Posted sales credit notes reduce output VAT in the period of the credit note.
     # Group by the original line tax treatment so mixed-treatment invoices remain classified correctly.
     sales_credits = []
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sales_credit_notes'").fetchone():
+    sales_credit_columns = {row["name"] for row in conn.execute('PRAGMA table_info("sales_credit_notes")')}
+    sales_credit_line_columns = {row["name"] for row in conn.execute('PRAGMA table_info("sales_credit_note_lines")')}
+    required_sales_credit = {"id", "credit_note_no", "credit_date", "invoice_id", "status"}
+    required_sales_credit_lines = {"credit_note_id", "line_total", "tax_amount", "tax_treatment"}
+    if required_sales_credit.issubset(sales_credit_columns) and required_sales_credit_lines.issubset(sales_credit_line_columns):
+        credit_reference = "COALESCE(cn.tax_reference,'')" if "tax_reference" in sales_credit_columns else "''"
+        credit_notes = "COALESCE(cn.tax_notes,cn.reason)" if "tax_notes" in sales_credit_columns else "COALESCE(cn.reason,'')"
         credit_rows = conn.execute(f"""
             SELECT cn.id, cn.credit_note_no document_no, cn.credit_date document_date,
                    c.name party_name, {customer_tax_number} party_tax_number,
                    cl.line_total taxable_base, cl.tax_amount,
-                   cl.tax_treatment, COALESCE(cn.tax_reference,'') tax_reference,
-                   COALESCE(cn.tax_notes,cn.reason) tax_notes
+                   cl.tax_treatment, {credit_reference} tax_reference,
+                   {credit_notes} tax_notes
             FROM sales_credit_notes cn
             JOIN sales_invoices i ON i.id=cn.invoice_id
             JOIN customers c ON c.id=i.customer_id
@@ -301,14 +307,24 @@ def build_tax_report_snapshot(conn, period_value):
     # Supplier credit notes reduce input VAT in their own posting period. The
     # deductible percentage and tax treatment are inherited from the source bill.
     purchase_credits = []
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='supplier_credit_notes'").fetchone():
+    purchase_credit_columns = {row["name"] for row in conn.execute('PRAGMA table_info("supplier_credit_notes")')}
+    required_purchase_credit = {"id", "credit_no", "credit_date", "supplier_id", "bill_id", "status"}
+    if required_purchase_credit.issubset(purchase_credit_columns):
+        pc_base = "cn.subtotal" if "subtotal" in purchase_credit_columns else "0"
+        pc_rate = "cn.tax_rate" if "tax_rate" in purchase_credit_columns else "0"
+        pc_tax = "cn.tax_amount" if "tax_amount" in purchase_credit_columns else "0"
+        pc_total = "cn.total_amount" if "total_amount" in purchase_credit_columns else f"({pc_base}+{pc_tax})"
+        pc_reference = "COALESCE(cn.tax_reference,'')" if "tax_reference" in purchase_credit_columns else "''"
+        pc_notes = "COALESCE(cn.tax_notes,cn.reason)" if "tax_notes" in purchase_credit_columns else "COALESCE(cn.reason,'')"
+        supplier_bill_columns = {row["name"] for row in conn.execute('PRAGMA table_info("supplier_bills")')}
+        bill_treatment = "COALESCE(b.tax_treatment,'standard')" if "tax_treatment" in supplier_bill_columns else "'standard'"
+        bill_deductible = "COALESCE(b.input_vat_deductible_percent,'100')" if "input_vat_deductible_percent" in supplier_bill_columns else "'100'"
         credit_rows = conn.execute(f"""
             SELECT cn.id, cn.credit_no document_no, cn.credit_date document_date,
                    s.name party_name, {supplier_tax_number} party_tax_number,
-                   cn.subtotal taxable_base, cn.tax_rate, cn.tax_amount, cn.total_amount,
-                   COALESCE(b.tax_treatment,'standard') tax_treatment,
-                   COALESCE(cn.tax_reference,'') tax_reference, COALESCE(cn.tax_notes,cn.reason) tax_notes,
-                   COALESCE(b.input_vat_deductible_percent,'100') deductible_percent
+                   {pc_base} taxable_base, {pc_rate} tax_rate, {pc_tax} tax_amount, {pc_total} total_amount,
+                   {bill_treatment} tax_treatment, {pc_reference} tax_reference, {pc_notes} tax_notes,
+                   {bill_deductible} deductible_percent
             FROM supplier_credit_notes cn
             JOIN supplier_bills b ON b.id=cn.bill_id
             JOIN suppliers s ON s.id=cn.supplier_id
