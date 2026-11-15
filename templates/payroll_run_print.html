@@ -26,7 +26,7 @@
 }
 </style>
 <header class="no-print"><h2>كشف المرتبات للطباعة</h2><p><a href="{{url_for('workforce.payroll_run',run_id=run.id)}}">العودة إلى تفاصيل المرتبات</a></p><button type="button" onclick="window.print()">طباعة / حفظ PDF</button></header>
-<section class="panel payroll-print">
+<section class="panel payroll-print print-document">
 <h2>NEXUS ERP</h2><h3>كشف مرتبات شهر {{run.period}}</h3>
 <div class="meta"><span>الفترة: <strong>{{run.period}}</strong></span><span>الحالة: <strong>{{'مرحّل' if run.status=='posted' else 'معكوس' if run.status=='reversed' else 'مسودة'}}</strong></span><span>عدد الموظفين: <strong>{{rows|length}}</strong></span><span>رقم القيد: <strong>{{run.journal_entry_id or '-'}}</strong></span></div>
 <div style="overflow-x:auto"><div class="table-wrap"><table>
