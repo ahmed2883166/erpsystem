@@ -651,10 +651,10 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         conn = sqlite3.connect(self.db_path)
         line = conn.execute(
-            "SELECT basic_salary_reference,basic_salary_variance_percent,basic_salary_approval_required,basic_salary_approved_by FROM payroll_lines"
+            "SELECT basic_salary_reference,basic_salary_variance_percent,basic_salary_variance_limit_percent,basic_salary_approval_required,basic_salary_approved_by FROM payroll_lines"
         ).fetchone()
         conn.close()
-        self.assertEqual(line, ("10000.00", "20.00", 1, None))
+        self.assertEqual(line, ("10000.00", "20.00", "10", 1, None))
         post_data = {"salary_expense_account":"4","employer_ins_expense_account":"3",
             "salaries_payable_account":"5","tax_payable_account":"6","insurance_payable_account":"7",
             "advances_account":"2","other_deductions_account":"2"}
