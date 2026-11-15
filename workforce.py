@@ -439,7 +439,7 @@ def _employee_form_values(form):
     # in the monthly payroll screen and are never sourced from this profile.
     salary = Decimal("0")
     variable_salary = Decimal("0")
-    hours = D("208")
+    hours = D(form.get("standard_hours", "208"))
     insured_wage = Decimal("0")
     legal_category = form.get("legal_category", "local").strip().lower()
     work_status = form.get("work_status", "permanent").strip().lower()
@@ -457,7 +457,7 @@ def _employee_form_values(form):
         raise ValueError("يجب تحديد تاريخ سريان الاستقالة أو بلوغ المعاش.")
     if work_status not in {"resigned", "retired"}:
         termination_date = ""
-    if (not legal_category or
+    if (hours <= 0 or not legal_category or
         work_status not in {"comprehensive_bonus", "permanent", "temporary", "unpaid_leave", "resigned", "retired"}):
         raise ValueError("راجع الراتب وساعات العمل والحالة الوظيفية والعلاوة ونسبة الإضافي.")
     return (
@@ -754,7 +754,7 @@ def edit_employee(employee_id):
         try:
             values = list(_employee_form_values(request.form))
             # Preserve legacy payroll profile columns during profile edits; they are no longer editable here.
-            for index, column in ((5,"basic_salary"),(6,"standard_hours"),(7,"variable_salary"),
+            for index, column in ((5,"basic_salary"),(7,"variable_salary"),
                                   (8,"legal_category"),(10,"insured_wage"),(11,"insurance_enabled"),
                                   (15,"raise_type"),(16,"raise_value"),(17,"raise_mode"),
                                   (18,"raise_effective_date"),(19,"overtime_rate_percent"),
