@@ -324,8 +324,11 @@ class WorkforceExtrasTests(unittest.TestCase):
         self.assertEqual(commitment,("friday_overtime","بدل الجمعة - 2026-11","1333.33",
             "2026-11-30","friday_allowance_batch",1,3))
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM cash_commitment_payments").fetchone()[0],0)
-        forecast=list_cash_commitments_forecast(conn,"2026-11-01","2026-12-31")
+        forecast_conn=sqlite3.connect(self.db_path)
+        forecast_conn.row_factory=sqlite3.Row
+        forecast=list_cash_commitments_forecast(forecast_conn,"2026-11-01","2026-12-31")
         self.assertEqual(forecast[0]["balance"],Decimal("1333.33"))
+        forecast_conn.close()
         duplicate=self.client.post("/hr/friday-allowance/1/post",data={})
         self.assertEqual(duplicate.status_code,302)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries WHERE reference='FRIDAY-ALLOWANCE-2026-11'").fetchone()[0],1)
