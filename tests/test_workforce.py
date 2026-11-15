@@ -855,7 +855,7 @@ class WorkforceTests(unittest.TestCase):
             "absence_deduction_2": "0", "other_deductions_2": "0", "advance_2": "0",
             "tax_2": "0", "employee_ins_2": "0", "employer_ins_2": "0"
         })
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 302, response.get_data(as_text=True))
         conn = sqlite3.connect(self.db_path)
         line = conn.execute(
             "SELECT basic_salary,salary_raise,overtime_amount,incentives,gross_pay,incentive_name,insured_wage,stamp_duty "
