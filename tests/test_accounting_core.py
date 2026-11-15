@@ -213,20 +213,27 @@ class SharedAccountingCoreTests(unittest.TestCase):
 
 
     def test_reconciliation_snapshot_excludes_copied_opening_from_inventory_gl(self):
-        self.conn.executescript("""
+        conn=sqlite3.connect(":memory:")
+        conn.row_factory=sqlite3.Row
+        conn.executescript("""
+            CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,account_type TEXT,is_group INTEGER,active INTEGER);
+            CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT);
+            CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,reference TEXT,status TEXT);
+            CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit TEXT,credit TEXT);
+            CREATE TABLE stock_valuation_layers(id INTEGER PRIMARY KEY,qty_remaining TEXT,unit_cost TEXT);
             CREATE TABLE financial_years(id INTEGER PRIMARY KEY,year_name TEXT,start_date TEXT,end_date TEXT,status TEXT,opening_entry_id INTEGER);
             CREATE TABLE financial_year_journal_history(id INTEGER PRIMARY KEY,financial_year_id INTEGER,entry_kind TEXT,action TEXT,entry_id INTEGER,related_entry_id INTEGER);
+            INSERT INTO accounts VALUES(1,'1130','مخزون خامات','asset',0,1);
+            INSERT INTO company_settings VALUES('activity','industrial');
+            INSERT INTO stock_valuation_layers VALUES(1,'10','10');
+            INSERT INTO journal_entries VALUES(1,'2026-10-31','OLD','posted'),(2,'2026-11-01','OPEN','posted');
+            INSERT INTO journal_lines VALUES(1,1,1,'100','0'),(2,2,1,'100','0');
             INSERT INTO financial_years VALUES(1,'2026','2026-11-01','2027-10-31','open',2);
             INSERT INTO financial_year_journal_history(financial_year_id,entry_kind,action,entry_id)
               VALUES(1,'opening','created',2);
-            INSERT INTO journal_entries(id,entry_date,reference,status) VALUES
-              (1,'2026-10-31','OLD','posted'),(2,'2026-11-01','OPEN','posted');
-            INSERT INTO journal_lines(id,entry_id,account_id,debit,credit)
-              VALUES(1,1,1,'100','0'),(2,2,1,'100','0');
-            INSERT INTO stock_valuation_layers(id,product_id,warehouse_id,qty_remaining,unit_cost,value_remaining)
-              VALUES(1,1,1,'10','10','100');
         """)
-        snapshot=reconciliation_snapshot(self.conn)
+        snapshot=reconciliation_snapshot(conn)
+        conn.close()
         self.assertEqual(snapshot["gl_stock"],Decimal("100.00"))
         self.assertEqual(snapshot["stock_difference"],Decimal("0.00"))
 
