@@ -1171,37 +1171,9 @@ def payroll():
                     unpaid_days = min(Decimal("30"),unpaid_days)
                     absence = M(absent_hours*basic_salary/D(e["standard_hours"]) +
                                 unpaid_days*basic_salary/Decimal("30"))
-                incentive_rule_id_raw = request.form.get("incentive_rule_" + str(e["id"]), "").strip()
-                incentive_days = D(request.form.get("incentive_days_" + str(e["id"]), "0"))
-                incentive_name = ""
-                incentive_method = ""
-                event_incentive = Decimal("0")
-                incentive_rule_id = int(incentive_rule_id_raw) if incentive_rule_id_raw else None
-                if incentive_rule_id:
-                    incentive_rule = c.execute("SELECT * FROM payroll_incentive_rules WHERE id=? AND active=1",
-                                                (incentive_rule_id,)).fetchone()
-                    if not incentive_rule:
-                        raise ValueError("نوع الحافز المختار غير موجود أو غير نشط.")
-                    incentive_name = incentive_rule["name"]
-                    incentive_method = incentive_rule["calculation_method"]
-                    incentive_value = D(incentive_rule["calculation_value"])
-                    if incentive_method == "fixed":
-                        event_incentive = M(incentive_value)
-                    elif incentive_method == "percentage_basic":
-                        event_incentive = M(basic_salary * incentive_value / Decimal("100"))
-                    else:
-                        if incentive_days <= 0:
-                            raise ValueError("أدخل عدد أيام الحافز للموظف " + e["full_name"] + ".")
-                        event_incentive = M(incentive_value * incentive_days)
-                if incentive_method == "fixed" and payroll_days < 30:
-                    event_incentive = M(event_incentive * payroll_factor)
-                # Percentage incentives use the prorated basic; per-day incentives follow entered eligible days.
-                if incentive_method == "percentage_basic" and payroll_days < 30:
-                    event_incentive = M(monthly_basic_salary * payroll_factor * D(incentive_rule["calculation_value"]) / Decimal("100"))
-                incentive_total = M(M(request.form.get("incentives_" + str(e["id"]), "0")) + event_incentive)
-                if unpaid_days > 0:
-                    incentive_total = M(incentive_total * max(Decimal("0"),Decimal("30")-unpaid_days) / Decimal("30"))
-                incentives = incentive_total
+                # Grants and exceptional bonuses are paid outside monthly payroll.
+                # Recurring allowances and salary raises remain part of payroll.
+                incentives = Decimal("0")
                 # Prorate monthly salary and recurring allowances for a mid-month termination.
                 # Loan installments remain contractual amounts and are not prorated by service days.
                 if payroll_days < 30:
@@ -1306,9 +1278,6 @@ def payroll():
                     snapshot_item("earning","بدلات / مستحقات متغيرة يدوية",manual_allowance,"payroll_input",None,30)
                     if raise_amount and e["raise_mode"] == "allowance":
                         snapshot_item("earning","علاوة مستقلة",M(raise_amount * payroll_factor),"salary_raise",e["id"],35)
-                    manual_incentive = M(request.form.get("incentives_" + str(e["id"]),"0"))
-                    snapshot_item("earning","حافز يدوي إضافي",manual_incentive,"payroll_input",None,40)
-                    snapshot_item("earning",incentive_name or "حافز مناسبة",event_incentive,"incentive_rule",incentive_rule_id,45)
                     snapshot_item("earning","عمل إضافي",overtime_amount,"attendance_or_manual",None,50)
                     snapshot_item("deduction","خصم الغياب والإجازة بدون أجر",absence,"attendance_leave",None,60)
                     snapshot_item("deduction","سلفة / دفعة مقدمة يدوية",manual_advance_deduction,"payroll_input",None,75)
@@ -1357,7 +1326,6 @@ def payroll():
             for x in fixed_rows
         )
         employees.append(employee)
-    incentive_rules = c.execute("SELECT * FROM payroll_incentive_rules WHERE active=1 ORDER BY name").fetchall()
     today_period = display_period
     runs_page = fetch_page(c,"SELECT * FROM payroll_runs ORDER BY period DESC,id DESC",
         "SELECT COUNT(*) FROM payroll_runs",
