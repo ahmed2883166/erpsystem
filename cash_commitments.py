@@ -252,8 +252,8 @@ def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
             (journal_entry_id,selected_payable_account),
         ).fetchall()
         payable_debit = sum((Decimal(str(row["debit"])) for row in debit_rows), Decimal("0"))
-        if payable_debit < amount:
-            raise ValueError("قيد السداد لا يحتوي على مدين كافٍ في حساب الالتزام المحدد.")
+        if payable_debit != amount:
+            raise ValueError("قيمة مدين حساب الالتزام في قيد السداد يجب أن تساوي مبلغ الدفعة تمامًا.")
         if commitment["payable_account_id"] is None:
             conn.execute(
                 "UPDATE cash_commitments SET payable_account_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -352,8 +352,9 @@ def void_cash_commitment(conn, commitment_id):
         ).fetchone()
         if not row:
             raise ValueError("الالتزام غير موجود.")
-        if row["status"] != "open":
-            raise ValueError("لا يمكن إلغاء التزام عليه دفعات أو تم إلغاؤه بالفعل.")
+        summary = cash_commitment_payment_summary(conn, commitment_id)
+        if summary["paid_total"] > 0 or row["status"] == "void":
+            raise ValueError("لا يمكن إلغاء التزام عليه دفعات فعالة أو تم إلغاؤه بالفعل.")
         conn.execute(
             "UPDATE cash_commitments SET status='void',updated_at=CURRENT_TIMESTAMP WHERE id=?",
             (commitment_id,),
