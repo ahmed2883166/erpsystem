@@ -606,6 +606,55 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(state, "open")
 
 
+
+    def test_payroll_reconciliation_reports_a_clean_posted_run(self):
+        self.add_employee()
+        self.client.post("/hr/payroll", data={
+            "period":"2026-11","basic_1":"10000","allowances_1":"0",
+            "overtime_hours_1":"0","overtime_amount_1":"",
+            "absent_hours_1":"0","absence_deduction_1":"0",
+            "other_deductions_1":"0","tax_1":"0","employee_ins_1":"0",
+            "employer_ins_1":"0"
+        })
+        self.approve_pending_salary_changes(1)
+        self.client.post("/hr/payroll/1/post", data={
+            "salary_expense_account":"4","employer_ins_expense_account":"3",
+            "salaries_payable_account":"5","tax_payable_account":"6",
+            "insurance_payable_account":"7","advances_account":"2",
+            "other_deductions_account":"2"
+        })
+        response=self.client.get("/hr/payroll-reconciliation")
+        self.assertEqual(response.status_code,200)
+        self.assertIn("سليم",response.get_data(as_text=True))
+        self.assertIn("لم يتم رصد تكرار",response.get_data(as_text=True))
+
+    def test_payroll_reconciliation_flags_journal_total_mismatch(self):
+        self.add_employee()
+        self.client.post("/hr/payroll", data={
+            "period":"2026-11","basic_1":"10000","allowances_1":"0",
+            "overtime_hours_1":"0","overtime_amount_1":"",
+            "absent_hours_1":"0","absence_deduction_1":"0",
+            "other_deductions_1":"0","tax_1":"0","employee_ins_1":"0",
+            "employer_ins_1":"0"
+        })
+        self.approve_pending_salary_changes(1)
+        self.client.post("/hr/payroll/1/post", data={
+            "salary_expense_account":"4","employer_ins_expense_account":"3",
+            "salaries_payable_account":"5","tax_payable_account":"6",
+            "insurance_payable_account":"7","advances_account":"2",
+            "other_deductions_account":"2"
+        })
+        conn=sqlite3.connect(self.db_path)
+        journal_id=conn.execute("SELECT journal_entry_id FROM payroll_runs WHERE id=1").fetchone()[0]
+        line_id=conn.execute("SELECT id FROM journal_lines WHERE entry_id=? ORDER BY id LIMIT 1",(journal_id,)).fetchone()[0]
+        conn.execute("UPDATE journal_lines SET debit=CAST(debit AS NUMERIC)+1 WHERE id=?",(line_id,))
+        conn.commit()
+        conn.close()
+        response=self.client.get("/hr/payroll-reconciliation")
+        self.assertEqual(response.status_code,200)
+        self.assertIn("إجمالي القيد لا يطابق",response.get_data(as_text=True))
+        self.assertIn("يحتاج مراجعة",response.get_data(as_text=True))
+
     def test_payroll_uses_employee_master_salary_when_monthly_field_is_blank(self):
         self.add_employee()
         response = self.client.post("/hr/payroll", data={"period": "2026-11", "basic_1": ""})
