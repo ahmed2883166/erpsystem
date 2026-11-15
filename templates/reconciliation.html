@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}المطابقة المحاسبية | NEXUS ERP{% endblock %}
 {% block content %}
-<header>
+<header class="report-page-header">
   <div><h2>مركز المطابقة والترابط</h2>
   <p>{{ settings.get('company_name','NEXUS ERP') }} — العملة الأساسية {{ settings.get('base_currency','') }}</p></div>
   <div class="table-actions no-print"><button type="button" class="secondary" onclick="window.print()">طباعة / حفظ PDF</button><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='reconciliation') }}">تصدير Excel</a><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='reconciliation').replace('/excel','/pdf') }}">تحميل PDF</a></div>
 </header>
 
-<section class="cards">
+<section class="cards reconciliation-kpis">
   <article><b>{{ '%.2f'|format(snapshot.journal_totals.debit or 0) }}</b><span>إجمالي المدين للقيود المرحلة</span></article>
   <article><b>{{ '%.2f'|format(snapshot.journal_totals.credit or 0) }}</b><span>إجمالي الدائن للقيود المرحلة</span></article>
   <article><b>{{ '%.2f'|format(snapshot.stock_value) }}</b><span>قيمة المخزون حسب طبقات التقييم</span></article>
@@ -20,11 +20,11 @@
     <p class="flash success">كل القيود المرحلة متوازنة على مستوى المدين والدائن.</p>
   {% else %}
     <p class="flash error">يوجد {{ snapshot.unbalanced|length }} قيد غير متوازن.</p>
-    <table><thead><tr><th>رقم القيد</th><th>المرجع</th><th>مدين</th><th>دائن</th><th>الفرق</th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>رقم القيد</th><th>المرجع</th><th>مدين</th><th>دائن</th><th>الفرق</th></tr></thead><tbody>
     {% for x in snapshot.unbalanced %}
       <tr><td>{{ x.id }}</td><td>{{ x.reference or '-' }}</td><td>{{ '%.2f'|format(x.debit) }}</td><td>{{ '%.2f'|format(x.credit) }}</td><td>{{ '%.2f'|format(x.debit-x.credit) }}</td></tr>
     {% endfor %}
-    </tbody></table>
+    </tbody></table></div>
   {% endif %}
   <p class="muted">إجمالي الفرق بين مدين ودائن القيود المرحلة: {{ '%.2f'|format((snapshot.journal_totals.debit or 0)-(snapshot.journal_totals.credit or 0)) }}</p>
 </section>
