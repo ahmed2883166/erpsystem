@@ -8,6 +8,8 @@
   <form method="get" class="report-filter">
     <label>العملية<input name="action" value="{{ action }}" placeholder="مثال: journal_posted"></label>
     <label>المستخدم<input name="user" value="{{ user_query }}" placeholder="اسم المستخدم"></label>
+    <label>نوع السجل<input name="entity_type" value="{{ entity_type }}" placeholder="مثال: invoice أو journal"></label>
+    <label>النتيجة<select name="outcome"><option value="">الكل</option><option value="success" {{ 'selected' if outcome == 'success' }}>ناجحة</option><option value="failure" {{ 'selected' if outcome == 'failure' }}>فاشلة</option></select></label>
     <label>من تاريخ<input type="date" name="date_from" value="{{ date_from }}"></label>
     <label>إلى تاريخ<input type="date" name="date_to" value="{{ date_to }}"></label>
     <button type="submit">بحث</button>
@@ -44,8 +46,8 @@
   </div>
   {% if audit_page.pages > 1 %}
   <nav class="pagination no-print">
-    {% if audit_page.page > 1 %}<a class="btn secondary" href="{{ url_for('audit_log', page=audit_page.page-1, action=action, user=user_query, date_from=date_from, date_to=date_to) }}">السابق</a>{% endif %}
-    {% if audit_page.page < audit_page.pages %}<a class="btn secondary" href="{{ url_for('audit_log', page=audit_page.page+1, action=action, user=user_query, date_from=date_from, date_to=date_to) }}">التالي</a>{% endif %}
+    {% if audit_page.page > 1 %}<a class="btn secondary" href="{{ url_for('audit_log', page=audit_page.page-1, action=action, user=user_query, entity_type=entity_type, outcome=outcome, date_from=date_from, date_to=date_to) }}">السابق</a>{% endif %}
+    {% if audit_page.page < audit_page.pages %}<a class="btn secondary" href="{{ url_for('audit_log', page=audit_page.page+1, action=action, user=user_query, entity_type=entity_type, outcome=outcome, date_from=date_from, date_to=date_to) }}">التالي</a>{% endif %}
   </nav>
   {% endif %}
 </section>
