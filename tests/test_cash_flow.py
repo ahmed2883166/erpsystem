@@ -305,6 +305,13 @@ class CashFlowReportTests(unittest.TestCase):
             journal_entry_id INTEGER
         )""")
         conn.execute("INSERT INTO asset_depreciations VALUES(1,1,'2026-11','80',3)")
+        # A separate depreciation posting to the same expense account must not
+        # disappear merely because another asset depreciation is linked there.
+        conn.execute("INSERT INTO journal_entries VALUES(6,'2026-11-22','posted')")
+        conn.executemany(
+            "INSERT INTO journal_lines VALUES(?,?,?,?,?)",
+            [(11,6,4,"25","0"), (12,6,1,"0","25")],
+        )
         snapshot = financial_planning.build_cash_flow_indirect_snapshot(
             conn, "2026-11-01", "2026-11-30"
         )
@@ -313,7 +320,7 @@ class CashFlowReportTests(unittest.TestCase):
             item for item in snapshot["indirect_items"]
             if item["label"] == "إضافة الإهلاك والمصروفات غير النقدية المحددة"
         )
-        self.assertEqual(adjustment["amount"], financial_planning.Decimal("80"))
+        self.assertEqual(adjustment["amount"], financial_planning.Decimal("105"))
 
     def test_non_cash_provision_expense_is_offset_by_current_provision_liability(self):
         conn = financial_planning._connect()
