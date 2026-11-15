@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block title %}المرتبات النهائية | NEXUS ERP{% endblock %}{% block content %}
 <header><h2>المرتبات النهائية للموظفين المنتهية خدمتهم</h2>
 <p>هذه شاشة مستقلة عن كشف المرتبات الشهري العادي. يظهر الموظف هنا في شهر انتهاء خدمته فقط، ويُحسب الأجر من أول الشهر حتى آخر يوم خدمة شاملًا.</p>
-<p class="muted">الأساسي والبدلات الشهرية النشطة تُقسم على 30 ثم تضرب في أيام العمل. الضرائب والتأمينات والدمغة والاستقطاعات الأخرى تُدخل يدويًا حاليًا. الحفظ مسودة فقط دون اعتماد أو صرف أو قيد محاسبي.</p>
+<p class="muted">الأساسي والبدلات الشهرية النشطة تُقسم على 30 ثم تضرب في أيام العمل. الضرائب والتأمينات والدمغة والاستقطاعات الأخرى تُدخل يدويًا حاليًا. يمكن تعديل المسودة أو إلغاؤها، ثم اعتمادها بترحيل قيد محاسبي بعد اختيار الحسابات المناسبة.</p>
 <p class="actions"><a class="button secondary" href="{{url_for('workforce.payroll')}}">العودة إلى المرتبات الشهرية</a> <a class="button secondary" href="{{url_for('workforce.end_of_service')}}">مكافأة نهاية الخدمة</a></p></header>
 <section class="panel"><h3>إعداد مرتب نهائي</h3>
 <form method="get" class="inline-form"><label>الشهر <input type="month" name="period" value="{{selected_period}}" required></label><button type="submit" class="secondary">عرض الموظفين</button></form>
@@ -21,6 +21,16 @@
 </section>
 <section class="panel"><h3>مسودات المرتبات النهائية لهذا الشهر</h3><div style="overflow-x:auto"><table>
 <tr><th>رقم الكشف</th><th>الموظف</th><th>أيام العمل</th><th>الأساسي المستحق</th><th>البدلات</th><th>الإجمالي</th><th>الضريبة</th><th>تأمين الموظف</th><th>الدمغة</th><th>استقطاعات أخرى</th><th>الصافي</th><th>الحالة</th><th>الإجراءات</th></tr>
-{% for r in rows %}<tr><td>{{r.final_payroll_no}}</td><td>{{r.employee_code}} — {{r.full_name}}</td><td>{{r.days_worked}}</td><td>{{r.basic_salary_snapshot}}</td><td>{{r.allowances_snapshot}}</td><td>{{r.gross_pay}}</td><td>{{r.tax_deduction}}</td><td>{{r.employee_insurance}}</td><td>{{r.stamp_duty}}</td><td>{{r.other_deductions}}</td><td>{{r.net_pay}}</td><td>{{'مسودة' if r.status=='draft' else ('ملغاة' if r.status=='cancelled' else r.status)}}</td><td>{% if r.status=='draft' %}<a class="button secondary" href="{{url_for('workforce.edit_final_payroll',final_id=r.id)}}">تعديل</a> <form method="post" action="{{url_for('workforce.cancel_final_payroll',final_id=r.id)}}" style="display:inline" onsubmit="return confirm('إلغاء المسودة مع الاحتفاظ بسجلها؟')"><button type="submit" class="danger">إلغاء</button></form>{% else %}—{% endif %}</td></tr>{% else %}<tr><td colspan="13">لا توجد مسودات لهذا الشهر.</td></tr>{% endfor %}
+{% for r in rows %}<tr><td>{{r.final_payroll_no}}</td><td>{{r.employee_code}} — {{r.full_name}}</td><td>{{r.days_worked}}</td><td>{{r.basic_salary_snapshot}}</td><td>{{r.allowances_snapshot}}</td><td>{{r.gross_pay}}</td><td>{{r.tax_deduction}}</td><td>{{r.employee_insurance}}</td><td>{{r.stamp_duty}}</td><td>{{r.other_deductions}}</td><td>{{r.net_pay}}</td><td>{{'مسودة' if r.status=='draft' else ('ملغاة' if r.status=='cancelled' else ('معتمد' if r.status=='approved' else ('مصروف' if r.status=='paid' else r.status)))}}</td><td>{% if r.status=='draft' %}
+<a class="button secondary" href="{{url_for('workforce.edit_final_payroll',final_id=r.id)}}">تعديل</a>
+<form method="post" action="{{url_for('workforce.cancel_final_payroll',final_id=r.id)}}" style="display:inline" onsubmit="return confirm('إلغاء المسودة مع الاحتفاظ بسجلها؟')"><button type="submit" class="danger">إلغاء</button></form>
+<details><summary>اعتماد وترحيل</summary>
+<form method="post" action="{{url_for('workforce.approve_final_payroll',final_id=r.id)}}" class="form-grid">
+{% for field,label,kind in [('salary_expense_account','مصروف الأجور','expense'),('employer_ins_expense_account','مصروف تأمين الشركة','expense'),('salaries_payable_account','صافي المرتبات المستحقة','liability'),('tax_payable_account','ضريبة ودمغة مستحقة','liability'),('insurance_payable_account','تأمينات مستحقة','liability'),('other_deductions_account','استقطاعات أخرى','liability')] %}
+<label>{{label}}<select name="{{field}}" required>{% for a in accounts if a.account_type==kind %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+{% endfor %}
+<button type="submit" onclick="return confirm('اعتماد المرتب النهائي وترحيل قيده المحاسبي؟')">اعتماد وترحيل القيد</button>
+</form></details>
+{% else %}{% if r.journal_entry_id %}<a href="{{url_for('journal_detail',entry_id=r.journal_entry_id)}}">عرض القيد {{r.journal_entry_id}}</a>{% else %}—{% endif %}{% endif %}</td></tr>{% else %}<tr><td colspan="13">لا توجد مسودات لهذا الشهر.</td></tr>{% endfor %}
 </table></div></section>
 {% endblock %}
