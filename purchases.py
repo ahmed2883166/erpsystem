@@ -2202,9 +2202,14 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
     if str(cancellation_date)<str(note["credit_date"]):
         raise ValueError("تاريخ إلغاء إشعار المورد لا يمكن أن يسبق تاريخ الإشعار.")
     allocations=conn.execute(
-        """SELECT a.*,m.movement_no,m.movement_type,m.accounting_status
+        """SELECT a.*,m.movement_no,m.movement_type,m.accounting_status,
+                  m.product_id movement_product_id,m.source_warehouse_id movement_warehouse_id,
+                  m.quantity movement_quantity,m.total_cost movement_total_cost,
+                  v.product_id source_product_id,v.warehouse_id source_warehouse_id,
+                  v.lot_id source_lot_id,v.location_id source_location_id
            FROM supplier_credit_note_layer_allocations a
            JOIN stock_movements m ON m.id=a.stock_movement_id
+           JOIN stock_valuation_layers v ON v.id=a.source_layer_id
            JOIN supplier_credit_note_lines l ON l.id=a.credit_note_line_id
            WHERE l.credit_note_id=? ORDER BY a.id""",(credit_note_id,)
     ).fetchall()
@@ -2221,6 +2226,25 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
         raise ValueError("لا يمكن إلغاء إشعار قديم لا يحتوي على روابط كاملة لطبقات المخزون الأصلية؛ يلزم فحصه يدويًا.")
     if any(row["movement_type"]!="issue" or row["accounting_status"]!="posted" for row in allocations):
         raise ValueError("حركات مخزون إشعار المورد تغيرت بالفعل؛ لا يمكن تنفيذ الإلغاء مرة أخرى.")
+    for line in conn.execute(
+        "SELECT * FROM supplier_credit_note_lines WHERE credit_note_id=? ORDER BY id",
+        (credit_note_id,)
+    ).fetchall():
+        parts=[row for row in allocations if row["credit_note_line_id"]==line["id"]]
+        qty_sum=sum((Decimal(str(row["quantity"])) for row in parts),Decimal("0"))
+        cost_sum=sum((Decimal(str(row["total_cost"])) for row in parts),Decimal("0"))
+        if qty_sum!=Decimal(str(line["quantity"])) or money(cost_sum)!=money(line["total_cost"]):
+            raise ValueError("تفاصيل طبقات التكلفة لا تطابق كمية أو قيمة سطر المرتجع؛ تم إيقاف الإلغاء للحماية.")
+        for part in parts:
+            if (part["movement_product_id"]!=line["product_id"]
+                or part["movement_warehouse_id"]!=line["warehouse_id"]
+                or part["source_product_id"]!=line["product_id"]
+                or part["source_warehouse_id"]!=line["warehouse_id"]
+                or part["source_lot_id"]!=part["lot_id"]
+                or part["source_location_id"]!=part["location_id"]
+                or Decimal(str(part["movement_quantity"]))!=Decimal(str(part["quantity"]))
+                or money(part["movement_total_cost"])!=money(part["total_cost"])):
+                raise ValueError("مرجع حركة أو طبقة مخزون لا يطابق سطر المرتجع؛ تم إيقاف الإلغاء للحماية.")
     reversal_id=_reverse_supplier_credit_journal(
         conn,note["journal_entry_id"],cancellation_date,
         "CANCEL-"+note["credit_no"],"إلغاء إشعار دائن مشتريات "+note["supplier_credit_no"],created_by
