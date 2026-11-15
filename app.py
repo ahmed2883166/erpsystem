@@ -46,6 +46,7 @@ from income_statement import (build_income_statement, normalize_income_statement
                                comparison_period, add_income_statement_comparison,
                                closing_entries_exclusion_sql)
 from profitability_reports import build_profitability_report
+from management_reports import build_period_comparison, build_inventory_ageing, build_cash_forecast
 
 # Development/demo builds run locally without a licensing server. Set NEXUS_DEMO_MODE=0
 # explicitly in a commercial deployment to enforce the signed remote licensing flow.
@@ -2459,6 +2460,69 @@ def profitability_report():
         base_currency=settings.get("base_currency", ""),
         company_name=settings.get("company_name", "NEXUS ERP"),
     )
+
+
+
+@app.route("/reports/period-comparison")
+@requires("reports.view")
+def period_comparison_report():
+    date_from, date_to = normalize_income_statement_period(
+        request.args.get("date_from"), request.args.get("date_to")
+    )
+    mode = request.args.get("mode", "previous_period")
+    connection = db()
+    try:
+        report = build_period_comparison(connection, date_from, date_to, mode)
+        settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
+            "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency','company_name')"
+        )} if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
+        ).fetchone() else {}
+    finally:
+        connection.close()
+    return render_template("period_comparison.html", **report,
+        base_currency=settings.get("base_currency", ""),
+        company_name=settings.get("company_name", "NEXUS ERP"))
+
+
+@app.route("/reports/inventory-ageing")
+@requires("stock.view")
+def inventory_ageing_report():
+    try:
+        as_of = date.fromisoformat(request.args.get("as_of", "")).isoformat()
+    except ValueError:
+        as_of = date.today().isoformat()
+    connection = db()
+    try:
+        report = build_inventory_ageing(connection, as_of)
+        settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
+            "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='base_currency'"
+        )} if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
+        ).fetchone() else {}
+    finally:
+        connection.close()
+    return render_template("inventory_ageing.html", report=report,
+        base_currency=settings.get("base_currency", ""))
+
+
+@app.route("/reports/cash-forecast")
+@requires("reports.view")
+def cash_forecast_report():
+    try:
+        as_of = date.fromisoformat(request.args.get("as_of", "")).isoformat()
+    except ValueError:
+        as_of = date.today().isoformat()
+    try:
+        horizon_days = int(request.args.get("days", "90"))
+    except (TypeError, ValueError):
+        horizon_days = 90
+    connection = db()
+    try:
+        report = build_cash_forecast(connection, as_of, horizon_days)
+    finally:
+        connection.close()
+    return render_template("cash_forecast.html", report=report)
 
 
 @app.route("/reports/expense-analysis")
