@@ -727,7 +727,7 @@ def available_layers(c, product_id, warehouse_id, lot_id=None, location_id=None)
     return c.execute(sql + " ORDER BY id", args).fetchall()
 
 
-def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=None, location_id=None):
+def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=None, location_id=None, include_layer_details=False):
     layers = available_layers(c, product_id, warehouse_id, lot_id, location_id)
     available = sum((D(x["qty_remaining"]) for x in layers), D("0"))
     if available < qty:
@@ -737,7 +737,7 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
         D(x["qty_remaining"]) * D(x["unit_cost"]) for x in layers
     ), D("0"))
     avg_cost = total_value / available if available else D("0")
-    remaining, cost_total, allocations = qty, D("0"), []
+    remaining, cost_total, allocations, layer_details = qty, D("0"), [], []
     for layer in layers:
         if remaining <= 0: break
         layer_qty = D(layer["qty_remaining"])
@@ -756,9 +756,13 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
         c.execute("UPDATE stock_valuation_layers SET qty_remaining=?,value_remaining=? WHERE id=?",
                   (str(q4(new_remaining)), format(new_value, "f"), layer["id"]))
         allocations.append((layer["lot_id"], take, unit_cost, cost))
+        if include_layer_details:
+            layer_details.append({"layer_id": int(layer["id"]), "lot_id": layer["lot_id"],
+                "location_id": layer["location_id"], "quantity": take,
+                "unit_cost": unit_cost, "total_cost": cost})
         cost_total += cost
         remaining -= take
-    return money(cost_total), allocations
+    return (money(cost_total), allocations, layer_details) if include_layer_details else (money(cost_total), allocations)
 
 
 def make_lot(c, product, lot_number, production_date, expiry_date, as_of=None):
