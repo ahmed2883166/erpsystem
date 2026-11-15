@@ -860,7 +860,7 @@ def login():
             session.update(user_id=user["id"], username=user["username"], full_name=user["full_name"],
                            role=user["role"], must_change_password=bool(user["must_change_password"]),
                            permissions=stored_user_permissions(user["permissions_json"], user["role"]))
-            log("login", "تسجيل دخول")
+            log("login", "تسجيل دخول", entity_type="auth", outcome="success")
             if user["must_change_password"]:
                 flash("يجب تغيير كلمة مرور المدير الافتراضية قبل استخدام النظام.", "warning")
                 return redirect(url_for("change_password"))
@@ -894,7 +894,7 @@ def change_password():
                 connection.commit()
                 connection.close()
                 session["must_change_password"] = False
-                log("password_changed", "تغيير كلمة مرور المستخدم الحالي")
+                log("password_changed", "تغيير كلمة مرور المستخدم الحالي", entity_type="security", outcome="success")
                 flash("تم تغيير كلمة المرور بنجاح.", "success")
                 return redirect(url_for("dashboard"))
             connection.close()
@@ -903,6 +903,8 @@ def change_password():
 
 @app.route("/logout")
 def logout():
+    if session.get("user_id"):
+        log("logout", "تسجيل خروج", entity_type="auth", outcome="success")
     session.clear()
     return redirect(url_for("login"))
 
@@ -2230,6 +2232,76 @@ def audit_log():
     return render_template(
         "audit_log.html", audit_page=page, action=action, user_query=user_query,
         entity_type=entity_type, outcome=outcome, date_from=date_from, date_to=date_to,
+    )
+
+
+@app.route("/security/activity-monitor")
+@requires("audit.view")
+def activity_monitor():
+    category = request.args.get("category", "all").strip()
+    if category not in {"all", "login", "changes"}:
+        category = "all"
+    user_query = request.args.get("user", "").strip()[:100]
+    outcome = request.args.get("outcome", "").strip()
+    if outcome not in {"success", "failure"}:
+        outcome = ""
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+
+    auth_filter = "(al.entity_type='auth' OR al.action IN ('login','login_failed','login_blocked','logout'))"
+    change_filter = "(al.before_values IS NOT NULL OR al.after_values IS NOT NULL OR al.action IN ('user_created','user_updated','role_created','role_updated','role_deactivated','password_changed'))"
+    conditions = [f"({auth_filter} OR {change_filter})"]
+    params = []
+    if category == "login":
+        conditions = [auth_filter]
+    elif category == "changes":
+        conditions = [change_filter]
+    if user_query:
+        conditions.append("(COALESCE(u.username,'') LIKE ? OR COALESCE(u.full_name,'') LIKE ? OR COALESCE(al.details,'') LIKE ?)")
+        params.extend([f"%{user_query}%", f"%{user_query}%", f"%{user_query}%"])
+    if outcome:
+        conditions.append("al.outcome=?")
+        params.append(outcome)
+    if date_from:
+        conditions.append("substr(al.created_at,1,10)>=?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("substr(al.created_at,1,10)<=?")
+        params.append(date_to)
+    where = " AND ".join(conditions)
+    connection = db()
+    try:
+        activity_page = fetch_page(
+            connection,
+            f"""SELECT al.id,al.action,al.details,al.created_at,al.entity_type,al.entity_id,
+                       al.remote_addr,al.outcome,al.actor_name,al.before_values,al.after_values,
+                       al.reason,al.request_id,u.username,u.full_name
+                FROM audit_log al LEFT JOIN users u ON u.id=al.user_id
+                WHERE {where} ORDER BY al.created_at DESC,al.id DESC""",
+            f"""SELECT COUNT(*) FROM audit_log al LEFT JOIN users u ON u.id=al.user_id
+                WHERE {where}""",
+            params, page=request.args.get("page", 1, type=int), per_page=50,
+        )
+        since = datetime.now().astimezone().date().isoformat()
+        metrics = connection.execute(
+            """SELECT
+                 SUM(CASE WHEN action='login' AND outcome='success' THEN 1 ELSE 0 END) successful_logins,
+                 SUM(CASE WHEN action IN ('login_failed','login_blocked') OR (entity_type='auth' AND outcome='failure') THEN 1 ELSE 0 END) failed_logins,
+                 SUM(CASE WHEN before_values IS NOT NULL OR after_values IS NOT NULL THEN 1 ELSE 0 END) sensitive_changes
+               FROM audit_log WHERE substr(created_at,1,10)>=date(?, '-6 days')""",
+            (since,),
+        ).fetchone()
+    finally:
+        connection.close()
+    summary = {
+        "successful_logins": int(metrics["successful_logins"] or 0),
+        "failed_logins": int(metrics["failed_logins"] or 0),
+        "sensitive_changes": int(metrics["sensitive_changes"] or 0),
+    }
+    return render_template(
+        "activity_monitor.html", activity_page=activity_page, summary=summary,
+        category=category, user_query=user_query, outcome=outcome,
+        date_from=date_from, date_to=date_to,
     )
 
 
