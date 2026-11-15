@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from accounting_core import register_decimal_aggregates
 from management_reports import build_cash_forecast, build_inventory_ageing, build_period_comparison
+from cash_commitments import initialize_cash_commitments_schema, create_cash_commitment, record_cash_commitment_payment
 
 
 class ManagementReportsTests(unittest.TestCase):
@@ -95,6 +96,24 @@ class ManagementReportsTests(unittest.TestCase):
         self.assertEqual(report["payments"], Decimal("1100"))
         self.assertEqual(report["net_expected"], Decimal("-1100"))
         self.assertTrue(any("الضرائب" in note for note in report["coverage_notes"]))
+
+
+    def test_cash_forecast_includes_registered_commitments_without_creating_journal_entries(self):
+        initialize_cash_commitments_schema(self.conn)
+        commitment_id = create_cash_commitment(
+            self.conn, "tax", "ضريبة القيمة المضافة", "1250",
+            "2026-11-25", period_label="2026-10", currency_code="EGP",
+        )
+        record_cash_commitment_payment(
+            self.conn, commitment_id, "2026-11-10", "250", 1
+        )
+        report = build_cash_forecast(self.conn, "2026-11-15", 90)
+        item = next(row for row in report["items"] if row["kind"] == "cash_commitment")
+        self.assertEqual(item["balance"], Decimal("1000.00"))
+        self.assertEqual(item["due_date"], "2026-11-25")
+        self.assertEqual(report["payments"], Decimal("1000.00"))
+        self.assertEqual(report["daily"][0]["other_commitments"], Decimal("1000.00"))
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 6)
 
     def test_period_comparison_calculates_variance(self):
         report = build_period_comparison(
