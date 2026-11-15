@@ -91,6 +91,40 @@ class ProfitabilityReportTests(unittest.TestCase):
         self.assertEqual(warehouse["gross_profit"], Decimal("720"))
         self.assertIsNone(warehouse["net_profit"])
 
+    def test_warehouse_report_respects_period_and_posted_status(self):
+        self.conn.executescript("""
+            INSERT INTO sales_invoices VALUES
+                (2,'2026-10-31','posted',1,'300'),
+                (3,'2026-11-20','draft',1,'400'),
+                (4,'2026-12-01','posted',1,'500');
+            INSERT INTO sales_invoice_lines VALUES
+                (2,2,'60'),(3,3,'80'),(4,4,'100');
+            INSERT INTO sales_credit_notes VALUES
+                (2,1,'2026-10-31','posted','25'),
+                (3,1,'2026-11-30','draft','35'),
+                (4,1,'2026-12-01','posted','45');
+            INSERT INTO sales_credit_note_lines VALUES
+                (2,2,'5'),(3,3,'7'),(4,4,'9');
+        """)
+        report = build_profitability_report(self.conn, "2026-11-01", "2026-11-30")
+        warehouse = report["warehouses"][0]
+        self.assertEqual(warehouse["revenue"], Decimal("900"))
+        self.assertEqual(warehouse["cogs"], Decimal("180"))
+
+    def test_warehouse_without_assignment_is_reported_separately(self):
+        self.conn.execute(
+            "INSERT INTO sales_invoices VALUES(2,'2026-11-10','posted',NULL,'250')"
+        )
+        self.conn.execute(
+            "INSERT INTO sales_invoice_lines VALUES(2,2,'50')"
+        )
+        report = build_profitability_report(self.conn, "2026-11-01", "2026-11-30")
+        unassigned = next(row for row in report["warehouses"] if row["unassigned"])
+        self.assertEqual(unassigned["name"], "فواتير دون مخزن محدد")
+        self.assertEqual(unassigned["revenue"], Decimal("250"))
+        self.assertEqual(unassigned["cogs"], Decimal("50"))
+        self.assertIsNone(unassigned["net_profit"])
+
     def test_asset_disposal_loss_is_not_misreported_as_negative_revenue(self):
         self.conn.executescript("""
             CREATE TABLE asset_disposals(
