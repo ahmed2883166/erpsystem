@@ -50,7 +50,8 @@ from management_reports import build_period_comparison, build_inventory_ageing, 
 from cash_commitments import (initialize_cash_commitments_schema, create_cash_commitment,
                               record_cash_commitment_payment, void_cash_commitment, create_recurring_schedule,
                               generate_recurring_schedule_occurrences, deactivate_recurring_schedule,
-                              sync_friday_allowance_commitments)
+                              sync_friday_allowance_commitments, reverse_cash_commitment_payment,
+                              cash_commitment_payment_summary)
 
 # Development/demo builds run locally without a licensing server. Set NEXUS_DEMO_MODE=0
 # explicitly in a commercial deployment to enforce the signed remote licensing flow.
@@ -2563,6 +2564,15 @@ def cash_commitments_register():
                         payable_account_id=int(request.form.get("payable_account_id", "0")) or None,
                     )
                     flash("تم ربط الدفعة بقيد السداد الذي خفّض حساب الالتزام.", "success")
+                elif action == "reverse_payment":
+                    reversal_id = reverse_cash_commitment_payment(
+                        connection,
+                        int(request.form.get("payment_id", "0")),
+                        request.form.get("reversal_date", ""),
+                        request.form.get("reversal_reason", ""),
+                        created_by=session.get("user_id"),
+                    )
+                    flash(f"تم عكس قيد السداد رقم {reversal_id} وتحديث رصيد الالتزام.", "success")
                 elif action == "void":
                     void_cash_commitment(connection, int(request.form.get("commitment_id", "0")))
                     flash("تم إلغاء الالتزام المفتوح.", "success")
@@ -2593,14 +2603,16 @@ def cash_commitments_register():
                 flash(safe_error_message(exc, "تعذر حفظ العملية. لم يتم إجراء أي تغيير."), "error")
             return redirect(url_for("cash_commitments_register"))
         rows = connection.execute(
-            """SELECT c.*,
-                      COALESCE((SELECT SUM(CAST(p.amount AS NUMERIC))
-                                FROM cash_commitment_payments p
-                                WHERE p.commitment_id=c.id),0) paid_total
-               FROM cash_commitments c
+            """SELECT c.* FROM cash_commitments c
                ORDER BY CASE c.status WHEN 'open' THEN 0 WHEN 'partially_paid' THEN 1
                     WHEN 'paid' THEN 2 ELSE 3 END, c.due_date DESC, c.id DESC"""
         ).fetchall()
+        rows = [dict(row) for row in rows]
+        for item in rows:
+            payment_summary = cash_commitment_payment_summary(connection, item["id"])
+            item["paid_total"] = payment_summary["paid_total"]
+            item["status"] = payment_summary["status"]
+            item["payments"] = payment_summary["payments"]
         schedules = connection.execute(
             """SELECT s.*,
                       (SELECT COUNT(*) FROM cash_commitment_schedule_occurrences o
