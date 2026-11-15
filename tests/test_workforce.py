@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import shutil
 from pathlib import Path
+from unittest.mock import patch
 
 from flask import Flask
 import payroll_compliance
@@ -331,6 +332,41 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(sum(float(x[1] or 0) for x in posted), 14150.0)
         self.assertEqual(sum(float(x[2] or 0) for x in posted), 14150.0)
         self.assertTrue(any(x[0] == "1300" and x[2] == "200.00" for x in posted))
+
+    def test_payroll_posting_locks_before_reading_run_status(self):
+        self.add_employee()
+        self.client.post("/hr/payroll", data={
+            "period": "2026-11", "basic_1": "12000", "allowances_1": "0",
+            "overtime_hours_1": "0", "overtime_amount_1": "",
+            "absent_hours_1": "0", "absence_deduction_1": "0",
+            "other_deductions_1": "0", "tax_1": "0",
+            "employee_ins_1": "0", "employer_ins_1": "0"
+        })
+
+        statements = []
+        original_db = workforce._db
+
+        def traced_db():
+            connection = original_db()
+            connection.set_trace_callback(statements.append)
+            return connection
+
+        with patch.object(workforce, "_db", side_effect=traced_db):
+            response = self.client.post("/hr/payroll/1/post", data={
+                "salary_expense_account": "4", "employer_ins_expense_account": "3",
+                "salaries_payable_account": "5", "tax_payable_account": "6",
+                "insurance_payable_account": "7", "advances_account": "2",
+                "other_deductions_account": "2"
+            })
+
+        self.assertEqual(response.status_code, 302)
+        normalized = [statement.strip().upper() for statement in statements]
+        begin_index = normalized.index("BEGIN IMMEDIATE")
+        run_read_index = next(
+            index for index, statement in enumerate(normalized)
+            if statement.startswith("SELECT * FROM PAYROLL_RUNS WHERE ID=")
+        )
+        self.assertLess(begin_index, run_read_index)
 
     def test_payroll_payment_supports_partial_and_full_settlement(self):
         self.add_employee()
