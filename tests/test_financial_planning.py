@@ -780,5 +780,33 @@ class FinancialYearJournalTests(unittest.TestCase):
         ).fetchone())
 
 
+    def test_opening_validation_excludes_copied_later_year_opening_entry(self):
+        from financial_planning import _opening_balance_mismatches
+        self.conn.executemany(
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) VALUES(?,?,?,?,0,1)",
+            [(1,"1110","النقدية","asset"),(2,"3100","رأس المال","equity")]
+        )
+        self.conn.executescript("""
+            CREATE TABLE financial_years(id INTEGER PRIMARY KEY,year_name TEXT,start_date TEXT,end_date TEXT,status TEXT,opening_entry_id INTEGER);
+            CREATE TABLE financial_year_journal_history(id INTEGER PRIMARY KEY,financial_year_id INTEGER,entry_kind TEXT,action TEXT,entry_id INTEGER,related_entry_id INTEGER);
+            INSERT INTO financial_years VALUES(1,'2027','2027-01-01','2027-12-31','open',2);
+            INSERT INTO financial_year_journal_history(financial_year_id,entry_kind,action,entry_id)
+              VALUES(1,'opening','created',2);
+        """)
+        self.conn.executemany(
+            "INSERT INTO journal_entries(id,entry_date,status) VALUES(?,?,?)",
+            [(1,"2026-12-31","posted"),(2,"2027-01-01","posted")]
+        )
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(?,?,?,?)",
+            [(1,1,"100.00","0"),(1,2,"0","100.00"),
+             (2,1,"100.00","0"),(2,2,"0","100.00")]
+        )
+        mismatches=_opening_balance_mismatches(
+            self.conn,"2027-01-01", {1:Decimal("100.00"),2:Decimal("100.00")}
+        )
+        self.assertEqual(mismatches,[])
+
+
 if __name__ == "__main__":
     unittest.main()
