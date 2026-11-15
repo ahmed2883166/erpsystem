@@ -53,6 +53,12 @@ class WorkforceTests(unittest.TestCase):
         (template_dir / "payroll_run.html").write_text(
             "{{ get_flashed_messages()|join('|') }}", encoding="utf-8"
         )
+        (template_dir / "payroll_reconciliation.html").write_text(
+            "{% for r in runs %}{{ r.result }}{% endfor %}|"
+            "{% for issue in issues %}{{ issue.message }}{% endfor %}|"
+            "{% if not issues %}لم يتم رصد تكرار أو اختلاف{% endif %}",
+            encoding="utf-8"
+        )
         (template_dir / "payroll_payslip.html").write_text(
             "{{ slip.full_name }}|{{ slip.net_pay }}|{{ slip.manual_advance_deduction }}", encoding="utf-8"
         )
@@ -655,6 +661,40 @@ class WorkforceTests(unittest.TestCase):
         self.assertIn("إجمالي القيد لا يطابق",response.get_data(as_text=True))
         self.assertIn("يحتاج مراجعة",response.get_data(as_text=True))
 
+
+    def test_payroll_reconciliation_flags_unallocated_legacy_payment(self):
+        self.add_employee()
+        self.client.post("/hr/payroll", data={
+            "period":"2026-11","basic_1":"10000","allowances_1":"0",
+            "overtime_hours_1":"0","overtime_amount_1":"",
+            "absent_hours_1":"0","absence_deduction_1":"0",
+            "other_deductions_1":"0","tax_1":"0","employee_ins_1":"0",
+            "employer_ins_1":"0"
+        })
+        self.approve_pending_salary_changes(1)
+        self.client.post("/hr/payroll/1/post", data={
+            "salary_expense_account":"4","employer_ins_expense_account":"3",
+            "salaries_payable_account":"5","tax_payable_account":"6",
+            "insurance_payable_account":"7","advances_account":"2",
+            "other_deductions_account":"2"
+        })
+        conn=sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO journal_entries(entry_date,reference,description,status,created_by,created_at)
+            VALUES('2026-11-05','PAYROLL-PAY-LEGACY-1','صرف مرتبات قديم','posted',1,CURRENT_TIMESTAMP)""")
+        payment_journal_id=conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?)",
+            (payment_journal_id,5,"1000","0","إقفال مستحقات المرتبات"))
+        conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?)",
+            (payment_journal_id,1,"0","1000","صرف من الصندوق"))
+        conn.execute("""INSERT INTO payroll_payments(run_id,payment_date,amount,cash_account_id,
+            journal_entry_id,reference,notes,created_by)
+            VALUES(1,'2026-11-05','1000',1,?,'PAYROLL-PAY-LEGACY-1','دفعة قديمة',1)""",
+            (payment_journal_id,))
+        conn.commit()
+        conn.close()
+        response=self.client.get("/hr/payroll-reconciliation")
+        self.assertEqual(response.status_code,200)
+        self.assertIn("غير موزعة على الموظفين",response.get_data(as_text=True))
     def test_payroll_uses_employee_master_salary_when_monthly_field_is_blank(self):
         self.add_employee()
         response = self.client.post("/hr/payroll", data={"period": "2026-11", "basic_1": ""})
