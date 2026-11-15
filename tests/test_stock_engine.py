@@ -1,4 +1,5 @@
 import tempfile
+from datetime import date
 import unittest
 from decimal import Decimal
 from unittest.mock import patch
@@ -251,6 +252,67 @@ class StockValuationTests(unittest.TestCase):
             stock.current_qty(self.db,self.product_id,self.warehouse_id),
             Decimal("207")
         )
+
+
+    def test_demand_forecast_subtracts_posted_returns_and_suggests_replenishment(self):
+        today = date.today()
+        start = (today - date.resolution * 89).isoformat()
+        self.db.executescript("""
+            CREATE TABLE sales_invoices(
+                id INTEGER PRIMARY KEY,warehouse_id INTEGER,status TEXT,invoice_date TEXT
+            );
+            CREATE TABLE sales_invoice_lines(
+                id INTEGER PRIMARY KEY,invoice_id INTEGER,product_id INTEGER,quantity TEXT
+            );
+            CREATE TABLE sales_credit_notes(
+                id INTEGER PRIMARY KEY,invoice_id INTEGER,status TEXT,credit_date TEXT
+            );
+            CREATE TABLE sales_credit_note_lines(
+                id INTEGER PRIMARY KEY,credit_note_id INTEGER,product_id INTEGER,quantity TEXT
+            );
+        """)
+        self.db.execute(
+            "INSERT INTO sales_invoices VALUES(1,?,'posted',?)",
+            (self.warehouse_id, start),
+        )
+        self.db.execute(
+            "INSERT INTO sales_invoice_lines VALUES(1,1,?,'90')",
+            (self.product_id,),
+        )
+        self.db.execute(
+            "INSERT INTO sales_credit_notes VALUES(1,1,'posted',?)",
+            (today.isoformat(),),
+        )
+        self.db.execute(
+            "INSERT INTO sales_credit_note_lines VALUES(1,1,?,'9')",
+            (self.product_id,),
+        )
+        products = {
+            row["id"]: row for row in self.db.execute(
+                "SELECT id,sku,name_ar,uom FROM stock_products"
+            ).fetchall()
+        }
+        forecast, available = stock.build_demand_replenishment_forecast(
+            self.db,
+            {(self.product_id, self.warehouse_id): {"qty": Decimal("18")}},
+            products,
+            today,
+        )
+        self.assertTrue(available)
+        self.assertEqual(len(forecast), 1)
+        row = forecast[0]
+        self.assertEqual(row["net_sold_qty"], Decimal("81"))
+        self.assertEqual(row["daily_demand"], Decimal("0.9"))
+        self.assertEqual(row["coverage_days"], Decimal("20"))
+        self.assertEqual(row["suggested_qty"], Decimal("0.9"))
+        self.assertEqual(row["priority"], "مراقبة")
+
+    def test_demand_forecast_is_unavailable_without_sales_schema(self):
+        forecast, available = stock.build_demand_replenishment_forecast(
+            self.db, {}, {}, date.today()
+        )
+        self.assertEqual(forecast, [])
+        self.assertFalse(available)
 
 
 if __name__ == "__main__":
