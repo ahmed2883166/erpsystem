@@ -113,10 +113,10 @@
   <h3>المركز المالي حتى {{ date_to }}</h3>
   <div class="table-wrap"><table class="financial-summary-table">
     <thead><tr><th>البند</th><th>الرصيد</th></tr></thead><tbody>
-      <tr><td>النقدية والبنوك</td><td><a href="{{ url_for('ledger') }}?date_to={{ date_to }}">{{ money(s.cash) }}</a></td></tr>
-      <tr><td>أرصدة العملاء / المدينين</td><td><a href="{{ url_for('aging.index', kind='customers', as_of=date_to) }}">{{ money(s.receivables) }}</a></td></tr>
-      <tr><td>أرصدة الموردين</td><td><a href="{{ url_for('aging.index', kind='suppliers', as_of=date_to) }}">{{ money(s.payables) }}</a></td></tr>
-      <tr><td>قيمة المخزون</td><td><a href="{{ url_for('inventory_ageing_report', as_of=date_to) }}">{{ money(s.inventory) }}</a></td></tr>
+      <tr><td>النقدية والبنوك</td><td><a href="{{ url_for('planning.cash_flow') }}">{{ money(s.cash) }}</a></td></tr>
+      <tr><td>أرصدة العملاء / المدينين</td><td><a href="{{ url_for('aging.index', kind='customers') }}">{{ money(s.receivables) }}</a></td></tr>
+      <tr><td>أرصدة الموردين</td><td><a href="{{ url_for('aging.index', kind='suppliers') }}">{{ money(s.payables) }}</a></td></tr>
+      <tr><td>قيمة المخزون</td><td>{% if 'stock.view' in permissions %}<a href="{{ url_for('inventory_ageing_report', as_of=date_to) }}">{{ money(s.inventory) }}</a>{% else %}{{ money(s.inventory) }}{% endif %}</td></tr>
       <tr class="financial-subtotal"><td>إجمالي الأصول</td><td><a href="{{ url_for('planning.balance_sheet', date_to=date_to) }}">{{ money(s.total_assets) }}</a></td></tr>
       <tr><td>إجمالي الالتزامات</td><td><a href="{{ url_for('planning.balance_sheet', date_to=date_to) }}">{{ money(s.total_liabilities) }}</a></td></tr>
       <tr><td>حقوق الملكية قبل نتيجة النشاط</td><td>{{ money(s.total_equity) }}</td></tr>
