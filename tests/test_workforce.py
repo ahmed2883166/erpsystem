@@ -402,7 +402,6 @@ class WorkforceTests(unittest.TestCase):
             return connection
 
         with patch.object(workforce, "_db", side_effect=traced_db):
-        self.approve_pending_salary_changes(1)
             response = self.client.post("/hr/payroll/1/post", data={
                 "salary_expense_account": "4", "employer_ins_expense_account": "3",
                 "salaries_payable_account": "5", "tax_payable_account": "6",
