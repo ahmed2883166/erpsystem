@@ -27,7 +27,7 @@ class CashCommitmentsTests(unittest.TestCase):
         self.conn.execute("""CREATE TABLE journal_entries(
             id INTEGER PRIMARY KEY, status TEXT NOT NULL,
             reference TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '',
-            entry_date TEXT NOT NULL DEFAULT '2026-11-30'
+            entry_date TEXT NOT NULL DEFAULT '2026-11-10'
         )""")
         self.conn.execute("""CREATE TABLE journal_lines(
             id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
