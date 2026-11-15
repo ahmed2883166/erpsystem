@@ -2173,7 +2173,7 @@ def _reverse_supplier_credit_journal(conn, entry_id, reversal_date, reference, d
         raise ValueError("تاريخ الإلغاء أو تاريخ القيد الأصلي غير صحيح.")
     if reversal_day<original_day:
         raise ValueError("تاريخ إلغاء إشعار المورد لا يمكن أن يسبق تاريخ الإشعار الأصلي.")
-    dimension_keys=("branch_id","cost_center_id","project_id","customer_id","salesperson_id","supplier_id")
+    dimension_keys=("branch_id","cost_center_id","project_id","customer_id","salesperson_id","supplier_id","stock_product_id","stock_warehouse_id")
     available={row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")}
     dimensions=[key for key in dimension_keys if key in available]
     columns=["account_id","debit","credit","memo",*dimensions]
@@ -2211,8 +2211,14 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
     line_count=conn.execute(
         "SELECT COUNT(*) FROM supplier_credit_note_lines WHERE credit_note_id=?",(credit_note_id,)
     ).fetchone()[0]
-    if not allocations or not line_count:
-        raise ValueError("لا يمكن إلغاء إشعار قديم لا يحتوي على روابط طبقات المخزون الأصلية؛ يلزم فحصه يدويًا.")
+    missing_allocations=conn.execute(
+        """SELECT 1 FROM supplier_credit_note_lines l
+           WHERE l.credit_note_id=? AND NOT EXISTS(
+             SELECT 1 FROM supplier_credit_note_layer_allocations a WHERE a.credit_note_line_id=l.id
+           ) LIMIT 1""",(credit_note_id,)
+    ).fetchone()
+    if not allocations or not line_count or missing_allocations:
+        raise ValueError("لا يمكن إلغاء إشعار قديم لا يحتوي على روابط كاملة لطبقات المخزون الأصلية؛ يلزم فحصه يدويًا.")
     if any(row["movement_type"]!="issue" or row["accounting_status"]!="posted" for row in allocations):
         raise ValueError("حركات مخزون إشعار المورد تغيرت بالفعل؛ لا يمكن تنفيذ الإلغاء مرة أخرى.")
     reversal_id=_reverse_supplier_credit_journal(
@@ -2225,11 +2231,11 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
             """INSERT INTO stock_movements(
               movement_no,movement_type,product_id,target_warehouse_id,target_location_id,lot_id,
               quantity,unit_cost,total_cost,movement_date,notes,created_by,journal_entry_id,accounting_status)
-              SELECT ?, 'receipt',l.product_id,nothing.warehouse_id,?, ?,?,?,?,?,?,?,?,'posted'
-              FROM supplier_credit_note_lines nothing
-              JOIN supplier_credit_notes n ON n.id=nothing.credit_note_id
-              JOIN stock_products l ON l.id=nothing.product_id
-              WHERE nothing.id=?""",
+              SELECT ?, 'receipt',l.product_id,cnl.warehouse_id,?, ?,?,?,?,?,?,?,?,'posted'
+              FROM supplier_credit_note_lines cnl
+              JOIN supplier_credit_notes n ON n.id=cnl.credit_note_id
+              JOIN stock_products l ON l.id=cnl.product_id
+              WHERE cnl.id=?""",
             (movement_no,allocation["location_id"],allocation["lot_id"],allocation["quantity"],
              allocation["unit_cost"],allocation["total_cost"],cancellation_date,
              "إعادة مخزون عند إلغاء مرتجع المورد "+note["credit_no"],created_by,reversal_id,
@@ -2241,10 +2247,10 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
             """INSERT INTO stock_valuation_layers(
               product_id,warehouse_id,location_id,lot_id,source_movement_id,
               qty_in,qty_remaining,unit_cost,value_remaining)
-              SELECT l.product_id,nothing.warehouse_id,?,?,?, ?,?,?,?
-              FROM supplier_credit_note_lines nothing
-              JOIN stock_products l ON l.id=nothing.product_id
-              WHERE nothing.id=?""",
+              SELECT l.product_id,cnl.warehouse_id,?,?,?, ?,?,?,?
+              FROM supplier_credit_note_lines cnl
+              JOIN stock_products l ON l.id=cnl.product_id
+              WHERE cnl.id=?""",
             (allocation["location_id"],allocation["lot_id"],cur.lastrowid,
              allocation["quantity"],allocation["quantity"],allocation["unit_cost"],
              allocation["total_cost"],allocation["credit_note_line_id"])
