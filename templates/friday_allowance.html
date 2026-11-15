@@ -23,13 +23,14 @@
 <button type="button" id="addAllFridayEmployees">إضافة كل المستحقين</button>
 <button type="button" class="secondary" id="addSelectedFridayEmployees">إضافة الموظفين المحددين</button>
 </div>
+<label>فلترة حسب الإدارة <input type="text" id="fridayDepartmentFilter" placeholder="اكتب اسم الإدارة لعرض موظفيها"></label>
 <label>الموظفون الذين لديهم حضور يوم جمعة في الشهر
 <select id="fridayEmployeePicker" multiple size="7" style="width:100%">
-{% for e in employees %}<option value="{{e.id}}" data-code="{{e.employee_code}}" data-name="{{e.full_name}}" data-basic="{{e.basic_salary}}" data-days="{{e.attendance_days}}">{{e.employee_code}} - {{e.full_name}} — أيام الجمعة: {{e.attendance_days}} — الأساسي: {{e.basic_salary}}</option>{% endfor %}
+{% for e in employees %}<option value="{{e.id}}" data-code="{{e.employee_code}}" data-name="{{e.full_name}}" data-basic="{{e.basic_salary}}" data-days="{{e.attendance_days}}" data-department="{{e.department or ''}}">{{e.employee_code}} - {{e.full_name}} — أيام الجمعة: {{e.attendance_days}} — الأساسي: {{e.basic_salary}}</option>{% endfor %}
 </select></label>
 <div style="overflow-x:auto;margin-top:12px">
 <table class="friday-selected-table">
-<thead><tr><th>كود الموظف</th><th>اسم الموظف</th><th>الراتب الأساسي</th><th>أيام الجمعة الحاضرة</th><th>البدل المحسوب</th><th>إجراء</th></tr></thead>
+<thead><tr><th>كود الموظف</th><th>اسم الموظف</th><th>الإدارة</th><th>الراتب الأساسي</th><th>أيام الجمعة الحاضرة</th><th>البدل المحسوب</th><th>إجراء</th></tr></thead>
 <tbody id="fridaySelectedBody"><tr><td colspan="6">لم تتم إضافة موظفين بعد.</td></tr></tbody>
 </table></div>
 <div id="fridaySelectedInputs"></div>
@@ -65,16 +66,17 @@ const fridayBody=document.getElementById('fridaySelectedBody');
 const fridayInputs=document.getElementById('fridaySelectedInputs');
 const fridayCount=document.getElementById('fridaySelectedCount');
 const fridaySelected=new Map();
+const fridayDepartmentFilter=document.getElementById('fridayDepartmentFilter');
 const fridayPeriod=document.querySelector('#fridayForm [name="period"]');
 fridayPeriod.addEventListener('change',()=>{
   if(fridayPeriod.value) window.location.href='{{url_for("workforce.friday_allowance")}}?period='+encodeURIComponent(fridayPeriod.value);
 });
 function renderFridaySelected(){
   fridayBody.innerHTML='';fridayInputs.innerHTML='';
-  if(!fridaySelected.size){const row=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=6;cell.textContent='لم تتم إضافة موظفين بعد.';row.appendChild(cell);fridayBody.appendChild(row);}
+  if(!fridaySelected.size){const row=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=7;cell.textContent='لم تتم إضافة موظفين بعد.';row.appendChild(cell);fridayBody.appendChild(row);}
   fridaySelected.forEach((e,id)=>{
     const row=document.createElement('tr');
-    [e.code,e.name,e.basic,e.days,e.amount].forEach(v=>{const cell=document.createElement('td');cell.textContent=v;row.appendChild(cell);});
+    [e.code,e.name,e.department||'-',e.basic,e.days,e.amount].forEach(v=>{const cell=document.createElement('td');cell.textContent=v;row.appendChild(cell);});
     const action=document.createElement('td');const remove=document.createElement('button');remove.type='button';remove.className='secondary';remove.textContent='حذف الموظف';
     remove.addEventListener('click',()=>{fridaySelected.delete(id);renderFridaySelected();});action.appendChild(remove);row.appendChild(action);fridayBody.appendChild(row);
     const hidden=document.createElement('input');hidden.type='hidden';hidden.name='employee_ids';hidden.value=id;fridayInputs.appendChild(hidden);
@@ -82,16 +84,20 @@ function renderFridaySelected(){
   fridayCount.textContent='عدد الموظفين المختارين: '+fridaySelected.size;
 }
 function addFridayOptions(options){
-  options.forEach(o=>{if(o.selected)fridaySelected.set(o.value,{code:o.dataset.code,name:o.dataset.name,basic:o.dataset.basic,days:o.dataset.days,
+  options.forEach(o=>{if(o.selected && !o.hidden)fridaySelected.set(o.value,{code:o.dataset.code,name:o.dataset.name,department:o.dataset.department,basic:o.dataset.basic,days:o.dataset.days,
     amount:(Number(o.dataset.basic||0)/30*2*Number(o.dataset.days||0)).toFixed(2)});});
   renderFridaySelected();
 }
 document.getElementById('addAllFridayEmployees').addEventListener('click',()=>{
-  Array.from(fridayPicker.options).forEach(o=>fridaySelected.set(o.value,{code:o.dataset.code,name:o.dataset.name,basic:o.dataset.basic,days:o.dataset.days,
+  Array.from(fridayPicker.options).filter(o=>!o.hidden).forEach(o=>fridaySelected.set(o.value,{code:o.dataset.code,name:o.dataset.name,department:o.dataset.department,basic:o.dataset.basic,days:o.dataset.days,
     amount:(Number(o.dataset.basic||0)/30*2*Number(o.dataset.days||0)).toFixed(2)}));
   renderFridaySelected();
 });
 document.getElementById('addSelectedFridayEmployees').addEventListener('click',()=>addFridayOptions(Array.from(fridayPicker.options)));
+fridayDepartmentFilter.addEventListener('input',()=>{
+  const query=fridayDepartmentFilter.value.trim().toLowerCase();
+  Array.from(fridayPicker.options).forEach(o=>{o.hidden=!!query && !(o.dataset.department||'').toLowerCase().includes(query);if(o.hidden)o.selected=false;});
+});
 renderFridaySelected();
 </script>
 {% endblock %}
