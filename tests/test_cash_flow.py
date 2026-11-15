@@ -247,6 +247,8 @@ class CashFlowReportTests(unittest.TestCase):
             if item["label"] == "التغير في الالتزامات المتداولة الأخرى"
         )
         self.assertEqual(other_liabilities["amount"], financial_planning.Decimal("0"))
+        self.assertEqual(snapshot["opening"], financial_planning.Decimal("1720"))
+        self.assertEqual(snapshot["closing"], financial_planning.Decimal("1720"))
         self.assertEqual(snapshot["indirect_operating_net"], financial_planning.Decimal("0"))
         self.assertEqual(snapshot["indirect_reconciliation"], financial_planning.Decimal("0"))
         self.assertEqual(snapshot["reconciliation_difference"], financial_planning.Decimal("0"))
