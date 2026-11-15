@@ -761,25 +761,33 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
         lines_by_entry.setdefault(line["entry_id"], []).append(line)
 
     threshold = Decimal(str(multiplier))
-    result = []
     seen_signatures = {}
-    for entry in entries:
-        entry_date = date.fromisoformat(entry["entry_date"])
-        reasons = []
-        entry_lines = lines_by_entry.get(entry["id"], ())
+    duplicate_entries = {}
+    # Entries are returned newest-first; scan oldest-first so the newer copy
+    # is consistently identified as the duplicate.
+    for candidate in reversed(entries):
+        candidate_lines = lines_by_entry.get(candidate["id"], ())
         signature = (
-            entry["entry_date"],
+            candidate["entry_date"],
             tuple(sorted((
                 int(line["account_id"]),
                 str(_decimal(line["debit"])),
                 str(_decimal(line["credit"])),
-            ) for line in entry_lines)),
+            ) for line in candidate_lines)),
         )
-        duplicate_of = seen_signatures.get(signature)
+        if signature in seen_signatures:
+            duplicate_entries[candidate["id"]] = seen_signatures[signature]
+        else:
+            seen_signatures[signature] = candidate["id"]
+
+    result = []
+    for entry in entries:
+        entry_date = date.fromisoformat(entry["entry_date"])
+        reasons = []
+        entry_lines = lines_by_entry.get(entry["id"], ())
+        duplicate_of = duplicate_entries.get(entry["id"])
         if duplicate_of is not None:
             reasons.append("قيد مطابق تمامًا لقيد مرحل آخر رقم " + str(duplicate_of) + " — يحتاج مراجعة")
-        else:
-            seen_signatures[signature] = entry["id"]
         if abs(_decimal(entry["debit"]) - _decimal(entry["credit"])) > Decimal("0.01"):
             reasons.append("القيد غير متوازن بين المدين والدائن")
         if entry_date >= period_end - timedelta(days=1):
