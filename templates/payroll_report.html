@@ -3,8 +3,8 @@
 {% block content %}
 <header>
   <h2>تقرير مستحقات وتفاصيل رواتب الموظفين</h2>
-  <p>يعرض المسيرات المرحلة فقط، ويمكن عرض جميع الموظفين أو موظف محدد خلال شهر أو فترة.</p>
-  <p class="muted">التقرير تاريخي ولا يعيد حساب الرواتب من بيانات الموظف الحالية. كل صف يعكس القيم المحفوظة وقت إعداد المسير.</p>
+  <p>يعرض كشوف المرتبات المرحلة فقط، ويمكن عرض جميع الموظفين أو موظف محدد خلال شهر أو فترة.</p>
+  <p class="muted">التقرير تاريخي ولا يعيد حساب الرواتب من بيانات الموظف الحالية. كل صف يعكس القيم المحفوظة وقت إعداد كشف المرتبات.</p>
 </header>
 <section class="panel">
   <h3>فلاتر التقرير</h3>
@@ -34,7 +34,7 @@
   </div>
 </section>
 <section class="panel">
-  <h3>تفاصيل كل موظف ومسير</h3>
+  <h3>تفاصيل كل موظف وكشف المرتبات</h3>
   <div style="overflow-x:auto">
     <table>
       <thead><tr>
@@ -59,7 +59,7 @@
           <td><a href="{{ url_for('report_exports.export_report_excel', report='payroll-payslip', run_id=r.run_id, employee_id=r.employee_id).replace('/excel','/pdf') }}">PDF</a> · <a href="{{ url_for('report_exports.export_report_excel', report='payroll-payslip', run_id=r.run_id, employee_id=r.employee_id) }}">Excel</a></td>
         </tr>
       {% else %}
-        <tr><td colspan="25">لا توجد مسيرات مرحلة مطابقة للفلاتر المختارة.</td></tr>
+        <tr><td colspan="25">لا توجد كشوف المرتبات مرحلة مطابقة للفلاتر المختارة.</td></tr>
       {% endfor %}
       </tbody>
       {% if rows %}
