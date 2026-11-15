@@ -173,6 +173,21 @@ class UserPermissionRouteTests(unittest.TestCase):
         self.assertIn("role_updated", audit_actions)
         self.assertIn("role_deactivated", audit_actions)
 
+    def test_workforce_manage_and_approval_permissions_are_independent(self):
+        manager = nexus.normalize_user_permissions(["workforce.manage"])
+        self.assertIn("workforce.view", manager)
+        self.assertIn("workforce.manage", manager)
+        self.assertNotIn("workforce.approve", manager)
+
+        approver = nexus.normalize_user_permissions(["workforce.approve"])
+        self.assertIn("workforce.view", approver)
+        self.assertIn("workforce.approve", approver)
+        self.assertNotIn("workforce.manage", approver)
+
+        self.assertIn("workforce.approve", nexus.PERMISSIONS["admin"])
+        self.assertIn("workforce.approve", nexus.PERMISSIONS["accountant"])
+        self.assertNotIn("workforce.approve", nexus.PERMISSIONS["viewer"])
+
     def test_sales_manage_does_not_implicitly_grant_discount_approval(self):
         permissions = nexus.normalize_user_permissions(["sales.manage"])
         self.assertIn("sales.view", permissions)
