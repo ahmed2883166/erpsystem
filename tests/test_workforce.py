@@ -58,6 +58,10 @@ class WorkforceTests(unittest.TestCase):
         (template_dir / "employee_grants.html").write_text("{{ get_flashed_messages()|join('|') }}", encoding="utf-8")
         (template_dir / "salary_changes.html").write_text("salary changes", encoding="utf-8")
         (template_dir / "salary_history.html").write_text("salary history", encoding="utf-8")
+        (template_dir / "incentive_rules.html").write_text(
+            "{{ total_rules }}|{{ active_rules }}|{% for r in incentive_rules %}{{ r.name }}{% endfor %}",
+            encoding="utf-8"
+        )
         (template_dir / "form2_salary_report.html").write_text(
             "{{ scope }}|{{ employees|length }}|{{ totals.insured_wage }}", encoding="utf-8"
         )
@@ -117,6 +121,24 @@ class WorkforceTests(unittest.TestCase):
         rows=conn.execute("SELECT employee_code_snapshot FROM employee_grant_lines WHERE grant_id=2").fetchall()
         self.assertEqual(rows,[("E002",)])
         conn.close()
+
+    def test_incentive_rules_have_a_dedicated_screen(self):
+        response = self.client.get("/hr/incentives")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("0|0|", response.get_data(as_text=True))
+        created = self.client.post("/hr/incentive-rules", data={
+            "name": "حافز أداء",
+            "calculation_method": "percentage_basic",
+            "calculation_value": "5"
+        })
+        self.assertEqual(created.status_code, 302)
+        self.assertIn("/hr/incentives", created.headers["Location"])
+        response = self.client.get("/hr/incentives")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("1|1|حافز أداء", response.get_data(as_text=True))
+        employee_page = self.client.get("/hr/employees")
+        self.assertEqual(employee_page.status_code, 200)
+        self.assertNotIn("إعداد أنواع الحوافز والمكافآت", employee_page.get_data(as_text=True))
 
     def test_group_form_2_report_filters_employee_categories(self):
         self.add_employee()
