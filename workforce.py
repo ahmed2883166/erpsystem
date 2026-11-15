@@ -1387,7 +1387,7 @@ def payroll():
     runs = runs_page["rows"]
     c.close()
     return render_template("payroll.html", employees=employees, runs=runs, runs_page=runs_page,
-                           today=today_period, incentive_rules=incentive_rules)
+                           today=today_period)
 
 
 @workforce_bp.route("/hr/payroll/<int:run_id>", methods=["GET"])
