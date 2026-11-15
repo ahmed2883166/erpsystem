@@ -1,14 +1,84 @@
-{% extends "base.html" %}{% block title %}الاستحقاقات والاستقطاعات | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>الاستحقاقات والاستقطاعات</h2><p>عرّف اسم البند وقيمته، ثم اختر الموظفين الذين ينطبق عليهم. يظهر كل بند تحت اسم الموظف في كشف المرتبات، دون وضع هذه التفاصيل في ملف الموظف.</p><p><a href="{{url_for('workforce.employees')}}">بيانات الموظفين</a> · <a href="{{url_for('workforce.payroll')}}">المرتبات</a> · <a href="{{url_for('workforce.employee_loans')}}">السلف</a></p></header>
-<section class="panel"><h3>إضافة بند وربطه بالموظفين</h3><form method="post" class="form-grid" id="payItemForm">
-<label>اسم البند<input name="item_name" placeholder="بدل انتقال / علاوة دورية / خصم تأمين طبي" required maxlength="120"></label>
-<label>نوع البند<select name="item_type" required><option value="allowance">استحقاق يضاف للمرتب</option><option value="deduction">استقطاع يخصم من المرتب</option></select></label>
-<label>القيمة الشهرية لكل موظف<input name="amount" type="number" min="0" step="0.01" required></label>
-<div style="grid-column:1/-1"><strong>اختيار الموظفين</strong><p class="muted">يمكن اختيار موظف مثبت أو مؤقت أو مكافأة شاملة أو أكثر من فئة في نفس البند.</p>
-<div class="actions"><button type="button" class="secondary" onclick="document.querySelectorAll('[name=employee_ids]').forEach(x=>x.checked=true)">تحديد الكل</button><button type="button" class="secondary" onclick="document.querySelectorAll('[name=employee_ids]').forEach(x=>x.checked=false)">إلغاء التحديد</button></div>
-<div class="employee-pick-grid">{% for e in employees %}<label class="employee-pick"><input type="checkbox" name="employee_ids" value="{{e.id}}"> <strong>{{e.employee_code}} - {{e.full_name}}</strong><small>{{{'permanent':'مثبت','temporary':'مؤقت','comprehensive_bonus':'مكافأة شاملة','unpaid_leave':'إجازة بدون مرتب','resigned':'استقالة','retired':'معاش'}.get(e.work_status,e.work_status)}}</small></label>{% endfor %}</div></div>
-<button type="submit">إضافة البند للموظفين المحددين</button></form></section>
-<section class="panel"><h3>مرآة الاستحقاقات والاستقطاعات حسب اسم البند</h3><div style="overflow-x:auto"><table><tr><th>اسم البند</th><th>النوع</th><th>الموظف</th><th>القيمة الشهرية</th><th>الحالة</th><th>الإجراء</th></tr>
-{% for group in groups %}{% for e in group.employees %}<tr>{% if loop.first %}<td rowspan="{{group.employees|length}}"><strong>{{group.item_name}}</strong></td><td rowspan="{{group.employees|length}}">{{'استحقاق' if group.item_type=='allowance' else 'استقطاع'}}</td>{% endif %}<td>{{e.employee_code}} - {{e.full_name}} <small>({{'مثبت' if e.work_status=='permanent' else 'مؤقت' if e.work_status=='temporary' else 'مكافأة شاملة' if e.work_status=='comprehensive_bonus' else e.work_status}})</small></td><td><form method="post" action="{{url_for('workforce.update_pay_item',item_id=e.id)}}" class="inline-form"><input type="number" name="amount" min="0" step="0.01" value="{{e.amount}}" style="max-width:120px" required><button type="submit">حفظ القيمة</button></form></td><td>{{'نشط' if e.active else 'موقوف'}}</td><td><form method="post" action="{{url_for('workforce.toggle_pay_item',item_id=e.id)}}"><button class="secondary" type="submit">{{'إيقاف' if e.active else 'إعادة تفعيل'}}</button></form></td></tr>{% endfor %}{% else %}<tr><td colspan="6">لم تتم إضافة استحقاقات أو استقطاعات بعد.</td></tr>{% endfor %}</table></div></section>
-<style>.employee-pick-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px;margin-top:10px}.employee-pick{display:flex;gap:8px;align-items:center;padding:9px;border:1px solid var(--border-color,#ddd);border-radius:8px}.employee-pick small{margin-right:auto;color:var(--muted,#667085)}.employee-pick input{width:auto}</style>
+{% extends "base.html" %}
+{% block title %}الاستحقاقات والاستقطاعات | NEXUS ERP{% endblock %}
+{% block content %}
+<style>
+.pay-item-picker{width:100%;min-height:170px}
+.pay-item-selected{width:100%;border-collapse:collapse;min-width:650px}
+.pay-item-selected th{background:#e9eef5;color:#1e344e;padding:10px;border:1px solid #cbd5e1;white-space:nowrap}
+.pay-item-selected td{padding:9px;border:1px solid #d8e0e9;text-align:center}
+.pay-item-selected tbody tr:nth-child(even){background:#f8fafc}
+.pay-item-shortcuts{display:flex;gap:9px;flex-wrap:wrap;margin:12px 0}
+.pay-item-shortcuts a{display:inline-flex;align-items:center;padding:9px 15px;border:1px solid var(--line);border-radius:9px;background:var(--surface2);font-weight:700;text-decoration:none}
+@media(max-width:700px){.pay-item-picker{min-height:220px}}
+</style>
+<header><h2>الاستحقاقات والاستقطاعات</h2><p>تعريف البند أولًا باسمه وقيمته، ثم اختيار الموظفين ومراجعة القائمة قبل إضافته لكشوف المرتبات.</p>
+<div class="pay-item-shortcuts">
+<a href="{{url_for('workforce.employees')}}">بيانات الموظفين</a>
+<a href="{{url_for('workforce.payroll')}}">المرتبات</a>
+<a href="{{url_for('workforce.employee_loans')}}">السلف</a>
+</div></header>
+<section class="panel">
+<h3>إضافة بند جديد</h3>
+<form method="post" class="form-grid" id="payItemForm">
+<label>اسم البند<input name="item_name" id="payItemName" placeholder="بدل انتقال / حافز شهري / خصم تأمين طبي" required maxlength="120"></label>
+<label>نوع البند<select name="item_type" id="payItemType" required><option value="allowance">استحقاق يضاف للمرتب</option><option value="deduction">استقطاع يخصم من المرتب</option></select></label>
+<label>القيمة الشهرية لكل موظف<input name="amount" id="payItemAmount" type="number" min="0" step="0.01" required value="0"></label>
+<div style="grid-column:1/-1">
+<strong>اختيار الموظفين</strong>
+<div class="actions">
+<button type="button" class="secondary" id="addAllPayEmployees">إضافة كل الموظفين الظاهرين</button>
+<button type="button" class="secondary" id="addSelectedPayEmployees">إضافة المحددين</button>
+</div>
+<label>فلترة حسب الإدارة<input type="text" id="payItemDepartmentFilter" placeholder="اكتب اسم الإدارة"></label>
+<label>قائمة الموظفين (اختيار متعدد)
+<select id="payItemEmployeePicker" class="pay-item-picker" multiple size="7">
+{% for e in employees %}<option value="{{e.id}}" data-code="{{e.employee_code}}" data-name="{{e.full_name}}" data-status="{{e.work_status}}" data-department="{{e.department or ''}}">{{e.employee_code}} - {{e.full_name}} — {{'مثبت' if e.work_status=='permanent' else 'مؤقت' if e.work_status=='temporary' else 'مكافأة شاملة' if e.work_status=='comprehensive_bonus' else e.work_status}} — {{e.department or 'بدون إدارة'}}</option>{% endfor %}
+</select></label>
+<div style="overflow-x:auto;margin-top:12px"><table class="pay-item-selected">
+<thead><tr><th>كود الموظف</th><th>اسم الموظف</th><th>الإدارة</th><th>الفئة</th><th>قيمة البند</th><th>إجراء</th></tr></thead>
+<tbody id="payItemSelectedBody"><tr><td colspan="6">لم تتم إضافة موظفين بعد.</td></tr></tbody>
+</table></div>
+<div id="payItemHiddenEmployees"></div>
+<p id="payItemSummary" class="muted">عدد الموظفين: 0 — إجمالي القيمة الشهرية: 0.00</p>
+</div>
+<button type="submit" id="savePayItem" disabled>حفظ البند للموظفين المحددين</button>
+</form>
+</section>
+<section class="panel">
+<h3>مرآة الاستحقاقات والاستقطاعات حسب اسم البند</h3>
+<div style="overflow-x:auto"><table><thead><tr><th>اسم البند</th><th>النوع</th><th>الموظف</th><th>القيمة الشهرية</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>
+{% for group in groups %}{% for e in group.employees %}<tr>{% if loop.first %}<td rowspan="{{group.employees|length}}"><strong>{{group.item_name}}</strong></td><td rowspan="{{group.employees|length}}">{{'استحقاق' if group.item_type=='allowance' else 'استقطاع'}}</td>{% endif %}<td>{{e.employee_code}} - {{e.full_name}} <small>({{'مثبت' if e.work_status=='permanent' else 'مؤقت' if e.work_status=='temporary' else 'مكافأة شاملة' if e.work_status=='comprehensive_bonus' else e.work_status}})</small></td><td><form method="post" action="{{url_for('workforce.update_pay_item',item_id=e.id)}}" class="inline-form"><input type="number" name="amount" min="0" step="0.01" value="{{e.amount}}" style="max-width:120px" required><button type="submit">حفظ القيمة</button></form></td><td>{{'نشط' if e.active else 'موقوف'}}</td><td><form method="post" action="{{url_for('workforce.toggle_pay_item',item_id=e.id)}}"><button class="secondary" type="submit">{{'إيقاف' if e.active else 'إعادة تفعيل'}}</button></form></td></tr>{% endfor %}{% else %}<tr><td colspan="6">لم تتم إضافة استحقاقات أو استقطاعات بعد.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% endblock %}
+{% block scripts %}
+<script>
+const payPicker=document.getElementById('payItemEmployeePicker');
+const paySelected=new Map();
+const payBody=document.getElementById('payItemSelectedBody');
+const payHidden=document.getElementById('payItemHiddenEmployees');
+const payAmount=document.getElementById('payItemAmount');
+const paySummary=document.getElementById('payItemSummary');
+const paySave=document.getElementById('savePayItem');
+function renderPaySelected(){
+ payBody.innerHTML='';payHidden.innerHTML='';
+ if(!paySelected.size){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=6;td.textContent='لم تتم إضافة موظفين بعد.';tr.appendChild(td);payBody.appendChild(tr);}
+ const amount=Number(payAmount.value||0);
+ paySelected.forEach((e,id)=>{
+  const tr=document.createElement('tr');
+  [e.code,e.name,e.department||'-',e.status,amount.toFixed(2)].forEach(v=>{const td=document.createElement('td');td.textContent=v;tr.appendChild(td);});
+  const td=document.createElement('td'),btn=document.createElement('button');btn.type='button';btn.className='secondary';btn.textContent='حذف الموظف';
+  btn.addEventListener('click',()=>{paySelected.delete(id);renderPaySelected();});td.appendChild(btn);tr.appendChild(td);payBody.appendChild(tr);
+  const hidden=document.createElement('input');hidden.type='hidden';hidden.name='employee_ids';hidden.value=id;payHidden.appendChild(hidden);
+ });
+ paySummary.textContent='عدد الموظفين: '+paySelected.size+' — إجمالي القيمة الشهرية: '+(amount*paySelected.size).toFixed(2);
+ paySave.disabled=!paySelected.size || !document.getElementById('payItemName').value.trim() || amount<0;
+}
+function addPayOptions(options){options.forEach(o=>{if(o.selected&&!o.hidden)paySelected.set(o.value,{code:o.dataset.code,name:o.dataset.name,department:o.dataset.department,status:o.dataset.status==='permanent'?'مثبت':o.dataset.status==='temporary'?'مؤقت':o.dataset.status==='comprehensive_bonus'?'مكافأة شاملة':o.dataset.status});});renderPaySelected();}
+document.getElementById('addAllPayEmployees').addEventListener('click',()=>{Array.from(payPicker.options).filter(o=>!o.hidden).forEach(o=>paySelected.set(o.value,{code:o.dataset.code,name:o.dataset.name,department:o.dataset.department,status:o.dataset.status==='permanent'?'مثبت':o.dataset.status==='temporary'?'مؤقت':o.dataset.status==='comprehensive_bonus'?'مكافأة شاملة':o.dataset.status}));renderPaySelected();});
+document.getElementById('addSelectedPayEmployees').addEventListener('click',()=>addPayOptions(Array.from(payPicker.options)));
+document.getElementById('payItemDepartmentFilter').addEventListener('input',e=>{const q=e.target.value.trim().toLowerCase();Array.from(payPicker.options).forEach(o=>{o.hidden=!!q&&!(o.dataset.department||'').toLowerCase().includes(q);if(o.hidden)o.selected=false;});});
+payAmount.addEventListener('input',renderPaySelected);
+document.getElementById('payItemName').addEventListener('input',renderPaySelected);
+renderPaySelected();
+</script>
 {% endblock %}
