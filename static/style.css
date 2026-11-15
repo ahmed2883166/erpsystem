@@ -643,3 +643,23 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  .journal-form-actions button{width:100%}
  .journal-entry-panel .form-row{grid-template-columns:minmax(0,1fr)}
 }
+
+/* Account tree: full-width hierarchy with visible parent/child distinction */
+.accounts-layout{display:flex;flex-direction:column;gap:16px}
+.accounts-layout>.panel{width:100%;min-width:0}
+.accounts-layout>.panel:first-child{order:0}
+.accounts-layout>.panel:last-child{order:1}
+.accounts-tree{min-width:1120px}
+.accounts-tree .account-group td{font-weight:800;background:color-mix(in srgb,var(--accent) 6%,var(--surface))}
+.accounts-tree .account-detail td:first-child,.accounts-tree .account-detail td:nth-child(2){font-weight:600}
+.accounts-tree .account-section-row td{background:var(--surface2);font-weight:900;color:var(--text);padding:11px 15px}
+.accounts-tree .account-name{display:flex;align-items:center;gap:7px;min-width:220px}
+.account-tree-toolbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.account-tree-toolbar .table-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.account-tree-toolbar input{min-width:210px}
+@media(max-width:560px){
+ .account-tree-toolbar .table-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}
+ .account-tree-toolbar input{grid-column:1/-1;min-width:0}
+ .account-tree-toolbar .table-actions select{min-width:0}
+ .accounts-tree{min-width:1050px}
+}
