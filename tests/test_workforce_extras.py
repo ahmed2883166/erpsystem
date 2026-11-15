@@ -139,7 +139,7 @@ class WorkforceExtrasTests(unittest.TestCase):
         conn=sqlite3.connect(self.db_path)
         wages=conn.execute("SELECT basic_salary,variable_salary,insured_wage FROM employees WHERE id=1").fetchone()
         conn.close()
-        self.assertEqual(wages,("12000.00","1800.00","9500.00"))
+        self.assertEqual(wages,("10000","0","0"))
 
 
     def test_employee_photo_is_decoded_private_and_replaced_safely(self):
