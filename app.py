@@ -56,9 +56,9 @@ from cash_commitments import (initialize_cash_commitments_schema, create_cash_co
                               sync_friday_allowance_commitments, reverse_cash_commitment_payment,
                               cash_commitment_payment_summary)
 
-# Development/demo builds run locally without a licensing server. Set NEXUS_DEMO_MODE=0
-# explicitly in a commercial deployment to enforce the signed remote licensing flow.
-NEXUS_DEMO_MODE = os.environ.get("NEXUS_DEMO_MODE", "1").strip().lower() not in {"0", "false", "no", "off"}
+# Fail closed by default: demo bypass must be explicitly enabled for isolated development.
+# Customer deployments must leave NEXUS_DEMO_MODE unset (or set it to 0).
+NEXUS_DEMO_MODE = os.environ.get("NEXUS_DEMO_MODE", "0").strip().lower() not in {"0", "false", "no", "off"}
 
 def current_license_status():
     if NEXUS_DEMO_MODE:
