@@ -2721,11 +2721,15 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(Decimal(customer_after["paid_amount"]), Decimal("45.60"))
         self.assertEqual(Decimal(customer_after["credited_amount"]), Decimal("22.80"))
 
-        # Inventory valuation layers and inventory control account must agree.
+        # Use the stock engine's authoritative remaining layer value. Under
+        # weighted-average costing, unit_cost is the receipt cost and is not
+        # rewritten when part of a layer is consumed; qty * unit_cost would
+        # therefore overstate or understate the remaining valuation.
+        stock.initialize_stock_schema()
         layer_value = sum((
-            Decimal(row["qty_remaining"]) * Decimal(row["unit_cost"])
+            Decimal(row["value_remaining"])
             for row in self.db.execute(
-                "SELECT qty_remaining,unit_cost FROM stock_valuation_layers WHERE product_id=?",
+                "SELECT value_remaining FROM stock_valuation_layers WHERE product_id=?",
                 (self.product_id,),
             )
         ), Decimal("0"))
