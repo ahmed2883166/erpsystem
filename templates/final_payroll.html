@@ -1,8 +1,8 @@
 {% extends "base.html" %}{% block title %}المرتبات النهائية | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>المرتبات النهائية للموظفين المنتهية خدمتهم</h2>
+<header class="page-heading"><div><h2>المرتبات النهائية للموظفين المنتهية خدمتهم</h2>
 <p>هذه شاشة مستقلة عن كشف المرتبات الشهري العادي. يظهر الموظف هنا في شهر انتهاء خدمته فقط، ويُحسب الأجر من أول الشهر حتى آخر يوم خدمة شاملًا.</p>
 <p class="muted">الأساسي والبدلات الشهرية النشطة تُقسم على 30 ثم تضرب في أيام العمل. الضرائب والتأمينات والدمغة والاستقطاعات الأخرى تُدخل يدويًا حاليًا. يمكن تعديل المسودة أو إلغاؤها، ثم اعتمادها بترحيل قيد محاسبي بعد اختيار الحسابات المناسبة.</p>
-<p class="actions"><a class="button secondary" href="{{url_for('workforce.payroll')}}">العودة إلى المرتبات الشهرية</a> <a class="button secondary" href="{{url_for('workforce.end_of_service')}}">مكافأة نهاية الخدمة</a></p></header>
+<p class="actions"><a class="button secondary" href="{{url_for('workforce.payroll')}}">العودة إلى المرتبات الشهرية</a> <a class="button secondary" href="{{url_for('workforce.end_of_service')}}">مكافأة نهاية الخدمة</a></p></div></header>
 <section class="panel"><h3>إعداد مرتب نهائي</h3>
 <form method="get" class="inline-form"><label>الشهر <input type="month" name="period" value="{{selected_period}}" required></label><button type="submit" class="secondary">عرض الموظفين</button></form>
 {% if employees %}
