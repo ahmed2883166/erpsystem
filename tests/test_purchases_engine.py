@@ -1511,5 +1511,50 @@ class PurchasingAccountingTests(unittest.TestCase):
             )
 
 
+    def test_supplier_price_insights_compares_latest_and_weighted_average(self):
+        import sqlite3
+        from datetime import date, timedelta
+        from purchases import _supplier_price_insights
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript("""
+            CREATE TABLE stock_products(id INTEGER PRIMARY KEY,sku TEXT,name_ar TEXT);
+            CREATE TABLE suppliers(id INTEGER PRIMARY KEY,name TEXT);
+            CREATE TABLE supplier_bills(
+                id INTEGER PRIMARY KEY,supplier_id INTEGER,bill_date TEXT,status TEXT
+            );
+            CREATE TABLE supplier_bill_inventory_lines(
+                id INTEGER PRIMARY KEY,bill_id INTEGER,product_id INTEGER,
+                billed_quantity TEXT,invoice_unit_price TEXT
+            );
+            INSERT INTO stock_products VALUES(1,'P-01','منتج اختبار');
+            INSERT INTO suppliers VALUES(1,'المورد الأول'),(2,'المورد الثاني');
+        """)
+        today = date.today()
+        conn.executemany(
+            "INSERT INTO supplier_bills(id,supplier_id,bill_date,status) VALUES(?,?,?,'posted')",
+            [(1,1,today.isoformat()),(2,1,(today-timedelta(days=10)).isoformat()),
+             (3,2,(today-timedelta(days=1)).isoformat())],
+        )
+        conn.executemany(
+            """INSERT INTO supplier_bill_inventory_lines
+               (id,bill_id,product_id,billed_quantity,invoice_unit_price)
+               VALUES(?, ?, 1, ?, ?)""",
+            [(1,1,"10","12"),(2,2,"5","10"),(3,3,"5","11")],
+        )
+        try:
+            rows, available = _supplier_price_insights(conn)
+            self.assertTrue(available)
+            supplier_a = next(row for row in rows if row["supplier_id"] == 1)
+            supplier_b = next(row for row in rows if row["supplier_id"] == 2)
+            self.assertEqual(supplier_a["latest_price"], Decimal("12"))
+            self.assertEqual(supplier_a["weighted_average"], Decimal("11.33333333333333333333333333"))
+            self.assertFalse(supplier_a["best_latest_price"])
+            self.assertTrue(supplier_b["best_latest_price"])
+        finally:
+            conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()
