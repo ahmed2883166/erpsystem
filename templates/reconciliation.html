@@ -63,11 +63,11 @@
     <p class="flash success">لا توجد مستندات مالية يتطلب نوعها قيدًا محاسبيًا وتفتقد رابط القيد.</p>
   {% else %}
     <p class="flash error">يوجد مستندات تحتاج مراجعة الربط المحاسبي:</p>
-    <table><thead><tr><th>نوع المستند</th><th>عدد المستندات غير المرتبطة</th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>نوع المستند</th><th>عدد المستندات غير المرتبطة</th></tr></thead><tbody>
     {% for item in snapshot.unlinked_documents %}
       <tr><td>{{ item.label }}</td><td>{{ item.count }}</td></tr>
     {% endfor %}
-    </tbody></table>
+    </tbody></table></div>
   {% endif %}
   <p>حركات المخزون ذات حالة محاسبية معلقة: <b>{{ snapshot.pending_stock }}</b></p>
   <p class="muted">حركات التحويل الداخلي لا تتطلب قيدًا عند استخدام حساب مخزون موحد، وحركات الاستلام قد تظل معلقة حتى استكمال مستند الاستلام/الفاتورة. التقرير يكشف الحالات ولا ينشئ قيود تسوية تلقائيًا.</p>
