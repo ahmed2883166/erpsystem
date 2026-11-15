@@ -621,3 +621,25 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  .page-shortcuts>.actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
  .page-shortcuts .btn,.page-shortcuts .button,.page-shortcuts .button-link{width:100%;min-width:0;padding:8px 9px;text-align:center}
 }
+
+/* Journal workspace: clear hierarchy, readable entry lines and totals */
+.journal-entry-panel>h3,.journal-register-panel>h3{font-size:18px;font-weight:800}
+.journal-entry-panel>.journal-meta,.journal-entry-panel>.journal-dimensions{gap:12px 16px}
+.journal-lines-wrap{margin-top:14px}
+.journal-lines{min-width:1040px}
+.journal-lines th{position:sticky;top:0;z-index:1}
+.journal-lines td:nth-child(1){min-width:210px}
+.journal-lines td:nth-child(2),.journal-lines td:nth-child(3){min-width:125px}
+.journal-lines td:nth-child(4){min-width:390px}
+.journal-lines td:nth-child(4) input,.journal-lines td:nth-child(4) select{margin:3px 0}
+.journal-lines tfoot td{font-weight:800;background:var(--surface2);position:sticky;bottom:0}
+.journal-lines tfoot #difference{font-variant-numeric:tabular-nums;font-size:16px}
+.journal-form-actions{justify-content:flex-start;align-items:center;margin-top:16px}
+.journal-form-actions button{min-width:145px}
+.journal-register-panel .report-filter{margin-bottom:16px}
+.journal-register-panel .pagination{margin-bottom:0}
+@media(max-width:560px){
+ .journal-form-actions{display:grid;grid-template-columns:1fr}
+ .journal-form-actions button{width:100%}
+ .journal-entry-panel .form-row{grid-template-columns:minmax(0,1fr)}
+}
