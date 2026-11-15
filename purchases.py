@@ -2394,11 +2394,12 @@ def new_credit_note():
                 c,product_id,warehouse_id,qty,method,include_layer_details=True
             )
                 subtotal+=cost
-                line_data.append({"product_id":product_id,"warehouse_id":warehouse_id,"quantity":qty,
+                line_item={"product_id":product_id,"warehouse_id":warehouse_id,"quantity":qty,
                     "cost":cost,"entered_quantity":entered_qty,"uom_id":uom_id,"uom_key":raw_uom_key,
                     "entered_uom_name":entered_uom_name or stored_uom_name,
                     "conversion_factor":conversion_factor,"layer_details":layer_details,
-                    "layer_allocations":[]})
+                    "layer_allocations":[]}
+                line_data.append(line_item)
                 for allocation_index,(lot_id,allocated_qty,unit_cost,allocated_total) in enumerate(allocations):
                     layer_detail=layer_details[allocation_index]
                     movement_no="SUPRET-"+datetime.now().strftime("%Y%m%d%H%M%S%f")+"-"+uuid.uuid4().hex[:5].upper()
@@ -2411,7 +2412,7 @@ def new_credit_note():
                        request.form["credit_date"],"مرتجع مورد — "+supplier_credit_no,session["user_id"],
                        str(allocated_qty/conversion_factor),uom_id,raw_uom_key,entered_uom_name or stored_uom_name))
                     movement_ids.append(cur.lastrowid)
-                    item["layer_allocations"].append({
+                    line_item["layer_allocations"].append({
                         "movement_id":cur.lastrowid,"source_layer_id":layer_detail["layer_id"],
                         "lot_id":layer_detail["lot_id"],"location_id":layer_detail["location_id"],
                         "quantity":layer_detail["quantity"],"unit_cost":layer_detail["unit_cost"],
