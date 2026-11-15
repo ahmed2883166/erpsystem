@@ -113,7 +113,7 @@ class ApprovalInboxTests(unittest.TestCase):
         conn.close()
         with self.client.session_transaction() as session:
             session.update(user_id=1, username="reviewer", full_name="مراجع",
-                           role="accountant", permissions=["workforce.manage"])
+                           role="accountant", permissions=["workforce.approve"])
         with patch.object(nexus, "db", side_effect=self._connect):
             response = self.client.get("/approvals")
         self.assertEqual(response.status_code, 200)
@@ -122,6 +122,14 @@ class ApprovalInboxTests(unittest.TestCase):
             self.assertIn(label, html)
         self.assertIn("لا يجوز اعتماد وترحيل كشف المرتبات بواسطة منشئه", html)
         self.assertEqual(html.count("فتح للمراجعة"), 5)
+
+    def test_inbox_does_not_treat_workforce_management_as_approval_permission(self):
+        with self.client.session_transaction() as session:
+            session.update(user_id=1, username="operator", full_name="مدخل بيانات",
+                           role="accountant", permissions=["workforce.manage"])
+        with patch.object(nexus, "db", side_effect=self._connect):
+            response = self.client.get("/approvals")
+        self.assertEqual(response.status_code, 302)
 
     def test_inbox_denies_users_without_approval_permissions(self):
         with self.client.session_transaction() as session:
