@@ -320,6 +320,38 @@ class WorkforceExtrasTests(unittest.TestCase):
         conn.close()
 
 
+    def test_friday_allowance_supports_individual_days_and_deduplicates_employees(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.executemany("""INSERT INTO accounts(id,code,name_ar,account_type,is_group,active)
+            VALUES(?,?,?,?,0,1)""", [
+            (1, "1000", "الصندوق", "asset"),
+            (2, "5200", "مصروف أجور إضافية", "expense"),
+            (3, "2200", "أجور إضافية مستحقة", "liability"),
+        ])
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,
+            friday_work_eligible) VALUES('E002','Employee Two','2026-01-01','6000','200',1)""")
+        conn.execute("UPDATE employees SET friday_work_eligible=1 WHERE id=1")
+        fridays = ["2026-11-06", "2026-11-13", "2026-11-20", "2026-11-27"]
+        conn.executemany("""INSERT INTO attendance_records(employee_id,attendance_date,status,check_in,check_out)
+            VALUES(?,?,?,?,?)""", [(1, day, "present", "08:00", "16:00") for day in fridays[:2]] +
+            [(2, day, "present", "08:00", "16:00") for day in fridays])
+        conn.commit()
+        conn.close()
+
+        response = self.client.post("/hr/friday-allowance", data={
+            "period": "2026-11", "expense_account_id": "2", "payable_account_id": "3",
+            "employee_ids": ["1", "1", "2"],
+            "attendance_days_1": "2", "attendance_days_2": "4",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        rows = conn.execute("""SELECT employee_id,attendance_days,amount FROM friday_allowance_lines
+            ORDER BY employee_id""").fetchall()
+        batch_total = conn.execute("SELECT total_amount FROM friday_allowance_batches").fetchone()[0]
+        conn.close()
+        self.assertEqual(rows, [(1, 2, "1333.33"), (2, 4, "1600.00")])
+        self.assertEqual(batch_total, "2933.33")
+
     def test_employee_friday_allowance_flag_is_saved_from_management_choice(self):
         response=self.client.post("/hr/1/edit",data={
             "employee_code":"E001","full_name":"Employee One","job_title":"محاسب","department":"الحسابات",
