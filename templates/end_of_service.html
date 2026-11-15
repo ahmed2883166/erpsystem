@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% block title %}مكافأة نهاية الخدمة | NEXUS ERP{% endblock %}{% block content %}
+<header><h2>مكافأة نهاية الخدمة</h2><p>إعداد تسوية يدوية قابلة للمراجعة. لا توجد معادلة قانونية مفعلة حتى تعتمد قواعدها.</p>
+<p class="muted">لا يتم إنشاء قيد أو صرف من هذه الشاشة؛ الحفظ ينشئ مسودة فقط.</p>
+<p><a class="button secondary" href="{{url_for('workforce.employees')}}">ملفات الموظفين</a> <a class="button secondary" href="{{url_for('workforce.payroll')}}">المرتبات</a></p></header>
+<section class="panel"><h3>إنشاء مسودة تسوية</h3>
+<form method="post" class="form-grid">
+<label>الموظف <select name="employee_id" required><option value="">اختر موظفًا</option>{% for e in employees %}<option value="{{e.id}}">{{e.employee_code}} - {{e.full_name}} — {{'استقالة' if e.work_status=='resigned' else 'معاش'}} — {{e.termination_date}}</option>{% endfor %}</select></label>
+<label>تاريخ انتهاء الخدمة <input type="date" name="termination_date" required></label>
+<label>سبب انتهاء الخدمة <input name="reason" maxlength="250"></label>
+<label>إجمالي الاستحقاق (يدوي) <input type="number" name="gross_entitlement" min="0" step="0.01" value="0" required></label>
+<label>إجمالي الاستقطاعات (يدوي) <input type="number" name="deductions" min="0" step="0.01" value="0" required></label>
+<label>ملاحظات <input name="notes" maxlength="500"></label>
+<div><button type="submit">حفظ كمسودة</button></div></form>
+<p class="muted">يحسب النظام مدة الخدمة للعرض فقط من تاريخ التعيين حتى تاريخ الانتهاء. لا تُستخدم المدة في حساب قيمة المكافأة قبل اعتماد القواعد.</p></section>
+<section class="panel"><h3>سجل التسويات</h3><div style="overflow-x:auto"><table><tr><th>رقم التسوية</th><th>الموظف</th><th>تاريخ الانتهاء</th><th>مدة الخدمة (سنوات)</th><th>الاستحقاق</th><th>الاستقطاعات</th><th>الصافي</th><th>الحالة</th></tr>
+{% for s in settlements %}<tr><td>{{s.settlement_no}}</td><td>{{s.employee_code}} - {{s.full_name}}</td><td>{{s.termination_date}}</td><td>{{'%.3f'|format(s.service_years|float)}}</td><td>{{s.gross_entitlement}}</td><td>{{s.deductions}}</td><td>{{s.net_payable}}</td><td>{{'مسودة' if s.status=='draft' else s.status}}</td></tr>{% else %}<tr><td colspan="8">لا توجد تسويات حتى الآن.</td></tr>{% endfor %}</table></div></section>
+{% endblock %}
