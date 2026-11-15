@@ -1670,17 +1670,25 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
         }
 
     def balances_as_of(as_of):
-        rows = conn.execute("""
+        # Keep working-capital movements consistent with the formal balance
+        # sheet: later-year opening copies must not duplicate prior ledger history.
+        from management_dashboard import _copied_opening_entry_ids
+        excluded = sorted(_copied_opening_entry_ids(conn, as_of))
+        exclusion_sql = (
+            " AND je.id NOT IN (" + ",".join("?" for _ in excluded) + ")"
+            if excluded else ""
+        )
+        rows = conn.execute(f"""
             SELECT a.id,a.account_type,
                    COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),'0') debit,
                    COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),'0') credit
             FROM accounts a
             LEFT JOIN journal_lines jl ON jl.account_id=a.id
             LEFT JOIN journal_entries je ON je.id=jl.entry_id
-                 AND je.status='posted' AND je.entry_date<=?
+                 AND je.status='posted' AND je.entry_date<=?{exclusion_sql}
             WHERE a.is_group=0
             GROUP BY a.id,a.account_type
-        """, (as_of,)).fetchall()
+        """, (as_of, *excluded)).fetchall()
         result = {}
         for row in rows:
             debit, credit = Decimal(str(row["debit"])), Decimal(str(row["credit"]))
