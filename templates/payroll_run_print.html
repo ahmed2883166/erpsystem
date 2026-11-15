@@ -29,7 +29,7 @@
 <section class="panel payroll-print">
 <h2>NEXUS ERP</h2><h3>كشف مرتبات شهر {{run.period}}</h3>
 <div class="meta"><span>الفترة: <strong>{{run.period}}</strong></span><span>الحالة: <strong>{{'مرحّل' if run.status=='posted' else 'معكوس' if run.status=='reversed' else 'مسودة'}}</strong></span><span>عدد الموظفين: <strong>{{rows|length}}</strong></span><span>رقم القيد: <strong>{{run.journal_entry_id or '-'}}</strong></span></div>
-<div style="overflow-x:auto"><table>
+<div style="overflow-x:auto"><div class="table-wrap"><table>
 <thead><tr>
 <th>م</th><th>كود الموظف</th><th>اسم الموظف</th><th>الإدارة</th>
 <th>الأجر الأساسي</th><th>الأجر التأميني</th><th>البدلات والعلاوات</th><th>الإضافي</th>
@@ -63,7 +63,7 @@
 <th>{{totals.other_deductions|money}}</th><th>{{totals.penalty_deduction|money}}</th>
 <th>{{totals.total_deductions|money}}</th><th>{{totals.net_pay|money}}</th><th></th>
 </tr></tfoot>
-</table></div>
+</table></div></div>
 <div class="totals">
 <div class="total">إجمالي الاستحقاق<strong>{{totals.total_entitlements|money}}</strong></div>
 <div class="total">إجمالي الاستقطاع<strong>{{totals.total_deductions|money}}</strong></div>
