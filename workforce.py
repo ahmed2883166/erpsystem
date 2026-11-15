@@ -1058,7 +1058,11 @@ def pay_items():
     catalog_items = c.execute("""SELECT id,name,item_type FROM employee_pay_item_catalog
         WHERE active=1 ORDER BY item_type,name""").fetchall()
     assignments = c.execute("""SELECT p.*,e.employee_code,e.full_name,e.work_status FROM employee_pay_items p
-        JOIN employees e ON e.id=p.employee_id ORDER BY p.item_type,p.item_name,e.employee_code""").fetchall()
+        JOIN employees e ON e.id=p.employee_id
+        WHERE p.active=0 OR p.id=(SELECT MAX(p2.id) FROM employee_pay_items p2
+            WHERE p2.employee_id=p.employee_id AND p2.item_name=p.item_name
+              AND p2.item_type=p.item_type AND p2.active=1)
+        ORDER BY p.item_type,p.item_name,e.employee_code,p.id""").fetchall()
     grouped = {}
     for item in assignments:
         key = (item["item_type"],item["item_name"])
@@ -1266,8 +1270,14 @@ def payroll():
                         raise ValueError("تاريخ انتهاء الخدمة لا يقع ضمن شهر المرتبات للموظف " + e["full_name"] + ".")
                 payroll_factor = Decimal(payroll_days) / Decimal("30")
                 employee_period_end = e["termination_date"] if e["work_status"] in {"resigned", "retired"} else period_end
-                fixed_items = c.execute("""SELECT id,item_name,item_type,amount FROM employee_pay_items
-                    WHERE employee_id=? AND active=1 ORDER BY id""", (e["id"],)).fetchall()
+                fixed_items = c.execute("""SELECT p.id,p.item_name,p.item_type,p.amount FROM employee_pay_items p
+                    WHERE p.employee_id=? AND p.active=1
+                      AND p.id=(SELECT MAX(p2.id) FROM employee_pay_items p2
+                                WHERE p2.employee_id=p.employee_id
+                                  AND p2.item_name=p.item_name
+                                  AND p2.item_type=p.item_type
+                                  AND p2.active=1)
+                    ORDER BY p.id""", (e["id"],)).fetchall()
                 fixed_item_amounts = {}
                 for fixed_item in fixed_items:
                     fixed_amount = M(request.form.get("pay_item_" + str(fixed_item["id"]), fixed_item["amount"]))
