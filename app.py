@@ -2192,6 +2192,10 @@ def approval_inbox():
 def audit_log():
     action = request.args.get("action", "").strip()[:100]
     user_query = request.args.get("user", "").strip()[:100]
+    entity_type = request.args.get("entity_type", "").strip()[:80]
+    outcome = request.args.get("outcome", "").strip()
+    if outcome not in {"success", "failure"}:
+        outcome = ""
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
     conditions, params = ["1=1"], []
@@ -2199,6 +2203,10 @@ def audit_log():
         conditions.append("al.action LIKE ?"); params.append(f"%{action}%")
     if user_query:
         conditions.append("(u.username LIKE ? OR u.full_name LIKE ?)"); params.extend([f"%{user_query}%", f"%{user_query}%"])
+    if entity_type:
+        conditions.append("al.entity_type = ?"); params.append(entity_type)
+    if outcome:
+        conditions.append("al.outcome = ?"); params.append(outcome)
     if date_from:
         conditions.append("substr(al.created_at,1,10) >= ?"); params.append(date_from)
     if date_to:
@@ -2219,7 +2227,7 @@ def audit_log():
     connection.close()
     return render_template(
         "audit_log.html", audit_page=page, action=action, user_query=user_query,
-        date_from=date_from, date_to=date_to,
+        entity_type=entity_type, outcome=outcome, date_from=date_from, date_to=date_to,
     )
 
 
