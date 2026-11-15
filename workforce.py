@@ -2676,6 +2676,15 @@ def defer_loan_installment(loan_id, installment_id):
             WHERE i.id=? AND i.loan_id=?""",(installment_id,loan_id)).fetchone()
         if not installment or installment["loan_status"] != "active" or installment["status"] != "pending":
             raise ValueError("القسط غير موجود أو ليس قسطًا نشطًا قابلًا للتأجيل.")
+        # Once the employee's payroll for this installment month is posted,
+        # the installment has been used in an approved payroll and must not be changed.
+        locked_payroll = c.execute("""SELECT 1 FROM payroll_runs r
+            JOIN payroll_lines pl ON pl.run_id=r.id
+            WHERE r.period=? AND r.status='posted' AND pl.employee_id=? LIMIT 1""",
+            (installment["due_period"], installment["employee_id"])).fetchone()
+        if locked_payroll:
+            raise ValueError("لا يمكن تعديل أو تأجيل قسط السلفة؛ تم اعتماد مرتب الموظف عن شهر " +
+                             installment["due_period"] + ". يجب عكس كشف المرتبات وفق الإجراءات المحاسبية أولًا.")
         remaining = M(max(Decimal("0"),D(installment["due_amount"])-D(installment["paid_amount"])))
         if remaining <= 0:
             raise ValueError("لا يوجد رصيد متبقٍ في هذا القسط لتأجيله.")
@@ -3308,6 +3317,56 @@ def attendance():
         selected_month=selected_month,days=range(1,days_count+1),friday_days=friday_days,grid=grid,
         status_labels={"present":"حاضر","absent":"غائب","permission":"إذن","holiday":"عطلة",
         "annual_leave":"إجازة سنوية","sick_leave":"إجازة مرضية","unpaid_leave":"إجازة بدون مرتب"})
+
+
+@workforce_bp.route("/hr/attendance/report", methods=["GET"])
+@_role("admin", "accountant", "viewer")
+def attendance_report():
+    c = _db()
+    today = date.today()
+    month_start = today.replace(day=1)
+    default_from = request.args.get("date_from", month_start.isoformat())
+    default_to = request.args.get("date_to", today.isoformat())
+    employee_id = request.args.get("employee_id", type=int)
+    try:
+        start_date = date.fromisoformat(default_from)
+        end_date = date.fromisoformat(default_to)
+        if end_date < start_date:
+            raise ValueError("تاريخ النهاية يجب أن يكون مساويًا أو بعد تاريخ البداية.")
+    except ValueError as exc:
+        c.close()
+        flash(str(exc) or "حدد فترة صحيحة لتقرير الغياب.", "error")
+        return redirect(url_for("workforce.attendance"))
+    employees = c.execute(
+        "SELECT id,employee_code,full_name FROM employees ORDER BY employee_code"
+    ).fetchall()
+    where_employee = " AND e.id=?" if employee_id else ""
+    params = [start_date.isoformat(), end_date.isoformat()]
+    if employee_id:
+        params.append(employee_id)
+    rows = c.execute("""SELECT e.id AS employee_id,e.employee_code,e.full_name,e.department,
+            COUNT(a.id) AS recorded_days,
+            SUM(CASE WHEN a.status='absent' THEN 1 ELSE 0 END) AS absent_days,
+            SUM(CASE WHEN a.status='absent' THEN CAST(a.absence_hours AS REAL) ELSE 0 END) AS absent_hours,
+            SUM(CASE WHEN a.status='unpaid_leave' THEN 1 ELSE 0 END) AS unpaid_leave_days,
+            SUM(CASE WHEN a.status='permission' THEN 1 ELSE 0 END) AS permission_days
+        FROM employees e
+        LEFT JOIN attendance_records a ON a.employee_id=e.id
+            AND a.attendance_date>=? AND a.attendance_date<=?
+        WHERE 1=1 """ + where_employee + """
+        GROUP BY e.id,e.employee_code,e.full_name,e.department
+        ORDER BY absent_days DESC,e.employee_code""", params).fetchall()
+    totals = {
+        "employees": len(rows),
+        "absent_days": sum(int(row["absent_days"] or 0) for row in rows),
+        "absent_hours": M(sum((D(row["absent_hours"] or 0) for row in rows), Decimal("0"))),
+        "unpaid_leave_days": sum(int(row["unpaid_leave_days"] or 0) for row in rows),
+        "permission_days": sum(int(row["permission_days"] or 0) for row in rows),
+    }
+    c.close()
+    return render_template("attendance_report.html", rows=rows, employees=employees,
+        selected_employee=employee_id, date_from=start_date.isoformat(),
+        date_to=end_date.isoformat(), totals=totals)
 
 
 @workforce_bp.route("/hr/leaves", methods=["GET", "POST"])
