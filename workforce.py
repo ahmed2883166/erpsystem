@@ -2031,6 +2031,8 @@ def approve_final_payroll(final_id):
             JOIN employees e ON e.id=f.employee_id WHERE f.id=?""", (final_id,)).fetchone()
         if not row or row["status"] != "draft" or row["journal_entry_id"]:
             raise ValueError("لا يمكن اعتماد إلا مسودة مرتب نهائي غير مرحلة.")
+        if row["created_by"] is None or row["created_by"] == session["user_id"]:
+            raise ValueError("لا يجوز اعتماد المرتب النهائي بواسطة منشئه، أو دون بيانات منشئ موثقة.")
         salary_expense = int(request.form["salary_expense_account"])
         employer_expense = int(request.form["employer_ins_expense_account"])
         salaries_payable = int(request.form["salaries_payable_account"])
@@ -2071,8 +2073,10 @@ def approve_final_payroll(final_id):
         reference = "FINAL-PAYROLL-POST-" + str(final_id)
         journal_id = post_journal(c, row["termination_date"], reference,
             "اعتماد المرتب النهائي للموظف " + row["full_name"], lines, session["user_id"])
-        c.execute("""UPDATE employee_final_payrolls SET status='approved',journal_entry_id=?
-            WHERE id=? AND status='draft' AND journal_entry_id IS NULL""", (journal_id, final_id))
+        c.execute("""UPDATE employee_final_payrolls SET status='approved',journal_entry_id=?,
+            approved_by=?,approved_at=CURRENT_TIMESTAMP
+            WHERE id=? AND status='draft' AND journal_entry_id IS NULL""",
+            (journal_id, session["user_id"], final_id))
         if c.execute("SELECT changes()").fetchone()[0] != 1:
             raise ValueError("تعذر تثبيت اعتماد المرتب النهائي؛ راجع حالة الكشف.")
         _audit(c, "employee_final_payroll_approved",
@@ -2103,6 +2107,8 @@ def pay_final_payroll(final_id):
         row = c.execute("SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
         if not row or row["status"] not in ("approved", "paid") or not row["journal_entry_id"]:
             raise ValueError("يجب اعتماد المرتب النهائي وترحيل قيده قبل الصرف.")
+        if row["approved_by"] is not None and row["approved_by"] == session["user_id"]:
+            raise ValueError("يجب أن ينفذ الصرف مستخدم مختلف عن معتمد المرتب النهائي.")
         paid = M(sum((D(x["amount"]) for x in c.execute(
             "SELECT amount FROM employee_final_payroll_payments WHERE final_payroll_id=?",
             (final_id,)).fetchall()), Decimal("0")))
@@ -2193,12 +2199,14 @@ def approve_payroll_basic_salary_change(run_id, line_id):
         return redirect(url_for("workforce.payroll_run", run_id=run_id))
     try:
         c.execute("BEGIN IMMEDIATE")
-        run = c.execute("SELECT status FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+        run = c.execute("SELECT status,created_by FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         line = c.execute("""SELECT l.*,e.full_name,e.employee_code
             FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
             WHERE l.id=? AND l.run_id=?""", (line_id, run_id)).fetchone()
         if not run or run["status"] != "draft" or not line:
             raise ValueError("لا يمكن اعتماد تعديل راتب خارج مسودة مرتبات مفتوحة.")
+        if run["created_by"] is None or run["created_by"] == session["user_id"]:
+            raise ValueError("اعتماد فرق الراتب الأساسي متاح لمدير مختلف عن منشئ كشف المرتبات.")
         if not line["basic_salary_approval_required"]:
             raise ValueError("هذا التعديل لا يتطلب موافقة مدير.")
         if line["basic_salary_approved_by"]:
@@ -2800,6 +2808,8 @@ def post_payroll(run_id):
         run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         if not run or run["status"] != "draft":
             raise ValueError("بيانات المرتبات غير موجودة أو تم ترحيلها بالفعل.")
+        if run["created_by"] is None or run["created_by"] == session["user_id"]:
+            raise ValueError("لا يجوز اعتماد وترحيل المرتبات بواسطة منشئ الكشف، أو دون بيانات منشئ موثقة.")
         rows = c.execute("""SELECT l.*,e.branch_id,e.cost_center_id,e.project_id,e.full_name,e.employee_code
             FROM payroll_lines l JOIN employees e ON e.id=l.employee_id WHERE l.run_id=?
             ORDER BY e.employee_code""", (run_id,)).fetchall()
@@ -2917,8 +2927,11 @@ def post_payroll(run_id):
                     c.execute("""UPDATE employee_penalties SET status='deducted',payroll_line_id=?,decided_by=COALESCE(decided_by,?)
                         WHERE employee_id=? AND effective_period=? AND status='approved'""",
                         (payroll_line["id"],session["user_id"],payroll_line["employee_id"],run["period"]))
-        c.execute("UPDATE payroll_runs SET status='posted',journal_entry_id=?,posted_at=CURRENT_TIMESTAMP WHERE id=?",
-                  (journal_id, run_id))
+        c.execute("""UPDATE payroll_runs SET status='posted',journal_entry_id=?,
+            approved_by=?,approved_at=CURRENT_TIMESTAMP,posted_at=CURRENT_TIMESTAMP
+            WHERE id=? AND status='draft'""", (journal_id,session["user_id"],run_id))
+        if c.execute("SELECT changes()").fetchone()[0] != 1:
+            raise ValueError("تم تغيير حالة كشف المرتبات؛ أعد تحميل الصفحة.")
         _audit(c, "payroll_posted", run["period"] + " journal=" + str(journal_id))
         c.commit()
         flash("تم ترحيل المرتبات وإنشاء القيد المحاسبي.", "success")
@@ -3038,6 +3051,8 @@ def pay_payroll(run_id):
         run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         if not run or run["status"] != "posted" or not run["journal_entry_id"]:
             raise ValueError("لا يمكن صرف مرتبات تم عكسها أو لم تعد مرحّلة.")
+        if run["approved_by"] is not None and run["approved_by"] == session["user_id"]:
+            raise ValueError("يجب أن ينفذ صرف المرتبات مستخدم مختلف عن معتمد كشف المرتبات.")
         rows = c.execute("SELECT net_pay FROM payroll_lines WHERE run_id=?", (run_id,)).fetchall()
         if not rows:
             raise ValueError("لا توجد تفاصيل للمرتبات.")
@@ -3138,6 +3153,8 @@ def approve_employee_loan(loan_id):
         loan = c.execute("SELECT * FROM employee_loans WHERE id=?", (loan_id,)).fetchone()
         if not loan or loan["status"] != "requested":
             raise ValueError("طلب السلفة غير موجود أو سبق اتخاذ قرار.")
+        if loan["created_by"] is None or loan["created_by"] == session["user_id"]:
+            raise ValueError("لا يجوز اعتماد طلب السلفة بواسطة منشئه، أو دون بيانات منشئ موثقة.")
         amount = M(request.form.get("approved_amount",loan["requested_amount"]))
         count = int(request.form.get("installment_count",loan["installment_count"]))
         first = request.form.get("first_due_period",loan["first_due_period"])
@@ -3165,6 +3182,8 @@ def reject_employee_loan(loan_id):
         loan = c.execute("SELECT * FROM employee_loans WHERE id=?", (loan_id,)).fetchone()
         if not loan or loan["status"] != "requested":
             raise ValueError("لا يمكن رفض الطلب في حالته الحالية.")
+        if loan["created_by"] is None or loan["created_by"] == session["user_id"]:
+            raise ValueError("لا يجوز رفض طلب السلفة بواسطة منشئه، أو دون بيانات منشئ موثقة.")
         c.execute("UPDATE employee_loans SET status='rejected',approved_by=?,approved_at=CURRENT_TIMESTAMP WHERE id=?",
                   (session["user_id"],loan_id))
         _audit(c,"employee_loan_rejected",loan["loan_no"])
@@ -3186,6 +3205,8 @@ def disburse_employee_loan(loan_id):
             JOIN employees e ON e.id=l.employee_id WHERE l.id=?""",(loan_id,)).fetchone()
         if not loan or loan["status"] != "approved":
             raise ValueError("لا يمكن صرف إلا سلفة معتمدة لم تُصرف.")
+        if loan["approved_by"] is not None and loan["approved_by"] == session["user_id"]:
+            raise ValueError("يجب أن ينفذ صرف السلفة مستخدم مختلف عن معتمدها.")
         loan_account_id = _employee_advance_account(c, int(request.form["loan_account_id"]))
         cash_id = int(request.form["cash_account_id"])
         _cash_or_bank_account(c, cash_id)
@@ -3458,6 +3479,8 @@ def approve_employee_grant(grant_id):
         c.execute("BEGIN IMMEDIATE")
         grant=c.execute("SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
         if not grant or grant["status"]!="draft": raise ValueError("المنحة غير موجودة أو سبق اعتمادها.")
+        if grant["created_by"] is None or grant["created_by"] == session["user_id"]:
+            raise ValueError("لا يجوز اعتماد المنحة بواسطة منشئها، أو دون بيانات منشئ موثقة.")
         lines=c.execute("SELECT * FROM employee_grant_lines WHERE grant_id=? ORDER BY id",(grant_id,)).fetchall()
         total=M(sum((D(x["amount"]) for x in lines),Decimal("0")))
         if not lines or total<=0 or total!=M(grant["total_amount"]): raise ValueError("كشف المنحة غير مكتمل أو غير متوازن.")
@@ -3465,7 +3488,11 @@ def approve_employee_grant(grant_id):
             "إثبات استحقاق منحة: "+grant["grant_name_snapshot"],
             [(int(grant["expense_account_id"]),total,0,"مصروف المنح"),
              (int(grant["payable_account_id"]),0,total,"منح مستحقة للموظفين")],session["user_id"])
-        c.execute("UPDATE employee_grants SET status='approved',journal_entry_id=? WHERE id=?",(journal_id,grant_id))
+        c.execute("""UPDATE employee_grants SET status='approved',journal_entry_id=?,
+            approved_by=?,approved_at=CURRENT_TIMESTAMP WHERE id=? AND status='draft'""",
+            (journal_id,session["user_id"],grant_id))
+        if c.execute("SELECT changes()").fetchone()[0] != 1:
+            raise ValueError("تعذر تثبيت اعتماد المنحة؛ أعد تحميل الشاشة.")
         _audit(c,"employee_grant_approved","grant="+str(grant_id)+" journal="+str(journal_id))
         c.commit(); flash("تم اعتماد المنحة وإثبات المصروف والمنح المستحقة بقيد يومية.","success")
     except (ValueError,KeyError,sqlite3.Error) as exc:
@@ -3481,6 +3508,8 @@ def pay_employee_grant(grant_id):
     try:
         grant=c.execute("SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
         if not grant or grant["status"] not in {"approved","partially_paid"}: raise ValueError("اعتمد المنحة أولًا قبل الصرف.")
+        if grant["approved_by"] is not None and grant["approved_by"] == session["user_id"]:
+            raise ValueError("يجب أن ينفذ صرف المنحة مستخدم مختلف عن معتمدها.")
         amount=M(request.form.get("amount","0"))
         if amount<=0: raise ValueError("مبلغ الصرف يجب أن يكون أكبر من صفر.")
         cash_id=int(request.form["cash_account_id"])
@@ -3493,6 +3522,8 @@ def pay_employee_grant(grant_id):
         grant=c.execute("SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
         if not grant or grant["status"] not in {"approved","partially_paid"}:
             raise ValueError("المنحة لم تعد متاحة للصرف.")
+        if grant["approved_by"] is not None and grant["approved_by"] == session["user_id"]:
+            raise ValueError("يجب أن ينفذ صرف المنحة مستخدم مختلف عن معتمدها.")
         paid=M(sum((D(x["amount"]) for x in c.execute("SELECT amount FROM employee_grant_payments WHERE grant_id=?",(grant_id,)).fetchall()),Decimal("0")))
         outstanding=M(D(grant["total_amount"])-paid)
         if amount>outstanding: raise ValueError("مبلغ الصرف أكبر من المتبقي.")
@@ -4258,6 +4289,8 @@ def approve_end_of_service(settlement_id):
             JOIN employees e ON e.id=s.employee_id WHERE s.id=?""",(settlement_id,)).fetchone()
         if not row or row["status"]!="draft" or row["journal_entry_id"]:
             raise ValueError("لا يمكن اعتماد إلا مسودة نهاية خدمة غير مرحلة.")
+        if row["created_by"] is None or row["created_by"] == session["user_id"]:
+            raise ValueError("لا يجوز اعتماد تسوية نهاية الخدمة بواسطة منشئها، أو دون بيانات منشئ موثقة.")
         expense_id,payable_id=int(request.form["expense_account_id"]),int(request.form["payable_account_id"])
         stamp_id_raw=request.form.get("stamp_payable_account_id","").strip()
         gross,stamp,net=M(row["gross_entitlement"]),M(row["stamp_duty"]),M(row["net_payable"])
@@ -4304,6 +4337,8 @@ def pay_end_of_service(settlement_id):
         row=c.execute("SELECT * FROM employee_end_of_service_settlements WHERE id=?",(settlement_id,)).fetchone()
         if not row or row["status"]!="approved" or not row["journal_entry_id"]:
             raise ValueError("يجب اعتماد مكافأة نهاية الخدمة وترحيل قيدها قبل الصرف.")
+        if row["approved_by"] is not None and row["approved_by"] == session["user_id"]:
+            raise ValueError("يجب أن ينفذ صرف مكافأة نهاية الخدمة مستخدم مختلف عن معتمدها.")
         paid=M(sum((D(x["amount"]) for x in c.execute(
             "SELECT amount FROM employee_end_of_service_payments WHERE settlement_id=?",(settlement_id,)).fetchall()),Decimal("0")))
         outstanding=M(max(Decimal("0"),D(row["net_payable"])-paid))
