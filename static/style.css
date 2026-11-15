@@ -768,3 +768,22 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  .payroll-print.print-document .meta{background:#f1f5f9!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
  .payroll-print.print-document th,.payroll-print.print-document tfoot td{background:#e8eef5!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
+
+/* Management dashboard and shared printable company identity */
+.management-dashboard-heading{align-items:flex-start}
+.management-dashboard-heading .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.management-dashboard-filter{align-items:end}
+.page-shortcuts-inline .button-link,.page-shortcuts-inline .button,.page-shortcuts-inline .btn{min-height:38px}
+.document-brand{break-inside:avoid;page-break-inside:avoid}
+.branch-print-details{break-inside:avoid;page-break-inside:avoid}
+@media(max-width:700px){
+ .management-dashboard-heading{display:block}
+ .management-dashboard-heading .actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+ .management-dashboard-heading .actions>*{min-width:0;text-align:center}
+ .management-dashboard-filter{grid-template-columns:1fr}
+}
+@media print{
+ .document-brand{gap:10px!important;padding:8px 0!important;margin-bottom:12px!important}
+ .document-brand img{max-width:90px!important;max-height:70px!important}
+ .branch-print-details{border-color:#cbd5e1!important;border-radius:0!important}
+}
