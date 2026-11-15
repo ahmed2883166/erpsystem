@@ -175,6 +175,35 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         self.assertEqual(state, "paid")
 
+    def test_workforce_manager_cannot_approve_without_approval_permission(self):
+        self.add_employee()
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO employee_loans(
+            loan_no,employee_id,request_date,requested_amount,first_due_period,created_by
+        ) VALUES('LOAN-PERM',1,'2026-11-15','1000','2026-12',1)""")
+        conn.commit()
+        conn.close()
+        with self.client.session_transaction() as session:
+            session["permissions"] = ["workforce.manage"]
+        denied = self.post_as_user("/hr/loans/1/approve", data={
+            "approved_amount":"1000","installment_count":"1","first_due_period":"2026-12"
+        })
+        self.assertEqual(denied.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT status,approved_by FROM employee_loans WHERE id=1").fetchone(),
+                         ("requested", None))
+        conn.close()
+        with self.client.session_transaction() as session:
+            session["permissions"] = ["workforce.approve"]
+        approved = self.post_as_user("/hr/loans/1/approve", data={
+            "approved_amount":"1000","installment_count":"1","first_due_period":"2026-12"
+        })
+        self.assertEqual(approved.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT status,approved_by FROM employee_loans WHERE id=1").fetchone(),
+                         ("approved", 2))
+        conn.close()
+
     def test_workforce_approval_actions_block_their_own_creator(self):
         self.add_employee()
         conn = sqlite3.connect(self.db_path)
