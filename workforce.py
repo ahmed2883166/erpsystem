@@ -755,7 +755,10 @@ def edit_employee(employee_id):
             values = list(_employee_form_values(request.form))
             # Preserve legacy payroll profile columns during profile edits; they are no longer editable here.
             for index, column in ((5,"basic_salary"),(6,"standard_hours"),(7,"variable_salary"),
-                                  (10,"insured_wage"),(11,"insurance_enabled")):
+                                  (8,"legal_category"),(10,"insured_wage"),(11,"insurance_enabled"),
+                                  (15,"raise_type"),(16,"raise_value"),(17,"raise_mode"),
+                                  (18,"raise_effective_date"),(19,"overtime_rate_percent"),
+                                  (24,"friday_work_eligible")):
                 values[index] = employee[column]
             values = tuple(values)
             _validate_employee_dimensions(c, values)
@@ -1174,8 +1177,7 @@ def payroll():
                 fixed_allowances = M(sum((fixed_item_amounts[x["id"]] for x in fixed_items if x["item_type"] == "allowance"), Decimal("0")))
                 fixed_deductions = M(sum((fixed_item_amounts[x["id"]] for x in fixed_items if x["item_type"] == "deduction"), Decimal("0")))
                 fixed_pay_deductions = fixed_deductions
-                allowances = M(request.form.get("allowances_" + str(e["id"]), e["variable_salary"]))
-                allowances = M(allowances + fixed_allowances)
+                allowances = M(fixed_allowances)
                 if raise_amount and e["raise_mode"] == "allowance":
                     allowances = M(allowances + raise_amount)
                 overtime_hours = D(request.form.get("overtime_hours_" + str(e["id"]), "0"))
@@ -1325,9 +1327,6 @@ def payroll():
                             snapshot_item("earning",fixed_item["item_name"],item_amount,"employee_pay_item",fixed_item["id"],20)
                         else:
                             snapshot_item("deduction",fixed_item["item_name"],item_amount,"employee_pay_item",fixed_item["id"],70)
-                    manual_allowance = M(D(request.form.get("allowances_" + str(e["id"]), e["variable_salary"])) * payroll_factor)
-                    manual_allowance_name = request.form.get("allowance_name_" + str(e["id"]), "بدلات / مستحقات متغيرة يدوية").strip()[:80] or "بدلات / مستحقات متغيرة يدوية"
-                    snapshot_item("earning",manual_allowance_name,manual_allowance,"payroll_input",None,30)
                     if raise_amount and e["raise_mode"] == "allowance":
                         snapshot_item("earning","علاوة مستقلة",M(raise_amount * payroll_factor),"salary_raise",e["id"],35)
                     snapshot_item("earning","عمل إضافي",overtime_amount,"attendance_or_manual",None,50)
