@@ -325,9 +325,10 @@ def reverse_cash_commitment_payment(conn, payment_id, reversal_date,
     try:
         payment = conn.execute(
             """SELECT p.*,c.id commitment_id,c.amount commitment_amount,c.status commitment_status,
-                      c.title commitment_title,c.payable_account_id
+                      c.title commitment_title,c.payable_account_id,j.entry_date payment_journal_date
                FROM cash_commitment_payments p
                JOIN cash_commitments c ON c.id=p.commitment_id
+               JOIN journal_entries j ON j.id=p.journal_entry_id
                WHERE p.id=?""",
             (payment_id,),
         ).fetchone()
@@ -337,6 +338,8 @@ def reverse_cash_commitment_payment(conn, payment_id, reversal_date,
             raise ValueError("لا يمكن عكس دفعة مرتبطة بالتزام ملغي.")
         if payment["reversal_journal_entry_id"] is not None:
             raise ValueError("تم عكس هذه الدفعة بالفعل.")
+        if reversal_date < max(payment["payment_date"], payment["payment_journal_date"] or payment["payment_date"]):
+            raise ValueError("تاريخ عكس السداد لا يجوز أن يسبق تاريخ السداد أو قيده المحاسبي.")
         if not _journal_entry_effect_is_active(conn, payment["journal_entry_id"]):
             raise ValueError("قيد السداد غير مرحّل أو سبق عكسه.")
         lines = conn.execute(
