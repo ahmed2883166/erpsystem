@@ -1922,17 +1922,31 @@ def create_employee_grant():
             raise ValueError("اختر حساب مصروف منح تفصيليًا ونشطًا.")
         if not payable or not payable["active"] or payable["is_group"] or payable["account_type"]!="liability" or expense_id==payable_id:
             raise ValueError("اختر حساب منح مستحقة تفصيليًا ونشطًا ومختلفًا عن حساب المصروف.")
-        if request.form.get("all_employees")=="1":
-            employees=c.execute("""SELECT id,employee_code,full_name,basic_salary FROM employees
-                WHERE active=1 AND work_status NOT IN ('unpaid_leave','resigned','retired') ORDER BY employee_code""").fetchall()
-        else:
-            ids=sorted({int(x) for x in request.form.getlist("employee_ids")})
-            if not ids: raise ValueError("اختر الموظفين أو حدد جميع الموظفين.")
-            marks=",".join("?" for _ in ids)
+        employee_scope=request.form.get("employee_scope","all_eligible")
+        scope_statuses={
+            "permanent": ("permanent",),
+            "comprehensive_bonus": ("comprehensive_bonus",),
+            "all_eligible": ("permanent","comprehensive_bonus"),
+        }
+        if employee_scope not in scope_statuses:
+            raise ValueError("حدد فئة الاستحقاق: مثبت أو مكافأة شاملة.")
+        ids=sorted({int(x) for x in request.form.getlist("employee_ids")})
+        if request.form.get("all_employees")=="1" and not ids:
+            # Backward compatibility for older clients that submit the legacy bulk flag.
+            statuses=scope_statuses[employee_scope]
+            marks=",".join("?" for _ in statuses)
             employees=c.execute(f"""SELECT id,employee_code,full_name,basic_salary FROM employees
-                WHERE id IN ({marks}) AND active=1 AND work_status NOT IN ('unpaid_leave','resigned','retired')
-                ORDER BY employee_code""",ids).fetchall()
-            if len(employees)!=len(ids): raise ValueError("بعض الموظفين غير نشطين أو غير مستحقين للمنحة.")
+                WHERE active=1 AND work_status IN ({marks}) ORDER BY employee_code""",statuses).fetchall()
+        else:
+            if not ids: raise ValueError("أضف جميع الموظفين المستحقين أو اختر موظفين محددين.")
+            id_marks=",".join("?" for _ in ids)
+            statuses=scope_statuses[employee_scope]
+            status_marks=",".join("?" for _ in statuses)
+            employees=c.execute(f"""SELECT id,employee_code,full_name,basic_salary FROM employees
+                WHERE id IN ({id_marks}) AND active=1 AND work_status IN ({status_marks})
+                ORDER BY employee_code""",(*ids,*statuses)).fetchall()
+            if len(employees)!=len(ids):
+                raise ValueError("يوجد موظف غير نشط أو لا ينتمي إلى فئة الاستحقاق المحددة.")
         if not employees: raise ValueError("لا يوجد موظفون مستحقون للمنحة.")
         snapshots=[]
         for emp in employees:
