@@ -420,3 +420,51 @@ nav a.active{background:var(--nav-hover);border-color:#8aa6c5;color:#fff;box-sha
 .nexus-date-control input.nexus-native-date{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer;z-index:2}
 .nexus-date-control:focus-within .nexus-date-display{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
 @media print{.nexus-date-display{background:#fff!important;color:#17212b!important;border:0!important;padding:0!important;min-height:0!important}}
+
+
+/* 2026 responsive workspace refinements */
+.global-report-actions{position:static!important;display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 0 auto;padding:0;border:0;box-shadow:none;background:transparent}
+.global-report-actions button{box-shadow:none}
+main>header.has-report-actions{align-items:center;flex-wrap:wrap}
+main>header.has-report-actions>*{min-width:0}
+.theme-toggle{position:static!important;display:flex;width:100%;margin-top:18px;box-shadow:none}
+.mobile-nav-toggle,.sidebar-backdrop{display:none}
+.nav-group[open]>summary{background:var(--nav-hover)}
+nav a.active{background:#24445a;border-color:#4e7892;color:#fff}
+.accounts-layout{grid-template-columns:minmax(0,1fr)!important}
+.accounts-layout>.panel:first-child{grid-row:1}
+.accounts-layout>.panel:last-child{grid-row:2;min-width:0}
+.accounts-layout .table-wrap{width:100%;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+.accounts-tree{min-width:1120px}
+.accounts-tree th,.accounts-tree td{white-space:nowrap}
+.accounts-tree .account-name{min-width:260px}
+.payroll-nav-groups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:12px 0 18px}
+.payroll-nav-group{border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}
+.payroll-nav-group>summary{cursor:pointer;padding:10px 14px;font-weight:800;background:var(--surface2);list-style:none}
+.payroll-nav-group>summary::-webkit-details-marker{display:none}
+.payroll-nav-group>summary:after{content:"＋";float:left;color:var(--muted)}
+.payroll-nav-group[open]>summary:after{content:"−"}
+.payroll-nav-group .actions{padding:8px 12px;margin:0;align-items:stretch}
+.payroll-nav-group .button{flex:1 1 150px;text-align:center}
+@media(max-width:850px){
+ body{overflow-x:hidden}
+ .mobile-nav-toggle{display:inline-flex;position:fixed;top:10px;right:10px;z-index:30;box-shadow:var(--shadow)}
+ aside#appSidebar{position:fixed;right:0;top:0;bottom:0;width:min(310px,86vw);height:100dvh;max-height:none;overflow-y:auto;z-index:32;transform:translateX(110%);transition:transform .22s ease;box-shadow:var(--shadow)}
+ body.sidebar-open aside#appSidebar{transform:translateX(0)}
+ .sidebar-backdrop{position:fixed;inset:0;background:rgba(2,6,23,.52);z-index:31}
+ body.sidebar-open .sidebar-backdrop{display:block}
+ main{margin:0;padding:68px 15px 22px}
+ nav{display:flex;flex-direction:column;gap:8px}
+ .global-report-actions{width:100%;margin:10px 0 0;justify-content:flex-start}
+ main>header.has-report-actions{display:flex}
+ .accounts-tree{min-width:1120px}
+ .payroll-nav-groups{grid-template-columns:1fr}
+ .theme-toggle{position:static!important;margin:18px 0 0}
+}
+@media(min-width:851px){
+ .mobile-nav-toggle,.sidebar-backdrop{display:none!important}
+}
+@media(max-width:560px){
+ .global-report-actions button{flex:1 1 140px}
+ .accounts-layout>.panel{width:100%}
+}
