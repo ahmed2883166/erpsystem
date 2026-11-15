@@ -202,6 +202,24 @@ class UserPermissionRouteTests(unittest.TestCase):
         conn.close()
         self.assertEqual(count, 0)
 
+    def test_non_admin_user_page_hides_admin_role_and_unowned_permissions(self):
+        conn = sqlite3.connect(nexus.DB_PATH)
+        conn.execute(
+            "UPDATE users SET role='accountant',permissions_json=? WHERE id=1",
+            (json.dumps(["users.manage"]),),
+        )
+        conn.commit()
+        conn.close()
+        with self.client.session_transaction() as session:
+            session.update(user_id=1, username="admin", full_name="مدير",
+                           role="accountant", permissions=["users.manage"])
+        response = self.client.get("/users")
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('<option value="admin">', body)
+        self.assertNotIn('name="permissions" value="backup.manage"', body)
+        self.assertIn('name="permissions" value="users.manage"', body)
+
     def test_non_admin_user_manager_cannot_create_admin_or_grant_extra_permissions(self):
         conn = sqlite3.connect(nexus.DB_PATH)
         conn.execute(
