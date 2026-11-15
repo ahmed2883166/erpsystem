@@ -24,6 +24,12 @@
     <label>تاريخ الاستحقاق<input type="date" name="due_date" required></label>
     <label>الفترة / الشهر<input name="period_label" maxlength="80" placeholder="مثال: أكتوبر 2026"></label>
     <label>العملة<input name="currency_code" maxlength="12" placeholder="مثال: EGP"></label>
+    <label>حساب الالتزام المستحق
+      <select name="payable_account_id" required>
+        <option value="">اختر حساب التزام</option>
+        {% for account in payable_accounts %}<option value="{{ account.id }}">{{ account.code }} - {{ account.name_ar }}</option>{% endfor %}
+      </select>
+    </label>
     <label class="full-width">ملاحظات<textarea name="notes" rows="2" maxlength="1000"></textarea></label>
     <div class="full-width"><button type="submit">حفظ الالتزام</button></div>
   </form>
@@ -50,6 +56,12 @@
     </label>
     <label>تاريخ انتهاء الجدول (اختياري)<input type="date" name="end_date"></label>
     <label>العملة<input name="currency_code" maxlength="12" placeholder="EGP"></label>
+    <label>حساب الالتزام المستحق
+      <select name="payable_account_id" required>
+        <option value="">اختر حساب التزام</option>
+        {% for account in payable_accounts %}<option value="{{ account.id }}">{{ account.code }} - {{ account.name_ar }}</option>{% endfor %}
+      </select>
+    </label>
     <label class="full-width">ملاحظات<textarea name="notes" rows="2" maxlength="1000"></textarea></label>
     <div class="full-width"><button type="submit">حفظ جدول التكرار</button></div>
   </form>
@@ -120,6 +132,11 @@
                 <label>تاريخ السداد<input type="date" name="payment_date" required></label>
                 <label>المبلغ<input type="number" name="amount" min="0.01" step="0.01" required></label>
                 <label>رقم قيد اليومية المرحّل<input type="number" name="journal_entry_id" min="1" required></label>
+                <label>حساب الالتزام المستحق
+                  <select name="payable_account_id" required>
+                    {% for account in payable_accounts %}<option value="{{ account.id }}" {% if item.payable_account_id == account.id %}selected{% endif %}>{{ account.code }} - {{ account.name_ar }}</option>{% endfor %}
+                  </select>
+                </label>
                 <label>مرجع السداد<input name="reference" maxlength="100"></label>
                 <button type="submit">ربط الدفعة بالقيد</button>
               </form>
