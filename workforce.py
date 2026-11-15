@@ -3150,6 +3150,7 @@ def employee_loans():
 def approve_employee_loan(loan_id):
     c = _db()
     try:
+        c.execute("BEGIN IMMEDIATE")
         loan = c.execute("SELECT * FROM employee_loans WHERE id=?", (loan_id,)).fetchone()
         if not loan or loan["status"] != "requested":
             raise ValueError("طلب السلفة غير موجود أو سبق اتخاذ قرار.")
@@ -3162,8 +3163,11 @@ def approve_employee_loan(loan_id):
         if amount <= 0 or amount > D(loan["requested_amount"]) or not 1 <= count <= 60:
             raise ValueError("المبلغ المعتمد لا يتجاوز المطلوب وعدد الأقساط من 1 إلى 60.")
         c.execute("""UPDATE employee_loans SET approved_amount=?,installment_count=?,first_due_period=?,
-            status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP WHERE id=?""",
+            status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP
+            WHERE id=? AND status='requested'""",
             (str(amount),count,first,session["user_id"],loan_id))
+        if c.execute("SELECT changes()").fetchone()[0] != 1:
+            raise ValueError("تم اتخاذ قرار على طلب السلفة بواسطة مستخدم آخر.")
         _audit(c,"employee_loan_approved",loan["loan_no"])
         c.commit()
         flash("تم اعتماد السلفة؛ يلزم صرفها لإنشاء جدول الأقساط.","success")
@@ -3179,13 +3183,16 @@ def approve_employee_loan(loan_id):
 def reject_employee_loan(loan_id):
     c = _db()
     try:
+        c.execute("BEGIN IMMEDIATE")
         loan = c.execute("SELECT * FROM employee_loans WHERE id=?", (loan_id,)).fetchone()
         if not loan or loan["status"] != "requested":
             raise ValueError("لا يمكن رفض الطلب في حالته الحالية.")
         if loan["created_by"] is None or loan["created_by"] == session["user_id"]:
             raise ValueError("لا يجوز رفض طلب السلفة بواسطة منشئه، أو دون بيانات منشئ موثقة.")
-        c.execute("UPDATE employee_loans SET status='rejected',approved_by=?,approved_at=CURRENT_TIMESTAMP WHERE id=?",
-                  (session["user_id"],loan_id))
+        c.execute("""UPDATE employee_loans SET status='rejected',approved_by=?,approved_at=CURRENT_TIMESTAMP
+            WHERE id=? AND status='requested'""", (session["user_id"],loan_id))
+        if c.execute("SELECT changes()").fetchone()[0] != 1:
+            raise ValueError("تم اتخاذ قرار على طلب السلفة بواسطة مستخدم آخر.")
         _audit(c,"employee_loan_rejected",loan["loan_no"])
         c.commit()
         flash("تم رفض الطلب مع الاحتفاظ بسجله.","success")
