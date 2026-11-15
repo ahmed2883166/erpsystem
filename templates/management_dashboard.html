@@ -21,17 +21,17 @@
 {% macro ratio(value) -%}{% if value is none %}—{% else %}{{ '%.2f'|format(value) }} مرة{% endif %}{%- endmacro %}
 {% macro percent(value) -%}{% if value is none %}—{% else %}{{ '%.2f'|format(value) }}%{% endif %}{%- endmacro %}
 
-<header>
+<header class="page-heading management-dashboard-heading">
   <div>
     <h2>لوحة الإدارة</h2>
     <p class="muted">{{ s.company_name }} · النشاط: {{ {'commercial':'تجاري','service':'خدمي','medical':'طبي','restaurant':'مطاعم','industrial':'صناعي'}.get(s.activity,s.activity) }} · العملة الأساسية: {{ s.base_currency }}</p>
     <p class="muted">الفترة {{ date_from }} — {{ date_to }} · مقارنة بالفترة {{ s.prev_start.isoformat() }} — {{ s.prev_end.isoformat() }}</p>
-    <div class="actions no-print">{% if 'budget.view' in permissions %}<a class="button-link" href="{{ url_for('planning.budget_index') }}">الموازنات</a>{% endif %}<a class="button-link" href="{{ url_for('planning.balance_sheet') }}">الميزانية العمومية</a>{% if 'cashflow.view' in permissions or 'reports.view' in permissions %}<a class="button-link" href="{{ url_for('planning.cash_flow') }}">التدفقات النقدية</a>{% endif %}{% if 'accounts.manage' in permissions %}<a class="button-link" href="{{ url_for('management_account_mapping') }}">ربط الحسابات</a><a class="button-link" href="{{ url_for('analytic_dimensions_settings') }}">إدارة الأبعاد التحليلية</a>{% endif %}</div>
+    <div class="actions page-shortcuts-inline no-print">{% if 'budget.view' in permissions %}<a class="button-link" href="{{ url_for('planning.budget_index') }}">الموازنات</a>{% endif %}<a class="button-link" href="{{ url_for('planning.balance_sheet') }}">الميزانية العمومية</a>{% if 'cashflow.view' in permissions or 'reports.view' in permissions %}<a class="button-link" href="{{ url_for('planning.cash_flow') }}">التدفقات النقدية</a>{% endif %}{% if 'accounts.manage' in permissions %}<a class="button-link" href="{{ url_for('management_account_mapping') }}">ربط الحسابات</a><a class="button-link" href="{{ url_for('analytic_dimensions_settings') }}">إدارة الأبعاد التحليلية</a>{% endif %}</div>
   </div>
 </header>
 
 <section class="panel no-print">
-  <form method="get" class="report-filter">
+  <form method="get" class="report-filter management-dashboard-filter">
     <label>من تاريخ<input type="date" name="date_from" value="{{ date_from }}" required></label>
     <label>إلى تاريخ<input type="date" name="date_to" value="{{ date_to }}" required></label>
     <label>الفرع<select name="branch_id"><option value="">كل الفروع</option>{% for x in dimension_options.branches %}<option value="{{ x.id }}" {% if selected_dimensions.get('branch_id') == x.id %}selected{% endif %}>{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
