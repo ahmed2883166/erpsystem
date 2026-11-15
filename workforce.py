@@ -1346,9 +1346,22 @@ def payroll_report():
         FROM employee_final_payrolls f JOIN employees e ON e.id=f.employee_id
         WHERE """ + " AND ".join(final_where) + """
         ORDER BY f.period DESC,e.employee_code""", final_params).fetchall()
+    final_paid_rows = c.execute("""SELECT p.final_payroll_id,SUM(CAST(p.amount AS REAL)) AS paid
+        FROM employee_final_payroll_payments p JOIN employee_final_payrolls f ON f.id=p.final_payroll_id
+        WHERE f.period>=? AND f.period<=? GROUP BY p.final_payroll_id""",
+        (month_from or "0000-01",month_to or "9999-12")).fetchall()
+    final_paid_map = {int(x["final_payroll_id"]): D(x["paid"] or 0) for x in final_paid_rows}
+    if employee_id:
+        final_paid_map = {int(x["final_payroll_id"]): D(x["paid"] or 0) for x in c.execute(
+            """SELECT p.final_payroll_id,SUM(CAST(p.amount AS REAL)) AS paid
+               FROM employee_final_payroll_payments p JOIN employee_final_payrolls f ON f.id=p.final_payroll_id
+               WHERE f.employee_id=? GROUP BY p.final_payroll_id""", (employee_id,)).fetchall()}
     final_totals = {
         "gross_pay": M(sum((D(x["gross_pay"]) for x in final_rows if x["status"] != "cancelled"),Decimal("0"))),
         "net_pay": M(sum((D(x["net_pay"]) for x in final_rows if x["status"] != "cancelled"),Decimal("0"))),
+        "paid": M(sum((final_paid_map.get(int(x["id"]),Decimal("0")) for x in final_rows if x["status"] != "cancelled"),Decimal("0"))),
+        "remaining": M(sum((max(Decimal("0"),D(x["net_pay"])-final_paid_map.get(int(x["id"]),Decimal("0")))
+                            for x in final_rows if x["status"] != "cancelled"),Decimal("0"))),
         "count": sum(1 for x in final_rows if x["status"] != "cancelled"),
     }
     employee_options = c.execute(
