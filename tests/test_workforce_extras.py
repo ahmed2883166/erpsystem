@@ -313,7 +313,9 @@ class WorkforceExtrasTests(unittest.TestCase):
         journal_lines=conn.execute("""SELECT account_id,debit,credit FROM journal_lines
             WHERE entry_id=? ORDER BY id""",(journal_id,)).fetchall()
         conn.close()
-        self.assertEqual(status,"posted")
+        with self.client.session_transaction() as session:
+            post_messages = session.get("_flashes", [])
+        self.assertEqual(status,"posted",repr(post_messages))
         self.assertEqual(journal,("FRIDAY-ALLOWANCE-2026-11","posted","2026-11-30"))
         self.assertEqual(journal_lines,[(2,"1333.33","0.00"),(3,"0.00","1333.33")])
         conn=sqlite3.connect(self.db_path)
