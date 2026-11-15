@@ -1315,6 +1315,26 @@ def payroll_report():
             D(row["gross_pay"]) - D(row["absence_deduction"]) + D(row["employer_insurance"])
         )
         run_net_pay[row["run_id"]] = run_net_pay.get(row["run_id"], Decimal("0")) + D(row["net_pay"])
+    final_where = ["1=1"]
+    final_params = []
+    if month_from:
+        final_where.append("f.period>=?")
+        final_params.append(month_from)
+    if month_to:
+        final_where.append("f.period<=?")
+        final_params.append(month_to)
+    if employee_id:
+        final_where.append("f.employee_id=?")
+        final_params.append(employee_id)
+    final_rows = c.execute("""SELECT f.*,e.employee_code,e.full_name,e.department
+        FROM employee_final_payrolls f JOIN employees e ON e.id=f.employee_id
+        WHERE """ + " AND ".join(final_where) + """
+        ORDER BY f.period DESC,e.employee_code""", final_params).fetchall()
+    final_totals = {
+        "gross_pay": M(sum((D(x["gross_pay"]) for x in final_rows if x["status"] != "cancelled"),Decimal("0"))),
+        "net_pay": M(sum((D(x["net_pay"]) for x in final_rows if x["status"] != "cancelled"),Decimal("0"))),
+        "count": sum(1 for x in final_rows if x["status"] != "cancelled"),
+    }
     employee_options = c.execute(
         "SELECT id,employee_code,full_name FROM employees ORDER BY employee_code"
     ).fetchall()
@@ -1331,6 +1351,7 @@ def payroll_report():
          for run_id in selected_run_ids),Decimal("0")))
     c.close()
     return render_template("payroll_report.html", rows=rows, totals=totals,
+                           final_rows=final_rows, final_totals=final_totals,
                            employees=employee_options, month_from=month_from,
                            month_to=month_to, selected_employee=employee_id)
 
