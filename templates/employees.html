@@ -22,8 +22,10 @@
 <label>مركز التكلفة <select name="cost_center_id"><option value="">غير محدد</option>{% for d in dimensions.cost_centers %}<option value="{{d.id}}">{{d.code}} - {{d.name_ar}}</option>{% endfor %}</select></label>
 <label>المشروع <select name="project_id"><option value="">غير محدد</option>{% for d in dimensions.projects %}<option value="{{d.id}}">{{d.code}} - {{d.name_ar}}</option>{% endfor %}</select></label>
 <label>تاريخ التعيين<input type="date" name="hire_date" required></label>
+<label>ساعات العمل القياسية شهريًا<input type="number" step="0.01" min="1" name="standard_hours" value="208" required></label>
 <label>الموقف من العمل<select name="work_status"><option value="permanent">مثبت</option><option value="temporary">مؤقت</option><option value="comprehensive_bonus">مكافأة شاملة</option><option value="unpaid_leave">إجازة بدون مرتب</option><option value="resigned">استقالة</option><option value="retired">معاش</option></select></label>
 <label>تاريخ سريان الاستقالة / المعاش (إلزامي عند الاختيار)<input type="date" name="termination_date"></label>
+<label style="grid-column:1/-1"><input type="checkbox" name="friday_work_eligible" value="1"> يستحق بدل العمل أيام الجمعة (بموافقة الإدارة)</label>
 <div class="notice" style="grid-column:1/-1">الأجر الأساسي والأجر التأميني والبدلات والعلاوات وحصص التأمين والاستقطاعات تُدخل من شاشة المرتبات أو شاشة الاستحقاقات والاستقطاعات، وليس من ملف الموظف.</div>
 <div class="notice" style="grid-column:1/-1">
   العلاوات والزيادات تُدار بقرار جماعي من شاشة <a href="{{url_for('workforce.salary_changes')}}">العلاوات والزيادات الجماعية</a>، ويمكن تطبيقها على كل الموظفين النشطين أو فئة محددة بعد معاينة الأثر واعتماد القرار.
