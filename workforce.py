@@ -1049,13 +1049,28 @@ def employee_form_2_salary_report():
     statuses = scope_statuses[scope]
     placeholders = ",".join("?" for _ in statuses)
     c = _db()
-    employees = c.execute(
-        f"""SELECT employee_code,full_name,national_id,insurance_number,hire_date,
-                   basic_salary,variable_salary,insured_wage,
-                   (CAST(basic_salary AS REAL)+CAST(variable_salary AS REAL)) AS comprehensive_wage
+    employee_rows = c.execute(
+        f"""SELECT id,employee_code,full_name,national_id,insurance_number,hire_date,
+                   basic_salary,variable_salary,insured_wage
             FROM employees WHERE work_status IN ({placeholders})
             ORDER BY employee_code,full_name""", statuses
     ).fetchall()
+    employees = []
+    as_of_date = date.today().isoformat()
+    for employee_row in employee_rows:
+        item = dict(employee_row)
+        basic, insured = _employee_salary_basis(c, item["id"], as_of_date)
+        latest_payroll = c.execute("""SELECT l.allowances FROM payroll_lines l
+            JOIN payroll_runs r ON r.id=l.run_id
+            WHERE l.employee_id=? AND r.status='posted' AND r.period<=?
+            ORDER BY r.period DESC,COALESCE(r.posted_at,r.created_at) DESC,r.id DESC LIMIT 1""",
+            (item["id"],as_of_date[:7])).fetchone()
+        variable = M(latest_payroll["allowances"]) if latest_payroll else M(item["variable_salary"])
+        item["basic_salary"] = str(basic)
+        item["variable_salary"] = str(variable)
+        item["insured_wage"] = str(insured)
+        item["comprehensive_wage"] = str(M(basic+variable))
+        employees.append(item)
     c.close()
     totals = {
         "count": len(employees),

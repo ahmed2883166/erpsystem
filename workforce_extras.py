@@ -228,16 +228,17 @@ def employee_financial_statement(employee_id):
         AND (?='' OR effective_period>=?) AND (?='' OR effective_period<=?)
         ORDER BY effective_period,penalty_date,id""",
         (employee_id,month_from,month_from,month_to,month_to)).fetchall()
+    active_lines = [line for line in lines if line["run_status"] == "posted"]
     summary = {
-        "gross":M(sum((D(x["gross_pay"]) for x in lines),Decimal("0"))),
-        "net":M(sum((D(x["net_pay"]) for x in lines),Decimal("0"))),
-        "paid":M(sum((D(a["amount"]) for line in lines for a in paid_by_line[line["id"]]),Decimal("0"))),
-        "employer_insurance":M(sum((D(x["employer_insurance"]) for x in lines),Decimal("0"))),
+        "gross":M(sum((D(x["gross_pay"]) for x in active_lines),Decimal("0"))),
+        "net":M(sum((D(x["net_pay"]) for x in active_lines),Decimal("0"))),
+        "paid":M(sum((D(a["amount"]) for line in active_lines for a in paid_by_line[line["id"]]),Decimal("0"))),
+        "employer_insurance":M(sum((D(x["employer_insurance"]) for x in active_lines),Decimal("0"))),
     }
     summary["remaining"] = M(max(Decimal("0"),summary["net"]-summary["paid"]))
     unallocated = c.execute("""SELECT p.period,pp.payment_date,pp.amount,pp.reference
         FROM payroll_payments pp JOIN payroll_runs p ON p.id=pp.run_id
-        WHERE p.status IN ('posted','reversed')
+        WHERE p.status='posted'
         AND NOT EXISTS(SELECT 1 FROM payroll_payment_allocations a WHERE a.payment_id=pp.id)
         AND EXISTS(SELECT 1 FROM payroll_lines l WHERE l.run_id=p.id AND l.employee_id=?)
         AND (?='' OR p.period>=?) AND (?='' OR p.period<=?)

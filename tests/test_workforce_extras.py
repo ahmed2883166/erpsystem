@@ -124,11 +124,17 @@ class WorkforceExtrasTests(unittest.TestCase):
             overtime_amount,absent_hours,absence_deduction,other_deductions,taxable_income_tax,
             employee_insurance,employer_insurance,gross_pay,net_pay)
             VALUES(1,1,'10000','0','0','0','0','0','0','0','0','0','10000','10000')""")
+        conn.execute("""INSERT INTO payroll_runs(id,period,status,journal_entry_id)
+            VALUES(2,'2026-11','reversed',2)""")
+        conn.execute("""INSERT INTO payroll_lines(run_id,employee_id,basic_salary,allowances,overtime_hours,
+            overtime_amount,absent_hours,absence_deduction,other_deductions,taxable_income_tax,
+            employee_insurance,employer_insurance,gross_pay,net_pay)
+            VALUES(2,1,'7000','0','0','0','0','0','0','0','0','0','7000','7000')""")
         conn.commit()
         conn.close()
         response = self.client.get("/hr/employee/1/statement")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Employee One", response.get_data(as_text=True))
+        self.assertIn("Employee One|10000.00", response.get_data(as_text=True))
 
 
     def test_employee_edit_persists_basic_variable_and_insured_wages_separately(self):

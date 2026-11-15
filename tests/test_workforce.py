@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import shutil
 from pathlib import Path
+from decimal import Decimal
 from unittest.mock import patch
 
 from flask import Flask
@@ -74,7 +75,8 @@ class WorkforceTests(unittest.TestCase):
             encoding="utf-8"
         )
         (template_dir / "form2_salary.html").write_text(
-            "{{ scope }}|{{ employees|length }}|{{ totals.insured_wage }}", encoding="utf-8"
+            "{{ scope }}|{{ employees|length }}|{{ totals.insured_wage }}|{% for e in employees %}{{e.basic_salary}}|{{e.variable_salary}}|{{e.comprehensive_wage}}{% endfor %}",
+            encoding="utf-8"
         )
         self.app = Flask(__name__, template_folder=str(template_dir))
         self.app.secret_key = "test"
@@ -1289,6 +1291,22 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(state[0],"paid")
         self.assertIsNotNone(state[1])
         self.assertEqual(payments,[("50000.00",),("54900.00",)])
+
+
+    def test_form2_report_uses_latest_posted_payroll_wages(self):
+        self.add_employee()
+        conn=sqlite3.connect(self.db_path)
+        conn.execute("UPDATE employees SET basic_salary='0',insured_wage='0',variable_salary='0' WHERE id=1")
+        conn.execute("""INSERT INTO payroll_runs(id,period,status,created_at,posted_at)
+            VALUES(1,'2026-11','posted','2026-11-01 00:00:00','2026-11-15 10:00:00')""")
+        conn.execute("""INSERT INTO payroll_lines(run_id,employee_id,basic_salary,allowances,overtime_hours,
+            overtime_amount,absent_hours,absence_deduction,other_deductions,taxable_income_tax,
+            employee_insurance,employer_insurance,gross_pay,net_pay,insured_wage)
+            VALUES(1,1,'10000','2000','0','0','0','0','0','0','0','0','12000','12000','8500')""")
+        conn.commit(); conn.close()
+        response=self.client.get("/hr/form-2-salary-report?scope=permanent")
+        self.assertEqual(response.status_code,200)
+        self.assertIn("permanent|1|8500.00|10000.00|2000.00|12000.00",response.get_data(as_text=True))
 
 if __name__ == "__main__":
     unittest.main()
