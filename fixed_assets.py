@@ -29,7 +29,16 @@ def require(write=False):
         def wrapped(*a,**kw):
             if not session.get("user_id"): return redirect(url_for("login"))
             required = "assets.manage" if write or request.method == "POST" else "assets.view"
-            if (required not in set(session["permissions"])) if "permissions" in session else (write and session.get("role") not in {"admin","accountant"}):
+            legacy_roles = {
+                "assets.manage": {"admin", "accountant"},
+                "assets.view": {"admin", "accountant", "viewer"},
+            }
+            allowed = (
+                required in set(session["permissions"])
+                if "permissions" in session
+                else session.get("role") in legacy_roles[required]
+            )
+            if not allowed:
                 flash("لا تملك صلاحية إدارة الأصول الثابتة.","error"); return redirect(url_for("assets.index"))
             return fn(*a,**kw)
         return wrapped
