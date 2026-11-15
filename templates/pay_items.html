@@ -18,10 +18,19 @@
 <a href="{{url_for('workforce.employee_loans')}}">السلف</a>
 </div></header>
 <section class="panel">
-<h3>إضافة بند جديد</h3>
+<h3>تعريف أسماء البنود (تُضاف مرة واحدة)</h3>
+<form method="post" action="{{url_for('workforce.add_pay_item_catalog')}}" class="form-grid">
+<label>اسم البند الجديد<input name="name" placeholder="علاوة / بدل انتقال / خصم تأمين طبي" required maxlength="120"></label>
+<label>نوع البند<select name="item_type" required><option value="allowance">استحقاق</option><option value="deduction">استقطاع</option></select></label>
+<button type="submit">إضافة اسم البند للقائمة</button>
+</form>
+<p class="muted">يمكن تعريف «علاوة» مرة واحدة ثم استخدامها مرات متعددة مع موظفين مختلفين، دون تكرار اسمها في القائمة.</p>
+</section>
+<section class="panel">
+<h3>إسناد بند للموظفين</h3>
 <form method="post" class="form-grid" id="payItemForm">
-<label>اسم البند<input name="item_name" id="payItemName" placeholder="بدل انتقال / حافز شهري / خصم تأمين طبي" required maxlength="120"></label>
-<label>نوع البند<select name="item_type" id="payItemType" required><option value="allowance">استحقاق يضاف للمرتب</option><option value="deduction">استقطاع يخصم من المرتب</option></select></label>
+<label>اسم البند <select name="item_catalog_id" id="payItemCatalog" required><option value="">اختر بندًا من القائمة</option>{% for item in catalog_items %}<option value="{{item.id}}" data-type="{{item.item_type}}">{{item.name}} — {{'استحقاق' if item.item_type=='allowance' else 'استقطاع'}}</option>{% endfor %}</select></label>
+<label>نوع البند <input id="payItemTypeLabel" value="يُحدد تلقائيًا من البند المختار" readonly></label>
 <label>القيمة الشهرية لكل موظف<input name="amount" id="payItemAmount" type="number" min="0" step="0.01" required value="0"></label>
 <div style="grid-column:1/-1">
 <strong>اختيار الموظفين</strong>
@@ -57,6 +66,7 @@ const paySelected=new Map();
 const payBody=document.getElementById('payItemSelectedBody');
 const payHidden=document.getElementById('payItemHiddenEmployees');
 const payAmount=document.getElementById('payItemAmount');
+const payCatalog=document.getElementById('payItemCatalog');
 const paySummary=document.getElementById('payItemSummary');
 const paySave=document.getElementById('savePayItem');
 function renderPaySelected(){
@@ -71,14 +81,14 @@ function renderPaySelected(){
   const hidden=document.createElement('input');hidden.type='hidden';hidden.name='employee_ids';hidden.value=id;payHidden.appendChild(hidden);
  });
  paySummary.textContent='عدد الموظفين: '+paySelected.size+' — إجمالي القيمة الشهرية: '+(amount*paySelected.size).toFixed(2);
- paySave.disabled=!paySelected.size || !document.getElementById('payItemName').value.trim() || amount<0;
+ paySave.disabled=!paySelected.size || !payCatalog.value || amount<0;
 }
 function addPayOptions(options){options.forEach(o=>{if(o.selected&&!o.hidden)paySelected.set(o.value,{code:o.dataset.code,name:o.dataset.name,department:o.dataset.department,status:o.dataset.status==='permanent'?'مثبت':o.dataset.status==='temporary'?'مؤقت':o.dataset.status==='comprehensive_bonus'?'مكافأة شاملة':o.dataset.status});});renderPaySelected();}
 document.getElementById('addAllPayEmployees').addEventListener('click',()=>{Array.from(payPicker.options).filter(o=>!o.hidden).forEach(o=>paySelected.set(o.value,{code:o.dataset.code,name:o.dataset.name,department:o.dataset.department,status:o.dataset.status==='permanent'?'مثبت':o.dataset.status==='temporary'?'مؤقت':o.dataset.status==='comprehensive_bonus'?'مكافأة شاملة':o.dataset.status}));renderPaySelected();});
 document.getElementById('addSelectedPayEmployees').addEventListener('click',()=>addPayOptions(Array.from(payPicker.options)));
 document.getElementById('payItemDepartmentFilter').addEventListener('input',e=>{const q=e.target.value.trim().toLowerCase();Array.from(payPicker.options).forEach(o=>{o.hidden=!!q&&!(o.dataset.department||'').toLowerCase().includes(q);if(o.hidden)o.selected=false;});});
 payAmount.addEventListener('input',renderPaySelected);
-document.getElementById('payItemName').addEventListener('input',renderPaySelected);
+payCatalog.addEventListener('change',()=>{const option=payCatalog.selectedOptions[0];document.getElementById('payItemTypeLabel').value=option&&option.dataset.type==='allowance'?'استحقاق':'استقطاع';renderPaySelected();});
 renderPaySelected();
 </script>
 {% endblock %}
