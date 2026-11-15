@@ -277,5 +277,30 @@ class SystemHealthTests(unittest.TestCase):
             ))
 
 
+    def test_http_500_logs_original_traceback_without_disclosing_it(self):
+        from app import DATA_DIR, handle_internal_server_error
+        from flask import Flask
+
+        test_app = Flask("http-500-log-test")
+        test_app.register_error_handler(500, handle_internal_server_error)
+        test_app.config["PROPAGATE_EXCEPTIONS"] = False
+
+        @test_app.route("/deliberate-test-failure")
+        def deliberate_test_failure():
+            raise RuntimeError("PrivateTracebackSentinel")
+
+        response = test_app.test_client().get(
+            "/deliberate-test-failure", headers={"Accept": "application/json"}
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertNotIn("PrivateTracebackSentinel", response.get_data(as_text=True))
+        self.assertTrue(response.get_json()["request_id"])
+        log_path = DATA_DIR / "logs" / "http_500.log"
+        self.assertTrue(log_path.exists())
+        log_text = log_path.read_text(encoding="utf-8")
+        self.assertIn("PrivateTracebackSentinel", log_text)
+        self.assertIn("RuntimeError", log_text)
+
+
 if __name__ == "__main__":
     unittest.main()
