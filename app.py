@@ -47,6 +47,7 @@ from income_statement import (build_income_statement, normalize_income_statement
                                closing_entries_exclusion_sql)
 from profitability_reports import build_profitability_report
 from management_reports import build_period_comparison, build_inventory_ageing, build_cash_forecast
+from cash_commitments import initialize_cash_commitments_schema
 
 # Development/demo builds run locally without a licensing server. Set NEXUS_DEMO_MODE=0
 # explicitly in a commercial deployment to enforce the signed remote licensing flow.
@@ -472,6 +473,7 @@ def initialize_database():
     dashboard_connection = db()
     activity_row = dashboard_connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
     initialize_management_dashboard_schema(dashboard_connection, activity_row["setting_value"] if activity_row else "commercial")
+    initialize_cash_commitments_schema(dashboard_connection)
     initialize_analytic_dimensions_schema(dashboard_connection)
     initialize_planning_schema(dashboard_connection)
     initialize_activity_profiles_schema(dashboard_connection)
