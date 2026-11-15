@@ -2532,6 +2532,7 @@ def cash_commitments_register():
                         request.form.get("due_date", ""),
                         period_label=request.form.get("period_label", ""),
                         currency_code=request.form.get("currency_code", ""),
+                        payable_account_id=int(request.form.get("payable_account_id", "0")) or None,
                         notes=request.form.get("notes", ""),
                         created_by=session.get("user_id"),
                     )
@@ -2546,8 +2547,9 @@ def cash_commitments_register():
                         reference=request.form.get("reference", ""),
                         notes=request.form.get("notes", ""),
                         created_by=session.get("user_id"),
+                        payable_account_id=int(request.form.get("payable_account_id", "0")) or None,
                     )
-                    flash("تم ربط الدفعة بقيد اليومية المرحّل.", "success")
+                    flash("تم ربط الدفعة بقيد السداد الذي خفّض حساب الالتزام.", "success")
                 elif action == "void":
                     void_cash_commitment(connection, int(request.form.get("commitment_id", "0")))
                     flash("تم إلغاء الالتزام المفتوح.", "success")
@@ -2558,6 +2560,7 @@ def cash_commitments_register():
                         request.form.get("frequency", ""),
                         currency_code=request.form.get("currency_code", ""),
                         end_date=request.form.get("end_date") or None,
+                        payable_account_id=int(request.form.get("payable_account_id", "0")) or None,
                         notes=request.form.get("notes", ""),
                         created_by=session.get("user_id"),
                     )
@@ -2591,7 +2594,12 @@ def cash_commitments_register():
                        WHERE o.schedule_id=s.id) occurrence_count
                FROM cash_commitment_schedules s ORDER BY s.active DESC,s.next_due_date,s.id"""
         ).fetchall()
+        payable_accounts = connection.execute(
+            """SELECT id,code,name_ar FROM accounts
+               WHERE active=1 AND is_group=0 AND account_type='liability' ORDER BY code"""
+        ).fetchall()
         return render_template("cash_commitments.html", commitments=rows, schedules=schedules,
+                               payable_accounts=payable_accounts,
                                can_manage="cash_commitments.manage" in session.get("permissions", []))
     finally:
         connection.close()
