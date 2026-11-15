@@ -74,10 +74,18 @@ def build_inventory_ageing(conn, as_of):
     expiry_expr = "lot.expiry_date" if _exists(conn, "stock_lots") else "NULL"
     sku_expr = "p.sku" if "sku" in product_cols else "CAST(p.id AS TEXT)"
     name_expr = "p.name_ar" if "name_ar" in product_cols else "CAST(p.id AS TEXT)"
+    last_movement_expr = (
+        """(SELECT MAX(mv.movement_date) FROM stock_movements mv
+             WHERE mv.product_id=l.product_id
+               AND (mv.source_warehouse_id=l.warehouse_id
+                    OR mv.target_warehouse_id=l.warehouse_id))"""
+        if _exists(conn, "stock_movements") else "NULL"
+    )
     rows = conn.execute(
         f"""SELECT l.product_id,l.warehouse_id,{sku_expr} sku,{name_expr} product_name,
                    w.code warehouse_code,w.name_ar warehouse_name,
                    {created_expr} layer_date,{expiry_expr} expiry_date,
+                   {last_movement_expr} last_movement_date,
                    l.qty_remaining,l.unit_cost,l.lot_id
             FROM stock_valuation_layers l
             JOIN stock_products p ON p.id=l.product_id
@@ -107,7 +115,13 @@ def build_inventory_ageing(conn, as_of):
             "warehouse": f'{row["warehouse_code"]} - {row["warehouse_name"]}',
             "layer_date": row["layer_date"], "age_days": age, "quantity": qty,
             "unit_cost": _d(row["unit_cost"]), "value": value,
-            "expiry_date": row["expiry_date"], "bucket": bucket,
+            "expiry_date": row["expiry_date"],
+            "last_movement_date": row["last_movement_date"],
+            "slow_moving": (
+                (cutoff - date.fromisoformat(str(row["last_movement_date"])[:10])).days > 90
+                if row["last_movement_date"] else age > 90
+            ),
+            "bucket": bucket,
         })
     return {"available": True, "rows": result, "totals": buckets,
             "total_value": sum(buckets.values(), Decimal("0")), "as_of": as_of}
