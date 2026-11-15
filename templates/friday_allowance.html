@@ -30,7 +30,7 @@
 </select></label>
 <div style="overflow-x:auto;margin-top:12px">
 <table class="friday-selected-table">
-<thead><tr><th>كود الموظف</th><th>اسم الموظف</th><th>الإدارة</th><th>الراتب الأساسي</th><th>أيام الجمعة الحاضرة</th><th>البدل المحسوب</th><th>إجراء</th></tr></thead>
+<thead><tr><th>كود الموظف</th><th>اسم الموظف</th><th>الإدارة</th><th>الراتب الأساسي</th><th>عدد الأيام المحتسب</th><th>البدل المحسوب</th><th>إجراء</th></tr></thead>
 <tbody id="fridaySelectedBody"><tr><td colspan="7">لم تتم إضافة موظفين بعد.</td></tr></tbody>
 </table></div>
 <div id="fridaySelectedInputs"></div>
@@ -54,7 +54,7 @@
 {% if b.status=='draft' %}
 <form method="post" action="{{url_for('workforce.post_friday_allowance',batch_id=b.id)}}" onsubmit="return confirm('سيتم ترحيل قيد مصروف أجور إضافية إلى أجور إضافية مستحقة. هل تريد المتابعة؟')"><button type="submit">اعتماد وإقفال وترحيل الكشف</button></form>
 <form method="post" action="{{url_for('workforce.delete_friday_allowance',batch_id=b.id)}}" onsubmit="return confirm('حذف مسودة بدل الجمعة المفتوحة؟ لن يمكن الحذف بعد الترحيل.')"><button type="submit" class="danger">حذف المسودة</button></form>
-{% else %}<span>رقم القيد: {{b.journal_entry_id}} — مغلق ولا يمكن حذفه</span>{% endif %}
+{% else %}<button type="button" class="secondary" disabled aria-disabled="true">مقفول — لا يمكن الحذف</button><span>رقم القيد: {{b.journal_entry_id}}</span>{% endif %}
 </div>
 </section>
 {% else %}<section class="panel"><p>لا توجد كشوف بدل جمعة حتى الآن.</p></section>{% endfor %}
@@ -76,21 +76,32 @@ function renderFridaySelected(){
   if(!fridaySelected.size){const row=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=7;cell.textContent='لم تتم إضافة موظفين بعد.';row.appendChild(cell);fridayBody.appendChild(row);}
   fridaySelected.forEach((e,id)=>{
     const row=document.createElement('tr');
-    [e.code,e.name,e.department||'-',e.basic,e.days,e.amount].forEach(v=>{const cell=document.createElement('td');cell.textContent=v;row.appendChild(cell);});
-    const action=document.createElement('td');const remove=document.createElement('button');remove.type='button';remove.className='secondary';remove.textContent='حذف الموظف';
+    [e.code,e.name,e.department||'-',e.basic].forEach(v=>{const cell=document.createElement('td');cell.textContent=v;row.appendChild(cell);});
+    const daysCell=document.createElement('td');
+    const daysInput=document.createElement('input');daysInput.type='number';daysInput.min='1';daysInput.max=String(e.maxDays);
+    daysInput.step='1';daysInput.value=String(e.days);daysInput.style.maxWidth='90px';daysInput.setAttribute('aria-label','عدد أيام بدل الجمعة للموظف '+e.name);
+    daysInput.addEventListener('change',()=>{
+      const value=Number(daysInput.value);
+      if(!Number.isInteger(value)||value<1||value>e.maxDays){alert('عدد الأيام يجب أن يكون من 1 إلى '+e.maxDays+' للموظف '+e.name);daysInput.value=String(e.days);return;}
+      e.days=value;e.amount=(Number(e.basic||0)/30*2*value).toFixed(2);renderFridaySelected();
+    });
+    daysCell.appendChild(daysInput);row.appendChild(daysCell);
+    const amountCell=document.createElement('td');amountCell.textContent=e.amount;row.appendChild(amountCell);
+    const action=document.createElement('td');const remove=document.createElement('button');remove.type='button';remove.className='secondary';remove.textContent='استبعاد الموظف';
     remove.addEventListener('click',()=>{fridaySelected.delete(id);renderFridaySelected();});action.appendChild(remove);row.appendChild(action);fridayBody.appendChild(row);
     const hidden=document.createElement('input');hidden.type='hidden';hidden.name='employee_ids';hidden.value=id;fridayInputs.appendChild(hidden);
+    const daysHidden=document.createElement('input');daysHidden.type='hidden';daysHidden.name='attendance_days_'+id;daysHidden.value=String(e.days);fridayInputs.appendChild(daysHidden);
   });
   fridayCount.textContent='عدد الموظفين المختارين: '+fridaySelected.size;
 }
 function addFridayOptions(options){
-  options.forEach(o=>{if(o.selected && !o.hidden)fridaySelected.set(o.value,{code:o.dataset.code,name:o.dataset.name,department:o.dataset.department,basic:o.dataset.basic,days:o.dataset.days,
+  options.forEach(o=>{if(o.selected && !o.hidden && !fridaySelected.has(o.value))fridaySelected.set(o.value,{code:o.dataset.code,name:o.dataset.name,department:o.dataset.department,basic:o.dataset.basic,days:Number(o.dataset.days||0),maxDays:Number(o.dataset.days||0),
     amount:(Number(o.dataset.basic||0)/30*2*Number(o.dataset.days||0)).toFixed(2)});});
   renderFridaySelected();
 }
 document.getElementById('addAllFridayEmployees').addEventListener('click',()=>{
-  Array.from(fridayPicker.options).filter(o=>!o.hidden).forEach(o=>fridaySelected.set(o.value,{code:o.dataset.code,name:o.dataset.name,department:o.dataset.department,basic:o.dataset.basic,days:o.dataset.days,
-    amount:(Number(o.dataset.basic||0)/30*2*Number(o.dataset.days||0)).toFixed(2)}));
+  Array.from(fridayPicker.options).filter(o=>!o.hidden).forEach(o=>{if(!fridaySelected.has(o.value))fridaySelected.set(o.value,{code:o.dataset.code,name:o.dataset.name,department:o.dataset.department,basic:o.dataset.basic,days:Number(o.dataset.days||0),maxDays:Number(o.dataset.days||0),
+    amount:(Number(o.dataset.basic||0)/30*2*Number(o.dataset.days||0)).toFixed(2)});});
   renderFridaySelected();
 });
 document.getElementById('addSelectedFridayEmployees').addEventListener('click',()=>addFridayOptions(Array.from(fridayPicker.options)));
