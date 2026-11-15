@@ -253,6 +253,108 @@ def list_cash_commitments_forecast(conn, as_of, end_date):
     return items
 
 
+
+def sync_friday_allowance_commitments(conn, created_by=None):
+    """Import legacy posted Friday batches without touching their journals or source rows.
+
+    A posted reversal cancels the batch accrual. If that reversal itself has a
+    posted reversal, the original accounting effect is restored and import is
+    allowed. The journal reversal workflow permits exactly this two-step chain.
+    """
+    def table_exists(name):
+        return conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+        ).fetchone() is not None
+
+    required_tables = {"friday_allowance_batches", "journal_entries", "cash_commitments"}
+    missing = sorted(name for name in required_tables if not table_exists(name))
+    if missing:
+        raise ValueError("تعذر مراجعة الكشوف؛ جداول مطلوبة غير موجودة: " + "، ".join(missing))
+
+    settings_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(company_settings)")
+    } if table_exists("company_settings") else set()
+    currency_code = ""
+    if {"setting_key", "setting_value"}.issubset(settings_columns):
+        setting = conn.execute(
+            "SELECT setting_value FROM company_settings WHERE setting_key='base_currency' LIMIT 1"
+        ).fetchone()
+        currency_code = str(setting["setting_value"] or "") if setting else ""
+
+    conn.execute("BEGIN IMMEDIATE")
+    imported = 0
+    skipped = []
+    try:
+        batches = conn.execute(
+            """SELECT id,period,status,total_amount,payable_account_id,journal_entry_id
+               FROM friday_allowance_batches
+               WHERE status='posted' AND journal_entry_id IS NOT NULL
+               ORDER BY period,id"""
+        ).fetchall()
+        for batch in batches:
+            batch_id = int(batch["id"])
+            if conn.execute(
+                """SELECT 1 FROM cash_commitments
+                   WHERE origin_type='friday_allowance_batch' AND origin_id=? LIMIT 1""",
+                (batch_id,),
+            ).fetchone():
+                skipped.append({"batch_id": batch_id, "reason": "مرتبط بالفعل"})
+                continue
+
+            journal_id = int(batch["journal_entry_id"])
+            original = conn.execute(
+                "SELECT id,status FROM journal_entries WHERE id=?", (journal_id,)
+            ).fetchone()
+            if not original or original["status"] != "posted":
+                skipped.append({"batch_id": batch_id, "reason": "قيد الاستحقاق غير موجود أو غير مرحّل"})
+                continue
+
+            reversal = conn.execute(
+                """SELECT id FROM journal_entries
+                   WHERE reference=? AND status='posted' ORDER BY id LIMIT 1""",
+                (f"REV-{journal_id}",),
+            ).fetchone()
+            if reversal:
+                restored = conn.execute(
+                    """SELECT 1 FROM journal_entries
+                       WHERE reference=? AND status='posted' LIMIT 1""",
+                    (f"REV-{int(reversal['id'])}",),
+                ).fetchone()
+                if not restored:
+                    skipped.append({"batch_id": batch_id, "reason": "قيد الاستحقاق معكوس"})
+                    continue
+
+            try:
+                period = str(batch["period"] or "")
+                if len(period) != 7 or period[4] != "-":
+                    raise ValueError("فترة الكشف غير صحيحة")
+                first_day = date.fromisoformat(period + "-01")
+                due_date = date(first_day.year, first_day.month,
+                                calendar.monthrange(first_day.year, first_day.month)[1]).isoformat()
+                amount = _amount(batch["total_amount"])
+                payable_account_id = _validate_payable_account(
+                    conn, batch["payable_account_id"], required=True
+                )
+            except (ValueError, TypeError, InvalidOperation) as exc:
+                skipped.append({"batch_id": batch_id, "reason": str(exc)})
+                continue
+
+            conn.execute(
+                """INSERT INTO cash_commitments
+                   (commitment_type,title,period_label,amount,due_date,currency_code,
+                    payable_account_id,origin_type,origin_id,notes,created_by)
+                   VALUES('friday_overtime',?,?,?,?,?,?,
+                          'friday_allowance_batch',?,'استيراد كشف سابق بعد المراجعة',?)""",
+                ("بدل الجمعة - " + period, period, str(amount), due_date,
+                 currency_code, payable_account_id, batch_id, created_by),
+            )
+            imported += 1
+        conn.commit()
+        return {"imported": imported, "skipped": skipped}
+    except Exception:
+        conn.rollback()
+        raise
+
 _FREQUENCY_MONTHS = {
     "monthly": 1,
     "quarterly": 3,
