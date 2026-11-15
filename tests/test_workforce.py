@@ -177,6 +177,32 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(line, ("1000.00", "11000.00"))
         self.assertEqual(snapshots, [("earning", "بدل انتقال", "1000.00", "employee_pay_item")])
 
+    def test_legacy_duplicate_active_pay_items_are_not_double_counted(self):
+        self.add_employee()
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount,active)
+            VALUES(1,'بدل انتقال','allowance','250',1)""")
+        conn.commit()
+        conn.close()
+
+        response = self.client.post("/hr/payroll", data={
+            "period": "2026-11", "basic_1": "10000",
+            "overtime_hours_1": "0", "overtime_amount_1": "",
+            "absent_hours_1": "0", "absence_deduction_1": "0",
+            "other_deductions_1": "0", "tax_1": "0",
+            "employee_ins_1": "0", "employer_ins_1": "0",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        line = conn.execute("SELECT allowances,gross_pay FROM payroll_lines WHERE run_id=1 AND employee_id=1").fetchone()
+        snapshots = conn.execute("""SELECT COUNT(*) FROM payroll_line_items
+            WHERE payroll_line_id=(SELECT id FROM payroll_lines WHERE run_id=1 AND employee_id=1)
+              AND source_type='employee_pay_item' AND item_name='بدل انتقال'""").fetchone()[0]
+        conn.close()
+        # The latest active assignment is authoritative; older duplicate rows remain untouched.
+        self.assertEqual(line, ("250.00", "10250.00"))
+        self.assertEqual(snapshots, 1)
+
     def test_pay_item_catalog_reuses_names_and_deduplicates_employee_assignments(self):
         self.add_employee()
         conn = sqlite3.connect(self.db_path)
