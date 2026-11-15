@@ -2015,7 +2015,7 @@ def loan_schedule(loan_id):
 def employee_grants():
     c = _db()
     grant_types = c.execute("SELECT * FROM employee_grant_types WHERE active=1 ORDER BY name").fetchall()
-    employees = c.execute("""SELECT id,employee_code,full_name,basic_salary,work_status FROM employees
+    employees = c.execute("""SELECT id,employee_code,full_name,basic_salary,work_status,department FROM employees
         WHERE active=1 AND work_status NOT IN ('unpaid_leave','resigned','retired') ORDER BY employee_code""").fetchall()
     accounts = _accounts(c)
     grant_rows = c.execute("""SELECT g.*,t.name AS grant_type_name
@@ -2356,7 +2356,7 @@ def friday_allowance():
         selected_period = selected_start.strftime("%Y-%m")
     next_month = date(selected_start.year + (1 if selected_start.month == 12 else 0),
                        1 if selected_start.month == 12 else selected_start.month + 1, 1)
-    eligible_employees = c.execute("""SELECT e.id,e.employee_code,e.full_name,e.basic_salary,e.work_status,
+    eligible_employees = c.execute("""SELECT e.id,e.employee_code,e.full_name,e.basic_salary,e.work_status,e.department,
             COUNT(a.id) AS attendance_days
         FROM employees e JOIN attendance_records a ON a.employee_id=e.id
         WHERE e.active=1 AND e.friday_work_eligible=1
