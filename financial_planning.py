@@ -1791,7 +1791,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
             JOIN accounts a ON a.id=jl.account_id
             WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
               AND a.is_group=0 AND a.account_type='expense'
-              AND a.id IN ({account_marks}){entry_exclusion_sql}
+              AND a.id IN ({account_marks}) {closing_filter}{entry_exclusion_sql}
         """,(start,end,*sorted(depreciation_candidate_ids),*sorted(depreciation_entry_ids))).fetchone()
         other_depreciation=(
             Decimal(str(depreciation_row["debit"] or "0"))
