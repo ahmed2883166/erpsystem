@@ -36,19 +36,19 @@ def collect_health_checks(connection):
     # Posted journal entries must contain balanced debit and credit totals.
     unbalanced, empty = 0, 0
     if _has_table(connection, "journal_entries") and _has_table(connection, "journal_lines"):
-        entries = connection.execute(
-            "SELECT id FROM journal_entries WHERE status='posted' ORDER BY id"
+        rows = connection.execute(
+            """SELECT je.id, COUNT(jl.id) line_count,
+                      COALESCE(DECIMAL_SUM(jl.debit),0) debit_total,
+                      COALESCE(DECIMAL_SUM(jl.credit),0) credit_total
+               FROM journal_entries je
+               LEFT JOIN journal_lines jl ON jl.entry_id=je.id
+               WHERE je.status='posted'
+               GROUP BY je.id"""
         ).fetchall()
-        for entry in entries:
-            lines = connection.execute(
-                "SELECT debit,credit FROM journal_lines WHERE entry_id=?", (entry["id"],)
-            ).fetchall()
-            if not lines:
+        for row in rows:
+            if not row["line_count"]:
                 empty += 1
-                continue
-            debit = sum((_money(row["debit"]) for row in lines), Decimal("0"))
-            credit = sum((_money(row["credit"]) for row in lines), Decimal("0"))
-            if abs(debit-credit) > Decimal("0.01"):
+            elif abs(_money(row["debit_total"])-_money(row["credit_total"])) > Decimal("0.01"):
                 unbalanced += 1
     add("journal_balance", "القيود المرحلة غير المتوازنة", "critical", unbalanced,
         "مراجعة إجمالي المدين والدائن لكل قيد مرحّل.", url_for("reconciliation"))
