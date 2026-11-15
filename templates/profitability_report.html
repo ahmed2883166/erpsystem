@@ -86,6 +86,29 @@
   {% endif %}
 </section>
 <section class="panel">
+  <h3>رابعًا: تحليل ربحية المنتجات</h3>
+  {% if not availability.products %}
+    <p class="muted">تحليل المنتجات غير متاح لأن جداول أو حقول تفاصيل البيع والمرتجعات غير مكتملة.</p>
+  {% else %}
+  <p class="muted">يعرض صافي المبيعات بعد توزيع خصم الفاتورة على البنود بنسبة قيمة كل بند، ويخصم تكلفة المبيعات ويراعي إشعارات البيع الدائنة المرحلة. ضريبة القيمة المضافة مستبعدة. المصروفات التشغيلية غير موزعة على المنتجات.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>كود الصنف</th><th>المنتج</th><th>صافي المبيعات</th><th>صافي تكلفة المبيعات</th><th>مجمل الربح</th><th>هامش الربح %</th><th>كمية مباعة</th><th>كمية مرتجعة</th></tr></thead>
+    <tbody>
+    {% for row in products %}
+      <tr>
+        <td>{{ row.sku or 'غير محدد' }}</td><td>{{ row.name }}</td>
+        <td>{{ row.revenue|money }}</td><td>{{ row.cogs|money }}</td>
+        <td><strong>{{ row.gross_profit|money }}</strong></td>
+        <td>{{ row.margin_percent|money if row.margin_percent is not none else '—' }}</td>
+        <td>{{ row.quantity_sold }}</td><td>{{ row.quantity_returned }}</td>
+      </tr>
+    {% else %}<tr><td colspan="8">لا توجد بنود بيع أو مرتجعات مرحلة خلال الفترة.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+</section>
+
+<section class="panel">
   <h3>ضوابط قراءة التقرير</h3>
   <ul>
     <li>يتم الاعتماد على القيود المرحلة فقط واستبعاد قيود إقفال السنة وعكسها.</li>
