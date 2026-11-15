@@ -48,7 +48,7 @@ from income_statement import (build_income_statement, normalize_income_statement
 from profitability_reports import build_profitability_report
 from management_reports import build_period_comparison, build_inventory_ageing, build_cash_forecast
 from cash_commitments import (initialize_cash_commitments_schema, create_cash_commitment,
-                              record_cash_commitment_payment, void_cash_commitment)
+                              record_cash_commitment_payment, void_cash_commitment, create_recurring_schedule,\n                              generate_recurring_schedule_occurrences, deactivate_recurring_schedule)
 
 # Development/demo builds run locally without a licensing server. Set NEXUS_DEMO_MODE=0
 # explicitly in a commercial deployment to enforce the signed remote licensing flow.
@@ -2550,6 +2550,26 @@ def cash_commitments_register():
                 elif action == "void":
                     void_cash_commitment(connection, int(request.form.get("commitment_id", "0")))
                     flash("تم إلغاء الالتزام المفتوح.", "success")
+                elif action == "create_schedule":
+                    create_recurring_schedule(
+                        connection, request.form.get("title", ""),
+                        request.form.get("amount", ""), request.form.get("first_due_date", ""),
+                        request.form.get("frequency", ""),
+                        currency_code=request.form.get("currency_code", ""),
+                        end_date=request.form.get("end_date") or None,
+                        notes=request.form.get("notes", ""),
+                        created_by=session.get("user_id"),
+                    )
+                    flash("تم حفظ جدول المصروف الدوري. لم تُنشأ الاستحقاقات بعد.", "success")
+                elif action == "generate_schedule":
+                    generated = generate_recurring_schedule_occurrences(
+                        connection, int(request.form.get("schedule_id", "0")),
+                        request.form.get("through_date", ""),
+                    )
+                    flash(f"تم إنشاء {generated} استحقاق جديد. إعادة التوليد لن تكرر الاستحقاقات السابقة.", "success")
+                elif action == "deactivate_schedule":
+                    deactivate_recurring_schedule(connection, int(request.form.get("schedule_id", "0")))
+                    flash("تم إيقاف الجدول. الاستحقاقات التي أُنشئت سابقًا لم تتغير.", "success")
                 else:
                     raise ValueError("الإجراء المطلوب غير معروف.")
             except (ValueError, TypeError, sqlite3.IntegrityError) as exc:
@@ -2564,7 +2584,13 @@ def cash_commitments_register():
                ORDER BY CASE c.status WHEN 'open' THEN 0 WHEN 'partially_paid' THEN 1
                     WHEN 'paid' THEN 2 ELSE 3 END, c.due_date DESC, c.id DESC"""
         ).fetchall()
-        return render_template("cash_commitments.html", commitments=rows,
+        schedules = connection.execute(
+            """SELECT s.*,
+                      (SELECT COUNT(*) FROM cash_commitment_schedule_occurrences o
+                       WHERE o.schedule_id=s.id) occurrence_count
+               FROM cash_commitment_schedules s ORDER BY s.active DESC,s.next_due_date,s.id"""
+        ).fetchall()
+        return render_template("cash_commitments.html", commitments=rows, schedules=schedules,
                                can_manage="cash_commitments.manage" in session.get("permissions", []))
     finally:
         connection.close()
