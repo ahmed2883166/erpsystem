@@ -1679,7 +1679,7 @@ def valuation_reconciliation():
         tagged_gl = {}
         tagged_by_code = {code: D("0") for code in inventory_codes}
         if has_stock_dimensions:
-            tagged_rows = conn.execute("""SELECT a.code,jl.stock_product_id,jl.stock_warehouse_id,
+            tagged_rows = conn.execute(f"""SELECT a.code,jl.stock_product_id,jl.stock_warehouse_id,
                     jl.debit,jl.credit
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                 JOIN accounts a ON a.id=jl.account_id
