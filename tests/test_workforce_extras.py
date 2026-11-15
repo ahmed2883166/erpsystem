@@ -291,7 +291,8 @@ class WorkforceExtrasTests(unittest.TestCase):
         ])
         conn.commit(); conn.close()
         prepared=self.client.post("/hr/friday-allowance",data={
-            "period":"2026-11","expense_account_id":"2","payable_account_id":"3"
+            "period":"2026-11","expense_account_id":"2","payable_account_id":"3",
+            "employee_ids":["1"]
         })
         self.assertEqual(prepared.status_code,302)
         conn=sqlite3.connect(self.db_path)
