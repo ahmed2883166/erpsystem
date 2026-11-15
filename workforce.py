@@ -535,7 +535,16 @@ def _salary_change_preview(c, form):
     decision_date = form.get("decision_date", "").strip()
     effective_date = form.get("effective_date", "").strip()
     title = form.get("title", "").strip()
-    scope = form.get("employee_scope", "all_active").strip()
+    selected_scopes = sorted(set(x.strip() for x in form.getlist("employee_scopes") if x.strip()))
+    if not selected_scopes:
+        legacy_scope = form.get("employee_scope", "all_active").strip()
+        selected_scopes = [legacy_scope]
+    allowed_scopes = {"permanent","temporary","comprehensive_bonus","unpaid_leave"}
+    if "all_active" in selected_scopes:
+        selected_scopes = ["all_active"]
+    if any(x not in allowed_scopes | {"all_active"} for x in selected_scopes):
+        raise ValueError("حدد فئة واحدة على الأقل من الفئات المتاحة.")
+    scope = ",".join(selected_scopes)
     calc_type = form.get("calculation_type", "fixed").strip()
     calc_base = form.get("calculation_base", "basic").strip()
     treatment = form.get("treatment", "basic").strip()
@@ -545,15 +554,16 @@ def _salary_change_preview(c, form):
     if date.fromisoformat(effective_date) > date.today():
         raise ValueError("لا تعتمد القرار قبل تاريخ سريانه. يمكن معاينة القرار، ثم اعتماده في يوم السريان أو بعده حتى لا تُصرف الزيادة مبكرًا.")
     if (not decision_no or not title or value <= 0
-        or scope not in {"all_active","permanent","comprehensive_bonus","unpaid_leave"}
+        or not selected_scopes
         or calc_type not in {"fixed","percentage"} or calc_base not in {"basic","insured_wage"}
         or treatment not in {"basic","allowance"}):
         raise ValueError("أكمل رقم القرار واسمه وتواريخه وحدد نطاق الموظفين وقاعدة الحساب والمعالجة وقيمة موجبة.")
     where = "active=1 AND work_status NOT IN ('resigned','retired')"
     params = []
-    if scope != "all_active":
-        where += " AND work_status=?"
-        params.append(scope)
+    if "all_active" not in selected_scopes:
+        marks = ",".join("?" for _ in selected_scopes)
+        where += " AND work_status IN (" + marks + ")"
+        params.extend(selected_scopes)
     employees = c.execute("SELECT id,employee_code,full_name,basic_salary,insured_wage,work_status FROM employees WHERE "
                           + where + " ORDER BY employee_code", params).fetchall()
     if not employees:
@@ -570,7 +580,7 @@ def _salary_change_preview(c, form):
                         "old":old_basic,"basis":basis,"amount":amount,"new":new_basic,
                         "status":emp["work_status"]})
     return {"decision_no":decision_no,"decision_date":decision_date,"effective_date":effective_date,
-            "title":title,"scope":scope,"calc_type":calc_type,"calc_base":calc_base,
+            "title":title,"scope":scope,"scopes":selected_scopes,"calc_type":calc_type,"calc_base":calc_base,
             "value":value,"treatment":treatment,"notes":form.get("notes","").strip(),
             "employees":preview}
 
@@ -822,17 +832,16 @@ def employee_form_2_salary_report():
     placeholders = ",".join("?" for _ in statuses)
     c = _db()
     employees = c.execute(
-        f"""SELECT employee_code,full_name,national_id,insurance_number,address,job_title,
-                   department,hire_date,work_status,basic_salary,variable_salary,insured_wage,
-                   insurance_enabled,active
+        f"""SELECT employee_code,full_name,national_id,insurance_number,hire_date,
+                   basic_salary,variable_salary,insured_wage,
+                   (CAST(basic_salary AS REAL)+CAST(variable_salary AS REAL)) AS comprehensive_wage
             FROM employees WHERE work_status IN ({placeholders})
             ORDER BY employee_code,full_name""", statuses
     ).fetchall()
     c.close()
     totals = {
         "count": len(employees),
-        "basic_salary": M(sum((D(e["basic_salary"]) for e in employees), Decimal("0"))),
-        "variable_salary": M(sum((D(e["variable_salary"]) for e in employees), Decimal("0"))),
+        "comprehensive_wage": M(sum((D(e["comprehensive_wage"]) for e in employees), Decimal("0"))),
         "insured_wage": M(sum((D(e["insured_wage"]) for e in employees), Decimal("0"))),
     }
     labels = {"all": "كل الفئات", "permanent": "الموظفون المثبتون",
@@ -1558,6 +1567,35 @@ def print_payroll_run(run_id):
     return render_template("payroll_run_print.html", run=run, rows=rows, details=details, totals=totals)
 
 
+@workforce_bp.route("/hr/payroll/<int:run_id>/delete", methods=["POST"])
+@_role("admin", "accountant")
+def delete_payroll_run(run_id):
+    c = _db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+        if not run or run["status"] != "draft" or run["journal_entry_id"]:
+            raise ValueError("لا يمكن حذف كشف المرتبات بعد اعتماده أو إقفاله. الحذف متاح للمسودة فقط.")
+        if c.execute("SELECT 1 FROM payroll_payments WHERE run_id=? LIMIT 1", (run_id,)).fetchone():
+            raise ValueError("لا يمكن حذف كشف مرتبات مرتبط بعملية صرف.")
+        line_ids=[int(x["id"]) for x in c.execute("SELECT id FROM payroll_lines WHERE run_id=?", (run_id,)).fetchall()]
+        if line_ids:
+            marks=",".join("?" for _ in line_ids)
+            c.execute("DELETE FROM payroll_loan_allocations WHERE payroll_line_id IN ("+marks+")", line_ids)
+        c.execute("DELETE FROM payroll_lines WHERE run_id=?", (run_id,))
+        c.execute("DELETE FROM payroll_runs WHERE id=? AND status='draft' AND journal_entry_id IS NULL", (run_id,))
+        if c.execute("SELECT changes()").fetchone()[0] != 1:
+            raise ValueError("لم يتم حذف كشف المرتبات؛ ربما تم اعتماده في عملية أخرى.")
+        _audit(c, "payroll_draft_deleted", "run=" + str(run_id) + " period=" + run["period"])
+        c.commit()
+        flash("تم حذف مسودة المرتبات المفتوحة فقط.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc) or "تعذر حذف مسودة المرتبات.", "error")
+    c.close()
+    return redirect(url_for("workforce.payroll"))
+
+
 @workforce_bp.route("/hr/payroll/<int:run_id>/post", methods=["POST"])
 @_role("admin", "accountant")
 def post_payroll(run_id):
@@ -2082,31 +2120,35 @@ def create_employee_grant():
             raise ValueError("اختر حساب مصروف منح تفصيليًا ونشطًا.")
         if not payable or not payable["active"] or payable["is_group"] or payable["account_type"]!="liability" or expense_id==payable_id:
             raise ValueError("اختر حساب منح مستحقة تفصيليًا ونشطًا ومختلفًا عن حساب المصروف.")
-        employee_scope=request.form.get("employee_scope","all_eligible")
+        selected_scopes=sorted(set(x.strip() for x in request.form.getlist("employee_scopes") if x.strip()))
+        if not selected_scopes:
+            legacy_scope=request.form.get("employee_scope","all_eligible")
+            selected_scopes=["all_eligible" if legacy_scope=="all_eligible" else legacy_scope]
         scope_statuses={
             "permanent": ("permanent",),
+            "temporary": ("temporary",),
             "comprehensive_bonus": ("comprehensive_bonus",),
-            "all_eligible": ("permanent","comprehensive_bonus"),
+            "all_eligible": ("permanent","temporary","comprehensive_bonus"),
         }
-        if employee_scope not in scope_statuses:
-            raise ValueError("حدد فئة الاستحقاق: مثبت أو مكافأة شاملة.")
+        if "all_eligible" in selected_scopes:
+            selected_scopes=["all_eligible"]
+        if not selected_scopes or any(x not in scope_statuses for x in selected_scopes):
+            raise ValueError("حدد فئة واحدة على الأقل: مثبت أو مؤقت أو مكافأة شاملة.")
+        statuses=tuple(sorted({status for scope_key in selected_scopes for status in scope_statuses[scope_key]}))
         ids=sorted({int(x) for x in request.form.getlist("employee_ids")})
         if request.form.get("all_employees")=="1" and not ids:
-            # Backward compatibility for older clients that submit the legacy bulk flag.
-            statuses=scope_statuses[employee_scope]
             marks=",".join("?" for _ in statuses)
             employees=c.execute(f"""SELECT id,employee_code,full_name,basic_salary FROM employees
                 WHERE active=1 AND work_status IN ({marks}) ORDER BY employee_code""",statuses).fetchall()
         else:
             if not ids: raise ValueError("أضف جميع الموظفين المستحقين أو اختر موظفين محددين.")
             id_marks=",".join("?" for _ in ids)
-            statuses=scope_statuses[employee_scope]
             status_marks=",".join("?" for _ in statuses)
             employees=c.execute(f"""SELECT id,employee_code,full_name,basic_salary FROM employees
                 WHERE id IN ({id_marks}) AND active=1 AND work_status IN ({status_marks})
                 ORDER BY employee_code""",(*ids,*statuses)).fetchall()
             if len(employees)!=len(ids):
-                raise ValueError("يوجد موظف غير نشط أو لا ينتمي إلى فئة الاستحقاق المحددة.")
+                raise ValueError("يوجد موظف غير نشط أو لا ينتمي إلى الفئات المحددة.")
         if not employees: raise ValueError("لا يوجد موظفون مستحقون للمنحة.")
         snapshots=[]
         for emp in employees:
