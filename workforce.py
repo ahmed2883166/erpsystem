@@ -987,6 +987,29 @@ def pay_items():
     return render_template("pay_items.html",employees=employees,groups=groups)
 
 
+@workforce_bp.route("/hr/pay-items/<int:item_id>/update", methods=["POST"])
+@_role("admin", "accountant")
+def update_pay_item(item_id):
+    c = _db()
+    try:
+        amount = M(request.form.get("amount", "0"))
+        if amount < 0:
+            raise ValueError("لا يمكن أن تكون قيمة الاستحقاق أو الاستقطاع سالبة.")
+        item = c.execute("SELECT * FROM employee_pay_items WHERE id=?", (item_id,)).fetchone()
+        if not item:
+            raise ValueError("البند غير موجود.")
+        c.execute("UPDATE employee_pay_items SET amount=? WHERE id=?", (str(amount),item_id))
+        _audit(c,"employee_pay_item_amount_updated",
+               item["item_name"]+" employee="+str(item["employee_id"])+" amount="+str(amount))
+        c.commit()
+        flash("تم تحديث قيمة البند لهذا الموظف. ستنعكس في كشف المرتبات الجديد فقط.", "success")
+    except (ValueError,sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc),"error")
+    c.close()
+    return redirect(url_for("workforce.pay_items"))
+
+
 @workforce_bp.route("/hr/pay-items/<int:item_id>/toggle", methods=["POST"])
 @_role("admin", "accountant")
 def toggle_pay_item(item_id):
