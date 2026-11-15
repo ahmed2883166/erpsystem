@@ -1285,7 +1285,7 @@ def payroll():
                         snapshot_item("deduction","جزاء: "+penalty["reason"],penalty_amount,"employee_penalty",penalty["id"],85)
                     manual_other = M(max(Decimal("0"),D(other_deductions)-fixed_pay_deductions))
                     snapshot_item("deduction","خصومات أخرى يدوية",manual_other,"payroll_input",None,90)
-                                        snapshot_item("deduction","ضريبة المرتبات",tax,"payroll_compliance",None,100)
+                    snapshot_item("deduction","ضريبة المرتبات",tax,"payroll_compliance",None,100)
                     snapshot_item("deduction","الدمغة",stamp_duty,"payroll_input",None,105)
                     snapshot_item("deduction","حصة الموظف في التأمينات",emp_ins,"payroll_compliance",None,110)
                     snapshot_item("employer_cost","حصة الشركة في التأمينات",employer_ins,"payroll_compliance",None,120)
