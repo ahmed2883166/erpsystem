@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block title %}منح ومكافآت الموظفين | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>المنح والمكافآت المستقلة</h2><p>إعداد المنحة ومراجعة استحقاق كل موظف واعتمادها وصرفها بعيدًا عن مسير المرتبات.</p></header>
+<header><h2>المنح والمكافآت المستقلة</h2><p>إعداد المنحة ومراجعة استحقاق كل موظف واعتمادها وإقفالها وصرفها بعيدًا عن كشف المرتبات.</p></header>
 <section class="panel"><h3>تعريف أسماء المنح</h3><form method="post" action="{{url_for('workforce.add_employee_grant_type')}}" class="form-grid">
 <label>اسم المنحة<input name="name" placeholder="منحة رمضان / منحة عيد / منحة مناسبة" required maxlength="120"></label><button type="submit">حفظ اسم المنحة</button></form>
 {% if grant_types %}<p class="muted">المنح المعرفة: {% for t in grant_types %}{{t.name}}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}</section>
@@ -11,12 +11,13 @@
 <label id="grantDays">عدد الأيام <input type="number" name="days_count" min="0.01" step="0.01" value="1"></label>
 <label>حساب مصروف المنح <select name="expense_account_id" required>{% for a in accounts if a.account_type=='expense' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
 <label>حساب المنح المستحقة <select name="payable_account_id" required>{% for a in accounts if a.account_type=='liability' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
-<label>فئة الاستحقاق
-<select name="employee_scope" id="grantEmployeeScope" required>
-<option value="all_eligible">كل الفئات المستحقة</option>
-<option value="permanent">موظف مثبت</option>
-<option value="comprehensive_bonus">مكافأة شاملة</option>
-</select></label>
+<div style="grid-column:1/-1"><strong>الفئات المستفيدة (اختيار متعدد)</strong>
+<div class="grant-scope-list">
+<label><input type="checkbox" name="employee_scopes" value="all_eligible" id="grantAllScope"> كل الموظفين المستحقين</label>
+<label><input type="checkbox" name="employee_scopes" value="permanent" class="grantScopeOption" checked> مثبت</label>
+<label><input type="checkbox" name="employee_scopes" value="temporary" class="grantScopeOption" checked> مؤقت</label>
+<label><input type="checkbox" name="employee_scopes" value="comprehensive_bonus" class="grantScopeOption" checked> مكافأة شاملة</label>
+</div><small class="muted">يمكن اختيار فئة أو أكثر، أو اختيار كل الموظفين المستحقين.</small></div>
 <div style="grid-column:1/-1" class="panel">
 <strong>اختيار الموظفين</strong>
 <div class="actions" style="margin:10px 0">
@@ -50,11 +51,11 @@
 <td>{{{'draft':'مسودة','approved':'معتمدة','partially_paid':'مدفوع جزئيًا','paid':'مدفوعة بالكامل'}.get(g.status,g.status)}}</td><td>
 <details><summary>مراجعة الموظفين والمبالغ</summary><table><tr><th>كود الموظف</th><th>اسم الموظف</th><th>الراتب الأساسي</th><th>الاستحقاق</th><th>المدفوع</th><th>المتبقي</th></tr>
 {% for line in grant_lines[g.id] %}<tr><td>{{line.employee_code_snapshot}}</td><td>{{line.employee_name_snapshot}}</td><td>{{line.basic_salary_snapshot}}</td><td>{{line.amount}}</td><td>{{line.paid_amount}}</td><td>{{line.remaining_amount}}</td></tr>{% endfor %}</table></details>
-<a href="{{url_for('workforce.print_employee_grant',grant_id=g.id)}}" target="_blank">كشف الطباعة</a>
+<a class="button secondary" href="{{url_for('workforce.print_employee_grant',grant_id=g.id)}}" target="_blank">كشف الطباعة</a>
 {% if g.status=='draft' %}
-<form method="post" action="{{url_for('workforce.approve_employee_grant',grant_id=g.id)}}" style="display:inline"><button type="submit">اعتماد وترحيل</button></form>
-<form method="post" action="{{url_for('workforce.delete_employee_grant',grant_id=g.id)}}" style="display:inline" onsubmit="return confirm('حذف مسودة الحافز المفتوحة؟ لا يمكن الحذف بعد الاعتماد أو الإغلاق.')"><button type="submit" class="danger">حذف الحافز</button></form>
-{% else %}<small class="muted">الحافز مغلق/معتمد — الحذف غير متاح</small>{% endif %}
+<form method="post" action="{{url_for('workforce.approve_employee_grant',grant_id=g.id)}}" style="display:inline"><button type="submit">اعتماد وإقفال وترحيل</button></form>
+<form method="post" action="{{url_for('workforce.delete_employee_grant',grant_id=g.id)}}" style="display:inline" onsubmit="return confirm('حذف مسودة المنحة المفتوحة؟ لا يمكن الحذف بعد الاعتماد أو الإغلاق.')"><button type="submit" class="danger">حذف الحافز</button></form>
+{% else %}<small class="muted">المنحة معتمدة/مقفلة — الحذف غير متاح</small>{% endif %}
 {% if g.status in ['approved','partially_paid'] %}<details><summary>تسجيل صرف</summary><form method="post" action="{{url_for('workforce.pay_employee_grant',grant_id=g.id)}}" class="form-grid">
 <label>مبلغ الصرف <input type="number" name="amount" min="0.01" max="{{(g.total_amount|float)-(g.paid_total|float)}}" step="0.01" required></label>
 <label>تاريخ الصرف <input type="date" name="payment_date" required></label>
@@ -63,6 +64,10 @@
 </td></tr>{% else %}<tr><td colspan="9">لا توجد منح مسجلة بعد.</td></tr>{% endfor %}</table></div></section>
 {% endblock %}
 {% block scripts %}<style>
+.grant-scope-list{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0}
+.grant-scope-list label{display:flex;align-items:center;gap:6px;border:1px solid var(--line);padding:8px 12px;border-radius:8px;background:var(--surface2)}
+.grant-scope-list input{width:auto;min-height:auto}
+
 #grantSelectedTable{width:100%;border-collapse:collapse;min-width:680px}
 #grantSelectedTable th{background:#e9eef5;color:#1e344e;padding:10px;border:1px solid #cbd5e1;white-space:nowrap}
 #grantSelectedTable td{padding:9px;border:1px solid #d8e0e9;text-align:center}
@@ -72,7 +77,10 @@ const method=document.getElementById('grantMethod'),days=document.getElementById
 function updateGrantDays(){days.hidden=method.value!=='per_day';document.getElementById('grantValue').hidden=method.value==='per_day';}
 method.addEventListener('change',updateGrantDays);updateGrantDays();
 
-const grantScope=document.getElementById('grantEmployeeScope');
+const grantScopeOptions=Array.from(document.querySelectorAll('.grantScopeOption'));
+const grantAllScope=document.getElementById('grantAllScope');
+function selectedGrantScopes(){return grantAllScope.checked?['all_eligible']:grantScopeOptions.filter(x=>x.checked).map(x=>x.value);}
+
 const picker=document.getElementById('grantEmployeePicker');
 const selectedBody=document.getElementById('grantSelectedBody');
 const hiddenInputs=document.getElementById('grantSelectedInputs');
@@ -86,9 +94,8 @@ function invalidateGrantPreview(){
   selectedEmployees.forEach(employee=>employee.amount='—');
 }
 function scopeAllows(status){
-  return grantScope.value==='all_eligible' ||
-    (grantScope.value==='permanent' && status==='permanent') ||
-    (grantScope.value==='comprehensive_bonus' && status==='comprehensive_bonus');
+  const scopes=selectedGrantScopes();
+  return scopes.includes('all_eligible') || scopes.includes(status);
 }
 function refreshGrantPicker(){
   const departmentQuery=(document.getElementById('grantDepartmentFilter').value||'').trim().toLowerCase();
@@ -139,9 +146,12 @@ document.getElementById('addAllGrantEmployees').addEventListener('click',()=>{
 });
 document.getElementById('addSelectedGrantEmployees').addEventListener('click',()=>addGrantOptions(Array.from(picker.options)));
 document.getElementById('grantDepartmentFilter').addEventListener('input',()=>{refreshGrantPicker();});
-grantScope.addEventListener('change',()=>{
+[...grantScopeOptions,grantAllScope].forEach(control=>control.addEventListener('change',()=>{
+  if(control===grantAllScope && grantAllScope.checked) grantScopeOptions.forEach(x=>x.checked=false);
+  if(control!==grantAllScope && control.checked) grantAllScope.checked=false;
+  if(!selectedGrantScopes().length && control!==grantAllScope) control.checked=true;
   selectedEmployees.clear();invalidateGrantPreview();refreshGrantPicker();renderSelectedGrantEmployees();
-});
+}));
 function calculateGrantPreview(){
   if(!selectedEmployees.size){alert('أضف موظفًا واحدًا على الأقل قبل الاحتساب.');return;}
   const method=document.getElementById('grantMethod').value;
