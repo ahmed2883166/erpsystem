@@ -156,6 +156,26 @@ class WorkforceTests(unittest.TestCase):
         page = self.client.get("/hr/pay-items")
         self.assertEqual(page.status_code,200)
 
+    def test_fixed_pay_item_is_snapshotted_once_in_payroll(self):
+        self.add_employee()
+        response = self.client.post("/hr/payroll", data={
+            "period": "2026-11", "basic_1": "10000",
+            "overtime_hours_1": "0", "overtime_amount_1": "",
+            "absent_hours_1": "0", "absence_deduction_1": "0",
+            "advance_1": "0", "other_deductions_1": "0",
+            "tax_1": "0", "employee_ins_1": "0", "employer_ins_1": "0",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        line = conn.execute("""SELECT allowances,gross_pay FROM payroll_lines
+            WHERE run_id=1 AND employee_id=1""").fetchone()
+        snapshots = conn.execute("""SELECT section,item_name,amount,source_type FROM payroll_line_items
+            WHERE payroll_line_id=(SELECT id FROM payroll_lines WHERE run_id=1 AND employee_id=1)
+              AND source_type='employee_pay_item'""").fetchall()
+        conn.close()
+        self.assertEqual(line, ("1000.00", "11000.00"))
+        self.assertEqual(snapshots, [("earning", "بدل انتقال", "1000.00", "employee_pay_item")])
+
     def test_pay_item_catalog_reuses_names_and_deduplicates_employee_assignments(self):
         self.add_employee()
         conn = sqlite3.connect(self.db_path)
