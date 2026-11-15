@@ -1885,7 +1885,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     section_net = total_in-total_out
     reconciliation_difference = direct["net_change"]-section_net
     return {
-        **direct, "method":"indirect", "sections":sections,
+        **direct, "method":"indirect", "net_profit":net_profit, "sections":sections,
         "total_in":total_in, "total_out":total_out,
         "reconciliation_difference":reconciliation_difference,
         "cash_reconciles":bool(direct["cash_mapping_available"]) and reconciliation_difference == 0,
