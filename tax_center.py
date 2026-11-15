@@ -196,7 +196,9 @@ def calculate_tax_input_totals(purchases):
         gross += tax
         if row.get("tax_treatment", "standard") == "standard":
             percent = Decimal(str(row.get("deductible_percent", "100") or "0"))
-            recoverable = tax * percent / Decimal("100")
+            # Invalid percentages must never inflate a recoverable VAT claim.
+            recoverable = (tax * percent / Decimal("100")
+                           if Decimal("0") <= percent <= Decimal("100") else Decimal("0"))
         else:
             recoverable = Decimal("0")
         deductible += recoverable
@@ -371,6 +373,9 @@ def build_tax_report_snapshot(conn, period_value):
             if abs((base + actual_tax) - expected_total) > Decimal("0.02"):
                 quality_issues.append({"severity": "error", "document": doc,
                                        "issue": "الإجمالي لا يساوي الوعاء الضريبي مضافًا إليه الضريبة"})
+            if kind == "مشتريات" and not Decimal("0") <= Decimal(str(row.get("deductible_percent", "100"))) <= Decimal("100"):
+                quality_issues.append({"severity": "error", "document": doc,
+                                       "issue": "نسبة خصم ضريبة المدخلات خارج النطاق من 0 إلى 100؛ لم تُحتسب كقابلة للخصم"})
     for row in inconsistent_sales + inconsistent_purchases:
         quality_issues.append({"severity": "error", "document": str(row["document_no"]),
                                "issue": "التصنيف الضريبي لا يتفق مع قيمة/نسبة الضريبة"})
