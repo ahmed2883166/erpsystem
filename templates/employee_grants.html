@@ -29,7 +29,7 @@
 <label>فلترة حسب الإدارة <input type="text" id="grantDepartmentFilter" placeholder="اكتب اسم الإدارة لعرض موظفيها"></label>
 <label>اختر موظفين محددين
 <select id="grantEmployeePicker" multiple size="6" style="width:100%">
-{% for e in employees %}<option value="{{e.id}}" data-status="{{e.work_status}}" data-code="{{e.employee_code}}" data-name="{{e.full_name}}" data-basic="{{e.basic_salary}}" data-department="{{e.department or ''}}">{{e.employee_code}} - {{e.full_name}} ({{'مثبت' if e.work_status=='permanent' else 'مكافأة شاملة'}}) — أساسي {{e.basic_salary}}</option>{% endfor %}
+{% for e in employees %}<option value="{{e.id}}" data-status="{{e.work_status}}" data-code="{{e.employee_code}}" data-name="{{e.full_name}}" data-basic="{{e.basic_salary}}" data-department="{{e.department or ''}}">{{e.employee_code}} - {{e.full_name}} ({{'مثبت' if e.work_status=='permanent' else 'مؤقت' if e.work_status=='temporary' else 'مكافأة شاملة'}}) — أساسي {{e.basic_salary}}</option>{% endfor %}
 </select>
 <small>اختيار الموظفين يكون حسب فئة الاستحقاق. المستقيل أو المحال للمعاش أو في إجازة بدون مرتب غير مؤهل.</small>
 </label>
