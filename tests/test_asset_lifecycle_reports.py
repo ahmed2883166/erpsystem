@@ -67,9 +67,9 @@ class FixedAssetLifecycleFinancialReportTests(unittest.TestCase):
             "INSERT INTO journal_entries(id,entry_date,status,entry_type,reference) "
             "VALUES(1,'2025-12-31','posted','general','OPENING-CASH')"
         )
-        self._insert_lines(1, [(1, "10000", "0"), (6, "0", "10000")])
         self.next_entry_id = 2
         self.next_line_id = 3
+        self._insert_lines(1, [(1, "10000", "0"), (6, "0", "10000")])
         self.next_depreciation_id = 1
         self.next_disposal_id = 1
 
