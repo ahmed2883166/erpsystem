@@ -342,6 +342,10 @@ class WorkforceTests(unittest.TestCase):
             "installment_count":"1","first_due_period":"2026-11"})
         self.post_as_user("/hr/loans/1/approve",data={"approved_amount":"300",
             "installment_count":"1","first_due_period":"2026-11"})
+        blocked_disbursement = self.post_as_user("/hr/loans/1/disburse",data={
+            "cash_account_id":"1","loan_account_id":"8","disbursement_date":"2026-11-01"
+        })
+        self.assertIn("مختلف عن معتمدها", blocked_disbursement.get_data(as_text=True))
         self.client.post("/hr/loans/1/disburse",data={"cash_account_id":"1","loan_account_id":"8",
             "disbursement_date":"2026-11-01"})
         response = self.client.post("/hr/loans/1/installments/1/defer")
@@ -1347,6 +1351,10 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(status,"approved")
         self.assertAlmostEqual(debit,105000.0,places=2)
         self.assertAlmostEqual(credit,105000.0,places=2)
+        blocked_payment = self.post_as_user("/hr/end-of-service/1/pay",data={
+            "payment_date":"2026-11-20","amount":"50000","cash_account_id":"1"
+        })
+        self.assertIn("مختلف عن معتمدها", blocked_payment.get_data(as_text=True))
         self.client.post("/hr/end-of-service/1/pay",data={"payment_date":"2026-11-20","amount":"50000","cash_account_id":"1"})
         self.client.post("/hr/end-of-service/1/pay",data={"payment_date":"2026-11-25","amount":"54900","cash_account_id":"1"})
         conn=sqlite3.connect(self.db_path)
