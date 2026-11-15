@@ -67,6 +67,39 @@ class ManagementReportsTests(unittest.TestCase):
         self.assertEqual(revenue["variance"], Decimal("200"))
         self.assertEqual(revenue["variance_percent"], Decimal("25"))
 
+    def test_inventory_ageing_respects_as_of_and_expiry_and_recent_movement(self):
+        self.conn.executemany(
+            "INSERT INTO stock_lots(id,expiry_date) VALUES(?,?)",
+            [(1, "2026-11-01"), (2, "2026-12-01")],
+        )
+        self.conn.executemany(
+            """INSERT INTO stock_valuation_layers
+               (id,product_id,warehouse_id,source_movement_id,lot_id,
+                qty_remaining,unit_cost,created_at)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            [
+                (10,1,1,None,1,"3","10","2026-07-01 08:00:00"),
+                (11,1,1,None,2,"2","20","2026-11-01 08:00:00"),
+                (12,1,1,None,None,"9","99","2026-11-20 08:00:00"),
+            ],
+        )
+        self.conn.executemany(
+            """INSERT INTO stock_movements
+               (id,product_id,source_warehouse_id,target_warehouse_id,movement_date)
+               VALUES(?,?,?,?,?)""",
+            [
+                (10,1,1,None,"2026-11-10"),
+                (11,1,1,None,"2026-12-10"),
+            ],
+        )
+        report = build_inventory_ageing(self.conn, "2026-11-15")
+        self.assertEqual(len(report["rows"]), 2)
+        self.assertEqual(report["total_value"], Decimal("70"))
+        self.assertEqual(report["expiry_totals"]["expired"], Decimal("30"))
+        self.assertEqual(report["expiry_totals"]["within_30"], Decimal("40"))
+        self.assertTrue(all(row["last_movement_date"] == "2026-11-10" for row in report["rows"]))
+        self.assertTrue(all(row["slow_moving"] is False for row in report["rows"]))
+
     def test_inventory_ageing_values_remaining_layers_by_age(self):
         old_date = (date(2026, 11, 15) - timedelta(days=100)).isoformat()
         recent_date = (date(2026, 11, 15) - timedelta(days=10)).isoformat()
