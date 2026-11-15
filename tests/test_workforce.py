@@ -1471,10 +1471,6 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(response.status_code,200)
         self.assertIn("permanent|1|8500.00|10000.00|2000.00|12000.00",response.get_data(as_text=True))
 
-if __name__ == "__main__":
-    unittest.main()
-
-
     def test_employee_grant_approval_posts_one_journal_and_rejects_repeat(self):
         self.add_employee()
         self.client.post("/hr/grants/types", data={"name":"منحة اعتماد اختبار"})
@@ -1584,3 +1580,7 @@ if __name__ == "__main__":
         self.assertEqual(salary_expense["balance"], Decimal("13650.00"))
         self.assertEqual(employer_insurance_expense["balance"], Decimal("400.00"))
         conn.close()
+
+
+if __name__ == "__main__":
+    unittest.main()
