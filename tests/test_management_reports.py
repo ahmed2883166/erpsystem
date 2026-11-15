@@ -42,7 +42,7 @@ class ManagementReportsTests(unittest.TestCase):
                 (4,4,1,'0','800'),(5,5,2,'200','0'),(6,6,3,'100','0');
             CREATE TABLE stock_products(id INTEGER PRIMARY KEY,sku TEXT,name_ar TEXT);
             CREATE TABLE stock_warehouses(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT);
-            CREATE TABLE stock_movements(id INTEGER PRIMARY KEY,movement_date TEXT);
+            CREATE TABLE stock_movements(id INTEGER PRIMARY KEY,product_id INTEGER,source_warehouse_id INTEGER,target_warehouse_id INTEGER,movement_date TEXT);
             CREATE TABLE stock_lots(id INTEGER PRIMARY KEY,expiry_date TEXT);
             CREATE TABLE stock_valuation_layers(
                 id INTEGER PRIMARY KEY,product_id INTEGER,warehouse_id INTEGER,
