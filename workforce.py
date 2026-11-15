@@ -1007,9 +1007,6 @@ def pay_items():
                 # Backward compatibility for saved forms and integrations using the former field names.
                 item_type = request.form.get("item_type", "")
                 item_name = request.form.get("item_name", "").strip()
-                if item_name and item_type in {"allowance", "deduction"}:
-                    c.execute("INSERT OR IGNORE INTO employee_pay_item_catalog(name,item_type) VALUES(?,?)",
-                              (item_name,item_type))
             if item_type not in {"allowance", "deduction"} or not item_name or amount < 0 or not employee_ids:
                 raise ValueError("اختر اسم البند من القائمة وقيمته وحدد موظفًا واحدًا على الأقل.")
             placeholders = ",".join("?" for _ in employee_ids)
@@ -1018,6 +1015,9 @@ def pay_items():
             if valid_ids != set(employee_ids):
                 raise ValueError("بعض الموظفين المختارين غير نشطين أو غير موجودين.")
             c.execute("BEGIN IMMEDIATE")
+            if not catalog_id:
+                c.execute("INSERT OR IGNORE INTO employee_pay_item_catalog(name,item_type) VALUES(?,?)",
+                          (item_name,item_type))
             created_count = 0
             updated_count = 0
             for employee_id in employee_ids:
