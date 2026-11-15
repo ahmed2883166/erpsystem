@@ -140,6 +140,9 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(snapshot["current"]["net_profit"], statement["net_profit"])
         self.assertEqual(snapshot["current"]["revenue"], Decimal("600.00"))
         self.assertEqual(snapshot["current"]["net_profit"], Decimal("145.56"))
+        revenue_chart_row = next(row for row in snapshot["revenue_accounts"] if row["id"] == 11)
+        self.assertEqual(revenue_chart_row["value"], Decimal("100.00"))
+        self.assertNotIn(11, {row["id"] for row in snapshot["expense_accounts"]})
 
     def test_period_results_and_comparison(self):
         s=build_management_snapshot(self.conn,date(2026,11,1),date(2026,11,30))
