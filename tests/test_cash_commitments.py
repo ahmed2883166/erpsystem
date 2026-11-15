@@ -31,7 +31,7 @@ class CashCommitmentsTests(unittest.TestCase):
         )""")
         self.conn.execute("""CREATE TABLE journal_lines(
             id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
-            debit TEXT NOT NULL DEFAULT '0', credit TEXT NOT NULL DEFAULT '0'
+            debit TEXT NOT NULL DEFAULT '0', credit TEXT NOT NULL DEFAULT '0', memo TEXT
         )""")
         self.conn.executemany(
             "INSERT INTO journal_entries(id,status) VALUES(?,?)",
