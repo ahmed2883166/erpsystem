@@ -72,18 +72,19 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
             """INSERT INTO journal_lines(
                 id,entry_id,account_id,debit,credit,memo,supplier_id,stock_product_id,stock_warehouse_id
             ) VALUES(?,10,?,?,?,?,?,?,?)""",
-            [(1,100,'72','0','إشعار مورد',8,None,None),
-             (2,200,'0','52.5','مخزون مرتجع',8,1,10),
-             (3,300,'0','19.5','ضريبة مدخلات',8,None,None)]
+            [(1,100,'92','0','إشعار مورد',8,None,None),
+             (2,200,'0','52.5','مخزون مرتجع مخزن 1',8,1,10),
+             (3,300,'0','19.5','ضريبة مدخلات',8,None,None),
+             (4,200,'0','20','مخزون مرتجع مخزن 2',8,2,20)]
         )
-        self.conn.execute("INSERT INTO supplier_bills VALUES(20,'72')")
+        self.conn.execute("INSERT INTO supplier_bills VALUES(20,'92')")
         self.conn.execute(
             """INSERT INTO supplier_credit_notes(
                 id,credit_no,supplier_id,bill_id,credit_date,supplier_credit_no,
                 total_amount,journal_entry_id,status
-            ) VALUES(30,'SCN-30',8,20,'2026-05-10','SUP-CN-30','72',10,'posted')"""
+            ) VALUES(30,'SCN-30',8,20,'2026-05-10','SUP-CN-30','92',10,'posted')"""
         )
-        self.conn.execute("INSERT INTO stock_products VALUES(1)")
+        self.conn.executemany("INSERT INTO stock_products VALUES(?)", [(1,), (2,)])
         self.conn.execute(
             """INSERT INTO stock_movements(
                 id,movement_no,movement_type,product_id,target_warehouse_id,quantity,
@@ -136,6 +137,37 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
             ) VALUES(70,40,50,60,7,3,'2.5','15','37.5'),
                      (71,40,51,61,8,4,'1','15','15')"""
         )
+        self.conn.execute(
+            """INSERT INTO supplier_credit_note_lines(
+                id,credit_note_id,product_id,warehouse_id,quantity,total_cost
+            ) VALUES(41,30,2,20,'1','20')"""
+        )
+        self.conn.execute(
+            """INSERT INTO stock_movements(
+                id,movement_no,movement_type,product_id,target_warehouse_id,quantity,
+                unit_cost,total_cost,movement_date,notes,accounting_status
+            ) VALUES(7,'PUR-7','receipt',2,20,'4','20','80',
+                     '2026-05-03','استلام مخزن 2','posted')"""
+        )
+        self.conn.execute(
+            """INSERT INTO stock_movements(
+                id,movement_no,movement_type,product_id,source_warehouse_id,lot_id,
+                quantity,unit_cost,total_cost,movement_date,notes,created_by,journal_entry_id,accounting_status
+            ) VALUES(52,'SUPRET-52','issue',2,20,9,'1','20','20',
+                     '2026-05-10','مرتجع مورد مخزن 2',1,10,'posted')"""
+        )
+        self.conn.execute(
+            """INSERT INTO stock_valuation_layers(
+                id,product_id,warehouse_id,location_id,lot_id,source_movement_id,
+                qty_in,qty_remaining,unit_cost,value_remaining
+            ) VALUES(62,2,20,5,9,7,'4','3','20','60')"""
+        )
+        self.conn.execute(
+            """INSERT INTO supplier_credit_note_layer_allocations(
+                id,credit_note_line_id,stock_movement_id,source_layer_id,lot_id,location_id,
+                quantity,unit_cost,total_cost
+            ) VALUES(72,41,52,62,9,5,'1','20','20')"""
+        )
         self.conn.commit()
 
     def tearDown(self):
@@ -147,12 +179,12 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
         )
         self.assertEqual(result["reversal_journal_id"], 11)
         reversal_lines = self.conn.execute(
-            "SELECT account_id,debit,credit FROM journal_lines WHERE entry_id=? ORDER BY account_id",
+            "SELECT account_id,SUM(CAST(debit AS REAL)) debit,SUM(CAST(credit AS REAL)) credit FROM journal_lines WHERE entry_id=? GROUP BY account_id ORDER BY account_id",
             (result["reversal_journal_id"],)
         ).fetchall()
         self.assertEqual(
             [(row["account_id"], row["debit"], row["credit"]) for row in reversal_lines],
-            [(100, "0.00", "72.00"), (200, "52.50", "0.00"), (300, "19.50", "0.00")]
+            [(100, "0.00", "92.00"), (200, "72.50", "0.00"), (300, "19.50", "0.00")]
         )
         restored = self.conn.execute(
             """SELECT m.movement_type,m.target_warehouse_id,m.target_location_id,m.lot_id,
@@ -160,12 +192,13 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
                FROM stock_movements m JOIN stock_valuation_layers l ON l.source_movement_id=m.id
                WHERE m.movement_no LIKE 'SUPCANCEL-%' ORDER BY m.id"""
         ).fetchall()
-        self.assertEqual(len(restored), 2)
+        self.assertEqual(len(restored), 3)
         self.assertEqual(
             [(r["movement_type"],r["target_warehouse_id"],r["target_location_id"],r["lot_id"],
               r["quantity"],r["total_cost"],r["qty_remaining"],r["value_remaining"]) for r in restored],
             [("receipt",10,3,7,"2.5","37.5","2.5","37.5"),
-             ("receipt",10,4,8,"1","15","1","15")]
+             ("receipt",10,4,8,"1","15","1","15"),
+             ("receipt",20,5,9,"1","20","1","20")]
         )
         original_move = self.conn.execute(
             "SELECT movement_type,accounting_status FROM stock_movements WHERE id=50"
@@ -180,6 +213,15 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
                FROM stock_movements WHERE product_id=1"""
         ).fetchone()[0]
         self.assertEqual(stock_balance, 10.0)
+        second_warehouse_balance = self.conn.execute(
+            """SELECT
+                SUM(CASE WHEN movement_type='receipt' AND target_warehouse_id=20
+                         THEN CAST(quantity AS REAL) ELSE 0 END)
+                - SUM(CASE WHEN movement_type IN ('issue','scrap') AND source_warehouse_id=20
+                           THEN CAST(quantity AS REAL) ELSE 0 END)
+               FROM stock_movements WHERE product_id=2"""
+        ).fetchone()[0]
+        self.assertEqual(second_warehouse_balance, 4.0)
         self.assertEqual(
             self.conn.execute("SELECT credited_amount FROM supplier_bills WHERE id=20").fetchone()[0],
             "0.00"
