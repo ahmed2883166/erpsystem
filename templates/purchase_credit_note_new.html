@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}إشعار دائن مشتريات | NEXUS ERP{% endblock %}
 {% block content %}
-<header><div><h2>إشعار دائن مشتريات / مرتجع مورد</h2><p class="muted">اختر وحدة المرتجع؛ يتم تحويل الكمية إلى الوحدة الأساسية قبل خصمها من المخزون، مع حفظ وحدة الإدخال في المستند.</p></div></header>
-<div class="actions stock-shortcuts"><a class="button-link" href="{{ url_for('purchase.index') }}">العودة للمشتريات</a><a class="button-link" href="{{ url_for('stock.movements') }}">حركات المخزون</a></div>
+<header class="page-heading"><div><h2>إشعار دائن مشتريات / مرتجع مورد</h2><p class="muted">اختر وحدة المرتجع؛ يتم تحويل الكمية إلى الوحدة الأساسية قبل خصمها من المخزون، مع حفظ وحدة الإدخال في المستند.</p></div></header>
+<div class="actions page-shortcuts no-print"><a class="button-link" href="{{ url_for('purchase.index') }}">العودة للمشتريات</a><a class="button-link" href="{{ url_for('stock.movements') }}">حركات المخزون</a></div>
 <section class="panel"><form method="post" id="supplierCreditForm">
 <div class="form-row">
 <div><label>المورد *</label><select name="supplier_id" id="creditSupplier" required><option value="">اختر المورد</option>{% for s in suppliers %}<option value="{{ s.id }}">{{ s.code }} — {{ s.name }}</option>{% endfor %}</select></div>
