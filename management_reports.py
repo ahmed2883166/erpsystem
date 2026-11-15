@@ -307,7 +307,11 @@ def build_cash_forecast(conn, as_of, horizon_days=90):
     visible = [item for item in items if "error" not in item and item["due_date"] <= end]
     daily = {}
     for item in visible:
-        day = daily.setdefault(item["due_date"], {
+        # Overdue balances are still outstanding today. Keep the document's
+        # original due_date in the detail list, but place its forecast impact
+        # on the as-of date instead of a historical day in the daily timeline.
+        forecast_date = max(item["due_date"], as_of)
+        day = daily.setdefault(forecast_date, {
             "collections": Decimal("0"), "supplier_payments": Decimal("0"),
             "payroll": Decimal("0"), "employee_grants": Decimal("0"),
             "other_commitments": Decimal("0"),
@@ -335,6 +339,7 @@ def build_cash_forecast(conn, as_of, horizon_days=90):
         "coverage_notes": [
             "المرتبات: صافي المرتبات المرحلة بعد خصم دفعات الصرف المسجلة حتى تاريخ التقرير؛ تاريخ الاستحقاق نهاية شهر المرتبات كتقدير.",
             "المنح: المنح المعتمدة فقط، بعد خصم دفعاتها المسجلة حتى تاريخ التقرير.",
-            "الالتزامات المسجلة يدويًا (الضرائب والمصروفات الدورية وما يُربط لاحقًا ببدل الجمعة) تُعرض بعد خصم الدفعات المرتبطة بقيود مرحلة حتى تاريخ التقرير.",
+            "الضرائب: مركز الضرائب يعرض ملخص ضريبة القيمة المضافة ومطابقتها مع الأستاذ العام، لكنه لا يحتفظ حاليًا بسجل مستقل لاستحقاق الضريبة أو سدادها؛ سجّل الالتزام يدويًا بعد مراجعة التقرير.",
+            "المصروفات الدورية والالتزامات اليدوية تُعرض بعد خصم الدفعات المرتبطة بقيود مرحلة حتى تاريخ التقرير. بدل الجمعة يُنشأ التزامه عند ترحيل الكشف، ويمكن استيراد الكشوف القديمة غير المرتبطة.",
         ],
     }
