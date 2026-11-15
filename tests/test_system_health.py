@@ -144,6 +144,32 @@ class SystemHealthTests(unittest.TestCase):
         self.assertEqual(by_key["recent_login_attempts"]["count"], 1)
         self.assertEqual(by_key["recent_login_attempts"]["severity"], "info")
 
+    def test_counts_persistent_failed_login_audit_events_for_24_hours(self):
+        for column, declaration in (
+            ("action", "TEXT"),
+            ("outcome", "TEXT"),
+            ("entity_type", "TEXT"),
+        ):
+            self.connection.execute(
+                "ALTER TABLE audit_log ADD COLUMN " + column + " " + declaration
+            )
+        self.connection.executemany(
+            """INSERT INTO audit_log(created_at,action,outcome,entity_type)
+               VALUES(datetime('now'),?,?,?)""",
+            [("login_failed", "failure", "auth")] * 20
+            + [("login", "success", "auth")],
+        )
+        self.connection.commit()
+        with self.app.test_request_context("/system/health"):
+            checks = system_health.collect_health_checks(self.connection)
+        login_check = next(item for item in checks if item["key"] == "recent_login_attempts")
+        self.assertEqual(login_check["count"], 20)
+        self.assertEqual(login_check["severity"], "high")
+        self.assertEqual(
+            login_check["href"], "/security/activity-monitor?category=login"
+        )
+        self.assertIn("سجل التدقيق المحفوظ", login_check["detail"])
+
     def test_reports_pending_approvals_without_approving_them(self):
         self.connection.execute("""
             CREATE TABLE approval_requests(
@@ -224,6 +250,10 @@ class SystemHealthTests(unittest.TestCase):
                     "stock_gl_review", "purchase_integrity"
                 }
             ))
+            login_check = next(item for item in checks if item["key"] == "recent_login_attempts")
+            self.assertEqual(
+                login_check["href"], "/security/activity-monitor?category=login"
+            )
 
     def test_admin_can_open_health_center(self):
         with patch.object(system_health, "connect_database", return_value=self.connection), \
