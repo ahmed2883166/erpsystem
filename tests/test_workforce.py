@@ -141,12 +141,14 @@ class WorkforceTests(unittest.TestCase):
             "employee_ids":["2"]
         })
         self.assertEqual(response.status_code,302)
+        response = self.client.post("/hr/pay-items/4/update", data={"amount":"150"})
+        self.assertEqual(response.status_code,302)
         conn = sqlite3.connect(self.db_path)
         rows = conn.execute("""SELECT employee_id,item_name,item_type,amount FROM employee_pay_items
             WHERE item_name IN ('بدل انتقال','خصم تأمين طبي') ORDER BY item_name,employee_id""").fetchall()
         conn.close()
         self.assertEqual(rows,[(1,"بدل انتقال","allowance","1000"),(1,"بدل انتقال","allowance","750.00"),
-                               (2,"بدل انتقال","allowance","750.00"),(2,"خصم تأمين طبي","deduction","100.00")])
+                               (2,"بدل انتقال","allowance","750.00"),(2,"خصم تأمين طبي","deduction","150.00")])
         page = self.client.get("/hr/pay-items")
         self.assertEqual(page.status_code,200)
 
