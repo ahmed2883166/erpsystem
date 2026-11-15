@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from accounting_core import register_decimal_aggregates
-from management_reports import build_inventory_ageing, build_period_comparison
+from management_reports import build_cash_forecast, build_inventory_ageing, build_period_comparison
 
 
 class ManagementReportsTests(unittest.TestCase):
@@ -56,6 +56,45 @@ class ManagementReportsTests(unittest.TestCase):
 
     def tearDown(self):
         self.conn.close()
+
+    def test_cash_forecast_includes_unpaid_payroll_and_approved_grants_as_of_date(self):
+        self.conn.executescript("""
+            CREATE TABLE payroll_runs(
+                id INTEGER PRIMARY KEY, period TEXT, status TEXT, journal_entry_id INTEGER
+            );
+            CREATE TABLE payroll_lines(
+                id INTEGER PRIMARY KEY, run_id INTEGER, net_pay TEXT
+            );
+            CREATE TABLE payroll_payments(
+                id INTEGER PRIMARY KEY, run_id INTEGER, payment_date TEXT, amount TEXT
+            );
+            CREATE TABLE employee_grants(
+                id INTEGER PRIMARY KEY, grant_name_snapshot TEXT, grant_date TEXT, status TEXT
+            );
+            CREATE TABLE employee_grant_lines(
+                id INTEGER PRIMARY KEY, grant_id INTEGER, amount TEXT
+            );
+            CREATE TABLE employee_grant_payments(
+                id INTEGER PRIMARY KEY, grant_id INTEGER, payment_date TEXT, amount TEXT
+            );
+            INSERT INTO payroll_runs VALUES(1,'2026-11','posted',10);
+            INSERT INTO payroll_lines VALUES(1,1,'1000');
+            INSERT INTO payroll_payments VALUES(1,1,'2026-11-10','300');
+            INSERT INTO payroll_payments VALUES(2,1,'2026-11-20','100');
+            INSERT INTO employee_grants VALUES(1,'منحة موسمية','2026-11-20','approved');
+            INSERT INTO employee_grant_lines VALUES(1,1,'500');
+            INSERT INTO employee_grant_payments VALUES(1,1,'2026-11-12','100');
+            INSERT INTO employee_grant_payments VALUES(2,1,'2026-11-22','50');
+        """)
+        report = build_cash_forecast(self.conn, "2026-11-15", 90)
+        payroll = next(row for row in report["items"] if row["kind"] == "payroll")
+        grant = next(row for row in report["items"] if row["kind"] == "employee_grants")
+        self.assertEqual(payroll["due_date"], "2026-11-30")
+        self.assertEqual(payroll["balance"], Decimal("700"))
+        self.assertEqual(grant["balance"], Decimal("400"))
+        self.assertEqual(report["payments"], Decimal("1100"))
+        self.assertEqual(report["net_expected"], Decimal("-1100"))
+        self.assertTrue(any("الضرائب" in note for note in report["coverage_notes"]))
 
     def test_period_comparison_calculates_variance(self):
         report = build_period_comparison(
