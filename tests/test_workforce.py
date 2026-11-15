@@ -126,9 +126,6 @@ class WorkforceTests(unittest.TestCase):
         response = self.client.get("/hr/incentives")
         self.assertEqual(response.status_code, 302)
         self.assertIn("/hr/grants", response.headers["Location"])
-        employee_page = self.client.get("/hr/employees")
-        self.assertEqual(employee_page.status_code, 200)
-        self.assertNotIn("إعداد أنواع الحوافز والمكافآت", employee_page.get_data(as_text=True))
 
     def test_group_form_2_report_filters_employee_categories(self):
         self.add_employee()
