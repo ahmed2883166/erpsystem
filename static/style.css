@@ -663,3 +663,23 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  .account-tree-toolbar .table-actions select{min-width:0}
  .accounts-tree{min-width:1050px}
 }
+
+/* Fixed assets and financial report page consistency */
+.asset-register-panel table{min-width:1120px}
+.asset-create-panel .form-grid{align-items:start}
+.asset-depreciation-run-panel .form-row{align-items:end}
+.cash-flow-tools,.cash-flow-method{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.cash-flow-tools .btn,.cash-flow-method .btn{min-height:39px}
+.report-page-header,.report-header{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
+.report-page-header .table-actions{display:flex;gap:8px;flex-wrap:wrap}
+.report-filter{display:flex;align-items:end;gap:12px;flex-wrap:wrap}
+.report-filter>label{flex:1 1 175px;min-width:150px}
+.report-filter>button,.report-filter>.button,.report-filter>.btn{min-height:40px}
+.financial-summary-table tfoot td,.financial-summary-table tfoot th{font-weight:800}
+@media(max-width:560px){
+ .report-page-header .table-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}
+ .report-page-header .table-actions>*{min-width:0;width:100%;text-align:center}
+ .cash-flow-tools,.cash-flow-method{align-items:stretch}
+ .cash-flow-tools .btn,.cash-flow-method .btn{flex:1 1 100%;text-align:center}
+ .report-filter>label{flex-basis:100%}
+}
