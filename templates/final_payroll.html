@@ -31,6 +31,24 @@
 {% endfor %}
 <button type="submit" onclick="return confirm('اعتماد المرتب النهائي وترحيل قيده المحاسبي؟')">اعتماد وترحيل القيد</button>
 </form></details>
-{% else %}{% if r.journal_entry_id %}<a href="{{url_for('journal_detail',entry_id=r.journal_entry_id)}}">عرض القيد {{r.journal_entry_id}}</a>{% else %}—{% endif %}{% endif %}</td></tr>{% else %}<tr><td colspan="13">لا توجد مسودات لهذا الشهر.</td></tr>{% endfor %}
+{% else %}
+{% if r.journal_entry_id %}<a href="{{url_for('journal_detail',entry_id=r.journal_entry_id)}}">عرض القيد {{r.journal_entry_id}}</a>{% endif %}
+{% if r.status in ['approved','paid'] %}
+<p>تم صرف: {{r.paid_amount}} — المتبقي: {{r.remaining_amount}}</p>
+{% if r.remaining_amount > 0 %}
+<details><summary>تسجيل صرف</summary>
+<form method="post" action="{{url_for('workforce.pay_final_payroll',final_id=r.id)}}" class="form-grid">
+<label>تاريخ الصرف <input type="date" name="payment_date" required></label>
+<label>المبلغ <input type="number" name="amount" min="0.01" max="{{r.remaining_amount}}" step="0.01" value="{{r.remaining_amount}}" required></label>
+<label>الخزينة / البنك <select name="cash_account_id" required>{% for a in payment_accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<label>ملاحظات <input name="notes" maxlength="250"></label>
+<button type="submit" onclick="return confirm('تأكيد صرف المبلغ وترحيل قيد السداد؟')">صرف وترحيل</button>
+</form></details>
+{% endif %}{% endif %}
+{% endif %}</td></tr>{% else %}<tr><td colspan="13">لا توجد مسودات لهذا الشهر.</td></tr>{% endfor %}
+</table></div></section>
+<section class="panel"><h3>سجل دفعات المرتبات النهائية</h3><div style="overflow-x:auto"><table>
+<tr><th>التاريخ</th><th>رقم الكشف</th><th>المبلغ</th><th>الخزينة / البنك</th><th>القيد</th><th>المرجع</th></tr>
+{% for p in payment_history %}<tr><td>{{p.payment_date}}</td><td>{{p.final_payroll_id}}</td><td>{{p.amount}}</td><td>{{p.account_code}} - {{p.account_name}}</td><td><a href="{{url_for('journal_detail',entry_id=p.journal_entry_id)}}">{{p.journal_entry_id}}</a></td><td>{{p.reference}}</td></tr>{% else %}<tr><td colspan="6">لا توجد دفعات في هذا الشهر.</td></tr>{% endfor %}
 </table></div></section>
 {% endblock %}
