@@ -148,32 +148,52 @@ def create_cash_commitment(conn, commitment_type, title, amount, due_date,
 
 def _journal_entry_effect_is_active(conn, journal_entry_id):
     """Whether a posted journal still has its original accounting effect."""
+    columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(journal_entries)")
+    }
+    selected = ["status"]
+    if "reference" in columns:
+        selected.append("reference")
+    if "description" in columns:
+        selected.append("description")
     entry = conn.execute(
-        "SELECT status,reference,description FROM journal_entries WHERE id=?",
+        "SELECT " + ",".join(selected) + " FROM journal_entries WHERE id=?",
         (journal_entry_id,),
     ).fetchone()
-    if not entry or entry["status"] != "posted":
+    if not entry or entry[0] != "posted":
         return False
-    reference = str(entry["reference"] or "")
-    description = str(entry["description"] or "")
+    values = dict(zip(selected, tuple(entry)))
+    reference = str(values.get("reference") or "")
+    description = str(values.get("description") or "")
     if reference.startswith("REV-") or description.startswith("قيد عكسي للقيد رقم "):
         return False
+    reversal_conditions, reversal_params = [], []
+    if "reference" in columns:
+        reversal_conditions.append("reference=?")
+        reversal_params.append(f"REV-{journal_entry_id}")
+    if "description" in columns:
+        reversal_conditions.append("description LIKE ?")
+        reversal_params.append(f"قيد عكسي للقيد رقم {journal_entry_id}:%")
+    if not reversal_conditions:
+        return True
     reversal = conn.execute(
-        """SELECT id FROM journal_entries
-           WHERE status='posted' AND
-             (reference=? OR description LIKE ?)
-           ORDER BY id LIMIT 1""",
-        (f"REV-{journal_entry_id}", f"قيد عكسي للقيد رقم {journal_entry_id}:%"),
+        "SELECT id FROM journal_entries WHERE status='posted' AND ("
+        + " OR ".join(reversal_conditions) + ") ORDER BY id LIMIT 1",
+        tuple(reversal_params),
     ).fetchone()
     if not reversal:
         return True
-    # The supported reversal-of-reversal restores the original accounting effect.
+    restored_conditions, restored_params = [], []
+    if "reference" in columns:
+        restored_conditions.append("reference=?")
+        restored_params.append(f"REV-{int(reversal[0])}")
+    if "description" in columns:
+        restored_conditions.append("description LIKE ?")
+        restored_params.append(f"قيد عكسي للقيد رقم {int(reversal[0])}:%")
     restored = conn.execute(
-        """SELECT 1 FROM journal_entries
-           WHERE status='posted' AND
-             (reference=? OR description LIKE ?)
-           LIMIT 1""",
-        (f"REV-{int(reversal['id'])}", f"قيد عكسي للقيد رقم {int(reversal['id'])}:%"),
+        "SELECT 1 FROM journal_entries WHERE status='posted' AND ("
+        + " OR ".join(restored_conditions) + ") LIMIT 1",
+        tuple(restored_params),
     ).fetchone()
     return restored is not None
 
@@ -227,16 +247,13 @@ def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
         if not commitment or commitment["status"] == "void":
             raise ValueError("الالتزام غير موجود أو ملغي.")
         journal = conn.execute(
-            "SELECT id,reference,description FROM journal_entries WHERE id=? AND status='posted'",
+            "SELECT id FROM journal_entries WHERE id=? AND status='posted'",
             (journal_entry_id,),
         ).fetchone()
         if not journal:
             raise ValueError("يجب ربط الدفعة بقيد يومية مرحّل موجود.")
-        if (str(journal["reference"] or "").startswith("REV-")
-                or str(journal["description"] or "").startswith("قيد عكسي للقيد رقم ")):
-            raise ValueError("لا يمكن ربط قيد عكسي كسند سداد.")
         if not _journal_entry_effect_is_active(conn, journal_entry_id):
-            raise ValueError("قيد السداد تم عكسه؛ لا يمكن ربطه بالتزام.")
+            raise ValueError("قيد السداد عكسي أو تم عكسه؛ لا يمكن ربطه بالتزام.")
         selected_payable_account = _validate_payable_account(
             conn,commitment["payable_account_id"] or payable_account_id,required=True
         )
@@ -258,7 +275,7 @@ def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
         total_debit = sum((Decimal(str(row["debit"] or "0")) for row in journal_lines), Decimal("0"))
         total_credit = sum((Decimal(str(row["credit"] or "0")) for row in journal_lines), Decimal("0"))
         if payable_debit != amount:
-            raise ValueError("قيمة مدين حساب الالتزام في قيد السداد يجب أن تساوي مبلغ الدفعة تمامًا.")
+            raise ValueError("قيد السداد لا يحتوي على مدين كافٍ في حساب الالتزام يساوي مبلغ الدفعة تمامًا.")
         if total_debit != amount or total_credit != amount:
             raise ValueError("يجب أن يكون قيد السداد مخصصًا لهذه الدفعة وحدها وبإجمالي مدين ودائن يساوي مبلغها.")
         if commitment["payable_account_id"] is None:
@@ -270,19 +287,21 @@ def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
         total = Decimal(str(commitment["amount"]))
         if paid + amount > total:
             raise ValueError("قيمة الدفعة تتجاوز الرصيد المتبقي من الالتزام.")
-        conn.execute(
+        cursor = conn.execute(
             """INSERT INTO cash_commitment_payments
                (commitment_id,payment_date,amount,journal_entry_id,reference,notes,created_by)
                VALUES(?,?,?,?,?,?,?)""",
             (commitment_id,payment_date,str(amount),journal_entry_id,
              str(reference or "").strip(),str(notes or "").strip(),created_by),
         )
+        payment_id = cursor.lastrowid
         status = "paid" if paid + amount == total else "partially_paid"
         conn.execute(
             "UPDATE cash_commitments SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
             (status,commitment_id),
         )
         conn.commit()
+        return payment_id
     except Exception:
         conn.rollback()
         raise
