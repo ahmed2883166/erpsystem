@@ -1246,8 +1246,8 @@ def payroll():
                      str(employer_ins),str(gross),str(net),
                      rule_set_id, str(taxable_annual), str(insured_wage),
                      str(incentives),str(advance_deduction),str(loan_deduction),str(total_entitlements),str(total_deductions),
-                     str(raise_amount),str(overtime_rate),incentive_rule_id,incentive_name,
-                     str(incentive_days),incentive_method,str(overtime_calculated_amount),
+                     str(raise_amount),str(overtime_rate),None,"",
+                      "0","",str(overtime_calculated_amount),
                      int(overtime_manual_override),overtime_override_reason))
                 payroll_line_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
                 if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_line_items'").fetchone():
