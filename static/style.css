@@ -610,3 +610,14 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  .dashboard-balance-row>div{align-items:flex-start;flex-direction:column}
  .dashboard-balance-row strong{text-align:right}
 }
+
+/* Consistent stock dashboard action strip */
+.page-shortcuts{margin:0 0 16px;padding:16px 18px}
+.page-shortcuts>h3{margin:0 0 10px;font-size:14px;font-weight:800}
+.page-shortcuts>.actions{display:flex;flex-wrap:wrap;gap:8px;margin:0;align-items:center}
+.page-shortcuts .btn,.page-shortcuts .button,.page-shortcuts .button-link{min-height:40px;display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+@media(max-width:560px){
+ .page-shortcuts{padding:13px}
+ .page-shortcuts>.actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+ .page-shortcuts .btn,.page-shortcuts .button,.page-shortcuts .button-link{width:100%;min-width:0;padding:8px 9px;text-align:center}
+}
