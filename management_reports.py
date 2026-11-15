@@ -216,30 +216,121 @@ def _open_document_balances(conn, kind, as_of):
     return result
 
 
+def _month_end(period):
+    """Return the last calendar day for a YYYY-MM payroll period."""
+    try:
+        first = date.fromisoformat(str(period)[:7] + "-01")
+        next_month = date(first.year + (first.month == 12), 1 if first.month == 12 else first.month + 1, 1)
+        return (next_month - timedelta(days=1)).isoformat()
+    except (TypeError, ValueError):
+        return None
+
+
+def _cash_forecast_payroll(conn, as_of):
+    items = []
+    if not all(_exists(conn, table) for table in ("payroll_runs", "payroll_lines", "payroll_payments")):
+        return items
+    for run in conn.execute(
+        """SELECT id,period FROM payroll_runs
+           WHERE status='posted' AND journal_entry_id IS NOT NULL ORDER BY period,id"""
+    ).fetchall():
+        due_date = _month_end(run["period"])
+        if not due_date:
+            continue
+        net_payable = _d(conn.execute(
+            "SELECT COALESCE(SUM(CAST(net_pay AS NUMERIC)),0) FROM payroll_lines WHERE run_id=?",
+            (run["id"],),
+        ).fetchone()[0])
+        paid = _d(conn.execute(
+            """SELECT COALESCE(SUM(CAST(amount AS NUMERIC)),0) FROM payroll_payments
+               WHERE run_id=? AND payment_date<=?""", (run["id"], as_of)
+        ).fetchone()[0])
+        balance = max(net_payable - paid, Decimal("0"))
+        if balance:
+            items.append({
+                "kind": "payroll", "party": "الموظفون", "document": "مرتبات " + str(run["period"]),
+                "due_date": due_date, "balance": balance,
+                "status": "متأخر" if due_date < as_of else "مستحق/متوقع",
+                "date_basis": "نهاية شهر المرتبات (تاريخ تقديري)",
+            })
+    return items
+
+
+def _cash_forecast_grants(conn, as_of):
+    items = []
+    required = {"employee_grants", "employee_grant_lines", "employee_grant_payments"}
+    if not all(_exists(conn, table) for table in required):
+        return items
+    grants = conn.execute(
+        """SELECT id,grant_name_snapshot,grant_date FROM employee_grants
+           WHERE status IN ('approved','partially_paid') ORDER BY grant_date,id"""
+    ).fetchall()
+    for grant in grants:
+        total = _d(conn.execute(
+            "SELECT COALESCE(SUM(CAST(amount AS NUMERIC)),0) FROM employee_grant_lines WHERE grant_id=?",
+            (grant["id"],),
+        ).fetchone()[0])
+        paid = _d(conn.execute(
+            """SELECT COALESCE(SUM(CAST(amount AS NUMERIC)),0) FROM employee_grant_payments
+               WHERE grant_id=? AND payment_date<=?""", (grant["id"], as_of)
+        ).fetchone()[0])
+        balance = max(total - paid, Decimal("0"))
+        if balance:
+            due_date = str(grant["grant_date"] or as_of)[:10]
+            items.append({
+                "kind": "employee_grants", "party": "الموظفون",
+                "document": str(grant["grant_name_snapshot"] or "منحة موظفين"),
+                "due_date": due_date, "balance": balance,
+                "status": "متأخر" if due_date < as_of else "مستحق/متوقع",
+                "date_basis": "تاريخ المنحة المسجل",
+            })
+    return items
+
+
 def build_cash_forecast(conn, as_of, horizon_days=90):
-    """Forecast open customer collections and supplier payments by due date."""
+    """Forecast documented receivables/payables and recorded payroll/grants."""
     horizon_days = max(1, min(int(horizon_days), 365))
     end = (date.fromisoformat(as_of) + timedelta(days=horizon_days)).isoformat()
-    items = []
+    items, errors = [], []
     for kind in ("customers", "suppliers"):
         try:
             items.extend(_open_document_balances(conn, kind, as_of))
-        except (KeyError, ValueError, Exception) as exc:
-            # Keep the report usable on legacy schemas, but explicitly disclose
-            # which side could not be calculated rather than inventing values.
-            items.append({"kind": kind, "error": "تعذر احتساب هذا الجانب بسبب نقص/اختلاف بيانات الاستحقاق."})
+        except Exception:
+            errors.append("تعذر احتساب " + ("أرصدة العملاء" if kind == "customers" else "أرصدة الموردين") + " بسبب نقص/اختلاف بيانات الاستحقاق.")
+    try:
+        items.extend(_cash_forecast_payroll(conn, as_of))
+        items.extend(_cash_forecast_grants(conn, as_of))
+    except Exception:
+        errors.append("تعذر احتساب التزامات المرتبات أو المنح بسبب نقص/اختلاف بيانات الموارد البشرية.")
     visible = [item for item in items if "error" not in item and item["due_date"] <= end]
     daily = {}
     for item in visible:
-        day = daily.setdefault(item["due_date"], {"collections": Decimal("0"), "payments": Decimal("0")})
-        key = "collections" if item["kind"] == "customers" else "payments"
-        day[key] += item["balance"]
+        day = daily.setdefault(item["due_date"], {
+            "collections": Decimal("0"), "supplier_payments": Decimal("0"),
+            "payroll": Decimal("0"), "employee_grants": Decimal("0"),
+            "payments": Decimal("0"),
+        })
+        if item["kind"] == "customers":
+            day["collections"] += item["balance"]
+        else:
+            category = {
+                "suppliers": "supplier_payments",
+                "payroll": "payroll",
+                "employee_grants": "employee_grants",
+            }.get(item["kind"], "supplier_payments")
+            day[category] += item["balance"]
+            day["payments"] += item["balance"]
     days = [{"date": day, **values} for day, values in sorted(daily.items())]
+    collections = sum((item["balance"] for item in visible if item["kind"] == "customers"), Decimal("0"))
+    payments = sum((item["balance"] for item in visible if item["kind"] != "customers"), Decimal("0"))
     return {
         "as_of": as_of, "horizon_days": horizon_days, "end_date": end,
-        "items": visible, "errors": [item["error"] for item in items if "error" in item],
-        "daily": days,
-        "collections": sum((item["balance"] for item in visible if item["kind"] == "customers"), Decimal("0")),
-        "payments": sum((item["balance"] for item in visible if item["kind"] == "suppliers"), Decimal("0")),
-        "net_expected": sum((item["balance"] if item["kind"] == "customers" else -item["balance"] for item in visible), Decimal("0")),
+        "items": visible, "errors": errors,
+        "daily": days, "collections": collections, "payments": payments,
+        "net_expected": collections - payments,
+        "coverage_notes": [
+            "المرتبات: صافي المرتبات المرحلة بعد خصم دفعات الصرف المسجلة حتى تاريخ التقرير؛ تاريخ الاستحقاق نهاية شهر المرتبات كتقدير.",
+            "المنح: المنح المعتمدة فقط، بعد خصم دفعاتها المسجلة حتى تاريخ التقرير.",
+            "الضرائب والمصروفات الدورية وبدل الجمعة لا تدخل في الإجمالي لعدم وجود سجل موحد موثق لمواعيد استحقاقها ومدفوعاتها؛ لا يتم افتراض تواريخ أو مبالغ.",
+        ],
     }
