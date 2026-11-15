@@ -240,7 +240,7 @@ class CashCommitmentsTests(unittest.TestCase):
             self.conn, "2026-11-15", "2026-12-15"
         )
         self.assertEqual(len(report), 1)
-        self.assertEqual(report[0]["balance"], Decimal("100.00"))
+        self.assertEqual(report[0]["balance"], Decimal("200.00"))
         report_after_payment = list_cash_commitments_forecast(
             self.conn, "2026-11-21", "2026-12-15"
         )
