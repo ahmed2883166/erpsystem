@@ -34,6 +34,21 @@
   </div>
 </section>
 <section class="panel">
+  <h3>المرتبات النهائية للموظفين المنتهية خدمتهم</h3>
+  <p class="muted">هذا القسم يعرض كشوف نهاية الخدمة منفصلة عن المرتبات الشهرية. الملغى ظاهر للتتبع لكنه مستبعد من الإجمالي. المسودات ليست مرتبات معتمدة أو مصروفة.</p>
+  <div class="stats-grid">
+    <div class="stat"><span>عدد الكشوف غير الملغاة</span><strong>{{ final_totals.count }}</strong></div>
+    <div class="stat"><span>إجمالي المرتبات النهائية</span><strong>{{ final_totals.gross_pay }}</strong></div>
+    <div class="stat"><span>صافي المرتبات النهائية</span><strong>{{ final_totals.net_pay }}</strong></div>
+  </div>
+  <div style="overflow-x:auto"><table>
+    <thead><tr><th>الشهر</th><th>رقم الكشف</th><th>كود الموظف</th><th>اسم الموظف</th><th>آخر يوم خدمة</th><th>الأيام</th><th>الأساسي المستحق</th><th>البدلات</th><th>الإجمالي</th><th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th><th>الدمغة</th><th>استقطاعات أخرى</th><th>الصافي</th><th>الحالة</th></tr></thead>
+    <tbody>{% for r in final_rows %}
+      <tr><td>{{r.period}}</td><td>{{r.final_payroll_no}}</td><td>{{r.employee_code}}</td><td>{{r.full_name}}</td><td>{{r.termination_date}}</td><td>{{r.days_worked}}</td><td>{{r.basic_salary_snapshot}}</td><td>{{r.allowances_snapshot}}</td><td>{{r.gross_pay}}</td><td>{{r.tax_deduction}}</td><td>{{r.employee_insurance}}</td><td>{{r.employer_insurance}}</td><td>{{r.stamp_duty}}</td><td>{{r.other_deductions}}</td><td><strong>{{r.net_pay}}</strong></td><td>{{'مسودة' if r.status=='draft' else ('ملغاة' if r.status=='cancelled' else ('معتمد' if r.status=='approved' else r.status))}}</td></tr>
+    {% else %}<tr><td colspan="16">لا توجد مرتبات نهائية مطابقة للفلاتر.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+<section class="panel">
   <h3>تفاصيل كل موظف وكشف المرتبات</h3>
   <div style="overflow-x:auto">
     <table>
