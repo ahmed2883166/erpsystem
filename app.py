@@ -3493,6 +3493,12 @@ def delete_user(user_id):
         flash("المستخدم غير موجود.","error")
     elif user_id==session.get("user_id"):
         flash("لا يمكنك حذف المستخدم الذي سجلت الدخول به.","error")
+    elif user["role"] == "admin":
+        flash("لا يمكن حذف حساب مدير النظام المحمي.","error")
+    elif session.get("role") != "admin" and not set(
+        stored_user_permissions(user["permissions_json"], user["role"])
+    ).issubset(set(session.get("permissions", []))):
+        flash("لا تملك صلاحية حذف مستخدم تتجاوز صلاحياته صلاحياتك.","error")
     else:
         checks=[
           ("SELECT 1 FROM audit_log WHERE user_id=? LIMIT 1","سجل المراجعة والتدقيق"),
