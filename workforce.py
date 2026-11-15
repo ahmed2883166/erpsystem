@@ -435,17 +435,19 @@ def _validate_employee_dimensions(c, values):
 
 
 def _employee_form_values(form):
-    salary = M(form.get("basic_salary"))
-    variable_salary = M(form.get("variable_salary", "0"))
-    hours = D(form.get("standard_hours", "208"))
-    insured_wage = M(form.get("insured_wage", "0"))
+    # Employee master is identity/employment data only. Payroll amounts are entered
+    # in the monthly payroll screen and are never sourced from this profile.
+    salary = Decimal("0")
+    variable_salary = Decimal("0")
+    hours = D("208")
+    insured_wage = Decimal("0")
     legal_category = form.get("legal_category", "local").strip().lower()
     work_status = form.get("work_status", "permanent").strip().lower()
-    raise_type = form.get("raise_type", "fixed").strip().lower()
-    raise_value = M(form.get("raise_value", "0"))
-    raise_mode = form.get("raise_mode", "basic").strip().lower()
-    overtime_rate = D(form.get("overtime_rate_percent", "150"))
-    effective_date = form.get("raise_effective_date", "").strip()
+    raise_type = "fixed"
+    raise_value = Decimal("0")
+    raise_mode = "basic"
+    overtime_rate = D("150")
+    effective_date = ""
     termination_date = form.get("termination_date", "").strip()
     if effective_date:
         date.fromisoformat(effective_date)
@@ -455,10 +457,8 @@ def _employee_form_values(form):
         raise ValueError("يجب تحديد تاريخ سريان الاستقالة أو بلوغ المعاش.")
     if work_status not in {"resigned", "retired"}:
         termination_date = ""
-    if (salary < 0 or variable_salary < 0 or hours <= 0 or insured_wage < 0 or not legal_category
-        or work_status not in {"comprehensive_bonus", "permanent", "temporary", "unpaid_leave", "resigned", "retired"}
-        or raise_type not in {"fixed", "percentage"} or raise_mode not in {"basic", "allowance"}
-        or raise_value < 0 or overtime_rate < 0 or overtime_rate > 500):
+    if (not legal_category or
+        work_status not in {"comprehensive_bonus", "permanent", "temporary", "unpaid_leave", "resigned", "retired"}):
         raise ValueError("راجع الراتب وساعات العمل والحالة الوظيفية والعلاوة ونسبة الإضافي.")
     return (
         form.get("employee_code", "").strip(), form["full_name"].strip(),
@@ -752,7 +752,12 @@ def edit_employee(employee_id):
     if request.method == "POST":
         new_photo_path = None
         try:
-            values = _employee_form_values(request.form)
+            values = list(_employee_form_values(request.form))
+            # Preserve legacy payroll profile columns during profile edits; they are no longer editable here.
+            for index, column in ((5,"basic_salary"),(6,"standard_hours"),(7,"variable_salary"),
+                                  (10,"insured_wage"),(11,"insurance_enabled")):
+                values[index] = employee[column]
+            values = tuple(values)
             _validate_employee_dimensions(c, values)
             new_photo_path = _save_employee_photo(request.files.get("photo"))
             old_photo_path = employee["photo_path"]
