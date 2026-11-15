@@ -2721,6 +2721,22 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(Decimal(customer_after["paid_amount"]), Decimal("45.60"))
         self.assertEqual(Decimal(customer_after["credited_amount"]), Decimal("22.80"))
 
+        # The customer control account must be fully settled after the
+        # collection, credit note and refund; output VAT must retain only the
+        # tax on the unreturned half of the invoice.
+        customer_ar_balance = self.db.execute(
+            """SELECT COALESCE(SUM(CAST(jl.debit AS NUMERIC)-CAST(jl.credit AS NUMERIC)),0)
+               FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+               WHERE a.code='1130'"""
+        ).fetchone()[0]
+        output_vat_balance = self.db.execute(
+            """SELECT COALESCE(SUM(CAST(jl.credit AS NUMERIC)-CAST(jl.debit AS NUMERIC)),0)
+               FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+               WHERE a.code='2130'"""
+        ).fetchone()[0]
+        self.assertEqual(Decimal(str(customer_ar_balance)), Decimal("0"))
+        self.assertEqual(Decimal(str(output_vat_balance)), Decimal("2.80"))
+
         # Use the stock engine's authoritative remaining layer value. Under
         # weighted-average costing, unit_cost is the receipt cost and is not
         # rewritten when part of a layer is consumed; qty * unit_cost would
