@@ -468,3 +468,124 @@ nav a.active{background:#24445a;border-color:#4e7892;color:#fff}
  .global-report-actions button{flex:1 1 140px}
  .accounts-layout>.panel{width:100%}
 }
+
+
+/* NEXUS unified screen system: consistent headers, forms, tables and actions */
+:root{
+ --radius-card:14px;
+ --radius-control:9px;
+ --focus-ring:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent);
+}
+html{scroll-behavior:smooth}
+body{min-width:320px}
+main{width:calc(100% - 260px);max-width:none;margin-right:260px}
+main>header:not(.has-report-actions){
+ display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;
+ gap:10px 22px;margin:0 0 22px;padding:0 0 18px;border-bottom:1px solid var(--line)
+}
+main>header>h2{font-size:clamp(21px,2vw,27px);font-weight:800;letter-spacing:-.2px}
+main>header>p{margin:4px 0 0;color:var(--muted);font-size:13px}
+main>header>div{min-width:0;flex:1 1 320px}
+main>header .actions{margin:0;justify-content:flex-start}
+main>header.has-report-actions{display:flex;align-items:center;gap:12px 20px}
+main>header.has-report-actions>h2{flex:1 1 240px}
+main>header.has-report-actions .global-report-actions{flex:0 1 auto}
+.panel,.cards article{
+ border-radius:var(--radius-card);border-color:var(--line);
+ box-shadow:0 5px 20px rgba(15,23,42,.045)
+}
+.panel{padding:clamp(16px,2vw,25px);min-width:0}
+.panel>h3:first-child{font-size:17px;font-weight:800;margin:0 0 15px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.panel>p:first-of-type{margin-top:0}
+.cards{gap:14px}
+.cards article{min-width:0;transition:transform .15s ease,box-shadow .15s ease}
+.cards article:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
+.cards b{font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.form-grid{
+ display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+ gap:14px 18px;align-items:end;min-width:0
+}
+.form-grid>label{min-width:0;margin:0}
+.form-grid>button,.form-grid>.button,.form-grid>.btn{justify-self:start;align-self:end}
+.form-grid>.notice,.form-grid>.flash,.form-grid>p,.form-grid>h3,
+.form-grid>.table-wrap,.form-grid>table,.form-grid>.full-width{grid-column:1/-1}
+.form-row{gap:14px 18px}
+label{font-size:13px;font-weight:700}
+label small{display:block;color:var(--muted);font-weight:500}
+input,select,textarea{
+ border-radius:var(--radius-control);min-width:0;transition:border-color .15s ease,box-shadow .15s ease
+}
+input:focus,select:focus,textarea:focus{outline:0;box-shadow:var(--focus-ring)}
+input[type=checkbox],input[type=radio]{width:18px;height:18px;min-height:18px;accent-color:var(--accent);vertical-align:middle}
+.inline-check,.checkline{display:flex;align-items:center;gap:10px}
+.inline-check input,.checkline input{flex:0 0 auto}
+.actions,.table-actions,.toolbar{
+ gap:8px;align-items:center
+}
+.actions{margin:12px 0 16px}
+.actions .button,.actions .btn,.actions button,
+.table-actions .button,.table-actions .btn,.table-actions button{
+ min-height:40px;padding:8px 14px;font-size:13px
+}
+button:focus-visible,.btn:focus-visible,a.button:focus-visible,a:focus-visible{
+ outline:3px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:2px
+}
+button:disabled,.btn.disabled{opacity:.55;cursor:not-allowed;transform:none}
+.table-wrap{border-radius:12px;background:var(--surface);min-width:0}
+table{font-variant-numeric:tabular-nums}
+thead th{position:sticky;top:0;z-index:1}
+tbody tr:last-child td{border-bottom:0}
+td .actions{margin:0}
+td .inline-form{display:inline-flex;align-items:center;gap:6px}
+.status-legend{padding:10px 12px;background:var(--surface);border:1px solid var(--line);border-radius:11px}
+.legend-item{font-size:12px}
+.notice{border-radius:11px}
+.flash{border:1px solid transparent}
+:root[data-theme="dark"] .flash.success{background:#123b35;color:#a7f3d0;border-color:#1d6658}
+:root[data-theme="dark"] .flash.error{background:#451f2a;color:#fecaca;border-color:#7f293b}
+:root[data-theme="dark"] .flash.warning{background:#45351b;color:#fde68a;border-color:#80601e}
+:root[data-theme="dark"] .state-paid,:root[data-theme="dark"] .status-success{background:#123b35;color:#a7f3d0}
+:root[data-theme="dark"] .state-partial{background:#45351b;color:#fde68a}
+:root[data-theme="dark"] .state-unpaid{background:#451f2a;color:#fecaca}
+:root[data-theme="dark"] .state-cancelled{background:#293548;color:#cbd5e1}
+.pagination{display:flex;flex-wrap:wrap}
+.pagination a{min-width:40px}
+.report-filter{padding:14px;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+.global-report-actions{gap:7px}
+.global-report-actions button{min-height:39px;padding:7px 12px;border-radius:9px}
+nav details.nav-group{border:1px solid #344256;border-radius:11px;overflow:hidden;background:#172333}
+nav details.nav-group>summary{display:flex;flex-direction:column;gap:1px;padding:10px 13px;cursor:pointer;list-style:none;color:#e5edf7;font-weight:800}
+nav details.nav-group>summary::-webkit-details-marker{display:none}
+nav details.nav-group>summary:after{content:"＋";float:left;margin-right:auto;color:#9fb3c8}
+nav details.nav-group[open]>summary:after{content:"−"}
+nav details.nav-group>summary small{font-size:10px;color:#9fb3c8;font-weight:500}
+nav .nav-links{display:grid;gap:5px;padding:7px 8px 9px;background:#111d2c}
+nav .nav-links a{min-height:38px;padding:7px 10px;font-size:12px;background:#1b2a3b;box-shadow:none}
+nav .nav-links a.active{background:#24445a;border-color:#4e7892}
+@media(max-width:1050px){
+ main{padding-left:22px;padding-right:22px}
+ .cards{gap:11px}
+}
+@media(max-width:850px){
+ main{width:100%;margin:0;padding:68px 15px 24px}
+ main>header:not(.has-report-actions){gap:8px 14px;margin-bottom:17px}
+ main>header.has-report-actions{align-items:flex-start}
+ .form-grid{gap:12px}
+ .panel{margin-bottom:16px}
+}
+@media(max-width:560px){
+ main{padding:68px 12px 20px}
+ .form-grid,.form-row{grid-template-columns:minmax(0,1fr)}
+ .form-grid>button,.form-grid>.button,.form-grid>.btn{width:100%}
+ .cards{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+ .cards article{padding:14px}
+ .cards b{font-size:21px}
+ .panel{padding:14px;border-radius:12px}
+ main>header>div{flex-basis:100%}
+ main>header.has-report-actions{display:flex;flex-direction:column;align-items:stretch}
+ main>header.has-report-actions .global-report-actions{width:100%;margin:4px 0 0}
+ .global-report-actions button{flex:1 1 120px}
+ .toolbar>*{min-width:0;flex:1 1 100%}
+ .table-wrap{margin-left:0;margin-right:0}
+}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
