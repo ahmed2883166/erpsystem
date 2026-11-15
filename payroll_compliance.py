@@ -443,8 +443,12 @@ def report():
         "employee_insurance": sum((_d(x["employee_insurance"]) for x in rows), Decimal("0")),
         "employer_insurance": sum((_d(x["employer_insurance"]) for x in rows), Decimal("0")),
     }
+    obligations = _payroll_obligations(conn, period)
     conn.close()
-    return render_template("payroll_compliance_report.html", period=period, rows=rows, totals=totals)
+    return render_template(
+        "payroll_compliance_report.html", period=period, rows=rows,
+        totals=totals, obligations=obligations,
+    )
 
 
 def _payroll_obligations(conn, period):
