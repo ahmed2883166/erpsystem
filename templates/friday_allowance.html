@@ -79,7 +79,7 @@ function renderFridaySelected(){
     [e.code,e.name,e.department||'-',e.basic].forEach(v=>{const cell=document.createElement('td');cell.textContent=v;row.appendChild(cell);});
     const daysCell=document.createElement('td');
     const daysInput=document.createElement('input');daysInput.type='number';daysInput.min='1';daysInput.max=String(e.maxDays);
-    daysInput.step='1';daysInput.value=String(e.days);daysInput.style.maxWidth='90px';daysInput.setAttribute('aria-label','عدد أيام بدل الجمعة للموظف '+e.name);
+    daysInput.step='1';daysInput.value=String(e.days);daysInput.style.maxWidth='90px';daysInput.setAttribute('aria-label','عدد أيام بدل الجمعة للموظف '+e.name);daysInput.title='الحد الأقصى حسب الحضور المسجل: '+e.maxDays+' يوم';
     daysInput.addEventListener('change',()=>{
       const value=Number(daysInput.value);
       if(!Number.isInteger(value)||value<1||value>e.maxDays){alert('عدد الأيام يجب أن يكون من 1 إلى '+e.maxDays+' للموظف '+e.name);daysInput.value=String(e.days);return;}
