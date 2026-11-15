@@ -80,6 +80,7 @@ class WorkforceTests(unittest.TestCase):
         )
         self.app = Flask(__name__, template_folder=str(template_dir))
         self.app.secret_key = "test"
+        self.app.add_url_rule("/", endpoint="dashboard", view_func=lambda: "Dashboard")
         self.app.register_blueprint(workforce.workforce_bp)
         self.client = self.app.test_client()
         with self.client.session_transaction() as session:
