@@ -383,6 +383,18 @@ class ManagementDashboardTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_management_snapshot(self.conn,date(2026,11,30),date(2026,11,1))
 
+    def test_unusual_journal_detection_ignores_year_end_closing_entries(self):
+        self.conn.execute(
+            "INSERT INTO journal_entries(id,entry_date,status,entry_type) "
+            "VALUES(24,'2026-11-30','posted','year_end_closing')"
+        )
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(24,?,?,?)",
+            [(7,"5000","0"),(6,"0","5000")],
+        )
+        flagged = unusual_journal_entries(self.conn, date(2026,11,1), date(2026,11,30))
+        self.assertNotIn(24, {item["id"] for item in flagged})
+
     def test_unusual_journal_totals_preserve_decimal_precision(self):
         self.conn.execute("INSERT INTO journal_entries(id,entry_date,status) VALUES(21,'2026-11-30','posted')")
         self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(21,9,'0.10','0')")
