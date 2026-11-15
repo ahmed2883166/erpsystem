@@ -328,6 +328,23 @@ def initialize_workforce_schema():
     ):
         if column not in eos_columns:
             c.execute(f"ALTER TABLE employee_end_of_service_settlements ADD COLUMN {column} {definition}")
+    if "journal_entry_id" not in eos_columns:
+        c.execute("ALTER TABLE employee_end_of_service_settlements ADD COLUMN journal_entry_id INTEGER")
+    c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_eos_journal_entry
+        ON employee_end_of_service_settlements(journal_entry_id) WHERE journal_entry_id IS NOT NULL""")
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS employee_end_of_service_payments(
+      id INTEGER PRIMARY KEY,
+      settlement_id INTEGER NOT NULL REFERENCES employee_end_of_service_settlements(id),
+      payment_date TEXT NOT NULL, amount TEXT NOT NULL,
+      cash_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      journal_entry_id INTEGER NOT NULL UNIQUE, reference TEXT NOT NULL UNIQUE,
+      notes TEXT NOT NULL DEFAULT '', created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_eos_payments_settlement
+      ON employee_end_of_service_payments(settlement_id,payment_date,id);
+    """)
     c.execute("""INSERT OR IGNORE INTO employee_pay_item_catalog(name,item_type)
         SELECT DISTINCT item_name,item_type FROM employee_pay_items WHERE trim(item_name)<>''""")
     c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('annual','إجازة سنوية',1,1)")
@@ -381,6 +398,9 @@ def initialize_workforce_schema():
             raise
         finally:
             c.execute("PRAGMA foreign_keys=ON")
+    payroll_run_cols = {r["name"] for r in c.execute("PRAGMA table_info(payroll_runs)")}
+    if "posted_at" not in payroll_run_cols:
+        c.execute("ALTER TABLE payroll_runs ADD COLUMN posted_at TEXT")
     employee_cols = {r["name"] for r in c.execute("PRAGMA table_info(employees)")}
     for name in ("branch_id", "cost_center_id", "project_id"):
         if name not in employee_cols:
@@ -511,6 +531,37 @@ def _cash_or_bank_account(c, account_id):
     if not c.execute("SELECT 1 FROM cash_accounts WHERE account_id=? AND active=1", (account_id,)).fetchone():
         raise ValueError("الحساب المختار غير مسجل كخزينة أو بنك نشط.")
     return account["id"]
+
+
+def _employee_salary_basis(c, employee_id, as_of_date=None):
+    """Use the latest posted payroll snapshot, unless a newer approved salary decision supersedes it."""
+    employee = c.execute("SELECT basic_salary,insured_wage FROM employees WHERE id=?",
+                          (employee_id,)).fetchone()
+    if not employee:
+        raise ValueError("الموظف غير موجود عند تحديد أساس الأجر.")
+    effective_date = as_of_date or date.today().isoformat()
+    payroll = c.execute("""
+        SELECT l.basic_salary,l.insured_wage,COALESCE(r.posted_at,r.created_at,'') AS source_timestamp
+        FROM payroll_lines l JOIN payroll_runs r ON r.id=l.run_id
+        WHERE l.employee_id=? AND r.status='posted' AND r.period<=?
+        ORDER BY r.period DESC,COALESCE(r.posted_at,r.created_at) DESC,r.id DESC LIMIT 1
+    """,(employee_id,effective_date[:7])).fetchone()
+    history = c.execute("""
+        SELECT h.new_basic_salary,b.created_at
+        FROM employee_salary_history h JOIN salary_change_batches b ON b.id=h.batch_id
+        WHERE h.employee_id=? AND h.effective_date<=?
+        ORDER BY h.effective_date DESC,b.created_at DESC,h.id DESC LIMIT 1
+    """,(employee_id,effective_date)).fetchone()
+    if payroll:
+        basic = D(payroll["basic_salary"])
+        if history and (history["created_at"] or "") > (payroll["source_timestamp"] or ""):
+            basic = D(history["new_basic_salary"])
+        insured = D(payroll["insured_wage"] or employee["insured_wage"] or "0")
+    elif history:
+        basic, insured = D(history["new_basic_salary"]), D(employee["insured_wage"] or "0")
+    else:
+        basic, insured = D(employee["basic_salary"] or "0"), D(employee["insured_wage"] or "0")
+    return M(basic), M(insured)
 
 
 def _dimension_options(c):
@@ -674,8 +725,9 @@ def _salary_change_preview(c, form):
         raise ValueError("لا يوجد موظفون نشطون ضمن الفئة المحددة.")
     preview = []
     for emp in employees:
-        old_basic = M(emp["basic_salary"])
-        basis = old_basic if calc_base == "basic" else M(emp["insured_wage"])
+        current_basic, current_insured = _employee_salary_basis(c, emp["id"], effective_date)
+        old_basic = current_basic
+        basis = old_basic if calc_base == "basic" else current_insured
         amount = M(basis * value / Decimal("100")) if calc_type == "percentage" else value
         new_basic = M(old_basic + amount) if treatment == "basic" else old_basic
         if amount <= 0:
@@ -1737,7 +1789,9 @@ def final_payroll():
                 WHERE r.period=? AND l.employee_id=? LIMIT 1""", (period,employee_id)).fetchone()
             if existing_monthly_line:
                 raise ValueError("يوجد لهذا الموظف سطر بالفعل في كشف المرتبات الشهري لهذا الشهر. راجع الكشف واحذف المسودة القديمة أو عالج الصرف السابق قبل إعداد مرتب نهائي لمنع التكرار.")
-            basic_monthly = M(employee["basic_salary"])
+            basic_monthly, _insured_monthly = _employee_salary_basis(c, employee_id, termination.isoformat())
+            if basic_monthly <= 0:
+                raise ValueError("لا يوجد راتب أساسي معتمد لهذا الموظف. سجّل أول كشف مرتبات مرحّل أو راجع بيانات الأجر قبل إعداد المرتب النهائي.")
             allowances_monthly = M(sum((D(x["amount"]) for x in c.execute("""
                 SELECT p.amount FROM employee_pay_items p WHERE p.employee_id=? AND p.active=1
                   AND p.item_type='allowance'
@@ -1782,13 +1836,18 @@ def final_payroll():
         next_month = date(period_start.year + (period_start.month == 12),
                           1 if period_start.month == 12 else period_start.month + 1, 1)
         period_end = next_month - date.resolution
-        eligible = c.execute("""SELECT e.* FROM employees e WHERE e.work_status IN ('resigned','retired')
+        eligible_rows = c.execute("""SELECT e.* FROM employees e WHERE e.work_status IN ('resigned','retired')
             AND e.termination_date>=? AND e.termination_date<=?
             AND NOT EXISTS (SELECT 1 FROM employee_final_payrolls f
                 WHERE f.employee_id=e.id AND f.termination_date=e.termination_date)
             AND NOT EXISTS (SELECT 1 FROM payroll_runs r JOIN payroll_lines l ON l.run_id=r.id
                 WHERE r.period=? AND l.employee_id=e.id)
             ORDER BY e.employee_code""", (period_start.isoformat(),period_end.isoformat(),selected_period)).fetchall()
+        eligible = []
+        for eligible_row in eligible_rows:
+            item = dict(eligible_row)
+            item["basic_salary"] = str(_employee_salary_basis(c, item["id"], item["termination_date"])[0])
+            eligible.append(item)
         rows = [dict(x) for x in c.execute("""SELECT f.*,e.employee_code,e.full_name FROM employee_final_payrolls f
             JOIN employees e ON e.id=f.employee_id WHERE f.period=? ORDER BY f.created_at DESC,f.id DESC""",
             (selected_period,)).fetchall()]
@@ -2158,7 +2217,7 @@ def payroll():
             for e in employees:
                 # Default to the employee master salary; monthly edits remain possible
                 # but are compared against the effective master value before snapshotting.
-                master_basic = M(e["basic_salary"])
+                master_basic, master_insured_wage = _employee_salary_basis(c, e["id"], period_end)
                 basic_raw = request.form.get("basic_" + str(e["id"]), "")
                 basic_salary = M(basic_raw) if basic_raw is not None and str(basic_raw).strip() else master_basic
                 raise_amount = Decimal("0")
@@ -2312,7 +2371,10 @@ def payroll():
                 gross = M(basic_salary + allowances + overtime_amount + incentives)
                 rule_set_id = None
                 taxable_annual = Decimal("0")
-                insured_wage = M(request.form.get("insured_wage_" + str(e["id"]), str(basic_salary)))
+                insured_wage = M(request.form.get(
+                    "insured_wage_" + str(e["id"]),
+                    str(master_insured_wage if master_insured_wage > 0 else basic_salary)
+                ))
                 if request.form.get("auto_calculate_statutory") == "1" and e["work_status"] != "unpaid_leave":
                     from payroll_compliance import calculate_payroll_deductions
                     statutory_employee = dict(e)
@@ -2458,6 +2520,9 @@ def payroll():
     employees = []
     for employee_row in employee_rows:
         employee = dict(employee_row)
+        current_basic, current_insured = _employee_salary_basis(c, employee["id"], date.today().isoformat())
+        employee["basic_salary"] = str(current_basic)
+        employee["insured_wage"] = str(current_insured)
         fixed_rows = c.execute("""SELECT item_name,item_type,amount FROM employee_pay_items
             WHERE employee_id=? AND active=1 ORDER BY id""", (employee["id"],)).fetchall()
         employee["fixed_allowance_total"] = M(sum(
@@ -2815,7 +2880,8 @@ def post_payroll(run_id):
                     c.execute("""UPDATE employee_penalties SET status='deducted',payroll_line_id=?,decided_by=COALESCE(decided_by,?)
                         WHERE employee_id=? AND effective_period=? AND status='approved'""",
                         (payroll_line["id"],session["user_id"],payroll_line["employee_id"],run["period"]))
-        c.execute("UPDATE payroll_runs SET status='posted',journal_entry_id=? WHERE id=?", (journal_id, run_id))
+        c.execute("UPDATE payroll_runs SET status='posted',journal_entry_id=?,posted_at=CURRENT_TIMESTAMP WHERE id=?",
+                  (journal_id, run_id))
         _audit(c, "payroll_posted", run["period"] + " journal=" + str(journal_id))
         c.commit()
         flash("تم ترحيل المرتبات وإنشاء القيد المحاسبي.", "success")
@@ -3191,8 +3257,13 @@ def loan_schedule(loan_id):
 def employee_grants():
     c = _db()
     grant_types = c.execute("SELECT * FROM employee_grant_types WHERE active=1 ORDER BY name").fetchall()
-    employees = c.execute("""SELECT id,employee_code,full_name,basic_salary,work_status,department FROM employees
+    employee_rows = c.execute("""SELECT id,employee_code,full_name,basic_salary,work_status,department FROM employees
         WHERE active=1 AND work_status NOT IN ('unpaid_leave','resigned','retired') ORDER BY employee_code""").fetchall()
+    employees = []
+    for employee_row in employee_rows:
+        item = dict(employee_row)
+        item["basic_salary"] = str(_employee_salary_basis(c, item["id"], date.today().isoformat())[0])
+        employees.append(item)
     accounts = _accounts(c)
     grant_rows = c.execute("""SELECT g.*,t.name AS grant_type_name
         FROM employee_grants g JOIN employee_grant_types t ON t.id=g.grant_type_id
@@ -3288,14 +3359,14 @@ def create_employee_grant():
             if len(employees)!=len(ids):
                 raise ValueError("يوجد موظف غير نشط أو لا ينتمي إلى فئة الاستحقاق المحددة.")
         if not employees: raise ValueError("لا يوجد موظفون مستحقون للمنحة.")
+        grant_date=date.fromisoformat(request.form.get("grant_date") or date.today().isoformat()).isoformat()
         snapshots=[]
         for emp in employees:
-            basic=M(emp["basic_salary"])
+            basic=_employee_salary_basis(c, emp["id"], grant_date)[0]
             amount=M(basic*value/Decimal("100")) if method=="percentage_basic" else (M((basic/Decimal("30"))*days_count) if method=="per_day" else value)
             if amount<=0: raise ValueError("قيمة المنحة الناتجة يجب أن تكون أكبر من صفر.")
             snapshots.append((emp,basic,amount))
         total=M(sum((x[2] for x in snapshots),Decimal("0")))
-        grant_date=date.fromisoformat(request.form.get("grant_date") or date.today().isoformat()).isoformat()
         c.execute("BEGIN IMMEDIATE")
         c.execute("""INSERT INTO employee_grants(grant_type_id,grant_name_snapshot,calculation_method,calculation_value,
             days_count,expense_account_id,payable_account_id,grant_date,total_amount,notes,created_by)
@@ -3502,8 +3573,12 @@ def friday_allowance():
             if not eligible:
                 raise ValueError("لا يوجد موظفون مستحقون لديهم حضور مسجل في أيام الجمعة خلال هذا الشهر.")
             total = Decimal("0")
+            period_as_of = (next_month - date.resolution).isoformat()
             for employee in eligible:
-                basic = M(employee["basic_salary"])
+                basic = _employee_salary_basis(c, employee["id"], period_as_of)[0]
+                if basic <= 0:
+                    raise ValueError("لا يوجد راتب أساسي معتمد للموظف " + employee["full_name"] +
+                                     ". رحّل أول كشف مرتبات أو راجع بيانات الأجر قبل احتساب بدل الجمعة.")
                 raw_days = request.form.get("attendance_days_" + str(employee["id"]), str(employee["attendance_days"]))
                 try:
                     days = int(raw_days)
@@ -3544,7 +3619,7 @@ def friday_allowance():
         selected_period = selected_start.strftime("%Y-%m")
     next_month = date(selected_start.year + (1 if selected_start.month == 12 else 0),
                        1 if selected_start.month == 12 else selected_start.month + 1, 1)
-    eligible_employees = c.execute("""SELECT e.id,e.employee_code,e.full_name,e.basic_salary,e.work_status,e.department,
+    eligible_rows = c.execute("""SELECT e.id,e.employee_code,e.full_name,e.basic_salary,e.work_status,e.department,
             COUNT(a.id) AS attendance_days
         FROM employees e JOIN attendance_records a ON a.employee_id=e.id
         WHERE e.active=1 AND e.friday_work_eligible=1
@@ -3554,6 +3629,12 @@ def friday_allowance():
           AND (e.work_status NOT IN ('resigned','retired') OR e.termination_date>=a.attendance_date)
         GROUP BY e.id ORDER BY e.employee_code""",
         (selected_start.isoformat(),next_month.isoformat())).fetchall()
+    period_as_of = (next_month - date.resolution).isoformat()
+    eligible_employees = []
+    for eligible_row in eligible_rows:
+        item = dict(eligible_row)
+        item["basic_salary"] = str(_employee_salary_basis(c, item["id"], period_as_of)[0])
+        eligible_employees.append(item)
     batches = c.execute("""SELECT b.*,ea.code AS expense_code,ea.name_ar AS expense_name,
         pa.code AS payable_code,pa.name_ar AS payable_name
         FROM friday_allowance_batches b JOIN accounts ea ON ea.id=b.expense_account_id
@@ -4027,10 +4108,11 @@ def end_of_service():
                 raise ValueError("تاريخ انتهاء الخدمة لا يجوز أن يسبق تاريخ التعيين.")
             if employee["work_status"] not in ("resigned", "retired"):
                 raise ValueError("يجب تسجيل الاستقالة أو الإحالة للمعاش في السجل الوظيفي أولًا.")
-            if employee["termination_date"] and employee["termination_date"] != termination_date.isoformat():
+            if not employee["termination_date"] or employee["termination_date"] != termination_date.isoformat():
                 raise ValueError("تاريخ التسوية يجب أن يطابق تاريخ انتهاء الخدمة المسجل في السجل الوظيفي.")
-
-            basic_salary = M(employee["basic_salary"])
+            basic_salary = _employee_salary_basis(c, employee_id, termination_date.isoformat())[0]
+            if basic_salary <= 0:
+                raise ValueError("لا يوجد راتب أساسي معتمد لهذا الموظف. سجّل أول كشف مرتبات مرحّل أو راجع بيانات الأجر قبل حساب نهاية الخدمة.")
             service_months = int(request.form.get("service_months", "0"))
             service_days = int(request.form.get("service_days", "0"))
             retirement_age_raw = request.form.get("retirement_age", "").strip()
@@ -4065,14 +4147,39 @@ def end_of_service():
             c.commit()
             flash("تم حفظ تسوية نهاية الخدمة كمسودة. حُسبت المكافأة وفق لائحة الشركة وبحد أقصى 20 شهرًا، بعد خصم الدمغة. لم يتم اعتمادها أو صرفها أو إنشاء قيد محاسبي.", "success")
             return redirect(url_for("workforce.end_of_service"))
-        employees = c.execute("""SELECT id,employee_code,full_name,hire_date,work_status,termination_date,basic_salary
+        employee_rows = c.execute("""SELECT id,employee_code,full_name,hire_date,work_status,termination_date,basic_salary
             FROM employees WHERE work_status IN ('resigned','retired')
             ORDER BY termination_date DESC,employee_code""").fetchall()
-        settlements = c.execute("""SELECT s.*,e.employee_code,e.full_name
+        employees = []
+        for employee_row in employee_rows:
+            item = dict(employee_row)
+            if item["termination_date"]:
+                item["basic_salary"] = str(_employee_salary_basis(c, item["id"], item["termination_date"])[0])
+            employees.append(item)
+        settlement_rows = c.execute("""SELECT s.*,e.employee_code,e.full_name,
+                COALESCE((SELECT SUM(CAST(p.amount AS NUMERIC)) FROM employee_end_of_service_payments p
+                          WHERE p.settlement_id=s.id),0) AS paid_amount
             FROM employee_end_of_service_settlements s JOIN employees e ON e.id=s.employee_id
             ORDER BY s.created_at DESC,s.id DESC""").fetchall()
+        settlements = []
+        for settlement_row in settlement_rows:
+            item = dict(settlement_row)
+            item["paid_amount"] = M(item["paid_amount"])
+            item["remaining_amount"] = M(max(Decimal("0"),D(item["net_payable"])-item["paid_amount"]))
+            settlements.append(item)
+        payment_history = c.execute("""SELECT p.*,a.code AS account_code,a.name_ar AS account_name,
+                s.settlement_no,e.employee_code,e.full_name
+            FROM employee_end_of_service_payments p JOIN accounts a ON a.id=p.cash_account_id
+            JOIN employee_end_of_service_settlements s ON s.id=p.settlement_id
+            JOIN employees e ON e.id=s.employee_id
+            ORDER BY p.payment_date DESC,p.id DESC LIMIT 100""").fetchall()
+        payment_accounts = c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
+            JOIN cash_accounts ca ON ca.account_id=a.id
+            WHERE a.active=1 AND a.is_group=0 AND a.account_type='asset' AND ca.active=1
+            ORDER BY a.code""").fetchall()
         return render_template("end_of_service.html", employees=employees, settlements=settlements,
-                               today=date.today().isoformat())
+                               accounts=_accounts(c), payment_accounts=payment_accounts,
+                               payment_history=payment_history,today=date.today().isoformat())
     except Exception as exc:
         try:
             c.rollback()
@@ -4082,3 +4189,127 @@ def end_of_service():
         return redirect(url_for("workforce.end_of_service"))
     finally:
         c.close()
+
+@workforce_bp.route("/hr/end-of-service/<int:settlement_id>/delete", methods=["POST"])
+@_role("admin", "accountant")
+def delete_end_of_service_draft(settlement_id):
+    c=_db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        row=c.execute("SELECT * FROM employee_end_of_service_settlements WHERE id=?",(settlement_id,)).fetchone()
+        if not row or row["status"]!="draft" or row["journal_entry_id"]:
+            raise ValueError("حذف تسوية نهاية الخدمة متاح للمسودة غير المعتمدة فقط.")
+        if c.execute("SELECT 1 FROM employee_end_of_service_payments WHERE settlement_id=? LIMIT 1",(settlement_id,)).fetchone():
+            raise ValueError("لا يمكن حذف تسوية مرتبطة بدفعات صرف.")
+        c.execute("DELETE FROM employee_end_of_service_settlements WHERE id=? AND status='draft'",(settlement_id,))
+        if c.execute("SELECT changes()").fetchone()[0]!=1: raise ValueError("لم يتم حذف المسودة؛ ربما تغيرت حالتها.")
+        _audit(c,"employee_end_of_service_draft_deleted",row["settlement_no"])
+        c.commit(); flash("تم حذف مسودة نهاية الخدمة فقط.","success")
+    except (ValueError,sqlite3.Error) as exc:
+        c.rollback(); flash(str(exc) or "تعذر حذف مسودة نهاية الخدمة.","error")
+    c.close()
+    return redirect(url_for("workforce.end_of_service"))
+
+
+@workforce_bp.route("/hr/end-of-service/<int:settlement_id>/approve", methods=["POST"])
+@_role("admin", "accountant")
+def approve_end_of_service(settlement_id):
+    c=_db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        row=c.execute("""SELECT s.*,e.full_name,e.employee_code FROM employee_end_of_service_settlements s
+            JOIN employees e ON e.id=s.employee_id WHERE s.id=?""",(settlement_id,)).fetchone()
+        if not row or row["status"]!="draft" or row["journal_entry_id"]:
+            raise ValueError("لا يمكن اعتماد إلا مسودة نهاية خدمة غير مرحلة.")
+        expense_id,payable_id=int(request.form["expense_account_id"]),int(request.form["payable_account_id"])
+        stamp_id_raw=request.form.get("stamp_payable_account_id","").strip()
+        gross,stamp,net=M(row["gross_entitlement"]),M(row["stamp_duty"]),M(row["net_payable"])
+        if gross<=0 or M(gross-stamp)!=net: raise ValueError("بيانات المكافأة أو الدمغة غير متطابقة.")
+        for account_id,expected,label in ((expense_id,"expense","مصروف المكافأة"),(payable_id,"liability","المكافأة المستحقة")):
+            a=c.execute("SELECT account_type,is_group,active FROM accounts WHERE id=?",(account_id,)).fetchone()
+            if not a or not a["active"] or a["is_group"] or a["account_type"]!=expected:
+                raise ValueError("اختر حساب "+label+" تفصيليًا ونشطًا وبطبيعة صحيحة.")
+        lines=[(expense_id,gross,0,"مصروف مكافأة نهاية الخدمة - "+row["employee_code"]),
+               (payable_id,0,net,"صافي مكافأة نهاية الخدمة المستحقة")]
+        if stamp>0:
+            if not stamp_id_raw: raise ValueError("اختر حساب الدمغة المستحقة قبل اعتماد التسوية.")
+            stamp_id=int(stamp_id_raw)
+            a=c.execute("SELECT account_type,is_group,active FROM accounts WHERE id=?",(stamp_id,)).fetchone()
+            if not a or not a["active"] or a["is_group"] or a["account_type"]!="liability":
+                raise ValueError("اختر حساب دمغة مستحقة تفصيليًا ونشطًا.")
+            lines.append((stamp_id,0,stamp,"دمغة مستحقة على مكافأة نهاية الخدمة"))
+        if M(sum((D(x[1]) for x in lines),Decimal("0")))!=M(sum((D(x[2]) for x in lines),Decimal("0"))):
+            raise ValueError("القيد المقترح غير متوازن؛ لم يتم اعتماد التسوية.")
+        ref="EOS-POST-"+str(settlement_id)
+        journal=post_journal(c,row["termination_date"],ref,"اعتماد مكافأة نهاية الخدمة للموظف "+row["full_name"],lines,session["user_id"])
+        c.execute("""UPDATE employee_end_of_service_settlements SET status='approved',journal_entry_id=?,
+            approved_by=?,approved_at=CURRENT_TIMESTAMP WHERE id=? AND status='draft' AND journal_entry_id IS NULL""",
+            (journal,session["user_id"],settlement_id))
+        if c.execute("SELECT changes()").fetchone()[0]!=1: raise ValueError("تعذر تثبيت اعتماد التسوية.")
+        _audit(c,"employee_end_of_service_approved",row["settlement_no"]+" journal="+str(journal))
+        c.commit(); flash("تم اعتماد مكافأة نهاية الخدمة وترحيل قيد المصروف والاستحقاق والدمغة.","success")
+    except Exception as exc:
+        c.rollback(); flash(safe_error_message(exc),"error")
+    c.close()
+    return redirect(url_for("workforce.end_of_service"))
+
+
+@workforce_bp.route("/hr/end-of-service/<int:settlement_id>/pay", methods=["POST"])
+@_role("admin", "accountant")
+def pay_end_of_service(settlement_id):
+    c=_db()
+    try:
+        pay_date=date.fromisoformat(request.form.get("payment_date") or date.today().isoformat()).isoformat()
+        amount=M(request.form.get("amount","0"))
+        if amount<=0: raise ValueError("مبلغ الصرف يجب أن يكون أكبر من صفر.")
+        cash_id=int(request.form["cash_account_id"])
+        c.execute("BEGIN IMMEDIATE"); _cash_or_bank_account(c,cash_id)
+        row=c.execute("SELECT * FROM employee_end_of_service_settlements WHERE id=?",(settlement_id,)).fetchone()
+        if not row or row["status"]!="approved" or not row["journal_entry_id"]:
+            raise ValueError("يجب اعتماد مكافأة نهاية الخدمة وترحيل قيدها قبل الصرف.")
+        paid=M(sum((D(x["amount"]) for x in c.execute(
+            "SELECT amount FROM employee_end_of_service_payments WHERE settlement_id=?",(settlement_id,)).fetchall()),Decimal("0")))
+        outstanding=M(max(Decimal("0"),D(row["net_payable"])-paid))
+        if outstanding<=0 or amount>outstanding: raise ValueError("مبلغ الصرف يتجاوز صافي مكافأة نهاية الخدمة المتبقي.")
+        payable=c.execute("""SELECT account_id FROM journal_lines WHERE entry_id=?
+            AND memo='صافي مكافأة نهاية الخدمة المستحقة' AND credit>0 ORDER BY id LIMIT 1""",
+            (row["journal_entry_id"],)).fetchone()
+        if not payable: raise ValueError("لم يتم العثور على حساب المكافأة المستحقة في القيد الأصلي.")
+        reference="EOS-PAY-"+str(settlement_id)+"-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
+        journal=post_journal(c,pay_date,reference,"صرف مكافأة نهاية الخدمة رقم "+row["settlement_no"],
+            [(int(payable["account_id"]),amount,0,"تخفيض مكافأة نهاية الخدمة المستحقة"),
+             (cash_id,0,amount,"صرف مكافأة نهاية الخدمة من البنك/الصندوق")],session["user_id"])
+        c.execute("""INSERT INTO employee_end_of_service_payments
+            (settlement_id,payment_date,amount,cash_account_id,journal_entry_id,reference,notes,created_by)
+            VALUES(?,?,?,?,?,?,?,?)""",
+            (settlement_id,pay_date,str(amount),cash_id,journal,reference,request.form.get("notes","").strip()[:250],session["user_id"]))
+        new_status="paid" if M(paid+amount)>=D(row["net_payable"]) else "approved"
+        c.execute("""UPDATE employee_end_of_service_settlements SET status=?,
+            paid_at=CASE WHEN ?='paid' THEN CURRENT_TIMESTAMP ELSE paid_at END
+            WHERE id=? AND status='approved'""",(new_status,new_status,settlement_id))
+        _audit(c,"employee_end_of_service_payment",row["settlement_no"]+" amount="+str(amount)+" journal="+str(journal))
+        c.commit(); flash("تم صرف مكافأة نهاية الخدمة بالكامل وترحيل قيد السداد." if new_status=="paid"
+            else "تم تسجيل دفعة جزئية لمكافأة نهاية الخدمة وترحيل قيدها.","success")
+    except Exception as exc:
+        c.rollback(); flash(safe_error_message(exc),"error")
+    c.close()
+    return redirect(url_for("workforce.end_of_service"))
+
+
+@workforce_bp.route("/hr/end-of-service/<int:settlement_id>/print", methods=["GET"])
+@_role("admin", "accountant", "viewer")
+def print_end_of_service(settlement_id):
+    c=_db()
+    settlement=c.execute("""SELECT s.*,e.employee_code,e.full_name,e.job_title,e.department
+        FROM employee_end_of_service_settlements s JOIN employees e ON e.id=s.employee_id WHERE s.id=?""",
+        (settlement_id,)).fetchone()
+    if not settlement:
+        c.close(); flash("تسوية نهاية الخدمة غير موجودة.","error")
+        return redirect(url_for("workforce.end_of_service"))
+    payments=c.execute("""SELECT p.*,a.code AS account_code,a.name_ar AS account_name
+        FROM employee_end_of_service_payments p JOIN accounts a ON a.id=p.cash_account_id
+        WHERE p.settlement_id=? ORDER BY p.payment_date,p.id""",(settlement_id,)).fetchall()
+    c.close()
+    paid=M(sum((D(x["amount"]) for x in payments),Decimal("0")))
+    return render_template("end_of_service_print.html",settlement=settlement,payments=payments,
+        paid_amount=paid,remaining_amount=M(max(Decimal("0"),D(settlement["net_payable"])-paid)))

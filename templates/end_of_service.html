@@ -1,54 +1,24 @@
 {% extends "base.html" %}{% block title %}مكافأة نهاية الخدمة | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>مكافأة نهاية الخدمة</h2><p>تُحسب المكافأة وفق لائحة الشركة: الأجر الأساسي × مدة الخدمة بالشهور والأيام، بحد أقصى 20 شهرًا من الأجر الأساسي.</p>
-<p class="muted">سن التقاعد قابل للإدخال حسب القانون الساري (مثل 60 أو 61). الدمغة تُخصم من إجمالي المكافأة. الحفظ مسودة فقط ولا ينشئ قيدًا أو صرفًا.</p>
-<p><a class="button secondary" href="{{url_for('workforce.employees')}}">ملفات الموظفين</a> <a class="button secondary" href="{{url_for('workforce.payroll')}}">المرتبات</a></p></header>
-<section class="panel"><h3>إنشاء مسودة تسوية</h3>
-<form method="post" class="form-grid" id="eos-form">
+<header class="page-heading"><div><h2>مكافأة نهاية الخدمة</h2><p>حسب لائحة الشركة: الأساسي × أشهر وأيام الخدمة، بحد أقصى 20 شهرًا.</p><p class="muted">سن التقاعد اختياري. الدمغة تُخصم من الإجمالي. لا يُنشأ قيد إلا بعد الاعتماد.</p><p><a class="button secondary" href="{{url_for('workforce.employees')}}">ملفات الموظفين</a> <a class="button secondary" href="{{url_for('workforce.payroll')}}">المرتبات</a></p></div></header>
+<section class="panel"><h3>إنشاء مسودة تسوية</h3><form method="post" class="form-grid" id="eos-form">
 <label>الموظف <select name="employee_id" id="eos-employee" required><option value="">اختر موظفًا</option>{% for e in employees %}<option value="{{e.id}}" data-basic="{{e.basic_salary}}">{{e.employee_code}} - {{e.full_name}} — {{'استقالة' if e.work_status=='resigned' else 'معاش'}} — {{e.termination_date}}</option>{% endfor %}</select></label>
-<label>الأجر الأساسي <input type="number" id="eos-basic" value="0" readonly step="0.01"></label>
-<label>تاريخ انتهاء الخدمة <input type="date" name="termination_date" required></label>
-<label>سن التقاعد/الانتهاء (اختياري) <input type="number" name="retirement_age" min="1" max="100" placeholder="اكتب 60 أو 61 حسب الحالة"></label>
-<label>سبب انتهاء الخدمة <input name="reason" maxlength="250"></label>
-<label>شهور الخدمة (إدخال يدوي) <input type="number" name="service_months" id="eos-months" min="0" step="1" value="0" required></label>
-<label>أيام الخدمة (إدخال يدوي) <input type="number" name="service_days" id="eos-days" min="0" max="30" step="1" value="0" required></label>
-<label>إجمالي المكافأة وفق اللائحة <input type="number" id="eos-gross" value="0" readonly step="0.01"></label>
-<label>الدمغة <input type="number" name="stamp_duty" id="eos-stamp" min="0" step="0.01" value="0" required></label>
-<label>صافي المستحق بعد الدمغة <input type="number" id="eos-net" value="0" readonly step="0.01"></label>
-<label>ملاحظات <input name="notes" maxlength="500"></label>
-<div><button type="submit">حفظ كمسودة</button></div></form>
-<p class="muted">طريقة الحساب: الشهر = أجر أساسي كامل، واليوم = الأجر الأساسي ÷ 30. يتم إيقاف الزيادة عند بلوغ 20 شهرًا. يتم التحقق وإعادة الحساب على الخادم عند الحفظ.</p>
-<div class="eos-signatures" style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:36px">
-<div style="border-top:1px solid #777;padding-top:10px;text-align:center">توقيع الموظف</div>
-<div style="border-top:1px solid #777;padding-top:10px;text-align:center">اعتماد الشركة / الموارد البشرية</div>
-</div></section>
-<section class="panel"><h3>سجل التسويات</h3><div style="overflow-x:auto"><table><tr><th>رقم التسوية</th><th>الموظف</th><th>تاريخ الانتهاء</th><th>الأجر الأساسي</th><th>مدة الخدمة</th><th>المكافأة</th><th>الدمغة</th><th>الصافي</th><th>الحالة</th></tr>
-{% for s in settlements %}<tr><td>{{s.settlement_no}}</td><td>{{s.employee_code}} - {{s.full_name}}</td><td>{{s.termination_date}}</td><td>{{s.basic_salary_snapshot}}</td><td>{{s.service_months}} شهر / {{s.service_days}} يوم</td><td>{{s.gross_entitlement}}</td><td>{{s.stamp_duty}}</td><td>{{s.net_payable}}</td><td>{{'مسودة' if s.status=='draft' else s.status}}</td></tr>{% else %}<tr><td colspan="9">لا توجد تسويات حتى الآن.</td></tr>{% endfor %}</table></div></section>
-<script>
-(function () {
-  const employee = document.getElementById('eos-employee');
-  const basic = document.getElementById('eos-basic');
-  const months = document.getElementById('eos-months');
-  const days = document.getElementById('eos-days');
-  const stamp = document.getElementById('eos-stamp');
-  const gross = document.getElementById('eos-gross');
-  const net = document.getElementById('eos-net');
-  function recalculate() {
-    const salary = Math.max(0, Number(basic.value) || 0);
-    const monthCount = Math.max(0, Number(months.value) || 0);
-    const dayCount = Math.min(30, Math.max(0, Number(days.value) || 0));
-    const eligibleMonths = Math.min(20, monthCount + dayCount / 30);
-    const amount = Math.round((salary * eligibleMonths + Number.EPSILON) * 100) / 100;
-    const duty = Math.max(0, Number(stamp.value) || 0);
-    gross.value = amount.toFixed(2);
-    net.value = Math.max(0, amount - duty).toFixed(2);
-  }
-  employee.addEventListener('change', function () {
-    const option = employee.options[employee.selectedIndex];
-    basic.value = option && option.dataset.basic ? option.dataset.basic : '0';
-    recalculate();
-  });
-  [months, days, stamp].forEach(input => input.addEventListener('input', recalculate));
-  recalculate();
-})();
-</script>
-{% endblock %}
+<label>الأجر الأساسي المعتمد <input type="number" id="eos-basic" value="0" readonly step="0.01"></label><label>تاريخ انتهاء الخدمة <input type="date" name="termination_date" required></label>
+<label>سن التقاعد/الانتهاء (اختياري) <input type="number" name="retirement_age" min="1" max="100" placeholder="60 أو 61 حسب الحالة"></label><label>سبب انتهاء الخدمة <input name="reason" maxlength="250"></label>
+<label>شهور الخدمة <input type="number" name="service_months" id="eos-months" min="0" step="1" value="0" required></label><label>أيام الخدمة <input type="number" name="service_days" id="eos-days" min="0" max="30" step="1" value="0" required></label>
+<label>إجمالي المكافأة <input type="number" id="eos-gross" value="0" readonly step="0.01"></label><label>الدمغة <input type="number" name="stamp_duty" id="eos-stamp" min="0" step="0.01" value="0" required></label>
+<label>صافي المستحق <input type="number" id="eos-net" value="0" readonly step="0.01"></label><label>ملاحظات <input name="notes" maxlength="500"></label><div><button type="submit">حفظ كمسودة</button></div></form>
+<p class="muted">الشهر = أجر أساسي كامل، واليوم = الأساسي ÷ 30. يتوقف الحساب عند 20 شهرًا. يعيد الخادم الحساب والتحقق عند الحفظ.</p></section>
+<section class="panel"><h3>سجل التسويات</h3><div class="table-wrap"><table><tr><th>رقم التسوية</th><th>الموظف</th><th>تاريخ الانتهاء</th><th>الأساسي</th><th>مدة الخدمة</th><th>الإجمالي</th><th>الدمغة</th><th>الصافي</th><th>المدفوع</th><th>المتبقي</th><th>الإجراءات</th></tr>
+{% for s in settlements %}<tr><td>{{s.settlement_no}}</td><td>{{s.employee_code}} - {{s.full_name}}</td><td>{{s.termination_date}}</td><td>{{s.basic_salary_snapshot}}</td><td>{{s.service_months}} شهر / {{s.service_days}} يوم</td><td>{{s.gross_entitlement}}</td><td>{{s.stamp_duty}}</td><td>{{s.net_payable}}</td><td>{{s.paid_amount}}</td><td>{{s.remaining_amount}}</td><td>
+{% if s.status=='draft' %}<span class="status-badge">مسودة</span><details><summary>اعتماد وترحيل القيد</summary><form method="post" action="{{url_for('workforce.approve_end_of_service',settlement_id=s.id)}}" class="form-grid">
+<label>مصروف المكافأة<select name="expense_account_id" required>{% for a in accounts if a.account_type=='expense' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<label>المكافأة المستحقة<select name="payable_account_id" required>{% for a in accounts if a.account_type=='liability' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<label>الدمغة المستحقة (إذا كانت أكبر من صفر)<select name="stamp_payable_account_id"><option value="">غير محدد</option>{% for a in accounts if a.account_type=='liability' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label><button type="submit">اعتماد وترحيل</button></form></details>
+<form method="post" action="{{url_for('workforce.delete_end_of_service_draft',settlement_id=s.id)}}" onsubmit="return confirm('حذف مسودة نهاية الخدمة؟')"><button type="submit" class="danger">حذف المسودة</button></form>
+{% else %}<span class="status-badge">{{'مدفوعة بالكامل' if s.status=='paid' else 'معتمدة'}}</span>{% if s.journal_entry_id %}<a href="{{url_for('journal_detail',entry_id=s.journal_entry_id)}}">القيد {{s.journal_entry_id}}</a>{% endif %}
+{% if s.status=='approved' and s.remaining_amount>0 %}<details><summary>تسجيل صرف</summary><form method="post" action="{{url_for('workforce.pay_end_of_service',settlement_id=s.id)}}" class="form-grid">
+<label>تاريخ الصرف<input type="date" name="payment_date" value="{{today}}" required></label><label>المبلغ<input type="number" name="amount" min="0.01" max="{{s.remaining_amount}}" step="0.01" value="{{s.remaining_amount}}" required></label>
+<label>الخزينة / البنك<select name="cash_account_id" required>{% for a in payment_accounts %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label><label>ملاحظات<input name="notes" maxlength="250"></label><button type="submit">صرف وترحيل</button></form></details>{% endif %}{% endif %}
+<a class="button secondary" href="{{url_for('workforce.print_end_of_service',settlement_id=s.id)}}" target="_blank">طباعة الكشف والتوقيعات</a></td></tr>{% else %}<tr><td colspan="11">لا توجد تسويات حتى الآن.</td></tr>{% endfor %}</table></div></section>
+<section class="panel"><h3>سجل دفعات نهاية الخدمة</h3><div class="table-wrap"><table><tr><th>التاريخ</th><th>رقم التسوية</th><th>الموظف</th><th>المبلغ</th><th>الحساب</th><th>القيد</th><th>المرجع</th></tr>{% for p in payment_history %}<tr><td>{{p.payment_date}}</td><td>{{p.settlement_no}}</td><td>{{p.employee_code}} - {{p.full_name}}</td><td>{{p.amount}}</td><td>{{p.account_code}} - {{p.account_name}}</td><td><a href="{{url_for('journal_detail',entry_id=p.journal_entry_id)}}">{{p.journal_entry_id}}</a></td><td>{{p.reference}}</td></tr>{% else %}<tr><td colspan="7">لا توجد دفعات.</td></tr>{% endfor %}</table></div></section>
+<script>(function(){const e=document.getElementById('eos-employee'),b=document.getElementById('eos-basic'),m=document.getElementById('eos-months'),d=document.getElementById('eos-days'),s=document.getElementById('eos-stamp'),g=document.getElementById('eos-gross'),n=document.getElementById('eos-net');function calc(){const salary=Math.max(0,Number(b.value)||0),months=Math.max(0,Number(m.value)||0),days=Math.min(30,Math.max(0,Number(d.value)||0)),gross=Math.round((salary*Math.min(20,months+days/30)+Number.EPSILON)*100)/100,stamp=Math.max(0,Number(s.value)||0);g.value=gross.toFixed(2);n.value=Math.max(0,gross-stamp).toFixed(2);}e.addEventListener('change',()=>{const o=e.options[e.selectedIndex];b.value=o&&o.dataset.basic?o.dataset.basic:'0';calc();});[m,d,s].forEach(x=>x.addEventListener('input',calc));calc();})();</script>{% endblock %}

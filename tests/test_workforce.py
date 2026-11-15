@@ -67,6 +67,8 @@ class WorkforceTests(unittest.TestCase):
         (template_dir / "employee_loan_schedule.html").write_text("loan schedule", encoding="utf-8")
         (template_dir / "salary_changes.html").write_text("salary changes", encoding="utf-8")
         (template_dir / "salary_history.html").write_text("salary history", encoding="utf-8")
+        (template_dir / "end_of_service.html").write_text("{{ employees|length }}|{{ settlements|length }}", encoding="utf-8")
+        (template_dir / "end_of_service_print.html").write_text("{{ settlement.settlement_no }}|{{ settlement.net_payable }}", encoding="utf-8")
         (template_dir / "incentive_rules.html").write_text(
             "{{ total_rules }}|{{ active_rules }}|{% for r in incentive_rules %}{{ r.name }}{% endfor %}",
             encoding="utf-8"
@@ -355,6 +357,9 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         self.assertEqual(line, ("13750.00", "12650.00"))
         conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT basic_salary FROM employees WHERE id=1").fetchone()[0], "10000")
+        conn.close()
+        conn = sqlite3.connect(self.db_path)
         manual_values = conn.execute(
             "SELECT basic_salary,allowances,taxable_income_tax,employee_insurance,employer_insurance,rule_set_id "
             "FROM payroll_lines WHERE run_id=1"
@@ -377,6 +382,10 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         self.assertEqual(status, "posted")
         self.assertEqual(journal_count, 1)
+        basis_conn = workforce._db()
+        self.assertEqual(workforce._employee_salary_basis(basis_conn, 1, "2026-11-30"),
+                         (Decimal("12000.00"), Decimal("12000.00")))
+        basis_conn.close()
         conn = sqlite3.connect(self.db_path)
         posted = conn.execute(
             "SELECT a.code,jl.debit,jl.credit,jl.memo FROM journal_lines jl "
@@ -1240,6 +1249,46 @@ class WorkforceTests(unittest.TestCase):
             ("E004", "5000"), ("E005", "4000")
         ])
         self.assertEqual(history, 3)
+
+
+    def test_end_of_service_approval_partial_payment_and_print(self):
+        self.add_employee()
+        conn=sqlite3.connect(self.db_path)
+        conn.execute("UPDATE employees SET work_status='resigned',termination_date='2026-11-15' WHERE id=1")
+        conn.commit(); conn.close()
+        created=self.client.post("/hr/end-of-service",data={
+            "employee_id":"1","termination_date":"2026-11-15","service_months":"10",
+            "service_days":"15","retirement_age":"60","stamp_duty":"100","reason":"استقالة"
+        })
+        self.assertEqual(created.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        draft=conn.execute("""SELECT status,basic_salary_snapshot,gross_entitlement,stamp_duty,net_payable
+            FROM employee_end_of_service_settlements WHERE id=1""").fetchone()
+        conn.close()
+        self.assertEqual(draft,("draft","10000.00","105000.00","100.00","104900.00"))
+        printed=self.client.get("/hr/end-of-service/1/print")
+        self.assertEqual(printed.status_code,200)
+        self.assertIn("EOS-E001-20261115",printed.get_data(as_text=True))
+        approved=self.client.post("/hr/end-of-service/1/approve",data={
+            "expense_account_id":"4","payable_account_id":"5","stamp_payable_account_id":"6"
+        })
+        self.assertEqual(approved.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        status,journal_id=conn.execute("SELECT status,journal_entry_id FROM employee_end_of_service_settlements WHERE id=1").fetchone()
+        debit,credit=conn.execute("SELECT SUM(debit),SUM(credit) FROM journal_lines WHERE entry_id=?",(journal_id,)).fetchone()
+        conn.close()
+        self.assertEqual(status,"approved")
+        self.assertAlmostEqual(debit,105000.0,places=2)
+        self.assertAlmostEqual(credit,105000.0,places=2)
+        self.client.post("/hr/end-of-service/1/pay",data={"payment_date":"2026-11-20","amount":"50000","cash_account_id":"1"})
+        self.client.post("/hr/end-of-service/1/pay",data={"payment_date":"2026-11-25","amount":"54900","cash_account_id":"1"})
+        conn=sqlite3.connect(self.db_path)
+        state=conn.execute("SELECT status,paid_at FROM employee_end_of_service_settlements WHERE id=1").fetchone()
+        payments=conn.execute("SELECT amount FROM employee_end_of_service_payments WHERE settlement_id=1 ORDER BY id").fetchall()
+        conn.close()
+        self.assertEqual(state[0],"paid")
+        self.assertIsNotNone(state[1])
+        self.assertEqual(payments,[("50000.00",),("54900.00",)])
 
 if __name__ == "__main__":
     unittest.main()
