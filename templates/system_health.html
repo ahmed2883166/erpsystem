@@ -21,7 +21,7 @@
         <td><span class="status-badge {{ 'status-paid' if item.count == 0 else ('status-cancelled' if item.severity == 'critical' and item.count else 'status-partial') }}">{{ item.status }}</span></td>
         <td>{{ item.count if item.count is not none else '—' }}</td>
         <td>{{ item.detail }}</td>
-        <td><a href="{{ item.href }}">فتح التفاصيل</a></td>
+        <td>{% if item.href %}<a href="{{ item.href }}">فتح التفاصيل</a>{% else %}<span class="muted">لا توجد صلاحية لفتح التقرير</span>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
