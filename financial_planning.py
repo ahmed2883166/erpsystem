@@ -271,7 +271,7 @@ def _opening_balance_mismatches(conn, cutoff_date, normalized):
 
     # If prior P&L has not yet been closed, carry its net result into retained earnings
     # for comparison with the opening balance entered for the new financial year.
-    pnl_rows = conn.execute("""SELECT a.account_type,jl.debit,jl.credit
+    pnl_rows = conn.execute(f"""SELECT a.account_type,jl.debit,jl.credit
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id

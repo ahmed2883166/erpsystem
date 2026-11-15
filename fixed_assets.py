@@ -828,6 +828,8 @@ def dispose(asset_id):
 
 def build_asset_reconciliation_rows(conn, as_of):
     """Reconcile register balances once per GL account, even when assets share a cost account."""
+    from accounting_core import register_decimal_aggregates
+    register_decimal_aggregates(conn)
     assets=conn.execute("""SELECT f.id,f.asset_account_id,f.accum_account_id,f.cost
         FROM fixed_assets f LEFT JOIN asset_disposals x ON x.asset_id=f.id
         WHERE f.purchase_date<=? AND f.status<>'reversed'
