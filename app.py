@@ -3908,7 +3908,7 @@ def import_data_wizard():
                         if not salary.is_finite() or salary < 0:
                             raise ValueError("الراتب الأساسي يجب أن يكون رقمًا غير سالب.")
                         status = clean.get("work_status") or "permanent"
-                        if status not in {"permanent", "comprehensive_bonus", "unpaid_leave", "resigned", "retired"}:
+                        if status not in {"permanent", "temporary", "comprehensive_bonus", "unpaid_leave", "resigned", "retired"}:
                             raise ValueError("حالة العمل غير معروفة.")
                         termination_date = clean.get("termination_date", "")
                         if termination_date:
