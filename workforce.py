@@ -97,6 +97,21 @@ def initialize_workforce_schema():
       effective_date TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
       created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS employee_end_of_service_settlements(
+      id INTEGER PRIMARY KEY, settlement_no TEXT NOT NULL UNIQUE,
+      employee_id INTEGER NOT NULL REFERENCES employees(id),
+      termination_date TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
+      service_start_date TEXT NOT NULL, service_years TEXT NOT NULL DEFAULT '0',
+      gross_entitlement TEXT NOT NULL DEFAULT '0', deductions TEXT NOT NULL DEFAULT '0',
+      net_payable TEXT NOT NULL DEFAULT '0',
+      status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','approved','paid','cancelled')),
+      notes TEXT NOT NULL DEFAULT '', created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      approved_by INTEGER, approved_at TEXT, paid_at TEXT,
+      UNIQUE(employee_id,termination_date)
+    );
+    CREATE INDEX IF NOT EXISTS idx_eos_employee_date
+      ON employee_end_of_service_settlements(employee_id,termination_date);
     CREATE INDEX IF NOT EXISTS idx_employee_employment_history
       ON employee_employment_history(employee_id,effective_date,id);
     CREATE TABLE IF NOT EXISTS payroll_runs(
@@ -3008,3 +3023,58 @@ def settle_custody(custody_id):
         flash(str(e), "error")
     c.close()
     return redirect(url_for("workforce.custody"))
+
+
+@workforce_bp.route("/hr/end-of-service", methods=["GET", "POST"])
+@_role("admin", "accountant")
+def end_of_service():
+    c = _db()
+    try:
+        if request.method == "POST":
+            employee_id = int(request.form.get("employee_id", "0"))
+            termination_date = date.fromisoformat(request.form.get("termination_date", ""))
+            employee = c.execute("SELECT * FROM employees WHERE id=?", (employee_id,)).fetchone()
+            if not employee:
+                raise ValueError("الموظف المحدد غير موجود.")
+            service_start = date.fromisoformat(employee["hire_date"])
+            if termination_date < service_start:
+                raise ValueError("تاريخ انتهاء الخدمة لا يجوز أن يسبق تاريخ التعيين.")
+            if employee["work_status"] not in ("resigned", "retired"):
+                raise ValueError("يجب تسجيل الاستقالة أو الإحالة للمعاش في السجل الوظيفي أولًا.")
+            if employee["termination_date"] and employee["termination_date"] != termination_date.isoformat():
+                raise ValueError("تاريخ التسوية يجب أن يطابق تاريخ انتهاء الخدمة المسجل في السجل الوظيفي.")
+            gross = M(request.form.get("gross_entitlement", "0"))
+            deductions = M(request.form.get("deductions", "0"))
+            if gross < 0 or deductions < 0 or deductions > gross:
+                raise ValueError("راجع إجمالي الاستحقاق والاستقطاعات؛ لا يجوز أن تكون سالبة أو تتجاوز الاستحقاق.")
+            years = Decimal((termination_date - service_start).days) / Decimal("365.2425")
+            settlement_no = "EOS-" + employee["employee_code"] + "-" + termination_date.strftime("%Y%m%d")
+            c.execute("BEGIN IMMEDIATE")
+            c.execute("""INSERT INTO employee_end_of_service_settlements
+                (settlement_no,employee_id,termination_date,reason,service_start_date,service_years,
+                 gross_entitlement,deductions,net_payable,notes,created_by)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (settlement_no,employee_id,termination_date.isoformat(),
+                 request.form.get("reason","").strip(),service_start.isoformat(),str(years),
+                 str(gross),str(deductions),str(M(gross-deductions)),
+                 request.form.get("notes","").strip(),session["user_id"]))
+            c.commit()
+            flash("تم حفظ تسوية نهاية الخدمة كمسودة فقط. لم يتم اعتمادها أو صرفها أو إنشاء قيد محاسبي.", "success")
+            return redirect(url_for("workforce.end_of_service"))
+        employees = c.execute("""SELECT id,employee_code,full_name,hire_date,work_status,termination_date
+            FROM employees WHERE work_status IN ('resigned','retired')
+            ORDER BY termination_date DESC,employee_code""").fetchall()
+        settlements = c.execute("""SELECT s.*,e.employee_code,e.full_name
+            FROM employee_end_of_service_settlements s JOIN employees e ON e.id=s.employee_id
+            ORDER BY s.created_at DESC,s.id DESC""").fetchall()
+        return render_template("end_of_service.html", employees=employees, settlements=settlements,
+                               today=date.today().isoformat())
+    except Exception as exc:
+        try:
+            c.rollback()
+        except Exception:
+            pass
+        flash(safe_error_message(exc), "error")
+        return redirect(url_for("workforce.end_of_service"))
+    finally:
+        c.close()
