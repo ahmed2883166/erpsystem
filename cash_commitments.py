@@ -281,7 +281,12 @@ def sync_friday_allowance_commitments(conn, created_by=None):
         ).fetchone()
         currency_code = str(setting["setting_value"] or "") if setting else ""
 
-    conn.execute("BEGIN IMMEDIATE")
+    owns_transaction = not conn.in_transaction
+    savepoint = "sync_friday_allowance_commitments"
+    if owns_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    else:
+        conn.execute(f"SAVEPOINT {savepoint}")
     imported = 0
     skipped = []
     try:
@@ -349,10 +354,17 @@ def sync_friday_allowance_commitments(conn, created_by=None):
                  currency_code, payable_account_id, batch_id, created_by),
             )
             imported += 1
-        conn.commit()
+        if owns_transaction:
+            conn.commit()
+        else:
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
         return {"imported": imported, "skipped": skipped}
     except Exception:
-        conn.rollback()
+        if owns_transaction:
+            conn.rollback()
+        else:
+            conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
         raise
 
 _FREQUENCY_MONTHS = {
