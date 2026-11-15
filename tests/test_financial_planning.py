@@ -271,6 +271,40 @@ class FinancialPlanningTests(unittest.TestCase):
         self.assertEqual(s["total_equity"],Decimal("1150"))
         self.assertTrue(s["balanced"])
 
+    def test_provision_liability_and_expense_are_reflected_in_balance_sheet(self):
+        self.conn.executemany(
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group) VALUES(?,?,?,?,0)",
+            [
+                (1, "1110", "الصندوق", "asset"),
+                (2, "3100", "رأس المال", "equity"),
+                (3, "4100", "الإيرادات", "revenue"),
+                (4, "6200", "مصروف مخصص", "expense"),
+                (5, "2250", "مخصص التزامات", "liability"),
+            ],
+        )
+        entries = [
+            (1, "2026-01-01", "posted", [(1, "1000", "0"), (2, "0", "1000")]),
+            (2, "2026-01-02", "posted", [(1, "200", "0"), (3, "0", "200")]),
+            (3, "2026-01-03", "posted", [(4, "50", "0"), (5, "0", "50")]),
+        ]
+        for entry_id, entry_date, status, lines in entries:
+            self.conn.execute(
+                "INSERT INTO journal_entries(id,entry_date,status) VALUES(?,?,?)",
+                (entry_id, entry_date, status),
+            )
+            for account_id, debit, credit in lines:
+                self.conn.execute(
+                    "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(?,?,?,?)",
+                    (entry_id, account_id, debit, credit),
+                )
+        snapshot = build_balance_sheet_snapshot(self.conn, "2026-01-31")
+        self.assertEqual(snapshot["total_assets"], Decimal("1200"))
+        self.assertEqual(snapshot["total_liabilities"], Decimal("50"))
+        self.assertEqual(snapshot["net_profit"], Decimal("150"))
+        self.assertEqual(snapshot["total_equity"], Decimal("1150"))
+        self.assertEqual(snapshot["balance_difference"], Decimal("0"))
+        self.assertTrue(snapshot["balanced"])
+
     def test_each_activity_chart_has_unique_account_codes(self):
         for activity, rows in CHARTS.items():
             codes = [row[0] for row in rows]
