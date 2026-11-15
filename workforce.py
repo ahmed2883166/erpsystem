@@ -1365,6 +1365,95 @@ def payroll_reconciliation():
         else:
             journal = None
 
+        # Audit actual cash/bank payroll payments separately from the accrual journal.
+        payment_rows = c.execute("""
+            SELECT p.id,p.amount,p.payment_date,p.reference,p.journal_entry_id,
+                   COALESCE(SUM(CAST(a.amount AS NUMERIC)),0) AS allocated_total,
+                   COUNT(a.id) AS allocation_count
+            FROM payroll_payments p
+            LEFT JOIN payroll_payment_allocations a ON a.payment_id=p.id
+            WHERE p.run_id=?
+            GROUP BY p.id ORDER BY p.payment_date,p.id
+        """, (run["id"],)).fetchall() if c.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'"
+        ).fetchone() else c.execute("""
+            SELECT p.id,p.amount,p.payment_date,p.reference,p.journal_entry_id,
+                   0 AS allocated_total,0 AS allocation_count
+            FROM payroll_payments p WHERE p.run_id=? ORDER BY p.payment_date,p.id
+        """, (run["id"],)).fetchall()
+        paid_total = Decimal("0")
+        for payment in payment_rows:
+            payment_amount = M(payment["amount"])
+            paid_total += payment_amount
+            if run["status"] == "reversed":
+                run_issues.append("تم تسجيل دفعة صرف على كشف مرتبات معكوس: دفعة " + str(payment["id"]) + ".")
+            payment_journal = c.execute("""
+                SELECT j.id,j.status,j.reference,
+                       COALESCE(SUM(CAST(l.debit AS NUMERIC)),0) AS debit_total,
+                       COALESCE(SUM(CAST(l.credit AS NUMERIC)),0) AS credit_total
+                FROM journal_entries j LEFT JOIN journal_lines l ON l.entry_id=j.id
+                WHERE j.id=? GROUP BY j.id
+            """, (payment["journal_entry_id"],)).fetchone()
+            if not payment_journal:
+                run_issues.append("قيد دفعة المرتبات رقم " + str(payment["id"]) + " غير موجود.")
+            else:
+                if payment_journal["status"] != "posted":
+                    run_issues.append("قيد دفعة المرتبات رقم " + str(payment["id"]) + " ليس مرحّلًا.")
+                if payment_journal["reference"] != payment["reference"]:
+                    run_issues.append("مرجع قيد دفعة المرتبات رقم " + str(payment["id"]) + " لا يطابق مرجع الدفعة.")
+                payment_debit = M(payment_journal["debit_total"])
+                payment_credit = M(payment_journal["credit_total"])
+                if payment_debit != payment_credit:
+                    run_issues.append("قيد دفعة المرتبات رقم " + str(payment["id"]) + " غير متوازن.")
+                if payment_debit != payment_amount or payment_credit != payment_amount:
+                    run_issues.append(
+                        "قيمة قيد دفعة المرتبات رقم " + str(payment["id"]) +
+                        " لا تطابق مبلغ الدفعة (" + str(payment_amount) + ")."
+                    )
+            if payment["allocation_count"] == 0:
+                run_issues.append(
+                    "دفعة المرتبات رقم " + str(payment["id"]) +
+                    " غير موزعة على الموظفين؛ يلزم مراجعة توزيعها التاريخي دون إنشاء قيد جديد."
+                )
+            elif M(payment["allocated_total"]) != payment_amount:
+                run_issues.append(
+                    "إجمالي توزيع دفعة المرتبات رقم " + str(payment["id"]) +
+                    " لا يساوي مبلغ الدفعة."
+                )
+        if paid_total > M(run["net_total"]):
+            run_issues.append(
+                "إجمالي دفعات الصرف (" + str(M(paid_total)) +
+                ") يتجاوز صافي المرتبات (" + str(M(run["net_total"])) + ")."
+            )
+
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'").fetchone():
+            invalid_allocations = c.execute("""
+                SELECT a.id,a.payment_id,a.payroll_line_id,p.run_id AS payment_run_id,
+                       pl.run_id AS line_run_id
+                FROM payroll_payment_allocations a
+                JOIN payroll_payments p ON p.id=a.payment_id
+                JOIN payroll_lines pl ON pl.id=a.payroll_line_id
+                WHERE p.run_id<>pl.run_id AND p.run_id=?
+            """, (run["id"],)).fetchall()
+            if invalid_allocations:
+                run_issues.append("توجد توزيعات صرف مرتبطة بموظفين من كشف مرتبات آخر.")
+            over_allocated_lines = c.execute("""
+                SELECT pl.id,e.employee_code,e.full_name,pl.net_pay,
+                       SUM(CAST(a.amount AS NUMERIC)) AS allocated
+                FROM payroll_lines pl
+                JOIN employees e ON e.id=pl.employee_id
+                JOIN payroll_payment_allocations a ON a.payroll_line_id=pl.id
+                JOIN payroll_payments p ON p.id=a.payment_id
+                WHERE pl.run_id=?
+                GROUP BY pl.id
+                HAVING SUM(CAST(a.amount AS NUMERIC))>CAST(pl.net_pay AS NUMERIC)
+            """, (run["id"],)).fetchall()
+            for allocation in over_allocated_lines:
+                run_issues.append(
+                    "توزيعات الصرف للموظف " + allocation["employee_code"] + " - " +
+                    allocation["full_name"] + " تتجاوز صافي استحقاقه."
+                )
+
         if run_issues:
             for message in run_issues:
                 issues.append({"period":run["period"],"run_id":run["id"],"message":message})
