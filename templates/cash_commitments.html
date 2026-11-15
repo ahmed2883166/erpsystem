@@ -104,6 +104,18 @@
 </section>
 {% endif %}
 
+{% if can_manage %}
+<section class="panel">
+  <h3>استيراد كشوف بدل الجمعة السابقة</h3>
+  <p class="muted">يراجع النظام الكشوف المرحلة التي لم تُربط بسجل الالتزامات. يتجاهل الكشف إذا كان قيده غير مرحّل أو معكوسًا، ولا يغيّر الكشف أو القيد ولا ينشئ قيدًا محاسبيًا جديدًا. إعادة المراجعة آمنة ولا تكرر السجلات المستوردة.</p>
+  <form method="post" onsubmit="return confirm('سيتم فحص كشوف بدل الجمعة السابقة واستيراد غير المرتبط منها فقط. هل تريد المتابعة؟');">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="sync_friday">
+    <button type="submit">مراجعة واستيراد الكشوف غير المرتبطة</button>
+  </form>
+</section>
+{% endif %}
+
 <section class="panel">
   <h3>الالتزامات المسجلة</h3>
   <div class="table-wrap">
