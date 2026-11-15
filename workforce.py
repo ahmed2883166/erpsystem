@@ -1549,7 +1549,7 @@ def print_payroll_run(run_id):
     for row in rows:
         details[row["id"]] = c.execute("""SELECT section,item_name,amount FROM payroll_line_items
             WHERE payroll_line_id=? ORDER BY section,sort_order,id""", (row["id"],)).fetchall() if has_items else []
-    fields = ("basic_salary","salary_raise","allowances","overtime_amount","gross_pay",
+    fields = ("basic_salary","salary_raise","allowances","overtime_amount","gross_pay","insured_wage",
               "employer_insurance","total_entitlements","employee_insurance","taxable_income_tax",
               "stamp_duty","advance_deduction","other_deductions","absence_deduction",
               "penalty_deduction","total_deductions","net_pay")
