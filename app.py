@@ -2572,6 +2572,14 @@ def cash_commitments_register():
                         request.form.get("reversal_reason", ""),
                         created_by=session.get("user_id"),
                     )
+                    log_change(
+                        "cash_commitment_payment_reversed", "cash_commitment_payment",
+                        int(request.form.get("payment_id", "0")),
+                        {"reversal_journal_entry_id": None},
+                        {"reversal_journal_entry_id": reversal_id},
+                        details=f"عكس قيد سداد الالتزام #{reversal_id}",
+                        reason=request.form.get("reversal_reason", "").strip(),
+                    )
                     flash(f"تم عكس قيد السداد رقم {reversal_id} وتحديث رصيد الالتزام.", "success")
                 elif action == "void":
                     void_cash_commitment(connection, int(request.form.get("commitment_id", "0")))
@@ -3097,6 +3105,7 @@ def reverse_journal(entry_id):
             "asset_depreciations": "إهلاك الأصول",
             "asset_disposals": "استبعاد الأصول",
             "bank_transactions": "حركات البنوك",
+            "cash_commitment_payments": "سجل الالتزامات النقدية",
         }
         source_label = source_labels.get(linked_source, linked_source)
         flash(
