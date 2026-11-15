@@ -90,6 +90,25 @@ class WorkforceTests(unittest.TestCase):
         conn.commit()
         conn.close()
 
+    def approve_pending_salary_changes(self, run_id=1):
+        conn = sqlite3.connect(self.db_path)
+        line_ids = [row[0] for row in conn.execute(
+            "SELECT id FROM payroll_lines WHERE run_id=? AND basic_salary_approval_required=1 AND basic_salary_approved_by IS NULL",
+            (run_id,)
+        ).fetchall()]
+        conn.close()
+        if not line_ids:
+            return
+        with self.client.session_transaction() as session:
+            session["role"] = "admin"
+        for line_id in line_ids:
+            self.client.post(
+                f"/hr/payroll/{run_id}/salary-approval/{line_id}",
+                data={"approval_note": "موافقة مدير افتراضية للاختبار"},
+            )
+        with self.client.session_transaction() as session:
+            session["role"] = "accountant"
+
     
     def test_grant_selection_filters_by_employee_category_and_creates_review_lines(self):
         self.add_employee()
@@ -292,6 +311,7 @@ class WorkforceTests(unittest.TestCase):
         self.add_employee()
         self.client.post("/hr/payroll", data={
             "period": "2026-11", "basic_1": "12000", "allowances_1": "1500",
+            "basic_override_reason_1": "سبب تعديل الراتب في الاختبار",
             "overtime_hours_1": "0", "overtime_amount_1": "",
             "absent_hours_1": "0", "absence_deduction_1": "0",
             "other_deductions_1": "100", "tax_1": "500",
@@ -316,6 +336,7 @@ class WorkforceTests(unittest.TestCase):
         self.add_employee()
         response = self.client.post("/hr/payroll", data={
             "period": "2026-11", "basic_1": "12000", "allowances_1": "1500",
+            "basic_override_reason_1": "سبب تعديل الراتب في الاختبار",
             "overtime_hours_1": "10", "overtime_amount_1": "750",
             "overtime_override_reason_1": "اعتماد يدوي بعد مراجعة المشرف",
             "absent_hours_1": "2", "absence_deduction_1": "100",
@@ -336,6 +357,7 @@ class WorkforceTests(unittest.TestCase):
         # Even though the test setup seeded Egypt's automatic rule set, manual
         # amounts must remain unchanged and no statutory rule is snapshotted.
         self.assertEqual(manual_values, ("12000.00", "1000.00", "500.00", "300.00", "400.00", None))
+        self.approve_pending_salary_changes(1)
         response = self.client.post("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
@@ -363,12 +385,14 @@ class WorkforceTests(unittest.TestCase):
         self.add_employee()
         self.client.post("/hr/payroll", data={
             "period": "2026-11", "basic_1": "12000", "allowances_1": "0",
+            "basic_override_reason_1": "سبب تعديل الراتب في الاختبار",
             "overtime_hours_1": "0", "overtime_amount_1": "",
             "absent_hours_1": "0", "absence_deduction_1": "0",
             "other_deductions_1": "0", "tax_1": "0",
             "employee_ins_1": "0", "employer_ins_1": "0"
         })
 
+        self.approve_pending_salary_changes(1)
         statements = []
         original_db = workforce._db
 
@@ -378,6 +402,7 @@ class WorkforceTests(unittest.TestCase):
             return connection
 
         with patch.object(workforce, "_db", side_effect=traced_db):
+        self.approve_pending_salary_changes(1)
             response = self.client.post("/hr/payroll/1/post", data={
                 "salary_expense_account": "4", "employer_ins_expense_account": "3",
                 "salaries_payable_account": "5", "tax_payable_account": "6",
@@ -398,12 +423,14 @@ class WorkforceTests(unittest.TestCase):
         self.add_employee()
         self.client.post("/hr/payroll", data={
             "period": "2026-11", "basic_1": "12000", "allowances_1": "1500",
+            "basic_override_reason_1": "سبب تعديل الراتب في الاختبار",
             "overtime_hours_1": "10", "overtime_amount_1": "750",
             "overtime_override_reason_1": "اعتماد يدوي بعد مراجعة المشرف",
             "absent_hours_1": "2", "absence_deduction_1": "100",
             "other_deductions_1": "200", "tax_1": "500",
             "employee_ins_1": "300", "employer_ins_1": "400"
         })
+        self.approve_pending_salary_changes(1)
         self.client.post("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
@@ -440,10 +467,12 @@ class WorkforceTests(unittest.TestCase):
         self.add_employee()
         self.client.post("/hr/payroll", data={
             "period":"2026-11","basic_1":"12000","allowances_1":"0",
+            "basic_override_reason_1": "سبب تعديل الراتب في الاختبار",
             "overtime_hours_1":"0","overtime_amount_1":"","absent_hours_1":"0",
             "absence_deduction_1":"0","other_deductions_1":"0","tax_1":"0",
             "employee_ins_1":"0","employer_ins_1":"0"
         })
+        self.approve_pending_salary_changes(1)
         self.client.post("/hr/payroll/1/post", data={
             "salary_expense_account":"4","employer_ins_expense_account":"3",
             "salaries_payable_account":"5","tax_payable_account":"6",
@@ -483,12 +512,14 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(disbursed_debit,8)
         self.assertEqual(installments,[("2026-11","333.34"),("2026-12","333.33"),("2027-01","333.33")])
         self.client.post("/hr/payroll",data={"period":"2026-11","basic_1":"12000",
+        "basic_override_reason_1": "سبب تعديل الراتب في الاختبار",
             "overtime_hours_1":"0","overtime_amount_1":"","absent_hours_1":"0","absence_deduction_1":"0",
             "advance_1":"0","other_deductions_1":"0","tax_1":"500","employee_ins_1":"300","employer_ins_1":"400"})
         conn=sqlite3.connect(self.db_path)
         line=conn.execute("SELECT advance_deduction,loan_deduction,net_pay FROM payroll_lines").fetchone()
         conn.close()
         self.assertEqual(line,("333.34","333.34","12366.66"))  # Duplicate active allowance is counted once.
+        self.approve_pending_salary_changes(1)
         response=self.client.post("/hr/payroll/1/post",data={"salary_expense_account":"4",
             "employer_ins_expense_account":"3","salaries_payable_account":"5","tax_payable_account":"6",
             "insurance_payable_account":"7","advances_account":"8","other_deductions_account":"2"})
@@ -576,17 +607,80 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(state, "open")
 
 
-    def test_payroll_rejects_empty_or_zero_basic_salary(self):
+    def test_payroll_uses_employee_master_salary_when_monthly_field_is_blank(self):
         self.add_employee()
-        for value in ("", "0", "0.00"):
-            response = self.client.post("/hr/payroll", data={
-                "period": "2026-11", "basic_1": value
-            }, follow_redirects=True)
-            self.assertIn("الراتب الأساسي", response.get_data(as_text=True))
+        response = self.client.post("/hr/payroll", data={"period": "2026-11", "basic_1": ""})
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        line = conn.execute(
+            "SELECT basic_salary,basic_salary_reference,basic_salary_approval_required FROM payroll_lines"
+        ).fetchone()
+        conn.close()
+        self.assertEqual(line, ("10000.00", "10000.00", 0))
+
+    def test_payroll_rejects_explicit_zero_basic_salary(self):
+        self.add_employee()
+        response = self.client.post("/hr/payroll", data={
+            "period": "2026-11", "basic_1": "0"
+        }, follow_redirects=True)
+        self.assertIn("الراتب الأساسي", response.get_data(as_text=True))
         conn = sqlite3.connect(self.db_path)
         count = conn.execute("SELECT COUNT(*) FROM payroll_runs").fetchone()[0]
         conn.close()
         self.assertEqual(count, 0)
+
+    def test_payroll_basic_salary_variance_limit_is_configurable_by_admin(self):
+        with self.client.session_transaction() as session:
+            session["role"] = "admin"
+        response = self.client.post("/hr/payroll/settings", data={
+            "basic_salary_variance_limit_percent": "15"
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        value = conn.execute(
+            "SELECT setting_value FROM company_settings WHERE setting_key='payroll_basic_salary_variance_limit_percent'"
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(value, "15.00")
+
+    def test_large_basic_salary_change_requires_admin_approval_before_posting(self):
+        self.add_employee()
+        response = self.client.post("/hr/payroll", data={
+            "period": "2026-11", "basic_1": "12000",
+            "basic_override_reason_1": "قرار زيادة معتمد من الإدارة"
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        line = conn.execute(
+            "SELECT basic_salary_reference,basic_salary_variance_percent,basic_salary_approval_required,basic_salary_approved_by FROM payroll_lines"
+        ).fetchone()
+        conn.close()
+        self.assertEqual(line, ("10000.00", "20.00", 1, None))
+        post_data = {"salary_expense_account":"4","employer_ins_expense_account":"3",
+            "salaries_payable_account":"5","tax_payable_account":"6","insurance_payable_account":"7",
+            "advances_account":"2","other_deductions_account":"2"}
+        blocked = self.client.post("/hr/payroll/1/post", data=post_data, follow_redirects=True)
+        self.assertIn("موافقة المدير", blocked.get_data(as_text=True))
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
+        conn.close()
+        with self.client.session_transaction() as session:
+            session["role"] = "admin"
+        approved = self.client.post("/hr/payroll/1/salary-approval/1",
+            data={"approval_note":"تمت مراجعة قرار الزيادة"}, follow_redirects=True)
+        self.assertIn("تم اعتماد تعديل الراتب الأساسي", approved.get_data(as_text=True))
+        conn = sqlite3.connect(self.db_path)
+        approved_by = conn.execute("SELECT basic_salary_approved_by FROM payroll_lines WHERE id=1").fetchone()[0]
+        conn.close()
+        self.assertEqual(approved_by, 1)
+        with self.client.session_transaction() as session:
+            session["role"] = "accountant"
+        posted = self.client.post("/hr/payroll/1/post", data=post_data)
+        self.assertEqual(posted.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        status = conn.execute("SELECT status FROM payroll_runs WHERE id=1").fetchone()[0]
+        conn.close()
+        self.assertEqual(status, "posted")
 
     def test_multi_employee_payroll_totals_and_posted_journal(self):
         self.add_employee()
@@ -598,6 +692,7 @@ class WorkforceTests(unittest.TestCase):
         response = self.client.post("/hr/payroll", data={
             "period": "2026-11",
             "basic_1": "12000", "allowances_1": "1500", "overtime_amount_1": "750",
+            "basic_override_reason_1": "سبب تعديل الراتب في الاختبار",
             "overtime_override_reason_1": "اعتماد يدوي بعد مراجعة المشرف",
             "absence_deduction_1": "100", "other_deductions_1": "200",
             "tax_1": "500", "employee_ins_1": "300", "employer_ins_1": "400",
@@ -610,6 +705,7 @@ class WorkforceTests(unittest.TestCase):
         totals = conn.execute("SELECT SUM(CAST(gross_pay AS NUMERIC)),SUM(CAST(net_pay AS NUMERIC)) FROM payroll_lines").fetchone()
         conn.close()
         self.assertEqual(totals, (21750, 20200))
+        self.approve_pending_salary_changes(1)
         response = self.client.post("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
@@ -694,6 +790,7 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         response = self.client.post("/hr/payroll", data={
             "period": "2026-11", "basic_1": "11000",
+            "basic_override_reason_1": "سبب تعديل الراتب في الاختبار",
             "overtime_hours_1": "10", "overtime_rate_percent_1": "150",
             "overtime_amount_1": "700", "overtime_override_reason_1": "موافقة مدير التشغيل",
             "other_deductions_1": "50", "tax_1": "0", "employee_ins_1": "0",
@@ -730,6 +827,7 @@ class WorkforceTests(unittest.TestCase):
             "absence_deduction_1": "0", "other_deductions_1": "0",
             "tax_1": "0", "employee_ins_1": "0", "employer_ins_1": "0"
         })
+        self.approve_pending_salary_changes(1)
         response = self.client.post("/hr/payroll/1/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
@@ -777,6 +875,7 @@ class WorkforceTests(unittest.TestCase):
         # run-scoped reference while preserving the original and reversal.
         self.client.post("/hr/payroll", data={
             "period": "2026-11", "basic_1": "10500", "allowances_1": "0",
+            "basic_override_reason_1": "سبب تعديل الراتب في الاختبار",
             "overtime_hours_1": "0", "overtime_amount_1": "",
             "absence_deduction_1": "0", "other_deductions_1": "0",
             "tax_1": "0", "employee_ins_1": "0", "employer_ins_1": "0"
@@ -786,6 +885,7 @@ class WorkforceTests(unittest.TestCase):
             "SELECT id FROM payroll_runs WHERE status='draft' AND period='2026-11'"
         ).fetchone()[0]
         conn.close()
+        self.approve_pending_salary_changes(replacement_run_id)
         response = self.client.post(f"/hr/payroll/{replacement_run_id}/post", data={
             "salary_expense_account": "4", "employer_ins_expense_account": "3",
             "salaries_payable_account": "5", "tax_payable_account": "6",
@@ -912,6 +1012,7 @@ class WorkforceTests(unittest.TestCase):
         response = self.client.post("/hr/payroll", data={
             "period": "2026-11", "auto_calculate_statutory": "1",
             "basic_1": "12000", "allowances_1": "1000",
+            "basic_override_reason_1": "سبب تعديل الراتب في الاختبار",
             "overtime_hours_1": "0", "overtime_amount_1": "0",
             "absent_hours_1": "0", "absence_deduction_1": "0",
             "other_deductions_1": "0", "tax_1": "0",
