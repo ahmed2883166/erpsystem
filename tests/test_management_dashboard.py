@@ -128,20 +128,24 @@ class ManagementDashboardTests(unittest.TestCase):
 
     def test_cash_forecast_groups_outstanding_invoices_by_due_week_exactly(self):
         self.conn.executescript("""
+            CREATE TABLE customers(id INTEGER PRIMARY KEY,code TEXT,name TEXT);
+            CREATE TABLE suppliers(id INTEGER PRIMARY KEY,code TEXT,name TEXT);
+            INSERT INTO customers VALUES(1,'C001','عميل اختبار');
+            INSERT INTO suppliers VALUES(1,'S001','مورد اختبار');
             CREATE TABLE sales_invoices(
-                id INTEGER PRIMARY KEY,status TEXT,invoice_date TEXT,due_date TEXT,
+                id INTEGER PRIMARY KEY,customer_id INTEGER,status TEXT,invoice_date TEXT,due_date TEXT,
                 total_amount TEXT,paid_amount TEXT,credited_amount TEXT
             );
             CREATE TABLE supplier_bills(
-                id INTEGER PRIMARY KEY,status TEXT,bill_date TEXT,due_date TEXT,
+                id INTEGER PRIMARY KEY,supplier_id INTEGER,status TEXT,bill_date TEXT,due_date TEXT,
                 total_amount TEXT,paid_amount TEXT,credited_amount TEXT
             );
             INSERT INTO sales_invoices VALUES
-                (1,'posted','2026-11-10','2026-11-08','1000.00','200.00','100.00'),
-                (2,'posted','2026-11-10','2026-11-25','300.00','0','0'),
-                (3,'draft','2026-11-10','2026-11-12','900.00','0','0');
+                (1,1,'posted','2026-11-10','2026-11-08','1000.00','200.00','100.00'),
+                (2,1,'posted','2026-11-10','2026-11-25','300.00','0','0'),
+                (3,1,'draft','2026-11-10','2026-11-12','900.00','0','0');
             INSERT INTO supplier_bills VALUES
-                (1,'posted','2026-11-10','2026-11-26','500.00','100.00','0');
+                (1,1,'posted','2026-11-10','2026-11-26','500.00','100.00','0');
         """)
         forecast = cash_forecast(self.conn, date(2026,11,11), 8)
         self.assertEqual(forecast["weeks"][0]["receipts"], Decimal("700.00"))
