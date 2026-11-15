@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block title %}إدارة الخزائن والبنوك | NEXUS ERP{% endblock %}
 {% block content %}
-<header>
+<header class="page-heading">
   <div><h2>الخزائن والبنوك</h2><p class="muted">كل سجل يمثل خزنة أو بنكًا واحدًا ويرتبط بحساب أستاذ تفصيلي مستقل. لا تحذف السجلات؛ عطّلها عند التوقف عن الاستخدام.</p></div>
   <a class="btn secondary" href="{{ url_for('bank.index') }}">العودة إلى الحركة النقدية</a>
 </header>
-<div class="grid">
-<section class="panel">
+<div class="cash-account-layout">
+<section class="panel cash-account-create">
   <h3>إضافة خزنة أو بنك</h3>
   <form method="post">
     <label>النوع
@@ -42,7 +42,7 @@
     <button type="submit">حفظ وربط الحساب</button>
   </form>
 </section>
-<section class="panel">
+<section class="panel cash-account-register">
   <h3>السجلات المعرفة</h3>
   <div class="table-wrap"><table>
     <thead><tr><th>النوع</th><th>الاسم</th><th>حساب الأستاذ</th><th>الفرع</th><th>العملة</th><th>بيانات البنك</th><th>الحالة</th><th>الإجراء</th></tr></thead>
