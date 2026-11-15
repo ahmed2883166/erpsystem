@@ -62,6 +62,7 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.db.execute("INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1150','مخزون','asset',0)")
         self.db.execute("INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('2110','الموردون','liability',0)")
         self.db.execute("INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('3000','حقوق الملكية','equity',0)")
+        self.db.execute("INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1165','ضريبة مدخلات','asset',0)")
         supplier_id = self.db.execute(
             "INSERT INTO suppliers(code,name) VALUES('SUP-RETURN-ROUTE','مورد مرتجع')"
         ).lastrowid
@@ -86,7 +87,7 @@ class PurchasingAccountingTests(unittest.TestCase):
                 bill_no,supplier_id,bill_date,supplier_invoice_no,subtotal,tax_rate,tax_amount,
                 total_amount,credited_amount,status,bill_kind
             ) VALUES('BILL-RETURN-ROUTE',?,'2026-11-10','INV-RETURN-ROUTE',
-                     '50','0','0','50','0','posted','inventory')""",
+                     '50','14','7','57','0','posted','inventory')""",
             (supplier_id,),
         ).lastrowid
         self.db.execute(
@@ -146,6 +147,7 @@ class PurchasingAccountingTests(unittest.TestCase):
             }),
             patch("activity_profiles.resolve_product_account_code", return_value="1150"),
             patch("purchases.validate_journal_dimensions", return_value={}),
+            patch("purchases._activity_tax_roles", return_value={"input_vat": "1165"}),
         ):
             response = client.post("/purchases/credit-notes/new", data={
                 "supplier_id": str(supplier_id),
@@ -165,7 +167,7 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.assertIsNotNone(note)
         self.assertEqual(note["status"], "posted")
         self.assertIsNotNone(note["journal_entry_id"])
-        self.assertEqual(Decimal(note["total_amount"]), Decimal("20.00"))
+        self.assertEqual(Decimal(note["total_amount"]), Decimal("22.80"))
         allocations = self.db.execute(
             """SELECT a.quantity,a.unit_cost,a.total_cost,a.source_layer_id,m.accounting_status,
                       m.movement_type,m.journal_entry_id
@@ -193,7 +195,8 @@ class PurchasingAccountingTests(unittest.TestCase):
             [(row["code"], Decimal(str(row["debit"])), Decimal(str(row["credit"])))
              for row in journal_totals],
             [("1150", Decimal("0"), Decimal("20")),
-             ("2110", Decimal("20"), Decimal("0"))],
+             ("1165", Decimal("0"), Decimal("2.8")),
+             ("2110", Decimal("22.8"), Decimal("0"))],
         )
         layer = self.db.execute(
             "SELECT qty_remaining,value_remaining FROM stock_valuation_layers WHERE source_movement_id=?",
@@ -204,7 +207,7 @@ class PurchasingAccountingTests(unittest.TestCase):
         bill = self.db.execute(
             "SELECT credited_amount FROM supplier_bills WHERE id=?", (bill_id,)
         ).fetchone()
-        self.assertEqual(Decimal(bill["credited_amount"]), Decimal("20.00"))
+        self.assertEqual(Decimal(bill["credited_amount"]), Decimal("22.80"))
         inventory_gl = self.db.execute(
             """SELECT SUM(CAST(jl.debit AS NUMERIC)-CAST(jl.credit AS NUMERIC))
                FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
