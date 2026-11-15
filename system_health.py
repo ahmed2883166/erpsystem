@@ -175,12 +175,18 @@ def index():
         can_reports = is_admin or "reports.view" in permissions
         can_stock = is_admin or "stock.view" in permissions
         can_purchases = is_admin or "purchases.view" in permissions
+        can_security = is_admin or "security.view" in permissions
+        can_settings = is_admin or "settings.view" in permissions
+        can_approvals = is_admin or "approvals.view" in permissions
         restricted_links = {
             "journal_balance": can_reports,
             "journal_empty": can_reports,
             "negative_stock_layers": can_stock,
             "stock_gl_review": can_stock,
             "purchase_integrity": can_purchases,
+            "recent_login_attempts": can_security,
+            "backup_readiness": can_settings,
+            "pending_approvals": can_approvals,
         }
         for item in checks:
             if item["key"] in restricted_links and not restricted_links[item["key"]]:
