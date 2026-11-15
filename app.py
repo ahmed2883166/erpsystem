@@ -2091,7 +2091,7 @@ def approval_inbox():
     if "user_id" not in session:
         return redirect(url_for("login"))
     permissions = set(session.get("permissions", PERMISSIONS.get(session.get("role"), set())))
-    approval_permissions = {"purchases.approve", "sales.approve", "budget.approve"}
+    approval_permissions = {"purchases.approve", "sales.approve", "budget.approve", "workforce.manage"}
     if not (permissions & approval_permissions):
         flash("لا تملك صلاحية مراجعة المستندات المعلقة.", "error")
         return redirect(url_for("dashboard"))
@@ -2146,6 +2146,117 @@ def approval_inbox():
                         "counterparty": row["department"] or row["purpose"],
                         "href": url_for("purchase.purchase_requests"), "can_act": not own,
                         "blocked_reason": "لا يجوز اعتماد أو رفض الطلب الذي أنشأته أو أرسلته للمراجعة." if own else "",
+                    })
+
+        if "workforce.manage" in permissions:
+            def approval_table_exists(table_name):
+                return connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    (table_name,),
+                ).fetchone() is not None
+
+            if approval_table_exists("payroll_runs") and approval_table_exists("payroll_lines"):
+                for row in connection.execute("""
+                    SELECT r.id,r.period,r.created_by,COUNT(l.id) AS employee_count,
+                           COALESCE(SUM(CAST(l.net_pay AS NUMERIC)),0) AS net_total
+                    FROM payroll_runs r JOIN payroll_lines l ON l.run_id=r.id
+                    WHERE r.status='draft'
+                    GROUP BY r.id,r.period,r.created_by
+                    ORDER BY r.period DESC,r.id DESC
+                """).fetchall():
+                    own = row["created_by"] is None or row["created_by"] == actor_id
+                    items.append({
+                        "kind": "كشف المرتبات", "number": row["period"],
+                        "date": row["period"], "counterparty": "عدد الموظفين: " + str(row["employee_count"]),
+                        "amount": row["net_total"],
+                        "href": url_for("workforce.payroll_run", run_id=row["id"]),
+                        "can_act": not own,
+                        "blocked_reason": "لا يجوز اعتماد وترحيل كشف المرتبات بواسطة منشئه." if own else "",
+                    })
+
+            if approval_table_exists("employee_final_payrolls"):
+                for row in connection.execute("""
+                    SELECT id,final_payroll_no,period,termination_date,net_pay,created_by
+                    FROM employee_final_payrolls
+                    WHERE status='draft' AND journal_entry_id IS NULL
+                    ORDER BY termination_date DESC,id DESC
+                """).fetchall():
+                    own = row["created_by"] is None or row["created_by"] == actor_id
+                    items.append({
+                        "kind": "مرتب نهائي", "number": row["final_payroll_no"],
+                        "date": row["termination_date"], "counterparty": "فترة المرتبات " + row["period"],
+                        "amount": row["net_pay"], "href": url_for("workforce.final_payroll", period=row["period"]),
+                        "can_act": not own,
+                        "blocked_reason": "لا يجوز اعتماد المرتب النهائي بواسطة منشئه." if own else "",
+                    })
+
+            if approval_table_exists("employee_loans") and approval_table_exists("employees"):
+                for row in connection.execute("""
+                    SELECT l.id,l.loan_no,l.request_date,l.requested_amount,l.created_by,e.full_name
+                    FROM employee_loans l JOIN employees e ON e.id=l.employee_id
+                    WHERE l.status='requested'
+                    ORDER BY l.request_date DESC,l.id DESC
+                """).fetchall():
+                    own = row["created_by"] is None or row["created_by"] == actor_id
+                    items.append({
+                        "kind": "طلب سلفة موظف", "number": row["loan_no"],
+                        "date": row["request_date"], "counterparty": row["full_name"],
+                        "amount": row["requested_amount"], "href": url_for("workforce.employee_loans"),
+                        "can_act": not own,
+                        "blocked_reason": "لا يجوز اعتماد طلب السلفة بواسطة منشئه." if own else "",
+                    })
+
+            if approval_table_exists("employee_grants"):
+                for row in connection.execute("""
+                    SELECT id,grant_name_snapshot,grant_date,total_amount,created_by
+                    FROM employee_grants
+                    WHERE status='draft' AND journal_entry_id IS NULL
+                    ORDER BY grant_date DESC,id DESC
+                """).fetchall():
+                    own = row["created_by"] is None or row["created_by"] == actor_id
+                    items.append({
+                        "kind": "منحة موظفين", "number": row["grant_name_snapshot"],
+                        "date": row["grant_date"], "counterparty": "كشف منحة",
+                        "amount": row["total_amount"], "href": url_for("workforce.employee_grants"),
+                        "can_act": not own,
+                        "blocked_reason": "لا يجوز اعتماد المنحة بواسطة منشئها." if own else "",
+                    })
+
+            if approval_table_exists("employee_end_of_service_settlements"):
+                for row in connection.execute("""
+                    SELECT id,settlement_no,termination_date,net_payable,created_by
+                    FROM employee_end_of_service_settlements
+                    WHERE status='draft' AND journal_entry_id IS NULL
+                    ORDER BY termination_date DESC,id DESC
+                """).fetchall():
+                    own = row["created_by"] is None or row["created_by"] == actor_id
+                    items.append({
+                        "kind": "تسوية نهاية خدمة", "number": row["settlement_no"],
+                        "date": row["termination_date"], "counterparty": "تسوية مستحقات موظف",
+                        "amount": row["net_payable"], "href": url_for("workforce.end_of_service"),
+                        "can_act": not own,
+                        "blocked_reason": "لا يجوز اعتماد تسوية نهاية الخدمة بواسطة منشئها." if own else "",
+                    })
+
+            if approval_table_exists("friday_allowance_batches"):
+                for row in connection.execute("""
+                    SELECT id,period,total_amount,created_by,approved_by,status
+                    FROM friday_allowance_batches
+                    WHERE status='draft' AND journal_entry_id IS NULL
+                    ORDER BY period DESC,id DESC
+                """).fetchall():
+                    own = row["created_by"] is None or row["created_by"] == actor_id
+                    if row["approved_by"] is None:
+                        kind = "بدل الجمعة — بانتظار الاعتماد"
+                        blocked = "لا يجوز اعتماد كشف بدل الجمعة بواسطة منشئه." if own else ""
+                    else:
+                        kind = "بدل الجمعة — معتمد بانتظار الترحيل"
+                        blocked = "لا يجوز ترحيل كشف بدل الجمعة بواسطة منشئه." if own else ""
+                    items.append({
+                        "kind": kind, "number": row["period"], "date": row["period"],
+                        "counterparty": "كشف بدل عمل أيام الجمعة", "amount": row["total_amount"],
+                        "href": url_for("workforce.friday_allowance", period=row["period"]),
+                        "can_act": not own, "blocked_reason": blocked,
                     })
 
         if "sales.approve" in permissions:
