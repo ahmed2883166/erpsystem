@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block title %}رد مبلغ للعميل | NEXUS ERP{% endblock %}
 {% block content %}
-<header><h2>رد مبلغ للعميل</h2><p>يتم رد الجزء الذي نتج عن إشعار دائن تجاوز الرصيد غير المحصل، مع قيد عكسي على ذمم العميل والصندوق/البنك.</p></header>
+<header class="page-heading"><div><h2>رد مبلغ للعميل</h2><p>يتم رد الجزء الذي نتج عن إشعار دائن تجاوز الرصيد غير المحصل، مع قيد عكسي على ذمم العميل والصندوق/البنك.</p></div></header>
 <section class="panel">
   <p><strong>الإشعار:</strong> {{ note.credit_note_no }} | <strong>الفاتورة:</strong> {{ note.invoice_no }}</p>
   <p><strong>العميل:</strong> {{ note.customer_name }} | <strong>القابل للرد المتبقي:</strong> {{ '%.2f'|format(remaining_refundable) }}</p>
   {% if remaining_refundable > 0 %}
-  <form method="post">
+  <form method="post"><div class="form-grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>تاريخ الرد <input type="date" name="refund_date" value="{{ today }}" required></label>
     <label>المبلغ <input type="number" name="amount" min="0.01" max="{{ remaining_refundable }}" step="0.01" value="{{ remaining_refundable }}" required></label>
