@@ -627,10 +627,12 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
     columns = {x["name"] for x in conn.execute("PRAGMA table_info(journal_entries)")}
     ref_expr = "je.reference" if "reference" in columns else "''"
     desc_expr = "je.description" if "description" in columns else "''"
+    closing_filter = _closing_entry_condition(conn)
     entries = conn.execute(f"""SELECT je.id,je.entry_date,{ref_expr} reference,{desc_expr} description,
         COALESCE(DECIMAL_SUM(jl.debit),'0') debit,COALESCE(DECIMAL_SUM(jl.credit),'0') credit
         FROM journal_entries je JOIN journal_lines jl ON jl.entry_id=je.id
         WHERE je.status='posted' AND je.entry_date BETWEEN ? AND ?
+          AND ({closing_filter})
         GROUP BY je.id ORDER BY je.entry_date DESC,je.id DESC""",
         (period_start.isoformat(),period_end.isoformat())).fetchall()
     if not entries:
@@ -642,6 +644,7 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
         WHERE je.status='posted' AND je.entry_date BETWEEN ? AND ?
+          AND ({closing_filter})
         ORDER BY jl.entry_id,jl.id""",
         (period_start.isoformat(),period_end.isoformat())).fetchall()
     account_ids = sorted({row["account_id"] for row in candidate_lines})
@@ -655,6 +658,7 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
             JOIN journal_entries e ON e.id=h.entry_id
             WHERE e.status='posted' AND h.account_id IN ({placeholders})
               AND e.entry_date>=? AND e.entry_date<?
+              AND ({closing_filter.replace("je.", "e.")})
             ORDER BY h.account_id,e.entry_date,h.id""",
             (*account_ids, history_start, history_end)).fetchall()
         for row in history_rows:
