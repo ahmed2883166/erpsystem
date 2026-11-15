@@ -840,13 +840,29 @@ def index():
         key=(layer["product_id"],layer["warehouse_id"])
         total=dashboard_warehouse_totals.setdefault(key,{"qty":Decimal("0")})
         total["qty"]+=Decimal(str(layer["qty_remaining"] or "0"))
-    reorder_alert_count=len(calculate_warehouse_reorder_alerts(c,dashboard_warehouse_totals))
+    reorder_alerts=calculate_warehouse_reorder_alerts(c,dashboard_warehouse_totals)
+    reorder_alert_count=len(reorder_alerts)
+    low_stock_skus={str(item.get("sku") or "") for item in reorder_alerts}
+    dashboard_rows=[]
+    for row in rows:
+        item=dict(row)
+        quantity=Decimal(str(item.get("qty") or "0"))
+        if quantity <= 0:
+            item["availability_label"]="غير متوفر"
+            item["availability_class"]="state-cancelled"
+        elif item["sku"] in low_stock_skus:
+            item["availability_label"]="رصيد منخفض"
+            item["availability_class"]="state-partial"
+        else:
+            item["availability_label"]="متوفر"
+            item["availability_class"]="state-paid"
+        dashboard_rows.append(item)
     expiry_alert_count=0
     for lot in c.execute("""SELECT id,expiry_date FROM stock_lots WHERE expiry_date IS NOT NULL""").fetchall():
         if (date.fromisoformat(lot["expiry_date"])-today).days<=30 and lot_qty.get(lot["id"],Decimal("0"))>0:
             expiry_alert_count+=1
     c.close()
-    return render_template("stock_dashboard.html",products=products,warehouses=warehouses,rows=rows,
+    return render_template("stock_dashboard.html",products=products,warehouses=warehouses,rows=dashboard_rows,
         reorder_alert_count=reorder_alert_count,expiry_alert_count=expiry_alert_count)
 
 
