@@ -143,8 +143,8 @@
   <div class="table-wrap"><table class="financial-summary-table"><thead><tr><th>المؤشر</th><th>القيمة</th></tr></thead><tbody>
     <tr><td>هامش مجمل الربح</td><td>{{ percent(s.ratios.gross_margin) }}</td></tr>
     <tr><td>هامش صافي الربح</td><td>{{ percent(s.ratios.net_profit_margin) }}</td></tr>
-    <tr><td>العائد على الأصول ROA</td><td>{{ percent(s.ratios.return_on_assets) }}</td></tr>
-    <tr><td>العائد على حقوق الملكية ROE</td><td>{{ percent(s.ratios.return_on_equity) }}</td></tr>
+    <tr><td>العائد على الأصول خلال الفترة ROA</td><td>{{ percent(s.ratios.return_on_assets) }}</td></tr>
+    <tr><td>العائد على حقوق الملكية خلال الفترة ROE</td><td>{{ percent(s.ratios.return_on_equity) }}</td></tr>
   </tbody></table></div>
   <h4>ثانيًا: نسب السيولة والهيكل التمويلي</h4>
   <div class="table-wrap"><table class="financial-summary-table"><thead><tr><th>المؤشر</th><th>القيمة</th></tr></thead><tbody>
@@ -166,7 +166,7 @@
     <tr><td>أيام السداد DPO</td><td>{{ '%.1f يوم'|format(s.ratios.payment_days) if s.ratios.payment_days is not none else '—' }}</td></tr>
     <tr><td>دورة التحويل النقدي CCC</td><td>{{ '%.1f يوم'|format(s.ratios.cash_conversion_cycle) if s.ratios.cash_conversion_cycle is not none else '—' }}</td></tr>
   </tbody></table></div>
-  <p class="muted">تنبيه: دوران الموردين محسوب باستخدام تكلفة المبيعات كبديل تقريبي للمشتريات عند عدم توفر صافي المشتريات. لا تُعرض النسبة عند عدم توفر متوسط الرصيد أو المقام صفرًا.</p>
+  <p class="muted">ملاحظات الاحتساب: العائد على الأصول وحقوق الملكية محسوب للفترة المحددة وليس معدلًا سنويًا. دوران العملاء وأيام التحصيل تقديريان باستخدام إجمالي الإيرادات بدل المبيعات الآجلة، ودوران الموردين وأيام السداد تقديريان باستخدام تكلفة المبيعات بدل المشتريات الآجلة. دورة التحويل النقدي تقديرية وتعتمد على هذه المؤشرات. لا تُعامل هذه النسب كبديل عن تحليل المبيعات والمشتريات الآجلة الفعلي، ولا تُعرض النسبة عند عدم توفر متوسط الرصيد أو إذا كان المقام صفرًا.</p>
 </section>
 
 <section class="panel">
