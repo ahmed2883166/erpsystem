@@ -110,6 +110,17 @@ def initialize_workforce_schema():
       incentive_days TEXT NOT NULL DEFAULT '0', incentive_method TEXT NOT NULL DEFAULT '',
       UNIQUE(run_id,employee_id)
     );
+    CREATE TABLE IF NOT EXISTS payroll_line_items(
+      id INTEGER PRIMARY KEY,
+      payroll_line_id INTEGER NOT NULL REFERENCES payroll_lines(id) ON DELETE CASCADE,
+      section TEXT NOT NULL CHECK(section IN ('earning','deduction','information','employer_cost')),
+      item_name TEXT NOT NULL, amount TEXT NOT NULL,
+      source_type TEXT NOT NULL DEFAULT 'payroll_input', source_id INTEGER,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_payroll_line_items_line_order
+      ON payroll_line_items(payroll_line_id,sort_order,id);
     CREATE TABLE IF NOT EXISTS payroll_payments(
       id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL REFERENCES payroll_runs(id),
       payment_date TEXT NOT NULL, amount TEXT NOT NULL,
