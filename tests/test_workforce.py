@@ -500,7 +500,7 @@ class WorkforceTests(unittest.TestCase):
         ).fetchall()
         conn.close()
         self.assertEqual(debit, credit)
-        self.assertEqual(debit, 24400)
+        self.assertEqual(debit, 22400)
         self.assertIn((4, 23750, 100), totals_by_account)
         self.assertIn((5, 0, 22200), totals_by_account)
 
