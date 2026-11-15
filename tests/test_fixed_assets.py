@@ -3,10 +3,47 @@ import unittest
 from decimal import Decimal
 from unittest.mock import patch
 
+from flask import Flask, session
 from fixed_assets import (_asset_disposal_journal_lines, _asset_period_amount,
                           _post_asset_depreciation, _reverse_full_period_depreciation_for_disposal,
-                          _validate_dedicated_accum_account,
+                          _validate_dedicated_accum_account, require,
                           register_assets_from_journal_lines)
+
+
+
+class FixedAssetPermissionFallbackTests(unittest.TestCase):
+    def setUp(self):
+        self.app = Flask(__name__)
+        self.app.secret_key = "test-only"
+        self.app.add_url_rule("/login", "login", lambda: "login")
+        self.app.add_url_rule("/dashboard", "dashboard", lambda: "dashboard")
+        self.app.add_url_rule("/assets/", "assets.index", lambda: "assets")
+
+    def test_legacy_viewer_cannot_post_asset_creation_without_permissions_list(self):
+        @require()
+        def protected_asset_create():
+            return "created"
+
+        self.app.add_url_rule("/assets/create-test", "asset_create_test", protected_asset_create,
+                              methods=["POST"])
+        with self.app.test_request_context("/assets/create-test", method="POST"):
+            session["user_id"] = 7
+            session["role"] = "viewer"
+            response = protected_asset_create()
+            self.assertEqual(response.status_code, 302)
+            self.assertIn("/assets/", response.location)
+
+    def test_legacy_accountant_can_post_asset_creation_without_permissions_list(self):
+        @require()
+        def protected_asset_create():
+            return "created"
+
+        self.app.add_url_rule("/assets/create-test", "asset_create_test", protected_asset_create,
+                              methods=["POST"])
+        with self.app.test_request_context("/assets/create-test", method="POST"):
+            session["user_id"] = 7
+            session["role"] = "accountant"
+            self.assertEqual(protected_asset_create(), "created")
 
 
 class FixedAssetDepreciationCalculationTests(unittest.TestCase):
