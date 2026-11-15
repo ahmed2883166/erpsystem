@@ -285,6 +285,17 @@ def initialize_workforce_schema():
     CREATE INDEX IF NOT EXISTS idx_payroll_period ON payroll_runs(period);
     CREATE INDEX IF NOT EXISTS idx_custody_employee ON employee_custodies(employee_id,status);
     """)
+    # Backward-compatible additions for the company-specific end-of-service policy.
+    eos_columns = {row["name"] for row in c.execute("PRAGMA table_info(employee_end_of_service_settlements)").fetchall()}
+    for column, definition in (
+        ("basic_salary_snapshot", "TEXT NOT NULL DEFAULT '0'"),
+        ("service_months", "INTEGER NOT NULL DEFAULT 0"),
+        ("service_days", "INTEGER NOT NULL DEFAULT 0"),
+        ("retirement_age", "INTEGER"),
+        ("stamp_duty", "TEXT NOT NULL DEFAULT '0'"),
+    ):
+        if column not in eos_columns:
+            c.execute(f"ALTER TABLE employee_end_of_service_settlements ADD COLUMN {column} {definition}")
     c.execute("""INSERT OR IGNORE INTO employee_pay_item_catalog(name,item_type)
         SELECT DISTINCT item_name,item_type FROM employee_pay_items WHERE trim(item_name)<>''""")
     c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('annual','إجازة سنوية',1,1)")
@@ -3075,25 +3086,43 @@ def end_of_service():
                 raise ValueError("يجب تسجيل الاستقالة أو الإحالة للمعاش في السجل الوظيفي أولًا.")
             if employee["termination_date"] and employee["termination_date"] != termination_date.isoformat():
                 raise ValueError("تاريخ التسوية يجب أن يطابق تاريخ انتهاء الخدمة المسجل في السجل الوظيفي.")
-            gross = M(request.form.get("gross_entitlement", "0"))
-            deductions = M(request.form.get("deductions", "0"))
-            if gross < 0 or deductions < 0 or deductions > gross:
-                raise ValueError("راجع إجمالي الاستحقاق والاستقطاعات؛ لا يجوز أن تكون سالبة أو تتجاوز الاستحقاق.")
+
+            basic_salary = M(employee["basic_salary"])
+            service_months = int(request.form.get("service_months", "0"))
+            service_days = int(request.form.get("service_days", "0"))
+            retirement_age_raw = request.form.get("retirement_age", "").strip()
+            retirement_age = int(retirement_age_raw) if retirement_age_raw else None
+            stamp_duty = M(request.form.get("stamp_duty", "0"))
+            if service_months < 0 or service_days < 0 or service_days > 30:
+                raise ValueError("أدخل شهور الخدمة وأيامها بصورة صحيحة؛ الأيام من صفر إلى 30.")
+            if retirement_age is not None and not 1 <= retirement_age <= 100:
+                raise ValueError("سن التقاعد يجب أن يكون بين 1 و100، أو اتركه فارغًا.")
+            if stamp_duty < 0:
+                raise ValueError("الدمغة لا يجوز أن تكون سالبة.")
+
+            # Company policy: one basic salary per service month, prorating days over 30,
+            # with a hard cap of 20 basic-salary months. Stamp duty is deducted afterward.
+            eligible_months = min(Decimal(service_months) + Decimal(service_days) / Decimal("30"), Decimal("20"))
+            gross = M(basic_salary * eligible_months)
+            if stamp_duty > gross:
+                raise ValueError("الدمغة لا يجوز أن تتجاوز إجمالي مكافأة نهاية الخدمة.")
+            net = M(gross - stamp_duty)
             years = Decimal((termination_date - service_start).days) / Decimal("365.2425")
             settlement_no = "EOS-" + employee["employee_code"] + "-" + termination_date.strftime("%Y%m%d")
             c.execute("BEGIN IMMEDIATE")
             c.execute("""INSERT INTO employee_end_of_service_settlements
                 (settlement_no,employee_id,termination_date,reason,service_start_date,service_years,
-                 gross_entitlement,deductions,net_payable,notes,created_by)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                 gross_entitlement,deductions,net_payable,notes,created_by,basic_salary_snapshot,
+                 service_months,service_days,retirement_age,stamp_duty)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (settlement_no,employee_id,termination_date.isoformat(),
                  request.form.get("reason","").strip(),service_start.isoformat(),str(years),
-                 str(gross),str(deductions),str(M(gross-deductions)),
-                 request.form.get("notes","").strip(),session["user_id"]))
+                 str(gross),str(stamp_duty),str(net),request.form.get("notes","").strip(),
+                 session["user_id"],str(basic_salary),service_months,service_days,retirement_age,str(stamp_duty)))
             c.commit()
-            flash("تم حفظ تسوية نهاية الخدمة كمسودة فقط. لم يتم اعتمادها أو صرفها أو إنشاء قيد محاسبي.", "success")
+            flash("تم حفظ تسوية نهاية الخدمة كمسودة. حُسبت المكافأة وفق لائحة الشركة وبحد أقصى 20 شهرًا، بعد خصم الدمغة. لم يتم اعتمادها أو صرفها أو إنشاء قيد محاسبي.", "success")
             return redirect(url_for("workforce.end_of_service"))
-        employees = c.execute("""SELECT id,employee_code,full_name,hire_date,work_status,termination_date
+        employees = c.execute("""SELECT id,employee_code,full_name,hire_date,work_status,termination_date,basic_salary
             FROM employees WHERE work_status IN ('resigned','retired')
             ORDER BY termination_date DESC,employee_code""").fetchall()
         settlements = c.execute("""SELECT s.*,e.employee_code,e.full_name
