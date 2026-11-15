@@ -51,6 +51,7 @@
     <a class="button-link" href="{{ url_for('profitability_report', date_from=date_from, date_to=date_to) }}">ربحية الفروع ومراكز التكلفة والمخازن</a>
     {% if 'stock.view' in permissions %}<a class="button-link" href="{{ url_for('inventory_ageing_report', as_of=date_to) }}">أعمار المخزون والأصناف الراكدة</a>{% endif %}
     <a class="button-link" href="{{ url_for('cash_forecast_report', as_of=date_to, days=90) }}">توقع التحصيلات والمدفوعات</a>
+    <a class="button-link" href="{{ url_for('decision_simulator_report', date_from=date_from, date_to=date_to) }}">محاكي القرارات «ماذا لو؟»</a>
   </div>
 </section>
 
