@@ -50,7 +50,10 @@
 <details><summary>مراجعة الموظفين والمبالغ</summary><table><tr><th>كود الموظف</th><th>اسم الموظف</th><th>الراتب الأساسي</th><th>الاستحقاق</th><th>المدفوع</th><th>المتبقي</th></tr>
 {% for line in grant_lines[g.id] %}<tr><td>{{line.employee_code_snapshot}}</td><td>{{line.employee_name_snapshot}}</td><td>{{line.basic_salary_snapshot}}</td><td>{{line.amount}}</td><td>{{line.paid_amount}}</td><td>{{line.remaining_amount}}</td></tr>{% endfor %}</table></details>
 <a href="{{url_for('workforce.print_employee_grant',grant_id=g.id)}}" target="_blank">كشف الطباعة</a>
-{% if g.status=='draft' %}<form method="post" action="{{url_for('workforce.approve_employee_grant',grant_id=g.id)}}" style="display:inline"><button type="submit">اعتماد وترحيل</button></form>{% endif %}
+{% if g.status=='draft' %}
+<form method="post" action="{{url_for('workforce.approve_employee_grant',grant_id=g.id)}}" style="display:inline"><button type="submit">اعتماد وترحيل</button></form>
+<form method="post" action="{{url_for('workforce.delete_employee_grant',grant_id=g.id)}}" style="display:inline" onsubmit="return confirm('حذف مسودة الحافز المفتوحة؟ لا يمكن الحذف بعد الاعتماد أو الإغلاق.')"><button type="submit" class="danger">حذف الحافز</button></form>
+{% else %}<small class="muted">الحافز مغلق/معتمد — الحذف غير متاح</small>{% endif %}
 {% if g.status in ['approved','partially_paid'] %}<details><summary>تسجيل صرف</summary><form method="post" action="{{url_for('workforce.pay_employee_grant',grant_id=g.id)}}" class="form-grid">
 <label>مبلغ الصرف <input type="number" name="amount" min="0.01" max="{{(g.total_amount|float)-(g.paid_total|float)}}" step="0.01" required></label>
 <label>تاريخ الصرف <input type="date" name="payment_date" required></label>
@@ -58,7 +61,12 @@
 <label>ملاحظات <input name="notes"></label><button type="submit">صرف وترحيل القيد</button></form></details>{% endif %}
 </td></tr>{% else %}<tr><td colspan="9">لا توجد منح مسجلة بعد.</td></tr>{% endfor %}</table></div></section>
 {% endblock %}
-{% block scripts %}<script>
+{% block scripts %}<style>
+#grantSelectedTable{width:100%;border-collapse:collapse;min-width:680px}
+#grantSelectedTable th{background:#e9eef5;color:#1e344e;padding:10px;border:1px solid #cbd5e1;white-space:nowrap}
+#grantSelectedTable td{padding:9px;border:1px solid #d8e0e9;text-align:center}
+#grantSelectedTable tbody tr:nth-child(even){background:#f8fafc}
+</style><script>
 const method=document.getElementById('grantMethod'),days=document.getElementById('grantDays');
 function updateGrantDays(){days.hidden=method.value!=='per_day';document.getElementById('grantValue').hidden=method.value==='per_day';}
 method.addEventListener('change',updateGrantDays);updateGrantDays();
