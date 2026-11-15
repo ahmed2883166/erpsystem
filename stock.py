@@ -1452,6 +1452,97 @@ def movements():
         movement_total=movement_total,today=date.today().isoformat())
 
 
+def build_demand_replenishment_forecast(conn, warehouse_totals, product_lookup, today,
+                                          forecast_days=90, target_cover_days=21):
+    """Estimate net daily demand per product/warehouse from posted sales less returns."""
+    required_tables = (
+        "sales_invoices", "sales_invoice_lines",
+        "sales_credit_notes", "sales_credit_note_lines",
+    )
+    existing_tables = {
+        row["name"] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    if not set(required_tables).issubset(existing_tables):
+        return [], False
+    invoice_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(sales_invoice_lines)")
+    }
+    credit_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(sales_credit_note_lines)")
+    }
+    if not {"product_id", "quantity", "invoice_id"}.issubset(invoice_columns):
+        return [], False
+    if not {"product_id", "quantity", "credit_note_id"}.issubset(credit_columns):
+        return [], False
+    if forecast_days <= 0 or target_cover_days <= 0:
+        raise ValueError("فترة توقع الطلب وهدف التغطية يجب أن يكونا أكبر من صفر.")
+
+    start_date = (today - date.resolution * (forecast_days - 1)).isoformat()
+    end_date = today.isoformat()
+    net_demand = {}
+    sales = conn.execute(
+        """SELECT i.warehouse_id,l.product_id,l.quantity
+           FROM sales_invoices i
+           JOIN sales_invoice_lines l ON l.invoice_id=i.id
+           WHERE i.status='posted' AND i.invoice_date>=? AND i.invoice_date<=?
+             AND l.product_id IS NOT NULL""",
+        (start_date, end_date),
+    ).fetchall()
+    for sale in sales:
+        key = (sale["product_id"], sale["warehouse_id"])
+        net_demand[key] = net_demand.get(key, Decimal("0")) + Decimal(str(sale["quantity"] or "0"))
+
+    returns = conn.execute(
+        """SELECT i.warehouse_id,l.product_id,l.quantity
+           FROM sales_credit_notes cn
+           JOIN sales_invoices i ON i.id=cn.invoice_id
+           JOIN sales_credit_note_lines l ON l.credit_note_id=cn.id
+           WHERE cn.status='posted' AND cn.credit_date>=? AND cn.credit_date<=?
+             AND l.product_id IS NOT NULL""",
+        (start_date, end_date),
+    ).fetchall()
+    for returned in returns:
+        key = (returned["product_id"], returned["warehouse_id"])
+        net_demand[key] = net_demand.get(key, Decimal("0")) - Decimal(str(returned["quantity"] or "0"))
+
+    warehouse_names = {
+        row["id"]: row for row in conn.execute(
+            "SELECT id,code,name_ar FROM stock_warehouses WHERE active=1"
+        ).fetchall()
+    }
+    result = []
+    for (product_id, warehouse_id), net_qty in net_demand.items():
+        daily_demand = max(Decimal("0"), net_qty) / Decimal(forecast_days)
+        if daily_demand <= 0:
+            continue
+        current_qty = warehouse_totals.get(
+            (product_id, warehouse_id), {"qty": Decimal("0")}
+        )["qty"]
+        target_qty = daily_demand * Decimal(target_cover_days)
+        suggested_qty = max(Decimal("0"), target_qty - current_qty)
+        product = product_lookup.get(product_id)
+        warehouse = warehouse_names.get(warehouse_id)
+        if not product or not warehouse:
+            continue
+        coverage_days = current_qty / daily_demand
+        result.append({
+            "sku": product["sku"], "name_ar": product["name_ar"], "uom": product["uom"],
+            "warehouse_code": warehouse["code"], "warehouse_name": warehouse["name_ar"],
+            "current_qty": current_qty, "net_sold_qty": net_qty,
+            "daily_demand": daily_demand, "coverage_days": coverage_days,
+            "target_qty": target_qty, "suggested_qty": suggested_qty,
+            "priority": "عاجل" if coverage_days < Decimal("7") else (
+                "قريب" if coverage_days < Decimal("14") else "مراقبة"
+            ),
+        })
+    result.sort(key=lambda row: (
+        row["coverage_days"], row["sku"], row["warehouse_code"]
+    ))
+    return result, True
+
+
 @stock_bp.route("/reports")
 @stock_permission("stock.view")
 def reports():
@@ -1552,57 +1643,13 @@ def reports():
             slow_rows.append({"sku":product["sku"],"name_ar":product["name_ar"],"uom":product["uom"],
                 "qty":product_totals.get(product["id"],{"qty":Decimal("0")})["qty"],
                 "value":product_totals.get(product["id"],{"value":Decimal("0")})["value"],**stats})
-    # Demand-based replenishment forecast: 90-day net sales, 21-day target cover.
-    forecast_rows=[]
-    forecast_available=False
+    # Demand-based replenishment forecast: net posted sales after returns.
+    forecast_rows, forecast_available = build_demand_replenishment_forecast(
+        c, warehouse_totals, product_lookup, today,
+        forecast_days=90, target_cover_days=21,
+    )
     forecast_days=90
     target_cover_days=21
-    required_sales_tables=("sales_invoices","sales_invoice_lines","sales_credit_notes","sales_credit_note_lines")
-    existing_tables={row["name"] for row in c.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'")}
-    if set(required_sales_tables).issubset(existing_tables):
-        invoice_line_columns={row["name"] for row in c.execute("PRAGMA table_info(sales_invoice_lines)")}
-        credit_line_columns={row["name"] for row in c.execute("PRAGMA table_info(sales_credit_note_lines)")}
-        if {"product_id","quantity"}.issubset(invoice_line_columns) and {"product_id","quantity"}.issubset(credit_line_columns):
-            forecast_available=True
-            sales_start=(today-date.resolution*(forecast_days-1)).isoformat()
-            sales_end=today.isoformat()
-            net_demand={}
-            for sale in c.execute("""SELECT i.warehouse_id,l.product_id,l.quantity
-                FROM sales_invoices i JOIN sales_invoice_lines l ON l.invoice_id=i.id
-                WHERE i.status='posted' AND i.invoice_date>=? AND i.invoice_date<=?
-                  AND l.product_id IS NOT NULL""",(sales_start,sales_end)).fetchall():
-                key=(sale["product_id"],sale["warehouse_id"])
-                net_demand[key]=net_demand.get(key,Decimal("0"))+Decimal(str(sale["quantity"] or "0"))
-            for returned in c.execute("""SELECT i.warehouse_id,l.product_id,l.quantity
-                FROM sales_credit_notes cn JOIN sales_invoices i ON i.id=cn.invoice_id
-                JOIN sales_credit_note_lines l ON l.credit_note_id=cn.id
-                WHERE cn.status='posted' AND cn.credit_date>=? AND cn.credit_date<=?
-                  AND l.product_id IS NOT NULL""",(sales_start,sales_end)).fetchall():
-                key=(returned["product_id"],returned["warehouse_id"])
-                net_demand[key]=net_demand.get(key,Decimal("0"))-Decimal(str(returned["quantity"] or "0"))
-            warehouse_names={row["id"]:row for row in c.execute(
-                "SELECT id,code,name_ar FROM stock_warehouses WHERE active=1").fetchall()}
-            for (product_id,warehouse_id),net_qty in net_demand.items():
-                daily=max(Decimal("0"),net_qty)/Decimal(forecast_days)
-                if daily<=0:
-                    continue
-                current_qty=warehouse_totals.get((product_id,warehouse_id),{"qty":Decimal("0")})["qty"]
-                target_qty=daily*Decimal(target_cover_days)
-                suggested=max(Decimal("0"),target_qty-current_qty)
-                product=product_lookup.get(product_id)
-                warehouse=warehouse_names.get(warehouse_id)
-                if not product or not warehouse:
-                    continue
-                coverage=current_qty/daily if daily else None
-                forecast_rows.append({
-                    "sku":product["sku"],"name_ar":product["name_ar"],"uom":product["uom"],
-                    "warehouse_code":warehouse["code"],"warehouse_name":warehouse["name_ar"],
-                    "current_qty":current_qty,"net_sold_qty":net_qty,"daily_demand":daily,
-                    "coverage_days":coverage,"target_qty":target_qty,"suggested_qty":suggested,
-                    "priority":"عاجل" if coverage<Decimal("7") else ("قريب" if coverage<Decimal("14") else "مراقبة"),
-                })
-            forecast_rows.sort(key=lambda row:(row["coverage_days"],row["sku"],row["warehouse_code"]))
     # Expiry alerts are lot- and valuation-layer-specific so warehouse, bin and quantity
     # remain visible. The default alert window is 30 days, including already expired lots.
     expiry_alerts=[]
