@@ -331,6 +331,21 @@ def build_tax_report_snapshot(conn, period_value):
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
         "('company_name','tax_country','tax_regime','tax_number','base_currency')")}
 
+    country = settings.get("tax_country", "EG")
+    tax_profile = {
+        "country_code": country,
+        "country_name": "مصر" if country == "EG" else "السعودية" if country == "SA" else "إعداد مخصص",
+        "authority": "مصلحة الضرائب المصرية" if country == "EG" else "هيئة الزكاة والضريبة والجمارك" if country == "SA" else "جهة ضريبية غير محددة",
+        "standard_rate": Decimal("14") if country == "EG" else Decimal("15") if country == "SA" else Decimal(str(settings.get("default_vat_rate", "0") or "0")),
+        "rate_note": (
+            "المعدل القياسي 14%؛ توجد معاملات خاصة وضريبة جدول واستثناءات تتطلب تصنيفًا ومستندًا مؤيدًا."
+            if country == "EG" else
+            "المعدل القياسي 15%؛ تطبق حالات التصفير والإعفاء وفق شروط اللائحة."
+            if country == "SA" else
+            "لا توجد قواعد دولة مدمجة لهذا الاختيار."
+        ),
+    }
+
     zero_sales = [r for r in sales if r["tax_treatment"] == "zero_rated"]
     exempt_sales = [r for r in sales if r["tax_treatment"] == "exempt"]
     outside_sales = [r for r in sales if r["tax_treatment"] == "out_of_scope"]
@@ -401,7 +416,7 @@ def build_tax_report_snapshot(conn, period_value):
         quality_issues.append({"severity": "error", "document": str(row["document_no"]),
                                "issue": "التصنيف الضريبي لا يتفق مع قيمة/نسبة الضريبة"})
     return {
-        "period": period, "settings": settings, "sales": sales,
+        "period": period, "settings": settings, "tax_profile": tax_profile, "sales": sales,
         "sales_credits": sales_credits, "purchases": purchases,
         "summary": summary, "inconsistent_sales": inconsistent_sales,
         "inconsistent_purchases": inconsistent_purchases,
