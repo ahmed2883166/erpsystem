@@ -62,7 +62,7 @@ class WorkforceTests(unittest.TestCase):
             "{{ total_rules }}|{{ active_rules }}|{% for r in incentive_rules %}{{ r.name }}{% endfor %}",
             encoding="utf-8"
         )
-        (template_dir / "form2_salary_report.html").write_text(
+        (template_dir / "form2_salary.html").write_text(
             "{{ scope }}|{{ employees|length }}|{{ totals.insured_wage }}", encoding="utf-8"
         )
         self.app = Flask(__name__, template_folder=str(template_dir))
