@@ -181,6 +181,9 @@ class CashCommitmentsTests(unittest.TestCase):
             [tuple(row) for row in reversal_lines],
             [(10, "0", "200"), (20, "200", "0")],
         )
+        from security_controls import linked_operational_source
+        self.assertEqual(linked_operational_source(self.conn, 1), "cash_commitment_payments")
+        self.assertEqual(linked_operational_source(self.conn, reversal_id), "cash_commitment_payments")
         payment = self.conn.execute(
             "SELECT reversal_journal_entry_id FROM cash_commitment_payments WHERE id=?",
             (payment_id,),
