@@ -239,7 +239,7 @@ class CashFlowReportTests(unittest.TestCase):
                 VALUES(1,'opening','created',7);
         """)
         snapshot = financial_planning.build_cash_flow_indirect_snapshot(
-            conn, "2027-01-01", "2027-01-31"
+            conn, "2027-01-02", "2027-01-31"
         )
         conn.close()
         other_liabilities = next(
