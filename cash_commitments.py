@@ -253,7 +253,7 @@ def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
         if not journal:
             raise ValueError("يجب ربط الدفعة بقيد يومية مرحّل موجود.")
         if not _journal_entry_effect_is_active(conn, journal_entry_id):
-            raise ValueError("قيد السداد عكسي أو تم عكسه؛ لا يمكن ربطه بالتزام.")
+            raise ValueError("لا يمكن ربط قيد عكسي أو قيد سداد تم عكسه بالتزام.")
         selected_payable_account = _validate_payable_account(
             conn,commitment["payable_account_id"] or payable_account_id,required=True
         )
