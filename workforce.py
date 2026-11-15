@@ -788,15 +788,17 @@ def edit_employee(employee_id):
 @workforce_bp.route("/hr/<int:employee_id>/form-2-salary", methods=["GET"])
 @_role("admin", "accountant", "viewer")
 def employee_form_2_salary(employee_id):
+    """Keep old employee-specific links working by opening the matching group report."""
     c = _db()
-    employee = c.execute("SELECT * FROM employees WHERE id=?", (employee_id,)).fetchone()
+    employee = c.execute("SELECT work_status FROM employees WHERE id=?", (employee_id,)).fetchone()
     c.close()
     if not employee:
         flash("الموظف غير موجود.", "error")
         return redirect(url_for("workforce.employees"))
-    insured_wage = M(employee["insured_wage"] or "0")
-    return render_template("form2_salary.html", e=employee, insured_wage=insured_wage,
-                           print_date=date.today().isoformat())
+    scope = employee["work_status"] if employee["work_status"] in {
+        "permanent", "temporary", "comprehensive_bonus"
+    } else "all"
+    return redirect(url_for("workforce.employee_form_2_salary_report", scope=scope))
 
 
 @workforce_bp.route("/hr/form-2-salary-report", methods=["GET"])
@@ -859,7 +861,7 @@ def export_employees_excel():
     headers = ["كود الموظف","اسم الموظف","العنوان","الرقم القومي","رقم التأمين",
                "الأساسي","المتغير","الحالة الوظيفية","نشط","تاريخ انتهاء الخدمة"]
     sheet.append(headers)
-    status_labels = {"permanent":"مثبت","comprehensive_bonus":"مكافأة شاملة",
+    status_labels = {"permanent":"مثبت","temporary":"مؤقت","comprehensive_bonus":"مكافأة شاملة",
                      "unpaid_leave":"إجازة بدون مرتب","resigned":"استقالة","retired":"معاش"}
     for row in rows:
         sheet.append([row["employee_code"],row["full_name"],row["address"],row["national_id"],
