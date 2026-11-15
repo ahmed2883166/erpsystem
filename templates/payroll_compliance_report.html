@@ -1,13 +1,37 @@
 {% extends "base.html" %}{% block title %}تقرير ضرائب وتأمينات الموظفين | NEXUS ERP{% endblock %}{% block content %}
+<style>
+.tax-month-summary{width:100%;border-collapse:collapse;min-width:560px;font-variant-numeric:tabular-nums}
+.tax-month-summary th{background:#e9eef5;color:#1e344e;text-align:right;padding:11px 14px;border:1px solid #cbd5e1;white-space:nowrap}
+.tax-month-summary td{padding:11px 14px;border:1px solid #d8e0e9}
+.tax-month-summary tbody tr:nth-child(even){background:#f7f9fc}
+.tax-month-summary .amount{text-align:left;font-weight:700;white-space:nowrap}
+.tax-month-summary tfoot th,.tax-month-summary tfoot td{background:#eef3f8;font-weight:800}
+.tax-report-table{width:100%;border-collapse:collapse;min-width:980px;font-variant-numeric:tabular-nums}
+.tax-report-table th{background:#e9eef5;color:#1e344e;padding:10px 8px;border:1px solid #cbd5e1;white-space:nowrap}
+.tax-report-table td{padding:9px 8px;border:1px solid #d8e0e9;text-align:center;white-space:nowrap}
+.tax-report-table tbody tr:nth-child(even){background:#f8fafc}
+.tax-scroll{overflow-x:auto}
+@media print{.no-print,header,nav,.sidebar{display:none!important}.panel{box-shadow:none!important;border:0!important}.tax-scroll{overflow:visible}.tax-report-table{font-size:9px;min-width:0}.tax-report-table th,.tax-report-table td{padding:4px 3px}}
+</style>
 <header><h2>تقرير ضرائب وتأمينات الموظفين</h2><p>يعرض المسيرات المرحلة فقط، ولا يضم المسودات.</p></header>
-<section class="panel"><form method="get" class="form-grid"><label>الشهر<input type="month" name="period" value="{{period}}" required></label><button type="submit">عرض التقرير</button></form></section>
-<section class="panel"><h3>ملخص الشهر {{period}}</h3><div class="kpi-grid">
-<div class="kpi"><span>إجمالي الأجور</span><strong>{{totals.gross|money}}</strong></div>
-<div class="kpi"><span>صافي الرواتب</span><strong>{{totals.net|money}}</strong></div>
-<div class="kpi"><span>ضريبة المرتبات</span><strong>{{totals.tax|money}}</strong></div>
-<div class="kpi"><span>تأمينات الموظفين</span><strong>{{totals.employee_insurance|money}}</strong></div>
-<div class="kpi"><span>تأمينات الشركة</span><strong>{{totals.employer_insurance|money}}</strong></div>
-</div></section>
-<section class="panel"><h3>تفاصيل الموظفين</h3><table><tr><th>الكود</th><th>الموظف</th><th>الفئة</th><th>الأجر</th><th>الدخل السنوي الخاضع</th><th>أجر التأمين</th><th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th><th>الصافي</th></tr>
-{% for r in rows %}<tr><td>{{r.employee_code}}</td><td>{{r.full_name}}</td><td>{{r.legal_category}}</td><td>{{r.gross_pay}}</td><td>{{r.taxable_annual}}</td><td>{{r.insured_wage}}</td><td>{{r.taxable_income_tax}}</td><td>{{r.employee_insurance}}</td><td>{{r.employer_insurance}}</td><td>{{r.net_pay}}</td></tr>{% else %}<tr><td colspan="10">لا توجد مسيرات مرحلة لهذا الشهر.</td></tr>{% endfor %}</table></section>
+<section class="panel no-print"><form method="get" class="form-grid"><label>الشهر<input type="month" name="period" value="{{period}}" required></label><button type="submit">عرض التقرير</button><button type="button" class="secondary" onclick="window.print()">طباعة التقرير</button></form></section>
+<section class="panel">
+<h3>ملخص الشهر {{period}}</h3>
+<div class="tax-scroll"><table class="tax-month-summary">
+<thead><tr><th style="width:55%">البيان</th><th>القيمة بالجنيه</th></tr></thead>
+<tbody>
+<tr><td>عدد الموظفين في المسيرات المرحلة</td><td class="amount">{{rows|length}}</td></tr>
+<tr><td>إجمالي الأجور قبل الاستقطاعات</td><td class="amount">{{totals.gross|money}}</td></tr>
+<tr><td>ضريبة المرتبات المستحقة</td><td class="amount">{{totals.tax|money}}</td></tr>
+<tr><td>حصة العامل في التأمينات الاجتماعية</td><td class="amount">{{totals.employee_insurance|money}}</td></tr>
+<tr><td>حصة صاحب العمل في التأمينات الاجتماعية</td><td class="amount">{{totals.employer_insurance|money}}</td></tr>
+<tr><td>إجمالي التزام التأمينات (حصة العامل + حصة الشركة)</td><td class="amount">{{(totals.employee_insurance + totals.employer_insurance)|money}}</td></tr>
+<tr><td>صافي الرواتب المستحق للموظفين</td><td class="amount">{{totals.net|money}}</td></tr>
+</tbody>
+<tfoot><tr><th>إجمالي التزامات الضرائب والتأمينات</th><td class="amount">{{(totals.tax + totals.employee_insurance + totals.employer_insurance)|money}}</td></tr></tfoot>
+</table></div>
+<p class="muted">حصة العامل تخصم من مستحقه، وحصة الشركة مصروف إضافي عليها. مجموع الحصتين يمثل التزام التأمينات الاجتماعية، ولا تُخلط حصة الشركة بصافي مستحق الموظف.</p>
+</section>
+<section class="panel"><h3>تفاصيل الموظفين</h3><div class="tax-scroll"><table class="tax-report-table"><thead><tr><th>الكود</th><th>الموظف</th><th>الفئة</th><th>الأجر</th><th>الدخل السنوي الخاضع</th><th>أجر التأمين</th><th>الضريبة</th><th>تأمين الموظف</th><th>تأمين الشركة</th><th>الصافي</th></tr></thead>
+<tbody>{% for r in rows %}<tr><td>{{r.employee_code}}</td><td>{{r.full_name}}</td><td>{{r.legal_category}}</td><td>{{r.gross_pay|money}}</td><td>{{r.taxable_annual|money}}</td><td>{{r.insured_wage|money}}</td><td>{{r.taxable_income_tax|money}}</td><td>{{r.employee_insurance|money}}</td><td>{{r.employer_insurance|money}}</td><td><strong>{{r.net_pay|money}}</strong></td></tr>{% else %}<tr><td colspan="10">لا توجد مسيرات مرحلة لهذا الشهر.</td></tr>{% endfor %}</tbody></table></div></section>
 {% endblock %}
