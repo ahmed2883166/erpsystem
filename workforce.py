@@ -63,6 +63,12 @@ def initialize_workforce_schema():
       item_name TEXT NOT NULL, item_type TEXT NOT NULL CHECK(item_type IN ('allowance','deduction')),
       amount TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS employee_pay_item_catalog(
+      id INTEGER PRIMARY KEY, name TEXT NOT NULL, item_type TEXT NOT NULL
+        CHECK(item_type IN ('allowance','deduction')),
+      active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(name,item_type)
+    );
     CREATE TABLE IF NOT EXISTS salary_change_batches(
       id INTEGER PRIMARY KEY, decision_no TEXT NOT NULL UNIQUE, decision_date TEXT NOT NULL,
       effective_date TEXT NOT NULL, title TEXT NOT NULL, employee_scope TEXT NOT NULL,
@@ -244,6 +250,8 @@ def initialize_workforce_schema():
     CREATE INDEX IF NOT EXISTS idx_payroll_period ON payroll_runs(period);
     CREATE INDEX IF NOT EXISTS idx_custody_employee ON employee_custodies(employee_id,status);
     """)
+    c.execute("""INSERT OR IGNORE INTO employee_pay_item_catalog(name,item_type)
+        SELECT DISTINCT item_name,item_type FROM employee_pay_items WHERE trim(item_name)<>''""")
     c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('annual','إجازة سنوية',1,1)")
     c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('unpaid','إجازة بدون أجر',0,0)")
     c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('sick','إجازة مرضية',1,0)")
@@ -957,18 +965,53 @@ def add_incentive_rule():
     return redirect(url_for("workforce.employee_grants"))
 
 
+@workforce_bp.route("/hr/pay-items/catalog", methods=["POST"])
+@_role("admin", "accountant")
+def add_pay_item_catalog():
+    c = _db()
+    try:
+        name = request.form.get("name", "").strip()
+        item_type = request.form.get("item_type", "")
+        if not name or len(name) > 120 or item_type not in {"allowance", "deduction"}:
+            raise ValueError("اكتب اسم البند وحدد هل هو استحقاق أم استقطاع.")
+        c.execute("INSERT INTO employee_pay_item_catalog(name,item_type) VALUES(?,?)", (name,item_type))
+        _audit(c, "employee_pay_item_catalog_created", name + " | " + item_type)
+        c.commit()
+        flash("تم حفظ اسم البند في قائمة البنود. يمكنك اختياره عند إسناده للموظفين.", "success")
+    except sqlite3.IntegrityError:
+        c.rollback()
+        flash("اسم البند موجود بالفعل ضمن نفس النوع؛ اختره من القائمة بدل إعادة تعريفه.", "warning")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc) or "تعذر حفظ اسم البند.", "error")
+    c.close()
+    return redirect(url_for("workforce.pay_items"))
+
+
 @workforce_bp.route("/hr/pay-items", methods=["GET", "POST"])
 @_role("admin", "accountant")
 def pay_items():
     c = _db()
     if request.method == "POST":
         try:
-            item_type = request.form.get("item_type", "")
-            item_name = request.form.get("item_name", "").strip()
             amount = M(request.form.get("amount", "0"))
             employee_ids = sorted({int(x) for x in request.form.getlist("employee_ids")})
+            catalog_id = request.form.get("item_catalog_id", "").strip()
+            if catalog_id:
+                catalog_item = c.execute("SELECT name,item_type FROM employee_pay_item_catalog WHERE id=? AND active=1",
+                                          (int(catalog_id),)).fetchone()
+                if not catalog_item:
+                    raise ValueError("اختر اسم بند نشطًا من قائمة البنود.")
+                item_name, item_type = catalog_item["name"], catalog_item["item_type"]
+            else:
+                # Backward compatibility for saved forms and integrations using the former field names.
+                item_type = request.form.get("item_type", "")
+                item_name = request.form.get("item_name", "").strip()
+                if item_name and item_type in {"allowance", "deduction"}:
+                    c.execute("INSERT OR IGNORE INTO employee_pay_item_catalog(name,item_type) VALUES(?,?)",
+                              (item_name,item_type))
             if item_type not in {"allowance", "deduction"} or not item_name or amount < 0 or not employee_ids:
-                raise ValueError("اختر نوع البند واكتب اسمه وقيمته وحدد موظفًا واحدًا على الأقل.")
+                raise ValueError("اختر اسم البند من القائمة وقيمته وحدد موظفًا واحدًا على الأقل.")
             placeholders = ",".join("?" for _ in employee_ids)
             valid_ids = {int(x["id"]) for x in c.execute(
                 "SELECT id FROM employees WHERE active=1 AND id IN ("+placeholders+")", employee_ids).fetchall()}
@@ -1000,6 +1043,8 @@ def pay_items():
         return redirect(url_for("workforce.pay_items"))
     employees = c.execute("""SELECT id,employee_code,full_name,work_status,department FROM employees
         WHERE active=1 ORDER BY work_status,employee_code""").fetchall()
+    catalog_items = c.execute("""SELECT id,name,item_type FROM employee_pay_item_catalog
+        WHERE active=1 ORDER BY item_type,name""").fetchall()
     assignments = c.execute("""SELECT p.*,e.employee_code,e.full_name,e.work_status FROM employee_pay_items p
         JOIN employees e ON e.id=p.employee_id ORDER BY p.item_type,p.item_name,e.employee_code""").fetchall()
     grouped = {}
@@ -1008,7 +1053,7 @@ def pay_items():
         grouped.setdefault(key,[]).append(dict(item))
     groups = [{"item_type":key[0],"item_name":key[1],"employees":value} for key,value in grouped.items()]
     c.close()
-    return render_template("pay_items.html",employees=employees,groups=groups)
+    return render_template("pay_items.html",employees=employees,groups=groups,catalog_items=catalog_items)
 
 
 @workforce_bp.route("/hr/pay-items/<int:item_id>/update", methods=["POST"])
@@ -2405,7 +2450,14 @@ def friday_allowance():
             total = Decimal("0")
             for employee in eligible:
                 basic = M(employee["basic_salary"])
-                days = int(employee["attendance_days"])
+                raw_days = request.form.get("attendance_days_" + str(employee["id"]), str(employee["attendance_days"]))
+                try:
+                    days = int(raw_days)
+                except (TypeError, ValueError):
+                    raise ValueError("عدد أيام الجمعة يجب أن يكون عددًا صحيحًا لكل موظف.")
+                if days < 1 or days > int(employee["attendance_days"]):
+                    raise ValueError("عدد أيام بدل الجمعة للموظف " + employee["full_name"] +
+                                      " يجب أن يكون من 1 إلى " + str(employee["attendance_days"]) + ".")
                 amount = M(basic / Decimal("30") * Decimal("2") * Decimal(days))
                 if amount <= 0:
                     continue
