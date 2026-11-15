@@ -118,6 +118,20 @@ class ManagementReportsTests(unittest.TestCase):
         self.assertEqual(report["daily"][0]["other_commitments"], Decimal("1000.00"))
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 7)
 
+    def test_cash_forecast_rolls_overdue_commitments_to_as_of_date(self):
+        initialize_cash_commitments_schema(self.conn)
+        create_cash_commitment(
+            self.conn, "recurring_expense", "مصروف كهرباء", "300",
+            "2026-11-01", currency_code="EGP", payable_account_id=4,
+        )
+        report = build_cash_forecast(self.conn, "2026-11-15", 90)
+        item = next(row for row in report["items"] if row["kind"] == "cash_commitment")
+        self.assertEqual(item["due_date"], "2026-11-01")
+        self.assertEqual(item["status"], "متأخر")
+        self.assertEqual(report["daily"][0]["date"], "2026-11-15")
+        self.assertEqual(report["daily"][0]["other_commitments"], Decimal("300.00"))
+        self.assertTrue(any("مركز الضرائب" in note for note in report["coverage_notes"]))
+
     def test_period_comparison_calculates_variance(self):
         report = build_period_comparison(
             self.conn, "2026-10-01", "2026-10-31", "previous_period"
