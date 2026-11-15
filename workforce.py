@@ -16,6 +16,7 @@ from pathlib import Path
 from PIL import Image, ImageOps, UnidentifiedImageError
 from accounting_core import post_journal, safe_error_message
 from code_sequences import next_code
+from cash_commitments import create_cash_commitment
 
 workforce_bp = Blueprint("workforce", __name__)
 
@@ -2595,8 +2596,19 @@ def post_friday_allowance(batch_id):
         c.execute("UPDATE friday_allowance_batches SET status='posted',journal_entry_id=? WHERE id=? AND status='draft'",
                   (journal_id,batch_id))
         _audit(c,"friday_allowance_posted",batch["period"]+" journal="+str(journal_id)+" total="+str(total))
+        currency_row = c.execute(
+            "SELECT setting_value FROM company_settings WHERE setting_key='base_currency'"
+        ).fetchone()
+        create_cash_commitment(
+            c, "friday_overtime", "بدل الجمعة - " + batch["period"], str(total),
+            accrual_date, period_label=batch["period"],
+            currency_code=currency_row["setting_value"] if currency_row else "",
+            payable_account_id=batch["payable_account_id"],
+            origin_type="friday_allowance_batch", origin_id=batch_id,
+            created_by=session["user_id"],
+        )
         c.commit()
-        flash("تم ترحيل بدل الجمعة وإنشاء قيد مصروف أجور إضافية إلى أجور إضافية مستحقة.","success")
+        flash("تم ترحيل بدل الجمعة وإنشاء قيد الاستحقاق وإضافته تلقائيًا إلى سجل الالتزامات النقدية.","success")
     except (ValueError,KeyError,sqlite3.Error) as exc:
         c.rollback()
         flash(str(exc) or "تعذر ترحيل بدل الجمعة.","error")
