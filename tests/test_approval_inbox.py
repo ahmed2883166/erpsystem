@@ -53,6 +53,30 @@ class ApprovalInboxTests(unittest.TestCase):
                 status TEXT, created_by INTEGER
             );
             INSERT INTO budget_plans VALUES(1,'موازنة 2027','2027-01-01','2027-12-31','pending',2);
+            CREATE TABLE employees(id INTEGER PRIMARY KEY, full_name TEXT);
+            INSERT INTO employees VALUES(1,'موظف تجريبي');
+            CREATE TABLE payroll_runs(id INTEGER PRIMARY KEY,period TEXT,status TEXT,created_by INTEGER);
+            CREATE TABLE payroll_lines(id INTEGER PRIMARY KEY,run_id INTEGER,net_pay TEXT);
+            CREATE TABLE employee_final_payrolls(
+                id INTEGER PRIMARY KEY,final_payroll_no TEXT,period TEXT,termination_date TEXT,
+                net_pay TEXT,created_by INTEGER,journal_entry_id INTEGER,status TEXT
+            );
+            CREATE TABLE employee_loans(
+                id INTEGER PRIMARY KEY,loan_no TEXT,request_date TEXT,requested_amount TEXT,
+                created_by INTEGER,employee_id INTEGER,status TEXT
+            );
+            CREATE TABLE employee_grants(
+                id INTEGER PRIMARY KEY,grant_name_snapshot TEXT,grant_date TEXT,total_amount TEXT,
+                created_by INTEGER,journal_entry_id INTEGER,status TEXT
+            );
+            CREATE TABLE employee_end_of_service_settlements(
+                id INTEGER PRIMARY KEY,settlement_no TEXT,termination_date TEXT,net_payable TEXT,
+                created_by INTEGER,journal_entry_id INTEGER,status TEXT
+            );
+            CREATE TABLE friday_allowance_batches(
+                id INTEGER PRIMARY KEY,period TEXT,total_amount TEXT,created_by INTEGER,
+                approved_by INTEGER,status TEXT,journal_entry_id INTEGER
+            );
         """)
         conn.commit()
         conn.close()
@@ -73,6 +97,31 @@ class ApprovalInboxTests(unittest.TestCase):
         self.assertIn("لا يجوز اعتماد أو رفض المستند", html)
         self.assertIn("PO-2", html)
         self.assertEqual(html.count("فتح للمراجعة"), 4)
+
+    def test_inbox_includes_workforce_approvals_and_blocks_the_creator(self):
+        conn = self._connect()
+        conn.executescript("""
+            INSERT INTO payroll_runs VALUES(1,'2026-11','draft',1);
+            INSERT INTO payroll_lines VALUES(1,1,'15000.00');
+            INSERT INTO employee_final_payrolls VALUES(1,'FP-1','2026-11','2026-11-15','9000',2,NULL,'draft');
+            INSERT INTO employee_loans VALUES(1,'LOAN-1','2026-11-14','3000',2,1,'requested');
+            INSERT INTO employee_grants VALUES(1,'منحة رمضان','2026-11-14','5000',2,NULL,'draft');
+            INSERT INTO employee_end_of_service_settlements VALUES(1,'EOS-1','2026-11-15','12000',2,NULL,'draft');
+            INSERT INTO friday_allowance_batches VALUES(1,'2026-11','2000',2,NULL,'draft',NULL);
+        """)
+        conn.commit()
+        conn.close()
+        with self.client.session_transaction() as session:
+            session.update(user_id=1, username="reviewer", full_name="مراجع",
+                           role="accountant", permissions=["workforce.manage"])
+        with patch.object(nexus, "db", side_effect=self._connect):
+            response = self.client.get("/approvals")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        for label in ("كشف المرتبات", "FP-1", "LOAN-1", "منحة رمضان", "EOS-1", "بدل الجمعة"):
+            self.assertIn(label, html)
+        self.assertIn("لا يجوز اعتماد وترحيل كشف المرتبات بواسطة منشئه", html)
+        self.assertEqual(html.count("فتح للمراجعة"), 5)
 
     def test_inbox_denies_users_without_approval_permissions(self):
         with self.client.session_transaction() as session:
