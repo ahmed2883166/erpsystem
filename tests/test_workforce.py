@@ -83,6 +83,40 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
 
     
+    def test_grant_selection_filters_by_employee_category_and_creates_review_lines(self):
+        self.add_employee()
+        conn=sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,work_status)
+            VALUES('E002','Comprehensive Employee','2026-01-01','8000','200','comprehensive_bonus')""")
+        conn.commit();conn.close()
+        self.client.post("/hr/grants/types",data={"name":"منحة اختبار"})
+        base={"grant_type_id":"1","calculation_method":"fixed","calculation_value":"500",
+              "days_count":"0","expense_account_id":"3","payable_account_id":"5",
+              "grant_date":"2026-11-15"}
+        # Add one employee from the permanent category only.
+        response=self.client.post("/hr/grants/create",data={**base,"employee_scope":"permanent",
+            "employee_ids":["1"]},follow_redirects=True)
+        self.assertEqual(response.status_code,200)
+        conn=sqlite3.connect(self.db_path)
+        rows=conn.execute("SELECT employee_code_snapshot,amount FROM employee_grant_lines ORDER BY employee_code_snapshot").fetchall()
+        self.assertEqual(rows,[("E001","500.00")])
+        conn.close()
+        # A comprehensive-bonus employee cannot be smuggled into a permanent-only grant.
+        response=self.client.post("/hr/grants/create",data={**base,"employee_scope":"permanent",
+            "employee_ids":["2"]},follow_redirects=True)
+        self.assertIn("لا ينتمي إلى فئة الاستحقاق",response.get_data(as_text=True))
+        conn=sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM employee_grants").fetchone()[0],1)
+        conn.close()
+        # Bulk eligibility for the comprehensive-bonus category remains independent.
+        response=self.client.post("/hr/grants/create",data={**base,"employee_scope":"comprehensive_bonus",
+            "all_employees":"1"},follow_redirects=True)
+        self.assertEqual(response.status_code,200)
+        conn=sqlite3.connect(self.db_path)
+        rows=conn.execute("SELECT employee_code_snapshot FROM employee_grant_lines WHERE grant_id=2").fetchall()
+        self.assertEqual(rows,[("E002",)])
+        conn.close()
+
     def test_employee_form_2_print_view_uses_insured_wage_for_both_amounts(self):
         self.add_employee()
         conn = sqlite3.connect(self.db_path)
