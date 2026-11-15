@@ -43,6 +43,17 @@
   </form>
 </section>
 
+<section class="panel management-report-shortcuts">
+  <h3>التقارير الإدارية التفصيلية</h3>
+  <p class="muted">اضغط على التقرير للانتقال من المؤشر العام إلى التفاصيل ومراجعة مصدر الأرقام.</p>
+  <div class="actions">
+    <a class="button-link" href="{{ url_for('period_comparison_report', date_from=date_from, date_to=date_to) }}">مقارنة الفترات</a>
+    <a class="button-link" href="{{ url_for('profitability_report', date_from=date_from, date_to=date_to) }}">ربحية الفروع ومراكز التكلفة والمخازن</a>
+    <a class="button-link" href="{{ url_for('inventory_ageing_report', as_of=date_to) }}">أعمار المخزون والأصناف الراكدة</a>
+    <a class="button-link" href="{{ url_for('cash_forecast_report', as_of=date_to, horizon_days=90) }}">توقع التحصيلات والمدفوعات</a>
+  </div>
+</section>
+
 <section class="panel">
   <h3>الأداء المالي خلال الفترة</h3>
   <div class="table-wrap financial-performance-table">
