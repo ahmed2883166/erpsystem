@@ -102,7 +102,7 @@ class WorkforceTests(unittest.TestCase):
               "grant_date":"2026-11-15"}
         # Add one employee from the permanent category only.
         response=self.client.post("/hr/grants/create",data={**base,"employee_scope":"permanent",
-            "employee_ids":["1"]},follow_redirects=True)
+            "employee_ids":["1","1"]},follow_redirects=True)
         self.assertEqual(response.status_code,200)
         conn=sqlite3.connect(self.db_path)
         rows=conn.execute("SELECT employee_code_snapshot,amount FROM employee_grant_lines ORDER BY employee_code_snapshot").fetchall()
