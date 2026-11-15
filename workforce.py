@@ -1242,7 +1242,7 @@ def payroll_report():
         params.append(employee_id)
     rows = c.execute("""
         SELECT r.id AS run_id,l.id AS payroll_line_id,r.period,e.id AS employee_id,e.employee_code,e.full_name,e.department,
-               l.basic_salary,l.salary_raise,l.allowances,l.incentives,l.incentive_name,
+               l.basic_salary,l.salary_raise,l.allowances,l.incentives,l.incentive_name,l.stamp_duty,
                l.overtime_hours,l.overtime_rate_percent,l.overtime_amount,l.gross_pay,
                l.absent_hours,l.absence_deduction,l.advance_deduction,
                COALESCE(l.loan_deduction,'0') AS loan_deduction,l.other_deductions,
@@ -1282,7 +1282,7 @@ def payroll_report():
         row["employee_deductions"] = M(
             D(row["absence_deduction"]) + row["manual_advance_deduction"] + loan
             + D(row["other_deductions"]) + D(row["penalty_deduction"]) + D(row["taxable_income_tax"])
-            + D(row["employee_insurance"])
+            + D(row["stamp_duty"]) + D(row["employee_insurance"])
         )
         row["employer_total_cost"] = M(
             D(row["gross_pay"]) - D(row["absence_deduction"]) + D(row["employer_insurance"])
@@ -1293,7 +1293,7 @@ def payroll_report():
     ).fetchall()
     fields = ("basic_salary","salary_raise","allowances","incentives","overtime_amount","gross_pay",
               "absence_deduction","manual_advance_deduction","loan_deduction","other_deductions","penalty_deduction",
-              "taxable_income_tax","employee_insurance","employer_insurance","employee_deductions",
+              "taxable_income_tax","stamp_duty","employee_insurance","employer_insurance","employee_deductions",
               "employer_total_cost","net_pay","paid_amount","remaining_payable")
     totals = {key: M(sum((D(row[key]) for row in rows), Decimal("0"))) for key in fields}
     # Legacy run-level payments are deliberately not attributed to employees.
@@ -1713,7 +1713,8 @@ def payroll_employee_payslip(run_id, employee_id):
     data["employee_deductions"] = M(
         D(data["absence_deduction"]) + total_advance + D(data["other_deductions"])
         + D(data.get("penalty_deduction") or "0")
-        + D(data["taxable_income_tax"]) + D(data["employee_insurance"])
+        + D(data["taxable_income_tax"]) + D(data.get("stamp_duty") or "0")
+        + D(data["employee_insurance"])
     )
     data["net_pay"] = M(data["net_pay"])
     data["total_entitlements"] = M(data["total_entitlements"])
