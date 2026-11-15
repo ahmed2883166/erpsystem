@@ -215,6 +215,7 @@ class CashCommitmentsTests(unittest.TestCase):
         self.conn.execute(
             "INSERT INTO journal_entries(id,status,reference,description) VALUES(7,'posted','REV-4','عكس قيد السداد')"
         )
+        self.conn.commit()
         with self.assertRaisesRegex(ValueError, "تم عكسه"):
             record_cash_commitment_payment(
                 self.conn, commitment_id, "2026-11-10", "60", 4
