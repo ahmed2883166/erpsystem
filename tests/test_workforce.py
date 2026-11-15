@@ -205,7 +205,7 @@ class WorkforceTests(unittest.TestCase):
             "period": "2026-11", "basic_1": "12000", "allowances_1": "1500",
             "overtime_hours_1": "0", "overtime_amount_1": "",
             "absent_hours_1": "0", "absence_deduction_1": "0",
-            "advance_1": "200", "other_deductions_1": "100", "tax_1": "500",
+            "other_deductions_1": "100", "tax_1": "500",
             "employee_ins_1": "300", "employer_ins_1": "400"
         })
         draft = self.client.get("/hr/payroll/1/employee/1/payslip", follow_redirects=True)
