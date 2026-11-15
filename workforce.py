@@ -2306,12 +2306,13 @@ def delete_employee_grant(grant_id):
 def approve_employee_grant(grant_id):
     c=_db()
     try:
+        # Lock before reading draft state so concurrent approvals cannot post twice.
+        c.execute("BEGIN IMMEDIATE")
         grant=c.execute("SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
         if not grant or grant["status"]!="draft": raise ValueError("المنحة غير موجودة أو سبق اعتمادها.")
         lines=c.execute("SELECT * FROM employee_grant_lines WHERE grant_id=? ORDER BY id",(grant_id,)).fetchall()
         total=M(sum((D(x["amount"]) for x in lines),Decimal("0")))
         if not lines or total<=0 or total!=M(grant["total_amount"]): raise ValueError("كشف المنحة غير مكتمل أو غير متوازن.")
-        c.execute("BEGIN IMMEDIATE")
         journal_id=post_journal(c,grant["grant_date"],"EMP-GRANT-"+str(grant_id),
             "إثبات استحقاق منحة: "+grant["grant_name_snapshot"],
             [(int(grant["expense_account_id"]),total,0,"مصروف المنح"),
