@@ -1433,6 +1433,80 @@ def final_payroll():
         c.close()
 
 
+@workforce_bp.route("/hr/final-payroll/<int:final_id>/edit", methods=["GET", "POST"])
+@_role("admin", "accountant")
+def edit_final_payroll(final_id):
+    c = _db()
+    try:
+        if request.method == "POST":
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute("SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
+            if not row or row["status"] != "draft":
+                raise ValueError("التعديل متاح لمسودة المرتب النهائي فقط.")
+            tax = M(request.form.get("tax_deduction", "0"))
+            employee_ins = M(request.form.get("employee_insurance", "0"))
+            employer_ins = M(request.form.get("employer_insurance", "0"))
+            stamp = M(request.form.get("stamp_duty", "0"))
+            other = M(request.form.get("other_deductions", "0"))
+            gross = M(row["gross_pay"])
+            deductions = M(tax + employee_ins + stamp + other)
+            if min(tax, employee_ins, employer_ins, stamp, other) < 0 or deductions > gross:
+                raise ValueError("راجع الاستقطاعات؛ يجب ألا تكون سالبة أو تتجاوز إجمالي المستحق.")
+            net = M(gross - deductions)
+            notes = request.form.get("notes", "").strip()[:500]
+            c.execute("""UPDATE employee_final_payrolls SET tax_deduction=?,employee_insurance=?,
+                employer_insurance=?,stamp_duty=?,other_deductions=?,net_pay=?,notes=?
+                WHERE id=? AND status='draft'""",
+                (str(tax),str(employee_ins),str(employer_ins),str(stamp),str(other),str(net),notes,final_id))
+            if c.execute("SELECT changes()").fetchone()[0] != 1:
+                raise ValueError("لم يتم حفظ التعديلات؛ ربما تغيرت حالة الكشف.")
+            _audit(c, "employee_final_payroll_draft_updated",
+                   str(row["final_payroll_no"]) + " net=" + str(net))
+            c.commit()
+            flash("تم تحديث مسودة المرتب النهائي.", "success")
+            return redirect(url_for("workforce.final_payroll", period=row["period"]))
+        row = c.execute("""SELECT f.*,e.employee_code,e.full_name FROM employee_final_payrolls f
+            JOIN employees e ON e.id=f.employee_id WHERE f.id=?""", (final_id,)).fetchone()
+        if not row:
+            flash("مسودة المرتب النهائي غير موجودة.", "error")
+            return redirect(url_for("workforce.final_payroll"))
+        if row["status"] != "draft":
+            flash("لا يمكن تعديل كشف غير مسودة.", "error")
+            return redirect(url_for("workforce.final_payroll", period=row["period"]))
+        return render_template("final_payroll_edit.html", row=row)
+    except Exception as exc:
+        c.rollback()
+        flash(safe_error_message(exc), "error")
+        return redirect(url_for("workforce.final_payroll"))
+    finally:
+        c.close()
+
+
+@workforce_bp.route("/hr/final-payroll/<int:final_id>/cancel", methods=["POST"])
+@_role("admin", "accountant")
+def cancel_final_payroll(final_id):
+    c = _db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute("SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
+        if not row or row["status"] != "draft":
+            raise ValueError("إلغاء المرتب النهائي متاح للمسودة فقط.")
+        c.execute("UPDATE employee_final_payrolls SET status='cancelled' WHERE id=? AND status='draft'",
+                  (final_id,))
+        if c.execute("SELECT changes()").fetchone()[0] != 1:
+            raise ValueError("لم يتم إلغاء المسودة؛ ربما تغيرت حالتها.")
+        _audit(c, "employee_final_payroll_draft_cancelled", row["final_payroll_no"])
+        c.commit()
+        flash("تم إلغاء المسودة. احتفظ النظام بسجلها ولم يحذفها.", "success")
+        return redirect(url_for("workforce.final_payroll", period=row["period"]))
+    except Exception as exc:
+        c.rollback()
+        flash(safe_error_message(exc), "error")
+        return redirect(url_for("workforce.final_payroll"))
+    finally:
+        c.close()
+
+
 @workforce_bp.route("/hr/payroll", methods=["GET", "POST"])
 @_role("admin", "accountant")
 def payroll():
