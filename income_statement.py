@@ -139,24 +139,71 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
         GROUP BY a.id ORDER BY a.account_type,a.code""",
         (date_from, date_to, *dimension_params)).fetchall()
 
-    # A loss on disposal may historically have been configured against a
-    # revenue-type account (for example 4710). The disposal register is the
-    # authoritative source for the nature of that posting in this period.
+    # Disposal gains and losses must be presented by their economic nature,
+    # not by the configured account's type. Split the disposal journal lines
+    # from the account's ordinary balance so a shared gain/loss account (or
+    # unrelated postings to that account) cannot turn gains into expenses.
     disposal_loss_account_ids = set()
+    disposal_line_adjustments = {}
+    disposal_result_rows = []
     disposal_table = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_disposals'"
     ).fetchone()
     if disposal_table:
         disposal_columns = {row["name"] for row in conn.execute("PRAGMA table_info(asset_disposals)")}
         if {"gain_loss_account_id", "gain_loss_amount", "disposal_date"}.issubset(disposal_columns):
-            disposal_loss_account_ids = {
-                row["gain_loss_account_id"] for row in conn.execute(
-                    """SELECT DISTINCT gain_loss_account_id FROM asset_disposals
-                       WHERE disposal_date>=? AND disposal_date<=?
-                         AND CAST(gain_loss_amount AS NUMERIC)<0""",
-                    (date_from, date_to),
+            if "journal_entry_id" in disposal_columns:
+                disposal_records = conn.execute(
+                    f"""SELECT ad.id,ad.gain_loss_account_id,ad.gain_loss_amount,
+                               a.code,a.name_ar,a.account_type,
+                               jl.debit,jl.credit
+                        FROM asset_disposals ad
+                        JOIN journal_entries je ON je.id=ad.journal_entry_id
+                        JOIN journal_lines jl ON jl.entry_id=je.id
+                             AND jl.account_id=ad.gain_loss_account_id
+                        JOIN accounts a ON a.id=ad.gain_loss_account_id
+                        WHERE {' AND '.join(conditions)}
+                          AND ad.disposal_date>=? AND ad.disposal_date<=?
+                          AND CAST(ad.gain_loss_amount AS NUMERIC)<>0""",
+                    (*dimension_params, date_from, date_to),
                 ).fetchall()
-            }
+                for disposal in disposal_records:
+                    amount = Decimal(str(disposal["gain_loss_amount"] or "0"))
+                    debit = Decimal(str(disposal["debit"] or "0"))
+                    credit = Decimal(str(disposal["credit"] or "0"))
+                    account_id = disposal["gain_loss_account_id"]
+                    previous = disposal_line_adjustments.setdefault(
+                        account_id, [Decimal("0"), Decimal("0")]
+                    )
+                    previous[0] += debit
+                    previous[1] += credit
+                    effective_type = "revenue" if amount > 0 else "expense"
+                    value = abs(amount)
+                    disposal_result_rows.append({
+                        "id": account_id,
+                        "code": disposal["code"] + "-D" + str(disposal["id"]),
+                        "name_ar": (
+                            "ربح استبعاد أصل - " if amount > 0 else "خسارة استبعاد أصل - "
+                        ) + disposal["name_ar"],
+                        "account_type": effective_type,
+                        "statement_section": "other_income" if amount > 0 else "operating_expenses",
+                        "account_subtype": "asset_disposal",
+                        "debit": value if amount < 0 else Decimal("0"),
+                        "credit": value if amount > 0 else Decimal("0"),
+                        "balance": value,
+                        "force_operating_expense": amount < 0,
+                    })
+            else:
+                # Compatibility with older disposal-register schemas that did
+                # not retain the linked journal entry id.
+                disposal_loss_account_ids = {
+                    row["gain_loss_account_id"] for row in conn.execute(
+                        """SELECT DISTINCT gain_loss_account_id FROM asset_disposals
+                           WHERE disposal_date>=? AND disposal_date<=?
+                             AND CAST(gain_loss_amount AS NUMERIC)<0""",
+                        (date_from, date_to),
+                    ).fetchall()
+                }
 
     revenue_rows, cogs_rows, operating_expense_rows = [], [], []
     revenue_total = Decimal("0")
@@ -165,6 +212,10 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
     for row in rows:
         debit = Decimal(str(row["debit"] or "0"))
         credit = Decimal(str(row["credit"] or "0"))
+        adjustment = disposal_line_adjustments.get(row["id"])
+        if adjustment:
+            debit -= adjustment[0]
+            credit -= adjustment[1]
         effective_type = (
             "expense" if row["account_type"] == "revenue"
             and row["id"] in disposal_loss_account_ids else row["account_type"]
@@ -183,6 +234,14 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
         else:
             operating_expense_rows.append(item)
             operating_expense_total += balance
+
+    for item in disposal_result_rows:
+        if item["account_type"] == "revenue":
+            revenue_rows.append(item)
+            revenue_total += item["balance"]
+        else:
+            operating_expense_rows.append(item)
+            operating_expense_total += item["balance"]
 
     gross_profit = revenue_total - cogs_total
     net_profit = gross_profit - operating_expense_total
