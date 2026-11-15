@@ -11,8 +11,33 @@
 <label id="grantDays">عدد الأيام <input type="number" name="days_count" min="0.01" step="0.01" value="1"></label>
 <label>حساب مصروف المنح <select name="expense_account_id" required>{% for a in accounts if a.account_type=='expense' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
 <label>حساب المنح المستحقة <select name="payable_account_id" required>{% for a in accounts if a.account_type=='liability' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
-<label style="grid-column:1/-1"><input type="checkbox" name="all_employees" value="1"> إضافة جميع الموظفين المستحقين تلقائيًا</label>
-<label style="grid-column:1/-1">أو اختر موظفين محددين <select name="employee_ids" multiple size="7" style="width:100%">{% for e in employees %}<option value="{{e.id}}">{{e.employee_code}} - {{e.full_name}} (أساسي {{e.basic_salary}})</option>{% endfor %}</select><small>اضغط Ctrl لاختيار أكثر من موظف. الموظف المستقيل أو المحال للمعاش أو في إجازة بدون مرتب لا يدخل ضمن المنحة.</small></label>
+<label>فئة الاستحقاق
+<select name="employee_scope" id="grantEmployeeScope" required>
+<option value="all_eligible">كل الفئات المستحقة</option>
+<option value="permanent">موظف مثبت</option>
+<option value="comprehensive_bonus">مكافأة شاملة</option>
+</select></label>
+<div style="grid-column:1/-1" class="panel">
+<strong>اختيار الموظفين</strong>
+<div class="actions" style="margin:10px 0">
+<button type="button" id="addAllGrantEmployees">إضافة جميع الموظفين المستحقين تلقائيًا</button>
+<button type="button" class="secondary" id="addSelectedGrantEmployees">إضافة الموظفين المحددين</button>
+</div>
+<label>اختر موظفين محددين
+<select id="grantEmployeePicker" multiple size="6" style="width:100%">
+{% for e in employees %}<option value="{{e.id}}" data-status="{{e.work_status}}" data-code="{{e.employee_code}}" data-name="{{e.full_name}}" data-basic="{{e.basic_salary}}">{{e.employee_code}} - {{e.full_name}} ({{'مثبت' if e.work_status=='permanent' else 'مكافأة شاملة'}}) — أساسي {{e.basic_salary}}</option>{% endfor %}
+</select>
+<small>اختيار الموظفين يكون حسب فئة الاستحقاق. المستقيل أو المحال للمعاش أو في إجازة بدون مرتب غير مؤهل.</small>
+</label>
+<div style="overflow-x:auto;margin-top:12px">
+<table id="grantSelectedTable">
+<thead><tr><th>الكود</th><th>اسم الموظف</th><th>الفئة</th><th>الراتب الأساسي</th><th>إجراء</th></tr></thead>
+<tbody id="grantSelectedBody"><tr id="grantEmptyRow"><td colspan="5">لم تتم إضافة موظفين بعد.</td></tr></tbody>
+</table>
+</div>
+<div id="grantSelectedInputs"></div>
+<small id="grantSelectedCount" class="muted">عدد الموظفين المختارين: 0</small>
+</div>
 <label style="grid-column:1/-1">ملاحظات <input name="notes" maxlength="300"></label>
 <button type="submit" {% if not grant_types %}disabled{% endif %}>إنشاء كشف المنحة للمراجعة</button></form></section>
 <section class="panel"><h3>كشوف المنح</h3><div style="overflow-x:auto"><table><tr><th>رقم</th><th>المنحة</th><th>التاريخ</th><th>طريقة الحساب</th><th>إجمالي الاستحقاق</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th>الإجراءات</th></tr>
@@ -35,4 +60,64 @@
 const method=document.getElementById('grantMethod'),days=document.getElementById('grantDays');
 function updateGrantDays(){days.hidden=method.value!=='per_day';document.getElementById('grantValue').hidden=method.value==='per_day';}
 method.addEventListener('change',updateGrantDays);updateGrantDays();
+
+const grantScope=document.getElementById('grantEmployeeScope');
+const picker=document.getElementById('grantEmployeePicker');
+const selectedBody=document.getElementById('grantSelectedBody');
+const hiddenInputs=document.getElementById('grantSelectedInputs');
+const selectedCount=document.getElementById('grantSelectedCount');
+const selectedEmployees=new Map();
+function scopeAllows(status){
+  return grantScope.value==='all_eligible' ||
+    (grantScope.value==='permanent' && status==='permanent') ||
+    (grantScope.value==='comprehensive_bonus' && status==='comprehensive_bonus');
+}
+function refreshGrantPicker(){
+  Array.from(picker.options).forEach(option=>{
+    option.hidden=!scopeAllows(option.dataset.status);
+    if(option.hidden) option.selected=false;
+  });
+}
+function renderSelectedGrantEmployees(){
+  selectedBody.innerHTML='';
+  hiddenInputs.innerHTML='';
+  if(!selectedEmployees.size){
+    const row=document.createElement('tr');
+    const cell=document.createElement('td');cell.colSpan=5;cell.textContent='لم تتم إضافة موظفين بعد.';
+    row.appendChild(cell);selectedBody.appendChild(row);
+  }
+  selectedEmployees.forEach((employee,id)=>{
+    const row=document.createElement('tr');
+    [employee.code,employee.name,employee.status==='permanent'?'مثبت':'مكافأة شاملة',employee.basic].forEach(value=>{
+      const cell=document.createElement('td');cell.textContent=value;row.appendChild(cell);
+    });
+    const action=document.createElement('td');
+    const remove=document.createElement('button');remove.type='button';remove.className='secondary';
+    remove.textContent='حذف';remove.addEventListener('click',()=>{selectedEmployees.delete(id);renderSelectedGrantEmployees();});
+    action.appendChild(remove);row.appendChild(action);selectedBody.appendChild(row);
+    const input=document.createElement('input');input.type='hidden';input.name='employee_ids';input.value=id;
+    hiddenInputs.appendChild(input);
+  });
+  selectedCount.textContent='عدد الموظفين المختارين: '+selectedEmployees.size;
+}
+function addGrantOptions(options){
+  options.forEach(option=>{
+    if(!option.selected || option.hidden || !scopeAllows(option.dataset.status)) return;
+    selectedEmployees.set(option.value,{code:option.dataset.code,name:option.dataset.name,
+      basic:option.dataset.basic,status:option.dataset.status});
+  });
+  renderSelectedGrantEmployees();
+}
+document.getElementById('addAllGrantEmployees').addEventListener('click',()=>{
+  Array.from(picker.options).filter(option=>scopeAllows(option.dataset.status)).forEach(option=>{
+    selectedEmployees.set(option.value,{code:option.dataset.code,name:option.dataset.name,
+      basic:option.dataset.basic,status:option.dataset.status});
+  });
+  renderSelectedGrantEmployees();
+});
+document.getElementById('addSelectedGrantEmployees').addEventListener('click',()=>addGrantOptions(Array.from(picker.options)));
+grantScope.addEventListener('change',()=>{
+  selectedEmployees.clear();refreshGrantPicker();renderSelectedGrantEmployees();
+});
+refreshGrantPicker();renderSelectedGrantEmployees();
 </script>{% endblock %}
