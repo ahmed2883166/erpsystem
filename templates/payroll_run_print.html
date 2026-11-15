@@ -32,7 +32,7 @@
 <div style="overflow-x:auto"><table>
 <thead><tr>
 <th>م</th><th>كود الموظف</th><th>اسم الموظف</th><th>الإدارة</th>
-<th>الأجر الأساسي</th><th>البدلات والعلاوات</th><th>الإضافي</th>
+<th>الأجر الأساسي</th><th>الأجر التأميني</th><th>البدلات والعلاوات</th><th>الإضافي</th>
 <th>حصة الشركة ضمن الاستحقاق</th><th>إجمالي الاستحقاق</th>
 <th>حصة العامل</th><th>حصة الشركة ضمن الاستقطاع</th><th>الضريبة</th><th>الدمغة</th>
 <th>السلف</th><th>خصم الغياب</th><th>خصومات أخرى</th><th>الجزاءات</th>
@@ -42,7 +42,7 @@
 {% for r in rows %}
 <tr>
 <td>{{loop.index}}</td><td>{{r.employee_code}}</td><td style="text-align:right">{{r.full_name}}</td><td>{{r.department or '-'}}</td>
-<td class="num">{{r.basic_salary|money}}</td>
+<td class="num">{{r.basic_salary|money}}</td><td class="num">{{r.insured_wage|money}}</td>
 <td class="num">{{r.allowances|money}}{% if details[r.id] %}<br><small>{% for item in details[r.id] if item.section=='earning' and item.item_name!='الراتب الأساسي' %}{{item.item_name}}: {{item.amount|money}}{% if not loop.last %}، {% endif %}{% endfor %}</small>{% endif %}</td>
 <td class="num">{{r.overtime_amount|money}}</td>
 <td class="num">{{r.employer_insurance|money}}</td><td class="num"><strong>{{r.total_entitlements|money}}</strong></td>
@@ -52,10 +52,10 @@
 <td class="num">{{r.other_deductions|money}}</td><td class="num">{{r.penalty_deduction|money}}</td>
 <td class="num"><strong>{{r.total_deductions|money}}</strong></td><td class="num"><strong>{{r.net_pay|money}}</strong></td><td class="signature"></td>
 </tr>
-{% else %}<tr><td colspan="20">لا توجد بيانات مرتبات للطباعة.</td></tr>{% endfor %}
+{% else %}<tr><td colspan="21">لا توجد بيانات مرتبات للطباعة.</td></tr>{% endfor %}
 </tbody>
 <tfoot><tr><th colspan="4">الإجمالي</th>
-<th>{{totals.basic_salary|money}}</th><th>{{totals.allowances|money}}</th><th>{{totals.overtime_amount|money}}</th>
+<th>{{totals.basic_salary|money}}</th><th>{{totals.insured_wage|money}}</th><th>{{totals.allowances|money}}</th><th>{{totals.overtime_amount|money}}</th>
 <th>{{totals.employer_insurance|money}}</th><th>{{totals.total_entitlements|money}}</th>
 <th>{{totals.employee_insurance|money}}</th><th>{{totals.employer_insurance|money}}</th>
 <th>{{totals.taxable_income_tax|money}}</th><th>{{totals.stamp_duty|money}}</th>
