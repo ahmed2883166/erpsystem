@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block title %}قائمة التدفقات النقدية | NEXUS ERP{% endblock %}
 {% block content %}
-<header><div><h2>قائمة التدفقات النقدية</h2><p class="muted">مبنية على حركة حسابات الصندوق والبنوك المرتبطة بلوحة الإدارة، للقيود المرحلة فقط.</p></div><div class="table-actions no-print"><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='cash-flow', date_from=date_from, date_to=date_to, method=method) }}">تصدير Excel</a><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='cash-flow', date_from=date_from, date_to=date_to, method=method).replace('/excel','/pdf') }}">تحميل PDF</a></div></header>
+<header class="report-page-header"><div><h2>قائمة التدفقات النقدية</h2><p class="muted">مبنية على حركة حسابات الصندوق والبنوك المرتبطة بلوحة الإدارة، للقيود المرحلة فقط.</p></div><div class="table-actions no-print"><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='cash-flow', date_from=date_from, date_to=date_to, method=method) }}">تصدير Excel</a><a class="btn secondary" href="{{ url_for('report_exports.export_report_excel', report='cash-flow', date_from=date_from, date_to=date_to, method=method).replace('/excel','/pdf') }}">تحميل PDF</a></div></header>
 <section class="panel no-print"><form method="get" class="report-filter"><label>من تاريخ<input type="date" name="date_from" value="{{ date_from }}" required></label><label>إلى تاريخ<input type="date" name="date_to" value="{{ date_to }}" required></label><input type="hidden" name="method" value="{{ method }}"><button>عرض الفترة</button></form></section>
-<section class="panel no-print">
+<section class="panel no-print cash-flow-tools">
   <a class="btn secondary" href="{{ url_for('planning.cash_flow_mapping') }}">إعداد تصنيف حسابات التدفقات النقدية</a>
 </section>
-<section class="panel no-print">
+<section class="panel no-print cash-flow-method">
   <strong>طريقة إعداد التدفقات التشغيلية:</strong>
   <a class="btn {{ 'primary' if method == 'indirect' else 'secondary' }}" href="{{ url_for('planning.cash_flow', date_from=date_from, date_to=date_to, method='indirect') }}">الطريقة غير المباشرة</a>
   <a class="btn {{ 'primary' if method == 'direct' else 'secondary' }}" href="{{ url_for('planning.cash_flow', date_from=date_from, date_to=date_to, method='direct') }}">الطريقة المباشرة</a>
