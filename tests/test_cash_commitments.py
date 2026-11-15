@@ -23,7 +23,9 @@ class CashCommitmentsTests(unittest.TestCase):
         )""")
         self.conn.executemany("INSERT INTO accounts VALUES(?,?,?,?)",[(10,"liability",0,1),(20,"asset",0,1)])
         self.conn.execute("""CREATE TABLE journal_entries(
-            id INTEGER PRIMARY KEY, status TEXT NOT NULL
+            id INTEGER PRIMARY KEY, status TEXT NOT NULL,
+            reference TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '',
+            entry_date TEXT NOT NULL DEFAULT '2026-11-30'
         )""")
         self.conn.execute("""CREATE TABLE journal_lines(
             id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
@@ -190,6 +192,77 @@ class CashCommitmentsTests(unittest.TestCase):
                 self.conn, "friday_overtime", "بدل جمعة", "150", "2026-11-30", payable_account_id=10,
                 origin_type="friday_allowance_batch", origin_id=22,
             )
+
+
+    def _legacy_friday_schema(self):
+        self.conn.execute("""CREATE TABLE friday_allowance_batches(
+            id INTEGER PRIMARY KEY, period TEXT NOT NULL, status TEXT NOT NULL,
+            total_amount TEXT NOT NULL, payable_account_id INTEGER, journal_entry_id INTEGER
+        )""")
+        self.conn.execute("""CREATE TABLE company_settings(
+            setting_key TEXT PRIMARY KEY, setting_value TEXT
+        )""")
+        self.conn.execute("INSERT INTO company_settings VALUES('base_currency','EGP')")
+        self.conn.execute("""INSERT INTO friday_allowance_batches
+            VALUES(1,'2026-01','posted','1250.00',10,1)""")
+        self.conn.execute("UPDATE journal_entries SET reference='FRIDAY-ALLOWANCE-2026-01' WHERE id=1")
+        self.conn.commit()
+
+    def test_sync_imports_legacy_posted_friday_batch_once_without_gl_changes(self):
+        from cash_commitments import sync_friday_allowance_commitments
+        self._legacy_friday_schema()
+        before_entries = self.conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
+        before_batches = tuple(self.conn.execute(
+            "SELECT id,status,total_amount,journal_entry_id FROM friday_allowance_batches"
+        ).fetchone())
+        result = sync_friday_allowance_commitments(self.conn, created_by=7)
+        self.assertEqual(result["imported"], 1)
+        self.assertEqual(result["skipped"], [])
+        row = self.conn.execute("""SELECT commitment_type,title,amount,due_date,currency_code,
+            payable_account_id,origin_type,origin_id,created_by FROM cash_commitments""").fetchone()
+        self.assertEqual(tuple(row), ("friday_overtime","بدل الجمعة - 2026-01","1250.00",
+            "2026-01-31","EGP",10,"friday_allowance_batch",1,7))
+        again = sync_friday_allowance_commitments(self.conn, created_by=7)
+        self.assertEqual(again["imported"], 0)
+        self.assertEqual(again["skipped"][0]["reason"], "مرتبط بالفعل")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM cash_commitments").fetchone()[0], 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], before_entries)
+        self.assertEqual(tuple(self.conn.execute(
+            "SELECT id,status,total_amount,journal_entry_id FROM friday_allowance_batches"
+        ).fetchone()), before_batches)
+
+    def test_sync_skips_reversed_batch_but_imports_restored_reversal_chain(self):
+        from cash_commitments import sync_friday_allowance_commitments
+        self._legacy_friday_schema()
+        self.conn.execute(
+            "INSERT INTO journal_entries(id,status,reference,description) VALUES(5,'posted','REV-1','reversal')"
+        )
+        result = sync_friday_allowance_commitments(self.conn)
+        self.assertEqual(result["imported"], 0)
+        self.assertEqual(result["skipped"][0]["reason"], "قيد الاستحقاق معكوس")
+        self.conn.execute(
+            "INSERT INTO journal_entries(id,status,reference,description) VALUES(6,'posted','REV-5','restoration')"
+        )
+        result = sync_friday_allowance_commitments(self.conn)
+        self.assertEqual(result["imported"], 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM cash_commitments").fetchone()[0], 1)
+
+    def test_sync_reports_invalid_payable_account_and_unposted_journal(self):
+        from cash_commitments import sync_friday_allowance_commitments
+        self._legacy_friday_schema()
+        self.conn.execute(
+            "INSERT INTO friday_allowance_batches VALUES(2,'2026-02','posted','900',20,3)"
+        )
+        self.conn.execute(
+            "INSERT INTO friday_allowance_batches VALUES(3,'2026-03','posted','900',10,2)"
+        )
+        result = sync_friday_allowance_commitments(self.conn)
+        self.assertEqual(result["imported"], 1)
+        self.assertEqual(len(result["skipped"]), 2)
+        reasons = {item["reason"] for item in result["skipped"]}
+        self.assertIn("حساب الالتزام يجب أن يكون حساب خصوم تفصيليًا ونشطًا.", reasons)
+        self.assertIn("قيد الاستحقاق غير موجود أو غير مرحّل", reasons)
+
 
 
 if __name__ == "__main__":
