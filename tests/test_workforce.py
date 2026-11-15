@@ -160,7 +160,10 @@ class WorkforceTests(unittest.TestCase):
         blocked = self.post_as_user("/hr/final-payroll/1/pay", data={
             "payment_date":"2026-11-20","amount":"10000","cash_account_id":"1"
         })
-        self.assertIn("مختلف عن معتمد المرتب النهائي", blocked.get_data(as_text=True))
+        self.assertEqual(blocked.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM employee_final_payroll_payments").fetchone()[0], 0)
+        conn.close()
         paid = self.client.post("/hr/final-payroll/1/pay", data={
             "payment_date":"2026-11-20","amount":"10000","cash_account_id":"1"
         })
@@ -386,8 +389,12 @@ class WorkforceTests(unittest.TestCase):
             "installment_count":"1","first_due_period":"2026-11"})
         blocked_disbursement = self.post_as_user("/hr/loans/1/disburse",data={
             "cash_account_id":"1","loan_account_id":"8","disbursement_date":"2026-11-01"
-        }, follow_redirects=True)
-        self.assertIn("مختلف عن معتمدها", blocked_disbursement.get_data(as_text=True))
+        })
+        self.assertEqual(blocked_disbursement.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT status,journal_entry_id FROM employee_loans WHERE id=1").fetchone(),
+                         ("approved", None))
+        conn.close()
         self.client.post("/hr/loans/1/disburse",data={"cash_account_id":"1","loan_account_id":"8",
             "disbursement_date":"2026-11-01"})
         response = self.client.post("/hr/loans/1/installments/1/defer")
@@ -565,8 +572,11 @@ class WorkforceTests(unittest.TestCase):
         })
         blocked_payment = self.post_as_user("/hr/payroll/1/payment", data={
             "payment_date": "2026-11-30", "amount": "5000", "cash_account_id": "1"
-        }, follow_redirects=True)
-        self.assertIn("مختلف عن معتمد كشف المرتبات", blocked_payment.get_data(as_text=True))
+        })
+        self.assertEqual(blocked_payment.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM payroll_payments").fetchone()[0], 0)
+        conn.close()
         response = self.client.post("/hr/payroll/1/payment", data={
             "payment_date": "2026-11-30", "amount": "5000", "cash_account_id": "1",
             "notes": "دفعة أولى"
@@ -1399,8 +1409,11 @@ class WorkforceTests(unittest.TestCase):
         self.assertAlmostEqual(credit,105000.0,places=2)
         blocked_payment = self.post_as_user("/hr/end-of-service/1/pay",data={
             "payment_date":"2026-11-20","amount":"50000","cash_account_id":"1"
-        }, follow_redirects=True)
-        self.assertIn("مختلف عن معتمدها", blocked_payment.get_data(as_text=True))
+        })
+        self.assertEqual(blocked_payment.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM employee_end_of_service_payments WHERE settlement_id=1").fetchone()[0], 0)
+        conn.close()
         self.client.post("/hr/end-of-service/1/pay",data={"payment_date":"2026-11-20","amount":"50000","cash_account_id":"1"})
         self.client.post("/hr/end-of-service/1/pay",data={"payment_date":"2026-11-25","amount":"54900","cash_account_id":"1"})
         conn=sqlite3.connect(self.db_path)
