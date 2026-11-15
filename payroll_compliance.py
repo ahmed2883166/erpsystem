@@ -265,7 +265,13 @@ def calculate_payroll_deductions(conn, employee, gross_monthly, period, taxable_
 
 
 def seed_egypt_2026(conn):
-    """Insert a reviewable Egypt 2026 baseline with the statutory income-tier table."""
+    """Insert a reviewable Egypt 2026 baseline only when it does not already exist."""
+    existing = conn.execute(
+        "SELECT id FROM payroll_rule_sets WHERE country_code='EG' "
+        "AND category_code='local' AND effective_from='2026-01-01' LIMIT 1"
+    ).fetchone()
+    if existing:
+        raise ValueError("إعداد مصر 2026 موجود بالفعل؛ لن يتم استبدال أي تعديلات أو شرائح محفوظة. أنشئ مجموعة جديدة بتاريخ سريان جديد إذا أردت تحديثها.")
     conn.execute("""
         INSERT OR IGNORE INTO payroll_rule_sets(country_code,category_code,effective_from,
           personal_exemption_annual,taxable_rounding_unit,insurance_floor,insurance_ceiling,
@@ -342,8 +348,8 @@ def rules():
                 ceiling = _m(request.form.get("insurance_ceiling"))
                 employee_rate = _d(request.form.get("employee_insurance_rate"))
                 employer_rate = _d(request.form.get("employer_insurance_rate"))
-                if len(country) != 2 or not category or min(exemption, floor, ceiling) < 0 or rounding_unit <= 0:
-                    raise ValueError("أدخل رمز دولة من حرفين وفئة موظف وحدودًا صحيحة، ووحدة تقريب أكبر من صفر.")
+                if country not in {"EG", "SA"} or not category or min(exemption, floor, ceiling) < 0 or rounding_unit <= 0:
+                    raise ValueError("الدول المدعومة في إعدادات ضرائب المرتبات هي مصر (EG) والسعودية (SA) فقط، مع إدخال فئة الموظف وحدود صحيحة ووحدة تقريب أكبر من صفر.")
                 if min(employee_rate, employer_rate) < 0 or max(employee_rate, employer_rate) > 100:
                     raise ValueError("نسب التأمينات يجب أن تكون بين صفر و100.")
                 if ceiling and ceiling < floor:
