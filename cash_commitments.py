@@ -204,12 +204,19 @@ def cash_commitment_payment_summary(conn, commitment_id):
     ).fetchone()
     if not commitment:
         raise ValueError("الالتزام غير موجود.")
+    journal_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(journal_entries)")
+    }
+    journal_fields = ["j.status journal_status"]
+    journal_fields.append("j.reference journal_reference" if "reference" in journal_columns
+                          else "'' journal_reference")
+    journal_fields.append("j.description journal_description" if "description" in journal_columns
+                          else "'' journal_description")
     payments = conn.execute(
-        """SELECT p.*,j.status journal_status,j.reference journal_reference,
-                  j.description journal_description
-           FROM cash_commitment_payments p
-           LEFT JOIN journal_entries j ON j.id=p.journal_entry_id
-           WHERE p.commitment_id=? ORDER BY p.payment_date,p.id""",
+        "SELECT p.*," + ",".join(journal_fields) +
+        """ FROM cash_commitment_payments p
+            LEFT JOIN journal_entries j ON j.id=p.journal_entry_id
+            WHERE p.commitment_id=? ORDER BY p.payment_date,p.id""",
         (commitment_id,),
     ).fetchall()
     effective = Decimal("0")
