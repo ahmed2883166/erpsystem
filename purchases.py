@@ -2119,6 +2119,29 @@ def bill_print(bill_id):
                            receipts=receipts,settings=settings,branch=branch)
 
 
+def _supplier_bill_returnable_quantity(c, bill_id, product_id, warehouse_id):
+    """Quantity invoiced on this bill for a product/warehouse, less posted prior returns."""
+    billed = c.execute("""
+        SELECT COALESCE(SUM(x.billed_quantity),'0') quantity
+        FROM supplier_bill_inventory_lines x
+        JOIN goods_receipt_lines gl ON gl.id=x.receipt_line_id
+        JOIN goods_receipts gr ON gr.id=gl.receipt_id
+        WHERE x.bill_id=? AND x.product_id=? AND gr.warehouse_id=?
+    """, (bill_id, product_id, warehouse_id)).fetchone()
+    returned = c.execute("""
+        SELECT COALESCE(SUM(l.quantity),'0') quantity
+        FROM supplier_credit_note_lines l
+        JOIN supplier_credit_notes n ON n.id=l.credit_note_id
+        WHERE n.bill_id=? AND n.status='posted'
+          AND l.product_id=? AND l.warehouse_id=?
+    """, (bill_id, product_id, warehouse_id)).fetchone()
+    return max(
+        Decimal("0"),
+        Decimal(str(billed["quantity"] or "0")) -
+        Decimal(str(returned["quantity"] or "0")),
+    )
+
+
 @purchase_bp.route("/credit-notes/new", methods=["GET","POST"])
 @require("purchases.manage")
 def new_credit_note():
@@ -2162,6 +2185,7 @@ def new_credit_note():
             method_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
             method=method_row["setting_value"] if method_row else "average"
             line_data=[]; movement_ids=[]; subtotal=Decimal("0")
+            remaining_returnable={}
             for raw_pid,raw_wh,raw_qty,raw_uom_key in zip(product_ids,warehouse_ids,quantities,uom_keys):
                 product_id=int(raw_pid); warehouse_id=int(raw_wh)
                 entered_qty=Decimal(raw_qty)
@@ -2169,6 +2193,17 @@ def new_credit_note():
                 uom_id,stored_uom_name=product_uom_storage(c,product_id,raw_uom_key or None)
                 qty=q4(entered_qty*conversion_factor)
                 if qty<=0: raise ValueError("كمية المرتجع يجب أن تكون أكبر من صفر.")
+                return_key=(product_id,warehouse_id)
+                if return_key not in remaining_returnable:
+                    remaining_returnable[return_key]=_supplier_bill_returnable_quantity(
+                        c,bill_id,product_id,warehouse_id
+                    )
+                if qty>remaining_returnable[return_key]:
+                    raise ValueError(
+                        "كمية مرتجع الصنف تتجاوز الكمية المفوترة المتبقية من الفاتورة الأصلية. "
+                        f"المتاح للمرتجع: {remaining_returnable[return_key]}."
+                    )
+                remaining_returnable[return_key]-=qty
                 product=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(product_id,)).fetchone()
                 warehouse=c.execute("SELECT id FROM stock_warehouses WHERE id=? AND active=1",(warehouse_id,)).fetchone()
                 if not product or product["product_type"]=="service" or not warehouse:
