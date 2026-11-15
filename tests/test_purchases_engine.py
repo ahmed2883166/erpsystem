@@ -56,6 +56,126 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.assertIn("supplier_payment_allocations", names)
         self.assertIn("purchase_requests", names)
 
+    def test_supplier_credit_note_route_persists_real_layer_allocations(self):
+        purchases.init_purchase_schema()
+        self.db.execute("INSERT INTO company_settings(setting_key,setting_value) VALUES('activity','commercial')")
+        self.db.execute("INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1150','مخزون','asset',0)")
+        self.db.execute("INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('2110','الموردون','liability',0)")
+        supplier_id = self.db.execute(
+            "INSERT INTO suppliers(code,name) VALUES('SUP-RETURN-ROUTE','مورد مرتجع')"
+        ).lastrowid
+        warehouse_id = self.db.execute(
+            "INSERT INTO stock_warehouses(code,name_ar) VALUES('W-RETURN-ROUTE','مخزن مرتجع')"
+        ).lastrowid
+        product_id = self.db.execute(
+            "INSERT INTO stock_products(sku,name_ar) VALUES('P-RETURN-ROUTE','صنف مرتجع')"
+        ).lastrowid
+        receipt_id = self.db.execute(
+            """INSERT INTO goods_receipts(receipt_no,supplier_id,warehouse_id,receipt_date,status,total_value)
+               VALUES('GR-RETURN-ROUTE',?,?,'2026-11-10','posted','50')""",
+            (supplier_id, warehouse_id),
+        ).lastrowid
+        receipt_line_id = self.db.execute(
+            """INSERT INTO goods_receipt_lines(receipt_id,product_id,quantity,unit_cost,total_cost)
+               VALUES(?,?, '5','10','50')""",
+            (receipt_id, product_id),
+        ).lastrowid
+        bill_id = self.db.execute(
+            """INSERT INTO supplier_bills(
+                bill_no,supplier_id,bill_date,supplier_invoice_no,subtotal,tax_rate,tax_amount,
+                total_amount,credited_amount,status,bill_kind
+            ) VALUES('BILL-RETURN-ROUTE',?,'2026-11-10','INV-RETURN-ROUTE',
+                     '50','0','0','50','0','posted','inventory')""",
+            (supplier_id,),
+        ).lastrowid
+        self.db.execute(
+            "INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?, '50')",
+            (bill_id, receipt_id),
+        )
+        self.db.execute(
+            """INSERT INTO supplier_bill_inventory_lines(
+                bill_id,line_no,receipt_line_id,product_id,billed_quantity,invoice_unit_price,line_total
+            ) VALUES(?,1,?,?,'5','10','50')""",
+            (bill_id, receipt_line_id, product_id),
+        )
+        source_movement_id = self.db.execute(
+            """INSERT INTO stock_movements(
+                movement_no,movement_type,product_id,target_warehouse_id,quantity,unit_cost,total_cost,
+                movement_date,notes,accounting_status
+            ) VALUES('OPEN-RETURN-ROUTE','receipt',?,?,'5','10','50','2026-11-10','استلام أصلي','posted')""",
+            (product_id, warehouse_id),
+        ).lastrowid
+        self.db.execute(
+            """INSERT INTO stock_valuation_layers(
+                product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost,value_remaining
+            ) VALUES(?,?,?,'5','5','10','50')""",
+            (product_id, warehouse_id, source_movement_id),
+        )
+        self.db.commit()
+
+        app = Flask(__name__)
+        app.secret_key = "test"
+        app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
+        app.register_blueprint(purchases.purchase_bp)
+        client = app.test_client()
+        with client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "admin"
+
+        with (
+            patch("purchases._activity_posting_accounts", return_value={
+                "supplier_ap": "2110", "purchase_inventory": "1150"
+            }),
+            patch("activity_profiles.resolve_product_account_code", return_value="1150"),
+            patch("purchases.validate_journal_dimensions", return_value={}),
+            patch("purchases.create_journal", return_value=700),
+        ):
+            response = client.post("/purchases/credit-notes/new", data={
+                "supplier_id": str(supplier_id),
+                "bill_id": str(bill_id),
+                "supplier_credit_no": "SUP-CN-RETURN-ROUTE",
+                "reason": "مرتجع فعلي من فاتورة المورد",
+                "credit_date": "2026-11-15",
+                "product_id": str(product_id),
+                "warehouse_id": str(warehouse_id),
+                "quantity": "2",
+                "uom_key": "",
+            })
+        self.assertEqual(response.status_code, 302)
+        note = self.db.execute(
+            "SELECT id,status,journal_entry_id,total_amount FROM supplier_credit_notes"
+        ).fetchone()
+        self.assertIsNotNone(note)
+        self.assertEqual((note["status"], note["journal_entry_id"], Decimal(note["total_amount"])),
+                         ("posted", 700, Decimal("20.00")))
+        allocations = self.db.execute(
+            """SELECT a.quantity,a.unit_cost,a.total_cost,a.source_layer_id,m.accounting_status,
+                      m.movement_type,m.journal_entry_id
+               FROM supplier_credit_note_layer_allocations a
+               JOIN stock_movements m ON m.id=a.stock_movement_id
+               JOIN supplier_credit_note_lines l ON l.id=a.credit_note_line_id
+               WHERE l.credit_note_id=?""",
+            (note["id"],),
+        ).fetchall()
+        self.assertEqual(len(allocations), 1)
+        self.assertEqual(
+            (Decimal(allocations[0]["quantity"]), Decimal(allocations[0]["unit_cost"]),
+             Decimal(allocations[0]["total_cost"]), allocations[0]["accounting_status"],
+             allocations[0]["movement_type"], allocations[0]["journal_entry_id"]),
+            (Decimal("2"), Decimal("10"), Decimal("20"), "posted", "issue", 700),
+        )
+        layer = self.db.execute(
+            "SELECT qty_remaining,value_remaining FROM stock_valuation_layers WHERE source_movement_id=?",
+            (source_movement_id,),
+        ).fetchone()
+        self.assertEqual((Decimal(layer["qty_remaining"]), Decimal(layer["value_remaining"])),
+                         (Decimal("3"), Decimal("30")))
+        bill = self.db.execute(
+            "SELECT credited_amount FROM supplier_bills WHERE id=?", (bill_id,)
+        ).fetchone()
+        self.assertEqual(Decimal(bill["credited_amount"]), Decimal("20.00"))
+
+
     def test_supplier_invoice_is_unique_and_receipt_can_be_allocated_partially(self):
         purchases.init_purchase_schema()
         self.db.execute("INSERT INTO suppliers(code,name) VALUES('SUP-1','مورد اختبار')")
