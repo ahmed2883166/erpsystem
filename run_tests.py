@@ -9,6 +9,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix="nexus-erp-tests-") as data_dir:
         os.environ["NEXUS_DATA_DIR"] = data_dir
         os.environ["NEXUS_BACKUP_DIR"] = os.path.join(data_dir, "backups")
+        # Unit/integration tests use the explicit local demo mode; production defaults fail closed.
+        os.environ["NEXUS_DEMO_MODE"] = "1"
         suite = unittest.defaultTestLoader.discover("tests")
         result = unittest.TextTestRunner(verbosity=2).run(suite)
         return 0 if result.wasSuccessful() else 1
