@@ -60,11 +60,11 @@
     <table>
       <thead><tr><th>القائمة المالية المختصرة</th><th>الفترة الحالية</th><th>الفترة المقارنة</th><th>الفرق</th></tr></thead>
       <tbody>
-        <tr><td>صافي الإيرادات</td><td>{{ money(s.current.revenue) }}</td><td>{{ money(s.previous.revenue) }}</td><td>{{ money(s.current.revenue - s.previous.revenue) }}</td></tr>
-        <tr><td>(−) تكلفة المبيعات والتكاليف المباشرة</td><td>{{ money(s.current.cogs) }}</td><td>{{ money(s.previous.cogs) }}</td><td>{{ money(s.current.cogs - s.previous.cogs) }}</td></tr>
-        <tr class="financial-subtotal"><td>مجمل الربح</td><td>{{ money(s.current.revenue - s.current.cogs) }}</td><td>{{ money(s.previous.revenue - s.previous.cogs) }}</td><td>{{ money((s.current.revenue - s.current.cogs) - (s.previous.revenue - s.previous.cogs)) }}</td></tr>
-        <tr><td>(−) المصروفات الأخرى</td><td>{{ money(s.current.expenses - s.current.cogs) }}</td><td>{{ money(s.previous.expenses - s.previous.cogs) }}</td><td>{{ money((s.current.expenses - s.current.cogs) - (s.previous.expenses - s.previous.cogs)) }}</td></tr>
-        <tr class="total financial-net"><td>صافي الربح / (الخسارة)</td><td>{{ money(s.current.net_profit) }}</td><td>{{ money(s.previous.net_profit) }}</td><td>{{ money(s.current.net_profit - s.previous.net_profit) }}</td></tr>
+        <tr><td>صافي الإيرادات</td><td><a href="{{ url_for('income_statement', date_from=date_from, date_to=date_to) }}" title="فتح قائمة الدخل">{{ money(s.current.revenue) }}</a></td><td>{{ money(s.previous.revenue) }}</td><td>{{ money(s.current.revenue - s.previous.revenue) }}</td></tr>
+        <tr><td>(−) تكلفة المبيعات والتكاليف المباشرة</td><td><a href="{{ url_for('income_statement', date_from=date_from, date_to=date_to) }}" title="تفاصيل تكلفة المبيعات">{{ money(s.current.cogs) }}</a></td><td>{{ money(s.previous.cogs) }}</td><td>{{ money(s.current.cogs - s.previous.cogs) }}</td></tr>
+        <tr class="financial-subtotal"><td>مجمل الربح</td><td><a href="{{ url_for('income_statement', date_from=date_from, date_to=date_to) }}" title="تفاصيل مجمل الربح">{{ money(s.current.revenue - s.current.cogs) }}</a></td><td>{{ money(s.previous.revenue - s.previous.cogs) }}</td><td>{{ money((s.current.revenue - s.current.cogs) - (s.previous.revenue - s.previous.cogs)) }}</td></tr>
+        <tr><td>(−) المصروفات الأخرى</td><td><a href="{{ url_for('income_statement', date_from=date_from, date_to=date_to) }}" title="تفاصيل المصروفات">{{ money(s.current.expenses - s.current.cogs) }}</a></td><td>{{ money(s.previous.expenses - s.previous.cogs) }}</td><td>{{ money((s.current.expenses - s.current.cogs) - (s.previous.expenses - s.previous.cogs)) }}</td></tr>
+        <tr class="total financial-net"><td>صافي الربح / (الخسارة)</td><td><a href="{{ url_for('income_statement', date_from=date_from, date_to=date_to) }}" title="فتح قائمة الدخل">{{ money(s.current.net_profit) }}</a></td><td>{{ money(s.previous.net_profit) }}</td><td>{{ money(s.current.net_profit - s.previous.net_profit) }}</td></tr>
         <tr><td>هامش مجمل الربح</td><td>{{ percent(s.ratios.gross_margin) }}</td><td>{% if s.previous.revenue %}{{ percent(((s.previous.revenue - s.previous.cogs) * 100 / s.previous.revenue)) }}{% else %}—{% endif %}</td><td>{% if s.current.revenue and s.previous.revenue %}{{ '%.2f'|format((s.current.revenue - s.current.cogs) * 100 / s.current.revenue - (s.previous.revenue - s.previous.cogs) * 100 / s.previous.revenue) }} نقطة مئوية{% else %}—{% endif %}</td></tr>
       </tbody>
     </table>
@@ -113,15 +113,15 @@
   <h3>المركز المالي حتى {{ date_to }}</h3>
   <div class="table-wrap"><table class="financial-summary-table">
     <thead><tr><th>البند</th><th>الرصيد</th></tr></thead><tbody>
-      <tr><td>النقدية والبنوك</td><td>{{ money(s.cash) }}</td></tr>
-      <tr><td>أرصدة العملاء / المدينين</td><td>{{ money(s.receivables) }}</td></tr>
-      <tr><td>أرصدة الموردين</td><td>{{ money(s.payables) }}</td></tr>
-      <tr><td>قيمة المخزون</td><td>{{ money(s.inventory) }}</td></tr>
-      <tr class="financial-subtotal"><td>إجمالي الأصول</td><td>{{ money(s.total_assets) }}</td></tr>
-      <tr><td>إجمالي الالتزامات</td><td>{{ money(s.total_liabilities) }}</td></tr>
+      <tr><td>النقدية والبنوك</td><td><a href="{{ url_for('ledger') }}?date_to={{ date_to }}">{{ money(s.cash) }}</a></td></tr>
+      <tr><td>أرصدة العملاء / المدينين</td><td><a href="{{ url_for('aging.index', kind='customers', as_of=date_to) }}">{{ money(s.receivables) }}</a></td></tr>
+      <tr><td>أرصدة الموردين</td><td><a href="{{ url_for('aging.index', kind='suppliers', as_of=date_to) }}">{{ money(s.payables) }}</a></td></tr>
+      <tr><td>قيمة المخزون</td><td><a href="{{ url_for('inventory_ageing_report', as_of=date_to) }}">{{ money(s.inventory) }}</a></td></tr>
+      <tr class="financial-subtotal"><td>إجمالي الأصول</td><td><a href="{{ url_for('planning.balance_sheet', date_to=date_to) }}">{{ money(s.total_assets) }}</a></td></tr>
+      <tr><td>إجمالي الالتزامات</td><td><a href="{{ url_for('planning.balance_sheet', date_to=date_to) }}">{{ money(s.total_liabilities) }}</a></td></tr>
       <tr><td>حقوق الملكية قبل نتيجة النشاط</td><td>{{ money(s.total_equity) }}</td></tr>
       <tr><td>نتيجة النشاط المتراكمة</td><td>{{ money(s.total_equity_after_profit - s.total_equity) }}</td></tr>
-      <tr class="financial-subtotal"><td>حقوق الملكية بعد نتيجة النشاط</td><td>{{ money(s.total_equity_after_profit) }}</td></tr>
+      <tr class="financial-subtotal"><td>حقوق الملكية بعد نتيجة النشاط</td><td><a href="{{ url_for('planning.balance_sheet', date_to=date_to) }}">{{ money(s.total_equity_after_profit) }}</a></td></tr>
       <tr><td>رأس المال العامل</td><td>{{ money(s.working_capital) }}</td></tr>
       <tr><td>نسبة السيولة الجارية</td><td>{{ ratio(s.current_ratio) }}</td></tr>
       <tr><td>نسبة السيولة السريعة</td><td>{{ ratio(s.quick_ratio) }}</td></tr>
