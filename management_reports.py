@@ -159,7 +159,17 @@ def build_inventory_ageing(conn, as_of):
             "expiry_days": expiry_days,
             "last_movement_date": row["last_movement_date"],
             "last_movement_age_days": last_movement_age,
-            "slow_moving": last_movement_age > 90 if last_movement_age is not None else age > 90,
+            "slow_moving": (
+                (last_movement_age > 90) if last_movement_age is not None
+                else (age > 90 if has_movements else None)
+            ),
+            "slow_moving_status": (
+                "راكد: لا توجد حركة لأكثر من 90 يومًا" if last_movement_age is not None and last_movement_age > 90
+                else "له حركة خلال آخر 90 يومًا" if last_movement_age is not None
+                else "لا توجد حركة مسجلة" if has_movements and age > 90
+                else "لا توجد بيانات حركات كافية للتصنيف" if not has_movements
+                else "لا توجد حركة مسجلة حديثًا"
+            ),
             "bucket": bucket,
         })
     return {"available": True, "rows": result, "totals": buckets,
