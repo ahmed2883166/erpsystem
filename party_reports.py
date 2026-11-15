@@ -118,32 +118,31 @@ def _decimal(value):
     return Decimal(str(value or "0"))
 
 
-def _gl_control_balance(c, account_codes, as_of, normal_side):
-    codes = sorted({str(code) for code in account_codes if code not in (None, "")})
-    if not codes:
-        return None, []
-    placeholders = ",".join("?" for _ in codes)
-    accounts = c.execute(
-        f"SELECT id,code FROM accounts WHERE code IN ({placeholders}) AND is_group=0 AND active=1",
-        codes,
-    ).fetchall()
-    account_ids = [row["id"] for row in accounts]
-    if not account_ids:
-        return None, codes
-    marks = ",".join("?" for _ in account_ids)
-    rows = c.execute(
-        f"""SELECT jl.debit,jl.credit FROM journal_lines jl
-            JOIN journal_entries je ON je.id=jl.entry_id
-            WHERE je.status='posted' AND je.entry_date<=?
-              AND jl.account_id IN ({marks})""",
-        (as_of, *account_ids),
-    ).fetchall()
-    debit = sum((_decimal(row["debit"]) for row in rows), Decimal("0"))
-    credit = sum((_decimal(row["credit"]) for row in rows), Decimal("0"))
-    return (debit - credit if normal_side == "debit" else credit - debit), [
-        row["code"] for row in accounts
-    ]
+def _opening_copy_exclusion(c, as_of):
+    from management_dashboard import _copied_opening_entry_ids
+    excluded=sorted(_copied_opening_entry_ids(c,as_of))
+    sql=(" AND je.id NOT IN ("+",".join("?" for _ in excluded)+")") if excluded else ""
+    return sql,tuple(excluded)
 
+
+def _gl_control_balance(c, account_codes, as_of, normal_side):
+    codes=sorted({str(code) for code in account_codes if code not in (None,"")})
+    if not codes: return None,[]
+    placeholders=",".join("?" for _ in codes)
+    accounts=c.execute(
+        f"SELECT id,code FROM accounts WHERE code IN ({placeholders}) AND is_group=0 AND active=1",
+        codes).fetchall()
+    account_ids=[row["id"] for row in accounts]
+    if not account_ids: return None,codes
+    marks=",".join("?" for _ in account_ids)
+    exclusion,excluded=_opening_copy_exclusion(c,as_of)
+    rows=c.execute(f"""SELECT jl.debit,jl.credit FROM journal_lines jl
+        JOIN journal_entries je ON je.id=jl.entry_id
+        WHERE je.status='posted' AND je.entry_date<=?{exclusion}
+          AND jl.account_id IN ({marks})""",(as_of,*excluded,*account_ids)).fetchall()
+    debit=sum((_decimal(row["debit"]) for row in rows),Decimal("0"))
+    credit=sum((_decimal(row["credit"]) for row in rows),Decimal("0"))
+    return (debit-credit if normal_side=="debit" else credit-debit),[row["code"] for row in accounts]
 
 def _subledger_total(c, kind, as_of):
     table = "customers" if kind == "customer" else "suppliers"
@@ -322,86 +321,57 @@ def _all_party_events(c, kind):
 
 def _gl_party_control_balance(c, account_codes, party_id, as_of, normal_side, dimension):
     """Return a party-specific GL control only when that dimension is stored on journal lines."""
-    if dimension not in _columns(c, "journal_lines"):
-        return None, False
-    codes = sorted({str(code) for code in account_codes if code not in (None, "")})
-    if not codes:
-        return None, False
-    placeholders = ",".join("?" for _ in codes)
-    accounts = c.execute(
-        f"SELECT id FROM accounts WHERE code IN ({placeholders}) AND is_group=0 AND active=1",
-        codes,
-    ).fetchall()
-    account_ids = [row["id"] for row in accounts]
-    if not account_ids:
-        return None, False
-    marks = ",".join("?" for _ in account_ids)
-    # Legacy or unassigned control-account lines prevent a reliable per-party
-    # GL comparison; never present a partial dimension balance as complete.
-    unassigned = c.execute(
-        f"""SELECT 1 FROM journal_lines jl
-            JOIN journal_entries je ON je.id=jl.entry_id
-            WHERE je.status='posted' AND je.entry_date<=?
-              AND jl.account_id IN ({marks}) AND jl.{dimension} IS NULL LIMIT 1""",
-        (as_of, *account_ids),
-    ).fetchone()
-    if unassigned:
-        return None, False
-    rows = c.execute(
-        f"""SELECT jl.debit,jl.credit FROM journal_lines jl
-            JOIN journal_entries je ON je.id=jl.entry_id
-            WHERE je.status='posted' AND je.entry_date<=?
-              AND jl.account_id IN ({marks}) AND jl.{dimension}=?""",
-        (as_of, *account_ids, party_id),
-    ).fetchall()
-    debit = sum((_decimal(row["debit"]) for row in rows), Decimal("0"))
-    credit = sum((_decimal(row["credit"]) for row in rows), Decimal("0"))
-    return (debit - credit if normal_side == "debit" else credit - debit), True
-
+    if dimension not in _columns(c,"journal_lines"): return None,False
+    codes=sorted({str(code) for code in account_codes if code not in (None,"")})
+    if not codes: return None,False
+    placeholders=",".join("?" for _ in codes)
+    accounts=c.execute(f"SELECT id FROM accounts WHERE code IN ({placeholders}) AND is_group=0 AND active=1",codes).fetchall()
+    account_ids=[row["id"] for row in accounts]
+    if not account_ids: return None,False
+    marks=",".join("?" for _ in account_ids)
+    exclusion,excluded=_opening_copy_exclusion(c,as_of)
+    unassigned=c.execute(f"""SELECT 1 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+        WHERE je.status='posted' AND je.entry_date<=?{exclusion}
+          AND jl.account_id IN ({marks}) AND jl.{dimension} IS NULL LIMIT 1""",
+        (as_of,*excluded,*account_ids)).fetchone()
+    if unassigned: return None,False
+    rows=c.execute(f"""SELECT jl.debit,jl.credit FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+        WHERE je.status='posted' AND je.entry_date<=?{exclusion}
+          AND jl.account_id IN ({marks}) AND jl.{dimension}=?""",
+        (as_of,*excluded,*account_ids,party_id)).fetchall()
+    debit=sum((_decimal(row["debit"]) for row in rows),Decimal("0"))
+    credit=sum((_decimal(row["credit"]) for row in rows),Decimal("0"))
+    return (debit-credit if normal_side=="debit" else credit-debit),True
 
 def _gl_party_control_balances(c, account_codes, as_of, normal_side, dimension):
     """Fetch all party-level control balances in one query, not one query per party."""
-    if dimension not in _columns(c, "journal_lines"):
-        return {}, False
-    codes = sorted({str(code) for code in account_codes if code not in (None, "")})
-    if not codes:
-        return {}, False
-    placeholders = ",".join("?" for _ in codes)
-    accounts = c.execute(
-        f"SELECT id FROM accounts WHERE code IN ({placeholders}) AND is_group=0 AND active=1",
-        codes,
-    ).fetchall()
-    account_ids = [row["id"] for row in accounts]
-    if not account_ids:
-        return {}, False
-    marks = ",".join("?" for _ in account_ids)
-    unassigned = c.execute(
-        f"""SELECT 1 FROM journal_lines jl
-            JOIN journal_entries je ON je.id=jl.entry_id
-            WHERE je.status='posted' AND je.entry_date<=?
-              AND jl.account_id IN ({marks}) AND jl.{dimension} IS NULL LIMIT 1""",
-        (as_of, *account_ids),
-    ).fetchone()
-    if unassigned:
-        return {}, False
-    rows = c.execute(
-        f"""SELECT jl.{dimension} party_id,jl.debit,jl.credit
-            FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
-            WHERE je.status='posted' AND je.entry_date<=?
-              AND jl.account_id IN ({marks}) AND jl.{dimension} IS NOT NULL""",
-        (as_of, *account_ids),
-    ).fetchall()
-    totals = {}
+    if dimension not in _columns(c,"journal_lines"): return {},False
+    codes=sorted({str(code) for code in account_codes if code not in (None,"")})
+    if not codes: return {},False
+    placeholders=",".join("?" for _ in codes)
+    accounts=c.execute(f"SELECT id FROM accounts WHERE code IN ({placeholders}) AND is_group=0 AND active=1",codes).fetchall()
+    account_ids=[row["id"] for row in accounts]
+    if not account_ids: return {},False
+    marks=",".join("?" for _ in account_ids)
+    exclusion,excluded=_opening_copy_exclusion(c,as_of)
+    unassigned=c.execute(f"""SELECT 1 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+        WHERE je.status='posted' AND je.entry_date<=?{exclusion}
+          AND jl.account_id IN ({marks}) AND jl.{dimension} IS NULL LIMIT 1""",
+        (as_of,*excluded,*account_ids)).fetchone()
+    if unassigned: return {},False
+    rows=c.execute(f"""SELECT jl.{dimension} party_id,jl.debit,jl.credit
+        FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+        WHERE je.status='posted' AND je.entry_date<=?{exclusion}
+          AND jl.account_id IN ({marks}) AND jl.{dimension} IS NOT NULL""",
+        (as_of,*excluded,*account_ids)).fetchall()
+    totals={}
     for row in rows:
-        totals.setdefault(row["party_id"], [Decimal("0"), Decimal("0")])
-        totals[row["party_id"]][0] += _decimal(row["debit"])
-        totals[row["party_id"]][1] += _decimal(row["credit"])
-    balances = {
-        party_id: debit - credit if normal_side == "debit" else credit - debit
-        for party_id, (debit, credit) in totals.items()
-    }
-    return balances, True
-
+        totals.setdefault(row["party_id"],[Decimal("0"),Decimal("0")])
+        totals[row["party_id"]][0]+=_decimal(row["debit"])
+        totals[row["party_id"]][1]+=_decimal(row["credit"])
+    balances={party_id:(debit-credit if normal_side=="debit" else credit-debit)
+        for party_id,(debit,credit) in totals.items()}
+    return balances,True
 
 def build_party_reconciliation(c, kind, as_of, selected_party_id=None):
     """Build per-party balances with explicit availability of party-level GL dimensions."""
