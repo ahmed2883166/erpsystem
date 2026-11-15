@@ -105,7 +105,7 @@ def initialize_cash_commitments_schema(conn):
             ON cash_commitment_schedules(active,next_due_date);
     """)
     payment_columns = {
-        row["name"] for row in conn.execute("PRAGMA table_info(cash_commitment_payments)")
+        row[1] for row in conn.execute("PRAGMA table_info(cash_commitment_payments)")
     }
     if "reversal_journal_entry_id" not in payment_columns:
         conn.execute(
