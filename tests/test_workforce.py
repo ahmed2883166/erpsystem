@@ -85,7 +85,6 @@ class WorkforceTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             session["user_id"] = 1
             session["role"] = "accountant"
-            session["user_id"] = 1
 
     def tearDown(self):
         workforce.DB_PATH = self.original_path
@@ -128,6 +127,7 @@ class WorkforceTests(unittest.TestCase):
             )
         with self.client.session_transaction() as session:
             session["role"] = "accountant"
+            session["user_id"] = 1
 
     
     def test_grant_selection_filters_by_employee_category_and_creates_review_lines(self):
@@ -546,7 +546,7 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         self.assertEqual(line,("333.34","333.34","12366.66"))  # Duplicate active allowance is counted once.
         self.approve_pending_salary_changes(1)
-        response=self.client.post("/hr/payroll/1/post",data={"salary_expense_account":"4",
+        response=self.post_as_user("/hr/payroll/1/post",data={"salary_expense_account":"4",
             "employer_ins_expense_account":"3","salaries_payable_account":"5","tax_payable_account":"6",
             "insurance_payable_account":"7","advances_account":"8","other_deductions_account":"2"})
         self.assertEqual(response.status_code,302)
@@ -768,7 +768,7 @@ class WorkforceTests(unittest.TestCase):
         post_data = {"salary_expense_account":"4","employer_ins_expense_account":"3",
             "salaries_payable_account":"5","tax_payable_account":"6","insurance_payable_account":"7",
             "advances_account":"2","other_deductions_account":"2"}
-        blocked = self.client.post("/hr/payroll/1/post", data=post_data, follow_redirects=True)
+        blocked = self.post_as_user("/hr/payroll/1/post", data=post_data, follow_redirects=True)
         self.assertIn("موافقة المدير", blocked.get_data(as_text=True))
         conn = sqlite3.connect(self.db_path)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
@@ -784,7 +784,7 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(approved_by, 1)
         with self.client.session_transaction() as session:
             session["role"] = "accountant"
-        posted = self.client.post("/hr/payroll/1/post", data=post_data)
+        posted = self.post_as_user("/hr/payroll/1/post", data=post_data)
         self.assertEqual(posted.status_code, 302)
         conn = sqlite3.connect(self.db_path)
         status = conn.execute("SELECT status FROM payroll_runs WHERE id=1").fetchone()[0]
