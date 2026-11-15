@@ -762,14 +762,31 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
 
     threshold = Decimal(str(multiplier))
     result = []
+    seen_signatures = {}
     for entry in entries:
         entry_date = date.fromisoformat(entry["entry_date"])
         reasons = []
+        entry_lines = lines_by_entry.get(entry["id"], ())
+        signature = (
+            entry["entry_date"],
+            tuple(sorted((
+                int(line["account_id"]),
+                str(_decimal(line["debit"])),
+                str(_decimal(line["credit"])),
+            ) for line in entry_lines)),
+        )
+        duplicate_of = seen_signatures.get(signature)
+        if duplicate_of is not None:
+            reasons.append("قيد مطابق تمامًا لقيد مرحل آخر رقم " + str(duplicate_of) + " — يحتاج مراجعة")
+        else:
+            seen_signatures[signature] = entry["id"]
+        if abs(_decimal(entry["debit"]) - _decimal(entry["credit"])) > Decimal("0.01"):
+            reasons.append("القيد غير متوازن بين المدين والدائن")
         if entry_date >= period_end - timedelta(days=1):
             reasons.append("قيد في آخر يومين من الفترة")
         lower_date = (entry_date - timedelta(days=90)).isoformat()
         current_date = entry_date.isoformat()
-        for line in lines_by_entry.get(entry["id"], ()):
+        for line in entry_lines:
             history = history_by_account.get(line["account_id"])
             if not history:
                 continue
