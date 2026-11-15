@@ -2219,7 +2219,7 @@ def save_payroll_settings():
 
 
 @workforce_bp.route("/hr/payroll/<int:run_id>/salary-approval/<int:line_id>", methods=["POST"])
-@_role("admin", permission="workforce.approve")
+@_role("admin", permission="workforce.salary_approve")
 def approve_payroll_basic_salary_change(run_id, line_id):
     c = _db()
     if session.get("role") != "admin":
