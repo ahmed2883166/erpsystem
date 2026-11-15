@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from income_statement import build_income_statement, comparison_period
+from cash_commitments import list_cash_commitments_forecast
 from receivables import (
     _customer_aging_documents, _customer_aging_movements,
     _supplier_aging_documents, _supplier_aging_movements,
@@ -300,6 +301,7 @@ def build_cash_forecast(conn, as_of, horizon_days=90):
     try:
         items.extend(_cash_forecast_payroll(conn, as_of))
         items.extend(_cash_forecast_grants(conn, as_of))
+        items.extend(list_cash_commitments_forecast(conn, as_of, end))
     except Exception:
         errors.append("تعذر احتساب التزامات المرتبات أو المنح بسبب نقص/اختلاف بيانات الموارد البشرية.")
     visible = [item for item in items if "error" not in item and item["due_date"] <= end]
@@ -308,6 +310,7 @@ def build_cash_forecast(conn, as_of, horizon_days=90):
         day = daily.setdefault(item["due_date"], {
             "collections": Decimal("0"), "supplier_payments": Decimal("0"),
             "payroll": Decimal("0"), "employee_grants": Decimal("0"),
+            "other_commitments": Decimal("0"),
             "payments": Decimal("0"),
         })
         if item["kind"] == "customers":
@@ -317,6 +320,7 @@ def build_cash_forecast(conn, as_of, horizon_days=90):
                 "suppliers": "supplier_payments",
                 "payroll": "payroll",
                 "employee_grants": "employee_grants",
+                "cash_commitment": "other_commitments",
             }.get(item["kind"], "supplier_payments")
             day[category] += item["balance"]
             day["payments"] += item["balance"]
@@ -331,6 +335,6 @@ def build_cash_forecast(conn, as_of, horizon_days=90):
         "coverage_notes": [
             "المرتبات: صافي المرتبات المرحلة بعد خصم دفعات الصرف المسجلة حتى تاريخ التقرير؛ تاريخ الاستحقاق نهاية شهر المرتبات كتقدير.",
             "المنح: المنح المعتمدة فقط، بعد خصم دفعاتها المسجلة حتى تاريخ التقرير.",
-            "الضرائب والمصروفات الدورية وبدل الجمعة لا تدخل في الإجمالي لعدم وجود سجل موحد موثق لمواعيد استحقاقها ومدفوعاتها؛ لا يتم افتراض تواريخ أو مبالغ.",
+            "الالتزامات المسجلة يدويًا (الضرائب والمصروفات الدورية وما يُربط لاحقًا ببدل الجمعة) تُعرض بعد خصم الدفعات المرتبطة بقيود مرحلة حتى تاريخ التقرير.",
         ],
     }
