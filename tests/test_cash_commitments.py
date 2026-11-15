@@ -18,6 +18,10 @@ class CashCommitmentsTests(unittest.TestCase):
     def setUp(self):
         self.conn = sqlite3.connect(":memory:")
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("""CREATE TABLE accounts(
+            id INTEGER PRIMARY KEY, account_type TEXT, is_group INTEGER, active INTEGER
+        )""")
+        self.conn.executemany("INSERT INTO accounts VALUES(?,?,?,?)",[(10,"liability",0,1),(20,"asset",0,1)])
         self.conn.execute("""CREATE TABLE journal_entries(
             id INTEGER PRIMARY KEY, status TEXT NOT NULL
         )""")
@@ -133,7 +137,7 @@ class CashCommitmentsTests(unittest.TestCase):
     def test_recurring_schedule_generates_month_end_dates_once_only(self):
         schedule_id = create_recurring_schedule(
             self.conn, "إيجار المقر", "5000", "2026-01-31", "monthly",
-            currency_code="EGP",
+            currency_code="EGP", payable_account_id=10,
         )
         self.assertEqual(
             generate_recurring_schedule_occurrences(self.conn, schedule_id, "2026-03-31"),
@@ -162,7 +166,7 @@ class CashCommitmentsTests(unittest.TestCase):
     def test_deactivating_schedule_preserves_existing_commitments(self):
         schedule_id = create_recurring_schedule(
             self.conn, "اشتراك سنوي", "1200", "2026-01-15", "annual",
-            currency_code="EGP",
+            currency_code="EGP", payable_account_id=10,
         )
         self.assertEqual(
             generate_recurring_schedule_occurrences(self.conn, schedule_id, "2026-01-15"),
@@ -178,12 +182,12 @@ class CashCommitmentsTests(unittest.TestCase):
 
     def test_duplicate_source_reference_is_rejected(self):
         create_cash_commitment(
-            self.conn, "friday_overtime", "بدل جمعة", "150", "2026-11-30",
+            self.conn, "friday_overtime", "بدل جمعة", "150", "2026-11-30", payable_account_id=10,
             origin_type="friday_allowance_batch", origin_id=22,
         )
         with self.assertRaises(sqlite3.IntegrityError):
             create_cash_commitment(
-                self.conn, "friday_overtime", "بدل جمعة", "150", "2026-11-30",
+                self.conn, "friday_overtime", "بدل جمعة", "150", "2026-11-30", payable_account_id=10,
                 origin_type="friday_allowance_batch", origin_id=22,
             )
 
