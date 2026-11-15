@@ -122,7 +122,7 @@ def initialize_workforce_schema():
       gross_pay TEXT NOT NULL, tax_deduction TEXT NOT NULL DEFAULT '0',
       employee_insurance TEXT NOT NULL DEFAULT '0', employer_insurance TEXT NOT NULL DEFAULT '0',
       stamp_duty TEXT NOT NULL DEFAULT '0', other_deductions TEXT NOT NULL DEFAULT '0',
-      net_pay TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft'
+      net_pay TEXT NOT NULL, journal_entry_id INTEGER UNIQUE, status TEXT NOT NULL DEFAULT 'draft'
         CHECK(status IN ('draft','approved','paid','cancelled')),
       notes TEXT NOT NULL DEFAULT '', created_by INTEGER,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -300,6 +300,22 @@ def initialize_workforce_schema():
     CREATE INDEX IF NOT EXISTS idx_leave_requests_dates ON employee_leave_requests(start_date,end_date,status);
     CREATE INDEX IF NOT EXISTS idx_payroll_period ON payroll_runs(period);
     CREATE INDEX IF NOT EXISTS idx_custody_employee ON employee_custodies(employee_id,status);
+    """)
+    final_payroll_columns = {row["name"] for row in c.execute("PRAGMA table_info(employee_final_payrolls)").fetchall()}
+    if "journal_entry_id" not in final_payroll_columns:
+        c.execute("ALTER TABLE employee_final_payrolls ADD COLUMN journal_entry_id INTEGER")
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS employee_final_payroll_payments(
+      id INTEGER PRIMARY KEY,
+      final_payroll_id INTEGER NOT NULL REFERENCES employee_final_payrolls(id),
+      payment_date TEXT NOT NULL, amount TEXT NOT NULL,
+      cash_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      journal_entry_id INTEGER NOT NULL UNIQUE, reference TEXT NOT NULL UNIQUE,
+      notes TEXT NOT NULL DEFAULT '', created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_final_payroll_payments
+      ON employee_final_payroll_payments(final_payroll_id,payment_date,id);
     """)
     # Backward-compatible additions for the company-specific end-of-service policy.
     eos_columns = {row["name"] for row in c.execute("PRAGMA table_info(employee_end_of_service_settlements)").fetchall()}
@@ -1442,7 +1458,7 @@ def final_payroll():
             JOIN employees e ON e.id=f.employee_id WHERE f.period=? ORDER BY f.created_at DESC,f.id DESC""",
             (selected_period,)).fetchall()
         return render_template("final_payroll.html", employees=eligible, rows=rows,
-                               selected_period=selected_period)
+                               accounts=_accounts(c), selected_period=selected_period)
     except Exception as exc:
         try:
             c.rollback()
@@ -1519,6 +1535,70 @@ def cancel_final_payroll(final_id):
         _audit(c, "employee_final_payroll_draft_cancelled", row["final_payroll_no"])
         c.commit()
         flash("تم إلغاء المسودة. احتفظ النظام بسجلها ولم يحذفها.", "success")
+        return redirect(url_for("workforce.final_payroll", period=row["period"]))
+    except Exception as exc:
+        c.rollback()
+        flash(safe_error_message(exc), "error")
+        return redirect(url_for("workforce.final_payroll"))
+    finally:
+        c.close()
+
+
+@workforce_bp.route("/hr/final-payroll/<int:final_id>/approve", methods=["POST"])
+@_role("admin", "accountant")
+def approve_final_payroll(final_id):
+    c = _db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute("""SELECT f.*,e.full_name,e.employee_code FROM employee_final_payrolls f
+            JOIN employees e ON e.id=f.employee_id WHERE f.id=?""", (final_id,)).fetchone()
+        if not row or row["status"] != "draft" or row["journal_entry_id"]:
+            raise ValueError("لا يمكن اعتماد إلا مسودة مرتب نهائي غير مرحلة.")
+        salary_expense = int(request.form["salary_expense_account"])
+        employer_expense = int(request.form["employer_ins_expense_account"])
+        salaries_payable = int(request.form["salaries_payable_account"])
+        tax_payable = int(request.form["tax_payable_account"])
+        insurance_payable = int(request.form["insurance_payable_account"])
+        other_account = int(request.form["other_deductions_account"])
+        expected = {
+            salary_expense: "expense", employer_expense: "expense",
+            salaries_payable: "liability", tax_payable: "liability",
+            insurance_payable: "liability", other_account: "liability",
+        }
+        for account_id, account_type in expected.items():
+            account = c.execute("""SELECT id,account_type,is_group,active FROM accounts
+                WHERE id=?""", (account_id,)).fetchone()
+            if not account or not account["active"] or account["is_group"] or account["account_type"] != account_type:
+                raise ValueError("راجع الحسابات المختارة؛ يجب أن تكون تفصيلية ونشطة وبطبيعة الحساب المطلوبة.")
+        gross = M(row["gross_pay"])
+        employer_ins = M(row["employer_insurance"])
+        net = M(row["net_pay"])
+        tax_and_stamp = M(D(row["tax_deduction"]) + D(row["stamp_duty"]))
+        employee_ins = M(row["employee_insurance"])
+        other = M(row["other_deductions"])
+        lines = [
+            (salary_expense, gross, 0, "الأجر النهائي - " + row["employee_code"] + " " + row["full_name"]),
+            (employer_expense, employer_ins, 0, "حصة الشركة بالتأمينات - " + row["employee_code"]),
+            (salaries_payable, 0, net, "صافي المرتب النهائي المستحق"),
+            (tax_payable, 0, tax_and_stamp, "ضريبة ودمغة المرتب النهائي"),
+            (insurance_payable, 0, M(employee_ins + employer_ins), "تأمينات المرتب النهائي"),
+            (other_account, 0, other, "استقطاعات أخرى من المرتب النهائي"),
+        ]
+        debit_total = M(sum((D(x[1]) for x in lines), Decimal("0")))
+        credit_total = M(sum((D(x[2]) for x in lines), Decimal("0")))
+        if debit_total <= 0 or debit_total != credit_total:
+            raise ValueError("القيد المقترح غير متوازن. لم يتم ترحيل المرتب النهائي.")
+        reference = "FINAL-PAYROLL-POST-" + str(final_id)
+        journal_id = post_journal(c, row["termination_date"], reference,
+            "اعتماد المرتب النهائي للموظف " + row["full_name"], lines, session["user_id"])
+        c.execute("""UPDATE employee_final_payrolls SET status='approved',journal_entry_id=?
+            WHERE id=? AND status='draft' AND journal_entry_id IS NULL""", (journal_id, final_id))
+        if c.execute("SELECT changes()").fetchone()[0] != 1:
+            raise ValueError("تعذر تثبيت اعتماد المرتب النهائي؛ راجع حالة الكشف.")
+        _audit(c, "employee_final_payroll_approved",
+               row["final_payroll_no"] + " journal=" + str(journal_id))
+        c.commit()
+        flash("تم اعتماد المرتب النهائي وترحيل قيده المحاسبي.", "success")
         return redirect(url_for("workforce.final_payroll", period=row["period"]))
     except Exception as exc:
         c.rollback()
