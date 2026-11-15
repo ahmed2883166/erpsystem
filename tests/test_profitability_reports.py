@@ -91,6 +91,29 @@ class ProfitabilityReportTests(unittest.TestCase):
         self.assertEqual(warehouse["gross_profit"], Decimal("720"))
         self.assertIsNone(warehouse["net_profit"])
 
+    def test_asset_disposal_loss_is_not_misreported_as_negative_revenue(self):
+        self.conn.executescript("""
+            CREATE TABLE asset_disposals(
+                id INTEGER PRIMARY KEY, disposal_date TEXT,
+                gain_loss_account_id INTEGER, gain_loss_amount TEXT,
+                journal_entry_id INTEGER
+            );
+            INSERT INTO journal_entries VALUES
+                (6,'2026-11-06','posted','general'),
+                (7,'2026-11-07','posted','general');
+            INSERT INTO journal_lines VALUES
+                (6,6,1,'0','30',1,1),
+                (7,7,1,'40','0',1,1);
+            INSERT INTO asset_disposals VALUES
+                (1,'2026-11-06',1,'30',6),
+                (2,'2026-11-07',1,'-40',7);
+        """)
+        report = build_profitability_report(self.conn, "2026-11-01", "2026-11-30")
+        branch = report["branches"][0]
+        self.assertEqual(branch["revenue"], Decimal("1030"))
+        self.assertEqual(branch["operating_expenses"], Decimal("140"))
+        self.assertEqual(branch["net_profit"], Decimal("690"))
+
     def test_unassigned_branch_and_cost_center_movements_are_not_hidden(self):
         self.conn.execute(
             "INSERT INTO journal_entries VALUES(6,'2026-11-06','posted','general')"
