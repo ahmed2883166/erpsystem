@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block title %}العلاوات والزيادات الجماعية | NEXUS ERP{% endblock %}
 {% block content %}
-<header><h2>إدارة العلاوات والزيادات الجماعية</h2>
+<header class="page-heading"><div><h2>إدارة العلاوات والزيادات الجماعية</h2>
 <p>إنشاء قرار علاوة واحد يطبق على كل الموظفين النشطين أو فئة محددة، مع معاينة أثره قبل الاعتماد وحفظ تاريخ الأجر لكل موظف. الموظف في إجازة بدون مرتب مشمول إذا اخترت كل النشطين.</p>
-<p><a class="button secondary" href="{{url_for('workforce.salary_history')}}">سجل تاريخ الأجور</a> <a class="button secondary" href="{{url_for('workforce.employees')}}">شؤون الموظفين</a></p></header>
+<p><a class="button secondary" href="{{url_for('workforce.salary_history')}}">سجل تاريخ الأجور</a> <a class="button secondary" href="{{url_for('workforce.employees')}}">شؤون الموظفين</a></p></div></header>
 {% if error %}<div class="flash error">{{error}}</div>{% endif %}
 <section class="panel"><h3>بيانات القرار</h3>
 <form method="post" class="form-grid">
@@ -31,8 +31,8 @@
 {% if preview %}
 <section class="panel"><h3>معاينة القرار — {{preview.title}}</h3>
 <p>القرار رقم {{preview.decision_no}} · السريان {{preview.effective_date}} · عدد الموظفين {{preview.employees|length}}</p>
-<div style="overflow-x:auto"><table><tr><th>كود الموظف</th><th>الموظف</th><th>الأساسي الحالي</th><th>أساس الحساب</th><th>قيمة الزيادة</th><th>الأساسي بعد القرار</th></tr>
-{% for e in preview.employees %}<tr><td>{{e.code}}</td><td>{{e.name}}</td><td>{{"%.2f"|format(e.old)}}</td><td>{{"%.2f"|format(e.basis)}}</td><td>{{"%.2f"|format(e.amount)}}</td><td>{{"%.2f"|format(e.new)}}</td></tr>{% endfor %}</table></div>
+<div style="overflow-x:auto"><div class="table-wrap"><table><tr><th>كود الموظف</th><th>الموظف</th><th>الأساسي الحالي</th><th>أساس الحساب</th><th>قيمة الزيادة</th><th>الأساسي بعد القرار</th></tr>
+{% for e in preview.employees %}<tr><td>{{e.code}}</td><td>{{e.name}}</td><td>{{"%.2f"|format(e.old)}}</td><td>{{"%.2f"|format(e.basis)}}</td><td>{{"%.2f"|format(e.amount)}}</td><td>{{"%.2f"|format(e.new)}}</td></tr>{% endfor %}</table></div></div>
 <form method="post" class="actions">
 {% for key in ['decision_no','decision_date','effective_date','title','calculation_type','calculation_base','calculation_value','treatment','notes'] %}
 <input type="hidden" name="{{key}}" value="{{request.form.get(key,'')}}">
@@ -43,7 +43,7 @@
 </form>
 </section>
 {% endif %}
-<section class="panel"><h3>القرارات المعتمدة</h3><div style="overflow-x:auto"><table><tr><th>رقم القرار</th><th>الوصف</th><th>تاريخ السريان</th><th>الفئة</th><th>نوع الزيادة</th><th>المعالجة</th><th>عدد الموظفين</th></tr>
+<section class="panel"><h3>القرارات المعتمدة</h3><div style="overflow-x:auto"><div class="table-wrap"><table><tr><th>رقم القرار</th><th>الوصف</th><th>تاريخ السريان</th><th>الفئة</th><th>نوع الزيادة</th><th>المعالجة</th><th>عدد الموظفين</th></tr>
 {% for b in batches %}<tr><td>{{b.decision_no}}</td><td>{{b.title}}</td><td>{{b.effective_date}}</td><td>{% set scope_labels={'permanent':'مثبت','temporary':'مؤقت','comprehensive_bonus':'مكافأة شاملة','all_active':'كل النشطين','unpaid_leave':'إجازة بدون مرتب'} %}{% for scope_value in b.employee_scope.split(',') %}{{scope_labels.get(scope_value,scope_value)}}{% if not loop.last %} + {% endif %}{% endfor %}</td><td>{{b.calculation_value}} {{'%' if b.calculation_type=='percentage' else 'جنيه'}}</td><td>{{'ضمن الأساسي' if b.treatment=='basic' else 'بدل مستقل'}}</td><td>{{b.employee_count}}</td></tr>
-{% else %}<tr><td colspan="7">لا توجد قرارات معتمدة حتى الآن.</td></tr>{% endfor %}</table></div></section>
+{% else %}<tr><td colspan="7">لا توجد قرارات معتمدة حتى الآن.</td></tr>{% endfor %}</table></div></div></section>
 {% endblock %}
