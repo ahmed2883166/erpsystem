@@ -164,3 +164,51 @@ class ProfitabilityReportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProductProfitabilityTests(unittest.TestCase):
+    def test_product_profitability_allocates_invoice_discount_and_returns(self):
+        from profitability_reports import _product_profitability
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript("""
+            CREATE TABLE stock_products(id INTEGER PRIMARY KEY, sku TEXT, name_ar TEXT);
+            CREATE TABLE sales_invoices(
+                id INTEGER PRIMARY KEY, invoice_date TEXT, status TEXT,
+                subtotal TEXT, discount_amount TEXT
+            );
+            CREATE TABLE sales_invoice_lines(
+                id INTEGER PRIMARY KEY, invoice_id INTEGER, product_id INTEGER,
+                description TEXT, quantity TEXT, line_total TEXT, cost_total TEXT
+            );
+            CREATE TABLE sales_credit_notes(
+                id INTEGER PRIMARY KEY, invoice_id INTEGER, credit_date TEXT, status TEXT
+            );
+            CREATE TABLE sales_credit_note_lines(
+                id INTEGER PRIMARY KEY, credit_note_id INTEGER, product_id INTEGER,
+                description TEXT, quantity TEXT, line_total TEXT, cost_total TEXT
+            );
+            INSERT INTO stock_products VALUES
+                (1,'P1','منتج أول'),(2,'P2','منتج ثان');
+            INSERT INTO sales_invoices VALUES(1,'2026-11-10','posted','100','10');
+            INSERT INTO sales_invoice_lines VALUES
+                (1,1,1,'منتج أول','3','60','20'),
+                (2,1,2,'منتج ثان','2','40','10');
+            INSERT INTO sales_credit_notes VALUES(1,1,'2026-11-15','posted');
+            INSERT INTO sales_credit_note_lines VALUES
+                (1,1,1,'منتج أول','1','10','3');
+        """)
+        try:
+            rows, available = _product_profitability(conn, "2026-11-01", "2026-11-30")
+            self.assertTrue(available)
+            by_id = {row["id"]: row for row in rows}
+            self.assertEqual(by_id[1]["revenue"], Decimal("44"))
+            self.assertEqual(by_id[1]["cogs"], Decimal("17"))
+            self.assertEqual(by_id[1]["gross_profit"], Decimal("27"))
+            self.assertEqual(by_id[1]["quantity_sold"], Decimal("3"))
+            self.assertEqual(by_id[1]["quantity_returned"], Decimal("1"))
+            self.assertEqual(by_id[2]["revenue"], Decimal("36"))
+            self.assertEqual(by_id[2]["gross_profit"], Decimal("26"))
+        finally:
+            conn.close()
