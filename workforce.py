@@ -3516,7 +3516,11 @@ def approve_employee_grant(grant_id):
         # Lock before reading draft state so concurrent approvals cannot post twice.
         c.execute("BEGIN IMMEDIATE")
         grant=c.execute("SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
-        if not grant or grant["status"]!="draft" or grant["approval_status"]!="pending":
+        if not grant:
+            raise ValueError("المنحة غير موجودة.")
+        if grant["status"] == "approved" or grant["approval_status"] == "approved" or grant["journal_entry_id"]:
+            raise ValueError("سبق اعتمادها؛ لا يمكن اعتماد المنحة أو إنشاء قيد لها مرة أخرى.")
+        if grant["status"] != "draft" or grant["approval_status"] != "pending":
             raise ValueError("المنحة غير موجودة أو ليست بانتظار الاعتماد.")
         if grant["created_by"] is None or grant["created_by"] == session["user_id"]:
             raise ValueError("لا يجوز اعتماد المنحة بواسطة منشئها، أو دون بيانات منشئ موثقة.")
