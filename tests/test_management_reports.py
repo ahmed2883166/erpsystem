@@ -30,7 +30,8 @@ class ManagementReportsTests(unittest.TestCase):
             INSERT INTO accounts VALUES
                 (1,'4100','مبيعات','revenue',0,1,'revenue'),
                 (2,'5100','تكلفة مبيعات','expense',0,1,'direct_costs'),
-                (3,'6100','مصروفات','expense',0,1,'operating_expenses');
+                (3,'6100','مصروفات','expense',0,1,'operating_expenses'),
+                (4,'2100','التزامات','liability',0,1,'liabilities');
             INSERT INTO journal_entries VALUES
                 (1,'2026-10-05','posted','general'),
                 (2,'2026-10-06','posted','general'),
@@ -102,7 +103,7 @@ class ManagementReportsTests(unittest.TestCase):
         initialize_cash_commitments_schema(self.conn)
         commitment_id = create_cash_commitment(
             self.conn, "tax", "ضريبة القيمة المضافة", "1250",
-            "2026-11-25", period_label="2026-10", currency_code="EGP",
+            "2026-11-25", period_label="2026-10", currency_code="EGP", payable_account_id=4,
         )
         record_cash_commitment_payment(
             self.conn, commitment_id, "2026-11-10", "250", 1
