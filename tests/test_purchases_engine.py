@@ -61,6 +61,7 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.db.execute("INSERT INTO company_settings(setting_key,setting_value) VALUES('activity','commercial')")
         self.db.execute("INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('1150','مخزون','asset',0)")
         self.db.execute("INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('2110','الموردون','liability',0)")
+        self.db.execute("INSERT INTO accounts(code,name_ar,account_type,is_group) VALUES('3000','حقوق الملكية','equity',0)")
         supplier_id = self.db.execute(
             "INSERT INTO suppliers(code,name) VALUES('SUP-RETURN-ROUTE','مورد مرتجع')"
         ).lastrowid
@@ -110,6 +111,23 @@ class PurchasingAccountingTests(unittest.TestCase):
                 product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost,value_remaining
             ) VALUES(?,?,?,'5','5','10','50')""",
             (product_id, warehouse_id, source_movement_id),
+        )
+        self.db.execute(
+            """INSERT INTO journal_entries(entry_date,reference,description,status,created_by,created_at)
+               VALUES('2026-11-10','OPEN-RETURN-ROUTE','قيد مخزون افتتاحي للاختبار','posted',1,'2026-11-10')"""
+        )
+        opening_entry_id = self.db.execute(
+            "SELECT id FROM journal_entries WHERE reference='OPEN-RETURN-ROUTE'"
+        ).fetchone()["id"]
+        self.db.executemany(
+            """INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo)
+               VALUES(?,?,?,?,?)""",
+            [
+                (opening_entry_id, self.db.execute("SELECT id FROM accounts WHERE code='1150'").fetchone()["id"],
+                 "50", "0", "رصيد مخزون افتتاحي"),
+                (opening_entry_id, self.db.execute("SELECT id FROM accounts WHERE code='3000'").fetchone()["id"],
+                 "0", "50", "حقوق ملكية افتتاحية"),
+            ],
         )
         self.db.commit()
 
