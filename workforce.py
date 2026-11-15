@@ -1528,6 +1528,36 @@ def payroll_employee_payslip(run_id, employee_id):
     return render_template("payroll_payslip.html", slip=data, detail_items=detail_items,payments=payments)
 
 
+@workforce_bp.route("/hr/payroll/<int:run_id>/print", methods=["GET"])
+@_role("admin", "accountant", "viewer")
+def print_payroll_run(run_id):
+    c = _db()
+    run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+    if not run:
+        c.close()
+        flash("بيانات المرتبات غير موجودة.", "error")
+        return redirect(url_for("workforce.payroll"))
+    rows = c.execute("""SELECT l.*,e.employee_code,e.full_name,e.department
+        FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
+        WHERE l.run_id=? ORDER BY e.employee_code""", (run_id,)).fetchall()
+    if not rows:
+        c.close()
+        flash("لا توجد تفاصيل لطباعة المرتبات.", "error")
+        return redirect(url_for("workforce.payroll_run", run_id=run_id))
+    details = {}
+    has_items = c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_line_items'").fetchone()
+    for row in rows:
+        details[row["id"]] = c.execute("""SELECT section,item_name,amount FROM payroll_line_items
+            WHERE payroll_line_id=? ORDER BY section,sort_order,id""", (row["id"],)).fetchall() if has_items else []
+    fields = ("basic_salary","salary_raise","allowances","overtime_amount","gross_pay",
+              "employer_insurance","total_entitlements","employee_insurance","taxable_income_tax",
+              "stamp_duty","advance_deduction","other_deductions","absence_deduction",
+              "penalty_deduction","total_deductions","net_pay")
+    totals = {key: M(sum((D(row[key] or "0") for row in rows), Decimal("0"))) for key in fields}
+    c.close()
+    return render_template("payroll_run_print.html", run=run, rows=rows, details=details, totals=totals)
+
+
 @workforce_bp.route("/hr/payroll/<int:run_id>/post", methods=["POST"])
 @_role("admin", "accountant")
 def post_payroll(run_id):
@@ -2106,6 +2136,31 @@ def create_employee_grant():
     return redirect(url_for("workforce.employee_grants"))
 
 
+@workforce_bp.route("/hr/grants/<int:grant_id>/delete", methods=["POST"])
+@_role("admin", "accountant")
+def delete_employee_grant(grant_id):
+    c = _db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        grant = c.execute("SELECT * FROM employee_grants WHERE id=?", (grant_id,)).fetchone()
+        if not grant or grant["status"] != "draft" or grant["journal_entry_id"]:
+            raise ValueError("لا يمكن حذف الحافز بعد اعتماده أو إغلاقه. الحذف متاح للمسودة المفتوحة فقط.")
+        if c.execute("SELECT 1 FROM employee_grant_payments WHERE grant_id=? LIMIT 1", (grant_id,)).fetchone():
+            raise ValueError("لا يمكن حذف حافز له أي عملية صرف مسجلة.")
+        c.execute("DELETE FROM employee_grant_lines WHERE grant_id=?", (grant_id,))
+        c.execute("DELETE FROM employee_grants WHERE id=? AND status='draft' AND journal_entry_id IS NULL", (grant_id,))
+        if c.total_changes == 0:
+            raise ValueError("لم يتم حذف الحافز؛ ربما تم إغلاقه في عملية أخرى.")
+        _audit(c, "employee_grant_draft_deleted", "grant=" + str(grant_id))
+        c.commit()
+        flash("تم حذف مسودة الحافز المفتوحة فقط.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc) or "تعذر حذف الحافز.", "error")
+    c.close()
+    return redirect(url_for("workforce.employee_grants"))
+
+
 @workforce_bp.route("/hr/grants/<int:grant_id>/approve", methods=["POST"])
 @_role("admin", "accountant")
 def approve_employee_grant(grant_id):
@@ -2245,17 +2300,24 @@ def friday_allowance():
                     total_amount,created_by) VALUES(?,?,?,'0',?)""",
                     (period,expense_account_id,payable_account_id,session["user_id"]))
                 batch_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+            selected_employee_ids = sorted({int(value) for value in request.form.getlist("employee_ids")})
+            if not selected_employee_ids:
+                raise ValueError("أضف موظفًا واحدًا على الأقل إلى جدول بدل الجمعة.")
+            selected_marks = ",".join("?" for _ in selected_employee_ids)
             eligible = c.execute("""SELECT e.id,e.employee_code,e.full_name,e.basic_salary,
                     e.branch_id,e.cost_center_id,e.project_id,COUNT(a.id) AS attendance_days
                 FROM employees e JOIN attendance_records a ON a.employee_id=e.id
                 WHERE e.active=1 AND e.friday_work_eligible=1
+                  AND e.id IN ("""+selected_marks+""")
                   AND a.status='present' AND strftime('%w',a.attendance_date)='5'
                   AND a.attendance_date>=? AND a.attendance_date<?
                   AND e.hire_date<=a.attendance_date
                   AND (e.work_status NOT IN ('resigned','retired')
                        OR e.termination_date>=a.attendance_date)
                 GROUP BY e.id ORDER BY e.employee_code""",
-                (month_start.isoformat(),next_month.isoformat())).fetchall()
+                (*selected_employee_ids,month_start.isoformat(),next_month.isoformat())).fetchall()
+            if len(eligible) != len(selected_employee_ids):
+                raise ValueError("يوجد موظف مضاف غير مؤهل أو لا يملك حضور جمعة مسجلًا في الشهر المحدد. راجع الاختيار.")
             if not eligible:
                 raise ValueError("لا يوجد موظفون مستحقون لديهم حضور مسجل في أيام الجمعة خلال هذا الشهر.")
             total = Decimal("0")
@@ -2292,6 +2354,18 @@ def friday_allowance():
     except ValueError:
         selected_start = date.today().replace(day=1)
         selected_period = selected_start.strftime("%Y-%m")
+    next_month = date(selected_start.year + (1 if selected_start.month == 12 else 0),
+                       1 if selected_start.month == 12 else selected_start.month + 1, 1)
+    eligible_employees = c.execute("""SELECT e.id,e.employee_code,e.full_name,e.basic_salary,e.work_status,
+            COUNT(a.id) AS attendance_days
+        FROM employees e JOIN attendance_records a ON a.employee_id=e.id
+        WHERE e.active=1 AND e.friday_work_eligible=1
+          AND a.status='present' AND strftime('%w',a.attendance_date)='5'
+          AND a.attendance_date>=? AND a.attendance_date<?
+          AND e.hire_date<=a.attendance_date
+          AND (e.work_status NOT IN ('resigned','retired') OR e.termination_date>=a.attendance_date)
+        GROUP BY e.id ORDER BY e.employee_code""",
+        (selected_start.isoformat(),next_month.isoformat())).fetchall()
     batches = c.execute("""SELECT b.*,ea.code AS expense_code,ea.name_ar AS expense_name,
         pa.code AS payable_code,pa.name_ar AS payable_name
         FROM friday_allowance_batches b JOIN accounts ea ON ea.id=b.expense_account_id
@@ -2306,7 +2380,31 @@ def friday_allowance():
         WHERE active=1 AND is_group=0 AND account_type='liability' ORDER BY code""").fetchall()
     c.close()
     return render_template("friday_allowance.html",batches=batches,batch_lines=batch_lines,
-        expense_accounts=expense_accounts,payable_accounts=payable_accounts,selected_period=selected_period)
+        expense_accounts=expense_accounts,payable_accounts=payable_accounts,selected_period=selected_period,
+        employees=eligible_employees)
+
+
+@workforce_bp.route("/hr/friday-allowance/<int:batch_id>/delete", methods=["POST"])
+@_role("admin", "accountant")
+def delete_friday_allowance(batch_id):
+    c = _db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        batch = c.execute("SELECT * FROM friday_allowance_batches WHERE id=?", (batch_id,)).fetchone()
+        if not batch or batch["status"] != "draft" or batch["journal_entry_id"]:
+            raise ValueError("لا يمكن حذف بدل الجمعة بعد إغلاقه أو ترحيله. الحذف متاح للمسودة المفتوحة فقط.")
+        c.execute("DELETE FROM friday_allowance_lines WHERE batch_id=?", (batch_id,))
+        c.execute("DELETE FROM friday_allowance_batches WHERE id=? AND status='draft' AND journal_entry_id IS NULL", (batch_id,))
+        if c.total_changes == 0:
+            raise ValueError("لم يتم حذف الكشف؛ ربما تم إغلاقه في عملية أخرى.")
+        _audit(c, "friday_allowance_draft_deleted", "batch=" + str(batch_id))
+        c.commit()
+        flash("تم حذف مسودة بدل الجمعة المفتوحة فقط.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc) or "تعذر حذف كشف بدل الجمعة.", "error")
+    c.close()
+    return redirect(url_for("workforce.friday_allowance"))
 
 
 @workforce_bp.route("/hr/friday-allowance/<int:batch_id>/post", methods=["POST"])
