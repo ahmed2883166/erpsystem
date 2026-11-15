@@ -5,6 +5,7 @@ from collections import OrderedDict
 from copy import deepcopy
 from threading import RLock
 from accounting_core import register_decimal_aggregates
+from income_statement import build_income_statement
 
 CENT = Decimal("0.01")
 
@@ -439,10 +440,28 @@ def build_management_snapshot(conn, start, end, dimensions=None):
     current_disposal_losses = disposal_loss_ids(start.isoformat(), end.isoformat())
     previous_disposal_losses = disposal_loss_ids(previous_start.isoformat(), previous_end.isoformat())
     cumulative_disposal_losses = disposal_loss_ids("0001-01-01", end.isoformat())
-    current = income_figures(current_balances, direct_cost_ids=direct_cost_ids,
-                             disposal_loss_ids=current_disposal_losses)
-    previous = income_figures(previous_balances, direct_cost_ids=direct_cost_ids,
-                              disposal_loss_ids=previous_disposal_losses)
+    # Use the exact same statement builder as the official income statement.
+    # It splits linked asset-disposal journal lines from ordinary postings to
+    # shared gain/loss accounts; account-wide reclassification here would
+    # incorrectly move unrelated revenue/expense lines.
+    current_statement = build_income_statement(
+        conn, start.isoformat(), end.isoformat(), dimensions=dimensions
+    )
+    previous_statement = build_income_statement(
+        conn, previous_start.isoformat(), previous_end.isoformat(), dimensions=dimensions
+    )
+    current = {
+        "revenue": current_statement["revenue_total"],
+        "cogs": current_statement["cogs_total"],
+        "expenses": current_statement["cogs_total"] + current_statement["operating_expense_total"],
+        "net_profit": current_statement["net_profit"],
+    }
+    previous = {
+        "revenue": previous_statement["revenue_total"],
+        "cogs": previous_statement["cogs_total"],
+        "expenses": previous_statement["cogs_total"] + previous_statement["operating_expense_total"],
+        "net_profit": previous_statement["net_profit"],
+    }
     cumulative = income_figures(as_of, direct_cost_ids=direct_cost_ids,
                                 disposal_loss_ids=cumulative_disposal_losses)
     assets = _leaf_sum(as_of, "asset")
