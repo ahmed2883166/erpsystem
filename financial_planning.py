@@ -1530,10 +1530,19 @@ def build_cash_flow_snapshot(conn, start, end):
     else:
         marks = ",".join("?" for _ in cash_ids)
         ids = tuple(sorted(cash_ids))
+        from management_dashboard import _copied_opening_entry_ids
+        from datetime import date as date_type, timedelta
+        opening_cutoff = (date_type.fromisoformat(start)-timedelta(days=1)).isoformat()
+        copied_openings = sorted(_copied_opening_entry_ids(conn, opening_cutoff))
+        opening_exclusion = (
+            " AND je.id NOT IN (" + ",".join("?" for _ in copied_openings) + ")"
+            if copied_openings else ""
+        )
         opening_row = conn.execute(f"""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) value
             FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
-            WHERE jl.account_id IN ({marks}) AND je.status='posted' AND je.entry_date<?""",
-            (*ids, start)).fetchone()
+            WHERE jl.account_id IN ({marks}) AND je.status='posted' AND je.entry_date<?
+              {opening_exclusion}""",
+            (*ids, start, *copied_openings)).fetchone()
         opening = Decimal(str(opening_row["value"] or "0"))
         sections = {k: {"in": Decimal("0"), "out": Decimal("0")} for k in ("operating", "investing", "financing")}
         journal_columns={row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
