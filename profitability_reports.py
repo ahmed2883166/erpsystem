@@ -43,6 +43,13 @@ def _grouped_gl_profitability(conn, date_from, date_to, dimension):
         if _table_exists(conn, "management_account_roles") else "0"
     )
     direct_cost_condition = f"({direct_cost_role} OR {section_expr}='direct_costs')"
+    disposal_columns = _columns(conn, "asset_disposals") if _table_exists(conn, "asset_disposals") else set()
+    has_linked_disposals = {"journal_entry_id", "gain_loss_account_id", "gain_loss_amount", "disposal_date"}.issubset(disposal_columns)
+    disposal_exclusion = (
+        "AND NOT EXISTS (SELECT 1 FROM asset_disposals ad "
+        "WHERE ad.journal_entry_id=je.id AND ad.gain_loss_account_id=a.id)"
+        if has_linked_disposals else ""
+    )
     register_decimal_aggregates(conn)
     rows = conn.execute(
         f"""SELECT d.id,d.code,d.name_ar,
@@ -69,17 +76,46 @@ def _grouped_gl_profitability(conn, date_from, date_to, dimension):
            LEFT JOIN {table} d ON d.id=jl.{column}
            WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
              AND {closing_filter}
+             {disposal_exclusion}
              AND a.account_type IN ('revenue','expense') AND a.is_group=0
            GROUP BY d.id,d.code,d.name_ar
            ORDER BY CASE WHEN d.id IS NULL THEN 1 ELSE 0 END,d.code,d.id""",
         (date_from, date_to),
     ).fetchall()
 
+    disposal_totals = {}
+    if has_linked_disposals:
+        disposal_rows = conn.execute(
+            f"""SELECT jl.{column} dimension_id,
+                       COALESCE(DECIMAL_SUM(CASE WHEN CAST(ad.gain_loss_amount AS NUMERIC)>0
+                         THEN ad.gain_loss_amount ELSE '0' END),'0') gains,
+                       COALESCE(DECIMAL_SUM(CASE WHEN CAST(ad.gain_loss_amount AS NUMERIC)<0
+                         THEN ad.gain_loss_amount ELSE '0' END),'0') losses
+                FROM asset_disposals ad
+                JOIN journal_entries je ON je.id=ad.journal_entry_id
+                JOIN journal_lines jl ON jl.entry_id=je.id
+                     AND jl.account_id=ad.gain_loss_account_id
+                WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
+                  AND ad.disposal_date>=? AND ad.disposal_date<=?
+                  AND {closing_filter}
+                GROUP BY jl.{column}""",
+            (date_from, date_to, date_from, date_to),
+        ).fetchall()
+        disposal_totals = {
+            row["dimension_id"]: (_amount(row["gains"]), _amount(row["losses"]))
+            for row in disposal_rows
+        }
+
     result = []
     for row in rows:
         revenue = _amount(row["revenue_credit"]) - _amount(row["revenue_debit"])
         cogs = _amount(row["cogs_debit"]) - _amount(row["cogs_credit"])
         expenses = _amount(row["expense_debit"]) - _amount(row["expense_credit"])
+        disposal_gains, disposal_losses = disposal_totals.get(
+            row["id"], (Decimal("0"), Decimal("0"))
+        )
+        revenue += disposal_gains
+        expenses -= disposal_losses
         result.append({
             "id": row["id"], "code": row["code"],
             "name": row["name_ar"] or "غير موزع",
