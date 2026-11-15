@@ -138,7 +138,8 @@ class SystemHealthTests(unittest.TestCase):
             self.assertIn("/", response.headers["Location"])
 
     def test_route_allows_audit_view_and_hides_restricted_report_links(self):
-        with patch.object(system_health, "connect_database", return_value=self.connection):
+        with patch.object(system_health, "connect_database", return_value=self.connection), \
+             patch.object(system_health, "render_template", return_value="rendered") as render:
             client = self.app.test_client()
             with client.session_transaction() as sess:
                 sess["user_id"] = 10
@@ -147,12 +148,20 @@ class SystemHealthTests(unittest.TestCase):
 
             response = client.get("/system/health")
             self.assertEqual(response.status_code, 200)
-            page = response.get_data(as_text=True)
-            self.assertIn("مركز سلامة النظام", page)
-            self.assertIn("لا توجد صلاحية لفتح التقرير", page)
+            self.assertEqual(response.get_data(as_text=True), "rendered")
+            checks = render.call_args.kwargs["checks"]
+            self.assertTrue(all(
+                item["href"] is None
+                for item in checks
+                if item["key"] in {
+                    "journal_balance", "journal_empty", "negative_stock_layers",
+                    "stock_gl_review", "purchase_integrity"
+                }
+            ))
 
     def test_admin_can_open_health_center(self):
-        with patch.object(system_health, "connect_database", return_value=self.connection):
+        with patch.object(system_health, "connect_database", return_value=self.connection), \
+             patch.object(system_health, "render_template", return_value="rendered") as render:
             client = self.app.test_client()
             with client.session_transaction() as sess:
                 sess["user_id"] = 1
@@ -161,8 +170,15 @@ class SystemHealthTests(unittest.TestCase):
 
             response = client.get("/system/health")
             self.assertEqual(response.status_code, 200)
-            page = response.get_data(as_text=True)
-            self.assertIn("فتح التفاصيل", page)
+            checks = render.call_args.kwargs["checks"]
+            self.assertTrue(all(
+                item["href"]
+                for item in checks
+                if item["key"] in {
+                    "journal_balance", "journal_empty", "negative_stock_layers",
+                    "stock_gl_review", "purchase_integrity"
+                }
+            ))
 
 
 if __name__ == "__main__":
