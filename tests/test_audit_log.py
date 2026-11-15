@@ -103,6 +103,41 @@ class AuditLogTests(unittest.TestCase):
         response = client.get("/security/audit-log")
         self.assertEqual(response.status_code, 302)
 
+    def test_audit_filters_apply_entity_outcome_and_date_together(self):
+        self.connection.executemany(
+            """INSERT INTO audit_log
+               (user_id,action,details,created_at,entity_type,entity_id,outcome)
+               VALUES(?,?,?,?,?,?,?)""",
+            [
+                (17,"module_operation","sale ok","2026-11-12T10:00:00+02:00","sales","10","success"),
+                (17,"module_operation","sale failed","2026-11-12T11:00:00+02:00","sales","11","failure"),
+                (17,"module_operation","purchase failed","2026-11-12T12:00:00+02:00","purchase","12","failure"),
+                (17,"module_operation","old sale failed","2026-11-10T12:00:00+02:00","sales","13","failure"),
+            ],
+        )
+        self.connection.commit()
+        client = nexus_app.app.test_client()
+        with client.session_transaction() as session:
+            session.update(user_id=17, username="tester", role="viewer",
+                           permissions=["audit.view"])
+
+        def open_database():
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+
+        with patch.object(nexus_app, "db", side_effect=open_database):
+            response = client.get(
+                "/security/audit-log?entity_type=sales&outcome=failure"
+                "&date_from=2026-11-11&date_to=2026-11-12"
+            )
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("sale failed", body)
+        self.assertNotIn("sale ok", body)
+        self.assertNotIn("purchase failed", body)
+        self.assertNotIn("old sale failed", body)
+
     def test_operational_mutation_hook_records_real_success_and_failure_outcomes(self):
         def open_database():
             connection = sqlite3.connect(self.db_path)
