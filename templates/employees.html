@@ -1,16 +1,16 @@
 {% extends "base.html" %}{% block title %}شؤون الموظفين | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>شؤون الموظفين</h2><p>شاشة بيانات الموظفين الأساسية والوظيفية فقط. الاستحقاقات والاستقطاعات والمرتبات والسلف لكل منها شاشة مستقلة.</p><div class="actions page-shortcuts no-print"><a class="button" href="{{url_for('workforce.pay_items')}}">الاستحقاقات والاستقطاعات</a><a class="button" href="{{url_for('workforce.employee_loans')}}">شاشة السلف</a>
+<header class="page-heading"><div><h2>شؤون الموظفين</h2><p>شاشة بيانات الموظفين الأساسية والوظيفية فقط. الاستحقاقات والاستقطاعات والمرتبات والسلف لكل منها شاشة مستقلة.</p><div class="actions page-shortcuts no-print"><a class="button" href="{{url_for('workforce.pay_items')}}">الاستحقاقات والاستقطاعات</a><a class="button" href="{{url_for('workforce.employee_loans')}}">شاشة السلف</a>
 <a class="button secondary" href="{{url_for('workforce.employee_penalties')}}">الجزاءات والمخالفات</a>
 <a class="button secondary" href="{{url_for('workforce.export_employees_excel')}}">تصدير الموظفين Excel</a>
 <a class="button" href="{{url_for('workforce.employee_form_2_salary_report')}}">تقرير استمارة 2 لجميع الموظفين</a>
 <a class="button secondary" href="{{url_for('workforce.employee_grants')}}">المنح والمكافآت المستقلة</a>
-<a class="button secondary" href="{{url_for('workforce.download_employee_template')}}">تحميل نموذج Excel</a></div></header>
-<section class="panel"><h3>استيراد بيانات الموظفين من Excel</h3>
+<a class="button secondary" href="{{url_for('workforce.download_employee_template')}}">تحميل نموذج Excel</a></div></div></header>
+<section class="panel employee-import-panel"><h3>استيراد بيانات الموظفين من Excel</h3>
 <p class="muted">ارفع ملف XLSX بنفس أعمدة النموذج. كود الموظف هو مفتاح المطابقة: الكود الموجود سيتم تحديث بياناته، والجديد سيتم إضافته. العملية كلها تتم أو تُلغى بالكامل عند وجود خطأ.</p>
 <form method="post" action="{{ url_for('workforce.import_employees_excel') }}" enctype="multipart/form-data" class="form-grid">
 <label>ملف الموظفين Excel (.xlsx)<input type="file" name="file" accept=".xlsx" required></label>
 <button type="submit">استيراد الموظفين</button></form></section>
-<section class="panel"><h3>إضافة موظف جديد</h3><form method="post" enctype="multipart/form-data" class="form-grid">
+<section class="panel employee-create-panel"><h3>إضافة موظف جديد</h3><form method="post" enctype="multipart/form-data" class="form-grid">
 <label>كود الموظف<small>يُنشأ تلقائيًا عند الحفظ</small></label><label>اسم الموظف<input name="full_name" required></label>
 <label>صورة الموظف (اختياري)<input type="file" name="photo" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"></label>
 <label>الرقم القومي<input name="national_id" maxlength="20"></label><label>رقم التأمين الاجتماعي<input name="insurance_number"></label>
@@ -42,7 +42,7 @@
 .employee-data-table .employee-actions a{display:inline-block;margin:3px;padding:5px 8px;border-radius:7px;background:#edf3fa;text-decoration:none}
 @media print{.employee-data-table th{position:static}}
 </style>
-<section class="panel"><h3>سجل الموظفين</h3><div class="employee-table-wrap"><table class="employee-data-table"><tr><th>الصورة</th><th>الكود</th><th>الاسم</th><th>الرقم القومي</th><th>رقم التأمين</th><th>العنوان</th><th>الموقف</th><th>الوظيفة</th><th>الإدارة</th><th>تاريخ التعيين</th><th>الفرع</th><th>إجراء</th></tr>
+<section class="panel employee-list-panel"><h3>سجل الموظفين</h3><div class="employee-table-wrap"><table class="employee-data-table"><tr><th>الصورة</th><th>الكود</th><th>الاسم</th><th>الرقم القومي</th><th>رقم التأمين</th><th>العنوان</th><th>الموقف</th><th>الوظيفة</th><th>الإدارة</th><th>تاريخ التعيين</th><th>الفرع</th><th>إجراء</th></tr>
 {% for e in employees %}<tr><td>{% if e.photo_path %}<img src="{{url_for('workforce.employee_photo',employee_id=e.id)}}" alt="صورة {{e.full_name}}" style="width:48px;height:48px;object-fit:cover;border-radius:50%">{% else %}-{% endif %}</td><td>{{e.employee_code}}</td><td>{{e.full_name}}</td><td>{{e.national_id or '-'}}</td><td>{{e.insurance_number or '-'}}</td><td>{{e.address or '-'}}</td>
 <td>{{{'comprehensive_bonus':'مكافأة شاملة','permanent':'مثبت','temporary':'مؤقت','unpaid_leave':'إجازة بدون مرتب','resigned':'استقالة','retired':'معاش'}.get(e.work_status,'مثبت')}}</td>
 <td>{{e.job_title}}</td><td>{{e.department}}</td><td>{{e.hire_date}}</td><td>{{e.branch_id or '-'}}</td><td class="employee-actions"><a href="{{url_for('workforce.edit_employee',employee_id=e.id)}}">تعديل الملف</a><a href="{{url_for('workforce.employee_employment_history',employee_id=e.id)}}">السجل الوظيفي</a><a href="{{url_for('workforce.employee_financial_statement',employee_id=e.id)}}">كشف حساب الموظف</a></td></tr>
