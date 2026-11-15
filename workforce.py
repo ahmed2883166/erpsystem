@@ -869,9 +869,15 @@ def employee_employment_history(employee_id):
                 raise ValueError("اختر حالة وظيفية صحيحة واكتب سبب التغيير.")
             termination_date = effective_date if status in {"resigned", "retired"} else ""
             c.execute("BEGIN IMMEDIATE")
-            current = c.execute("SELECT work_status,termination_date FROM employees WHERE id=?", (employee_id,)).fetchone()
+            current = c.execute("SELECT work_status,termination_date,hire_date FROM employees WHERE id=?", (employee_id,)).fetchone()
             if not current:
                 raise ValueError("الموظف غير موجود.")
+            if effective_date < (current["hire_date"] or effective_date):
+                raise ValueError("تاريخ التغيير لا يمكن أن يسبق تاريخ تعيين الموظف.")
+            latest = c.execute("""SELECT effective_date FROM employee_employment_history
+                WHERE employee_id=? ORDER BY effective_date DESC,id DESC LIMIT 1""", (employee_id,)).fetchone()
+            if latest and effective_date < latest["effective_date"]:
+                raise ValueError("تاريخ التغيير أقدم من آخر حركة وظيفية مسجلة؛ راجع السجل قبل الإضافة.")
             if current["work_status"] == status and (current["termination_date"] or "") == termination_date:
                 raise ValueError("الحالة المختارة مطابقة للحالة الحالية بالفعل.")
             c.execute("UPDATE employees SET work_status=?,termination_date=? WHERE id=?",
@@ -884,7 +890,7 @@ def employee_employment_history(employee_id):
             flash("تم تسجيل التغيير الوظيفي مع الاحتفاظ بالحالة السابقة وسجل المرتبات.", "success")
             c.close()
             return redirect(url_for("workforce.employee_employment_history", employee_id=employee_id))
-        except (ValueError, sqlite3.Error) as exc:
+        except (ValueError, TypeError, sqlite3.Error) as exc:
             c.rollback()
             flash(str(exc) or "تعذر تسجيل التغيير الوظيفي.", "error")
     history = c.execute("""SELECT * FROM employee_employment_history
