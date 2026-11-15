@@ -125,7 +125,47 @@
       {% for item in commitments %}
         <tr>
           <td>{{ {'tax':'ضرائب','recurring_expense':'مصروف دوري','friday_overtime':'بدل جمعة'}.get(item.commitment_type,item.commitment_type) }}</td>
-          <td>{{ item.title }}{% if item.notes %}<small class="muted">{{ item.notes }}</small>{% endif %}</td>
+          <td>
+            {{ item.title }}{% if item.notes %}<small class="muted">{{ item.notes }}</small>{% endif %}
+            {% if item.payments %}
+            <details>
+              <summary>تفاصيل الدفعات ({{ item.payments|length }})</summary>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>التاريخ</th><th>المبلغ</th><th>قيد السداد</th><th>الحالة</th>{% if can_manage %}<th>الإجراء</th>{% endif %}</tr></thead>
+                  <tbody>
+                  {% for payment in item.payments %}
+                    <tr>
+                      <td>{{ payment.payment_date }}</td>
+                      <td>{{ payment.amount|money }}</td>
+                      <td>#{{ payment.journal_entry_id }}</td>
+                      <td>
+                        {% if payment.effective %}سداد فعال
+                        {% elif payment.reversal_journal_entry_id %}معكوس بالقيد #{{ payment.reversal_journal_entry_id }}
+                        {% else %}قيد السداد غير فعال{% endif %}
+                      </td>
+                      {% if can_manage %}
+                      <td>
+                        {% if payment.effective %}
+                        <form method="post" class="form-grid" onsubmit="return confirm('سيتم إنشاء قيد عكسي للسداد مع الاحتفاظ بالقيد الأصلي. هل تريد المتابعة؟');">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                          <input type="hidden" name="action" value="reverse_payment">
+                          <input type="hidden" name="payment_id" value="{{ payment.id }}">
+                          <label>تاريخ العكس<input type="date" name="reversal_date" required></label>
+                          <label>سبب العكس<input name="reversal_reason" maxlength="500" required></label>
+                          <button type="submit" class="secondary">عكس السداد</button>
+                        </form>
+                        {% else %}—{% endif %}
+                      </td>
+                      {% endif %}
+                    </tr>
+                  {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+            {% endif %}
+          </td>
           <td>{{ item.period_label or '—' }}</td>
           <td>{{ item.due_date }}</td>
           <td>{{ item.amount|money }} {{ item.currency_code }}</td>
