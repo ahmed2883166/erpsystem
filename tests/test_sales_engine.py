@@ -2558,3 +2558,209 @@ class SalesIntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_purchase_payment_sales_collection_return_reconcile_financial_statements(self):
+        import purchases
+        from unittest.mock import patch
+        from flask import Flask
+
+        # Reuse this test's isolated database so purchasing, sales, stock and GL
+        # are validated as one business cycle.
+        purchases.DB_PATH = sales.DB_PATH
+        purchases.init_purchase_schema()
+        self.db.executemany(
+            "INSERT INTO accounts(code,name_ar,account_type) VALUES(?,?,?)",
+            [
+                ("2110", "الموردون", "liability"),
+                ("2190", "بضاعة مستلمة غير مفوترة", "liability"),
+                ("3000", "حقوق الملكية", "equity"),
+            ],
+        )
+        self.db.commit()
+
+        opening_entry_id = self.db.execute(
+            """INSERT INTO journal_entries(entry_date,reference,description,status,created_by,created_at)
+               VALUES('2026-11-10','OPEN-STOCK-PURCHASE-SALES','إثبات المخزون الافتتاحي','posted',1,CURRENT_TIMESTAMP)"""
+        ).lastrowid
+        self.db.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?)",
+            [
+                (opening_entry_id, self.db.execute("SELECT id FROM accounts WHERE code='1150'").fetchone()["id"], "50", "0", "مخزون أول المدة"),
+                (opening_entry_id, self.db.execute("SELECT id FROM accounts WHERE code='3000'").fetchone()["id"], "0", "50", "حقوق الملكية"),
+            ],
+        )
+
+        supplier_id = self.db.execute(
+            "INSERT INTO suppliers(code,name) VALUES('SUP-E2E','مورد الدورة المتكاملة')"
+        ).lastrowid
+        po_id = self.db.execute(
+            """INSERT INTO purchase_orders(po_no,supplier_id,order_date,status,created_by)
+               VALUES('PO-E2E','2026-11-15','2026-11-15','approved',1)"""
+        ).lastrowid
+        self.db.execute(
+            "INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price) VALUES(?,?, '2','8')",
+            (po_id, self.product_id),
+        )
+        self.db.commit()
+
+        purchase_app = Flask(__name__)
+        purchase_app.secret_key = "test"
+        purchase_app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
+        purchase_app.register_blueprint(purchases.purchase_bp)
+        purchase_client = purchase_app.test_client()
+        with purchase_client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "admin"
+        receipt_response = purchase_client.post("/purchases/receipts/new", data={
+            "supplier_id": str(supplier_id),
+            "product_id": str(self.product_id),
+            "warehouse_id": str(self.warehouse_id),
+            "po_id": str(po_id),
+            "receipt_date": "2026-11-15",
+            "quantity": "2",
+            "unit_cost": "8",
+        })
+        self.assertEqual(receipt_response.status_code, 302)
+        receipt = self.db.execute(
+            "SELECT id,total_value,journal_entry_id FROM goods_receipts WHERE po_id=?",
+            (po_id,),
+        ).fetchone()
+        self.assertEqual(Decimal(receipt["total_value"]), Decimal("16.00"))
+        self.assertTrue(receipt["journal_entry_id"])
+
+        bill_id = self.db.execute(
+            """INSERT INTO supplier_bills(
+                bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,
+                subtotal,tax_rate,tax_amount,total_amount,created_by,status,bill_kind
+            ) VALUES('BILL-E2E',?,'2026-11-15','2026-12-15','INV-E2E',
+                     '16','0','0','16',1,'approved','inventory')""",
+            (supplier_id,),
+        ).lastrowid
+        self.db.execute(
+            "INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?, '16')",
+            (bill_id, receipt["id"]),
+        )
+        self.db.commit()
+        with patch("purchases._activity_posting_accounts", return_value={
+            "inventory": "1150", "cogs": "5100", "supplier_ap": "2110",
+            "purchase_inventory": "1150",
+        }):
+            bill_entry_id = purchases.post_supplier_bill(self.db, bill_id, 1)
+        self.db.commit()
+        bill_lines = self.db.execute(
+            """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
+               JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=?""",
+            (bill_entry_id,),
+        ).fetchall()
+        bill_postings = {
+            row["code"]: (Decimal(row["debit"]), Decimal(row["credit"]))
+            for row in bill_lines
+        }
+        self.assertEqual(bill_postings["2190"], (Decimal("16.00"), Decimal("0.00")))
+        self.assertEqual(bill_postings["2110"], (Decimal("0.00"), Decimal("16.00")))
+
+        with patch("purchases._activity_posting_accounts", return_value={
+            "inventory": "1150", "cogs": "5100", "supplier_ap": "2110",
+            "purchase_inventory": "1150",
+        }):
+            payment_response = purchase_client.post("/purchases/payments/new", data={
+                "supplier_id": str(supplier_id),
+                "amount": "16",
+                "cash_account_id": str(self.db.execute(
+                    "SELECT id FROM accounts WHERE code='1110'"
+                ).fetchone()["id"]),
+                "payment_date": "2026-11-15",
+                "reference": "SUPPLIER-E2E-PAYMENT",
+            })
+        self.assertEqual(payment_response.status_code, 302)
+        supplier_bill = self.db.execute(
+            "SELECT paid_amount,status FROM supplier_bills WHERE id=?", (bill_id,)
+        ).fetchone()
+        self.assertEqual(Decimal(supplier_bill["paid_amount"]), Decimal("16.00"))
+        self.assertEqual(supplier_bill["status"], "posted")
+
+        # Complete the real sales, collection, partial return and refund flow.
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-16", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "2", "unit_price": "20",
+              "tax_rate": "14", "tax_treatment": "standard"}], "14", 1,
+        )
+        self.db.commit()
+        cash_id = self.db.execute(
+            "SELECT id FROM accounts WHERE code='1110'"
+        ).fetchone()["id"]
+        self.db.execute("BEGIN IMMEDIATE")
+        sales.post_customer_receipt(
+            self.db, invoice["invoice_id"], "2026-11-17", "45.60", cash_id, 1,
+            "CUSTOMER-E2E-RECEIPT",
+        )
+        line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?",
+            (invoice["invoice_id"],),
+        ).fetchone()["id"]
+        credit = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-18", "مرتجع جزئي",
+            [{"invoice_line_id": line_id, "quantity": "1"}], 1,
+        )
+        refund = sales.post_customer_refund(
+            self.db, credit["credit_note_id"], "2026-11-19", "22.80", cash_id, 1,
+        )
+        self.db.commit()
+        self.assertEqual(credit["total_amount"], Decimal("22.80"))
+        self.assertEqual(refund["amount"], Decimal("22.80"))
+
+        # The supplier and customer subledgers must both be settled.
+        self.assertEqual(
+            Decimal(self.db.execute(
+                "SELECT balance_due FROM suppliers WHERE id=?", (supplier_id,)
+            ).fetchone()["balance_due"] or "0"),
+            Decimal("0"),
+        )
+        customer_after = self.db.execute(
+            "SELECT paid_amount,credited_amount FROM sales_invoices WHERE id=?",
+            (invoice["invoice_id"],),
+        ).fetchone()
+        self.assertEqual(Decimal(customer_after["paid_amount"]), Decimal("45.60"))
+        self.assertEqual(Decimal(customer_after["credited_amount"]), Decimal("22.80"))
+
+        # Inventory valuation layers and inventory control account must agree.
+        layer_value = sum((Decimal(row["value_remaining"]) for row in self.db.execute(
+            "SELECT value_remaining FROM stock_valuation_layers WHERE product_id=?",
+            (self.product_id,),
+        )), Decimal("0"))
+        inventory_gl = Decimal(str(self.db.execute(
+            """SELECT COALESCE(SUM(CAST(jl.debit AS NUMERIC)-CAST(jl.credit AS NUMERIC)),0)
+               FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+               JOIN accounts a ON a.id=jl.account_id
+               WHERE je.status='posted' AND a.code='1150'"""
+        ).fetchone()[0]))
+        self.assertEqual(inventory_gl, layer_value)
+
+        # Real statement builders: purchase cost is capitalized, sale margin
+        # is recognized, and the balance sheet remains in balance.
+        self.db.execute("ALTER TABLE accounts ADD COLUMN statement_section TEXT")
+        self.db.execute(
+            "UPDATE accounts SET statement_section='direct_costs' WHERE code='5100'"
+        )
+        self.db.commit()
+        from income_statement import build_income_statement
+        from financial_planning import build_balance_sheet_snapshot
+        income = build_income_statement(self.db, "2026-11-10", "2026-11-30")
+        self.assertEqual(income["revenue_total"], Decimal("20.00"))
+        self.assertEqual(income["cogs_total"], invoice["total_cost"] / 2)
+        self.assertEqual(income["gross_profit"], income["revenue_total"] - income["cogs_total"])
+        self.assertEqual(income["net_profit"], income["gross_profit"])
+
+        position = build_balance_sheet_snapshot(self.db, "2026-11-30")
+        self.assertEqual(position["balance_difference"], Decimal("0.00"))
+        self.assertTrue(position["balanced"])
+
+        # Every posted journal entry in the full procure-to-sale cycle balances.
+        unbalanced = self.db.execute(
+            """SELECT je.id FROM journal_entries je JOIN journal_lines jl ON jl.entry_id=je.id
+               WHERE je.status='posted' GROUP BY je.id
+               HAVING ABS(SUM(CAST(jl.debit AS NUMERIC))-SUM(CAST(jl.credit AS NUMERIC)))>0.005"""
+        ).fetchall()
+        self.assertEqual(unbalanced, [])
