@@ -2279,10 +2279,7 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
              allocation["quantity"],allocation["quantity"],allocation["unit_cost"],
              allocation["total_cost"],allocation["credit_note_line_id"])
         )
-        conn.execute(
-            "UPDATE stock_movements SET movement_type='cancelled_issue',accounting_status='reversed' WHERE id=?",
-            (allocation["stock_movement_id"],)
-        )
+        # Keep the original issue immutable: the new receipt is its stock reversal.
     credited=Decimal(str(note["total_amount"] or "0"))
     bill=conn.execute("SELECT credited_amount FROM supplier_bills WHERE id=?",(note["bill_id"],)).fetchone()
     new_credited=Decimal(str(bill["credited_amount"] or "0"))-credited
