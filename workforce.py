@@ -1575,12 +1575,12 @@ def approve_final_payroll(final_id):
         tax_payable = int(request.form["tax_payable_account"])
         insurance_payable = int(request.form["insurance_payable_account"])
         other_account = int(request.form["other_deductions_account"])
-        expected = {
-            salary_expense: "expense", employer_expense: "expense",
-            salaries_payable: "liability", tax_payable: "liability",
-            insurance_payable: "liability", other_account: "liability",
-        }
-        for account_id, account_type in expected.items():
+        expected = [
+            (salary_expense, "expense"), (employer_expense, "expense"),
+            (salaries_payable, "liability"), (tax_payable, "liability"),
+            (insurance_payable, "liability"), (other_account, "liability"),
+        ]
+        for account_id, account_type in expected:
             account = c.execute("""SELECT id,account_type,is_group,active FROM accounts
                 WHERE id=?""", (account_id,)).fetchone()
             if not account or not account["active"] or account["is_group"] or account["account_type"] != account_type:
@@ -1633,8 +1633,8 @@ def pay_final_payroll(final_id):
         if amount <= 0:
             raise ValueError("مبلغ صرف المرتب النهائي يجب أن يكون أكبر من صفر.")
         cash_id = int(request.form["cash_account_id"])
-        _cash_or_bank_account(c, cash_id)
         c.execute("BEGIN IMMEDIATE")
+        _cash_or_bank_account(c, cash_id)
         row = c.execute("SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
         if not row or row["status"] not in ("approved", "paid") or not row["journal_entry_id"]:
             raise ValueError("يجب اعتماد المرتب النهائي وترحيل قيده قبل الصرف.")
