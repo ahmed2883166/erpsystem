@@ -1231,7 +1231,7 @@ def payroll():
                     basic_salary = M(monthly_basic_salary * payroll_factor)
                     allowances = M(allowances * payroll_factor)
                     raise_amount = M(raise_amount * payroll_factor)
-                manual_advance_deduction = M(request.form.get("advance_" + str(e["id"]), "0"))
+                manual_advance_deduction = Decimal("0")
                 due_installments = c.execute("""SELECT i.due_amount,i.paid_amount
                     FROM employee_loan_installments i JOIN employee_loans l ON l.id=i.loan_id
                     WHERE l.employee_id=? AND l.status='active' AND i.due_period<=? AND i.status='pending'
