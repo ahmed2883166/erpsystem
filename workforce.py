@@ -995,7 +995,7 @@ def pay_items():
             flash(str(exc) or "تعذر حفظ بند الاستحقاق/الاستقطاع.", "error")
         c.close()
         return redirect(url_for("workforce.pay_items"))
-    employees = c.execute("""SELECT id,employee_code,full_name,work_status FROM employees
+    employees = c.execute("""SELECT id,employee_code,full_name,work_status,department FROM employees
         WHERE active=1 ORDER BY work_status,employee_code""").fetchall()
     assignments = c.execute("""SELECT p.*,e.employee_code,e.full_name,e.work_status FROM employee_pay_items p
         JOIN employees e ON e.id=p.employee_id ORDER BY p.item_type,p.item_name,e.employee_code""").fetchall()
@@ -1594,6 +1594,10 @@ def delete_payroll_run(run_id):
         if line_ids:
             marks=",".join("?" for _ in line_ids)
             c.execute("DELETE FROM payroll_loan_allocations WHERE payroll_line_id IN ("+marks+")", line_ids)
+        for dependent_table in ("payroll_line_items","payroll_payment_allocations"):
+            if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(dependent_table,)).fetchone():
+                c.execute("DELETE FROM "+dependent_table+" WHERE payroll_line_id IN ("+
+                          (",".join("?" for _ in line_ids) if line_ids else "NULL")+")", line_ids)
         c.execute("DELETE FROM payroll_lines WHERE run_id=?", (run_id,))
         c.execute("DELETE FROM payroll_runs WHERE id=? AND status='draft' AND journal_entry_id IS NULL", (run_id,))
         if c.execute("SELECT changes()").fetchone()[0] != 1:
