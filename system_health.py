@@ -121,23 +121,31 @@ def collect_health_checks(connection):
         add("backup_readiness", "النسخ الاحتياطي التلقائي", "info", 0,
             "إعدادات النسخ الاحتياطي غير متاحة في قاعدة البيانات الحالية.", "/")
 
-    # Recent failed logins are a signal for review, not an automatic account lock.
-    if _has_table(connection, "login_attempts"):
-        attempt_columns = _columns(connection, "login_attempts")
-        if {"attempted_at", "username", "remote_addr"}.issubset(attempt_columns):
-            failed_logins = connection.execute(
-                "SELECT COUNT(*) FROM login_attempts WHERE attempted_at >= datetime('now','-24 hours')"
-            ).fetchone()[0]
-            add("recent_login_attempts", "محاولات الدخول خلال آخر 24 ساعة",
-                "high" if failed_logins >= 20 else "info", failed_logins,
-                "راجع أسماء المستخدمين وعناوين الشبكة وتوقيت المحاولات؛ لا يتم قفل أي حساب تلقائيًا من هذا التقرير.",
-                "/security/login-attempts")
-        else:
-            add("recent_login_attempts", "مراجعة محاولات الدخول", "info", 0,
-                "جدول محاولات الدخول لا يحتوي على جميع الحقول المطلوبة للفحص.", "/")
+    # Prefer the append-only audit log: the temporary login_attempts table is
+    # pruned after the 15-minute lockout window and cannot represent 24 hours.
+    login_audit_columns = _columns(connection, "audit_log")
+    if {"created_at", "action", "outcome", "entity_type"}.issubset(login_audit_columns):
+        failed_logins = connection.execute(
+            """SELECT COUNT(*) FROM audit_log
+               WHERE datetime(created_at) >= datetime('now','-24 hours')
+                 AND (action IN ('login_failed','login_blocked')
+                      OR (entity_type='auth' AND outcome='failure'))"""
+        ).fetchone()[0]
+        login_source = "سجل التدقيق المحفوظ"
+    elif _has_table(connection, "login_attempts") and {
+        "attempted_at", "username", "remote_addr"
+    }.issubset(_columns(connection, "login_attempts")):
+        failed_logins = connection.execute(
+            "SELECT COUNT(*) FROM login_attempts WHERE datetime(attempted_at) >= datetime('now','-24 hours')"
+        ).fetchone()[0]
+        login_source = "سجل المحاولات المؤقت؛ قد لا يشمل المحاولات الأقدم من 15 دقيقة"
     else:
-        add("recent_login_attempts", "مراجعة محاولات الدخول", "info", 0,
-            "سجل محاولات الدخول غير متاح في قاعدة البيانات الحالية.", "/")
+        failed_logins = 0
+        login_source = "سجل محاولات الدخول غير متاح في قاعدة البيانات الحالية"
+    add("recent_login_attempts", "محاولات الدخول الفاشلة خلال آخر 24 ساعة",
+        "high" if failed_logins >= 20 else "info", failed_logins,
+        f"{login_source}. راجع المستخدم وعنوان الشبكة والتوقيت؛ لا يتم قفل أي حساب تلقائيًا من هذا التقرير.",
+        "/security/activity-monitor?category=login")
 
     # Count approval work waiting for a decision when the approval queue exists.
     if _has_table(connection, "approval_requests"):
@@ -175,7 +183,7 @@ def index():
         can_reports = is_admin or "reports.view" in permissions
         can_stock = is_admin or "stock.view" in permissions
         can_purchases = is_admin or "purchases.view" in permissions
-        can_security = is_admin or "security.view" in permissions
+        can_security = is_admin or "audit.view" in permissions
         can_settings = is_admin or "settings.view" in permissions
         can_approvals = is_admin or "approvals.view" in permissions
         restricted_links = {
