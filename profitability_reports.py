@@ -299,6 +299,7 @@ def build_profitability_report(conn, date_from, date_to):
     warehouses, warehouse_available = _warehouse_profitability(
         conn, date_from, date_to
     )
+    products, products_available = _product_profitability(conn, date_from, date_to)
 
     activity = None
     if _table_exists(conn, "activity_profiles"):
