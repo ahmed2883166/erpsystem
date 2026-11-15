@@ -65,6 +65,10 @@ const fridayBody=document.getElementById('fridaySelectedBody');
 const fridayInputs=document.getElementById('fridaySelectedInputs');
 const fridayCount=document.getElementById('fridaySelectedCount');
 const fridaySelected=new Map();
+const fridayPeriod=document.querySelector('#fridayForm [name="period"]');
+fridayPeriod.addEventListener('change',()=>{
+  if(fridayPeriod.value) window.location.href='{{url_for("workforce.friday_allowance")}}?period='+encodeURIComponent(fridayPeriod.value);
+});
 function renderFridaySelected(){
   fridayBody.innerHTML='';fridayInputs.innerHTML='';
   if(!fridaySelected.size){const row=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=6;cell.textContent='لم تتم إضافة موظفين بعد.';row.appendChild(cell);fridayBody.appendChild(row);}
