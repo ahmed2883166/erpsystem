@@ -51,6 +51,32 @@ class PayrollComplianceTests(unittest.TestCase):
             """, [(rule_id,"0","60000","10"),(rule_id,"60000",None,"20")])
         return rule_id
 
+
+    def test_tax_bracket_union_uses_valid_numeric_ordering(self):
+        rule_id = self.add_rule()
+        self.conn.execute("""
+            INSERT INTO payroll_tax_tier_brackets(rule_set_id,income_max,lower_bound,upper_bound,rate)
+            VALUES(?,?,?,?,?)
+        """, (rule_id, "600000", "0", "50000", "10"))
+        rows = self.conn.execute("""
+            SELECT * FROM (
+                SELECT b.id,b.rule_set_id,b.lower_bound,b.upper_bound,b.rate,
+                       'EG' AS country_code,'local' AS category_code,
+                       NULL AS income_max,'standard' AS bracket_kind
+                FROM payroll_tax_brackets b WHERE b.rule_set_id=?
+                UNION ALL
+                SELECT t.id,t.rule_set_id,t.lower_bound,t.upper_bound,t.rate,
+                       'EG' AS country_code,'local' AS category_code,
+                       t.income_max,'tier' AS bracket_kind
+                FROM payroll_tax_tier_brackets t WHERE t.rule_set_id=?
+            ) AS all_brackets
+            ORDER BY country_code,category_code,bracket_kind,
+                     CAST(lower_bound AS NUMERIC),id
+        """, (rule_id, rule_id)).fetchall()
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[0]["bracket_kind"], "standard")
+        self.assertEqual(rows[-1]["bracket_kind"], "tier")
+
     def test_progressive_tax_and_insurance_caps(self):
         self.add_rule()
         result = calculate_payroll_deductions(self.conn, self.employee, Decimal("10000"), "2026-11")
