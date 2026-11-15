@@ -3283,7 +3283,8 @@ def users():
         session.get("permissions", role_default_permissions(session.get("role")))
     ))
     available_role_permissions = role_permissions if is_role_admin else {
-        key: values for key, values in role_permissions.items() if key != "admin"
+        key: sorted(set(values) & actor_permissions)
+        for key, values in role_permissions.items() if key != "admin"
     }
     available_permissions = list(ALL_PERMISSIONS) if is_role_admin else [
         permission for permission in ALL_PERMISSIONS if permission in actor_permissions
@@ -3418,7 +3419,8 @@ def edit_user(user_id):
         session.get("permissions", role_default_permissions(session.get("role")))
     ))
     available_role_permissions = role_permissions if is_role_admin else {
-        key: values for key, values in role_permissions.items() if key != "admin"
+        key: sorted(set(values) & actor_permissions)
+        for key, values in role_permissions.items() if key != "admin"
     }
     available_permissions = list(ALL_PERMISSIONS) if is_role_admin else [
         permission for permission in ALL_PERMISSIONS if permission in actor_permissions
