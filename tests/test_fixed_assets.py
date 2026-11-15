@@ -258,6 +258,81 @@ class FixedAssetDepreciationRevisionTests(unittest.TestCase):
         )
 
 
+    def test_mid_month_march_disposal_reverses_full_month_and_posts_inclusive_proration(self):
+        # January and February are already depreciated; March was posted as a full month.
+        self.conn.execute(
+            "INSERT INTO asset_depreciations(asset_id,period,amount,journal_entry_id) "
+            "VALUES(1,'2026-03','100.00',11)"
+        )
+        self.conn.execute(
+            "INSERT INTO journal_entries VALUES(11,'DEP-1-2026-03','posted','2026-03-31')"
+        )
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) "
+            "VALUES(11,?,?,?,?)",
+            [
+                (30, "100.00", "0", "مصروف إهلاك"),
+                (40, "0", "100.00", "مجمع إهلاك"),
+            ],
+        )
+
+        with patch("fixed_assets.post_journal", side_effect=[77, 78]) as post:
+            result = _reverse_full_period_depreciation_for_disposal(
+                self.conn, self.asset, "2026-03", "2026-03-15", 5
+            )
+
+        # 15 inclusive days out of 31: 100 * 15 / 31 = 48.39.
+        self.assertEqual(result, (Decimal("48.39"), 77, 78))
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(post.call_args_list[0].args[1], "2026-03-15")
+        self.assertEqual(post.call_args_list[0].args[2], "ASSET-DEP-REV-3")
+        self.assertEqual(post.call_args_list[0].args[4], [
+            (30, "0", "100.00", "عكس إهلاك أصل قبل إعادة احتسابه: مصروف إهلاك"),
+            (40, "100.00", "0", "عكس إهلاك أصل قبل إعادة احتسابه: مجمع إهلاك"),
+        ])
+        replacement = post.call_args_list[1]
+        self.assertEqual(replacement.args[1], "2026-03-15")
+        self.assertEqual(replacement.args[2], "DEP-1-2026-03-DISPOSAL-2026-03-15")
+        self.assertEqual(replacement.args[4][0][1:3], (Decimal("48.39"), 0))
+        self.assertEqual(replacement.args[4][1][1:3], (0, Decimal("48.39")))
+
+        row = self.conn.execute(
+            "SELECT amount,journal_entry_id FROM asset_depreciations "
+            "WHERE asset_id=1 AND period='2026-03'"
+        ).fetchone()
+        self.assertEqual((row["amount"], row["journal_entry_id"]), ("48.39", 78))
+
+        # The audited revision preserves the original, reversal and replacement links.
+        revision = self.conn.execute(
+            "SELECT original_journal_entry_id,reversal_journal_entry_id,"
+            "replacement_journal_entry_id,original_amount,replacement_amount,disposal_date "
+            "FROM asset_depreciation_revisions WHERE depreciation_id=3"
+        ).fetchone()
+        self.assertEqual(tuple(revision), (11, 77, 78, "100.00", "48.39", "2026-03-15"))
+
+        # Accumulated depreciation is Jan + Feb + prorated March, not a full March.
+        accumulated = sum(
+            (Decimal(row["amount"]) for row in self.conn.execute(
+                "SELECT amount FROM asset_depreciations WHERE asset_id=1"
+            )),
+            Decimal("0"),
+        )
+        self.assertEqual(accumulated, Decimal("248.39"))
+        self.assertEqual(Decimal(self.asset["cost"]) - accumulated, Decimal("951.61"))
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM asset_depreciations WHERE asset_id=1 AND period>'2026-03'"
+            ).fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM asset_depreciation_revisions WHERE depreciation_id=3"
+            ).fetchone()[0],
+            1,
+        )
+
+
 class JournalLinkedAssetRegistrationTests(unittest.TestCase):
     def setUp(self):
         self.conn = sqlite3.connect(":memory:")
