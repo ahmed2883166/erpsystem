@@ -1697,6 +1697,9 @@ def delete_payroll_run(run_id):
 def post_payroll(run_id):
     c = _db()
     try:
+        # Acquire the write lock before reading the run status. This prevents two
+        # concurrent requests from both observing a draft and posting it twice.
+        c.execute("BEGIN IMMEDIATE")
         run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         if not run or run["status"] != "draft":
             raise ValueError("بيانات المرتبات غير موجودة أو تم ترحيلها بالفعل.")
@@ -1755,7 +1758,6 @@ def post_payroll(run_id):
             (tax_payable, 0, M(stamp_duty), "دمغة مستحقة على المرتبات"),
             (insurance_payable, 0, M(emp_ins + employer_ins), "تأمينات اجتماعية مستحقة"),
         ])
-        c.execute("BEGIN IMMEDIATE")
         # Include the immutable payroll run ID in the reference. A reversed payroll
         # journal remains posted in the ledger for auditability, so a corrected
         # replacement run must not collide with the original journal reference.
