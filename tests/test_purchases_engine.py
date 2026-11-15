@@ -128,7 +128,6 @@ class PurchasingAccountingTests(unittest.TestCase):
             }),
             patch("activity_profiles.resolve_product_account_code", return_value="1150"),
             patch("purchases.validate_journal_dimensions", return_value={}),
-            patch("purchases.create_journal", return_value=700),
         ):
             response = client.post("/purchases/credit-notes/new", data={
                 "supplier_id": str(supplier_id),
@@ -146,8 +145,9 @@ class PurchasingAccountingTests(unittest.TestCase):
             "SELECT id,status,journal_entry_id,total_amount FROM supplier_credit_notes"
         ).fetchone()
         self.assertIsNotNone(note)
-        self.assertEqual((note["status"], note["journal_entry_id"], Decimal(note["total_amount"])),
-                         ("posted", 700, Decimal("20.00")))
+        self.assertEqual(note["status"], "posted")
+        self.assertIsNotNone(note["journal_entry_id"])
+        self.assertEqual(Decimal(note["total_amount"]), Decimal("20.00"))
         allocations = self.db.execute(
             """SELECT a.quantity,a.unit_cost,a.total_cost,a.source_layer_id,m.accounting_status,
                       m.movement_type,m.journal_entry_id
@@ -162,7 +162,20 @@ class PurchasingAccountingTests(unittest.TestCase):
             (Decimal(allocations[0]["quantity"]), Decimal(allocations[0]["unit_cost"]),
              Decimal(allocations[0]["total_cost"]), allocations[0]["accounting_status"],
              allocations[0]["movement_type"], allocations[0]["journal_entry_id"]),
-            (Decimal("2"), Decimal("10"), Decimal("20"), "posted", "issue", 700),
+            (Decimal("2"), Decimal("10"), Decimal("20"), "posted", "issue", note["journal_entry_id"]),
+        )
+        journal_totals = self.db.execute(
+            """SELECT a.code,SUM(CAST(jl.debit AS NUMERIC)) debit,
+                      SUM(CAST(jl.credit AS NUMERIC)) credit
+               FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+               WHERE jl.entry_id=? GROUP BY a.code ORDER BY a.code""",
+            (note["journal_entry_id"],),
+        ).fetchall()
+        self.assertEqual(
+            [(row["code"], Decimal(str(row["debit"])), Decimal(str(row["credit"])))
+             for row in journal_totals],
+            [("1150", Decimal("0"), Decimal("20")),
+             ("2110", Decimal("20"), Decimal("0"))],
         )
         layer = self.db.execute(
             "SELECT qty_remaining,value_remaining FROM stock_valuation_layers WHERE source_movement_id=?",
@@ -174,6 +187,19 @@ class PurchasingAccountingTests(unittest.TestCase):
             "SELECT credited_amount FROM supplier_bills WHERE id=?", (bill_id,)
         ).fetchone()
         self.assertEqual(Decimal(bill["credited_amount"]), Decimal("20.00"))
+        inventory_gl = self.db.execute(
+            """SELECT SUM(CAST(jl.debit AS NUMERIC)-CAST(jl.credit AS NUMERIC))
+               FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+               JOIN accounts a ON a.id=jl.account_id
+               WHERE je.status='posted' AND a.code='1150'"""
+        ).fetchone()[0]
+        valuation = self.db.execute(
+            "SELECT SUM(CAST(value_remaining AS NUMERIC)) FROM stock_valuation_layers WHERE product_id=?",
+            (product_id,),
+        ).fetchone()[0]
+        self.assertEqual(Decimal(str(inventory_gl)), Decimal("30"))
+        self.assertEqual(Decimal(str(valuation)), Decimal("30"))
+        self.assertEqual(Decimal(str(inventory_gl)), Decimal(str(valuation)))
 
 
     def test_supplier_invoice_is_unique_and_receipt_can_be_allocated_partially(self):
