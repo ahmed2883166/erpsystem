@@ -946,24 +946,65 @@ def add_incentive_rule():
     return redirect(url_for("workforce.employee_grants"))
 
 
-@workforce_bp.route("/hr/pay-items", methods=["POST"])
+@workforce_bp.route("/hr/pay-items", methods=["GET", "POST"])
 @_role("admin", "accountant")
-def add_pay_item():
-    try:
-        item_type = request.form.get("item_type")
-        amount = M(request.form.get("amount"))
-        if item_type not in {"allowance", "deduction"} or amount < 0:
-            raise ValueError("نوع البند أو المبلغ غير صحيح.")
-        c = _db()
-        c.execute("INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount) VALUES(?,?,?,?)",
-                  (int(request.form["employee_id"]), request.form["item_name"].strip(), item_type, str(amount)))
-        _audit(c, "employee_pay_item_created", request.form.get("item_name","").strip())
-        c.commit()
+def pay_items():
+    c = _db()
+    if request.method == "POST":
+        try:
+            item_type = request.form.get("item_type", "")
+            item_name = request.form.get("item_name", "").strip()
+            amount = M(request.form.get("amount", "0"))
+            employee_ids = sorted({int(x) for x in request.form.getlist("employee_ids")})
+            if item_type not in {"allowance", "deduction"} or not item_name or amount < 0 or not employee_ids:
+                raise ValueError("اختر نوع البند واكتب اسمه وقيمته وحدد موظفًا واحدًا على الأقل.")
+            placeholders = ",".join("?" for _ in employee_ids)
+            valid_ids = {int(x["id"]) for x in c.execute(
+                "SELECT id FROM employees WHERE active=1 AND id IN ("+placeholders+")", employee_ids).fetchall()}
+            if valid_ids != set(employee_ids):
+                raise ValueError("بعض الموظفين المختارين غير نشطين أو غير موجودين.")
+            c.execute("BEGIN IMMEDIATE")
+            for employee_id in employee_ids:
+                c.execute("""INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount,active)
+                    VALUES(?,?,?,?,1)""", (employee_id,item_name,item_type,str(amount)))
+            _audit(c,"employee_pay_item_group_created",item_name+" | employees="+str(len(employee_ids)))
+            c.commit()
+            flash("تم ربط البند بـ "+str(len(employee_ids))+" موظفًا. سيظهر لكل موظف في كشف المرتبات.", "success")
+        except (ValueError, KeyError, sqlite3.Error) as exc:
+            c.rollback()
+            flash(str(exc) or "تعذر حفظ بند الاستحقاق/الاستقطاع.", "error")
         c.close()
-        flash("تم حفظ البدل/الخصم الثابت.", "success")
-    except (ValueError, KeyError, sqlite3.Error) as e:
-        flash(str(e), "error")
-    return redirect(url_for("workforce.employees"))
+        return redirect(url_for("workforce.pay_items"))
+    employees = c.execute("""SELECT id,employee_code,full_name,work_status FROM employees
+        WHERE active=1 ORDER BY work_status,employee_code""").fetchall()
+    assignments = c.execute("""SELECT p.*,e.employee_code,e.full_name,e.work_status FROM employee_pay_items p
+        JOIN employees e ON e.id=p.employee_id WHERE p.active=1 ORDER BY p.item_type,p.item_name,e.employee_code""").fetchall()
+    grouped = {}
+    for item in assignments:
+        key = (item["item_type"],item["item_name"])
+        grouped.setdefault(key,[]).append(dict(item))
+    groups = [{"item_type":key[0],"item_name":key[1],"employees":value} for key,value in grouped.items()]
+    c.close()
+    return render_template("pay_items.html",employees=employees,groups=groups)
+
+
+@workforce_bp.route("/hr/pay-items/<int:item_id>/toggle", methods=["POST"])
+@_role("admin", "accountant")
+def toggle_pay_item(item_id):
+    c = _db()
+    try:
+        item = c.execute("SELECT * FROM employee_pay_items WHERE id=?", (item_id,)).fetchone()
+        if not item:
+            raise ValueError("البند غير موجود.")
+        c.execute("UPDATE employee_pay_items SET active=? WHERE id=?", (0 if item["active"] else 1,item_id))
+        _audit(c,"employee_pay_item_toggled",item["item_name"]+" employee="+str(item["employee_id"]))
+        c.commit()
+        flash("تم تحديث حالة البند. لن يُحذف أي أثر سابق في كشوف المرتبات.", "success")
+    except (ValueError,sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc),"error")
+    c.close()
+    return redirect(url_for("workforce.pay_items"))
 
 
 @workforce_bp.route("/hr/payroll-report", methods=["GET"])
@@ -1866,6 +1907,44 @@ def disburse_employee_loan(loan_id):
         flash(str(exc) or "تعذر صرف السلفة.","error")
     c.close()
     return redirect(url_for("workforce.employee_loans"))
+
+
+@workforce_bp.route("/hr/loans/<int:loan_id>/installments/<int:installment_id>/defer", methods=["POST"])
+@_role("admin", "accountant")
+def defer_loan_installment(loan_id, installment_id):
+    c = _db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        installment = c.execute("""SELECT i.*,l.employee_id,l.status AS loan_status,l.loan_no
+            FROM employee_loan_installments i JOIN employee_loans l ON l.id=i.loan_id
+            WHERE i.id=? AND i.loan_id=?""",(installment_id,loan_id)).fetchone()
+        if not installment or installment["loan_status"] != "active" or installment["status"] != "pending":
+            raise ValueError("القسط غير موجود أو ليس قسطًا نشطًا قابلًا للتأجيل.")
+        remaining = M(max(Decimal("0"),D(installment["due_amount"])-D(installment["paid_amount"])))
+        if remaining <= 0:
+            raise ValueError("لا يوجد رصيد متبقٍ في هذا القسط لتأجيله.")
+        old_period = date.fromisoformat(installment["due_period"]+"-01")
+        next_month = old_period.year*12+old_period.month
+        next_period = f"{next_month//12:04d}-{next_month%12+1:02d}"
+        target = c.execute("""SELECT id,due_amount,paid_amount FROM employee_loan_installments
+            WHERE loan_id=? AND due_period=?""",(loan_id,next_period)).fetchone()
+        if target:
+            new_due = M(D(target["due_amount"])+remaining)
+            c.execute("UPDATE employee_loan_installments SET due_amount=? WHERE id=?",(str(new_due),target["id"]))
+        else:
+            c.execute("""INSERT INTO employee_loan_installments(loan_id,due_period,due_amount,paid_amount,status)
+                VALUES(?,?,?,'0','pending')""",(loan_id,next_period,str(remaining)))
+        # Keep the original row for audit; its already-paid amount remains untouched.
+        c.execute("UPDATE employee_loan_installments SET due_amount=paid_amount WHERE id=?",(installment_id,))
+        _audit(c,"employee_loan_installment_deferred",
+               installment["loan_no"]+" "+installment["due_period"]+" -> "+next_period+" amount="+str(remaining))
+        c.commit()
+        flash("تم تأجيل القسط إلى "+next_period+" مع بقاء المبلغ ضمن رصيد السلفة دون إسقاطه.","success")
+    except (ValueError,sqlite3.Error) as exc:
+        c.rollback()
+        flash(str(exc) or "تعذر تأجيل القسط.","error")
+    c.close()
+    return redirect(url_for("workforce.loan_schedule",loan_id=loan_id))
 
 
 @workforce_bp.route("/hr/loans/<int:loan_id>/schedule", methods=["GET"])
