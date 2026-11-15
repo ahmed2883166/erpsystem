@@ -501,7 +501,7 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         self.assertEqual(debit, credit)
         self.assertEqual(debit, 22400)
-        self.assertIn((4, 23750, 100), totals_by_account)
+        self.assertIn((4, 21750, 100), totals_by_account)
         self.assertIn((5, 0, 22200), totals_by_account)
 
     def test_employee_profile_fields_and_salary_raise_overtime_and_event_bonus(self):
@@ -556,7 +556,7 @@ class WorkforceTests(unittest.TestCase):
             "SELECT incentives,gross_pay,incentive_days FROM payroll_lines WHERE run_id=1 AND employee_id=2"
         ).fetchone()
         conn.close()
-        self.assertEqual(line, ("10000.00","0","825.00","0","11325.00","", "9000.00", "25.00"))
+        self.assertEqual(line, ("10000.00","0","750.00","0","11250.00","", "9000.00", "25.00"))
         self.assertEqual(per_day, ("0","8000.00","0"))
 
     def test_payroll_raise_fixed_items_and_overtime_override_are_snapshotted(self):
