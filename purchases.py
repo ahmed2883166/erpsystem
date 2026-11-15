@@ -2255,7 +2255,7 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
             """INSERT INTO stock_movements(
               movement_no,movement_type,product_id,target_warehouse_id,target_location_id,lot_id,
               quantity,unit_cost,total_cost,movement_date,notes,created_by,journal_entry_id,accounting_status)
-              SELECT ?, 'receipt',l.product_id,cnl.warehouse_id,?, ?,?,?,?,?,?,?,?,'posted'
+              SELECT ?, 'receipt',cnl.product_id,cnl.warehouse_id,?, ?,?,?,?,?,?,?,?,'posted'
               FROM supplier_credit_note_lines cnl
               JOIN supplier_credit_notes n ON n.id=cnl.credit_note_id
               JOIN stock_products l ON l.id=cnl.product_id
@@ -2271,7 +2271,7 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
             """INSERT INTO stock_valuation_layers(
               product_id,warehouse_id,location_id,lot_id,source_movement_id,
               qty_in,qty_remaining,unit_cost,value_remaining)
-              SELECT l.product_id,cnl.warehouse_id,?,?,?, ?,?,?,?
+              SELECT cnl.product_id,cnl.warehouse_id,?,?,?, ?,?,?,?
               FROM supplier_credit_note_lines cnl
               JOIN stock_products l ON l.id=cnl.product_id
               WHERE cnl.id=?""",
