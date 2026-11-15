@@ -26,8 +26,8 @@
 <form method="post" action="{{url_for('workforce.cancel_final_payroll',final_id=r.id)}}" style="display:inline" onsubmit="return confirm('إلغاء المسودة مع الاحتفاظ بسجلها؟')"><button type="submit" class="danger">إلغاء</button></form>
 <details><summary>اعتماد وترحيل</summary>
 <form method="post" action="{{url_for('workforce.approve_final_payroll',final_id=r.id)}}" class="form-grid">
-{% for field,label,kind in [('salary_expense_account','مصروف الأجور','expense'),('employer_ins_expense_account','مصروف تأمين الشركة','expense'),('salaries_payable_account','صافي المرتبات المستحقة','liability'),('tax_payable_account','ضريبة ودمغة مستحقة','liability'),('insurance_payable_account','تأمينات مستحقة','liability'),('other_deductions_account','استقطاعات أخرى','liability')] %}
-<label>{{label}}<select name="{{field}}" required>{% for a in accounts if a.account_type==kind %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+{% for field,label,kind in [('salary_expense_account','مصروف الأجور','expense'),('employer_ins_expense_account','مصروف تأمين الشركة','expense'),('salaries_payable_account','صافي المرتبات المستحقة','liability'),('tax_payable_account','ضريبة ودمغة مستحقة','liability'),('insurance_payable_account','تأمينات مستحقة','liability'),('other_deductions_account','استقطاعات أخرى','any')] %}
+<label>{{label}}<select name="{{field}}" required>{% for a in accounts if kind=='any' or a.account_type==kind %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
 {% endfor %}
 <button type="submit" onclick="return confirm('اعتماد المرتب النهائي وترحيل قيده المحاسبي؟')">اعتماد وترحيل القيد</button>
 </form></details>
