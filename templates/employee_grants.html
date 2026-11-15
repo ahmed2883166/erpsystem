@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block title %}منح ومكافآت الموظفين | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>المنح والمكافآت المستقلة</h2><p>إعداد المنحة ومراجعة استحقاق كل موظف واعتمادها وإقفالها وصرفها بعيدًا عن كشف المرتبات.</p></header>
+<header class="page-heading"><div><h2>المنح والمكافآت المستقلة</h2><p>إعداد المنحة ومراجعة استحقاق كل موظف واعتمادها وإقفالها وصرفها بعيدًا عن كشف المرتبات.</p></div></header>
 <section class="panel"><h3>تعريف أسماء المنح</h3><form method="post" action="{{url_for('workforce.add_employee_grant_type')}}" class="form-grid">
 <label>اسم المنحة<input name="name" placeholder="منحة رمضان / منحة عيد / منحة مناسبة" required maxlength="120"></label><button type="submit">حفظ اسم المنحة</button></form>
 {% if grant_types %}<p class="muted">المنح المعرفة: {% for t in grant_types %}{{t.name}}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}</section>
