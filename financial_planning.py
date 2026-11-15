@@ -1743,6 +1743,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
                 ).fetchall()
             }
     asset_depreciation_total=Decimal("0")
+    depreciation_entry_ids=set()
     asset_depreciation_exists=conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_depreciations'"
     ).fetchone()
@@ -1752,7 +1753,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
         }
         if {"amount","journal_entry_id"}.issubset(asset_depreciation_columns):
             posted_asset_depreciation=conn.execute("""
-                SELECT d.amount FROM asset_depreciations d
+                SELECT d.amount,d.journal_entry_id FROM asset_depreciations d
                 JOIN journal_entries je ON je.id=d.journal_entry_id
                 WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
             """,(start,end)).fetchall()
@@ -1760,12 +1761,42 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
                 (Decimal(str(row["amount"] or "0")) for row in posted_asset_depreciation),
                 Decimal("0"),
             )
-    other_depreciation = sum((Decimal(str(r["debit"]))-Decimal(str(r["credit"]))
-                        for r in period_rows if r["account_type"]=="expense"
-                        and r["account_id"] not in depreciation_account_ids
-                        and (str(r["code"]).startswith(("64","65"))
-                             or "إهلاك" in str(r["name_ar"])
-                             or "depreciation" in str(r["name_ar"]).lower())), Decimal("0"))
+            depreciation_entry_ids={
+                int(row["journal_entry_id"]) for row in posted_asset_depreciation
+                if row["journal_entry_id"] is not None
+            }
+    # Add back all depreciation-account postings, but exclude journal entries
+    # already represented by asset_depreciations.amount. Excluding an entire
+    # account would hide separate/manual depreciation postings to that account.
+    depreciation_candidate_ids=set(depreciation_account_ids)
+    depreciation_candidate_ids.update(
+        row["account_id"] for row in period_rows
+        if row["account_type"]=="expense"
+        and (str(row["code"]).startswith(("64","65"))
+             or "إهلاك" in str(row["name_ar"])
+             or "depreciation" in str(row["name_ar"]).lower())
+    )
+    other_depreciation=Decimal("0")
+    if depreciation_candidate_ids:
+        account_marks=",".join("?" for _ in depreciation_candidate_ids)
+        entry_exclusion_sql=(
+            " AND je.id NOT IN ("+",".join("?" for _ in depreciation_entry_ids)+")"
+            if depreciation_entry_ids else ""
+        )
+        depreciation_row=conn.execute(f"""
+            SELECT COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
+                   COALESCE(DECIMAL_SUM(jl.credit),'0') credit
+            FROM journal_lines jl
+            JOIN journal_entries je ON je.id=jl.entry_id
+            JOIN accounts a ON a.id=jl.account_id
+            WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
+              AND a.is_group=0 AND a.account_type='expense'
+              AND a.id IN ({account_marks}){entry_exclusion_sql}
+        """,(start,end,*sorted(depreciation_candidate_ids),*sorted(depreciation_entry_ids))).fetchone()
+        other_depreciation=(
+            Decimal(str(depreciation_row["debit"] or "0"))
+            -Decimal(str(depreciation_row["credit"] or "0"))
+        )
     depreciation=asset_depreciation_total+other_depreciation
     disposal_gain_loss=Decimal("0")
     disposals_exists=conn.execute(
