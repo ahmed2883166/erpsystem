@@ -4,13 +4,13 @@
 <header class="page-heading"><div><h2>إشعار دائن / مرتجع بيع</h2><p>تُدخل كمية المرتجع بوحدة الصنف المختارة، ويُعاد المخزون بالوحدة الأساسية مع الحفاظ على بيانات الوحدة الأصلية.</p></div></header>
 <section class="panel">
 {% if not invoice %}
-<h3>اختيار الفاتورة الأصلية</h3><form method="get"><label>فاتورة البيع<select name="invoice_id" required><option value="">اختر فاتورة</option>{% for x in invoices %}<option value="{{ x.id }}">{{ x.invoice_no }} — {{ x.customer_name }} — {{ x.total_amount }}</option>{% endfor %}</select></label><button type="submit">عرض بنود الفاتورة</button></form>
+<h3>اختيار الفاتورة الأصلية</h3><form method="get" class="form-grid"><label>فاتورة البيع<select name="invoice_id" required><option value="">اختر فاتورة</option>{% for x in invoices %}<option value="{{ x.id }}">{{ x.invoice_no }} — {{ x.customer_name }} — {{ x.total_amount }}</option>{% endfor %}</select></label><button type="submit">عرض بنود الفاتورة</button></form>
 {% else %}
 <h3>الفاتورة {{ invoice.invoice_no }}</h3>
 <p>العميل: {{ invoice.customer_name }} · تاريخ الفاتورة: {{ invoice.invoice_date }}</p>
 <p>إجمالي الفاتورة: {{ invoice.total_amount }} · المحصل: {{ invoice.paid_amount }} · الإشعارات السابقة: {{ invoice.credited_amount or '0' }}</p>
 <p class="warning">الإشعار يخفض الذمم المفتوحة. رد المبالغ المحصلة يتم بإجراء رد نقدي مستقل.</p>
-<form method="post">
+<form method="post" class="credit-note-form">
 <input type="hidden" name="invoice_id" value="{{ invoice.id }}">
 <div class="form-grid"><label>تاريخ الإشعار<input type="date" name="credit_date" value="{{ today }}" required></label><label>سبب الإشعار<input name="reason" maxlength="500" required placeholder="مرتجع / خصم بعد البيع / تصحيح فاتورة"></label></div>
 <h3>بنود المرتجع</h3>
