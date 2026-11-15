@@ -638,7 +638,7 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
     if not entries:
         return []
 
-    candidate_lines = conn.execute("""SELECT jl.id line_id,jl.entry_id,jl.account_id,
+    candidate_lines = conn.execute(f"""SELECT jl.id line_id,jl.entry_id,jl.account_id,
         jl.debit,jl.credit,a.code,a.name_ar
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
