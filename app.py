@@ -45,6 +45,7 @@ from data_reset import clear_company_data
 from income_statement import (build_income_statement, normalize_income_statement_period,
                                comparison_period, add_income_statement_comparison,
                                closing_entries_exclusion_sql)
+from profitability_reports import build_profitability_report
 
 # Development/demo builds run locally without a licensing server. Set NEXUS_DEMO_MODE=0
 # explicitly in a commercial deployment to enforce the signed remote licensing flow.
@@ -2420,6 +2421,41 @@ def income_statement():
         dimension_options=dimension_options, selected_dimensions=selected_dimensions,
         compare_date_from=compare_dates[0] if compare_dates else "",
         compare_date_to=compare_dates[1] if compare_dates else "",
+        base_currency=settings.get("base_currency", ""),
+        company_name=settings.get("company_name", "NEXUS ERP"),
+    )
+
+
+@app.route("/reports/profitability")
+@requires("reports.view")
+def profitability_report():
+    date_from, date_to = normalize_income_statement_period(
+        request.args.get("date_from"), request.args.get("date_to")
+    )
+    connection = db()
+    try:
+        # Additive only: ensures branch and cost-center dimensions exist on
+        # upgraded databases before the read-only profitability queries run.
+        initialize_analytic_dimensions_schema(connection)
+        report = build_profitability_report(connection, date_from, date_to)
+        settings = {
+            row["setting_key"]: row["setting_value"]
+            for row in connection.execute(
+                "SELECT setting_key,setting_value FROM company_settings "
+                "WHERE setting_key IN ('base_currency','company_name')"
+            )
+        } if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
+        ).fetchone() else {}
+    finally:
+        connection.close()
+    branch_rows = report["branches"]
+    summary = {
+        key: sum((row[key] for row in branch_rows), Decimal("0"))
+        for key in ("revenue", "cogs", "gross_profit", "operating_expenses", "net_profit")
+    }
+    return render_template(
+        "profitability_report.html", **report, summary=summary,
         base_currency=settings.get("base_currency", ""),
         company_name=settings.get("company_name", "NEXUS ERP"),
     )
