@@ -105,16 +105,28 @@
  const aside=document.getElementById('appSidebar');
  if(!aside)return;
  const groups=[...aside.querySelectorAll('details.nav-group')];
- const path=window.location.pathname;
- const currentLink=[...aside.querySelectorAll('nav a[href]')].find(a=>{
-   try{return new URL(a.href,window.location.origin).pathname===path;}catch(_){return false;}
- });
+ const path=window.location.pathname.replace(/\\/+$/,'')||'/';
+ const links=[...aside.querySelectorAll('nav a[href]')].map(link=>{
+   try{return {link,path:new URL(link.href,window.location.origin).pathname.replace(/\\/+$/,'')||'/'};}catch(_){return null;}
+ }).filter(Boolean);
+ const currentLink=links
+   .filter(item=>item.path===path||(item.path!=='/'&&path.startsWith(item.path+'/')))
+   .sort((a,b)=>b.path.length-a.path.length)[0]?.link||null;
  groups.forEach(group=>{group.open=!!(currentLink&&group.contains(currentLink));});
  if(currentLink){currentLink.classList.add('active');}
  const toggle=document.getElementById('mobileNavToggle');
  const backdrop=document.getElementById('sidebarBackdrop');
- const close=()=>{document.body.classList.remove('sidebar-open');toggle?.setAttribute('aria-expanded','false');};
- toggle?.addEventListener('click',()=>{const open=!document.body.classList.contains('sidebar-open');document.body.classList.toggle('sidebar-open',open);toggle.setAttribute('aria-expanded',String(open));});
+ const close=()=>{
+   document.body.classList.remove('sidebar-open');
+   toggle?.setAttribute('aria-expanded','false');
+   if(toggle)toggle.textContent='☰ القائمة';
+ };
+ toggle?.addEventListener('click',()=>{
+   const open=!document.body.classList.contains('sidebar-open');
+   document.body.classList.toggle('sidebar-open',open);
+   toggle.setAttribute('aria-expanded',String(open));
+   toggle.textContent=open?'✕ إغلاق القائمة':'☰ القائمة';
+ });
  backdrop?.addEventListener('click',close);
  aside.querySelectorAll('nav a[href]').forEach(link=>link.addEventListener('click',close));
  document.addEventListener('keydown',event=>{if(event.key==='Escape')close();});
