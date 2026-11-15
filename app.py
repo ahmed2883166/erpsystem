@@ -49,7 +49,8 @@ from profitability_reports import build_profitability_report
 from management_reports import build_period_comparison, build_inventory_ageing, build_cash_forecast
 from cash_commitments import (initialize_cash_commitments_schema, create_cash_commitment,
                               record_cash_commitment_payment, void_cash_commitment, create_recurring_schedule,
-                              generate_recurring_schedule_occurrences, deactivate_recurring_schedule)
+                              generate_recurring_schedule_occurrences, deactivate_recurring_schedule,
+                              sync_friday_allowance_commitments)
 
 # Development/demo builds run locally without a licensing server. Set NEXUS_DEMO_MODE=0
 # explicitly in a commercial deployment to enforce the signed remote licensing flow.
@@ -2537,6 +2538,18 @@ def cash_commitments_register():
                         created_by=session.get("user_id"),
                     )
                     flash("تم تسجيل الالتزام بنجاح.", "success")
+                elif action == "sync_friday":
+                    result = sync_friday_allowance_commitments(
+                        connection, created_by=session.get("user_id")
+                    )
+                    reasons = {}
+                    for item in result["skipped"]:
+                        reasons[item["reason"]] = reasons.get(item["reason"], 0) + 1
+                    detail = "، ".join(f"{reason}: {count}" for reason, count in reasons.items())
+                    message = f"تم استيراد {result['imported']} كشف بدل جمعة."
+                    if result["skipped"]:
+                        message += f" تم تجاهل {len(result['skipped'])} كشف ({detail})."
+                    flash(message, "success" if result["imported"] else "warning")
                 elif action == "payment":
                     record_cash_commitment_payment(
                         connection,
