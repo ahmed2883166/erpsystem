@@ -104,14 +104,15 @@ class SystemHealthTests(unittest.TestCase):
         self.assertEqual(by_key["negative_stock_layers"]["count"], 1)
 
     def test_health_scan_is_read_only(self):
+        tables = (
+            "journal_entries", "journal_lines", "sales_invoices",
+            "supplier_bills", "stock_valuation_layers"
+        )
         before = {
             table: self.connection.execute(
-                "SELECT COUNT(*) FROM " + table
-            ).fetchone()[0]
-            for table in (
-                "journal_entries", "journal_lines", "sales_invoices",
-                "supplier_bills", "stock_valuation_layers"
-            )
+                "SELECT * FROM " + table + " ORDER BY 1"
+            ).fetchall()
+            for table in tables
         }
 
         with self.app.test_request_context("/system/health"):
@@ -119,11 +120,14 @@ class SystemHealthTests(unittest.TestCase):
 
         after = {
             table: self.connection.execute(
-                "SELECT COUNT(*) FROM " + table
-            ).fetchone()[0]
-            for table in before
+                "SELECT * FROM " + table + " ORDER BY 1"
+            ).fetchall()
+            for table in tables
         }
-        self.assertEqual(after, before)
+        self.assertEqual(
+            {table: [tuple(row) for row in rows] for table, rows in after.items()},
+            {table: [tuple(row) for row in rows] for table, rows in before.items()}
+        )
 
     def test_route_rejects_user_without_health_permission(self):
         with patch.object(system_health, "connect_database", return_value=self.connection):
