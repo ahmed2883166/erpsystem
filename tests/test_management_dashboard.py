@@ -161,7 +161,7 @@ class ManagementDashboardTests(unittest.TestCase):
                 {"kind": "suppliers", "due_date": "2026-11-19", "balance": Decimal("40")},
                 {"kind": "payroll", "due_date": "2026-11-26", "balance": Decimal("200")},
                 {"kind": "employee_grants", "due_date": "2026-11-28", "balance": Decimal("50")},
-                {"kind": "cash_commitment", "due_date": "2026-12-01", "balance": Decimal("30")},
+                {"kind": "cash_commitment", "due_date": "2026-12-05", "balance": Decimal("30")},
             ],
             "errors": [],
         }
