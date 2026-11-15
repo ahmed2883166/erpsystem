@@ -3,7 +3,7 @@
 {% block content %}
 {% set order_status_labels = {'pending_approval':'في انتظار الاعتماد','approved':'معتمد','rejected':'مرفوض','partially_delivered':'تم التسليم جزئيًا','delivered':'تم التسليم بالكامل','partially_invoiced':'تمت الفوترة جزئيًا','invoiced':'تمت الفوترة بالكامل'} %}
 {% set delivery_status_labels = {'draft':'مسودة','posted':'مرحّل'} %}
-<header>
+<header class="page-heading">
   <div>
     <h2>أمر البيع {{ order.order_no }}</h2><a class="button secondary" href="{{ url_for('quotes.sales_order_print',order_id=order.id) }}">طباعة أمر البيع</a>
     <p>{{ order.customer_code }} - {{ order.customer_name }} | عرض السعر {{ order.quote_no }}</p>
@@ -12,7 +12,7 @@
 </header>
 <section class="panel">
   <h3>بنود أمر البيع</h3>
-  <table>
+  <div class="table-wrap"><table>
     <thead><tr><th>الصنف / الوصف</th><th>الكمية المطلوبة</th><th>تم تسليمها</th><th>تمت فوترتها</th><th>محجوز في مسودات</th><th>متاح للتسليم</th><th>جاهز للفوترة</th><th>سعر الوحدة</th></tr></thead>
     <tbody>
     {% for line in lines %}
@@ -23,7 +23,7 @@
       </tr>
     {% endfor %}
     </tbody>
-  </table>
+  </table></div>
   <p>إجمالي البنود: {{ '%.2f'|format(gross_order_value) }} |
      خصم أمر البيع: {{ '%.2f'|format(order_discount) }} |
      الصافي: {{ '%.2f'|format(net_order_value) }} |
