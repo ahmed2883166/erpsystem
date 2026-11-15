@@ -1360,6 +1360,11 @@ def final_payroll():
             days_worked = (termination - period_start).days + 1
             if days_worked < 1 or days_worked > (period_end - period_start).days + 1:
                 raise ValueError("عدد أيام العمل غير صحيح.")
+            existing_monthly_line = c.execute("""SELECT r.id,r.status FROM payroll_runs r
+                JOIN payroll_lines l ON l.run_id=r.id
+                WHERE r.period=? AND l.employee_id=? LIMIT 1""", (period,employee_id)).fetchone()
+            if existing_monthly_line:
+                raise ValueError("يوجد لهذا الموظف سطر بالفعل في كشف المرتبات الشهري لهذا الشهر. راجع الكشف واحذف المسودة القديمة أو عالج الصرف السابق قبل إعداد مرتب نهائي لمنع التكرار.")
             basic_monthly = M(employee["basic_salary"])
             allowances_monthly = M(sum((D(x["amount"]) for x in c.execute("""
                 SELECT p.amount FROM employee_pay_items p WHERE p.employee_id=? AND p.active=1
@@ -1409,7 +1414,9 @@ def final_payroll():
             AND e.termination_date>=? AND e.termination_date<=?
             AND NOT EXISTS (SELECT 1 FROM employee_final_payrolls f
                 WHERE f.employee_id=e.id AND f.termination_date=e.termination_date)
-            ORDER BY e.employee_code""", (period_start.isoformat(),period_end.isoformat())).fetchall()
+            AND NOT EXISTS (SELECT 1 FROM payroll_runs r JOIN payroll_lines l ON l.run_id=r.id
+                WHERE r.period=? AND l.employee_id=e.id)
+            ORDER BY e.employee_code""", (period_start.isoformat(),period_end.isoformat(),selected_period)).fetchall()
         rows = c.execute("""SELECT f.*,e.employee_code,e.full_name FROM employee_final_payrolls f
             JOIN employees e ON e.id=f.employee_id WHERE f.period=? ORDER BY f.created_at DESC,f.id DESC""",
             (selected_period,)).fetchall()
