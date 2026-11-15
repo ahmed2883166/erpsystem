@@ -322,6 +322,28 @@ class CashFlowReportTests(unittest.TestCase):
         )
         self.assertEqual(adjustment["amount"], financial_planning.Decimal("105"))
 
+    def test_year_end_closing_entry_is_not_added_back_as_depreciation(self):
+        conn = financial_planning._connect()
+        conn.execute("ALTER TABLE journal_entries ADD COLUMN entry_type TEXT")
+        conn.execute("INSERT INTO accounts(id,code,name_ar,account_type,is_group) VALUES(7,'6400','مصروف إهلاك','expense',0)")
+        conn.execute("INSERT INTO accounts(id,code,name_ar,account_type,is_group) VALUES(8,'3200','أرباح مرحلة','equity',0)")
+        conn.execute("CREATE TABLE fixed_assets(id INTEGER PRIMARY KEY, expense_account_id INTEGER)")
+        conn.execute("INSERT INTO fixed_assets(id,expense_account_id) VALUES(1,7)")
+        conn.execute("INSERT INTO journal_entries(id,entry_date,status,entry_type) VALUES(6,'2026-11-30','posted','year_end_closing')")
+        conn.executemany(
+            "INSERT INTO journal_lines VALUES(?,?,?,?,?)",
+            [(11,6,8,"80","0"), (12,6,7,"0","80")],
+        )
+        snapshot = financial_planning.build_cash_flow_indirect_snapshot(
+            conn, "2026-11-01", "2026-11-30"
+        )
+        conn.close()
+        adjustment = next(
+            item for item in snapshot["indirect_items"]
+            if item["label"] == "إضافة الإهلاك والمصروفات غير النقدية المحددة"
+        )
+        self.assertEqual(adjustment["amount"], financial_planning.Decimal("0"))
+
     def test_non_cash_provision_expense_is_offset_by_current_provision_liability(self):
         conn = financial_planning._connect()
         baseline = financial_planning.build_cash_flow_indirect_snapshot(
