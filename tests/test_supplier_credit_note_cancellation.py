@@ -152,7 +152,7 @@ class SupplierCreditNoteCancellationTests(unittest.TestCase):
         ).fetchall()
         self.assertEqual(
             [(row["account_id"], row["debit"], row["credit"]) for row in reversal_lines],
-            [(100, "0", "72"), (200, "52.5", "0"), (300, "19.5", "0")]
+            [(100, "0.00", "72.00"), (200, "52.50", "0.00"), (300, "19.50", "0.00")]
         )
         restored = self.conn.execute(
             """SELECT m.movement_type,m.target_warehouse_id,m.target_location_id,m.lot_id,
