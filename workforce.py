@@ -2274,6 +2274,19 @@ def post_payroll(run_id):
         other_deductions_account = int(request.form["other_deductions_account"])
         advances_account = int(request.form["advances_account"])
         total_loan_deduction = M(sum((D(x["loan_deduction"]) for x in rows),Decimal("0")))
+        # Validate account nature server-side; form filtering alone is not an accounting control.
+        required_account_types = (
+            (salary_expense, "expense"), (employer_ins_expense, "expense"),
+            (salaries_payable, "liability"), (tax_payable, "liability"),
+            (insurance_payable, "liability"),
+        )
+        for selected_id, expected_type in required_account_types:
+            selected_account = c.execute(
+                "SELECT account_type,is_group,active FROM accounts WHERE id=?", (selected_id,)
+            ).fetchone()
+            if (not selected_account or not selected_account["active"] or selected_account["is_group"]
+                    or selected_account["account_type"] != expected_type):
+                raise ValueError("الحسابات المختارة غير صحيحة؛ اختر حساب مصروف تفصيليًا للأجور والتأمين، وحساب التزام تفصيليًا للمستحقات والضرائب والتأمينات.")
         if advance_deduction > 0:
             _employee_advance_account(c, advances_account)
         if total_loan_deduction > 0:
