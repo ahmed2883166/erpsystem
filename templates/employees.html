@@ -5,6 +5,7 @@
 <a class="button secondary" href="{{url_for('workforce.employee_penalties')}}">الجزاءات والمخالفات</a>
 <a class="button secondary" href="{{url_for('workforce.export_employees_excel')}}">تصدير الموظفين Excel</a>
 <a class="button" href="{{url_for('workforce.employee_form_2_salary_report')}}">تقرير استمارة 2 لجميع الموظفين</a>
+<a class="button secondary" href="{{url_for('workforce.incentive_rules')}}">الحوافز والمكافآت</a>
 <a class="button secondary" href="{{url_for('workforce.download_employee_template')}}">تحميل نموذج Excel</a></p></header>
 <section class="panel"><h3>استيراد بيانات الموظفين من Excel</h3>
 <p class="muted">ارفع ملف XLSX بنفس أعمدة النموذج. كود الموظف هو مفتاح المطابقة: الكود الموجود سيتم تحديث بياناته، والجديد سيتم إضافته. العملية كلها تتم أو تُلغى بالكامل عند وجود خطأ.</p>
@@ -58,14 +59,6 @@
 {% if employees_page.page>1 %}<a class="button secondary" href="{{ url_for('workforce.employees',employees_page=employees_page.page-1,employees_per_page=employees_page.per_page) }}">السابق</a>{% endif %}
 {% if employees_page.page<employees_page.pages %}<a class="button" href="{{ url_for('workforce.employees',employees_page=employees_page.page+1,employees_per_page=employees_page.per_page) }}">التالي</a>{% endif %}</div>
 <p class="muted">الإجازة بدون مرتب لا تُدرج ضمن كشف المرتبات. الموظف المستقيل أو المحال للمعاش يُدرج فقط إذا كان تاريخ انتهاء خدمته داخل شهر المرتبات، ويُحسب الأجر والبدلات المتكررة بنسبة أيام الخدمة على أساس 30 يومًا.</p></section>
-<section class="panel"><h3>إعداد أنواع الحوافز والمكافآت</h3><p>أنشئ حافزًا لمناسبة أو إنجاز أو مكافأة، ثم اختره للموظف عند إعداد المرتبات.</p>
-<form method="post" action="{{url_for('workforce.add_incentive_rule')}}" class="form-grid">
-<label>اسم الحافز<input name="name" placeholder="حافز رمضان / مكافأة إنجاز / حافز إنتاج" required></label>
-<label>طريقة الحساب<select name="calculation_method"><option value="fixed">مبلغ مقطوع لكل موظف</option><option value="percentage_basic">نسبة من الراتب الأساسي</option><option value="per_day">قيمة يومية × عدد الأيام</option></select></label>
-<label>القيمة أو النسبة<input type="number" name="calculation_value" min="0.01" step="0.01" required></label>
-<button type="submit">حفظ نوع الحافز</button></form>
-<table><tr><th>الحافز</th><th>طريقة الحساب</th><th>القيمة</th><th>الحالة</th></tr>
-{% for r in incentive_rules %}<tr><td>{{r.name}}</td><td>{{{'fixed':'مبلغ مقطوع','percentage_basic':'نسبة من الأساسي','per_day':'قيمة يومية × أيام'}.get(r.calculation_method,r.calculation_method)}}</td><td>{{r.calculation_value}}</td><td>{{'نشط' if r.active else 'غير نشط'}}</td></tr>{% else %}<tr><td colspan="4">لم تُضف أنواع حوافز بعد.</td></tr>{% endfor %}</table></section>
 <section class="panel"><h3>البدلات والخصومات الثابتة للموظفين</h3><form method="post" action="{{url_for('workforce.add_pay_item')}}" class="form-grid">
 <label>الموظف<select name="employee_id" required>{% for e in employee_options %}<option value="{{e.id}}">{{e.employee_code}} - {{e.full_name}}</option>{% endfor %}</select></label>
 <label>اسم البند<input name="item_name" placeholder="بدل انتقال / خصم ثابت" required></label>
