@@ -775,13 +775,14 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         with self.client.session_transaction() as session:
             session["role"] = "admin"
+            session["user_id"] = 2
         approved = self.client.post("/hr/payroll/1/salary-approval/1",
             data={"approval_note":"تمت مراجعة قرار الزيادة"}, follow_redirects=True)
         self.assertIn("تم اعتماد تعديل الراتب الأساسي", approved.get_data(as_text=True))
         conn = sqlite3.connect(self.db_path)
         approved_by = conn.execute("SELECT basic_salary_approved_by FROM payroll_lines WHERE id=1").fetchone()[0]
         conn.close()
-        self.assertEqual(approved_by, 1)
+        self.assertEqual(approved_by, 2)
         with self.client.session_transaction() as session:
             session["role"] = "accountant"
         posted = self.post_as_user("/hr/payroll/1/post", data=post_data)
