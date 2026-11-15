@@ -731,13 +731,10 @@ def employees():
         page=request.args.get("employees_page",1,type=int),
         per_page=request.args.get("employees_per_page",50,type=int))
     rows = employees_page["rows"]
-    employee_options = c.execute("SELECT id,employee_code,full_name FROM employees ORDER BY employee_code").fetchall()
-    items = c.execute("""SELECT p.*,e.employee_code,e.full_name FROM employee_pay_items p
-                         JOIN employees e ON e.id=p.employee_id ORDER BY e.employee_code,p.id DESC""").fetchall()
     dimensions = _dimension_options(c)
     c.close()
-    return render_template("employees.html", employees=rows, employee_options=employee_options,
-                           employees_page=employees_page, items=items, dimensions=dimensions)
+    return render_template("employees.html", employees=rows,
+                           employees_page=employees_page, dimensions=dimensions)
 
 
 @workforce_bp.route("/hr/<int:employee_id>/edit", methods=["GET", "POST"])
