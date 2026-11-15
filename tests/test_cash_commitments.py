@@ -11,6 +11,8 @@ from cash_commitments import (
     create_recurring_schedule,
     generate_recurring_schedule_occurrences,
     deactivate_recurring_schedule,
+    cash_commitment_payment_summary,
+    reverse_cash_commitment_payment,
 )
 
 
@@ -33,12 +35,14 @@ class CashCommitmentsTests(unittest.TestCase):
         )""")
         self.conn.executemany(
             "INSERT INTO journal_entries(id,status) VALUES(?,?)",
-            [(1, "posted"), (2, "draft"), (3, "posted"), (4, "posted")],
+            [(1, "posted"), (2, "draft"), (3, "posted"), (4, "posted"), (5, "posted")],
         )
         self.conn.executemany(
             "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(?,?,?,?)",
             [(1,10,"200","0"),(1,20,"0","200"),
-             (3,10,"100","0"),(3,20,"0","100")],
+             (3,10,"100","0"),(3,20,"0","100"),
+             (4,10,"60","0"),(4,20,"0","60"),
+             (5,10,"150","0"),(5,20,"0","150")],
         )
         initialize_cash_commitments_schema(self.conn)
 
@@ -85,7 +89,7 @@ class CashCommitmentsTests(unittest.TestCase):
 
     def test_payment_requires_debit_to_the_commitment_liability_account(self):
         commitment_id = self._commitment("100")
-        with self.assertRaisesRegex(ValueError, "مدين كافٍ"):
+        with self.assertRaisesRegex(ValueError, "يجب أن تساوي"):
             record_cash_commitment_payment(
                 self.conn, commitment_id, "2026-11-10", "100", 4
             )
@@ -95,23 +99,106 @@ class CashCommitmentsTests(unittest.TestCase):
         )
 
     def test_cannot_overpay_or_reuse_journal_entry(self):
-        commitment_id = self._commitment("100")
+        commitment_id = self._commitment("200")
         record_cash_commitment_payment(
-            self.conn, commitment_id, "2026-11-10", "60", 1
+            self.conn, commitment_id, "2026-11-10", "60", 4
         )
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "تتجاوز الرصيد المتبقي"):
             record_cash_commitment_payment(
-                self.conn, commitment_id, "2026-11-11", "50", 3
+                self.conn, commitment_id, "2026-11-11", "150", 5
             )
         with self.assertRaises(sqlite3.IntegrityError):
             record_cash_commitment_payment(
-                self.conn, commitment_id, "2026-11-11", "10", 1
+                self.conn, commitment_id, "2026-11-11", "60", 4
+            )
+
+    def test_reversing_payment_restores_commitment_balance_and_preserves_journals(self):
+        commitment_id = self._commitment("200")
+        payment_id = record_cash_commitment_payment(
+            self.conn, commitment_id, "2026-11-10", "200", 1
+        )
+        self.assertEqual(
+            cash_commitment_payment_summary(self.conn, commitment_id)["status"], "paid"
+        )
+
+        def fake_post_journal(conn, entry_date, reference, description, lines, user_id):
+            reversal_id = conn.execute(
+                "SELECT COALESCE(MAX(id),0)+1 FROM journal_entries"
+            ).fetchone()[0]
+            conn.execute(
+                """INSERT INTO journal_entries(id,status,reference,description,entry_date)
+                   VALUES(?,'posted',?,?,?)""",
+                (reversal_id, reference, description, entry_date),
+            )
+            for account_id, debit, credit, memo in lines:
+                conn.execute(
+                    """INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo)
+                       VALUES(?,?,?,?,?)""",
+                    (reversal_id, account_id, debit, credit, memo),
+                )
+            return reversal_id
+
+        original_before = tuple(self.conn.execute(
+            "SELECT status,reference FROM journal_entries WHERE id=1"
+        ).fetchone())
+        reversal_id = reverse_cash_commitment_payment(
+            self.conn, payment_id, "2026-11-15", "تم تسجيل السداد بالخطأ",
+            created_by=9, post_journal_func=fake_post_journal,
+        )
+        self.assertEqual(reversal_id, 6)
+        self.assertEqual(tuple(self.conn.execute(
+            "SELECT status,reference FROM journal_entries WHERE id=1"
+        ).fetchone()), original_before)
+        reversal_lines = self.conn.execute(
+            "SELECT account_id,debit,credit FROM journal_lines WHERE entry_id=? ORDER BY id",
+            (reversal_id,),
+        ).fetchall()
+        self.assertEqual(
+            [tuple(row) for row in reversal_lines],
+            [(10, "0", "200"), (20, "200", "0")],
+        )
+        payment = self.conn.execute(
+            "SELECT reversal_journal_entry_id FROM cash_commitment_payments WHERE id=?",
+            (payment_id,),
+        ).fetchone()
+        self.assertEqual(payment["reversal_journal_entry_id"], reversal_id)
+        summary = cash_commitment_payment_summary(self.conn, commitment_id)
+        self.assertEqual(summary["paid_total"], Decimal("0"))
+        self.assertEqual(summary["status"], "open")
+        forecast = list_cash_commitments_forecast(
+            self.conn, "2026-11-15", "2026-12-15"
+        )
+        self.assertEqual(forecast[0]["balance"], Decimal("200.00"))
+        with self.assertRaisesRegex(ValueError, "بالفعل"):
+            reverse_cash_commitment_payment(
+                self.conn, payment_id, "2026-11-16", "محاولة عكس ثانية",
+                post_journal_func=fake_post_journal,
+            )
+
+    def test_reversed_or_reversal_journal_cannot_be_linked_as_payment(self):
+        commitment_id = self._commitment("200")
+        self.conn.execute(
+            "INSERT INTO journal_entries(id,status,reference,description) VALUES(6,'posted','REV-1','قيد عكسي')"
+        )
+        self.conn.execute(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(6,10,'200','0')"
+        )
+        with self.assertRaisesRegex(ValueError, "قيد عكسي"):
+            record_cash_commitment_payment(
+                self.conn, commitment_id, "2026-11-10", "200", 6
+            )
+        self.conn.execute(
+            "INSERT INTO journal_entries(id,status,reference,description) VALUES(7,'posted','REV-4','عكس قيد السداد')"
+        )
+        with self.assertRaisesRegex(ValueError, "تم عكسه"):
+            record_cash_commitment_payment(
+                self.conn, commitment_id, "2026-11-10", "60", 4
             )
 
     def test_paid_commitment_is_not_forecast_and_void_is_excluded(self):
-        paid_id = self._commitment("50")
+        paid_id = self._commitment("200")
         record_cash_commitment_payment(
-            self.conn, paid_id, "2026-11-10", "50", 1
+            self.conn, paid_id, "2026-11-10", "200", 1
         )
         void_id = self._commitment("70", "2026-11-26")
         void_cash_commitment(self.conn, void_id)
@@ -121,9 +208,9 @@ class CashCommitmentsTests(unittest.TestCase):
         )
 
     def test_future_dated_full_payment_does_not_hide_commitment_as_of_earlier_date(self):
-        commitment_id = self._commitment("100")
+        commitment_id = self._commitment("200")
         record_cash_commitment_payment(
-            self.conn, commitment_id, "2026-11-20", "100", 1
+            self.conn, commitment_id, "2026-11-20", "200", 1
         )
         report = list_cash_commitments_forecast(
             self.conn, "2026-11-15", "2026-12-15"
