@@ -321,7 +321,10 @@ def _all_party_events(c, kind):
 
 def _gl_party_control_balance(c, account_codes, party_id, as_of, normal_side, dimension):
     """Return a party-specific GL control only when that dimension is stored on journal lines."""
-    if dimension not in _columns(c,"journal_lines"): return None,False
+    if dimension not in {"customer_id", "supplier_id"}:
+        return None, False
+    if dimension not in _columns(c, "journal_lines"):
+        return None, False
     codes=sorted({str(code) for code in account_codes if code not in (None,"")})
     if not codes: return None,False
     placeholders=",".join("?" for _ in codes)
@@ -345,7 +348,10 @@ def _gl_party_control_balance(c, account_codes, party_id, as_of, normal_side, di
 
 def _gl_party_control_balances(c, account_codes, as_of, normal_side, dimension):
     """Fetch all party-level control balances in one query, not one query per party."""
-    if dimension not in _columns(c,"journal_lines"): return {},False
+    if dimension not in {"customer_id", "supplier_id"}:
+        return {}, False
+    if dimension not in _columns(c, "journal_lines"):
+        return {}, False
     codes=sorted({str(code) for code in account_codes if code not in (None,"")})
     if not codes: return {},False
     placeholders=",".join("?" for _ in codes)
