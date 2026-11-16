@@ -4,6 +4,7 @@ import unittest
 from decimal import Decimal
 from pathlib import Path
 from flask import Flask
+from jinja2 import ChoiceLoader, DictLoader
 import purchases
 
 
@@ -74,9 +75,12 @@ class GRNIReconciliationTests(unittest.TestCase):
     def test_route_is_read_only_and_allows_viewer_role(self):
         original_db_path = purchases.DB_PATH
         try:
-            app = Flask(__name__)
+            app = Flask(__name__, template_folder="../templates")
             app.secret_key = "test"
-            app.context_processor(lambda: {"permissions": []})
+            app.jinja_loader = ChoiceLoader([
+                DictLoader({"base.html": "{% block content %}{% endblock %}"}),
+                app.jinja_loader,
+            ])
             app.register_blueprint(purchases.purchase_bp)
             with tempfile.TemporaryDirectory() as tmp:
                 db_path = Path(tmp) / "grni.db"
