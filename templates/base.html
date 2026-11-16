@@ -182,7 +182,7 @@
    const tables=[...document.querySelectorAll('main table')].filter(table=>table.querySelectorAll('tr').length>0);
    const visibleRows=table=>[...table.querySelectorAll('tr')].filter(row=>row.getClientRects().length>0);
    return {
-     title:document.querySelector('main h2,main h1')?.innerText||document.title||'NEXUS ERP',
+     title:document.querySelector('main h2,main h1')?.innerText||document.title||'ADMRAIL ERP',
      tables:tables.map((table,index)=>({
        title:table.closest('.panel')?.querySelector('h3,h2')?.innerText||('جدول '+(index+1)),
        rows:visibleRows(table).map(row=>[...row.querySelectorAll('th,td')].filter(cell=>cell.getClientRects().length>0).map(cell=>{
