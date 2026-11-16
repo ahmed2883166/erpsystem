@@ -1,12 +1,18 @@
 import sqlite3
 import time
 import unittest
+import tempfile
+from pathlib import Path
+
+from database import connect_database
 
 from report_request_control import (
     ReportRequestGate,
     bounded_env_int,
     is_expensive_report_request,
     make_sqlite_deadline_callback,
+    set_current_report_deadline,
+    reset_current_report_deadline,
 )
 
 
@@ -59,6 +65,29 @@ class ReportRequestControlTests(unittest.TestCase):
                 ).fetchone()
         finally:
             connection.close()
+
+
+    def test_shared_database_factory_applies_deadline_to_blueprint_connections(self):
+        with tempfile.TemporaryDirectory(prefix="nexus-report-deadline-") as folder:
+            db_path = Path(folder) / "report.sqlite3"
+            token = set_current_report_deadline(time.monotonic() - 1)
+            connection = None
+            try:
+                connection = connect_database(db_path)
+                connection.execute("CREATE TABLE numbers(value INTEGER)")
+                connection.executemany(
+                    "INSERT INTO numbers(value) VALUES(?)",
+                    ((number,) for number in range(1000)),
+                )
+                with self.assertRaises(sqlite3.OperationalError):
+                    connection.execute(
+                        "SELECT sum(a.value * b.value) "
+                        "FROM numbers a CROSS JOIN numbers b"
+                    ).fetchone()
+            finally:
+                if connection is not None:
+                    connection.close()
+                reset_current_report_deadline(token)
 
 
 if __name__ == "__main__":
