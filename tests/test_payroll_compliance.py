@@ -96,6 +96,35 @@ class PayrollComplianceTests(unittest.TestCase):
         self.assertEqual(result["tax"], Decimal("592.50"))
 
 
+    def test_egypt_preset_never_overwrites_existing_rule_or_tax_brackets(self):
+        rule_id = self.add_rule()
+        self.conn.execute("""
+            INSERT INTO payroll_tax_tier_brackets(rule_set_id,income_max,lower_bound,upper_bound,rate)
+            VALUES(?,?,?,?,?)
+        """, (rule_id, "500000", "0", "50000", "7"))
+        self.conn.commit()
+
+        with self.assertRaisesRegex(ValueError, "موجود بالفعل"):
+            seed_egypt_2026(self.conn)
+
+        rule = self.conn.execute(
+            "SELECT personal_exemption_annual,employee_insurance_rate FROM payroll_rule_sets WHERE id=?",
+            (rule_id,),
+        ).fetchone()
+        standard_brackets = self.conn.execute(
+            "SELECT lower_bound,upper_bound,rate FROM payroll_tax_brackets WHERE rule_set_id=? ORDER BY id",
+            (rule_id,),
+        ).fetchall()
+        tier_brackets = self.conn.execute(
+            "SELECT income_max,lower_bound,upper_bound,rate FROM payroll_tax_tier_brackets WHERE rule_set_id=?",
+            (rule_id,),
+        ).fetchall()
+        self.assertEqual(tuple(rule), ("24000", "10"))
+        self.assertEqual([tuple(row) for row in standard_brackets], [
+            ("0", "60000", "10"), ("60000", None, "20")
+        ])
+        self.assertEqual([tuple(row) for row in tier_brackets], [("500000", "0", "50000", "7")])
+
     def test_default_egypt_rules_are_seeded_once_without_overwriting_edits(self):
         ensure_default_payroll_rules(self.conn)
         self.conn.execute(

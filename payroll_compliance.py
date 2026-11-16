@@ -272,13 +272,17 @@ def seed_egypt_2026(conn):
     ).fetchone()
     if existing:
         raise ValueError("إعداد مصر 2026 موجود بالفعل؛ لن يتم استبدال أي تعديلات أو شرائح محفوظة. أنشئ مجموعة جديدة بتاريخ سريان جديد إذا أردت تحديثها.")
-    conn.execute("""
+    inserted = conn.execute("""
         INSERT OR IGNORE INTO payroll_rule_sets(country_code,category_code,effective_from,
           personal_exemption_annual,taxable_rounding_unit,insurance_floor,insurance_ceiling,
           employee_insurance_rate,employer_insurance_rate,notes)
         VALUES('EG','local','2026-01-01','20000','10','2700','16700','11','18.75',
           'إعداد مبدئي لمصر 2026؛ راجع المعاملة القانونية قبل الاعتماد')
     """)
+    # Another worker may have inserted the same preset after our initial read.
+    # Never use the conflict row as permission to overwrite its rules or brackets.
+    if inserted.rowcount != 1:
+        raise ValueError("تم إنشاء إعداد مصر 2026 بواسطة عملية أخرى؛ لم يتم تعديل أي قواعد محفوظة.")
     rule = conn.execute("""
         SELECT id FROM payroll_rule_sets
         WHERE country_code='EG' AND category_code='local' AND effective_from='2026-01-01'
@@ -286,12 +290,6 @@ def seed_egypt_2026(conn):
     if not rule:
         raise ValueError("تعذر إنشاء مجموعة قواعد مصر 2026.")
     rule_id = rule["id"]
-    conn.execute("""UPDATE payroll_rule_sets SET personal_exemption_annual='20000',
-        taxable_rounding_unit='10',insurance_floor='2700',insurance_ceiling='16700',
-        employee_insurance_rate='11',employer_insurance_rate='18.75',enabled=1
-        WHERE id=?""", (rule_id,))
-    conn.execute("DELETE FROM payroll_tax_brackets WHERE rule_set_id=?", (rule_id,))
-    conn.execute("DELETE FROM payroll_tax_tier_brackets WHERE rule_set_id=?", (rule_id,))
     tiers = [
         ("600000", [("0","40000","0"),("40000","55000","10"),("55000","70000","15"),
                     ("70000","200000","20"),("200000","400000","22.5"),("400000",None,"25")]),
