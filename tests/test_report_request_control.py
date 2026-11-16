@@ -18,8 +18,21 @@ from report_request_control import (
 
 class ReportRequestControlTests(unittest.TestCase):
     def test_only_read_only_report_requests_are_limited(self):
+        # The home page endpoint is named "dashboard" but must never be throttled.
+        self.assertFalse(is_expensive_report_request(
+            "GET", "dashboard", "/"
+        ))
+        self.assertFalse(is_expensive_report_request(
+            "GET", "dashboard", "/dashboard"
+        ))
+        self.assertFalse(is_expensive_report_request(
+            "GET", "dashboard_settings", "/dashboard/settings"
+        ))
         self.assertTrue(is_expensive_report_request(
             "GET", "management_dashboard", "/dashboard/management"
+        ))
+        self.assertTrue(is_expensive_report_request(
+            "GET", "management_dashboard", "/dashboard/management/"
         ))
         self.assertTrue(is_expensive_report_request(
             "GET", "income_statement", "/reports/income-statement"
