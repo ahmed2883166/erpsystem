@@ -30,6 +30,30 @@ class StockValuationTests(unittest.TestCase):
         self.db.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost)
                            VALUES(?,?,?,'100','100','14')""",(self.product_id,self.warehouse_id,movement_id))
 
+    def test_schema_reinitialization_preserves_revalued_layer_value(self):
+        layer_id = self.db.execute(
+            "SELECT id FROM stock_valuation_layers WHERE product_id=? ORDER BY id LIMIT 1",
+            (self.product_id,),
+        ).fetchone()["id"]
+        self.db.execute(
+            "UPDATE stock_valuation_layers SET value_remaining='1100.25' WHERE id=?",
+            (layer_id,),
+        )
+        self.db.commit()
+
+        # Startup migration must not reset a moving-average layer to its receipt cost.
+        stock.initialize_stock_schema()
+
+        check = stock.get_db()
+        try:
+            value = check.execute(
+                "SELECT value_remaining FROM stock_valuation_layers WHERE id=?",
+                (layer_id,),
+            ).fetchone()["value_remaining"]
+        finally:
+            check.close()
+        self.assertEqual(value, "1100.25")
+
     def tearDown(self):
         self.db.close()
         self.tmp.cleanup()
