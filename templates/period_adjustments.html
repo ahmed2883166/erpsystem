@@ -55,7 +55,7 @@
 <section class="panel">
   <h3>جداول التسوية المسجلة</h3>
   <div class="table-wrap"><table>
-    <thead><tr><th>الرقم</th><th>البيان</th><th>النوع</th><th>المبلغ</th><th>الفترة</th><th>الدورية</th><th>الحساب المدين</th><th>الحساب الدائن</th><th>المراجعة</th></tr></thead>
+    <thead><tr><th>الرقم</th><th>البيان</th><th>النوع</th><th>المبلغ</th><th>الفترة</th><th>الدورية</th><th>الحساب المدين</th><th>الحساب الدائن</th><th>الحالة</th><th>المراجعة والإجراء</th></tr></thead>
     <tbody>
     {% for item in schedules %}
       <tr>
@@ -64,9 +64,16 @@
         <td>{{ item.start_date }} إلى {{ item.end_date }}</td>
         <td>{{ 'شهري' if item.frequency == 'monthly' else 'سنوي' }}</td>
         <td>{{ item.debit_name }}</td><td>{{ item.credit_name }}</td>
-        <td><a href="{{ url_for('adjustments.index', selected=item.id) }}">معاينة الفترات</a></td>
+        <td>{{ 'نشط' if item.status == 'active' else 'ملغى' }}</td>
+        <td><a href="{{ url_for('adjustments.index', selected=item.id) }}">معاينة الفترات</a>
+        {% if item.status == 'active' and 'journal.manage' in permissions %}
+          <form method="post" action="{{ url_for('adjustments.cancel_adjustment', adjustment_id=item.id) }}">
+            <label>سبب الإلغاء</label><input name="reason" maxlength="500" required>
+            <button type="submit" class="secondary">إلغاء الجدول</button>
+          </form>
+        {% endif %}</td>
       </tr>
-    {% else %}<tr><td colspan="9">لا توجد جداول تسوية مسجلة.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="10">لا توجد جداول تسوية مسجلة.</td></tr>{% endfor %}
     </tbody>
   </table></div>
 </section>
