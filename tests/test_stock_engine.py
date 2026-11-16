@@ -61,6 +61,13 @@ class StockValuationTests(unittest.TestCase):
     def test_moving_average_cost(self):
         cost, allocations = stock.consume_layers(self.db,self.product_id,self.warehouse_id,stock.D("50"),"average")
         self.assertEqual(cost, stock.D("600.00"))
+        remaining = self.db.execute(
+            "SELECT qty_remaining,value_remaining FROM stock_valuation_layers ORDER BY id"
+        ).fetchall()
+        self.assertEqual(
+            [(stock.D(row["qty_remaining"]), stock.D(row["value_remaining"])) for row in remaining],
+            [(stock.D("50"), stock.D("600.00")), (stock.D("100"), stock.D("1200.00"))],
+        )
 
     def test_moving_average_cost_applies_average_when_entire_first_layer_is_consumed(self):
         cost, allocations = stock.consume_layers(
