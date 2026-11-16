@@ -45,25 +45,27 @@ class ReportRequestGate:
         self._semaphore.release()
 
 
-_REPORT_ENDPOINT_MARKERS = (
-    "report", "dashboard", "statement", "ledger", "trial_balance",
-    "cash_flow", "cashflow",
-)
+# Match concrete report URL families only. Never classify a page from its
+# Flask endpoint name: the application's home page endpoint is named "dashboard".
 _REPORT_PATH_PREFIXES = (
-    "/reports/", "/dashboard/", "/trial-balance", "/trial_balance",
-    "/ledger", "/hr/payroll-report", "/hr/employee-statement",
+    "/reports",
+    "/dashboard/management",
+    "/trial-balance",
+    "/trial_balance",
+    "/ledger",
+    "/hr/payroll-report",
+    "/hr/employee-statement",
 )
 
 
 def is_expensive_report_request(method, endpoint, path):
-    """Identify read-only report views without throttling normal data-entry pages."""
+    """Identify known read-only report URLs, never ordinary pages by endpoint name."""
     if str(method or "").upper() != "GET":
         return False
-    endpoint_name = str(endpoint or "").lower()
-    request_path = str(path or "").lower()
-    return (
-        any(marker in endpoint_name for marker in _REPORT_ENDPOINT_MARKERS)
-        or any(request_path.startswith(prefix) for prefix in _REPORT_PATH_PREFIXES)
+    request_path = str(path or "").split("?", 1)[0].rstrip("/").lower()
+    return any(
+        request_path == prefix or request_path.startswith(prefix + "/")
+        for prefix in _REPORT_PATH_PREFIXES
     )
 
 
