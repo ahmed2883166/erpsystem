@@ -133,9 +133,9 @@
  const aside=document.getElementById('appSidebar');
  if(!aside)return;
  const groups=[...aside.querySelectorAll('details.nav-group')];
- const path=window.location.pathname.replace(/\\/+$/,'')||'/';
+ const path=window.location.pathname.replace(/\/+$/,'')||'/';
  const links=[...aside.querySelectorAll('nav a[href]')].map(link=>{
-   try{return {link,path:new URL(link.href,window.location.origin).pathname.replace(/\\/+$/,'')||'/'};}catch(_){return null;}
+   try{return {link,path:new URL(link.href,window.location.origin).pathname.replace(/\/+$/,'')||'/'};}catch(_){return null;}
  }).filter(Boolean);
  const currentLink=links
    .filter(item=>item.path===path||(item.path!=='/'&&path.startsWith(item.path+'/')))
