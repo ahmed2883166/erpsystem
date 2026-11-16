@@ -96,10 +96,38 @@
 {% endif %}
 <script>
 (function(){
- const token=document.querySelector('meta[name="csrf-token"]')?.content;
- if(token){document.querySelectorAll('form[method="post" i],form:not([method])').forEach(form=>{
-   if(!form.querySelector('input[name="csrf_token"]')){const input=document.createElement('input');input.type='hidden';input.name='csrf_token';input.value=token;form.appendChild(input);}
- });}
+ const tokenMeta=document.querySelector('meta[name="csrf-token"]');
+ const getToken=()=>tokenMeta?.getAttribute('content')||'';
+ const isPostForm=form=>form instanceof HTMLFormElement &&
+   ((form.getAttribute('method')||'get').toLowerCase()==='post');
+ const ensureToken=form=>{
+   if(!isPostForm(form))return;
+   const token=getToken();
+   if(!token)return;
+   let field=form.querySelector('input[name="csrf_token"]');
+   if(!field){field=document.createElement('input');field.type='hidden';field.name='csrf_token';form.appendChild(field);}
+   field.value=token;
+ };
+ const syncForms=()=>document.querySelectorAll('form').forEach(ensureToken);
+ syncForms();
+ // Cover forms inserted later by dialogs, partial updates, and dynamic screens.
+ if(typeof MutationObserver!=='undefined'){
+   const observer=new MutationObserver(records=>{
+     for(const record of records){
+       record.addedNodes.forEach(node=>{
+         if(!(node instanceof Element))return;
+         if(node.matches?.('form'))ensureToken(node);
+         node.querySelectorAll?.('form').forEach(ensureToken);
+       });
+     }
+   });
+   observer.observe(document.documentElement,{childList:true,subtree:true});
+ }
+ // Last safety net: refresh the token immediately before any normal POST submission.
+ document.addEventListener('submit',event=>{
+   const form=event.target;
+   if(form instanceof HTMLFormElement)ensureToken(form);
+ },true);
 })();
 (function(){
  const aside=document.getElementById('appSidebar');
