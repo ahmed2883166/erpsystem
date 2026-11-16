@@ -832,3 +832,34 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  body.sidebar-open{overflow:auto}
  aside#appSidebar{position:fixed}
 }
+
+
+/* ADMRAIL: consistent, high-contrast document status colors across modules */
+.state-pill{border:1px solid transparent;font-weight:800}
+.state-pill.state-draft,.state-pill.state-unpaid,.state-pill.state-pending{
+  background:#e0f2fe!important;color:#075985!important;border-color:#7dd3fc!important
+}
+.state-pill.state-paid,.state-pill.state-approved,.state-pill.state-received,.state-pill.state-posted{
+  background:#dcfce7!important;color:#166534!important;border-color:#86efac!important
+}
+.state-pill.state-partial,.state-pill.state-issued,.state-pill.state-pending-approval{
+  background:#fef3c7!important;color:#92400e!important;border-color:#fcd34d!important
+}
+.state-pill.state-cancelled,.state-pill.state-rejected,.state-pill.state-void{
+  background:#e2e8f0!important;color:#475569!important;border-color:#cbd5e1!important
+}
+.state-pill.state-transfer{background:#ede9fe!important;color:#5b21b6!important;border-color:#c4b5fd!important}
+:root[data-theme="dark"] .state-pill.state-draft,
+:root[data-theme="dark"] .state-pill.state-unpaid,
+:root[data-theme="dark"] .state-pill.state-pending{background:#082f49!important;color:#bae6fd!important;border-color:#0369a1!important}
+:root[data-theme="dark"] .state-pill.state-paid,
+:root[data-theme="dark"] .state-pill.state-approved,
+:root[data-theme="dark"] .state-pill.state-received,
+:root[data-theme="dark"] .state-pill.state-posted{background:#052e16!important;color:#bbf7d0!important;border-color:#15803d!important}
+:root[data-theme="dark"] .state-pill.state-partial,
+:root[data-theme="dark"] .state-pill.state-issued,
+:root[data-theme="dark"] .state-pill.state-pending-approval{background:#451a03!important;color:#fde68a!important;border-color:#b45309!important}
+:root[data-theme="dark"] .state-pill.state-cancelled,
+:root[data-theme="dark"] .state-pill.state-rejected,
+:root[data-theme="dark"] .state-pill.state-void{background:#1e293b!important;color:#cbd5e1!important;border-color:#64748b!important}
+:root[data-theme="dark"] .state-pill.state-transfer{background:#2e1065!important;color:#ddd6fe!important;border-color:#7c3aed!important}
