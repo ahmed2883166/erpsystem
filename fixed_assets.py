@@ -481,6 +481,18 @@ def _reverse_full_period_depreciation_for_disposal(conn, asset, period, disposal
     return replacement_amount, reversal_entry, replacement_entry
 
 
+def _manual_asset_journal_lines(asset_account_id, counterpart_account_id, cost, asset_name):
+    """Build the single balanced acquisition journal for a manually registered asset."""
+    amount = Decimal(str(cost)).quantize(M, rounding=ROUND_HALF_UP)
+    if amount <= 0 or int(asset_account_id) == int(counterpart_account_id):
+        raise ValueError("قيمة الأصل أو الحساب المقابل غير صحيحة.")
+    label = "إثبات تكلفة الأصل " + str(asset_name).strip()
+    return [
+        (int(asset_account_id), amount, Decimal("0"), label),
+        (int(counterpart_account_id), Decimal("0"), amount, "الحساب المقابل لاقتناء الأصل"),
+    ]
+
+
 @assets_bp.route("/", methods=["GET","POST"])
 @require()
 def index():
@@ -491,6 +503,7 @@ def index():
             flash("لا تملك صلاحية إدارة الأصول الثابتة.","error")
             return redirect(url_for("assets.index"))
         try:
+            c.execute("BEGIN IMMEDIATE")
             cost=Decimal(request.form["cost"]); residual=Decimal(request.form.get("residual_value","0"))
             life=int(request.form["useful_life_months"])
             if not cost.is_finite() or not residual.is_finite() or cost<=0 or residual<0 or residual>=cost or life<=0:
@@ -504,6 +517,7 @@ def index():
             method=request.form["depreciation_method"]
             if method not in {"straight_line","declining_balance"}: raise ValueError("طريقة الإهلاك غير صحيحة.")
             ids=[int(request.form[k]) for k in ("asset_account_id","accum_account_id","expense_account_id")]
+            counterpart_id=int(request.form["counterpart_account_id"])
             if ids[0] == ids[1]:
                 raise ValueError("يجب أن يكون حساب تكلفة الأصل مختلفًا عن حساب مجمع الإهلاك.")
             _validate_dedicated_accum_account(c, ids[1])
@@ -514,15 +528,39 @@ def index():
             if account_types[0]!="asset" or account_types[1]!="asset" or account_types[2]!="expense":
                 raise ValueError("حساب الأصل ومجمع الإهلاك يجب أن يكونا من الأصول، ومصروف الإهلاك من المصروفات.")
             if method=="declining_balance" and not (Decimal("0") < Decimal(request.form.get("annual_rate","0")) <= Decimal("100")): raise ValueError("معدل الإهلاك السنوي يجب أن يكون أكبر من صفر ولا يتجاوز 100%.")
+            counterpart=c.execute("SELECT is_group,active,account_type FROM accounts WHERE id=?",(counterpart_id,)).fetchone()
+            if (not counterpart or counterpart["is_group"] or not counterpart["active"]
+                    or counterpart["account_type"] not in {"asset","liability","equity"}):
+                raise ValueError("اختر حسابًا مقابلًا تفصيليًا ونشطًا من النقدية أو الالتزامات أو حقوق الملكية.")
+            if counterpart_id in ids:
+                raise ValueError("الحساب المقابل يجب أن يختلف عن حساب تكلفة الأصل ومجمع الإهلاك ومصروف الإهلاك.")
             asset_cursor = c.execute("""INSERT INTO fixed_assets(asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,useful_life_months,depreciation_method,annual_rate,total_units,asset_account_id,accum_account_id,expense_account_id,notes,created_by)
               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (asset_code,request.form["asset_name"].strip(),request.form.get("category","").strip(),
                purchase_date,ready_date,str(cost),str(residual),life,method,
                request.form.get("annual_rate","0"),request.form.get("total_units","0"),*ids,request.form.get("notes",""),session["user_id"]))
             asset_id = asset_cursor.lastrowid
-            c.commit(); g.audit_created_record = ("fixed_assets", asset_id, None, None); flash("تم تسجيل الأصل. تأكد من أن قيد الشراء الأصلي مسجل قبل بدء الإهلاك.","success")
+            journal_lines=_manual_asset_journal_lines(ids[0],counterpart_id,cost,request.form["asset_name"])
+            entry_id=post_journal(
+                c,purchase_date,"ASSET-ADD-"+asset_code,
+                "إثبات تكلفة أصل ثابت "+request.form["asset_name"].strip(),
+                journal_lines,session["user_id"]
+            )
+            debit_line=c.execute("""SELECT id FROM journal_lines
+                WHERE entry_id=? AND account_id=? AND debit=? AND credit='0'
+                ORDER BY id LIMIT 1""",(entry_id,ids[0],str(cost.quantize(M,rounding=ROUND_HALF_UP)))).fetchone()
+            if not debit_line:
+                raise ValueError("تم إنشاء قيد الأصل لكن تعذر ربط سطر التكلفة بسجل الأصل؛ أُلغيت العملية بالكامل.")
+            c.execute("""INSERT INTO fixed_asset_journal_lines(
+                journal_line_id,entry_id,asset_name,category,ready_date,cost,status,fixed_asset_id
+            ) VALUES(?,?,?,?,?,?,?,?)""",
+                (debit_line["id"],entry_id,request.form["asset_name"].strip(),
+                 request.form.get("category","").strip(),ready_date,str(cost),"configured",asset_id))
+            c.commit()
+            g.audit_created_record = ("fixed_assets", asset_id, None, None)
+            flash("تم تسجيل الأصل وترحيل قيد تكلفته وربطه بسجل الأصول دون تكرار.","success")
             return redirect(url_for("assets.index"))
-        except (ValueError,InvalidOperation,KeyError,sqlite3.IntegrityError) as e:
+        except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود الأصل مستخدم أو توجد بيانات غير صحيحة.","error")
     pending_assets=c.execute("""SELECT p.*,je.entry_date,je.reference,
         a.code account_code,a.name_ar account_name
@@ -562,8 +600,10 @@ def index():
           AND NOT EXISTS (SELECT 1 FROM journal_lines jl WHERE jl.account_id=a.id)
         ORDER BY a.code""").fetchall()
     c.close()
+    counterpart_accounts=[row for row in accounts if row["account_type"] in {"asset","liability","equity"}]
     return render_template("fixed_assets.html",assets=assets,pending_assets=pending_assets,asset_accounts=asset_accounts,
-        accum_accounts=accum_accounts,expense_accounts=expense_accounts,today=date.today().isoformat())
+        accum_accounts=accum_accounts,expense_accounts=expense_accounts,
+        counterpart_accounts=counterpart_accounts,today=date.today().isoformat())
 
 @assets_bp.route("/journal-pending/<int:journal_line_id>/configure", methods=["POST"])
 @require(write=True)
