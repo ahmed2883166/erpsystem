@@ -654,6 +654,11 @@ def log_change(action, entity_type, entity_id, before_values, after_values, deta
 
 _OPERATIONAL_AUDIT_RECORDS = {
     "sales.discount_approval": ("sales_discount_approval_requests", "request_id", "id", None, None),
+    "sales.submit_invoice_workflow": ("sales_invoice_workflows", "workflow_id", "id", None, None),
+    "sales.decide_invoice_workflow": ("sales_invoice_workflows", "workflow_id", "id", None, None),
+    "sales.post_invoice_workflow": ("sales_invoice_workflows", "workflow_id", "id", None, None),
+    "sales.cancel_invoice_workflow": ("sales_invoice_workflows", "workflow_id", "id", None, None),
+    "sales.edit_invoice_workflow": ("sales_invoice_workflows", "workflow_id", "id", None, None),
     "quotes.approve_order_route": ("sales_orders", "order_id", "id", "sales_order_lines", "sales_order_id"),
     "quotes.reject_order_route": ("sales_orders", "order_id", "id", "sales_order_lines", "sales_order_id"),
     "quotes.invoice_order_route": ("sales_orders", "order_id", "id", "sales_order_lines", "sales_order_id"),
