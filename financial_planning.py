@@ -557,6 +557,38 @@ def build_financial_year_preclose_report(conn, year_id):
             add("bank_reconciliation", "حركات بنكية غير مسوّاة", "warning" if unreconciled_bank else "success",
                 unreconciled_bank, "راجع المطابقة البنكية للحركات داخل السنة قبل اعتماد الإقفال.", False)
 
+    if _table_exists_financial(conn, "period_adjustments") and _table_exists_financial(conn, "period_adjustment_posts"):
+        try:
+            from period_adjustments import preview_adjustment
+            schedules = conn.execute("""SELECT id FROM period_adjustments
+                WHERE status='active' AND start_date<=? AND end_date>=? ORDER BY id""",
+                (end, start)).fetchall()
+            pending_adjustment_periods = []
+            for schedule in schedules:
+                preview = preview_adjustment(conn, schedule["id"])
+                for period in preview["periods"]:
+                    if start <= period["posting_date"] <= end and period["status"] != "posted":
+                        pending_adjustment_periods.append(
+                            (preview["adjustment"]["adjustment_no"], period["period_start"],
+                             period["period_end"], period["amount"], period["status"])
+                        )
+            details = "؛ ".join(
+                f"{number} ({period_start} إلى {period_end}) بمبلغ {amount}"
+                for number, period_start, period_end, amount, _status in pending_adjustment_periods[:8]
+            )
+            if len(pending_adjustment_periods) > 8:
+                details += f"؛ وفترات أخرى عددها {len(pending_adjustment_periods) - 8}"
+            add("period_adjustments", "تسويات المقدم والمستحق والإيرادات والمخصصات",
+                "danger" if pending_adjustment_periods else "success",
+                len(pending_adjustment_periods),
+                details if pending_adjustment_periods else
+                "لا توجد فترات تسوية معلقة داخل السنة المالية.",
+                bool(pending_adjustment_periods))
+        except (sqlite3.Error, KeyError, TypeError, ValueError):
+            add("period_adjustments", "فحص التسويات الدورية", "danger", 1,
+                "تعذر التحقق من جداول التسويات؛ لا يمكن تأكيد جاهزية الإقفال قبل مراجعتها.",
+                True)
+
     try:
         snapshot = reconciliation_snapshot(conn)
         unlinked = sum(int(item.get("count", 0) or 0)
