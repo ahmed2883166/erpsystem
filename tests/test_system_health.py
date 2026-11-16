@@ -125,7 +125,9 @@ class SystemHealthTests(unittest.TestCase):
                 bill_id INTEGER,receipt_id INTEGER,matched_amount TEXT
             );
             INSERT INTO supplier_bill_receipts VALUES(1,1,'40');
-            ALTER TABLE stock_movements ADD COLUMN movement_no TEXT;
+            CREATE TABLE stock_movements(
+                id INTEGER PRIMARY KEY,accounting_status TEXT,movement_no TEXT
+            );
             INSERT INTO stock_movements(id,accounting_status,movement_no)
                 VALUES(99,'posted','PUR-GRN-1');
             ALTER TABLE stock_valuation_layers ADD COLUMN unit_cost TEXT;
