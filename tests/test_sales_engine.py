@@ -133,7 +133,7 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(saved["status"], "draft")
         self.assertEqual(saved["invoice_date"], "2026-11-12")
         self.assertEqual(saved["due_date"], "2026-12-01")
-        self.assertEqual(saved["gross_subtotal"], "25")
+        self.assertEqual(Decimal(saved["gross_subtotal"]), Decimal("25.00"))
         self.assertEqual(saved_payload["items"][0]["description"], "بند بعد التعديل")
         self.assertEqual(saved["updated_by"], 11)
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM sales_invoices").fetchone()[0], 0)
