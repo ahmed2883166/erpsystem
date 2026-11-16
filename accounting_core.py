@@ -240,6 +240,13 @@ def _grni_codes(activity):
     return roles.get("grni", ("2190",))
 
 
+def _grni_codes(activity):
+    """Return the GRNI liability control accounts for the selected activity."""
+    from chart_templates import ACTIVITY_ACCOUNT_ROLES
+    roles = ACTIVITY_ACCOUNT_ROLES.get(activity, ACTIVITY_ACCOUNT_ROLES["commercial"])
+    return roles.get("grni", ("2190",))
+
+
 def _decimal_sum(values):
     return sum((Decimal(str(value or "0")) for value in values), Decimal("0"))
 
@@ -327,6 +334,7 @@ def reconciliation_snapshot(conn):
     if (_table_exists(conn, "goods_receipts") and
             _table_exists(conn, "supplier_bill_receipts") and
             _table_exists(conn, "supplier_bills")):
+        receipt_columns = _columns(conn, "goods_receipts")
         receipt_columns = _columns(conn, "goods_receipts")
         receipt_link_columns = _columns(conn, "supplier_bill_receipts")
         bill_columns = _columns(conn, "supplier_bills")
