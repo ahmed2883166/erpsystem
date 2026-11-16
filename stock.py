@@ -744,10 +744,14 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
         take = min(layer_qty, remaining)
         layer_value = (D(layer["value_remaining"]) if layer["value_remaining"] not in (None, "")
                        else layer_qty * D(layer["unit_cost"]))
-        if take == layer_qty:
+        if valuation_method == "average":
+            # Moving average applies to every issued unit, including a whole layer.
+            # Allocate the rounded issue total across consumed layers so the
+            # per-layer allocations always add up to the journalled COGS amount.
+            target_issue_cost = money(qty * avg_cost)
+            cost = (target_issue_cost - cost_total) if take == remaining else money(take * avg_cost)
+        elif take == layer_qty:
             cost = layer_value
-        elif valuation_method == "average":
-            cost = money(take * avg_cost)
         else:
             cost = money(layer_value * take / layer_qty)
         unit_cost = cost / take if take else D("0")
