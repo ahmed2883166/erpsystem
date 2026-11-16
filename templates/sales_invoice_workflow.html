@@ -31,12 +31,15 @@
 <section class="panel">
   <h3>الإجراء حسب حالة الفاتورة</h3>
   {% if workflow.status == 'draft' and 'sales.manage' in permissions %}
+    {% if workflow.created_by == session.get('user_id') or session.get('role') == 'admin' %}
+      <p><a class="btn secondary" href="{{ url_for('sales.edit_invoice_workflow', workflow_id=workflow.id) }}">تعديل المسودة</a></p>
+    {% endif %}
     <form method="post" action="{{ url_for('sales.submit_invoice_workflow', workflow_id=workflow.id) }}">
       <button type="submit">إرسال للاعتماد</button>
     </form>
   {% elif workflow.status == 'pending_approval' and can_approve %}
     <form method="post" action="{{ url_for('sales.decide_invoice_workflow', workflow_id=workflow.id) }}">
-      <label><input type="checkbox" name="credit_override" value="1"> اعتماد استثنائي لتجاوز الحد الائتماني (مدير النظام فقط)</label>
+      {% if session.get('role') == 'admin' %}<label><input type="checkbox" name="credit_override" value="1"> اعتماد استثنائي لتجاوز الحد الائتماني (مدير النظام فقط)</label>{% endif %}
       <button type="submit" name="action" value="approve">اعتماد الفاتورة</button>
     </form>
     <form method="post" action="{{ url_for('sales.decide_invoice_workflow', workflow_id=workflow.id) }}">
