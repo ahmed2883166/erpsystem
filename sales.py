@@ -751,6 +751,72 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             "current_exposure": current_exposure, "new_exposure": current_exposure + total_amount}
 
 
+def create_invoice_workflow(conn, payload, status, created_by, gross_subtotal,
+                            discount_amount, discount_percent):
+    """Save an invoice draft or approval request without touching stock or the GL."""
+    if status not in {"draft", "pending_approval"}:
+        raise ValueError("حالة مسودة الفاتورة غير صحيحة.")
+    customer_id = int(payload.get("customer_id") or 0)
+    customer = conn.execute("SELECT id FROM customers WHERE id=? AND active=1",
+                            (customer_id,)).fetchone()
+    if not customer:
+        raise ValueError("العميل غير موجود أو غير نشط.")
+    try:
+        invoice_date = date.fromisoformat(str(payload.get("invoice_date"))).isoformat()
+        due_date = date.fromisoformat(str(payload.get("due_date"))).isoformat()
+    except (TypeError, ValueError):
+        raise ValueError("تاريخ الفاتورة أو الاستحقاق غير صحيح.")
+    if due_date < invoice_date:
+        raise ValueError("تاريخ الاستحقاق لا يمكن أن يسبق تاريخ الفاتورة.")
+    items = payload.get("items") or []
+    if not items:
+        raise ValueError("أضف صنفًا أو خدمة واحدة على الأقل.")
+    normalized_items = []
+    for item in items:
+        quantity = Decimal(str(item.get("quantity", "0")))
+        unit_price = Decimal(str(item.get("unit_price", "0")))
+        if not quantity.is_finite() or quantity <= 0 or not unit_price.is_finite() or unit_price < 0:
+            raise ValueError("الكمية أو سعر الوحدة في المسودة غير صحيح.")
+        product_id = item.get("product_id")
+        if product_id:
+            product = conn.execute("SELECT id FROM stock_products WHERE id=? AND active=1",
+                                   (int(product_id),)).fetchone()
+            if not product:
+                raise ValueError("يوجد صنف غير موجود أو غير نشط في بنود المسودة.")
+        elif not str(item.get("description") or "").strip():
+            raise ValueError("اكتب وصف الخدمة أو البند غير المخزني.")
+        normalized = {}
+        for key, value in item.items():
+            normalized[key] = str(value) if isinstance(value, Decimal) else value
+        normalized_items.append(normalized)
+    payload = dict(payload)
+    payload["customer_id"] = customer_id
+    payload["invoice_date"] = invoice_date
+    payload["due_date"] = due_date
+    payload["items"] = normalized_items
+    gross = Decimal(str(gross_subtotal)).quantize(CENT, rounding=ROUND_HALF_UP)
+    discount = Decimal(str(discount_amount)).quantize(CENT, rounding=ROUND_HALF_UP)
+    percent = Decimal(str(discount_percent)).quantize(CENT, rounding=ROUND_HALF_UP)
+    if not gross.is_finite() or gross <= 0 or not discount.is_finite() or discount < 0 or discount >= gross:
+        raise ValueError("إجمالي المسودة أو الخصم غير صحيح.")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        workflow_no = "SIVD-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+        cursor = conn.execute("""INSERT INTO sales_invoice_workflows(
+            workflow_no,customer_id,invoice_date,due_date,gross_subtotal,discount_amount,
+            discount_percent,payload_json,status,created_by,submitted_by,submitted_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (workflow_no, customer_id, invoice_date, due_date, str(gross), str(discount),
+             str(percent), json.dumps(payload, ensure_ascii=False), status, created_by,
+             created_by if status == "pending_approval" else None,
+             datetime.now().isoformat(timespec="seconds") if status == "pending_approval" else None))
+        conn.commit()
+        return cursor.lastrowid, workflow_no
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=None):
     """Post a sales credit note against an unpaid invoice and restore returned stock."""
     invoice = conn.execute(
