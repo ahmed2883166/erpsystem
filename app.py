@@ -46,7 +46,8 @@ from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
 from report_request_control import (ReportRequestGate, bounded_env_int,
                                     is_expensive_report_request,
-                                    make_sqlite_deadline_callback)
+                                    set_current_report_deadline,
+                                    reset_current_report_deadline)
 from app_paths import DATA_DIR, DB_PATH, BACKUP_DIR, ensure_data_directory
 from backup_scheduler import create_backup_archive, next_backup_datetime, start_backup_scheduler
 from system_health import health_bp
@@ -412,13 +413,7 @@ REPORT_REQUEST_GATE = ReportRequestGate(
 
 
 def db():
-    connection = connect_database(DB_PATH, isolation_level="")
-    deadline = getattr(g, "_nexus_report_deadline", None) if has_request_context() else None
-    if deadline is not None:
-        # Interrupt long-running SQLite virtual-machine work for report requests.
-        # This is a server-side deadline, not browser-disconnect detection.
-        connection.set_progress_handler(make_sqlite_deadline_callback(deadline), 10000)
-    return connection
+    return connect_database(DB_PATH, isolation_level="")
 
 
 @app.before_request
@@ -437,11 +432,16 @@ def guard_expensive_report_request():
         )
     g._nexus_report_slot_acquired = True
     g._nexus_report_deadline = time.monotonic() + REPORT_REQUEST_TIMEOUT_SECONDS
+    g._nexus_report_deadline_token = set_current_report_deadline(g._nexus_report_deadline)
     return None
 
 
 @app.teardown_request
 def release_expensive_report_slot(error=None):
+    token = getattr(g, "_nexus_report_deadline_token", None)
+    if token is not None:
+        reset_current_report_deadline(token)
+        g._nexus_report_deadline_token = None
     if getattr(g, "_nexus_report_slot_acquired", False):
         g._nexus_report_slot_acquired = False
         REPORT_REQUEST_GATE.release()
