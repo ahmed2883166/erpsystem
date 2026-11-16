@@ -32,9 +32,6 @@ class FixedAssetPermissionFallbackTests(unittest.TestCase):
     def setUp(self):
         self.app = Flask(__name__)
         self.app.secret_key = "test-only"
-        # The route re-renders this page after a posting error; keep this test isolated
-        # from the full application layout and its unrelated endpoint dependencies.
-        self.app.jinja_loader = DictLoader({"fixed_assets.html": "asset form"})
         self.app.add_url_rule("/login", "login", lambda: "login")
         self.app.add_url_rule("/dashboard", "dashboard", lambda: "dashboard")
         self.app.add_url_rule("/assets/", "assets.index", lambda: "assets")
@@ -540,6 +537,9 @@ class ManualAssetRouteIntegrationTests(unittest.TestCase):
         """)
         self.app = Flask(__name__)
         self.app.secret_key = "test-only"
+        # The route re-renders this page after a posting error; isolate this test
+        # from the full application layout and its unrelated endpoint dependencies.
+        self.app.jinja_loader = DictLoader({"fixed_assets.html": "asset form"})
         self.app.add_url_rule("/login", "login", lambda: "login")
         self.app.add_url_rule("/dashboard", "dashboard", lambda: "dashboard")
         self.app.register_blueprint(fixed_assets.assets_bp)
