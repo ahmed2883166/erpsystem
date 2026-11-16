@@ -546,9 +546,11 @@ def index():
                 "إثبات تكلفة أصل ثابت "+request.form["asset_name"].strip(),
                 journal_lines,session["user_id"]
             )
-            debit_line=c.execute("""SELECT id FROM journal_lines
-                WHERE entry_id=? AND account_id=? AND debit=? AND credit='0'
-                ORDER BY id LIMIT 1""",(entry_id,ids[0],str(cost.quantize(M,rounding=ROUND_HALF_UP)))).fetchone()
+            debit_line=next((row for row in c.execute(
+                "SELECT id,debit,credit FROM journal_lines WHERE entry_id=? AND account_id=? ORDER BY id",
+                (entry_id,ids[0])
+            ).fetchall() if Decimal(str(row["debit"] or "0"))==cost.quantize(M,rounding=ROUND_HALF_UP)
+                and Decimal(str(row["credit"] or "0"))==Decimal("0")),None)
             if not debit_line:
                 raise ValueError("تم إنشاء قيد الأصل لكن تعذر ربط سطر التكلفة بسجل الأصل؛ أُلغيت العملية بالكامل.")
             c.execute("""INSERT INTO fixed_asset_journal_lines(
