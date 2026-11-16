@@ -6,6 +6,7 @@ not on every request connection.
 """
 import sqlite3
 from pathlib import Path
+from report_request_control import current_report_deadline, make_sqlite_deadline_callback
 
 
 DEFAULT_TIMEOUT_SECONDS = 20
@@ -29,6 +30,10 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
         # the connection factory.
         from accounting_core import register_decimal_aggregates
         register_decimal_aggregates(connection)
+    deadline = current_report_deadline()
+    if deadline is not None:
+        # Covers connections opened inside blueprints as well as app.db().
+        connection.set_progress_handler(make_sqlite_deadline_callback(deadline), 10000)
     return connection
 
 
