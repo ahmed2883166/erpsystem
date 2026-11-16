@@ -126,6 +126,38 @@ class PeriodAdjustmentTests(unittest.TestCase):
         self.assertTrue(adjustment_check["blocking"])
         self.assertEqual(adjustment_check["count"], 3)
 
+    def test_preclose_checks_asset_depreciation_and_open_fx_transactions(self):
+        from financial_planning import build_financial_year_preclose_report
+        self.conn.executescript("""
+        CREATE TABLE financial_years(
+          id INTEGER PRIMARY KEY,year_name TEXT,start_date TEXT,end_date TEXT,
+          status TEXT DEFAULT 'open',opening_entry_id INTEGER,closing_entry_id INTEGER);
+        INSERT INTO financial_years(id,year_name,start_date,end_date,status)
+          VALUES(1,'2026','2026-01-01','2026-12-31','open');
+        CREATE TABLE fixed_assets(
+          id INTEGER PRIMARY KEY,ready_date TEXT,status TEXT DEFAULT 'active');
+        INSERT INTO fixed_assets VALUES(1,'2025-01-01','active');
+        CREATE TABLE asset_depreciations(
+          id INTEGER PRIMARY KEY,asset_id INTEGER,period TEXT,amount TEXT,journal_entry_id INTEGER);
+        INSERT INTO asset_depreciations VALUES(1,1,'2026-01','100',NULL);
+        CREATE TABLE fx_transactions(
+          id INTEGER PRIMARY KEY,original_foreign TEXT,transaction_date TEXT);
+        INSERT INTO fx_transactions VALUES(1,'100','2026-02-01');
+        CREATE TABLE fx_settlements(
+          id INTEGER PRIMARY KEY,transaction_id INTEGER,settlement_date TEXT,foreign_amount TEXT);
+        CREATE TABLE fx_revaluations(
+          id INTEGER PRIMARY KEY,transaction_id INTEGER,revaluation_date TEXT);
+        """)
+        report = build_financial_year_preclose_report(self.conn, 1)
+        depreciation = next(item for item in report["checks"]
+                            if item["code"] == "asset_depreciation_integrity")
+        fx = next(item for item in report["checks"]
+                  if item["code"] == "fx_year_end_revaluation")
+        self.assertTrue(depreciation["blocking"])
+        self.assertEqual(depreciation["count"], 1)
+        self.assertEqual(fx["severity"], "warning")
+        self.assertEqual(fx["count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
