@@ -737,6 +737,10 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
         D(x["qty_remaining"]) * D(x["unit_cost"]) for x in layers
     ), D("0"))
     avg_cost = total_value / available if available else D("0")
+    target_issue_cost = money(qty * avg_cost) if valuation_method == "average" else None
+    remaining_qty_after_issue = available - qty
+    remaining_value_after_issue = (total_value - target_issue_cost) if valuation_method == "average" else None
+    remaining_value_allocated = D("0")
     remaining, cost_total, allocations, layer_details = qty, D("0"), [], []
     for layer in layers:
         if remaining <= 0: break
@@ -746,9 +750,8 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
                        else layer_qty * D(layer["unit_cost"]))
         if valuation_method == "average":
             # Moving average applies to every issued unit, including a whole layer.
-            # Allocate the rounded issue total across consumed layers so the
-            # per-layer allocations always add up to the journalled COGS amount.
-            target_issue_cost = money(qty * avg_cost)
+            # Allocate issue cost and rebase the remaining layer values to the
+            # same weighted average, preserving the total inventory carrying value.
             cost = (target_issue_cost - cost_total) if take == remaining else money(take * avg_cost)
         elif take == layer_qty:
             cost = layer_value
@@ -756,7 +759,16 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
             cost = money(layer_value * take / layer_qty)
         unit_cost = cost / take if take else D("0")
         new_remaining = layer_qty - take
-        new_value = layer_value - cost
+        if valuation_method == "average":
+            if new_remaining <= 0:
+                new_value = D("0")
+            elif remaining_qty_after_issue == new_remaining:
+                new_value = remaining_value_after_issue - remaining_value_allocated
+            else:
+                new_value = money(new_remaining * avg_cost)
+            remaining_value_allocated += new_value
+        else:
+            new_value = layer_value - cost
         c.execute("UPDATE stock_valuation_layers SET qty_remaining=?,value_remaining=? WHERE id=?",
                   (str(q4(new_remaining)), format(new_value, "f"), layer["id"]))
         allocations.append((layer["lot_id"], take, unit_cost, cost))
