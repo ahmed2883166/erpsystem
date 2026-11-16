@@ -56,7 +56,7 @@ class PeriodAdjustmentTests(unittest.TestCase):
     def test_yearly_frequency_creates_one_period_per_calendar_year(self):
         adjustment_id = create_adjustment(
             self.conn, "تأمين سنوي", "prepaid_expense", "2400",
-            "2026-07-01", "2027-06-30", "yearly", 1, 2, 7
+            "2026-07-01", "2028-06-30", "yearly", 1, 2, 7
         )
         periods = preview_adjustment(self.conn, adjustment_id)["periods"]
         self.assertEqual(len(periods), 2)
