@@ -198,6 +198,17 @@ class JournalAndLedgerFilterTests(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertLess(html.index("RCPT-3"), html.index("INV-RENT"))
         self.assertLess(html.index("INV-RENT"), html.index("OPEN-1"))
+        self.assertIn("130.00", html)  # Period closing balance remains unchanged.
+        self.assertIn("100.00", html)  # Opening balance appears after reversed movements.
+
+    def test_ledger_can_display_running_balances_from_newest_to_oldest(self):
+        response = self.client.get(
+            "/reports/ledger?account_id=1&date_from=2026-01-01&sort_order=desc"
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertLess(html.index("RCPT-3"), html.index("INV-RENT"))
+        self.assertLess(html.index("INV-RENT"), html.index("OPEN-1"))
         self.assertIn("130.00", html)  # Full-period closing balance remains unchanged.
         self.assertIn("0.00", html)  # Opening balance is displayed after reversed movements.
 

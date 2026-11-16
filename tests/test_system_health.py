@@ -201,6 +201,26 @@ class SystemHealthTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_sqlite_error_during_opening_check_becomes_visible_warning(self):
+        self.connection.execute("""CREATE TABLE financial_years(
+            id INTEGER PRIMARY KEY,year_name TEXT,start_date TEXT,opening_entry_id INTEGER
+        )""")
+        self.connection.execute(
+            "INSERT INTO financial_years VALUES(1,'2027','2027-01-01',77)"
+        )
+        self.connection.commit()
+        with patch(
+            "financial_planning.build_financial_year_preclose_report",
+            side_effect=sqlite3.OperationalError("database is locked"),
+        ):
+            with self.app.test_request_context("/system/health"):
+                checks = system_health.collect_health_checks(self.connection)
+        check = next(item for item in checks
+                     if item["key"] == "opening_balance_reconciliation")
+        self.assertEqual(check["severity"], "high")
+        self.assertEqual(check["count"], 1)
+        self.assertIn("تعذر التحقق من افتتاح السنة 2027", check["detail"])
+
     def test_reports_backup_failure_and_recent_login_activity(self):
         self.connection.executescript("""
             CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL);

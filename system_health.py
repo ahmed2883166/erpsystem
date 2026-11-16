@@ -1,5 +1,4 @@
 """Read-only operational and accounting health checks for NEXUS ERP."""
-import sqlite3
 from decimal import Decimal, InvalidOperation
 from flask import Blueprint, render_template, session, redirect, url_for, flash
 from app_paths import DB_PATH
