@@ -29,6 +29,8 @@ class CurrencyCenterTests(unittest.TestCase):
           INSERT INTO accounts VALUES(3,'4100','المبيعات','revenue',0,1);
           INSERT INTO accounts VALUES(4,'7100','أرباح فروق عملة','revenue',0,1);
           INSERT INTO accounts VALUES(5,'7200','خسائر فروق عملة','expense',0,1);
+          INSERT INTO accounts VALUES(6,'5200','مصروفات الموردين','expense',0,1);
+          INSERT INTO accounts VALUES(7,'2100','الموردون','liability',0,1);
         """)
         conn.commit()
         conn.close()
@@ -227,6 +229,49 @@ class CurrencyCenterTests(unittest.TestCase):
             "SELECT balance_foreign,balance_base FROM fx_transactions WHERE id=1"
         ).fetchone(), ("100", "5000.00"))
         conn.close()
+
+    def test_payable_partial_settlement_and_revaluation_post_balanced_loss(self):
+        response = self.client.post("/currencies/transactions", data={
+            "party_type": "payable", "reference": "BILL-USD-PAYABLE", "party_name": "Foreign Supplier",
+            "currency_code": "USD", "transaction_date": "2026-11-01",
+            "foreign_amount": "100", "rate": "50", "party_account_id": "7",
+            "counterpart_account_id": "6"
+        })
+        self.assertEqual(response.status_code, 302)
+
+        response = self.client.post("/currencies/1/settle", data={
+            "settlement_date": "2026-11-05", "foreign_amount": "40", "rate": "51",
+            "cash_account_id": "1", "fx_gain_account_id": "4", "fx_loss_account_id": "5"
+        })
+        self.assertEqual(response.status_code, 302)
+
+        response = self.client.post("/currencies/1/revalue", data={
+            "revaluation_date": "2026-11-30", "rate": "52",
+            "fx_gain_account_id": "4", "fx_loss_account_id": "5"
+        })
+        self.assertEqual(response.status_code, 302)
+
+        conn = sqlite3.connect(self.db_path)
+        state = conn.execute(
+            "SELECT balance_foreign,balance_base,status FROM fx_transactions WHERE id=1"
+        ).fetchone()
+        settlement = conn.execute(
+            "SELECT fx_difference FROM fx_settlements WHERE transaction_id=1"
+        ).fetchone()[0]
+        revaluation = conn.execute(
+            "SELECT difference FROM fx_revaluations WHERE transaction_id=1"
+        ).fetchone()[0]
+        lines = conn.execute("SELECT debit,credit FROM journal_lines").fetchall()
+        from decimal import Decimal
+        debit = sum((Decimal(row[0]) for row in lines), Decimal("0"))
+        credit = sum((Decimal(row[1]) for row in lines), Decimal("0"))
+        conn.close()
+
+        self.assertEqual(state, ("60", "3120.00", "open"))
+        self.assertEqual(settlement, "-40.00")
+        self.assertEqual(revaluation, "120.00")
+        self.assertEqual(debit, Decimal("7160.00"))
+        self.assertEqual(credit, Decimal("7160.00"))
 
     def test_revaluation_before_latest_settlement_is_rejected(self):
         self.client.post("/currencies/transactions", data={
