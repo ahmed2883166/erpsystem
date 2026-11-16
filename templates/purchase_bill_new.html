@@ -60,7 +60,7 @@
 <div class="table-wrap"><table><thead><tr><th>الإيصال</th><th>المورد</th><th>أمر الشراء</th><th>الصنف</th><th>المستلم</th><th>سعر أمر الشراء</th><th>تكلفة الاستلام</th><th>كمية الفاتورة</th><th>سعر الفاتورة</th></tr></thead><tbody>
 {% for line in receipt_lines %}
 {% set saved = existing_invoice_lines.get(line.receipt_line_id) if existing_invoice_lines is defined else none %}
-<tr>
+<tr data-invoice-line>
 <td>{{ line.receipt_no }}</td><td>{{ line.supplier_name }}</td><td>{{ line.po_no or 'استلام مباشر' }}</td>
 <td>{{ line.sku }} — {{ line.product_name }}</td><td>{{ line.received_quantity }} {{ line.uom }}</td>
 <td>{{ line.ordered_unit_price if line.ordered_unit_price is not none else '—' }}</td><td>{{ line.received_unit_cost }}</td>
@@ -69,7 +69,21 @@
 </tr>
 {% else %}<tr><td colspan="9">لا توجد بنود استلام متاحة للمطابقة.</td></tr>{% endfor %}
 </tbody></table></div>
+<p class="muted">لعرض البنود بالتتابع: اضغط Enter داخل كمية أو سعر آخر بند ظاهر لإظهار البند التالي.</p>
 </fieldset><script>
+const purchaseInvoiceBody=document.querySelector('#inventory-fields tbody');
+if(purchaseInvoiceBody){
+ const purchaseInvoiceRows=[...purchaseInvoiceBody.querySelectorAll('tr[data-invoice-line]')];
+ purchaseInvoiceRows.forEach((row,index)=>{if(index>=2)row.hidden=true;});
+ purchaseInvoiceBody.addEventListener('keydown',event=>{
+  if(event.key!=='Enter')return;
+  const row=event.target.closest('tr[data-invoice-line]');
+  if(!row)return;
+  event.preventDefault();
+  const next=purchaseInvoiceRows[purchaseInvoiceRows.indexOf(row)+1];
+  if(next){next.hidden=false;const quantity=next.querySelector('input[name^="invoice_quantity_"]');(quantity||next.querySelector('input')).focus();}
+ });
+}
 function toggleBillKind(){
   const kind=document.getElementById('bill-kind').value;
   const asset=document.getElementById('asset-fields');
