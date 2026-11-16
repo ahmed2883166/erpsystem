@@ -475,10 +475,23 @@ class JournalLinkedAssetRegistrationTests(unittest.TestCase):
 
 
 
+class _DecimalSum:
+    def __init__(self):
+        self.total = Decimal("0")
+
+    def step(self, value):
+        if value is not None:
+            self.total += Decimal(str(value))
+
+    def finalize(self):
+        return str(self.total)
+
+
 class ManualAssetRouteIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.conn = sqlite3.connect(":memory:")
         self.conn.row_factory = sqlite3.Row
+        self.conn.create_aggregate("DECIMAL_SUM", 1, _DecimalSum)
         self.conn.executescript("""
             CREATE TABLE accounts(
                 id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT,
@@ -504,12 +517,21 @@ class ManualAssetRouteIntegrationTests(unittest.TestCase):
                 depreciation_method TEXT, annual_rate TEXT, total_units TEXT,
                 asset_account_id INTEGER, accum_account_id INTEGER,
                 expense_account_id INTEGER, notes TEXT, created_by INTEGER,
-                status TEXT DEFAULT 'active'
+                status TEXT DEFAULT 'active', supplier_bill_id INTEGER
             );
             CREATE TABLE fixed_asset_journal_lines(
                 journal_line_id INTEGER PRIMARY KEY, entry_id INTEGER,
                 asset_name TEXT, category TEXT, ready_date TEXT, cost TEXT,
                 status TEXT, fixed_asset_id INTEGER UNIQUE
+            );
+            CREATE TABLE fixed_asset_supplier_bill_links(
+                bill_id INTEGER, asset_id INTEGER UNIQUE
+            );
+            CREATE TABLE supplier_bills(
+                id INTEGER PRIMARY KEY, bill_no TEXT, supplier_invoice_no TEXT
+            );
+            CREATE TABLE asset_depreciations(
+                id INTEGER PRIMARY KEY, asset_id INTEGER, amount TEXT
             );
         """)
         self.app = Flask(__name__)
