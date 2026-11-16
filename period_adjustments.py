@@ -92,10 +92,15 @@ def _periods(adjustment):
             result.append((period_start.isoformat(), period_end.isoformat()))
             cursor = next_month
     elif frequency == "yearly":
-        for year in range(start.year, end.year + 1):
-            period_start = max(start, date(year, 1, 1))
-            period_end = min(end, date(year, 12, 31))
-            result.append((period_start.isoformat(), period_end.isoformat()))
+        cursor = start
+        while cursor <= end:
+            try:
+                next_start = cursor.replace(year=cursor.year + 1)
+            except ValueError:
+                next_start = cursor.replace(year=cursor.year + 1, day=28)
+            period_end = min(end, next_start - timedelta(days=1))
+            result.append((cursor.isoformat(), period_end.isoformat()))
+            cursor = next_start
     else:
         raise ValueError("دورية التسوية غير صحيحة.")
     total = Decimal(str(adjustment["total_amount"]))
@@ -232,6 +237,8 @@ def reverse_adjustment_period(conn, post_id, reversal_date, reason, created_by=N
             raise ValueError("قيد التسوية غير موجود.")
         if row["reversal_journal_entry_id"]:
             raise ValueError("تم عكس قيد هذه الفترة بالفعل.")
+        if normalized_date < row["period_end"]:
+            raise ValueError("تاريخ عكس التسوية لا يمكن أن يسبق تاريخ القيد الأصلي.")
         original = conn.execute("SELECT status FROM journal_entries WHERE id=?",
                                 (row["journal_entry_id"],)).fetchone()
         if not original or original["status"] != "posted":
