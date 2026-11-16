@@ -122,7 +122,6 @@ class SharedAccountingCoreTests(unittest.TestCase):
         self.assertEqual(snapshot["inventory_account_codes"], ["1130"])
 
     def test_custom_activity_profile_controls_inventory_and_grni_reconciliation(self):
-        import json
         self.db.executescript("""
             CREATE TABLE activity_profiles(
                 id INTEGER PRIMARY KEY, code TEXT, name TEXT, base_activity TEXT,
