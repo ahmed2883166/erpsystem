@@ -89,9 +89,9 @@
       <tr>
         <td>{{ period.period_start }}</td><td>{{ period.period_end }}</td><td>{{ period.posting_date }}</td>
         <td>{{ '%.2f'|format(period.amount) }}</td>
-        <td>{% if period.status == 'pending' %}بانتظار الترحيل{% elif period.status == 'posted' %}مرحّلة — قيد #{{ period.journal_entry_id }}{% else %}معكوسة — الأصل #{{ period.journal_entry_id }} / العكسي #{{ period.reversal_journal_entry_id }}{% endif %}</td>
+        <td>{% if preview.adjustment.status == 'cancelled' %}الجدول ملغى{% elif period.status == 'pending' %}بانتظار الترحيل{% elif period.status == 'posted' %}مرحّلة — قيد #{{ period.journal_entry_id }}{% else %}معكوسة — الأصل #{{ period.journal_entry_id }} / العكسي #{{ period.reversal_journal_entry_id }}{% endif %}</td>
         <td>
-          {% if period.status == 'pending' and 'journal.manage' in permissions %}
+          {% if period.status == 'pending' and preview.adjustment.status == 'active' and 'journal.manage' in permissions %}
             <form method="post" action="{{ url_for('adjustments.post_period', adjustment_id=preview.adjustment.id) }}">
               <input type="hidden" name="period_start" value="{{ period.period_start }}"><input type="hidden" name="period_end" value="{{ period.period_end }}">
               <button type="submit">ترحيل هذه الفترة</button>
