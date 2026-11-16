@@ -2235,6 +2235,38 @@ def new_invoice():
                 (discount_amount * Decimal("100") / gross_subtotal).quantize(CENT, rounding=ROUND_HALF_UP)
                 if gross_subtotal > 0 else Decimal("0.00")
             )
+            workflow_action = request.form.get("workflow_action", "")
+            if workflow_action in {"draft", "submit"}:
+                payload = {
+                    "customer_id": int(request.form["customer_id"]),
+                    "invoice_date": request.form["invoice_date"],
+                    "due_date": due_date,
+                    "warehouse_id": request.form.get("warehouse_id", type=int),
+                    "items": items,
+                    "tax_rate": request.form.get("tax_rate", "0"),
+                    "dimensions": {
+                        key: request.form.get(key) for key in
+                        ("branch_id", "cost_center_id", "project_id", "salesperson_id")
+                    },
+                    "sales_channel": request.form.get("sales_channel", "default"),
+                    "discount_override": {
+                        "discount_type": discount_type,
+                        "discount_value": str(discount_value),
+                        "discount_amount": str(discount_amount),
+                    },
+                }
+                workflow_id, workflow_no = create_invoice_workflow(
+                    c, payload, "draft" if workflow_action == "draft" else "pending_approval",
+                    session["user_id"], gross_subtotal, discount_amount, discount_percent
+                )
+                c.close()
+                if workflow_action == "draft":
+                    flash(f"تم حفظ الفاتورة {workflow_no} كمسودة. لا يوجد قيد محاسبي أو خصم مخزون حتى الآن.", "success")
+                else:
+                    flash(f"تم إرسال الفاتورة {workflow_no} للاعتماد. لم يتم ترحيلها أو خصم المخزون.", "warning")
+                return redirect(url_for("sales.invoice_workflow", workflow_id=workflow_id))
+            if workflow_action:
+                raise ValueError("إجراء الفاتورة غير صحيح.")
             limit_row = c.execute(
                 "SELECT setting_value FROM company_settings WHERE setting_key='sales_discount_limit_percent'"
             ).fetchone()
