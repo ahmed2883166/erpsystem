@@ -183,10 +183,15 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
     rows = conn.execute(
         "SELECT * FROM supplier_bill_asset_lines WHERE bill_id=? ORDER BY line_no",(bill["id"],)
     ).fetchall() if has_lines else []
+    deductible_percent = Decimal(str(bill["input_vat_deductible_percent"] or "100"))
+    if not deductible_percent.is_finite() or not Decimal("0") <= deductible_percent <= Decimal("100"):
+        raise ValueError("نسبة خصم ضريبة المدخلات لفاتورة الأصل غير صحيحة.")
+    tax_amount = Decimal(str(bill["tax_amount"] or "0"))
+    non_deductible_tax = (tax_amount * (Decimal("100") - deductible_percent) / Decimal("100")).quantize(Decimal("0.01"))
     if not rows:
         rows = [{
             "asset_code": bill["asset_code"], "asset_name": bill["asset_name"],
-            "asset_category": bill["asset_category"] or "", "cost": bill["subtotal"],
+            "asset_category": bill["asset_category"] or "", "cost": str(Decimal(str(bill["subtotal"])) + non_deductible_tax),
             "ready_date": bill["asset_ready_date"], "residual_value": bill["asset_residual_value"] or "0",
             "useful_life_months": bill["asset_useful_life_months"],
             "depreciation_method": bill["asset_depreciation_method"], "annual_rate": bill["asset_annual_rate"] or "0",
@@ -239,8 +244,9 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
         prepared.append((code,name,str(row["asset_category"] or ""),purchase_date,ready_date,
                          str(cost),str(residual),life,method,str(annual_rate),
                          row["asset_account_id"],row["accum_account_id"],row["expense_account_id"]))
-    if total!=Decimal(str(bill["subtotal"])):
-        raise ValueError("مجموع تكاليف الأصول لا يساوي صافي فاتورة المورد.")
+    expected_asset_cost = Decimal(str(bill["subtotal"])) + non_deductible_tax
+    if total!=expected_asset_cost:
+        raise ValueError("مجموع تكاليف الأصول لا يساوي صافي الفاتورة مضافًا إليه الضريبة غير القابلة للخصم.")
     created=[]
     for values in prepared:
         code,name,category,purchase,ready,cost,residual,life,method,rate,asset_acc,accum_acc,expense_acc=values
