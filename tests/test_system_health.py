@@ -151,6 +151,35 @@ class SystemHealthTests(unittest.TestCase):
             4,
         )
 
+    def test_opening_mismatch_is_exposed_in_health_center_without_mutation(self):
+        self.connection.execute("""CREATE TABLE financial_years(
+            id INTEGER PRIMARY KEY,year_name TEXT,start_date TEXT,opening_entry_id INTEGER
+        )""")
+        self.connection.execute(
+            "INSERT INTO financial_years VALUES(1,'2027','2027-01-01',77)"
+        )
+        self.connection.commit()
+        report = {"checks": [
+            {"code": "opening_integrity", "count": 0,
+             "details": "قيد الافتتاح سليم"},
+            {"code": "opening_balance_reconciliation", "count": 5,
+             "details": "1130: الدفتري 500 مقابل الافتتاح 0",
+             "blocking": True},
+        ]}
+        with patch("financial_planning.build_financial_year_preclose_report",
+                   return_value=report):
+            with self.app.test_request_context("/system/health"):
+                checks = system_health.collect_health_checks(self.connection)
+        check = next(item for item in checks
+                     if item["key"] == "opening_balance_reconciliation")
+        self.assertEqual(check["severity"], "high")
+        self.assertEqual(check["count"], 5)
+        self.assertIn("1130", check["detail"])
+        self.assertEqual(
+            self.connection.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0],
+            4,
+        )
+
     def test_partial_schema_does_not_crash_health_scan(self):
         connection = sqlite3.connect(":memory:")
         connection.row_factory = sqlite3.Row
