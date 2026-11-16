@@ -187,7 +187,7 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
     if not deductible_percent.is_finite() or not Decimal("0") <= deductible_percent <= Decimal("100"):
         raise ValueError("نسبة خصم ضريبة المدخلات لفاتورة الأصل غير صحيحة.")
     tax_amount = Decimal(str(bill["tax_amount"] or "0"))
-    non_deductible_tax = (tax_amount * (Decimal("100") - deductible_percent) / Decimal("100")).quantize(Decimal("0.01"))
+    non_deductible_tax = (tax_amount * (Decimal("100") - deductible_percent) / Decimal("100")).quantize(M, rounding=ROUND_HALF_UP)
     if not rows:
         rows = [{
             "asset_code": bill["asset_code"], "asset_name": bill["asset_name"],
