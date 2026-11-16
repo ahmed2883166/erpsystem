@@ -73,15 +73,15 @@ ACTIVITY_LABELS = {
 ACTIVITY_ACCOUNT_ROLES = {
     "commercial": {
         "cash": ("1110", "1120"), "receivables": ("1130",),
-        "payables": ("2110",), "customer_advances": ("2160",), "inventory": ("1150",),
+        "payables": ("2110",), "grni": ("2190",), "customer_advances": ("2160",), "inventory": ("1150",),
         "quick_assets": ("1110", "1120", "1130", "1140"),
         "current_assets": ("1110", "1120", "1130", "1140", "1150", "1160", "1165", "1191", "1192", "1193"),
-        "current_liabilities": ("2110", "2120", "2130", "2140", "2160", "2171", "2191", "2192"),
+        "current_liabilities": ("2110", "2120", "2130", "2140", "2160", "2171", "2190", "2191", "2192"),
         "direct_cost": ("5100", "5610", "5620", "5630", "5640", "5650"),
     },
     "service": {
         "cash": ("1110", "1111"), "receivables": ("1120",), "contract_assets": ("1130",),
-        "payables": ("2100",), "customer_advances": ("2160",), "inventory": (),
+        "payables": ("2100",), "grni": ("2190",), "customer_advances": ("2160",), "inventory": (),
         "quick_assets": ("1110", "1111", "1120", "1130"),
         "current_assets": ("1110", "1111", "1120", "1130", "1140", "1165", "1191", "1192", "1193"),
         "current_liabilities": ("2100", "2110", "2120", "2130", "2150", "2160", "2171", "2191", "2192"),
