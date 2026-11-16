@@ -6,6 +6,21 @@ concurrency gate; it does not pretend to detect every disconnected client.
 """
 import threading
 import time
+from contextvars import ContextVar
+
+_REPORT_DEADLINE = ContextVar('nexus_report_deadline', default=None)
+
+
+def set_current_report_deadline(deadline):
+    return _REPORT_DEADLINE.set(deadline)
+
+
+def reset_current_report_deadline(token):
+    _REPORT_DEADLINE.reset(token)
+
+
+def current_report_deadline():
+    return _REPORT_DEADLINE.get()
 
 
 def bounded_env_int(value, default, minimum=1, maximum=120):
