@@ -103,6 +103,17 @@ class PeriodAdjustmentTests(unittest.TestCase):
                 self.conn, post_id, "2026-01-31", "محاولة عكس مكرر", 7
             )
 
+    def test_new_accounting_and_sales_workflow_templates_compile(self):
+        from pathlib import Path
+        from flask import Flask
+        template_dir = Path(__file__).resolve().parents[1] / "templates"
+        app = Flask(__name__, template_folder=str(template_dir))
+        app.add_template_filter(lambda value: value, "money")
+        with app.app_context():
+            for name in ("period_adjustments.html", "sales_invoice_workflow.html",
+                         "sales.html", "sales_invoice_new.html"):
+                app.jinja_env.get_template(name)
+
     def test_rejects_wrong_account_nature(self):
         with self.assertRaisesRegex(ValueError, "نوع الحساب"):
             create_adjustment(
