@@ -340,17 +340,20 @@ def reconciliation_snapshot(conn):
                 if _table_exists(conn, "suppliers") and "supplier_id" in receipt_columns else ""
             )
             supplier_select = "s.name supplier_name" if supplier_join else "'' supplier_name"
+            receipt_no_select = "r.receipt_no" if "receipt_no" in receipt_columns else "CAST(r.id AS TEXT)"
+            receipt_date_select = "r.receipt_date" if "receipt_date" in receipt_columns else "NULL"
             movement_columns = _columns(conn, "stock_movements")
             layer_columns = _columns(conn, "stock_valuation_layers")
             can_trace_layers = (
+                "receipt_no" in receipt_columns and
                 {"movement_no", "id"}.issubset(movement_columns) and
                 {"source_movement_id", "qty_remaining"}.issubset(layer_columns)
             )
             for row in conn.execute(
-                f"""SELECT r.id,r.receipt_no,r.receipt_date,r.total_value,
-                           {supplier_select}
+                f"""SELECT r.id,{receipt_no_select} receipt_no,{receipt_date_select} receipt_date,
+                           r.total_value,{supplier_select}
                     FROM goods_receipts r {supplier_join}
-                    WHERE r.status='posted' ORDER BY r.receipt_date,r.id"""
+                    WHERE r.status='posted' ORDER BY {receipt_date_select},r.id"""
             ):
                 total = Decimal(str(row["total_value"] or "0"))
                 matched = matched_by_receipt.get(row["id"], Decimal("0"))
