@@ -408,7 +408,9 @@ REPORT_REQUEST_TIMEOUT_SECONDS = bounded_env_int(
     os.environ.get("NEXUS_REPORT_TIMEOUT_SECONDS", "90"), 90, 5, 180
 )
 REPORT_REQUEST_GATE = ReportRequestGate(
-    bounded_env_int(os.environ.get("NEXUS_REPORT_CONCURRENCY", "2"), 2, 1, 16)
+    bounded_env_int(os.environ.get("NEXUS_REPORT_CONCURRENCY", "2"), 2, 1, 16),
+    max_waiters=bounded_env_int(os.environ.get("NEXUS_REPORT_QUEUE_CAPACITY", "4"), 4, 0, 32),
+    wait_seconds=bounded_env_int(os.environ.get("NEXUS_REPORT_QUEUE_WAIT_SECONDS", "10"), 10, 1, 30),
 )
 
 
@@ -422,7 +424,7 @@ def guard_expensive_report_request():
         return None
     if not REPORT_REQUEST_GATE.acquire():
         app.logger.warning(
-            "Rejected report request because the report concurrency limit is full: %s",
+            "Rejected report request because the active slots and bounded wait queue are full or timed out: %s",
             request.path,
         )
         return (
