@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/company-setup-currency-tax-activity
+      - feature/lan-postgresql-assessment
   pull_request:
     branches:
       - main
