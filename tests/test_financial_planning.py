@@ -663,6 +663,17 @@ class FinancialYearJournalTests(unittest.TestCase):
             5,
         )
 
+    def test_preclose_accepts_opening_balances_matching_prior_ledger(self):
+        self._create_closed_previous_year()
+        create_opening_entry(self.conn, self.year_id,
+            {"1": "1200", "2": "200", "3": "800", "4": "200"}, 1)
+        report = build_financial_year_preclose_report(self.conn, self.year_id)
+        check = next(item for item in report["checks"]
+                     if item["code"] == "opening_balance_reconciliation")
+        self.assertEqual(check["count"], 0)
+        self.assertFalse(check["blocking"])
+        self.assertTrue(report["can_close"])
+
     def test_preclose_report_warns_when_opening_entry_is_missing(self):
         report = build_financial_year_preclose_report(self.conn, self.year_id)
         self.assertTrue(report["can_close"])
