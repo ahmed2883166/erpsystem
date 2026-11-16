@@ -557,6 +557,79 @@ def build_financial_year_preclose_report(conn, year_id):
             add("bank_reconciliation", "حركات بنكية غير مسوّاة", "warning" if unreconciled_bank else "success",
                 unreconciled_bank, "راجع المطابقة البنكية للحركات داخل السنة قبل اعتماد الإقفال.", False)
 
+    # Fixed-asset depreciation must have a posted journal for every recorded run.
+    if _table_exists_financial(conn, "asset_depreciations"):
+        depreciation_columns = {row["name"] for row in conn.execute("PRAGMA table_info(asset_depreciations)")}
+        if {"period", "journal_entry_id"}.issubset(depreciation_columns):
+            unposted_depreciation = conn.execute("""SELECT COUNT(*) FROM asset_depreciations d
+                LEFT JOIN journal_entries je ON je.id=d.journal_entry_id
+                WHERE d.period>=? AND d.period<=?
+                  AND (d.journal_entry_id IS NULL OR je.status!='posted')""",
+                (start[:7], end[:7])).fetchone()[0]
+            add("asset_depreciation_integrity", "سلامة قيود إهلاك الأصول",
+                "danger" if unposted_depreciation else "success", unposted_depreciation,
+                "توجد سجلات إهلاك بلا قيد مرحّل أو مرتبطة بقيد غير مرحّل؛ عالجها قبل الإقفال."
+                if unposted_depreciation else
+                "كل سجلات الإهلاك المسجلة داخل السنة مرتبطة بقيود مرحلة.",
+                bool(unposted_depreciation))
+            if _table_exists_financial(conn, "fixed_assets"):
+                no_run_assets = conn.execute("""SELECT COUNT(*) FROM fixed_assets f
+                    WHERE f.ready_date<=? AND f.status='active'
+                      AND NOT EXISTS (SELECT 1 FROM asset_depreciations d
+                        WHERE d.asset_id=f.id AND d.period>=? AND d.period<=?)""",
+                    (end, start[:7], end[:7])).fetchone()[0]
+                add("asset_depreciation_coverage", "مراجعة تشغيل إهلاك الأصول خلال السنة",
+                    "warning" if no_run_assets else "success", no_run_assets,
+                    f"عدد الأصول النشطة التي لا يظهر لها تشغيل إهلاك داخل السنة: {no_run_assets}. "
+                    "راجع سجل كل أصل؛ قد يكون الأصل مستهلكًا بالكامل أو غير مستحق للإهلاك.",
+                    False)
+
+    # Revalue foreign-currency receivables/payables that remained open at year end.
+    # This intentionally does not claim coverage of foreign-currency cash/bank balances
+    # that are not registered in the FX transaction subledger.
+    if (_table_exists_financial(conn, "fx_transactions")
+            and _table_exists_financial(conn, "fx_revaluations")):
+        try:
+            settlement_rows = conn.execute("""SELECT t.id,t.original_foreign,
+                    s.settlement_date,s.foreign_amount
+                FROM fx_transactions t
+                LEFT JOIN fx_settlements s ON s.transaction_id=t.id
+                WHERE t.transaction_date<=? ORDER BY t.id,s.settlement_date""",
+                (end,)).fetchall() if _table_exists_financial(conn, "fx_settlements") else conn.execute(
+                    "SELECT id,original_foreign,NULL settlement_date,NULL foreign_amount FROM fx_transactions WHERE transaction_date<=?",
+                    (end,)).fetchall()
+            grouped_fx = {}
+            for fx_row in settlement_rows:
+                fx_id = int(fx_row["id"])
+                item = grouped_fx.setdefault(fx_id, {
+                    "original": Decimal(str(fx_row["original_foreign"] or "0")),
+                    "settled": Decimal("0"),
+                })
+                if fx_row["settlement_date"] and fx_row["settlement_date"] <= end:
+                    item["settled"] += Decimal(str(fx_row["foreign_amount"] or "0"))
+            missing_fx_revaluations = []
+            for fx_id, balances in grouped_fx.items():
+                if balances["original"] - balances["settled"] <= 0:
+                    continue
+                has_year_end_revaluation = conn.execute("""SELECT 1 FROM fx_revaluations
+                    WHERE transaction_id=? AND revaluation_date=? LIMIT 1""",
+                    (fx_id, end)).fetchone()
+                if not has_year_end_revaluation:
+                    missing_fx_revaluations.append(fx_id)
+            add("fx_year_end_revaluation", "إعادة تقييم معاملات الذمم بالعملات الأجنبية",
+                "warning" if missing_fx_revaluations else "success",
+                len(missing_fx_revaluations),
+                (f"عدد معاملات العملات المفتوحة في تاريخ الإقفال دون إعادة تقييم بتاريخ {end}: "
+                 f"{len(missing_fx_revaluations)}. يشمل الفحص معاملات مركز العملات للذمم المدينة والدائنة فقط؛ "
+                 "راجع أرصدة البنوك والصناديق الأجنبية المسجلة خارج هذا المركز يدويًا.")
+                if missing_fx_revaluations else
+                f"لا توجد معاملات ذمم مفتوحة في {end} دون إعادة تقييم مسجلة. "
+                "راجع أرصدة البنوك والصناديق الأجنبية المسجلة خارج مركز العملات يدويًا.",
+                False)
+        except (sqlite3.Error, KeyError, TypeError, ValueError, InvalidOperation):
+            add("fx_year_end_revaluation", "فحص إعادة تقييم العملات الأجنبية", "warning", 1,
+                "تعذر استكمال فحص معاملات العملات؛ راجع مركز العملات يدويًا قبل الإقفال.", False)
+
     if _table_exists_financial(conn, "period_adjustments") and _table_exists_financial(conn, "period_adjustment_posts"):
         try:
             from period_adjustments import preview_adjustment
