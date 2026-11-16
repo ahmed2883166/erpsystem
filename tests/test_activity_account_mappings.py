@@ -16,7 +16,7 @@ class ActivityAccountMappingTests(unittest.TestCase):
         for activity, roles in ACTIVITY_ACCOUNT_ROLES.items():
             chart = {row[0]: row for row in CHARTS[activity]}
             for role, codes in roles.items():
-                expected_type = "liability" if role in {"payables", "current_liabilities", "customer_advances"} else (
+                expected_type = "liability" if role in {"payables", "current_liabilities", "customer_advances", "grni"} else (
                     "expense" if role == "direct_cost" else (
                         "equity" if role == "retained_earnings" else "asset"
                     )
@@ -29,6 +29,9 @@ class ActivityAccountMappingTests(unittest.TestCase):
 
     def test_customer_advances_use_one_canonical_account_for_new_postings(self):
         self.assertEqual(ACTIVITY_ACCOUNT_ROLES["commercial"]["customer_advances"], ("2160",))
+        for activity, roles in ACTIVITY_ACCOUNT_ROLES.items():
+            self.assertEqual(roles["grni"], ("2190",))
+            self.assertIn("2190", roles["current_liabilities"])
         self.assertEqual(ACTIVITY_ACCOUNT_ROLES["service"]["customer_advances"], ("2160",))
         # Legacy accounts remain in current-liability reporting so their historical balances
         # are not hidden when new transactions move to the canonical control account.
