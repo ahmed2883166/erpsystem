@@ -447,6 +447,18 @@ def release_expensive_report_slot(error=None):
         REPORT_REQUEST_GATE.release()
 
 
+@app.after_request
+def report_deadline_response(response):
+    deadline = getattr(g, "_nexus_report_deadline", None)
+    if deadline is not None and time.monotonic() >= deadline:
+        return (
+            "استغرق التقرير وقتًا أطول من المهلة المحددة. جرّب فترة أقصر أو أعد المحاولة لاحقًا.",
+            503,
+            {"Retry-After": "5", "Content-Type": "text/plain; charset=utf-8"},
+        )
+    return response
+
+
 def _save_initial_admin_password(password):
     """Persist a one-time bootstrap credential with owner-only file permissions."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
