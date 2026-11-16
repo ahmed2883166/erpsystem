@@ -492,6 +492,44 @@ def build_financial_year_preclose_report(conn, year_id):
             "قيد الافتتاح غير موجود أو غير مرحّل أو غير متوازن أو تاريخه/حساباته غير صحيحة.",
             not opening_valid)
 
+        # A balanced opening journal can still contain wrong account balances.
+        # Compare each opening line with the prior posted ledger before allowing year close.
+        if opening_valid:
+            from datetime import date, timedelta
+            cutoff_date = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
+            prior_posted = conn.execute(
+                "SELECT COUNT(*) FROM journal_entries WHERE status='posted' AND entry_date<?",
+                (start,),
+            ).fetchone()[0]
+            previous_year = _previous_closed_financial_year(conn, start)
+            if previous_year or prior_posted:
+                opening_rows = conn.execute("""SELECT jl.account_id,a.account_type,
+                        jl.debit,jl.credit
+                    FROM journal_lines jl
+                    JOIN accounts a ON a.id=jl.account_id
+                    WHERE jl.entry_id=? ORDER BY jl.account_id,jl.id""",
+                    (year["opening_entry_id"],)).fetchall()
+                supplied = {}
+                for line in opening_rows:
+                    account_id = line["account_id"]
+                    amount = (Decimal(str(line["debit"] or "0")) -
+                              Decimal(str(line["credit"] or "0")))
+                    if line["account_type"] != "asset":
+                        amount = -amount
+                    supplied[account_id] = supplied.get(account_id, Decimal("0")) + amount
+                mismatches = _opening_balance_mismatches(conn, cutoff_date, supplied)
+                mismatch_details = "؛ ".join(
+                    f"{code} {name}: الدفتري {expected:.2f} مقابل الافتتاح {actual:.2f}"
+                    for code, name, expected, actual in mismatches[:8]
+                )
+                if len(mismatches) > 8:
+                    mismatch_details += f"؛ واختلافات أخرى عددها {len(mismatches) - 8}"
+                add("opening_balance_reconciliation", "مطابقة أرصدة الافتتاح مع الأستاذ",
+                    "danger" if mismatches else "success", len(mismatches),
+                    mismatch_details if mismatches else
+                    f"أرصدة قيد الافتتاح تطابق الأستاذ حتى {cutoff_date}.",
+                    bool(mismatches))
+
     invalid_account_lines = conn.execute("""SELECT COUNT(*) FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
