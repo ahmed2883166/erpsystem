@@ -7,6 +7,8 @@ import json
 import logging
 from logging.handlers import RotatingFileHandler
 import os
+import re
+import secrets
 import sqlite3
 import tempfile
 import zipfile
@@ -124,7 +126,7 @@ def add_security_headers(response):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-    if os.environ.get("NEXUS_COOKIE_SECURE", "0").strip().lower() in {"1", "true", "yes", "on"}:
+    if app.config.get("SESSION_COOKIE_SECURE") and request.is_secure:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
 
@@ -160,11 +162,35 @@ app.config.update(
     SECRET_KEY=_load_secret_key(),
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=os.environ.get("NEXUS_COOKIE_SECURE", "0") == "1",
+    SESSION_COOKIE_SECURE=os.environ.get("NEXUS_COOKIE_SECURE", "1").strip().lower() in {"1", "true", "yes", "on"},
     PERMANENT_SESSION_LIFETIME=1800,
 )
-from flask_wtf.csrf import CSRFProtect
+from flask_wtf.csrf import CSRFProtect, generate_csrf
 csrf = CSRFProtect(app)
+
+
+@app.after_request
+def add_server_side_csrf_fields(response):
+    """Add CSRF inputs to rendered POST forms without relying on browser JavaScript."""
+    if response.mimetype != "text/html" or not response.get_data():
+        return response
+    token = generate_csrf()
+    if not token:
+        return response
+    token_field = '<input type="hidden" name="csrf_token" value="' + token + '">'
+    form_pattern = re.compile(r"(<form\b[^>]*>)(.*?)(</form\s*>)", re.IGNORECASE | re.DOTALL)
+
+    def inject_token(match):
+        opening, body, closing = match.groups()
+        is_post = re.search(r"""\bmethod\s*=\s*(?:"post"|'post'|post\b)""", opening, re.IGNORECASE)
+        already_has_token = re.search(r"""\bname\s*=\s*(?:"csrf_token"|'csrf_token')""", body, re.IGNORECASE)
+        if is_post and not already_has_token:
+            body = token_field + body
+        return opening + body + closing
+
+    response.set_data(form_pattern.sub(inject_token, response.get_data(as_text=True)))
+    return response
+
 
 app.register_blueprint(stock_bp)
 app.register_blueprint(purchase_bp)
@@ -360,6 +386,23 @@ def db():
     return connect_database(DB_PATH, isolation_level="")
 
 
+def _save_initial_admin_password(password):
+    """Persist a one-time bootstrap credential with owner-only file permissions."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    credential_path = DATA_DIR / ".nexus_initial_admin_password"
+    descriptor = os.open(credential_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(password + "\n")
+    try:
+        os.chmod(credential_path, 0o600)
+    except OSError:
+        pass
+    app.logger.warning(
+        "A one-time administrator password was generated. Retrieve it from %s and change it at first login.",
+        credential_path,
+    )
+
+
 def password_hash(password, salt=None, iterations=310000):
     """Create a salted PBKDF2-SHA256 password hash for new and changed passwords."""
     salt = salt or os.urandom(16)
@@ -494,13 +537,23 @@ def initialize_database():
     for key, value in defaults.items():
         connection.execute("INSERT OR IGNORE INTO company_settings(setting_key,setting_value) VALUES(?,?)", (key,value))
     connection.execute("INSERT OR IGNORE INTO currencies(code,name_ar,symbol,active,is_base,rate_to_base) VALUES('EGP','جنيه مصري','ج.م',1,1,1)")
-    if not connection.execute("SELECT 1 FROM users WHERE username = 'admin'").fetchone():
-        connection.execute("INSERT INTO users(username, full_name, password_hash, role, created_at, must_change_password) VALUES(?,?,?,?,?,1)",
-                           ("admin", "مدير النظام", password_hash("admin123"), "admin", now()))
-    else:
-        admin = connection.execute("SELECT id,password_hash FROM users WHERE username='admin'").fetchone()
-        if admin and verify_password("admin123", admin["password_hash"]):
-            connection.execute("UPDATE users SET must_change_password=1 WHERE id=?", (admin["id"],))
+    admin = connection.execute(
+        "SELECT id,password_hash,must_change_password FROM users WHERE username='admin'"
+    ).fetchone()
+    credential_path = DATA_DIR / ".nexus_initial_admin_password"
+    if not admin or (admin["must_change_password"] and not credential_path.exists()):
+        initial_password = secrets.token_urlsafe(24)
+        if not admin:
+            connection.execute(
+                "INSERT INTO users(username, full_name, password_hash, role, created_at, must_change_password) VALUES(?,?,?,?,?,1)",
+                ("admin", "مدير النظام", password_hash(initial_password), "admin", now())
+            )
+        else:
+            connection.execute(
+                "UPDATE users SET password_hash=?,must_change_password=1 WHERE id=?",
+                (password_hash(initial_password), admin["id"])
+            )
+        _save_initial_admin_password(initial_password)
     if not connection.execute("SELECT 1 FROM accounts LIMIT 1").fetchone():
         activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
         seed_activity_chart(connection, activity_row["setting_value"] if activity_row else "commercial")
@@ -4582,8 +4635,8 @@ if __name__ == "__main__":
         startup_db = db()
         try:
             default_admin = startup_db.execute("SELECT password_hash,must_change_password FROM users WHERE username='admin' AND active=1").fetchone()
-            if default_admin and (verify_password("admin123", default_admin["password_hash"]) or default_admin["must_change_password"]):
-                raise RuntimeError("Change the default administrator password locally before enabling LAN access.")
+            if default_admin and default_admin["must_change_password"]:
+                raise RuntimeError("Complete the administrator's required password change locally before enabling LAN access.")
         finally:
             startup_db.close()
     serve(app, host=requested_host, port=int(os.environ.get("PORT", 5000)),
