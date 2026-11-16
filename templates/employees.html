@@ -7,10 +7,10 @@
 <a class="button secondary" href="{{url_for('workforce.download_employee_template')}}">تحميل نموذج Excel</a></div></div></header>
 <section class="panel employee-import-panel"><h3>استيراد بيانات الموظفين من Excel</h3>
 <p class="muted">ارفع ملف XLSX بنفس أعمدة النموذج. كود الموظف هو مفتاح المطابقة: الكود الموجود سيتم تحديث بياناته، والجديد سيتم إضافته. العملية كلها تتم أو تُلغى بالكامل عند وجود خطأ.</p>
-<form method="post" action="{{ url_for('workforce.import_employees_excel') }}" enctype="multipart/form-data" class="form-grid">
+<form method="post" action="{{ url_for('workforce.import_employees_excel') }}" enctype="multipart/form-data" class="form-grid"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <label>ملف الموظفين Excel (.xlsx)<input type="file" name="file" accept=".xlsx" required></label>
 <button type="submit">استيراد الموظفين</button></form></section>
-<section class="panel employee-create-panel"><h3>إضافة موظف جديد</h3><form method="post" enctype="multipart/form-data" class="form-grid">
+<section class="panel employee-create-panel"><h3>إضافة موظف جديد</h3><form method="post" enctype="multipart/form-data" class="form-grid"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <label>كود الموظف<small>يُنشأ تلقائيًا عند الحفظ</small></label><label>اسم الموظف<input name="full_name" required></label>
 <label>صورة الموظف (اختياري)<input type="file" name="photo" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"></label>
 <label>الرقم القومي<input name="national_id" maxlength="20"></label><label>رقم التأمين الاجتماعي<input name="insurance_number"></label>
