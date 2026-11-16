@@ -487,7 +487,7 @@ def initialize_database():
         ("KWD","دينار كويتي","د.ك"),("QAR","ريال قطري","ر.ق")
     ]
     connection.executemany("INSERT OR IGNORE INTO currencies(code,name_ar,symbol,active,is_base,rate_to_base) VALUES(?,?,?,0,0,0)", currency_seed)
-    defaults = {"company_name":"NEXUS ERP Demo", "tax_country":"EG", "tax_regime":"EG_VAT",
+    defaults = {"company_name":"ADMRAIL ERP Demo", "tax_country":"EG", "tax_regime":"EG_VAT",
                 "tax_number":"", "activity":"commercial", "base_currency":"EGP", "default_vat_rate":"14", "inventory_cost_method":"average"}
     for key, value in defaults.items():
         connection.execute("INSERT OR IGNORE INTO company_settings(setting_key,setting_value) VALUES(?,?)", (key,value))
@@ -897,7 +897,7 @@ def license_page():
     if request.method == "POST":
         try:
             activate_license(request.form.get("activation_code",""))
-            flash("تم تفعيل NEXUS ERP بنجاح.","success")
+            flash("تم تفعيل ADMRAIL ERP بنجاح.","success")
             return redirect(url_for("about"))
         except RuntimeError as exc:
             flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
@@ -2615,7 +2615,7 @@ def income_statement():
         compare_date_from=compare_dates[0] if compare_dates else "",
         compare_date_to=compare_dates[1] if compare_dates else "",
         base_currency=settings.get("base_currency", ""),
-        company_name=settings.get("company_name", "NEXUS ERP"),
+        company_name=settings.get("company_name", "ADMRAIL ERP"),
     )
 
 
@@ -2650,7 +2650,7 @@ def profitability_report():
     return render_template(
         "profitability_report.html", **report, summary=summary,
         base_currency=settings.get("base_currency", ""),
-        company_name=settings.get("company_name", "NEXUS ERP"),
+        company_name=settings.get("company_name", "ADMRAIL ERP"),
     )
 
 
@@ -2674,7 +2674,7 @@ def period_comparison_report():
         connection.close()
     return render_template("period_comparison.html", **report,
         base_currency=settings.get("base_currency", ""),
-        company_name=settings.get("company_name", "NEXUS ERP"))
+        company_name=settings.get("company_name", "ADMRAIL ERP"))
 
 
 @app.route("/reports/inventory-ageing")
@@ -2908,7 +2908,7 @@ def expense_analysis():
         "expense_analysis.html", **report, date_from=date_from, date_to=date_to,
         dimension_options=dimension_options, selected_dimensions=selected_dimensions,
         base_currency=settings.get("base_currency", ""),
-        company_name=settings.get("company_name", "NEXUS ERP"),
+        company_name=settings.get("company_name", "ADMRAIL ERP"),
     )
 
 
