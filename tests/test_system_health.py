@@ -103,6 +103,52 @@ class SystemHealthTests(unittest.TestCase):
         self.assertEqual(by_key["missing_journal_supplier_bills"]["count"], 1)
         self.assertEqual(by_key["negative_stock_layers"]["count"], 1)
 
+    def test_grni_control_account_mismatch_is_visible_without_posting_adjustment(self):
+        self.connection.executescript("""
+            ALTER TABLE journal_entries ADD COLUMN reference TEXT;
+            UPDATE journal_entries SET reference='HEALTH-'||id;
+            ALTER TABLE journal_lines ADD COLUMN account_id INTEGER;
+            CREATE TABLE accounts(
+                id INTEGER PRIMARY KEY,code TEXT,is_group INTEGER,active INTEGER
+            );
+            INSERT INTO accounts VALUES(2190,'2190',0,1);
+            CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT);
+            INSERT INTO company_settings VALUES('activity','commercial');
+            CREATE TABLE suppliers(id INTEGER PRIMARY KEY,name TEXT);
+            INSERT INTO suppliers VALUES(1,'مورد اختبار');
+            CREATE TABLE goods_receipts(
+                id INTEGER PRIMARY KEY,receipt_no TEXT,receipt_date TEXT,supplier_id INTEGER,
+                total_value TEXT,status TEXT,journal_entry_id INTEGER
+            );
+            INSERT INTO goods_receipts VALUES(1,'GRN-1','2026-11-10',1,'100','posted',1);
+            CREATE TABLE supplier_bill_receipts(
+                bill_id INTEGER,receipt_id INTEGER,matched_amount TEXT
+            );
+            INSERT INTO supplier_bill_receipts VALUES(1,1,'40');
+            ALTER TABLE stock_movements ADD COLUMN movement_no TEXT;
+            INSERT INTO stock_movements(id,accounting_status,movement_no)
+                VALUES(99,'posted','PUR-GRN-1');
+            ALTER TABLE stock_valuation_layers ADD COLUMN unit_cost TEXT;
+            ALTER TABLE stock_valuation_layers ADD COLUMN value_remaining TEXT;
+            ALTER TABLE stock_valuation_layers ADD COLUMN source_movement_id INTEGER;
+            UPDATE stock_valuation_layers SET qty_remaining='4',unit_cost='10',
+                value_remaining='40',source_movement_id=99 WHERE id=1;
+            UPDATE stock_valuation_layers SET qty_remaining='0',unit_cost='10',
+                value_remaining='0' WHERE id=2;
+            INSERT INTO journal_lines(id,entry_id,account_id,debit,credit)
+                VALUES(20,1,2190,'0','100'),(21,2,2190,'60','0');
+        """)
+        with self.app.test_request_context("/system/health"):
+            checks = system_health.collect_health_checks(self.connection)
+        check = next(item for item in checks if item["key"] == "grni_reconciliation")
+        self.assertEqual(check["severity"], "high")
+        self.assertEqual(check["count"], 1)
+        self.assertIn("فرق المطابقة: -20.00", check["detail"])
+        self.assertEqual(
+            self.connection.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0],
+            4,
+        )
+
     def test_partial_schema_does_not_crash_health_scan(self):
         connection = sqlite3.connect(":memory:")
         connection.row_factory = sqlite3.Row
