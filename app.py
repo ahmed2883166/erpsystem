@@ -4659,4 +4659,4 @@ if __name__ == "__main__":
         finally:
             startup_db.close()
     serve(app, host=requested_host, port=int(os.environ.get("PORT", 5000)),
-          threads=max(2, int(os.environ.get("NEXUS_THREADS", "8"))))
+          threads=max(2, int(os.environ.get("NEXUS_THREADS", "12"))))
