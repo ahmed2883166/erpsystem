@@ -1,4 +1,4 @@
-"""Eight-client SQLite write-concurrency regression tests.
+"""Ten-client SQLite write-concurrency regression tests.
 
 These exercise the same connection factory and journal posting function used by
 the ERP, against isolated temporary files. They never open the company database.
@@ -42,12 +42,12 @@ def prepare_database(db_path):
         setup.close()
 
 
-class EightClientWriteConcurrencyTests(unittest.TestCase):
-    CLIENTS = 8
+class TenClientWriteConcurrencyTests(unittest.TestCase):
+    CLIENTS = 10
     POSTS_PER_CLIENT = 25
 
-    def test_eight_clients_can_post_journals_without_lost_or_duplicate_writes(self):
-        with tempfile.TemporaryDirectory(prefix="nexus-eight-client-") as folder:
+    def test_ten_clients_can_post_journals_without_lost_or_duplicate_writes(self):
+        with tempfile.TemporaryDirectory(prefix="nexus-ten-client-") as folder:
             db_path = Path(folder) / "concurrency.sqlite3"
             prepare_database(db_path)
             start = threading.Barrier(self.CLIENTS)
@@ -109,8 +109,8 @@ class EightClientWriteConcurrencyTests(unittest.TestCase):
             finally:
                 verify.close()
 
-    def test_eight_clients_posting_the_same_reference_create_only_one_journal(self):
-        with tempfile.TemporaryDirectory(prefix="nexus-eight-client-idempotency-") as folder:
+    def test_ten_clients_posting_the_same_reference_create_only_one_journal(self):
+        with tempfile.TemporaryDirectory(prefix="nexus-ten-client-idempotency-") as folder:
             db_path = Path(folder) / "idempotency.sqlite3"
             prepare_database(db_path)
             start = threading.Barrier(self.CLIENTS)
