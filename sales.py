@@ -2554,12 +2554,6 @@ def edit_invoice_workflow(workflow_id):
             update_invoice_workflow(c, workflow_id, payload, session["user_id"],
                                     gross, discount, percent,
                                     is_admin=(session.get("role") == "admin"))
-            from app import log
-            log("sales_invoice_draft_updated", workflow["workflow_no"],
-                entity_type="sales_invoice_workflow", entity_id=workflow_id,
-                after_values={"customer_id": payload["customer_id"],
-                              "invoice_date": payload["invoice_date"],
-                              "gross_subtotal": str(gross), "discount_amount": str(discount)})
             flash("تم حفظ تعديلات المسودة. لم يتم إنشاء قيد أو خصم مخزون.", "success")
             return redirect(url_for("sales.invoice_workflow", workflow_id=workflow_id))
         except (ValueError, InvalidOperation, KeyError, TypeError, sqlite3.Error) as exc:
