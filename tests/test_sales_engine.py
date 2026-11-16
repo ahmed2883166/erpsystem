@@ -103,6 +103,86 @@ class SalesIntegrationTests(unittest.TestCase):
         ).fetchone()["qty_remaining"]
         self.assertEqual(Decimal(remaining), Decimal("5"))
 
+    def test_draft_workflow_can_be_edited_without_posting_stock_or_journal(self):
+        payload = {
+            "customer_id": self.customer_id, "invoice_date": "2026-11-10",
+            "due_date": "2026-11-30", "warehouse_id": self.warehouse_id,
+            "items": [{"product_id": self.product_id, "quantity": "1", "unit_price": "20",
+                       "description": "بند قبل التعديل", "uom_id": "",
+                       "tax_rate": "14", "tax_treatment": "standard"}],
+            "tax_rate": "14", "dimensions": {}, "sales_channel": "default",
+            "discount_override": {"discount_type": "none", "discount_value": "0",
+                                  "discount_amount": "0"},
+        }
+        workflow_id, _ = sales.create_invoice_workflow(
+            self.db, payload, "draft", 11, Decimal("20"), Decimal("0"), Decimal("0")
+        )
+        payload["invoice_date"] = "2026-11-12"
+        payload["due_date"] = "2026-12-01"
+        payload["items"][0]["description"] = "بند بعد التعديل"
+        payload["items"][0]["unit_price"] = "25"
+        sales.update_invoice_workflow(
+            self.db, workflow_id, payload, 11, Decimal("25"), Decimal("0"),
+            Decimal("0")
+        )
+        saved = self.db.execute(
+            "SELECT status,invoice_date,due_date,gross_subtotal,payload_json,updated_by "
+            "FROM sales_invoice_workflows WHERE id=?", (workflow_id,)
+        ).fetchone()
+        saved_payload = json.loads(saved["payload_json"])
+        self.assertEqual(saved["status"], "draft")
+        self.assertEqual(saved["invoice_date"], "2026-11-12")
+        self.assertEqual(saved["due_date"], "2026-12-01")
+        self.assertEqual(saved["gross_subtotal"], "25")
+        self.assertEqual(saved_payload["items"][0]["description"], "بند بعد التعديل")
+        self.assertEqual(saved["updated_by"], 11)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM sales_invoices").fetchone()[0], 0)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'"
+        ).fetchone()[0], 0)
+        remaining = self.db.execute(
+            "SELECT qty_remaining FROM stock_valuation_layers"
+        ).fetchone()["qty_remaining"]
+        self.assertEqual(Decimal(remaining), Decimal("5"))
+
+    def test_draft_workflow_cannot_be_edited_by_another_non_admin_user(self):
+        payload = {
+            "customer_id": self.customer_id, "invoice_date": "2026-11-10",
+            "due_date": "2026-11-30", "warehouse_id": self.warehouse_id,
+            "items": [{"product_id": self.product_id, "quantity": "1", "unit_price": "20",
+                       "description": "بند", "uom_id": "", "tax_rate": "14",
+                       "tax_treatment": "standard"}],
+        }
+        workflow_id, _ = sales.create_invoice_workflow(
+            self.db, payload, "draft", 11, Decimal("20"), Decimal("0"), Decimal("0")
+        )
+        with self.assertRaisesRegex(ValueError, "المسودات التي أنشأتها"):
+            sales.update_invoice_workflow(
+                self.db, workflow_id, payload, 12, Decimal("20"), Decimal("0"),
+                Decimal("0"), is_admin=False
+            )
+        self.assertEqual(self.db.execute(
+            "SELECT status,created_by FROM sales_invoice_workflows WHERE id=?", (workflow_id,)
+        ).fetchone()[:], ("draft", 11))
+
+    def test_submitted_invoice_workflow_cannot_be_edited(self):
+        payload = {
+            "customer_id": self.customer_id, "invoice_date": "2026-11-10",
+            "due_date": "2026-11-30", "warehouse_id": self.warehouse_id,
+            "items": [{"product_id": self.product_id, "quantity": "1", "unit_price": "20",
+                       "description": "بند", "uom_id": "", "tax_rate": "14",
+                       "tax_treatment": "standard"}],
+        }
+        workflow_id, _ = sales.create_invoice_workflow(
+            self.db, payload, "pending_approval", 11, Decimal("20"), Decimal("0"), Decimal("0")
+        )
+        with self.assertRaisesRegex(ValueError, "مسودة غير مرسلة"):
+            sales.update_invoice_workflow(
+                self.db, workflow_id, payload, 11, Decimal("20"), Decimal("0"),
+                Decimal("0")
+            )
+
     def test_approved_invoice_workflow_can_be_posted_once_with_saved_payload(self):
         payload = {
             "customer_id": self.customer_id,
