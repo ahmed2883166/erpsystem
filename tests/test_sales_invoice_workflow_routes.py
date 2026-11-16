@@ -72,6 +72,35 @@ class SalesInvoiceWorkflowRouteTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(tuple(row), ("pending_approval", None))
 
+    def test_invoice_submitter_cannot_approve_another_users_draft(self):
+        workflow_id = self._workflow(created_by=10, submitted_by=20)
+        self._login(user_id=20)
+        response = self.client.post(
+            f"/sales/invoices/workflow/{workflow_id}/decision",
+            data={"action": "approve"},
+        )
+        self.assertEqual(response.status_code, 302)
+        row = self.connection.execute(
+            "SELECT status,approved_by FROM sales_invoice_workflows WHERE id=?",
+            (workflow_id,),
+        ).fetchone()
+        self.assertEqual(tuple(row), ("pending_approval", None))
+
+    def test_missing_workflow_creator_or_submitter_fails_closed(self):
+        workflow_id = self._workflow(created_by=None, submitted_by=10)
+        self._login(user_id=20)
+        response = self.client.post(
+            f"/sales/invoices/workflow/{workflow_id}/decision",
+            data={"action": "approve"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT status FROM sales_invoice_workflows WHERE id=?", (workflow_id,)
+            ).fetchone()["status"],
+            "pending_approval",
+        )
+
     def test_sales_manage_without_approval_permission_cannot_approve_invoice(self):
         workflow_id = self._workflow()
         self._login(permissions=["sales.manage"])
