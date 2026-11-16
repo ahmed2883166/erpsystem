@@ -636,6 +636,32 @@ class FinancialYearJournalTests(unittest.TestCase):
         report = build_financial_year_preclose_report(self.conn, self.year_id)
         self.assertTrue(any(item["code"] == "unbalanced_entries" for item in report["blockers"]))
 
+    def test_preclose_blocks_balanced_but_incorrect_opening_account_balances(self):
+        self._create_closed_previous_year()
+        opening_id = self._opening()
+        # Keep the journal balanced while corrupting two opening balances.
+        self.conn.execute(
+            "UPDATE journal_lines SET debit='990' WHERE entry_id=? AND account_id=1",
+            (opening_id,),
+        )
+        self.conn.execute(
+            "UPDATE journal_lines SET credit='790' WHERE entry_id=? AND account_id=3",
+            (opening_id,),
+        )
+        self.conn.commit()
+        report = build_financial_year_preclose_report(self.conn, self.year_id)
+        check = next(item for item in report["checks"]
+                     if item["code"] == "opening_balance_reconciliation")
+        self.assertEqual(check["count"], 2)
+        self.assertTrue(check["blocking"])
+        self.assertFalse(report["can_close"])
+        self.assertIn("1110", check["details"])
+        self.assertIn("3100", check["details"])
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0],
+            4,
+        )
+
     def test_preclose_report_warns_when_opening_entry_is_missing(self):
         report = build_financial_year_preclose_report(self.conn, self.year_id)
         self.assertTrue(report["can_close"])
