@@ -181,6 +181,8 @@ def init_purchase_schema():
     bill_columns = {row["name"] for row in c.execute("PRAGMA table_info(supplier_bills)")}
     if "credited_amount" not in bill_columns:
         c.execute("ALTER TABLE supplier_bills ADD COLUMN credited_amount TEXT NOT NULL DEFAULT '0'")
+    if "input_vat_deductible_percent" not in bill_columns:
+        c.execute("ALTER TABLE supplier_bills ADD COLUMN input_vat_deductible_percent TEXT NOT NULL DEFAULT '100'")
     if "due_date" not in bill_columns:
         c.execute("ALTER TABLE supplier_bills ADD COLUMN due_date TEXT")
         c.execute("UPDATE supplier_bills SET due_date=bill_date WHERE due_date IS NULL")
@@ -1735,6 +1737,16 @@ def post_supplier_bill(c, bill_id, actor_id):
     subtotal = money(bill["subtotal"])
     tax = money(bill["tax_amount"])
     journal_lines = []
+    deductible_percent = Decimal(str(bill["input_vat_deductible_percent"] or "100"))
+    if not deductible_percent.is_finite() or not Decimal("0") <= deductible_percent <= Decimal("100"):
+        raise ValueError("نسبة خصم ضريبة المدخلات يجب أن تكون من 0 إلى 100.")
+    recoverable_tax = money(tax * deductible_percent / Decimal("100"))
+    non_deductible_tax = money(tax - recoverable_tax)
+    if bill["bill_kind"] == "inventory" and non_deductible_tax:
+        raise ValueError(
+            "لا يمكن ترحيل ضريبة مخزون غير قابلة للخصم حاليًا؛ يلزم أولًا توزيعها على طبقات المخزون "
+            "والأصناف المصروفة حتى لا تختلف تكلفة المخزون عن الأستاذ. استخدم 100% أو أجّل الترحيل."
+        )
     if bill["bill_kind"] == "inventory":
         receipt_rows = c.execute("""SELECT x.receipt_id,x.matched_amount,r.supplier_id,r.status
             FROM supplier_bill_receipts x JOIN goods_receipts r ON r.id=x.receipt_id
@@ -1792,8 +1804,8 @@ def post_supplier_bill(c, bill_id, actor_id):
         if not expense or expense["account_type"] != "expense" or expense["is_group"] or not expense["active"]:
             raise ValueError("حساب مصروف الفاتورة غير صالح أو غير نشط.")
         journal_lines.extend([
-            (expense_id, subtotal, 0, "مصروف فاتورة المورد"),
-            (ap, 0, subtotal, "إثبات المورد"),
+            (expense_id, subtotal + non_deductible_tax, 0, "مصروف فاتورة المورد شامل ضريبة المدخلات غير القابلة للخصم"),
+            (ap, 0, subtotal, "إثبات المورد قبل الضريبة"),
         ])
     elif bill["bill_kind"] == "asset":
         if c.execute("SELECT 1 FROM supplier_bill_receipts WHERE bill_id=? LIMIT 1", (bill_id,)).fetchone():
@@ -1801,27 +1813,37 @@ def post_supplier_bill(c, bill_id, actor_id):
         asset_rows = c.execute("SELECT * FROM supplier_bill_asset_lines WHERE bill_id=? ORDER BY line_no",(bill_id,)).fetchall()
         if asset_rows:
             line_total = money("0")
-            for row in asset_rows:
-                cost = money(row["cost"])
+            remaining_non_deductible = non_deductible_tax
+            for index, row in enumerate(asset_rows):
+                base_cost = money(row["cost"])
+                if index == len(asset_rows) - 1:
+                    allocated_non_deductible = remaining_non_deductible
+                else:
+                    allocated_non_deductible = money(non_deductible_tax * base_cost / subtotal)
+                    remaining_non_deductible = money(remaining_non_deductible - allocated_non_deductible)
+                cost = money(base_cost + allocated_non_deductible)
                 line_total = money(line_total + cost)
+                c.execute("UPDATE supplier_bill_asset_lines SET cost=? WHERE id=?", (str(cost), row["id"]))
                 journal_lines.append((row["asset_account_id"],cost,0,
-                    "رسملة الأصل " + row["asset_code"] + " - " + row["asset_name"]))
+                    "رسملة الأصل " + row["asset_code"] + " - " + row["asset_name"] +
+                    (" شامل الضريبة غير القابلة للخصم" if allocated_non_deductible else "")))
             if line_total != subtotal:
                 raise ValueError("مجموع تكاليف الأصول لا يساوي صافي فاتورة المورد.")
         else:
             asset_data = validate_asset_bill_data(c, dict(bill), bill["bill_date"], subtotal)
-            journal_lines.append((asset_data["asset_account_id"],subtotal,0,
-                "رسملة تكلفة الأصل " + asset_data["asset_name"]))
+            asset_cost = money(subtotal + non_deductible_tax)
+            journal_lines.append((asset_data["asset_account_id"],asset_cost,0,
+                "رسملة تكلفة الأصل " + asset_data["asset_name"] +
+                (" شامل الضريبة غير القابلة للخصم" if non_deductible_tax else "")))
         journal_lines.append((ap,0,subtotal,"إثبات المورد مقابل شراء أصل ثابت"))
     else:
         raise ValueError("نوع فاتورة المورد المخزن غير معروف.")
-    if tax:
+    if recoverable_tax:
         vat_code = _activity_tax_roles(c)["input_vat"]
         vat = ensure_detail_account(c, vat_code, "ضريبة مدخلات قابلة للخصم", "asset", "1100")
-        journal_lines.extend([
-            (vat, tax, 0, "ضريبة مدخلات حسب الفاتورة"),
-            (ap, 0, tax, "ضريبة ضمن إجمالي المورد"),
-        ])
+        journal_lines.append((vat, recoverable_tax, 0, "ضريبة مدخلات قابلة للخصم حسب الفاتورة"))
+    if tax:
+        journal_lines.append((ap, 0, tax, "ضريبة ضمن إجمالي المورد"))
     total = money(subtotal + tax)
     if total != money(bill["total_amount"]):
         raise ValueError("إجمالي الفاتورة لا يطابق الصافي والضريبة؛ راجع المستند.")
@@ -1847,6 +1869,9 @@ def new_bill():
         try:
             supplier=int(request.form["supplier_id"]); subtotal=money(request.form["subtotal"]); rate=Decimal(request.form.get("tax_rate","0"))
             if subtotal<=0 or rate<0 or rate>100: raise ValueError("قيمة الفاتورة أو الضريبة غير صحيحة.")
+            deductible_percent = Decimal(request.form.get("input_vat_deductible_percent", "100"))
+            if not deductible_percent.is_finite() or not Decimal("0") <= deductible_percent <= Decimal("100"):
+                raise ValueError("نسبة خصم ضريبة المدخلات يجب أن تكون من 0 إلى 100.")
             tax=money(subtotal*rate/Decimal("100")); total=subtotal+tax
             receipts=[int(x) for x in request.form.getlist("receipt_id")]
             supplier_invoice_no=request.form["supplier_invoice_no"].strip()
@@ -1897,13 +1922,13 @@ def new_bill():
             due_date=request.form.get("due_date") or request.form["bill_date"]
             if due_date < request.form["bill_date"]: raise ValueError("تاريخ استحقاق المورد لا يمكن أن يسبق تاريخ الفاتورة.")
             cur=c.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,
-                subtotal,tax_rate,tax_amount,total_amount,created_by,branch_id,cost_center_id,project_id,
+                subtotal,tax_rate,tax_amount,total_amount,input_vat_deductible_percent,created_by,branch_id,cost_center_id,project_id,
                 status,bill_kind,expense_account_id,asset_code,asset_name,asset_category,asset_ready_date,
                 asset_residual_value,asset_useful_life_months,asset_depreciation_method,asset_annual_rate,
                 asset_account_id,asset_accum_account_id,asset_expense_account_id)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (no,supplier,request.form["bill_date"],due_date,supplier_invoice_no,str(subtotal),str(rate),
-                 str(tax),str(total),session["user_id"],dimensions["branch_id"],dimensions["cost_center_id"],
+                 str(tax),str(total),str(deductible_percent),session["user_id"],dimensions["branch_id"],dimensions["cost_center_id"],
                  dimensions["project_id"],bill_kind,expense_account_id,
                  asset_data.get("asset_code"),asset_data.get("asset_name"),asset_data.get("asset_category"),
                  asset_data.get("asset_ready_date"),asset_data.get("asset_residual_value","0"),
@@ -1973,6 +1998,9 @@ def edit_bill(bill_id):
             supplier_invoice_no = request.form["supplier_invoice_no"].strip()
             if subtotal <= 0 or rate < 0 or rate > 100:
                 raise ValueError("قيمة الفاتورة أو الضريبة غير صحيحة.")
+            deductible_percent = Decimal(request.form.get("input_vat_deductible_percent", "100"))
+            if not deductible_percent.is_finite() or not Decimal("0") <= deductible_percent <= Decimal("100"):
+                raise ValueError("نسبة خصم ضريبة المدخلات يجب أن تكون من 0 إلى 100.")
             if not supplier_invoice_no or not bill_date:
                 raise ValueError("رقم فاتورة المورد وتاريخها مطلوبان.")
             if due_date < bill_date:
@@ -2032,7 +2060,7 @@ def edit_bill(bill_id):
                                       "ضريبة مدخلات قابلة للخصم", "asset", "1100")
 
             c.execute("""UPDATE supplier_bills SET supplier_id=?,bill_date=?,due_date=?,
-                supplier_invoice_no=?,subtotal=?,tax_rate=?,tax_amount=?,total_amount=?,
+                supplier_invoice_no=?,subtotal=?,tax_rate=?,tax_amount=?,total_amount=?,input_vat_deductible_percent=?,
                 branch_id=?,cost_center_id=?,project_id=?,bill_kind=?,expense_account_id=?,
                 asset_code=?,asset_name=?,asset_category=?,asset_ready_date=?,asset_residual_value=?,
                 asset_useful_life_months=?,asset_depreciation_method=?,asset_annual_rate=?,
@@ -2041,7 +2069,7 @@ def edit_bill(bill_id):
                 rejected_by=NULL,rejected_at=NULL,rejection_reason=NULL,approval_reason=NULL
                 WHERE id=? AND status IN ('draft','rejected') AND journal_entry_id IS NULL""",
                 (supplier, bill_date, due_date, supplier_invoice_no, str(subtotal), str(rate),
-                 str(tax), str(total), dimensions["branch_id"], dimensions["cost_center_id"],
+                 str(tax), str(total), str(deductible_percent), dimensions["branch_id"], dimensions["cost_center_id"],
                  dimensions["project_id"], bill_kind, expense_account_id,
                  asset_data.get("asset_code"),asset_data.get("asset_name"),asset_data.get("asset_category"),
                  asset_data.get("asset_ready_date"),asset_data.get("asset_residual_value","0"),
