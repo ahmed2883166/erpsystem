@@ -638,14 +638,15 @@ class FinancialYearJournalTests(unittest.TestCase):
 
     def test_preclose_blocks_balanced_but_incorrect_opening_account_balances(self):
         self._create_closed_previous_year()
-        opening_id = self._opening()
+        opening_id = create_opening_entry(self.conn, self.year_id,
+            {"1": "1200", "2": "200", "3": "800", "4": "200"}, 1)
         # Keep the journal balanced while corrupting two opening balances.
         self.conn.execute(
-            "UPDATE journal_lines SET debit='990' WHERE entry_id=? AND account_id=1",
+            "UPDATE journal_lines SET debit='1190' WHERE entry_id=? AND account_id=1",
             (opening_id,),
         )
         self.conn.execute(
-            "UPDATE journal_lines SET credit='790' WHERE entry_id=? AND account_id=3",
+            "UPDATE journal_lines SET credit='190' WHERE entry_id=? AND account_id=4",
             (opening_id,),
         )
         self.conn.commit()
@@ -656,7 +657,7 @@ class FinancialYearJournalTests(unittest.TestCase):
         self.assertTrue(check["blocking"])
         self.assertFalse(report["can_close"])
         self.assertIn("1110", check["details"])
-        self.assertIn("3100", check["details"])
+        self.assertIn("3200", check["details"])
         self.assertEqual(
             self.conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0],
             4,
