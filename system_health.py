@@ -178,6 +178,40 @@ def collect_health_checks(connection):
             add("grni_reconciliation", "مطابقة بضاعة مستلمة غير مفوترة GRNI",
                 "high" if issue_count else "info", issue_count, detail, "/purchases")
 
+    # Validate the latest financial-year opening against the prior ledger.
+    # The underlying pre-close report is read-only and blocks close on mismatched balances.
+    if _has_table(connection, "financial_years"):
+        year_columns = _columns(connection, "financial_years")
+        if {"id", "year_name", "start_date", "opening_entry_id"}.issubset(year_columns):
+            year = connection.execute("""SELECT id,year_name,start_date
+                FROM financial_years WHERE opening_entry_id IS NOT NULL
+                ORDER BY start_date DESC,id DESC LIMIT 1""").fetchone()
+            if year:
+                try:
+                    from financial_planning import build_financial_year_preclose_report
+                    report = build_financial_year_preclose_report(connection, year["id"])
+                    opening_checks = {
+                        item["code"]: item for item in report.get("checks", [])
+                        if item.get("code") in {
+                            "opening_integrity", "opening_balance_reconciliation"
+                        }
+                    }
+                    for code, title in (
+                        ("opening_integrity", "سلامة قيد افتتاح السنة"),
+                        ("opening_balance_reconciliation", "مطابقة أرصدة الافتتاح مع الأستاذ"),
+                    ):
+                        item = opening_checks.get(code)
+                        if item:
+                            add(code, title,
+                                "high" if item["count"] else "info",
+                                item["count"], f"السنة {year['year_name']}: {item['details']}",
+                                "/financial-years")
+                except (sqlite3.Error, KeyError, TypeError, ValueError):
+                    add("opening_balance_reconciliation", "مطابقة أرصدة الافتتاح مع الأستاذ",
+                        "high", 1,
+                        f"تعذر التحقق من افتتاح السنة {year['year_name']}؛ يلزم مراجعة تقرير ما قبل الإقفال.",
+                        "/financial-years")
+
     # Cross-check uses the existing detailed reconciliation page; this screen does not post fixes.
     checks.append({"key":"stock_gl_review","title":"مطابقة تقييم المخزون مع الأستاذ",
                    "severity":"info","count":None,"detail":"افتح تقرير المطابقة التفصيلي لمراجعة الفروق دون تعديل تلقائي.",
