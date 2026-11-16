@@ -451,11 +451,11 @@ def release_expensive_report_slot(error=None):
 def report_deadline_response(response):
     deadline = getattr(g, "_nexus_report_deadline", None)
     if deadline is not None and time.monotonic() >= deadline:
-        return (
+        return app.make_response((
             "استغرق التقرير وقتًا أطول من المهلة المحددة. جرّب فترة أقصر أو أعد المحاولة لاحقًا.",
             503,
             {"Retry-After": "5", "Content-Type": "text/plain; charset=utf-8"},
-        )
+        ))
     return response
 
 
