@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}سند قبض {{ receipt.receipt_no }} | NEXUS ERP{% endblock %}
+{% block content %}
+<section class="panel print-document">
+<div class="no-print actions"><button type="button" onclick="window.print()">طباعة سند القبض / PDF</button></div>
+{% set document_title = 'سند قبض عميل' %}{% set document_number = receipt.receipt_no %}{% set document_date = receipt.receipt_date %}
+{% include "partials/print_brand_header.html" %}
+<div class="form-row"><div><b>العميل:</b> {{ receipt.customer_name }} ({{ receipt.customer_code }})</div><div><b>الفاتورة:</b> {{ receipt.invoice_no }}</div><div><b>استلمنا في:</b> {{ receipt.cash_name }} — {{ receipt.cash_code }}</div><div><b>المرجع:</b> {{ receipt.reference or '—' }}</div></div>
+<h2>إجمالي المقبوض: {{ receipt.amount|money }} {{ settings.get('base_currency','') }}</h2>
+<p class="muted">رقم القيد: {{ receipt.journal_entry_id }}</p>
+</section>
+{% endblock %}

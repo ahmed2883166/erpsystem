@@ -1,0 +1,436 @@
+import sqlite3
+import tempfile
+import io
+import unittest
+from decimal import Decimal
+from pathlib import Path
+
+from flask import Flask
+from PIL import Image
+from werkzeug.datastructures import FileStorage
+import workforce
+import workforce_extras
+import payroll_compliance
+from cash_commitments import initialize_cash_commitments_schema, list_cash_commitments_forecast, record_cash_commitment_payment
+
+
+class WorkforceExtrasTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp.name) / "nexus-extras.db"
+        self.original_path = workforce.DB_PATH
+        self.original_compliance_path = payroll_compliance.DB_PATH
+        workforce.DB_PATH = self.db_path
+        payroll_compliance.DB_PATH = self.db_path
+        conn = sqlite3.connect(self.db_path)
+        conn.executescript("""
+            CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,account_type TEXT,
+                is_group INTEGER DEFAULT 0,active INTEGER DEFAULT 1);
+            CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,reference TEXT,
+                description TEXT,status TEXT,created_by INTEGER,created_at TEXT);
+            CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,
+                debit TEXT DEFAULT '0',credit TEXT DEFAULT '0',memo TEXT);
+            CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT NOT NULL);
+            CREATE TABLE cash_accounts(id INTEGER PRIMARY KEY,account_id INTEGER NOT NULL UNIQUE,
+                kind TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1);
+            INSERT INTO company_settings VALUES('tax_country','EG');
+        """)
+        initialize_cash_commitments_schema(conn)
+        conn.commit()
+        conn.close()
+        workforce.initialize_workforce_schema()
+        payroll_compliance.initialize_payroll_compliance_schema()
+        workforce_extras.initialize_workforce_extras_schema()
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours)
+            VALUES('E001','Employee One','2026-01-01','10000','200')""")
+        conn.commit()
+        conn.close()
+        template_dir = Path(self.temp.name) / "templates"
+        template_dir.mkdir()
+        for name, body in {
+            "employee_penalties.html": "{{ rows|length }}",
+            "employee_statement.html": "{{ employee.full_name }}|{{ summary.net }}",
+            "payroll.html": "{{ get_flashed_messages()|join('|') }}",
+            "payroll_run.html": "run",
+            "friday_allowance.html": "friday",
+        }.items():
+            (template_dir / name).write_text(body, encoding="utf-8")
+        self.app = Flask(__name__, template_folder=str(template_dir))
+        self.app.secret_key = "test"
+        self.app.instance_path = str(Path(self.temp.name) / "instance")
+        self.app.static_folder = str(Path(self.temp.name) / "static")
+        self.app.register_blueprint(workforce.workforce_bp)
+        self.client = self.app.test_client()
+        with self.client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "accountant"
+
+    def post_as_user(self, path, data=None, user_id=2, follow_redirects=False):
+        with self.client.session_transaction() as session:
+            session["user_id"] = user_id
+        response = self.client.post(path, data=data or {}, follow_redirects=follow_redirects)
+        with self.client.session_transaction() as session:
+            session["user_id"] = 1
+        return response
+
+    def tearDown(self):
+        workforce.DB_PATH = self.original_path
+        payroll_compliance.DB_PATH = self.original_compliance_path
+        self.temp.cleanup()
+
+    def test_service_duration_is_derived_from_dates_on_a_30_day_basis(self):
+        from datetime import date
+        self.assertEqual(
+            workforce._service_duration_30_day(date(2026, 1, 1), date(2026, 2, 12)),
+            (1, 12),
+        )
+        self.assertEqual(
+            workforce._service_duration_30_day(date(2026, 1, 1), date(2026, 1, 1)),
+            (0, 0),
+        )
+        with self.assertRaises(ValueError):
+            workforce._service_duration_30_day(date(2026, 2, 1), date(2026, 1, 31))
+
+    def test_penalty_requires_approval_and_is_snapshotted_in_payroll(self):
+        response = self.client.post("/hr/penalties", data={
+            "employee_id": "1", "penalty_date": "2026-11-10",
+            "effective_period": "2026-11", "amount": "250",
+            "duration_days": "0", "reason": "جزاء تأخير",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT status FROM employee_penalties").fetchone()[0], "requested")
+        conn.close()
+
+        self.client.post("/hr/penalties/1/decision", data={"decision": "approved"})
+        response = self.client.post("/hr/payroll", data={
+            "period": "2026-11", "basic_1": "10000", "allowances_1": "0",
+            "overtime_hours_1": "0", "overtime_amount_1": "",
+            "overtime_rate_percent_1": "150", "overtime_override_reason_1": "",
+            "absent_hours_1": "0", "absence_deduction_1": "0",
+            "advance_1": "0", "other_deductions_1": "0",
+            "tax_1": "0", "employee_ins_1": "0", "employer_ins_1": "0",
+            "incentives_1": "0",
+        })
+        self.assertEqual(response.status_code, 302, response.get_data(as_text=True))
+        conn = sqlite3.connect(self.db_path)
+        line = conn.execute("SELECT other_deductions,penalty_deduction FROM payroll_lines").fetchone()
+        item = conn.execute("""SELECT item_name,amount FROM payroll_line_items
+            WHERE source_type='employee_penalty'""").fetchone()
+        status = conn.execute("SELECT status FROM employee_penalties").fetchone()[0]
+        conn.close()
+        self.assertEqual(line, ("0.00", "250.00"))
+        self.assertEqual(item, ("جزاء: جزاء تأخير", "250.00"))
+        self.assertEqual(status, "approved")
+
+    def test_full_month_unpaid_leave_is_snapshotted_without_pay_or_deductions(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("UPDATE employees SET work_status='unpaid_leave' WHERE id=1")
+        conn.commit()
+        conn.close()
+        response = self.client.post("/hr/payroll", data={"period":"2026-11"}, follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM payroll_runs").fetchone()[0],1)
+        line = conn.execute("SELECT basic_salary,allowances,gross_pay,net_pay,total_entitlements,total_deductions FROM payroll_lines").fetchone()
+        conn.close()
+        self.assertEqual(line, ("0","0","0","0","0","0"))
+
+    def test_employee_statement_keeps_historical_and_unallocated_payments_distinct(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO payroll_runs(id,period,status,journal_entry_id)
+            VALUES(1,'2026-10','posted',1)""")
+        conn.execute("""INSERT INTO payroll_lines(run_id,employee_id,basic_salary,allowances,overtime_hours,
+            overtime_amount,absent_hours,absence_deduction,other_deductions,taxable_income_tax,
+            employee_insurance,employer_insurance,gross_pay,net_pay)
+            VALUES(1,1,'10000','0','0','0','0','0','0','0','0','0','10000','10000')""")
+        conn.execute("""INSERT INTO payroll_runs(id,period,status,journal_entry_id)
+            VALUES(2,'2026-11','reversed',2)""")
+        conn.execute("""INSERT INTO payroll_lines(run_id,employee_id,basic_salary,allowances,overtime_hours,
+            overtime_amount,absent_hours,absence_deduction,other_deductions,taxable_income_tax,
+            employee_insurance,employer_insurance,gross_pay,net_pay)
+            VALUES(2,1,'7000','0','0','0','0','0','0','0','0','0','7000','7000')""")
+        conn.commit()
+        conn.close()
+        response = self.client.get("/hr/employee/1/statement")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Employee One|10000.00", response.get_data(as_text=True))
+
+
+    def test_employee_edit_persists_basic_variable_and_insured_wages_separately(self):
+        response=self.client.post("/hr/1/edit",data={
+            "employee_code":"E001","full_name":"Employee One","job_title":"محاسب","department":"الحسابات",
+            "hire_date":"2026-01-01","basic_salary":"12000","standard_hours":"208",
+            "variable_salary":"1800","legal_category":"local","insurance_number":"INS-1",
+            "insured_wage":"9500","insurance_enabled":"1","address":"Tanta",
+            "national_id":"12345678901234","work_status":"permanent","raise_type":"fixed",
+            "raise_value":"0","raise_mode":"basic","raise_effective_date":"",
+            "overtime_rate_percent":"150","branch_id":"","cost_center_id":"","project_id":"",
+            "termination_date":""
+        })
+        self.assertEqual(response.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        wages=conn.execute("SELECT basic_salary,variable_salary,insured_wage FROM employees WHERE id=1").fetchone()
+        conn.close()
+        self.assertEqual(wages,("10000","0","0"))
+
+
+    def test_employee_photo_is_decoded_private_and_replaced_safely(self):
+        first_buffer = io.BytesIO()
+        Image.new("RGB", (16, 12), "red").save(first_buffer, format="PNG")
+        with self.app.app_context():
+            first_path = workforce._save_employee_photo(
+                FileStorage(stream=io.BytesIO(first_buffer.getvalue()), filename="profile.png")
+            )
+            first_file = Path(self.app.instance_path) / "uploads" / first_path
+            self.assertTrue(first_file.is_file())
+            self.assertFalse(str(first_file).startswith(str(Path(self.app.static_folder).resolve())))
+
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("UPDATE employees SET photo_path=? WHERE id=1", (first_path,))
+        conn.commit()
+        conn.close()
+
+        second_buffer = io.BytesIO()
+        Image.new("RGB", (20, 20), "blue").save(second_buffer, format="PNG")
+        response = self.client.post("/hr/1/edit", data={
+            "employee_code":"E001","full_name":"Employee One","job_title":"محاسب","department":"الحسابات",
+            "hire_date":"2026-01-01","basic_salary":"12000","standard_hours":"208",
+            "variable_salary":"1800","legal_category":"local","insurance_number":"INS-1",
+            "insured_wage":"9500","insurance_enabled":"1","address":"Tanta",
+            "national_id":"12345678901234","work_status":"permanent","raise_type":"fixed",
+            "raise_value":"0","raise_mode":"basic","raise_effective_date":"",
+            "overtime_rate_percent":"150","branch_id":"","cost_center_id":"","project_id":"",
+            "termination_date":"",
+            "photo":(io.BytesIO(second_buffer.getvalue()), "new-profile.png"),
+        }, content_type="multipart/form-data")
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        second_path = conn.execute("SELECT photo_path FROM employees WHERE id=1").fetchone()[0]
+        conn.close()
+        self.assertNotEqual(second_path, first_path)
+        self.assertFalse(first_file.exists())
+        image_response = self.client.get("/hr/1/photo")
+        self.assertEqual(image_response.status_code, 200)
+        self.assertEqual(image_response.mimetype, "image/jpeg")
+        self.assertEqual(image_response.headers.get("Cache-Control"), "private, no-store")
+        self.assertIn(b"JFIF", image_response.data[:20])
+
+    def test_legacy_employee_photo_is_not_public_and_migrates_on_authenticated_view(self):
+        legacy_dir = Path(self.app.static_folder) / "uploads" / "employees"
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        legacy_file = legacy_dir / "legacy.png"
+        Image.new("RGB", (12, 12), "green").save(legacy_file, format="PNG")
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("UPDATE employees SET photo_path='uploads/employees/legacy.png' WHERE id=1")
+        conn.commit()
+        conn.close()
+
+        blocked = self.client.get("/static/uploads/employees/legacy.png")
+        self.assertEqual(blocked.status_code, 404)
+        viewed = self.client.get("/hr/1/photo")
+        self.assertEqual(viewed.status_code, 200)
+        self.assertEqual(viewed.mimetype, "image/jpeg")
+        self.assertFalse(legacy_file.exists())
+        conn = sqlite3.connect(self.db_path)
+        migrated = conn.execute("SELECT photo_path FROM employees WHERE id=1").fetchone()[0]
+        conn.close()
+        self.assertTrue(migrated.startswith("employees/"))
+        self.assertTrue(migrated.endswith(".jpg"))
+
+    def test_employee_photo_rejects_fake_image_payload_even_with_image_extension(self):
+        with self.app.app_context():
+            with self.assertRaisesRegex(ValueError, "تعذر قراءة الصورة"):
+                workforce._save_employee_photo(
+                    FileStorage(stream=io.BytesIO(b"not-an-image"), filename="fake.jpg")
+                )
+
+    def test_independent_employee_grant_snapshots_calculation_and_posts_two_journals(self):
+        conn=sqlite3.connect(self.db_path)
+        conn.executemany("""INSERT INTO accounts(id,code,name_ar,account_type,is_group,active)
+            VALUES(?,?,?,?,0,1)""",[
+            (1,"1000","الصندوق","asset"),
+            (2,"5000","مصروف المنح","expense"),
+            (3,"2100","منح مستحقة","liability"),
+        ])
+        conn.commit(); conn.close()
+        self.client.post("/hr/grants/types",data={"name":"منحة رمضان"})
+        response=self.client.post("/hr/grants/create",data={
+            "grant_type_id":"1","grant_date":"2026-11-14","calculation_method":"per_day",
+            "calculation_value":"0","days_count":"5","expense_account_id":"2",
+            "payable_account_id":"3","employee_ids":["1"],"notes":"اختبار"
+        })
+        self.assertEqual(response.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        grant=conn.execute("SELECT total_amount,status FROM employee_grants WHERE id=1").fetchone()
+        line=conn.execute("SELECT basic_salary_snapshot,amount,paid_amount FROM employee_grant_lines WHERE grant_id=1").fetchone()
+        conn.execute("UPDATE employees SET basic_salary='12000' WHERE id=1")
+        conn.commit(); conn.close()
+        self.assertEqual(grant,("1666.67","draft"))
+        self.assertEqual(line,("10000.00","1666.67","0"))
+        approved=self.post_as_user("/hr/grants/1/approve",data={})
+        self.assertEqual(approved.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        journal=conn.execute("SELECT status FROM journal_entries WHERE reference='EMP-GRANT-1'").fetchone()
+        journal_lines=conn.execute("SELECT account_id,debit,credit FROM journal_lines WHERE entry_id=(SELECT journal_entry_id FROM employee_grants WHERE id=1) ORDER BY id").fetchall()
+        conn.close()
+        self.assertEqual(journal,("posted",))
+        self.assertEqual(journal_lines,[(2,"1666.67","0.00"),(3,"0.00","1666.67")])
+        blocked_payment=self.post_as_user("/hr/grants/1/pay",data={
+            "amount":"500","payment_date":"2026-11-15","cash_account_id":"1"
+        })
+        self.assertEqual(blocked_payment.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM employee_grant_payments WHERE grant_id=1").fetchone()[0],0)
+        conn.close()
+        paid=self.client.post("/hr/grants/1/pay",data={
+            "amount":"500","payment_date":"2026-11-15","cash_account_id":"1"
+        })
+        self.assertEqual(paid.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        grant_status=conn.execute("SELECT status FROM employee_grants WHERE id=1").fetchone()[0]
+        paid_line=conn.execute("SELECT paid_amount FROM employee_grant_lines WHERE grant_id=1").fetchone()[0]
+        payment_lines=conn.execute("SELECT account_id,debit,credit FROM journal_lines WHERE entry_id=(SELECT journal_entry_id FROM employee_grant_payments WHERE grant_id=1) ORDER BY id").fetchall()
+        conn.close()
+        self.assertEqual(grant_status,"partially_paid")
+        self.assertEqual(paid_line,"500.00")
+        self.assertEqual(payment_lines,[(3,"500.00","0.00"),(1,"0.00","500.00")])
+
+
+    def test_monthly_attendance_matrix_saves_multiple_days_and_leave_statuses(self):
+        response=self.client.post("/hr/attendance",data={
+            "save_month":"1","month":"2026-11",
+            "status_1_1":"present","check_in_1_1":"08:00","check_out_1_1":"16:00",
+            "status_1_2":"absent","absence_1_2":"8",
+            "status_1_3":"unpaid_leave",
+        })
+        self.assertEqual(response.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        rows=conn.execute("SELECT attendance_date,status,check_in,check_out,absence_hours FROM attendance_records ORDER BY attendance_date").fetchall()
+        conn.close()
+        self.assertEqual(rows,[
+            ("2026-11-01","present","08:00","16:00","0.00"),
+            ("2026-11-02","absent","","","8.00"),
+            ("2026-11-03","unpaid_leave","","","0.00"),
+        ])
+
+
+    def test_friday_allowance_uses_basic_salary_only_and_posts_accrual_once(self):
+        conn=sqlite3.connect(self.db_path)
+        conn.executemany("""INSERT INTO accounts(id,code,name_ar,account_type,is_group,active)
+            VALUES(?,?,?,?,0,1)""",[
+            (1,"1000","الصندوق","asset"),
+            (2,"5200","مصروف أجور إضافية","expense"),
+            (3,"2200","أجور إضافية مستحقة","liability"),
+        ])
+        conn.execute("UPDATE employees SET friday_work_eligible=1,variable_salary='5000',insured_wage='8000' WHERE id=1")
+        conn.executemany("""INSERT INTO attendance_records(employee_id,attendance_date,status,check_in,check_out)
+            VALUES(1,? ,?,'08:00','16:00')""",[
+            ("2026-11-06","present"),("2026-11-13","present"),
+            ("2026-11-20","absent"),("2026-11-07","present"),
+        ])
+        conn.commit(); conn.close()
+        prepared=self.client.post("/hr/friday-allowance",data={
+            "period":"2026-11","expense_account_id":"2","payable_account_id":"3",
+            "employee_ids":["1"]
+        })
+        self.assertEqual(prepared.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        batch=conn.execute("SELECT id,status,total_amount FROM friday_allowance_batches WHERE period='2026-11'").fetchone()
+        line=conn.execute("""SELECT basic_salary_snapshot,attendance_days,amount
+            FROM friday_allowance_lines WHERE batch_id=?""",(batch[0],)).fetchone()
+        conn.close()
+        self.assertEqual(batch, (1,"draft","1333.33"))
+        self.assertEqual(line,("10000.00",2,"1333.33"))
+        approved=self.post_as_user("/hr/friday-allowance/1/approve",data={"reason":"تمت مراجعة كشف الحضور"})
+        self.assertEqual(approved.status_code,302)
+        posted=self.post_as_user("/hr/friday-allowance/1/post",data={})
+        self.assertEqual(posted.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        status,journal_id=conn.execute("SELECT status,journal_entry_id FROM friday_allowance_batches WHERE id=1").fetchone()
+        journal=conn.execute("SELECT reference,status,entry_date FROM journal_entries WHERE id=?",(journal_id,)).fetchone()
+        journal_lines=conn.execute("""SELECT account_id,debit,credit FROM journal_lines
+            WHERE entry_id=? ORDER BY id""",(journal_id,)).fetchall()
+        conn.close()
+        with self.client.session_transaction() as session:
+            post_messages = session.get("_flashes", [])
+        self.assertEqual(status,"posted",repr(post_messages))
+        self.assertEqual(journal,("FRIDAY-ALLOWANCE-2026-11","posted","2026-11-30"))
+        self.assertEqual(journal_lines,[(2,"1333.33","0.00"),(3,"0.00","1333.33")])
+        conn=sqlite3.connect(self.db_path)
+        commitment=conn.execute("""SELECT commitment_type,title,amount,due_date,origin_type,origin_id,payable_account_id
+            FROM cash_commitments""").fetchone()
+        self.assertEqual(commitment,("friday_overtime","بدل الجمعة - 2026-11","1333.33",
+            "2026-11-30","friday_allowance_batch",1,3))
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM cash_commitment_payments").fetchone()[0],0)
+        payment_conn=workforce._db()
+        with self.assertRaisesRegex(ValueError,"مدين كافٍ"):
+            record_cash_commitment_payment(
+                payment_conn,1,"2026-11-30","1333.33",journal_id,
+                payable_account_id=3,
+            )
+        payment_conn.close()
+        forecast_conn=sqlite3.connect(self.db_path)
+        forecast_conn.row_factory=sqlite3.Row
+        forecast=list_cash_commitments_forecast(forecast_conn,"2026-11-01","2026-12-31")
+        self.assertEqual(forecast[0]["balance"],Decimal("1333.33"))
+        forecast_conn.close()
+        duplicate=self.post_as_user("/hr/friday-allowance/1/post",data={})
+        self.assertEqual(duplicate.status_code,302)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries WHERE reference='FRIDAY-ALLOWANCE-2026-11'").fetchone()[0],1)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM cash_commitments WHERE origin_type='friday_allowance_batch' AND origin_id=1").fetchone()[0],1)
+        conn.close()
+
+
+    def test_friday_allowance_supports_individual_days_and_deduplicates_employees(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.executemany("""INSERT INTO accounts(id,code,name_ar,account_type,is_group,active)
+            VALUES(?,?,?,?,0,1)""", [
+            (1, "1000", "الصندوق", "asset"),
+            (2, "5200", "مصروف أجور إضافية", "expense"),
+            (3, "2200", "أجور إضافية مستحقة", "liability"),
+        ])
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,
+            friday_work_eligible) VALUES('E002','Employee Two','2026-01-01','6000','200',1)""")
+        conn.execute("UPDATE employees SET friday_work_eligible=1 WHERE id=1")
+        fridays = ["2026-11-06", "2026-11-13", "2026-11-20", "2026-11-27"]
+        conn.executemany("""INSERT INTO attendance_records(employee_id,attendance_date,status,check_in,check_out)
+            VALUES(?,?,?,?,?)""", [(1, day, "present", "08:00", "16:00") for day in fridays[:2]] +
+            [(2, day, "present", "08:00", "16:00") for day in fridays])
+        conn.commit()
+        conn.close()
+
+        response = self.client.post("/hr/friday-allowance", data={
+            "period": "2026-11", "expense_account_id": "2", "payable_account_id": "3",
+            "employee_ids": ["1", "1", "2"],
+            "attendance_days_1": "2", "attendance_days_2": "4",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        rows = conn.execute("""SELECT employee_id,attendance_days,amount FROM friday_allowance_lines
+            ORDER BY employee_id""").fetchall()
+        batch_total = conn.execute("SELECT total_amount FROM friday_allowance_batches").fetchone()[0]
+        conn.close()
+        self.assertEqual(rows, [(1, 2, "1333.33"), (2, 4, "1600.00")])
+        self.assertEqual(batch_total, "2933.33")
+
+    def test_employee_friday_allowance_flag_is_saved_from_management_choice(self):
+        response=self.client.post("/hr/1/edit",data={
+            "employee_code":"E001","full_name":"Employee One","job_title":"محاسب","department":"الحسابات",
+            "hire_date":"2026-01-01","basic_salary":"10000","standard_hours":"208",
+            "variable_salary":"0","legal_category":"local","insurance_number":"INS-1",
+            "insured_wage":"8000","insurance_enabled":"1","address":"Tanta",
+            "national_id":"12345678901234","work_status":"permanent","raise_type":"fixed",
+            "raise_value":"0","raise_mode":"basic","raise_effective_date":"",
+            "overtime_rate_percent":"150","branch_id":"","cost_center_id":"","project_id":"",
+            "termination_date":"","friday_work_eligible":"1"
+        })
+        self.assertEqual(response.status_code,302)
+        conn=sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT friday_work_eligible FROM employees WHERE id=1").fetchone()[0],1)
+        conn.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

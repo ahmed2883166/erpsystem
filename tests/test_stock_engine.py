@@ -1,0 +1,372 @@
+import tempfile
+from datetime import date
+import unittest
+from decimal import Decimal
+from unittest.mock import patch
+from pathlib import Path
+import stock
+
+
+class StockValuationTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        stock.DB_PATH = Path(self.tmp.name) / "test.db"
+        stock.initialize_stock_schema()
+        self.db = stock.get_db()
+        self.db.execute("INSERT INTO stock_products(sku,name_ar) VALUES('P1','منتج اختبار')")
+        self.product_id = self.db.execute("SELECT id FROM stock_products").fetchone()["id"]
+        self.db.execute("INSERT INTO stock_warehouses(code,name_ar) VALUES('W1','مخزن اختبار')")
+        self.warehouse_id = self.db.execute("SELECT id FROM stock_warehouses").fetchone()["id"]
+        self.db.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,quantity,unit_cost,total_cost,movement_date)
+                           VALUES('R1','receipt',?,?, '100','10','1000','2026-01-01')""",
+                        (self.product_id,self.warehouse_id))
+        movement_id = self.db.execute("SELECT id FROM stock_movements WHERE movement_no='R1'").fetchone()["id"]
+        self.db.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost)
+                           VALUES(?,?,?,'100','100','10')""",(self.product_id,self.warehouse_id,movement_id))
+        self.db.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,quantity,unit_cost,total_cost,movement_date)
+                           VALUES('R2','receipt',?,?, '100','14','1400','2026-01-02')""",
+                        (self.product_id,self.warehouse_id))
+        movement_id = self.db.execute("SELECT id FROM stock_movements WHERE movement_no='R2'").fetchone()["id"]
+        self.db.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost)
+                           VALUES(?,?,?,'100','100','14')""",(self.product_id,self.warehouse_id,movement_id))
+
+    def test_schema_reinitialization_preserves_revalued_layer_value(self):
+        layer_id = self.db.execute(
+            "SELECT id FROM stock_valuation_layers WHERE product_id=? ORDER BY id LIMIT 1",
+            (self.product_id,),
+        ).fetchone()["id"]
+        self.db.execute(
+            "UPDATE stock_valuation_layers SET value_remaining='1100.25' WHERE id=?",
+            (layer_id,),
+        )
+        self.db.commit()
+
+        # Startup migration must not reset a moving-average layer to its receipt cost.
+        stock.initialize_stock_schema()
+
+        check = stock.get_db()
+        try:
+            value = check.execute(
+                "SELECT value_remaining FROM stock_valuation_layers WHERE id=?",
+                (layer_id,),
+            ).fetchone()["value_remaining"]
+        finally:
+            check.close()
+        self.assertEqual(value, "1100.25")
+
+    def tearDown(self):
+        self.db.close()
+        self.tmp.cleanup()
+
+    def test_product_uom_options_reads_custom_code_column(self):
+        unit=self.db.execute(
+            "SELECT id,category_id FROM stock_uoms WHERE code='PCS'"
+        ).fetchone()
+        self.db.execute(
+            "UPDATE stock_products SET base_uom_id=? WHERE id=?",
+            (unit["id"],self.product_id)
+        )
+        self.db.execute("""INSERT INTO stock_product_uoms(
+            product_id,uom_id,custom_code,custom_name,factor_to_base,is_base,
+            purchase_enabled,sales_enabled)
+            VALUES(?,?, 'PCS-CUSTOM','قطعة مخصصة','1',1,1,1)""",
+            (self.product_id,unit["id"]))
+        options=stock.product_uom_options(self.db,self.product_id)
+        self.assertTrue(any(
+            option["code"]=="PCS-CUSTOM" and option["name_ar"]=="قطعة مخصصة"
+            for option in options
+        ))
+
+    def test_fifo_cost(self):
+        cost, allocations = stock.consume_layers(self.db,self.product_id,self.warehouse_id,stock.D("50"),"fifo")
+        self.assertEqual(cost, stock.D("500.00"))
+        self.assertEqual(allocations[0][2], stock.D("10"))
+
+    def test_moving_average_cost(self):
+        cost, allocations = stock.consume_layers(self.db,self.product_id,self.warehouse_id,stock.D("50"),"average")
+        self.assertEqual(cost, stock.D("600.00"))
+        remaining = self.db.execute(
+            "SELECT qty_remaining,value_remaining FROM stock_valuation_layers ORDER BY id"
+        ).fetchall()
+        self.assertEqual(
+            [(stock.D(row["qty_remaining"]), stock.D(row["value_remaining"])) for row in remaining],
+            [(stock.D("50"), stock.D("600.00")), (stock.D("100"), stock.D("1200.00"))],
+        )
+
+    def test_moving_average_cost_applies_average_when_entire_first_layer_is_consumed(self):
+        cost, allocations = stock.consume_layers(
+            self.db, self.product_id, self.warehouse_id, stock.D("100"), "average"
+        )
+        self.assertEqual(cost, stock.D("1200.00"))
+        self.assertEqual(sum((row[3] for row in allocations), stock.D("0")), cost)
+        remaining = self.db.execute(
+            "SELECT qty_remaining,value_remaining FROM stock_valuation_layers ORDER BY id"
+        ).fetchall()
+        self.assertEqual(
+            [(stock.D(row["qty_remaining"]), stock.D(row["value_remaining"])) for row in remaining],
+            [(stock.D("0"), stock.D("0")), (stock.D("100"), stock.D("1200.00"))],
+        )
+
+    def test_moving_average_allocations_reconcile_when_issue_spans_layers(self):
+        cost, allocations = stock.consume_layers(
+            self.db, self.product_id, self.warehouse_id, stock.D("150"), "average"
+        )
+        self.assertEqual(cost, stock.D("1800.00"))
+        self.assertEqual(sum((row[3] for row in allocations), stock.D("0")), cost)
+
+
+    def test_negative_stock_is_rejected(self):
+        with self.assertRaisesRegex(ValueError,"الرصيد غير كافٍ"):
+            stock.consume_layers(self.db,self.product_id,self.warehouse_id,stock.D("201"),"fifo")
+
+
+    def test_interbranch_transfer_posts_destination_debit_and_source_credit(self):
+        self.db.execute("""CREATE TABLE accounts(
+            id INTEGER PRIMARY KEY,code TEXT,is_group INTEGER,active INTEGER,account_type TEXT)""")
+        self.db.execute("INSERT INTO accounts VALUES(1,'1185',0,1,'asset')")
+        source_branch=self.db.execute(
+            "INSERT INTO branches(code,name_ar) VALUES('BR-A','فرع أ')"
+        ).lastrowid
+        target_branch=self.db.execute(
+            "INSERT INTO branches(code,name_ar) VALUES('BR-B','فرع ب')"
+        ).lastrowid
+        movement_id=self.db.execute("""INSERT INTO stock_movements(
+            movement_no,movement_type,product_id,source_warehouse_id,target_warehouse_id,
+            quantity,unit_cost,total_cost,movement_date)
+            VALUES('TR-BR-1','transfer',?,?,?,'4','25','100','2026-11-14')""",
+            (self.product_id,self.warehouse_id,self.warehouse_id)).lastrowid
+        with patch("stock.post_journal",return_value=991) as post:
+            result=stock.post_interbranch_transfer_journal(
+                self.db,movement_id,"TR-BR-1",{"name_ar":"صنف اختبار"},
+                "2026-11-14",Decimal("100"),7,source_branch,target_branch
+            )
+        self.assertEqual(result,991)
+        lines=post.call_args.args[4]
+        self.assertEqual(lines[0][1:3],(Decimal("100.00"),0))
+        self.assertEqual(lines[0][4],{"branch_id":target_branch})
+        self.assertEqual(lines[1][1:3],(0,Decimal("100.00")))
+        self.assertEqual(lines[1][4],{"branch_id":source_branch})
+        saved=self.db.execute(
+            "SELECT journal_entry_id,accounting_status,accounting_note FROM stock_movements WHERE id=?",
+            (movement_id,)
+        ).fetchone()
+        self.assertEqual(saved["journal_entry_id"],991)
+        self.assertEqual(saved["accounting_status"],"posted")
+
+    def test_same_branch_transfer_remains_non_posting(self):
+        movement_id=self.db.execute("""INSERT INTO stock_movements(
+            movement_no,movement_type,product_id,source_warehouse_id,target_warehouse_id,
+            quantity,unit_cost,total_cost,movement_date)
+            VALUES('TR-SAME','transfer',?,?,?,'1','10','10','2026-11-14')""",
+            (self.product_id,self.warehouse_id,self.warehouse_id)).lastrowid
+        with patch("stock.post_journal") as post:
+            result=stock.post_interbranch_transfer_journal(
+                self.db,movement_id,"TR-SAME",{"name_ar":"صنف اختبار"},
+                "2026-11-14",Decimal("10"),7,3,3
+            )
+        self.assertIsNone(result)
+        post.assert_not_called()
+        self.assertEqual(self.db.execute(
+            "SELECT accounting_status FROM stock_movements WHERE id=?",(movement_id,)
+        ).fetchone()["accounting_status"],"not_required")
+
+    def test_reorder_alerts_are_scoped_to_each_warehouse(self):
+        second_wh=self.db.execute(
+            "INSERT INTO stock_warehouses(code,name_ar) VALUES('W-SECOND','مخزن ثاني')"
+        ).lastrowid
+        second_move=self.db.execute("""INSERT INTO stock_movements(
+            movement_no,movement_type,product_id,target_warehouse_id,quantity,
+            unit_cost,total_cost,movement_date)
+            VALUES('R-SECOND','receipt',? ,?,'100','10','1000','2026-11-14')""",
+            (self.product_id,second_wh)).lastrowid
+        self.db.execute("""INSERT INTO stock_valuation_layers(
+            product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost,value_remaining)
+            VALUES(?,?,?,'100','100','10','1000')""",
+            (self.product_id,second_wh,second_move))
+        self.db.execute("""INSERT INTO stock_warehouse_product_settings(
+            product_id,warehouse_id,min_qty,reorder_point,reorder_qty)
+            VALUES(?,?, '5','250','20'),(?,?, '10','80','30')""",
+            (self.product_id,self.warehouse_id,self.product_id,second_wh))
+        totals={
+            (self.product_id,self.warehouse_id):{"qty":Decimal("200")},
+            (self.product_id,second_wh):{"qty":Decimal("100")},
+        }
+        alerts=stock.calculate_warehouse_reorder_alerts(self.db,totals)
+        self.assertEqual(len(alerts),1)
+        self.assertEqual(alerts[0]["warehouse_code"],"W1")
+        self.assertEqual(alerts[0]["qty"],Decimal("200"))
+        self.assertEqual(alerts[0]["point"],Decimal("250"))
+
+    def test_minimum_stock_is_used_when_reorder_point_is_zero(self):
+        self.db.execute("""INSERT INTO stock_warehouse_product_settings(
+            product_id,warehouse_id,min_qty,reorder_point,reorder_qty)
+            VALUES(?,?, '8','0','0')""",(self.product_id,self.warehouse_id))
+        alerts=stock.calculate_warehouse_reorder_alerts(
+            self.db,{(self.product_id,self.warehouse_id):{"qty":Decimal("4")}}
+        )
+        self.assertEqual(len(alerts),1)
+        self.assertEqual(alerts[0]["point"],Decimal("8"))
+        self.assertEqual(alerts[0]["suggested"],Decimal("8"))
+
+    def test_default_product_location_rejects_location_from_another_warehouse(self):
+        second_wh=self.db.execute(
+            "INSERT INTO stock_warehouses(code,name_ar) VALUES('W2','مخزن آخر')"
+        ).lastrowid
+        first_loc=self.db.execute("""INSERT INTO stock_locations(
+            warehouse_id,code,name_ar,location_type) VALUES(?,'F1','دور 1','floor')""",
+            (self.warehouse_id,)).lastrowid
+        with self.assertRaisesRegex(Exception,"موقع الصنف الافتراضي"):
+            self.db.execute("""INSERT INTO stock_product_locations(
+                product_id,warehouse_id,location_id,is_default) VALUES(?,?,?,1)""",
+                (self.product_id,second_wh,first_loc))
+
+
+    def test_issue_without_purpose_is_marked_pending_not_posted(self):
+        self.db.execute("""CREATE TABLE company_settings(
+            setting_key TEXT PRIMARY KEY,setting_value TEXT)""")
+        movement_id=self.db.execute("""INSERT INTO stock_movements(
+            movement_no,movement_type,product_id,source_warehouse_id,quantity,
+            unit_cost,total_cost,movement_date,accounting_status)
+            VALUES('ISSUE-NO-PURPOSE','issue',?,?,'1','10','10','2026-11-14','pending')""",
+            (self.product_id,self.warehouse_id)).lastrowid
+        result=stock.post_issue_journal(
+            self.db,movement_id,"ISSUE-NO-PURPOSE",{"id":self.product_id,"name_ar":"منتج اختبار"},
+            "2026-11-14",Decimal("10"),7,None
+        )
+        self.assertIsNone(result)
+        saved=self.db.execute(
+            "SELECT journal_entry_id,accounting_status,accounting_note FROM stock_movements WHERE id=?",
+            (movement_id,)
+        ).fetchone()
+        self.assertIsNone(saved["journal_entry_id"])
+        self.assertEqual(saved["accounting_status"],"pending_purpose")
+        self.assertIn("حدد غرض الصرف",saved["accounting_note"])
+
+    def test_issue_journal_posting_is_idempotent(self):
+        movement_id=self.db.execute("""INSERT INTO stock_movements(
+            movement_no,movement_type,product_id,quantity,unit_cost,total_cost,
+            movement_date,journal_entry_id,accounting_status)
+            VALUES('ISSUE-ALREADY-POSTED','issue',?,'1','10','10','2026-11-14',456,'posted')""",
+            (self.product_id,)).lastrowid
+        with patch("stock.post_journal") as post:
+            result=stock.post_issue_journal(
+                self.db,movement_id,"ISSUE-ALREADY-POSTED",
+                {"id":self.product_id,"name_ar":"منتج اختبار"},
+                "2026-11-14",Decimal("10"),7,"sale"
+            )
+        self.assertEqual(result,456)
+        post.assert_not_called()
+
+
+    def test_current_qty_is_scoped_to_warehouse_and_lot(self):
+        second_wh=self.db.execute(
+            "INSERT INTO stock_warehouses(code,name_ar) VALUES('W-QTY-2','مخزن كمية 2')"
+        ).lastrowid
+        lot_a=self.db.execute(
+            "INSERT INTO stock_lots(product_id,lot_number) VALUES(?,'LOT-A')",
+            (self.product_id,)
+        ).lastrowid
+        lot_b=self.db.execute(
+            "INSERT INTO stock_lots(product_id,lot_number) VALUES(?,'LOT-B')",
+            (self.product_id,)
+        ).lastrowid
+
+        movements=[
+            ("QTY-R-A","receipt",None,self.warehouse_id,lot_a,"10.1250"),
+            ("QTY-R-B","receipt",None,second_wh,lot_a,"100"),
+            ("QTY-I-A","issue",self.warehouse_id,None,lot_a,"2.0250"),
+            ("QTY-S-B","scrap",self.warehouse_id,None,lot_b,"1"),
+            ("QTY-T-A","transfer",self.warehouse_id,second_wh,lot_a,"3.1000"),
+            ("QTY-R-NULL","receipt",None,self.warehouse_id,None,"7"),
+        ]
+        for no,kind,source,target,lot,qty in movements:
+            self.db.execute(
+                """INSERT INTO stock_movements(
+                    movement_no,movement_type,product_id,source_warehouse_id,
+                    target_warehouse_id,lot_id,quantity,unit_cost,total_cost,movement_date)
+                   VALUES(?,?,?,?,?,?,?,'1',?,'2026-11-15')""",
+                (no,kind,self.product_id,source,target,lot,qty,qty)
+            )
+
+        self.assertEqual(
+            stock.current_qty(self.db,self.product_id,self.warehouse_id,lot_a),
+            Decimal("5.0000")
+        )
+        self.assertEqual(
+            stock.current_qty(self.db,self.product_id,second_wh,lot_a),
+            Decimal("103.1000")
+        )
+        self.assertEqual(
+            stock.current_qty(self.db,self.product_id,self.warehouse_id,lot_b),
+            Decimal("-1")
+        )
+        # Omitting lot_id means the total across all lots in this warehouse.
+        self.assertEqual(
+            stock.current_qty(self.db,self.product_id,self.warehouse_id),
+            Decimal("207")
+        )
+
+
+    def test_demand_forecast_subtracts_posted_returns_and_suggests_replenishment(self):
+        today = date.today()
+        start = (today - date.resolution * 89).isoformat()
+        self.db.executescript("""
+            CREATE TABLE sales_invoices(
+                id INTEGER PRIMARY KEY,warehouse_id INTEGER,status TEXT,invoice_date TEXT
+            );
+            CREATE TABLE sales_invoice_lines(
+                id INTEGER PRIMARY KEY,invoice_id INTEGER,product_id INTEGER,quantity TEXT
+            );
+            CREATE TABLE sales_credit_notes(
+                id INTEGER PRIMARY KEY,invoice_id INTEGER,status TEXT,credit_date TEXT
+            );
+            CREATE TABLE sales_credit_note_lines(
+                id INTEGER PRIMARY KEY,credit_note_id INTEGER,product_id INTEGER,quantity TEXT
+            );
+        """)
+        self.db.execute(
+            "INSERT INTO sales_invoices VALUES(1,?,'posted',?)",
+            (self.warehouse_id, start),
+        )
+        self.db.execute(
+            "INSERT INTO sales_invoice_lines VALUES(1,1,?,'90')",
+            (self.product_id,),
+        )
+        self.db.execute(
+            "INSERT INTO sales_credit_notes VALUES(1,1,'posted',?)",
+            (today.isoformat(),),
+        )
+        self.db.execute(
+            "INSERT INTO sales_credit_note_lines VALUES(1,1,?,'9')",
+            (self.product_id,),
+        )
+        products = {
+            row["id"]: row for row in self.db.execute(
+                "SELECT id,sku,name_ar,uom FROM stock_products"
+            ).fetchall()
+        }
+        forecast, available = stock.build_demand_replenishment_forecast(
+            self.db,
+            {(self.product_id, self.warehouse_id): {"qty": Decimal("18")}},
+            products,
+            today,
+        )
+        self.assertTrue(available)
+        self.assertEqual(len(forecast), 1)
+        row = forecast[0]
+        self.assertEqual(row["net_sold_qty"], Decimal("81"))
+        self.assertEqual(row["daily_demand"], Decimal("0.9"))
+        self.assertEqual(row["coverage_days"], Decimal("20"))
+        self.assertEqual(row["suggested_qty"], Decimal("0.9"))
+        self.assertEqual(row["priority"], "مراقبة")
+
+    def test_demand_forecast_is_unavailable_without_sales_schema(self):
+        forecast, available = stock.build_demand_replenishment_forecast(
+            self.db, {}, {}, date.today()
+        )
+        self.assertEqual(forecast, [])
+        self.assertFalse(available)
+
+
+if __name__ == "__main__":
+    unittest.main()

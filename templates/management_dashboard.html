@@ -1,0 +1,231 @@
+{% extends 'base.html' %}
+{% block title %}لوحة الإدارة | NEXUS ERP
+{% endblock %}
+{% block content %}
+<style>
+.chart-row{display:flex;justify-content:space-between;gap:12px;margin:10px 0 4px;font-size:.92rem}
+.chart-row a{text-decoration:none}
+.chart-track{height:9px;background:var(--panel-border,#ddd);border-radius:8px;overflow:hidden;margin-bottom:12px}
+.chart-fill{display:block;height:100%;border-radius:8px}
+.revenue-fill{background:#16a34a}.expense-fill{background:#d97706}
+</style>
+{% macro delta(value, good_when_up=True) -%}
+  {%- if value is none -%}<span class="muted">—</span>
+  {%- else -%}
+    {%- set up = value >= 0 -%}
+    {%- set good = (up and good_when_up) or (not up and not good_when_up) -%}
+    <span class="{{ 'success' if good else 'danger' }}">{{ '▲' if up else '▼' }} {{ '%.2f'|format(value|abs) }}%</span>
+  {%- endif -%}
+{%- endmacro %}
+{% macro money(value) -%}{{ '%.2f'|format(value) }} {{ s.base_currency }}{%- endmacro %}
+{% macro ratio(value) -%}{% if value is none %}—{% else %}{{ '%.2f'|format(value) }} مرة{% endif %}{%- endmacro %}
+{% macro percent(value) -%}{% if value is none %}—{% else %}{{ '%.2f'|format(value) }}%{% endif %}{%- endmacro %}
+
+<header class="page-heading management-dashboard-heading">
+  <div>
+    <h2>لوحة الإدارة</h2>
+    <p class="muted">{{ s.company_name }} · النشاط: {{ {'commercial':'تجاري','service':'خدمي','medical':'طبي','restaurant':'مطاعم','industrial':'صناعي'}.get(s.activity,s.activity) }} · العملة الأساسية: {{ s.base_currency }}</p>
+    <p class="muted">الفترة {{ date_from }} — {{ date_to }} · مقارنة بالفترة {{ s.prev_start.isoformat() }} — {{ s.prev_end.isoformat() }}</p>
+    <div class="actions page-shortcuts-inline no-print">{% if 'budget.view' in permissions %}<a class="button-link" href="{{ url_for('planning.budget_index') }}">الموازنات</a>{% endif %}<a class="button-link" href="{{ url_for('planning.balance_sheet') }}">الميزانية العمومية</a>{% if 'cashflow.view' in permissions or 'reports.view' in permissions %}<a class="button-link" href="{{ url_for('planning.cash_flow') }}">التدفقات النقدية</a>{% endif %}{% if 'accounts.manage' in permissions %}<a class="button-link" href="{{ url_for('management_account_mapping') }}">ربط الحسابات</a><a class="button-link" href="{{ url_for('analytic_dimensions_settings') }}">إدارة الأبعاد التحليلية</a>{% endif %}</div>
+  </div>
+</header>
+
+<section class="panel no-print">
+  <form method="get" class="report-filter management-dashboard-filter">
+    <label>من تاريخ<input type="date" name="date_from" value="{{ date_from }}" required></label>
+    <label>إلى تاريخ<input type="date" name="date_to" value="{{ date_to }}" required></label>
+    <label>الفرع<select name="branch_id"><option value="">كل الفروع</option>{% for x in dimension_options.branches %}<option value="{{ x.id }}" {% if selected_dimensions.get('branch_id') == x.id %}selected{% endif %}>{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
+    <label>مركز التكلفة<select name="cost_center_id"><option value="">كل المراكز</option>{% for x in dimension_options.cost_centers %}<option value="{{ x.id }}" {% if selected_dimensions.get('cost_center_id') == x.id %}selected{% endif %}>{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
+    <label>المشروع<select name="project_id"><option value="">كل المشروعات</option>{% for x in dimension_options.projects %}<option value="{{ x.id }}" {% if selected_dimensions.get('project_id') == x.id %}selected{% endif %}>{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
+    <label>العميل<select name="customer_id"><option value="">كل العملاء</option>{% for x in dimension_options.customers %}<option value="{{ x.id }}" {% if selected_dimensions.get('customer_id') == x.id %}selected{% endif %}>{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
+    <label>مندوب المبيعات<select name="salesperson_id"><option value="">كل المندوبين</option>{% for x in dimension_options.salespersons %}<option value="{{ x.id }}" {% if selected_dimensions.get('salesperson_id') == x.id %}selected{% endif %}>{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
+    <button type="submit">تطبيق الفلاتر</button>
+  </form>
+</section>
+
+<section class="panel management-report-shortcuts">
+  <h3>التقارير الإدارية التفصيلية</h3>
+  <p class="muted">اضغط على التقرير للانتقال من المؤشر العام إلى التفاصيل ومراجعة مصدر الأرقام.</p>
+  <div class="actions">
+    <a class="button-link" href="{{ url_for('period_comparison_report', date_from=date_from, date_to=date_to) }}">مقارنة الفترات</a>
+    <a class="button-link" href="{{ url_for('profitability_report', date_from=date_from, date_to=date_to) }}">ربحية الفروع ومراكز التكلفة والمخازن</a>
+    {% if 'stock.view' in permissions %}<a class="button-link" href="{{ url_for('inventory_ageing_report', as_of=date_to) }}">أعمار المخزون والأصناف الراكدة</a>{% endif %}
+    <a class="button-link" href="{{ url_for('cash_forecast_report', as_of=date_to, days=90) }}">توقع التحصيلات والمدفوعات</a>
+    <a class="button-link" href="{{ url_for('decision_simulator_report', date_from=date_from, date_to=date_to) }}">محاكي القرارات «ماذا لو؟»</a>
+  </div>
+</section>
+
+<section class="panel">
+  <h3>الأداء المالي خلال الفترة</h3>
+  <div class="table-wrap financial-performance-table">
+    <table>
+      <thead><tr><th>القائمة المالية المختصرة</th><th>الفترة الحالية</th><th>الفترة المقارنة</th><th>الفرق</th></tr></thead>
+      <tbody>
+        <tr><td>صافي الإيرادات</td><td><a href="{{ url_for('income_statement', date_from=date_from, date_to=date_to) }}" title="فتح قائمة الدخل">{{ money(s.current.revenue) }}</a></td><td>{{ money(s.previous.revenue) }}</td><td>{{ money(s.current.revenue - s.previous.revenue) }}</td></tr>
+        <tr><td>(−) تكلفة المبيعات والتكاليف المباشرة</td><td><a href="{{ url_for('income_statement', date_from=date_from, date_to=date_to) }}" title="تفاصيل تكلفة المبيعات">{{ money(s.current.cogs) }}</a></td><td>{{ money(s.previous.cogs) }}</td><td>{{ money(s.current.cogs - s.previous.cogs) }}</td></tr>
+        <tr class="financial-subtotal"><td>مجمل الربح</td><td><a href="{{ url_for('income_statement', date_from=date_from, date_to=date_to) }}" title="تفاصيل مجمل الربح">{{ money(s.current.revenue - s.current.cogs) }}</a></td><td>{{ money(s.previous.revenue - s.previous.cogs) }}</td><td>{{ money((s.current.revenue - s.current.cogs) - (s.previous.revenue - s.previous.cogs)) }}</td></tr>
+        <tr><td>(−) المصروفات الأخرى</td><td><a href="{{ url_for('income_statement', date_from=date_from, date_to=date_to) }}" title="تفاصيل المصروفات">{{ money(s.current.expenses - s.current.cogs) }}</a></td><td>{{ money(s.previous.expenses - s.previous.cogs) }}</td><td>{{ money((s.current.expenses - s.current.cogs) - (s.previous.expenses - s.previous.cogs)) }}</td></tr>
+        <tr class="total financial-net"><td>صافي الربح / (الخسارة)</td><td><a href="{{ url_for('income_statement', date_from=date_from, date_to=date_to) }}" title="فتح قائمة الدخل">{{ money(s.current.net_profit) }}</a></td><td>{{ money(s.previous.net_profit) }}</td><td>{{ money(s.current.net_profit - s.previous.net_profit) }}</td></tr>
+        <tr><td>هامش مجمل الربح</td><td>{{ percent(s.ratios.gross_margin) }}</td><td>{% if s.previous.revenue %}{{ percent(((s.previous.revenue - s.previous.cogs) * 100 / s.previous.revenue)) }}{% else %}—{% endif %}</td><td>{% if s.current.revenue and s.previous.revenue %}{{ '%.2f'|format((s.current.revenue - s.current.cogs) * 100 / s.current.revenue - (s.previous.revenue - s.previous.cogs) * 100 / s.previous.revenue) }} نقطة مئوية{% else %}—{% endif %}</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">الأرقام من القيود المرحلة فقط. لا تشمل القيود المسودة. التغير يقارن بفترة سابقة مساوية في عدد الأيام.</p>
+</section>
+
+<section class="panel dashboard-visual-panel">
+  <div class="section-heading">
+    <div><h3>التحليل البصري للأداء</h3><p class="muted">اختر المؤشر ونوع الرسم، واضغط على أي بند لفتح دفتر الأستاذ المرتبط به.</p></div>
+    <div class="chart-controls no-print">
+      <button type="button" class="secondary chart-switch active" data-metric="revenue">الإيرادات</button>
+      <button type="button" class="secondary chart-switch" data-metric="expense">المصروفات</button>
+      <select id="chartKind" aria-label="نوع الرسم"><option value="bar">أعمدة</option><option value="doughnut">دائري</option></select>
+    </div>
+  </div>
+  <div class="dashboard-chart-layout">
+    <div class="dashboard-chart-canvas"><canvas id="managementChart" role="img" aria-label="رسم بياني للإيرادات والمصروفات حسب الحساب"></canvas></div>
+    <div class="dashboard-chart-legend" id="managementChartLegend"></div>
+  </div>
+  <div class="table-wrap chart-data-table">
+    <table><thead><tr><th>الحساب</th><th>القيمة</th><th>النسبة من الإجمالي</th><th>فتح الحساب</th></tr></thead>
+    <tbody id="managementChartRows"><tr><td colspan="4">جارٍ تجهيز البيانات…</td></tr></tbody></table>
+  </div>
+  <script id="managementChartData" type="application/json">{{ {'revenue': s.revenue_accounts|map(attribute='value')|map('float')|list, 'expense': s.expense_accounts|map(attribute='value')|map('float')|list}|tojson }}</script>
+  <script id="managementChartLabels" type="application/json">{{ {'revenue': s.revenue_accounts|map(attribute='code')|list, 'expense': s.expense_accounts|map(attribute='code')|list}|tojson }}</script>
+  <script id="managementChartNames" type="application/json">{{ {'revenue': s.revenue_accounts|map(attribute='name')|list, 'expense': s.expense_accounts|map(attribute='name')|list}|tojson }}</script>
+  <script id="managementChartLinks" type="application/json">{{ {'revenue': s.revenue_accounts|map(attribute='id')|map('string')|list, 'expense': s.expense_accounts|map(attribute='id')|map('string')|list}|tojson }}</script>
+</section>
+
+<section class="panel">
+  <h3>تفاصيل الحسابات — اضغط لفتح دفتر الأستاذ</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>التصنيف</th><th>الحساب</th><th>الرصيد</th><th>التفاصيل</th></tr></thead>
+    <tbody>
+    {% for item in s.account_details %}
+      <tr><td>{{ {'cash':'نقدية وبنوك','receivables':'عملاء ومدينون','payables':'موردون ودائنون','inventory':'مخزون'}.get(item.role,item.role) }}</td>
+        <td>{{ item.code }} — {{ item.name }}</td><td>{{ money(item.balance) }}</td>
+        <td><a href="{{ url_for('ledger', account_id=item.id, date_to=date_to) }}">كشف الحساب</a></td></tr>
+    {% else %}<tr><td colspan="4">لا توجد حسابات مرتبطة. راجع إعدادات الربط.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+<section class="panel">
+  <h3>المركز المالي حتى {{ date_to }}</h3>
+  <div class="table-wrap"><table class="financial-summary-table">
+    <thead><tr><th>البند</th><th>الرصيد</th></tr></thead><tbody>
+      <tr><td>النقدية والبنوك</td><td><a href="{{ url_for('planning.cash_flow') }}">{{ money(s.cash) }}</a></td></tr>
+      <tr><td>أرصدة العملاء / المدينين</td><td><a href="{{ url_for('aging.index', kind='customers', as_of=date_to) }}">{{ money(s.receivables) }}</a></td></tr>
+      <tr><td>أرصدة الموردين</td><td><a href="{{ url_for('aging.index', kind='suppliers', as_of=date_to) }}">{{ money(s.payables) }}</a></td></tr>
+      <tr><td>قيمة المخزون</td><td>{% if 'stock.view' in permissions %}<a href="{{ url_for('inventory_ageing_report', as_of=date_to) }}">{{ money(s.inventory) }}</a>{% else %}{{ money(s.inventory) }}{% endif %}</td></tr>
+      <tr class="financial-subtotal"><td>إجمالي الأصول</td><td><a href="{{ url_for('planning.balance_sheet', date_to=date_to) }}">{{ money(s.total_assets) }}</a></td></tr>
+      <tr><td>إجمالي الالتزامات</td><td><a href="{{ url_for('planning.balance_sheet', date_to=date_to) }}">{{ money(s.total_liabilities) }}</a></td></tr>
+      <tr><td>حقوق الملكية قبل نتيجة النشاط</td><td>{{ money(s.total_equity) }}</td></tr>
+      <tr><td>نتيجة النشاط المتراكمة</td><td>{{ money(s.total_equity_after_profit - s.total_equity) }}</td></tr>
+      <tr class="financial-subtotal"><td>حقوق الملكية بعد نتيجة النشاط</td><td><a href="{{ url_for('planning.balance_sheet', date_to=date_to) }}">{{ money(s.total_equity_after_profit) }}</a></td></tr>
+      <tr><td>رأس المال العامل</td><td>{{ money(s.working_capital) }}</td></tr>
+      <tr><td>نسبة السيولة الجارية</td><td>{{ ratio(s.current_ratio) }}</td></tr>
+      <tr><td>نسبة السيولة السريعة</td><td>{{ ratio(s.quick_ratio) }}</td></tr>
+      <tr><td>فحص المعادلة المحاسبية</td><td>{% if s.balance_ok is none %}<span class="muted">غير متاح مع فلتر تحليلي جزئي</span>{% elif s.balance_ok %}<span class="success">متوازنة ✓</span>{% else %}<span class="danger">تحتاج مراجعة</span>{% endif %}</td></tr>
+    </tbody></table></div>
+  {% if s.negative_asset_accounts %}
+    <p class="danger"><strong>تنبيه: توجد أرصدة دائنة في حسابات مصنفة كأصول.</strong> لا يتم إعادة تصنيفها تلقائيًا؛ راجع طبيعة الرصيد وربط الحساب.</p>
+    <div class="table-wrap"><table><thead><tr><th>كود الحساب</th><th>الحساب</th><th>الرصيد السالب</th><th>كشف الحساب</th></tr></thead><tbody>
+      {% for item in s.negative_asset_accounts %}<tr><td>{{ item.code }}</td><td>{{ item.name }}</td><td class="danger">{{ money(item.balance) }}</td><td><a href="{{ url_for('ledger', account_id=item.id, date_to=date_to) }}">فتح الحساب</a></td></tr>{% endfor %}
+    </tbody></table></div>
+  {% endif %}
+  <p class="muted">يتم تحديد الحسابات من شاشة «ربط حسابات لوحة الإدارة»، ويمكنك اختيار الحسابات التفصيلية الفعلية حتى لو كانت أكواد شجرة الحسابات مختلفة. حقوق الملكية المعروضة بعد نتيجة النشاط تشمل الربح أو الخسارة المتراكمة.</p>
+</section>
+
+<section class="panel">
+  <h3>النسب والمؤشرات المالية الشاملة</h3>
+  <p class="muted">تعتمد مؤشرات العائد والكفاءة على أرصدة أول وآخر الفترة، ومؤشرات السيولة والمديونية على أرصدة نهاية الفترة. الأيام محسوبة على طول الفترة المحددة.</p>
+  <h4>أولًا: نسب الربحية والعائد</h4>
+  <div class="table-wrap"><table class="financial-summary-table"><thead><tr><th>المؤشر</th><th>القيمة</th></tr></thead><tbody>
+    <tr><td>هامش مجمل الربح</td><td>{{ percent(s.ratios.gross_margin) }}</td></tr>
+    <tr><td>هامش صافي الربح</td><td>{{ percent(s.ratios.net_profit_margin) }}</td></tr>
+    <tr><td>العائد على الأصول خلال الفترة ROA</td><td>{{ percent(s.ratios.return_on_assets) }}</td></tr>
+    <tr><td>العائد على حقوق الملكية خلال الفترة ROE</td><td>{{ percent(s.ratios.return_on_equity) }}</td></tr>
+  </tbody></table></div>
+  <h4>ثانيًا: نسب السيولة والهيكل التمويلي</h4>
+  <div class="table-wrap"><table class="financial-summary-table"><thead><tr><th>المؤشر</th><th>القيمة</th></tr></thead><tbody>
+    <tr><td>السيولة الجارية</td><td>{{ ratio(s.ratios.current_ratio) }}</td></tr>
+    <tr><td>السيولة السريعة</td><td>{{ ratio(s.ratios.quick_ratio) }}</td></tr>
+    <tr><td>نسبة النقدية</td><td>{{ ratio(s.ratios.cash_ratio) }}</td></tr>
+    <tr><td>إجمالي الالتزامات إلى الأصول</td><td>{{ percent(s.ratios.debt_ratio) }}</td></tr>
+    <tr><td>الديون إلى حقوق الملكية</td><td>{{ ratio(s.ratios.debt_to_equity) }}</td></tr>
+    <tr><td>حقوق الملكية إلى الأصول</td><td>{{ percent(s.ratios.equity_ratio) }}</td></tr>
+  </tbody></table></div>
+  <h4>ثالثًا: نسب النشاط والكفاءة التشغيلية</h4>
+  <div class="table-wrap"><table class="financial-summary-table"><thead><tr><th>المؤشر</th><th>القيمة</th></tr></thead><tbody>
+    <tr><td>معدل دوران الأصول</td><td>{{ ratio(s.ratios.asset_turnover) }}</td></tr>
+    <tr><td>معدل دوران المخزون</td><td>{{ ratio(s.ratios.inventory_turnover) }}</td></tr>
+    <tr><td>أيام التخزين DIO</td><td>{{ '%.1f يوم'|format(s.ratios.inventory_days) if s.ratios.inventory_days is not none else '—' }}</td></tr>
+    <tr><td>معدل دوران العملاء</td><td>{{ ratio(s.ratios.receivables_turnover) }}</td></tr>
+    <tr><td>أيام التحصيل DSO</td><td>{{ '%.1f يوم'|format(s.ratios.collection_days) if s.ratios.collection_days is not none else '—' }}</td></tr>
+    <tr><td>معدل دوران الموردين</td><td>{{ ratio(s.ratios.payables_turnover) }}</td></tr>
+    <tr><td>أيام السداد DPO</td><td>{{ '%.1f يوم'|format(s.ratios.payment_days) if s.ratios.payment_days is not none else '—' }}</td></tr>
+    <tr><td>دورة التحويل النقدي CCC</td><td>{{ '%.1f يوم'|format(s.ratios.cash_conversion_cycle) if s.ratios.cash_conversion_cycle is not none else '—' }}</td></tr>
+  </tbody></table></div>
+  <p class="muted">ملاحظات الاحتساب: العائد على الأصول وحقوق الملكية محسوب للفترة المحددة وليس معدلًا سنويًا. دوران العملاء وأيام التحصيل تقديريان باستخدام إجمالي الإيرادات بدل المبيعات الآجلة، ودوران الموردين وأيام السداد تقديريان باستخدام تكلفة المبيعات بدل المشتريات الآجلة. دورة التحويل النقدي تقديرية وتعتمد على هذه المؤشرات. لا تُعامل هذه النسب كبديل عن تحليل المبيعات والمشتريات الآجلة الفعلي، ولا تُعرض النسبة عند عدم توفر متوسط الرصيد أو إذا كان المقام صفرًا.</p>
+</section>
+
+<section class="panel">
+  <h3>توقع الرصيد النقدي — الأسابيع الثمانية القادمة</h3>
+  <p class="muted">يعتمد على النقدية والبنوك المرتبطة، والفواتير المرحلة المفتوحة حسب الاستحقاق، والمرتبات المرحلة، والمنح المعتمدة، والالتزامات الأخرى المسجلة. المتأخر يُدرج في الأسبوع الأول، وتُعرض أي مصادر تعذر احتسابها في تنبيهات واضحة.</p>
+  {% if s.cash_forecast.warning %}<p class="danger"><strong>تحذير: الرصيد المتوقع ينخفض عن الحد الأدنى المحدد.</strong></p>{% endif %}
+  <div class="table-wrap"><table class="financial-summary-table"><thead><tr><th>المؤشر</th><th>القيمة</th></tr></thead><tbody>
+    <tr><td>الرصيد الحالي</td><td>{{ money(s.cash_forecast.opening) }}</td></tr>
+    <tr><td>الحد الأدنى للنقدية</td><td>{{ money(s.cash_forecast.minimum) }}</td></tr>
+    <tr><td>الرواتب المستحقة المدرجة</td><td>{{ money(s.cash_forecast.payroll_due) }}</td></tr>
+    <tr><td>المنح المعتمدة المستحقة</td><td>{{ money(s.cash_forecast.grants_due) }}</td></tr>
+    <tr><td>الالتزامات الأخرى المسجلة</td><td>{{ money(s.cash_forecast.other_commitments_due) }}</td></tr>
+  </tbody></table></div>
+  {% for warning in s.cash_forecast.errors %}<p class="danger">{{ warning }}</p>{% endfor %}
+  <form method="post" action="{{ url_for('management_minimum_cash') }}" class="report-filter no-print"><label>الحد الأدنى للنقدية<input type="number" min="0" step="0.01" name="minimum_cash_balance" value="{{ s.cash_forecast.minimum }}" required></label><button type="submit">حفظ الحد الأدنى</button></form>
+  <div class="table-wrap"><table><thead><tr><th>الأسبوع</th><th>أول الأسبوع</th><th>مقبوضات متوقعة</th><th>مدفوعات مستحقة</th><th>صافي الحركة</th><th>الرصيد المتوقع</th></tr></thead><tbody>{% for w in s.cash_forecast.weeks %}<tr><td>{{ w.label }}</td><td>{{ money(w.opening) }}</td><td>{{ money(w.receipts) }}</td><td>{{ money(w.payments) }}</td><td>{{ money(w.net) }}</td><td class="{{ 'danger' if s.cash_forecast.minimum > 0 and w.closing < s.cash_forecast.minimum else '' }}">{{ money(w.closing) }}</td></tr>{% endfor %}</tbody></table></div>
+</section>
+<section class="panel">
+  <h3>مراجعة القيود غير المعتادة</h3>
+  <p class="muted">تنبيه استرشادي عند تجاوز مبلغ سطر الحساب ثلاثة أضعاف متوسطه التاريخي خلال 90 يومًا، أو إذا وقع القيد في آخر يومين من الفترة. لا يتم تعديل القيود أو منعها تلقائيًا.</p>
+  <p class="muted">إجمالي القيود المطابقة: {{ s.unusual_total }} · عرض الصفحة {{ s.unusual_page }} من {{ s.unusual_pages }} (100 قيد كحد أقصى في الصفحة).</p>
+  <div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>المرجع</th><th>البيان</th><th>مدين</th><th>دائن</th><th>سبب التنبيه</th></tr></thead><tbody>{% for e in s.unusual_entries %}<tr><td>{{ e.date }}</td><td>{{ e.reference }}</td><td>{{ e.description }}</td><td>{{ money(e.debit) }}</td><td>{{ money(e.credit) }}</td><td>{{ e.reasons|join('، ') }}</td></tr>{% else %}<tr><td colspan="6">لا توجد قيود مطابقة لمعايير التنبيه في الفترة.</td></tr>{% endfor %}</tbody></table></div>
+  {% if s.unusual_prev_url or s.unusual_next_url %}
+  <div class="actions no-print">
+    {% if s.unusual_prev_url %}<a class="button-link secondary" href="{{ s.unusual_prev_url }}">القيود الأحدث / السابق</a>{% endif %}
+    {% if s.unusual_next_url %}<a class="button-link" href="{{ s.unusual_next_url }}">المزيد من القيود / التالي</a>{% endif %}
+  </div>
+  {% endif %}
+</section>
+
+{% endblock %}
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+<script>
+(() => {
+  const read = id => { try { return JSON.parse(document.getElementById(id)?.textContent || '{}'); } catch (_) { return {}; } };
+  const values=read('managementChartData'), labels=read('managementChartLabels'), names=read('managementChartNames'), links=read('managementChartLinks');
+  const canvas=document.getElementById('managementChart'), table=document.getElementById('managementChartRows');
+  if(!canvas || !table) return;
+  let metric='revenue', chart=null;
+  const currency={{ s.base_currency|tojson }};
+  const format=n=>new Intl.NumberFormat('ar-EG',{maximumFractionDigits:2}).format(Number(n)||0)+' '+currency;
+  const rows=()=> (values[metric]||[]).map((v,i)=>({value:Number(v)||0,code:(labels[metric]||[])[i]||'',name:(names[metric]||[])[i]||'',id:(links[metric]||[])[i]||''})).filter(x=>x.value!==0).sort((a,b)=>b.value-a.value);
+  function render(){
+    const data=rows(), total=data.reduce((s,x)=>s+x.value,0);
+    table.replaceChildren();
+    if(!data.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=4;td.textContent='لا توجد بيانات مرحلة لهذا المؤشر في الفترة.';tr.append(td);table.append(tr);}
+    data.forEach(x=>{const tr=document.createElement('tr');[x.code+' — '+x.name,format(x.value),(total?((x.value/total)*100).toFixed(1):'0.0')+'%'].forEach(value=>{const td=document.createElement('td');td.textContent=value;tr.append(td);});const td=document.createElement('td'),a=document.createElement('a');a.href='/reports/ledger?account_id='+encodeURIComponent(x.id)+'&date_from='+encodeURIComponent({{ date_from|tojson }})+'&date_to='+encodeURIComponent({{ date_to|tojson }});a.textContent='كشف الحساب';td.append(a);tr.append(td);table.append(tr);});
+    const legend=document.getElementById('managementChartLegend');legend.replaceChildren();
+    data.slice(0,8).forEach(x=>{const row=document.createElement('div'),label=document.createElement('span'),amount=document.createElement('b');row.className='chart-legend-row';label.textContent=x.code+' — '+x.name;amount.textContent=format(x.value);row.append(label,amount);legend.append(row);});
+    if(!window.Chart){canvas.replaceWith(Object.assign(document.createElement('p'),{className:'muted',textContent:'تعذر تحميل مكتبة الرسم البياني. يمكنك مراجعة جدول البيانات التفصيلي أسفل الرسم.'}));return;}
+    if(chart) chart.destroy();
+    const kind=document.getElementById('chartKind').value;
+    chart=new Chart(canvas,{type:kind,data:{labels:data.map(x=>x.code+' — '+x.name),datasets:[{label:metric==='revenue'?'الإيرادات':'المصروفات',data:data.map(x=>x.value),backgroundColor:kind==='doughnut'?data.map((_,i)=>'hsl('+(165+i*37)%360+' 58% '+(48+(i%3)*7)+'%)'):'rgba(15,155,142,.72)',borderColor:'rgba(15,155,142,1)',borderWidth:1,borderRadius:kind==='bar'?7:0}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:kind==='doughnut',position:'bottom'},tooltip:{callbacks:{label:c=>format(c.raw)}}},scales:kind==='bar'?{x:{beginAtZero:true,grid:{color:'rgba(130,145,165,.14)'},ticks:{callback:v=>new Intl.NumberFormat('ar-EG',{notation:'compact'}).format(v)}},y:{grid:{display:false}}}:{}}});
+  }
+  document.querySelectorAll('.chart-switch').forEach(b=>b.addEventListener('click',()=>{metric=b.dataset.metric;document.querySelectorAll('.chart-switch').forEach(x=>x.classList.toggle('active',x===b));render();}));
+  document.getElementById('chartKind').addEventListener('change',render);
+  render();
+})();
+</script>
+{% endblock %}

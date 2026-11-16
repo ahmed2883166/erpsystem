@@ -1,0 +1,24 @@
+changelog:
+  categories:
+    - title: "ميزات جديدة"
+      labels:
+        - "feature"
+        - "enhancement"
+    - title: "إصلاحات"
+      labels:
+        - "bug"
+        - "fix"
+    - title: "أمان واعتمادية"
+      labels:
+        - "security"
+        - "reliability"
+    - title: "أداء"
+      labels:
+        - "performance"
+    - title: "توثيق واختبارات"
+      labels:
+        - "documentation"
+        - "tests"
+    - title: "أخرى"
+      labels:
+        - "*"

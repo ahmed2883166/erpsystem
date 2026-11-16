@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}محاكي القرارات | NEXUS ERP{% endblock %}
+{% block content %}
+<header class="report-header">
+  <h2>محاكي القرارات — ماذا لو؟</h2>
+  <p class="muted">اختبر أثر تغير المبيعات والأسعار والتكاليف قبل اتخاذ القرار. المحاكاة لا تحفظ بيانات ولا تنشئ قيودًا.</p>
+</header>
+<section class="panel">
+  <form method="post" class="form-grid">
+    <div class="form-row">
+      <label>من تاريخ<input type="date" name="date_from" value="{{ date_from }}" required></label>
+      <label>إلى تاريخ<input type="date" name="date_to" value="{{ date_to }}" required></label>
+    </div>
+    <h3>افتراضات السيناريو</h3>
+    <div class="form-grid">
+      <label>تغير حجم المبيعات (%)<input type="number" name="sales_volume_change_pct" step="0.1" min="-100" max="500" value="{{ values.sales_volume_change_pct }}" required><small class="muted">زيادة أو انخفاض الكميات المباعة</small></label>
+      <label>تغير سعر البيع (%)<input type="number" name="selling_price_change_pct" step="0.1" min="-100" max="500" value="{{ values.selling_price_change_pct }}" required><small class="muted">يطبق بعد أثر حجم المبيعات</small></label>
+      <label>تغير تكلفة الوحدة (%)<input type="number" name="unit_cost_change_pct" step="0.1" min="-100" max="500" value="{{ values.unit_cost_change_pct }}" required></label>
+      <label>تغير المصروفات التشغيلية (%)<input type="number" name="operating_expense_change_pct" step="0.1" min="-100" max="500" value="{{ values.operating_expense_change_pct }}" required></label>
+      <label>مصروف إضافي خلال الفترة<input type="number" name="additional_operating_expense" step="0.01" min="0" value="{{ values.additional_operating_expense }}" required></label>
+    </div>
+    <button type="submit">احسب السيناريو</button>
+  </form>
+</section>
+<section class="panel">
+  <h3>النتائج الفعلية للفترة المختارة</h3>
+  <p class="muted">المصدر: قائمة الدخل من القيود المرحلة فقط، مع استبعاد قيود الإقفال وفق قواعد قائمة الدخل.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>المؤشر</th><th>الفعلي</th>{% if scenario %}<th>السيناريو</th><th>الفرق</th>{% endif %}</tr></thead>
+    <tbody>
+      <tr><td>الإيرادات</td><td>{{ statement.revenue_total|money }}</td>{% if scenario %}<td>{{ scenario.scenario.revenue|money }}</td><td>{{ (scenario.scenario.revenue-scenario.base.revenue)|money }}</td>{% endif %}</tr>
+      <tr><td>تكلفة المبيعات</td><td>{{ statement.cogs_total|money }}</td>{% if scenario %}<td>{{ scenario.scenario.cogs|money }}</td><td>{{ (scenario.scenario.cogs-scenario.base.cogs)|money }}</td>{% endif %}</tr>
+      <tr><td>مجمل الربح</td><td>{{ statement.gross_profit|money }}</td>{% if scenario %}<td>{{ scenario.scenario.gross_profit|money }}</td><td>{{ (scenario.scenario.gross_profit-scenario.base.gross_profit)|money }}</td>{% endif %}</tr>
+      <tr><td>المصروفات التشغيلية</td><td>{{ statement.operating_expense_total|money }}</td>{% if scenario %}<td>{{ scenario.scenario.operating_expenses|money }}</td><td>{{ (scenario.scenario.operating_expenses-scenario.base.operating_expenses)|money }}</td>{% endif %}</tr>
+      <tr class="total"><td>صافي الربح / (الخسارة)</td><td>{{ statement.net_profit|money }}</td>{% if scenario %}<td>{{ scenario.scenario.net_profit|money }}</td><td>{{ scenario.profit_change|money }}</td>{% endif %}</tr>
+      {% if scenario %}<tr><td>هامش صافي الربح</td><td>{% if scenario.base.net_margin is none %}—{% else %}{{ scenario.base.net_margin }}%{% endif %}</td><td>{% if scenario.scenario.net_margin is none %}—{% else %}{{ scenario.scenario.net_margin }}%{% endif %}</td><td>—</td></tr>{% endif %}
+    </tbody>
+  </table></div>
+  {% if scenario %}
+    <p class="{{ 'success' if scenario.profit_change >= 0 else 'danger' }}"><strong>تأثير السيناريو على صافي الربح: {{ scenario.profit_change|money }}</strong></p>
+    <p class="muted">{{ scenario.notice }}</p>
+  {% endif %}
+</section>
+<section class="panel">
+  <h3>حدود المحاكاة</h3>
+  <ul>
+    <li>الحسابات مبنية على نتائج الفترة المحددة، وليست توقعًا مضمونًا للمستقبل.</li>
+    <li>تغير حجم المبيعات يؤثر على الإيرادات وتكلفة المبيعات؛ وتغير السعر يؤثر على الإيرادات فقط.</li>
+    <li>تغير تكلفة الوحدة يؤثر على تكلفة المبيعات، وتغير المصروفات يؤثر على المصروفات التشغيلية.</li>
+    <li>لا تشمل النسخة الحالية الضرائب أو التمويل أو تغير مزيج المنتجات أو أثر القرار على المخزون والسيولة.</li>
+    <li>لا يتم تعديل أي مستند أو رصيد أو قيد محاسبي عند تشغيل المحاكاة.</li>
+  </ul>
+</section>
+{% endblock %}

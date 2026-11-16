@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}ربحية الفروع والأنشطة والمخازن | NEXUS ERP{% endblock %}
+{% block content %}
+<header class="report-header">
+  <h2>تقرير ربحية الفروع والأنشطة والمخازن</h2>
+  <p class="muted">{{ company_name }} · من {{ date_from }} إلى {{ date_to }}</p>
+</header>
+<section class="panel no-print">
+  <form method="get" class="form-row">
+    <div><label for="date_from">من تاريخ</label><input id="date_from" type="date" name="date_from" value="{{ date_from }}"></div>
+    <div><label for="date_to">إلى تاريخ</label><input id="date_to" type="date" name="date_to" value="{{ date_to }}"></div>
+    <div class="form-actions"><button type="submit">عرض التقرير</button><a class="button secondary" href="{{ url_for('profitability_report') }}">الفترة الافتراضية</a><button type="button" class="secondary" onclick="window.print()">طباعة</button></div>
+  </form>
+</section>
+
+{% if active_activity %}
+<section class="panel">
+  <strong>ملف النشاط التشغيلي الحالي:</strong> {{ active_activity.name }} <span class="muted">({{ active_activity.code }})</span>
+  <p class="muted">ملف النشاط الحالي يحدد إعدادات الحسابات على مستوى الشركة. أما المقارنة بين وحدات التشغيل فتظهر من خلال مراكز التكلفة المسجلة على القيود. لن ننسب قيودًا إلى نشاط غير مسجل عليها.</p>
+</section>
+{% else %}
+<section class="panel"><p class="muted">لم يتم العثور على ملف نشاط محدد. راجع إعدادات النشاط إذا كنت تريد إظهار اسمه في التقرير.</p></section>
+{% endif %}
+
+<section class="grid">
+  <article class="panel"><small class="muted">إيرادات الفروع (بما فيها غير الموزع)</small><h2>{{ summary.revenue|money }} {{ base_currency }}</h2></article>
+  <article class="panel"><small class="muted">تكلفة النشاط</small><h2>{{ summary.cogs|money }} {{ base_currency }}</h2></article>
+  <article class="panel"><small class="muted">مجمل الربح</small><h2>{{ summary.gross_profit|money }} {{ base_currency }}</h2></article>
+  <article class="panel"><small class="muted">صافي الربح بعد المصروفات المسجلة على الأبعاد</small><h2>{{ summary.net_profit|money }} {{ base_currency }}</h2></article>
+</section>
+
+<section class="panel">
+  <h3>أولًا: ربحية الفروع</h3>
+  {% if not availability.branches %}<p class="muted">بُعد الفروع غير متاح في مخطط قاعدة البيانات الحالي.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>الفرع</th><th>الإيرادات</th><th>تكلفة النشاط</th><th>مجمل الربح</th><th>المصروفات التشغيلية</th><th>صافي الربح</th><th>عدد القيود</th></tr></thead>
+    <tbody>
+    {% for row in branches %}
+      <tr>
+        <td>{% if row.id %}<a href="{{ url_for('income_statement',date_from=date_from,date_to=date_to,branch_id=row.id,compare='none') }}">{{ row.code }} - {{ row.name }}</a>{% else %}<strong>{{ row.name }}</strong>{% endif %}</td>
+        <td>{{ row.revenue|money }}</td><td>{{ row.cogs|money }}</td><td>{{ row.gross_profit|money }}</td>
+        <td>{{ row.operating_expenses|money }}</td><td><strong>{{ row.net_profit|money }}</strong></td><td>{{ row.journal_count }}</td>
+      </tr>
+    {% else %}<tr><td colspan="7">لا توجد قيود مرحلة على أبعاد الفروع خلال الفترة.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  <p class="muted">يشمل صف «غير موزع» القيود التي لم يُحدد لها فرع. راجع هذا الصف قبل الاعتماد على مقارنة الفروع.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h3>ثانيًا: ربحية مراكز التكلفة (تقسيم تشغيلي اختياري)</h3>
+  {% if not availability.cost_centers %}<p class="muted">بُعد مراكز التكلفة غير متاح في مخطط قاعدة البيانات الحالي.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>مركز التكلفة / النشاط</th><th>الإيرادات</th><th>تكلفة النشاط</th><th>مجمل الربح</th><th>المصروفات التشغيلية</th><th>صافي الربح</th><th>عدد القيود</th></tr></thead>
+    <tbody>
+    {% for row in cost_centers %}
+      <tr>
+        <td>{% if row.id %}<a href="{{ url_for('income_statement',date_from=date_from,date_to=date_to,cost_center_id=row.id,compare='none') }}">{{ row.code }} - {{ row.name }}</a>{% else %}<strong>{{ row.name }}</strong>{% endif %}</td>
+        <td>{{ row.revenue|money }}</td><td>{{ row.cogs|money }}</td><td>{{ row.gross_profit|money }}</td>
+        <td>{{ row.operating_expenses|money }}</td><td><strong>{{ row.net_profit|money }}</strong></td><td>{{ row.journal_count }}</td>
+      </tr>
+    {% else %}<tr><td colspan="7">لا توجد قيود مرحلة على مراكز التكلفة خلال الفترة.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  <p class="muted">هذا تحليل لمراكز التكلفة المسجلة فعليًا على القيود، وليس مقارنة تلقائية بين ملفات الأنشطة في إعدادات الشركة. يمكن استخدام مركز تكلفة لكل نشاط تشغيلي بشرط اختياره على الفواتير والقيود. لا يتم توزيع المصروفات غير المسندة تلقائيًا.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h3>ثالثًا: ربحية المخازن</h3>
+  {% if not availability.warehouses %}<p class="muted">بيانات فواتير البيع وتكلفة البنود أو المخازن غير مكتملة لإعداد هذا الجزء.</p>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>المخزن</th><th>صافي المبيعات</th><th>صافي تكلفة المبيعات</th><th>مجمل الربح</th><th>أساس الاحتساب</th></tr></thead>
+    <tbody>
+    {% for row in warehouses %}
+      <tr>
+        <td>{{ row.code }} - {{ row.name }}</td><td>{{ row.revenue|money }}</td>
+        <td>{{ row.cogs|money }}</td><td><strong>{{ row.gross_profit|money }}</strong></td>
+        <td>{{ row.basis }}</td>
+      </tr>
+    {% else %}<tr><td colspan="5">لا توجد فواتير بيع مرتبطة بمخازن خلال الفترة.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  <p class="muted">ربحية المخزن هنا هي مجمل الربح من فواتير البيع وإشعاراتها الدائنة بعد تكلفة البنود المحفوظة. لا نعرض صافي ربح للمخزن قبل وجود توزيع موثوق للمصروفات التشغيلية عليه.</p>
+  {% endif %}
+</section>
+<section class="panel">
+  <h3>رابعًا: تحليل ربحية المنتجات</h3>
+  {% if not availability.products %}
+    <p class="muted">تحليل المنتجات غير متاح لأن جداول أو حقول تفاصيل البيع والمرتجعات غير مكتملة.</p>
+  {% else %}
+  <p class="muted">يعرض صافي المبيعات بعد توزيع خصم الفاتورة على البنود بنسبة قيمة كل بند، ويخصم تكلفة المبيعات ويراعي إشعارات البيع الدائنة المرحلة. ضريبة القيمة المضافة مستبعدة. المصروفات التشغيلية غير موزعة على المنتجات.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>كود الصنف</th><th>المنتج</th><th>صافي المبيعات</th><th>صافي تكلفة المبيعات</th><th>مجمل الربح</th><th>هامش الربح %</th><th>كمية مباعة</th><th>كمية مرتجعة</th></tr></thead>
+    <tbody>
+    {% for row in products %}
+      <tr>
+        <td>{{ row.sku or 'غير محدد' }}</td><td>{{ row.name }}</td>
+        <td>{{ row.revenue|money }}</td><td>{{ row.cogs|money }}</td>
+        <td><strong>{{ row.gross_profit|money }}</strong></td>
+        <td>{{ row.margin_percent|money if row.margin_percent is not none else '—' }}</td>
+        <td>{{ row.quantity_sold }}</td><td>{{ row.quantity_returned }}</td>
+      </tr>
+    {% else %}<tr><td colspan="8">لا توجد بنود بيع أو مرتجعات مرحلة خلال الفترة.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h3>ضوابط قراءة التقرير</h3>
+  <ul>
+    <li>يتم الاعتماد على القيود المرحلة فقط واستبعاد قيود إقفال السنة وعكسها.</li>
+    <li>تُخصم إشعارات المبيعات الدائنة المرحلة من مبيعات وتكلفة المخزن المرتبط بالفاتورة.</li>
+    <li>لا يتم توزيع المصروفات أو الفروق غير المسندة على الفروع أو مراكز التكلفة أو المخازن بالتخمين.</li>
+    <li>راجع صف «غير موزع» واستكمل الأبعاد على العمليات الجديدة قبل اتخاذ قرار إداري.</li>
+  </ul>
+</section>
+{% endblock %}

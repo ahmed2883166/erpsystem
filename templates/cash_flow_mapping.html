@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}تصنيف حسابات التدفقات النقدية | NEXUS ERP{% endblock %}
+{% block content %}
+<header>
+  <div>
+    <h2>تصنيف حسابات التدفقات النقدية</h2>
+    <p class="muted">حدد النشاط الذي تنتمي إليه حركة كل حساب مقابل للنقدية وفق طبيعة المعاملة، وليس اسم الحساب فقط.</p>
+  </div>
+  <a class="btn secondary" href="{{ url_for('planning.cash_flow') }}">العودة لقائمة التدفقات</a>
+</header>
+<section class="panel">
+  <p><b>قاعدة مهمة:</b> الحساب الواحد قد تظهر حركته في أكثر من نشاط بحسب طبيعة المعاملة. هذا الربط إعداد افتراضي للحساب، ويجب مراجعة المعاملات الاستثنائية يدويًا. لا تصنف التحويلات بين الصندوق والبنوك كتدفق نقدي تشغيلي أو استثماري أو تمويلي.</p>
+  <p class="muted">الحسابات التي تتركها دون تصنيف ستستخدم اقتراحًا آليًا مؤقتًا، وستظهر في قائمة الحسابات غير المرتبطة داخل تقرير التدفقات. لا تعتمد التقرير رسميًا قبل استكمال التصنيف والمراجعة.</p>
+</section>
+<section class="panel">
+  <form method="post">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>نوع الحساب</th><th>تصنيف التدفق النقدي</th></tr></thead>
+        <tbody>
+        {% for account in accounts %}
+          <tr>
+            <td>{{ account.code }}</td>
+            <td>{{ account.name_ar }}</td>
+            <td>{{ account.account_type }}</td>
+            <td>
+              {% if account.id in cash_account_ids %}
+                <span class="state-pill state-paid">نقدية / بنك — لا يصنف كمقابل</span>
+              {% else %}
+                <select name="category_{{ account.id }}">
+                  <option value="">غير محدد — اقتراح آلي مؤقت</option>
+                  {% for key,label in categories.items() %}
+                    <option value="{{ key }}" {% if account.category == key %}selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+              {% endif %}
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4">لا توجد حسابات تفصيلية نشطة.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="table-actions"><button type="submit">حفظ تصنيفات الحسابات</button></div>
+  </form>
+</section>
+{% endblock %}

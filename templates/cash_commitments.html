@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% block title %}سجل الالتزامات النقدية | NEXUS ERP{% endblock %}
+{% block content %}
+<header class="report-header">
+  <h2>سجل الالتزامات النقدية</h2>
+  <p class="muted">تابع المبالغ المطلوب سدادها ومواعيدها. تسجيل الالتزام هنا لا ينشئ قيدًا محاسبيًا؛ عند السداد اربطه بقيد يومية مرحّل موجود.</p>
+</header>
+
+{% if can_manage %}
+<section class="panel">
+  <h3>إضافة التزام جديد</h3>
+  <p class="muted">هذا النموذج لإضافة التزام منفرد. لو المصروف يتكرر شهريًا أو ربع سنويًا أو نصف سنويًا أو سنويًا، أنشئ له جدولًا في القسم التالي. يمكن مراجعة كشوف بدل الجمعة السابقة واستيراد غير المرتبط منها من القسم المخصص أسفل الصفحة.</p>
+  <form method="post" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="create">
+    <label>نوع الالتزام
+      <select name="commitment_type" required>
+        <option value="tax">ضرائب</option>
+        <option value="recurring_expense">مصروف دوري</option>
+      </select>
+    </label>
+    <label>اسم الالتزام<input name="title" maxlength="180" required placeholder="مثال: ضريبة القيمة المضافة"></label>
+    <label>المبلغ<input type="number" name="amount" min="0.01" step="0.01" required></label>
+    <label>تاريخ الاستحقاق<input type="date" name="due_date" required></label>
+    <label>الفترة / الشهر<input name="period_label" maxlength="80" placeholder="مثال: أكتوبر 2026"></label>
+    <label>العملة<input name="currency_code" maxlength="12" placeholder="مثال: EGP"></label>
+    <label>حساب الالتزام المستحق
+      <select name="payable_account_id" required>
+        <option value="">اختر حساب التزام</option>
+        {% for account in payable_accounts %}<option value="{{ account.id }}">{{ account.code }} - {{ account.name_ar }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="full-width">ملاحظات<textarea name="notes" rows="2" maxlength="1000"></textarea></label>
+    <div class="full-width"><button type="submit">حفظ الالتزام</button></div>
+  </form>
+</section>
+{% endif %}
+
+{% if can_manage %}
+<section class="panel">
+  <h3>جدولة المصروفات المتكررة</h3>
+  <p class="muted">احفظ بيانات المصروف مرة واحدة، ثم اختر تاريخًا لتوليد الاستحقاقات حتى ذلك التاريخ. التوليد يدوي ومكرر بأمان؛ إعادة الضغط لا تنشئ نفس الاستحقاق مرتين، ولا تُنشأ قيود محاسبية تلقائيًا.</p>
+  <form method="post" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="create_schedule">
+    <label>اسم المصروف<input name="title" maxlength="180" required placeholder="مثال: إيجار المقر"></label>
+    <label>المبلغ في كل مرة<input type="number" name="amount" min="0.01" step="0.01" required></label>
+    <label>أول تاريخ استحقاق<input type="date" name="first_due_date" required></label>
+    <label>التكرار
+      <select name="frequency" required>
+        <option value="monthly">شهري</option>
+        <option value="quarterly">كل 3 شهور</option>
+        <option value="semiannual">كل 6 شهور</option>
+        <option value="annual">سنوي</option>
+      </select>
+    </label>
+    <label>تاريخ انتهاء الجدول (اختياري)<input type="date" name="end_date"></label>
+    <label>العملة<input name="currency_code" maxlength="12" placeholder="EGP"></label>
+    <label>حساب الالتزام المستحق
+      <select name="payable_account_id" required>
+        <option value="">اختر حساب التزام</option>
+        {% for account in payable_accounts %}<option value="{{ account.id }}">{{ account.code }} - {{ account.name_ar }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="full-width">ملاحظات<textarea name="notes" rows="2" maxlength="1000"></textarea></label>
+    <div class="full-width"><button type="submit">حفظ جدول التكرار</button></div>
+  </form>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>المصروف</th><th>قيمة كل مرة</th><th>الدورية</th><th>الاستحقاق القادم</th><th>عدد الاستحقاقات المنشأة</th><th>الحالة</th><th>الإجراءات</th></tr></thead>
+      <tbody>
+      {% for schedule in schedules %}
+        <tr>
+          <td>{{ schedule.title }}</td>
+          <td>{{ schedule.amount|money }} {{ schedule.currency_code }}</td>
+          <td>{{ {'monthly':'شهري','quarterly':'ربع سنوي','semiannual':'نصف سنوي','annual':'سنوي'}.get(schedule.frequency,schedule.frequency) }}</td>
+          <td>{{ schedule.next_due_date }}</td>
+          <td>{{ schedule.occurrence_count }}</td>
+          <td>{{ 'نشط' if schedule.active else 'متوقف' }}</td>
+          <td>
+            {% if schedule.active %}
+            <form method="post" class="form-grid">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="generate_schedule">
+              <input type="hidden" name="schedule_id" value="{{ schedule.id }}">
+              <label>توليد حتى تاريخ<input type="date" name="through_date" required></label>
+              <button type="submit">توليد الاستحقاقات</button>
+            </form>
+            <form method="post">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="deactivate_schedule">
+              <input type="hidden" name="schedule_id" value="{{ schedule.id }}">
+              <button type="submit" class="secondary">إيقاف الجدول</button>
+            </form>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7">لا توجد جداول مصروفات متكررة.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if can_manage %}
+<section class="panel">
+  <h3>استيراد كشوف بدل الجمعة السابقة</h3>
+  <p class="muted">يراجع النظام الكشوف المرحلة التي لم تُربط بسجل الالتزامات. يتجاهل الكشف إذا كان قيده غير مرحّل أو معكوسًا، ولا يغيّر الكشف أو القيد ولا ينشئ قيدًا محاسبيًا جديدًا. إعادة المراجعة آمنة ولا تكرر السجلات المستوردة.</p>
+  <form method="post" onsubmit="return confirm('سيتم فحص كشوف بدل الجمعة السابقة واستيراد غير المرتبط منها فقط. هل تريد المتابعة؟');">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="sync_friday">
+    <button type="submit">مراجعة واستيراد الكشوف غير المرتبطة</button>
+  </form>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h3>الالتزامات المسجلة</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>النوع</th><th>الالتزام</th><th>الفترة</th><th>الاستحقاق</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th>{% if can_manage %}<th>الإجراءات</th>{% endif %}</tr></thead>
+      <tbody>
+      {% for item in commitments %}
+        <tr>
+          <td>{{ {'tax':'ضرائب','recurring_expense':'مصروف دوري','friday_overtime':'بدل جمعة'}.get(item.commitment_type,item.commitment_type) }}</td>
+          <td>
+            {{ item.title }}{% if item.notes %}<small class="muted">{{ item.notes }}</small>{% endif %}
+            {% if item.payments %}
+            <details>
+              <summary>تفاصيل الدفعات ({{ item.payments|length }})</summary>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>التاريخ</th><th>المبلغ</th><th>قيد السداد</th><th>الحالة</th>{% if can_manage %}<th>الإجراء</th>{% endif %}</tr></thead>
+                  <tbody>
+                  {% for payment in item.payments %}
+                    <tr>
+                      <td>{{ payment.payment_date }}</td>
+                      <td>{{ payment.amount|money }}</td>
+                      <td>#{{ payment.journal_entry_id }}</td>
+                      <td>
+                        {% if payment.effective %}سداد فعال
+                        {% elif payment.reversal_journal_entry_id %}معكوس بالقيد #{{ payment.reversal_journal_entry_id }}
+                        {% else %}قيد السداد غير فعال{% endif %}
+                      </td>
+                      {% if can_manage %}
+                      <td>
+                        {% if payment.effective %}
+                        <form method="post" class="form-grid" onsubmit="return confirm('سيتم إنشاء قيد عكسي للسداد مع الاحتفاظ بالقيد الأصلي. هل تريد المتابعة؟');">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                          <input type="hidden" name="action" value="reverse_payment">
+                          <input type="hidden" name="payment_id" value="{{ payment.id }}">
+                          <label>تاريخ العكس<input type="date" name="reversal_date" required></label>
+                          <label>سبب العكس<input name="reversal_reason" maxlength="500" required></label>
+                          <button type="submit" class="secondary">عكس السداد</button>
+                        </form>
+                        {% else %}—{% endif %}
+                      </td>
+                      {% endif %}
+                    </tr>
+                  {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+            {% endif %}
+          </td>
+          <td>{{ item.period_label or '—' }}</td>
+          <td>{{ item.due_date }}</td>
+          <td>{{ item.amount|money }} {{ item.currency_code }}</td>
+          <td>{{ item.paid_total|money }}</td>
+          <td>{{ ([item.amount|float - item.paid_total|float, 0]|max)|money }}</td>
+          <td>{{ {'open':'مفتوح','partially_paid':'مدفوع جزئيًا','paid':'مدفوع','void':'ملغي'}.get(item.status,item.status) }}</td>
+          {% if can_manage %}
+          <td>
+            {% if item.status in ['open','partially_paid'] %}
+            <details>
+              <summary>تسجيل سداد</summary>
+              <form method="post" class="form-grid">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="payment">
+                <input type="hidden" name="commitment_id" value="{{ item.id }}">
+                <label>تاريخ السداد<input type="date" name="payment_date" required></label>
+                <label>المبلغ<input type="number" name="amount" min="0.01" step="0.01" required></label>
+                <label>رقم قيد اليومية المرحّل<input type="number" name="journal_entry_id" min="1" required></label>
+                <label>حساب الالتزام المستحق
+                  <select name="payable_account_id" required>
+                    {% for account in payable_accounts %}<option value="{{ account.id }}" {% if item.payable_account_id == account.id %}selected{% endif %}>{{ account.code }} - {{ account.name_ar }}</option>{% endfor %}
+                  </select>
+                </label>
+                <label>مرجع السداد<input name="reference" maxlength="100"></label>
+                <button type="submit">ربط الدفعة بالقيد</button>
+              </form>
+            </details>
+            {% if item.status == 'open' %}
+            <form method="post" onsubmit="return confirm('هل تريد إلغاء هذا الالتزام؟');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="void">
+              <input type="hidden" name="commitment_id" value="{{ item.id }}">
+              <button type="submit" class="secondary">إلغاء</button>
+            </form>
+            {% endif %}
+            {% else %}—{% endif %}
+          </td>
+          {% endif %}
+        </tr>
+      {% else %}
+        <tr><td colspan="{{ 9 if can_manage else 8 }}">لا توجد التزامات مسجلة حتى الآن.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">مهم: أدخل رقم قيد سداد مرحّل بالفعل. النظام لا ينشئ قيدًا جديدًا من هذه الشاشة ولا يسمح بربط القيد نفسه بأكثر من دفعة.</p>
+</section>
+{% endblock %}

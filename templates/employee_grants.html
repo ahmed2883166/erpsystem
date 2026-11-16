@@ -1,0 +1,182 @@
+{% extends "base.html" %}{% block title %}منح ومكافآت الموظفين | NEXUS ERP{% endblock %}{% block content %}
+<header class="page-heading"><div><h2>المنح والمكافآت المستقلة</h2><p>إعداد المنحة ومراجعة استحقاق كل موظف واعتمادها وإقفالها وصرفها بعيدًا عن كشف المرتبات.</p></div></header>
+<section class="panel"><h3>تعريف أسماء المنح</h3><form method="post" action="{{url_for('workforce.add_employee_grant_type')}}" class="form-grid"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>اسم المنحة<input name="name" placeholder="منحة رمضان / منحة عيد / منحة مناسبة" required maxlength="120"></label><button type="submit">حفظ اسم المنحة</button></form>
+{% if grant_types %}<p class="muted">المنح المعرفة: {% for t in grant_types %}{{t.name}}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}</section>
+<section class="panel"><h3>إعداد كشف منحة جديد</h3><form method="post" action="{{url_for('workforce.create_employee_grant')}}" class="form-grid"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>اسم المنحة <select name="grant_type_id" required>{% for t in grant_types %}<option value="{{t.id}}">{{t.name}}</option>{% endfor %}</select></label>
+<label>تاريخ المنحة <input type="date" name="grant_date" value="{{today}}" required></label>
+<label>طريقة الحساب <select name="calculation_method" id="grantMethod" required><option value="percentage_basic">نسبة من الأساسي</option><option value="per_day">عدد أيام من الأساسي</option><option value="fixed">مبلغ مقطوع لكل موظف</option></select></label>
+<label id="grantValue">النسبة / المبلغ <input type="number" name="calculation_value" min="0" step="0.01" value="0"></label>
+<label id="grantDays">عدد الأيام <input type="number" name="days_count" min="0.01" step="0.01" value="1"></label>
+<label>حساب مصروف المنح <select name="expense_account_id" required>{% for a in accounts if a.account_type=='expense' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<label>حساب المنح المستحقة <select name="payable_account_id" required>{% for a in accounts if a.account_type=='liability' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<div style="grid-column:1/-1"><strong>الفئات المستفيدة (اختيار متعدد)</strong>
+<div class="grant-scope-list">
+<label><input type="checkbox" name="employee_scopes" value="all_eligible" id="grantAllScope"> كل الموظفين المستحقين</label>
+<label><input type="checkbox" name="employee_scopes" value="permanent" class="grantScopeOption" checked> مثبت</label>
+<label><input type="checkbox" name="employee_scopes" value="temporary" class="grantScopeOption" checked> مؤقت</label>
+<label><input type="checkbox" name="employee_scopes" value="comprehensive_bonus" class="grantScopeOption" checked> مكافأة شاملة</label>
+</div><small class="muted">يمكن اختيار فئة أو أكثر، أو اختيار كل الموظفين المستحقين.</small></div>
+<div style="grid-column:1/-1" class="panel">
+<strong>اختيار الموظفين</strong>
+<div class="actions" style="margin:10px 0">
+<button type="button" id="addAllGrantEmployees">إضافة جميع الموظفين المستحقين تلقائيًا</button>
+<button type="button" class="secondary" id="addSelectedGrantEmployees">إضافة الموظفين المحددين</button>
+<button type="button" id="calculateGrantPreview" class="secondary">احتساب</button>
+</div>
+<p id="grantCalculationStatus" class="muted">أدخل قاعدة المنحة واختر الموظفين، ثم اضغط «احتساب» لمراجعة المبالغ قبل إنشاء الكشف.</p>
+<label>فلترة حسب الإدارة <input type="text" id="grantDepartmentFilter" placeholder="اكتب اسم الإدارة لعرض موظفيها"></label>
+<label>اختر موظفين محددين
+<select id="grantEmployeePicker" multiple size="6" style="width:100%">
+{% for e in employees %}<option value="{{e.id}}" data-status="{{e.work_status}}" data-code="{{e.employee_code}}" data-name="{{e.full_name}}" data-basic="{{e.basic_salary}}" data-department="{{e.department or ''}}">{{e.employee_code}} - {{e.full_name}} ({{'مثبت' if e.work_status=='permanent' else 'مؤقت' if e.work_status=='temporary' else 'مكافأة شاملة'}}) — أساسي {{e.basic_salary}}</option>{% endfor %}
+</select>
+<small>اختيار الموظفين يكون حسب فئة الاستحقاق. المستقيل أو المحال للمعاش أو في إجازة بدون مرتب غير مؤهل.</small>
+</label>
+<div style="overflow-x:auto;margin-top:12px">
+<table id="grantSelectedTable">
+<thead><tr><th>الكود</th><th>اسم الموظف</th><th>الإدارة</th><th>الفئة</th><th>الراتب الأساسي</th><th>مبلغ المنحة المحسوب</th><th>إجراء</th></tr></thead>
+<tbody id="grantSelectedBody"><tr id="grantEmptyRow"><td colspan="7">لم تتم إضافة موظفين بعد.</td></tr></tbody>
+</table>
+</div>
+<div id="grantSelectedInputs"></div>
+<small id="grantSelectedCount" class="muted">عدد الموظفين المختارين: 0</small>
+</div>
+<label style="grid-column:1/-1">ملاحظات <input name="notes" maxlength="300"></label>
+<button type="submit" id="createGrantDraft" {% if not grant_types %}disabled{% else %}disabled{% endif %}>إنشاء كشف المنحة للمراجعة بعد الاحتساب</button></form></section>
+<section class="panel"><h3>كشوف المنح</h3><div style="overflow-x:auto"><table><tr><th>رقم</th><th>المنحة</th><th>التاريخ</th><th>طريقة الحساب</th><th>إجمالي الاستحقاق</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th>الإجراءات</th></tr>
+{% for g in grants %}<tr><td>{{g.id}}</td><td>{{g.grant_name_snapshot}}</td><td>{{g.grant_date}}</td>
+<td>{{{'fixed':'مبلغ مقطوع','percentage_basic':'نسبة من الأساسي','per_day':'عدد أيام من الأساسي'}.get(g.calculation_method,g.calculation_method)}}</td>
+<td>{{g.total_amount}}</td><td>{{g.paid_total}}</td><td>{{g.outstanding_total}}</td>
+<td>{{{'draft':'مسودة','approved':'معتمدة','partially_paid':'مدفوع جزئيًا','paid':'مدفوعة بالكامل'}.get(g.status,g.status)}}</td><td>
+<details><summary>مراجعة الموظفين والمبالغ</summary><table><tr><th>كود الموظف</th><th>اسم الموظف</th><th>الراتب الأساسي</th><th>الاستحقاق</th><th>المدفوع</th><th>المتبقي</th></tr>
+{% for line in grant_lines[g.id] %}<tr><td>{{line.employee_code_snapshot}}</td><td>{{line.employee_name_snapshot}}</td><td>{{line.basic_salary_snapshot}}</td><td>{{line.amount}}</td><td>{{line.paid_amount}}</td><td>{{line.remaining_amount}}</td></tr>{% endfor %}</table></details>
+<a class="button secondary" href="{{url_for('workforce.print_employee_grant',grant_id=g.id)}}" target="_blank">كشف الطباعة</a>
+{% if g.status=='draft' %}
+<form method="post" action="{{url_for('workforce.approve_employee_grant',grant_id=g.id)}}" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">اعتماد وإقفال وترحيل</button></form>
+<form method="post" action="{{url_for('workforce.delete_employee_grant',grant_id=g.id)}}" style="display:inline" onsubmit="return confirm('حذف مسودة المنحة المفتوحة؟ لا يمكن الحذف بعد الاعتماد أو الإغلاق.')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="danger">حذف الحافز</button></form>
+{% else %}<button type="button" class="secondary" disabled aria-disabled="true">مقفولة — لا يمكن الحذف</button>{% endif %}
+{% if g.status in ['approved','partially_paid'] %}<details><summary>تسجيل صرف</summary><form method="post" action="{{url_for('workforce.pay_employee_grant',grant_id=g.id)}}" class="form-grid"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>مبلغ الصرف <input type="number" name="amount" min="0.01" max="{{(g.total_amount|float)-(g.paid_total|float)}}" step="0.01" required></label>
+<label>تاريخ الصرف <input type="date" name="payment_date" required></label>
+<label>الصندوق / البنك <select name="cash_account_id" required>{% for a in accounts if a.account_type=='asset' %}<option value="{{a.id}}">{{a.code}} - {{a.name_ar}}</option>{% endfor %}</select></label>
+<label>ملاحظات <input name="notes"></label><button type="submit">صرف وترحيل القيد</button></form></details>{% endif %}
+</td></tr>{% else %}<tr><td colspan="9">لا توجد منح مسجلة بعد.</td></tr>{% endfor %}</table></div></section>
+{% endblock %}
+{% block scripts %}<style>
+.grant-scope-list{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0}
+.grant-scope-list label{display:flex;align-items:center;gap:6px;border:1px solid var(--line);padding:8px 12px;border-radius:8px;background:var(--surface2)}
+.grant-scope-list input{width:auto;min-height:auto}
+
+#grantSelectedTable{width:100%;border-collapse:collapse;min-width:680px}
+#grantSelectedTable th{background:#e9eef5;color:#1e344e;padding:10px;border:1px solid #cbd5e1;white-space:nowrap}
+#grantSelectedTable td{padding:9px;border:1px solid #d8e0e9;text-align:center}
+#grantSelectedTable tbody tr:nth-child(even){background:#f8fafc}
+</style><script>
+const method=document.getElementById('grantMethod'),days=document.getElementById('grantDays');
+function updateGrantDays(){days.hidden=method.value!=='per_day';document.getElementById('grantValue').hidden=method.value==='per_day';}
+method.addEventListener('change',updateGrantDays);updateGrantDays();
+
+const grantScopeOptions=Array.from(document.querySelectorAll('.grantScopeOption'));
+const grantAllScope=document.getElementById('grantAllScope');
+function selectedGrantScopes(){return grantAllScope.checked?['all_eligible']:grantScopeOptions.filter(x=>x.checked).map(x=>x.value);}
+
+const picker=document.getElementById('grantEmployeePicker');
+const selectedBody=document.getElementById('grantSelectedBody');
+const hiddenInputs=document.getElementById('grantSelectedInputs');
+const selectedCount=document.getElementById('grantSelectedCount');
+const selectedEmployees=new Map();
+let grantPreviewReady=false;
+function invalidateGrantPreview(){
+  grantPreviewReady=false;
+  document.getElementById('createGrantDraft').disabled=true;
+  document.getElementById('grantCalculationStatus').textContent='تم تغيير البيانات؛ اضغط «احتساب» لتحديث المبالغ قبل إنشاء الكشف.';
+  selectedEmployees.forEach(employee=>employee.amount='—');
+}
+function scopeAllows(status){
+  const scopes=selectedGrantScopes();
+  return scopes.includes('all_eligible') || scopes.includes(status);
+}
+function refreshGrantPicker(){
+  const departmentQuery=(document.getElementById('grantDepartmentFilter').value||'').trim().toLowerCase();
+  Array.from(picker.options).forEach(option=>{
+    const departmentMatches=!departmentQuery || (option.dataset.department||'').toLowerCase().includes(departmentQuery);
+    option.hidden=!scopeAllows(option.dataset.status) || !departmentMatches;
+    if(option.hidden) option.selected=false;
+  });
+}
+function renderSelectedGrantEmployees(){
+  selectedBody.innerHTML='';
+  hiddenInputs.innerHTML='';
+  if(!selectedEmployees.size){
+    const row=document.createElement('tr');
+    const cell=document.createElement('td');cell.colSpan=7;cell.textContent='لم تتم إضافة موظفين بعد.';
+    row.appendChild(cell);selectedBody.appendChild(row);
+  }
+  selectedEmployees.forEach((employee,id)=>{
+    const row=document.createElement('tr');
+    [employee.code,employee.name,employee.department||'-',employee.status==='permanent'?'مثبت':employee.status==='temporary'?'مؤقت':'مكافأة شاملة',employee.basic,employee.amount||'—'].forEach(value=>{
+      const cell=document.createElement('td');cell.textContent=value;row.appendChild(cell);
+    });
+    const action=document.createElement('td');
+    const remove=document.createElement('button');remove.type='button';remove.className='secondary';
+    remove.textContent='حذف';remove.addEventListener('click',()=>{selectedEmployees.delete(id);invalidateGrantPreview();renderSelectedGrantEmployees();});
+    action.appendChild(remove);row.appendChild(action);selectedBody.appendChild(row);
+    const input=document.createElement('input');input.type='hidden';input.name='employee_ids';input.value=id;
+    hiddenInputs.appendChild(input);
+  });
+  selectedCount.textContent='عدد الموظفين المختارين: '+selectedEmployees.size;
+}
+function addGrantOptions(options){
+  options.forEach(option=>{
+    if(!option.selected || option.hidden || !scopeAllows(option.dataset.status)) return;
+    selectedEmployees.set(option.value,{code:option.dataset.code,name:option.dataset.name,
+      basic:option.dataset.basic,department:option.dataset.department,status:option.dataset.status});
+  });
+  invalidateGrantPreview();
+  renderSelectedGrantEmployees();
+}
+document.getElementById('addAllGrantEmployees').addEventListener('click',()=>{
+  Array.from(picker.options).filter(option=>!option.hidden).forEach(option=>{
+    selectedEmployees.set(option.value,{code:option.dataset.code,name:option.dataset.name,
+      basic:option.dataset.basic,department:option.dataset.department,status:option.dataset.status});
+  });
+  invalidateGrantPreview();
+  renderSelectedGrantEmployees();
+});
+document.getElementById('addSelectedGrantEmployees').addEventListener('click',()=>addGrantOptions(Array.from(picker.options)));
+document.getElementById('grantDepartmentFilter').addEventListener('input',()=>{refreshGrantPicker();});
+[...grantScopeOptions,grantAllScope].forEach(control=>control.addEventListener('change',()=>{
+  if(control===grantAllScope && grantAllScope.checked) grantScopeOptions.forEach(x=>x.checked=false);
+  if(control!==grantAllScope && control.checked) grantAllScope.checked=false;
+  if(!selectedGrantScopes().length && control!==grantAllScope) control.checked=true;
+  selectedEmployees.clear();invalidateGrantPreview();refreshGrantPicker();renderSelectedGrantEmployees();
+}));
+function calculateGrantPreview(){
+  if(!selectedEmployees.size){alert('أضف موظفًا واحدًا على الأقل قبل الاحتساب.');return;}
+  const method=document.getElementById('grantMethod').value;
+  const value=Number(document.querySelector('[name="calculation_value"]').value||0);
+  const daysCount=Number(document.querySelector('[name="days_count"]').value||0);
+  if((method!=='per_day' && value<=0)||(method==='per_day' && daysCount<=0)){alert('أدخل قيمة موجبة أو عدد أيام صحيحًا قبل الاحتساب.');return;}
+  let total=0;
+  selectedEmployees.forEach(employee=>{
+    const basic=Number(employee.basic||0);
+    const amount=method==='fixed'?value:(method==='percentage_basic'?basic*value/100:basic/30*daysCount);
+    employee.amount=(Math.round((amount+Number.EPSILON)*100)/100).toFixed(2);
+    total+=amount;
+  });
+  grantPreviewReady=true;
+  document.getElementById('createGrantDraft').disabled=false;
+  document.getElementById('grantCalculationStatus').textContent='تم احتساب '+selectedEmployees.size+' موظفًا. إجمالي المنحة: '+(Math.round((total+Number.EPSILON)*100)/100).toFixed(2)+' — راجع المبالغ ثم أنشئ الكشف.';
+  renderSelectedGrantEmployees();
+}
+document.getElementById('calculateGrantPreview').addEventListener('click',calculateGrantPreview);
+['grantMethod','grantValue','grantDays'].forEach(id=>{
+  const element=document.getElementById(id);
+  element.addEventListener('change',invalidateGrantPreview);
+  const input=element.querySelector('input');
+  if(input) input.addEventListener('input',invalidateGrantPreview);
+});
+picker.addEventListener('change',invalidateGrantPreview);
+refreshGrantPicker();renderSelectedGrantEmployees();
+</script>{% endblock %}

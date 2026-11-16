@@ -1,0 +1,44 @@
+{% extends "base.html" %}{% block title %}قواعد الضرائب والتأمينات | NEXUS ERP{% endblock %}{% block content %}
+<header class="page-heading"><div><h2>قواعد ضريبة المرتبات والتأمينات الاجتماعية</h2><p>الدولة الحالية: <strong>{{current_country}}</strong>. القواعد مؤرخة وتطبق على كشوف المرتبات التي يقع تاريخها بعد تاريخ السريان. عند تغيير الحد الأدنى أو الأقصى أو النسب في سنة جديدة، أنشئ مجموعة قواعد جديدة بتاريخ سريان جديد؛ ستظل المسيرات القديمة مرتبطة بقواعدها السابقة.</p></div></header>
+{% if current_country == 'EG' %}
+<section class="panel">
+  <h3>مرجع مراجعة ضريبة المرتبات 2026</h3>
+  <p>مصلحة الضرائب المصرية نشرت نموذج احتساب شهري منفصلًا للقطاع الخاص وآخر للقطاع العام والحكومي لعام 2026. الإعداد المبدئي الحالي يتضمن الإعفاء الشخصي والخصم التأميني والشرائح السنوية، لكنه لا يغطي بعد كل خصومات صناديق التأمين وأقساط التأمين الخاصة وحدودها والاستثناءات والتسويات الواردة في تعليمات المصلحة؛ لذلك لا تعتبره معتمدًا لمسير فعلي.</p>
+  <p><a href="https://www.eta.gov.eg/ar/payroll-forms" target="_blank" rel="noopener noreferrer">فتح نماذج مصلحة الضرائب الرسمية لعام 2026</a> · <a href="https://portal.eta.gov.eg/ar/node/1382" target="_blank" rel="noopener noreferrer">شرح المصلحة لطريقة الاحتساب والإعفاءات</a></p>
+</section>
+{% set egypt_seed_exists = rule_sets|selectattr('country_code','equalto','EG')|selectattr('category_code','equalto','local')|selectattr('effective_from','equalto','2026-01-01')|list %}
+<section class="panel"><h3>إعداد مبدئي لمصر 2026</h3><p>يحمّل هذا الخيار إعدادًا مبدئيًا قابلًا للمراجعة. لا يُعد اعتمادًا قانونيًا نهائيًا، ويجب مراجعة القواعد والشرائح مع المحاسب قبل استخدامها.</p>
+{% if not egypt_seed_exists %}
+<form method="post"><input type="hidden" name="action" value="seed_egypt_2026"><button type="submit">تحميل إعداد مصر 2026</button></form>
+{% else %}
+<p class="success">إعداد مصر 2026 مسجل بالفعل. تم إخفاء إعادة التحميل لحماية أي تعديلات أو شرائح محفوظة.</p>
+{% endif %}
+<small>هذا الإعداد مبدئي ولا يغطي جميع الاستثناءات والتسويات السنوية. لا تعتمد عليه قبل المراجعة القانونية والمحاسبية.</small></section>
+{% endif %}
+<section class="panel"><h3>إضافة مجموعة قواعد</h3><p>أدخل النسب والحدود طبقًا للقانون الرسمي الساري. النسب تُكتب كنسبة مئوية، مثل 11 وليس 0.11. رمز فئة الموظف يجب أن يطابق ملف الموظف حرفيًا بعد تحويله إلى أحرف صغيرة.</p>
+<form method="post" class="form-grid">
+<input type="hidden" name="action" value="create_rule">
+<label>رمز الدولة<input name="country_code" value="{{current_country}}" maxlength="2" required></label>
+<label>فئة الموظف<input name="category_code" value="local" placeholder="local / expat / saudi / non_saudi" required></label>
+<label>السنة / تاريخ بداية تطبيق القواعد<input type="date" name="effective_from" value="{{today}}" required><small>أنشئ مجموعة جديدة لكل سنة عند تغيير الحدود أو النسب، ويفضل تاريخ 1 يناير.</small></label>
+<label>الإعفاء الشخصي السنوي<input type="number" min="0" step="0.01" name="personal_exemption_annual" value="0" required></label>
+<label>وحدة تقريب الدخل السنوي الخاضع (1 = بدون تقريب)<input type="number" min="0.01" step="0.01" name="taxable_rounding_unit" value="1" required></label>
+<fieldset class="panel" style="grid-column:1/-1"><legend>حدود أجر الاشتراك التأميني</legend><div class="form-grid">
+<label>الحد الأدنى للأجر التأميني<input type="number" min="0" step="0.01" name="insurance_floor" value="0" required></label>
+<label>الحد الأقصى للأجر التأميني<input type="number" min="0" step="0.01" name="insurance_ceiling" value="0" required></label>
+</div></fieldset>
+<fieldset class="panel" style="grid-column:1/-1"><legend>نسب التأمينات الاجتماعية</legend><div class="form-grid">
+<label>حصة العامل %<input type="number" min="0" max="100" step="0.0001" name="employee_insurance_rate" value="0" required></label>
+<label>حصة صاحب العمل %<input type="number" min="0" max="100" step="0.0001" name="employer_insurance_rate" value="0" required></label>
+</div><small>يتم احتساب الحصتين على أجر الاشتراك التأميني بعد تطبيق الحد الأدنى والأقصى. مجموعهما يُثبت التزامًا على الشركة لصالح التأمينات.</small></fieldset>
+<label>ملاحظات / مرجع قانوني<input name="notes"></label><button type="submit">حفظ مجموعة القواعد</button></form></section>
+<section class="panel"><h3>مجموعات القواعد المسجلة</h3><div class="table-wrap"><table><tr><th>الدولة</th><th>الفئة</th><th>سنة / تاريخ السريان</th><th>الإعفاء السنوي</th><th>الحد الأدنى للأجر التأميني</th><th>الحد الأقصى للأجر التأميني</th><th>حصة العامل</th><th>حصة صاحب العمل</th><th>إجمالي النسبة</th><th>الشرائح</th></tr>
+{% for r in rule_sets %}<tr><td>{{r.country_code}}</td><td>{{r.category_code}}</td><td>{{r.effective_from}}</td><td>{{r.personal_exemption_annual}}</td><td>{{r.insurance_floor}}</td><td>{{r.insurance_ceiling}}</td><td>{{r.employee_insurance_rate}}%</td><td>{{r.employer_insurance_rate}}%</td><td>{{(r.employee_insurance_rate|float + r.employer_insurance_rate|float)|round(4)}}%</td><td>{{r.bracket_count}}</td></tr>{% else %}<tr><td colspan="10">لم تُسجل قواعد بعد.</td></tr>{% endfor %}</table></div></section>
+<section class="panel"><h3>إضافة شريحة ضريبة دخل سنوية</h3><p>ابدأ أول شريحة من صفر. اجعل بداية كل شريحة مساوية لنهاية السابقة. اترك الحد الأعلى فارغًا للشريحة الأخيرة المفتوحة.</p>
+<form method="post" class="form-grid"><input type="hidden" name="action" value="add_bracket">
+<label>مجموعة القواعد<select name="rule_set_id" required>{% for r in rule_sets %}<option value="{{r.id}}">{{r.country_code}} / {{r.category_code}} / {{r.effective_from}}</option>{% endfor %}</select></label>
+<label>من دخل سنوي خاضع<input type="number" min="0" step="0.01" name="lower_bound" required></label>
+<label>إلى دخل سنوي (فارغ للأخيرة)<input type="number" min="0" step="0.01" name="upper_bound"></label>
+<label>النسبة %<input type="number" min="0" max="100" step="0.0001" name="rate" required></label><button type="submit">إضافة الشريحة</button></form>
+<div class="table-wrap"><table><tr><th>الدولة</th><th>الفئة</th><th>مستوى الدخل السنوي الكلي</th><th>من الوعاء</th><th>إلى الوعاء</th><th>النسبة</th></tr>{% for b in brackets %}<tr><td>{{b.country_code}}</td><td>{{b.category_code}}</td><td>{% if b.bracket_kind=='tier' %}حتى {{b.income_max or 'أعلى من كل الحدود'}}{% else %}كل المستويات{% endif %}</td><td>{{b.lower_bound}}</td><td>{{b.upper_bound or 'مفتوحة'}}</td><td>{{b.rate}}%</td></tr>{% else %}<tr><td colspan="6">لا توجد شرائح ضريبية.</td></tr>{% endfor %}</table></div></section>
+{% endblock %}
