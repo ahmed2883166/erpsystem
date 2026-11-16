@@ -3,6 +3,7 @@ from decimal import Decimal, InvalidOperation
 from flask import Blueprint, render_template, session, redirect, url_for, flash
 from app_paths import DB_PATH
 from database import connect_database
+from accounting_core import reconciliation_snapshot
 
 health_bp = Blueprint("system_health", __name__)
 
@@ -156,6 +157,26 @@ def collect_health_checks(connection):
             ).fetchone()[0]
             add("pending_approvals", "طلبات الموافقة المعلقة", "info", pending_approvals,
                 "راجع مركز الموافقات لتجنب تأخر المستندات؛ لا يتم اعتماد أي طلب تلقائيًا.", "/approvals")
+
+    # Reconcile the posted GRNI control account against still-uninvoiced posted receipts.
+    # This is diagnostic only: never creates a journal or changes source documents.
+    if _has_table(connection, "goods_receipts") and _has_table(connection, "supplier_bill_receipts"):
+        snapshot = reconciliation_snapshot(connection)
+        if snapshot.get("grni_ledger") is not None:
+            grni_difference = snapshot.get("grni_difference") or Decimal("0")
+            overallocated = snapshot.get("grni_overallocated_receipts") or []
+            issue_count = int(grni_difference != 0 or bool(overallocated))
+            detail = (
+                f"رصيد حساب GRNI: {snapshot['grni_ledger']:.2f}؛ "
+                f"المتبقي من إيصالات الاستلام غير المفوترة: {snapshot['grni']:.2f}؛ "
+                f"فرق المطابقة: {grni_difference:.2f}. "
+                f"قيمة طبقات الاستلام المتبقية: {snapshot['stock_value']:.2f}؛ "
+                f"قيمة الصرف المقدرة من طبقات الإيصالات: {snapshot['grni_consumed_value']:.2f}."
+            )
+            if overallocated:
+                detail += f" يوجد {len(overallocated)} إيصال/إيصالات بتخصيص فواتير يتجاوز قيمة الاستلام."
+            add("grni_reconciliation", "مطابقة بضاعة مستلمة غير مفوترة GRNI",
+                "high" if issue_count else "info", issue_count, detail, "/purchases")
 
     # Cross-check uses the existing detailed reconciliation page; this screen does not post fixes.
     checks.append({"key":"stock_gl_review","title":"مطابقة تقييم المخزون مع الأستاذ",
