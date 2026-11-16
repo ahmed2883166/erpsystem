@@ -155,6 +155,39 @@ def init_sales_schema():
     );
     CREATE INDEX IF NOT EXISTS idx_sales_discount_approval_status
       ON sales_discount_approval_requests(status,created_at,id);
+    CREATE TABLE IF NOT EXISTS sales_invoice_workflows(
+      id INTEGER PRIMARY KEY,
+      workflow_no TEXT NOT NULL UNIQUE,
+      customer_id INTEGER NOT NULL REFERENCES customers(id),
+      invoice_date TEXT NOT NULL,
+      due_date TEXT NOT NULL,
+      gross_subtotal TEXT NOT NULL,
+      discount_amount TEXT NOT NULL DEFAULT '0',
+      discount_percent TEXT NOT NULL DEFAULT '0',
+      payload_json TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft'
+        CHECK(status IN ('draft','pending_approval','approved','rejected','cancelled','posted')),
+      created_by INTEGER,
+      submitted_by INTEGER,
+      submitted_at TEXT,
+      approved_by INTEGER,
+      approved_at TEXT,
+      approved_credit_override INTEGER NOT NULL DEFAULT 0,
+      rejected_by INTEGER,
+      rejected_at TEXT,
+      rejection_reason TEXT NOT NULL DEFAULT '',
+      cancelled_by INTEGER,
+      cancelled_at TEXT,
+      cancellation_reason TEXT NOT NULL DEFAULT '',
+      posted_invoice_id INTEGER UNIQUE REFERENCES sales_invoices(id),
+      posted_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_sales_invoice_workflows_status
+      ON sales_invoice_workflows(status,created_at,id);
+    CREATE INDEX IF NOT EXISTS idx_sales_invoice_workflows_customer
+      ON sales_invoice_workflows(customer_id,invoice_date,id);
     """)
     discount_request_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_discount_approval_requests)")}
     for name, definition in {
