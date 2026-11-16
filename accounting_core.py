@@ -240,13 +240,6 @@ def _grni_codes(activity):
     return roles.get("grni", ("2190",))
 
 
-def _grni_codes(activity):
-    """Return the GRNI liability control accounts for the selected activity."""
-    from chart_templates import ACTIVITY_ACCOUNT_ROLES
-    roles = ACTIVITY_ACCOUNT_ROLES.get(activity, ACTIVITY_ACCOUNT_ROLES["commercial"])
-    return roles.get("grni", ("2190",))
-
-
 def _decimal_sum(values):
     return sum((Decimal(str(value or "0")) for value in values), Decimal("0"))
 
@@ -335,7 +328,6 @@ def reconciliation_snapshot(conn):
             _table_exists(conn, "supplier_bill_receipts") and
             _table_exists(conn, "supplier_bills")):
         receipt_columns = _columns(conn, "goods_receipts")
-        receipt_columns = _columns(conn, "goods_receipts")
         receipt_link_columns = _columns(conn, "supplier_bill_receipts")
         bill_columns = _columns(conn, "supplier_bills")
         # Only posted bills settle GRNI. Draft/approval/rejected bills remain
@@ -358,7 +350,7 @@ def reconciliation_snapshot(conn):
             )
             supplier_join = (
                 "LEFT JOIN suppliers s ON s.id=r.supplier_id"
-                if "supplier_id" in receipt_columns and supplier_name_column else ""
+                if "supplier_id" in receipt_columns and {"id", supplier_name_column}.issubset(supplier_columns) else ""
             )
             supplier_select = f"s.{supplier_name_column} supplier_name" if supplier_join else "'' supplier_name"
             receipt_no_select = "r.receipt_no" if "receipt_no" in receipt_columns else "CAST(r.id AS TEXT)"
@@ -370,6 +362,7 @@ def reconciliation_snapshot(conn):
                 {"movement_no", "id"}.issubset(movement_columns) and
                 {"source_movement_id", "qty_remaining", "unit_cost"}.issubset(layer_columns)
             )
+            value_remaining_select = "value_remaining" if "value_remaining" in layer_columns else "NULL"
             for row in conn.execute(
                 f"""SELECT r.id,{receipt_no_select} receipt_no,{receipt_date_select} receipt_date,
                            r.total_value,{supplier_select}
@@ -390,7 +383,7 @@ def reconciliation_snapshot(conn):
                     if movement:
                         movement_id = int(movement["id"])
                         layer_rows = conn.execute(
-                            "SELECT qty_remaining,unit_cost,value_remaining FROM stock_valuation_layers "
+                            f"SELECT qty_remaining,unit_cost,{value_remaining_select} value_remaining FROM stock_valuation_layers "
                             "WHERE source_movement_id=?", (movement_id,)
                         ).fetchall()
                         remaining_qty = sum(
