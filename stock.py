@@ -741,8 +741,21 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
     remaining_qty_after_issue = available - qty
     remaining_value_after_issue = (total_value - target_issue_cost) if valuation_method == "average" else None
     remaining_value_allocated = D("0")
+    # Identify the final layer that retains stock so any cent-rounding remainder
+    # is assigned there and the sum of layer values stays equal to the GL value.
+    quantity_to_issue = qty
+    remaining_quantities = []
+    for candidate in layers:
+        candidate_qty = D(candidate["qty_remaining"])
+        candidate_take = min(candidate_qty, quantity_to_issue) if quantity_to_issue > 0 else D("0")
+        remaining_quantities.append(candidate_qty - candidate_take)
+        quantity_to_issue -= candidate_take
+    last_remaining_index = next(
+        (index for index in range(len(remaining_quantities) - 1, -1, -1)
+         if remaining_quantities[index] > 0), None
+    )
     remaining, cost_total, allocations, layer_details = qty, D("0"), [], []
-    for layer in layers:
+    for layer_index, layer in enumerate(layers):
         if remaining <= 0 and valuation_method != "average":
             break
         layer_qty = D(layer["qty_remaining"])
@@ -763,7 +776,7 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
         if valuation_method == "average":
             if new_remaining <= 0:
                 new_value = D("0")
-            elif remaining_qty_after_issue == new_remaining:
+            elif layer_index == last_remaining_index:
                 new_value = remaining_value_after_issue - remaining_value_allocated
             else:
                 new_value = money(new_remaining * avg_cost)
