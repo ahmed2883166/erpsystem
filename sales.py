@@ -2001,6 +2001,9 @@ def index():
         item["creditable"] = Decimal(invoice["total_amount"]) > Decimal(invoice["credited_amount"] or "0")
         item["closed_by_credit"] = item["remaining_amount"] <= 0 and Decimal(invoice["credited_amount"] or "0") > 0 and Decimal(invoice["paid_amount"] or "0") < Decimal(invoice["total_amount"])
         enriched_invoices.append(item)
+    invoice_workflows = c.execute("""SELECT w.*,cu.name customer_name,cu.code customer_code
+        FROM sales_invoice_workflows w JOIN customers cu ON cu.id=w.customer_id
+        ORDER BY w.id DESC LIMIT 100""").fetchall()
     receipts_page = fetch_page(c,
         """SELECT r.*,i.invoice_no,c.name customer_name FROM customer_receipts r
            JOIN sales_invoices i ON i.id=r.invoice_id JOIN customers c ON c.id=i.customer_id
@@ -2047,6 +2050,7 @@ def index():
         enriched_notes.append(item)
     c.close()
     return render_template("sales.html", customers=customers, invoices=enriched_invoices,
+                           invoice_workflows=invoice_workflows,
                            receipts=receipts, batch_receipts=batch_receipts, credit_notes=enriched_notes, refunds=refunds,
                            invoice_page=invoice_page, invoice_pages=invoice_pages,
                            invoice_per_page=invoice_per_page, invoice_total=invoice_total,
