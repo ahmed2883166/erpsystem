@@ -213,8 +213,10 @@ def calculate_tax_input_totals(purchases):
         if row.get("tax_treatment", "standard") == "standard":
             percent = Decimal(str(row.get("deductible_percent", "100") or "0"))
             # Invalid percentages must never inflate a recoverable VAT claim.
-            recoverable = (tax * percent / Decimal("100")
-                           if Decimal("0") <= percent <= Decimal("100") else Decimal("0"))
+            recoverable = (
+                (tax * percent / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                if Decimal("0") <= percent <= Decimal("100") else Decimal("0")
+            )
         else:
             recoverable = Decimal("0")
         deductible += recoverable
