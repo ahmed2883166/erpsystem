@@ -3047,12 +3047,14 @@ def ledger():
                 boundary_running = Decimal(str(boundary["running_balance"] or "0"))
                 opening_balance = boundary_running - Decimal(str(boundary["debit"] or "0")) + Decimal(str(boundary["credit"] or "0"))
                 closing_boundary = raw_rows[0] if sort_order == "desc" else raw_rows[-1]
-                closing_balance = Decimal(str(closing_boundary["running_balance"] or "0")).quantize(
-                    Decimal("0.01"), rounding=ROUND_HALF_UP
-                )
-            else:
+                else:
                 opening_balance = base_opening
-                closing_balance = base_opening
+            period_net = connection.execute(f"""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),'0') net
+                FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                WHERE {' AND '.join(date_conditions)}""", date_params).fetchone()
+            closing_balance = (base_opening + Decimal(str(period_net["net"] or "0"))).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
 
             filtered_totals = connection.execute(f"""SELECT
                 COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
