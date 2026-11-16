@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from database import connect_database, enable_wal, fetch_page
+from app_paths import ensure_data_directory
 
 
 class SharedDatabaseTests(unittest.TestCase):
@@ -45,6 +46,13 @@ class SharedDatabaseTests(unittest.TestCase):
                 self.assertEqual(len(fallback["rows"]), 25)
             finally:
                 conn.close()
+
+    def test_data_directory_creates_missing_parent_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "nested" / "runtime" / "data"
+            created = ensure_data_directory(target)
+            self.assertEqual(created, target.resolve())
+            self.assertTrue(created.is_dir())
 
     def test_wal_is_enabled_and_persistent(self):
         with tempfile.TemporaryDirectory() as directory:
