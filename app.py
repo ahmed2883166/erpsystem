@@ -35,6 +35,7 @@ from party_reports import party_bp
 from management_dashboard import cached_management_snapshot, initialize_management_dashboard_schema
 from analytic_dimensions import initialize_analytic_dimensions_schema, active_dimension_options, validate_journal_dimensions
 from financial_planning import planning_bp, initialize_planning_schema
+from period_adjustments import adjustments_bp, initialize_adjustments_schema
 from activity_profiles import (initialize_activity_profiles_schema, list_activity_profiles, create_activity_profile, create_specialized_activity_profile, SPECIALIZED_ACTIVITY_PRESETS, set_activity_profile_active, validate_activity_profile, update_custom_activity_profile, get_active_activity_profile)
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
@@ -178,6 +179,7 @@ app.register_blueprint(payroll_compliance_bp)
 app.register_blueprint(currency_bp)
 app.register_blueprint(party_bp)
 app.register_blueprint(planning_bp)
+app.register_blueprint(adjustments_bp)
 app.register_blueprint(health_bp)
 # SECRET_KEY and session/CSRF settings are initialized above.
 
@@ -554,6 +556,7 @@ def initialize_database():
     initialize_cash_commitments_schema(dashboard_connection)
     initialize_analytic_dimensions_schema(dashboard_connection)
     initialize_planning_schema(dashboard_connection)
+    initialize_adjustments_schema(dashboard_connection)
     initialize_activity_profiles_schema(dashboard_connection)
     dashboard_connection.close()
 
