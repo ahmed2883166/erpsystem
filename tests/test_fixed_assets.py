@@ -596,7 +596,8 @@ class ManualAssetRouteIntegrationTests(unittest.TestCase):
             BEGIN SELECT RAISE(ABORT,'forced link failure'); END
         """)
         response = self.client.post("/assets/", data=self._payload())
-        self.assertEqual(response.status_code, 302)
+        # The route catches the database error, rolls back, and re-renders the form with an error flash.
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM fixed_assets").fetchone()[0], 0)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM journal_lines").fetchone()[0], 0)
