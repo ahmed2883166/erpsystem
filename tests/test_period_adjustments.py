@@ -53,7 +53,7 @@ class PeriodAdjustmentTests(unittest.TestCase):
         self.assertEqual(sum((p["amount"] for p in preview["periods"]), Decimal("0")),
                          Decimal("100.00"))
 
-    def test_yearly_frequency_creates_one_period_per_calendar_year(self):
+    def test_yearly_frequency_creates_12_month_periods_from_start_date(self):
         adjustment_id = create_adjustment(
             self.conn, "تأمين سنوي", "prepaid_expense", "2400",
             "2026-07-01", "2028-06-30", "yearly", 1, 2, 7
