@@ -151,5 +151,120 @@ class TenClientWriteConcurrencyTests(unittest.TestCase):
                 verify.close()
 
 
+    def test_ten_writers_and_five_report_readers_run_together(self):
+        """Exercise WAL read/write overlap with isolated ERP journal data."""
+        import time
+
+        with tempfile.TemporaryDirectory(prefix="nexus-lan-read-write-load-") as folder:
+            db_path = Path(folder) / "mixed-load.sqlite3"
+            prepare_database(db_path)
+            worker_count = 15
+            start = threading.Barrier(worker_count)
+            read_latencies = []
+            read_errors = []
+            expected_entries = self.CLIENTS * self.POSTS_PER_CLIENT
+
+            def writer(client_number):
+                start.wait(timeout=20)
+                connection = connect_database(db_path, timeout=20, isolation_level="")
+                try:
+                    for sequence in range(self.POSTS_PER_CLIENT):
+                        reference = f"MIXED-{client_number:02d}-{sequence:04d}"
+                        connection.execute("BEGIN IMMEDIATE")
+                        try:
+                            post_journal(
+                                connection, "2026-11-16", reference,
+                                "اختبار حمل قراءة وكتابة متزامن",
+                                [
+                                    (1, "75.25", "0", "مدين الصندوق"),
+                                    (2, "0", "75.25", "دائن الإيراد"),
+                                ],
+                                created_by=client_number,
+                            )
+                            connection.commit()
+                        except Exception:
+                            connection.rollback()
+                            raise
+                finally:
+                    connection.close()
+
+            def report_reader(reader_number):
+                start.wait(timeout=20)
+                connection = connect_database(db_path, timeout=20, isolation_level=None)
+                try:
+                    for _ in range(40):
+                        began = time.perf_counter()
+                        try:
+                            row = connection.execute("""
+                                SELECT COUNT(*) AS entries,
+                                       COALESCE(SUM((SELECT COUNT(*) FROM journal_lines jl
+                                                     WHERE jl.entry_id=je.id)), 0) AS lines
+                                FROM journal_entries je
+                            """).fetchone()
+                            self.assertGreaterEqual(row["entries"], 0)
+                            self.assertGreaterEqual(row["lines"], 0)
+                        except Exception as exc:
+                            read_errors.append((reader_number, repr(exc)))
+                            raise
+                        finally:
+                            read_latencies.append(time.perf_counter() - began)
+                finally:
+                    connection.close()
+
+            began = time.perf_counter()
+            with ThreadPoolExecutor(max_workers=worker_count) as pool:
+                futures = [
+                    pool.submit(writer, number)
+                    for number in range(1, self.CLIENTS + 1)
+                ]
+                futures.extend(
+                    pool.submit(report_reader, number)
+                    for number in range(1, 6)
+                )
+                for future in futures:
+                    future.result(timeout=90)
+            elapsed = time.perf_counter() - began
+
+            self.assertEqual(read_errors, [])
+            self.assertEqual(len(read_latencies), 200)
+            ordered = sorted(read_latencies)
+            p95 = ordered[int(len(ordered) * 0.95) - 1]
+            print(
+                "LAN_MIXED_LOAD_METRICS "
+                f"writers={self.CLIENTS} readers=5 entries={expected_entries} "
+                f"reads={len(read_latencies)} elapsed_seconds={elapsed:.3f} "
+                f"read_p95_seconds={p95:.4f} read_max_seconds={max(ordered):.4f}"
+            )
+            self.assertLess(elapsed, 60, "Mixed ten-client write and report-read workload took too long")
+            self.assertLess(p95, 5, "95th percentile report-read latency exceeded five seconds")
+            self.assertLess(max(ordered), 10, "A report read took more than ten seconds")
+
+            verify = connect_database(db_path)
+            try:
+                self.assertEqual(verify.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                self.assertEqual(
+                    verify.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0],
+                    expected_entries,
+                )
+                self.assertEqual(
+                    verify.execute("SELECT COUNT(*) FROM journal_lines").fetchone()[0],
+                    expected_entries * 2,
+                )
+                self.assertEqual(
+                    verify.execute("""
+                        SELECT COUNT(*) FROM (
+                            SELECT entry_id,
+                                   DECIMAL_SUM(debit) AS debit_total,
+                                   DECIMAL_SUM(credit) AS credit_total
+                            FROM journal_lines GROUP BY entry_id
+                            HAVING debit_total <> credit_total
+                        )
+                    """).fetchone()[0],
+                    0,
+                )
+            finally:
+                verify.close()
+
+
 if __name__ == "__main__":
     unittest.main()
