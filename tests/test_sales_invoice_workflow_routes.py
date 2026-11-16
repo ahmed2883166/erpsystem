@@ -15,6 +15,14 @@ class SalesInvoiceWorkflowRouteTests(unittest.TestCase):
         sales.DB_PATH = Path(self.temp.name) / "workflow.db"
         self.connection = self._connect()
         self.connection.executescript("""
+            CREATE TABLE users(id INTEGER PRIMARY KEY,username TEXT,full_name TEXT);
+            INSERT INTO users VALUES(20,'reviewer','مراجع');
+            INSERT INTO users VALUES(99,'admin','مدير النظام');
+            CREATE TABLE audit_log(
+                id INTEGER PRIMARY KEY,user_id INTEGER,action TEXT,details TEXT,created_at TEXT,
+                entity_type TEXT,entity_id TEXT,remote_addr TEXT,outcome TEXT,actor_name TEXT,
+                before_values TEXT,after_values TEXT,submitted_values TEXT,reason TEXT,request_id TEXT
+            );
             CREATE TABLE customers(id INTEGER PRIMARY KEY, name TEXT, code TEXT);
             INSERT INTO customers VALUES(1,'عميل اختبار','C-1');
             CREATE TABLE sales_invoice_workflows(
@@ -29,11 +37,14 @@ class SalesInvoiceWorkflowRouteTests(unittest.TestCase):
         self.connection.commit()
         nexus.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
         self.client = nexus.app.test_client()
-        self.patch_db = patch.object(sales, "db", side_effect=self._connect)
-        self.patch_db.start()
+        self.patch_sales_db = patch.object(sales, "db", side_effect=self._connect)
+        self.patch_app_db = patch.object(nexus, "db", side_effect=self._connect)
+        self.patch_sales_db.start()
+        self.patch_app_db.start()
 
     def tearDown(self):
-        self.patch_db.stop()
+        self.patch_sales_db.stop()
+        self.patch_app_db.stop()
         self.connection.close()
         sales.DB_PATH = self.original_path
         self.temp.cleanup()
