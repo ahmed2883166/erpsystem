@@ -6,6 +6,21 @@
 <form method="get" class="inline-form"><label>عدد السطور <select name="invoice_per_page" onchange="this.form.submit()"><option value="50" {% if invoice_per_page==50 %}selected{% endif %}>50</option><option value="100" {% if invoice_per_page==100 %}selected{% endif %}>100</option></select></label></form>
 {% if invoice_page>1 %}<a class="button secondary" href="{{ url_for('sales.index',invoice_page=invoice_page-1,invoice_per_page=invoice_per_page) }}">السابق</a>{% endif %}
 {% if invoice_page<invoice_pages %}<a class="button" href="{{ url_for('sales.index',invoice_page=invoice_page+1,invoice_per_page=invoice_per_page) }}">التالي</a>{% endif %}</div></section>
+<section class="panel"><h3>مسودات فواتير البيع وطلبات الاعتماد</h3>
+<p class="muted">المسودة وطلب الاعتماد لا ينشئان قيدًا ولا يخصمان المخزون. الاعتماد مرحلة مستقلة عن الترحيل، والتحصيل حالة منفصلة بعد الترحيل.</p>
+<div class="table-wrap"><table><tr><th>رقم الطلب</th><th>العميل</th><th>تاريخ الفاتورة</th><th>قبل الضريبة</th><th>الخصم</th><th>الحالة</th><th>الإجراء</th></tr>
+{% for w in invoice_workflows %}<tr>
+<td>{{ w.workflow_no }}</td><td>{{ w.customer_name }}</td><td>{{ w.invoice_date }}</td>
+<td>{{ w.gross_subtotal|money }}</td><td>{{ w.discount_amount|money }}</td>
+<td>{% if w.status=='draft' %}<span class="state-pill state-draft">مسودة</span>
+{% elif w.status=='pending_approval' %}<span class="state-pill state-partial">في انتظار الاعتماد</span>
+{% elif w.status=='approved' %}<span class="state-pill state-approved">معتمدة — بانتظار الترحيل</span>
+{% elif w.status=='rejected' %}<span class="state-pill state-cancelled">مرفوضة</span>
+{% elif w.status=='cancelled' %}<span class="state-pill state-cancelled">ملغاة قبل الترحيل</span>
+{% else %}<span class="state-pill state-paid">مرحّلة</span>{% endif %}</td>
+<td>{% if w.status=='posted' and w.posted_invoice_id %}<a href="{{ url_for('sales.invoice_print',invoice_id=w.posted_invoice_id) }}">فتح الفاتورة المرحلة</a>{% else %}<a href="{{ url_for('sales.invoice_workflow',workflow_id=w.id) }}">عرض الحالة والإجراء</a>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="7">لا توجد مسودات أو طلبات اعتماد.</td></tr>{% endfor %}
+</table></div></section>
 <section class="panel"><h3>تحصيلات العملاء</h3><div class="table-wrap"><table><tr><th>رقم التحصيل</th><th>الفاتورة</th><th>العميل</th><th>التاريخ</th><th>القيمة</th><th>القيد</th><th>طباعة</th></tr>{% for x in receipts %}<tr><td>{{ x.receipt_no }}</td><td>{{ x.invoice_no }}</td><td>{{ x.customer_name }}</td><td>{{ x.receipt_date }}</td><td>{{ x.amount }}</td><td>{% if x.journal_entry_id %}<a class="journal-entry-link" href="{{ url_for('journal_detail',entry_id=x.journal_entry_id) }}">#{{ x.journal_entry_id }} — عرض القيد</a>{% else %}—{% endif %}</td><td><a href="{{ url_for('sales.single_receipt_print',receipt_id=x.id) }}">طباعة</a></td></tr>{% else %}<tr><td colspan="7">لا توجد تحصيلات.</td></tr>{% endfor %}</table></div><div class="actions pagination"><span class="muted">إجمالي تحصيلات العملاء: {{ receipts_page.total }} — الصفحة {{ receipts_page.page }} من {{ receipts_page.pages }}</span>
 <form method="get" class="inline-form"><label>عدد السطور <select name="receipts_per_page" onchange="this.form.submit()"><option value="50" {% if receipts_page.per_page==50 %}selected{% endif %}>50</option><option value="100" {% if receipts_page.per_page==100 %}selected{% endif %}>100</option></select></label></form>
 {% if receipts_page.page>1 %}<a class="button secondary" href="{{ url_for('sales.index',receipts_page=receipts_page.page-1,receipts_per_page=receipts_page.per_page) }}">السابق</a>{% endif %}
