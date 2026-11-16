@@ -11,6 +11,7 @@ import re
 import secrets
 import sqlite3
 import tempfile
+import time
 import zipfile
 from datetime import date, datetime
 from pathlib import Path
@@ -43,6 +44,9 @@ from activity_profiles import (initialize_activity_profiles_schema, list_activit
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
+from report_request_control import (ReportRequestGate, bounded_env_int,
+                                    is_expensive_report_request,
+                                    make_sqlite_deadline_callback)
 from app_paths import DATA_DIR, DB_PATH, BACKUP_DIR, ensure_data_directory
 from backup_scheduler import create_backup_archive, next_backup_datetime, start_backup_scheduler
 from system_health import health_bp
@@ -399,8 +403,48 @@ def assert_user_management_scope(target=None, requested_role=None, requested_per
 register_report_exports(app, DB_PATH, PERMISSIONS)
 
 
+REPORT_REQUEST_TIMEOUT_SECONDS = bounded_env_int(
+    os.environ.get("NEXUS_REPORT_TIMEOUT_SECONDS", "90"), 90, 5, 180
+)
+REPORT_REQUEST_GATE = ReportRequestGate(
+    bounded_env_int(os.environ.get("NEXUS_REPORT_CONCURRENCY", "2"), 2, 1, 16)
+)
+
+
 def db():
-    return connect_database(DB_PATH, isolation_level="")
+    connection = connect_database(DB_PATH, isolation_level="")
+    deadline = getattr(g, "_nexus_report_deadline", None) if has_request_context() else None
+    if deadline is not None:
+        # Interrupt long-running SQLite virtual-machine work for report requests.
+        # This is a server-side deadline, not browser-disconnect detection.
+        connection.set_progress_handler(make_sqlite_deadline_callback(deadline), 10000)
+    return connection
+
+
+@app.before_request
+def guard_expensive_report_request():
+    if not is_expensive_report_request(request.method, request.endpoint, request.path):
+        return None
+    if not REPORT_REQUEST_GATE.acquire():
+        app.logger.warning(
+            "Rejected report request because the report concurrency limit is full: %s",
+            request.path,
+        )
+        return (
+            "التقارير مشغولة حاليًا. انتظر قليلًا ثم أعد المحاولة.",
+            503,
+            {"Retry-After": "5", "Content-Type": "text/plain; charset=utf-8"},
+        )
+    g._nexus_report_slot_acquired = True
+    g._nexus_report_deadline = time.monotonic() + REPORT_REQUEST_TIMEOUT_SECONDS
+    return None
+
+
+@app.teardown_request
+def release_expensive_report_slot(error=None):
+    if getattr(g, "_nexus_report_slot_acquired", False):
+        g._nexus_report_slot_acquired = False
+        REPORT_REQUEST_GATE.release()
 
 
 def _save_initial_admin_password(password):
