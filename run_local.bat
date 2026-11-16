@@ -2,13 +2,15 @@
 setlocal
 cd /d "%~dp0"
 
-title NEXUS ERP - Local Server
+title ADMRAIL ERP - Local Server
 REM Local developer-only license bypass. Do not ship this launcher to customers.
 set "NEXUS_DEMO_MODE=1"
+REM Use a dedicated port so an older NEXUS process on port 5000 cannot show its license page.
+set "PORT=5055"
 
 echo Starting NEXUS ERP...
 echo Please keep this window open while using the program.
-echo The browser will open at http://127.0.0.1:5000
+echo The browser will open at http://127.0.0.1:5055
 echo.
 
 REM Open the browser after the Flask/Waitress server has had time to start.
