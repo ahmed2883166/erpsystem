@@ -137,6 +137,7 @@ def index():
                 raise ValueError("سعر الصرف يجب أن يكون أكبر من صفر.")
             if not c.execute("SELECT 1 FROM currencies WHERE code=? AND active=1", (currency,)).fetchone():
                 raise ValueError("العملة غير موجودة أو غير مفعلة في إعدادات الشركة.")
+            c.execute("BEGIN IMMEDIATE")
             c.execute("""INSERT INTO fx_exchange_rates(currency_code,rate_date,rate_to_base,created_by)
                          VALUES(?,?,?,?) ON CONFLICT(currency_code,rate_date)
                          DO UPDATE SET rate_to_base=excluded.rate_to_base,source='manual',created_by=excluded.created_by""",
@@ -175,17 +176,26 @@ def create_transaction():
         if kind not in {"receivable", "payable"}:
             raise ValueError("نوع العملية غير صحيح.")
         currency = request.form["currency_code"].upper().strip()
+        if not c.execute(
+            "SELECT 1 FROM currencies WHERE code=? AND active=1 AND is_base=0", (currency,)
+        ).fetchone():
+            raise ValueError("العملة غير موجودة أو غير مفعلة كعملة أجنبية في إعدادات الشركة.")
         trans_date = date.fromisoformat(request.form["transaction_date"]).isoformat()
         foreign = D(request.form["foreign_amount"])
-        rate = _rate(c,currency,trans_date,request.form.get("rate"))
         if foreign <= 0:
             raise ValueError("المبلغ بالعملة الأجنبية يجب أن يكون أكبر من صفر.")
         party_account = _account(c,int(request.form["party_account_id"]))
         counterpart = _account(c,int(request.form["counterpart_account_id"]))
-        base_amount = M(foreign*rate)
         reference = request.form["reference"].strip()
+        party_name = request.form["party_name"].strip()
         if not reference:
             raise ValueError("رقم المستند أو المرجع مطلوب.")
+        if not party_name:
+            raise ValueError("اسم العميل أو المورد مطلوب.")
+        # The exchange-rate upsert, journal posting and subledger insert must commit together.
+        c.execute("BEGIN IMMEDIATE")
+        rate = _rate(c,currency,trans_date,request.form.get("rate"))
+        base_amount = M(foreign*rate)
         if kind == "receivable":
             lines = [(party_account,base_amount,0,"إثبات ذمة مدينة بالعملة الأجنبية"),
                      (counterpart,0,base_amount,"إيراد / حساب مقابل")]
@@ -198,7 +208,7 @@ def create_transaction():
             original_foreign,balance_foreign,original_rate,original_base,balance_base,party_account_id,
             counterpart_account_id,journal_entry_id,created_by)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (reference,kind,request.form["party_name"].strip(),currency,trans_date,str(foreign),str(foreign),
+            (reference,kind,party_name,currency,trans_date,str(foreign),str(foreign),
              str(rate),str(base_amount),str(base_amount),party_account,counterpart,journal_id,session["user_id"]))
         _audit(c, "fx_transaction_created", reference + " " + currency + " " + str(foreign))
         c.commit()

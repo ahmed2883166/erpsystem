@@ -64,6 +64,41 @@ class CurrencyCenterTests(unittest.TestCase):
         self.assertEqual(tuple(state), ("30", "1500", "open"))
         conn.close()
 
+    def test_fx_transaction_and_rate_roll_back_when_subledger_insert_fails(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            CREATE TRIGGER fail_fx_transaction_insert BEFORE INSERT ON fx_transactions
+            BEGIN SELECT RAISE(ABORT,'forced fx transaction failure'); END
+        """)
+        conn.commit()
+        conn.close()
+
+        self.client.post("/currencies/transactions", data={
+            "party_type": "receivable", "reference": "INV-USD-ROLLBACK", "party_name": "Customer",
+            "currency_code": "USD", "transaction_date": "2026-11-01",
+            "foreign_amount": "100", "rate": "50", "party_account_id": "2",
+            "counterpart_account_id": "3"
+        })
+
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM fx_transactions").fetchone()[0], 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM fx_exchange_rates").fetchone()[0], 0)
+        conn.close()
+
+    def test_fx_transaction_rejects_inactive_or_base_currency(self):
+        self.client.post("/currencies/transactions", data={
+            "party_type": "receivable", "reference": "INV-EGP-INVALID", "party_name": "Customer",
+            "currency_code": "EGP", "transaction_date": "2026-11-01",
+            "foreign_amount": "100", "rate": "1", "party_account_id": "2",
+            "counterpart_account_id": "3"
+        })
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM fx_transactions").fetchone()[0], 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM fx_exchange_rates").fetchone()[0], 0)
+        conn.close()
+
     def test_receivable_settlement_and_period_end_revaluation(self):
         response = self.client.post("/currencies/transactions", data={
             "party_type": "receivable", "reference": "INV-USD-1", "party_name": "Foreign Customer",
