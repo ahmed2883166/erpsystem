@@ -1005,7 +1005,7 @@ def company_setup():
     connection = db()
     if request.method == "POST":
         activity = request.form.get("activity", "commercial")
-        tax_country = request.form.get("tax_country", "OTHER")
+        tax_country = request.form.get("tax_country", "")
         # Country localization is deterministic: Egypt and Saudi Arabia get their standard VAT defaults.
         if tax_country == "EG":
             tax_regime, base_currency, automatic_vat = "EG_VAT", "EGP", "14"
@@ -1014,7 +1014,7 @@ def company_setup():
         else:
             tax_regime, automatic_vat = "CUSTOM", request.form.get("default_vat_rate", "0").strip()
             base_currency = request.form.get("base_currency", "").upper()
-        if activity not in CHARTS or tax_country not in {"EG", "SA", "OTHER"} or tax_regime not in {"EG_VAT", "SA_VAT_ZAKAT", "CUSTOM"}:
+        if activity not in CHARTS or tax_country not in {"EG", "SA"} or tax_regime not in {"EG_VAT", "SA_VAT_ZAKAT", "CUSTOM"}:
             flash("اختيارات الإعدادات غير صحيحة.", "error")
             connection.close()
             return redirect(url_for("company_setup"))
