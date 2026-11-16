@@ -2333,6 +2333,162 @@ def new_invoice():
 
 
 
+@sales_bp.route("/invoices/workflow/<int:workflow_id>")
+@require("sales.view")
+def invoice_workflow(workflow_id):
+    c = db()
+    row = c.execute("""SELECT w.*,cu.name customer_name,cu.code customer_code
+        FROM sales_invoice_workflows w JOIN customers cu ON cu.id=w.customer_id
+        WHERE w.id=?""", (workflow_id,)).fetchone()
+    if not row:
+        c.close()
+        abort(404)
+    try:
+        payload = json.loads(row["payload_json"])
+    except (TypeError, ValueError):
+        c.close()
+        flash("بيانات مسودة الفاتورة غير سليمة؛ لم يتم تنفيذ أي إجراء.", "error")
+        return redirect(url_for("sales.index"))
+    c.close()
+    return render_template("sales_invoice_workflow.html", workflow=row, payload=payload,
+                           can_approve=("sales.approve" in set(session.get("permissions", ()))
+                                        or session.get("role") == "admin"))
+
+
+@sales_bp.route("/invoices/workflow/<int:workflow_id>/submit", methods=["POST"])
+@require("sales.manage")
+def submit_invoice_workflow(workflow_id):
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        changed = c.execute("""UPDATE sales_invoice_workflows
+            SET status='pending_approval',submitted_by=?,submitted_at=?,updated_at=CURRENT_TIMESTAMP
+            WHERE id=? AND status='draft'""",
+            (session["user_id"], datetime.now().isoformat(timespec="seconds"), workflow_id)).rowcount
+        if changed != 1:
+            raise ValueError("لا يمكن إرسال المسودة؛ قد تكون عولجت أو تغيرت حالتها.")
+        c.commit()
+        flash("تم إرسال الفاتورة للاعتماد. لم يتم ترحيلها أو خصم المخزون.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(safe_error_message(exc, "تعذر إرسال المسودة للاعتماد."), "error")
+    finally:
+        c.close()
+    return redirect(url_for("sales.invoice_workflow", workflow_id=workflow_id))
+
+
+@sales_bp.route("/invoices/workflow/<int:workflow_id>/decision", methods=["POST"])
+@require("sales.approve")
+def decide_invoice_workflow(workflow_id):
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute("""SELECT * FROM sales_invoice_workflows
+            WHERE id=? AND status='pending_approval'""", (workflow_id,)).fetchone()
+        if not row:
+            raise ValueError("الفاتورة ليست في انتظار الاعتماد أو سبق اتخاذ قرار عليها.")
+        if row["created_by"] == session.get("user_id"):
+            raise ValueError("لا يجوز اعتماد أو رفض مسودة الفاتورة التي أنشأتها بنفسك.")
+        action = request.form.get("action")
+        reason = str(request.form.get("reason") or "").strip()
+        if action == "reject":
+            if not reason:
+                raise ValueError("سبب رفض الفاتورة مطلوب.")
+            changed = c.execute("""UPDATE sales_invoice_workflows SET status='rejected',
+                rejected_by=?,rejected_at=?,rejection_reason=?,updated_at=CURRENT_TIMESTAMP
+                WHERE id=? AND status='pending_approval'""",
+                (session["user_id"], datetime.now().isoformat(timespec="seconds"),
+                 reason, workflow_id)).rowcount
+            if changed != 1:
+                raise ValueError("تم اتخاذ قرار على الفاتورة بواسطة مستخدم آخر.")
+            c.commit()
+            flash("تم رفض الفاتورة. لم يتم إنشاء قيد أو حركة مخزون.", "success")
+        elif action == "approve":
+            credit_override = 1 if request.form.get("credit_override") == "1" else 0
+            changed = c.execute("""UPDATE sales_invoice_workflows SET status='approved',
+                approved_by=?,approved_at=?,approved_credit_override=?,updated_at=CURRENT_TIMESTAMP
+                WHERE id=? AND status='pending_approval'""",
+                (session["user_id"], datetime.now().isoformat(timespec="seconds"),
+                 credit_override, workflow_id)).rowcount
+            if changed != 1:
+                raise ValueError("تم اتخاذ قرار على الفاتورة بواسطة مستخدم آخر.")
+            c.commit()
+            flash("تم اعتماد الفاتورة. ما زالت غير مرحلة ولم يتم خصم المخزون؛ يلزم تنفيذ الترحيل كخطوة مستقلة.", "success")
+        else:
+            raise ValueError("اختر اعتماد الفاتورة أو رفضها.")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(safe_error_message(exc, "تعذر حفظ قرار الاعتماد."), "error")
+    finally:
+        c.close()
+    return redirect(url_for("sales.invoice_workflow", workflow_id=workflow_id))
+
+
+@sales_bp.route("/invoices/workflow/<int:workflow_id>/post", methods=["POST"])
+@require("sales.manage")
+def post_invoice_workflow(workflow_id):
+    c = db()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        workflow = c.execute("""SELECT * FROM sales_invoice_workflows
+            WHERE id=? AND status='approved' AND posted_invoice_id IS NULL""",
+            (workflow_id,)).fetchone()
+        if not workflow:
+            raise ValueError("الفاتورة ليست معتمدة وجاهزة للترحيل، أو سبق ترحيلها.")
+        payload = json.loads(workflow["payload_json"])
+        result = post_invoice(
+            c, int(payload["customer_id"]), payload["invoice_date"],
+            payload.get("warehouse_id"), payload["items"], payload.get("tax_rate", "0"),
+            session["user_id"], allow_credit_override=bool(workflow["approved_credit_override"]),
+            dimensions=payload.get("dimensions") or {},
+            discount_override=payload.get("discount_override"),
+            sales_channel=payload.get("sales_channel", "default"),
+        )
+        c.execute("UPDATE sales_invoices SET due_date=? WHERE id=?",
+                  (payload.get("due_date") or payload["invoice_date"], result["invoice_id"]))
+        changed = c.execute("""UPDATE sales_invoice_workflows SET status='posted',
+            posted_invoice_id=?,posted_at=?,updated_at=CURRENT_TIMESTAMP
+            WHERE id=? AND status='approved' AND posted_invoice_id IS NULL""",
+            (result["invoice_id"], datetime.now().isoformat(timespec="seconds"), workflow_id)).rowcount
+        if changed != 1:
+            raise ValueError("تعذر تثبيت حالة الترحيل؛ أُلغيت المعاملة بالكامل.")
+        c.commit()
+        g.audit_created_record = ("sales_invoices", result["invoice_id"], "sales_invoice_lines", "invoice_id")
+        flash("تم ترحيل الفاتورة المعتمدة وإنشاء القيد وحركة المخزون مرة واحدة: " + result["invoice_no"], "success")
+        return redirect(url_for("sales.invoice_print", invoice_id=result["invoice_id"]))
+    except (ValueError, InvalidOperation, KeyError, TypeError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(safe_error_message(exc, "تعذر ترحيل الفاتورة المعتمدة. لم يتم حفظ أي تغييرات."), "error")
+    finally:
+        c.close()
+    return redirect(url_for("sales.invoice_workflow", workflow_id=workflow_id))
+
+
+@sales_bp.route("/invoices/workflow/<int:workflow_id>/cancel", methods=["POST"])
+@require("sales.manage")
+def cancel_invoice_workflow(workflow_id):
+    c = db()
+    try:
+        reason = str(request.form.get("reason") or "").strip()
+        if not reason:
+            raise ValueError("سبب إلغاء المسودة مطلوب.")
+        changed = c.execute("""UPDATE sales_invoice_workflows SET status='cancelled',
+            cancelled_by=?,cancelled_at=?,cancellation_reason=?,updated_at=CURRENT_TIMESTAMP
+            WHERE id=? AND status IN ('draft','pending_approval','approved','rejected')""",
+            (session["user_id"], datetime.now().isoformat(timespec="seconds"),
+             reason, workflow_id)).rowcount
+        if changed != 1:
+            raise ValueError("لا يمكن إلغاء الفاتورة؛ قد تكون مرحلة بالفعل. الفاتورة المرحلة تُعالج بإشعار دائن أو قيد عكسي.")
+        c.commit()
+        flash("تم إلغاء مسودة الفاتورة دون إنشاء قيد أو حركة مخزون.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        c.rollback()
+        flash(safe_error_message(exc, "تعذر إلغاء مسودة الفاتورة."), "error")
+    finally:
+        c.close()
+    return redirect(url_for("sales.index"))
+
+
 def reject_discount_approval_request(conn, current, reviewer_id, reason, request_id):
     """Reject a pending discount request without leaving its sales order in limbo."""
     if current["request_type"] == "sales_order":
