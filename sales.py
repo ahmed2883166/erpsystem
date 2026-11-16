@@ -189,6 +189,13 @@ def init_sales_schema():
     CREATE INDEX IF NOT EXISTS idx_sales_invoice_workflows_customer
       ON sales_invoice_workflows(customer_id,invoice_date,id);
     """)
+    workflow_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoice_workflows)")}
+    for name, definition in {
+        "updated_by": "INTEGER",
+        "last_edit_at": "TEXT",
+    }.items():
+        if name not in workflow_columns:
+            c.execute(f"ALTER TABLE sales_invoice_workflows ADD COLUMN {name} {definition}")
     discount_request_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_discount_approval_requests)")}
     for name, definition in {
         "request_type": "TEXT NOT NULL DEFAULT 'invoice'",
@@ -812,6 +819,80 @@ def create_invoice_workflow(conn, payload, status, created_by, gross_subtotal,
              datetime.now().isoformat(timespec="seconds") if status == "pending_approval" else None))
         conn.commit()
         return cursor.lastrowid, workflow_no
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def update_invoice_workflow(conn, workflow_id, payload, user_id, gross_subtotal,
+                            discount_amount, discount_percent, is_admin=False):
+    """Update an existing draft only; never changes stock or accounting records."""
+    customer_id = int(payload.get("customer_id") or 0)
+    customer = conn.execute("SELECT id FROM customers WHERE id=? AND active=1",
+                            (customer_id,)).fetchone()
+    if not customer:
+        raise ValueError("العميل غير موجود أو غير نشط.")
+    try:
+        invoice_date = date.fromisoformat(str(payload.get("invoice_date"))).isoformat()
+        due_date = date.fromisoformat(str(payload.get("due_date"))).isoformat()
+    except (TypeError, ValueError):
+        raise ValueError("تاريخ الفاتورة أو الاستحقاق غير صحيح.")
+    if due_date < invoice_date:
+        raise ValueError("تاريخ الاستحقاق لا يمكن أن يسبق تاريخ الفاتورة.")
+    items = payload.get("items") or []
+    if not items:
+        raise ValueError("أضف صنفًا أو خدمة واحدة على الأقل.")
+    normalized_items = []
+    for item in items:
+        try:
+            quantity = Decimal(str(item.get("quantity", "0")))
+            unit_price = Decimal(str(item.get("unit_price", "0")))
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValueError("الكمية أو سعر الوحدة في المسودة غير صحيح.")
+        if not quantity.is_finite() or quantity <= 0 or not unit_price.is_finite() or unit_price < 0:
+            raise ValueError("الكمية أو سعر الوحدة في المسودة غير صحيح.")
+        product_id = item.get("product_id")
+        if product_id:
+            product = conn.execute("SELECT id FROM stock_products WHERE id=? AND active=1",
+                                   (int(product_id),)).fetchone()
+            if not product:
+                raise ValueError("يوجد صنف غير موجود أو غير نشط في بنود المسودة.")
+        elif not str(item.get("description") or "").strip():
+            raise ValueError("اكتب وصف الخدمة أو البند غير المخزني.")
+        normalized_items.append({
+            key: str(value) if isinstance(value, Decimal) else value
+            for key, value in item.items()
+        })
+    gross = Decimal(str(gross_subtotal)).quantize(CENT, rounding=ROUND_HALF_UP)
+    discount = Decimal(str(discount_amount)).quantize(CENT, rounding=ROUND_HALF_UP)
+    percent = Decimal(str(discount_percent)).quantize(CENT, rounding=ROUND_HALF_UP)
+    if (not gross.is_finite() or gross <= 0 or not discount.is_finite()
+            or discount < 0 or discount >= gross or not percent.is_finite()
+            or percent < 0 or percent > 100):
+        raise ValueError("إجمالي المسودة أو الخصم غير صحيح.")
+    normalized_payload = dict(payload)
+    normalized_payload.update({
+        "customer_id": customer_id, "invoice_date": invoice_date,
+        "due_date": due_date, "items": normalized_items,
+    })
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        existing = conn.execute("""SELECT status,created_by FROM sales_invoice_workflows
+            WHERE id=?""", (workflow_id,)).fetchone()
+        if not existing or existing["status"] != "draft":
+            raise ValueError("لا يمكن تعديل الفاتورة؛ يجب أن تكون مسودة غير مرسلة للاعتماد.")
+        if not is_admin and existing["created_by"] != user_id:
+            raise ValueError("يمكنك تعديل المسودات التي أنشأتها فقط.")
+        changed = conn.execute("""UPDATE sales_invoice_workflows SET
+            customer_id=?,invoice_date=?,due_date=?,gross_subtotal=?,discount_amount=?,
+            discount_percent=?,payload_json=?,updated_by=?,last_edit_at=CURRENT_TIMESTAMP,
+            updated_at=CURRENT_TIMESTAMP
+            WHERE id=? AND status='draft'""",
+            (customer_id, invoice_date, due_date, str(gross), str(discount), str(percent),
+             json.dumps(normalized_payload, ensure_ascii=False), user_id, workflow_id)).rowcount
+        if changed != 1:
+            raise ValueError("تغيرت حالة المسودة أثناء الحفظ؛ لم يتم تعديلها.")
+        conn.commit()
     except Exception:
         conn.rollback()
         raise
@@ -2391,6 +2472,132 @@ def invoice_workflow(workflow_id):
                                         or session.get("role") == "admin"))
 
 
+@sales_bp.route("/invoices/workflow/<int:workflow_id>/edit", methods=["GET", "POST"])
+@require("sales.manage")
+def edit_invoice_workflow(workflow_id):
+    c = db()
+    workflow = c.execute("""SELECT w.*,cu.name customer_name
+        FROM sales_invoice_workflows w JOIN customers cu ON cu.id=w.customer_id
+        WHERE w.id=?""", (workflow_id,)).fetchone()
+    if not workflow:
+        c.close()
+        abort(404)
+    if workflow["status"] != "draft":
+        c.close()
+        flash("التعديل متاح للمسودة فقط. بعد إرسالها للاعتماد تُحفظ كما هي لضمان سلامة المراجعة.", "error")
+        return redirect(url_for("sales.invoice_workflow", workflow_id=workflow_id))
+    if workflow["created_by"] != session.get("user_id") and session.get("role") != "admin":
+        c.close()
+        flash("يمكنك تعديل المسودات التي أنشأتها فقط.", "error")
+        return redirect(url_for("sales.invoice_workflow", workflow_id=workflow_id))
+    try:
+        payload = json.loads(workflow["payload_json"])
+    except (TypeError, ValueError):
+        c.close()
+        flash("بيانات مسودة الفاتورة غير سليمة؛ لم يتم تنفيذ أي تعديل.", "error")
+        return redirect(url_for("sales.invoice_workflow", workflow_id=workflow_id))
+    if request.method == "POST":
+        try:
+            items = []
+            for pid, qty, price, desc, line_rate, treatment, uom_id in zip(
+                    request.form.getlist("product_id"), request.form.getlist("quantity"),
+                    request.form.getlist("unit_price"), request.form.getlist("description"),
+                    request.form.getlist("line_tax_rate"), request.form.getlist("line_tax_treatment"),
+                    request.form.getlist("uom_id")):
+                if pid or desc.strip():
+                    selected_price = price
+                    if pid:
+                        rules = c.execute("""SELECT id,unit_price,min_qty,valid_from
+                            FROM customer_price_rules WHERE customer_id=? AND product_id=?
+                            AND active=1 AND valid_from<=? AND (valid_to IS NULL OR valid_to>=?)""",
+                            (int(request.form["customer_id"]), int(pid),
+                             request.form["invoice_date"], request.form["invoice_date"])).fetchall()
+                        factor, _ = product_uom_factor(c, int(pid), uom_id, "sales")
+                        matched = _select_customer_price_rule(rules, Decimal(str(qty)) * factor)
+                        if matched is not None:
+                            selected_price = Decimal(str(matched)) * factor
+                    items.append({
+                        "product_id": int(pid) if pid else None, "quantity": qty,
+                        "unit_price": selected_price, "uom_id": uom_id, "description": desc,
+                        "tax_rate": line_rate, "tax_treatment": treatment,
+                    })
+            customer = c.execute("""SELECT discount_type,discount_value FROM customers
+                WHERE id=? AND active=1""", (int(request.form["customer_id"]),)).fetchone()
+            if not customer:
+                raise ValueError("العميل غير موجود أو غير نشط.")
+            gross = sum((Decimal(str(x["quantity"])) * Decimal(str(x["unit_price"]))
+                         for x in items), Decimal("0.00")).quantize(CENT, rounding=ROUND_HALF_UP)
+            dtype = str(customer["discount_type"] or "none").lower()
+            dvalue = Decimal(str(customer["discount_value"] or "0"))
+            if dtype == "percent":
+                discount = (gross * dvalue / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
+            elif dtype == "fixed":
+                discount = dvalue.quantize(CENT, rounding=ROUND_HALF_UP)
+            elif dtype == "none":
+                discount = Decimal("0.00")
+            else:
+                raise ValueError("نوع خصم العميل غير صحيح.")
+            percent = ((discount * Decimal("100") / gross).quantize(CENT, rounding=ROUND_HALF_UP)
+                       if gross > 0 else Decimal("0.00"))
+            payload = {
+                "customer_id": int(request.form["customer_id"]),
+                "invoice_date": request.form["invoice_date"],
+                "due_date": request.form.get("due_date") or request.form["invoice_date"],
+                "warehouse_id": request.form.get("warehouse_id", type=int),
+                "items": items, "tax_rate": request.form.get("tax_rate", "0"),
+                "dimensions": {key: request.form.get(key) for key in
+                    ("branch_id", "cost_center_id", "project_id", "salesperson_id")},
+                "sales_channel": request.form.get("sales_channel", "default"),
+                "discount_override": {"discount_type": dtype, "discount_value": str(dvalue),
+                                      "discount_amount": str(discount)},
+            }
+            update_invoice_workflow(c, workflow_id, payload, session["user_id"],
+                                    gross, discount, percent,
+                                    is_admin=(session.get("role") == "admin"))
+            from app import log
+            log("sales_invoice_draft_updated", workflow["workflow_no"],
+                entity_type="sales_invoice_workflow", entity_id=workflow_id,
+                after_values={"customer_id": payload["customer_id"],
+                              "invoice_date": payload["invoice_date"],
+                              "gross_subtotal": str(gross), "discount_amount": str(discount)})
+            flash("تم حفظ تعديلات المسودة. لم يتم إنشاء قيد أو خصم مخزون.", "success")
+            return redirect(url_for("sales.invoice_workflow", workflow_id=workflow_id))
+        except (ValueError, InvalidOperation, KeyError, TypeError, sqlite3.Error) as exc:
+            c.rollback()
+            flash(safe_error_message(exc, "تعذر تعديل المسودة. لم يتم حفظ أي تغييرات."), "error")
+            workflow = c.execute("""SELECT w.*,cu.name customer_name
+                FROM sales_invoice_workflows w JOIN customers cu ON cu.id=w.customer_id
+                WHERE w.id=?""", (workflow_id,)).fetchone()
+            payload = {
+                "customer_id": request.form.get("customer_id"),
+                "invoice_date": request.form.get("invoice_date"),
+                "due_date": request.form.get("due_date"),
+                "warehouse_id": request.form.get("warehouse_id"),
+                "tax_rate": request.form.get("tax_rate", "0"),
+                "items": [{
+                    "product_id": p, "quantity": q, "unit_price": price, "description": desc,
+                    "uom_id": uom, "tax_rate": rate, "tax_treatment": treatment,
+                } for p,q,price,desc,rate,treatment,uom in zip(
+                    request.form.getlist("product_id"), request.form.getlist("quantity"),
+                    request.form.getlist("unit_price"), request.form.getlist("description"),
+                    request.form.getlist("line_tax_rate"), request.form.getlist("line_tax_treatment"),
+                    request.form.getlist("uom_id"))],
+                "dimensions": {key: request.form.get(key) for key in
+                    ("branch_id", "cost_center_id", "project_id", "salesperson_id")},
+            }
+    customers = c.execute("SELECT * FROM customers WHERE active=1 ORDER BY name").fetchall()
+    products = c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
+    product_uoms = {p["id"]: product_uom_options(c, p["id"]) for p in products}
+    warehouses = c.execute("SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
+    settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','default_vat_rate')")}
+    dimension_options = active_dimension_options(c)
+    c.close()
+    return render_template("sales_invoice_workflow_edit.html", workflow=workflow, payload=payload,
+        customers=customers, products=products, product_uoms=product_uoms, warehouses=warehouses,
+        settings=settings, dimension_options=dimension_options, today=date.today().isoformat())
+
+
 @sales_bp.route("/invoices/workflow/<int:workflow_id>/submit", methods=["POST"])
 @require("sales.manage")
 def submit_invoice_workflow(workflow_id):
@@ -2440,7 +2647,7 @@ def decide_invoice_workflow(workflow_id):
             c.commit()
             flash("تم رفض الفاتورة. لم يتم إنشاء قيد أو حركة مخزون.", "success")
         elif action == "approve":
-            credit_override = 1 if request.form.get("credit_override") == "1" else 0
+            credit_override = 1 if (session.get("role") == "admin" and request.form.get("credit_override") == "1") else 0
             changed = c.execute("""UPDATE sales_invoice_workflows SET status='approved',
                 approved_by=?,approved_at=?,approved_credit_override=?,updated_at=CURRENT_TIMESTAMP
                 WHERE id=? AND status='pending_approval'""",
