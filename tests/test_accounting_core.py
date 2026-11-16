@@ -202,6 +202,7 @@ class SharedAccountingCoreTests(unittest.TestCase):
             ALTER TABLE stock_valuation_layers ADD COLUMN source_movement_id INTEGER;
             ALTER TABLE stock_valuation_layers ADD COLUMN value_remaining TEXT;
             UPDATE stock_valuation_layers SET source_movement_id=99,value_remaining='40' WHERE id=1;
+            UPDATE stock_valuation_layers SET qty_remaining='0',value_remaining='0' WHERE id=2;
             INSERT INTO journal_entries VALUES(16,'2026-11-11','GRNI-TRACE-CREDIT','GRNI test','posted',1,'now');
             INSERT INTO journal_lines VALUES(7,16,9,'0','100','GRNI credit');
             INSERT INTO journal_entries VALUES(17,'2026-11-11','GRNI-TRACE-DEBIT','GRNI settlement','posted',1,'now');
