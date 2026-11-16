@@ -39,7 +39,7 @@ from activity_profiles import (initialize_activity_profiles_schema, list_activit
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
-from app_paths import DATA_DIR, DB_PATH, BACKUP_DIR
+from app_paths import DATA_DIR, DB_PATH, BACKUP_DIR, ensure_data_directory
 from backup_scheduler import create_backup_archive, next_backup_datetime, start_backup_scheduler
 from system_health import health_bp
 from backup_restore import extract_validated_backup, restore_database_with_rollback
@@ -393,7 +393,7 @@ def password_hash_needs_upgrade(stored_hash):
 
 
 def initialize_database():
-    DATA_DIR.mkdir(exist_ok=True)
+    ensure_data_directory()
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     enable_wal(DB_PATH)
     connection = db()
