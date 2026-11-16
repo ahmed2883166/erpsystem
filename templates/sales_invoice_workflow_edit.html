@@ -1,5 +1,25 @@
 {% extends "base.html" %}
 {% block title %}تعديل مسودة {{ workflow.workflow_no }} | ADMRAIL ERP{% endblock %}
+{% block scripts %}
+<script>
+document.querySelectorAll('tbody tr').forEach(function(row){
+  const product=row.querySelector('select[name="product_id"]');
+  const unit=row.querySelector('select[name="uom_id"]');
+  if(!product||!unit)return;
+  function filterUnits(){
+    let first=null;
+    Array.from(unit.options).forEach(function(option){
+      if(!option.value){option.hidden=false;if(!first)first=option;return;}
+      option.hidden=option.dataset.product!==product.value;
+      if(!option.hidden&&!first)first=option;
+    });
+    if(unit.selectedOptions.length&&unit.selectedOptions[0].hidden)unit.value=first?first.value:'';
+  }
+  product.addEventListener('change',filterUnits);
+  filterUnits();
+});
+</script>
+{% endblock %}
 {% block content %}
 <header class="page-heading">
   <div><h2>تعديل مسودة فاتورة البيع {{ workflow.workflow_no }}</h2>
