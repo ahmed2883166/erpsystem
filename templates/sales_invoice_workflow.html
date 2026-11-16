@@ -20,7 +20,7 @@
   <p>المبلغ بعد الخصم وقبل الضريبة: {{ (workflow.gross_subtotal|float - workflow.discount_amount|float)|money }}</p>
   <div class="table-wrap"><table>
     <thead><tr><th>الصنف / الوصف</th><th>الكمية</th><th>سعر الوحدة</th><th>المعاملة الضريبية</th><th>النسبة</th></tr></thead>
-    <tbody>{% for item in payload.items %}
+    <tbody>{% for item in payload['items'] %}
       <tr><td>{{ item.description or ('كود الصنف #' ~ item.product_id) }}</td>
       <td>{{ item.quantity }}</td><td>{{ item.unit_price }}</td>
       <td>{{ item.tax_treatment }}</td><td>{{ item.tax_rate }}%</td></tr>
