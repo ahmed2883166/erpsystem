@@ -4264,6 +4264,14 @@ def settle_custody(custody_id):
     return redirect(url_for("workforce.custody"))
 
 
+def _service_duration_30_day(service_start, termination_date):
+    """Derive service months/days from dates using the existing 30-day company-policy basis."""
+    elapsed_days = (termination_date - service_start).days
+    if elapsed_days < 0:
+        raise ValueError("تاريخ انتهاء الخدمة لا يجوز أن يسبق تاريخ التعيين.")
+    return divmod(elapsed_days, 30)
+
+
 @workforce_bp.route("/hr/end-of-service", methods=["GET", "POST"])
 @_role("admin", "accountant")
 def end_of_service():
@@ -4285,13 +4293,10 @@ def end_of_service():
             basic_salary = _employee_salary_basis(c, employee_id, termination_date.isoformat())[0]
             if basic_salary <= 0:
                 raise ValueError("لا يوجد راتب أساسي معتمد لهذا الموظف. سجّل أول كشف مرتبات مرحّل أو راجع بيانات الأجر قبل حساب نهاية الخدمة.")
-            service_months = int(request.form.get("service_months", "0"))
-            service_days = int(request.form.get("service_days", "0"))
+            service_months, service_days = _service_duration_30_day(service_start, termination_date)
             retirement_age_raw = request.form.get("retirement_age", "").strip()
             retirement_age = int(retirement_age_raw) if retirement_age_raw else None
             stamp_duty = M(request.form.get("stamp_duty", "0"))
-            if service_months < 0 or service_days < 0 or service_days > 30:
-                raise ValueError("أدخل شهور الخدمة وأيامها بصورة صحيحة؛ الأيام من صفر إلى 30.")
             if retirement_age is not None and not 1 <= retirement_age <= 100:
                 raise ValueError("سن التقاعد يجب أن يكون بين 1 و100، أو اتركه فارغًا.")
             if stamp_duty < 0:
@@ -4317,7 +4322,7 @@ def end_of_service():
                  str(gross),str(stamp_duty),str(net),request.form.get("notes","").strip(),
                  session["user_id"],str(basic_salary),service_months,service_days,retirement_age,str(stamp_duty)))
             c.commit()
-            flash("تم حفظ تسوية نهاية الخدمة كمسودة. حُسبت المكافأة وفق لائحة الشركة وبحد أقصى 20 شهرًا، بعد خصم الدمغة. لم يتم اعتمادها أو صرفها أو إنشاء قيد محاسبي.", "success")
+            flash("تم حفظ مسودة نهاية الخدمة. حُسبت مدة الخدمة من التواريخ المسجلة، أما قيمة المكافأة فهي وفق لائحة الشركة الداخلية بحد أقصى 20 شهرًا وليست معادلة قانونية عامة. لم يتم اعتمادها أو صرفها.", "success")
             return redirect(url_for("workforce.end_of_service"))
         employee_rows = c.execute("""SELECT id,employee_code,full_name,hire_date,work_status,termination_date,basic_salary
             FROM employees WHERE work_status IN ('resigned','retired')

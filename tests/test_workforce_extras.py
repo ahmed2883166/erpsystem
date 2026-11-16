@@ -79,6 +79,19 @@ class WorkforceExtrasTests(unittest.TestCase):
         payroll_compliance.DB_PATH = self.original_compliance_path
         self.temp.cleanup()
 
+    def test_service_duration_is_derived_from_dates_on_a_30_day_basis(self):
+        from datetime import date
+        self.assertEqual(
+            workforce._service_duration_30_day(date(2026, 1, 1), date(2026, 2, 12)),
+            (1, 11),
+        )
+        self.assertEqual(
+            workforce._service_duration_30_day(date(2026, 1, 1), date(2026, 1, 1)),
+            (0, 0),
+        )
+        with self.assertRaises(ValueError):
+            workforce._service_duration_30_day(date(2026, 2, 1), date(2026, 1, 31))
+
     def test_penalty_requires_approval_and_is_snapshotted_in_payroll(self):
         response = self.client.post("/hr/penalties", data={
             "employee_id": "1", "penalty_date": "2026-11-10",
