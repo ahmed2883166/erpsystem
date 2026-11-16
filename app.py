@@ -3060,6 +3060,9 @@ def ledger():
             period_net = connection.execute(f"""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),'0') net
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                 WHERE {' AND '.join(date_conditions)}""", date_params).fetchone()
+            closing_balance = (base_opening + Decimal(str(period_net["net"] or "0"))).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
             for row in raw_rows:
                 item = dict(row)
                 item["debit"] = Decimal(str(item["debit"] or "0"))
