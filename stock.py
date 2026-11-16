@@ -743,9 +743,10 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
     remaining_value_allocated = D("0")
     remaining, cost_total, allocations, layer_details = qty, D("0"), [], []
     for layer in layers:
-        if remaining <= 0: break
+        if remaining <= 0 and valuation_method != "average":
+            break
         layer_qty = D(layer["qty_remaining"])
-        take = min(layer_qty, remaining)
+        take = min(layer_qty, remaining) if remaining > 0 else D("0")
         layer_value = (D(layer["value_remaining"]) if layer["value_remaining"] not in (None, "")
                        else layer_qty * D(layer["unit_cost"]))
         if valuation_method == "average":
@@ -771,11 +772,12 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
             new_value = layer_value - cost
         c.execute("UPDATE stock_valuation_layers SET qty_remaining=?,value_remaining=? WHERE id=?",
                   (str(q4(new_remaining)), format(new_value, "f"), layer["id"]))
-        allocations.append((layer["lot_id"], take, unit_cost, cost))
-        if include_layer_details:
-            layer_details.append({"layer_id": int(layer["id"]), "lot_id": layer["lot_id"],
-                "location_id": layer["location_id"], "quantity": take,
-                "unit_cost": unit_cost, "total_cost": cost})
+        if take > 0:
+            allocations.append((layer["lot_id"], take, unit_cost, cost))
+            if include_layer_details:
+                layer_details.append({"layer_id": int(layer["id"]), "lot_id": layer["lot_id"],
+                    "location_id": layer["location_id"], "quantity": take,
+                    "unit_cost": unit_cost, "total_cost": cost})
         cost_total += cost
         remaining -= take
     return (money(cost_total), allocations, layer_details) if include_layer_details else (money(cost_total), allocations)
