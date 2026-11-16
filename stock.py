@@ -738,7 +738,6 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
     ), D("0"))
     avg_cost = total_value / available if available else D("0")
     target_issue_cost = money(qty * avg_cost) if valuation_method == "average" else None
-    remaining_qty_after_issue = available - qty
     remaining_value_after_issue = (total_value - target_issue_cost) if valuation_method == "average" else None
     remaining_value_allocated = D("0")
     # Identify the final layer that retains stock so any cent-rounding remainder
