@@ -1,5 +1,6 @@
 import sqlite3
 import unittest
+import fixed_assets
 from decimal import Decimal
 from unittest.mock import patch
 
