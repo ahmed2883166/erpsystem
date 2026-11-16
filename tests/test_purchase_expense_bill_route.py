@@ -1032,5 +1032,25 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         conn.close()
 
 
+    def test_supplier_bill_posting_blocks_partial_deductible_inventory_before_any_journal(self):
+        conn = purchases.db()
+        conn.execute("""INSERT INTO supplier_bills(
+            bill_no,supplier_id,bill_date,supplier_invoice_no,subtotal,tax_rate,tax_amount,
+            total_amount,input_vat_deductible_percent,status,bill_kind
+        ) VALUES('VAT-STOCK-BLOCK',?,'2026-11-11','VAT-STOCK-BLOCK-INV',
+            '100','14','14','114','75','approved','inventory')""", (self.supplier_id,))
+        bill_id = conn.execute(
+            "SELECT id FROM supplier_bills WHERE bill_no='VAT-STOCK-BLOCK'"
+        ).fetchone()["id"]
+        conn.commit()
+        with self.assertRaisesRegex(ValueError, "توزيعها على طبقات المخزون"):
+            purchases.post_supplier_bill(conn, bill_id, 1)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
+        bill = conn.execute("SELECT status,journal_entry_id FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+        self.assertEqual((bill["status"], bill["journal_entry_id"]), ("approved", None))
+        conn.rollback()
+        conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()
