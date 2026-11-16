@@ -894,3 +894,32 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
 @media(max-width:850px){.app-footer{grid-template-columns:1fr 1fr}.app-footer-contact{grid-column:1/-1;justify-content:flex-start}.app-footer-copy{grid-column:1/-1}}
 @media(max-width:520px){.app-footer{grid-template-columns:1fr;padding:15px}.app-footer-contact{display:grid;grid-template-columns:1fr}.app-footer-contact a{min-width:0}.app-footer-copy{grid-column:auto}}
 @media print{.app-footer{display:none!important}}
+
+
+/* Account directory: readable hierarchy and reliable horizontal scrolling on narrow screens. */
+.accounts-layout,.accounts-layout>.panel,.accounts-layout .table-wrap{min-width:0;max-width:100%}
+.accounts-layout .table-wrap{display:block;overflow-x:auto!important;overflow-y:visible;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
+.accounts-tree{font-size:14px;line-height:1.55;min-width:1050px}
+.accounts-tree th,.accounts-tree td{padding:10px 12px;white-space:nowrap}
+.accounts-tree .account-group td{font-weight:800;background:color-mix(in srgb,var(--accent) 7%,var(--surface))}
+.accounts-tree .account-detail td:first-child{padding-right:20px}
+.accounts-tree .account-name{display:flex;align-items:center;gap:8px;min-width:240px}
+.account-parent-path{display:block;color:var(--muted);font-size:.84em;font-weight:400;line-height:1.4}
+.account-tree-toolbar{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.account-tree-toolbar .table-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.account-tree-toolbar input,.account-tree-toolbar select{min-width:0;max-width:100%}
+.accounts-tree thead{position:sticky;top:0;z-index:2}
+.accounts-tree .tree-toggle{min-width:30px;min-height:30px;padding:3px 8px;margin-left:6px}
+@media(max-width:800px){
+  .accounts-layout{display:flex;flex-direction:column}
+  .accounts-layout>.panel{width:100%;min-width:0}
+  .accounts-layout .table-wrap{width:100%;overflow-x:auto!important}
+  .accounts-tree{min-width:980px;font-size:13.5px}
+  .account-tree-toolbar .table-actions{width:100%}
+  .account-tree-toolbar input{flex:1 1 180px}
+}
+@media(max-width:560px){
+  .accounts-tree{min-width:980px}
+  .account-tree-toolbar .table-actions{display:grid;grid-template-columns:1fr 1fr}
+  .account-tree-toolbar input{grid-column:1/-1}
+}

@@ -1,6 +1,11 @@
 {% extends "base.html" %}{% block title %}قواعد الضرائب والتأمينات | NEXUS ERP{% endblock %}{% block content %}
 <header class="page-heading"><div><h2>قواعد ضريبة المرتبات والتأمينات الاجتماعية</h2><p>الدولة الحالية: <strong>{{current_country}}</strong>. القواعد مؤرخة وتطبق على كشوف المرتبات التي يقع تاريخها بعد تاريخ السريان. عند تغيير الحد الأدنى أو الأقصى أو النسب في سنة جديدة، أنشئ مجموعة قواعد جديدة بتاريخ سريان جديد؛ ستظل المسيرات القديمة مرتبطة بقواعدها السابقة.</p></div></header>
 {% if current_country == 'EG' %}
+<section class="panel">
+  <h3>مرجع مراجعة ضريبة المرتبات 2026</h3>
+  <p>مصلحة الضرائب المصرية نشرت نموذج احتساب شهري منفصلًا للقطاع الخاص وآخر للقطاع العام والحكومي لعام 2026. الإعداد المبدئي الحالي يتضمن الإعفاء الشخصي والخصم التأميني والشرائح السنوية، لكنه لا يغطي بعد كل خصومات صناديق التأمين وأقساط التأمين الخاصة وحدودها والاستثناءات والتسويات الواردة في تعليمات المصلحة؛ لذلك لا تعتبره معتمدًا لمسير فعلي.</p>
+  <p><a href="https://www.eta.gov.eg/ar/payroll-forms" target="_blank" rel="noopener noreferrer">فتح نماذج مصلحة الضرائب الرسمية لعام 2026</a> · <a href="https://portal.eta.gov.eg/ar/node/1382" target="_blank" rel="noopener noreferrer">شرح المصلحة لطريقة الاحتساب والإعفاءات</a></p>
+</section>
 {% set egypt_seed_exists = rule_sets|selectattr('country_code','equalto','EG')|selectattr('category_code','equalto','local')|selectattr('effective_from','equalto','2026-01-01')|list %}
 <section class="panel"><h3>إعداد مبدئي لمصر 2026</h3><p>يحمّل هذا الخيار إعدادًا مبدئيًا قابلًا للمراجعة. لا يُعد اعتمادًا قانونيًا نهائيًا، ويجب مراجعة القواعد والشرائح مع المحاسب قبل استخدامها.</p>
 {% if not egypt_seed_exists %}
