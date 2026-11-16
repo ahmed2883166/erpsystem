@@ -111,7 +111,7 @@ class PeriodAdjustmentTests(unittest.TestCase):
         app.add_template_filter(lambda value: value, "money")
         with app.app_context():
             for name in ("period_adjustments.html", "sales_invoice_workflow.html",
-                         "sales.html", "sales_invoice_new.html"):
+                         "sales_invoice_workflow_edit.html", "sales.html", "sales_invoice_new.html"):
                 app.jinja_env.get_template(name)
 
     def test_rejects_wrong_account_nature(self):
