@@ -237,3 +237,37 @@ class CurrencyCenterTests(unittest.TestCase):
         before = sqlite3.connect(self.db_path)
         before_count = before.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
         before.close()
+
+        self.client.post("/currencies/1/revalue", data={
+            "revaluation_date": "2026-11-15", "rate": "51",
+            "fx_gain_account_id": "4", "fx_loss_account_id": "5"
+        })
+
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute(
+            "SELECT COUNT(*) FROM fx_revaluations WHERE transaction_id=1"
+        ).fetchone()[0], 1)
+        self.assertEqual(conn.execute(
+            "SELECT COUNT(*) FROM journal_entries"
+        ).fetchone()[0], before_count)
+        conn.close()
+
+    def test_duplicate_revaluation_is_rejected(self):
+        self.client.post("/currencies/transactions", data={
+            "party_type": "receivable", "reference": "INV-USD-2", "party_name": "Customer",
+            "currency_code": "USD", "transaction_date": "2026-11-01",
+            "foreign_amount": "100", "rate": "50", "party_account_id": "2",
+            "counterpart_account_id": "3"
+        })
+        payload = {"revaluation_date": "2026-11-30", "rate": "51",
+                   "fx_gain_account_id": "4", "fx_loss_account_id": "5"}
+        self.client.post("/currencies/1/revalue", data=payload)
+        self.client.post("/currencies/1/revalue", data=payload)
+        conn = sqlite3.connect(self.db_path)
+        count = conn.execute("SELECT COUNT(*) FROM fx_revaluations WHERE transaction_id=1").fetchone()[0]
+        conn.close()
+        self.assertEqual(count, 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
