@@ -202,7 +202,6 @@ def create_transaction():
         else:
             lines = [(counterpart,base_amount,0,"مصروف / حساب مقابل"),
                      (party_account,0,base_amount,"إثبات ذمة دائنة بالعملة الأجنبية")]
-        c.execute("BEGIN IMMEDIATE")
         journal_id = post_journal(c,trans_date,"FX-OPEN-"+reference,"إثبات معاملة بعملة أجنبية",lines,session["user_id"])
         c.execute("""INSERT INTO fx_transactions(reference,party_type,party_name,currency_code,transaction_date,
             original_foreign,balance_foreign,original_rate,original_base,balance_base,party_account_id,
