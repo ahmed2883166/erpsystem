@@ -360,15 +360,13 @@ class TenClientWriteConcurrencyTests(unittest.TestCase):
                         query_started = time.perf_counter()
                         try:
                             row = connection.execute("""
-                                SELECT je.entry_date,
-                                       COUNT(DISTINCT je.id) AS entry_count,
+                                SELECT COUNT(DISTINCT je.id) AS entry_count,
                                        COUNT(jl.id) AS line_count,
                                        DECIMAL_SUM(jl.debit) AS debit_total,
                                        DECIMAL_SUM(jl.credit) AS credit_total
                                 FROM journal_entries je
                                 JOIN journal_lines jl ON jl.entry_id = je.id
                                 WHERE je.entry_date BETWEEN ? AND ?
-                                GROUP BY je.entry_date
                             """, ("2026-01-01", "2026-12-31")).fetchone()
                             if row is None:
                                 raise AssertionError("Financial report returned no period row")
