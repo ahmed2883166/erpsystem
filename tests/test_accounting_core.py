@@ -188,6 +188,36 @@ class SharedAccountingCoreTests(unittest.TestCase):
         snapshot = reconciliation_snapshot(self.db)
         self.assertEqual(snapshot["grni"], 100.0)
 
+    def test_grni_report_traces_open_receipt_to_remaining_and_consumed_stock(self):
+        self.db.executescript("""
+            ALTER TABLE goods_receipts ADD COLUMN receipt_no TEXT;
+            ALTER TABLE goods_receipts ADD COLUMN receipt_date TEXT;
+            ALTER TABLE goods_receipts ADD COLUMN supplier_id INTEGER;
+            UPDATE goods_receipts SET receipt_no='GRN-TRACE-1',receipt_date='2026-11-10',supplier_id=1;
+            CREATE TABLE suppliers(id INTEGER PRIMARY KEY,name TEXT);
+            INSERT INTO suppliers VALUES(1,'مورد اختبار');
+            ALTER TABLE stock_movements ADD COLUMN movement_no TEXT;
+            INSERT INTO stock_movements(id,accounting_status,movement_no)
+                VALUES(99,'posted','PUR-GRN-TRACE-1');
+            ALTER TABLE stock_valuation_layers ADD COLUMN source_movement_id INTEGER;
+            ALTER TABLE stock_valuation_layers ADD COLUMN value_remaining TEXT;
+            UPDATE stock_valuation_layers SET source_movement_id=99,value_remaining='40' WHERE id=1;
+            INSERT INTO journal_entries VALUES(16,'2026-11-11','GRNI-TRACE-CREDIT','GRNI test','posted',1,'now');
+            INSERT INTO journal_lines VALUES(7,16,9,'0','100','GRNI credit');
+            INSERT INTO journal_entries VALUES(17,'2026-11-11','GRNI-TRACE-DEBIT','GRNI settlement','posted',1,'now');
+            INSERT INTO journal_lines VALUES(8,17,9,'60','0','GRNI debit');
+        """)
+        snapshot = reconciliation_snapshot(self.db)
+        self.assertEqual(snapshot["grni"], 60.0)
+        self.assertEqual(snapshot["grni_ledger"], Decimal("40.00"))
+        self.assertEqual(snapshot["grni_difference"], Decimal("-20.00"))
+        self.assertEqual(snapshot["grni_receipts"][0]["receipt_no"], "GRN-TRACE-1")
+        self.assertEqual(snapshot["grni_receipts"][0]["supplier_name"], "مورد اختبار")
+        self.assertEqual(snapshot["grni_receipts"][0]["remaining_stock_value"], Decimal("40.00"))
+        self.assertEqual(snapshot["grni_receipts"][0]["consumed_value"], Decimal("60.00"))
+        self.assertEqual(snapshot["grni_consumed_value"], Decimal("60.00"))
+        self.assertEqual(snapshot["grni_stock_gap"], Decimal("20.00"))
+
     def test_supplier_credit_notes_reduce_open_ap(self):
         self.db.execute("UPDATE supplier_bills SET credited_amount='10' WHERE id=1")
         snapshot = reconciliation_snapshot(self.db)
