@@ -314,24 +314,115 @@ def reconciliation_snapshot(conn):
                     gl_stock += Decimal(str(row["debit"] or "0")) - Decimal(str(row["credit"] or "0"))
 
     grni = Decimal("0")
+    grni_receipts = []
+    grni_overallocated_receipts = []
+    grni_consumed_value = Decimal("0")
     if (_table_exists(conn, "goods_receipts") and
             _table_exists(conn, "supplier_bill_receipts") and
             _table_exists(conn, "supplier_bills")):
         receipt_link_columns = _columns(conn, "supplier_bill_receipts")
         bill_columns = _columns(conn, "supplier_bills")
-        # A draft, pending, or rejected invoice does not settle GRNI. The
-        # liability moves to AP only after the supplier bill is posted.
+        # Only posted bills settle GRNI. Draft/approval/rejected bills remain
+        # visible as allocations but do not clear the receipt liability.
         if {"bill_id", "receipt_id", "matched_amount"}.issubset(receipt_link_columns) and "status" in bill_columns:
             matched_by_receipt = {}
             for row in conn.execute("""SELECT x.receipt_id,x.matched_amount
                 FROM supplier_bill_receipts x
                 JOIN supplier_bills b ON b.id=x.bill_id
                 WHERE b.status='posted'"""):
-                matched_by_receipt[row["receipt_id"]] = matched_by_receipt.get(row["receipt_id"], Decimal("0")) + Decimal(str(row["matched_amount"] or "0"))
-            for row in conn.execute("SELECT id,total_value FROM goods_receipts WHERE status='posted'"):
-                unmatched = Decimal(str(row["total_value"] or "0")) - matched_by_receipt.get(row["id"], Decimal("0"))
-                if unmatched > 0:
-                    grni += unmatched
+                matched_by_receipt[row["receipt_id"]] = (
+                    matched_by_receipt.get(row["receipt_id"], Decimal("0")) +
+                    Decimal(str(row["matched_amount"] or "0"))
+                )
+            receipt_columns = _columns(conn, "goods_receipts")
+            supplier_join = (
+                "LEFT JOIN suppliers s ON s.id=r.supplier_id"
+                if _table_exists(conn, "suppliers") and "supplier_id" in receipt_columns else ""
+            )
+            supplier_select = "s.name supplier_name" if supplier_join else "'' supplier_name"
+            movement_columns = _columns(conn, "stock_movements")
+            layer_columns = _columns(conn, "stock_valuation_layers")
+            can_trace_layers = (
+                {"movement_no", "id"}.issubset(movement_columns) and
+                {"source_movement_id", "qty_remaining"}.issubset(layer_columns)
+            )
+            for row in conn.execute(
+                f"""SELECT r.id,r.receipt_no,r.receipt_date,r.total_value,
+                           {supplier_select}
+                    FROM goods_receipts r {supplier_join}
+                    WHERE r.status='posted' ORDER BY r.receipt_date,r.id"""
+            ):
+                total = Decimal(str(row["total_value"] or "0"))
+                matched = matched_by_receipt.get(row["id"], Decimal("0"))
+                unmatched = total - matched
+                movement_id = None
+                remaining_qty = None
+                remaining_value = None
+                if can_trace_layers:
+                    movement = conn.execute(
+                        "SELECT id FROM stock_movements WHERE movement_no=?",
+                        ("PUR-" + str(row["receipt_no"]),)
+                    ).fetchone()
+                    if movement:
+                        movement_id = int(movement["id"])
+                        layer_rows = conn.execute(
+                            "SELECT qty_remaining,unit_cost,value_remaining FROM stock_valuation_layers "
+                            "WHERE source_movement_id=?", (movement_id,)
+                        ).fetchall()
+                        remaining_qty = sum(
+                            (Decimal(str(layer["qty_remaining"] or "0")) for layer in layer_rows),
+                            Decimal("0")
+                        )
+                        remaining_value = sum((
+                            Decimal(str(layer["value_remaining"]))
+                            if "value_remaining" in layer_columns and layer["value_remaining"] not in (None, "")
+                            else Decimal(str(layer["qty_remaining"] or "0")) * Decimal(str(layer["unit_cost"] or "0"))
+                            for layer in layer_rows
+                        ), Decimal("0"))
+                        consumed_value = total - remaining_value
+                        grni_consumed_value += consumed_value
+                else:
+                    consumed_value = None
+                item = {
+                    "receipt_id": int(row["id"]), "receipt_no": row["receipt_no"],
+                    "receipt_date": row["receipt_date"], "supplier_name": row["supplier_name"],
+                    "receipt_value": _money(total), "matched_posted_bills": _money(matched),
+                    "unmatched_grni": _money(unmatched), "movement_id": movement_id,
+                    "remaining_qty": remaining_qty,
+                    "remaining_stock_value": _money(remaining_value) if remaining_value is not None else None,
+                    "consumed_value": _money(consumed_value) if consumed_value is not None else None,
+                }
+                grni_receipts.append(item)
+                grni += unmatched
+                if unmatched < 0:
+                    grni_overallocated_receipts.append(item)
+
+    # Compare the receipt subledger with the actual posted GRNI control-account
+    # balance. This separates a legitimate stock-consumption gap from a GL
+    # posting/allocation error; no automatic journal adjustment is made.
+    grni_ledger = None
+    grni_difference = None
+    if _table_exists(conn, "accounts") and _table_exists(conn, "journal_lines") and _table_exists(conn, "journal_entries"):
+        grni_account = conn.execute(
+            "SELECT id FROM accounts WHERE code='2190' AND is_group=0 ORDER BY id LIMIT 1"
+        ).fetchone()
+        if grni_account:
+            from management_dashboard import _copied_opening_entry_ids
+            excluded_grni_openings = sorted(_copied_opening_entry_ids(conn, date.today().isoformat()))
+            exclusion_sql = (
+                " AND je.id NOT IN (" + ",".join("?" for _ in excluded_grni_openings) + ")"
+                if excluded_grni_openings else ""
+            )
+            grni_ledger = Decimal("0")
+            for line in conn.execute(
+                """SELECT jl.debit,jl.credit FROM journal_lines jl
+                   JOIN journal_entries je ON je.id=jl.entry_id
+                   WHERE je.status='posted' AND jl.account_id=?""" + exclusion_sql,
+                (grni_account["id"], *excluded_grni_openings)
+            ):
+                grni_ledger += Decimal(str(line["credit"] or "0")) - Decimal(str(line["debit"] or "0"))
+            grni_ledger = _money(grni_ledger)
+            grni_difference = _money(grni_ledger - grni)
 
     open_ap = Decimal("0")
     if _table_exists(conn, "supplier_bills"):
@@ -374,5 +465,9 @@ def reconciliation_snapshot(conn):
         "stock_value": _money(stock_value), "gl_stock": _money(gl_stock) if gl_stock is not None else None,
         "stock_difference": difference, "inventory_account_codes": found_codes,
         "missing_inventory_codes": missing_codes, "grni": _money(grni), "open_ap": _money(open_ap),
+        "grni_receipts": grni_receipts, "grni_overallocated_receipts": grni_overallocated_receipts,
+        "grni_ledger": grni_ledger, "grni_difference": grni_difference,
+        "grni_consumed_value": _money(grni_consumed_value),
+        "grni_stock_gap": _money(grni - stock_value),
         "unlinked_documents": unlinked_documents, "pending_stock": pending_stock, "settings": settings,
     }
