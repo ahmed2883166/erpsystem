@@ -733,7 +733,7 @@ def _delete_employee_photo(relative_path):
         except OSError:
             current_app.logger.warning("Could not remove replaced employee photo: %s", target.name)
 
-def _salary_change_preview(c, form):
+def _salary_change_preview(c, form, allow_future=False):
     decision_no = form.get("decision_no", "").strip()
     decision_date = form.get("decision_date", "").strip()
     effective_date = form.get("effective_date", "").strip()
@@ -757,8 +757,8 @@ def _salary_change_preview(c, form):
     value = M(form.get("calculation_value", "0"))
     date.fromisoformat(decision_date)
     date.fromisoformat(effective_date)
-    if date.fromisoformat(effective_date) > date.today():
-        raise ValueError("لا تعتمد القرار قبل تاريخ سريانه. يمكن معاينة القرار، ثم اعتماده في يوم السريان أو بعده حتى لا تُصرف الزيادة مبكرًا.")
+    if date.fromisoformat(effective_date) > date.today() and not allow_future:
+        raise ValueError("لا يمكن اعتماد القرار قبل تاريخ سريانه. يمكنك معاينته الآن ثم اعتماده في يوم السريان أو بعده حتى لا تُصرف الزيادة مبكرًا.")
     if (not decision_no or not title or value <= 0
         or not selected_scopes
         or calc_type not in {"fixed","percentage"} or calc_base not in {"basic","insured_wage"}
@@ -800,7 +800,7 @@ def salary_changes():
     error = ""
     if request.method == "POST":
         try:
-            preview = _salary_change_preview(c, request.form)
+            preview = _salary_change_preview(c, request.form, allow_future=request.form.get("confirm") != "1")
             if request.form.get("confirm") == "1":
                 c.execute("BEGIN IMMEDIATE")
                 c.execute("""INSERT INTO salary_change_batches(decision_no,decision_date,effective_date,title,
