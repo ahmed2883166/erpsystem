@@ -157,7 +157,7 @@ class PeriodAdjustmentTests(unittest.TestCase):
         CREATE TABLE fx_settlements(
           id INTEGER PRIMARY KEY,transaction_id INTEGER,settlement_date TEXT,foreign_amount TEXT);
         CREATE TABLE fx_revaluations(
-          id INTEGER PRIMARY KEY,transaction_id INTEGER,revaluation_date TEXT);
+          id INTEGER PRIMARY KEY,transaction_id INTEGER,revaluation_date TEXT,journal_entry_id INTEGER);
         """)
         report = build_financial_year_preclose_report(self.conn, 1)
         depreciation = next(item for item in report["checks"]
