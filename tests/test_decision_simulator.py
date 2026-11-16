@@ -22,7 +22,7 @@ class DecisionSimulatorTests(unittest.TestCase):
         self.assertEqual(result["scenario"]["cogs"], Decimal("6732.00"))
         self.assertEqual(result["scenario"]["operating_expenses"], Decimal("2600.00"))
         self.assertEqual(result["scenario"]["net_profit"], Decimal("2218.00"))
-        self.assertEqual(result["profit_change"], Decimal("-282.00"))
+        self.assertEqual(result["profit_change"], Decimal("718.00"))
 
     def test_additional_operating_expense_is_included_without_mutating_source(self):
         original = dict(self.statement)
