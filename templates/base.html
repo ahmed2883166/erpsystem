@@ -94,6 +94,18 @@
   <button type="button" class="secondary" id="exportCurrentReportPdf" hidden>تنزيل PDF للشاشة</button>
 </div>
 {% endif %}
+{% if session.user_id %}
+<footer class="app-footer no-print">
+  <div class="app-footer-brand"><span class="app-footer-mark">A</span><div><strong>ADMRAIL ERP</strong><small>نظام إدارة موارد المؤسسة</small></div></div>
+  <div class="app-footer-owner"><strong>تصميم وتطوير</strong><span>Ahmed El Shaer</span></div>
+  <div class="app-footer-contact">
+    <a href="mailto:ahmed2883166@gmail.com" aria-label="البريد الإلكتروني"><span>✉</span><span>ahmed2883166@gmail.com</span></a>
+    <a href="tel:+201002296868" dir="ltr" aria-label="الهاتف"><span>☎</span><span>01002296868</span></a>
+    <a href="https://wa.me/201002296868" target="_blank" rel="noopener noreferrer" aria-label="واتساب"><span>◉</span><span>واتساب</span></a>
+  </div>
+  <small class="app-footer-copy">© {{ year }} ADMRAIL ERP · جميع الحقوق محفوظة</small>
+</footer>
+{% endif %}
 <script>
 (function(){
  const tokenMeta=document.querySelector('meta[name="csrf-token"]');
