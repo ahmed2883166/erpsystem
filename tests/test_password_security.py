@@ -14,8 +14,8 @@ class PasswordSecurityTests(unittest.TestCase):
         self.assertFalse(password_hash_needs_upgrade(first))
 
     def test_legacy_sha256_is_verified_and_marked_for_upgrade(self):
-        legacy = hashlib.sha256("admin123".encode("utf-8")).hexdigest()
-        self.assertTrue(verify_password("admin123", legacy))
+        legacy = hashlib.sha256("Legacy-Password-For-Test-Only".encode("utf-8")).hexdigest()
+        self.assertTrue(verify_password("Legacy-Password-For-Test-Only", legacy))
         self.assertFalse(verify_password("wrong", legacy))
         self.assertTrue(password_hash_needs_upgrade(legacy))
 
