@@ -62,6 +62,28 @@ class StockValuationTests(unittest.TestCase):
         cost, allocations = stock.consume_layers(self.db,self.product_id,self.warehouse_id,stock.D("50"),"average")
         self.assertEqual(cost, stock.D("600.00"))
 
+    def test_moving_average_cost_applies_average_when_entire_first_layer_is_consumed(self):
+        cost, allocations = stock.consume_layers(
+            self.db, self.product_id, self.warehouse_id, stock.D("100"), "average"
+        )
+        self.assertEqual(cost, stock.D("1200.00"))
+        self.assertEqual(sum((row[3] for row in allocations), stock.D("0")), cost)
+        remaining = self.db.execute(
+            "SELECT qty_remaining,value_remaining FROM stock_valuation_layers ORDER BY id"
+        ).fetchall()
+        self.assertEqual(
+            [(stock.D(row["qty_remaining"]), stock.D(row["value_remaining"])) for row in remaining],
+            [(stock.D("0"), stock.D("0")), (stock.D("100"), stock.D("1200.00"))],
+        )
+
+    def test_moving_average_allocations_reconcile_when_issue_spans_layers(self):
+        cost, allocations = stock.consume_layers(
+            self.db, self.product_id, self.warehouse_id, stock.D("150"), "average"
+        )
+        self.assertEqual(cost, stock.D("1800.00"))
+        self.assertEqual(sum((row[3] for row in allocations), stock.D("0")), cost)
+
+
     def test_negative_stock_is_rejected(self):
         with self.assertRaisesRegex(ValueError,"الرصيد غير كافٍ"):
             stock.consume_layers(self.db,self.product_id,self.warehouse_id,stock.D("201"),"fifo")
