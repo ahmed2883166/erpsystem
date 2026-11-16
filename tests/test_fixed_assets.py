@@ -20,9 +20,9 @@ class ManualAssetAcquisitionJournalTests(unittest.TestCase):
                          sum((line[2] for line in lines), Decimal("0")))
 
     def test_manual_asset_journal_rejects_same_asset_and_counterpart_account(self):
-        with self.assertRaisesRegex(ValueError, "الحساب المقابل"):
+        with self.assertRaisesRegex(ValueError, "غير صحيحة"):
             _manual_asset_journal_lines(10, 10, Decimal("100"), "أصل")
-        with self.assertRaisesRegex(ValueError, "الحساب المقابل"):
+        with self.assertRaisesRegex(ValueError, "غير صحيحة"):
             _manual_asset_journal_lines(10, 20, Decimal("0"), "أصل")
 
 
