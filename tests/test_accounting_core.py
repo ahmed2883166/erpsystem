@@ -121,6 +121,36 @@ class SharedAccountingCoreTests(unittest.TestCase):
         self.assertEqual(len(snapshot["unbalanced"]), 0)
         self.assertEqual(snapshot["inventory_account_codes"], ["1130"])
 
+    def test_custom_activity_profile_controls_inventory_and_grni_reconciliation(self):
+        import json
+        self.db.executescript("""
+            CREATE TABLE activity_profiles(
+                id INTEGER PRIMARY KEY, code TEXT, name TEXT, base_activity TEXT,
+                description TEXT, account_roles_json TEXT, posting_accounts_json TEXT,
+                tax_roles_json TEXT, is_builtin INTEGER, active INTEGER
+            );
+            INSERT INTO accounts VALUES(11,'2191','التزامات استلام مخصصة','liability',NULL,0,1);
+            INSERT INTO company_settings VALUES('activity_profile_code','custom_trade');
+            INSERT INTO activity_profiles VALUES(
+                1,'custom_trade','نشاط تجاري مخصص','commercial','',
+                '{"inventory":["1140"],"grni":["2191"]}','{}','{}',0,1
+            );
+            INSERT INTO journal_entries VALUES
+                (18,'2026-11-12','CUSTOM-STOCK','مخزون ملف النشاط','posted',1,'now'),
+                (19,'2026-11-12','CUSTOM-GRNI','التزام ملف النشاط','posted',1,'now');
+            INSERT INTO journal_lines VALUES
+                (7,18,6,'80','0','مخزون حسب الملف المخصص'),
+                (8,18,2,'0','80','مقابل المخزون'),
+                (9,19,2,'60','0','مقابل الالتزام'),
+                (10,19,11,'0','60','GRNI حسب الملف المخصص');
+        """)
+        snapshot = reconciliation_snapshot(self.db)
+        self.assertEqual(snapshot["inventory_account_codes"], ["1140"])
+        self.assertEqual(snapshot["gl_stock"], Decimal("80.00"))
+        self.assertEqual(snapshot["stock_difference"], Decimal("0.00"))
+        self.assertEqual(snapshot["grni_ledger"], Decimal("60.00"))
+        self.assertEqual(snapshot["grni_difference"], Decimal("0.00"))
+
     def test_sql_decimal_aggregates_preserve_text_precision(self):
         register_decimal_aggregates(self.db)
         self.db.execute("CREATE TABLE decimal_values(debit TEXT,credit TEXT)")
