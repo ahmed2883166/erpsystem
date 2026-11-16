@@ -266,10 +266,25 @@ def settle(transaction_id):
 def revalue(transaction_id):
     c = _db()
     try:
+        # Lock before reading balances so two period-end requests cannot calculate
+        # from the same stale carrying amount.
+        c.execute("BEGIN IMMEDIATE")
         t = c.execute("SELECT * FROM fx_transactions WHERE id=? AND status='open'", (transaction_id,)).fetchone()
         if not t:
             raise ValueError("لا يوجد رصيد مفتوح لإعادة تقييمه.")
         revalue_date = date.fromisoformat(request.form["revaluation_date"]).isoformat()
+        latest_settlement = c.execute(
+            "SELECT MAX(settlement_date) FROM fx_settlements WHERE transaction_id=?",
+            (transaction_id,),
+        ).fetchone()[0]
+        latest_revaluation = c.execute(
+            "SELECT MAX(revaluation_date) FROM fx_revaluations WHERE transaction_id=?",
+            (transaction_id,),
+        ).fetchone()[0]
+        if latest_settlement and revalue_date < latest_settlement:
+            raise ValueError("تاريخ إعادة التقييم يسبق آخر تسوية للمعاملة؛ راجع ترتيب التسويات وإعادة التقييم.")
+        if latest_revaluation and revalue_date <= latest_revaluation:
+            raise ValueError("يجب أن يكون تاريخ إعادة التقييم لاحقًا لآخر إعادة تقييم مسجلة.")
         if c.execute("SELECT 1 FROM fx_revaluations WHERE transaction_id=? AND revaluation_date=?",
                      (transaction_id,revalue_date)).fetchone():
             raise ValueError("تمت إعادة تقييم هذه المعاملة في هذا التاريخ بالفعل.")
@@ -281,6 +296,7 @@ def revalue(transaction_id):
         loss = _account(c,int(request.form["fx_loss_account_id"]))
         party = int(t["party_account_id"])
         if delta == 0:
+            c.commit()
             flash("لا توجد فروق إعادة تقييم في هذا التاريخ.", "info")
             c.close()
             return redirect(url_for("currency_center.index"))
@@ -289,7 +305,6 @@ def revalue(transaction_id):
             lines.append((gain,0,delta,"أرباح إعادة تقييم") if delta>0 else (party,0,-delta,"تخفيض الذمم المدينة"))
         else:
             lines = [(loss,delta,0,"خسائر إعادة تقييم الالتزام"),(party,0,delta,"زيادة الالتزام")] if delta>0 else [(party,-delta,0,"تخفيض الالتزام"),(gain,0,-delta,"أرباح إعادة تقييم")]
-        c.execute("BEGIN IMMEDIATE")
         ref = "FX-REVALUE-" + str(transaction_id) + "-" + revalue_date
         jid = post_journal(c,revalue_date,ref,"إعادة تقييم رصيد عملة أجنبية "+t["reference"],lines,session["user_id"])
         c.execute("""INSERT INTO fx_revaluations(transaction_id,revaluation_date,rate,old_base,new_base,difference,
