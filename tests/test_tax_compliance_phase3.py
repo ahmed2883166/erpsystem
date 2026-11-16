@@ -49,6 +49,8 @@ class TaxInputTotalsTests(unittest.TestCase):
         gross, deductible, non_deductible = calculate_tax_input_totals(documents)
 
         self.assertEqual(gross, Decimal("15.01"))
+        self.assertEqual(deductible, Decimal("5.00"))
+        self.assertEqual(non_deductible, Decimal("10.01"))
         self.assertEqual(deductible + non_deductible, gross)
 
 
