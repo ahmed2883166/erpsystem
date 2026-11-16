@@ -1,8 +1,8 @@
 {% extends 'base.html' %}
-{% block title %}ترخيص NEXUS ERP{% endblock %}
+{% block title %}ترخيص ADMRAIL ERP{% endblock %}
 {% block content %}
 <section class="panel">
-<h1>ترخيص NEXUS ERP</h1>
+<h1>ترخيص ADMRAIL ERP</h1>
 {% if license_info.status == 'demo' %}
 <div class="flash success">وضع التشغيل المحلي مفعّل. يعمل البرنامج على هذا الجهاز دون الاتصال بخادم التراخيص أو إدخال كود تفعيل.</div>
 <p>تم تعليق التحقق والتفعيل مؤقتًا في مشغل التطوير المحلي فقط. نظام الترخيص محفوظ لاستخدامه مستقبلًا عند تجهيز خادم التراخيص.</p>
@@ -18,7 +18,7 @@
 <p>يعمل البرنامج محليًا بعد التفعيل، ويحتاج اتصالًا دوريًا بخادم التراخيص بعد انتهاء فترة السماح المحددة في الرخصة.</p>
 <form method="post">
 <label for="activation_code">كود التفعيل</label>
-<input id="activation_code" name="activation_code" required minlength="8" maxlength="160" autocomplete="off" placeholder="أدخل كود التفعيل المرسل من NEXUS">
+<input id="activation_code" name="activation_code" required minlength="8" maxlength="160" autocomplete="off" placeholder="أدخل كود التفعيل المرسل من ADMRAIL">
 <button type="submit">تفعيل البرنامج</button>
 </form>
 {% endif %}
