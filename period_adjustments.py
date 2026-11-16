@@ -74,6 +74,14 @@ def initialize_adjustments_schema(conn):
     INSERT OR IGNORE INTO company_settings(setting_key,setting_value)
       VALUES('period_adjustment_frequency','monthly');
     """)
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(period_adjustments)")}
+    for name, declaration in (
+        ("cancelled_by", "INTEGER"),
+        ("cancelled_at", "TEXT"),
+        ("cancellation_reason", "TEXT NOT NULL DEFAULT ''"),
+    ):
+        if name not in columns:
+            conn.execute(f"ALTER TABLE period_adjustments ADD COLUMN {name} {declaration}")
     conn.commit()
 
 
@@ -342,6 +350,41 @@ def post_period(adjustment_id):
     finally:
         conn.close()
     return redirect(url_for("adjustments.index", selected=adjustment_id))
+
+
+@adjustments_bp.route("/period-adjustments/<int:adjustment_id>/cancel", methods=["POST"])
+@_require("journal.manage")
+def cancel_adjustment(adjustment_id):
+    conn = _db()
+    try:
+        reason = str(request.form.get("reason") or "").strip()
+        if not reason or len(reason) > 500:
+            raise ValueError("اكتب سبب إلغاء جدول التسوية بما لا يزيد عن 500 حرف.")
+        conn.execute("BEGIN IMMEDIATE")
+        adjustment = conn.execute(
+            "SELECT status FROM period_adjustments WHERE id=?", (adjustment_id,)
+        ).fetchone()
+        if not adjustment or adjustment["status"] != "active":
+            raise ValueError("جدول التسوية غير موجود أو سبق إلغاؤه.")
+        un_reversed = conn.execute("""SELECT COUNT(*) FROM period_adjustment_posts
+            WHERE adjustment_id=? AND reversal_journal_entry_id IS NULL""",
+            (adjustment_id,)).fetchone()[0]
+        if un_reversed:
+            raise ValueError("لا يمكن إلغاء الجدول قبل عكس كل الفترات المرحلة. اعكس القيود أولًا ثم ألغِ الجدول.")
+        changed = conn.execute("""UPDATE period_adjustments SET status='cancelled',
+            cancelled_by=?,cancelled_at=CURRENT_TIMESTAMP,cancellation_reason=?
+            WHERE id=? AND status='active'""",
+            (session.get("user_id"), reason, adjustment_id)).rowcount
+        if changed != 1:
+            raise ValueError("تغيرت حالة جدول التسوية أثناء الإلغاء.")
+        conn.commit()
+        flash("تم إلغاء جدول التسوية. لم يتم حذف أي قيد أو سجل.", "success")
+    except (ValueError, sqlite3.Error) as exc:
+        conn.rollback()
+        flash(str(exc) if isinstance(exc, ValueError) else "تعذر إلغاء جدول التسوية.", "error")
+    finally:
+        conn.close()
+    return redirect(url_for("adjustments.index"))
 
 
 @adjustments_bp.route("/period-adjustments/posts/<int:post_id>/reverse", methods=["POST"])
