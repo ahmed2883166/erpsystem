@@ -279,7 +279,23 @@ def reconciliation_snapshot(conn):
     settings = {r["setting_key"]: r["setting_value"] for r in conn.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','company_name','base_currency')"
     )} if _table_exists(conn, "company_settings") else {}
-    codes = _inventory_codes(settings.get("activity", "commercial"))
+    # Custom activity profiles may override inventory and GRNI control accounts.
+    # The integrity snapshot must reconcile the selected company's live mappings,
+    # not silently fall back to the base activity chart.
+    profile_roles = None
+    if _table_exists(conn, "activity_profiles"):
+        from activity_profiles import get_active_activity_profile
+        profile_roles = get_active_activity_profile(conn).get("account_roles", {})
+    inventory_role = (profile_roles or {}).get("inventory")
+    codes = (
+        tuple(str(code) for code in (inventory_role if isinstance(inventory_role, (list, tuple, set)) else (inventory_role,)) if code not in (None, ""))
+        if inventory_role is not None else _inventory_codes(settings.get("activity", "commercial"))
+    )
+    grni_role = (profile_roles or {}).get("grni")
+    grni_codes_for_profile = (
+        tuple(str(code) for code in (grni_role if isinstance(grni_role, (list, tuple, set)) else (grni_role,)) if code not in (None, ""))
+        if grni_role is not None else _grni_codes(settings.get("activity", "commercial"))
+    )
 
     stock_value = Decimal("0")
     if _table_exists(conn, "stock_valuation_layers"):
@@ -424,7 +440,7 @@ def reconciliation_snapshot(conn):
             {"code", "is_group"}.issubset(_columns(conn, "accounts")) and
             {"account_id", "debit", "credit", "entry_id"}.issubset(_columns(conn, "journal_lines")) and
             {"id", "status"}.issubset(_columns(conn, "journal_entries"))):
-        grni_codes = _grni_codes(settings.get("activity", "commercial"))
+        grni_codes = grni_codes_for_profile
         grni_marks = ",".join("?" for _ in grni_codes)
         grni_accounts = conn.execute(
             f"SELECT id FROM accounts WHERE code IN ({grni_marks}) AND is_group=0 ORDER BY id",
