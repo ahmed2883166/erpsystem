@@ -179,6 +179,7 @@ def preview_adjustment(conn, adjustment_id):
         periods.append({**item, "status": "reversed" if existing and existing["reversal_journal_entry_id"]
                         else "posted" if existing else "pending",
                         "journal_entry_id": existing["journal_entry_id"] if existing else None,
+                        "post_id": existing["id"] if existing else None,
                         "reversal_journal_entry_id": existing["reversal_journal_entry_id"] if existing else None})
     return {"adjustment": adjustment, "periods": periods}
 
