@@ -47,6 +47,11 @@ class SharedDatabaseTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_local_launcher_does_not_inherit_database_init_skip(self):
+        launcher = Path(__file__).resolve().parents[1] / "run_local.bat"
+        content = launcher.read_text(encoding="utf-8")
+        self.assertIn('set "NEXUS_SKIP_DB_INIT=0"', content)
+
     def test_data_directory_creates_missing_parent_directories(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "nested" / "runtime" / "data"
