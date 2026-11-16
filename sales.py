@@ -2630,8 +2630,11 @@ def decide_invoice_workflow(workflow_id):
             WHERE id=? AND status='pending_approval'""", (workflow_id,)).fetchone()
         if not row:
             raise ValueError("الفاتورة ليست في انتظار الاعتماد أو سبق اتخاذ قرار عليها.")
-        if row["created_by"] == session.get("user_id"):
-            raise ValueError("لا يجوز اعتماد أو رفض مسودة الفاتورة التي أنشأتها بنفسك.")
+        if row["created_by"] is None or row["submitted_by"] is None:
+            raise ValueError("بيانات منشئ أو مرسل الفاتورة غير مكتملة؛ لا يمكن اعتمادها قبل مراجعة سجلها.")
+        if (row["created_by"] == session.get("user_id")
+                or row["submitted_by"] == session.get("user_id")):
+            raise ValueError("لا يجوز اعتماد أو رفض فاتورة أنشأتها أو أرسلتها للمراجعة بنفسك.")
         action = request.form.get("action")
         reason = str(request.form.get("reason") or "").strip()
         if action == "reject":
