@@ -2931,6 +2931,10 @@ def ledger():
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
     search_query = request.args.get("q", "").strip()[:100]
+    sort_order = request.args.get("sort_order", "asc").strip().lower()
+    if sort_order not in {"asc", "desc"}:
+        sort_order = "asc"
+    sort_sql = "DESC" if sort_order == "desc" else "ASC"
     for value in (date_from, date_to):
         if value:
             try:
