@@ -1,4 +1,5 @@
 import sqlite3
+import threading
 import time
 import unittest
 import tempfile
@@ -47,10 +48,41 @@ class ReportRequestControlTests(unittest.TestCase):
             "GET", "sales_invoice_new", "/sales/invoices/new"
         ))
 
-    def test_report_gate_rejects_without_waiting_and_releases(self):
-        gate = ReportRequestGate(1)
+    def test_report_gate_wait_queue_is_bounded_and_releases(self):
+        gate = ReportRequestGate(1, max_waiters=1, wait_seconds=2)
         self.assertTrue(gate.acquire())
+        acquired = []
+        waiter = threading.Thread(target=lambda: acquired.append(gate.acquire()))
+        waiter.start()
+
+        wait_deadline = time.monotonic() + 1
+        while gate.waiting_count != 1 and time.monotonic() < wait_deadline:
+            time.sleep(0.001)
+        self.assertEqual(gate.waiting_count, 1)
+        # A second waiter is rejected immediately when the queue is full.
         self.assertFalse(gate.acquire())
+
+        gate.release()
+        waiter.join(timeout=2)
+        self.assertFalse(waiter.is_alive())
+        self.assertEqual(acquired, [True])
+        gate.release()
+
+    def test_report_gate_waiter_times_out_and_does_not_leak_queue_capacity(self):
+        gate = ReportRequestGate(1, max_waiters=1, wait_seconds=1)
+        self.assertTrue(gate.acquire())
+        acquired = []
+        waiter = threading.Thread(target=lambda: acquired.append(gate.acquire()))
+        waiter.start()
+        wait_deadline = time.monotonic() + 1
+        while gate.waiting_count != 1 and time.monotonic() < wait_deadline:
+            time.sleep(0.001)
+        self.assertEqual(gate.waiting_count, 1)
+
+        waiter.join(timeout=2)
+        self.assertFalse(waiter.is_alive())
+        self.assertEqual(acquired, [False])
+        self.assertEqual(gate.waiting_count, 0)
         gate.release()
         self.assertTrue(gate.acquire())
         gate.release()
