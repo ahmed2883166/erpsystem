@@ -7,8 +7,23 @@ from flask import Flask, session
 from fixed_assets import (_asset_disposal_journal_lines, _asset_period_amount,
                           _post_asset_depreciation, _reverse_full_period_depreciation_for_disposal,
                           _validate_dedicated_accum_account, require,
-                          register_assets_from_journal_lines)
+                          register_assets_from_journal_lines, _manual_asset_journal_lines)
 
+
+
+class ManualAssetAcquisitionJournalTests(unittest.TestCase):
+    def test_manual_asset_creation_builds_one_balanced_cost_journal(self):
+        lines = _manual_asset_journal_lines(10, 20, Decimal("12500.50"), "سيارة نقل")
+        self.assertEqual(lines[0][:3], (10, Decimal("12500.50"), Decimal("0")))
+        self.assertEqual(lines[1][:3], (20, Decimal("0"), Decimal("12500.50")))
+        self.assertEqual(sum((line[1] for line in lines), Decimal("0")),
+                         sum((line[2] for line in lines), Decimal("0")))
+
+    def test_manual_asset_journal_rejects_same_asset_and_counterpart_account(self):
+        with self.assertRaisesRegex(ValueError, "الحساب المقابل"):
+            _manual_asset_journal_lines(10, 10, Decimal("100"), "أصل")
+        with self.assertRaisesRegex(ValueError, "الحساب المقابل"):
+            _manual_asset_journal_lines(10, 20, Decimal("0"), "أصل")
 
 
 class FixedAssetPermissionFallbackTests(unittest.TestCase):
