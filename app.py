@@ -19,6 +19,7 @@ from functools import wraps
 import uuid
 
 from flask import Flask, abort, Response, flash, redirect, render_template, request, send_file, session, url_for, has_request_context, g
+from flask.sessions import SecureCookieSessionInterface
 from chart_templates import (CHARTS, ACTIVITY_LABELS, OPERATIONAL_ACCOUNT_CODES, seed_activity_chart, ensure_activity_chart_accounts, migrate_vat_accounts, ensure_account_metadata, migrate_legacy_duplicate_account_labels)
 from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
@@ -119,14 +120,30 @@ def handle_internal_server_error(error):
         return {"error": safe_message, "request_id": request_id}, 500
     return safe_message, 500
 
+def _session_cookie_secure_for_request():
+    """Honor an explicit deployment override; otherwise secure cookies on HTTPS only."""
+    configured = os.environ.get("NEXUS_COOKIE_SECURE")
+    if configured is not None and configured.strip():
+        return configured.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(has_request_context() and request.is_secure)
+
+
+class RequestAwareSecureCookieSessionInterface(SecureCookieSessionInterface):
+    def get_cookie_secure(self, app):
+        return _session_cookie_secure_for_request()
+
+
+app.session_interface = RequestAwareSecureCookieSessionInterface()
+
+
 @app.after_request
 def add_security_headers(response):
-    """Apply browser security headers without assuming HTTPS on a private LAN."""
+    """Apply browser security headers and HSTS only for HTTPS requests."""
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-    if app.config.get("SESSION_COOKIE_SECURE") and request.is_secure:
+    if _session_cookie_secure_for_request() and request.is_secure:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
 
@@ -162,7 +179,7 @@ app.config.update(
     SECRET_KEY=_load_secret_key(),
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=os.environ.get("NEXUS_COOKIE_SECURE", "1").strip().lower() in {"1", "true", "yes", "on"},
+    SESSION_COOKIE_SECURE=os.environ.get("NEXUS_COOKIE_SECURE", "").strip().lower() in {"1", "true", "yes", "on"},
     PERMANENT_SESSION_LIFETIME=1800,
 )
 from flask_wtf.csrf import CSRFProtect, generate_csrf

@@ -8,3 +8,11 @@ instance/
 nexus-licenses.sqlite3
 *.pem
 .env
+
+backups/
+**/backups/
+.nexus_secret_key
+.nexus_initial_admin_password
+**/.nexus_initial_admin_password
+nexus_license.json
+**/nexus_license.json
