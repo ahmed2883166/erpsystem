@@ -224,6 +224,20 @@ def settle(transaction_id):
         if amount <= 0 or amount > D(t["balance_foreign"]):
             raise ValueError("مبلغ التسوية أكبر من الرصيد الأجنبي المتبقي أو غير صحيح.")
         settle_date = date.fromisoformat(request.form["settlement_date"]).isoformat()
+        if settle_date < t["transaction_date"]:
+            raise ValueError("تاريخ التسوية لا يجوز أن يسبق تاريخ المعاملة.")
+        latest_settlement = c.execute(
+            "SELECT MAX(settlement_date) FROM fx_settlements WHERE transaction_id=?",
+            (transaction_id,),
+        ).fetchone()[0]
+        if latest_settlement and settle_date < latest_settlement:
+            raise ValueError("تاريخ التسوية يسبق تسوية سابقة؛ يجب تسجيل التسويات بترتيبها الزمني.")
+        latest_revaluation = c.execute(
+            "SELECT MAX(revaluation_date) FROM fx_revaluations WHERE transaction_id=?",
+            (transaction_id,),
+        ).fetchone()[0]
+        if latest_revaluation and settle_date <= latest_revaluation:
+            raise ValueError("تاريخ التسوية يجب أن يأتي بعد آخر إعادة تقييم مسجلة.")
         rate = _rate(c,t["currency_code"],settle_date,request.form.get("rate"))
         cash = M(amount*rate)
         full_settlement = amount == D(t["balance_foreign"])
@@ -273,6 +287,8 @@ def revalue(transaction_id):
         if not t:
             raise ValueError("لا يوجد رصيد مفتوح لإعادة تقييمه.")
         revalue_date = date.fromisoformat(request.form["revaluation_date"]).isoformat()
+        if revalue_date < t["transaction_date"]:
+            raise ValueError("تاريخ إعادة التقييم لا يجوز أن يسبق تاريخ المعاملة.")
         latest_settlement = c.execute(
             "SELECT MAX(settlement_date) FROM fx_settlements WHERE transaction_id=?",
             (transaction_id,),

@@ -118,6 +118,81 @@ class CurrencyCenterTests(unittest.TestCase):
         self.assertEqual(state, ("0", "0.00", "settled"))
 
 
+    def test_settlement_cannot_be_backdated_before_a_prior_settlement(self):
+        self.client.post("/currencies/transactions", data={
+            "party_type": "receivable", "reference": "INV-USD-SETTLE-ORDER", "party_name": "Customer",
+            "currency_code": "USD", "transaction_date": "2026-11-01",
+            "foreign_amount": "100", "rate": "50", "party_account_id": "2",
+            "counterpart_account_id": "3"
+        })
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO fx_settlements(
+            transaction_id,settlement_date,foreign_amount,rate,base_amount,
+            carrying_amount,fx_difference
+        ) VALUES(1,'2026-11-20','10','51','510','500','10')""")
+        conn.commit()
+        before_journals = conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
+        conn.close()
+
+        self.client.post("/currencies/1/settle", data={
+            "settlement_date": "2026-11-15", "foreign_amount": "10", "rate": "51",
+            "cash_account_id": "1", "fx_gain_account_id": "4", "fx_loss_account_id": "5"
+        })
+
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM fx_settlements").fetchone()[0], 1)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], before_journals)
+        state = conn.execute("SELECT balance_foreign,balance_base FROM fx_transactions WHERE id=1").fetchone()
+        self.assertEqual(state, ("100", "5000"))
+        conn.close()
+
+    def test_settlement_cannot_be_backdated_before_latest_revaluation(self):
+        self.client.post("/currencies/transactions", data={
+            "party_type": "receivable", "reference": "INV-USD-SETTLE-AFTER-REVALUE", "party_name": "Customer",
+            "currency_code": "USD", "transaction_date": "2026-11-01",
+            "foreign_amount": "100", "rate": "50", "party_account_id": "2",
+            "counterpart_account_id": "3"
+        })
+        self.client.post("/currencies/1/revalue", data={
+            "revaluation_date": "2026-11-30", "rate": "52",
+            "fx_gain_account_id": "4", "fx_loss_account_id": "5"
+        })
+        conn = sqlite3.connect(self.db_path)
+        before_journals = conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
+        conn.close()
+
+        self.client.post("/currencies/1/settle", data={
+            "settlement_date": "2026-11-15", "foreign_amount": "10", "rate": "51",
+            "cash_account_id": "1", "fx_gain_account_id": "4", "fx_loss_account_id": "5"
+        })
+
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM fx_settlements").fetchone()[0], 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], before_journals)
+        self.assertEqual(conn.execute(
+            "SELECT balance_foreign,balance_base FROM fx_transactions WHERE id=1"
+        ).fetchone(), ("100", "5200.00"))
+        conn.close()
+
+    def test_revaluation_cannot_precede_transaction_date(self):
+        self.client.post("/currencies/transactions", data={
+            "party_type": "receivable", "reference": "INV-USD-REVALUE-PRIOR", "party_name": "Customer",
+            "currency_code": "USD", "transaction_date": "2026-11-01",
+            "foreign_amount": "100", "rate": "50", "party_account_id": "2",
+            "counterpart_account_id": "3"
+        })
+        self.client.post("/currencies/1/revalue", data={
+            "revaluation_date": "2026-10-31", "rate": "52",
+            "fx_gain_account_id": "4", "fx_loss_account_id": "5"
+        })
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM fx_revaluations").fetchone()[0], 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 1)
+        self.assertEqual(conn.execute(
+            "SELECT balance_foreign,balance_base FROM fx_transactions WHERE id=1"
+        ).fetchone(), ("100", "5000"))
+        conn.close()
+
     def test_revaluation_before_latest_settlement_is_rejected(self):
         self.client.post("/currencies/transactions", data={
             "party_type": "receivable", "reference": "INV-USD-CHRONO-1", "party_name": "Customer",
