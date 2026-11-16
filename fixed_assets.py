@@ -191,7 +191,10 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
     if not rows:
         rows = [{
             "asset_code": bill["asset_code"], "asset_name": bill["asset_name"],
-            "asset_category": bill["asset_category"] or "", "cost": str(Decimal(str(bill["subtotal"])) + non_deductible_tax),
+            "asset_category": bill["asset_category"] or "", "cost": (
+                str(bill["subtotal"]) if non_deductible_tax == 0
+                else str(Decimal(str(bill["subtotal"])) + non_deductible_tax)
+            ),
             "ready_date": bill["asset_ready_date"], "residual_value": bill["asset_residual_value"] or "0",
             "useful_life_months": bill["asset_useful_life_months"],
             "depreciation_method": bill["asset_depreciation_method"], "annual_rate": bill["asset_annual_rate"] or "0",
@@ -241,8 +244,9 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
         _validate_dedicated_accum_account(conn, accum_id)
         used_accum_accounts.add(accum_id)
         total+=cost
+        stored_cost = str(row["cost"]) if non_deductible_tax == 0 else str(cost)
         prepared.append((code,name,str(row["asset_category"] or ""),purchase_date,ready_date,
-                         str(cost),str(residual),life,method,str(annual_rate),
+                         stored_cost,str(residual),life,method,str(annual_rate),
                          row["asset_account_id"],row["accum_account_id"],row["expense_account_id"]))
     expected_asset_cost = Decimal(str(bill["subtotal"])) + non_deductible_tax
     if total!=expected_asset_cost:
