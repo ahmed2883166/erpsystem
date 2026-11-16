@@ -233,6 +233,13 @@ def _inventory_codes(activity):
     return ACTIVITY_ACCOUNT_ROLES.get(activity, ACTIVITY_ACCOUNT_ROLES["commercial"])["inventory"]
 
 
+def _grni_codes(activity):
+    """Return the GRNI liability control accounts for the selected activity."""
+    from chart_templates import ACTIVITY_ACCOUNT_ROLES
+    roles = ACTIVITY_ACCOUNT_ROLES.get(activity, ACTIVITY_ACCOUNT_ROLES["commercial"])
+    return roles.get("grni", ("2190",))
+
+
 def _decimal_sum(values):
     return sum((Decimal(str(value or "0")) for value in values), Decimal("0"))
 
@@ -320,11 +327,14 @@ def reconciliation_snapshot(conn):
     if (_table_exists(conn, "goods_receipts") and
             _table_exists(conn, "supplier_bill_receipts") and
             _table_exists(conn, "supplier_bills")):
+        receipt_columns = _columns(conn, "goods_receipts")
         receipt_link_columns = _columns(conn, "supplier_bill_receipts")
         bill_columns = _columns(conn, "supplier_bills")
         # Only posted bills settle GRNI. Draft/approval/rejected bills remain
         # visible as allocations but do not clear the receipt liability.
-        if {"bill_id", "receipt_id", "matched_amount"}.issubset(receipt_link_columns) and "status" in bill_columns:
+        if ({"id", "total_value", "status"}.issubset(receipt_columns) and
+                {"bill_id", "receipt_id", "matched_amount"}.issubset(receipt_link_columns) and
+                {"id", "status"}.issubset(bill_columns)):
             matched_by_receipt = {}
             for row in conn.execute("""SELECT x.receipt_id,x.matched_amount
                 FROM supplier_bill_receipts x
@@ -334,12 +344,15 @@ def reconciliation_snapshot(conn):
                     matched_by_receipt.get(row["receipt_id"], Decimal("0")) +
                     Decimal(str(row["matched_amount"] or "0"))
                 )
-            receipt_columns = _columns(conn, "goods_receipts")
+            supplier_columns = _columns(conn, "suppliers")
+            supplier_name_column = "name" if "name" in supplier_columns else (
+                "name_ar" if "name_ar" in supplier_columns else None
+            )
             supplier_join = (
                 "LEFT JOIN suppliers s ON s.id=r.supplier_id"
-                if _table_exists(conn, "suppliers") and "supplier_id" in receipt_columns else ""
+                if "supplier_id" in receipt_columns and supplier_name_column else ""
             )
-            supplier_select = "s.name supplier_name" if supplier_join else "'' supplier_name"
+            supplier_select = f"s.{supplier_name_column} supplier_name" if supplier_join else "'' supplier_name"
             receipt_no_select = "r.receipt_no" if "receipt_no" in receipt_columns else "CAST(r.id AS TEXT)"
             receipt_date_select = "r.receipt_date" if "receipt_date" in receipt_columns else "NULL"
             movement_columns = _columns(conn, "stock_movements")
@@ -347,7 +360,7 @@ def reconciliation_snapshot(conn):
             can_trace_layers = (
                 "receipt_no" in receipt_columns and
                 {"movement_no", "id"}.issubset(movement_columns) and
-                {"source_movement_id", "qty_remaining"}.issubset(layer_columns)
+                {"source_movement_id", "qty_remaining", "unit_cost"}.issubset(layer_columns)
             )
             for row in conn.execute(
                 f"""SELECT r.id,{receipt_no_select} receipt_no,{receipt_date_select} receipt_date,
@@ -405,11 +418,19 @@ def reconciliation_snapshot(conn):
     # posting/allocation error; no automatic journal adjustment is made.
     grni_ledger = None
     grni_difference = None
-    if _table_exists(conn, "accounts") and _table_exists(conn, "journal_lines") and _table_exists(conn, "journal_entries"):
-        grni_account = conn.execute(
-            "SELECT id FROM accounts WHERE code='2190' AND is_group=0 ORDER BY id LIMIT 1"
-        ).fetchone()
-        if grni_account:
+    if (_table_exists(conn, "accounts") and _table_exists(conn, "journal_lines") and
+            _table_exists(conn, "journal_entries") and
+            {"code", "is_group"}.issubset(_columns(conn, "accounts")) and
+            {"account_id", "debit", "credit", "entry_id"}.issubset(_columns(conn, "journal_lines")) and
+            {"id", "status"}.issubset(_columns(conn, "journal_entries"))):
+        grni_codes = _grni_codes(settings.get("activity", "commercial"))
+        grni_marks = ",".join("?" for _ in grni_codes)
+        grni_accounts = conn.execute(
+            f"SELECT id FROM accounts WHERE code IN ({grni_marks}) AND is_group=0 ORDER BY id",
+            tuple(grni_codes),
+        ).fetchall()
+        if grni_accounts:
+            grni_account_ids = [row["id"] for row in grni_accounts]
             from management_dashboard import _copied_opening_entry_ids
             excluded_grni_openings = sorted(_copied_opening_entry_ids(conn, date.today().isoformat()))
             exclusion_sql = (
@@ -420,8 +441,10 @@ def reconciliation_snapshot(conn):
             for line in conn.execute(
                 """SELECT jl.debit,jl.credit FROM journal_lines jl
                    JOIN journal_entries je ON je.id=jl.entry_id
-                   WHERE je.status='posted' AND jl.account_id=?""" + exclusion_sql,
-                (grni_account["id"], *excluded_grni_openings)
+                   WHERE je.status='posted' AND jl.account_id IN ({})""".format(
+                    ",".join("?" for _ in grni_account_ids)
+                ) + exclusion_sql,
+                (*grni_account_ids, *excluded_grni_openings)
             ):
                 grni_ledger += Decimal(str(line["credit"] or "0")) - Decimal(str(line["debit"] or "0"))
             grni_ledger = _money(grni_ledger)
