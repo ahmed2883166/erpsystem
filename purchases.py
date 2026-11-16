@@ -1822,8 +1822,9 @@ def post_supplier_bill(c, bill_id, actor_id):
                     allocated_non_deductible = money(non_deductible_tax * base_cost / subtotal)
                     remaining_non_deductible = money(remaining_non_deductible - allocated_non_deductible)
                 cost = money(base_cost + allocated_non_deductible)
+                stored_cost = str(row["cost"]) if allocated_non_deductible == 0 else str(cost)
                 line_total = money(line_total + cost)
-                c.execute("UPDATE supplier_bill_asset_lines SET cost=? WHERE id=?", (str(cost), row["id"]))
+                c.execute("UPDATE supplier_bill_asset_lines SET cost=? WHERE id=?", (stored_cost, row["id"]))
                 journal_lines.append((row["asset_account_id"],cost,0,
                     "رسملة الأصل " + row["asset_code"] + " - " + row["asset_name"] +
                     (" شامل الضريبة غير القابلة للخصم" if allocated_non_deductible else "")))
