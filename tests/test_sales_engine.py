@@ -67,6 +67,96 @@ class SalesIntegrationTests(unittest.TestCase):
         self.db.close()
         self.tmp.cleanup()
 
+    def test_invoice_draft_and_approval_record_do_not_post_stock_or_journal(self):
+        payload = {
+            "customer_id": self.customer_id,
+            "invoice_date": "2026-11-10",
+            "due_date": "2026-11-30",
+            "warehouse_id": self.warehouse_id,
+            "items": [{
+                "product_id": self.product_id, "quantity": "1", "unit_price": "20",
+                "description": "صنف اختبار", "uom_id": "", "tax_rate": "14",
+                "tax_treatment": "standard",
+            }],
+            "tax_rate": "14", "dimensions": {}, "sales_channel": "default",
+            "discount_override": {
+                "discount_type": "none", "discount_value": "0", "discount_amount": "0"
+            },
+        }
+        workflow_id, workflow_no = sales.create_invoice_workflow(
+            self.db, payload, "pending_approval", 11, Decimal("20"),
+            Decimal("0"), Decimal("0")
+        )
+        workflow = self.db.execute(
+            "SELECT * FROM sales_invoice_workflows WHERE id=?", (workflow_id,)
+        ).fetchone()
+        self.assertEqual(workflow["workflow_no"], workflow_no)
+        self.assertEqual(workflow["status"], "pending_approval")
+        self.assertIsNone(workflow["posted_invoice_id"])
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM sales_invoices").fetchone()[0], 0)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'"
+        ).fetchone()[0], 0)
+        remaining = self.db.execute(
+            "SELECT qty_remaining FROM stock_valuation_layers"
+        ).fetchone()["qty_remaining"]
+        self.assertEqual(Decimal(remaining), Decimal("5"))
+
+    def test_approved_invoice_workflow_can_be_posted_once_with_saved_payload(self):
+        payload = {
+            "customer_id": self.customer_id,
+            "invoice_date": "2026-11-10",
+            "due_date": "2026-11-30",
+            "warehouse_id": self.warehouse_id,
+            "items": [{
+                "product_id": self.product_id, "quantity": "1", "unit_price": "20",
+                "description": "صنف اختبار", "uom_id": "", "tax_rate": "14",
+                "tax_treatment": "standard",
+            }],
+            "tax_rate": "14", "dimensions": {}, "sales_channel": "default",
+            "discount_override": {
+                "discount_type": "none", "discount_value": "0", "discount_amount": "0"
+            },
+        }
+        workflow_id, _ = sales.create_invoice_workflow(
+            self.db, payload, "pending_approval", 11, Decimal("20"),
+            Decimal("0"), Decimal("0")
+        )
+        self.db.execute("""UPDATE sales_invoice_workflows SET status='approved',
+            approved_by=12 WHERE id=?""", (workflow_id,))
+        self.db.commit()
+        self.db.execute("BEGIN IMMEDIATE")
+        workflow = self.db.execute(
+            "SELECT * FROM sales_invoice_workflows WHERE id=? AND status='approved'",
+            (workflow_id,)
+        ).fetchone()
+        saved = json.loads(workflow["payload_json"])
+        result = sales.post_invoice(
+            self.db, saved["customer_id"], saved["invoice_date"],
+            saved["warehouse_id"], saved["items"], saved["tax_rate"], 12,
+            dimensions=saved["dimensions"],
+            discount_override=saved["discount_override"],
+            sales_channel=saved["sales_channel"],
+        )
+        self.db.execute("UPDATE sales_invoices SET due_date=? WHERE id=?",
+                        (saved["due_date"], result["invoice_id"]))
+        self.db.execute("""UPDATE sales_invoice_workflows SET status='posted',
+            posted_invoice_id=?,posted_at=CURRENT_TIMESTAMP WHERE id=? AND status='approved'""",
+            (result["invoice_id"], workflow_id))
+        self.db.commit()
+        final = self.db.execute(
+            "SELECT status,posted_invoice_id FROM sales_invoice_workflows WHERE id=?",
+            (workflow_id,)
+        ).fetchone()
+        self.assertEqual(final["status"], "posted")
+        self.assertEqual(final["posted_invoice_id"], result["invoice_id"])
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM sales_invoices").fetchone()[0], 1)
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM stock_movements WHERE movement_type='issue'"
+        ).fetchone()[0], 1)
+
+
     def test_custom_activity_profile_controls_invoice_account_posting(self):
         from activity_profiles import (
             initialize_activity_profiles_schema, create_activity_profile,
