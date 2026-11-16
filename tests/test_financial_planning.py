@@ -660,7 +660,7 @@ class FinancialYearJournalTests(unittest.TestCase):
         self.assertIn("3200", check["details"])
         self.assertEqual(
             self.conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0],
-            4,
+            5,
         )
 
     def test_preclose_report_warns_when_opening_entry_is_missing(self):
