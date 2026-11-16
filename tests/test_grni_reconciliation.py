@@ -76,6 +76,7 @@ class GRNIReconciliationTests(unittest.TestCase):
         try:
             app = Flask(__name__)
             app.secret_key = "test"
+            app.context_processor(lambda: {"permissions": []})
             app.register_blueprint(purchases.purchase_bp)
             with tempfile.TemporaryDirectory() as tmp:
                 db_path = Path(tmp) / "grni.db"
