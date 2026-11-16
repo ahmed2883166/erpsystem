@@ -568,6 +568,140 @@ def index():
         price_insights=price_insights,price_insights_available=price_insights_available,
         today=date.today().isoformat())
 
+
+def build_grni_reconciliation(c, month):
+    """Reconcile posted GRNI receipt/bill subledger movements to GL account 2190."""
+    try:
+        period_start = date.fromisoformat(str(month) + "-01")
+    except (TypeError, ValueError):
+        raise ValueError("حدد شهرًا صحيحًا بصيغة سنة-شهر.")
+    if period_start.strftime("%Y-%m") != str(month):
+        raise ValueError("حدد شهرًا صحيحًا بصيغة سنة-شهر.")
+    next_month = date(period_start.year + (period_start.month == 12),
+                      1 if period_start.month == 12 else period_start.month + 1, 1)
+    period_end = next_month - timedelta(days=1)
+    start_text, end_text = period_start.isoformat(), period_end.isoformat()
+    account_row = c.execute(
+        """SELECT id,code,name_ar FROM accounts WHERE code='2190' AND active=1 AND is_group=0 LIMIT 1"""
+    ).fetchone()
+    account_available = account_row is not None
+    receipts = c.execute(
+        """SELECT r.id,r.receipt_no,r.receipt_date,r.total_value,s.name AS supplier_name,
+                  w.code AS warehouse_code,w.name_ar AS warehouse_name
+           FROM goods_receipts r JOIN suppliers s ON s.id=r.supplier_id
+           JOIN stock_warehouses w ON w.id=r.warehouse_id
+           WHERE r.status='posted' AND r.receipt_date<=? ORDER BY r.receipt_date,r.id""",
+        (end_text,),
+    ).fetchall()
+    receipt_ids = [row["id"] for row in receipts]
+    allocations, bill_period_total, bill_opening_total = {}, money("0"), money("0")
+    for offset in range(0, len(receipt_ids), 500):
+        batch = receipt_ids[offset:offset + 500]
+        placeholders = ",".join("?" for _ in batch)
+        rows = c.execute(
+            f"""SELECT x.receipt_id,x.matched_amount,b.bill_no,b.bill_date
+                FROM supplier_bill_receipts x JOIN supplier_bills b ON b.id=x.bill_id
+                WHERE b.status='posted' AND b.bill_kind='inventory'
+                  AND b.bill_date<=? AND x.receipt_id IN ({placeholders})
+                ORDER BY b.bill_date,b.id""", [end_text, *batch]
+        ).fetchall()
+        for item in rows:
+            amount = money(item["matched_amount"] or "0")
+            bucket = allocations.setdefault(item["receipt_id"], {
+                "total": money("0"), "opening": money("0"), "period": money("0"), "bills": []
+            })
+            bucket["total"] = money(bucket["total"] + amount)
+            if item["bill_date"] < start_text:
+                bucket["opening"] = money(bucket["opening"] + amount)
+                bill_opening_total = money(bill_opening_total + amount)
+            else:
+                bucket["period"] = money(bucket["period"] + amount)
+                bill_period_total = money(bill_period_total + amount)
+            bucket["bills"].append({"bill_no": item["bill_no"], "bill_date": item["bill_date"], "amount": amount})
+    opening_receipts = period_receipts = closing_receipts = money("0")
+    detail_rows = []
+    for receipt in receipts:
+        received = money(receipt["total_value"] or "0")
+        bucket = allocations.get(receipt["id"], {})
+        billed = bucket.get("total", money("0"))
+        billed_period = bucket.get("period", money("0"))
+        if receipt["receipt_date"] < start_text:
+            opening_receipts = money(opening_receipts + received)
+        else:
+            period_receipts = money(period_receipts + received)
+        closing_receipts = money(closing_receipts + received)
+        outstanding = money(received - billed)
+        if receipt["receipt_date"] < start_text and outstanding == 0 and billed_period == 0:
+            continue
+        detail_rows.append({
+            "receipt_no": receipt["receipt_no"], "receipt_date": receipt["receipt_date"],
+            "supplier_name": receipt["supplier_name"],
+            "warehouse": " — ".join(x for x in (receipt["warehouse_code"], receipt["warehouse_name"]) if x),
+            "received": received, "billed": billed,
+            "billed_opening": bucket.get("opening", money("0")), "billed_period": billed_period,
+            "outstanding": outstanding,
+            "age_days": max(0, (period_end - date.fromisoformat(receipt["receipt_date"])).days),
+            "status": ("مسوّى بالكامل" if outstanding == 0 else
+                       "غير مفوتر" if billed == 0 else
+                       "تجاوز تخصيص الفواتير قيمة الاستلام" if outstanding < 0 else "مسوّى جزئيًا"),
+            "bills": bucket.get("bills", []),
+        })
+    subledger_opening = money(opening_receipts - bill_opening_total)
+    subledger_closing = money(closing_receipts - bill_opening_total - bill_period_total)
+    subledger_period_net = money(period_receipts - bill_period_total)
+    gl_opening_debit = gl_opening_credit = gl_period_debit = gl_period_credit = money("0")
+    if account_available:
+        gl_rows = c.execute(
+            """SELECT je.entry_date,jl.debit,jl.credit FROM journal_lines jl
+               JOIN journal_entries je ON je.id=jl.entry_id
+               WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<=?
+               ORDER BY je.entry_date,je.id,jl.id""", (account_row["id"], end_text)
+        ).fetchall()
+        for line in gl_rows:
+            debit, credit = money(line["debit"] or "0"), money(line["credit"] or "0")
+            if line["entry_date"] < start_text:
+                gl_opening_debit = money(gl_opening_debit + debit)
+                gl_opening_credit = money(gl_opening_credit + credit)
+            else:
+                gl_period_debit = money(gl_period_debit + debit)
+                gl_period_credit = money(gl_period_credit + credit)
+    gl_opening = money(gl_opening_credit - gl_opening_debit)
+    gl_period_net = money(gl_period_credit - gl_period_debit)
+    gl_closing = money(gl_opening + gl_period_net)
+    return {
+        "month": str(month), "period_start": start_text, "period_end": end_text,
+        "account_available": account_available,
+        "account_code": account_row["code"] if account_available else "2190",
+        "account_name": account_row["name_ar"] if account_available else "بضاعة مستلمة غير مفوترة GRNI",
+        "opening_receipts": opening_receipts, "opening_bill_settlements": bill_opening_total,
+        "subledger_opening": subledger_opening, "period_receipts": period_receipts,
+        "period_bill_settlements": bill_period_total, "subledger_period_net": subledger_period_net,
+        "subledger_closing": subledger_closing, "gl_opening_debit": gl_opening_debit,
+        "gl_opening_credit": gl_opening_credit, "gl_opening": gl_opening,
+        "gl_period_debit": gl_period_debit, "gl_period_credit": gl_period_credit,
+        "gl_period_net": gl_period_net, "gl_closing": gl_closing,
+        "opening_difference": money(gl_opening - subledger_opening) if account_available else None,
+        "movement_difference": money(gl_period_net - subledger_period_net) if account_available else None,
+        "closing_difference": money(gl_closing - subledger_closing) if account_available else None,
+        "rows": detail_rows,
+    }
+
+
+@purchase_bp.route("/grni-reconciliation")
+@require("purchases.view")
+def grni_reconciliation():
+    selected_month = (request.args.get("month") or date.today().strftime("%Y-%m")).strip()
+    c = db()
+    try:
+        report = build_grni_reconciliation(c, selected_month)
+        return render_template("purchase_grni_reconciliation.html", report=report, selected_month=selected_month)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("purchase.grni_reconciliation", month=date.today().strftime("%Y-%m")))
+    finally:
+        c.close()
+
+
 @purchase_bp.route("/three-way-match")
 @require("purchases.view")
 def three_way_match():
