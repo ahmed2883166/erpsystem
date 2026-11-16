@@ -2,6 +2,9 @@
 setlocal
 cd /d "%~dp0"
 
+REM Always initialize the configured company database in the normal local launcher.
+set "NEXUS_SKIP_DB_INIT=0"
+
 title ADMRAIL ERP - Local Server
 REM Local developer-only license bypass. Do not ship this launcher to customers.
 set "NEXUS_DEMO_MODE=1"
