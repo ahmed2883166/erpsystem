@@ -1827,8 +1827,8 @@ def post_supplier_bill(c, bill_id, actor_id):
                 journal_lines.append((row["asset_account_id"],cost,0,
                     "رسملة الأصل " + row["asset_code"] + " - " + row["asset_name"] +
                     (" شامل الضريبة غير القابلة للخصم" if allocated_non_deductible else "")))
-            if line_total != subtotal:
-                raise ValueError("مجموع تكاليف الأصول لا يساوي صافي فاتورة المورد.")
+            if line_total != money(subtotal + non_deductible_tax):
+                raise ValueError("مجموع تكاليف الأصول بعد إضافة الضريبة غير القابلة للخصم لا يطابق صافي الفاتورة والضريبة المرسملة.")
         else:
             asset_data = validate_asset_bill_data(c, dict(bill), bill["bill_date"], subtotal)
             asset_cost = money(subtotal + non_deductible_tax)
