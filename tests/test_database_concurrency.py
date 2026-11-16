@@ -266,5 +266,187 @@ class TenClientWriteConcurrencyTests(unittest.TestCase):
                 verify.close()
 
 
+    def test_twenty_clients_mix_journal_entry_and_financial_report_reads(self):
+        """Stress 20 simultaneous clients against a larger isolated SQLite ledger."""
+        import time
+
+        writer_count = 12
+        reader_count = 8
+        clients = writer_count + reader_count
+        posts_per_writer = 20
+        reads_per_reader = 30
+
+        with tempfile.TemporaryDirectory(prefix="nexus-twenty-client-mixed-load-") as folder:
+            db_path = Path(folder) / "twenty-client.sqlite3"
+            prepare_database(db_path)
+            setup = connect_database(db_path)
+            try:
+                setup.executescript("""
+                    CREATE INDEX idx_journal_entries_date ON journal_entries(entry_date);
+                    CREATE INDEX idx_journal_entries_reference ON journal_entries(reference);
+                    CREATE INDEX idx_journal_lines_entry_account ON journal_lines(entry_id, account_id);
+                """)
+                # A pre-existing ledger makes report reads more representative than
+                # measuring an almost-empty database.
+                setup.execute("BEGIN")
+                entries = []
+                lines = []
+                for number in range(1, 5001):
+                    entries.append((
+                        number, "2026-01-15", f"HIST-{number:06d}",
+                        "رصيد تاريخي لاختبار التقارير", "posted", 1,
+                        "2026-01-15 10:00:00",
+                    ))
+                    lines.extend([
+                        (number * 2 - 1, number, 1, "100.00", "0", "مدين"),
+                        (number * 2, number, 2, "0", "100.00", "دائن"),
+                    ])
+                setup.executemany(
+                    "INSERT INTO journal_entries(id,entry_date,reference,description,status,created_by,created_at) VALUES(?,?,?,?,?,?,?)",
+                    entries,
+                )
+                setup.executemany(
+                    "INSERT INTO journal_lines(id,entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?,?)",
+                    lines,
+                )
+                setup.commit()
+            finally:
+                setup.close()
+
+            start = threading.Barrier(clients)
+            writer_latencies = []
+            reader_latencies = []
+            latency_lock = threading.Lock()
+            failures = []
+            began = time.perf_counter()
+
+            def writer(client_number):
+                start.wait(timeout=20)
+                connection = connect_database(db_path, timeout=20, isolation_level="")
+                try:
+                    for sequence in range(posts_per_writer):
+                        reference = f"TWENTY-{client_number:02d}-{sequence:04d}"
+                        tx_started = time.perf_counter()
+                        connection.execute("BEGIN IMMEDIATE")
+                        try:
+                            post_journal(
+                                connection, "2026-11-16", reference,
+                                "اختبار إدخال متزامن لعشرين جهازًا",
+                                [
+                                    (1, "125.50", "0", "مدين الصندوق"),
+                                    (2, "0", "125.50", "دائن الإيراد"),
+                                ],
+                                created_by=client_number,
+                            )
+                            connection.commit()
+                        except Exception:
+                            connection.rollback()
+                            raise
+                        finally:
+                            with latency_lock:
+                                writer_latencies.append(time.perf_counter() - tx_started)
+                except Exception as exc:
+                    with latency_lock:
+                        failures.append(("writer", client_number, repr(exc)))
+                    raise
+                finally:
+                    connection.close()
+
+            def report_reader(reader_number):
+                start.wait(timeout=20)
+                connection = connect_database(db_path, timeout=20, isolation_level=None)
+                try:
+                    for _ in range(reads_per_reader):
+                        query_started = time.perf_counter()
+                        try:
+                            row = connection.execute("""
+                                SELECT je.entry_date,
+                                       COUNT(DISTINCT je.id) AS entry_count,
+                                       COUNT(jl.id) AS line_count,
+                                       DECIMAL_SUM(jl.debit) AS debit_total,
+                                       DECIMAL_SUM(jl.credit) AS credit_total
+                                FROM journal_entries je
+                                JOIN journal_lines jl ON jl.entry_id = je.id
+                                WHERE je.entry_date BETWEEN ? AND ?
+                                GROUP BY je.entry_date
+                            """, ("2026-01-01", "2026-12-31")).fetchone()
+                            if row is None:
+                                raise AssertionError("Financial report returned no period row")
+                            if row["entry_count"] < 5000 or row["line_count"] < 10000:
+                                raise AssertionError("Report did not see the complete historical ledger")
+                            if row["debit_total"] != row["credit_total"]:
+                                raise AssertionError("Report debit and credit totals do not balance")
+                        except Exception as exc:
+                            with latency_lock:
+                                failures.append(("reader", reader_number, repr(exc)))
+                            raise
+                        finally:
+                            with latency_lock:
+                                reader_latencies.append(time.perf_counter() - query_started)
+                finally:
+                    connection.close()
+
+            with ThreadPoolExecutor(max_workers=clients) as pool:
+                futures = [
+                    pool.submit(writer, number)
+                    for number in range(1, writer_count + 1)
+                ]
+                futures.extend(
+                    pool.submit(report_reader, number)
+                    for number in range(1, reader_count + 1)
+                )
+                for future in futures:
+                    future.result(timeout=120)
+
+            elapsed = time.perf_counter() - began
+            self.assertEqual(failures, [])
+            self.assertEqual(len(writer_latencies), writer_count * posts_per_writer)
+            self.assertEqual(len(reader_latencies), reader_count * reads_per_reader)
+
+            writer_sorted = sorted(writer_latencies)
+            reader_sorted = sorted(reader_latencies)
+            writer_p95 = writer_sorted[int(len(writer_sorted) * 0.95) - 1]
+            reader_p95 = reader_sorted[int(len(reader_sorted) * 0.95) - 1]
+            print(
+                "LAN_TWENTY_CLIENT_METRICS "
+                f"clients={clients} writers={writer_count} readers={reader_count} "
+                f"historical_entries=5000 new_entries={writer_count * posts_per_writer} "
+                f"report_reads={len(reader_latencies)} elapsed_seconds={elapsed:.3f} "
+                f"write_p95_seconds={writer_p95:.4f} write_max_seconds={max(writer_sorted):.4f} "
+                f"report_p95_seconds={reader_p95:.4f} report_max_seconds={max(reader_sorted):.4f}"
+            )
+            self.assertLess(elapsed, 90, "20-client mixed workload exceeded 90 seconds")
+            self.assertLess(writer_p95, 5, "95th percentile journal write latency exceeded five seconds")
+            self.assertLess(max(writer_sorted), 20, "A journal write exceeded SQLite's configured lock timeout")
+            self.assertLess(reader_p95, 3, "95th percentile financial report read exceeded three seconds")
+            self.assertLess(max(reader_sorted), 10, "A financial report read exceeded ten seconds")
+
+            verify = connect_database(db_path)
+            try:
+                self.assertEqual(verify.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                self.assertEqual(
+                    verify.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0],
+                    5000 + writer_count * posts_per_writer,
+                )
+                self.assertEqual(
+                    verify.execute("SELECT COUNT(*) FROM journal_lines").fetchone()[0],
+                    (5000 + writer_count * posts_per_writer) * 2,
+                )
+                self.assertEqual(
+                    verify.execute("""
+                        SELECT COUNT(*) FROM (
+                            SELECT entry_id,
+                                   DECIMAL_SUM(debit) AS debit_total,
+                                   DECIMAL_SUM(credit) AS credit_total
+                            FROM journal_lines GROUP BY entry_id
+                            HAVING debit_total <> credit_total
+                        )
+                    """).fetchone()[0],
+                    0,
+                )
+            finally:
+                verify.close()
+
+
 if __name__ == "__main__":
     unittest.main()
