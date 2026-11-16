@@ -8,7 +8,7 @@ const currency=document.querySelector('[name="base_currency"]');
 function applyLocalization(){
  if(country.value==='EG'){regime.value='EG_VAT';vat.value='14';currency.value='EGP';}
  else if(country.value==='SA'){regime.value='SA_VAT_ZAKAT';vat.value='15';currency.value='SAR';}
- else {regime.value='CUSTOM';}
+ else if(country.value!=='LEGACY_OTHER'){regime.value='CUSTOM';}
 }
 country.addEventListener('change',applyLocalization);
 applyLocalization();
@@ -28,7 +28,7 @@ applyLocalization();
     <div><label>الدولة / التوطين الضريبي</label><select name="tax_country">
       <option value="EG" {% if settings.get('tax_country','EG')=='EG' %}selected{% endif %}>مصر</option>
       <option value="SA" {% if settings.get('tax_country')=='SA' %}selected{% endif %}>السعودية</option>
-      <option value="OTHER" {% if settings.get('tax_country')=='OTHER' %}selected{% endif %}>دولة أخرى</option>
+      {% if settings.get('tax_country')=='OTHER' %}<option value="LEGACY_OTHER" selected disabled>إعداد ضريبي قديم غير مدعوم — اختر مصر أو السعودية</option>{% endif %}
     </select></div>
     <div><label>النظام الضريبي</label><select name="tax_regime">
       <option value="EG_VAT" {% if settings.get('tax_regime','EG_VAT')=='EG_VAT' %}selected{% endif %}>مصر - VAT (14%)</option>
