@@ -472,7 +472,7 @@ def build_financial_year_preclose_report(conn, year_id):
                 COUNT(jl.id) line_count,
                 COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
                 COALESCE(DECIMAL_SUM(jl.credit),'0') credit,
-                COALESCE(SUM(CASE WHEN a.account_type NOT IN ('asset','liability','equity')
+                COALESCE(SUM(CASE WHEN a.id IS NULL OR a.account_type NOT IN ('asset','liability','equity')
                                   OR a.is_group=1 OR a.active=0 THEN 1 ELSE 0 END),0) invalid_lines
             FROM journal_entries je
             LEFT JOIN journal_lines jl ON jl.entry_id=je.id
