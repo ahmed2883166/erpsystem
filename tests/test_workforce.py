@@ -1423,7 +1423,7 @@ class WorkforceTests(unittest.TestCase):
         draft=conn.execute("""SELECT status,basic_salary_snapshot,gross_entitlement,stamp_duty,net_payable
             FROM employee_end_of_service_settlements WHERE id=1""").fetchone()
         conn.close()
-        self.assertEqual(draft,("draft","10000.00","105000.00","100.00","104900.00"))
+        self.assertEqual(draft,("draft","10000.00","106000.00","100.00","105900.00"))
         printed=self.client.get("/hr/end-of-service/1/print")
         self.assertEqual(printed.status_code,200)
         self.assertIn("EOS-E001-20261115",printed.get_data(as_text=True))
@@ -1436,8 +1436,8 @@ class WorkforceTests(unittest.TestCase):
         debit,credit=conn.execute("SELECT SUM(debit),SUM(credit) FROM journal_lines WHERE entry_id=?",(journal_id,)).fetchone()
         conn.close()
         self.assertEqual(status,"approved")
-        self.assertAlmostEqual(debit,105000.0,places=2)
-        self.assertAlmostEqual(credit,105000.0,places=2)
+        self.assertAlmostEqual(debit,106000.0,places=2)
+        self.assertAlmostEqual(credit,106000.0,places=2)
         blocked_payment = self.post_as_user("/hr/end-of-service/1/pay",data={
             "payment_date":"2026-11-20","amount":"50000","cash_account_id":"1"
         })

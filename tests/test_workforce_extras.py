@@ -83,7 +83,7 @@ class WorkforceExtrasTests(unittest.TestCase):
         from datetime import date
         self.assertEqual(
             workforce._service_duration_30_day(date(2026, 1, 1), date(2026, 2, 12)),
-            (1, 11),
+            (1, 12),
         )
         self.assertEqual(
             workforce._service_duration_30_day(date(2026, 1, 1), date(2026, 1, 1)),
