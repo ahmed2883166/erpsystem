@@ -1,5 +1,0 @@
-{% extends 'base.html' %}{% block title %}تشغيل الإهلاك الجماعي | NEXUS ERP{% endblock %}{% block content %}
-<header class="page-heading"><div><h2>تشغيل الإهلاك الجماعي</h2><p class="muted">يرحّل قيدًا مستقلًا لكل أصل داخل معاملة واحدة؛ إما نجاح كامل أو تراجع كامل.</p></div><div class="table-actions no-print"><a class="btn secondary" href="{{url_for('assets.index')}}">العودة لسجل الأصول</a></div></header>
-<section class="panel asset-depreciation-run-panel"><h3>تحديد فترة الإهلاك</h3><form method="post" class="form-row"><label>فترة الإهلاك<input type="month" name="period" value="{{period}}" required></label><button>احتساب وترحيل كل الأصول النشطة</button></form><p class="muted">الأصول التي سبق ترحيلها في الفترة يتم تجاوزها، ولا يسمح بتخطي فترة سابقة غير مرحلة.</p></section>
-{% if results %}<section class="panel"><h3>تفاصيل التشغيل</h3><div class="table-wrap"><table><tr><th>كود الأصل</th><th>قيمة الإهلاك</th></tr>{% for r in results %}<tr><td>{{r.asset}}</td><td>{{'%.2f'|format(r.amount)}}</td></tr>{% endfor %}</table></div></section>{% endif %}
-{% endblock %}
