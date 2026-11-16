@@ -966,5 +966,71 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         conn.close()
 
 
+    def test_partial_recoverable_vat_posts_nonrecoverable_part_to_expense(self):
+        with self.client.session_transaction() as session:
+            session["user_id"] = 1
+            session["role"] = "accountant"
+        with patch("purchases._activity_tax_roles", return_value={"input_vat": "1165"}):
+            response = self.client.post("/purchases/bills/new", data={
+                "supplier_id": str(self.supplier_id),
+                "supplier_invoice_no": "VAT-PARTIAL-001",
+                "bill_date": "2026-11-11",
+                "due_date": "2026-11-30",
+                "bill_kind": "expense",
+                "expense_account_id": str(self.expense_id),
+                "subtotal": "100.00",
+                "tax_rate": "14",
+                "input_vat_deductible_percent": "75",
+            })
+            self.assertEqual(response.status_code, 302)
+            conn = purchases.db()
+            bill_id = conn.execute(
+                "SELECT id FROM supplier_bills WHERE supplier_invoice_no='VAT-PARTIAL-001'"
+            ).fetchone()["id"]
+            conn.close()
+            self._submit_approve_and_post(bill_id)
+        conn = purchases.db()
+        bill = conn.execute(
+            "SELECT journal_entry_id,input_vat_deductible_percent FROM supplier_bills WHERE id=?",
+            (bill_id,),
+        ).fetchone()
+        self.assertEqual(bill["input_vat_deductible_percent"], "75")
+        lines = conn.execute(
+            """SELECT a.code,jl.debit,jl.credit FROM journal_lines jl
+               JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=? ORDER BY jl.id""",
+            (bill["journal_entry_id"],),
+        ).fetchall()
+        self.assertEqual(
+            [(row["code"], Decimal(row["debit"]), Decimal(row["credit"])) for row in lines],
+            [("5000", Decimal("103.50"), Decimal("0.00")),
+             ("2110", Decimal("0.00"), Decimal("100.00")),
+             ("1165", Decimal("10.50"), Decimal("0.00")),
+             ("2110", Decimal("0.00"), Decimal("14.00"))],
+        )
+        conn.close()
+
+    def test_partial_nonrecoverable_vat_on_inventory_bill_is_blocked_safely(self):
+        conn = purchases.db()
+        conn.execute("""INSERT INTO supplier_bills(
+            bill_no,supplier_id,bill_date,supplier_invoice_no,subtotal,tax_rate,tax_amount,
+            total_amount,input_vat_deductible_percent,status,bill_kind
+        ) VALUES('VAT-STOCK-BLOCK',?,'2026-11-11','VAT-STOCK-BLOCK-INV',
+            '100','14','14','114','75','approved','inventory')""", (self.supplier_id,))
+        bill_id = conn.execute(
+            "SELECT id FROM supplier_bills WHERE bill_no='VAT-STOCK-BLOCK'"
+        ).fetchone()["id"]
+        conn.commit()
+        with self.assertRaisesRegex(ValueError, "توزيعها على طبقات المخزون"):
+            purchases.post_supplier_bill(conn, bill_id, 1)
+        self.assertEqual(conn.execute(
+            "SELECT COUNT(*) FROM journal_entries"
+        ).fetchone()[0], 0)
+        self.assertEqual(conn.execute(
+            "SELECT status,journal_entry_id FROM supplier_bills WHERE id=?", (bill_id,)
+        ).fetchone()["status"], "approved")
+        conn.rollback()
+        conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()
