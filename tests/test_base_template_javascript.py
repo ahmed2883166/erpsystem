@@ -15,7 +15,7 @@ class BaseTemplateJavaScriptTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "Node.js is required for JavaScript syntax validation")
     def test_inline_scripts_parse_without_syntax_errors(self):
         html = BASE_TEMPLATE.read_text(encoding="utf-8")
-        scripts = re.findall(r"<script\\b[^>]*>(.*?)</script\\s*>", html, re.IGNORECASE | re.DOTALL)
+        scripts = re.findall(r"<script\b[^>]*>(.*?)</script\s*>", html, re.IGNORECASE | re.DOTALL)
         self.assertTrue(scripts, "Expected at least one inline script in base.html")
 
         for index, script in enumerate(scripts, start=1):
