@@ -18,3 +18,10 @@ def ensure_data_directory(path=None):
     target = DATA_DIR if path is None else Path(path).expanduser().resolve()
     target.mkdir(parents=True, exist_ok=True)
     return target
+
+
+def ensure_data_directory(path=None):
+    """Create the configured data directory, including missing parent folders."""
+    target = DATA_DIR if path is None else Path(path).expanduser().resolve()
+    target.mkdir(parents=True, exist_ok=True)
+    return target
