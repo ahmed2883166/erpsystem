@@ -32,14 +32,40 @@ def bounded_env_int(value, default, minimum=1, maximum=120):
 
 
 class ReportRequestGate:
-    """A non-blocking gate: excess report requests are rejected, never queued."""
+    """Limit active reports and allow only a small, time-bounded waiting queue."""
 
-    def __init__(self, max_concurrent=2):
+    def __init__(self, max_concurrent=2, max_waiters=4, wait_seconds=10):
         self.max_concurrent = bounded_env_int(max_concurrent, 2, 1, 16)
+        self.max_waiters = bounded_env_int(max_waiters, 4, 0, 32)
+        self.wait_seconds = bounded_env_int(wait_seconds, 10, 1, 30)
         self._semaphore = threading.BoundedSemaphore(self.max_concurrent)
+        self._waiter_lock = threading.Lock()
+        self._waiting = 0
+
+    @property
+    def waiting_count(self):
+        with self._waiter_lock:
+            return self._waiting
 
     def acquire(self):
-        return self._semaphore.acquire(blocking=False)
+        # Fast path: do not enter the waiting queue when a slot is available.
+        if self._semaphore.acquire(blocking=False):
+            return True
+
+        # Bound the number of requests allowed to occupy Waitress worker threads.
+        with self._waiter_lock:
+            if self._waiting >= self.max_waiters:
+                return False
+            self._waiting += 1
+
+        try:
+            # Recheck after joining the queue to close the release/acquire race.
+            if self._semaphore.acquire(blocking=False):
+                return True
+            return self._semaphore.acquire(timeout=self.wait_seconds)
+        finally:
+            with self._waiter_lock:
+                self._waiting -= 1
 
     def release(self):
         self._semaphore.release()
