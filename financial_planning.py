@@ -611,8 +611,10 @@ def build_financial_year_preclose_report(conn, year_id):
             for fx_id, balances in grouped_fx.items():
                 if balances["original"] - balances["settled"] <= 0:
                     continue
-                has_year_end_revaluation = conn.execute("""SELECT 1 FROM fx_revaluations
-                    WHERE transaction_id=? AND revaluation_date=? LIMIT 1""",
+                has_year_end_revaluation = conn.execute("""SELECT 1 FROM fx_revaluations r
+                    JOIN journal_entries je ON je.id=r.journal_entry_id
+                    WHERE r.transaction_id=? AND r.revaluation_date=?
+                      AND je.status='posted' LIMIT 1""",
                     (fx_id, end)).fetchone()
                 if not has_year_end_revaluation:
                     missing_fx_revaluations.append(fx_id)
