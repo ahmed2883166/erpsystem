@@ -711,9 +711,9 @@ def _operational_audit_snapshot(endpoint, view_args, created_record=None):
         if row is None:
             return None
         record_values = dict(row)
-        if table == "sales_discount_approval_requests":
-            # Do not copy the full invoice payload into the audit trail; the
-            # request header contains the review-relevant discount/status data.
+        if table in {"sales_discount_approval_requests", "sales_invoice_workflows"}:
+            # Keep the audit snapshot focused on workflow headers; submitted form
+            # values are captured separately by the centralized request audit.
             record_values.pop("payload_json", None)
         snapshot = {"record": record_values}
         if child_table:
@@ -782,7 +782,7 @@ def audit_operational_mutations(response):
             view_args = request.view_args or {}
             record_id = next(
                 (view_args[key] for key in (
-                    "id", "entry_id", "invoice_id", "bill_id", "document_id",
+                    "id", "entry_id", "invoice_id", "workflow_id", "bill_id", "document_id",
                     "year_id", "run_id", "product_id", "warehouse_id", "asset_id",
                     "order_id", "receipt_id", "payment_id", "movement_id",
                     "count_id", "stocktake_id", "party_id", "employee_id",
