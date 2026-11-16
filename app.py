@@ -1723,6 +1723,10 @@ def journal():
     source_filter = request.args.get("source", "").strip()
     account_filter = request.args.get("account_id", type=int)
     search_query = request.args.get("q", "").strip()[:100]
+    sort_order = request.args.get("sort_order", "asc").strip().lower()
+    if sort_order not in {"asc", "desc"}:
+        sort_order = "asc"
+    sort_sql = "DESC" if sort_order == "desc" else "ASC"
     for value in (date_from, date_to):
         if value:
             try:
@@ -3008,7 +3012,7 @@ def ledger():
                      WHERE jl2.entry_id=ledger_rows.entry_id
                        AND jl2.account_id<>ledger_rows.account_id) counterpart_accounts
                 FROM ledger_rows WHERE {outer_where}
-                ORDER BY entry_date,line_id"""
+                ORDER BY entry_date {sort_sql},line_id {sort_sql}"""
                 query_params = [str(base_opening), *date_params, *search_params]
             else:
                 history_conditions = ["hist.account_id=jl.account_id", "he.status='posted'",
@@ -3026,7 +3030,7 @@ def ledger():
                         WHERE {' AND '.join(history_conditions)}),'0')) running_balance
                     FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                     WHERE {' AND '.join(display_conditions)}
-                    ORDER BY je.entry_date,jl.id"""
+                    ORDER BY je.entry_date {sort_sql},jl.id {sort_sql}"""
                 query_params = [str(base_opening), *history_params, *display_params]
             ledger_page = fetch_page(
                 connection, query,
@@ -3039,11 +3043,16 @@ def ledger():
             )
             raw_rows = ledger_page["rows"]
             if raw_rows:
-                first = raw_rows[0]
-                first_running = Decimal(str(first["running_balance"] or "0"))
-                opening_balance = first_running - Decimal(str(first["debit"] or "0")) + Decimal(str(first["credit"] or "0"))
+                boundary = raw_rows[-1] if sort_order == "desc" else raw_rows[0]
+                boundary_running = Decimal(str(boundary["running_balance"] or "0"))
+                opening_balance = boundary_running - Decimal(str(boundary["debit"] or "0")) + Decimal(str(boundary["credit"] or "0"))
+                closing_boundary = raw_rows[0] if sort_order == "desc" else raw_rows[-1]
+                closing_balance = Decimal(str(closing_boundary["running_balance"] or "0")).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
             else:
                 opening_balance = base_opening
+                closing_balance = base_opening
 
             filtered_totals = connection.execute(f"""SELECT
                 COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
@@ -3056,9 +3065,6 @@ def ledger():
             period_net = connection.execute(f"""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),'0') net
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                 WHERE {' AND '.join(date_conditions)}""", date_params).fetchone()
-            closing_balance = (base_opening + Decimal(str(period_net["net"] or "0"))).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
-            )
             for row in raw_rows:
                 item = dict(row)
                 item["debit"] = Decimal(str(item["debit"] or "0"))
@@ -3070,7 +3076,7 @@ def ledger():
     connection.close()
     return render_template("ledger.html", accounts=accounts_list, selected=selected, rows=rows,
         date_from=date_from, date_to=date_to, search_query=search_query,
-        opening_balance=opening_balance, closing_balance=closing_balance,
+        sort_order=sort_order, opening_balance=opening_balance, closing_balance=closing_balance,
         total_debit=total_debit, total_credit=total_credit, ledger_page=ledger_page)
 
 
