@@ -338,6 +338,36 @@ class AuditLogTests(unittest.TestCase):
         self.assertNotIn("payload_json", before["record"])
         self.assertNotIn("payload_json", after["record"])
 
+    def test_sales_invoice_workflow_snapshot_tracks_status_without_copying_payload(self):
+        self.connection.executescript("""
+            CREATE TABLE sales_invoice_workflows(
+                id INTEGER PRIMARY KEY, workflow_no TEXT, status TEXT,
+                created_by INTEGER, submitted_by INTEGER, approved_by INTEGER,
+                payload_json TEXT
+            );
+            INSERT INTO sales_invoice_workflows VALUES(
+                55,'SIVD-55','draft',17,NULL,NULL,
+                '{"customer_id":7,"items":[{"product_id":3,"unit_price":"200"}]}'
+            );
+        """)
+        self.connection.commit()
+        with patch.object(nexus_app, "db", side_effect=self._open_connection):
+            before = nexus_app._operational_audit_snapshot(
+                "sales.edit_invoice_workflow", {"workflow_id": 55}
+            )
+            self.connection.execute(
+                "UPDATE sales_invoice_workflows SET status='pending_approval',submitted_by=17 WHERE id=55"
+            )
+            self.connection.commit()
+            after = nexus_app._operational_audit_snapshot(
+                "sales.submit_invoice_workflow", {"workflow_id": 55}
+            )
+        self.assertEqual(before["record"]["status"], "draft")
+        self.assertEqual(after["record"]["status"], "pending_approval")
+        self.assertEqual(after["record"]["submitted_by"], 17)
+        self.assertNotIn("payload_json", before["record"])
+        self.assertNotIn("payload_json", after["record"])
+
     def test_audit_view_is_a_separate_permission_and_route(self):
         self.assertIn("audit.view", nexus_app.PERMISSION_LABELS)
         self.assertIn("audit.view", nexus_app.PERMISSIONS["admin"])
