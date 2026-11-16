@@ -1446,14 +1446,14 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM employee_end_of_service_payments WHERE settlement_id=1").fetchone()[0], 0)
         conn.close()
         self.client.post("/hr/end-of-service/1/pay",data={"payment_date":"2026-11-20","amount":"50000","cash_account_id":"1"})
-        self.client.post("/hr/end-of-service/1/pay",data={"payment_date":"2026-11-25","amount":"54900","cash_account_id":"1"})
+        self.client.post("/hr/end-of-service/1/pay",data={"payment_date":"2026-11-25","amount":"55900","cash_account_id":"1"})
         conn=sqlite3.connect(self.db_path)
         state=conn.execute("SELECT status,paid_at FROM employee_end_of_service_settlements WHERE id=1").fetchone()
         payments=conn.execute("SELECT amount FROM employee_end_of_service_payments WHERE settlement_id=1 ORDER BY id").fetchall()
         conn.close()
         self.assertEqual(state[0],"paid")
         self.assertIsNotNone(state[1])
-        self.assertEqual(payments,[("50000.00",),("54900.00",)])
+        self.assertEqual(payments,[("50000.00",),("55900.00",)])
 
 
     def test_form2_report_uses_latest_posted_payroll_wages(self):
