@@ -110,6 +110,22 @@ class PeriodAdjustmentTests(unittest.TestCase):
                 "2026-01-01", "2026-01-31", "monthly", 3, 2, 7
             )
 
+    def test_preclose_blocks_unposted_adjustment_periods(self):
+        from financial_planning import build_financial_year_preclose_report
+        self.conn.executescript("""
+        CREATE TABLE financial_years(
+          id INTEGER PRIMARY KEY,year_name TEXT,start_date TEXT,end_date TEXT,
+          status TEXT DEFAULT 'open',opening_entry_id INTEGER,closing_entry_id INTEGER);
+        INSERT INTO financial_years(id,year_name,start_date,end_date,status)
+          VALUES(1,'2026','2026-01-01','2026-12-31','open');
+        """)
+        self._schedule()
+        report = build_financial_year_preclose_report(self.conn, 1)
+        adjustment_check = next(item for item in report["checks"]
+                                if item["code"] == "period_adjustments")
+        self.assertTrue(adjustment_check["blocking"])
+        self.assertEqual(adjustment_check["count"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()
