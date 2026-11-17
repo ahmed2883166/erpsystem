@@ -3,8 +3,6 @@
 The append-only triggers use SQLite syntax. PostgreSQL needs its own reviewed
 trigger function and migration, so this helper fails closed on other dialects.
 """
-import sqlite3
-
 from db_compat import database_dialect, table_columns, execute_script
 
 
