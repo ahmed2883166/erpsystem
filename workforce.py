@@ -2080,9 +2080,9 @@ def reopen_final_payroll(final_id):
         if c.execute("SELECT 1 FROM employee_final_payroll_payments WHERE final_payroll_id=? LIMIT 1",
                      (final_id,)).fetchone():
             raise ValueError("لا يمكن إعادة فتح كشف مرتبط بدفعات صرف.")
-        c.execute("UPDATE employee_final_payrolls SET status='draft' WHERE id=? AND status='cancelled'",
+        update_cursor = c.execute("UPDATE employee_final_payrolls SET status='draft' WHERE id=? AND status='cancelled'",
                   (final_id,))
-        if c.execute("SELECT changes()").fetchone()[0] != 1:
+        if update_cursor.rowcount != 1:
             raise ValueError("لم تتم إعادة فتح المسودة.")
         _audit(c, "employee_final_payroll_draft_reopened", row["final_payroll_no"])
         c.commit()
@@ -3003,12 +3003,12 @@ def post_payroll(run_id):
                     c.execute("""UPDATE employee_penalties SET status='deducted',payroll_line_id=?,decided_by=COALESCE(decided_by,?)
                         WHERE employee_id=? AND effective_period=? AND status='approved'""",
                         (payroll_line["id"],session["user_id"],payroll_line["employee_id"],run["period"]))
-        c.execute("""UPDATE payroll_runs SET status='posted',journal_entry_id=?,
+        update_cursor = c.execute("""UPDATE payroll_runs SET status='posted',journal_entry_id=?,
             approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_status='approved',
             posted_at=CURRENT_TIMESTAMP
             WHERE id=? AND status='draft' AND approval_status='pending'""",
             (journal_id,session["user_id"],run_id))
-        if c.execute("SELECT changes()").fetchone()[0] != 1:
+        if update_cursor.rowcount != 1:
             raise ValueError("تم تغيير حالة كشف المرتبات؛ أعد تحميل الصفحة.")
         _audit(c, "payroll_posted", run["period"] + " journal=" + str(journal_id))
         c.commit()
