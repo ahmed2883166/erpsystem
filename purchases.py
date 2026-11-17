@@ -484,7 +484,7 @@ def _supplier_price_insights(conn, lookback_days=365):
     if not set(required).issubset(present):
         return [], False
     start=(date.today()-timedelta(days=lookback_days)).isoformat()
-    rows=conn.execute("""SELECT bl.product_id,bl.billed_quantity,bl.invoice_unit_price,
+    rows=execute_compat(conn, """SELECT bl.product_id,bl.billed_quantity,bl.invoice_unit_price,
             b.supplier_id,b.bill_date,b.id bill_id,s.name supplier_name,
             p.sku,p.name_ar
         FROM supplier_bill_inventory_lines bl
@@ -2383,7 +2383,7 @@ def _supplier_bill_returnable_quantity(c, bill_id, product_id, warehouse_id):
 
 
 def _reverse_supplier_credit_journal(conn, entry_id, reversal_date, reference, description, created_by):
-    original=conn.execute("SELECT status,entry_date FROM journal_entries WHERE id=?",(entry_id,)).fetchone()
+    original=execute_compat(conn, "SELECT status,entry_date FROM journal_entries WHERE id=?",(entry_id,)).fetchone()
     if not original or original["status"]!="posted":
         raise ValueError("لا يمكن عكس قيد إشعار مورد غير موجود أو غير مرحل.")
     try:
@@ -2397,7 +2397,7 @@ def _reverse_supplier_credit_journal(conn, entry_id, reversal_date, reference, d
     available=_columns(conn, "journal_lines")
     dimensions=[key for key in dimension_keys if key in available]
     columns=["account_id","debit","credit","memo",*dimensions]
-    rows=conn.execute("SELECT "+",".join(columns)+" FROM journal_lines WHERE entry_id=? ORDER BY id",(entry_id,)).fetchall()
+    rows=execute_compat(conn, "SELECT "+",".join(columns)+" FROM journal_lines WHERE entry_id=? ORDER BY id",(entry_id,)).fetchall()
     if not rows:
         raise ValueError("قيد إشعار المورد لا يحتوي على تفاصيل قابلة للعكس.")
     lines=[(row["account_id"],Decimal(str(row["credit"] or "0")),
@@ -2414,14 +2414,14 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
     reason=str(reason or "").strip()
     if not reason or len(reason)>500:
         raise ValueError("سبب إلغاء إشعار المورد مطلوب وبحد أقصى 500 حرف.")
-    note=conn.execute(
+    note=execute_compat(conn, 
         "SELECT * FROM supplier_credit_notes WHERE id=? AND status='posted'",(credit_note_id,)
     ).fetchone()
     if not note:
         raise ValueError("إشعار المورد غير موجود أو تم إلغاؤه بالفعل.")
     if str(cancellation_date)<str(note["credit_date"]):
         raise ValueError("تاريخ إلغاء إشعار المورد لا يمكن أن يسبق تاريخ الإشعار.")
-    allocations=conn.execute(
+    allocations=execute_compat(conn, 
         """SELECT a.*,m.movement_no,m.movement_type,m.accounting_status,
                   m.product_id movement_product_id,m.source_warehouse_id movement_warehouse_id,
                   m.quantity movement_quantity,m.total_cost movement_total_cost,
@@ -2433,10 +2433,10 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
            JOIN supplier_credit_note_lines l ON l.id=a.credit_note_line_id
            WHERE l.credit_note_id=? ORDER BY a.id""",(credit_note_id,)
     ).fetchall()
-    line_count=conn.execute(
+    line_count=execute_compat(conn, 
         "SELECT COUNT(*) FROM supplier_credit_note_lines WHERE credit_note_id=?",(credit_note_id,)
     ).fetchone()[0]
-    missing_allocations=conn.execute(
+    missing_allocations=execute_compat(conn, 
         """SELECT 1 FROM supplier_credit_note_lines l
            WHERE l.credit_note_id=? AND NOT EXISTS(
              SELECT 1 FROM supplier_credit_note_layer_allocations a WHERE a.credit_note_line_id=l.id
@@ -2446,7 +2446,7 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
         raise ValueError("لا يمكن إلغاء إشعار قديم لا يحتوي على روابط كاملة لطبقات المخزون الأصلية؛ يلزم فحصه يدويًا.")
     if any(row["movement_type"]!="issue" or row["accounting_status"]!="posted" for row in allocations):
         raise ValueError("حركات مخزون إشعار المورد تغيرت بالفعل؛ لا يمكن تنفيذ الإلغاء مرة أخرى.")
-    for line in conn.execute(
+    for line in execute_compat(conn, 
         "SELECT * FROM supplier_credit_note_lines WHERE credit_note_id=? ORDER BY id",
         (credit_note_id,)
     ).fetchall():
@@ -2484,7 +2484,7 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
              allocation["unit_cost"],allocation["total_cost"],cancellation_date,
              "إعادة مخزون عند إلغاء مرتجع المورد "+note["credit_no"],created_by,reversal_id,
              allocation["credit_note_line_id"]))
-        conn.execute(
+        execute_compat(conn, 
             """INSERT INTO stock_valuation_layers(
               product_id,warehouse_id,location_id,lot_id,source_movement_id,
               qty_in,qty_remaining,unit_cost,value_remaining)
@@ -2498,12 +2498,12 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
         )
         # Keep the original issue immutable: the new receipt is its stock reversal.
     credited=Decimal(str(note["total_amount"] or "0"))
-    bill=conn.execute("SELECT credited_amount FROM supplier_bills WHERE id=?",(note["bill_id"],)).fetchone()
+    bill=execute_compat(conn, "SELECT credited_amount FROM supplier_bills WHERE id=?",(note["bill_id"],)).fetchone()
     new_credited=Decimal(str(bill["credited_amount"] or "0"))-credited
     if new_credited<0:
         raise ValueError("رصيد الإشعارات الدائنة على فاتورة المورد غير متسق؛ راجع البيانات قبل الإلغاء.")
-    conn.execute("UPDATE supplier_bills SET credited_amount=? WHERE id=?",(str(money(new_credited)),note["bill_id"]))
-    conn.execute(
+    execute_compat(conn, "UPDATE supplier_bills SET credited_amount=? WHERE id=?",(str(money(new_credited)),note["bill_id"]))
+    execute_compat(conn, 
         """UPDATE supplier_credit_notes SET status='cancelled',cancel_journal_entry_id=?,
            cancelled_by=?,cancelled_at=CURRENT_TIMESTAMP,cancellation_reason=? WHERE id=?""",
         (reversal_id,created_by,reason,credit_note_id)
