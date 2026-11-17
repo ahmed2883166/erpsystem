@@ -1,0 +1,28 @@
+import unittest
+
+from scripts.copy_sqlite_to_postgres import dependency_order, quote_ident
+
+
+class SQLitePostgresCopyPlanningTests(unittest.TestCase):
+    def test_dependency_order_places_parent_before_child(self):
+        result = dependency_order(
+            ["journal_lines", "accounts", "journal_entries"],
+            {
+                "journal_lines": {"journal_entries", "accounts"},
+                "journal_entries": set(),
+                "accounts": set(),
+            },
+        )
+        self.assertLess(result.index("accounts"), result.index("journal_lines"))
+        self.assertLess(result.index("journal_entries"), result.index("journal_lines"))
+
+    def test_dependency_order_rejects_cycles(self):
+        with self.assertRaisesRegex(ValueError, "Foreign-key cycle"):
+            dependency_order(["a", "b"], {"a": {"b"}, "b": {"a"}})
+
+    def test_identifiers_are_quoted(self):
+        self.assertEqual(quote_ident('odd"name'), '"odd""name"')
+
+
+if __name__ == "__main__":
+    unittest.main()
