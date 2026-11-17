@@ -368,7 +368,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
     def test_inventory_schema_uses_exact_quantities_and_enforces_location_scope(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         schema = quote_schema_name(self.schema)
 
