@@ -230,7 +230,7 @@ def generate_trigger_ddl(triggers):
         if trigger.get("table_name") != "stock_locations":
             raise ValueError("Stock location deactivation trigger is attached to an unexpected table.")
         lines.extend([
-            "CREATE OR REPLACE FUNCTION nexus_prevent_default_stock_location_deactivation()",
+            "CREATE OR REPLACE FUNCTION nexus_prevent_default_location_deactivation()",
             "RETURNS trigger LANGUAGE plpgsql AS $",
             "BEGIN",
             "    IF OLD.active = 1 AND NEW.active = 0 AND EXISTS (",
@@ -243,7 +243,7 @@ def generate_trigger_ddl(triggers):
             "$;",
             "",
             f"CREATE TRIGGER {quote_ident(stock_location_deactivation)} BEFORE UPDATE OF active ON stock_locations "
-            "FOR EACH ROW EXECUTE FUNCTION nexus_prevent_default_stock_location_deactivation();",
+            "FOR EACH ROW EXECUTE FUNCTION nexus_prevent_default_location_deactivation();",
         ])
     return lines
 
