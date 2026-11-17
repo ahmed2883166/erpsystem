@@ -351,7 +351,7 @@ class StocktakeRouteTests(unittest.TestCase):
         conn.close()
         with self.client.session_transaction() as session:
             flashes = session.get("_flashes", [])
-        self.assertTrue(any("ربط مخزني المصدر والوجهة" in message for _category, message in flashes))
+        self.assertTrue(any("اربط المخزنين بفرعين محددين" in message for _category, message in flashes))
 
     def test_zero_cost_stocktake_variance_does_not_create_broken_posted_link(self):
         self._login()
