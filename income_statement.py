@@ -2,7 +2,9 @@
 from datetime import date
 from decimal import Decimal
 
-from accounting_core import register_decimal_aggregates
+from accounting_core import register_decimal_aggregates, decimal_sum_expression
+from db_compat import table_columns, table_exists
+from db_sql import execute_compat
 
 
 CLOSING_ENTRY_TYPES = ("year_end_closing", "year_end_closing_reversal")
@@ -23,13 +25,10 @@ def normalize_income_statement_period(date_from=None, date_to=None, today=None):
 
 
 def closing_entries_exclusion_sql(conn):
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
+    columns = table_columns(conn, "journal_entries")
     if "entry_type" in columns:
         return "COALESCE(je.entry_type,'general') NOT IN ('year_end_closing','year_end_closing_reversal')"
-    tables = {row["name"] for row in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='financial_year_journal_history'"
-    )}
-    if tables:
+    if table_exists(conn, "financial_year_journal_history"):
         return """je.id NOT IN (
             SELECT entry_id FROM financial_year_journal_history
             WHERE entry_kind='closing'
@@ -104,13 +103,11 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
     """Calculate revenue, COGS, gross profit, operating expenses and net profit."""
     register_decimal_aggregates(conn)
     closing_filter = closing_entries_exclusion_sql(conn)
-    role_table = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='management_account_roles'"
-    ).fetchone()
+    role_table = table_exists(conn, "management_account_roles")
     direct_cost_ids = set()
     if role_table:
         direct_cost_ids = {
-            row["account_id"] for row in conn.execute(
+            row["account_id"] for row in execute_compat(conn, 
                 "SELECT account_id FROM management_account_roles WHERE role='direct_cost'"
             )
         }
@@ -125,13 +122,19 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
         if value is not None:
             conditions.append(f"jl.{key}=?")
             dimension_params.append(value)
-    account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+    account_columns = table_columns(conn, "accounts")
     section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
     subtype_expr = "a.account_subtype" if "account_subtype" in account_columns else "NULL"
-    rows = conn.execute(f"""SELECT a.id,a.code,a.name_ar,a.account_type,
+    debit_sum_sql = decimal_sum_expression(
+        conn, "CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END"
+    )
+    credit_sum_sql = decimal_sum_expression(
+        conn, "CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END"
+    )
+    rows = execute_compat(conn, f"""SELECT a.id,a.code,a.name_ar,a.account_type,
         {section_expr} statement_section,{subtype_expr} account_subtype,
-        COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
-        COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
+        {debit_sum_sql} debit,
+        {credit_sum_sql} credit
         FROM accounts a
         LEFT JOIN journal_lines jl ON jl.account_id=a.id
         LEFT JOIN journal_entries je ON je.id=jl.entry_id AND {' AND '.join(conditions)}
@@ -146,14 +149,12 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
     disposal_loss_account_ids = set()
     disposal_line_adjustments = {}
     disposal_result_rows = []
-    disposal_table = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_disposals'"
-    ).fetchone()
+    disposal_table = table_exists(conn, "asset_disposals")
     if disposal_table:
-        disposal_columns = {row["name"] for row in conn.execute("PRAGMA table_info(asset_disposals)")}
+        disposal_columns = table_columns(conn, "asset_disposals")
         if {"gain_loss_account_id", "gain_loss_amount", "disposal_date"}.issubset(disposal_columns):
             if "journal_entry_id" in disposal_columns:
-                disposal_records = conn.execute(
+                disposal_records = execute_compat(conn, 
                     f"""SELECT ad.id,ad.gain_loss_account_id,ad.gain_loss_amount,
                                a.code,a.name_ar,a.account_type,
                                jl.debit,jl.credit
@@ -197,7 +198,7 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
                 # Compatibility with older disposal-register schemas that did
                 # not retain the linked journal entry id.
                 disposal_loss_account_ids = {
-                    row["gain_loss_account_id"] for row in conn.execute(
+                    row["gain_loss_account_id"] for row in execute_compat(conn, 
                         """SELECT DISTINCT gain_loss_account_id FROM asset_disposals
                            WHERE disposal_date>=? AND disposal_date<=?
                              AND CAST(gain_loss_amount AS NUMERIC)<0""",
