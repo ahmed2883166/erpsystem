@@ -22,7 +22,7 @@ class PartyReportsPostgreSQLQueryTests(unittest.TestCase):
             connection.execute(f'SET search_path TO "{schema}"')
             statements = (
                 "CREATE TABLE journal_entries (id BIGINT PRIMARY KEY, entry_date TEXT, status TEXT)",
-                "CREATE TABLE accounts (id BIGINT PRIMARY KEY, code TEXT, is_group BOOLEAN, active BOOLEAN)",
+                "CREATE TABLE accounts (id BIGINT PRIMARY KEY, code TEXT, is_group BIGINT, active BIGINT)",
                 "CREATE TABLE journal_lines (id BIGINT PRIMARY KEY, entry_id BIGINT, account_id BIGINT, debit NUMERIC(24,6), credit NUMERIC(24,6))",
                 "CREATE TABLE financial_years (id BIGINT PRIMARY KEY, start_date TEXT)",
                 """CREATE TABLE financial_year_journal_history (
@@ -37,7 +37,7 @@ class PartyReportsPostgreSQLQueryTests(unittest.TestCase):
                 "INSERT INTO journal_entries VALUES (1, '2026-12-31', 'posted'), (2, '2027-01-01', 'posted'), (3, '2027-01-02', 'posted')"
             )
             connection.execute("INSERT INTO financial_years VALUES (1, '2027-01-01')")
-            connection.execute("INSERT INTO accounts VALUES (1, '1100', FALSE, TRUE)")
+            connection.execute("INSERT INTO accounts VALUES (1, '1100', 0, 1)")
             connection.execute(
                 "INSERT INTO journal_lines VALUES (1, 1, 1, 100.00, 0), (2, 2, 1, 100.00, 0), (3, 3, 1, 0, 100.00)"
             )
