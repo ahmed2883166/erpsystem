@@ -4100,7 +4100,7 @@ def attendance_report():
     params = [start_date.isoformat(), end_date.isoformat()]
     if employee_id:
         params.append(employee_id)
-    rows = c.execute("""SELECT e.id AS employee_id,e.employee_code,e.full_name,e.department,
+    rows = c.execute(f"""SELECT e.id AS employee_id,e.employee_code,e.full_name,e.department,
             COUNT(a.id) AS recorded_days,
             SUM(CASE WHEN a.status='absent' THEN 1 ELSE 0 END) AS absent_days,
             ${decimal_sum_expression(c, "CASE WHEN a.status='absent' THEN a.absence_hours ELSE '0' END")} AS absent_hours,
