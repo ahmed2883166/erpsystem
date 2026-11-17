@@ -432,6 +432,43 @@ class WorkforceExtrasTests(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT friday_work_eligible FROM employees WHERE id=1").fetchone()[0],1)
         conn.close()
 
+    def test_legacy_payroll_snapshot_migration_is_idempotent(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("INSERT INTO payroll_runs(period,status) VALUES('2026-10','posted')")
+        run_id = conn.execute("SELECT id FROM payroll_runs WHERE period='2026-10'").fetchone()[0]
+        conn.execute("""
+            INSERT INTO payroll_lines(
+                run_id,employee_id,basic_salary,allowances,overtime_hours,overtime_amount,
+                absent_hours,absence_deduction,other_deductions,taxable_income_tax,
+                employee_insurance,employer_insurance,gross_pay,net_pay
+            ) VALUES(?,1,'10000','500','0','0','0','0','100','250','1000','1500','10500','9150')
+        """, (run_id,))
+        conn.execute(
+            "DELETE FROM workforce_migrations WHERE migration_key='payroll_line_items_legacy_snapshot_v1'"
+        )
+        conn.commit()
+        conn.close()
+
+        workforce_extras.initialize_workforce_extras_schema()
+        conn = sqlite3.connect(self.db_path)
+        first_count = conn.execute(
+            "SELECT COUNT(*) FROM payroll_line_items WHERE source_type='legacy_aggregate'"
+        ).fetchone()[0]
+        conn.close()
+        self.assertGreater(first_count, 0)
+
+        workforce_extras.initialize_workforce_extras_schema()
+        conn = sqlite3.connect(self.db_path)
+        second_count = conn.execute(
+            "SELECT COUNT(*) FROM payroll_line_items WHERE source_type='legacy_aggregate'"
+        ).fetchone()[0]
+        migration_count = conn.execute(
+            "SELECT COUNT(*) FROM workforce_migrations WHERE migration_key='payroll_line_items_legacy_snapshot_v1'"
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(second_count, first_count)
+        self.assertEqual(migration_count, 1)
+
     def test_attendance_report_sums_absence_hours_without_float_rounding(self):
         conn = sqlite3.connect(self.db_path)
         conn.executemany("""INSERT INTO attendance_records(
