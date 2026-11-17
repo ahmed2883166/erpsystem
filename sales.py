@@ -1314,20 +1314,42 @@ def cancel_credit_note(conn, credit_note_id, cancellation_date, reason, created_
     if execute_compat(conn, "SELECT 1 FROM customer_refunds WHERE credit_note_id=? LIMIT 1",
                     (credit_note_id,)).fetchone():
         raise ValueError("لا يمكن إلغاء الإشعار بعد رد مبالغ منه. اعكس عملية الرد أولًا.")
-    movements = execute_compat(conn, 
-        """SELECT DISTINCT m.id,m.movement_no,l.id layer_id,l.qty_in,l.qty_remaining,
-                  l.value_remaining
-           FROM sales_credit_note_line_lots x
-           JOIN stock_movements m ON m.id=x.stock_movement_id
-           JOIN stock_valuation_layers l ON l.source_movement_id=m.id
-           WHERE x.credit_note_line_id IN
-             (SELECT id FROM sales_credit_note_lines WHERE credit_note_id=?)""",
-        (credit_note_id,),
+    # Include both current lot-linked movements and legacy line-level movement links.
+    # Average-cost issues can rebase a returned layer's value without consuming its
+    # quantity; quantity-only checks would then reverse the original GL value while
+    # deleting a differently-valued stock layer.
+    movements = execute_compat(conn,
+        """SELECT DISTINCT m.id,m.movement_no,m.total_cost,l.id layer_id,
+                  l.qty_in,l.qty_remaining,l.value_remaining
+           FROM stock_movements m
+           LEFT JOIN stock_valuation_layers l ON l.source_movement_id=m.id
+           WHERE m.id IN (
+             SELECT stock_movement_id FROM sales_credit_note_lines
+             WHERE credit_note_id=? AND stock_movement_id IS NOT NULL
+             UNION
+             SELECT x.stock_movement_id FROM sales_credit_note_line_lots x
+             JOIN sales_credit_note_lines cl ON cl.id=x.credit_note_line_id
+             WHERE cl.credit_note_id=?
+           )""",
+        (credit_note_id, credit_note_id),
     ).fetchall()
     for movement in movements:
+        if movement["layer_id"] is None:
+            continue
         if Decimal(movement["qty_remaining"]) != Decimal(movement["qty_in"]):
             raise ValueError(
                 "لا يمكن إلغاء الإشعار لأن كمية المرتجع من التشغيلة استُخدمت أو نُقلت بعد إعادتها للمخزون."
+            )
+        current_value = Decimal(str(movement["value_remaining"] or "0")).quantize(
+            CENT, rounding=ROUND_HALF_UP
+        )
+        original_value = Decimal(str(movement["total_cost"] or "0")).quantize(
+            CENT, rounding=ROUND_HALF_UP
+        )
+        if current_value != original_value:
+            raise ValueError(
+                "لا يمكن إلغاء الإشعار لأن القيمة الدفترية لطبقة المرتجع تغيرت بعد إعادة تقييم المتوسط المرجح. "
+                "يجب تسوية فرق التقييم أولًا."
             )
     reversal_id = _reverse_posted_journal(
         conn, note["journal_entry_id"], cancellation_date,
@@ -1345,25 +1367,17 @@ def cancel_credit_note(conn, credit_note_id, cancellation_date, reason, created_
                      (movement["layer_id"],))
         execute_compat(conn, "UPDATE stock_movements SET movement_type='cancelled_receipt',accounting_status='reversed' WHERE id=?",
                      (movement["id"],))
-    # Backward compatibility for older credit notes that did not store lot allocation rows.
-    legacy = execute_compat(conn, 
-        """SELECT stock_movement_id FROM sales_credit_note_lines
-           WHERE credit_note_id=? AND stock_movement_id IS NOT NULL""", (credit_note_id,)
-    ).fetchall()
-    for row in legacy:
-        if not execute_compat(conn, "SELECT 1 FROM sales_credit_note_line_lots WHERE stock_movement_id=?",
-                            (row["stock_movement_id"],)).fetchone():
-            layer = execute_compat(conn, 
-                "SELECT id,qty_in,qty_remaining FROM stock_valuation_layers WHERE source_movement_id=?",
-                (row["stock_movement_id"],),
-            ).fetchone()
-            if layer:
-                if Decimal(layer["qty_remaining"]) != Decimal(layer["qty_in"]):
-                    raise ValueError("لا يمكن إلغاء الإشعار لأن مخزون المرتجع القديم تم استخدامه.")
-                execute_compat(conn, "UPDATE stock_valuation_layers SET qty_remaining='0',value_remaining='0' WHERE id=?",
-                             (layer["id"],))
-            execute_compat(conn, "UPDATE stock_movements SET movement_type='cancelled_receipt',accounting_status='reversed' WHERE id=?",
-                         (row["stock_movement_id"],))
+    # All linked movements (including legacy line-level links) were checked above.
+    for movement in movements:
+        if movement["layer_id"] is not None:
+            execute_compat(conn,
+                "UPDATE stock_valuation_layers SET qty_remaining='0',value_remaining='0' WHERE id=?",
+                (movement["layer_id"],)
+            )
+        execute_compat(conn,
+            "UPDATE stock_movements SET movement_type='cancelled_receipt',accounting_status='reversed' WHERE id=?",
+            (movement["id"],)
+        )
     execute_compat(conn, 
         """UPDATE sales_credit_notes SET status='cancelled',cancel_journal_entry_id=?,
            cancel_cogs_journal_entry_id=?,cancelled_by=?,cancelled_at=CURRENT_TIMESTAMP,
