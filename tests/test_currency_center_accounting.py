@@ -100,6 +100,67 @@ class CurrencyBalanceUpdateTests(unittest.TestCase):
         self.assertEqual(row["balance_base"], "0.00")
         self.assertEqual(row["status"], "settled")
 
+    def test_journal_and_settlement_roll_back_when_fx_balance_update_fails(self):
+        """The posted journal and settlement row must share the FX balance transaction."""
+        conn = sqlite3.connect(":memory:", isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.executescript("""
+                CREATE TABLE accounts(
+                    id INTEGER PRIMARY KEY, is_group INTEGER NOT NULL,
+                    active INTEGER NOT NULL, account_type TEXT
+                );
+                CREATE TABLE journal_entries(
+                    id INTEGER PRIMARY KEY, entry_date TEXT NOT NULL,
+                    reference TEXT NOT NULL UNIQUE, description TEXT,
+                    status TEXT NOT NULL, created_by INTEGER, created_at TEXT
+                );
+                CREATE TABLE journal_lines(
+                    id INTEGER PRIMARY KEY, entry_id INTEGER NOT NULL,
+                    account_id INTEGER NOT NULL, debit TEXT NOT NULL,
+                    credit TEXT NOT NULL, memo TEXT
+                );
+                CREATE TABLE fx_transactions(
+                    id INTEGER PRIMARY KEY, balance_foreign TEXT NOT NULL,
+                    balance_base TEXT NOT NULL, status TEXT NOT NULL
+                );
+                CREATE TABLE fx_settlements(
+                    id INTEGER PRIMARY KEY, transaction_id INTEGER NOT NULL,
+                    settlement_date TEXT NOT NULL, foreign_amount TEXT NOT NULL
+                );
+                INSERT INTO accounts VALUES(1,0,1,'asset'),(2,0,1,'revenue');
+                INSERT INTO fx_transactions VALUES(1,'100.00','500.00','open');
+            """)
+            currency_center._begin_fx_write(conn)
+            currency_center.post_journal(
+                conn, "2026-11-17", "FX-ATOMICITY-TEST", "اختبار ذرية التسوية",
+                [(1, Decimal("50.00"), Decimal("0"), "مدين"),
+                 (2, Decimal("0"), Decimal("50.00"), "دائن")],
+                1,
+            )
+            conn.execute(
+                "INSERT INTO fx_settlements(transaction_id,settlement_date,foreign_amount) "
+                "VALUES(1,'2026-11-17','10.00')"
+            )
+            with self.assertRaisesRegex(ValueError, "تغير رصيد المعاملة"):
+                currency_center.update_open_fx_balance(
+                    conn, 1, "stale-balance", Decimal("90.00"), Decimal("450.00")
+                )
+            conn.rollback()
+
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_lines").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM fx_settlements").fetchone()[0], 0)
+            row = conn.execute(
+                "SELECT balance_foreign,balance_base,status FROM fx_transactions WHERE id=1"
+            ).fetchone()
+            self.assertEqual(
+                (row["balance_foreign"], row["balance_base"], row["status"]),
+                ("100.00", "500.00", "open"),
+            )
+        finally:
+            conn.close()
+
     def test_stale_expected_balance_is_rejected_without_overwriting(self):
         with self.assertRaisesRegex(ValueError, "تغير رصيد المعاملة"):
             currency_center.update_open_fx_balance(
