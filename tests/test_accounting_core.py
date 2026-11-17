@@ -321,6 +321,34 @@ class DecimalSumDialectTests(unittest.TestCase):
             "COALESCE(SUM(CAST(jl.debit AS NUMERIC)), 0)",
         )
 
+    def test_sqlite_decimal_comparison_does_not_round_large_quantities(self):
+        from accounting_core import decimal_compare_expression, register_decimal_aggregates
+        connection = sqlite3.connect(":memory:")
+        try:
+            register_decimal_aggregates(connection)
+            expression = decimal_compare_expression(connection, "quantity")
+            positive = connection.execute(
+                "SELECT " + expression + " > 0",
+                {"quantity": "0.00000000000000000001"},
+            ).fetchone()[0]
+            negative = connection.execute(
+                "SELECT " + expression + " > 0",
+                {"quantity": "-0.00000000000000000001"},
+            ).fetchone()[0]
+            self.assertEqual((positive, negative), (1, 0))
+        finally:
+            connection.close()
+
+    def test_postgresql_decimal_comparison_uses_numeric_cast(self):
+        from accounting_core import decimal_compare_expression
+        expression = decimal_compare_expression(
+            self.FakePostgreSQLConnection(), "qty_remaining"
+        )
+        self.assertEqual(
+            expression,
+            "(CAST(qty_remaining AS NUMERIC) - CAST('0' AS NUMERIC))",
+        )
+
     def test_sqlite_large_decimal_fixture_matches_postgresql_expected_total(self):
         from accounting_core import decimal_sum_expression, register_decimal_aggregates
         from decimal import Decimal
