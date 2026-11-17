@@ -13,7 +13,7 @@ from functools import wraps
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, safe_error_message, decimal_sum_expression
-from db_compat import table_columns, table_exists
+from db_compat import table_columns, table_exists, insert_and_get_id
 from database import connect_database, fetch_page
 from stock import consume_layers, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
@@ -668,7 +668,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
     invoice_no = "SINV-" + stamp
     effective_rate = (tax_amount * Decimal("100") / subtotal).quantize(CENT, rounding=ROUND_HALF_UP)
-    cur = conn.execute(
+    invoice_id = insert_and_get_id(conn,
         """INSERT INTO sales_invoices(invoice_no,customer_id,invoice_date,warehouse_id,subtotal,
            tax_rate,tax_amount,discount_type,discount_value,discount_amount,total_amount,
            created_by,branch_id,cost_center_id,project_id,salesperson_id,sales_order_id,
@@ -678,14 +678,12 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
          str(tax_amount), discount_type, str(discount_value), str(discount_amount), str(total_amount),
          created_by, dimensions["branch_id"], dimensions["cost_center_id"],
          dimensions["project_id"], dimensions["salesperson_id"], sales_order_id,
-         sales_channel, revenue_code)
-    )
-    invoice_id = cur.lastrowid
+         sales_channel, revenue_code))
     for index, item in enumerate(normalized, 1):
         movement_id = None
         if item["product_id"] and preissued_costs is None:
             movement_no = invoice_no + "-" + str(index)
-            move = conn.execute(
+            movement_id = insert_and_get_id(conn,
                 """INSERT INTO stock_movements(movement_no,movement_type,product_id,source_warehouse_id,
                    quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,issue_purpose,
                    entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name)
@@ -693,11 +691,9 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
                 (movement_no, item["product_id"], warehouse_id, str(item["quantity"]),
                  str((item["cost_total"] / item["quantity"]).quantize(CENT)), str(item["cost_total"]),
                  invoice_date, "صرف مبيعات " + invoice_no, created_by,
-                 str(item["entered_quantity"]),item["uom_id"],item["uom_key"],item["entered_uom_name"])
-            )
-            movement_id = move.lastrowid
+                 str(item["entered_quantity"]),item["uom_id"],item["uom_key"],item["entered_uom_name"]))
         order_line_id = item.get("sales_order_line_id")
-        line_cursor = conn.execute(
+        invoice_line_id = insert_and_get_id(conn,
             """INSERT INTO sales_invoice_lines(invoice_id,product_id,description,quantity,unit_price,
                line_total,cost_total,stock_movement_id,tax_rate,tax_treatment,tax_amount,sales_order_line_id,
                entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
@@ -705,9 +701,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             (invoice_id, item["product_id"], item["description"], str(item["quantity"]),
              str(item["unit_price"]), str(item["line_total"]), str(item["cost_total"]), movement_id,
              str(item["tax_rate"]), item["tax_treatment"], str(item["tax_amount"]), order_line_id,
-             str(item["entered_quantity"]), item["uom_id"], item["uom_key"], item["entered_uom_name"], str(item["conversion_factor"]))
-        )
-        invoice_line_id = line_cursor.lastrowid
+             str(item["entered_quantity"]), item["uom_id"], item["uom_key"], item["entered_uom_name"], str(item["conversion_factor"])))
         for allocation in item.get("stock_allocations", []):
             if len(allocation) == 4:
                 lot_id, allocated_qty, allocated_unit_cost, allocated_cost = allocation
@@ -820,7 +814,7 @@ def create_invoice_workflow(conn, payload, status, created_by, gross_subtotal,
     conn.execute("BEGIN IMMEDIATE")
     try:
         workflow_no = "SIVD-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
-        cursor = conn.execute("""INSERT INTO sales_invoice_workflows(
+        workflow_id = insert_and_get_id(conn, """INSERT INTO sales_invoice_workflows(
             workflow_no,customer_id,invoice_date,due_date,gross_subtotal,discount_amount,
             discount_percent,payload_json,status,created_by,submitted_by,submitted_at)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
@@ -829,7 +823,7 @@ def create_invoice_workflow(conn, payload, status, created_by, gross_subtotal,
              created_by if status == "pending_approval" else None,
              datetime.now().isoformat(timespec="seconds") if status == "pending_approval" else None))
         conn.commit()
-        return cursor.lastrowid, workflow_no
+        return workflow_id, workflow_no
     except Exception:
         conn.rollback()
         raise
