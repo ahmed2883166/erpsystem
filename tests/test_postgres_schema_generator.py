@@ -95,11 +95,17 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
                     {"name": "paid_at", "type": "TEXT", "pk": 0},
                     {"name": "depreciation_method", "type": "TEXT", "pk": 0},
                     {"name": "change_reason", "type": "TEXT", "pk": 0},
-                    {"name": "tax_reference", "type": "TEXT", "pk": 0},
                     {"name": "tax_notes", "type": "TEXT", "pk": 0},
                     {"name": "tax_treatment", "type": "TEXT", "pk": 0},
                     {"name": "credit_note_no", "type": "TEXT", "pk": 0},
                     {"name": "net_amount", "type": "TEXT", "pk": 0},
+                ],
+                "foreign_keys": [],
+                "indexes": [],
+            }, {
+                "name": "sales_invoices",
+                "columns": [
+                    {"name": "tax_reference", "type": "TEXT", "pk": 0},
                 ],
                 "foreign_keys": [],
                 "indexes": [],
