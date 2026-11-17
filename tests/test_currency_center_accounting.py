@@ -20,6 +20,30 @@ class CurrencyAmountTests(unittest.TestCase):
         self.assertEqual(currency_center.M("-1.005"), Decimal("-1.01"))
 
 
+class CurrencyWriteLockTests(unittest.TestCase):
+    def test_sqlite_write_lock_starts_immediate_transaction(self):
+        conn = sqlite3.connect(":memory:", isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("""
+                CREATE TABLE fx_transactions (
+                    id INTEGER PRIMARY KEY,
+                    balance_foreign TEXT NOT NULL,
+                    status TEXT NOT NULL
+                )
+            """)
+            conn.execute(
+                "INSERT INTO fx_transactions(id,balance_foreign,status) VALUES(1,'100.00','open')"
+            )
+            currency_center._begin_fx_write(conn)
+            self.assertTrue(conn.in_transaction)
+            row = currency_center._open_fx_transaction_for_update(conn, 1)
+            self.assertEqual(row["balance_foreign"], "100.00")
+            conn.rollback()
+        finally:
+            conn.close()
+
+
 class CurrencyBalanceUpdateTests(unittest.TestCase):
     def setUp(self):
         self.conn = sqlite3.connect(":memory:")
@@ -80,6 +104,37 @@ class CurrencyBalanceUpdateTests(unittest.TestCase):
     "PostgreSQL integration DSN not configured",
 )
 class CurrencyBalanceUpdatePostgreSQLTests(unittest.TestCase):
+    def test_fx_write_lock_and_row_lock_work_in_disposable_schema(self):
+        import uuid
+        import psycopg
+
+        schema = "nexus_fx_lock_" + uuid.uuid4().hex[:12]
+        conn = psycopg.connect(os.environ["NEXUS_TEST_POSTGRES_DSN"])
+        try:
+            with conn.transaction():
+                conn.execute(f'CREATE SCHEMA "{schema}"')
+                conn.execute(f'SET LOCAL search_path TO "{schema}"')
+                conn.execute("""
+                    CREATE TABLE fx_transactions (
+                        id BIGINT PRIMARY KEY,
+                        balance_foreign TEXT NOT NULL,
+                        status TEXT NOT NULL
+                    )
+                """)
+                conn.execute(
+                    "INSERT INTO fx_transactions(id,balance_foreign,status) VALUES(1,'100.00','open')"
+                )
+                currency_center._begin_fx_write(conn)
+                row = currency_center._open_fx_transaction_for_update(conn, 1)
+                self.assertEqual(row["balance_foreign"], "100.00")
+                raise RuntimeError("rollback disposable schema")
+        except RuntimeError as exc:
+            self.assertEqual(str(exc), "rollback disposable schema")
+        finally:
+            conn.close()
+
+
+
     def test_full_settlement_updates_row_in_rolled_back_schema(self):
         import uuid
         import psycopg
