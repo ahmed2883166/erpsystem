@@ -121,6 +121,16 @@ def initialize_payroll_compliance_schema():
     }.items():
         if name not in line_cols:
             _execute(conn, "ALTER TABLE payroll_lines ADD COLUMN " + name + " " + definition)
+    # Add the natural-key uniqueness guard to legacy installations when safe.
+    # If historical duplicates already exist, preserve them and do not destroy data.
+    duplicate_rule_key = _execute(conn, """
+        SELECT 1 FROM payroll_rule_sets
+        GROUP BY country_code,category_code,effective_from
+        HAVING COUNT(*) > 1 LIMIT 1
+    """).fetchone()
+    if not duplicate_rule_key:
+        _execute(conn, """CREATE UNIQUE INDEX IF NOT EXISTS uq_payroll_rule_sets_natural_key
+            ON payroll_rule_sets(country_code,category_code,effective_from)""")
     # Seed the Egypt baseline once on existing and new installations. Never
     # overwrite a rule set that an accountant has already reviewed or edited.
     if current_tax_country(conn) == "EG":
@@ -286,7 +296,7 @@ def seed_egypt_2026(conn):
           employee_insurance_rate,employer_insurance_rate,notes)
         VALUES('EG','local','2026-01-01','20000','10','2700','16700','11','18.75',
           'إعداد مبدئي لمصر 2026؛ راجع المعاملة القانونية قبل الاعتماد')
-        ON CONFLICT(country_code,category_code,effective_from) DO NOTHING
+        ON CONFLICT DO NOTHING
     """)
     # Another worker may have inserted the same preset after our initial read.
     # Never use the conflict row as permission to overwrite its rules or brackets.
