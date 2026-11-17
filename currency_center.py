@@ -210,6 +210,11 @@ def index():
         except (ValueError, KeyError, sqlite3.Error) as e:
             c.rollback()
             flash(str(e), "error")
+        except Exception as e:
+            c.rollback()
+            if not _is_database_error(e):
+                raise
+            flash(_database_error_message(), "error")
     rates_page = fetch_page(c,
         "SELECT * FROM fx_exchange_rates ORDER BY rate_date DESC,currency_code",
         "SELECT COUNT(*) FROM fx_exchange_rates",
@@ -278,9 +283,9 @@ def create_transaction():
         c.rollback()
         flash(str(e), "error")
     except Exception as e:
+        c.rollback()
         if not _is_database_error(e):
             raise
-        c.rollback()
         flash(_database_error_message(), "error")
     c.close()
     return redirect(url_for("currency_center.index"))
@@ -342,9 +347,9 @@ def settle(transaction_id):
         c.rollback()
         flash(str(e), "error")
     except Exception as e:
+        c.rollback()
         if not _is_database_error(e):
             raise
-        c.rollback()
         flash(_database_error_message(), "error")
     c.close()
     return redirect(url_for("currency_center.index"))
@@ -403,9 +408,9 @@ def revalue(transaction_id):
         c.rollback()
         flash(str(e), "error")
     except Exception as e:
+        c.rollback()
         if not _is_database_error(e):
             raise
-        c.rollback()
         flash(_database_error_message(), "error")
     c.close()
     return redirect(url_for("currency_center.index"))
