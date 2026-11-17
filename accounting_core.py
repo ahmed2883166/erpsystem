@@ -572,7 +572,8 @@ def reconciliation_snapshot(conn):
                 LEFT JOIN journal_entries je ON je.id=sm.journal_entry_id
                 WHERE (sm.accounting_status='posted' AND
                        (sm.journal_entry_id IS NULL OR je.id IS NULL OR je.status<>'posted'))
-                   OR (sm.journal_entry_id IS NOT NULL AND je.id IS NULL)""") or 0)
+                   OR (sm.journal_entry_id IS NOT NULL AND
+                       (je.id IS NULL OR je.status<>'posted'))""") or 0)
     difference = _money(gl_stock - stock_value) if gl_stock is not None else None
     return {
         "unbalanced": unbalanced, "journal_totals": journal_totals,
