@@ -13,6 +13,7 @@ from functools import wraps
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, safe_error_message
+from db_compat import table_columns, table_exists
 from database import connect_database, fetch_page
 from stock import consume_layers, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
@@ -25,6 +26,16 @@ CENT = Decimal("0.01")
 
 def db():
     return connect_database(DB_PATH, isolation_level=None)
+
+
+def _table_exists(conn, name):
+    """Database-neutral table existence check; SQL execution remains opt-in."""
+    return table_exists(conn, name)
+
+
+def _columns(conn, name):
+    """Database-neutral column metadata for a known table."""
+    return table_columns(conn, name)
 
 
 def init_sales_schema():
@@ -189,14 +200,14 @@ def init_sales_schema():
     CREATE INDEX IF NOT EXISTS idx_sales_invoice_workflows_customer
       ON sales_invoice_workflows(customer_id,invoice_date,id);
     """)
-    workflow_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoice_workflows)")}
+    workflow_columns = _columns(c, "sales_invoice_workflows")
     for name, definition in {
         "updated_by": "INTEGER",
         "last_edit_at": "TEXT",
     }.items():
         if name not in workflow_columns:
             c.execute(f"ALTER TABLE sales_invoice_workflows ADD COLUMN {name} {definition}")
-    discount_request_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_discount_approval_requests)")}
+    discount_request_columns = _columns(c, "sales_discount_approval_requests")
     for name, definition in {
         "request_type": "TEXT NOT NULL DEFAULT 'invoice'",
         "sales_order_id": "INTEGER",
@@ -205,7 +216,7 @@ def init_sales_schema():
             c.execute(f"ALTER TABLE sales_discount_approval_requests ADD COLUMN {name} {definition}")
     c.execute("CREATE INDEX IF NOT EXISTS idx_sales_discount_order ON sales_discount_approval_requests(sales_order_id,status)")
 
-    line_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoice_lines)")}
+    line_columns = _columns(c, "sales_invoice_lines")
     for name, definition in (("entered_quantity","TEXT"),("uom_id","TEXT"),("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'")):
         if name not in line_columns:
             c.execute("ALTER TABLE sales_invoice_lines ADD COLUMN "+name+" "+definition)
@@ -216,7 +227,7 @@ def init_sales_schema():
     }.items():
         if name not in line_columns:
             c.execute(f"ALTER TABLE sales_invoice_lines ADD COLUMN {name} {definition}")
-    invoice_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoices)")}
+    invoice_columns = _columns(c, "sales_invoices")
     if "sales_order_id" not in invoice_columns:
         c.execute("ALTER TABLE sales_invoices ADD COLUMN sales_order_id INTEGER")
     if "sales_channel" not in invoice_columns:
@@ -236,7 +247,7 @@ def init_sales_schema():
       status TEXT NOT NULL DEFAULT 'posted', created_by INTEGER,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )""")
-    credit_note_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_credit_notes)")}
+    credit_note_columns = _columns(c, "sales_credit_notes")
     for name, definition in {
         "refundable_amount": "TEXT NOT NULL DEFAULT '0'",
         "cancel_journal_entry_id": "INTEGER",
@@ -265,7 +276,7 @@ def init_sales_schema():
       entered_quantity TEXT, uom_id INTEGER REFERENCES stock_uoms(id), uom_key TEXT,
       entered_uom_name TEXT, conversion_factor TEXT NOT NULL DEFAULT '1'
     )""")
-    credit_line_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_credit_note_lines)")}
+    credit_line_columns = _columns(c, "sales_credit_note_lines")
     for name, definition in (("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),
                              ("uom_key","TEXT"),("entered_uom_name","TEXT"),
                              ("conversion_factor","TEXT NOT NULL DEFAULT '1'")):
@@ -276,7 +287,7 @@ def init_sales_schema():
       lot_id INTEGER REFERENCES stock_lots(id), quantity TEXT NOT NULL,
       stock_movement_id INTEGER REFERENCES stock_movements(id)
     )""")
-    invoice_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoices)")}
+    invoice_columns = _columns(c, "sales_invoices")
     if "due_date" not in invoice_columns:
         c.execute("ALTER TABLE sales_invoices ADD COLUMN due_date TEXT")
         c.execute("UPDATE sales_invoices SET due_date=invoice_date WHERE due_date IS NULL")
@@ -286,7 +297,7 @@ def init_sales_schema():
         if name not in invoice_columns:
             c.execute("ALTER TABLE sales_invoices ADD COLUMN " + name + " INTEGER REFERENCES " + table + "(id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_sales_credit_invoice ON sales_credit_notes(invoice_id,credit_date,id)")
-    customer_columns = {row["name"] for row in c.execute("PRAGMA table_info(customers)")}
+    customer_columns = _columns(c, "customers")
     if "credit_limit" not in customer_columns:
         c.execute("ALTER TABLE customers ADD COLUMN credit_limit TEXT NOT NULL DEFAULT '0'")
     for name, definition in {
@@ -1236,7 +1247,7 @@ def _reverse_posted_journal(conn, entry_id, reversal_date, reference, descriptio
         "salesperson_id", "supplier_id",
     )
     available_dimensions = {
-        row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")
+        row for row in _columns(conn, "journal_lines")
     }
     selected_dimensions = [key for key in dimension_keys if key in available_dimensions]
     selected_columns = ["account_id", "debit", "credit", "memo", *selected_dimensions]
@@ -1519,10 +1530,8 @@ def _ensure_unique_customer_cash_reference(conn, reference):
         ("customer_refunds", "reference"),
     )
     for table, column in sources:
-        if conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-        ).fetchone():
-            columns = {row["name"] for row in conn.execute(f'PRAGMA table_info("{table}")')}
+        if _table_exists(conn, table):
+            columns = _columns(conn, table)
             if column in columns and conn.execute(
                 f'SELECT 1 FROM "{table}" WHERE TRIM(COALESCE("{column}",\'\'))=? LIMIT 1',
                 (reference,),
@@ -2880,7 +2889,7 @@ def invoice_print(invoice_id):
     if not invoice:
         c.close()
         abort(404)
-    product_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_products)").fetchall()}
+    product_columns = _columns(c, "stock_products")
     product_uom_expr = "p.uom" if "uom" in product_columns else "'' AS uom"
     raw_lines = c.execute(f"""SELECT l.*,p.sku,p.name_ar product_name,{product_uom_expr}
         FROM sales_invoice_lines l LEFT JOIN stock_products p ON p.id=l.product_id
@@ -2899,11 +2908,9 @@ def invoice_print(invoice_id):
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
         "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
     branch = None
-    invoice_columns = {row["name"] for row in c.execute("PRAGMA table_info(sales_invoices)")}
-    if "branch_id" in invoice_columns and c.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='branches'"
-    ).fetchone() and invoice["branch_id"]:
-        branch_columns = {row["name"] for row in c.execute("PRAGMA table_info(branches)")}
+    invoice_columns = _columns(c, "sales_invoices")
+    if "branch_id" in invoice_columns and _table_exists(c, "branches") and invoice["branch_id"]:
+        branch_columns = _columns(c, "branches")
         branch_fields = [
             column if column in branch_columns else "'' AS " + column
             for column in ("address", "phone", "email", "tax_number")

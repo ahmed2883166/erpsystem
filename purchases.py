@@ -10,6 +10,7 @@ from functools import wraps
 from datetime import date, datetime, timedelta
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, money, safe_error_message
+from db_compat import table_columns, table_exists
 from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 from code_sequences import next_code
@@ -18,6 +19,16 @@ purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
 
 def db():
     return connect_database(DB_PATH, isolation_level=None)
+
+
+def _table_exists(conn, name):
+    """Database-neutral table existence check; SQL execution remains opt-in."""
+    return table_exists(conn, name)
+
+
+def _columns(conn, name):
+    """Database-neutral column metadata for a known table."""
+    return table_columns(conn, name)
 
 def init_purchase_schema():
     c=db()
@@ -143,7 +154,7 @@ def init_purchase_schema():
       ON supplier_bill_receipts(receipt_id);
     CREATE INDEX IF NOT EXISTS idx_purchase_receipts_supplier ON goods_receipts(supplier_id,receipt_date);
     """)
-    credit_note_columns={row["name"] for row in c.execute("PRAGMA table_info(supplier_credit_notes)")}
+    credit_note_columns=_columns(c, "supplier_credit_notes")
     for name,declaration in (
         ("cancel_journal_entry_id","INTEGER"),
         ("cancelled_by","INTEGER"),
@@ -152,7 +163,7 @@ def init_purchase_schema():
     ):
         if name not in credit_note_columns:
             c.execute("ALTER TABLE supplier_credit_notes ADD COLUMN "+name+" "+declaration)
-    credit_line_columns={row["name"] for row in c.execute("PRAGMA table_info(supplier_credit_note_lines)")}
+    credit_line_columns=_columns(c, "supplier_credit_note_lines")
     for name,declaration in (("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),
         ("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'")):
         if name not in credit_line_columns:
@@ -164,10 +175,10 @@ def init_purchase_schema():
         ("purchase_order_lines",(("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
         ("goods_receipt_lines",(("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
     ):
-        existing={row["name"] for row in c.execute("PRAGMA table_info("+table+")")}
+        existing=_columns(c, table)
         for name,declaration in fields:
             if name not in existing: c.execute("ALTER TABLE "+table+" ADD COLUMN "+name+" "+declaration)
-    order_columns = {row["name"] for row in c.execute("PRAGMA table_info(purchase_orders)")}
+    order_columns = _columns(c, "purchase_orders")
     for name, declaration in (
         ("submitted_by", "INTEGER"), ("submitted_at", "TEXT"),
         ("approved_by", "INTEGER"), ("approved_at", "TEXT"),
@@ -178,7 +189,7 @@ def init_purchase_schema():
             c.execute("ALTER TABLE purchase_orders ADD COLUMN " + name + " " + declaration)
     c.execute("CREATE INDEX IF NOT EXISTS idx_purchase_orders_approval ON purchase_orders(status, created_at, id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_purchase_requests_creator ON purchase_requests(created_by, status, id)")
-    bill_columns = {row["name"] for row in c.execute("PRAGMA table_info(supplier_bills)")}
+    bill_columns = _columns(c, "supplier_bills")
     if "credited_amount" not in bill_columns:
         c.execute("ALTER TABLE supplier_bills ADD COLUMN credited_amount TEXT NOT NULL DEFAULT '0'")
     if "input_vat_deductible_percent" not in bill_columns:
@@ -227,10 +238,10 @@ def init_purchase_schema():
     for name, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"), ("project_id", "projects")):
         if name not in bill_columns:
             c.execute("ALTER TABLE supplier_bills ADD COLUMN " + name + " INTEGER REFERENCES " + table + "(id)")
-    receipt_line_columns = {row["name"] for row in c.execute("PRAGMA table_info(goods_receipt_lines)")}
+    receipt_line_columns = _columns(c, "goods_receipt_lines")
     if "location_id" not in receipt_line_columns:
         c.execute("ALTER TABLE goods_receipt_lines ADD COLUMN location_id INTEGER REFERENCES stock_locations(id)")
-    receipt_columns = {row["name"] for row in c.execute("PRAGMA table_info(goods_receipts)")}
+    receipt_columns = _columns(c, "goods_receipts")
     for name, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"), ("project_id", "projects")):
         if name not in receipt_columns:
             c.execute("ALTER TABLE goods_receipts ADD COLUMN " + name + " INTEGER REFERENCES " + table + "(id)")
@@ -245,7 +256,7 @@ def init_purchase_schema():
       resolved_by INTEGER, resolved_at TEXT,
       UNIQUE(issue_type,issue_key)
     )""")
-    integrity_columns = {row["name"] for row in c.execute("PRAGMA table_info(purchase_integrity_issues)")}
+    integrity_columns = _columns(c, "purchase_integrity_issues")
     if "resolved_by" not in integrity_columns:
         c.execute("ALTER TABLE purchase_integrity_issues ADD COLUMN resolved_by INTEGER")
     if "resolved_at" not in integrity_columns:
@@ -448,9 +459,7 @@ def validate_asset_bill_data(c, form, bill_date, subtotal):
         ids[field] = account_id
     if ids["asset_account_id"] == ids["asset_accum_account_id"]:
         raise ValueError("حساب تكلفة الأصل يجب أن يختلف عن حساب مجمع الإهلاك.")
-    if c.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fixed_assets'"
-    ).fetchone():
+    if _table_exists(c, "fixed_assets"):
         existing = c.execute(
             "SELECT 1 FROM fixed_assets WHERE asset_code=? LIMIT 1", (asset_code,)
         ).fetchone()
@@ -470,8 +479,7 @@ def validate_asset_bill_data(c, form, bill_date, subtotal):
 def _supplier_price_insights(conn, lookback_days=365):
     """Compare posted historical supplier prices by product using quantity-weighted averages."""
     required=("supplier_bill_inventory_lines","supplier_bills","suppliers","stock_products")
-    present={row["name"] for row in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'")}
+    present={name for name in required if _table_exists(conn, name)}
     if not set(required).issubset(present):
         return [], False
     start=(date.today()-timedelta(days=lookback_days)).isoformat()
@@ -1779,9 +1787,7 @@ def submit_supplier_bill(c, bill_id, actor_id):
     elif bill["bill_kind"] == "asset":
         if bill_receipts:
             raise ValueError("فاتورة الأصل الثابت لا يجوز ربطها بإيصالات استلام مخزني.")
-        asset_line_exists = c.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='supplier_bill_asset_lines'"
-        ).fetchone()
+        asset_line_exists = _table_exists(c, "supplier_bill_asset_lines")
         asset_lines = c.execute(
             "SELECT * FROM supplier_bill_asset_lines WHERE bill_id=? ORDER BY line_no",
             (bill_id,),
@@ -2341,11 +2347,9 @@ def bill_print(bill_id):
       "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
       "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
     branch = None
-    bill_columns = {row["name"] for row in c.execute("PRAGMA table_info(supplier_bills)")}
-    if "branch_id" in bill_columns and c.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='branches'"
-    ).fetchone() and bill["branch_id"]:
-        branch_columns = {row["name"] for row in c.execute("PRAGMA table_info(branches)")}
+    bill_columns = _columns(c, "supplier_bills")
+    if "branch_id" in bill_columns and _table_exists(c, "branches") and bill["branch_id"]:
+        branch_columns = _columns(c, "branches")
         branch_fields = [
             column if column in branch_columns else "'' AS " + column
             for column in ("address", "phone", "email", "tax_number")
@@ -2394,7 +2398,7 @@ def _reverse_supplier_credit_journal(conn, entry_id, reversal_date, reference, d
     if reversal_day<original_day:
         raise ValueError("تاريخ إلغاء إشعار المورد لا يمكن أن يسبق تاريخ الإشعار الأصلي.")
     dimension_keys=("branch_id","cost_center_id","project_id","customer_id","salesperson_id","supplier_id","stock_product_id","stock_warehouse_id")
-    available={row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")}
+    available=_columns(conn, "journal_lines")
     dimensions=[key for key in dimension_keys if key in available]
     columns=["account_id","debit","credit","memo",*dimensions]
     rows=conn.execute("SELECT "+",".join(columns)+" FROM journal_lines WHERE entry_id=? ORDER BY id",(entry_id,)).fetchall()
