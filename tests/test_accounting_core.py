@@ -258,6 +258,26 @@ class SharedAccountingCoreTests(unittest.TestCase):
         self.assertEqual(snapshot["unlinked_documents"], [])
         self.assertEqual(snapshot["pending_stock"], 1)
 
+    def test_reconciliation_reports_pending_stock_status_and_broken_journal_links(self):
+        self.db.execute("ALTER TABLE stock_movements ADD COLUMN journal_entry_id INTEGER")
+        self.db.execute("INSERT INTO journal_entries VALUES(20,'2026-11-10','DRAFT-STOCK','قيد غير مرحل','draft',1,'now')")
+        self.db.execute(
+            "INSERT INTO stock_movements(id,accounting_status,journal_entry_id) VALUES(2,'posted',10)"
+        )
+        self.db.execute(
+            "INSERT INTO stock_movements(id,accounting_status,journal_entry_id) VALUES(3,'posted',NULL)"
+        )
+        self.db.execute(
+            "INSERT INTO stock_movements(id,accounting_status,journal_entry_id) VALUES(4,'posted',999)"
+        )
+        self.db.execute(
+            "INSERT INTO stock_movements(id,accounting_status,journal_entry_id) VALUES(5,'posted',20)"
+        )
+        snapshot = reconciliation_snapshot(self.db)
+        self.assertEqual(snapshot["pending_stock"], 1)
+        self.assertEqual(snapshot["pending_stock_by_status"], {"pending_document": 1})
+        self.assertEqual(snapshot["stock_linkage_issues"], 3)
+
     def test_linkage_report_flags_documents_without_journal(self):
         self.db.execute("INSERT INTO bank_transactions VALUES(2,NULL)")
         snapshot = reconciliation_snapshot(self.db)
