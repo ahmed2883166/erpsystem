@@ -7,7 +7,8 @@ to warehouses in the current data model.
 """
 from decimal import Decimal
 
-from accounting_core import register_decimal_aggregates
+from accounting_core import decimal_sum_expression, register_decimal_aggregates
+from db_sql import execute_compat
 from income_statement import closing_entries_exclusion_sql
 from db_compat import table_columns, table_exists
 
@@ -52,24 +53,20 @@ def _grouped_gl_profitability(conn, date_from, date_to, dimension):
         if has_linked_disposals else ""
     )
     register_decimal_aggregates(conn)
-    rows = conn.execute(
+    revenue_credit_sum = decimal_sum_expression(conn, "CASE WHEN a.account_type='revenue' THEN jl.credit ELSE '0' END")
+    revenue_debit_sum = decimal_sum_expression(conn, "CASE WHEN a.account_type='revenue' THEN jl.debit ELSE '0' END")
+    cogs_debit_sum = decimal_sum_expression(conn, f"CASE WHEN a.account_type='expense' AND ({direct_cost_condition}) THEN jl.debit ELSE '0' END")
+    cogs_credit_sum = decimal_sum_expression(conn, f"CASE WHEN a.account_type='expense' AND ({direct_cost_condition}) THEN jl.credit ELSE '0' END")
+    expense_debit_sum = decimal_sum_expression(conn, f"CASE WHEN a.account_type='expense' AND NOT ({direct_cost_condition}) THEN jl.debit ELSE '0' END")
+    expense_credit_sum = decimal_sum_expression(conn, f"CASE WHEN a.account_type='expense' AND NOT ({direct_cost_condition}) THEN jl.credit ELSE '0' END")
+    rows = execute_compat(conn, 
         f"""SELECT d.id,d.code,d.name_ar,
-             COALESCE(DECIMAL_SUM(CASE WHEN a.account_type='revenue'
-               THEN jl.credit ELSE '0' END),'0') revenue_credit,
-             COALESCE(DECIMAL_SUM(CASE WHEN a.account_type='revenue'
-               THEN jl.debit ELSE '0' END),'0') revenue_debit,
-             COALESCE(DECIMAL_SUM(CASE WHEN a.account_type='expense'
-               AND ({direct_cost_condition})
-               THEN jl.debit ELSE '0' END),'0') cogs_debit,
-             COALESCE(DECIMAL_SUM(CASE WHEN a.account_type='expense'
-               AND ({direct_cost_condition})
-               THEN jl.credit ELSE '0' END),'0') cogs_credit,
-             COALESCE(DECIMAL_SUM(CASE WHEN a.account_type='expense'
-               AND NOT ({direct_cost_condition})
-               THEN jl.debit ELSE '0' END),'0') expense_debit,
-             COALESCE(DECIMAL_SUM(CASE WHEN a.account_type='expense'
-               AND NOT ({direct_cost_condition})
-               THEN jl.credit ELSE '0' END),'0') expense_credit,
+             {revenue_credit_sum} revenue_credit,
+             {revenue_debit_sum} revenue_debit,
+             {cogs_debit_sum} cogs_debit,
+             {cogs_credit_sum} cogs_credit,
+             {expense_debit_sum} expense_debit,
+             {expense_credit_sum} expense_credit,
              COUNT(DISTINCT je.id) journal_count
            FROM journal_lines jl
            JOIN journal_entries je ON je.id=jl.entry_id
@@ -86,12 +83,12 @@ def _grouped_gl_profitability(conn, date_from, date_to, dimension):
 
     disposal_totals = {}
     if has_linked_disposals:
-        disposal_rows = conn.execute(
+        disposal_gain_sum = decimal_sum_expression(conn, "CASE WHEN CAST(ad.gain_loss_amount AS NUMERIC)>0 THEN ad.gain_loss_amount ELSE '0' END")
+        disposal_loss_sum = decimal_sum_expression(conn, "CASE WHEN CAST(ad.gain_loss_amount AS NUMERIC)<0 THEN ad.gain_loss_amount ELSE '0' END")
+        disposal_rows = execute_compat(conn, 
             f"""SELECT jl.{column} dimension_id,
-                       COALESCE(DECIMAL_SUM(CASE WHEN CAST(ad.gain_loss_amount AS NUMERIC)>0
-                         THEN ad.gain_loss_amount ELSE '0' END),'0') gains,
-                       COALESCE(DECIMAL_SUM(CASE WHEN CAST(ad.gain_loss_amount AS NUMERIC)<0
-                         THEN ad.gain_loss_amount ELSE '0' END),'0') losses
+                       {disposal_gain_sum} gains,
+                       {disposal_loss_sum} losses
                 FROM asset_disposals ad
                 JOIN journal_entries je ON je.id=ad.journal_entry_id
                 JOIN journal_lines jl ON jl.entry_id=je.id
@@ -138,27 +135,33 @@ def _warehouse_profitability(conn, date_from, date_to):
         return [], False
 
     register_decimal_aggregates(conn)
-    invoice_rows = conn.execute(
-        """SELECT i.warehouse_id,
-                  COALESCE(DECIMAL_SUM(i.subtotal),'0') revenue,
-                  COALESCE(DECIMAL_SUM(COALESCE(lines.cost_total,'0')),'0') cogs
+    invoice_revenue_sum = decimal_sum_expression(conn, "i.subtotal")
+    invoice_cogs_sum = decimal_sum_expression(conn, "COALESCE(lines.cost_total,'0')")
+    invoice_line_cost_sum = decimal_sum_expression(conn, "cost_total")
+    credit_revenue_sum = decimal_sum_expression(conn, "cn.subtotal")
+    credit_cogs_sum = decimal_sum_expression(conn, "COALESCE(lines.cost_total,'0')")
+    credit_line_cost_sum = decimal_sum_expression(conn, "cost_total")
+    invoice_rows = execute_compat(conn, 
+        f"""SELECT i.warehouse_id,
+                  {invoice_revenue_sum} revenue,
+                  {invoice_cogs_sum} cogs
            FROM sales_invoices i
            LEFT JOIN (
-             SELECT invoice_id,DECIMAL_SUM(cost_total) cost_total
+             SELECT invoice_id,{invoice_line_cost_sum} cost_total
              FROM sales_invoice_lines GROUP BY invoice_id
            ) lines ON lines.invoice_id=i.id
            WHERE i.status='posted' AND i.invoice_date>=? AND i.invoice_date<=?
            GROUP BY i.warehouse_id""",
         (date_from, date_to),
     ).fetchall()
-    credit_rows = conn.execute(
-        """SELECT i.warehouse_id,
-                  COALESCE(DECIMAL_SUM(cn.subtotal),'0') revenue,
-                  COALESCE(DECIMAL_SUM(COALESCE(lines.cost_total,'0')),'0') cogs
+    credit_rows = execute_compat(conn, 
+        f"""SELECT i.warehouse_id,
+                  {credit_revenue_sum} revenue,
+                  {credit_cogs_sum} cogs
            FROM sales_credit_notes cn
            JOIN sales_invoices i ON i.id=cn.invoice_id
            LEFT JOIN (
-             SELECT credit_note_id,DECIMAL_SUM(cost_total) cost_total
+             SELECT credit_note_id,{credit_line_cost_sum} cost_total
              FROM sales_credit_note_lines GROUP BY credit_note_id
            ) lines ON lines.credit_note_id=cn.id
            WHERE cn.status='posted' AND cn.credit_date>=? AND cn.credit_date<=?
@@ -176,7 +179,7 @@ def _warehouse_profitability(conn, date_from, date_to):
         bucket[0] -= _amount(row["revenue"])
         bucket[1] -= _amount(row["cogs"])
 
-    warehouse_rows = conn.execute(
+    warehouse_rows = execute_compat(conn, 
         "SELECT id,code,name_ar FROM stock_warehouses ORDER BY code,id"
     ).fetchall()
     names = {row["id"]: dict(row) for row in warehouse_rows}
@@ -222,7 +225,7 @@ def _product_profitability(conn, date_from, date_to):
         return [], False
 
     totals = {}
-    invoice_rows = conn.execute(
+    invoice_rows = execute_compat(conn, 
         """SELECT l.product_id,l.description,l.quantity,l.line_total,l.cost_total,
                   i.subtotal invoice_subtotal,i.discount_amount,
                   p.sku,p.name_ar
@@ -253,7 +256,7 @@ def _product_profitability(conn, date_from, date_to):
         item["quantity_sold"] += _amount(row["quantity"])
         item["invoice_lines"] += 1
 
-    credit_rows = conn.execute(
+    credit_rows = execute_compat(conn, 
         """SELECT l.product_id,l.description,l.quantity,l.line_total,l.cost_total,
                   p.sku,p.name_ar
            FROM sales_credit_note_lines l
@@ -304,15 +307,15 @@ def build_profitability_report(conn, date_from, date_to):
 
     activity = None
     if _table_exists(conn, "activity_profiles"):
-        setting = conn.execute(
+        setting = execute_compat(conn, 
             "SELECT setting_value FROM company_settings WHERE setting_key='activity_profile_code'"
         ).fetchone() if _table_exists(conn, "company_settings") else None
         if not setting and _table_exists(conn, "company_settings"):
-            setting = conn.execute(
+            setting = execute_compat(conn, 
                 "SELECT setting_value FROM company_settings WHERE setting_key='activity'"
             ).fetchone()
         if setting:
-            row = conn.execute(
+            row = execute_compat(conn, 
                 "SELECT code,name,base_activity FROM activity_profiles WHERE code=?",
                 (setting["setting_value"],),
             ).fetchone()
