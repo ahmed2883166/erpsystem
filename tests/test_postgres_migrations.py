@@ -101,6 +101,12 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         ).fetchone()
         self.assertIsNotNone(table["table_name"])
 
+    def test_rejects_migration_set_missing_previously_applied_versions(self):
+        original = self._migration(1, "0001_probe.sql", 'CREATE TABLE "probe" (id BIGINT)')
+        apply_migrations(self.connection, [original], schema=self.schema)
+        with self.assertRaisesRegex(RuntimeError, "missing from the supplied migration set: 1"):
+            apply_migrations(self.connection, [], schema=self.schema)
+
     def test_modified_applied_migration_is_rejected(self):
         original = self._migration(1, "0001_probe.sql", 'CREATE TABLE "probe" (id BIGINT)')
         apply_migrations(self.connection, [original], schema=self.schema)
