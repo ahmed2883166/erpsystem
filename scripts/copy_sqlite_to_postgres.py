@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 from decimal import Decimal
 from pathlib import Path
@@ -66,8 +67,10 @@ def open_sqlite_readonly(path: str):
 
 
 def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
-                  batch_size: int = 500) -> dict:
-    if not schema or not schema.replace("_", "a").isalnum() or not schema[0].isalpha():
+                  batch_size: int = 500, *, apply: bool = False) -> dict:
+    if not apply:
+        raise ValueError("Copy is disabled by default. Pass apply=True only after reviewing the isolated target.")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", schema):
         raise ValueError("PostgreSQL schema must be a simple identifier.")
     if batch_size < 1 or batch_size > 10000:
         raise ValueError("batch_size must be between 1 and 10000.")
@@ -209,11 +212,12 @@ def main(argv=None) -> int:
     parser.add_argument("--postgres-dsn", default=os.environ.get("NEXUS_POSTGRES_DSN"))
     parser.add_argument("--schema", default="nexus")
     parser.add_argument("--batch-size", type=int, default=500)
+    parser.add_argument("--apply", action="store_true", help="Explicitly authorize writes to the isolated empty target schema")
     args = parser.parse_args(argv)
     if not args.postgres_dsn:
         parser.error("Provide --postgres-dsn or set NEXUS_POSTGRES_DSN.")
     try:
-        result = copy_database(args.sqlite, args.postgres_dsn, args.schema, args.batch_size)
+        result = copy_database(args.sqlite, args.postgres_dsn, args.schema, args.batch_size, apply=args.apply)
     except Exception as exc:
         parser.error(str(exc))
     print(json.dumps(result, ensure_ascii=False, indent=2))
