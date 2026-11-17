@@ -364,7 +364,7 @@ def _select_customer_price_rule(price_rules, quantity):
 
 
 def _account(conn, code, expected_type):
-    row = conn.execute(
+    row = execute_compat(conn, 
         "SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (code,)
     ).fetchone()
     if not row or row["is_group"] or not row["active"] or row["account_type"] != expected_type:
@@ -373,7 +373,7 @@ def _account(conn, code, expected_type):
 
 
 def _refund_total(conn, invoice_id):
-    rows = conn.execute(
+    rows = execute_compat(conn, 
         """SELECT rf.amount FROM customer_refunds rf
            JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id WHERE cn.invoice_id=?""",
         (invoice_id,),
@@ -382,7 +382,7 @@ def _refund_total(conn, invoice_id):
 
 
 def _activity(conn):
-    row = conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+    row = execute_compat(conn, "SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
     return row["setting_value"] if row else "commercial"
 
 
@@ -405,14 +405,14 @@ def _sales_return_account(conn, activity, fallback_code):
     }
     preferred_code = activity_return_codes.get(activity)
     if preferred_code:
-        preferred = conn.execute(
+        preferred = execute_compat(conn, 
             """SELECT id FROM accounts WHERE code=? AND account_type='revenue'
                AND is_group=0 AND active=1""",
             (preferred_code,),
         ).fetchone()
         if preferred:
             return preferred["id"]
-    candidates = conn.execute(
+    candidates = execute_compat(conn, 
         """SELECT id,name_ar FROM accounts
            WHERE account_type='revenue' AND is_group=0 AND active=1
              AND (name_ar LIKE '%مردود%' OR name_ar LIKE '%مسموحات%'
@@ -443,12 +443,12 @@ def _allowed_vat_rates(conn):
     # accepted for zero-rated/exempt/out-of-scope treatments.
     values = ["0"]
     try:
-        configured = conn.execute("SELECT rate FROM tax_rates WHERE active=1 ORDER BY id").fetchall()
+        configured = execute_compat(conn, "SELECT rate FROM tax_rates WHERE active=1 ORDER BY id").fetchall()
         values.extend(str(row["rate"]) for row in configured)
     except sqlite3.Error:
         pass
     if len(values) == 1:
-        settings = {r["setting_key"]: r["setting_value"] for r in conn.execute(
+        settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(conn, 
             "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('tax_country','default_vat_rate')")}
         if settings.get("tax_country") == "EG":
             values.append("14")
@@ -471,7 +471,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     # independently. Exempt/zero-rated invoices must not fail on an unused header rate.
     allowed_rates = _allowed_vat_rates(conn)
 
-    customer = conn.execute("SELECT * FROM customers WHERE id=? AND active=1", (customer_id,)).fetchone()
+    customer = execute_compat(conn, "SELECT * FROM customers WHERE id=? AND active=1", (customer_id,)).fetchone()
     if not customer:
         raise ValueError("العميل غير موجود أو غير نشط.")
     dimensions = validate_journal_dimensions(conn, dimensions or {})
@@ -530,7 +530,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
         product_inventory_code = codes.get("inventory")
         product_cogs_code = codes.get("cogs")
         if product_id:
-            product = conn.execute("SELECT * FROM stock_products WHERE id=? AND active=1", (int(product_id),)).fetchone()
+            product = execute_compat(conn, "SELECT * FROM stock_products WHERE id=? AND active=1", (int(product_id),)).fetchone()
             if not product:
                 raise ValueError("الصنف غير موجود أو غير نشط.")
             from activity_profiles import resolve_product_account_code
@@ -647,7 +647,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     if tax_amount > 0 and vat is None:
         vat = _sales_output_vat_account(conn, activity)
     credit_limit = Decimal(customer["credit_limit"] or "0")
-    outstanding_rows = conn.execute(
+    outstanding_rows = execute_compat(conn, 
         """SELECT i.id,i.total_amount,i.paid_amount,COALESCE(i.credited_amount,'0') credited_amount
            FROM sales_invoices i WHERE i.customer_id=? AND i.status='posted'""", (customer_id,)
     ).fetchall()
@@ -708,7 +708,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
                 lot_id, allocated_qty, allocated_unit_cost, allocated_cost = allocation
             else:
                 lot_id, allocated_qty, allocated_cost = allocation
-            conn.execute(
+            execute_compat(conn, 
                 "INSERT INTO sales_invoice_line_lots(invoice_line_id,lot_id,quantity,cost_total) VALUES(?,?,?,?)",
                 (invoice_line_id, lot_id, str(allocated_qty), str(allocated_cost))
             )
@@ -719,7 +719,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
         invoice_lines.append((vat, 0, tax_amount, "ضريبة مخرجات"))
     journal_id = post_journal(conn, invoice_date, invoice_no, "فاتورة مبيعات " + invoice_no,
                               invoice_lines, created_by, dimensions=dimensions)
-    conn.execute("UPDATE sales_invoices SET journal_entry_id=? WHERE id=?", (journal_id, invoice_id))
+    execute_compat(conn, "UPDATE sales_invoices SET journal_entry_id=? WHERE id=?", (journal_id, invoice_id))
 
     cogs_journal_id = None
     if total_cost > 0 and preissued_costs is None:
@@ -752,8 +752,8 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             cogs_lines, created_by, dimensions=dimensions
         )
     if preissued_costs is None:
-        for row in conn.execute("SELECT id FROM stock_movements WHERE movement_no LIKE ?", (invoice_no + "-%",)).fetchall():
-            conn.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status=? WHERE id=?",
+        for row in execute_compat(conn, "SELECT id FROM stock_movements WHERE movement_no LIKE ?", (invoice_no + "-%",)).fetchall():
+            execute_compat(conn, "UPDATE stock_movements SET journal_entry_id=?,accounting_status=? WHERE id=?",
                          (cogs_journal_id, "posted" if cogs_journal_id else "not_required", row["id"]))
     return {"invoice_id": invoice_id, "invoice_no": invoice_no, "journal_entry_id": journal_id,
             "cogs_journal_entry_id": cogs_journal_id, "subtotal": subtotal,
@@ -770,7 +770,7 @@ def create_invoice_workflow(conn, payload, status, created_by, gross_subtotal,
     if status not in {"draft", "pending_approval"}:
         raise ValueError("حالة مسودة الفاتورة غير صحيحة.")
     customer_id = int(payload.get("customer_id") or 0)
-    customer = conn.execute("SELECT id FROM customers WHERE id=? AND active=1",
+    customer = execute_compat(conn, "SELECT id FROM customers WHERE id=? AND active=1",
                             (customer_id,)).fetchone()
     if not customer:
         raise ValueError("العميل غير موجود أو غير نشط.")
@@ -792,7 +792,7 @@ def create_invoice_workflow(conn, payload, status, created_by, gross_subtotal,
             raise ValueError("الكمية أو سعر الوحدة في المسودة غير صحيح.")
         product_id = item.get("product_id")
         if product_id:
-            product = conn.execute("SELECT id FROM stock_products WHERE id=? AND active=1",
+            product = execute_compat(conn, "SELECT id FROM stock_products WHERE id=? AND active=1",
                                    (int(product_id),)).fetchone()
             if not product:
                 raise ValueError("يوجد صنف غير موجود أو غير نشط في بنود المسودة.")
@@ -834,7 +834,7 @@ def update_invoice_workflow(conn, workflow_id, payload, user_id, gross_subtotal,
                             discount_amount, discount_percent, is_admin=False):
     """Update an existing draft only; never changes stock or accounting records."""
     customer_id = int(payload.get("customer_id") or 0)
-    customer = conn.execute("SELECT id FROM customers WHERE id=? AND active=1",
+    customer = execute_compat(conn, "SELECT id FROM customers WHERE id=? AND active=1",
                             (customer_id,)).fetchone()
     if not customer:
         raise ValueError("العميل غير موجود أو غير نشط.")
@@ -859,7 +859,7 @@ def update_invoice_workflow(conn, workflow_id, payload, user_id, gross_subtotal,
             raise ValueError("الكمية أو سعر الوحدة في المسودة غير صحيح.")
         product_id = item.get("product_id")
         if product_id:
-            product = conn.execute("SELECT id FROM stock_products WHERE id=? AND active=1",
+            product = execute_compat(conn, "SELECT id FROM stock_products WHERE id=? AND active=1",
                                    (int(product_id),)).fetchone()
             if not product:
                 raise ValueError("يوجد صنف غير موجود أو غير نشط في بنود المسودة.")
@@ -883,13 +883,13 @@ def update_invoice_workflow(conn, workflow_id, payload, user_id, gross_subtotal,
     })
     begin_write_transaction(conn)
     try:
-        existing = conn.execute("""SELECT status,created_by FROM sales_invoice_workflows
+        existing = execute_compat(conn, """SELECT status,created_by FROM sales_invoice_workflows
             WHERE id=?""", (workflow_id,)).fetchone()
         if not existing or existing["status"] != "draft":
             raise ValueError("لا يمكن تعديل الفاتورة؛ يجب أن تكون مسودة غير مرسلة للاعتماد.")
         if not is_admin and existing["created_by"] != user_id:
             raise ValueError("يمكنك تعديل المسودات التي أنشأتها فقط.")
-        changed = conn.execute("""UPDATE sales_invoice_workflows SET
+        changed = execute_compat(conn, """UPDATE sales_invoice_workflows SET
             customer_id=?,invoice_date=?,due_date=?,gross_subtotal=?,discount_amount=?,
             discount_percent=?,payload_json=?,updated_by=?,last_edit_at=CURRENT_TIMESTAMP,
             updated_at=CURRENT_TIMESTAMP
@@ -906,7 +906,7 @@ def update_invoice_workflow(conn, workflow_id, payload, user_id, gross_subtotal,
 
 def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=None):
     """Post a sales credit note against an unpaid invoice and restore returned stock."""
-    invoice = conn.execute(
+    invoice = execute_compat(conn, 
         "SELECT * FROM sales_invoices WHERE id=? AND status='posted'", (invoice_id,)
     ).fetchone()
     if not invoice:
@@ -949,7 +949,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
     cost_total = Decimal("0.00")
     for item in lines:
         line_id = int(item["invoice_line_id"])
-        original = conn.execute(
+        original = execute_compat(conn, 
             "SELECT * FROM sales_invoice_lines WHERE id=? AND invoice_id=?",
             (line_id, invoice_id),
         ).fetchone()
@@ -972,7 +972,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         sold_qty = Decimal(original["quantity"])
         if not qty.is_finite() or qty <= 0:
             raise ValueError("كمية الإشعار يجب أن تكون أكبر من صفر.")
-        prior_credit_rows = conn.execute(
+        prior_credit_rows = execute_compat(conn, 
             """SELECT cl.quantity,cl.line_total,cl.tax_amount,cl.cost_total
                FROM sales_credit_note_lines cl
                JOIN sales_credit_notes cn ON cn.id=cl.credit_note_id
@@ -1012,12 +1012,12 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         subtotal += line_value
         tax_total += line_tax
         cost_total += line_cost
-        original_allocations = conn.execute(
+        original_allocations = execute_compat(conn, 
             "SELECT lot_id,quantity,cost_total FROM sales_invoice_line_lots WHERE invoice_line_id=? ORDER BY id",
             (line_id,),
         ).fetchall()
         if not original_allocations:
-            product_tracking = conn.execute(
+            product_tracking = execute_compat(conn, 
                 "SELECT track_lot,track_expiry FROM stock_products WHERE id=?", (original["product_id"],)
             ).fetchone() if original["product_id"] else None
             if product_tracking and (product_tracking["track_lot"] or product_tracking["track_expiry"]):
@@ -1027,7 +1027,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
                 )
             original_allocations = [{"lot_id": None, "quantity": original["quantity"],
                                      "cost_total": original["cost_total"] or "0"}]
-        returned_rows = conn.execute(
+        returned_rows = execute_compat(conn, 
             """SELECT rl.lot_id,rl.quantity FROM sales_credit_note_line_lots rl
                JOIN sales_credit_note_lines cl ON cl.id=rl.credit_note_line_id
                JOIN sales_credit_notes cn ON cn.id=cl.credit_note_id
@@ -1109,7 +1109,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         conn, credit_date, credit_no, "إشعار دائن لفاتورة " + invoice["invoice_no"],
         journal_lines, created_by, dimensions=dimensions,
     )
-    conn.execute("UPDATE sales_credit_notes SET journal_entry_id=? WHERE id=?", (journal_id, credit_id))
+    execute_compat(conn, "UPDATE sales_credit_notes SET journal_entry_id=? WHERE id=?", (journal_id, credit_id))
 
     cogs_journal_id = None
     stock_index = 0
@@ -1131,7 +1131,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
             warehouse_id = invoice["warehouse_id"]
             if not warehouse_id:
                 raise ValueError("فاتورة الصنف المخزني لا تحتوي على مخزن صرف صالح.")
-            default_location = conn.execute("SELECT location_id FROM stock_product_locations WHERE product_id=? AND warehouse_id=?",
+            default_location = execute_compat(conn, "SELECT location_id FROM stock_product_locations WHERE product_id=? AND warehouse_id=?",
                                             (product_id, warehouse_id)).fetchone()
             return_location_id = default_location["location_id"] if default_location else None
             for lot_part in item["lot_allocations"]:
@@ -1148,20 +1148,20 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
                      str(part_cost), credit_date, "مرتجع مبيعات بموجب " + credit_no, created_by,
                      str(lot_part["quantity"] / item["conversion_factor"]), item["uom_id"], item["uom_key"],
                      item["entered_uom_name"]))
-                conn.execute(
+                execute_compat(conn, 
                     """INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,lot_id,source_movement_id,
                        qty_in,qty_remaining,unit_cost,value_remaining) VALUES(?,?,?,?,?,?,?,?,?)""",
                     (product_id, warehouse_id, return_location_id, lot_part["lot_id"], movement_id, str(part_qty),
                      str(part_qty), str(unit_cost), str(part_cost)),
                 )
-                conn.execute(
+                execute_compat(conn, 
                     """INSERT INTO sales_credit_note_line_lots(credit_note_line_id,lot_id,quantity,stock_movement_id)
                        VALUES(?,?,?,?)""",
                     (credit_line_id, lot_part["lot_id"], str(part_qty), movement_id),
                 )
-                if not conn.execute("SELECT stock_movement_id FROM sales_credit_note_lines WHERE id=?",
+                if not execute_compat(conn, "SELECT stock_movement_id FROM sales_credit_note_lines WHERE id=?",
                                     (credit_line_id,)).fetchone()["stock_movement_id"]:
-                    conn.execute("UPDATE sales_credit_note_lines SET stock_movement_id=? WHERE id=?",
+                    execute_compat(conn, "UPDATE sales_credit_note_lines SET stock_movement_id=? WHERE id=?",
                                  (movement_id, credit_line_id))
 
     if cost_total > 0:
@@ -1192,21 +1192,21 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
             conn, credit_date, credit_no + "-COGS", "عكس تكلفة المبيعات " + credit_no,
             return_cost_lines, created_by, dimensions=dimensions,
         )
-        conn.execute(
+        execute_compat(conn, 
             "UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE movement_no LIKE ?",
             (cogs_journal_id, credit_no + "-%"),
         )
     else:
-        conn.execute(
+        execute_compat(conn, 
             "UPDATE stock_movements SET accounting_status='not_required' WHERE movement_no LIKE ?",
             (credit_no + "-%",),
         )
 
-    conn.execute(
+    execute_compat(conn, 
         "UPDATE sales_credit_notes SET cogs_journal_entry_id=? WHERE id=?",
         (cogs_journal_id, credit_id),
     )
-    conn.execute(
+    execute_compat(conn, 
         "UPDATE sales_invoices SET credited_amount=? WHERE id=?",
         (str(credited + total), invoice_id),
     )
@@ -1219,7 +1219,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
 
 
 def _reverse_posted_journal(conn, entry_id, reversal_date, reference, description, created_by):
-    original = conn.execute(
+    original = execute_compat(conn, 
         "SELECT status,entry_date FROM journal_entries WHERE id=?", (entry_id,)
     ).fetchone()
     if not original or original["status"] != "posted":
@@ -1240,7 +1240,7 @@ def _reverse_posted_journal(conn, entry_id, reversal_date, reference, descriptio
     }
     selected_dimensions = [key for key in dimension_keys if key in available_dimensions]
     selected_columns = ["account_id", "debit", "credit", "memo", *selected_dimensions]
-    rows = conn.execute(
+    rows = execute_compat(conn, 
         "SELECT " + ",".join(selected_columns) +
         " FROM journal_lines WHERE entry_id=? ORDER BY id",
         (entry_id,),
@@ -1264,12 +1264,12 @@ def post_customer_refund(conn, credit_note_id, refund_date, amount, cash_account
                          created_by=None, reference=""):
     refund_date = _validate_customer_advance_date(refund_date)
     amount = _validated_customer_advance_amount(amount, "قيمة رد المبلغ")
-    note = conn.execute(
+    note = execute_compat(conn, 
         "SELECT * FROM sales_credit_notes WHERE id=? AND status='posted'", (credit_note_id,)
     ).fetchone()
     if not note:
         raise ValueError("الإشعار الدائن غير موجود أو غير مرحل.")
-    refunded_rows = conn.execute(
+    refunded_rows = execute_compat(conn, 
         "SELECT amount FROM customer_refunds WHERE credit_note_id=?", (credit_note_id,)
     ).fetchall()
     already_refunded = sum((Decimal(row["amount"]) for row in refunded_rows), Decimal("0"))
@@ -1280,7 +1280,7 @@ def post_customer_refund(conn, credit_note_id, refund_date, amount, cash_account
         raise ValueError("لا يمكن رد مبلغ بتاريخ يسبق تاريخ الإشعار الدائن.")
     _ensure_unique_customer_cash_reference(conn, reference)
     _customer_cash_account(conn, cash_account_id)
-    invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=?", (note["invoice_id"],)).fetchone()
+    invoice = execute_compat(conn, "SELECT * FROM sales_invoices WHERE id=?", (note["invoice_id"],)).fetchone()
     ar = _account(conn, _sales_account_codes(conn, _activity(conn))["ar"], "asset")
     refund_no = "SREF-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
     dimensions = validate_journal_dimensions(conn, _customer_invoice_dimensions(invoice))
@@ -1289,7 +1289,7 @@ def post_customer_refund(conn, credit_note_id, refund_date, amount, cash_account
         [(ar, amount, 0, "تسوية الرصيد الدائن للعميل"),
          (cash_account_id, 0, amount, "رد نقدي/بنكي للعميل")], created_by, dimensions=dimensions,
     )
-    conn.execute(
+    execute_compat(conn, 
         """INSERT INTO customer_refunds(refund_no,credit_note_id,refund_date,amount,cash_account_id,
            journal_entry_id,reference,created_by) VALUES(?,?,?,?,?,?,?,?)""",
         (refund_no, credit_note_id, refund_date, str(amount), cash_account_id, journal_id,
@@ -1307,15 +1307,15 @@ def cancel_credit_note(conn, credit_note_id, cancellation_date, reason, created_
     reason = str(reason or "").strip()
     if not reason or len(reason) > 500:
         raise ValueError("سبب إلغاء الإشعار مطلوب وبحد أقصى 500 حرف.")
-    note = conn.execute(
+    note = execute_compat(conn, 
         "SELECT * FROM sales_credit_notes WHERE id=? AND status='posted'", (credit_note_id,)
     ).fetchone()
     if not note:
         raise ValueError("الإشعار الدائن غير موجود أو تم إلغاؤه بالفعل.")
-    if conn.execute("SELECT 1 FROM customer_refunds WHERE credit_note_id=? LIMIT 1",
+    if execute_compat(conn, "SELECT 1 FROM customer_refunds WHERE credit_note_id=? LIMIT 1",
                     (credit_note_id,)).fetchone():
         raise ValueError("لا يمكن إلغاء الإشعار بعد رد مبالغ منه. اعكس عملية الرد أولًا.")
-    movements = conn.execute(
+    movements = execute_compat(conn, 
         """SELECT DISTINCT m.id,m.movement_no,l.id layer_id,l.qty_in,l.qty_remaining,
                   l.value_remaining
            FROM sales_credit_note_line_lots x
@@ -1342,54 +1342,54 @@ def cancel_credit_note(conn, credit_note_id, cancellation_date, reason, created_
             "إلغاء عكس تكلفة المبيعات " + note["credit_note_no"], created_by,
         )
     for movement in movements:
-        conn.execute("UPDATE stock_valuation_layers SET qty_remaining='0',value_remaining='0' WHERE id=?",
+        execute_compat(conn, "UPDATE stock_valuation_layers SET qty_remaining='0',value_remaining='0' WHERE id=?",
                      (movement["layer_id"],))
-        conn.execute("UPDATE stock_movements SET movement_type='cancelled_receipt',accounting_status='reversed' WHERE id=?",
+        execute_compat(conn, "UPDATE stock_movements SET movement_type='cancelled_receipt',accounting_status='reversed' WHERE id=?",
                      (movement["id"],))
     # Backward compatibility for older credit notes that did not store lot allocation rows.
-    legacy = conn.execute(
+    legacy = execute_compat(conn, 
         """SELECT stock_movement_id FROM sales_credit_note_lines
            WHERE credit_note_id=? AND stock_movement_id IS NOT NULL""", (credit_note_id,)
     ).fetchall()
     for row in legacy:
-        if not conn.execute("SELECT 1 FROM sales_credit_note_line_lots WHERE stock_movement_id=?",
+        if not execute_compat(conn, "SELECT 1 FROM sales_credit_note_line_lots WHERE stock_movement_id=?",
                             (row["stock_movement_id"],)).fetchone():
-            layer = conn.execute(
+            layer = execute_compat(conn, 
                 "SELECT id,qty_in,qty_remaining FROM stock_valuation_layers WHERE source_movement_id=?",
                 (row["stock_movement_id"],),
             ).fetchone()
             if layer:
                 if Decimal(layer["qty_remaining"]) != Decimal(layer["qty_in"]):
                     raise ValueError("لا يمكن إلغاء الإشعار لأن مخزون المرتجع القديم تم استخدامه.")
-                conn.execute("UPDATE stock_valuation_layers SET qty_remaining='0',value_remaining='0' WHERE id=?",
+                execute_compat(conn, "UPDATE stock_valuation_layers SET qty_remaining='0',value_remaining='0' WHERE id=?",
                              (layer["id"],))
-            conn.execute("UPDATE stock_movements SET movement_type='cancelled_receipt',accounting_status='reversed' WHERE id=?",
+            execute_compat(conn, "UPDATE stock_movements SET movement_type='cancelled_receipt',accounting_status='reversed' WHERE id=?",
                          (row["stock_movement_id"],))
-    conn.execute(
+    execute_compat(conn, 
         """UPDATE sales_credit_notes SET status='cancelled',cancel_journal_entry_id=?,
            cancel_cogs_journal_entry_id=?,cancelled_by=?,cancelled_at=CURRENT_TIMESTAMP,
            cancellation_reason=? WHERE id=?""",
         (reversal_id, cogs_reversal_id, created_by, reason, credit_note_id),
     )
-    invoice = conn.execute("SELECT credited_amount FROM sales_invoices WHERE id=?",
+    invoice = execute_compat(conn, "SELECT credited_amount FROM sales_invoices WHERE id=?",
                            (note["invoice_id"],)).fetchone()
     new_credited = Decimal(invoice["credited_amount"] or "0") - Decimal(note["total_amount"])
     if new_credited < 0:
         raise ValueError("رصيد الإشعارات الدائنة على الفاتورة غير متسق؛ راجع سلامة البيانات.")
-    conn.execute("UPDATE sales_invoices SET credited_amount=? WHERE id=?",
+    execute_compat(conn, "UPDATE sales_invoices SET credited_amount=? WHERE id=?",
                  (str(new_credited), note["invoice_id"]))
     return {"reversal_journal_id": reversal_id, "cogs_reversal_journal_id": cogs_reversal_id}
 
 
 def _inventory_method(conn):
-    row = conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
+    row = execute_compat(conn, "SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
     return row["setting_value"] if row else "average"
 
 
 def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_id, created_by=None, reference=""):
     receipt_date = _validate_customer_advance_date(receipt_date)
     amount = _validated_customer_advance_amount(amount, "قيمة التحصيل")
-    invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=? AND status='posted'", (invoice_id,)).fetchone()
+    invoice = execute_compat(conn, "SELECT * FROM sales_invoices WHERE id=? AND status='posted'", (invoice_id,)).fetchone()
     if not invoice:
         raise ValueError("فاتورة العميل غير موجودة أو غير مرحلة.")
     if "invoice_date" in invoice.keys() and receipt_date < invoice["invoice_date"]:
@@ -1413,12 +1413,12 @@ def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_i
         [(cash_account_id, amount, 0, "تحصيل نقدي/بنكي"),
          (ar, 0, amount, "تخفيض ذمم العميل")], created_by, dimensions=dimensions
     )
-    conn.execute(
+    execute_compat(conn, 
         """INSERT INTO customer_receipts(receipt_no,invoice_id,receipt_date,amount,cash_account_id,
            journal_entry_id,reference,created_by) VALUES(?,?,?,?,?,?,?,?)""",
         (receipt_no, invoice_id, receipt_date, str(amount), cash_account_id, journal_id, reference, created_by)
     )
-    conn.execute("UPDATE sales_invoices SET paid_amount=? WHERE id=?",
+    execute_compat(conn, "UPDATE sales_invoices SET paid_amount=? WHERE id=?",
                  (str(Decimal(invoice["paid_amount"]) + amount), invoice_id))
     return {"receipt_no": receipt_no, "journal_entry_id": journal_id}
 
@@ -1427,7 +1427,7 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
                                 created_by=None, reference=""):
     """Post one cash receipt allocated across multiple open invoices of one customer."""
     receipt_date = _validate_customer_advance_date(receipt_date)
-    customer = conn.execute("SELECT id,name FROM customers WHERE id=? AND active=1", (customer_id,)).fetchone()
+    customer = execute_compat(conn, "SELECT id,name FROM customers WHERE id=? AND active=1", (customer_id,)).fetchone()
     if not customer:
         raise ValueError("العميل غير موجود أو غير نشط.")
     normalized = []
@@ -1438,7 +1438,7 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
             raise ValueError("لا يمكن اختيار الفاتورة أكثر من مرة في نفس الإيصال.")
         seen.add(invoice_id)
         amount = _validated_customer_advance_amount(raw_amount, "قيمة التوزيع على كل فاتورة")
-        invoice = conn.execute("SELECT * FROM sales_invoices WHERE id=? AND customer_id=? AND status='posted'",
+        invoice = execute_compat(conn, "SELECT * FROM sales_invoices WHERE id=? AND customer_id=? AND status='posted'",
                                (invoice_id, customer_id)).fetchone()
         if not invoice:
             raise ValueError("إحدى الفواتير المحددة لا تتبع العميل أو غير مرحلة.")
@@ -1478,9 +1478,9 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
         VALUES(?,?,?,?,?,?,?,?)""",
         (receipt_no, customer_id, receipt_date, str(total), cash_account_id, journal_id, reference, created_by))
     for invoice, amount in normalized:
-        conn.execute("INSERT INTO customer_receipt_allocations(batch_id,invoice_id,amount) VALUES(?,?,?)",
+        execute_compat(conn, "INSERT INTO customer_receipt_allocations(batch_id,invoice_id,amount) VALUES(?,?,?)",
                      (batch_id, invoice["id"], str(amount)))
-        conn.execute("UPDATE sales_invoices SET paid_amount=? WHERE id=?",
+        execute_compat(conn, "UPDATE sales_invoices SET paid_amount=? WHERE id=?",
                      (str(Decimal(invoice["paid_amount"] or "0") + amount), invoice["id"]))
     return {"receipt_no": receipt_no, "journal_entry_id": journal_id, "total_amount": total,
             "invoice_count": len(normalized)}
@@ -1520,7 +1520,7 @@ def _ensure_unique_customer_cash_reference(conn, reference):
     for table, column in sources:
         if _table_exists(conn, table):
             columns = _columns(conn, table)
-            if column in columns and conn.execute(
+            if column in columns and execute_compat(conn, 
                 f'SELECT 1 FROM "{table}" WHERE TRIM(COALESCE("{column}",\'\'))=? LIMIT 1',
                 (reference,),
             ).fetchone():
@@ -1531,7 +1531,7 @@ def _customer_cash_account(conn, cash_account_id):
     """Accept only active detailed cash/bank accounts mapped for this activity."""
     from activity_profiles import active_account_role_ids
     allowed_ids = active_account_role_ids(conn).get("cash", set())
-    row = conn.execute(
+    row = execute_compat(conn, 
         "SELECT id,is_group,active,account_type FROM accounts WHERE id=?",
         (cash_account_id,),
     ).fetchone()
@@ -1547,7 +1547,7 @@ def _customer_advances_account(conn):
     account_ids = active_account_role_ids(conn).get("customer_advances", set())
     if len(account_ids) != 1:
         raise ValueError("يجب ربط دور دفعات العملاء المقدمة بحساب التزام تفصيلي واحد في ملف النشاط.")
-    row = conn.execute(
+    row = execute_compat(conn, 
         "SELECT id,is_group,active,account_type FROM accounts WHERE id=?",
         (next(iter(account_ids)),),
     ).fetchone()
@@ -1574,7 +1574,7 @@ def _validate_customer_advance_date(value):
 
 
 def _customer_advance_available(conn, advance_receipt_id):
-    receipt = conn.execute(
+    receipt = execute_compat(conn, 
         """SELECT r.amount FROM customer_advance_receipts r
            WHERE r.id=? AND NOT EXISTS (
              SELECT 1 FROM customer_advance_reversals x
@@ -1584,7 +1584,7 @@ def _customer_advance_available(conn, advance_receipt_id):
     ).fetchone()
     if not receipt:
         raise ValueError("إيصال مقدم العميل غير موجود أو تم عكسه.")
-    allocated = conn.execute(
+    allocated = execute_compat(conn, 
         """SELECT a.amount FROM customer_advance_allocations a
            WHERE a.advance_receipt_id=? AND NOT EXISTS (
              SELECT 1 FROM customer_advance_reversals x
@@ -1592,7 +1592,7 @@ def _customer_advance_available(conn, advance_receipt_id):
            )""",
         (advance_receipt_id,),
     ).fetchall()
-    refunded = conn.execute(
+    refunded = execute_compat(conn, 
         """SELECT r.amount FROM customer_advance_refunds r
            WHERE r.advance_receipt_id=? AND NOT EXISTS (
              SELECT 1 FROM customer_advance_reversals x
@@ -1609,7 +1609,7 @@ def post_customer_advance_receipt(conn, customer_id, receipt_date, amount,
     """Receive an unallocated customer advance; it is a liability, not revenue or AR collection."""
     receipt_date = _validate_customer_advance_date(receipt_date)
     amount = _validated_customer_advance_amount(amount, "قيمة مقدم العميل")
-    customer = conn.execute(
+    customer = execute_compat(conn, 
         "SELECT id,name FROM customers WHERE id=? AND active=1", (customer_id,)
     ).fetchone()
     if not customer:
@@ -1639,7 +1639,7 @@ def allocate_customer_advance(conn, advance_receipt_id, allocations, allocation_
                                created_by=None):
     """Apply one advance to one or more posted invoices belonging to the same customer."""
     allocation_date = _validate_customer_advance_date(allocation_date)
-    receipt = conn.execute(
+    receipt = execute_compat(conn, 
         """SELECT r.*,c.name customer_name FROM customer_advance_receipts r
            JOIN customers c ON c.id=r.customer_id WHERE r.id=? AND c.active=1""",
         (advance_receipt_id,),
@@ -1655,7 +1655,7 @@ def allocate_customer_advance(conn, advance_receipt_id, allocations, allocation_
             raise ValueError("لا يمكن اختيار الفاتورة أكثر من مرة في نفس عملية التخصيص.")
         seen.add(invoice_id)
         amount = _validated_customer_advance_amount(raw_amount, "قيمة التخصيص")
-        invoice = conn.execute(
+        invoice = execute_compat(conn, 
             "SELECT * FROM sales_invoices WHERE id=? AND customer_id=? AND status='posted'",
             (invoice_id, receipt["customer_id"]),
         ).fetchone()
@@ -1703,13 +1703,13 @@ def allocate_customer_advance(conn, advance_receipt_id, allocations, allocation_
         journal_lines, created_by,
     )
     for invoice, amount in normalized:
-        conn.execute(
+        execute_compat(conn, 
             """INSERT INTO customer_advance_allocations
                (advance_receipt_id,invoice_id,allocation_date,amount,journal_entry_id,created_by)
                VALUES(?,?,?,?,?,?)""",
             (advance_receipt_id, invoice["id"], allocation_date, str(amount), journal_id, created_by),
         )
-        conn.execute(
+        execute_compat(conn, 
             "UPDATE sales_invoices SET paid_amount=? WHERE id=?",
             (str(Decimal(str(invoice["paid_amount"] or "0")) + amount), invoice["id"]),
         )
@@ -1727,14 +1727,14 @@ def reverse_customer_advance_transaction(
     reason = str(reason or "").strip()
     if len(reason) < 5 or len(reason) > 500:
         raise ValueError("سبب العكس مطلوب من 5 إلى 500 حرف.")
-    if conn.execute(
+    if execute_compat(conn, 
         """SELECT 1 FROM customer_advance_reversals
            WHERE source_type=? AND source_id=?""",
         (source_type, source_id),
     ).fetchone():
         raise ValueError("تم عكس هذه العملية من قبل.")
     if source_type == "receipt":
-        source = conn.execute(
+        source = execute_compat(conn, 
             "SELECT * FROM customer_advance_receipts WHERE id=?", (source_id,)
         ).fetchone()
         if not source:
@@ -1746,7 +1746,7 @@ def reverse_customer_advance_transaction(
             raise ValueError("لا يمكن عكس إيصال المقدم قبل عكس كل التخصيصات والردود المرتبطة به.")
     elif source_type == "allocation":
         original_journal_id = int(source_id)
-        allocations = conn.execute(
+        allocations = execute_compat(conn, 
             """SELECT a.*,i.invoice_no,i.paid_amount,i.customer_id
                FROM customer_advance_allocations a
                JOIN sales_invoices i ON i.id=a.invoice_id
@@ -1760,7 +1760,7 @@ def reverse_customer_advance_transaction(
             if Decimal(str(row["paid_amount"] or "0")) < Decimal(str(row["amount"])):
                 raise ValueError("رصيد الفاتورة لا يسمح بعكس قيمة التخصيص بأمان.")
     else:
-        source = conn.execute(
+        source = execute_compat(conn, 
             "SELECT * FROM customer_advance_refunds WHERE id=?", (source_id,)
         ).fetchone()
         if not source:
@@ -1776,7 +1776,7 @@ def reverse_customer_advance_transaction(
     )
     if source_type == "allocation":
         for row in allocations:
-            conn.execute(
+            execute_compat(conn, 
                 "UPDATE sales_invoices SET paid_amount=? WHERE id=?",
                 (str(Decimal(str(row["paid_amount"] or "0")) - Decimal(str(row["amount"]))),
                  row["invoice_id"]),
@@ -1802,7 +1802,7 @@ def post_customer_advance_refund(conn, advance_receipt_id, refund_date, amount,
     """Refund only the unallocated portion of a customer advance."""
     refund_date = _validate_customer_advance_date(refund_date)
     amount = _validated_customer_advance_amount(amount, "قيمة رد مقدم العميل")
-    receipt = conn.execute(
+    receipt = execute_compat(conn, 
         """SELECT r.*,c.name customer_name FROM customer_advance_receipts r
            JOIN customers c ON c.id=r.customer_id WHERE r.id=? AND c.active=1""",
         (advance_receipt_id,),
@@ -1826,7 +1826,7 @@ def post_customer_advance_refund(conn, advance_receipt_id, refund_date, amount,
          (cash_account_id, 0, amount, "رد نقدي/بنكي للعميل")],
         created_by, dimensions=dimensions,
     )
-    conn.execute(
+    execute_compat(conn, 
         """INSERT INTO customer_advance_refunds
            (refund_no,advance_receipt_id,refund_date,amount,cash_account_id,journal_entry_id,reference,created_by)
            VALUES(?,?,?,?,?,?,?,?)""",
@@ -2730,7 +2730,7 @@ def cancel_invoice_workflow(workflow_id):
 def reject_discount_approval_request(conn, current, reviewer_id, reason, request_id):
     """Reject a pending discount request without leaving its sales order in limbo."""
     if current["request_type"] == "sales_order":
-        order = conn.execute(
+        order = execute_compat(conn, 
             """SELECT id,status,discount_approval_request_id FROM sales_orders
                WHERE id=?""",
             (current["sales_order_id"],),
@@ -2738,7 +2738,7 @@ def reject_discount_approval_request(conn, current, reviewer_id, reason, request
         if (not order or order["status"] != "pending_approval"
                 or order["discount_approval_request_id"] != request_id):
             raise ValueError("أمر البيع لم يعد صالحًا لرفض طلب الخصم.")
-    changed = conn.execute(
+    changed = execute_compat(conn, 
         """UPDATE sales_discount_approval_requests
            SET status='rejected',reviewed_by=?,reviewed_at=?,decision_reason=?
            WHERE id=? AND status='pending'""",
@@ -2747,7 +2747,7 @@ def reject_discount_approval_request(conn, current, reviewer_id, reason, request
     if changed != 1:
         raise ValueError("تمت معالجة طلب الخصم بواسطة مستخدم آخر.")
     if current["request_type"] == "sales_order":
-        changed = conn.execute(
+        changed = execute_compat(conn, 
             """UPDATE sales_orders SET status='rejected',discount_approval_status='rejected',
                rejection_reason=?,rejected_by=?,rejected_at=CURRENT_TIMESTAMP
                WHERE id=? AND discount_approval_request_id=? AND status='pending_approval'""",
