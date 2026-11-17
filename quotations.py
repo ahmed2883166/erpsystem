@@ -15,6 +15,7 @@ from db_sql import execute_compat, executemany_compat
 quotes_bp=Blueprint("quotes",__name__,url_prefix="/sales/quotations")
 
 M=Decimal("0.01")
+QUOTATION_ERRORS=(ValueError,KeyError,InvalidOperation)+DB_ERROR
 
 def db():
  return connect_database(DB_PATH, isolation_level=None)
@@ -537,7 +538,7 @@ def index():
     (no,customer,qdate,valid, str(subtotal),str(rate),str(tax),str(subtotal+tax),request.form.get("notes",""),session["user_id"]))
    executemany_compat(c,"INSERT INTO quotation_lines(quotation_id,product_id,description,quantity,unit_price,line_total) VALUES(?,?,?,?,?,?)",[(qid,*x) for x in lines])
    c.commit(); flash("تم حفظ عرض السعر "+no,"success"); return redirect(url_for("quotes.view",quote_id=qid))
-  except (ValueError,KeyError,DB_ERROR) as e: c.rollback(); flash(str(e),"error")
+  except QUOTATION_ERRORS as e: c.rollback(); flash(str(e),"error")
  customers=execute_compat(c,"SELECT id,code,name FROM customers WHERE active=1 ORDER BY name").fetchall()
  products=execute_compat(c,"SELECT id,sku,name_ar FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
  settings={r["setting_key"]:r["setting_value"] for r in execute_compat(c,"SELECT setting_key,setting_value FROM company_settings WHERE setting_key='default_vat_rate'")}
@@ -588,7 +589,7 @@ def convert(quote_id):
                      "limit_percent":result["discount_limit"]})
   flash("تم إنشاء أمر البيع "+result["order_no"]+" وإرساله للاعتماد الداخلي.","success")
   return redirect(url_for("quotes.sales_order_view",order_id=result["sales_order_id"]))
- except (ValueError,InvalidOperation,DB_ERROR) as e:
+ except QUOTATION_ERRORS as e:
   c.rollback(); flash(str(e),"error")
   return redirect(url_for("quotes.view",quote_id=quote_id))
  finally: c.close()
@@ -681,7 +682,7 @@ def approve_order_route(order_id):
   begin_write_transaction(c)
   approve_sales_order(c,order_id,session["user_id"])
   c.commit(); flash("تم اعتماد أمر البيع. يمكن الآن إنشاء أذون التسليم.","success")
- except (ValueError,InvalidOperation,DB_ERROR) as e:
+ except QUOTATION_ERRORS as e:
   c.rollback(); flash(str(e),"error")
  finally: c.close()
  return redirect(url_for("quotes.sales_order_view",order_id=order_id))
@@ -695,7 +696,7 @@ def reject_order_route(order_id):
   begin_write_transaction(c)
   reject_sales_order(c,order_id,session["user_id"],request.form.get("reason",""))
   c.commit(); flash("تم رفض أمر البيع وتسجيل سبب الرفض.","success")
- except (ValueError,InvalidOperation,DB_ERROR) as e:
+ except QUOTATION_ERRORS as e:
   c.rollback(); flash(str(e),"error")
  finally: c.close()
  return redirect(url_for("quotes.sales_order_view",order_id=order_id))
@@ -715,7 +716,7 @@ def create_delivery_note_route(order_id):
    lines,session["user_id"],request.form.get("notes",""))
   g.audit_created_record=("delivery_notes",result["delivery_note_id"],"delivery_note_lines","delivery_note_id")
   c.commit(); flash("تم إنشاء إذن التسليم "+result["delivery_no"]+" كمسودة.","success")
- except (ValueError,DB_ERROR) as e:
+ except QUOTATION_ERRORS as e:
   c.rollback(); flash(str(e),"error")
  finally: c.close()
  return redirect(url_for("quotes.sales_order_view",order_id=order_id))
@@ -733,7 +734,7 @@ def post_delivery_note_route(note_id):
   order_id=note["sales_order_id"]
   result=post_delivery_note(c,note_id,session["user_id"])
   c.commit(); flash("تم ترحيل إذن التسليم وصرف المخزون. تكلفة الصرف: "+str(result["total_cost"]),"success")
- except (ValueError,DB_ERROR) as e:
+ except QUOTATION_ERRORS as e:
   c.rollback(); flash(str(e),"error")
  finally: c.close()
  return redirect(url_for("quotes.sales_order_view",order_id=order_id)) if order_id else redirect(url_for("quotes.index"))
@@ -750,7 +751,7 @@ def invoice_order_route(order_id):
   g.audit_created_record=("sales_invoices",result["invoice_id"],"sales_invoice_lines","invoice_id")
   c.commit(); flash("تم إصدار فاتورة الكميات المسلمة فقط: "+result["invoice_no"],"success")
   return redirect(url_for("quotes.sales_order_view",order_id=order_id))
- except (ValueError,DB_ERROR) as e:
+ except QUOTATION_ERRORS as e:
   c.rollback(); flash(str(e),"error")
   return redirect(url_for("quotes.sales_order_view",order_id=order_id))
  finally: c.close()
@@ -766,7 +767,7 @@ def price_rules():
    execute_compat(c,"INSERT INTO customer_price_rules(customer_id,product_id,unit_price,valid_from,valid_to,min_qty) VALUES(?,?,?,?,?,?)",
     (int(request.form["customer_id"]),int(request.form["product_id"]),str(price),request.form["valid_from"],request.form.get("valid_to") or None,str(qty)))
    c.commit(); flash("تم حفظ السعر الخاص بالعميل.","success")
-  except (ValueError,DB_ERROR) as e: c.rollback(); flash(str(e),"error")
+  except QUOTATION_ERRORS as e: c.rollback(); flash(str(e),"error")
  customers=execute_compat(c,"SELECT id,code,name FROM customers WHERE active=1 ORDER BY name").fetchall()
  products=execute_compat(c,"SELECT id,sku,name_ar FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
  rules=execute_compat(c,"SELECT r.*,cu.name customer_name,p.name_ar product_name,p.sku FROM customer_price_rules r JOIN customers cu ON cu.id=r.customer_id JOIN stock_products p ON p.id=r.product_id ORDER BY r.valid_from DESC").fetchall()
