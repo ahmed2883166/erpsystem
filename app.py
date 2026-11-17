@@ -16,6 +16,7 @@ import zipfile
 from datetime import date, datetime
 from pathlib import Path
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal_settings import parse_decimal_setting
 from functools import wraps
 import uuid
 
@@ -1158,9 +1159,7 @@ def company_setup():
             current_discount_limit["setting_value"] if current_discount_limit else "10",
         ).strip()
         try:
-            discount_limit_number = float(discount_limit_value)
-            if not 0 <= discount_limit_number <= 100:
-                raise ValueError()
+            discount_limit_number = parse_decimal_setting(discount_limit_value, minimum=0, maximum=100)
         except ValueError:
             flash("حد خصم المبيعات يجب أن يكون رقمًا من 0 إلى 100.", "error")
             connection.close()
@@ -1179,8 +1178,8 @@ def company_setup():
             "default_vat_rate": automatic_vat
         }
         try:
-            vat_rate = float(settings_values["default_vat_rate"])
-            if not 0 <= vat_rate <= 100 or not settings_values["company_name"]:
+            vat_rate = parse_decimal_setting(settings_values["default_vat_rate"], minimum=0, maximum=100)
+            if not settings_values["company_name"]:
                 raise ValueError()
         except ValueError:
             flash("أدخل اسم شركة ومعدل ضريبة صحيحًا من 0 إلى 100.", "error")
@@ -1228,7 +1227,9 @@ def company_setup():
                 connection.execute("UPDATE currencies SET active=0,is_base=0 WHERE code=?", (code,))
                 continue
             try:
-                rate = 1.0 if code == base_currency else float(request.form.get("rate_" + code, "0") or 0)
+                rate = Decimal("1") if code == base_currency else parse_decimal_setting(
+                    request.form.get("rate_" + code, "0") or 0, minimum=0
+                )
             except ValueError:
                 rate = 0
             if rate <= 0:
@@ -1236,7 +1237,7 @@ def company_setup():
                 connection.rollback()
                 connection.close()
                 return redirect(url_for("company_setup"))
-            connection.execute("UPDATE currencies SET active=1,is_base=?,rate_to_base=?,updated_at=? WHERE code=?", (1 if code == base_currency else 0, rate, now(), code))
+            connection.execute("UPDATE currencies SET active=1,is_base=?,rate_to_base=?,updated_at=? WHERE code=?", (1 if code == base_currency else 0, str(rate), now(), code))
         if has_entries and previous_activity and previous_activity != activity:
             flash("لا يمكن تغيير النشاط بعد ترحيل قيود؛ لأن ذلك قد يغيّر دلالات وربط الحسابات. أنشئ شركة جديدة أو نفّذ تحويلًا محاسبيًا معتمدًا.", "error")
             connection.rollback()
