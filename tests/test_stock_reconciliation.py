@@ -109,16 +109,17 @@ class StockReconciliationReportTests(unittest.TestCase):
                 value_remaining,source_movement_id
             ) VALUES
                 (2,1,1,'4','4','10','40',201),
-                (3,1,1,'1','1','10','10',NULL);
+                (3,1,1,'1','1','10','10',NULL),
+                (4,1,1,'1','not-a-number','10','10',NULL);
         """)
 
         report = self.run_report()
         codes = {issue["code"] for issue in report["layer_integrity_issues"]}
 
-        self.assertEqual(report["layer_integrity_issue_count"], 3)
+        self.assertEqual(report["layer_integrity_issue_count"], 4)
         self.assertEqual(report["reconciliation_status"], "review")
         self.assertTrue({
-            "missing_source_reference",
+            "missing_source_reference", "invalid_numeric_value",
             "inbound_layer_quantity_mismatch",
             "inbound_movement_without_layer",
         }.issubset(codes))
