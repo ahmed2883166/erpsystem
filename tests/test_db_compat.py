@@ -21,6 +21,20 @@ from db_compat import (
 )
 
 
+class CrossDatabaseErrorTypeTests(unittest.TestCase):
+    def test_sqlite_errors_remain_in_shared_database_error_types(self):
+        from db_compat import DB_ERROR, DB_INTEGRITY_ERROR
+
+        self.assertIn(sqlite3.Error, DB_ERROR)
+        self.assertIn(sqlite3.IntegrityError, DB_INTEGRITY_ERROR)
+
+    def test_integrity_errors_are_a_subset_of_database_errors(self):
+        from db_compat import DB_ERROR, DB_INTEGRITY_ERROR
+
+        for error_type in DB_INTEGRITY_ERROR:
+            self.assertIn(error_type, DB_ERROR)
+
+
 class SQLPlaceholderTranslationTests(unittest.TestCase):
     def test_translates_only_unquoted_qmark_placeholders(self):
         sql = '''SELECT ?, '?', "?", $tag$?;$tag$
