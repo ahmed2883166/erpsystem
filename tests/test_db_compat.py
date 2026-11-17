@@ -350,6 +350,14 @@ class PostgreSQLSchemaCompatibilityTests(unittest.TestCase):
             self.assertEqual(info["id"]["pk"], 1)
             self.assertEqual(info["amount"]["type"], "numeric")
             self.assertEqual(info["amount"]["pk"], 0)
+            self.assertFalse(info["id"]["generated"])
+            self.assertFalse(info["amount"]["generated"])
+            connection.execute(
+                "ALTER TABLE compatibility_probe ADD COLUMN normalized_amount "
+                "TEXT GENERATED ALWAYS AS (amount::text) STORED"
+            )
+            generated_info = table_column_info(connection, "compatibility_probe")
+            self.assertTrue(generated_info["normalized_amount"]["generated"])
             self.assertFalse(table_exists(connection, "missing_table"))
         finally:
             connection.rollback()
