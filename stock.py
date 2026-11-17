@@ -2013,7 +2013,7 @@ def valuation_reconciliation():
             row["status"] = "matched" if row["difference"].quantize(D("0.01")) == D("0.00") else "review"
         matched_account_count = sum(1 for row in rows if row["status"] == "matched")
         difference_account_count = len(rows)-matched_account_count
-        reconciliation_status = "matched" if total_difference.quantize(D("0.01")) == D("0.00") else "review"
+        reconciliation_status = "matched" if (total_difference.quantize(D("0.01")) == D("0.00") and layer_integrity_issue_count == 0) else "review"
         detail_matched_count = sum(1 for row in detail_rows if row["status"] == "matched")
         detail_difference_count = len(detail_rows) - detail_matched_count
         unallocated_rows = [{"code": code, "name": accounts[code]["name_ar"],
