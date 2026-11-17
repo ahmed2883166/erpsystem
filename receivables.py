@@ -1,6 +1,7 @@
 from app_paths import DB_PATH
 from database import connect_database
 from db_compat import table_columns, table_exists
+from db_sql import execute_compat
 """Customer and supplier receivables/payables aging reports."""
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -87,10 +88,10 @@ def _customer_aging_movements(conn, as_of):
    sources += (("SELECT invoice_id,amount FROM customer_advance_allocations WHERE allocation_date<=?",(as_of,)),)
    all_sources += (("SELECT invoice_id,amount FROM customer_advance_allocations",()),)
   for sql,params in sources:
-   for invoice_id,amount in conn.execute(sql,params).fetchall():
+   for invoice_id,amount in execute_compat(conn, sql,params).fetchall():
     paid_as_of[invoice_id]=paid_as_of.get(invoice_id,Decimal("0"))+_amount(amount)
   for sql,params in all_sources:
-   for invoice_id,amount in conn.execute(sql,params).fetchall():
+   for invoice_id,amount in execute_compat(conn, sql,params).fetchall():
     paid_all[invoice_id]=paid_all.get(invoice_id,Decimal("0"))+_amount(amount)
  credited_as_of={}
  credited_all={}
@@ -107,15 +108,15 @@ def _customer_aging_movements(conn, as_of):
    sql="""SELECT invoice_id,total_amount amount FROM sales_credit_notes
           WHERE status='posted' AND credit_date<=?"""
   params=(as_of,as_of) if "reversal" in sql else (as_of,)
-  for invoice_id,amount in conn.execute(
+  for invoice_id,amount in execute_compat(conn, 
    """SELECT invoice_id,total_amount amount FROM sales_credit_notes WHERE status='posted'""",()
   ).fetchall():
    credited_all[invoice_id]=credited_all.get(invoice_id,Decimal("0"))+_amount(amount)
-  for invoice_id,amount in conn.execute(sql,params).fetchall():
+  for invoice_id,amount in execute_compat(conn, sql,params).fetchall():
    credited_as_of[invoice_id]=credited_as_of.get(invoice_id,Decimal("0"))+_amount(amount)
  refunds_as_of={}
  if _table_exists(conn,"customer_refunds") and _table_exists(conn,"sales_credit_notes"):
-  for invoice_id,amount in conn.execute(
+  for invoice_id,amount in execute_compat(conn, 
    """SELECT cn.invoice_id,rf.amount FROM customer_refunds rf
       JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id
       WHERE cn.credit_date<=? AND rf.refund_date<=?""",(as_of,as_of)
@@ -141,7 +142,7 @@ def _customer_aging_documents(conn, as_of):
  credit_expr="COALESCE(i.credited_amount,'0')" if "credited_amount" in columns else "'0'"
  party_code_expr="cu.code" if "code" in customer_columns else "CAST(cu.id AS TEXT)"
  party_name_expr="cu.name" if "name" in customer_columns else "CAST(cu.id AS TEXT)"
- return conn.execute(f"""SELECT i.id invoice_id,{invoice_no_expr} doc_no,
+ return execute_compat(conn, f"""SELECT i.id invoice_id,{invoice_no_expr} doc_no,
    {party_code_expr} party_code,{party_name_expr} party_name,
    i.invoice_date doc_date,{due_expr} due_date,i.total_amount total_amount,
    {paid_expr} paid_amount,{credit_expr} credited_amount
@@ -164,7 +165,7 @@ def _supplier_aging_documents(conn, as_of):
  bill_no_expr="b.bill_no" if "bill_no" in columns else "CAST(b.id AS TEXT)"
  party_code_expr="s.code" if "code" in supplier_columns else "CAST(s.id AS TEXT)"
  party_name_expr="s.name" if "name" in supplier_columns else "CAST(s.id AS TEXT)"
- return conn.execute(f"""SELECT b.id invoice_id,{bill_no_expr} doc_no,{party_code_expr} party_code,{party_name_expr} party_name,
+ return execute_compat(conn, f"""SELECT b.id invoice_id,{bill_no_expr} doc_no,{party_code_expr} party_code,{party_name_expr} party_name,
    b.bill_date doc_date,{due_expr} due_date,b.total_amount total_amount,
    {paid_expr} paid_amount,{credit_expr} credited_amount
    FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
@@ -189,24 +190,24 @@ def _supplier_aging_movements(conn, as_of):
  paid_as_of={}
  paid_all={}
  if has_detail:
-  for bill_id,amount in conn.execute(
+  for bill_id,amount in execute_compat(conn, 
    """SELECT a.bill_id,a.amount FROM supplier_payment_allocations a
       JOIN supplier_payments p ON p.id=a.payment_id
       WHERE p.payment_date<=?""",(as_of,)
   ).fetchall():
    paid_as_of[bill_id]=paid_as_of.get(bill_id,Decimal("0"))+_amount(amount)
-  for bill_id,amount in conn.execute(
+  for bill_id,amount in execute_compat(conn, 
    "SELECT bill_id,amount FROM supplier_payment_allocations",()
   ).fetchall():
    paid_all[bill_id]=paid_all.get(bill_id,Decimal("0"))+_amount(amount)
  credited_as_of={}
  credited_all={}
  if _supplier_credit_notes_linked(conn):
-  for bill_id,amount in conn.execute(
+  for bill_id,amount in execute_compat(conn, 
    "SELECT bill_id,total_amount FROM supplier_credit_notes WHERE status='posted'",()
   ).fetchall():
    credited_all[bill_id]=credited_all.get(bill_id,Decimal("0"))+_amount(amount)
-  for bill_id,amount in conn.execute(
+  for bill_id,amount in execute_compat(conn, 
    """SELECT bill_id,total_amount FROM supplier_credit_notes
       WHERE status='posted' AND credit_date<=?""",(as_of,)
   ).fetchall():
