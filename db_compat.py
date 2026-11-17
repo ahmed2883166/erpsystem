@@ -108,6 +108,7 @@ def table_column_info(connection, table_name, *, schema=None):
                 "name": row["name"] if isinstance(row, sqlite3.Row) else row[1],
                 "type": row["type"] if isinstance(row, sqlite3.Row) else row[2],
                 "pk": row["pk"] if isinstance(row, sqlite3.Row) else row[5],
+                "generated": (row["hidden"] if isinstance(row, sqlite3.Row) else row[6]) in (2, 3),
             }
             for row in rows
         }
@@ -117,7 +118,8 @@ def table_column_info(connection, table_name, *, schema=None):
         rows = connection.execute(
             """
             SELECT c.column_name AS name, c.data_type AS type,
-                   COALESCE(k.ordinal_position, 0) AS pk
+                   COALESCE(k.ordinal_position, 0) AS pk,
+                   (c.is_generated <> 'NEVER') AS generated
             FROM information_schema.columns AS c
             LEFT JOIN information_schema.key_column_usage AS k
               ON k.table_schema=c.table_schema AND k.table_name=c.table_name
@@ -160,6 +162,7 @@ def table_column_info(connection, table_name, *, schema=None):
             "name": row["name"] if isinstance(row, dict) else row[0],
             "type": row["type"] if isinstance(row, dict) else row[1],
             "pk": row["pk"] if isinstance(row, dict) else row[2],
+            "generated": row["generated"] if isinstance(row, dict) else row[3],
         }
         for row in rows
     }
