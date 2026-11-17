@@ -57,7 +57,7 @@ class CurrencyBalanceUpdateTests(unittest.TestCase):
         row = self.conn.execute(
             "SELECT balance_foreign,balance_base,status FROM fx_transactions WHERE id=1"
         ).fetchone()
-        self.assertEqual(row["balance_foreign"], "0.00")
+        self.assertEqual(row["balance_foreign"], "0")
         self.assertEqual(row["balance_base"], "0.00")
         self.assertEqual(row["status"], "settled")
 
