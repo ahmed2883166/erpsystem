@@ -1938,7 +1938,7 @@ def customer_advances():
         item["allocation_batches"] = execute_compat(c, 
             """SELECT a.journal_entry_id,MIN(a.allocation_date) allocation_date,
                       SUM(CAST(a.amount AS NUMERIC)) amount,COUNT(*) invoice_count,
-                      {_group_concat_expression(c, 'i.invoice_no')} invoice_numbers,
+                      {} invoice_numbers,
                       x.reversal_journal_entry_id,x.reversal_date,x.reason
                FROM customer_advance_allocations a
                JOIN sales_invoices i ON i.id=a.invoice_id
@@ -2104,7 +2104,7 @@ def index():
         per_page=request.args.get("receipts_per_page",50,type=int))
     batch_receipts_page = fetch_page(c,
         """SELECT b.*,cu.name customer_name,COUNT(a.id) invoice_count,
-              {_group_concat_expression(c, "i.invoice_no || ' (' || a.amount || ')")} invoice_numbers
+              {} invoice_numbers
            FROM customer_receipt_batches b JOIN customers cu ON cu.id=b.customer_id
            LEFT JOIN customer_receipt_allocations a ON a.batch_id=b.id
            LEFT JOIN sales_invoices i ON i.id=a.invoice_id
