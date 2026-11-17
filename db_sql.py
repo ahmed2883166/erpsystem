@@ -156,4 +156,6 @@ def executemany_compat(connection, sql, seq_of_params):
     dialect = database_dialect(connection)
     if dialect == "sqlite":
         return connection.executemany(sql, seq_of_params)
-    return connection.executemany(qmark_to_format(sql), seq_of_params)
+    cursor = connection.cursor()
+    cursor.executemany(qmark_to_format(sql), seq_of_params)
+    return cursor

@@ -4,6 +4,8 @@ import unittest
 import uuid
 from decimal import Decimal
 
+from db_sql import executemany_compat
+
 POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
 
 
@@ -50,9 +52,10 @@ class PostgreSQLAccountingCoreTests(unittest.TestCase):
                     memo TEXT
                 )
             """)
-            connection.executemany(
+            executemany_compat(
+                connection,
                 "INSERT INTO accounts(id,code,name_ar,account_type,is_group,active) "
-                "VALUES(%s,%s,%s,%s,%s,%s)",
+                "VALUES(?,?,?,?,?,?)",
                 [
                     (1, "1110", "الصندوق", "asset", 0, 1),
                     (2, "4100", "الإيرادات", "revenue", 0, 1),
