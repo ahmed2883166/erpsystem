@@ -117,8 +117,8 @@ def initialize_assets_schema():
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )""")
     execute_compat(c, "CREATE INDEX IF NOT EXISTS idx_fixed_asset_journal_pending ON fixed_asset_journal_lines(status,entry_id)")
+    c.commit()
     c.close()
-
 
 def register_assets_from_journal_lines(conn, entry_id, line_details, actor_id):
     """Stage fixed assets from posted debit journal lines; never posts a second purchase entry."""
