@@ -143,7 +143,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
             self._migration(1, "0001_create_probe.sql",
                             'CREATE TABLE "probe" (id BIGINT PRIMARY KEY)')
         ]
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         row = self.connection.execute(
             "SELECT COUNT(*) AS count FROM "
@@ -173,7 +173,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
                 """,
             )
         ]
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1])
         row = self.connection.execute(
             'SELECT label FROM ' + quote_schema_name(self.schema) + '."multi_probe" WHERE id=1'
         ).fetchone()
@@ -262,7 +262,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
     def test_party_and_banking_schema_supports_independent_ledgers(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         schema = quote_schema_name(self.schema)
 
@@ -304,7 +304,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
     def test_purchasing_schema_creates_order_receipt_and_bill_links(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         schema = quote_schema_name(self.schema)
         user_id = self.connection.execute(
@@ -424,7 +424,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
     def test_inventory_schema_uses_exact_quantities_and_enforces_location_scope(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         schema = quote_schema_name(self.schema)
 
