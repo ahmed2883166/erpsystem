@@ -10,6 +10,7 @@ import unittest
 import uuid
 from pathlib import Path
 
+from db_compat import _split_sql_statements
 from postgres_database import connect_postgres
 from postgres_migrations import Migration, apply_migrations, load_migrations, quote_schema_name
 
@@ -36,6 +37,19 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
         self.assertEqual([item.version for item in migrations], [1, 2])
         self.assertEqual(migrations[0].name, "0001_create_first.sql")
         self.assertEqual(len(migrations[0].checksum), 64)
+
+    def test_repository_core_migration_is_loadable_and_splits_function_body_safely(self):
+        migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
+        migrations = load_migrations(migration_dir)
+        self.assertEqual([item.version for item in migrations], [1])
+        statements = _split_sql_statements(migrations[0].sql)
+        audit_function = next(
+            item for item in statements
+            if "CREATE OR REPLACE FUNCTION reject_audit_log_mutation" in item
+        )
+        self.assertIn("RAISE EXCEPTION 'Audit log records are immutable';", audit_function)
+        self.assertIn("END;\n$nexus_audit$", audit_function)
+        self.assertTrue(any("debit NUMERIC(24, 6)" in item for item in statements))
 
     def test_rejects_invalid_or_empty_migration_files(self):
         with tempfile.TemporaryDirectory() as directory:
