@@ -1,5 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database
+from db_compat import table_columns, table_exists
 """Customer and supplier receivables/payables aging reports."""
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -16,7 +17,7 @@ def initialize_aging_schema():
  for table, source_date in (("sales_invoices","invoice_date"),("supplier_bills","bill_date")):
   if not _table_exists(c, table):
    continue
-  cols={r["name"] for r in c.execute("PRAGMA table_info("+table+")")}
+  cols=table_columns(c, table)
   if "due_date" not in cols:
    c.execute("ALTER TABLE "+table+" ADD COLUMN due_date TEXT")
   c.execute(
@@ -49,9 +50,7 @@ def _amount(value):
 
 
 def _table_exists(conn, name):
- return conn.execute(
-  "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
- ).fetchone() is not None
+ return table_exists(conn, name)
 
 
 def _customer_aging_movements(conn, as_of):
@@ -96,7 +95,7 @@ def _customer_aging_movements(conn, as_of):
  credited_as_of={}
  credited_all={}
  if _table_exists(conn,"sales_credit_notes"):
-  columns={row["name"] for row in conn.execute("PRAGMA table_info(sales_credit_notes)")}
+  columns=table_columns(conn, "sales_credit_notes")
   if "cancel_journal_entry_id" in columns and _table_exists(conn,"journal_entries"):
    sql="""SELECT cn.invoice_id,cn.total_amount amount
           FROM sales_credit_notes cn
@@ -132,8 +131,8 @@ def _customer_aging_documents(conn, as_of):
  # subledger movements below rather than causing the report/export to fail.
  if not _table_exists(conn, "sales_invoices") or not _table_exists(conn, "customers"):
   return []
- columns={row["name"] for row in conn.execute("PRAGMA table_info(sales_invoices)")}
- customer_columns={row["name"] for row in conn.execute("PRAGMA table_info(customers)")}
+ columns=table_columns(conn, "sales_invoices")
+ customer_columns=table_columns(conn, "customers")
  if not {"id","customer_id","invoice_date","total_amount","status"}.issubset(columns):
   return []
  invoice_no_expr="i.invoice_no" if "invoice_no" in columns else "CAST(i.id AS TEXT)"
@@ -155,8 +154,8 @@ def _supplier_aging_documents(conn, as_of):
  # The reporting page may be opened before the purchases module initializes.
  if not _table_exists(conn, "supplier_bills") or not _table_exists(conn, "suppliers"):
   return []
- columns={row["name"] for row in conn.execute("PRAGMA table_info(supplier_bills)")}
- supplier_columns={row["name"] for row in conn.execute("PRAGMA table_info(suppliers)")}
+ columns=table_columns(conn, "supplier_bills")
+ supplier_columns=table_columns(conn, "suppliers")
  if not {"id","supplier_id","bill_date","total_amount","status"}.issubset(columns):
   return []
  credit_expr="COALESCE(b.credited_amount,'0')" if "credited_amount" in columns else "'0'"
@@ -176,14 +175,14 @@ def _supplier_aging_documents(conn, as_of):
 def _supplier_credit_notes_linked(conn):
  if not _table_exists(conn,"supplier_credit_notes"):
   return False
- columns={row["name"] for row in conn.execute("PRAGMA table_info(supplier_credit_notes)")}
+ columns=table_columns(conn, "supplier_credit_notes")
  return {"bill_id","total_amount","status","credit_date"}.issubset(columns)
 
 
 def _supplier_aging_movements(conn, as_of):
- payment_columns=({row["name"] for row in conn.execute("PRAGMA table_info(supplier_payments)")}
+ payment_columns=(table_columns(conn, "supplier_payments")
                   if _table_exists(conn,"supplier_payments") else set())
- allocation_columns=({row["name"] for row in conn.execute("PRAGMA table_info(supplier_payment_allocations)")}
+ allocation_columns=(table_columns(conn, "supplier_payment_allocations")
                      if _table_exists(conn,"supplier_payment_allocations") else set())
  has_detail=({"id","payment_date"}.issubset(payment_columns) and
              {"payment_id","bill_id","amount"}.issubset(allocation_columns))
