@@ -105,6 +105,112 @@ def _index_sql_by_name(snapshot):
     }
 
 
+def generate_trigger_ddl(triggers):
+    """Translate the known NEXUS SQLite triggers; fail closed on unknown ones."""
+    if not triggers:
+        return []
+    by_name = {trigger["name"]: trigger for trigger in triggers}
+    known_audit = {
+        "audit_log_block_delete": ("nexus_block_audit_log_mutation", "DELETE"),
+        "audit_log_block_update": ("nexus_block_audit_log_mutation", "UPDATE"),
+        "budget_audit_no_delete": ("nexus_block_budget_audit_mutation", "DELETE"),
+        "budget_audit_no_update": ("nexus_block_budget_audit_mutation", "UPDATE"),
+    }
+    dashboard_pattern = re.compile(
+        r"trg_dashboard_version_([A-Za-z_][A-Za-z0-9_]*)_(insert|update|delete)$"
+    )
+    stock_triggers = {
+        "trg_stock_product_locations_same_wh_insert": ("INSERT", "stock_product_locations"),
+        "trg_stock_product_locations_same_wh_update": ("UPDATE", "stock_product_locations"),
+    }
+    dashboard = []
+    for trigger in triggers:
+        name = trigger["name"]
+        if name in known_audit or name in stock_triggers:
+            continue
+        match = dashboard_pattern.fullmatch(name)
+        if match and match.group(1) == trigger.get("table_name"):
+            dashboard.append((trigger, match.group(2).upper()))
+            continue
+        raise ValueError(f"Unsupported SQLite trigger; refusing to omit it: {name}")
+
+    lines = []
+    if any(name in by_name for name in known_audit):
+        lines.extend([
+            "CREATE OR REPLACE FUNCTION nexus_block_audit_log_mutation()",
+            "RETURNS trigger LANGUAGE plpgsql AS $",
+            "BEGIN",
+            "    RAISE EXCEPTION 'audit_log is append-only';",
+            "END;",
+            "$;",
+            "",
+            "CREATE OR REPLACE FUNCTION nexus_block_budget_audit_mutation()",
+            "RETURNS trigger LANGUAGE plpgsql AS $",
+            "BEGIN",
+            "    RAISE EXCEPTION 'Budget audit history is immutable';",
+            "END;",
+            "$;",
+            "",
+        ])
+        for name, (function_name, operation) in known_audit.items():
+            trigger = by_name.get(name)
+            if trigger:
+                lines.append(
+                    f"CREATE TRIGGER {quote_ident(name)} BEFORE {operation} ON "
+                    f"{quote_ident(trigger['table_name'])} FOR EACH ROW "
+                    f"EXECUTE FUNCTION {function_name}();"
+                )
+
+    if dashboard:
+        lines.extend([
+            "CREATE OR REPLACE FUNCTION nexus_bump_dashboard_version()",
+            "RETURNS trigger LANGUAGE plpgsql AS $",
+            "BEGIN",
+            "    UPDATE management_dashboard_data_version",
+            "       SET version = version + 1 WHERE id = 1;",
+            "    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;",
+            "    RETURN NEW;",
+            "END;",
+            "$;",
+            "",
+        ])
+        for trigger, operation in dashboard:
+            lines.append(
+                f"CREATE TRIGGER {quote_ident(trigger['name'])} AFTER {operation} ON "
+                f"{quote_ident(trigger['table_name'])} FOR EACH ROW "
+                "EXECUTE FUNCTION nexus_bump_dashboard_version();"
+            )
+
+    if any(name in by_name for name in stock_triggers):
+        lines.extend([
+            "CREATE OR REPLACE FUNCTION nexus_validate_stock_product_location()",
+            "RETURNS trigger LANGUAGE plpgsql AS $",
+            "BEGIN",
+            "    IF NOT EXISTS (",
+            "        SELECT 1 FROM stock_locations l",
+            "         WHERE l.id = NEW.location_id",
+            "           AND l.warehouse_id = NEW.warehouse_id",
+            "           AND l.active = 1",
+            "    ) THEN",
+            "        RAISE EXCEPTION 'موقع الصنف الافتراضي يجب أن يكون نشطًا ويتبع نفس المخزن.';",
+            "    END IF;",
+            "    RETURN NEW;",
+            "END;",
+            "$;",
+            "",
+        ])
+        for name, (operation, table_name) in stock_triggers.items():
+            if name not in by_name:
+                continue
+            timing = "BEFORE UPDATE OF warehouse_id, location_id" if operation == "UPDATE" else "BEFORE INSERT"
+            lines.append(
+                f"CREATE TRIGGER {quote_ident(name)} {timing} ON "
+                f"{quote_ident(table_name)} FOR EACH ROW "
+                "EXECUTE FUNCTION nexus_validate_stock_product_location();"
+            )
+    return lines
+
+
 def generate_postgres_ddl(snapshot):
     tables = snapshot.get("tables")
     if not isinstance(tables, list) or not tables:
@@ -249,11 +355,15 @@ def generate_postgres_ddl(snapshot):
             f"({columns_sql}){where_clause};"
         )
 
+    trigger_lines = generate_trigger_ddl(snapshot.get("triggers", []))
+    if trigger_lines:
+        lines.extend(["", *trigger_lines])
     lines.extend(["", "COMMIT;", ""])
     review = {
         "table_count": len(tables),
         "foreign_key_count": len(pending_fks),
         "index_count": len(pending_indexes),
+        "trigger_count": len(snapshot.get("triggers", [])),
         "identity_columns": identity_columns,
         "text_numeric_candidates": sorted(set(numeric_candidates)),
         "notes": [
