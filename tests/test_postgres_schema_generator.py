@@ -173,7 +173,8 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
                     ],
                     "foreign_keys": [],
                     "indexes": [],
-                },                {
+                },
+                {
                     "name": "stock_products",
                     "columns": [
                         {"name": "reorder_point", "type": "TEXT", "pk": 0},
