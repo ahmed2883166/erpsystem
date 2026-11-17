@@ -166,10 +166,10 @@ def index():
             rate = D(request.form["rate_to_base"])
             if rate <= 0:
                 raise ValueError("سعر الصرف يجب أن يكون أكبر من صفر.")
-            if not c.execute("SELECT 1 FROM currencies WHERE code=? AND active=1", (currency,)).fetchone():
+            if not execute_compat(c, "SELECT 1 FROM currencies WHERE code=? AND active=1", (currency,)).fetchone():
                 raise ValueError("العملة غير موجودة أو غير مفعلة في إعدادات الشركة.")
             c.execute("BEGIN IMMEDIATE")
-            c.execute("""INSERT INTO fx_exchange_rates(currency_code,rate_date,rate_to_base,created_by)
+            execute_compat(c, """INSERT INTO fx_exchange_rates(currency_code,rate_date,rate_to_base,created_by)
                          VALUES(?,?,?,?) ON CONFLICT(currency_code,rate_date)
                          DO UPDATE SET rate_to_base=excluded.rate_to_base,source='manual',created_by=excluded.created_by""",
                       (currency,rate_date,str(rate),session["user_id"]))
@@ -184,7 +184,7 @@ def index():
         "SELECT COUNT(*) FROM fx_exchange_rates",
         page=request.args.get("rates_page",1,type=int),
         per_page=request.args.get("rates_per_page",50,type=int))
-    currencies = c.execute("SELECT code,name_ar FROM currencies WHERE active=1 AND is_base=0 ORDER BY code").fetchall()
+    currencies = execute_compat(c, "SELECT code,name_ar FROM currencies WHERE active=1 AND is_base=0 ORDER BY code").fetchall()
     transactions_page = fetch_page(c,
         """SELECT t.*,a.code party_code,a.name_ar party_account FROM fx_transactions t
            JOIN accounts a ON a.id=t.party_account_id ORDER BY t.id DESC""",
@@ -192,7 +192,7 @@ def index():
         page=request.args.get("transactions_page",1,type=int),
         per_page=request.args.get("transactions_per_page",50,type=int))
     rates, rows = rates_page["rows"], transactions_page["rows"]
-    accounts = c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE is_group=0 AND active=1 ORDER BY code").fetchall()
+    accounts = execute_compat(c, "SELECT id,code,name_ar,account_type FROM accounts WHERE is_group=0 AND active=1 ORDER BY code").fetchall()
     c.close()
     return render_template("currencies.html", rates=rates, rates_page=rates_page, currencies=currencies, transactions=rows,
                            transactions_page=transactions_page, accounts=accounts, today=date.today().isoformat())
@@ -207,7 +207,7 @@ def create_transaction():
         if kind not in {"receivable", "payable"}:
             raise ValueError("نوع العملية غير صحيح.")
         currency = request.form["currency_code"].upper().strip()
-        if not c.execute(
+        if not execute_compat(c, 
             "SELECT 1 FROM currencies WHERE code=? AND active=1 AND is_base=0", (currency,)
         ).fetchone():
             raise ValueError("العملة غير موجودة أو غير مفعلة كعملة أجنبية في إعدادات الشركة.")
@@ -234,7 +234,7 @@ def create_transaction():
             lines = [(counterpart,base_amount,0,"مصروف / حساب مقابل"),
                      (party_account,0,base_amount,"إثبات ذمة دائنة بالعملة الأجنبية")]
         journal_id = post_journal(c,trans_date,"FX-OPEN-"+reference,"إثبات معاملة بعملة أجنبية",lines,session["user_id"])
-        c.execute("""INSERT INTO fx_transactions(reference,party_type,party_name,currency_code,transaction_date,
+        execute_compat(c, """INSERT INTO fx_transactions(reference,party_type,party_name,currency_code,transaction_date,
             original_foreign,balance_foreign,original_rate,original_base,balance_base,party_account_id,
             counterpart_account_id,journal_entry_id,created_by)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
@@ -257,7 +257,7 @@ def settle(transaction_id):
     try:
         # Acquire the SQLite write lock before reading the remaining balance.
         c.execute("BEGIN IMMEDIATE")
-        t = c.execute("SELECT * FROM fx_transactions WHERE id=? AND status='open'", (transaction_id,)).fetchone()
+        t = execute_compat(c, "SELECT * FROM fx_transactions WHERE id=? AND status='open'", (transaction_id,)).fetchone()
         if not t:
             raise ValueError("المعاملة غير موجودة أو تمت تسويتها.")
         amount = D(request.form["foreign_amount"])
@@ -293,7 +293,7 @@ def settle(transaction_id):
         jid = post_journal(c,settle_date,ref,"تسوية معاملة عملة أجنبية "+t["reference"],lines,session["user_id"])
         remaining_foreign = D(t["balance_foreign"])-amount
         remaining_base = Decimal("0.00") if full_settlement else M(D(t["balance_base"])-carrying)
-        c.execute("""INSERT INTO fx_settlements(transaction_id,settlement_date,foreign_amount,rate,base_amount,
+        execute_compat(c, """INSERT INTO fx_settlements(transaction_id,settlement_date,foreign_amount,rate,base_amount,
             carrying_amount,fx_difference,journal_entry_id,created_by) VALUES(?,?,?,?,?,?,?,?,?)""",
             (transaction_id,settle_date,str(amount),str(rate),str(cash),str(carrying),str(diff),jid,session["user_id"]))
         update_open_fx_balance(
@@ -317,7 +317,7 @@ def revalue(transaction_id):
         # Lock before reading balances so two period-end requests cannot calculate
         # from the same stale carrying amount.
         c.execute("BEGIN IMMEDIATE")
-        t = c.execute("SELECT * FROM fx_transactions WHERE id=? AND status='open'", (transaction_id,)).fetchone()
+        t = execute_compat(c, "SELECT * FROM fx_transactions WHERE id=? AND status='open'", (transaction_id,)).fetchone()
         if not t:
             raise ValueError("لا يوجد رصيد مفتوح لإعادة تقييمه.")
         revalue_date = date.fromisoformat(request.form["revaluation_date"]).isoformat()
@@ -329,7 +329,7 @@ def revalue(transaction_id):
             raise ValueError("تاريخ إعادة التقييم يسبق آخر تسوية للمعاملة؛ راجع ترتيب التسويات وإعادة التقييم.")
         if latest_revaluation and revalue_date <= latest_revaluation:
             raise ValueError("يجب أن يكون تاريخ إعادة التقييم لاحقًا لآخر إعادة تقييم مسجلة.")
-        if c.execute("SELECT 1 FROM fx_revaluations WHERE transaction_id=? AND revaluation_date=?",
+        if execute_compat(c, "SELECT 1 FROM fx_revaluations WHERE transaction_id=? AND revaluation_date=?",
                      (transaction_id,revalue_date)).fetchone():
             raise ValueError("تمت إعادة تقييم هذه المعاملة في هذا التاريخ بالفعل.")
         rate = _rate(c,t["currency_code"],revalue_date,request.form.get("rate"))
@@ -351,10 +351,10 @@ def revalue(transaction_id):
             lines = [(loss,delta,0,"خسائر إعادة تقييم الالتزام"),(party,0,delta,"زيادة الالتزام")] if delta>0 else [(party,-delta,0,"تخفيض الالتزام"),(gain,0,-delta,"أرباح إعادة تقييم")]
         ref = "FX-REVALUE-" + str(transaction_id) + "-" + revalue_date
         jid = post_journal(c,revalue_date,ref,"إعادة تقييم رصيد عملة أجنبية "+t["reference"],lines,session["user_id"])
-        c.execute("""INSERT INTO fx_revaluations(transaction_id,revaluation_date,rate,old_base,new_base,difference,
+        execute_compat(c, """INSERT INTO fx_revaluations(transaction_id,revaluation_date,rate,old_base,new_base,difference,
             journal_entry_id,created_by) VALUES(?,?,?,?,?,?,?,?)""",
             (transaction_id,revalue_date,str(rate),str(old_base),str(new_base),str(delta),jid,session["user_id"]))
-        c.execute("UPDATE fx_transactions SET balance_base=? WHERE id=?", (str(new_base),transaction_id))
+        execute_compat(c, "UPDATE fx_transactions SET balance_base=? WHERE id=?", (str(new_base),transaction_id))
         _audit(c, "fx_revalued", t["reference"] + " date=" + revalue_date + " diff=" + str(delta))
         c.commit()
         flash("تمت إعادة تقييم الرصيد وإثبات الفرق غير المحقق.", "success")
