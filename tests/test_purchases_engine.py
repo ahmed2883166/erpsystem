@@ -564,7 +564,8 @@ class PurchasingAccountingTests(unittest.TestCase):
                 "inventory": "1150", "cogs": "5100", "supplier_ap": "2110",
                 "purchase_inventory": "1150",
             }),
-            patch("activity_profiles.resolve_product_account_code", return_value="1150"),
+            patch("activity_profiles.resolve_product_account_code",
+                  side_effect=lambda _c, _p, role, default: "5100" if role == "cogs" else "1150"),
             patch("purchases.validate_journal_dimensions", return_value={}),
             patch("purchases._activity_tax_roles", return_value={"input_vat": "1165"}),
         ):
