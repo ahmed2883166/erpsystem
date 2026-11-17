@@ -19,9 +19,7 @@ def validate(ddl_path, dsn):
     # a shared development database. A unique, owned schema keeps validation
     # isolated and makes cleanup incapable of deleting another run's objects.
     schema_name = "nexus_schema_validation_" + uuid.uuid4().hex
-    quoted_schema = '"' + schema_name + '"'
     with psycopg.connect(dsn, autocommit=True) as connection:
-        connection.execute(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
         connection.execute(f'CREATE SCHEMA "{schema_name}"')
         try:
             connection.execute(f'SET search_path TO "{schema_name}"')
