@@ -179,6 +179,7 @@ def init_bank_schema():
     execute_compat(c, """CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_statement_journal_line
         ON bank_statement_lines(matched_journal_line_id)
         WHERE matched_journal_line_id IS NOT NULL""")
+    c.commit()
     c.close()
 
 def require(permission="manage"):
