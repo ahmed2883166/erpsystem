@@ -13,7 +13,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from datetime import date, datetime
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
-from accounting_core import post_journal, money, safe_error_message
+from accounting_core import post_journal, money, safe_error_message, decimal_sum_expression, decimal_compare_expression
 from analytic_dimensions import initialize_analytic_dimensions_schema
 from code_sequences import next_code
 
@@ -720,8 +720,9 @@ def current_qty(c, product_id, warehouse_id, lot_id=None):
 
 
 def available_layers(c, product_id, warehouse_id, lot_id=None, location_id=None):
-    sql = """SELECT * FROM stock_valuation_layers WHERE product_id=? AND warehouse_id=?
-             AND CAST(qty_remaining AS REAL)>0"""
+    positive_qty_sql = decimal_compare_expression(c, "qty_remaining") + " > 0"
+    sql = f"""SELECT * FROM stock_valuation_layers WHERE product_id=? AND warehouse_id=?
+             AND {positive_qty_sql}"""
     args = [product_id, warehouse_id]
     if lot_id is not None:
         if lot_id == 0:
@@ -866,8 +867,9 @@ def index():
     c=get_db()
     products=c.execute("SELECT COUNT(*) n FROM stock_products WHERE active=1").fetchone()["n"]
     warehouses=c.execute("SELECT COUNT(*) n FROM stock_warehouses WHERE active=1").fetchone()["n"]
-    rows=c.execute("""SELECT p.id,p.sku,p.name_ar,p.uom,
-      COALESCE(SUM(CAST(l.qty_remaining AS REAL)),0) qty
+    qty_sum_sql = decimal_sum_expression(c, "l.qty_remaining")
+    rows=c.execute(f"""SELECT p.id,p.sku,p.name_ar,p.uom,
+      {qty_sum_sql} qty
       FROM stock_products p LEFT JOIN stock_valuation_layers l ON l.product_id=p.id
       WHERE p.active=1 GROUP BY p.id ORDER BY p.name_ar LIMIT 10""").fetchall()
     today=date.today()
@@ -878,8 +880,9 @@ def index():
         if layer["lot_id"] is not None:
             lot_qty[layer["lot_id"]]=lot_qty.get(layer["lot_id"],Decimal("0"))+quantity
     dashboard_warehouse_totals={}
-    for layer in c.execute("""SELECT warehouse_id,product_id,qty_remaining
-        FROM stock_valuation_layers WHERE CAST(qty_remaining AS REAL)>0""").fetchall():
+    positive_qty_sql = decimal_compare_expression(c, "qty_remaining") + " > 0"
+    for layer in c.execute(f"""SELECT warehouse_id,product_id,qty_remaining
+        FROM stock_valuation_layers WHERE {positive_qty_sql}""").fetchall():
         key=(layer["product_id"],layer["warehouse_id"])
         total=dashboard_warehouse_totals.setdefault(key,{"qty":Decimal("0")})
         total["qty"]+=Decimal(str(layer["qty_remaining"] or "0"))
@@ -1199,7 +1202,7 @@ def product_locations():
             # explicitly chosen by the user as this product's default location.
             c.execute("""UPDATE stock_valuation_layers SET location_id=?
                 WHERE product_id=? AND warehouse_id=? AND location_id IS NULL
-                  AND CAST(qty_remaining AS REAL)>0""", (location_id, product_id, warehouse_id))
+                  AND {decimal_compare_expression(c, "qty_remaining")} > 0""", (location_id, product_id, warehouse_id))
             c.commit()
             flash("تم تحديد الموقع الافتراضي وإسناد الأرصدة القديمة غير المحددة إليه.", "success")
         except (ValueError, sqlite3.Error) as exc:
@@ -1579,7 +1582,8 @@ def build_demand_replenishment_forecast(conn, warehouse_totals, product_lookup, 
 def reports():
     c=get_db()
     products=c.execute("SELECT id,sku,name_ar,uom,min_qty,reorder_point,reorder_qty FROM stock_products WHERE active=1 ORDER BY sku").fetchall()
-    layers=c.execute("SELECT * FROM stock_valuation_layers WHERE CAST(qty_remaining AS REAL)>0 ORDER BY id").fetchall()
+    positive_qty_sql = decimal_compare_expression(c, "qty_remaining") + " > 0"
+    layers=c.execute(f"SELECT * FROM stock_valuation_layers WHERE {positive_qty_sql} ORDER BY id").fetchall()
     product_totals={}
     warehouse_totals={}
     for layer in layers:
@@ -1975,7 +1979,7 @@ def barcode_lookup():
 def _stocktake_layer_balance(c, product_id, warehouse_id, location_id=None, lot_id=None):
     sql = """SELECT qty_remaining,unit_cost,value_remaining
         FROM stock_valuation_layers WHERE product_id=? AND warehouse_id=?
-        AND CAST(qty_remaining AS REAL)>0"""
+        AND {decimal_compare_expression(c, "qty_remaining")} > 0"""
     args = [product_id, warehouse_id]
     if location_id is not None:
         sql += " AND location_id IS NULL" if location_id == 0 else " AND location_id=?"
@@ -2017,7 +2021,7 @@ def counts():
                 WHERE warehouse_id=? AND active=1 AND location_type='bin' ORDER BY id""", (warehouse_id,)).fetchall()]
             for product in c.execute("SELECT id,track_lot FROM stock_products WHERE active=1 ORDER BY sku").fetchall():
                 existing_scopes = c.execute("""SELECT DISTINCT location_id,lot_id FROM stock_valuation_layers
-                    WHERE product_id=? AND warehouse_id=? AND CAST(qty_remaining AS REAL)>0""",
+                    WHERE product_id=? AND warehouse_id=? AND {decimal_compare_expression(c, "qty_remaining")} > 0""",
                     (product["id"], warehouse_id)).fetchall()
                 existing_locations = {row["location_id"] for row in existing_scopes}
                 default_row = c.execute("""SELECT location_id FROM stock_product_locations
