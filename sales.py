@@ -14,6 +14,7 @@ from functools import wraps
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, safe_error_message, decimal_sum_expression
 from db_compat import table_columns, table_exists, insert_and_get_id, begin_write_transaction, execute_script
+from db_sql import execute_compat
 from database import connect_database, fetch_page
 from stock import consume_layers, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
@@ -206,39 +207,39 @@ def init_sales_schema():
         "last_edit_at": "TEXT",
     }.items():
         if name not in workflow_columns:
-            c.execute(f"ALTER TABLE sales_invoice_workflows ADD COLUMN {name} {definition}")
+            execute_compat(c, f"ALTER TABLE sales_invoice_workflows ADD COLUMN {name} {definition}")
     discount_request_columns = _columns(c, "sales_discount_approval_requests")
     for name, definition in {
         "request_type": "TEXT NOT NULL DEFAULT 'invoice'",
         "sales_order_id": "INTEGER",
     }.items():
         if name not in discount_request_columns:
-            c.execute(f"ALTER TABLE sales_discount_approval_requests ADD COLUMN {name} {definition}")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_sales_discount_order ON sales_discount_approval_requests(sales_order_id,status)")
+            execute_compat(c, f"ALTER TABLE sales_discount_approval_requests ADD COLUMN {name} {definition}")
+    execute_compat(c, "CREATE INDEX IF NOT EXISTS idx_sales_discount_order ON sales_discount_approval_requests(sales_order_id,status)")
 
     line_columns = _columns(c, "sales_invoice_lines")
     for name, definition in (("entered_quantity","TEXT"),("uom_id","TEXT"),("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'")):
         if name not in line_columns:
-            c.execute("ALTER TABLE sales_invoice_lines ADD COLUMN "+name+" "+definition)
+            execute_compat(c, "ALTER TABLE sales_invoice_lines ADD COLUMN "+name+" "+definition)
     for name, definition in {
         "tax_rate": "TEXT NOT NULL DEFAULT '0'",
         "tax_treatment": "TEXT NOT NULL DEFAULT 'standard'",
         "tax_amount": "TEXT NOT NULL DEFAULT '0'",
     }.items():
         if name not in line_columns:
-            c.execute(f"ALTER TABLE sales_invoice_lines ADD COLUMN {name} {definition}")
+            execute_compat(c, f"ALTER TABLE sales_invoice_lines ADD COLUMN {name} {definition}")
     invoice_columns = _columns(c, "sales_invoices")
     if "sales_order_id" not in invoice_columns:
-        c.execute("ALTER TABLE sales_invoices ADD COLUMN sales_order_id INTEGER")
+        execute_compat(c, "ALTER TABLE sales_invoices ADD COLUMN sales_order_id INTEGER")
     if "sales_channel" not in invoice_columns:
-        c.execute("ALTER TABLE sales_invoices ADD COLUMN sales_channel TEXT NOT NULL DEFAULT 'default'")
+        execute_compat(c, "ALTER TABLE sales_invoices ADD COLUMN sales_channel TEXT NOT NULL DEFAULT 'default'")
     if "revenue_account_code" not in invoice_columns:
-        c.execute("ALTER TABLE sales_invoices ADD COLUMN revenue_account_code TEXT NOT NULL DEFAULT ''")
+        execute_compat(c, "ALTER TABLE sales_invoices ADD COLUMN revenue_account_code TEXT NOT NULL DEFAULT ''")
     if "sales_order_line_id" not in line_columns:
-        c.execute("ALTER TABLE sales_invoice_lines ADD COLUMN sales_order_line_id INTEGER")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_sales_invoices_order ON sales_invoices(sales_order_id,id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_sales_invoice_lines_order_line ON sales_invoice_lines(sales_order_line_id,invoice_id)")
-    c.execute("""CREATE TABLE IF NOT EXISTS sales_credit_notes(
+        execute_compat(c, "ALTER TABLE sales_invoice_lines ADD COLUMN sales_order_line_id INTEGER")
+    execute_compat(c, "CREATE INDEX IF NOT EXISTS idx_sales_invoices_order ON sales_invoices(sales_order_id,id)")
+    execute_compat(c, "CREATE INDEX IF NOT EXISTS idx_sales_invoice_lines_order_line ON sales_invoice_lines(sales_order_line_id,invoice_id)")
+    execute_compat(c, """CREATE TABLE IF NOT EXISTS sales_credit_notes(
       id INTEGER PRIMARY KEY, credit_note_no TEXT NOT NULL UNIQUE,
       invoice_id INTEGER NOT NULL REFERENCES sales_invoices(id),
       credit_date TEXT NOT NULL, reason TEXT NOT NULL,
@@ -257,8 +258,8 @@ def init_sales_schema():
         "cancellation_reason": "TEXT",
     }.items():
         if name not in credit_note_columns:
-            c.execute(f"ALTER TABLE sales_credit_notes ADD COLUMN {name} {definition}")
-    c.execute("""CREATE TABLE IF NOT EXISTS customer_refunds(
+            execute_compat(c, f"ALTER TABLE sales_credit_notes ADD COLUMN {name} {definition}")
+    execute_compat(c, """CREATE TABLE IF NOT EXISTS customer_refunds(
       id INTEGER PRIMARY KEY, refund_no TEXT NOT NULL UNIQUE,
       credit_note_id INTEGER NOT NULL REFERENCES sales_credit_notes(id),
       refund_date TEXT NOT NULL, amount TEXT NOT NULL,
@@ -266,7 +267,7 @@ def init_sales_schema():
       journal_entry_id INTEGER NOT NULL UNIQUE, reference TEXT NOT NULL DEFAULT '',
       created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )""")
-    c.execute("""CREATE TABLE IF NOT EXISTS sales_credit_note_lines(
+    execute_compat(c, """CREATE TABLE IF NOT EXISTS sales_credit_note_lines(
       id INTEGER PRIMARY KEY, credit_note_id INTEGER NOT NULL REFERENCES sales_credit_notes(id),
       invoice_line_id INTEGER NOT NULL REFERENCES sales_invoice_lines(id),
       product_id INTEGER REFERENCES stock_products(id), description TEXT NOT NULL,
@@ -281,38 +282,38 @@ def init_sales_schema():
                              ("uom_key","TEXT"),("entered_uom_name","TEXT"),
                              ("conversion_factor","TEXT NOT NULL DEFAULT '1'")):
         if name not in credit_line_columns:
-            c.execute("ALTER TABLE sales_credit_note_lines ADD COLUMN " + name + " " + definition)
-    c.execute("""CREATE TABLE IF NOT EXISTS sales_credit_note_line_lots(
+            execute_compat(c, "ALTER TABLE sales_credit_note_lines ADD COLUMN " + name + " " + definition)
+    execute_compat(c, """CREATE TABLE IF NOT EXISTS sales_credit_note_line_lots(
       id INTEGER PRIMARY KEY, credit_note_line_id INTEGER NOT NULL REFERENCES sales_credit_note_lines(id),
       lot_id INTEGER REFERENCES stock_lots(id), quantity TEXT NOT NULL,
       stock_movement_id INTEGER REFERENCES stock_movements(id)
     )""")
     invoice_columns = _columns(c, "sales_invoices")
     if "due_date" not in invoice_columns:
-        c.execute("ALTER TABLE sales_invoices ADD COLUMN due_date TEXT")
-        c.execute("UPDATE sales_invoices SET due_date=invoice_date WHERE due_date IS NULL")
+        execute_compat(c, "ALTER TABLE sales_invoices ADD COLUMN due_date TEXT")
+        execute_compat(c, "UPDATE sales_invoices SET due_date=invoice_date WHERE due_date IS NULL")
     if "credited_amount" not in invoice_columns:
-        c.execute("ALTER TABLE sales_invoices ADD COLUMN credited_amount TEXT NOT NULL DEFAULT '0'")
+        execute_compat(c, "ALTER TABLE sales_invoices ADD COLUMN credited_amount TEXT NOT NULL DEFAULT '0'")
     for name, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"), ("project_id", "projects"), ("salesperson_id", "salespersons")):
         if name not in invoice_columns:
-            c.execute("ALTER TABLE sales_invoices ADD COLUMN " + name + " INTEGER REFERENCES " + table + "(id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_sales_credit_invoice ON sales_credit_notes(invoice_id,credit_date,id)")
+            execute_compat(c, "ALTER TABLE sales_invoices ADD COLUMN " + name + " INTEGER REFERENCES " + table + "(id)")
+    execute_compat(c, "CREATE INDEX IF NOT EXISTS idx_sales_credit_invoice ON sales_credit_notes(invoice_id,credit_date,id)")
     customer_columns = _columns(c, "customers")
     if "credit_limit" not in customer_columns:
-        c.execute("ALTER TABLE customers ADD COLUMN credit_limit TEXT NOT NULL DEFAULT '0'")
+        execute_compat(c, "ALTER TABLE customers ADD COLUMN credit_limit TEXT NOT NULL DEFAULT '0'")
     for name, definition in {
         "discount_type": "TEXT NOT NULL DEFAULT 'none'",
         "discount_value": "TEXT NOT NULL DEFAULT '0'",
     }.items():
         if name not in customer_columns:
-            c.execute(f"ALTER TABLE customers ADD COLUMN {name} {definition}")
+            execute_compat(c, f"ALTER TABLE customers ADD COLUMN {name} {definition}")
     for name, definition in {
         "discount_type": "TEXT NOT NULL DEFAULT 'none'",
         "discount_value": "TEXT NOT NULL DEFAULT '0'",
         "discount_amount": "TEXT NOT NULL DEFAULT '0'",
     }.items():
         if name not in invoice_columns:
-            c.execute(f"ALTER TABLE sales_invoices ADD COLUMN {name} {definition}")
+            execute_compat(c, f"ALTER TABLE sales_invoices ADD COLUMN {name} {definition}")
     # Re-run after creating customers and salespersons so their journal dimensions exist.
     initialize_analytic_dimensions_schema(c)
     c.close()
@@ -1842,7 +1843,7 @@ def post_customer_advance_refund(conn, advance_receipt_id, refund_date, amount,
 @require("sales.view")
 def customer_advances():
     c = db()
-    customers = c.execute(
+    customers = execute_compat(c, 
         "SELECT id,code,name FROM customers WHERE active=1 ORDER BY name"
     ).fetchall()
     from activity_profiles import active_account_role_ids
@@ -1850,7 +1851,7 @@ def customer_advances():
     cash_accounts = []
     if cash_account_ids:
         placeholders = ",".join("?" for _ in cash_account_ids)
-        cash_accounts = c.execute(
+        cash_accounts = execute_compat(c, 
             f"""SELECT id,code,name_ar FROM accounts
                 WHERE id IN ({placeholders}) AND active=1 AND is_group=0
                   AND account_type='asset' ORDER BY code""",
@@ -1858,7 +1859,7 @@ def customer_advances():
         ).fetchall()
 
     allocated_by_receipt = {}
-    for row in c.execute(
+    for row in execute_compat(c, 
         """SELECT a.advance_receipt_id,a.amount FROM customer_advance_allocations a
            WHERE NOT EXISTS (SELECT 1 FROM customer_advance_reversals x
              WHERE x.source_type='allocation' AND x.source_id=a.journal_entry_id)"""
@@ -1866,7 +1867,7 @@ def customer_advances():
         allocated_by_receipt.setdefault(row["advance_receipt_id"], Decimal("0"))
         allocated_by_receipt[row["advance_receipt_id"]] += Decimal(str(row["amount"] or "0"))
     refunded_by_receipt = {}
-    for row in c.execute(
+    for row in execute_compat(c, 
         """SELECT r.advance_receipt_id,r.amount FROM customer_advance_refunds r
            WHERE NOT EXISTS (SELECT 1 FROM customer_advance_reversals x
              WHERE x.source_type='refund' AND x.source_id=r.id)"""
@@ -1875,7 +1876,7 @@ def customer_advances():
         refunded_by_receipt[row["advance_receipt_id"]] += Decimal(str(row["amount"] or "0"))
 
     refunds_by_invoice = {}
-    for row in c.execute(
+    for row in execute_compat(c, 
         """SELECT cn.invoice_id,rf.amount FROM customer_refunds rf
            JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id
            WHERE cn.status='posted'"""
@@ -1884,7 +1885,7 @@ def customer_advances():
         refunds_by_invoice[row["invoice_id"]] += Decimal(str(row["amount"] or "0"))
 
     open_invoices_by_customer = {}
-    for invoice in c.execute(
+    for invoice in execute_compat(c, 
         "SELECT * FROM sales_invoices WHERE status='posted' ORDER BY invoice_date,id"
     ).fetchall():
         outstanding = (Decimal(str(invoice["total_amount"])) -
@@ -1898,7 +1899,7 @@ def customer_advances():
             })
 
     advances = []
-    for row in c.execute(
+    for row in execute_compat(c, 
         """SELECT r.*,cu.name customer_name,cu.code customer_code
            FROM customer_advance_receipts r
            JOIN customers cu ON cu.id=r.customer_id
@@ -1906,7 +1907,7 @@ def customer_advances():
     ).fetchall():
         item = dict(row)
         item["remaining_amount"] = (
-            Decimal("0") if c.execute(
+            Decimal("0") if execute_compat(c, 
                 "SELECT 1 FROM customer_advance_reversals WHERE source_type='receipt' AND source_id=?",
                 (row["id"],),
             ).fetchone() else
@@ -1914,12 +1915,12 @@ def customer_advances():
             allocated_by_receipt.get(row["id"], Decimal("0")) -
             refunded_by_receipt.get(row["id"], Decimal("0"))
         )
-        item["receipt_reversal"] = c.execute(
+        item["receipt_reversal"] = execute_compat(c, 
             "SELECT reversal_date,reason,reversal_journal_entry_id FROM customer_advance_reversals WHERE source_type='receipt' AND source_id=?",
             (row["id"],),
         ).fetchone()
         item["reversed"] = item["receipt_reversal"] is not None
-        item["allocation_batches"] = c.execute(
+        item["allocation_batches"] = execute_compat(c, 
             """SELECT a.journal_entry_id,MIN(a.allocation_date) allocation_date,
                       SUM(CAST(a.amount AS NUMERIC)) amount,COUNT(*) invoice_count,
                       GROUP_CONCAT(i.invoice_no, ', ') invoice_numbers,
@@ -1933,7 +1934,7 @@ def customer_advances():
                ORDER BY a.journal_entry_id DESC""",
             (row["id"],),
         ).fetchall()
-        item["refunds"] = c.execute(
+        item["refunds"] = execute_compat(c, 
             """SELECT r.*,x.reversal_journal_entry_id,x.reversal_date,x.reason FROM customer_advance_refunds r
                LEFT JOIN customer_advance_reversals x
                  ON x.source_type='refund' AND x.source_id=r.id
@@ -2055,15 +2056,15 @@ def refund_customer_advance_route(advance_id):
 @require("sales.view")
 def index():
     c = db()
-    customers = c.execute("SELECT * FROM customers ORDER BY name").fetchall()
+    customers = execute_compat(c, "SELECT * FROM customers ORDER BY name").fetchall()
     invoice_page = max(1, request.args.get("invoice_page", 1, type=int) or 1)
     invoice_per_page = request.args.get("invoice_per_page", 50, type=int) or 50
     if invoice_per_page not in (50, 100):
         invoice_per_page = 50
-    invoice_total = c.execute("SELECT COUNT(*) FROM sales_invoices").fetchone()[0]
+    invoice_total = execute_compat(c, "SELECT COUNT(*) FROM sales_invoices").fetchone()[0]
     invoice_pages = max(1, (invoice_total + invoice_per_page - 1) // invoice_per_page)
     invoice_page = min(invoice_page, invoice_pages)
-    invoices = c.execute("""SELECT i.*,c.name customer_name FROM sales_invoices i
+    invoices = execute_compat(c, """SELECT i.*,c.name customer_name FROM sales_invoices i
         JOIN customers c ON c.id=i.customer_id ORDER BY i.id DESC LIMIT ? OFFSET ?""",
         (invoice_per_page, (invoice_page - 1) * invoice_per_page)).fetchall()
     enriched_invoices = []
@@ -2076,7 +2077,7 @@ def index():
         item["creditable"] = Decimal(invoice["total_amount"]) > Decimal(invoice["credited_amount"] or "0")
         item["closed_by_credit"] = item["remaining_amount"] <= 0 and Decimal(invoice["credited_amount"] or "0") > 0 and Decimal(invoice["paid_amount"] or "0") < Decimal(invoice["total_amount"])
         enriched_invoices.append(item)
-    invoice_workflows = c.execute("""SELECT w.*,cu.name customer_name,cu.code customer_code
+    invoice_workflows = execute_compat(c, """SELECT w.*,cu.name customer_name,cu.code customer_code
         FROM sales_invoice_workflows w JOIN customers cu ON cu.id=w.customer_id
         ORDER BY w.id DESC LIMIT 100""").fetchall()
     receipts_page = fetch_page(c,
@@ -2117,7 +2118,7 @@ def index():
     refunds = refunds_page["rows"]
     enriched_notes = []
     for note in credit_notes:
-        note_refunds = c.execute("SELECT amount FROM customer_refunds WHERE credit_note_id=?", (note["id"],)).fetchall()
+        note_refunds = execute_compat(c, "SELECT amount FROM customer_refunds WHERE credit_note_id=?", (note["id"],)).fetchall()
         refunded = sum((Decimal(row["amount"]) for row in note_refunds), Decimal("0"))
         item = dict(note)
         item["refunded_amount"] = refunded
@@ -2161,7 +2162,7 @@ def customer_list():
             discount_type, discount_value = _customer_discount_input(request.form)
             if not credit_limit.is_finite() or credit_limit < 0: raise ValueError("الحد الائتماني يجب أن يكون صفرًا أو أكبر.")
             customer_code = next_code(c, "customer", "CUS", "customers", "code")
-            c.execute("""INSERT INTO customers(code,name,tax_number,phone,email,address,credit_limit,discount_type,discount_value)
+            execute_compat(c, """INSERT INTO customers(code,name,tax_number,phone,email,address,credit_limit,discount_type,discount_value)
                          VALUES(?,?,?,?,?,?,?,?,?)""",
                       (customer_code, request.form["name"].strip(),
                        request.form.get("tax_number", "").strip(), request.form.get("phone", "").strip(),
@@ -2186,7 +2187,7 @@ def customer_list():
     invoice_paid_sum_sql = decimal_sum_expression(c, "i.paid_amount")
     invoice_credited_sum_sql = decimal_sum_expression(c, "i.credited_amount")
     refunded_total_sum_sql = decimal_sum_expression(c, "COALESCE(r.refunded,'0')")
-    for balance_row in c.execute(f"""WITH refunds_by_invoice AS (
+    for balance_row in execute_compat(c, f"""WITH refunds_by_invoice AS (
             SELECT cn.invoice_id, {refund_sum_sql} refunded
             FROM sales_credit_notes cn JOIN customer_refunds r ON r.credit_note_id=cn.id
             GROUP BY cn.invoice_id
@@ -2210,16 +2211,16 @@ def customer_list():
 @sales_bp.route("/customers/<int:customer_id>/edit",methods=["GET","POST"])
 @require("sales.manage")
 def edit_customer(customer_id):
-    c=db(); customer=c.execute("SELECT * FROM customers WHERE id=?",(customer_id,)).fetchone()
+    c=db(); customer=execute_compat(c, "SELECT * FROM customers WHERE id=?",(customer_id,)).fetchone()
     if not customer:
         c.close(); flash("العميل غير موجود.","error"); return redirect(url_for("sales.customer_list"))
-    used=c.execute("SELECT 1 FROM sales_invoices WHERE customer_id=? LIMIT 1",(customer_id,)).fetchone() is not None
+    used=execute_compat(c, "SELECT 1 FROM sales_invoices WHERE customer_id=? LIMIT 1",(customer_id,)).fetchone() is not None
     if request.method=="POST":
         try:
             limit=Decimal(request.form.get("credit_limit","0") or "0")
             discount_type, discount_value = _customer_discount_input(request.form)
             if not limit.is_finite() or limit<0: raise ValueError("الحد الائتماني يجب أن يكون صفرًا أو أكبر.")
-            c.execute("""UPDATE customers SET code=?,name=?,tax_number=?,phone=?,email=?,address=?,credit_limit=?,
+            execute_compat(c, """UPDATE customers SET code=?,name=?,tax_number=?,phone=?,email=?,address=?,credit_limit=?,
                          discount_type=?,discount_value=? WHERE id=?""",
               (request.form["code"].strip(),request.form["name"].strip(),request.form.get("tax_number","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("address","").strip(),str(limit),discount_type,str(discount_value),customer_id))
             c.commit(); c.close(); flash("تم تعديل بيانات العميل.","success"); return redirect(url_for("sales.customer_list"))
@@ -2231,12 +2232,12 @@ def edit_customer(customer_id):
 @sales_bp.route("/customers/<int:customer_id>/delete",methods=["POST"])
 @require("sales.manage")
 def delete_customer(customer_id):
-    c=db(); customer=c.execute("SELECT * FROM customers WHERE id=?",(customer_id,)).fetchone()
+    c=db(); customer=execute_compat(c, "SELECT * FROM customers WHERE id=?",(customer_id,)).fetchone()
     if not customer: flash("العميل غير موجود.","error")
-    elif c.execute("SELECT 1 FROM sales_invoices WHERE customer_id=? LIMIT 1",(customer_id,)).fetchone():
+    elif execute_compat(c, "SELECT 1 FROM sales_invoices WHERE customer_id=? LIMIT 1",(customer_id,)).fetchone():
         flash("لا يمكن حذف العميل لوجود فواتير أو عمليات بيع مرتبطة به. يمكنك تعديل بياناته بدل الحذف.","error")
     else:
-        try: c.execute("DELETE FROM customers WHERE id=?",(customer_id,)); c.commit(); flash("تم حذف العميل.","success")
+        try: execute_compat(c, "DELETE FROM customers WHERE id=?",(customer_id,)); c.commit(); flash("تم حذف العميل.","success")
         except sqlite3.IntegrityError: c.rollback(); flash("لا يمكن حذف العميل لوجود مستند مرتبط به.","error")
     c.close(); return redirect(url_for("sales.customer_list"))
 
@@ -2251,13 +2252,13 @@ def salesperson_list():
             if not name or len(name) > 120:
                 raise ValueError("أدخل اسمًا صحيحًا لمندوب المبيعات.")
             code = next_code(c, "salesperson", "SLS", "salespersons", "code")
-            c.execute("INSERT INTO salespersons(code,name) VALUES(?,?)", (code, name))
+            execute_compat(c, "INSERT INTO salespersons(code,name) VALUES(?,?)", (code, name))
             c.commit()
             flash("تم إضافة مندوب المبيعات.", "success")
         except (ValueError, sqlite3.IntegrityError) as exc:
             c.rollback()
             flash(safe_error_message(exc, "كود مندوب المبيعات مستخدم بالفعل."), "error")
-    rows = c.execute("SELECT * FROM salespersons ORDER BY code").fetchall()
+    rows = execute_compat(c, "SELECT * FROM salespersons ORDER BY code").fetchall()
     c.close()
     return render_template("sales_salespersons.html", rows=rows)
 
@@ -2276,7 +2277,7 @@ def new_invoice():
                 if pid or desc.strip():
                     selected_price = price
                     if pid:
-                        price_rules = c.execute("""SELECT id,unit_price,min_qty,valid_from FROM customer_price_rules
+                        price_rules = execute_compat(c, """SELECT id,unit_price,min_qty,valid_from FROM customer_price_rules
                           WHERE customer_id=? AND product_id=? AND active=1 AND valid_from<=?
                             AND (valid_to IS NULL OR valid_to>=?)""",
                           (int(request.form["customer_id"]), int(pid), request.form["invoice_date"],
@@ -2295,7 +2296,7 @@ def new_invoice():
             # Check the configured discount ceiling before post_invoice consumes stock
             # or creates accounting entries. Above-limit invoices are saved as drafts
             # for approval; no inventory or GL transaction is created at this stage.
-            customer_for_discount = c.execute(
+            customer_for_discount = execute_compat(c, 
                 "SELECT discount_type,discount_value FROM customers WHERE id=? AND active=1",
                 (int(request.form["customer_id"]),)
             ).fetchone()
@@ -2351,7 +2352,7 @@ def new_invoice():
                 return redirect(url_for("sales.invoice_workflow", workflow_id=workflow_id))
             if workflow_action:
                 raise ValueError("إجراء الفاتورة غير صحيح.")
-            limit_row = c.execute(
+            limit_row = execute_compat(c, 
                 "SELECT setting_value FROM company_settings WHERE setting_key='sales_discount_limit_percent'"
             ).fetchone()
             discount_limit = Decimal(str(limit_row["setting_value"] if limit_row else "10"))
@@ -2409,7 +2410,7 @@ def new_invoice():
                                   allow_credit_override=(session.get("role") == "admin" and request.form.get("credit_override") == "1"),
                                   dimensions=request.form,
                                   sales_channel=request.form.get("sales_channel", "default"))
-            c.execute("UPDATE sales_invoices SET due_date=? WHERE id=?", (due_date, result["invoice_id"]))
+            execute_compat(c, "UPDATE sales_invoices SET due_date=? WHERE id=?", (due_date, result["invoice_id"]))
             c.commit()
             g.audit_created_record = ("sales_invoices", result["invoice_id"], "sales_invoice_lines", "invoice_id")
             c.close()
@@ -2422,19 +2423,19 @@ def new_invoice():
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
             c.rollback()
             flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
-    customers = c.execute("SELECT * FROM customers WHERE active=1 ORDER BY name").fetchall()
+    customers = execute_compat(c, "SELECT * FROM customers WHERE active=1 ORDER BY name").fetchall()
     exposure_by_customer = {}
-    for invoice_row in c.execute(
+    for invoice_row in execute_compat(c, 
         "SELECT customer_id,total_amount,paid_amount,COALESCE(credited_amount,'0') credited_amount "
         "FROM sales_invoices WHERE status='posted'"
     ).fetchall():
         balance = Decimal(invoice_row["total_amount"]) - Decimal(invoice_row["paid_amount"] or "0") - Decimal(invoice_row["credited_amount"] or "0")
         exposure_by_customer[invoice_row["customer_id"]] = exposure_by_customer.get(invoice_row["customer_id"], Decimal("0")) + balance
     customers = [dict(row, outstanding=exposure_by_customer.get(row["id"], Decimal("0"))) for row in customers]
-    products = c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
+    products = execute_compat(c, "SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     product_uoms={p["id"]:product_uom_options(c,p["id"]) for p in products}
-    warehouses = c.execute("SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
-    settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
+    warehouses = execute_compat(c, "SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
+    settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(c, 
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','default_vat_rate')")}
     dimension_options = active_dimension_options(c)
     c.close()
@@ -2451,7 +2452,7 @@ def new_invoice():
 @require("sales.view")
 def invoice_workflow(workflow_id):
     c = db()
-    row = c.execute("""SELECT w.*,cu.name customer_name,cu.code customer_code
+    row = execute_compat(c, """SELECT w.*,cu.name customer_name,cu.code customer_code
         FROM sales_invoice_workflows w JOIN customers cu ON cu.id=w.customer_id
         WHERE w.id=?""", (workflow_id,)).fetchone()
     if not row:
@@ -2473,7 +2474,7 @@ def invoice_workflow(workflow_id):
 @require("sales.manage")
 def edit_invoice_workflow(workflow_id):
     c = db()
-    workflow = c.execute("""SELECT w.*,cu.name customer_name
+    workflow = execute_compat(c, """SELECT w.*,cu.name customer_name
         FROM sales_invoice_workflows w JOIN customers cu ON cu.id=w.customer_id
         WHERE w.id=?""", (workflow_id,)).fetchone()
     if not workflow:
@@ -2504,7 +2505,7 @@ def edit_invoice_workflow(workflow_id):
                 if pid or desc.strip():
                     selected_price = price
                     if pid:
-                        rules = c.execute("""SELECT id,unit_price,min_qty,valid_from
+                        rules = execute_compat(c, """SELECT id,unit_price,min_qty,valid_from
                             FROM customer_price_rules WHERE customer_id=? AND product_id=?
                             AND active=1 AND valid_from<=? AND (valid_to IS NULL OR valid_to>=?)""",
                             (int(request.form["customer_id"]), int(pid),
@@ -2518,7 +2519,7 @@ def edit_invoice_workflow(workflow_id):
                         "unit_price": selected_price, "uom_id": uom_id, "description": desc,
                         "tax_rate": line_rate, "tax_treatment": treatment,
                     })
-            customer = c.execute("""SELECT discount_type,discount_value FROM customers
+            customer = execute_compat(c, """SELECT discount_type,discount_value FROM customers
                 WHERE id=? AND active=1""", (int(request.form["customer_id"]),)).fetchone()
             if not customer:
                 raise ValueError("العميل غير موجود أو غير نشط.")
@@ -2556,7 +2557,7 @@ def edit_invoice_workflow(workflow_id):
         except (ValueError, InvalidOperation, KeyError, TypeError, sqlite3.Error) as exc:
             c.rollback()
             flash(safe_error_message(exc, "تعذر تعديل المسودة. لم يتم حفظ أي تغييرات."), "error")
-            workflow = c.execute("""SELECT w.*,cu.name customer_name
+            workflow = execute_compat(c, """SELECT w.*,cu.name customer_name
                 FROM sales_invoice_workflows w JOIN customers cu ON cu.id=w.customer_id
                 WHERE w.id=?""", (workflow_id,)).fetchone()
             payload = {
@@ -2576,11 +2577,11 @@ def edit_invoice_workflow(workflow_id):
                 "dimensions": {key: request.form.get(key) for key in
                     ("branch_id", "cost_center_id", "project_id", "salesperson_id")},
             }
-    customers = c.execute("SELECT * FROM customers WHERE active=1 ORDER BY name").fetchall()
-    products = c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
+    customers = execute_compat(c, "SELECT * FROM customers WHERE active=1 ORDER BY name").fetchall()
+    products = execute_compat(c, "SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     product_uoms = {p["id"]: product_uom_options(c, p["id"]) for p in products}
-    warehouses = c.execute("SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
-    settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
+    warehouses = execute_compat(c, "SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
+    settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(c, 
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','default_vat_rate')")}
     dimension_options = active_dimension_options(c)
     c.close()
@@ -2595,7 +2596,7 @@ def submit_invoice_workflow(workflow_id):
     c = db()
     try:
         begin_write_transaction(c)
-        changed = c.execute("""UPDATE sales_invoice_workflows
+        changed = execute_compat(c, """UPDATE sales_invoice_workflows
             SET status='pending_approval',submitted_by=?,submitted_at=?,updated_at=CURRENT_TIMESTAMP
             WHERE id=? AND status='draft'""",
             (session["user_id"], datetime.now().isoformat(timespec="seconds"), workflow_id)).rowcount
@@ -2617,7 +2618,7 @@ def decide_invoice_workflow(workflow_id):
     c = db()
     try:
         begin_write_transaction(c)
-        row = c.execute("""SELECT * FROM sales_invoice_workflows
+        row = execute_compat(c, """SELECT * FROM sales_invoice_workflows
             WHERE id=? AND status='pending_approval'""", (workflow_id,)).fetchone()
         if not row:
             raise ValueError("الفاتورة ليست في انتظار الاعتماد أو سبق اتخاذ قرار عليها.")
@@ -2631,7 +2632,7 @@ def decide_invoice_workflow(workflow_id):
         if action == "reject":
             if not reason:
                 raise ValueError("سبب رفض الفاتورة مطلوب.")
-            changed = c.execute("""UPDATE sales_invoice_workflows SET status='rejected',
+            changed = execute_compat(c, """UPDATE sales_invoice_workflows SET status='rejected',
                 rejected_by=?,rejected_at=?,rejection_reason=?,updated_at=CURRENT_TIMESTAMP
                 WHERE id=? AND status='pending_approval'""",
                 (session["user_id"], datetime.now().isoformat(timespec="seconds"),
@@ -2642,7 +2643,7 @@ def decide_invoice_workflow(workflow_id):
             flash("تم رفض الفاتورة. لم يتم إنشاء قيد أو حركة مخزون.", "success")
         elif action == "approve":
             credit_override = 1 if (session.get("role") == "admin" and request.form.get("credit_override") == "1") else 0
-            changed = c.execute("""UPDATE sales_invoice_workflows SET status='approved',
+            changed = execute_compat(c, """UPDATE sales_invoice_workflows SET status='approved',
                 approved_by=?,approved_at=?,approved_credit_override=?,updated_at=CURRENT_TIMESTAMP
                 WHERE id=? AND status='pending_approval'""",
                 (session["user_id"], datetime.now().isoformat(timespec="seconds"),
@@ -2667,7 +2668,7 @@ def post_invoice_workflow(workflow_id):
     c = db()
     try:
         begin_write_transaction(c)
-        workflow = c.execute("""SELECT * FROM sales_invoice_workflows
+        workflow = execute_compat(c, """SELECT * FROM sales_invoice_workflows
             WHERE id=? AND status='approved' AND posted_invoice_id IS NULL""",
             (workflow_id,)).fetchone()
         if not workflow:
@@ -2681,9 +2682,9 @@ def post_invoice_workflow(workflow_id):
             discount_override=payload.get("discount_override"),
             sales_channel=payload.get("sales_channel", "default"),
         )
-        c.execute("UPDATE sales_invoices SET due_date=? WHERE id=?",
+        execute_compat(c, "UPDATE sales_invoices SET due_date=? WHERE id=?",
                   (payload.get("due_date") or payload["invoice_date"], result["invoice_id"]))
-        changed = c.execute("""UPDATE sales_invoice_workflows SET status='posted',
+        changed = execute_compat(c, """UPDATE sales_invoice_workflows SET status='posted',
             posted_invoice_id=?,posted_at=?,updated_at=CURRENT_TIMESTAMP
             WHERE id=? AND status='approved' AND posted_invoice_id IS NULL""",
             (result["invoice_id"], datetime.now().isoformat(timespec="seconds"), workflow_id)).rowcount
@@ -2709,7 +2710,7 @@ def cancel_invoice_workflow(workflow_id):
         reason = str(request.form.get("reason") or "").strip()
         if not reason:
             raise ValueError("سبب إلغاء المسودة مطلوب.")
-        changed = c.execute("""UPDATE sales_invoice_workflows SET status='cancelled',
+        changed = execute_compat(c, """UPDATE sales_invoice_workflows SET status='cancelled',
             cancelled_by=?,cancelled_at=?,cancellation_reason=?,updated_at=CURRENT_TIMESTAMP
             WHERE id=? AND status IN ('draft','pending_approval','approved','rejected')""",
             (session["user_id"], datetime.now().isoformat(timespec="seconds"),
@@ -2761,7 +2762,7 @@ def reject_discount_approval_request(conn, current, reviewer_id, reason, request
 @require("sales.approve")
 def discount_approval(request_id):
     c = db()
-    row = c.execute(
+    row = execute_compat(c, 
         """SELECT r.*,cu.code customer_code,cu.name customer_name
            FROM sales_discount_approval_requests r
            JOIN customers cu ON cu.id=r.customer_id WHERE r.id=?""",
@@ -2783,7 +2784,7 @@ def discount_approval(request_id):
             if action == "reject" and not reason:
                 raise ValueError("سبب رفض الخصم مطلوب.")
             begin_write_transaction(c)
-            current = c.execute(
+            current = execute_compat(c, 
                 "SELECT * FROM sales_discount_approval_requests WHERE id=? AND status='pending'",
                 (request_id,),
             ).fetchone()
@@ -2800,14 +2801,14 @@ def discount_approval(request_id):
                 flash("تم رفض طلب الخصم. لم يتم إنشاء فاتورة أو قيد أو حركة مخزون.", "success")
                 return redirect(url_for("approval_inbox"))
             if current["request_type"] == "sales_order":
-                order = c.execute(
+                order = execute_compat(c, 
                     "SELECT id,status,discount_approval_request_id FROM sales_orders WHERE id=?",
                     (current["sales_order_id"],),
                 ).fetchone()
                 if (not order or order["status"] != "pending_approval"
                         or order["discount_approval_request_id"] != request_id):
                     raise ValueError("أمر البيع لم يعد صالحًا لاعتماد الخصم.")
-                changed = c.execute(
+                changed = execute_compat(c, 
                     """UPDATE sales_discount_approval_requests
                        SET status='approved',reviewed_by=?,reviewed_at=?,decision_reason=?
                        WHERE id=? AND status='pending' AND request_type='sales_order'""",
@@ -2815,7 +2816,7 @@ def discount_approval(request_id):
                 ).rowcount
                 if changed != 1:
                     raise ValueError("تمت معالجة طلب الخصم بواسطة مستخدم آخر.")
-                changed = c.execute(
+                changed = execute_compat(c, 
                     """UPDATE sales_orders SET discount_approval_status='approved'
                        WHERE id=? AND discount_approval_request_id=? AND status='pending_approval'""",
                     (current["sales_order_id"], request_id),
@@ -2840,9 +2841,9 @@ def discount_approval(request_id):
                 discount_override=payload.get("discount_override"),
                 sales_channel=payload.get("sales_channel", "default"),
             )
-            c.execute("UPDATE sales_invoices SET due_date=? WHERE id=?",
+            execute_compat(c, "UPDATE sales_invoices SET due_date=? WHERE id=?",
                       (payload.get("due_date") or payload["invoice_date"], result["invoice_id"]))
-            changed = c.execute(
+            changed = execute_compat(c, 
                 """UPDATE sales_discount_approval_requests
                    SET status='approved',reviewed_by=?,reviewed_at=?,decision_reason=?,invoice_id=?
                    WHERE id=? AND status='pending'""",
@@ -2871,7 +2872,7 @@ def discount_approval(request_id):
 @require("sales.view")
 def invoice_print(invoice_id):
     c = db()
-    invoice = c.execute("""SELECT i.*,cu.code customer_code,cu.name customer_name,
+    invoice = execute_compat(c, """SELECT i.*,cu.code customer_code,cu.name customer_name,
         cu.tax_number customer_tax_number FROM sales_invoices i
         JOIN customers cu ON cu.id=i.customer_id WHERE i.id=?""", (invoice_id,)).fetchone()
     if not invoice:
@@ -2879,7 +2880,7 @@ def invoice_print(invoice_id):
         abort(404)
     product_columns = _columns(c, "stock_products")
     product_uom_expr = "p.uom" if "uom" in product_columns else "'' AS uom"
-    raw_lines = c.execute(f"""SELECT l.*,p.sku,p.name_ar product_name,{product_uom_expr}
+    raw_lines = execute_compat(c, f"""SELECT l.*,p.sku,p.name_ar product_name,{product_uom_expr}
         FROM sales_invoice_lines l LEFT JOIN stock_products p ON p.id=l.product_id
         WHERE l.invoice_id=? ORDER BY l.id""", (invoice_id,)).fetchall()
     lines=[]
@@ -2892,7 +2893,7 @@ def invoice_print(invoice_id):
         except (TypeError,InvalidOperation,ZeroDivisionError):
             item["display_unit_price"]=row["unit_price"]
         lines.append(item)
-    settings = {r["setting_key"]:r["setting_value"] for r in c.execute(
+    settings = {r["setting_key"]:r["setting_value"] for r in execute_compat(c, 
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
         "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
     branch = None
@@ -2903,7 +2904,7 @@ def invoice_print(invoice_id):
             column if column in branch_columns else "'' AS " + column
             for column in ("address", "phone", "email", "tax_number")
         ]
-        branch = c.execute(
+        branch = execute_compat(c, 
             "SELECT code,name_ar," + ",".join(branch_fields) + " FROM branches WHERE id=?",
             (invoice["branch_id"],),
         ).fetchone()
@@ -2919,18 +2920,18 @@ def new_credit_note():
     invoice = None
     lines = []
     if invoice_id:
-        invoice = c.execute(
+        invoice = execute_compat(c, 
             """SELECT i.*,cu.name customer_name FROM sales_invoices i
                JOIN customers cu ON cu.id=i.customer_id WHERE i.id=? AND i.status='posted'""",
             (invoice_id,),
         ).fetchone()
         if invoice:
-            lines = c.execute(
+            lines = execute_compat(c, 
                 "SELECT * FROM sales_invoice_lines WHERE invoice_id=? ORDER BY id",
                 (invoice_id,),
             ).fetchall()
             prior_by_line = {}
-            for prior in c.execute(
+            for prior in execute_compat(c, 
                 """SELECT cl.invoice_line_id,cl.quantity FROM sales_credit_note_lines cl
                    JOIN sales_credit_notes cn ON cn.id=cl.credit_note_id
                    JOIN sales_invoice_lines il ON il.id=cl.invoice_line_id
@@ -2947,7 +2948,7 @@ def new_credit_note():
                 item["credited_qty"] = str(prior_by_line.get(line["id"], Decimal("0")))
                 item["uom_options"] = [u for u in product_uom_options(c, line["product_id"]) if u.get("sales_enabled", 1)] if line["product_id"] else []
                 if line["product_id"] and not item["uom_options"]:
-                    product_unit = c.execute("SELECT uom FROM stock_products WHERE id=?", (line["product_id"],)).fetchone()
+                    product_unit = execute_compat(c, "SELECT uom FROM stock_products WHERE id=?", (line["product_id"],)).fetchone()
                     item["uom_options"] = [{"id":"", "name_ar": product_unit["uom"], "is_base":1}] if product_unit else []
                 enriched_lines.append(item)
             lines = enriched_lines
@@ -2974,7 +2975,7 @@ def new_credit_note():
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
             c.rollback()
             flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
-    invoices = c.execute(
+    invoices = execute_compat(c, 
         """SELECT i.id,i.invoice_no,i.invoice_date,i.total_amount,i.paid_amount,
                   COALESCE(i.credited_amount,'0') credited_amount,cu.name customer_name
            FROM sales_invoices i JOIN customers cu ON cu.id=i.customer_id
@@ -3019,8 +3020,8 @@ def new_receipt():
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
             c.rollback()
             flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
-    customers = c.execute("SELECT id,code,name FROM customers WHERE active=1 ORDER BY name").fetchall()
-    raw_invoices = c.execute("""SELECT i.id,i.invoice_no,i.customer_id,i.invoice_date,i.due_date,
+    customers = execute_compat(c, "SELECT id,code,name FROM customers WHERE active=1 ORDER BY name").fetchall()
+    raw_invoices = execute_compat(c, """SELECT i.id,i.invoice_no,i.customer_id,i.invoice_date,i.due_date,
         i.total_amount,i.paid_amount,COALESCE(i.credited_amount,'0') credited_amount,c.name customer_name
         FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
         WHERE i.status='posted' ORDER BY c.name,i.invoice_date,i.id""").fetchall()
@@ -3037,7 +3038,7 @@ def new_receipt():
     cash_accounts = []
     if cash_account_ids:
         placeholders = ",".join("?" for _ in cash_account_ids)
-        cash_accounts = c.execute(
+        cash_accounts = execute_compat(c, 
             f"""SELECT id,code,name_ar FROM accounts
                 WHERE id IN ({placeholders}) AND account_type='asset'
                   AND is_group=0 AND active=1 ORDER BY code""",
@@ -3052,7 +3053,7 @@ def new_receipt():
 @require("sales.view")
 def single_receipt_print(receipt_id):
     c = db()
-    receipt = c.execute("""SELECT r.*,i.invoice_no,cu.code customer_code,cu.name customer_name,
+    receipt = execute_compat(c, """SELECT r.*,i.invoice_no,cu.code customer_code,cu.name customer_name,
         a.code cash_code,a.name_ar cash_name FROM customer_receipts r
         JOIN sales_invoices i ON i.id=r.invoice_id
         JOIN customers cu ON cu.id=i.customer_id
@@ -3060,7 +3061,7 @@ def single_receipt_print(receipt_id):
     if not receipt:
         c.close()
         abort(404)
-    settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
+    settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(c, 
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
         "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
     c.close()
@@ -3072,18 +3073,18 @@ def single_receipt_print(receipt_id):
 @require("sales.view")
 def receipt_print(receipt_id):
     c = db()
-    receipt = c.execute("""SELECT r.*,cu.code customer_code,cu.name customer_name,
+    receipt = execute_compat(c, """SELECT r.*,cu.code customer_code,cu.name customer_name,
         a.code cash_code,a.name_ar cash_name FROM customer_receipt_batches r
         JOIN customers cu ON cu.id=r.customer_id
         JOIN accounts a ON a.id=r.cash_account_id WHERE r.id=?""", (receipt_id,)).fetchone()
     if not receipt:
         c.close()
         abort(404)
-    allocations = c.execute("""SELECT i.invoice_no,i.invoice_date,i.total_amount,
+    allocations = execute_compat(c, """SELECT i.invoice_no,i.invoice_date,i.total_amount,
         a.amount FROM customer_receipt_allocations a
         JOIN sales_invoices i ON i.id=a.invoice_id WHERE a.batch_id=? ORDER BY a.id""",
         (receipt_id,)).fetchall()
-    settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
+    settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(c, 
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
         "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
     c.close()
@@ -3104,7 +3105,7 @@ if __name__ == "__main__":
 @require("sales.manage")
 def refund_credit_note(credit_note_id):
     c = db()
-    note = c.execute(
+    note = execute_compat(c, 
         """SELECT n.*,i.invoice_no,cu.name customer_name FROM sales_credit_notes n
            JOIN sales_invoices i ON i.id=n.invoice_id JOIN customers cu ON cu.id=i.customer_id
            WHERE n.id=? AND n.status='posted'""", (credit_note_id,)
@@ -3113,7 +3114,7 @@ def refund_credit_note(credit_note_id):
         c.close()
         flash("الإشعار الدائن غير موجود أو غير مرحل.", "error")
         return redirect(url_for("sales.index"))
-    refunds = c.execute("SELECT amount FROM customer_refunds WHERE credit_note_id=?", (credit_note_id,)).fetchall()
+    refunds = execute_compat(c, "SELECT amount FROM customer_refunds WHERE credit_note_id=?", (credit_note_id,)).fetchall()
     already_refunded = sum((Decimal(row["amount"]) for row in refunds), Decimal("0"))
     remaining_refundable = max(Decimal("0"), Decimal(note["refundable_amount"] or "0") - already_refunded)
     if request.method == "POST":
@@ -3134,7 +3135,7 @@ def refund_credit_note(credit_note_id):
     cash_accounts = []
     if cash_account_ids:
         placeholders = ",".join("?" for _ in cash_account_ids)
-        cash_accounts = c.execute(
+        cash_accounts = execute_compat(c, 
             f"""SELECT id,code,name_ar FROM accounts
                 WHERE id IN ({placeholders}) AND account_type='asset'
                   AND is_group=0 AND active=1 ORDER BY code""",
