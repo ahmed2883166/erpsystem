@@ -3,8 +3,15 @@ import os
 import sqlite3
 import unittest
 import uuid
+from types import SimpleNamespace
 
-from db_compat import database_dialect, table_columns, table_exists, begin_write_transaction, transaction_is_active
+from db_compat import (
+    database_dialect,
+    table_columns,
+    table_exists,
+    begin_write_transaction,
+    transaction_is_active,
+)
 
 
 class SQLiteSchemaCompatibilityTests(unittest.TestCase):
@@ -53,6 +60,34 @@ class SQLiteSchemaCompatibilityTests(unittest.TestCase):
             table_exists(self.connection, 'probe"; DROP TABLE accounts; --')
         with self.assertRaises(ValueError):
             table_columns(self.connection, "probe WHERE 1=1")
+
+
+class _FakePsycopgConnection:
+    __module__ = "psycopg.fake"
+
+    def __init__(self, status_name):
+        self.info = SimpleNamespace(
+            transaction_status=SimpleNamespace(name=status_name)
+        )
+        self.statements = []
+
+    def execute(self, statement):
+        self.statements.append(statement)
+
+
+class PortableTransactionStateTests(unittest.TestCase):
+    def test_postgresql_idle_connection_starts_one_transaction(self):
+        connection = _FakePsycopgConnection("IDLE")
+        self.assertFalse(transaction_is_active(connection))
+        self.assertTrue(begin_write_transaction(connection))
+        self.assertEqual(connection.statements, ["BEGIN"])
+        self.assertTrue(transaction_is_active(connection))
+
+    def test_postgresql_existing_transaction_is_not_nested(self):
+        connection = _FakePsycopgConnection("INTRANS")
+        self.assertTrue(transaction_is_active(connection))
+        self.assertFalse(begin_write_transaction(connection))
+        self.assertEqual(connection.statements, [])
 
 
 POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
