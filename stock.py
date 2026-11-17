@@ -1,6 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database, fetch_page
-from db_compat import table_columns, table_exists, begin_write_transaction, insert_and_get_id
+from db_compat import table_columns, table_exists, begin_write_transaction, insert_and_get_id, execute_script
 """NEXUS ERP inventory foundation (v0.2).
 
 Implements product master, warehouses, stock receipts/issues/transfers/scrap,
@@ -42,7 +42,7 @@ def initialize_stock_schema():
     DB_PATH.parent.mkdir(exist_ok=True)
     c = get_db()
     initialize_analytic_dimensions_schema(c)
-    c.executescript("""
+    execute_script(c,"""
     CREATE TABLE IF NOT EXISTS stock_products(
       id INTEGER PRIMARY KEY, sku TEXT NOT NULL UNIQUE, name_ar TEXT NOT NULL,
       category TEXT NOT NULL DEFAULT '', product_type TEXT NOT NULL DEFAULT 'goods',
@@ -140,7 +140,7 @@ def initialize_stock_schema():
     layer_columns = _columns(c, "stock_valuation_layers")
     if "location_id" not in layer_columns:
         c.execute("ALTER TABLE stock_valuation_layers ADD COLUMN location_id INTEGER REFERENCES stock_locations(id)")
-    c.executescript("""
+    execute_script(c,"""
     CREATE TABLE IF NOT EXISTS stock_warehouse_product_settings(
       product_id INTEGER NOT NULL REFERENCES stock_products(id),
       warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
@@ -192,7 +192,7 @@ def initialize_stock_schema():
                           (str(D(str(layer["total_cost"]))), layer["id"]))
     c.execute("DROP INDEX IF EXISTS idx_stock_movement_journal")
     c.execute("CREATE INDEX IF NOT EXISTS idx_stock_movement_journal ON stock_movements(journal_entry_id) WHERE journal_entry_id IS NOT NULL")
-    c.executescript("""
+    execute_script(c,"""
     CREATE TABLE IF NOT EXISTS stocktakes(
       id INTEGER PRIMARY KEY, count_no TEXT NOT NULL UNIQUE,
       warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
@@ -217,7 +217,7 @@ def initialize_stock_schema():
     if "location_id" not in line_columns or "lot_id" not in line_columns:
         c.execute("DROP INDEX IF EXISTS idx_stocktake_lines_header")
         c.execute("ALTER TABLE stocktake_lines RENAME TO stocktake_lines_legacy")
-        c.executescript("""
+        execute_script(c,"""
         CREATE TABLE stocktake_lines(
           id INTEGER PRIMARY KEY, stocktake_id INTEGER NOT NULL REFERENCES stocktakes(id) ON DELETE CASCADE,
           product_id INTEGER NOT NULL REFERENCES stock_products(id),
@@ -241,7 +241,7 @@ def initialize_stock_schema():
         c.execute("ALTER TABLE stocktakes ADD COLUMN movement_cutoff_id INTEGER NOT NULL DEFAULT 0")
 
     # Unit catalog and additive links; legacy quantities remain untouched.
-    c.executescript("""
+    execute_script(c,"""
     CREATE TABLE IF NOT EXISTS stock_uom_categories(
       id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name_ar TEXT NOT NULL UNIQUE,
       active INTEGER NOT NULL DEFAULT 1
@@ -275,7 +275,7 @@ def initialize_stock_schema():
     c.execute("""UPDATE stock_products SET base_uom_id=(
         SELECT id FROM stock_uoms WHERE name_ar=stock_products.uom ORDER BY is_base DESC LIMIT 1
         ) WHERE base_uom_id IS NULL AND EXISTS(SELECT 1 FROM stock_uoms WHERE name_ar=stock_products.uom)""")
-    c.executescript("""
+    execute_script(c,"""
     CREATE TABLE IF NOT EXISTS stock_product_uoms(
       id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES stock_products(id),
       uom_id INTEGER REFERENCES stock_uoms(id), custom_code TEXT NOT NULL,
