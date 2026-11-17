@@ -5,7 +5,7 @@ meaning. It intentionally does not claim PostgreSQL compatibility yet:
 dialect-specific identity, trigger, and migration behavior still needs a
 separate reviewed migration layer.
 """
-from db_compat import execute_script
+from db_compat import execute_script, table_columns
 
 
 CORE_SCHEMA_SQL = """
@@ -59,4 +59,23 @@ CORE_SCHEMA_SQL = """
 def initialize_core_schema(connection):
     """Create the core tables idempotently on the supplied connection."""
     execute_script(connection, CORE_SCHEMA_SQL)
+    return True
+
+
+def ensure_legacy_core_columns(connection):
+    """Add backward-compatible columns missing from older company databases.
+
+    Existing values and primary keys are left untouched. The helper uses the
+    shared schema-inspection adapter and is safe to run repeatedly.
+    """
+    additions = (
+        ("users", "must_change_password", "INTEGER NOT NULL DEFAULT 0"),
+        ("users", "permissions_json", "TEXT"),
+        ("accounts", "is_group", "INTEGER NOT NULL DEFAULT 0"),
+    )
+    for table_name, column_name, declaration in additions:
+        if column_name not in table_columns(connection, table_name):
+            connection.execute(
+                f"ALTER TABLE {table_name} ADD COLUMN {column_name} {declaration}"
+            )
     return True
