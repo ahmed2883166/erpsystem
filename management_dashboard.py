@@ -6,6 +6,8 @@ from copy import deepcopy
 from threading import RLock
 from accounting_core import register_decimal_aggregates
 from income_statement import build_income_statement
+from db_compat import table_exists
+from db_sql import execute_compat
 
 CENT = Decimal("0.01")
 
@@ -122,13 +124,11 @@ def _closing_entry_condition(conn):
 
 def _copied_opening_entry_ids(conn, as_of):
     """Return later-year opening copies (and their reversals) already represented by prior ledger history."""
-    tables = {row["name"] for row in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' "
-        "AND name IN ('financial_years','financial_year_journal_history')"
-    )}
-    if tables != {"financial_years", "financial_year_journal_history"}:
+    if not all(table_exists(conn, table) for table in (
+        "financial_years", "financial_year_journal_history"
+    )):
         return set()
-    rows = conn.execute("""
+    rows = execute_compat(conn, """
         SELECT h.entry_id FROM financial_year_journal_history h
         JOIN financial_years fy ON fy.id=h.financial_year_id
         WHERE h.entry_kind='opening' AND h.action='created' AND fy.start_date<=?
@@ -138,7 +138,8 @@ def _copied_opening_entry_ids(conn, as_of):
     excluded = {int(row["entry_id"]) for row in rows}
     if excluded:
         marks = ",".join("?" for _ in excluded)
-        reversals = conn.execute(
+        reversals = execute_compat(
+            conn,
             f"""SELECT entry_id FROM financial_year_journal_history
                 WHERE entry_kind='opening' AND action='reversed'
                   AND related_entry_id IN ({marks})""",
