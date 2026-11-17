@@ -1467,7 +1467,8 @@ def _supplier_receipt_available_amount(c, receipt_id, exclude_bill_id=None):
     if exclude_bill_id is not None:
         sql += " AND x.bill_id<>?"
         params.append(exclude_bill_id)
-    allocated = sum((money(row["matched_amount"]) for row in execute_compat(c, sql, params)), money("0"))
+    allocated_rows = execute_compat(c, sql, params).fetchall()
+    allocated = sum((money(row["matched_amount"]) for row in allocated_rows), money("0"))
     receipt = execute_compat(c, "SELECT total_value FROM goods_receipts WHERE id=?", (receipt_id,)).fetchone()
     if not receipt:
         raise ValueError("إيصال الاستلام غير موجود.")
