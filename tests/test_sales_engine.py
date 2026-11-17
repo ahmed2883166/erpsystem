@@ -1044,8 +1044,8 @@ class SalesIntegrationTests(unittest.TestCase):
             (credit["credit_note_id"],)
         ).fetchone()["stock_movement_id"]
         layer = self.db.execute(
-            "SELECT id,qty_in,qty_remaining,total_cost FROM stock_valuation_layers l "
-            "JOIN stock_movements m ON m.id=l.source_movement_id WHERE m.id=?",
+            "SELECT l.id AS layer_id,l.qty_in,l.qty_remaining,m.total_cost "
+            "FROM stock_valuation_layers l JOIN stock_movements m ON m.id=l.source_movement_id WHERE m.id=?",
             (returned_movement,)
         ).fetchone()
         self.assertEqual(Decimal(layer["qty_remaining"]), Decimal(layer["qty_in"]))
@@ -1053,7 +1053,7 @@ class SalesIntegrationTests(unittest.TestCase):
         # Simulate an average-cost rebase: quantity is untouched, carrying value changed.
         self.db.execute(
             "UPDATE stock_valuation_layers SET value_remaining='9.50' WHERE id=?",
-            (layer["id"],)
+            (layer["layer_id"],)
         )
         journal_count = self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
         with self.assertRaisesRegex(ValueError, "القيمة الدفترية لطبقة المرتجع تغيرت"):
