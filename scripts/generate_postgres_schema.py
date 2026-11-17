@@ -216,6 +216,15 @@ def generate_postgres_ddl(snapshot):
     tables = snapshot.get("tables")
     if not isinstance(tables, list) or not tables:
         raise ValueError("Schema snapshot contains no tables.")
+    views = snapshot.get("views", [])
+    if views:
+        view_names = sorted(
+            str(view.get("name") or "<unnamed>") for view in views
+        )
+        raise ValueError(
+            "SQLite views are not translated to PostgreSQL yet; refusing to "
+            "generate an incomplete schema. Review views: " + ", ".join(view_names)
+        )
 
     lines = [
         "-- Generated conservative PostgreSQL baseline from NEXUS SQLite schema.",
