@@ -6,7 +6,7 @@ onto payroll lines when a run is created.
 """
 from app_paths import DB_PATH
 from database import connect_database
-from db_compat import DB_ERROR, execute_script, table_columns, table_exists, begin_write_transaction
+from db_compat import DB_ERROR, execute_script, table_columns, table_exists, begin_write_transaction, insert_and_get_id
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
@@ -350,14 +350,13 @@ def rules():
                     raise ValueError("نسب التأمينات يجب أن تكون بين صفر و100.")
                 if ceiling and ceiling < floor:
                     raise ValueError("الحد الأقصى لأجر التأمين يجب ألا يقل عن الحد الأدنى.")
-                cur = conn.execute("""
+                rule_id = insert_and_get_id(conn, """
                     INSERT INTO payroll_rule_sets(country_code,category_code,effective_from,
                       personal_exemption_annual,taxable_rounding_unit,insurance_floor,insurance_ceiling,
                       employee_insurance_rate,employer_insurance_rate,notes)
                     VALUES(?,?,?,?,?,?,?,?,?,?)
                 """, (country,category,effective,str(exemption),str(rounding_unit),str(floor),str(ceiling),
                       str(employee_rate),str(employer_rate),request.form.get("notes","").strip()))
-                rule_id = cur.lastrowid
                 _audit(conn, "payroll_rule_created", country + "/" + category + " id=" + str(rule_id))
                 conn.commit()
                 flash("تم إنشاء مجموعة القواعد. أضف شرائح ضريبة الدخل السنوية لها.", "success")
