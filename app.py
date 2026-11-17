@@ -846,7 +846,7 @@ def _operational_audit_snapshot(endpoint, view_args, created_record=None):
         if child_table:
             child_exists = table_exists(connection, child_table,)
             if child_exists:
-                child_info = table_column_info(connection, child_table).values()
+                child_info = list(table_column_info(connection, child_table).values())
                 # Some operational detail tables use a composite primary key
                 # and intentionally have no id column. Order by declared PK.
                 primary_columns = sorted(
