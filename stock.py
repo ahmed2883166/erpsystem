@@ -1,6 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database, fetch_page
-from db_compat import (table_columns, table_exists, begin_write_transaction, insert_and_get_id, execute_script, DB_ERROR, DB_INTEGRITY_ERROR)
+from db_compat import (table_columns, table_exists, database_dialect, begin_write_transaction, insert_and_get_id, execute_script, DB_ERROR, DB_INTEGRITY_ERROR)
 from db_sql import execute_compat
 """NEXUS ERP inventory foundation (v0.2).
 
@@ -41,6 +41,24 @@ def _table_exists(conn, name):
 def _columns(conn, name):
     """Return table columns without SQLite-specific PRAGMA at call sites."""
     return table_columns(conn, name)
+
+
+def _install_stock_location_triggers(conn):
+    """Install SQLite guards; PostgreSQL equivalents live in its schema migrations."""
+    if database_dialect(conn) != "sqlite":
+        return
+    execute_script(conn, """
+    CREATE TRIGGER IF NOT EXISTS trg_stock_product_locations_same_wh_insert
+    BEFORE INSERT ON stock_product_locations
+    WHEN NOT EXISTS(SELECT 1 FROM stock_locations l WHERE l.id=NEW.location_id
+      AND l.warehouse_id=NEW.warehouse_id AND l.active=1)
+    BEGIN SELECT RAISE(ABORT,'موقع الصنف الافتراضي يجب أن يكون نشطًا ويتبع نفس المخزن.'); END;
+    CREATE TRIGGER IF NOT EXISTS trg_stock_product_locations_same_wh_update
+    BEFORE UPDATE OF warehouse_id,location_id ON stock_product_locations
+    WHEN NOT EXISTS(SELECT 1 FROM stock_locations l WHERE l.id=NEW.location_id
+      AND l.warehouse_id=NEW.warehouse_id AND l.active=1)
+    BEGIN SELECT RAISE(ABORT,'موقع الصنف الافتراضي يجب أن يكون نشطًا ويتبع نفس المخزن.'); END;
+    """)
 
 
 def initialize_stock_schema():
@@ -157,17 +175,8 @@ def initialize_stock_schema():
       PRIMARY KEY(product_id,warehouse_id)
     );
     CREATE INDEX IF NOT EXISTS idx_stock_wh_product_reorder ON stock_warehouse_product_settings(warehouse_id,reorder_point,product_id);
-    CREATE TRIGGER IF NOT EXISTS trg_stock_product_locations_same_wh_insert
-    BEFORE INSERT ON stock_product_locations
-    WHEN NOT EXISTS(SELECT 1 FROM stock_locations l WHERE l.id=NEW.location_id
-      AND l.warehouse_id=NEW.warehouse_id AND l.active=1)
-    BEGIN SELECT RAISE(ABORT,'موقع الصنف الافتراضي يجب أن يكون نشطًا ويتبع نفس المخزن.'); END;
-    CREATE TRIGGER IF NOT EXISTS trg_stock_product_locations_same_wh_update
-    BEFORE UPDATE OF warehouse_id,location_id ON stock_product_locations
-    WHEN NOT EXISTS(SELECT 1 FROM stock_locations l WHERE l.id=NEW.location_id
-      AND l.warehouse_id=NEW.warehouse_id AND l.active=1)
-    BEGIN SELECT RAISE(ABORT,'موقع الصنف الافتراضي يجب أن يكون نشطًا ويتبع نفس المخزن.'); END;
     """)
+    _install_stock_location_triggers(c)
     # Carry legacy product-level reorder thresholds forward as initial per-warehouse settings.
     _execute(c, f"""INSERT INTO stock_warehouse_product_settings
         (product_id,warehouse_id,min_qty,reorder_point,reorder_qty)
