@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from income_statement import build_income_statement, comparison_period
 from cash_commitments import list_cash_commitments_forecast
-from db_compat import table_columns, table_exists
+from db_compat import database_dialect, table_columns, table_exists
 from db_sql import execute_compat
 from receivables import (
     _customer_aging_documents, _customer_aging_movements,
@@ -20,6 +20,13 @@ def _exists(conn, table):
 def _cols(conn, table):
     """Return validated column metadata for the selected database schema."""
     return table_columns(conn, table)
+
+
+def _date_prefix_sql(conn, expression):
+    """Return a portable YYYY-MM-DD expression for date/timestamp text."""
+    if database_dialect(conn) == "postgresql":
+        return f"LEFT(CAST({expression} AS TEXT),10)"
+    return f"substr({expression},1,10)"
 
 
 def _d(value):
