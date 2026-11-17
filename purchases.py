@@ -2403,7 +2403,8 @@ def _allocate_supplier_bill_return_value(bill_lines, requested_quantity, legacy_
     return money(total_value), allocations
 
 
-def _supplier_bill_return_value_allocations(c, bill_id, product_id, warehouse_id, requested_quantity):
+def _supplier_bill_return_value_allocations(c, bill_id, product_id, warehouse_id, requested_quantity,
+                                            pending_allocations=None):
     rows = execute_compat(c, """
         SELECT x.id AS bill_line_id,x.billed_quantity,x.invoice_unit_price,
                COALESCE(SUM(CASE WHEN cn.status='posted' THEN a.quantity ELSE '0' END),'0') AS allocated_quantity
@@ -2425,7 +2426,18 @@ def _supplier_bill_return_value_allocations(c, bill_id, product_id, warehouse_id
           AND NOT EXISTS (SELECT 1 FROM supplier_credit_note_bill_line_allocations a
                           WHERE a.credit_note_line_id=l.id)
     """, (bill_id, product_id, warehouse_id)).fetchone()
-    return _allocate_supplier_bill_return_value(rows, requested_quantity, legacy["quantity"] if legacy else "0")
+    pending_allocations = pending_allocations or {}
+    adjusted_rows = []
+    for row in rows:
+        item = dict(row)
+        item["allocated_quantity"] = str(
+            Decimal(str(item["allocated_quantity"] or "0"))
+            + Decimal(str(pending_allocations.get(int(item["bill_line_id"]), "0")))
+        )
+        adjusted_rows.append(item)
+    return _allocate_supplier_bill_return_value(
+        adjusted_rows, requested_quantity, legacy["quantity"] if legacy else "0"
+    )
 
 
 def _supplier_bill_returnable_quantity(c, bill_id, product_id, warehouse_id):
@@ -2647,6 +2659,7 @@ def new_credit_note():
             method=method_row["setting_value"] if method_row else "average"
             line_data=[]; movement_ids=[]; subtotal=Decimal("0")
             remaining_returnable={}
+            pending_bill_line_quantities={}
             for raw_pid,raw_wh,raw_qty,raw_uom_key in zip(product_ids,warehouse_ids,quantities,uom_keys):
                 product_id=int(raw_pid); warehouse_id=int(raw_wh)
                 entered_qty=Decimal(raw_qty)
@@ -2666,8 +2679,14 @@ def new_credit_note():
                     )
                 remaining_returnable[return_key]-=qty
                 supplier_return_value,bill_line_allocations=_supplier_bill_return_value_allocations(
-                    c,bill_id,product_id,warehouse_id,qty
+                    c,bill_id,product_id,warehouse_id,qty,pending_bill_line_quantities
                 )
+                for bill_allocation in bill_line_allocations:
+                    bill_line_id=bill_allocation["supplier_bill_line_id"]
+                    pending_bill_line_quantities[bill_line_id]=(
+                        pending_bill_line_quantities.get(bill_line_id,Decimal("0"))
+                        + bill_allocation["quantity"]
+                    )
                 product=execute_compat(c, "SELECT * FROM stock_products WHERE id=? AND active=1",(product_id,)).fetchone()
                 warehouse=execute_compat(c, "SELECT id FROM stock_warehouses WHERE id=? AND active=1",(warehouse_id,)).fetchone()
                 if not product or product["product_type"]=="service" or not warehouse:
