@@ -8,6 +8,7 @@ import sqlite3
 from pathlib import Path
 from report_request_control import current_report_deadline, make_sqlite_deadline_callback
 from db_sql import execute_compat
+from sqlite_maintenance import enable_sqlite_wal
 
 
 DEFAULT_TIMEOUT_SECONDS = 20
@@ -39,18 +40,8 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
 
 
 def enable_wal(path, *, timeout=DEFAULT_TIMEOUT_SECONDS):
-    """Enable persistent WAL mode once during application initialization."""
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(str(target), timeout=timeout)
-    try:
-        connection.execute(f"PRAGMA busy_timeout = {int(timeout * 1000)}")
-        mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
-        if str(mode).lower() != "wal":
-            raise RuntimeError(f"Could not enable SQLite WAL mode (reported {mode!r}).")
-        return str(mode).lower()
-    finally:
-        connection.close()
+    """Backward-compatible wrapper for the isolated SQLite maintenance layer."""
+    return enable_sqlite_wal(path, timeout=timeout)
 
 
 def _first_column_value(row):
