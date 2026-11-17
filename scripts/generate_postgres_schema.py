@@ -89,6 +89,14 @@ def extract_check_constraints(create_sql):
     return checks
 
 
+def extract_nocase_unique_columns(create_sql):
+    """Find SQLite columns whose UNIQUE constraint uses COLLATE NOCASE."""
+    if not create_sql:
+        return set()
+    pattern = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)\\s+[^,]*?COLLATE\\s+NOCASE[^,]*?\\bUNIQUE\\b', re.I | re.S)
+    return {match.group(1) for match in pattern.finditer(create_sql)}
+
+
 def _index_sql_by_name(snapshot):
     return {
         item["name"]: item.get("sql")
@@ -112,6 +120,7 @@ def generate_postgres_ddl(snapshot):
     table_names = {table["name"] for table in tables}
     pending_fks = []
     pending_indexes = []
+    nocase_unique_columns = {table['name']: extract_nocase_unique_columns(table.get('sql')) for table in tables}
     numeric_candidates = []
     identity_columns = []
 
@@ -219,6 +228,13 @@ def generate_postgres_ddl(snapshot):
         if not cols:
             raise ValueError(f"Index {name} has no columns.")
         unique = "UNIQUE " if index.get("unique") else ""
+        if index.get("unique") and len(cols) == 1 and cols[0] in nocase_unique_columns.get(table_name, set()):
+            index_name = quote_ident(short_identifier("uq_" + table_name + "_" + cols[0] + "_nocase"))
+            lines.append(
+                f"CREATE UNIQUE INDEX {index_name} ON {quote_ident(table_name)} "
+                f"(lower({quote_ident(cols[0])}));"
+            )
+            continue
         where_clause = ""
         if original_sql:
             where_match = re.search(r"\bWHERE\b(.+)$", original_sql, re.I | re.S)
@@ -245,6 +261,7 @@ def generate_postgres_ddl(snapshot):
             "Review candidate fields before any NUMERIC(p,s) conversion.",
             "CHECK constraints are copied from the SQLite CREATE TABLE definitions.",
             "Expression indexes are copied from their SQLite CREATE INDEX definitions.",
+            "SQLite COLLATE NOCASE unique columns are represented by unique lower(column) indexes.",
             "Validate generated DDL on the target PostgreSQL major version before production use.",
         ],
     }
