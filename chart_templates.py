@@ -1,3 +1,4 @@
+from db_compat import table_columns
 """Activity-specific starter charts for NEXUS ERP.
 These are practical starting templates, not a substitute for a country-specific statutory chart.
 """
@@ -257,9 +258,14 @@ def account_metadata_for(account_type, code, name_ar):
     }
 
 
+def _account_columns(conn):
+    """Return account column names using the active database dialect."""
+    return table_columns(conn, "accounts")
+
+
 def ensure_account_metadata(conn):
     """Add and refresh derived chart metadata; never touches journal lines or balances."""
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+    columns = _account_columns(conn)
     declarations = {
         "normal_balance": "TEXT NOT NULL DEFAULT 'debit'",
         "statement_section": "TEXT",
