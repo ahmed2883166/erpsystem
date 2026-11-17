@@ -15,7 +15,7 @@ from accounting_core import post_journal, safe_error_message, decimal_sum_expres
 from db_compat import table_columns, table_exists, insert_and_get_id, begin_write_transaction, execute_script, database_dialect, DB_ERROR, DB_INTEGRITY_ERROR
 from db_sql import execute_compat
 from database import connect_database, fetch_page
-from stock import consume_layers, product_uom_factor, product_uom_options, product_uom_storage
+from stock import consume_layers, product_uom_factor, product_uom_options, product_uom_storage, lock_stock_warehouses
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 from code_sequences import next_code
 
@@ -1137,6 +1137,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
             warehouse_id = invoice["warehouse_id"]
             if not warehouse_id:
                 raise ValueError("فاتورة الصنف المخزني لا تحتوي على مخزن صرف صالح.")
+            lock_stock_warehouses(conn, warehouse_id)
             default_location = execute_compat(conn, "SELECT location_id FROM stock_product_locations WHERE product_id=? AND warehouse_id=?",
                                             (product_id, warehouse_id)).fetchone()
             return_location_id = default_location["location_id"] if default_location else None
