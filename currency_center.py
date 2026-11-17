@@ -8,6 +8,7 @@ from functools import wraps
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
+from db_compat import table_exists
 
 currency_bp = Blueprint("currency_center", __name__)
 
@@ -82,8 +83,13 @@ def _role(fn):
     return wrapped
 
 
+def _table_exists(c, name):
+    """Check optional currency-center tables using the active DB dialect."""
+    return table_exists(c, name)
+
+
 def _audit(c, action, details):
-    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='audit_log'").fetchone():
+    if _table_exists(c, "audit_log"):
         c.execute("INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
                   (session.get("user_id"), action, details))
 
