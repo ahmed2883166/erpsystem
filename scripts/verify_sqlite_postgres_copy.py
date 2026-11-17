@@ -14,8 +14,6 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.parse import quote
 
-import psycopg
-from psycopg.rows import dict_row
 
 
 def _ident(value: str) -> str:
@@ -80,6 +78,11 @@ def _compare_decimal_maps(label, source, target, issues):
 
 
 def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> dict:
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+    except ImportError as exc:
+        raise RuntimeError("Install psycopg[binary]>=3.2,<4.0 to verify PostgreSQL copies.") from exc
     _ident(schema)
     source_path = Path(sqlite_path).expanduser().resolve(strict=True)
     uri = "file:" + quote(source_path.as_posix(), safe="/:") + "?mode=ro"
