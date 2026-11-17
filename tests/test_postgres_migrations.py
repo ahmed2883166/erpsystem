@@ -56,6 +56,13 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
         self.assertTrue(any("CREATE TABLE IF NOT EXISTS stock_products" in item for item in inventory_statements))
         self.assertTrue(any("CREATE TABLE IF NOT EXISTS stock_valuation_layers" in item for item in inventory_statements))
         self.assertTrue(any("NUMERIC(24, 8)" in item for item in inventory_statements))
+        purchasing_statements = _split_sql_statements(migrations[3].sql)
+        self.assertTrue(any("CREATE TABLE IF NOT EXISTS purchase_orders" in item for item in purchasing_statements))
+        self.assertTrue(any("CREATE TABLE IF NOT EXISTS goods_receipts" in item for item in purchasing_statements))
+        sales_statements = _split_sql_statements(migrations[4].sql)
+        self.assertTrue(any("CREATE TABLE IF NOT EXISTS sales_invoices" in item for item in sales_statements))
+        self.assertTrue(any("CREATE TABLE IF NOT EXISTS customer_receipts" in item for item in sales_statements))
+        self.assertTrue(any("CREATE TABLE IF NOT EXISTS sales_credit_notes" in item for item in sales_statements))
 
     def test_rejects_invalid_or_empty_migration_files(self):
         with tempfile.TemporaryDirectory() as directory:
