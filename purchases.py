@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from functools import wraps
 from datetime import date, datetime, timedelta
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
-from accounting_core import post_journal, money, safe_error_message
+from accounting_core import post_journal, money, safe_error_message, decimal_sum_expression
 from db_compat import table_columns, table_exists
 from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
@@ -920,10 +920,13 @@ def suppliers():
         per_page=request.args.get("suppliers_per_page",50,type=int))
     suppliers_rows=suppliers_page["rows"]
     outstanding_by_supplier={}
-    for bill in c.execute("""SELECT supplier_id,
-        COALESCE(DECIMAL_SUM(total_amount),'0') total_amount,
-        COALESCE(DECIMAL_SUM(paid_amount),'0') paid_amount,
-        COALESCE(DECIMAL_SUM(credited_amount),'0') credited_amount
+    bill_total_sum_sql = decimal_sum_expression(c, "total_amount")
+    bill_paid_sum_sql = decimal_sum_expression(c, "paid_amount")
+    bill_credited_sum_sql = decimal_sum_expression(c, "credited_amount")
+    for bill in c.execute(f"""SELECT supplier_id,
+        {bill_total_sum_sql} total_amount,
+        {bill_paid_sum_sql} paid_amount,
+        {bill_credited_sum_sql} credited_amount
         FROM supplier_bills WHERE status='posted' GROUP BY supplier_id"""):
         outstanding_by_supplier[bill["supplier_id"]] = (
             Decimal(bill["total_amount"]) - Decimal(bill["paid_amount"]) - Decimal(bill["credited_amount"])
