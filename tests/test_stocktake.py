@@ -348,7 +348,7 @@ class StocktakeRouteTests(unittest.TestCase):
             ("activity", "industrial"), ("inventory_cost_method", "fifo"),
         ])
         initialize_activity_profiles_schema(conn)
-        create_profile_id = create_activity_profile(conn, "zero_cost_count", "جرد تكلفة صفرية", "industrial")
+        create_activity_profile(conn, "zero_cost_count", "جرد تكلفة صفرية", "industrial")
         conn.execute("INSERT INTO company_settings VALUES('activity_profile_code','zero_cost_count')")
         conn.commit()
         conn.close()
