@@ -1,0 +1,215 @@
+"""Read-only post-copy verification for SQLite -> PostgreSQL NEXUS migrations.
+
+Checks every table/column/row count plus exact-decimal accounting, party, and
+inventory valuation control totals. It never changes either database.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sqlite3
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from urllib.parse import quote
+
+import psycopg
+from psycopg.rows import dict_row
+
+
+def _ident(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", value):
+        raise ValueError(f"Unsafe PostgreSQL identifier: {value!r}")
+    return '"' + value.replace('"', '""') + '"'
+
+
+def _decimal(value) -> Decimal:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return Decimal("0")
+    try:
+        return Decimal(str(value).strip())
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"Non-numeric value found in financial control field: {value!r}") from exc
+
+
+def _sqlite_grouped_sum(conn, table, amount_column, group_columns=()):
+    qtable = '"' + table.replace('"', '""') + '"'
+    qamount = '"' + amount_column.replace('"', '""') + '"'
+    qgroups = [ '"' + col.replace('"', '""') + '"' for col in group_columns ]
+    select = ", ".join(qgroups + [qamount])
+    rows = conn.execute(f"SELECT {select} FROM {qtable}").fetchall()
+    totals = {}
+    for row in rows:
+        key = tuple(row[i] for i in range(len(group_columns)))
+        totals[key] = totals.get(key, Decimal("0")) + _decimal(row[len(group_columns)])
+    return totals
+
+
+def _pg_grouped_sum(conn, schema, table, amount_column, group_columns=()):
+    qtable = _ident(schema) + "." + _ident(table)
+    qamount = _ident(amount_column)
+    qgroups = [_ident(col) for col in group_columns]
+    group_sql = ", ".join(qgroups)
+    select_sql = (group_sql + ", " if group_sql else "") + (
+        "COALESCE(SUM(COALESCE(NULLIF(BTRIM(" + qamount +
+        "::text), ''), '0')::numeric), 0)"
+    )
+    sql = f"SELECT {select_sql} FROM {qtable}"
+    if group_sql:
+        sql += f" GROUP BY {group_sql}"
+    result = {}
+    for row in conn.execute(sql).fetchall():
+        key = tuple(row[col] for col in group_columns)
+        result[key] = _decimal(row[len(group_columns)])
+    return result
+
+
+def _compare_decimal_maps(label, source, target, issues):
+    keys = sorted(set(source) | set(target), key=lambda item: tuple(str(x) for x in item))
+    for key in keys:
+        left = source.get(key, Decimal("0"))
+        right = target.get(key, Decimal("0"))
+        if left != right:
+            issues.append({
+                "control": label,
+                "key": list(key),
+                "sqlite": str(left),
+                "postgres": str(right),
+            })
+
+
+def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> dict:
+    _ident(schema)
+    source_path = Path(sqlite_path).expanduser().resolve(strict=True)
+    uri = "file:" + quote(source_path.as_posix(), safe="/:") + "?mode=ro"
+    src = sqlite3.connect(uri, uri=True, timeout=10)
+    src.row_factory = sqlite3.Row
+    dst = None
+    try:
+        src.execute("PRAGMA query_only = ON")
+        src.execute("BEGIN")
+        integrity = [row[0] for row in src.execute("PRAGMA integrity_check")]
+        fk_issues = [dict(row) for row in src.execute("PRAGMA foreign_key_check")]
+        if integrity != ["ok"] or fk_issues:
+            raise ValueError("SQLite source integrity/FK checks failed; verification is blocked.")
+
+        source_tables = [row[0] for row in src.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        )]
+        source_columns = {
+            table: [row["name"] for row in src.execute(
+                'PRAGMA table_info("' + table.replace('"', '""') + '")'
+            )]
+            for table in source_tables
+        }
+        dst = psycopg.connect(postgres_dsn, connect_timeout=10, autocommit=False,
+                              row_factory=dict_row)
+        dst.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        dst.execute("SET LOCAL search_path TO " + _ident(schema))
+        target_tables = {
+            row["table_name"] for row in dst.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema=%s AND table_type='BASE TABLE'", (schema,)
+            ).fetchall()
+        }
+        issues = []
+        missing = sorted(set(source_tables) - target_tables)
+        extra = sorted(target_tables - set(source_tables))
+        if missing or extra:
+            issues.append({"control": "table_coverage", "missing": missing, "extra": extra})
+
+        row_counts = {}
+        for table in source_tables:
+            if table not in target_tables:
+                continue
+            src_cols = source_columns[table]
+            target_cols = [row["column_name"] for row in dst.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema=%s AND table_name=%s ORDER BY ordinal_position",
+                (schema, table),
+            ).fetchall()]
+            if set(src_cols) != set(target_cols):
+                issues.append({
+                    "control": "column_coverage", "table": table,
+                    "missing": sorted(set(src_cols) - set(target_cols)),
+                    "extra": sorted(set(target_cols) - set(src_cols)),
+                })
+                continue
+            source_count = src.execute(
+                'SELECT COUNT(*) FROM "' + table.replace('"', '""') + '"'
+            ).fetchone()[0]
+            target_count = dst.execute(
+                "SELECT COUNT(*) AS n FROM " + _ident(schema) + "." + _ident(table)
+            ).fetchone()["n"]
+            row_counts[table] = {"sqlite": source_count, "postgres": target_count}
+            if source_count != target_count:
+                issues.append({
+                    "control": "row_count", "table": table,
+                    "sqlite": source_count, "postgres": target_count,
+                })
+
+        controls = []
+        def compare_control(table, amount, groups, label):
+            if table not in source_tables or table not in target_tables:
+                return
+            source_map = _sqlite_grouped_sum(src, table, amount, groups)
+            target_map = _pg_grouped_sum(dst, schema, table, amount, groups)
+            _compare_decimal_maps(label, source_map, target_map, issues)
+            controls.append(label)
+
+        if "journal_lines" in source_tables:
+            compare_control("journal_lines", "debit", (), "journal_lines.debit_total")
+            compare_control("journal_lines", "credit", (), "journal_lines.credit_total")
+            compare_control("journal_lines", "debit", ("customer_id",), "customer.debit_by_id") if "customer_id" in source_columns["journal_lines"] else None
+            compare_control("journal_lines", "credit", ("customer_id",), "customer.credit_by_id") if "customer_id" in source_columns["journal_lines"] else None
+            compare_control("journal_lines", "debit", ("supplier_id",), "supplier.debit_by_id") if "supplier_id" in source_columns["journal_lines"] else None
+            compare_control("journal_lines", "credit", ("supplier_id",), "supplier.credit_by_id") if "supplier_id" in source_columns["journal_lines"] else None
+
+        if "stock_valuation_layers" in source_tables:
+            for amount in ("qty_in", "qty_remaining", "value_remaining"):
+                compare_control("stock_valuation_layers", amount, (), f"stock_valuation_layers.{amount}_total")
+                compare_control(
+                    "stock_valuation_layers", amount, ("product_id", "warehouse_id"),
+                    f"stock_valuation_layers.{amount}_by_product_warehouse",
+                )
+
+        dst.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        dst.rollback()
+        return {
+            "read_only": True,
+            "source_integrity_ok": True,
+            "source_foreign_keys_ok": True,
+            "schema": schema,
+            "source_table_count": len(source_tables),
+            "matched_table_count": len(row_counts),
+            "source_row_count": sum(item["sqlite"] for item in row_counts.values()),
+            "target_row_count": sum(item["postgres"] for item in row_counts.values()),
+            "financial_and_inventory_controls": controls,
+            "issue_count": len(issues),
+            "issues": issues[:200],
+            "passed": not issues and len(row_counts) == len(source_tables),
+            "row_counts": row_counts,
+        }
+    finally:
+        src.close()
+        if dst is not None:
+            dst.close()
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--sqlite", required=True)
+    parser.add_argument("--postgres-dsn", default=os.environ.get("NEXUS_POSTGRES_DSN"))
+    parser.add_argument("--schema", default="nexus")
+    args = parser.parse_args(argv)
+    if not args.postgres_dsn:
+        parser.error("Provide --postgres-dsn or set NEXUS_POSTGRES_DSN.")
+    result = verify_copy(args.sqlite, args.postgres_dsn, args.schema)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result["passed"] else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
