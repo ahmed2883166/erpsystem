@@ -88,6 +88,34 @@ POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
 
 @unittest.skipUnless(POSTGRES_DSN, "NEXUS_TEST_POSTGRES_DSN is not configured")
 class PostgreSQLQmarkExecutionTests(unittest.TestCase):
+    def test_postgresql_identity_ddl_generates_inserted_ids(self):
+        import uuid
+        from db_compat import insert_and_get_id
+
+        connection = connect_postgres(POSTGRES_DSN)
+        schema = "nexus_identity_probe_" + uuid.uuid4().hex
+        try:
+            connection.execute(f'CREATE SCHEMA "{schema}"')
+            connection.execute(f'SET LOCAL search_path TO "{schema}"')
+            execute_compat(
+                connection,
+                "CREATE TABLE identity_probe (id INTEGER PRIMARY KEY, label TEXT NOT NULL)",
+            )
+            row_id = insert_and_get_id(
+                connection,
+                "INSERT INTO identity_probe(label) VALUES(?)",
+                ("identity works",),
+            )
+            self.assertGreater(row_id, 0)
+            row = connection.execute(
+                "SELECT id, label FROM identity_probe WHERE id=%s", (row_id,)
+            ).fetchone()
+            self.assertEqual(row["id"], row_id)
+            self.assertEqual(row["label"], "identity works")
+        finally:
+            connection.rollback()
+            connection.close()
+
     def test_qmark_parameters_execute_on_postgresql(self):
         from postgres_database import connect_postgres
 
