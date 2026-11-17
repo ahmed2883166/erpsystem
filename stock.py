@@ -1,5 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database, fetch_page
+from db_compat import table_columns, table_exists
 """NEXUS ERP inventory foundation (v0.2).
 
 Implements product master, warehouses, stock receipts/issues/transfers/scrap,
@@ -25,6 +26,16 @@ MONEY = D("0.01")
 
 def get_db():
     return connect_database(DB_PATH, isolation_level=None)
+
+
+def _table_exists(conn, name):
+    """Database-neutral metadata check; stock operations remain SQLite-only."""
+    return table_exists(conn, name)
+
+
+def _columns(conn, name):
+    """Return table columns without SQLite-specific PRAGMA at call sites."""
+    return table_columns(conn, name)
 
 
 def initialize_stock_schema():
@@ -92,7 +103,7 @@ def initialize_stock_schema():
     CREATE INDEX IF NOT EXISTS idx_stock_layers_product_wh ON stock_valuation_layers(product_id,warehouse_id,id);
     """)
     # Additive migrations preserve all existing stock and product data.
-    warehouse_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_warehouses)")}
+    warehouse_columns = _columns(c, "stock_warehouses")
     if "branch_id" not in warehouse_columns:
         c.execute("ALTER TABLE stock_warehouses ADD COLUMN branch_id INTEGER REFERENCES branches(id)")
     # Link legacy free-text branch labels only when an exact branch name/code match exists.
@@ -100,7 +111,7 @@ def initialize_stock_schema():
         SELECT id FROM branches WHERE lower(name_ar)=lower(stock_warehouses.branch)
            OR lower(code)=lower(stock_warehouses.branch) ORDER BY id LIMIT 1
         ) WHERE branch_id IS NULL AND TRIM(COALESCE(branch,''))<>''""")
-    product_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_products)")}
+    product_columns = _columns(c, "stock_products")
     if "category_id" not in product_columns:
         c.execute("ALTER TABLE stock_products ADD COLUMN category_id INTEGER REFERENCES stock_categories(id)")
     for name in ("purchase_price", "sale_price", "reorder_point", "reorder_qty"):
@@ -113,7 +124,7 @@ def initialize_stock_schema():
         code = f"LEGACY-{index:04d}"
         c.execute("INSERT OR IGNORE INTO stock_categories(code,name_ar) VALUES(?,?)", (code, label))
         c.execute("UPDATE stock_products SET category_id=(SELECT id FROM stock_categories WHERE name_ar=?) WHERE TRIM(category)=? AND category_id IS NULL", (label, label))
-    movement_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_movements)")}
+    movement_columns = _columns(c, "stock_movements")
     if "journal_entry_id" not in movement_columns:
         c.execute("ALTER TABLE stock_movements ADD COLUMN journal_entry_id INTEGER")
     if "accounting_status" not in movement_columns:
@@ -126,7 +137,7 @@ def initialize_stock_schema():
         c.execute("ALTER TABLE stock_movements ADD COLUMN source_location_id INTEGER REFERENCES stock_locations(id)")
     if "target_location_id" not in movement_columns:
         c.execute("ALTER TABLE stock_movements ADD COLUMN target_location_id INTEGER REFERENCES stock_locations(id)")
-    layer_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_valuation_layers)")}
+    layer_columns = _columns(c, "stock_valuation_layers")
     if "location_id" not in layer_columns:
         c.execute("ALTER TABLE stock_valuation_layers ADD COLUMN location_id INTEGER REFERENCES stock_locations(id)")
     c.executescript("""
@@ -161,7 +172,7 @@ def initialize_stock_schema():
     c.execute("CREATE INDEX IF NOT EXISTS idx_stock_layers_location ON stock_valuation_layers(location_id,product_id)")
     # One summarized COGS journal may cover multiple stock issue movements.
     # The journal link is therefore intentionally non-unique.
-    layer_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_valuation_layers)")}
+    layer_columns = _columns(c, "stock_valuation_layers")
     if "value_remaining" not in layer_columns:
         c.execute("ALTER TABLE stock_valuation_layers ADD COLUMN value_remaining TEXT NOT NULL DEFAULT ''")
         # Backfill legacy layers using Decimal in Python, avoiding SQLite REAL arithmetic.
@@ -201,7 +212,7 @@ def initialize_stock_schema():
     );
     """)
     # Upgrade legacy one-line-per-product counts to location/lot-aware lines.
-    line_columns = {row["name"] for row in c.execute("PRAGMA table_info(stocktake_lines)")}
+    line_columns = _columns(c, "stocktake_lines")
     if "location_id" not in line_columns or "lot_id" not in line_columns:
         c.execute("DROP INDEX IF EXISTS idx_stocktake_lines_header")
         c.execute("ALTER TABLE stocktake_lines RENAME TO stocktake_lines_legacy")
@@ -224,7 +235,7 @@ def initialize_stock_schema():
     c.execute("CREATE INDEX IF NOT EXISTS idx_stocktake_lines_header ON stocktake_lines(stocktake_id,product_id,location_id,lot_id)")
     c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_stocktake_line_scope
         ON stocktake_lines(stocktake_id,product_id,COALESCE(location_id,0),COALESCE(lot_id,0))""")
-    stocktake_columns = {row["name"] for row in c.execute("PRAGMA table_info(stocktakes)")}
+    stocktake_columns = _columns(c, "stocktakes")
     if "movement_cutoff_id" not in stocktake_columns:
         c.execute("ALTER TABLE stocktakes ADD COLUMN movement_cutoff_id INTEGER NOT NULL DEFAULT 0")
 
@@ -256,7 +267,7 @@ def initialize_stock_schema():
         category=c.execute("SELECT id FROM stock_uom_categories WHERE code=?",(category_code,)).fetchone()
         c.execute("INSERT OR IGNORE INTO stock_uoms(category_id,code,name_ar,factor_to_base,is_base) VALUES(?,?,?,?,?)",
             (category["id"],code,label,factor,is_base))
-    product_columns={row["name"] for row in c.execute("PRAGMA table_info(stock_products)")}
+    product_columns=_columns(c, "stock_products")
     if "base_uom_id" not in product_columns:
         c.execute("ALTER TABLE stock_products ADD COLUMN base_uom_id INTEGER REFERENCES stock_uoms(id)")
     # Link existing products to a matching seeded unit by label; unmatched legacy labels remain intact.
@@ -286,14 +297,13 @@ def initialize_stock_schema():
       ("purchase_order_lines",(("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
       ("goods_receipt_lines",(("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
     ):
-        table_exists=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone()
-        if not table_exists:
+        if not _table_exists(c, table):
             continue
-        existing={row["name"] for row in c.execute("PRAGMA table_info("+table+")")}
+        existing=_columns(c, table)
         for name,declaration in fields:
             if name not in existing: c.execute("ALTER TABLE "+table+" ADD COLUMN "+name+" "+declaration)
 
-    movement_columns={row["name"] for row in c.execute("PRAGMA table_info(stock_movements)")}
+    movement_columns=_columns(c, "stock_movements")
     if "entered_quantity" not in movement_columns:
         c.execute("ALTER TABLE stock_movements ADD COLUMN entered_quantity TEXT")
     if "entered_uom_id" not in movement_columns:
@@ -308,7 +318,7 @@ def initialize_stock_schema():
     initialize_analytic_dimensions_schema(c)
     # Conservative historical backfill: only journals linked to exactly one
     # stock movement, with one matching inventory-control line, are attributable.
-    journal_columns = {row["name"] for row in c.execute("PRAGMA table_info(journal_lines)")}
+    journal_columns = _columns(c, "journal_lines")
     if {"stock_product_id", "stock_warehouse_id"}.issubset(journal_columns):
         from activity_profiles import active_posting_accounts, resolve_product_account_code
         try:
@@ -478,7 +488,7 @@ def post_interbranch_transfer_journal(c, movement_id, movement_no, product, move
 
 def set_stock_accounting_note(c, movement_id, note):
     """Write a pending reason when the additive note column exists (legacy unit schemas may omit it)."""
-    columns={row["name"] for row in c.execute("PRAGMA table_info(stock_movements)")}
+    columns=_columns(c, "stock_movements")
     if "accounting_note" in columns:
         c.execute("UPDATE stock_movements SET accounting_note=? WHERE id=?",(note,movement_id))
 
@@ -517,8 +527,8 @@ def post_scrap_journal(c, movement_id, movement_no, product, movement_date, tota
     if amount <= 0:
         c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
         return None
-    movement_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_movements)")}
-    journal_columns = {row["name"] for row in c.execute("PRAGMA table_info(journal_lines)")}
+    movement_columns = _columns(c, "stock_movements")
+    journal_columns = _columns(c, "journal_lines")
     stock_dims = None
     if {"product_id", "source_warehouse_id"}.issubset(movement_columns) and {
         "stock_product_id", "stock_warehouse_id"
@@ -590,8 +600,8 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
     if amount <= 0:
         c.execute("UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
         return None
-    movement_columns = {row["name"] for row in c.execute("PRAGMA table_info(stock_movements)")}
-    journal_columns = {row["name"] for row in c.execute("PRAGMA table_info(journal_lines)")}
+    movement_columns = _columns(c, "stock_movements")
+    journal_columns = _columns(c, "journal_lines")
     stock_dims = None
     if {"product_id", "source_warehouse_id"}.issubset(movement_columns) and {
         "stock_product_id", "stock_warehouse_id"
@@ -627,9 +637,7 @@ def ensure_stock_date_open(conn, value, label="تاريخ حركة المخزو�
     if normalized_date != str(value):
         raise ValueError(label + " غير صحيح؛ استخدم YYYY-MM-DD.")
 
-    tables = {row["name"] for row in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('accounting_periods','financial_years')"
-    )}
+    tables = {name for name in ("accounting_periods", "financial_years") if _table_exists(conn, name)}
     if "accounting_periods" in tables:
         locked = conn.execute(
             """SELECT period_name FROM accounting_periods
@@ -1225,7 +1233,7 @@ def edit_product(product_id):
         c.close(); flash("الصنف غير موجود.","error"); return redirect(url_for("stock.products"))
     used=c.execute("SELECT 1 FROM stock_movements WHERE product_id=? LIMIT 1",(product_id,)).fetchone() is not None
     for table in ("purchase_order_lines","goods_receipt_lines","sales_invoice_lines"):
-        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():
+        if _table_exists(c, table):
             used=used or c.execute("SELECT 1 FROM "+table+" WHERE product_id=? LIMIT 1",(product_id,)).fetchone() is not None
     uoms=c.execute("SELECT u.id,u.code,u.name_ar,u.category_id,c.name_ar category_name FROM stock_uoms u JOIN stock_uom_categories c ON c.id=u.category_id WHERE u.active=1 AND c.active=1 ORDER BY c.id,u.is_base DESC,u.name_ar").fetchall()
     if request.method=="POST":
@@ -1395,7 +1403,7 @@ def movements():
                     if not lot: raise ValueError("التشغيلة غير مسجلة.")
                     if lot["expiry_date"] and date.fromisoformat(lot["expiry_date"])<date.today(): raise ValueError("لا يمكن صرف تشغيلة منتهية الصلاحية.")
                     lot_id=lot["id"]
-                settings_table = c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'").fetchone()
+                settings_table = _table_exists(c, "company_settings")
                 method_row = c.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone() if settings_table else None
                 method = method_row["setting_value"] if method_row else "average"
                 if kind in {"issue","scrap","relocate","transfer"} and source_location_id and not c.execute("SELECT 1 FROM stock_locations WHERE id=? AND warehouse_id=? AND active=1",(source_location_id,src)).fetchone():
@@ -1490,11 +1498,7 @@ def build_demand_replenishment_forecast(conn, warehouse_totals, product_lookup, 
         "sales_invoices", "sales_invoice_lines",
         "sales_credit_notes", "sales_credit_note_lines",
     )
-    existing_tables = {
-        row["name"] for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )
-    }
+    existing_tables = {name for name in required_tables if _table_exists(conn, name)}
     if not set(required_tables).issubset(existing_tables):
         return [], False
     invoice_columns = {
@@ -1788,12 +1792,10 @@ def valuation_reconciliation():
         if missing:
             raise ValueError("حسابات المخزون التالية غير موجودة أو غير نشطة: " + "، ".join(missing))
         gl_by_account = {code: D("0") for code in inventory_codes}
-        journal_tables = {row["name"] for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('journal_entries','journal_lines')"
-        )}
+        journal_tables = {name for name in ("journal_entries", "journal_lines") if _table_exists(conn, name)}
         if journal_tables != {"journal_entries", "journal_lines"}:
             raise ValueError("دفتر الأستاذ غير مهيأ؛ لا يمكن إجراء المطابقة.")
-        journal_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")}
+        journal_columns = _columns(conn, "journal_lines")
         has_stock_dimensions = {"stock_product_id", "stock_warehouse_id"}.issubset(journal_columns)
         from management_dashboard import _copied_opening_entry_ids
         copied_openings=sorted(_copied_opening_entry_ids(conn,date.today().isoformat()))
@@ -1943,7 +1945,7 @@ def resolve_pending_movement(movement_id):
         ).fetchone()["accounting_status"]
         conn.commit()
         try:
-            audit_columns={row["name"] for row in conn.execute("PRAGMA table_info(audit_log)")}
+            audit_columns=_columns(conn, "audit_log")
             if {"user_id","action","details","created_at"}.issubset(audit_columns):
                 conn.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
                     VALUES(?,?,?,?)""",(session.get("user_id"),"stock_pending_movement_processed",
