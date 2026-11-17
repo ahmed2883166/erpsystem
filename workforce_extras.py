@@ -13,6 +13,12 @@ from flask import flash, redirect, render_template, request, session, url_for
 import workforce
 from backup_scheduler import create_backup_archive
 from workforce import workforce_bp, _db, _role, D, M, _audit
+from db_compat import DB_ERROR, execute_script, table_columns, begin_write_transaction
+from db_sql import execute_compat
+
+def _execute(conn, sql, params=()):
+    """Execute qmark SQL on the configured database driver."""
+    return execute_compat(conn, sql, params)
 
 
 def create_workforce_safety_backup():
@@ -36,7 +42,7 @@ def create_workforce_safety_backup():
 
 def initialize_workforce_extras_schema():
     c = _db()
-    c.executescript("""
+    execute_script(c, """
     CREATE TABLE IF NOT EXISTS employee_penalties(
       id INTEGER PRIMARY KEY,
       employee_id INTEGER NOT NULL REFERENCES employees(id),
@@ -80,14 +86,14 @@ def initialize_workforce_extras_schema():
     CREATE INDEX IF NOT EXISTS idx_payroll_payment_alloc_line
       ON payroll_payment_allocations(payroll_line_id,payment_id);
     """)
-    cols = {r["name"] for r in c.execute("PRAGMA table_info(payroll_lines)")}
+    cols = table_columns(c, "payroll_lines")
     if "penalty_deduction" not in cols:
-        c.execute("ALTER TABLE payroll_lines ADD COLUMN penalty_deduction TEXT NOT NULL DEFAULT '0'")
+        _execute(c, "ALTER TABLE payroll_lines ADD COLUMN penalty_deduction TEXT NOT NULL DEFAULT '0'")
     # Preserve old payroll totals as aggregate snapshots. Do not pretend legacy
     # aggregated allowances/deductions contain item-level detail.
     migration = "payroll_line_items_legacy_snapshot_v1"
-    if not c.execute("SELECT 1 FROM workforce_migrations WHERE migration_key=?", (migration,)).fetchone():
-        rows = c.execute("""SELECT id,basic_salary,allowances,incentives,overtime_amount,
+    if not _execute(c, "SELECT 1 FROM workforce_migrations WHERE migration_key=?", (migration,)).fetchone():
+        rows = _execute(c, """SELECT id,basic_salary,allowances,incentives,overtime_amount,
             absence_deduction,advance_deduction,other_deductions,taxable_income_tax,
             employee_insurance,employer_insurance FROM payroll_lines""").fetchall()
         for row in rows:
@@ -108,11 +114,11 @@ def initialize_workforce_extras_schema():
             for section,label,key in legacy:
                 amount = M(row[key] or "0")
                 if amount:
-                    c.execute("""INSERT INTO payroll_line_items
+                    _execute(c, """INSERT INTO payroll_line_items
                         (payroll_line_id,section,item_name,amount,source_type)
                         VALUES(?,?,?,?, 'legacy_aggregate')""",
                         (line_id,section,label,str(amount)))
-        c.execute("INSERT INTO workforce_migrations(migration_key) VALUES(?)",(migration,))
+        _execute(c, "INSERT INTO workforce_migrations(migration_key) VALUES(?)",(migration,))
     c.close()
 
 
@@ -130,11 +136,11 @@ def employee_penalties():
             amount = M(request.form.get("amount","0"))
             days = M(request.form.get("duration_days","0"))
             reason = request.form.get("reason","").strip()
-            if not c.execute("SELECT 1 FROM employees WHERE id=?",(employee_id,)).fetchone():
+            if not _execute(c, "SELECT 1 FROM employees WHERE id=?",(employee_id,)).fetchone():
                 raise ValueError("الموظف غير موجود.")
             if not reason or amount < 0 or days < 0 or (amount == 0 and days == 0):
                 raise ValueError("أدخل سبب الجزاء وقيمة أو مدة صحيحة.")
-            c.execute("""INSERT INTO employee_penalties
+            _execute(c, """INSERT INTO employee_penalties
                 (employee_id,penalty_date,effective_period,reason,amount,duration_days,reference,requested_by)
                 VALUES(?,?,?,?,?,?,?,?)""",
                 (employee_id,penalty_date,period,reason,str(amount),str(days),
@@ -142,13 +148,13 @@ def employee_penalties():
             _audit(c,"employee_penalty_requested",f"{employee_id} {period} {amount}")
             c.commit()
             flash("تم تسجيل الجزاء في انتظار الاعتماد، ولم يُخصم من المرتب بعد.","success")
-        except (ValueError,KeyError,sqlite3.Error) as exc:
+        except (ValueError, KeyError) + DB_ERROR as exc:
             c.rollback()
             flash(str(exc) or "تعذر تسجيل الجزاء.","error")
         c.close()
         return redirect(url_for("workforce.employee_penalties"))
-    employees = c.execute("SELECT id,employee_code,full_name FROM employees ORDER BY employee_code").fetchall()
-    rows = c.execute("""SELECT p.*,e.employee_code,e.full_name
+    employees = _execute(c, "SELECT id,employee_code,full_name FROM employees ORDER BY employee_code").fetchall()
+    rows = _execute(c, """SELECT p.*,e.employee_code,e.full_name
         FROM employee_penalties p JOIN employees e ON e.id=p.employee_id
         ORDER BY p.penalty_date DESC,p.id DESC""").fetchall()
     c.close()
@@ -164,16 +170,16 @@ def decide_employee_penalty(penalty_id):
         decision = request.form.get("decision")
         if decision not in {"approved","rejected","cancelled"}:
             raise ValueError("قرار الجزاء غير صحيح.")
-        c.execute("BEGIN IMMEDIATE")
-        row = c.execute("SELECT * FROM employee_penalties WHERE id=?",(penalty_id,)).fetchone()
+        begin_write_transaction(c)
+        row = _execute(c, "SELECT * FROM employee_penalties WHERE id=?",(penalty_id,)).fetchone()
         if not row or row["status"] != "requested":
             raise ValueError("الجزاء غير موجود أو سبق اتخاذ قرار بشأنه.")
-        c.execute("""UPDATE employee_penalties SET status=?,decided_by=?,decided_at=CURRENT_TIMESTAMP
+        _execute(c, """UPDATE employee_penalties SET status=?,decided_by=?,decided_at=CURRENT_TIMESTAMP
             WHERE id=? AND status='requested'""",(decision,session["user_id"],penalty_id))
         _audit(c,"employee_penalty_"+decision,str(penalty_id))
         c.commit()
         flash("تم تحديث حالة الجزاء.","success")
-    except (ValueError,sqlite3.Error) as exc:
+    except (ValueError,) + DB_ERROR as exc:
         c.rollback()
         flash(str(exc),"error")
     c.close()
@@ -184,7 +190,7 @@ def decide_employee_penalty(penalty_id):
 @_role("admin","accountant","viewer")
 def employee_financial_statement(employee_id):
     c = _db()
-    employee = c.execute("SELECT * FROM employees WHERE id=?",(employee_id,)).fetchone()
+    employee = _execute(c, "SELECT * FROM employees WHERE id=?",(employee_id,)).fetchone()
     if not employee:
         c.close()
         flash("الموظف غير موجود.","error")
@@ -211,20 +217,20 @@ def employee_financial_statement(employee_id):
     if month_to:
         where.append("r.period<=?")
         params.append(month_to)
-    lines = c.execute("""SELECT l.*,r.period,r.status run_status,r.journal_entry_id,r.id run_id
+    lines = _execute(c, """SELECT l.*,r.period,r.status run_status,r.journal_entry_id,r.id run_id
         FROM payroll_lines l JOIN payroll_runs r ON r.id=l.run_id
         WHERE """+" AND ".join(where)+" ORDER BY r.period,l.id",params).fetchall()
     details = {}
     paid_by_line = {}
     for line in lines:
-        items = c.execute("""SELECT * FROM payroll_line_items WHERE payroll_line_id=?
+        items = _execute(c, """SELECT * FROM payroll_line_items WHERE payroll_line_id=?
             ORDER BY section,sort_order,id""",(line["id"],)).fetchall()
         details[line["id"]] = items
-        allocations = c.execute("""SELECT a.amount,p.payment_date,p.reference,p.journal_entry_id
+        allocations = _execute(c, """SELECT a.amount,p.payment_date,p.reference,p.journal_entry_id
             FROM payroll_payment_allocations a JOIN payroll_payments p ON p.id=a.payment_id
             WHERE a.payroll_line_id=? ORDER BY p.payment_date,p.id""",(line["id"],)).fetchall()
         paid_by_line[line["id"]] = allocations
-    penalties = c.execute("""SELECT * FROM employee_penalties WHERE employee_id=?
+    penalties = _execute(c, """SELECT * FROM employee_penalties WHERE employee_id=?
         AND (?='' OR effective_period>=?) AND (?='' OR effective_period<=?)
         ORDER BY effective_period,penalty_date,id""",
         (employee_id,month_from,month_from,month_to,month_to)).fetchall()
@@ -236,7 +242,7 @@ def employee_financial_statement(employee_id):
         "employer_insurance":M(sum((D(x["employer_insurance"]) for x in active_lines),Decimal("0"))),
     }
     summary["remaining"] = M(max(Decimal("0"),summary["net"]-summary["paid"]))
-    unallocated = c.execute("""SELECT p.period,pp.payment_date,pp.amount,pp.reference
+    unallocated = _execute(c, """SELECT p.period,pp.payment_date,pp.amount,pp.reference
         FROM payroll_payments pp JOIN payroll_runs p ON p.id=pp.run_id
         WHERE p.status='posted'
         AND NOT EXISTS(SELECT 1 FROM payroll_payment_allocations a WHERE a.payment_id=pp.id)
@@ -253,14 +259,14 @@ def employee_financial_statement(employee_id):
 @_role("admin","accountant")
 def allocate_legacy_payroll_payment(run_id, payment_id):
     c = _db()
-    payment = c.execute("SELECT * FROM payroll_payments WHERE id=? AND run_id=?",
+    payment = _execute(c, "SELECT * FROM payroll_payments WHERE id=? AND run_id=?",
                         (payment_id,run_id)).fetchone()
-    run = c.execute("SELECT * FROM payroll_runs WHERE id=?",(run_id,)).fetchone()
+    run = _execute(c, "SELECT * FROM payroll_runs WHERE id=?",(run_id,)).fetchone()
     if not payment or not run:
         c.close()
         flash("دفعة المرتبات غير موجودة.","error")
         return redirect(url_for("workforce.payroll_run",run_id=run_id))
-    existing = c.execute("""SELECT a.*,e.employee_code,e.full_name
+    existing = _execute(c, """SELECT a.*,e.employee_code,e.full_name
         FROM payroll_payment_allocations a
         JOIN payroll_lines l ON l.id=a.payroll_line_id
         JOIN employees e ON e.id=l.employee_id
@@ -269,14 +275,14 @@ def allocate_legacy_payroll_payment(run_id, payment_id):
         try:
             if existing:
                 raise ValueError("هذه الدفعة موزعة بالفعل؛ لا يمكن استبدال توزيعها التاريخي من هذه الشاشة.")
-            c.execute("BEGIN IMMEDIATE")
-            lines = c.execute("""SELECT id,employee_id,net_pay FROM payroll_lines
+            begin_write_transaction(c)
+            lines = _execute(c, """SELECT id,employee_id,net_pay FROM payroll_lines
                 WHERE run_id=? ORDER BY id""",(run_id,)).fetchall()
             total = Decimal("0")
             inserts = []
             for line in lines:
                 amount = M(request.form.get("allocation_"+str(line["id"]),"0"))
-                already = M(sum((D(x["amount"]) for x in c.execute(
+                already = M(sum((D(x["amount"]) for x in _execute(c, 
                     "SELECT amount FROM payroll_payment_allocations WHERE payroll_line_id=?",
                     (line["id"],)).fetchall()),Decimal("0")))
                 if amount < 0 or amount > M(D(line["net_pay"])-already):
@@ -287,22 +293,22 @@ def allocate_legacy_payroll_payment(run_id, payment_id):
             if M(total) != M(payment["amount"]):
                 raise ValueError("يجب أن يساوي مجموع التوزيعات قيمة الدفعة القديمة بالضبط.")
             for item in inserts:
-                c.execute("""INSERT INTO payroll_payment_allocations(payment_id,payroll_line_id,amount)
+                _execute(c, """INSERT INTO payroll_payment_allocations(payment_id,payroll_line_id,amount)
                     VALUES(?,?,?)""",item)
             _audit(c,"payroll_payment_allocated",str(payment_id)+" amount="+str(M(total)))
             c.commit()
             flash("تم توزيع الدفعة القديمة على الموظفين دون إنشاء قيد جديد أو تعديل القيد الأصلي.","success")
             c.close()
             return redirect(url_for("workforce.payroll_run",run_id=run_id))
-        except (ValueError,sqlite3.Error) as exc:
+        except (ValueError,) + DB_ERROR as exc:
             c.rollback()
             flash(str(exc),"error")
-    lines = c.execute("""SELECT l.id,l.net_pay,e.employee_code,e.full_name
+    lines = _execute(c, """SELECT l.id,l.net_pay,e.employee_code,e.full_name
         FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
         WHERE l.run_id=? ORDER BY e.employee_code""",(run_id,)).fetchall()
     allocated_by_line = {}
     for line in lines:
-        allocated_by_line[line["id"]] = M(sum((D(x["amount"]) for x in c.execute(
+        allocated_by_line[line["id"]] = M(sum((D(x["amount"]) for x in _execute(c, 
             "SELECT amount FROM payroll_payment_allocations WHERE payroll_line_id=?",
             (line["id"],)).fetchall()),Decimal("0")))
     c.close()
