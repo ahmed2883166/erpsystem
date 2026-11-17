@@ -15,7 +15,7 @@ from werkzeug.utils import secure_filename
 from werkzeug.datastructures import FileStorage
 from pathlib import Path
 from PIL import Image, ImageOps, UnidentifiedImageError
-from accounting_core import post_journal, safe_error_message
+from accounting_core import post_journal, safe_error_message, decimal_sum_expression
 from code_sequences import next_code
 from cash_commitments import create_cash_commitment
 
@@ -2926,13 +2926,17 @@ def post_payroll(run_id):
         if advance_deduction > 0:
             _employee_advance_account(c, advances_account)
         if total_loan_deduction > 0:
-            loan_account_ids = {row["loan_account_id"] for row in c.execute("""SELECT DISTINCT l.loan_account_id
+            loan_installment_rows = c.execute("""SELECT DISTINCT l.loan_account_id,
+                    i.due_amount,i.paid_amount
                 FROM employee_loans l
                 JOIN employee_loan_installments i ON i.loan_id=l.id
                 JOIN payroll_lines pl ON pl.employee_id=l.employee_id
-                WHERE pl.run_id=? AND l.status='active' AND i.due_period<=? AND i.status='pending'
-                  AND CAST(i.due_amount AS REAL)>CAST(i.paid_amount AS REAL)""",
-                (run_id, run["period"])).fetchall()}
+                WHERE pl.run_id=? AND l.status='active' AND i.due_period<=? AND i.status='pending'""",
+                (run_id, run["period"])).fetchall()
+            loan_account_ids = {
+                row["loan_account_id"] for row in loan_installment_rows
+                if D(row["due_amount"]) > D(row["paid_amount"])
+            }
             if None in loan_account_ids or loan_account_ids != {advances_account}:
                 raise ValueError("اختر نفس حساب سلف الموظفين المسجل عند صرف القرض؛ لا يجوز ترحيل قسط القرض إلى حساب مختلف.")
         lines = []
@@ -4099,7 +4103,7 @@ def attendance_report():
     rows = c.execute("""SELECT e.id AS employee_id,e.employee_code,e.full_name,e.department,
             COUNT(a.id) AS recorded_days,
             SUM(CASE WHEN a.status='absent' THEN 1 ELSE 0 END) AS absent_days,
-            SUM(CASE WHEN a.status='absent' THEN CAST(a.absence_hours AS REAL) ELSE 0 END) AS absent_hours,
+            ${decimal_sum_expression(c, "CASE WHEN a.status='absent' THEN a.absence_hours ELSE '0' END")} AS absent_hours,
             SUM(CASE WHEN a.status='unpaid_leave' THEN 1 ELSE 0 END) AS unpaid_leave_days,
             SUM(CASE WHEN a.status='permission' THEN 1 ELSE 0 END) AS permission_days
         FROM employees e
