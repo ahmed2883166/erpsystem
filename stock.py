@@ -754,7 +754,12 @@ def available_layers(c, product_id, warehouse_id, lot_id=None, location_id=None)
             sql += " AND location_id IS NULL"
         else:
             sql += " AND location_id=?"; args.append(location_id)
-    return _execute(c, sql + " ORDER BY id", args).fetchall()
+    sql += " ORDER BY id"
+    # Concurrent PostgreSQL issues must serialize on the exact valuation rows.
+    # SQLite already serializes writers through BEGIN IMMEDIATE.
+    if database_dialect(c) == "postgresql":
+        sql += " FOR UPDATE"
+    return _execute(c, sql, args).fetchall()
 
 
 def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=None, location_id=None, include_layer_details=False):
