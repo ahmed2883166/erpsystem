@@ -2,6 +2,7 @@ import unittest
 from decimal import Decimal
 
 from scripts.copy_sqlite_to_postgres import copy_database, dependency_order, normalize_value, order_self_referencing_rows, quote_ident
+from scripts.verify_sqlite_postgres_copy import verify_copy
 
 
 class SQLitePostgresCopyPlanningTests(unittest.TestCase):
@@ -152,11 +153,16 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
     def test_real_postgres_copy_preserves_ids_relationships_decimals_and_sequences(self):
         import psycopg
         self._create_target()
+        source_path = self._source()
         result = copy_database(
-            self._source(), self.dsn, self.schema, batch_size=2, apply=True
+            source_path, self.dsn, self.schema, batch_size=2, apply=True
         )
         self.assertTrue(result["committed"])
         self.assertEqual(result["total_rows"], 4)
+        verification = verify_copy(source_path, self.dsn, self.schema)
+        self.assertTrue(verification["passed"], verification["issues"])
+        self.assertEqual(verification["source_table_count"], 2)
+        self.assertEqual(verification["source_row_count"], 4)
         with psycopg.connect(self.dsn) as conn:
             accounts = conn.execute(
                 f'SELECT id, parent_id FROM "{self.schema}"."accounts" ORDER BY id'
