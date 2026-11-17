@@ -3,7 +3,6 @@ from database import connect_database, fetch_page
 """NEXUS ERP purchasing v1: suppliers, purchase orders, GRNI receipts, bills and payments.
 All posting is transactional and idempotent. Tax is posted only when an explicit input-tax account exists.
 """
-import sqlite3
 import uuid
 from decimal import Decimal, InvalidOperation
 from functools import wraps
