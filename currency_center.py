@@ -76,8 +76,8 @@ def initialize_currency_schema():
       created_by INTEGER, UNIQUE(transaction_id,revaluation_date)
     );
     """)
+    c.commit()
     c.close()
-
 
 def _role(fn):
     @wraps(fn)
