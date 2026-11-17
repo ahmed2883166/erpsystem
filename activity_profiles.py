@@ -6,7 +6,7 @@ inherit a supported base activity and can be selected independently.
 """
 import json
 import re
-from db_compat import table_exists
+from db_compat import execute_script, insert_and_get_id, table_columns, table_exists
 from db_sql import execute_compat
 
 from chart_templates import (
@@ -33,7 +33,7 @@ SPECIALIZED_ACTIVITY_PRESETS = {
 
 
 def initialize_activity_profiles_schema(conn):
-    conn.executescript("""
+    execute_script(conn, """
     CREATE TABLE IF NOT EXISTS activity_profiles (
       id INTEGER PRIMARY KEY,
       code TEXT NOT NULL UNIQUE,
@@ -55,7 +55,7 @@ def initialize_activity_profiles_schema(conn):
         roles = ACTIVITY_ACCOUNT_ROLES.get(activity, {})
         posting = ACTIVITY_POSTING_ACCOUNTS.get(activity, {})
         tax_roles = ACTIVITY_TAX_ACCOUNT_ROLES.get(activity, {})
-        conn.execute(
+        execute_compat(conn, 
             """INSERT INTO activity_profiles
                (code,name,base_activity,description,account_roles_json,
                 posting_accounts_json,tax_roles_json,is_builtin,active)
@@ -78,7 +78,7 @@ def initialize_activity_profiles_schema(conn):
 
 def list_activity_profiles(conn, include_inactive=False):
     where = "" if include_inactive else "WHERE active=1"
-    rows = conn.execute(
+    rows = execute_compat(conn, 
         f"SELECT * FROM activity_profiles {where} ORDER BY is_builtin DESC,name,code"
     ).fetchall()
     result = []
@@ -114,7 +114,7 @@ def create_activity_profile(conn, code, name, base_activity, description=""):
     roles = ACTIVITY_ACCOUNT_ROLES[base_activity]
     posting = ACTIVITY_POSTING_ACCOUNTS[base_activity]
     tax_roles = ACTIVITY_TAX_ACCOUNT_ROLES[base_activity]
-    cur = conn.execute(
+    return insert_and_get_id(conn,
         """INSERT INTO activity_profiles
            (code,name,base_activity,description,account_roles_json,
             posting_accounts_json,tax_roles_json,is_builtin,active)
@@ -124,7 +124,6 @@ def create_activity_profile(conn, code, name, base_activity, description=""):
          json.dumps(posting,ensure_ascii=False,sort_keys=True),
          json.dumps(tax_roles,ensure_ascii=False,sort_keys=True)),
     )
-    return cur.lastrowid
 
 
 
@@ -133,7 +132,7 @@ def create_specialized_activity_profile(conn, preset_code):
     preset = SPECIALIZED_ACTIVITY_PRESETS.get(str(preset_code or "").strip())
     if not preset:
         raise ValueError("النشاط المتخصص المطلوب غير معروف.")
-    existing = conn.execute(
+    existing = execute_compat(conn, 
         "SELECT id FROM activity_profiles WHERE code=?", (preset_code,)
     ).fetchone()
     if existing:
@@ -144,14 +143,14 @@ def create_specialized_activity_profile(conn, preset_code):
 
 
 def set_activity_profile_active(conn, profile_id, active):
-    row = conn.execute(
+    row = execute_compat(conn, 
         "SELECT code,is_builtin FROM activity_profiles WHERE id=?", (profile_id,)
     ).fetchone()
     if not row:
         raise ValueError("ملف النشاط غير موجود.")
     if row["is_builtin"]:
         raise ValueError("لا يمكن تعطيل ملفات الأنشطة الأساسية المدمجة.")
-    conn.execute(
+    execute_compat(conn, 
         "UPDATE activity_profiles SET active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
         (1 if active else 0, profile_id),
     )
@@ -169,7 +168,7 @@ def validate_activity_profile(conn, profile):
         for value in mapping.values():
             values = value if isinstance(value, (list, tuple)) else (value,)
             required.update(str(code) for code in values if code not in (None, ""))
-    existing = {row["code"]: row for row in conn.execute(
+    existing = {row["code"]: row for row in execute_compat(conn, 
         "SELECT code,account_type,is_group,active FROM accounts"
     )}
     errors = []
@@ -321,7 +320,7 @@ def resolve_product_account_code(conn, product_id, role, default_code=None):
     account_codes = PRODUCT_CATEGORY_ACCOUNT_CODES.get(activity, {}).get(role, {})
     if not rules or not product_id:
         return default_code
-    product = conn.execute(
+    product = execute_compat(conn, 
         """SELECT p.category, c.code category_code, c.name_ar category_name
            FROM stock_products p
            LEFT JOIN stock_categories c ON c.id=p.category_id
@@ -365,13 +364,13 @@ def active_account_role_ids(conn):
             [*codes.get("current_assets", []), "1140", "1150", "1160"]
         ))
     result = {}
-    account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+    account_columns = table_columns(conn, "accounts")
     group_expr = "COALESCE(is_group,0)" if "is_group" in account_columns else "0"
     active_expr = "COALESCE(active,1)" if "active" in account_columns else "1"
     for role, values in codes.items():
         ids = set()
         for code in values if isinstance(values, list) else [values]:
-            row = conn.execute(
+            row = execute_compat(conn, 
                 f"SELECT id,{group_expr} is_group,{active_expr} active FROM accounts WHERE code=?",
                 (str(code),)
             ).fetchone()
@@ -385,7 +384,7 @@ def active_account_role_ids(conn):
 def update_custom_activity_profile(conn, profile_id, account_roles_json,
                                    posting_accounts_json, tax_roles_json):
     """Update mappings for a custom profile after strict structure/type validation."""
-    row = conn.execute(
+    row = execute_compat(conn, 
         "SELECT * FROM activity_profiles WHERE id=?", (profile_id,)
     ).fetchone()
     if not row:
@@ -434,7 +433,7 @@ def update_custom_activity_profile(conn, profile_id, account_roles_json,
         "current_liabilities": "liability", "customer_advances": "liability", "direct_cost": "expense",
         "retained_earnings": "equity",
     }
-    accounts = {r["code"]: r for r in conn.execute(
+    accounts = {r["code"]: r for r in execute_compat(conn, 
         "SELECT code,account_type,is_group,active FROM accounts"
     )}
     def check_code(code, expected_type, label):
@@ -460,7 +459,7 @@ def update_custom_activity_profile(conn, profile_id, account_roles_json,
         check_code(code, posting_types.get(key), key)
     for key, code in tax_roles.items():
         check_code(code, tax_types.get(key), key)
-    conn.execute(
+    execute_compat(conn, 
         """UPDATE activity_profiles
            SET account_roles_json=?,posting_accounts_json=?,tax_roles_json=?,
                updated_at=CURRENT_TIMESTAMP WHERE id=?""",

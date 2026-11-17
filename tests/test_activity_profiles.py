@@ -454,5 +454,81 @@ class ActivityProfileTests(unittest.TestCase):
             self.assertIsNotNone(saved["journal_entry_id"])
 
 
+class ActivityProfilePostgreSQLIntegrationTests(unittest.TestCase):
+    """Exercise the activity registry against the isolated PostgreSQL CI service."""
+
+    @classmethod
+    def setUpClass(cls):
+        import os
+        cls.dsn = os.environ.get("NEXUS_TEST_POSTGRES_DSN")
+        if not cls.dsn:
+            raise unittest.SkipTest("NEXUS_TEST_POSTGRES_DSN is not configured")
+        try:
+            import psycopg  # noqa: F401
+        except ImportError:
+            raise unittest.SkipTest("psycopg is not installed")
+
+    def test_registry_uses_portable_schema_insert_and_column_helpers(self):
+        import psycopg
+        import uuid
+        from psycopg.rows import dict_row
+        from db_compat import execute_script
+        from activity_profiles import active_account_role_ids, get_active_activity_profile
+
+        schema = "activity_profile_test_" + uuid.uuid4().hex[:12]
+        try:
+            with psycopg.connect(self.dsn, row_factory=dict_row) as conn:
+                conn.execute(f'CREATE SCHEMA "{schema}"')
+                conn.execute(f'SET search_path TO "{schema}"')
+                execute_script(conn, """
+                    CREATE TABLE accounts (
+                        id INTEGER PRIMARY KEY,
+                        code TEXT NOT NULL UNIQUE,
+                        account_type TEXT NOT NULL,
+                        is_group INTEGER NOT NULL DEFAULT 0,
+                        active INTEGER NOT NULL DEFAULT 1
+                    );
+                    CREATE TABLE company_settings (
+                        setting_key TEXT PRIMARY KEY,
+                        setting_value TEXT
+                    );
+                """)
+                initialize_activity_profiles_schema(conn)
+                custom_id = create_activity_profile(
+                    conn, "custom_service", "خدمات مخصصة", "service"
+                )
+                self.assertIsInstance(custom_id, int)
+                conn.execute(
+                    "INSERT INTO company_settings(setting_key,setting_value) VALUES(%s,%s)",
+                    ("activity", "service"),
+                )
+                conn.execute(
+                    "INSERT INTO company_settings(setting_key,setting_value) VALUES(%s,%s)",
+                    ("activity_profile_code", "custom_service"),
+                )
+                account_id = conn.execute(
+                    "INSERT INTO accounts(code,account_type) VALUES(%s,%s) RETURNING id",
+                    ("1110", "asset"),
+                ).fetchone()["id"]
+
+                profile = get_active_activity_profile(conn)
+                self.assertEqual(profile["id"], custom_id)
+                roles = active_account_role_ids(conn)
+                self.assertEqual(roles["cash"], {account_id})
+
+                inactive_id = create_activity_profile(
+                    conn, "inactive_service", "خدمة غير نشطة", "service"
+                )
+                set_activity_profile_active(conn, inactive_id, False)
+                inactive = conn.execute(
+                    "SELECT active FROM activity_profiles WHERE id=%s",
+                    (inactive_id,),
+                ).fetchone()
+                self.assertEqual(inactive["active"], 0)
+        finally:
+            with psycopg.connect(self.dsn, autocommit=True) as cleanup:
+                cleanup.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
 if __name__ == "__main__":
     unittest.main()
