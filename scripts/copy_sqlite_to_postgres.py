@@ -146,6 +146,9 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
         raise RuntimeError("Install psycopg[binary]>=3.2,<4.0 first.") from exc
 
     src = open_sqlite_readonly(sqlite_path)
+    # Pin one read snapshot for the entire copy so concurrent application writes
+    # cannot produce a cross-table mixture of different source moments.
+    src.execute("BEGIN")
     dst = psycopg.connect(postgres_dsn, connect_timeout=10, autocommit=False,
                           row_factory=dict_row)
     try:
