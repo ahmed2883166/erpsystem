@@ -8,7 +8,7 @@ from functools import wraps
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
-from db_compat import table_exists
+from db_compat import database_dialect, table_exists
 from db_sql import execute_compat
 
 currency_bp = Blueprint("currency_center", __name__)
@@ -87,6 +87,25 @@ def _role(fn):
 def _table_exists(c, name):
     """Check optional currency-center tables using the active DB dialect."""
     return table_exists(c, name)
+
+
+def _begin_fx_write(c):
+    """Start an FX write unit using the active driver's transaction policy."""
+    if database_dialect(c) == "sqlite":
+        execute_compat(c, "BEGIN IMMEDIATE")
+    else:
+        # psycopg starts a transaction lazily with autocommit=False.
+        status = getattr(getattr(c, "info", None), "transaction_status", None)
+        if status is not None and str(status).endswith("IDLE"):
+            execute_compat(c, "BEGIN")
+
+
+def _open_fx_transaction_for_update(c, transaction_id):
+    """Read the open FX balance while preventing concurrent PostgreSQL updates."""
+    sql = "SELECT * FROM fx_transactions WHERE id=? AND status='open'"
+    if database_dialect(c) == "postgresql":
+        sql += " FOR UPDATE"
+    return execute_compat(c, sql, (transaction_id,)).fetchone()
 
 
 def _latest_fx_date(c, kind, transaction_id):
@@ -168,7 +187,7 @@ def index():
                 raise ValueError("سعر الصرف يجب أن يكون أكبر من صفر.")
             if not execute_compat(c, "SELECT 1 FROM currencies WHERE code=? AND active=1", (currency,)).fetchone():
                 raise ValueError("العملة غير موجودة أو غير مفعلة في إعدادات الشركة.")
-            c.execute("BEGIN IMMEDIATE")
+            _begin_fx_write(c)
             execute_compat(c, """INSERT INTO fx_exchange_rates(currency_code,rate_date,rate_to_base,created_by)
                          VALUES(?,?,?,?) ON CONFLICT(currency_code,rate_date)
                          DO UPDATE SET rate_to_base=excluded.rate_to_base,source='manual',created_by=excluded.created_by""",
@@ -224,7 +243,7 @@ def create_transaction():
         if not party_name:
             raise ValueError("اسم العميل أو المورد مطلوب.")
         # The exchange-rate upsert, journal posting and subledger insert must commit together.
-        c.execute("BEGIN IMMEDIATE")
+        _begin_fx_write(c)
         rate = _rate(c,currency,trans_date,request.form.get("rate"))
         base_amount = M(foreign*rate)
         if kind == "receivable":
@@ -256,8 +275,8 @@ def settle(transaction_id):
     c = _db()
     try:
         # Acquire the SQLite write lock before reading the remaining balance.
-        c.execute("BEGIN IMMEDIATE")
-        t = execute_compat(c, "SELECT * FROM fx_transactions WHERE id=? AND status='open'", (transaction_id,)).fetchone()
+        _begin_fx_write(c)
+        t = _open_fx_transaction_for_update(c, transaction_id)
         if not t:
             raise ValueError("المعاملة غير موجودة أو تمت تسويتها.")
         amount = D(request.form["foreign_amount"])
@@ -316,8 +335,8 @@ def revalue(transaction_id):
     try:
         # Lock before reading balances so two period-end requests cannot calculate
         # from the same stale carrying amount.
-        c.execute("BEGIN IMMEDIATE")
-        t = execute_compat(c, "SELECT * FROM fx_transactions WHERE id=? AND status='open'", (transaction_id,)).fetchone()
+        _begin_fx_write(c)
+        t = _open_fx_transaction_for_update(c, transaction_id)
         if not t:
             raise ValueError("لا يوجد رصيد مفتوح لإعادة تقييمه.")
         revalue_date = date.fromisoformat(request.form["revaluation_date"]).isoformat()
