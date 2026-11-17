@@ -95,6 +95,12 @@ def _journal_entry_key(columns):
     )
 
 
+def _inventory_valuation_required(source_tables):
+    """Require valuation controls whenever core inventory tables are present."""
+    inventory_core = {"stock_products", "stock_movements", "stock_warehouses"}
+    return bool(set(source_tables) & inventory_core)
+
+
 def _verification_passed(issues, controls_skipped, row_counts, source_tables):
     """A copy cannot pass while any required financial control was skipped."""
     return (
@@ -245,6 +251,14 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
                 compare_control("journal_lines", "debit", ("supplier_id",), "supplier.debit_by_id")
                 compare_control("journal_lines", "credit", ("supplier_id",), "supplier.credit_by_id")
 
+        if (
+            _inventory_valuation_required(source_tables)
+            and "stock_valuation_layers" not in source_tables
+        ):
+            controls_skipped.append({
+                "control": "stock_valuation_layers.required",
+                "reason": "source_table_missing",
+            })
         if "stock_valuation_layers" in source_tables:
             for amount in ("qty_in", "qty_remaining", "value_remaining"):
                 compare_control("stock_valuation_layers", amount, (), f"stock_valuation_layers.{amount}_total")

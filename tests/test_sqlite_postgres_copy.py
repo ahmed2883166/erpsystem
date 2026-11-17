@@ -7,6 +7,7 @@ from scripts.verify_sqlite_postgres_copy import (
     _decimal,
     _missing_control_columns,
     _journal_entry_key,
+    _inventory_valuation_required,
     _sqlite_grouped_sum,
     _verification_passed,
     verify_copy,
@@ -122,6 +123,11 @@ class SQLitePostgresVerifierUnitTests(unittest.TestCase):
         )
         self.assertEqual(source_missing, ["customer_id"])
         self.assertEqual(target_missing, ["entry_id"])
+
+    def test_inventory_valuation_is_required_when_inventory_is_present(self):
+        self.assertTrue(_inventory_valuation_required({"stock_products", "stock_movements"}))
+        self.assertTrue(_inventory_valuation_required({"stock_warehouses"}))
+        self.assertFalse(_inventory_valuation_required({"accounts", "journal_lines"}))
 
     def test_missing_journal_table_is_not_a_successful_verification(self):
         skipped = [{"control": "journal_lines.required", "reason": "source_table_missing"}]
