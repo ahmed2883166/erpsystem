@@ -60,10 +60,13 @@ startup. This runbook describes a controlled rehearsal, not a production cutover
      --schema nexus_rehearsal
    ```
 
-6. Retain both JSON reports. The verifier checks every table/column and row
-   count, exact-decimal journal debit/credit totals, customer/supplier journal
-   balances by party ID, and inventory valuation-layer quantity/value totals
-   overall and by product/warehouse. Any mismatch blocks approval.
+6. Retain both JSON reports. The verifier checks table/column coverage and row
+   counts, exact-decimal journal debit/credit totals, customer/supplier debit
+   and credit totals by party ID when those columns exist, and inventory
+   valuation-layer quantity/value totals overall and by product/warehouse.
+   Controls whose required table or columns are unavailable are listed
+   separately as skipped; review those skips and resolve schema gaps before
+   approval. Any reported mismatch blocks approval.
 
 ## Important limitations
 
