@@ -1026,6 +1026,53 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(sum((Decimal(x["debit"]) for x in refund_lines), Decimal("0")), Decimal("50.00"))
         self.assertEqual(sum((Decimal(x["credit"]) for x in refund_lines), Decimal("0")), Decimal("50.00"))
 
+    def test_credit_note_cancellation_blocks_when_average_cost_revalues_return_layer(self):
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "2", "unit_price": "20"}], "0", 1
+        )
+        line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?", (invoice["invoice_id"],)
+        ).fetchone()["id"]
+        credit = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-11", "مرتجع لاختبار إعادة التقييم",
+            [{"invoice_line_id": line_id, "quantity": "1"}], 1
+        )
+        returned_movement = self.db.execute(
+            "SELECT stock_movement_id FROM sales_credit_note_lines WHERE credit_note_id=?",
+            (credit["credit_note_id"],)
+        ).fetchone()["stock_movement_id"]
+        layer = self.db.execute(
+            "SELECT id,qty_in,qty_remaining,total_cost FROM stock_valuation_layers l "
+            "JOIN stock_movements m ON m.id=l.source_movement_id WHERE m.id=?",
+            (returned_movement,)
+        ).fetchone()
+        self.assertEqual(Decimal(layer["qty_remaining"]), Decimal(layer["qty_in"]))
+        self.assertEqual(Decimal(layer["total_cost"]), Decimal("10.00"))
+        # Simulate an average-cost rebase: quantity is untouched, carrying value changed.
+        self.db.execute(
+            "UPDATE stock_valuation_layers SET value_remaining='9.50' WHERE id=?",
+            (layer["id"],)
+        )
+        journal_count = self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
+        with self.assertRaisesRegex(ValueError, "القيمة الدفترية لطبقة المرتجع تغيرت"):
+            sales.cancel_credit_note(
+                self.db, credit["credit_note_id"], "2026-11-12",
+                "اختبار منع إلغاء طبقة أعيد تقييمها", 1
+            )
+        self.assertEqual(
+            self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0],
+            journal_count,
+        )
+        self.assertEqual(
+            self.db.execute(
+                "SELECT status FROM sales_credit_notes WHERE id=?", (credit["credit_note_id"],)
+            ).fetchone()["status"],
+            "posted",
+        )
+        self.db.rollback()
+
     def test_credit_note_cancellation_posts_reversals_and_removes_returned_stock(self):
         self.db.execute("INSERT INTO accounts(code,name_ar,account_type) VALUES('3000','حقوق الملكية','equity')")
         inventory_id = self.db.execute("SELECT id FROM accounts WHERE code='1150'").fetchone()["id"]
