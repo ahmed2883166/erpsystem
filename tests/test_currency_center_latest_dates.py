@@ -73,14 +73,15 @@ class LatestFxDatePostgreSQLTests(unittest.TestCase):
                             transaction_id BIGINT NOT NULL, revaluation_date TEXT NOT NULL
                         )
                     """)
-                    conn.executemany(
-                        "INSERT INTO fx_settlements(transaction_id, settlement_date) VALUES(%s, %s)",
-                        [(7, "2026-01-10"), (7, "2026-03-10"), (8, "2026-12-31")],
-                    )
-                    conn.executemany(
-                        "INSERT INTO fx_revaluations(transaction_id, revaluation_date) VALUES(%s, %s)",
-                        [(7, "2026-02-28"), (7, "2026-04-30")],
-                    )
+                    with conn.cursor() as cur:
+                        cur.executemany(
+                            "INSERT INTO fx_settlements(transaction_id, settlement_date) VALUES(%s, %s)",
+                            [(7, "2026-01-10"), (7, "2026-03-10"), (8, "2026-12-31")],
+                        )
+                        cur.executemany(
+                            "INSERT INTO fx_revaluations(transaction_id, revaluation_date) VALUES(%s, %s)",
+                            [(7, "2026-02-28"), (7, "2026-04-30")],
+                        )
                     self.assertEqual(_latest_fx_date(conn, "settlement", 7), "2026-03-10")
                     self.assertEqual(_latest_fx_date(conn, "revaluation", 7), "2026-04-30")
                     self.assertIsNone(_latest_fx_date(conn, "settlement", 99))
