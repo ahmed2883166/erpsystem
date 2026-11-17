@@ -261,6 +261,10 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                     )
                 counts[table] = copied
 
+            # Force all deferred PostgreSQL constraints to be checked before sequence updates/commit.
+            # Immediate constraints have already been checked by PostgreSQL during inserts.
+            dst.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
             # Explicit IDs are preserved; reset identity/serial sequences to the new maximum.
             for table in order:
                 for col in source_columns[table]:
