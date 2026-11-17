@@ -77,6 +77,14 @@ def _compare_decimal_maps(label, source, target, issues):
             })
 
 
+def _missing_control_columns(required, source_available, target_available):
+    """Return explicit source/target schema gaps for a requested control."""
+    required = set(required)
+    source_missing = sorted(required - set(source_available))
+    target_missing = sorted(required - set(target_available))
+    return source_missing, target_missing
+
+
 def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> dict:
     try:
         import psycopg
@@ -167,8 +175,9 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
             required = {amount, *groups}
             source_available = set(source_columns.get(table, []))
             target_available = set(target_columns_by_table.get(table, []))
-            missing_source = sorted(required - source_available)
-            missing_target = sorted(required - target_available)
+            missing_source, missing_target = _missing_control_columns(
+                required, source_available, target_available
+            )
             if missing_source or missing_target:
                 controls_skipped.append({
                     "control": label,

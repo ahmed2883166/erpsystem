@@ -5,6 +5,7 @@ from scripts.copy_sqlite_to_postgres import copy_database, dependency_order, nor
 from scripts.verify_sqlite_postgres_copy import (
     _compare_decimal_maps,
     _decimal,
+    _missing_control_columns,
     _sqlite_grouped_sum,
     verify_copy,
 )
@@ -105,6 +106,39 @@ class SQLitePostgresVerifierUnitTests(unittest.TestCase):
             {tuple(item["key"]) for item in issues},
             {(1,), (2,), (3,)},
         )
+
+    def test_missing_control_columns_are_reported_for_both_databases(self):
+        source_missing, target_missing = _missing_control_columns(
+            {"debit", "entry_id", "customer_id"},
+            {"debit", "entry_id"},
+            {"debit", "customer_id"},
+        )
+        self.assertEqual(source_missing, ["customer_id"])
+        self.assertEqual(target_missing, ["entry_id"])
+
+    def test_journal_control_grouping_detects_reassigned_entry_lines(self):
+        import sqlite3
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.execute(
+                "CREATE TABLE journal_lines (entry_id INTEGER, debit TEXT)"
+            )
+            conn.executemany(
+                "INSERT INTO journal_lines(entry_id, debit) VALUES (?, ?)",
+                [(100, "50.00"), (100, "25.00"), (200, "75.00")],
+            )
+            totals = _sqlite_grouped_sum(
+                conn, "journal_lines", "debit", ("entry_id",)
+            )
+            self.assertEqual(totals[(100,)], Decimal("75.00"))
+            self.assertEqual(totals[(200,)], Decimal("75.00"))
+            # Grand total alone is 150.00; the per-entry distribution is distinct.
+            reassigned = {(100,): Decimal("50.00"), (200,): Decimal("100.00")}
+            issues = []
+            _compare_decimal_maps("journal.debit_by_entry", totals, reassigned, issues)
+            self.assertEqual({tuple(item["key"]) for item in issues}, {(100,), (200,)})
+        finally:
+            conn.close()
 
 
 if __name__ == "__main__":
