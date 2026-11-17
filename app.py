@@ -46,6 +46,7 @@ from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
 from database_backend import require_supported_runtime_backend
+from core_schema import initialize_core_schema
 from db_compat import begin_write_transaction, insert_and_get_id, execute_script, table_exists, table_columns, table_names, table_column_info
 from report_request_control import (ReportRequestGate, bounded_env_int,
                                     is_expensive_report_request,
@@ -523,52 +524,7 @@ def initialize_database():
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     enable_wal(DB_PATH)
     connection = db()
-    execute_script(connection,"""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, full_name TEXT NOT NULL,
-            password_hash TEXT NOT NULL, role TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL,
-            must_change_password INTEGER NOT NULL DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS accounts (
-            id INTEGER PRIMARY KEY, code TEXT UNIQUE NOT NULL, name_ar TEXT NOT NULL,
-            account_type TEXT NOT NULL, parent_id INTEGER REFERENCES accounts(id),
-            is_group INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1
-        );
-        CREATE TABLE IF NOT EXISTS journal_entries (
-            id INTEGER PRIMARY KEY, entry_date TEXT NOT NULL, reference TEXT, description TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'posted', created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS journal_lines (
-            id INTEGER PRIMARY KEY, entry_id INTEGER NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
-            account_id INTEGER NOT NULL REFERENCES accounts(id), debit TEXT NOT NULL DEFAULT '0',
-            credit TEXT NOT NULL DEFAULT '0', memo TEXT
-        );
-        CREATE TABLE IF NOT EXISTS audit_log (
-            id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), action TEXT NOT NULL,
-            details TEXT, created_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS company_settings (
-            setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS currencies (
-            code TEXT PRIMARY KEY, name_ar TEXT NOT NULL, symbol TEXT NOT NULL,
-            active INTEGER NOT NULL DEFAULT 0, is_base INTEGER NOT NULL DEFAULT 0,
-            rate_to_base REAL NOT NULL DEFAULT 0, updated_at TEXT
-        );
-        CREATE TABLE IF NOT EXISTS tax_rates (
-            id INTEGER PRIMARY KEY, code TEXT UNIQUE NOT NULL, name_ar TEXT NOT NULL,
-            rate REAL NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1
-        );
-        CREATE TABLE IF NOT EXISTS login_attempts (
-            id INTEGER PRIMARY KEY, username TEXT NOT NULL, remote_addr TEXT NOT NULL,
-            attempted_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS accounting_periods (
-            id INTEGER PRIMARY KEY, period_name TEXT NOT NULL, start_date TEXT NOT NULL,
-            end_date TEXT NOT NULL, locked INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
-        );
-    """)
+    initialize_core_schema(connection)
     audit_columns = table_columns(connection, "audit_log")
     for column, declaration in (
         ("entity_type", "TEXT"),
