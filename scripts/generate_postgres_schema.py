@@ -402,8 +402,15 @@ def generate_postgres_ddl(snapshot):
     if trigger_lines:
         lines.extend(["", *trigger_lines])
     lines.extend(["", "COMMIT;", ""])
+    numeric_candidates_by_table = {}
+    for candidate in sorted(set(numeric_candidates)):
+        candidate_table, candidate_column = candidate.split(".", 1)
+        numeric_candidates_by_table.setdefault(candidate_table, []).append(candidate_column)
+
     review = {
         "table_count": len(tables),
+        "text_numeric_candidate_count": len(set(numeric_candidates)),
+        "text_numeric_candidates_by_table": numeric_candidates_by_table,
         "foreign_key_count": len(pending_fks),
         "index_count": len(pending_indexes),
         "trigger_count": len(snapshot.get("triggers", [])),
