@@ -146,17 +146,19 @@ class PortableScriptExecutionTests(unittest.TestCase):
             -- leading comment with ; delimiter
             CREATE TABLE script_probe (id BIGINT, label TEXT);
             INSERT INTO script_probe(label) VALUES('a;b');
-            /* a block comment ; */
+            /* outer block ; /* nested block ; */ still a comment ; */
+            INSERT INTO script_probe(label) VALUES(E'escaped \\' ; still string');
             DO $nexus$
             BEGIN
                 PERFORM 1;
             END
             $nexus$;
         """)
-        self.assertEqual(len(connection.statements), 3)
+        self.assertEqual(len(connection.statements), 4)
         self.assertIn("CREATE TABLE script_probe", connection.statements[0])
         self.assertIn("'a;b'", connection.statements[1])
-        self.assertIn("PERFORM 1;", connection.statements[2])
+        self.assertIn("E'escaped \\' ; still string'", connection.statements[2])
+        self.assertIn("PERFORM 1;", connection.statements[3])
 
     def test_postgresql_script_rejects_unterminated_quotes(self):
         connection = _FakePsycopgConnection("IDLE")
