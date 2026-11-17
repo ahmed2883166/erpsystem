@@ -1527,7 +1527,7 @@ def _validate_supplier_bill_inventory_lines(c, supplier_id, receipt_ids, subtota
         if not quantity.is_finite() or quantity <= 0 or not unit_price.is_finite() or unit_price < 0:
             raise ValueError("كمية وسعر بند فاتورة المورد غير صالحين.")
         already_billed_sql = """
-            SELECT COALESCE(SUM(x.billed_quantity), '0')
+            SELECT COALESCE(SUM(CAST(x.billed_quantity AS NUMERIC)), 0)
             FROM supplier_bill_inventory_lines x
             JOIN supplier_bills b ON b.id=x.bill_id
             WHERE x.receipt_line_id=? AND b.status IN ('draft','pending_approval','approved','posted')
@@ -1575,7 +1575,7 @@ def _validate_saved_supplier_bill_inventory_lines(c, bill):
         qty = Decimal(str(row["billed_quantity"]))
         total = money(total + money(row["line_total"]))
         already = Decimal(str(execute_compat(c, """
-            SELECT COALESCE(SUM(x.billed_quantity),'0')
+            SELECT COALESCE(SUM(CAST(x.billed_quantity AS NUMERIC)),0)
             FROM supplier_bill_inventory_lines x JOIN supplier_bills b ON b.id=x.bill_id
             WHERE x.receipt_line_id=? AND b.status<>'cancelled' AND x.bill_id<>?
         """, (row["receipt_line_id"], bill["id"])).fetchone()[0] or "0"))
@@ -2407,7 +2407,7 @@ def _supplier_bill_return_value_allocations(c, bill_id, product_id, warehouse_id
                                             pending_allocations=None, layer_details=None):
     rows = execute_compat(c, """
         SELECT x.id AS bill_line_id,x.receipt_line_id,x.billed_quantity,x.invoice_unit_price,
-               COALESCE(SUM(CASE WHEN cn.status='posted' THEN a.quantity ELSE '0' END),'0') AS allocated_quantity
+               COALESCE(SUM(CASE WHEN cn.status='posted' THEN CAST(a.quantity AS NUMERIC) ELSE 0 END),0) AS allocated_quantity
         FROM supplier_bill_inventory_lines x
         JOIN goods_receipt_lines gl ON gl.id=x.receipt_line_id
         JOIN goods_receipts gr ON gr.id=gl.receipt_id
@@ -2419,7 +2419,7 @@ def _supplier_bill_return_value_allocations(c, bill_id, product_id, warehouse_id
         ORDER BY x.id
     """, (bill_id, product_id, warehouse_id)).fetchall()
     legacy = execute_compat(c, """
-        SELECT COALESCE(SUM(l.quantity),'0') AS quantity
+        SELECT COALESCE(SUM(CAST(l.quantity AS NUMERIC)),0) AS quantity
         FROM supplier_credit_note_lines l
         JOIN supplier_credit_notes n ON n.id=l.credit_note_id
         WHERE n.bill_id=? AND n.status='posted' AND l.product_id=? AND l.warehouse_id=?
@@ -2500,14 +2500,14 @@ def _supplier_bill_return_value_allocations(c, bill_id, product_id, warehouse_id
 def _supplier_bill_returnable_quantity(c, bill_id, product_id, warehouse_id):
     """Quantity invoiced on this bill for a product/warehouse, less posted prior returns."""
     billed = execute_compat(c, """
-        SELECT COALESCE(SUM(x.billed_quantity),'0') quantity
+        SELECT COALESCE(SUM(CAST(x.billed_quantity AS NUMERIC)),0) quantity
         FROM supplier_bill_inventory_lines x
         JOIN goods_receipt_lines gl ON gl.id=x.receipt_line_id
         JOIN goods_receipts gr ON gr.id=gl.receipt_id
         WHERE x.bill_id=? AND x.product_id=? AND gr.warehouse_id=?
     """, (bill_id, product_id, warehouse_id)).fetchone()
     returned = execute_compat(c, """
-        SELECT COALESCE(SUM(l.quantity),'0') quantity
+        SELECT COALESCE(SUM(CAST(l.quantity AS NUMERIC)),0) quantity
         FROM supplier_credit_note_lines l
         JOIN supplier_credit_notes n ON n.id=l.credit_note_id
         WHERE n.bill_id=? AND n.status='posted'
