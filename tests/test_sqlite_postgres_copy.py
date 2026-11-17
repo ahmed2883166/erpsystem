@@ -51,6 +51,10 @@ class SQLitePostgresCopyPlanningTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "disabled by default"):
             copy_database("missing.sqlite", "postgresql://invalid", apply=False)
 
+    def test_copy_refuses_public_schema_before_connecting(self):
+        with self.assertRaisesRegex(ValueError, "dedicated, isolated"):
+            copy_database("missing.sqlite", "postgresql://invalid", schema="public", apply=True)
+
     def test_identifiers_are_quoted(self):
         self.assertEqual(quote_ident('odd"name'), '"odd""name"')
 
