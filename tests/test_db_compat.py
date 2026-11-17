@@ -4,7 +4,7 @@ import sqlite3
 import unittest
 import uuid
 
-from db_compat import database_dialect, table_columns, table_exists, begin_write_transaction
+from db_compat import database_dialect, table_columns, table_exists, begin_write_transaction, transaction_is_active
 
 
 class SQLiteSchemaCompatibilityTests(unittest.TestCase):
@@ -12,11 +12,14 @@ class SQLiteSchemaCompatibilityTests(unittest.TestCase):
         connection = sqlite3.connect(":memory:")
         try:
             connection.execute("CREATE TABLE probe (id INTEGER PRIMARY KEY)")
+            self.assertFalse(transaction_is_active(connection))
             self.assertTrue(begin_write_transaction(connection))
             self.assertTrue(connection.in_transaction)
+            self.assertTrue(transaction_is_active(connection))
             connection.execute("INSERT INTO probe DEFAULT VALUES")
             self.assertFalse(begin_write_transaction(connection))
             connection.commit()
+            self.assertFalse(transaction_is_active(connection))
             self.assertFalse(connection.in_transaction)
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM probe").fetchone()[0], 1)
         finally:
