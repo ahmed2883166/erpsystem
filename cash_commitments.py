@@ -4,6 +4,8 @@ Payments link to existing posted journal entries. This module never posts GL ent
 """
 from datetime import date
 import calendar
+
+from db_insert import insert_one_returning_id
 from decimal import Decimal, InvalidOperation
 
 COMMITMENT_TYPES = {"tax", "recurring_expense", "friday_overtime"}
@@ -133,7 +135,7 @@ def create_cash_commitment(conn, commitment_type, title, amount, due_date,
     origin_type = str(origin_type or "").strip()
     if bool(origin_type) != (origin_id is not None):
         raise ValueError("مرجع المصدر يجب أن يحتوي النوع والمعرف معًا.")
-    cur = conn.execute(
+    commitment_id = insert_one_returning_id(conn,
         """INSERT INTO cash_commitments
            (commitment_type,title,period_label,amount,due_date,currency_code,
             payable_account_id,origin_type,origin_id,notes,created_by)
@@ -143,7 +145,7 @@ def create_cash_commitment(conn, commitment_type, title, amount, due_date,
          str(notes or "").strip(),created_by),
     )
     conn.commit()
-    return cur.lastrowid
+    return commitment_id
 
 
 def _journal_entry_effect_is_active(conn, journal_entry_id, as_of=None):
@@ -313,14 +315,13 @@ def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
         total = Decimal(str(commitment["amount"]))
         if paid + amount > total:
             raise ValueError("قيمة الدفعة تتجاوز الرصيد المتبقي من الالتزام.")
-        cursor = conn.execute(
+        payment_id = insert_one_returning_id(conn,
             """INSERT INTO cash_commitment_payments
                (commitment_id,payment_date,amount,journal_entry_id,reference,notes,created_by)
                VALUES(?,?,?,?,?,?,?)""",
             (commitment_id,payment_date,str(amount),journal_entry_id,
              str(reference or "").strip(),str(notes or "").strip(),created_by),
         )
-        payment_id = cursor.lastrowid
         status = "paid" if paid + amount == total else "partially_paid"
         conn.execute(
             "UPDATE cash_commitments SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -621,7 +622,7 @@ def create_recurring_schedule(conn, title, amount, first_due_date, frequency,
     normalized_end = date.fromisoformat(str(end_date)).isoformat() if end_date else None
     if normalized_end and normalized_end < first_due_date:
         raise ValueError("تاريخ نهاية التكرار يسبق أول استحقاق.")
-    cursor = conn.execute(
+    schedule_id = insert_one_returning_id(conn,
         """INSERT INTO cash_commitment_schedules
            (title,amount,currency_code,frequency,interval_months,anchor_day,
             next_due_date,end_date,payable_account_id,notes,created_by)
@@ -631,7 +632,7 @@ def create_recurring_schedule(conn, title, amount, first_due_date, frequency,
          normalized_end,payable_account_id,str(notes or "").strip(),created_by),
     )
     conn.commit()
-    return cursor.lastrowid
+    return schedule_id
 
 
 def generate_recurring_schedule_occurrences(conn, schedule_id, through_date):
@@ -664,13 +665,12 @@ def generate_recurring_schedule_occurrences(conn, schedule_id, through_date):
                 (schedule_id,next_due),
             ).fetchone()
             if not existing:
-                occurrence = conn.execute(
+                occurrence_id = insert_one_returning_id(conn,
                     """INSERT INTO cash_commitment_schedule_occurrences
                        (schedule_id,due_date) VALUES(?,?)""",
                     (schedule_id,next_due),
                 )
-                occurrence_id = occurrence.lastrowid
-                commitment = conn.execute(
+                commitment_id = insert_one_returning_id(conn,
                     """INSERT INTO cash_commitments
                        (commitment_type,title,period_label,amount,due_date,currency_code,
                         payable_account_id,origin_type,origin_id,notes,created_by)
@@ -681,7 +681,7 @@ def generate_recurring_schedule_occurrences(conn, schedule_id, through_date):
                 )
                 conn.execute(
                     "UPDATE cash_commitment_schedule_occurrences SET commitment_id=? WHERE id=?",
-                    (commitment.lastrowid,occurrence_id),
+                    (commitment_id,occurrence_id),
                 )
                 generated += 1
             next_due = _advance_schedule_date(
