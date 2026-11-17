@@ -22,12 +22,12 @@ def extract_validated_backup(archive_path, candidate_path,
         members = archive.infolist()
         if len(members) > 16 or any(item.is_dir() for item in members):
             raise ValueError("هيكل ملف النسخة الاحتياطية غير مسموح به.")
-        allowed_names = {"nexus.db", "manifest.json"}
-        if any(item.filename not in allowed_names for item in members):
-            raise ValueError("ملف النسخة يحتوي على ملفات إضافية غير معتمدة.")
         database_members = [item for item in members if item.filename == "nexus.db"]
         if len(database_members) != 1:
             raise ValueError("يجب أن تحتوي النسخة على ملف قاعدة بيانات واحد باسم nexus.db.")
+        allowed_names = {"nexus.db", "manifest.json"}
+        if any(item.filename not in allowed_names for item in members):
+            raise ValueError("ملف النسخة يحتوي على ملفات إضافية غير معتمدة.")
         member = database_members[0]
         if member.file_size <= 0 or member.file_size > max_database_bytes:
             raise ValueError("حجم قاعدة البيانات داخل النسخة غير مسموح به.")

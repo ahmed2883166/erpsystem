@@ -196,9 +196,13 @@ def restore_postgres_backup_to_new_database(
                     "--single-transaction", "--no-owner", "--no-acl",
                     "--dbname", target_name, dump.name,
                 ], env=restore_env, timeout=timeout)
-    except Exception:
+    except Exception as restore_error:
         with psycopg.connect(admin_dsn, autocommit=True) as admin:
             admin.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(target_name)))
+        if isinstance(restore_error, subprocess.CalledProcessError):
+            diagnostic = (restore_error.stderr or restore_error.stdout or "").strip()
+            if diagnostic:
+                restore_error.add_note("pg_restore diagnostic: " + diagnostic[-4000:])
         raise
     return {
         "database_name": target_name,
