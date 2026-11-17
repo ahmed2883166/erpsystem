@@ -44,7 +44,7 @@ from activity_profiles import (initialize_activity_profiles_schema, list_activit
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
-from db_compat import begin_write_transaction, insert_and_get_id
+from db_compat import begin_write_transaction, insert_and_get_id, execute_script
 from report_request_control import (ReportRequestGate, bounded_env_int,
                                     is_expensive_report_request,
                                     set_current_report_deadline,
@@ -518,7 +518,7 @@ def initialize_database():
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     enable_wal(DB_PATH)
     connection = db()
-    connection.executescript("""
+    execute_script(connection,"""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, full_name TEXT NOT NULL,
             password_hash TEXT NOT NULL, role TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
@@ -584,7 +584,7 @@ def initialize_database():
     connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_request_id ON audit_log(request_id)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_entity_created ON audit_log(entity_type,created_at,id)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_outcome_created ON audit_log(outcome,created_at,id)")
-    connection.executescript("""
+    execute_script(connection,"""
         CREATE TRIGGER IF NOT EXISTS audit_log_block_update
         BEFORE UPDATE ON audit_log
         BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
