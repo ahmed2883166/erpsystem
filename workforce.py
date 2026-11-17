@@ -939,9 +939,9 @@ def employee_photo(employee_id):
                     migrated_path = _save_employee_photo(FileStorage(stream=old_stream, filename=parts[2]))
                 migration_db = _db()
                 try:
-                    migration_db.execute("UPDATE employees SET photo_path=? WHERE id=? AND photo_path=?",
+                    migration_cursor = migration_db.execute("UPDATE employees SET photo_path=? WHERE id=? AND photo_path=?",
                                          (migrated_path, employee_id, relative))
-                    if migration_db.execute("SELECT changes()").fetchone()[0] != 1:
+                    if migration_cursor.rowcount != 1:
                         raise RuntimeError("Employee photo reference changed during migration.")
                     migration_db.commit()
                 except Exception:
@@ -2015,11 +2015,11 @@ def edit_final_payroll(final_id):
                 raise ValueError("راجع الاستقطاعات؛ يجب ألا تكون سالبة أو تتجاوز إجمالي المستحق.")
             net = M(gross - deductions)
             notes = request.form.get("notes", "").strip()[:500]
-            c.execute("""UPDATE employee_final_payrolls SET tax_deduction=?,employee_insurance=?,
+            update_cursor = c.execute("""UPDATE employee_final_payrolls SET tax_deduction=?,employee_insurance=?,
                 employer_insurance=?,stamp_duty=?,other_deductions=?,net_pay=?,notes=?
                 WHERE id=? AND status='draft'""",
                 (str(tax),str(employee_ins),str(employer_ins),str(stamp),str(other),str(net),notes,final_id))
-            if c.execute("SELECT changes()").fetchone()[0] != 1:
+            if update_cursor.rowcount != 1:
                 raise ValueError("لم يتم حفظ التعديلات؛ ربما تغيرت حالة الكشف.")
             _audit(c, "employee_final_payroll_draft_updated",
                    str(row["final_payroll_no"]) + " net=" + str(net))
@@ -2052,9 +2052,9 @@ def cancel_final_payroll(final_id):
         row = c.execute("SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
         if not row or row["status"] != "draft":
             raise ValueError("إلغاء المرتب النهائي متاح للمسودة فقط.")
-        c.execute("UPDATE employee_final_payrolls SET status='cancelled' WHERE id=? AND status='draft'",
+        update_cursor = c.execute("UPDATE employee_final_payrolls SET status='cancelled' WHERE id=? AND status='draft'",
                   (final_id,))
-        if c.execute("SELECT changes()").fetchone()[0] != 1:
+        if update_cursor.rowcount != 1:
             raise ValueError("لم يتم إلغاء المسودة؛ ربما تغيرت حالتها.")
         _audit(c, "employee_final_payroll_draft_cancelled", row["final_payroll_no"])
         c.commit()
@@ -2148,11 +2148,11 @@ def approve_final_payroll(final_id):
         reference = "FINAL-PAYROLL-POST-" + str(final_id)
         journal_id = post_journal(c, row["termination_date"], reference,
             "اعتماد المرتب النهائي للموظف " + row["full_name"], lines, session["user_id"])
-        c.execute("""UPDATE employee_final_payrolls SET status='approved',journal_entry_id=?,
+        update_cursor = c.execute("""UPDATE employee_final_payrolls SET status='approved',journal_entry_id=?,
             approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_status='approved'
             WHERE id=? AND status='draft' AND journal_entry_id IS NULL AND approval_status='pending'""",
             (journal_id, session["user_id"], final_id))
-        if c.execute("SELECT changes()").fetchone()[0] != 1:
+        if update_cursor.rowcount != 1:
             raise ValueError("تعذر تثبيت اعتماد المرتب النهائي؛ راجع حالة الكشف.")
         _audit(c, "employee_final_payroll_approved",
                row["final_payroll_no"] + " journal=" + str(journal_id))
@@ -2289,12 +2289,12 @@ def approve_payroll_basic_salary_change(run_id, line_id):
         approval_note = request.form.get("approval_note", "").strip()
         if not approval_note:
             raise ValueError("اكتب ملاحظة اعتماد المدير قبل الموافقة على تعديل الراتب.")
-        c.execute("""UPDATE payroll_lines
+        update_cursor = c.execute("""UPDATE payroll_lines
             SET basic_salary_approved_by=?,basic_salary_approved_at=CURRENT_TIMESTAMP
             WHERE id=? AND run_id=? AND basic_salary_approval_required=1
               AND basic_salary_approved_by IS NULL""",
             (session["user_id"], line_id, run_id))
-        if c.execute("SELECT changes()").fetchone()[0] != 1:
+        if update_cursor.rowcount != 1:
             raise ValueError("تعذر تسجيل موافقة المدير؛ أعد تحميل الشاشة.")
         _audit(c, "payroll_basic_salary_change_approved",
                "run=" + str(run_id) + " employee=" + line["employee_code"] +
@@ -2856,8 +2856,8 @@ def delete_payroll_run(run_id):
                 c.execute("DELETE FROM "+dependent_table+" WHERE payroll_line_id IN ("+
                           (",".join("?" for _ in line_ids) if line_ids else "NULL")+")", line_ids)
         c.execute("DELETE FROM payroll_lines WHERE run_id=?", (run_id,))
-        c.execute("DELETE FROM payroll_runs WHERE id=? AND status='draft' AND journal_entry_id IS NULL", (run_id,))
-        if c.execute("SELECT changes()").fetchone()[0] != 1:
+        delete_cursor = c.execute("DELETE FROM payroll_runs WHERE id=? AND status='draft' AND journal_entry_id IS NULL", (run_id,))
+        if delete_cursor.rowcount != 1:
             raise ValueError("لم يتم حذف كشف المرتبات؛ ربما تم اعتماده في عملية أخرى.")
         _audit(c, "payroll_draft_deleted", "run=" + str(run_id) + " period=" + run["period"])
         c.commit()
@@ -3239,11 +3239,11 @@ def approve_employee_loan(loan_id):
         date.fromisoformat(first + "-01")
         if amount <= 0 or amount > D(loan["requested_amount"]) or not 1 <= count <= 60:
             raise ValueError("المبلغ المعتمد لا يتجاوز المطلوب وعدد الأقساط من 1 إلى 60.")
-        c.execute("""UPDATE employee_loans SET approved_amount=?,installment_count=?,first_due_period=?,
+        update_cursor = c.execute("""UPDATE employee_loans SET approved_amount=?,installment_count=?,first_due_period=?,
             status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP
             WHERE id=? AND status='requested'""",
             (str(amount),count,first,session["user_id"],loan_id))
-        if c.execute("SELECT changes()").fetchone()[0] != 1:
+        if update_cursor.rowcount != 1:
             raise ValueError("تم اتخاذ قرار على طلب السلفة بواسطة مستخدم آخر.")
         _audit(c,"employee_loan_approved",loan["loan_no"])
         c.commit()
@@ -3266,9 +3266,9 @@ def reject_employee_loan(loan_id):
             raise ValueError("لا يمكن رفض الطلب في حالته الحالية.")
         if loan["created_by"] is None or loan["created_by"] == session["user_id"]:
             raise ValueError("لا يجوز رفض طلب السلفة بواسطة منشئه، أو دون بيانات منشئ موثقة.")
-        c.execute("""UPDATE employee_loans SET status='rejected',approved_by=?,approved_at=CURRENT_TIMESTAMP
+        update_cursor = c.execute("""UPDATE employee_loans SET status='rejected',approved_by=?,approved_at=CURRENT_TIMESTAMP
             WHERE id=? AND status='requested'""", (session["user_id"],loan_id))
-        if c.execute("SELECT changes()").fetchone()[0] != 1:
+        if update_cursor.rowcount != 1:
             raise ValueError("تم اتخاذ قرار على طلب السلفة بواسطة مستخدم آخر.")
         _audit(c,"employee_loan_rejected",loan["loan_no"])
         c.commit()
@@ -3576,11 +3576,11 @@ def approve_employee_grant(grant_id):
             "إثبات استحقاق منحة: "+grant["grant_name_snapshot"],
             [(int(grant["expense_account_id"]),total,0,"مصروف المنح"),
              (int(grant["payable_account_id"]),0,total,"منح مستحقة للموظفين")],session["user_id"])
-        c.execute("""UPDATE employee_grants SET status='approved',journal_entry_id=?,
+        update_cursor = c.execute("""UPDATE employee_grants SET status='approved',journal_entry_id=?,
             approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_status='approved'
             WHERE id=? AND status='draft' AND approval_status='pending'""",
             (journal_id,session["user_id"],grant_id))
-        if c.execute("SELECT changes()").fetchone()[0] != 1:
+        if update_cursor.rowcount != 1:
             raise ValueError("تعذر تثبيت اعتماد المنحة؛ أعد تحميل الشاشة.")
         _audit(c,"employee_grant_approved","grant="+str(grant_id)+" journal="+str(journal_id))
         c.commit(); flash("تم اعتماد المنحة وإثبات المصروف والمنح المستحقة بقيد يومية.","success")
@@ -4422,8 +4422,8 @@ def delete_end_of_service_draft(settlement_id):
             raise ValueError("حذف تسوية نهاية الخدمة متاح للمسودة غير المعتمدة فقط.")
         if c.execute("SELECT 1 FROM employee_end_of_service_payments WHERE settlement_id=? LIMIT 1",(settlement_id,)).fetchone():
             raise ValueError("لا يمكن حذف تسوية مرتبطة بدفعات صرف.")
-        c.execute("DELETE FROM employee_end_of_service_settlements WHERE id=? AND status='draft'",(settlement_id,))
-        if c.execute("SELECT changes()").fetchone()[0]!=1: raise ValueError("لم يتم حذف المسودة؛ ربما تغيرت حالتها.")
+        delete_cursor = c.execute("DELETE FROM employee_end_of_service_settlements WHERE id=? AND status='draft'",(settlement_id,))
+        if delete_cursor.rowcount != 1: raise ValueError("لم يتم حذف المسودة؛ ربما تغيرت حالتها.")
         _audit(c,"employee_end_of_service_draft_deleted",row["settlement_no"])
         c.commit(); flash("تم حذف مسودة نهاية الخدمة فقط.","success")
     except (ValueError,sqlite3.Error) as exc:
@@ -4465,11 +4465,11 @@ def approve_end_of_service(settlement_id):
             raise ValueError("القيد المقترح غير متوازن؛ لم يتم اعتماد التسوية.")
         ref="EOS-POST-"+str(settlement_id)
         journal=post_journal(c,row["termination_date"],ref,"اعتماد مكافأة نهاية الخدمة للموظف "+row["full_name"],lines,session["user_id"])
-        c.execute("""UPDATE employee_end_of_service_settlements SET status='approved',journal_entry_id=?,
+        update_cursor = c.execute("""UPDATE employee_end_of_service_settlements SET status='approved',journal_entry_id=?,
             approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_status='approved'
             WHERE id=? AND status='draft' AND journal_entry_id IS NULL AND approval_status='pending'""",
             (journal,session["user_id"],settlement_id))
-        if c.execute("SELECT changes()").fetchone()[0]!=1: raise ValueError("تعذر تثبيت اعتماد التسوية.")
+        if update_cursor.rowcount != 1: raise ValueError("تعذر تثبيت اعتماد التسوية.")
         _audit(c,"employee_end_of_service_approved",row["settlement_no"]+" journal="+str(journal))
         c.commit(); flash("تم اعتماد مكافأة نهاية الخدمة وترحيل قيد المصروف والاستحقاق والدمغة.","success")
     except Exception as exc:
