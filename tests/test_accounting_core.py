@@ -272,6 +272,15 @@ class SharedAccountingCoreTests(unittest.TestCase):
 
 
 
+    def test_reconciliation_snapshot_includes_residual_value_on_zero_quantity_layer(self):
+        self.db.execute("ALTER TABLE stock_valuation_layers ADD COLUMN value_remaining TEXT")
+        self.db.execute("UPDATE stock_valuation_layers SET value_remaining='0'")
+        self.db.execute(
+            "INSERT INTO stock_valuation_layers(id,qty_remaining,unit_cost,value_remaining) VALUES(3,'0','99','7.25')"
+        )
+        snapshot = reconciliation_snapshot(self.db)
+        self.assertEqual(snapshot["stock_value"], Decimal("87.25"))
+
     def test_reconciliation_snapshot_excludes_copied_opening_from_inventory_gl(self):
         conn=sqlite3.connect(":memory:")
         conn.row_factory=sqlite3.Row
