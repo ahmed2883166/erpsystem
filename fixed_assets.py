@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import date, timedelta
 from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
-from accounting_core import post_journal, safe_error_message, decimal_sum_expression
+from accounting_core import post_journal, safe_error_message, decimal_sum_expression, register_decimal_aggregates
 from code_sequences import next_code
 from db_insert import insert_one_returning_id
 from db_compat import table_columns, table_exists
@@ -886,6 +886,9 @@ def dispose(asset_id):
 
 def build_asset_reconciliation_rows(conn, as_of):
     """Reconcile register balances once per GL account, even when assets share a cost account."""
+    # This public helper also accepts caller-managed SQLite connections, not only
+    # connections created by database.connect_database(). Keep exact aggregates available.
+    register_decimal_aggregates(conn)
     assets=conn.execute("""SELECT f.id,f.asset_account_id,f.accum_account_id,f.cost
         FROM fixed_assets f LEFT JOIN asset_disposals x ON x.asset_id=f.id
         WHERE f.purchase_date<=? AND f.status<>'reversed'

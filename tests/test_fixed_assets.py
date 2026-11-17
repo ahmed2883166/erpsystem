@@ -6,6 +6,7 @@ from unittest.mock import patch
 from jinja2 import DictLoader
 
 from flask import Flask, session
+from accounting_core import register_decimal_aggregates
 from fixed_assets import (_asset_disposal_journal_lines, _asset_period_amount,
                           _post_asset_depreciation, _reverse_full_period_depreciation_for_disposal,
                           _validate_dedicated_accum_account, require,
@@ -391,6 +392,7 @@ class JournalLinkedAssetRegistrationTests(unittest.TestCase):
     def setUp(self):
         self.conn = sqlite3.connect(":memory:")
         self.conn.row_factory = sqlite3.Row
+        register_decimal_aggregates(self.conn)
         self.conn.executescript("""
             CREATE TABLE journal_entries(id INTEGER PRIMARY KEY, entry_date TEXT, status TEXT);
             CREATE TABLE accounts(id INTEGER PRIMARY KEY, account_type TEXT, is_group INTEGER, active INTEGER);
@@ -451,6 +453,7 @@ class JournalLinkedAssetRegistrationTests(unittest.TestCase):
         import fixed_assets
         conn=sqlite3.connect(":memory:")
         conn.row_factory=sqlite3.Row
+        register_decimal_aggregates(conn)
         conn.executescript("""
             CREATE TABLE fixed_assets(id INTEGER PRIMARY KEY,asset_account_id INTEGER,accum_account_id INTEGER,cost TEXT,purchase_date TEXT,status TEXT);
             CREATE TABLE asset_disposals(id INTEGER PRIMARY KEY,asset_id INTEGER,disposal_date TEXT);
@@ -494,7 +497,7 @@ class ManualAssetRouteIntegrationTests(unittest.TestCase):
         self.db_uri = f"file:fixed_asset_test_{id(self)}?mode=memory&cache=shared"
         self.conn = sqlite3.connect(self.db_uri, uri=True, isolation_level=None)
         self.conn.row_factory = sqlite3.Row
-        self.conn.create_aggregate("DECIMAL_SUM", 1, _DecimalSum)
+        register_decimal_aggregates(self.conn)
         self.conn.executescript("""
             CREATE TABLE accounts(
                 id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT,
@@ -560,7 +563,7 @@ class ManualAssetRouteIntegrationTests(unittest.TestCase):
     def _connect(self):
         conn = sqlite3.connect(self.db_uri, uri=True, isolation_level=None)
         conn.row_factory = sqlite3.Row
-        conn.create_aggregate("DECIMAL_SUM", 1, _DecimalSum)
+        register_decimal_aggregates(conn)
         return conn
 
     def _payload(self):
