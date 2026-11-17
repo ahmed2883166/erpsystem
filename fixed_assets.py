@@ -9,6 +9,7 @@ from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, safe_error_message
 from code_sequences import next_code
+from db_insert import insert_one_returning_id
 
 assets_bp = Blueprint("assets", __name__, url_prefix="/assets")
 
@@ -254,7 +255,7 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
     created=[]
     for values in prepared:
         code,name,category,purchase,ready,cost,residual,life,method,rate,asset_acc,accum_acc,expense_acc=values
-        cursor=conn.execute("""INSERT INTO fixed_assets(
+        asset_id=insert_one_returning_id(conn, """INSERT INTO fixed_assets(
             asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,
             useful_life_months,depreciation_method,annual_rate,asset_account_id,
             accum_account_id,expense_account_id,notes,created_by,supplier_bill_id
@@ -263,7 +264,6 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
              asset_acc,accum_acc,expense_acc,
              "تم الإنشاء تلقائيًا من فاتورة المورد " + bill["bill_no"], actor_id,
              bill["id"] if len(prepared)==1 else None))
-        asset_id=cursor.lastrowid
         if len(prepared)>1:
             conn.execute("INSERT INTO fixed_asset_supplier_bill_links(bill_id,asset_id) VALUES(?,?)",
                          (bill["id"],asset_id))
@@ -544,12 +544,11 @@ def index():
                 raise ValueError("اختر حسابًا مقابلًا تفصيليًا ونشطًا من النقدية أو الالتزامات أو حقوق الملكية.")
             if counterpart_id in ids:
                 raise ValueError("الحساب المقابل يجب أن يختلف عن حساب تكلفة الأصل ومجمع الإهلاك ومصروف الإهلاك.")
-            asset_cursor = c.execute("""INSERT INTO fixed_assets(asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,useful_life_months,depreciation_method,annual_rate,total_units,asset_account_id,accum_account_id,expense_account_id,notes,created_by)
+            asset_id = insert_one_returning_id(c, """INSERT INTO fixed_assets(asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,useful_life_months,depreciation_method,annual_rate,total_units,asset_account_id,accum_account_id,expense_account_id,notes,created_by)
               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (asset_code,request.form["asset_name"].strip(),request.form.get("category","").strip(),
                purchase_date,ready_date,str(cost),str(residual),life,method,
                request.form.get("annual_rate","0"),request.form.get("total_units","0"),*ids,request.form.get("notes",""),session["user_id"]))
-            asset_id = asset_cursor.lastrowid
             journal_lines=_manual_asset_journal_lines(ids[0],counterpart_id,cost,request.form["asset_name"])
             entry_id=post_journal(
                 c,purchase_date,"ASSET-ADD-"+asset_code,
@@ -656,7 +655,7 @@ def configure_journal_asset(journal_line_id):
         if accum_id==pending["account_id"]:
             raise ValueError("حساب مجمع الإهلاك يجب أن يختلف عن حساب تكلفة الأصل.")
         code=next_code(c,"fixed_asset","AST","fixed_assets","asset_code")
-        cur=c.execute("""INSERT INTO fixed_assets(
+        asset_id=insert_one_returning_id(c, """INSERT INTO fixed_assets(
             asset_code,asset_name,category,purchase_date,ready_date,cost,residual_value,
             useful_life_months,depreciation_method,annual_rate,asset_account_id,
             accum_account_id,expense_account_id,notes,created_by
@@ -665,7 +664,6 @@ def configure_journal_asset(journal_line_id):
              str(cost),str(residual),life,method,str(rate),pending["account_id"],
              accum_id,expense_id,"تم الربط تلقائيًا بقيد الشراء رقم "+str(pending["entry_id"]),
              session["user_id"]))
-        asset_id=cur.lastrowid
         c.execute("UPDATE fixed_asset_journal_lines SET status='configured',fixed_asset_id=? WHERE journal_line_id=? AND status='pending'",
                   (asset_id,journal_line_id))
         if c.execute("SELECT changes()").fetchone()[0]!=1:
@@ -868,7 +866,7 @@ def dispose(asset_id):
         )
         entry=post_journal(c,disposal_date,"ASSET-DISPOSAL-"+str(asset_id),
             "استبعاد الأصل "+asset["asset_code"],lines,session["user_id"])
-        cur=c.execute("""INSERT INTO asset_disposals(asset_id,disposal_date,proceeds_account_id,
+        disposal_id=insert_one_returning_id(c, """INSERT INTO asset_disposals(asset_id,disposal_date,proceeds_account_id,
             proceeds_amount,output_vat_account_id,output_vat_amount,gain_loss_account_id,
             gain_loss_amount,net_book_value,journal_entry_id,reason,created_by,
             disposal_type,document_number)
@@ -877,7 +875,7 @@ def dispose(asset_id):
              str(vat),gain_loss_account_id,str(gain_loss),str(nbv),entry,reason,
              session["user_id"],disposal_type,document_number))
         c.execute("UPDATE fixed_assets SET status='disposed' WHERE id=?",(asset_id,))
-        g.audit_created_record=("asset_disposals",cur.lastrowid,None,None)
+        g.audit_created_record=("asset_disposals",disposal_id,None,None)
         c.commit()
         flash("تم استبعاد الأصل وترحيل قيد البيع/الاستبعاد. ربح أو خسارة الاستبعاد: "+str(gain_loss),"success")
     except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
