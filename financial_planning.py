@@ -228,7 +228,8 @@ def create_financial_year(conn, year_name, start_date, end_date, created_by=None
             (end, start),
         ).fetchone()
         if overlap:
-            raise ValueError(f"الفترة تتداخل مع السنة المالية: {overlap[0]}.")
+            overlapping_name = overlap["year_name"] if isinstance(overlap, dict) else overlap[0]
+            raise ValueError(f"الفترة تتداخل مع السنة المالية: {overlapping_name}.")
         year_id = insert_and_get_id(conn,
             """INSERT INTO financial_years(year_name,start_date,end_date,created_by)
                VALUES(?,?,?,?)""",
