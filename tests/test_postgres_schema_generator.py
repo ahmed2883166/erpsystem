@@ -327,6 +327,23 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         self.assertIn("p.location_id = OLD.id", ddl)
         self.assertIn("child.amount", review["text_numeric_candidates"])
 
+    def test_rejects_generated_or_virtual_hidden_columns(self):
+        snapshot = _with_required_numeric_override_tables({
+            "tables": [{
+                "name": "sample",
+                "columns": [
+                    {"name": "id", "type": "INTEGER", "pk": 1, "hidden": 0},
+                    {"name": "normalized_code", "type": "TEXT", "pk": 0, "hidden": 2},
+                ],
+                "foreign_keys": [],
+                "indexes": [],
+            }]
+        })
+        with self.assertRaisesRegex(
+            ValueError, "generated/virtual hidden columns.*normalized_code"
+        ):
+            generate_postgres_ddl(snapshot)
+
     def test_rejects_untranslated_views_instead_of_silently_omitting_them(self):
         snapshot = {
             "tables": [{

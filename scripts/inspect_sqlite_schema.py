@@ -71,7 +71,7 @@ def inspect_database(database_path, include_row_counts=False):
             quoted = _quote_identifier(table_name)
             table["columns"] = [
                 dict(row) for row in connection.execute(
-                    f"PRAGMA table_info({quoted})"
+                    f"PRAGMA table_xinfo({quoted})"
                 ).fetchall()
             ]
             table["foreign_keys"] = [

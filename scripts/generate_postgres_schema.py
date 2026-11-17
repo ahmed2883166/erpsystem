@@ -298,6 +298,16 @@ def generate_postgres_ddl(snapshot):
         columns = table.get("columns", [])
         if not columns:
             raise ValueError(f"Table {table_name!r} has no columns in snapshot.")
+        hidden_columns = [
+            column.get("name")
+            for column in columns
+            if int(column.get("hidden") or 0) != 0
+        ]
+        if hidden_columns:
+            raise ValueError(
+                f"SQLite generated/virtual hidden columns are not translated to PostgreSQL yet; "
+                f"refusing to omit {table_name}: " + ", ".join(map(str, hidden_columns))
+            )
         primary = sorted(
             (column for column in columns if int(column.get("pk") or 0)),
             key=lambda column: int(column.get("pk") or 0),
