@@ -6,7 +6,7 @@ from datetime import date
 import calendar
 
 from db_insert import insert_one_returning_id
-from db_compat import table_columns, begin_write_transaction
+from db_compat import table_columns, begin_write_transaction, transaction_is_active, table_exists as db_table_exists
 from decimal import Decimal, InvalidOperation
 
 COMMITMENT_TYPES = {"tax", "recurring_expense", "friday_overtime"}
@@ -480,9 +480,7 @@ def sync_friday_allowance_commitments(conn, created_by=None):
     allowed. The journal reversal workflow permits exactly this two-step chain.
     """
     def table_exists(name):
-        return conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
-        ).fetchone() is not None
+        return db_table_exists(conn, name)
 
     required_tables = {"friday_allowance_batches", "journal_entries", "cash_commitments"}
     missing = sorted(name for name in required_tables if not table_exists(name))
@@ -497,7 +495,7 @@ def sync_friday_allowance_commitments(conn, created_by=None):
         ).fetchone()
         currency_code = str(setting["setting_value"] or "") if setting else ""
 
-    owns_transaction = not conn.in_transaction
+    owns_transaction = not transaction_is_active(conn)
     savepoint = "sync_friday_allowance_commitments"
     if owns_transaction:
         begin_write_transaction(conn)
