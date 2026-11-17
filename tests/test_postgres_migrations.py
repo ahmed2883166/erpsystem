@@ -174,6 +174,47 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "was modified"):
             apply_migrations(self.connection, [changed], schema=self.schema)
 
+    def test_native_core_schema_preserves_exact_accounting_amounts(self):
+        migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
+        migrations = load_migrations(migration_dir)
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1])
+
+        schema = quote_schema_name(self.schema)
+        user_id = self.connection.execute(
+            f"INSERT INTO {schema}.users(username,full_name,password_hash,role,created_at) "
+            "VALUES (%s,%s,%s,%s,%s) RETURNING id",
+            ("pg_core_test", "PG Test", "hash", "admin", "2026-01-01"),
+        ).fetchone()["id"]
+        account_id = self.connection.execute(
+            f"INSERT INTO {schema}.accounts(code,name_ar,account_type) "
+            "VALUES (%s,%s,%s) RETURNING id",
+            ("1000", "Cash", "asset"),
+        ).fetchone()["id"]
+        entry_id = self.connection.execute(
+            f"INSERT INTO {schema}.journal_entries(entry_date,description,created_by,created_at) "
+            "VALUES (%s,%s,%s,%s) RETURNING id",
+            ("2026-01-01", "Precision probe", user_id, "2026-01-01"),
+        ).fetchone()["id"]
+        self.connection.execute(
+            f"INSERT INTO {schema}.journal_lines(entry_id,account_id,debit,credit) "
+            "VALUES (%s,%s,%s,%s)",
+            (entry_id, account_id, "1234567890123.123456", "0"),
+        )
+        amount = self.connection.execute(
+            f"SELECT debit FROM {schema}.journal_lines WHERE entry_id=%s",
+            (entry_id,),
+        ).fetchone()["debit"]
+        self.assertEqual(str(amount), "1234567890123.123456")
+        self.assertGreater(entry_id, 0)
+
+        with self.assertRaises(Exception):
+            self.connection.execute(
+                f"INSERT INTO {schema}.journal_lines(entry_id,account_id,debit,credit) "
+                "VALUES (%s,%s,%s,%s)",
+                (entry_id, account_id, "1", "1"),
+            )
+        self.connection.rollback()
+
     def test_failed_batch_rolls_back_schema_and_migration_records(self):
         migrations = [
             self._migration(1, "0001_ok.sql", 'CREATE TABLE "first_probe" (id BIGINT)'),
