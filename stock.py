@@ -1820,7 +1820,7 @@ def _stock_valuation_layer_integrity(conn, limit=200):
         issue_count += 1
         if len(issues) < limit:
             issues.append({
-                "layer_id": int(row["id"]),
+                "layer_id": int(row["id"]) if row["id"] is not None else None,
                 "product_id": row["product_id"] if "product_id" in columns else None,
                 "warehouse_id": row["warehouse_id"] if "warehouse_id" in columns else None,
                 "source_movement_id": row["source_movement_id"] if "source_movement_id" in columns else None,
@@ -1888,7 +1888,7 @@ def _stock_valuation_layer_integrity(conn, limit=200):
                 WHERE source_movement_id=? ORDER BY id
             """, (movement["id"],)).fetchall()
             if not linked:
-                add({"id": movement["id"], "product_id": movement["product_id"],
+                add({"id": None, "product_id": movement["product_id"],
                      "warehouse_id": movement["target_warehouse_id"],
                      "source_movement_id": movement["id"]},
                     "inbound_movement_without_layer",
