@@ -296,26 +296,6 @@ def generate_postgres_ddl(snapshot):
             cols = [column.get("name") for column in index.get("columns", [])]
             pending_indexes.append((table_name, index, cols))
 
-    # Add foreign keys after every table exists; this supports cyclic references.
-    for counter, (table_name, fk) in enumerate(pending_fks, start=1):
-        target_table = fk["table"]
-        source_col = quote_ident(fk["from"])
-        target_col = quote_ident(fk["to"])
-        raw_constraint = f"fk_{table_name}_{fk['from']}_{counter}"
-        constraint = quote_ident(short_identifier(raw_constraint))
-        action = str(fk.get("on_delete") or "NO ACTION").upper()
-        if action not in {"NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"}:
-            action = "NO ACTION"
-        update_action = str(fk.get("on_update") or "NO ACTION").upper()
-        if update_action not in {"NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"}:
-            update_action = "NO ACTION"
-        lines.append(
-            f"ALTER TABLE {quote_ident(table_name)} ADD CONSTRAINT {constraint} "
-            f"FOREIGN KEY ({source_col}) REFERENCES {quote_ident(target_table)} "
-            f"({target_col}) ON UPDATE {update_action} ON DELETE {action};"
-        )
-    lines.append("")
-
     named_index_sql = _index_sql_by_name(snapshot)
     for table_name, index, cols in pending_indexes:
         name = index.get("name") or f"ix_{table_name}_{'_'.join(str(c) for c in cols)}"
@@ -354,6 +334,27 @@ def generate_postgres_ddl(snapshot):
             f"CREATE {unique}INDEX {qindex} ON {quote_ident(table_name)} "
             f"({columns_sql}){where_clause};"
         )
+
+
+    # Add foreign keys after every table exists; this supports cyclic references.
+    for counter, (table_name, fk) in enumerate(pending_fks, start=1):
+        target_table = fk["table"]
+        source_col = quote_ident(fk["from"])
+        target_col = quote_ident(fk["to"])
+        raw_constraint = f"fk_{table_name}_{fk['from']}_{counter}"
+        constraint = quote_ident(short_identifier(raw_constraint))
+        action = str(fk.get("on_delete") or "NO ACTION").upper()
+        if action not in {"NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"}:
+            action = "NO ACTION"
+        update_action = str(fk.get("on_update") or "NO ACTION").upper()
+        if update_action not in {"NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"}:
+            update_action = "NO ACTION"
+        lines.append(
+            f"ALTER TABLE {quote_ident(table_name)} ADD CONSTRAINT {constraint} "
+            f"FOREIGN KEY ({source_col}) REFERENCES {quote_ident(target_table)} "
+            f"({target_col}) ON UPDATE {update_action} ON DELETE {action};"
+        )
+    lines.append("")
 
     trigger_lines = generate_trigger_ddl(snapshot.get("triggers", []))
     if trigger_lines:
