@@ -12,10 +12,22 @@ def _execute(connection, sql, params=()):
     return execute_compat(connection, sql, params)
 
 
-def _decimal_sum_expression(connection, expression):
+def decimal_sum_expression(connection, expression):
+    """Build an exact monetary SUM expression for SQLite or PostgreSQL.
+
+    SQLite keeps legacy money columns as TEXT and uses the registered Decimal
+    aggregate. PostgreSQL casts those same textual values to NUMERIC before
+    aggregation; it must never route financial totals through FLOAT/REAL.
+    The expression argument is SQL supplied by trusted application code.
+    """
     if database_dialect(connection) == "sqlite":
         return f"COALESCE(DECIMAL_SUM({expression}), '0')"
     return f"COALESCE(SUM(CAST({expression} AS NUMERIC)), 0)"
+
+
+def _decimal_sum_expression(connection, expression):
+    """Backward-compatible internal alias; prefer decimal_sum_expression."""
+    return decimal_sum_expression(connection, expression)
 
 
 def safe_error_message(exc, fallback="تعذر إتمام العملية بسبب خطأ في البيانات. لم يتم حفظ أي تغييرات."):
