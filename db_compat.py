@@ -183,19 +183,24 @@ def table_names(connection, *, schema=None):
 
 
 def _split_sql_statements(script):
-    """Split SQL on semicolons outside quoted strings, identifiers and comments."""
+    """Split PostgreSQL SQL on semicolons outside strings, identifiers and comments."""
     statements = []
     current = []
     i = 0
     state = "normal"
+    block_depth = 0
     dollar_tag = None
     length = len(script)
     while i < length:
         char = script[i]
         nxt = script[i + 1] if i + 1 < length else ""
-        if state == "single":
+        if state in {"single", "escape_single"}:
             current.append(char)
             if char == "'" and nxt == "'":
+                current.append(nxt)
+                i += 2
+                continue
+            if state == "escape_single" and char == "\\" and nxt:
                 current.append(nxt)
                 i += 2
                 continue
@@ -211,15 +216,22 @@ def _split_sql_statements(script):
                 state = "normal"
         elif state == "line_comment":
             current.append(char)
-            if char == "\n":
+            if char == "\\n":
                 state = "normal"
         elif state == "block_comment":
-            current.append(char)
-            if char == "*" and nxt == "/":
-                current.append(nxt)
+            if char == "/" and nxt == "*":
+                current.extend((char, nxt))
+                block_depth += 1
                 i += 2
-                state = "normal"
                 continue
+            if char == "*" and nxt == "/":
+                current.extend((char, nxt))
+                block_depth -= 1
+                i += 2
+                if block_depth == 0:
+                    state = "normal"
+                continue
+            current.append(char)
         elif state == "dollar":
             if script.startswith(dollar_tag, i):
                 current.append(dollar_tag)
@@ -229,7 +241,11 @@ def _split_sql_statements(script):
             current.append(char)
         else:
             if char == "'":
-                state = "single"
+                previous_is_e = (
+                    i > 0 and script[i - 1] in "eE"
+                    and (i < 2 or not (script[i - 2].isalnum() or script[i - 2] == "_"))
+                )
+                state = "escape_single" if previous_is_e else "single"
                 current.append(char)
             elif char == '"':
                 state = "double"
@@ -242,10 +258,11 @@ def _split_sql_statements(script):
             elif char == "/" and nxt == "*":
                 current.extend((char, nxt))
                 i += 2
+                block_depth = 1
                 state = "block_comment"
                 continue
             elif char == "$":
-                match = re.match(r"\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$", script[i:])
+                match = re.match(r"\\$[A-Za-z_][A-Za-z0-9_]*\\$|\\$\\$", script[i:])
                 if match:
                     dollar_tag = match.group(0)
                     current.append(dollar_tag)
@@ -261,7 +278,7 @@ def _split_sql_statements(script):
             else:
                 current.append(char)
         i += 1
-    if state in {"single", "double", "block_comment", "dollar"}:
+    if state in {"single", "escape_single", "double", "block_comment", "dollar"}:
         raise ValueError("Unterminated quoted SQL or comment in script.")
     tail = "".join(current).strip()
     if tail:
