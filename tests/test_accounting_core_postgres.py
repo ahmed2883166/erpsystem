@@ -80,11 +80,11 @@ class PostgreSQLAccountingCoreTests(unittest.TestCase):
             self.assertEqual(snapshot["journal_totals"]["credit"], Decimal("125.50"))
             self.assertEqual(snapshot["unbalanced"], [])
             self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0],
+                connection.execute("SELECT COUNT(*) AS row_count FROM journal_entries").fetchone()["row_count"],
                 1,
             )
             self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM journal_lines").fetchone()[0],
+                connection.execute("SELECT COUNT(*) AS row_count FROM journal_lines").fetchone()["row_count"],
                 2,
             )
         finally:
