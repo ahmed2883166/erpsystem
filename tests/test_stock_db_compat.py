@@ -204,7 +204,7 @@ class StockValuationLayerLockTests(unittest.TestCase):
         conn = FakePostgresConnection()
         self.assertEqual(available_layers(conn, 12, 3), [])
         self.assertIn("ORDER BY id FOR UPDATE", conn.sql)
-        self.assertEqual(conn.params, (12, 3))
+        self.assertEqual(tuple(conn.params), (12, 3))
 
     def test_sqlite_layer_query_does_not_add_postgresql_lock_clause(self):
         from stock import available_layers
