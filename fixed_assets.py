@@ -580,13 +580,13 @@ def index():
         JOIN accounts a ON a.id=jl.account_id
         WHERE p.status='pending' AND je.status='posted'
         ORDER BY je.entry_date,p.journal_line_id""").fetchall()
-    assets=c.execute("""SELECT f.*,a.code asset_code_gl,a.name_ar asset_account_name,
+    assets=c.execute(f"""SELECT f.*,a.code asset_code_gl,a.name_ar asset_account_name,
       aa.code accum_account_code,aa.name_ar accum_account_name,
       ea.code expense_account_code,ea.name_ar expense_account_name,
       COALESCE(f.supplier_bill_id,l.bill_id) linked_supplier_bill_id,
       sb.bill_no supplier_bill_no,sb.supplier_invoice_no,
       p.entry_id linked_journal_entry_id,
-      {decimal_sum_expression(c, "d.amount").replace("d.amount", "d.amount")} accumulated
+      {decimal_sum_expression(c, "d.amount")} accumulated
       FROM fixed_assets f JOIN accounts a ON a.id=f.asset_account_id
       JOIN accounts aa ON aa.id=f.accum_account_id
       JOIN accounts ea ON ea.id=f.expense_account_id
