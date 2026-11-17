@@ -1,3 +1,5 @@
+import hashlib
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -48,10 +50,12 @@ class BackupScheduleTests(unittest.TestCase):
             archive = create_backup_archive(database, root / "backups", 10)
             self.assertTrue(archive.exists())
             with __import__("zipfile").ZipFile(archive) as zipped:
-                self.assertIn("nexus.db", zipped.namelist())
-                self.assertIn("manifest.json", zipped.namelist())
+                self.assertEqual(set(zipped.namelist()), {"nexus.db", "manifest.json"})
                 extracted = root / "restored.db"
-                extracted.write_bytes(zipped.read("nexus.db"))
+                payload = zipped.read("nexus.db")
+                manifest = json.loads(zipped.read("manifest.json"))
+                self.assertEqual(manifest["database_sha256"], hashlib.sha256(payload).hexdigest())
+                extracted.write_bytes(payload)
             restored = sqlite3.connect(extracted)
             self.assertEqual(restored.execute("SELECT value FROM sample").fetchone()[0], "preserved")
             restored.close()

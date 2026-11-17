@@ -3,6 +3,7 @@
 A lightweight daemon checks the persisted schedule. A SQLite write transaction
 claims each due run so multiple Waitress/Gunicorn workers cannot create duplicates.
 """
+import hashlib
 import json
 import os
 import sqlite3
@@ -78,16 +79,28 @@ def create_backup_archive(db_path, backup_dir, keep_count=30):
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     archive_path = backup_dir / f"{BACKUP_PREFIX}{stamp}.zip"
     snapshot_path = backup_dir / f".snapshot-{stamp}-{os.getpid()}.db"
+    temporary_archive = archive_path.with_suffix(".zip.tmp")
     online_backup_sqlite(db_path, snapshot_path, timeout=20)
     try:
-        with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        hasher = hashlib.sha256()
+        with snapshot_path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        with zipfile.ZipFile(temporary_archive, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.write(snapshot_path, "nexus.db")
             archive.writestr("manifest.json", json.dumps({
                 "application": "NEXUS ERP",
                 "created_at": datetime.now().isoformat(timespec="seconds"),
                 "database_integrity": "ok",
+                "database_sha256": hasher.hexdigest(),
             }, ensure_ascii=False))
+        # Publish only a complete archive; interrupted writes never appear as backups.
+        with zipfile.ZipFile(temporary_archive, "r") as archive:
+            if archive.testzip() is not None:
+                raise RuntimeError("SQLite backup archive failed ZIP integrity validation.")
+        temporary_archive.replace(archive_path)
     except Exception:
+        temporary_archive.unlink(missing_ok=True)
         archive_path.unlink(missing_ok=True)
         raise
     finally:

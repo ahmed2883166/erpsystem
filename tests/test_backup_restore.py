@@ -45,6 +45,23 @@ class BackupRestoreTests(unittest.TestCase):
             self.assertEqual(restored.execute("SELECT value FROM sample").fetchone()[0], "backup-data")
             restored.close()
 
+    def test_rejects_database_checksum_mismatch(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            database = root / "source.db"
+            archive_path = root / "tampered.zip"
+            make_database(database, "trusted-data")
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.write(database, "nexus.db")
+                archive.writestr("manifest.json", json.dumps({
+                    "application": "NEXUS ERP",
+                    "database_integrity": "ok",
+                    "database_sha256": "0" * 64,
+                }))
+            with self.assertRaisesRegex(ValueError, "بصمة قاعدة البيانات"):
+                extract_validated_backup(archive_path, root / "candidate.db")
+            self.assertFalse((root / "candidate.db").exists())
+
     def test_rejects_zip_without_nexus_database(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

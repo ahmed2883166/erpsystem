@@ -1,4 +1,5 @@
 """Safe validation and rollback helpers for restoring NEXUS SQLite backups."""
+import hashlib
 import json
 import sqlite3
 import zipfile
@@ -38,6 +39,8 @@ def extract_validated_backup(archive_path, candidate_path,
                 raise ValueError("محتوى Manifest يجب أن يكون كائن JSON صالحًا.")
             if manifest.get("application") not in (None, "NEXUS ERP"):
                 raise ValueError("النسخة لا تخص نظام NEXUS ERP.")
+        expected_sha256 = manifest.get("database_sha256") if manifests else None
+        hasher = hashlib.sha256()
         written = 0
         with archive.open(member, "r") as source, candidate_path.open("wb") as target:
             while True:
@@ -47,7 +50,11 @@ def extract_validated_backup(archive_path, candidate_path,
                 written += len(chunk)
                 if written > max_database_bytes:
                     raise ValueError("حجم قاعدة البيانات المستخرجة تجاوز الحد المسموح.")
+                hasher.update(chunk)
                 target.write(chunk)
+        if expected_sha256 is not None and hasher.hexdigest() != expected_sha256:
+            candidate_path.unlink(missing_ok=True)
+            raise ValueError("فشل التحقق من بصمة قاعدة البيانات داخل النسخة الاحتياطية.")
     connection = sqlite3.connect(str(candidate_path))
     try:
         integrity = sqlite_integrity_check(connection)
