@@ -1,8 +1,11 @@
 """Optional analytical dimensions for NEXUS ERP.
 
 Legacy journal lines remain valid: all dimension references are nullable and
-are introduced through additive SQLite migrations.
+are introduced through additive SQLite/PostgreSQL migrations.
 """
+from db_compat import execute_script, table_columns, table_exists
+from db_sql import execute_compat
+
 
 DIMENSIONS = {
     "branch": ("branches", "الفرع"),
@@ -11,8 +14,18 @@ DIMENSIONS = {
 }
 
 
+def _add_dimension_column(conn, columns, name, table):
+    if name not in columns:
+        execute_compat(
+            conn,
+            f"ALTER TABLE journal_lines ADD COLUMN {name} INTEGER REFERENCES {table}(id)",
+        )
+        columns.add(name)
+
+
 def initialize_analytic_dimensions_schema(conn):
-    conn.executescript("""
+    """Create dimension tables and add nullable journal references portably."""
+    execute_script(conn, """
     CREATE TABLE IF NOT EXISTS branches(
       id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name_ar TEXT NOT NULL,
       active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -27,56 +40,73 @@ def initialize_analytic_dimensions_schema(conn):
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     """)
-    # Additive branch contact details used by printed invoices and documents.
-    branch_columns = {row["name"] for row in conn.execute("PRAGMA table_info(branches)")}
+
+    branch_columns = table_columns(conn, "branches")
     for column in ("address", "phone", "email", "tax_number"):
         if column not in branch_columns:
-            conn.execute(f"ALTER TABLE branches ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='journal_lines'").fetchone():
-        # Dimension tables exist; journal columns are added once the journal table is created.
+            execute_compat(
+                conn,
+                f"ALTER TABLE branches ADD COLUMN {column} TEXT NOT NULL DEFAULT ''",
+            )
+            branch_columns.add(column)
+
+    if not table_exists(conn, "journal_lines"):
         conn.commit()
         return
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")}
-    for name, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"),
-                        ("project_id", "projects")):
-        if name not in columns:
-            conn.execute(f"ALTER TABLE journal_lines ADD COLUMN {name} INTEGER REFERENCES {table}(id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_branch ON journal_lines(branch_id,entry_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_cost_center ON journal_lines(cost_center_id,entry_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_project ON journal_lines(project_id,entry_id)")
+
+    columns = table_columns(conn, "journal_lines")
+    for name, table in (
+        ("branch_id", "branches"),
+        ("cost_center_id", "cost_centers"),
+        ("project_id", "projects"),
+    ):
+        _add_dimension_column(conn, columns, name, table)
+
+    for name, columns_sql in (
+        ("idx_journal_lines_branch", "branch_id,entry_id"),
+        ("idx_journal_lines_cost_center", "cost_center_id,entry_id"),
+        ("idx_journal_lines_project", "project_id,entry_id"),
+    ):
+        execute_compat(
+            conn,
+            f"CREATE INDEX IF NOT EXISTS {name} ON journal_lines({columns_sql})",
+        )
+
     # Operational stock dimensions are separate from analytical dimensions.
-    stock_tables = {row["name"] for row in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('stock_products','stock_warehouses')"
-    )}
-    if "stock_products" in stock_tables:
-        if "stock_product_id" not in columns:
-            conn.execute("ALTER TABLE journal_lines ADD COLUMN stock_product_id INTEGER REFERENCES stock_products(id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_stock_product ON journal_lines(stock_product_id,account_id,entry_id)")
-    if "stock_warehouses" in stock_tables:
-        if "stock_warehouse_id" not in columns:
-            conn.execute("ALTER TABLE journal_lines ADD COLUMN stock_warehouse_id INTEGER REFERENCES stock_warehouses(id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_stock_warehouse ON journal_lines(stock_warehouse_id,account_id,entry_id)")
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customers'").fetchone():
-        if "customer_id" not in columns:
-            conn.execute("ALTER TABLE journal_lines ADD COLUMN customer_id INTEGER REFERENCES customers(id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_customer ON journal_lines(customer_id,entry_id)")
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='salespersons'").fetchone():
-        if "salesperson_id" not in columns:
-            conn.execute("ALTER TABLE journal_lines ADD COLUMN salesperson_id INTEGER REFERENCES salespersons(id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_salesperson ON journal_lines(salesperson_id,entry_id)")
-    # Supplier dimension is installed only after the purchasing module creates
-    # its suppliers table. Re-running this additive migration is safe.
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='suppliers'").fetchone():
-        if "supplier_id" not in columns:
-            conn.execute("ALTER TABLE journal_lines ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_supplier ON journal_lines(supplier_id,entry_id)")
+    if table_exists(conn, "stock_products"):
+        _add_dimension_column(conn, columns, "stock_product_id", "stock_products")
+        execute_compat(
+            conn,
+            "CREATE INDEX IF NOT EXISTS idx_journal_lines_stock_product "
+            "ON journal_lines(stock_product_id,account_id,entry_id)",
+        )
+    if table_exists(conn, "stock_warehouses"):
+        _add_dimension_column(conn, columns, "stock_warehouse_id", "stock_warehouses")
+        execute_compat(
+            conn,
+            "CREATE INDEX IF NOT EXISTS idx_journal_lines_stock_warehouse "
+            "ON journal_lines(stock_warehouse_id,account_id,entry_id)",
+        )
+
+    for table, column, index in (
+        ("customers", "customer_id", "idx_journal_lines_customer"),
+        ("salespersons", "salesperson_id", "idx_journal_lines_salesperson"),
+        ("suppliers", "supplier_id", "idx_journal_lines_supplier"),
+    ):
+        if table_exists(conn, table):
+            _add_dimension_column(conn, columns, column, table)
+            execute_compat(
+                conn,
+                f"CREATE INDEX IF NOT EXISTS {index} ON journal_lines({column},entry_id)",
+            )
     conn.commit()
 
 
 def active_dimension_options(conn):
-    branch_columns = {row["name"] for row in conn.execute("PRAGMA table_info(branches)")}
+    """Load active dimension choices using portable metadata and SQL helpers."""
+    branch_columns = table_columns(conn, "branches")
     branch_fields = [
-        f"{column}" if column in branch_columns else f"'' AS {column}"
+        column if column in branch_columns else f"'' AS {column}"
         for column in ("address", "phone", "email", "tax_number")
     ]
     branches_sql = (
@@ -84,15 +114,27 @@ def active_dimension_options(conn):
         " FROM branches WHERE active=1 ORDER BY code"
     )
     return {
-        "branches": conn.execute(branches_sql).fetchall(),
-        "cost_centers": conn.execute("SELECT id,code,name_ar FROM cost_centers WHERE active=1 ORDER BY code").fetchall(),
-        "projects": conn.execute("SELECT id,code,name_ar FROM projects WHERE active=1 ORDER BY code").fetchall(),
-        "customers": conn.execute("SELECT id,code,name AS name_ar FROM customers WHERE active=1 ORDER BY code").fetchall()
-            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='customers'").fetchone() else [],
-        "salespersons": conn.execute("SELECT id,code,name AS name_ar FROM salespersons WHERE active=1 ORDER BY code").fetchall()
-            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='salespersons'").fetchone() else [],
-        "suppliers": conn.execute("SELECT id,code,name AS name_ar FROM suppliers WHERE active=1 ORDER BY code").fetchall()
-            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='suppliers'").fetchone() else [],
+        "branches": execute_compat(conn, branches_sql).fetchall(),
+        "cost_centers": execute_compat(
+            conn,
+            "SELECT id,code,name_ar FROM cost_centers WHERE active=1 ORDER BY code",
+        ).fetchall(),
+        "projects": execute_compat(
+            conn,
+            "SELECT id,code,name_ar FROM projects WHERE active=1 ORDER BY code",
+        ).fetchall(),
+        "customers": execute_compat(
+            conn,
+            "SELECT id,code,name AS name_ar FROM customers WHERE active=1 ORDER BY code",
+        ).fetchall() if table_exists(conn, "customers") else [],
+        "salespersons": execute_compat(
+            conn,
+            "SELECT id,code,name AS name_ar FROM salespersons WHERE active=1 ORDER BY code",
+        ).fetchall() if table_exists(conn, "salespersons") else [],
+        "suppliers": execute_compat(
+            conn,
+            "SELECT id,code,name AS name_ar FROM suppliers WHERE active=1 ORDER BY code",
+        ).fetchall() if table_exists(conn, "suppliers") else [],
     }
 
 
@@ -100,9 +142,14 @@ def validate_journal_dimensions(conn, dimensions):
     """Validate optional dimension IDs; return normalized nullable IDs."""
     dimensions = dimensions or {}
     result = {}
-    for key, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"),
-                       ("project_id", "projects"), ("customer_id", "customers"), ("salesperson_id", "salespersons"),
-                       ("supplier_id", "suppliers")):
+    for key, table in (
+        ("branch_id", "branches"),
+        ("cost_center_id", "cost_centers"),
+        ("project_id", "projects"),
+        ("customer_id", "customers"),
+        ("salesperson_id", "salespersons"),
+        ("supplier_id", "suppliers"),
+    ):
         raw = dimensions.get(key)
         if raw in (None, ""):
             result[key] = None
@@ -111,9 +158,13 @@ def validate_journal_dimensions(conn, dimensions):
             value = int(raw)
         except (TypeError, ValueError):
             raise ValueError("قيمة أحد الأبعاد التحليلية غير صحيحة.")
-        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+        if not table_exists(conn, table):
             raise ValueError("جدول أحد الأبعاد التحليلية غير مهيأ. أعد تشغيل البرنامج لإكمال التحديث.")
-        if not conn.execute(f"SELECT 1 FROM {table} WHERE id=? AND active=1", (value,)).fetchone():
+        if not execute_compat(
+            conn,
+            f"SELECT 1 FROM {table} WHERE id=? AND active=1",
+            (value,),
+        ).fetchone():
             raise ValueError("اختر بُعدًا تحليليًا موجودًا ونشطًا.")
         result[key] = value
     return result
