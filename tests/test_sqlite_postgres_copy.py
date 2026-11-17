@@ -99,7 +99,6 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
         conn = sqlite3.connect(path)
         try:
             conn.execute("PRAGMA foreign_keys = ON")
-            conn.execute("PRAGMA defer_foreign_keys = ON")
             conn.executescript("""
                 CREATE TABLE accounts (
                     id INTEGER PRIMARY KEY,
@@ -112,6 +111,10 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
                     amount NUMERIC NOT NULL
                 );
             """)
+            # executescript commits its own transaction; defer constraints only
+            # after it, for the fixture's intentionally unordered parent rows.
+            conn.execute("PRAGMA defer_foreign_keys = ON")
+            conn.execute("BEGIN")
             conn.executemany(
                 "INSERT INTO accounts(id, parent_id, name) VALUES (?, ?, ?)",
                 [(3, 2, "Child"), (1, None, "Root"), (2, 1, "Group")],
