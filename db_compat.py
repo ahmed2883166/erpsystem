@@ -1,8 +1,8 @@
-"""Small, explicit cross-database schema inspection primitives.
+"""Focused SQLite/PostgreSQL compatibility helpers for staged migration.
 
-This module is intentionally narrower than a DB-API compatibility layer. It
-supports only metadata reads needed by application code; it does not translate
-SQL, alter transaction behavior, or select a database for the application.
+The helpers cover schema inspection, transaction boundaries, generated IDs,
+and multi-statement DDL execution. They do not translate arbitrary application
+SQL or select the database used by the Flask application.
 """
 import re
 import sqlite3
