@@ -41,7 +41,7 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
     def test_repository_core_migration_is_loadable_and_splits_function_body_safely(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6])
+        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7])
         statements = _split_sql_statements(migrations[0].sql)
         audit_function = next(
             item for item in statements
@@ -70,6 +70,11 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
                             for item in location_integrity_statements))
         self.assertTrue(any("CREATE TRIGGER trg_stock_product_locations_active_update" in item
                             for item in location_integrity_statements))
+        stock_value_statements = _split_sql_statements(migrations[6].sql)
+        self.assertTrue(any("CREATE OR REPLACE FUNCTION nexus_initialize_stock_layer_value" in item
+                            for item in stock_value_statements))
+        self.assertTrue(any("CREATE TRIGGER trg_stock_layer_initialize_value" in item
+                            for item in stock_value_statements))
 
     def test_rejects_invalid_or_empty_migration_files(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -276,7 +281,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
     def test_party_and_banking_schema_supports_independent_ledgers(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6, 7])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         schema = quote_schema_name(self.schema)
 
@@ -318,7 +323,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
     def test_purchasing_schema_creates_order_receipt_and_bill_links(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6, 7])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         schema = quote_schema_name(self.schema)
         user_id = self.connection.execute(
@@ -382,7 +387,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
     def test_sales_schema_links_invoice_lines_receipts_and_credit_notes(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6, 7])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         schema = quote_schema_name(self.schema)
         user_id = self.connection.execute(
@@ -438,7 +443,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
     def test_inventory_schema_uses_exact_quantities_and_enforces_location_scope(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6, 7])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         schema = quote_schema_name(self.schema)
 
@@ -477,6 +482,16 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
             (movement_id,),
         ).fetchone()["unit_cost"]
         self.assertEqual(str(amount), "12.345678")
+        layer_id = self.connection.execute(
+            f"INSERT INTO {schema}.stock_valuation_layers(product_id,warehouse_id,source_movement_id,"
+            "qty_in,qty_remaining,unit_cost) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+            (product_id, warehouse_id, movement_id, "2.125", "2.125", "12.345678"),
+        ).fetchone()["id"]
+        layer_value = self.connection.execute(
+            f"SELECT value_remaining FROM {schema}.stock_valuation_layers WHERE id=%s",
+            (layer_id,),
+        ).fetchone()["value_remaining"]
+        self.assertEqual(str(layer_value), "26.23456575")
         # Keep the valid fixture rows while testing each rejected insert in isolation.
         self.connection.commit()
 
