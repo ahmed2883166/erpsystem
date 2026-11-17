@@ -308,10 +308,14 @@ def generate_postgres_ddl(snapshot):
                 ("accounts", "normal_balance"),
                 ("company_settings", "setting_value"),
                 ("management_dashboard_meta", "meta_value"),
+                ("sales_credit_notes", "tax_reference"),
+                ("sales_invoices", "tax_reference"),
+                ("supplier_bills", "tax_reference"),
+                ("supplier_credit_notes", "tax_reference"),
             }
             metadata_suffixes = {
                 "at", "code", "date", "id", "json", "method", "name", "no",
-                "notes", "number", "reason", "reference", "status", "treatment", "type",
+                "notes", "number", "reason", "status", "treatment", "type",
             }
             numeric_name_match = (
                 bool(name_parts)
