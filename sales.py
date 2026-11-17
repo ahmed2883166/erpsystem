@@ -1333,6 +1333,9 @@ def cancel_credit_note(conn, credit_note_id, cancellation_date, reason, created_
     ).fetchone()
     if not note:
         raise ValueError("الإشعار الدائن غير موجود أو تم إلغاؤه بالفعل.")
+    # Keep the lock order consistent with credit-note posting: invoice first,
+    # then warehouse/layer rows. This avoids a warehouse↔invoice deadlock.
+    invoice = _sales_invoice_for_update(conn, note["invoice_id"])
     if execute_compat(conn, "SELECT 1 FROM customer_refunds WHERE credit_note_id=? LIMIT 1",
                     (credit_note_id,)).fetchone():
         raise ValueError("لا يمكن إلغاء الإشعار بعد رد مبالغ منه. اعكس عملية الرد أولًا.")
@@ -1402,7 +1405,6 @@ def cancel_credit_note(conn, credit_note_id, cancellation_date, reason, created_
            cancellation_reason=? WHERE id=?""",
         (reversal_id, cogs_reversal_id, created_by, reason, credit_note_id),
     )
-    invoice = _sales_invoice_for_update(conn, note["invoice_id"])
     new_credited = Decimal(invoice["credited_amount"] or "0") - Decimal(note["total_amount"])
     if new_credited < 0:
         raise ValueError("رصيد الإشعارات الدائنة على الفاتورة غير متسق؛ راجع سلامة البيانات.")
