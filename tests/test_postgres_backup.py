@@ -1,5 +1,7 @@
 import hashlib
 import json
+import os
+import shutil
 import tempfile
 import unittest
 import zipfile
@@ -77,14 +79,12 @@ class PostgreSQLBackupRoundTripIntegrationTests(unittest.TestCase):
     """Exercise real pg_dump/pg_restore against disposable PostgreSQL databases."""
 
     @unittest.skipUnless(
-        __import__("os").environ.get("NEXUS_TEST_POSTGRES_DSN")
-        and __import__("shutil").which("pg_dump")
-        and __import__("shutil").which("pg_restore"),
+        os.environ.get("NEXUS_TEST_POSTGRES_DSN")
+        and shutil.which("pg_dump")
+        and shutil.which("pg_restore"),
         "PostgreSQL server and native client tools are required",
     )
     def test_real_backup_restore_round_trip_and_existing_database_protection(self):
-        import os
-        import shutil
         import uuid
 
         import psycopg
