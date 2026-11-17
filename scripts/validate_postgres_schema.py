@@ -51,6 +51,11 @@ def validate(ddl_path, dsn):
                 "index_count": index_count,
                 "invalid_index_count": invalid_indexes,
             }
+        except Exception:
+            # Roll back the explicit DDL transaction before dropping the
+            # disposable schema when PostgreSQL rejects any statement.
+            connection.execute("ROLLBACK")
+            raise
         finally:
             connection.execute(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
 
