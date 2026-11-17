@@ -9,6 +9,7 @@ from flask import Blueprint, abort, flash, redirect, render_template, request, s
 from app_paths import DB_PATH
 from database import connect_database
 from accounting_core import post_journal
+from db_insert import insert_one_returning_id
 
 adjustments_bp = Blueprint("adjustments", __name__)
 CENT = Decimal("0.01")
@@ -163,7 +164,7 @@ def create_adjustment(conn, description, kind, total_amount, start_date, end_dat
     _validate_accounts(conn, kind, int(debit_account_id), int(credit_account_id))
     conn.execute("BEGIN IMMEDIATE")
     try:
-        cur = conn.execute("""INSERT INTO period_adjustments(
+        adjustment_id = insert_one_returning_id(conn, """INSERT INTO period_adjustments(
             adjustment_no,description,adjustment_type,total_amount,start_date,end_date,
             frequency,debit_account_id,credit_account_id,created_by)
             VALUES(?,?,?,?,?,?,?,?,?,?)""",
@@ -172,7 +173,7 @@ def create_adjustment(conn, description, kind, total_amount, start_date, end_dat
              description, kind, str(amount), start, end, frequency,
              int(debit_account_id), int(credit_account_id), created_by))
         conn.commit()
-        return cur.lastrowid
+        return adjustment_id
     except Exception:
         conn.rollback()
         raise
