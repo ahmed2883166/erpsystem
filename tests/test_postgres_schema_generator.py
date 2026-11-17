@@ -67,6 +67,7 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
                     "columns": [
                         {"name": "debit", "type": "TEXT", "pk": 0},
                         {"name": "credit", "type": "TEXT", "pk": 0},
+                        {"name": "amount", "type": "TEXT", "pk": 0},
                     ],
                     "foreign_keys": [],
                     "indexes": [],
@@ -96,6 +97,10 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         self.assertIn('"rate_to_base" NUMERIC', ddl)
         self.assertIn('"rate" NUMERIC', ddl)
         self.assertIn('"tax_number" TEXT', ddl)
+        self.assertIn('"amount" TEXT', ddl)
+        self.assertIn("journal_lines.amount", review["text_numeric_candidates"])
+        self.assertNotIn("journal_lines.debit", review["text_numeric_candidates"])
+        self.assertNotIn("journal_lines.credit", review["text_numeric_candidates"])
 
     def test_rejects_numeric_overrides_missing_from_schema_snapshot(self):
         snapshot = {
