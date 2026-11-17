@@ -43,6 +43,22 @@ class SQLitePostgresMigrationPreflightTests(unittest.TestCase):
         self.assertEqual(report["column_differences"][0]["missing_in_postgres"], ["active"])
         self.assertEqual(report["nonempty_postgres_tables"][0]["table"], "accounts")
 
+    def test_preflight_blocks_extra_postgres_tables(self):
+        source = {
+            "integrity_check": ["ok"],
+            "foreign_key_violations": [],
+            "tables": {"accounts": {"columns": ["id"], "row_count": 1}},
+        }
+        target = {
+            "tables": {
+                "accounts": {"columns": ["id"], "row_count": 0},
+                "unexpected": {"columns": ["id"], "row_count": 0},
+            }
+        }
+        report = build_report(source, target)
+        self.assertFalse(report["preflight_passed"])
+        self.assertEqual(report["extra_postgres_tables"], ["unexpected"])
+
     def test_preflight_blocks_source_integrity_and_foreign_key_issues(self):
         source = {
             "integrity_check": ["database disk image is malformed"],
