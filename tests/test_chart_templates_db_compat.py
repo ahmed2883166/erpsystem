@@ -131,19 +131,20 @@ class AccountChartMetadataPostgreSQLTests(unittest.TestCase):
                             account_id BIGINT NOT NULL REFERENCES accounts(id)
                         )
                     """)
-                    conn.executemany("""
-                        INSERT INTO accounts(id,code,name_ar,account_type,parent_id,is_group)
-                        VALUES(%s,%s,%s,%s,%s,%s)
-                    """, [
-                        (11, "1100", "الأصول المتداولة", "asset", None, 1),
-                        (20, "2000", "الالتزامات", "liability", None, 1),
-                        (12, "2120", "ضريبة القيمة المضافة - مخرجات", "liability", 20, 0),
-                        (13, "2130", "حساب التزامات قديم", "liability", 20, 0),
-                    ])
-                    conn.executemany(
-                        "INSERT INTO journal_lines(account_id) VALUES(%s)",
-                        [(12,), (13,)],
-                    )
+                    with conn.cursor() as cur:
+                        cur.executemany("""
+                            INSERT INTO accounts(id,code,name_ar,account_type,parent_id,is_group)
+                            VALUES(%s,%s,%s,%s,%s,%s)
+                        """, [
+                            (11, "1100", "الأصول المتداولة", "asset", None, 1),
+                            (20, "2000", "الالتزامات", "liability", None, 1),
+                            (12, "2120", "ضريبة القيمة المضافة - مخرجات", "liability", 20, 0),
+                            (13, "2130", "حساب التزامات قديم", "liability", 20, 0),
+                        ])
+                        cur.executemany(
+                            "INSERT INTO journal_lines(account_id) VALUES(%s)",
+                            [(12,), (13,)],
+                        )
                     migrate_vat_accounts(conn, "medical")
                     by_code = {
                         row["code"]: row["id"]
