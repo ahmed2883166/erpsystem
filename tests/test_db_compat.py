@@ -197,6 +197,8 @@ class GeneratedIdCompatibilityTests(unittest.TestCase):
             def fetchone(self):
                 return {"id": 42}
         class Connection(_FakePsycopgConnection):
+            __module__ = "psycopg.fake"
+
             def execute(self, statement, params=()):
                 self.statements.append((statement, tuple(params)))
                 return Cursor()
