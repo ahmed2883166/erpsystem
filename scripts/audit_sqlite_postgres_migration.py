@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
 from urllib.parse import quote
@@ -49,14 +50,15 @@ def inspect_sqlite(path: str) -> dict:
 
 
 def inspect_postgres(dsn: str, schema: str) -> dict:
-    if not schema or not schema.replace("_", "a").isalnum() or not schema[0].isalpha():
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", schema):
         raise ValueError("PostgreSQL schema must be a simple identifier.")
     try:
         import psycopg
+        from psycopg.rows import dict_row
     except ImportError as exc:
         raise RuntimeError("Install psycopg[binary]>=3.2,<4.0 first.") from exc
 
-    conn = psycopg.connect(dsn, connect_timeout=10, autocommit=False)
+    conn = psycopg.connect(dsn, connect_timeout=10, autocommit=False, row_factory=dict_row)
     try:
         conn.execute("SET TRANSACTION READ ONLY")
         rows = conn.execute(
