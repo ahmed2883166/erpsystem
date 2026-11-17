@@ -71,3 +71,72 @@ class PostgreSQLBackupTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PostgreSQLBackupRoundTripIntegrationTests(unittest.TestCase):
+    """Exercise real pg_dump/pg_restore against disposable PostgreSQL databases."""
+
+    @unittest.skipUnless(
+        __import__("os").environ.get("NEXUS_TEST_POSTGRES_DSN")
+        and __import__("shutil").which("pg_dump")
+        and __import__("shutil").which("pg_restore"),
+        "PostgreSQL server and native client tools are required",
+    )
+    def test_real_backup_restore_round_trip_and_existing_database_protection(self):
+        import os
+        import shutil
+        import uuid
+
+        import psycopg
+        from psycopg import sql
+        from psycopg.conninfo import make_conninfo
+
+        admin_dsn = os.environ["NEXUS_TEST_POSTGRES_DSN"]
+        suffix = uuid.uuid4().hex[:12]
+        source_db = "nexus_bk_src_" + suffix
+        restored_db = "nexus_bk_dst_" + suffix
+        with tempfile.TemporaryDirectory(prefix="nexus-pg-roundtrip-") as folder:
+            try:
+                with psycopg.connect(admin_dsn, autocommit=True) as admin:
+                    admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(source_db)))
+
+                source_dsn = make_conninfo(admin_dsn, dbname=source_db)
+                with psycopg.connect(source_dsn) as source:
+                    source.execute("CREATE TABLE backup_probe(id BIGINT PRIMARY KEY, payload TEXT NOT NULL)")
+                    source.execute(
+                        "INSERT INTO backup_probe(id,payload) VALUES(%s,%s)",
+                        (1, "NEXUS PostgreSQL round-trip"),
+                    )
+
+                archive = postgres_backup.create_postgres_backup_archive(
+                    source_dsn, folder, keep_count=5
+                )
+                self.assertTrue(archive.is_file())
+                checked = postgres_backup.validate_postgres_backup_archive(archive)
+                self.assertEqual(checked["database_name"], source_db)
+
+                restored = postgres_backup.restore_postgres_backup_to_new_database(
+                    archive, admin_dsn, database_name=restored_db
+                )
+                self.assertTrue(restored["restored"])
+                self.assertEqual(restored["source_database_name"], source_db)
+                restored_dsn = make_conninfo(admin_dsn, dbname=restored_db)
+                with psycopg.connect(restored_dsn) as restored_connection:
+                    row = restored_connection.execute(
+                        "SELECT id,payload FROM backup_probe"
+                    ).fetchone()
+                    self.assertEqual(row, (1, "NEXUS PostgreSQL round-trip"))
+
+                with self.assertRaises(FileExistsError):
+                    postgres_backup.restore_postgres_backup_to_new_database(
+                        archive, admin_dsn, database_name=source_db
+                    )
+                with psycopg.connect(source_dsn) as source:
+                    row = source.execute("SELECT payload FROM backup_probe WHERE id=1").fetchone()
+                    self.assertEqual(row, ("NEXUS PostgreSQL round-trip",))
+            finally:
+                with psycopg.connect(admin_dsn, autocommit=True) as admin:
+                    for database in (restored_db, source_db):
+                        admin.execute(
+                            sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(database))
+                        )
