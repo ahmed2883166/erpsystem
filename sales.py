@@ -12,7 +12,7 @@ from functools import wraps
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, safe_error_message, decimal_sum_expression
-from db_compat import table_columns, table_exists, insert_and_get_id, begin_write_transaction, execute_script, DB_ERROR, DB_INTEGRITY_ERROR
+from db_compat import table_columns, table_exists, insert_and_get_id, begin_write_transaction, execute_script, database_dialect, DB_ERROR, DB_INTEGRITY_ERROR
 from db_sql import execute_compat
 from database import connect_database, fetch_page
 from stock import consume_layers, product_uom_factor, product_uom_options, product_uom_storage
@@ -26,6 +26,13 @@ CENT = Decimal("0.01")
 
 def db():
     return connect_database(DB_PATH, isolation_level=None)
+
+
+def _group_concat_expression(connection, expression):
+    """Return a dialect-specific string aggregate for fixed internal SQL."""
+    if database_dialect(connection) == "sqlite":
+        return "GROUP_CONCAT(" + expression + ", ', ')"
+    return "STRING_AGG(CAST(" + expression + " AS TEXT), ', ')"
 
 
 def _table_exists(conn, name):
@@ -1931,7 +1938,7 @@ def customer_advances():
         item["allocation_batches"] = execute_compat(c, 
             """SELECT a.journal_entry_id,MIN(a.allocation_date) allocation_date,
                       SUM(CAST(a.amount AS NUMERIC)) amount,COUNT(*) invoice_count,
-                      GROUP_CONCAT(i.invoice_no, ', ') invoice_numbers,
+                      {_group_concat_expression(c, 'i.invoice_no')} invoice_numbers,
                       x.reversal_journal_entry_id,x.reversal_date,x.reason
                FROM customer_advance_allocations a
                JOIN sales_invoices i ON i.id=a.invoice_id
@@ -1939,7 +1946,7 @@ def customer_advances():
                  ON x.source_type='allocation' AND x.source_id=a.journal_entry_id
                WHERE a.advance_receipt_id=?
                GROUP BY a.journal_entry_id,x.reversal_journal_entry_id
-               ORDER BY a.journal_entry_id DESC""",
+               ORDER BY a.journal_entry_id DESC""".format(_group_concat_expression(c, 'i.invoice_no')),
             (row["id"],),
         ).fetchall()
         item["refunds"] = execute_compat(c, 
@@ -2097,11 +2104,13 @@ def index():
         per_page=request.args.get("receipts_per_page",50,type=int))
     batch_receipts_page = fetch_page(c,
         """SELECT b.*,cu.name customer_name,COUNT(a.id) invoice_count,
-              GROUP_CONCAT(i.invoice_no || ' (' || a.amount || ')', ', ') invoice_numbers
+              {_group_concat_expression(c, "i.invoice_no || ' (' || a.amount || ')")} invoice_numbers
            FROM customer_receipt_batches b JOIN customers cu ON cu.id=b.customer_id
            LEFT JOIN customer_receipt_allocations a ON a.batch_id=b.id
            LEFT JOIN sales_invoices i ON i.id=a.invoice_id
-           GROUP BY b.id ORDER BY b.id DESC""",
+           GROUP BY b.id ORDER BY b.id DESC""".format(
+               _group_concat_expression(c, "i.invoice_no || ' (' || a.amount || ')")
+           ),
         "SELECT COUNT(*) FROM customer_receipt_batches",
         page=request.args.get("batch_receipts_page",1,type=int),
         per_page=request.args.get("batch_receipts_per_page",50,type=int))
