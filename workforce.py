@@ -14,6 +14,14 @@ from werkzeug.utils import secure_filename
 from werkzeug.datastructures import FileStorage
 from pathlib import Path
 from PIL import Image, ImageOps, UnidentifiedImageError
+
+# Exception tuples combine the active database driver's errors with workflow errors.
+_DB_VALUE_KEY_INTEGRITY_ERRORS = (ValueError, KeyError) + DB_INTEGRITY_ERROR
+_DB_OS_VALUE_RUNTIME_ERRORS = (OSError, ValueError, RuntimeError) + DB_ERROR
+_DB_VALUE_KEY_ERRORS = (ValueError, KeyError) + DB_ERROR
+_DB_VALUE_TYPE_ERRORS = (ValueError, TypeError) + DB_ERROR
+_DB_VALUE_ERRORS = (ValueError,) + DB_ERROR
+_DB_VALUE_INVALID_KEY_ERRORS = (ValueError, InvalidOperation, KeyError) + DB_ERROR
 from accounting_core import post_journal, safe_error_message, decimal_sum_expression
 from code_sequences import next_code
 from cash_commitments import create_cash_commitment
@@ -882,7 +890,7 @@ def salary_changes():
                 flash("تم اعتماد القرار وتحديث "+str(len(preview["employees"]))+" موظفًا، وحفظ سجل تاريخي لكل موظف.","success")
                 c.close()
                 return redirect(url_for("workforce.salary_changes"))
-        except (ValueError,KeyError,*DB_INTEGRITY_ERROR) as exc:
+        except _DB_VALUE_KEY_INTEGRITY_ERRORS as exc:
             c.rollback()
             error = str(exc) or "تعذر حفظ قرار الزيادة. تأكد من عدم تكرار رقم القرار."
             preview = None
@@ -955,7 +963,7 @@ def employee_photo(employee_id):
                     current_app.logger.warning("Could not remove migrated public employee photo: %s", legacy_file.name)
                 relative = migrated_path
                 parts = relative.split("/")
-            except (OSError, ValueError, *DB_ERROR, RuntimeError):
+            except _DB_OS_VALUE_RUNTIME_ERRORS:
                 return "Not found", 404
     if len(parts) != 2 or parts[0] != "employees" or not parts[1].endswith(".jpg"):
         return "Not found", 404
@@ -988,7 +996,7 @@ def employees():
             _audit(c, "employee_created", values[0])
             c.commit()
             flash("تم إضافة الموظف وحفظ بياناته الوظيفية والأجرية.", "success")
-        except (ValueError, KeyError, *DB_INTEGRITY_ERROR) as e:
+        except _DB_VALUE_KEY_INTEGRITY_ERRORS as e:
             c.rollback()
             _delete_employee_photo(photo_path)
             flash(str(e) or "كود الموظف أو الرقم القومي مستخدم بالفعل.", "error")
@@ -1056,7 +1064,7 @@ def edit_employee(employee_id):
             flash("تم تحديث ملف الموظف.", "success")
             c.close()
             return redirect(url_for("workforce.employees"))
-        except (ValueError, KeyError, *DB_INTEGRITY_ERROR) as exc:
+        except _DB_VALUE_KEY_INTEGRITY_ERRORS as exc:
             c.rollback()
             _delete_employee_photo(new_photo_path)
             flash(str(exc) or "تعذر تحديث بيانات الموظف.", "error")
@@ -1105,7 +1113,7 @@ def employee_employment_history(employee_id):
             flash("تم تسجيل التغيير الوظيفي مع الاحتفاظ بالحالة السابقة وسجل المرتبات.", "success")
             c.close()
             return redirect(url_for("workforce.employee_employment_history", employee_id=employee_id))
-        except (ValueError, TypeError, *DB_ERROR) as exc:
+        except _DB_VALUE_TYPE_ERRORS as exc:
             c.rollback()
             flash(str(exc) or "تعذر تسجيل التغيير الوظيفي.", "error")
     history = c.execute("""SELECT * FROM employee_employment_history
@@ -1278,7 +1286,7 @@ def add_incentive_rule():
         _audit(c, "payroll_incentive_rule_created", name)
         c.commit()
         flash("تم حفظ نوع الحافز ويمكن اختياره عند إعداد المرتبات.", "success")
-    except (ValueError, *DB_ERROR) as exc:
+    except _DB_VALUE_ERRORS as exc:
         c.rollback()
         flash(str(exc) or "تعذر حفظ الحافز.", "error")
     c.close()
@@ -1298,10 +1306,10 @@ def add_pay_item_catalog():
         _audit(c, "employee_pay_item_catalog_created", name + " | " + item_type)
         c.commit()
         flash("تم حفظ اسم البند في قائمة البنود. يمكنك اختياره عند إسناده للموظفين.", "success")
-    except *DB_INTEGRITY_ERROR:
+    except DB_INTEGRITY_ERROR:
         c.rollback()
         flash("اسم البند موجود بالفعل ضمن نفس النوع؛ اختره من القائمة بدل إعادة تعريفه.", "warning")
-    except (ValueError, *DB_ERROR) as exc:
+    except _DB_VALUE_ERRORS as exc:
         c.rollback()
         flash(str(exc) or "تعذر حفظ اسم البند.", "error")
     c.close()
@@ -1356,7 +1364,7 @@ def pay_items():
                    item_name+" | employees="+str(len(employee_ids))+" | created="+str(created_count)+" | updated="+str(updated_count))
             c.commit()
             flash("تم حفظ البند لـ "+str(len(employee_ids))+" موظفًا دون تكرار. جديد: "+str(created_count)+"، أعيد تفعيله/تحديثه: "+str(updated_count)+".", "success")
-        except (ValueError, KeyError, *DB_ERROR) as exc:
+        except _DB_VALUE_KEY_ERRORS as exc:
             c.rollback()
             flash(str(exc) or "تعذر حفظ بند الاستحقاق/الاستقطاع.", "error")
         c.close()
@@ -1396,7 +1404,7 @@ def update_pay_item(item_id):
                item["item_name"]+" employee="+str(item["employee_id"])+" amount="+str(amount))
         c.commit()
         flash("تم تحديث قيمة البند لهذا الموظف. ستنعكس في كشف المرتبات الجديد فقط.", "success")
-    except (ValueError,*DB_ERROR) as exc:
+    except _DB_VALUE_ERRORS as exc:
         c.rollback()
         flash(str(exc),"error")
     c.close()
@@ -1415,7 +1423,7 @@ def toggle_pay_item(item_id):
         _audit(c,"employee_pay_item_toggled",item["item_name"]+" employee="+str(item["employee_id"]))
         c.commit()
         flash("تم تحديث حالة البند. لن يُحذف أي أثر سابق في كشوف المرتبات.", "success")
-    except (ValueError,*DB_ERROR) as exc:
+    except _DB_VALUE_ERRORS as exc:
         c.rollback()
         flash(str(exc),"error")
     c.close()
@@ -2255,7 +2263,7 @@ def save_payroll_settings():
         _audit(c, "payroll_basic_salary_variance_limit_updated", "limit=" + str(limit))
         c.commit()
         flash("تم حفظ حد اختلاف الراتب الأساسي بنجاح.", "success")
-    except (ValueError, *DB_ERROR) as exc:
+    except _DB_VALUE_ERRORS as exc:
         c.rollback()
         flash(str(exc) or "تعذر حفظ إعدادات المرتبات.", "error")
     finally:
@@ -2301,7 +2309,7 @@ def approve_payroll_basic_salary_change(run_id, line_id):
                "% note=" + approval_note[:250])
         c.commit()
         flash("تم اعتماد تعديل الراتب الأساسي للموظف " + line["full_name"] + ".", "success")
-    except (ValueError, *DB_ERROR) as exc:
+    except _DB_VALUE_ERRORS as exc:
         c.rollback()
         flash(str(exc) or "تعذر اعتماد تعديل الراتب.", "error")
     finally:
@@ -2622,10 +2630,10 @@ def payroll():
             g.audit_created_record = ("payroll_runs", run_id, "payroll_lines", "run_id")
             flash("تم حفظ المرتبات كمسودة. راجع البنود ثم اعتمدها.", "success")
             return redirect(url_for("workforce.payroll_run", run_id=run_id))
-        except (ValueError, InvalidOperation, KeyError, *DB_ERROR) as e:
+        except _DB_VALUE_INVALID_KEY_ERRORS as e:
             c.rollback()
             error_text = str(e)
-            if isinstance(e, *DB_INTEGRITY_ERROR) and "payroll_runs.period" in error_text:
+            if isinstance(e, DB_INTEGRITY_ERROR) and "payroll_runs.period" in error_text:
                 flash("يوجد كشف مرتبات مسجل بالفعل لهذا الشهر. افتح الكشف الموجود أو راجع حالته قبل إنشاء كشف جديد.", "error")
             else:
                 flash(safe_error_message(e, "تعذر إعداد المرتبات بسبب تعارض في البيانات. لم يتم حفظ كشف المرتبات."), "error")
@@ -2861,7 +2869,7 @@ def delete_payroll_run(run_id):
         _audit(c, "payroll_draft_deleted", "run=" + str(run_id) + " period=" + run["period"])
         c.commit()
         flash("تم حذف مسودة المرتبات المفتوحة فقط.", "success")
-    except (ValueError, *DB_ERROR) as exc:
+    except _DB_VALUE_ERRORS as exc:
         c.rollback()
         flash(str(exc) or "تعذر حذف مسودة المرتبات.", "error")
     c.close()
@@ -3012,7 +3020,7 @@ def post_payroll(run_id):
         _audit(c, "payroll_posted", run["period"] + " journal=" + str(journal_id))
         c.commit()
         flash("تم ترحيل المرتبات وإنشاء القيد المحاسبي.", "success")
-    except (ValueError, KeyError, *DB_ERROR) as e:
+    except _DB_VALUE_KEY_ERRORS as e:
         c.rollback()
         flash(str(e), "error")
     c.close()
@@ -3092,7 +3100,7 @@ def reverse_payroll(run_id):
         _audit(c, "payroll_run_reversed", reference + " reason=" + reason)
         c.commit()
         flash("تم إنشاء قيد عكسي مستقل للمرتبات. القيد الأصلي وتفاصيل المرتبات لم يتم حذفها أو تعديلها.", "success")
-    except (ValueError, InvalidOperation, KeyError, *DB_ERROR) as exc:
+    except _DB_VALUE_INVALID_KEY_ERRORS as exc:
         c.rollback()
         flash(str(exc), "error")
     c.close()
@@ -3172,7 +3180,7 @@ def pay_payroll(run_id):
         _audit(c, "payroll_payment_posted", reference + " amount=" + str(amount))
         c.commit()
         flash("تم صرف دفعة المرتبات وترحيل قيدها بنجاح.", "success")
-    except (ValueError, KeyError, *DB_ERROR) as exc:
+    except _DB_VALUE_KEY_ERRORS as exc:
         c.rollback()
         flash(str(exc), "error")
     c.close()
@@ -3200,7 +3208,7 @@ def employee_loans():
             _audit(c,"employee_loan_requested",loan_no)
             c.commit()
             flash("تم تسجيل طلب السلفة في انتظار الموافقة.","success")
-        except (ValueError,KeyError,*DB_ERROR) as exc:
+        except _DB_VALUE_KEY_ERRORS as exc:
             c.rollback()
             flash(str(exc) or "تعذر تسجيل طلب السلفة.","error")
         c.close()
@@ -3247,7 +3255,7 @@ def approve_employee_loan(loan_id):
         _audit(c,"employee_loan_approved",loan["loan_no"])
         c.commit()
         flash("تم اعتماد السلفة؛ يلزم صرفها لإنشاء جدول الأقساط.","success")
-    except (ValueError,KeyError,*DB_ERROR) as exc:
+    except _DB_VALUE_KEY_ERRORS as exc:
         c.rollback()
         flash(str(exc) or "تعذر اعتماد الطلب.","error")
     c.close()
@@ -3272,7 +3280,7 @@ def reject_employee_loan(loan_id):
         _audit(c,"employee_loan_rejected",loan["loan_no"])
         c.commit()
         flash("تم رفض الطلب مع الاحتفاظ بسجله.","success")
-    except (ValueError,*DB_ERROR) as exc:
+    except _DB_VALUE_ERRORS as exc:
         c.rollback()
         flash(str(exc) or "تعذر رفض الطلب.","error")
     c.close()
@@ -3317,7 +3325,7 @@ def disburse_employee_loan(loan_id):
         _audit(c,"employee_loan_disbursed",loan["loan_no"]+" journal="+str(journal))
         c.commit()
         flash("تم صرف السلفة وترحيل القيد وإنشاء جدول الأقساط.","success")
-    except (ValueError,KeyError,*DB_ERROR) as exc:
+    except _DB_VALUE_KEY_ERRORS as exc:
         c.rollback()
         flash(str(exc) or "تعذر صرف السلفة.","error")
     c.close()
@@ -3365,7 +3373,7 @@ def defer_loan_installment(loan_id, installment_id):
                installment["loan_no"]+" "+installment["due_period"]+" -> "+next_period+" amount="+str(remaining))
         c.commit()
         flash("تم تأجيل القسط إلى "+next_period+" مع بقاء المبلغ ضمن رصيد السلفة دون إسقاطه.","success")
-    except (ValueError,*DB_ERROR) as exc:
+    except _DB_VALUE_ERRORS as exc:
         c.rollback()
         flash(str(exc) or "تعذر تأجيل القسط.","error")
     c.close()
@@ -3442,7 +3450,7 @@ def add_employee_grant_type():
         _audit(c,"employee_grant_type_created",name)
         c.commit()
         flash("تم حفظ اسم المنحة.", "success")
-    except (ValueError,*DB_ERROR) as exc:
+    except _DB_VALUE_ERRORS as exc:
         c.rollback()
         flash(str(exc) if isinstance(exc,ValueError) else "اسم المنحة موجود بالفعل أو تعذر حفظه.","error")
     c.close()
@@ -3521,7 +3529,7 @@ def create_employee_grant():
         _audit(c,"employee_grant_draft_created","grant="+str(grant_id)+" total="+str(total))
         c.commit()
         flash("تم إعداد كشف المنحة كمسودة. راجع المبالغ قبل الاعتماد.", "success")
-    except (ValueError,KeyError,*DB_ERROR) as exc:
+    except _DB_VALUE_KEY_ERRORS as exc:
         c.rollback(); flash(str(exc) or "تعذر إعداد المنحة.","error")
     c.close()
     return redirect(url_for("workforce.employee_grants"))
@@ -3545,7 +3553,7 @@ def delete_employee_grant(grant_id):
         _audit(c, "employee_grant_draft_deleted", "grant=" + str(grant_id))
         c.commit()
         flash("تم حذف مسودة الحافز المفتوحة فقط.", "success")
-    except (ValueError, *DB_ERROR) as exc:
+    except _DB_VALUE_ERRORS as exc:
         c.rollback()
         flash(str(exc) or "تعذر حذف الحافز.", "error")
     c.close()
@@ -3583,7 +3591,7 @@ def approve_employee_grant(grant_id):
             raise ValueError("تعذر تثبيت اعتماد المنحة؛ أعد تحميل الشاشة.")
         _audit(c,"employee_grant_approved","grant="+str(grant_id)+" journal="+str(journal_id))
         c.commit(); flash("تم اعتماد المنحة وإثبات المصروف والمنح المستحقة بقيد يومية.","success")
-    except (ValueError,KeyError,*DB_ERROR) as exc:
+    except _DB_VALUE_KEY_ERRORS as exc:
         c.rollback(); flash(str(exc) or "تعذر اعتماد المنحة.","error")
     c.close()
     return redirect(url_for("workforce.employee_grants"))
@@ -3649,7 +3657,7 @@ def pay_employee_grant(grant_id):
         c.execute("UPDATE employee_grants SET status=? WHERE id=?",(new_status,grant_id))
         _audit(c,"employee_grant_payment","grant="+str(grant_id)+" amount="+str(amount)+" journal="+str(journal_id))
         c.commit(); flash("تم تسجيل صرف المنحة وترحيل قيد السداد.","success")
-    except (ValueError,KeyError,*DB_ERROR) as exc:
+    except _DB_VALUE_KEY_ERRORS as exc:
         c.rollback(); flash(str(exc) or "تعذر تسجيل صرف المنحة.","error")
     c.close()
     return redirect(url_for("workforce.employee_grants"))
@@ -3761,7 +3769,7 @@ def friday_allowance():
             _audit(c,"friday_allowance_prepared",period+" batch="+str(batch_id)+" total="+str(total))
             c.commit()
             flash("تم إعداد كشف بدل الجمعة للمراجعة. لم يتم ترحيل أي قيد حتى الآن.","success")
-        except (ValueError,KeyError,*DB_ERROR) as exc:
+        except _DB_VALUE_KEY_ERRORS as exc:
             c.rollback()
             flash(str(exc) or "تعذر إعداد كشف بدل الجمعة.","error")
         c.close()
@@ -3856,7 +3864,7 @@ def approve_friday_allowance(batch_id):
                "batch=" + str(batch_id) + " period=" + batch["period"] + " reason=" + reason)
         c.commit()
         flash("تم اعتماد كشف بدل الجمعة. أصبح جاهزًا للترحيل.", "success")
-    except (ValueError, *DB_ERROR) as exc:
+    except _DB_VALUE_ERRORS as exc:
         c.rollback()
         flash(str(exc) or "تعذر اعتماد كشف بدل الجمعة.", "error")
     finally:
@@ -3880,7 +3888,7 @@ def delete_friday_allowance(batch_id):
         _audit(c, "friday_allowance_draft_deleted", "batch=" + str(batch_id))
         c.commit()
         flash("تم حذف مسودة بدل الجمعة المفتوحة فقط.", "success")
-    except (ValueError, *DB_ERROR) as exc:
+    except _DB_VALUE_ERRORS as exc:
         c.rollback()
         flash(str(exc) or "تعذر حذف كشف بدل الجمعة.", "error")
     c.close()
@@ -3944,7 +3952,7 @@ def post_friday_allowance(batch_id):
         )
         c.commit()
         flash("تم ترحيل بدل الجمعة وإنشاء قيد الاستحقاق وإضافته تلقائيًا إلى سجل الالتزامات النقدية.","success")
-    except (ValueError,KeyError,*DB_ERROR) as exc:
+    except _DB_VALUE_KEY_ERRORS as exc:
         c.rollback()
         flash(str(exc) or "تعذر ترحيل بدل الجمعة.","error")
     c.close()
@@ -4003,7 +4011,7 @@ def attendance():
             _audit(c,"attendance_month_saved",selected_month)
             c.commit()
             flash("تم حفظ مصفوفة الحضور للشهر المحدد.", "success")
-        except (ValueError,KeyError,*DB_ERROR) as exc:
+        except _DB_VALUE_KEY_ERRORS as exc:
             c.rollback()
             flash(str(exc) or "تعذر حفظ مصفوفة الحضور.", "error")
         c.close()
@@ -4043,7 +4051,7 @@ def attendance():
             _audit(c,"attendance_saved",str(employee_id)+" "+selected_date+" "+status)
             c.commit()
             flash("تم حفظ سجل الحضور والانصراف.","success")
-        except (ValueError,KeyError,*DB_ERROR) as exc:
+        except _DB_VALUE_KEY_ERRORS as exc:
             c.rollback()
             flash(str(exc) or "تعذر حفظ سجل الحضور.","error")
         c.close()
@@ -4144,7 +4152,7 @@ def leaves():
                  request.form.get("reason","").strip(),session["user_id"]))
             _audit(c,"leave_requested",str(employee_id)+" "+start.isoformat()+".."+end.isoformat())
             c.commit(); flash("تم تسجيل طلب الإجازة في انتظار الاعتماد.","success")
-        except (ValueError,KeyError,*DB_ERROR) as exc:
+        except _DB_VALUE_KEY_ERRORS as exc:
             c.rollback(); flash(str(exc) or "تعذر تسجيل طلب الإجازة.","error")
         c.close(); return redirect(url_for("workforce.leaves"))
     employees=c.execute("SELECT id,employee_code,full_name FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
@@ -4173,7 +4181,7 @@ def set_leave_balance():
             balance_days=excluded.balance_days,updated_at=CURRENT_TIMESTAMP""",(employee_id,leave_type_id,str(days)))
         _audit(c,"leave_balance_adjusted",str(employee_id)+" type="+str(leave_type_id)+" balance="+str(days))
         c.commit(); flash("تم تحديث رصيد الإجازة بعد المراجعة.","success")
-    except (ValueError,KeyError,*DB_ERROR) as exc:
+    except _DB_VALUE_KEY_ERRORS as exc:
         c.rollback(); flash(str(exc) or "تعذر تحديث رصيد الإجازة.","error")
     c.close(); return redirect(url_for("workforce.leaves"))
 
@@ -4202,7 +4210,7 @@ def decide_leave(request_id):
             (decision,session["user_id"],request_id))
         _audit(c,"leave_"+decision,str(request_id)+" "+leave["leave_name"])
         c.commit(); flash("تم اعتماد الإجازة." if decision=="approved" else "تم رفض الإجازة.","success")
-    except (ValueError,KeyError,*DB_ERROR) as exc:
+    except _DB_VALUE_KEY_ERRORS as exc:
         c.rollback(); flash(str(exc) or "تعذر اتخاذ قرار الإجازة.","error")
     c.close(); return redirect(url_for("workforce.leaves"))
 
@@ -4232,7 +4240,7 @@ def custody():
             _audit(c, "employee_custody_issued", no + " amount=" + str(amount))
             c.commit()
             flash("تم صرف العهدة وترحيل قيدها.", "success")
-        except (ValueError, KeyError, *DB_ERROR) as e:
+        except _DB_VALUE_KEY_ERRORS as e:
             c.rollback()
             flash(str(e), "error")
         c.close()
@@ -4268,7 +4276,7 @@ def custody_expense(custody_id):
         _audit(c, "employee_custody_expense_added", str(custody_id) + " amount=" + str(amount))
         c.commit()
         flash("تم تسجيل مصروف العهدة بانتظار التسوية والاعتماد.", "success")
-    except (ValueError, KeyError, *DB_ERROR) as e:
+    except _DB_VALUE_KEY_ERRORS as e:
         c.rollback()
         flash(str(e), "error")
     c.close()
@@ -4300,7 +4308,7 @@ def settle_custody(custody_id):
         _audit(c, "employee_custody_settled", row["custody_no"] + " journal=" + str(journal_id))
         c.commit()
         flash("تمت تسوية العهدة بالكامل وترحيل القيد.", "success")
-    except (ValueError, KeyError, *DB_ERROR) as e:
+    except _DB_VALUE_KEY_ERRORS as e:
         c.rollback()
         flash(str(e), "error")
     c.close()
@@ -4425,7 +4433,7 @@ def delete_end_of_service_draft(settlement_id):
         if delete_cursor.rowcount != 1: raise ValueError("لم يتم حذف المسودة؛ ربما تغيرت حالتها.")
         _audit(c,"employee_end_of_service_draft_deleted",row["settlement_no"])
         c.commit(); flash("تم حذف مسودة نهاية الخدمة فقط.","success")
-    except (ValueError,*DB_ERROR) as exc:
+    except _DB_VALUE_ERRORS as exc:
         c.rollback(); flash(str(exc) or "تعذر حذف مسودة نهاية الخدمة.","error")
     c.close()
     return redirect(url_for("workforce.end_of_service"))
