@@ -143,10 +143,6 @@ class StockLocationTriggerDialectTests(unittest.TestCase):
         _install_stock_location_triggers(FakePostgresConnection())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class StockWarehouseLockTests(unittest.TestCase):
     def test_postgresql_locks_warehouses_in_stable_order(self):
         from stock import lock_stock_warehouses
@@ -267,3 +263,7 @@ class StockValuationLayerLockTests(unittest.TestCase):
             self.assertEqual(available_layers(conn, 12, 3), [])
         finally:
             conn.close()
+
+
+if __name__ == "__main__":
+    unittest.main()
