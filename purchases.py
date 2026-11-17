@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, money, safe_error_message, decimal_sum_expression
 from db_compat import table_columns, table_exists, table_indexes, begin_write_transaction, insert_and_get_id, execute_script
+from db_sql import execute_compat
 from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 from code_sequences import next_code
@@ -162,12 +163,12 @@ def init_purchase_schema():
         ("cancellation_reason","TEXT"),
     ):
         if name not in credit_note_columns:
-            c.execute("ALTER TABLE supplier_credit_notes ADD COLUMN "+name+" "+declaration)
+            execute_compat(c, "ALTER TABLE supplier_credit_notes ADD COLUMN "+name+" "+declaration)
     credit_line_columns=_columns(c, "supplier_credit_note_lines")
     for name,declaration in (("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),
         ("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'")):
         if name not in credit_line_columns:
-            c.execute("ALTER TABLE supplier_credit_note_lines ADD COLUMN "+name+" "+declaration)
+            execute_compat(c, "ALTER TABLE supplier_credit_note_lines ADD COLUMN "+name+" "+declaration)
     # suppliers now exists: install the supplier_id column on journal lines
     # through the same additive migration used by the other analytical dimensions.
     initialize_analytic_dimensions_schema(c)
@@ -177,7 +178,7 @@ def init_purchase_schema():
     ):
         existing=_columns(c, table)
         for name,declaration in fields:
-            if name not in existing: c.execute("ALTER TABLE "+table+" ADD COLUMN "+name+" "+declaration)
+            if name not in existing: execute_compat(c, "ALTER TABLE "+table+" ADD COLUMN "+name+" "+declaration)
     order_columns = _columns(c, "purchase_orders")
     for name, declaration in (
         ("submitted_by", "INTEGER"), ("submitted_at", "TEXT"),
@@ -186,17 +187,17 @@ def init_purchase_schema():
         ("rejection_reason", "TEXT"), ("approval_reason", "TEXT"),
     ):
         if name not in order_columns:
-            c.execute("ALTER TABLE purchase_orders ADD COLUMN " + name + " " + declaration)
-    c.execute("CREATE INDEX IF NOT EXISTS idx_purchase_orders_approval ON purchase_orders(status, created_at, id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_purchase_requests_creator ON purchase_requests(created_by, status, id)")
+            execute_compat(c, "ALTER TABLE purchase_orders ADD COLUMN " + name + " " + declaration)
+    execute_compat(c, "CREATE INDEX IF NOT EXISTS idx_purchase_orders_approval ON purchase_orders(status, created_at, id)")
+    execute_compat(c, "CREATE INDEX IF NOT EXISTS idx_purchase_requests_creator ON purchase_requests(created_by, status, id)")
     bill_columns = _columns(c, "supplier_bills")
     if "credited_amount" not in bill_columns:
-        c.execute("ALTER TABLE supplier_bills ADD COLUMN credited_amount TEXT NOT NULL DEFAULT '0'")
+        execute_compat(c, "ALTER TABLE supplier_bills ADD COLUMN credited_amount TEXT NOT NULL DEFAULT '0'")
     if "input_vat_deductible_percent" not in bill_columns:
-        c.execute("ALTER TABLE supplier_bills ADD COLUMN input_vat_deductible_percent TEXT NOT NULL DEFAULT '100'")
+        execute_compat(c, "ALTER TABLE supplier_bills ADD COLUMN input_vat_deductible_percent TEXT NOT NULL DEFAULT '100'")
     if "due_date" not in bill_columns:
-        c.execute("ALTER TABLE supplier_bills ADD COLUMN due_date TEXT")
-        c.execute("UPDATE supplier_bills SET due_date=bill_date WHERE due_date IS NULL")
+        execute_compat(c, "ALTER TABLE supplier_bills ADD COLUMN due_date TEXT")
+        execute_compat(c, "UPDATE supplier_bills SET due_date=bill_date WHERE due_date IS NULL")
     for name, declaration in (
         ("asset_code", "TEXT"), ("asset_name", "TEXT"), ("asset_category", "TEXT"),
         ("asset_ready_date", "TEXT"), ("asset_residual_value", "TEXT NOT NULL DEFAULT '0'"),
@@ -214,8 +215,8 @@ def init_purchase_schema():
         ("rejection_reason", "TEXT"), ("approval_reason", "TEXT"),
     ):
         if name not in bill_columns:
-            c.execute("ALTER TABLE supplier_bills ADD COLUMN " + name + " " + declaration)
-    c.execute("""CREATE TABLE IF NOT EXISTS supplier_bill_asset_lines(
+            execute_compat(c, "ALTER TABLE supplier_bills ADD COLUMN " + name + " " + declaration)
+    execute_compat(c, """CREATE TABLE IF NOT EXISTS supplier_bill_asset_lines(
       id INTEGER PRIMARY KEY,
       bill_id INTEGER NOT NULL REFERENCES supplier_bills(id) ON DELETE CASCADE,
       line_no INTEGER NOT NULL,
@@ -233,24 +234,24 @@ def init_purchase_schema():
       expense_account_id INTEGER NOT NULL REFERENCES accounts(id),
       UNIQUE(bill_id,line_no), UNIQUE(bill_id,asset_code)
     )""")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_supplier_bill_asset_lines ON supplier_bill_asset_lines(bill_id,line_no)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_supplier_bills_approval ON supplier_bills(status, bill_date, id)")
+    execute_compat(c, "CREATE INDEX IF NOT EXISTS idx_supplier_bill_asset_lines ON supplier_bill_asset_lines(bill_id,line_no)")
+    execute_compat(c, "CREATE INDEX IF NOT EXISTS idx_supplier_bills_approval ON supplier_bills(status, bill_date, id)")
     for name, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"), ("project_id", "projects")):
         if name not in bill_columns:
-            c.execute("ALTER TABLE supplier_bills ADD COLUMN " + name + " INTEGER REFERENCES " + table + "(id)")
+            execute_compat(c, "ALTER TABLE supplier_bills ADD COLUMN " + name + " INTEGER REFERENCES " + table + "(id)")
     receipt_line_columns = _columns(c, "goods_receipt_lines")
     if "location_id" not in receipt_line_columns:
-        c.execute("ALTER TABLE goods_receipt_lines ADD COLUMN location_id INTEGER REFERENCES stock_locations(id)")
+        execute_compat(c, "ALTER TABLE goods_receipt_lines ADD COLUMN location_id INTEGER REFERENCES stock_locations(id)")
     receipt_columns = _columns(c, "goods_receipts")
     for name, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"), ("project_id", "projects")):
         if name not in receipt_columns:
-            c.execute("ALTER TABLE goods_receipts ADD COLUMN " + name + " INTEGER REFERENCES " + table + "(id)")
+            execute_compat(c, "ALTER TABLE goods_receipts ADD COLUMN " + name + " INTEGER REFERENCES " + table + "(id)")
 
     # Legacy-safe integrity migration: never fail application startup because
     # old posted documents contain duplicates. Keep every financial document,
     # report the duplicates, and rely on BEGIN IMMEDIATE + application guards
     # until an accountant resolves the legacy records and UNIQUE indexes can be added.
-    c.execute("""CREATE TABLE IF NOT EXISTS purchase_integrity_issues(
+    execute_compat(c, """CREATE TABLE IF NOT EXISTS purchase_integrity_issues(
       id INTEGER PRIMARY KEY, issue_type TEXT NOT NULL, issue_key TEXT NOT NULL,
       detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, resolved INTEGER NOT NULL DEFAULT 0,
       resolved_by INTEGER, resolved_at TEXT,
@@ -258,13 +259,13 @@ def init_purchase_schema():
     )""")
     integrity_columns = _columns(c, "purchase_integrity_issues")
     if "resolved_by" not in integrity_columns:
-        c.execute("ALTER TABLE purchase_integrity_issues ADD COLUMN resolved_by INTEGER")
+        execute_compat(c, "ALTER TABLE purchase_integrity_issues ADD COLUMN resolved_by INTEGER")
     if "resolved_at" not in integrity_columns:
-        c.execute("ALTER TABLE purchase_integrity_issues ADD COLUMN resolved_at TEXT")
-    duplicate_bills=c.execute("""SELECT supplier_id,lower(trim(supplier_invoice_no)) k,COUNT(*) n
+        execute_compat(c, "ALTER TABLE purchase_integrity_issues ADD COLUMN resolved_at TEXT")
+    duplicate_bills=execute_compat(c, """SELECT supplier_id,lower(trim(supplier_invoice_no)) k,COUNT(*) n
       FROM supplier_bills GROUP BY supplier_id,k HAVING COUNT(*)>1""").fetchall()
     for row in duplicate_bills:
-        c.execute("""INSERT INTO purchase_integrity_issues(issue_type,issue_key)
+        execute_compat(c, """INSERT INTO purchase_integrity_issues(issue_type,issue_key)
                      VALUES('duplicate_supplier_invoice',?)
                      ON CONFLICT(issue_type,issue_key) DO UPDATE SET
                        resolved=0,resolved_by=NULL,resolved_at=NULL""",
@@ -272,9 +273,9 @@ def init_purchase_schema():
     # One GRNI receipt may be invoiced in several partial supplier bills.
     # Drop the legacy one-receipt/one-bill index additively; existing allocation
     # rows and journal links remain untouched.
-    c.execute("DROP INDEX IF EXISTS uq_supplier_bill_receipt_once")
+    execute_compat(c, "DROP INDEX IF EXISTS uq_supplier_bill_receipt_once")
     if not duplicate_bills:
-        c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bill_invoice_no
+        execute_compat(c, """CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bill_invoice_no
           ON supplier_bills(supplier_id, lower(trim(supplier_invoice_no)))""")
     c.commit()
     c.close()
@@ -293,14 +294,14 @@ def require(permission):
 
 def submit_purchase_order(c, order_id, actor_id):
     begin_write_transaction(c)
-    order = c.execute("SELECT * FROM purchase_orders WHERE id=?", (order_id,)).fetchone()
+    order = execute_compat(c, "SELECT * FROM purchase_orders WHERE id=?", (order_id,)).fetchone()
     if not order:
         raise ValueError("أمر الشراء غير موجود.")
     if order["status"] not in {"draft", "rejected"}:
         raise ValueError("لا يمكن إرسال أمر الشراء للمراجعة من حالته الحالية.")
-    if not c.execute("SELECT 1 FROM purchase_order_lines WHERE po_id=? LIMIT 1", (order_id,)).fetchone():
+    if not execute_compat(c, "SELECT 1 FROM purchase_order_lines WHERE po_id=? LIMIT 1", (order_id,)).fetchone():
         raise ValueError("لا يمكن إرسال أمر شراء بدون بنود.")
-    c.execute("""UPDATE purchase_orders SET status='pending_approval',
+    execute_compat(c, """UPDATE purchase_orders SET status='pending_approval',
         submitted_by=?, submitted_at=CURRENT_TIMESTAMP, approved_by=NULL, approved_at=NULL,
         rejected_by=NULL, rejected_at=NULL, rejection_reason=NULL, approval_reason=NULL
         WHERE id=?""", (actor_id, order_id))
@@ -308,7 +309,7 @@ def submit_purchase_order(c, order_id, actor_id):
 
 def approve_purchase_order(c, order_id, actor_id, reason=""):
     begin_write_transaction(c)
-    order = c.execute("SELECT * FROM purchase_orders WHERE id=?", (order_id,)).fetchone()
+    order = execute_compat(c, "SELECT * FROM purchase_orders WHERE id=?", (order_id,)).fetchone()
     if not order:
         raise ValueError("أمر الشراء غير موجود.")
     if order["status"] != "pending_approval":
@@ -317,7 +318,7 @@ def approve_purchase_order(c, order_id, actor_id, reason=""):
         raise ValueError("لا يجوز اعتماد أمر شراء أنشأته أو أرسلته للمراجعة بنفسك.")
     if order["created_by"] is None or order["submitted_by"] is None:
         raise ValueError("بيانات منشئ أو مرسل أمر الشراء غير مكتملة؛ راجع المستند.")
-    updated = c.execute("""UPDATE purchase_orders SET status='approved', approved_by=?,
+    updated = execute_compat(c, """UPDATE purchase_orders SET status='approved', approved_by=?,
         approved_at=CURRENT_TIMESTAMP, approval_reason=? WHERE id=? AND status='pending_approval'""",
         (actor_id, reason.strip(), order_id))
     if updated.rowcount != 1:
@@ -329,21 +330,21 @@ def reject_purchase_order(c, order_id, actor_id, reason):
     if len(reason) < 5:
         raise ValueError("اكتب سبب رفض واضحًا (5 أحرف على الأقل).")
     begin_write_transaction(c)
-    order = c.execute("SELECT * FROM purchase_orders WHERE id=?", (order_id,)).fetchone()
+    order = execute_compat(c, "SELECT * FROM purchase_orders WHERE id=?", (order_id,)).fetchone()
     if not order:
         raise ValueError("أمر الشراء غير موجود.")
     if order["status"] != "pending_approval":
         raise ValueError("أمر الشراء ليس بانتظار الاعتماد.")
     if order["created_by"] == actor_id or order["submitted_by"] == actor_id:
         raise ValueError("لا يجوز رفض مستند أنشأته أو أرسلته للمراجعة بنفسك.")
-    updated = c.execute("""UPDATE purchase_orders SET status='rejected', rejected_by=?,
+    updated = execute_compat(c, """UPDATE purchase_orders SET status='rejected', rejected_by=?,
         rejected_at=CURRENT_TIMESTAMP, rejection_reason=? WHERE id=? AND status='pending_approval'""",
         (actor_id, reason, order_id))
     if updated.rowcount != 1:
         raise ValueError("تغيرت حالة أمر الشراء؛ أعد تحميل الصفحة.")
 
 def account(c, code, typ=None):
-    row=c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?",(code,)).fetchone()
+    row=execute_compat(c, "SELECT id,is_group,active,account_type FROM accounts WHERE code=?",(code,)).fetchone()
     if not row or row["is_group"] or not row["active"] or (typ and row["account_type"]!=typ):
         raise ValueError(f"حساب الربط {code} غير موجود أو غير نشط/تفصيلي. راجع دليل الحسابات.")
     return row["id"]
@@ -353,7 +354,7 @@ def create_journal(c, d, ref, desc, lines, user, dimensions=None):
 
 def ensure_detail_account(c, code, name, typ, preferred_parent):
     # Account mappings must be configured in the chart of accounts; posting never creates GL accounts.
-    found=c.execute("SELECT id,is_group,active,account_type FROM accounts WHERE code=?",(code,)).fetchone()
+    found=execute_compat(c, "SELECT id,is_group,active,account_type FROM accounts WHERE code=?",(code,)).fetchone()
     if not found or found["is_group"] or not found["active"] or found["account_type"]!=typ:
         raise ValueError("حساب الربط المطلوب "+code+" ("+name+") غير مضبوط. أضفه كحساب تفصيلي نشط بالنوع "+typ+" قبل الترحيل.")
     return found["id"]
@@ -451,7 +452,7 @@ def validate_asset_bill_data(c, form, bill_date, subtotal):
             account_id = int(form.get(field, 0))
         except (TypeError, ValueError):
             account_id = 0
-        row = c.execute(
+        row = execute_compat(c, 
             "SELECT account_type,is_group,active FROM accounts WHERE id=?", (account_id,)
         ).fetchone()
         if not row or row["account_type"] != expected or row["is_group"] or not row["active"]:
@@ -460,7 +461,7 @@ def validate_asset_bill_data(c, form, bill_date, subtotal):
     if ids["asset_account_id"] == ids["asset_accum_account_id"]:
         raise ValueError("حساب تكلفة الأصل يجب أن يختلف عن حساب مجمع الإهلاك.")
     if _table_exists(c, "fixed_assets"):
-        existing = c.execute(
+        existing = execute_compat(c, 
             "SELECT 1 FROM fixed_assets WHERE asset_code=? LIMIT 1", (asset_code,)
         ).fetchone()
         if existing:
@@ -534,7 +535,7 @@ def _supplier_price_insights(conn, lookback_days=365):
 @require("purchases.view")
 def index():
     c=db()
-    suppliers=c.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
+    suppliers=execute_compat(c, "SELECT * FROM suppliers ORDER BY name").fetchall()
     price_insights, price_insights_available = _supplier_price_insights(c)
     orders_page = fetch_page(c,
         """SELECT p.*,s.name supplier_name FROM purchase_orders p
@@ -589,11 +590,11 @@ def build_grni_reconciliation(c, month):
                       1 if period_start.month == 12 else period_start.month + 1, 1)
     period_end = next_month - timedelta(days=1)
     start_text, end_text = period_start.isoformat(), period_end.isoformat()
-    account_row = c.execute(
+    account_row = execute_compat(c, 
         """SELECT id,code,name_ar FROM accounts WHERE code='2190' AND active=1 AND is_group=0 LIMIT 1"""
     ).fetchone()
     account_available = account_row is not None
-    receipts = c.execute(
+    receipts = execute_compat(c, 
         """SELECT r.id,r.receipt_no,r.receipt_date,r.total_value,s.name AS supplier_name,
                   w.code AS warehouse_code,w.name_ar AS warehouse_name
            FROM goods_receipts r JOIN suppliers s ON s.id=r.supplier_id
@@ -606,7 +607,7 @@ def build_grni_reconciliation(c, month):
     for offset in range(0, len(receipt_ids), 500):
         batch = receipt_ids[offset:offset + 500]
         placeholders = ",".join("?" for _ in batch)
-        rows = c.execute(
+        rows = execute_compat(c, 
             f"""SELECT x.receipt_id,x.matched_amount,b.bill_no,b.bill_date
                 FROM supplier_bill_receipts x JOIN supplier_bills b ON b.id=x.bill_id
                 WHERE b.status='posted' AND b.bill_kind='inventory'
@@ -659,7 +660,7 @@ def build_grni_reconciliation(c, month):
     subledger_period_net = money(period_receipts - bill_period_total)
     gl_opening_debit = gl_opening_credit = gl_period_debit = gl_period_credit = money("0")
     if account_available:
-        gl_rows = c.execute(
+        gl_rows = execute_compat(c, 
             """SELECT je.entry_date,jl.debit,jl.credit FROM journal_lines jl
                JOIN journal_entries je ON je.id=jl.entry_id
                WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<=?
@@ -736,7 +737,7 @@ def three_way_match():
     legacy_bill_counts = {}
     if line_ids:
         placeholders = ",".join("?" for _ in line_ids)
-        for item in c.execute(f"""
+        for item in execute_compat(c, f"""
             SELECT gl.po_line_id,gl.quantity,gl.total_cost
             FROM goods_receipt_lines gl
             JOIN goods_receipts gr ON gr.id=gl.receipt_id
@@ -746,7 +747,7 @@ def three_way_match():
             total = received_totals.setdefault(key, {"quantity": Decimal("0"), "value": Decimal("0")})
             total["quantity"] += Decimal(str(item["quantity"] or "0"))
             total["value"] += money(item["total_cost"] or "0")
-        for item in c.execute(f"""
+        for item in execute_compat(c, f"""
             SELECT gl.po_line_id,bl.billed_quantity,bl.line_total
             FROM supplier_bill_inventory_lines bl
             JOIN supplier_bills sb ON sb.id=bl.bill_id
@@ -758,7 +759,7 @@ def three_way_match():
             total = billed_totals.setdefault(key, {"quantity": Decimal("0"), "value": Decimal("0")})
             total["quantity"] += Decimal(str(item["billed_quantity"] or "0"))
             total["value"] += money(item["line_total"] or "0")
-        for item in c.execute(f"""
+        for item in execute_compat(c, f"""
             SELECT gl.po_line_id,COUNT(DISTINCT sb.id) AS legacy_count
             FROM supplier_bill_receipts alloc
             JOIN supplier_bills sb ON sb.id=alloc.bill_id
@@ -812,14 +813,14 @@ def three_way_match():
 @require("purchases.view")
 def integrity_issues():
     c=db()
-    issues=c.execute("""SELECT * FROM purchase_integrity_issues
+    issues=execute_compat(c, """SELECT * FROM purchase_integrity_issues
         WHERE resolved=0 ORDER BY detected_at,id""").fetchall()
     details=[]
     for issue in issues:
         key=issue["issue_key"]
         if issue["issue_type"]=="duplicate_supplier_invoice":
             supplier_text, invoice_key = key.split(":",1)
-            rows=c.execute("""SELECT b.id,b.bill_no,b.supplier_invoice_no,b.bill_date,b.total_amount,
+            rows=execute_compat(c, """SELECT b.id,b.bill_no,b.supplier_invoice_no,b.bill_date,b.total_amount,
                 s.name supplier_name
                 FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
                 WHERE b.supplier_id=? AND lower(trim(b.supplier_invoice_no))=?
@@ -829,7 +830,7 @@ def integrity_issues():
                     "summary":"رقم فاتورة مورد مكرر لدى نفس المورد"})
         elif issue["issue_type"]=="duplicate_receipt_link":
             receipt_id=int(key)
-            rows=c.execute("""SELECT r.id receipt_id,r.receipt_no,b.id bill_id,b.bill_no,
+            rows=execute_compat(c, """SELECT r.id receipt_id,r.receipt_no,b.id bill_id,b.bill_no,
                 b.supplier_invoice_no,s.name supplier_name,x.matched_amount
                 FROM supplier_bill_receipts x
                 JOIN goods_receipts r ON r.id=x.receipt_id
@@ -856,7 +857,7 @@ def resolve_integrity_issue(issue_id):
     c = db()
     try:
         begin_write_transaction(c)
-        issue = c.execute(
+        issue = execute_compat(c, 
             "SELECT * FROM purchase_integrity_issues WHERE id=? AND resolved=0",
             (issue_id,),
         ).fetchone()
@@ -866,13 +867,13 @@ def resolve_integrity_issue(issue_id):
         key = issue["issue_key"]
         if issue["issue_type"] == "duplicate_supplier_invoice":
             supplier_text, invoice_key = key.split(":", 1)
-            remaining = c.execute(
+            remaining = execute_compat(c, 
                 """SELECT COUNT(*) FROM supplier_bills
                    WHERE supplier_id=? AND lower(trim(supplier_invoice_no))=?""",
                 (int(supplier_text), invoice_key),
             ).fetchone()[0]
         elif issue["issue_type"] == "duplicate_receipt_link":
-            remaining = c.execute(
+            remaining = execute_compat(c, 
                 "SELECT COUNT(*) FROM supplier_bill_receipts WHERE receipt_id=?",
                 (int(key),),
             ).fetchone()[0]
@@ -883,7 +884,7 @@ def resolve_integrity_issue(issue_id):
                 "لا يمكن إغلاق الحالة: التكرار ما زال موجودًا. صحح المستندات أولًا ثم أعد المحاولة."
             )
 
-        c.execute(
+        execute_compat(c, 
             """UPDATE purchase_integrity_issues
                SET resolved=1,resolved_by=?,resolved_at=CURRENT_TIMESTAMP
                WHERE id=? AND resolved=0""",
@@ -906,7 +907,7 @@ def suppliers():
     if request.method=="POST":
         try:
             supplier_code = next_code(c, "supplier", "SUP", "suppliers", "code")
-            c.execute("INSERT INTO suppliers(code,name,tax_number,phone,email,address) VALUES(?,?,?,?,?,?)",
+            execute_compat(c, "INSERT INTO suppliers(code,name,tax_number,phone,email,address) VALUES(?,?,?,?,?,?)",
               (supplier_code,request.form["name"].strip(),request.form.get("tax_number","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("address","").strip()))
             c.commit(); flash("تم حفظ المورد.","success")
         except sqlite3.IntegrityError: c.rollback(); flash("كود المورد مستخدم بالفعل.","error")
@@ -919,7 +920,7 @@ def suppliers():
     bill_total_sum_sql = decimal_sum_expression(c, "total_amount")
     bill_paid_sum_sql = decimal_sum_expression(c, "paid_amount")
     bill_credited_sum_sql = decimal_sum_expression(c, "credited_amount")
-    for bill in c.execute(f"""SELECT supplier_id,
+    for bill in execute_compat(c, f"""SELECT supplier_id,
         {bill_total_sum_sql} total_amount,
         {bill_paid_sum_sql} paid_amount,
         {bill_credited_sum_sql} credited_amount
@@ -935,17 +936,17 @@ def suppliers():
 @purchase_bp.route("/suppliers/<int:supplier_id>/edit",methods=["GET","POST"])
 @require("purchases.manage")
 def edit_supplier(supplier_id):
-    c=db(); supplier=c.execute("SELECT * FROM suppliers WHERE id=?",(supplier_id,)).fetchone()
+    c=db(); supplier=execute_compat(c, "SELECT * FROM suppliers WHERE id=?",(supplier_id,)).fetchone()
     if not supplier:
         c.close(); flash("المورد غير موجود.","error"); return redirect(url_for("purchase.suppliers"))
-    used=any(c.execute(q,(supplier_id,)).fetchone() for q in [
+    used=any(execute_compat(c, q,(supplier_id,)).fetchone() for q in [
       "SELECT 1 FROM purchase_orders WHERE supplier_id=? LIMIT 1",
       "SELECT 1 FROM goods_receipts WHERE supplier_id=? LIMIT 1",
       "SELECT 1 FROM supplier_bills WHERE supplier_id=? LIMIT 1",
       "SELECT 1 FROM supplier_payments WHERE supplier_id=? LIMIT 1"])
     if request.method=="POST":
         try:
-            c.execute("UPDATE suppliers SET code=?,name=?,tax_number=?,phone=?,email=?,address=? WHERE id=?",
+            execute_compat(c, "UPDATE suppliers SET code=?,name=?,tax_number=?,phone=?,email=?,address=? WHERE id=?",
               (request.form["code"].strip(),request.form["name"].strip(),request.form.get("tax_number","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("address","").strip(),supplier_id))
             c.commit(); c.close(); flash("تم تعديل بيانات المورد.","success"); return redirect(url_for("purchase.suppliers"))
         except sqlite3.IntegrityError: c.rollback(); flash("كود المورد مستخدم بالفعل.","error")
@@ -955,7 +956,7 @@ def edit_supplier(supplier_id):
 @purchase_bp.route("/suppliers/<int:supplier_id>/delete",methods=["POST"])
 @require("purchases.manage")
 def delete_supplier(supplier_id):
-    c=db(); supplier=c.execute("SELECT * FROM suppliers WHERE id=?",(supplier_id,)).fetchone()
+    c=db(); supplier=execute_compat(c, "SELECT * FROM suppliers WHERE id=?",(supplier_id,)).fetchone()
     if not supplier: flash("المورد غير موجود.","error")
     else:
         checks=[
@@ -963,10 +964,10 @@ def delete_supplier(supplier_id):
           ("SELECT 1 FROM goods_receipts WHERE supplier_id=? LIMIT 1","استلامات المشتريات"),
           ("SELECT 1 FROM supplier_bills WHERE supplier_id=? LIMIT 1","فواتير الموردين"),
           ("SELECT 1 FROM supplier_payments WHERE supplier_id=? LIMIT 1","مدفوعات الموردين")]
-        used=next((label for q,label in checks if c.execute(q,(supplier_id,)).fetchone()),None)
+        used=next((label for q,label in checks if execute_compat(c, q,(supplier_id,)).fetchone()),None)
         if used: flash("لا يمكن حذف المورد لوجود "+used+" مرتبطة به.","error")
         else:
-            try: c.execute("DELETE FROM suppliers WHERE id=?",(supplier_id,)); c.commit(); flash("تم حذف المورد.","success")
+            try: execute_compat(c, "DELETE FROM suppliers WHERE id=?",(supplier_id,)); c.commit(); flash("تم حذف المورد.","success")
             except sqlite3.IntegrityError: c.rollback(); flash("لا يمكن حذف المورد لوجود مستند مرتبط به.","error")
     c.close(); return redirect(url_for("purchase.suppliers"))
 
@@ -975,7 +976,7 @@ def delete_supplier(supplier_id):
 @require("purchases.view")
 def purchase_requests():
     c = db()
-    rows = c.execute("""
+    rows = execute_compat(c, """
         SELECT r.*,p.sku,p.name_ar AS product_name,
                po.po_no AS converted_po_no
         FROM purchase_requests r
@@ -983,7 +984,7 @@ def purchase_requests():
         LEFT JOIN purchase_orders po ON po.id=r.converted_to_po_id
         ORDER BY r.id DESC
     """).fetchall()
-    suppliers = c.execute("SELECT id,name FROM suppliers WHERE active=1 ORDER BY name").fetchall()
+    suppliers = execute_compat(c, "SELECT id,name FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     c.close()
     return render_template("purchase_requests.html", requests=rows, suppliers=suppliers)
 
@@ -1001,7 +1002,7 @@ def new_purchase_request():
             department = (request.form.get("department") or "").strip()
             request_date = (request.form.get("request_date") or "").strip()
             required_date = (request.form.get("required_date") or "").strip() or None
-            product = c.execute("SELECT id FROM stock_products WHERE id=? AND active=1", (product_id,)).fetchone()
+            product = execute_compat(c, "SELECT id FROM stock_products WHERE id=? AND active=1", (product_id,)).fetchone()
             if not product:
                 raise ValueError("الصنف غير موجود أو غير نشط.")
             if not quantity.is_finite() or not estimated_price.is_finite() or quantity <= 0 or estimated_price < 0:
@@ -1020,7 +1021,7 @@ def new_purchase_request():
                 raise ValueError("تاريخ الاحتياج لا يمكن أن يسبق تاريخ الطلب.")
             begin_write_transaction(c)
             request_no = "PR-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
-            c.execute("""INSERT INTO purchase_requests(
+            execute_compat(c, """INSERT INTO purchase_requests(
                 request_no,request_date,required_date,department,purpose,product_id,
                 quantity,estimated_unit_price,status,created_by
             ) VALUES(?,?,?,?,?,?,?,?,'draft',?)""",
@@ -1032,7 +1033,7 @@ def new_purchase_request():
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
             c.rollback()
             flash(safe_error_message(exc, "تعذر حفظ طلب الشراء. لم يتم حفظ أي تغييرات."), "error")
-    products = c.execute("SELECT id,sku,name_ar,uom FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
+    products = execute_compat(c, "SELECT id,sku,name_ar,uom FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     c.close()
     return render_template("purchase_request_new.html", products=products, today=date.today().isoformat())
 
@@ -1043,12 +1044,12 @@ def submit_purchase_request(request_id):
     c = db()
     try:
         begin_write_transaction(c)
-        row = c.execute("SELECT * FROM purchase_requests WHERE id=?", (request_id,)).fetchone()
+        row = execute_compat(c, "SELECT * FROM purchase_requests WHERE id=?", (request_id,)).fetchone()
         if not row:
             raise ValueError("طلب الشراء غير موجود.")
         if row["status"] not in {"draft", "rejected"}:
             raise ValueError("لا يمكن إرسال الطلب من حالته الحالية.")
-        c.execute("""UPDATE purchase_requests SET status='pending_approval',
+        execute_compat(c, """UPDATE purchase_requests SET status='pending_approval',
             submitted_by=?,submitted_at=CURRENT_TIMESTAMP,approved_by=NULL,approved_at=NULL,
             approval_reason=NULL,rejected_by=NULL,rejected_at=NULL,rejection_reason=NULL
             WHERE id=?""", (session["user_id"], request_id))
@@ -1068,14 +1069,14 @@ def approve_purchase_request(request_id):
     c = db()
     try:
         begin_write_transaction(c)
-        row = c.execute("SELECT * FROM purchase_requests WHERE id=?", (request_id,)).fetchone()
+        row = execute_compat(c, "SELECT * FROM purchase_requests WHERE id=?", (request_id,)).fetchone()
         if not row or row["status"] != "pending_approval":
             raise ValueError("طلب الشراء غير موجود أو ليس بانتظار الاعتماد.")
         if row["created_by"] == session["user_id"] or row["submitted_by"] == session["user_id"]:
             raise ValueError("لا يجوز اعتماد طلب أنشأته أو أرسلته للمراجعة بنفسك.")
         if row["created_by"] is None or row["submitted_by"] is None:
             raise ValueError("بيانات منشئ أو مرسل الطلب غير مكتملة.")
-        updated = c.execute("""UPDATE purchase_requests SET status='approved',approved_by=?,
+        updated = execute_compat(c, """UPDATE purchase_requests SET status='approved',approved_by=?,
             approved_at=CURRENT_TIMESTAMP,approval_reason=?
             WHERE id=? AND status='pending_approval'""",
             (session["user_id"], (request.form.get("reason") or "").strip(), request_id))
@@ -1100,12 +1101,12 @@ def reject_purchase_request(request_id):
         if len(reason) < 5:
             raise ValueError("سبب الرفض مطلوب (5 أحرف على الأقل).")
         begin_write_transaction(c)
-        row = c.execute("SELECT * FROM purchase_requests WHERE id=?", (request_id,)).fetchone()
+        row = execute_compat(c, "SELECT * FROM purchase_requests WHERE id=?", (request_id,)).fetchone()
         if not row or row["status"] != "pending_approval":
             raise ValueError("طلب الشراء غير موجود أو ليس بانتظار الاعتماد.")
         if row["created_by"] == session["user_id"] or row["submitted_by"] == session["user_id"]:
             raise ValueError("لا يجوز رفض طلب أنشأته أو أرسلته للمراجعة بنفسك.")
-        updated = c.execute("""UPDATE purchase_requests SET status='rejected',rejected_by=?,
+        updated = execute_compat(c, """UPDATE purchase_requests SET status='rejected',rejected_by=?,
             rejected_at=CURRENT_TIMESTAMP,rejection_reason=?
             WHERE id=? AND status='pending_approval'""", (session["user_id"],reason,request_id))
         if updated.rowcount != 1:
@@ -1128,10 +1129,10 @@ def convert_purchase_request(request_id):
         supplier_id = int(request.form["supplier_id"])
         unit_price = money(request.form["unit_price"])
         begin_write_transaction(c)
-        row = c.execute("""SELECT r.*,p.active AS product_active
+        row = execute_compat(c, """SELECT r.*,p.active AS product_active
             FROM purchase_requests r JOIN stock_products p ON p.id=r.product_id
             WHERE r.id=?""", (request_id,)).fetchone()
-        supplier = c.execute("SELECT id FROM suppliers WHERE id=? AND active=1", (supplier_id,)).fetchone()
+        supplier = execute_compat(c, "SELECT id FROM suppliers WHERE id=? AND active=1", (supplier_id,)).fetchone()
         if not row or row["status"] != "approved" or row["converted_to_po_id"]:
             raise ValueError("لا يمكن تحويل الطلب إلا إذا كان معتمدًا وغير محول سابقًا.")
         if not supplier or not row["product_active"]:
@@ -1145,9 +1146,9 @@ def convert_purchase_request(request_id):
             (po_no,supplier_id,date.today().isoformat(),row["required_date"],
              "من طلب الشراء الداخلي " + row["request_no"] + " — " + row["purpose"],
              session["user_id"]))
-        c.execute("""INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price)
+        execute_compat(c, """INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price)
             VALUES(?,?,?,?)""", (po_id,row["product_id"],row["quantity"],str(unit_price)))
-        updated = c.execute("""UPDATE purchase_requests SET status='converted',
+        updated = execute_compat(c, """UPDATE purchase_requests SET status='converted',
             converted_to_po_id=?,converted_at=CURRENT_TIMESTAMP
             WHERE id=? AND status='approved' AND converted_to_po_id IS NULL""", (po_id,request_id))
         if updated.rowcount != 1:
@@ -1178,12 +1179,12 @@ def new_order():
             no="PO-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             order_id=insert_and_get_id(c,"INSERT INTO purchase_orders(po_no,supplier_id,order_date,expected_date,notes,created_by) VALUES(?,?,?,?,?,?)",
               (no,supplier,request.form["order_date"],request.form.get("expected_date") or None,request.form.get("notes",""),session["user_id"]))
-            c.execute("""INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price,entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
+            execute_compat(c, """INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price,entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
               VALUES(?,?,?,?,?,?,?,?,?)""",(order_id,product,str(qty),str(price),str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,str(factor)))
             c.commit(); flash(f"تم إنشاء أمر الشراء {no}.","success"); return redirect(url_for("purchase.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
-    su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
-    products=c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
+    su=execute_compat(c, "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
+    products=execute_compat(c, "SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     product_uoms={p["id"]:product_uom_options(c,p["id"]) for p in products}
     c.close(); return render_template("purchase_order_new.html",suppliers=su,products=products,product_uoms=product_uoms,today=date.today().isoformat())
 
@@ -1238,13 +1239,13 @@ def reject_order(order_id):
 @purchase_bp.route("/orders/<int:order_id>/edit",methods=["GET","POST"])
 @require("purchases.manage")
 def edit_order(order_id):
-    c=db(); order=c.execute("""SELECT p.*,l.id line_id,l.product_id,l.quantity,l.unit_price,l.entered_quantity,l.uom_id,l.uom_key,l.entered_uom_name,l.conversion_factor
+    c=db(); order=execute_compat(c, """SELECT p.*,l.id line_id,l.product_id,l.quantity,l.unit_price,l.entered_quantity,l.uom_id,l.uom_key,l.entered_uom_name,l.conversion_factor
       FROM purchase_orders p LEFT JOIN purchase_order_lines l ON l.po_id=p.id WHERE p.id=?""",(order_id,)).fetchone()
     if not order:
         c.close(); flash("أمر الشراء غير موجود.","error"); return redirect(url_for("purchase.index"))
     order=dict(order)
     order["entered_unit_price"]=str(Decimal(str(order["unit_price"] or "0"))*Decimal(str(order.get("conversion_factor") or "1")))
-    received=c.execute("SELECT 1 FROM goods_receipts WHERE po_id=? LIMIT 1",(order_id,)).fetchone() is not None
+    received=execute_compat(c, "SELECT 1 FROM goods_receipts WHERE po_id=? LIMIT 1",(order_id,)).fetchone() is not None
     if received or order["status"] not in {"draft", "rejected"}:
         c.close(); flash("لا يمكن تعديل أمر شراء تم استلامه أو اعتماده.","error"); return redirect(url_for("purchase.index"))
     if request.method=="POST":
@@ -1255,15 +1256,15 @@ def edit_order(order_id):
             factor,uom_name=product_uom_factor(c,product,request.form.get("uom_id"),"purchase")
             qty=q4(entered_qty*factor); price=entered_price/factor
             stored_uom_id,entered_uom_name=product_uom_storage(c,product,request.form.get("uom_id"))
-            c.execute("""UPDATE purchase_orders SET supplier_id=?,order_date=?,expected_date=?,notes=?,status='draft',
+            execute_compat(c, """UPDATE purchase_orders SET supplier_id=?,order_date=?,expected_date=?,notes=?,status='draft',
               rejected_by=NULL,rejected_at=NULL,rejection_reason=NULL WHERE id=?""",
               (supplier,request.form["order_date"],request.form.get("expected_date") or None,request.form.get("notes",""),order_id))
-            c.execute("""UPDATE purchase_order_lines SET product_id=?,quantity=?,unit_price=?,entered_quantity=?,uom_id=?,uom_key=?,entered_uom_name=?,conversion_factor=? WHERE id=?""",
+            execute_compat(c, """UPDATE purchase_order_lines SET product_id=?,quantity=?,unit_price=?,entered_quantity=?,uom_id=?,uom_key=?,entered_uom_name=?,conversion_factor=? WHERE id=?""",
               (product,str(qty),str(price),str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,str(factor),order["line_id"]))
             c.commit(); c.close(); flash("تم تعديل أمر الشراء.","success"); return redirect(url_for("purchase.index"))
         except (ValueError,InvalidOperation,sqlite3.Error) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
-    suppliers=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
-    products=c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
+    suppliers=execute_compat(c, "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
+    products=execute_compat(c, "SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     product_uoms={p["id"]:product_uom_options(c,p["id"]) for p in products}
     c.close(); return render_template("purchase_order_edit.html",order=order,suppliers=suppliers,products=products,product_uoms=product_uoms)
 
@@ -1273,14 +1274,14 @@ def edit_order(order_id):
 @require("purchases.view")
 def order_print(order_id):
     c = db()
-    order = c.execute("""SELECT p.*,s.code supplier_code,s.name supplier_name,
+    order = execute_compat(c, """SELECT p.*,s.code supplier_code,s.name supplier_name,
         s.tax_number supplier_tax_number FROM purchase_orders p
         JOIN suppliers s ON s.id=p.supplier_id WHERE p.id=?""", (order_id,)).fetchone()
     if not order:
         c.close()
         from flask import abort
         abort(404)
-    raw_lines = c.execute("""SELECT l.*,p.sku,p.name_ar product_name,p.uom
+    raw_lines = execute_compat(c, """SELECT l.*,p.sku,p.name_ar product_name,p.uom
         FROM purchase_order_lines l JOIN stock_products p ON p.id=l.product_id
         WHERE l.po_id=? ORDER BY l.id""", (order_id,)).fetchall()
     lines = []
@@ -1297,7 +1298,7 @@ def order_print(order_id):
             item["display_unit_price"] = Decimal(str(row["unit_price"]))
         order_total += item["line_total"]
         lines.append(item)
-    settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
+    settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(c, 
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
         "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
     c.close()
@@ -1308,19 +1309,19 @@ def order_print(order_id):
 @purchase_bp.route("/orders/<int:order_id>/delete",methods=["POST"])
 @require("purchases.manage")
 def delete_order(order_id):
-    c=db(); order=c.execute("SELECT * FROM purchase_orders WHERE id=?",(order_id,)).fetchone()
+    c=db(); order=execute_compat(c, "SELECT * FROM purchase_orders WHERE id=?",(order_id,)).fetchone()
     if not order: flash("أمر الشراء غير موجود.","error")
     elif order["status"] not in {"draft", "rejected"}: flash("لا يمكن حذف أمر شراء تم إرساله للمراجعة أو اعتماده.","error")
-    elif c.execute("SELECT 1 FROM goods_receipts WHERE po_id=? LIMIT 1",(order_id,)).fetchone():
+    elif execute_compat(c, "SELECT 1 FROM goods_receipts WHERE po_id=? LIMIT 1",(order_id,)).fetchone():
         flash("لا يمكن حذف أمر الشراء لوجود استلام مرتبط به.","error")
     else:
-        try: c.execute("DELETE FROM purchase_orders WHERE id=?",(order_id,)); c.commit(); flash("تم حذف أمر الشراء غير المستلم.","success")
+        try: execute_compat(c, "DELETE FROM purchase_orders WHERE id=?",(order_id,)); c.commit(); flash("تم حذف أمر الشراء غير المستلم.","success")
         except sqlite3.IntegrityError: c.rollback(); flash("لا يمكن حذف أمر الشراء لوجود مستند مرتبط به.","error")
     c.close(); return redirect(url_for("purchase.index"))
 
 def refresh_purchase_order_receipt_status(c, po_id):
     """Derive the PO header status from every line after a goods receipt."""
-    rows = c.execute(
+    rows = execute_compat(c, 
         "SELECT quantity,received_qty FROM purchase_order_lines WHERE po_id=? ORDER BY id",
         (po_id,),
     ).fetchall()
@@ -1334,7 +1335,7 @@ def refresh_purchase_order_receipt_status(c, po_id):
         status = "partially_received"
     else:
         status = "approved"
-    c.execute("UPDATE purchase_orders SET status=? WHERE id=?", (status, po_id))
+    execute_compat(c, "UPDATE purchase_orders SET status=? WHERE id=?", (status, po_id))
     return status
 
 
@@ -1353,24 +1354,24 @@ def new_receipt():
             stored_uom_id,entered_uom_name=product_uom_storage(c,product,request.form.get("uom_id"))
             begin_write_transaction(c)
             dimensions = validate_journal_dimensions(c, {**request.form, "supplier_id": supplier})
-            product_row=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(product,)).fetchone()
+            product_row=execute_compat(c, "SELECT * FROM stock_products WHERE id=? AND active=1",(product,)).fetchone()
             if not product_row or product_row["product_type"]=="service": raise ValueError("اختر صنفًا مخزنيًا نشطًا.")
             location_id=request.form.get("location_id",type=int)
             if not location_id:
-                default_location=c.execute("SELECT location_id FROM stock_product_locations WHERE product_id=? AND warehouse_id=?",(product,wh)).fetchone()
+                default_location=execute_compat(c, "SELECT location_id FROM stock_product_locations WHERE product_id=? AND warehouse_id=?",(product,wh)).fetchone()
                 location_id=default_location["location_id"] if default_location else None
-            if location_id and not c.execute("SELECT 1 FROM stock_locations WHERE id=? AND warehouse_id=? AND active=1",(location_id,wh)).fetchone():
+            if location_id and not execute_compat(c, "SELECT 1 FROM stock_locations WHERE id=? AND warehouse_id=? AND active=1",(location_id,wh)).fetchone():
                 raise ValueError("موقع التخزين لا يتبع المخزن المحدد.")
-            if c.execute("SELECT 1 FROM stock_locations WHERE warehouse_id=? AND active=1 LIMIT 1",(wh,)).fetchone() and not location_id:
+            if execute_compat(c, "SELECT 1 FROM stock_locations WHERE warehouse_id=? AND active=1 LIMIT 1",(wh,)).fetchone() and not location_id:
                 raise ValueError("حدد الدور/الموقع الذي ستُخزن فيه الكمية.")
             lot_id=make_lot(c,product_row,request.form.get("lot_number","").strip(),
                 request.form.get("production_date",""),request.form.get("expiry_date",""),request.form["receipt_date"])
             po_line_id=None
             if po_id:
-                po=c.execute("SELECT * FROM purchase_orders WHERE id=? AND supplier_id=? AND status IN ('approved','partially_received')",
+                po=execute_compat(c, "SELECT * FROM purchase_orders WHERE id=? AND supplier_id=? AND status IN ('approved','partially_received')",
                              (po_id,supplier)).fetchone()
                 if not po: raise ValueError("أمر الشراء غير موجود أو لا يتبع المورد أو مغلق.")
-                po_lines=c.execute("SELECT * FROM purchase_order_lines WHERE po_id=? AND product_id=? ORDER BY id",
+                po_lines=execute_compat(c, "SELECT * FROM purchase_order_lines WHERE po_id=? AND product_id=? ORDER BY id",
                                    (po_id,product)).fetchall()
                 if len(po_lines)!=1: raise ValueError("الصنف يجب أن يقابل سطرًا واحدًا فقط في أمر الشراء.")
                 po_line=po_lines[0]
@@ -1390,19 +1391,19 @@ def new_receipt():
               branch_id,cost_center_id,project_id) VALUES(?,?,?,?,?,?,?,?,?,?)""",
               (no,po_id,supplier,wh,request.form["receipt_date"],str(total),session["user_id"],
                dimensions["branch_id"],dimensions["cost_center_id"],dimensions["project_id"]))
-            c.execute("""INSERT INTO goods_receipt_lines(receipt_id,po_line_id,product_id,quantity,unit_cost,total_cost,location_id,entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
+            execute_compat(c, """INSERT INTO goods_receipt_lines(receipt_id,po_line_id,product_id,quantity,unit_cost,total_cost,location_id,entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                       (rid,po_line_id,product,str(qty),str(unit),str(total),location_id,str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,str(factor)))
             if po_id:
                 received_total=Decimal(po_line["received_qty"])+qty
-                c.execute("UPDATE purchase_order_lines SET received_qty=? WHERE id=?",(str(received_total),po_line_id))
+                execute_compat(c, "UPDATE purchase_order_lines SET received_qty=? WHERE id=?",(str(received_total),po_line_id))
                 refresh_purchase_order_receipt_status(c, po_id)
             # Stock ledger + valuation layer are updated in the same DB transaction.
             move_no="PUR-"+no
             mid=insert_and_get_id(c, """INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,target_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name)
               VALUES(?,'receipt',?,?,?,?,?,?,?,?,?,?, 'pending_document',?,?,?,?)""",
               (move_no,product,wh,location_id,lot_id,str(qty),str(unit),str(total),request.form["receipt_date"],"استلام مشتريات "+no,session["user_id"],str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name))
-            c.execute("INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost) VALUES(?,?,?,?,?,?,?,?)",
+            execute_compat(c, "INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost) VALUES(?,?,?,?,?,?,?,?)",
               (product,wh,location_id,lot_id,mid,str(qty),str(qty),str(unit)))
             stock_line_dimensions = {
                 "stock_product_id": int(product),
@@ -1411,16 +1412,16 @@ def new_receipt():
             eid=create_journal(c,request.form["receipt_date"],no,"استلام مشتريات غير مفوتر "+no,
                 [(inv,total,0,"إثبات مخزون مستلم",stock_line_dimensions),
                  (grni,0,total,"بضاعة مستلمة غير مفوترة")],session["user_id"],dimensions=dimensions)
-            c.execute("UPDATE goods_receipts SET journal_entry_id=? WHERE id=?",(eid,rid))
-            c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?",(eid,mid))
+            execute_compat(c, "UPDATE goods_receipts SET journal_entry_id=? WHERE id=?",(eid,rid))
+            execute_compat(c, "UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?",(eid,mid))
             c.commit(); g.audit_created_record = ("goods_receipts", rid, "goods_receipt_lines", "receipt_id"); flash(f"تم الاستلام وترحيل قيد GRNI رقم {no}.","success"); return redirect(url_for("purchase.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
-    su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
-    wh=c.execute("SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
-    pr=c.execute("SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
+    su=execute_compat(c, "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
+    wh=execute_compat(c, "SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
+    pr=execute_compat(c, "SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     product_uoms={p["id"]:product_uom_options(c,p["id"]) for p in pr}
-    orders=c.execute("SELECT id,po_no,supplier_id,status FROM purchase_orders WHERE status IN ('approved','partially_received') ORDER BY id DESC").fetchall()
-    locations=c.execute("SELECT id,warehouse_id,code,name_ar,location_type FROM stock_locations WHERE active=1 ORDER BY warehouse_id,code").fetchall()
+    orders=execute_compat(c, "SELECT id,po_no,supplier_id,status FROM purchase_orders WHERE status IN ('approved','partially_received') ORDER BY id DESC").fetchall()
+    locations=execute_compat(c, "SELECT id,warehouse_id,code,name_ar,location_type FROM stock_locations WHERE active=1 ORDER BY warehouse_id,code").fetchall()
     dimension_options=active_dimension_options(c)
     c.close(); return render_template("purchase_receipt_new.html",suppliers=su,warehouses=wh,products=pr,product_uoms=product_uoms,orders=orders,locations=locations,dimension_options=dimension_options,today=date.today().isoformat())
 
@@ -1431,8 +1432,8 @@ def _supplier_receipt_available_amount(c, receipt_id, exclude_bill_id=None):
     if exclude_bill_id is not None:
         sql += " AND x.bill_id<>?"
         params.append(exclude_bill_id)
-    allocated = sum((money(row["matched_amount"]) for row in c.execute(sql, params)), money("0"))
-    receipt = c.execute("SELECT total_value FROM goods_receipts WHERE id=?", (receipt_id,)).fetchone()
+    allocated = sum((money(row["matched_amount"]) for row in execute_compat(c, sql, params)), money("0"))
+    receipt = execute_compat(c, "SELECT total_value FROM goods_receipts WHERE id=?", (receipt_id,)).fetchone()
     if not receipt:
         raise ValueError("إيصال الاستلام غير موجود.")
     return money(money(receipt["total_value"]) - allocated)
@@ -1443,7 +1444,7 @@ def _validate_supplier_receipt_allocations(c, supplier_id, receipt_ids, subtotal
     allocations = []
     total_allocated = money("0")
     for receipt_id in dict.fromkeys(receipt_ids):
-        receipt = c.execute("""SELECT id,total_value FROM goods_receipts
+        receipt = execute_compat(c, """SELECT id,total_value FROM goods_receipts
             WHERE id=? AND supplier_id=? AND status='posted'""",
             (receipt_id, supplier_id)).fetchone()
         if not receipt:
@@ -1479,7 +1480,7 @@ def _supplier_receipt_line_rows(c, receipt_ids):
     for offset in range(0, len(receipt_ids), 500):
         batch = receipt_ids[offset:offset + 500]
         placeholders = ",".join("?" for _ in batch)
-        result.extend(c.execute(f"""
+        result.extend(execute_compat(c, f"""
             SELECT gl.id AS receipt_line_id,gl.receipt_id,gl.po_line_id,gl.product_id,
                    gl.quantity AS received_quantity,gl.unit_cost AS received_unit_cost,
                    gl.total_cost AS received_total_cost,r.supplier_id,r.status AS receipt_status,
@@ -1526,7 +1527,7 @@ def _validate_supplier_bill_inventory_lines(c, supplier_id, receipt_ids, subtota
         if exclude_bill_id is not None:
             already_billed_sql += " AND x.bill_id<>?"
             params.append(exclude_bill_id)
-        already_billed = Decimal(str(c.execute(already_billed_sql, params).fetchone()[0] or "0"))
+        already_billed = Decimal(str(execute_compat(c, already_billed_sql, params).fetchone()[0] or "0"))
         received = Decimal(str(row["received_quantity"]))
         if quantity > received - already_billed:
             raise ValueError(
@@ -1547,7 +1548,7 @@ def _validate_supplier_bill_inventory_lines(c, supplier_id, receipt_ids, subtota
 
 
 def _validate_saved_supplier_bill_inventory_lines(c, bill):
-    rows = c.execute("""
+    rows = execute_compat(c, """
         SELECT x.*,gl.quantity AS received_quantity,r.supplier_id,r.status AS receipt_status,
                b.supplier_id AS bill_supplier_id
         FROM supplier_bill_inventory_lines x
@@ -1564,7 +1565,7 @@ def _validate_saved_supplier_bill_inventory_lines(c, bill):
             raise ValueError("تفاصيل فاتورة المورد مرتبطة بإيصال غير صالح.")
         qty = Decimal(str(row["billed_quantity"]))
         total = money(total + money(row["line_total"]))
-        already = Decimal(str(c.execute("""
+        already = Decimal(str(execute_compat(c, """
             SELECT COALESCE(SUM(x.billed_quantity),'0')
             FROM supplier_bill_inventory_lines x JOIN supplier_bills b ON b.id=x.bill_id
             WHERE x.receipt_line_id=? AND b.status<>'cancelled' AND x.bill_id<>?
@@ -1587,20 +1588,20 @@ def _supplier_grni_price_variance_lines(c, receipt_rows, discount_amount, matche
     default_cogs = posting.get("cogs")
     source_lines = []
     for receipt in receipt_rows:
-        header = c.execute(
+        header = execute_compat(c, 
             "SELECT receipt_no,warehouse_id FROM goods_receipts WHERE id=?",
             (receipt["receipt_id"],),
         ).fetchone()
         if not header:
             raise ValueError("إيصال GRNI غير موجود أثناء تسوية فرق السعر.")
-        receipt_lines = c.execute(
+        receipt_lines = execute_compat(c, 
             "SELECT * FROM goods_receipt_lines WHERE receipt_id=? ORDER BY id",
             (receipt["receipt_id"],),
         ).fetchall()
         if not receipt_lines:
             raise ValueError("إيصال GRNI لا يحتوي على تفاصيل أصناف يمكن تسوية تكلفتها.")
         for line in receipt_lines:
-            movement_rows = c.execute(
+            movement_rows = execute_compat(c, 
                 """SELECT * FROM stock_movements
                    WHERE movement_type='receipt' AND product_id=?
                      AND target_warehouse_id=? AND notes=?
@@ -1614,7 +1615,7 @@ def _supplier_grni_price_variance_lines(c, receipt_rows, discount_amount, matche
                     "لم يتم ترحيل خصم المورد حتى لا تختلف تكلفة المخزون عن الدفاتر."
                 )
             movement = movement_rows[0]
-            layers = c.execute(
+            layers = execute_compat(c, 
                 """SELECT id,qty_in,qty_remaining,unit_cost,value_remaining
                    FROM stock_valuation_layers WHERE source_movement_id=? ORDER BY id""",
                 (movement["id"],),
@@ -1711,18 +1712,18 @@ def _supplier_grni_price_variance_lines(c, receipt_rows, discount_amount, matche
             new_layer_value = money(old_value - layer_discount)
             if new_layer_value < 0:
                 raise ValueError("توزيع خصم المورد تجاوز قيمة إحدى طبقات المخزون.")
-            c.execute(
+            execute_compat(c, 
                 """UPDATE stock_valuation_layers
                    SET unit_cost=?,value_remaining=? WHERE id=?""",
                 (str(new_unit_cost), str(new_layer_value), layer["id"]),
             )
         if layer_discount_left != 0:
             raise ValueError("تعذر توزيع خصم المورد بالكامل على طبقات المخزون المتبقية.")
-        c.execute(
+        execute_compat(c, 
             "UPDATE stock_movements SET unit_cost=?,total_cost=? WHERE id=?",
             (str(new_unit_cost), str(net_line_cost), item["movement"]["id"]),
         )
-        c.execute(
+        execute_compat(c, 
             "UPDATE goods_receipt_lines SET unit_cost=?,total_cost=? WHERE id=?",
             (str(new_unit_cost), str(net_line_cost), item["line"]["id"]),
         )
@@ -1733,11 +1734,11 @@ def _supplier_grni_price_variance_lines(c, receipt_rows, discount_amount, matche
 
 def _available_supplier_receipts(c, supplier_id, exclude_bill_id=None):
     if supplier_id is None:
-        rows = c.execute("""SELECT r.*,s.name supplier_name FROM goods_receipts r
+        rows = execute_compat(c, """SELECT r.*,s.name supplier_name FROM goods_receipts r
             JOIN suppliers s ON s.id=r.supplier_id
             WHERE r.status='posted' ORDER BY r.id""").fetchall()
     else:
-        rows = c.execute("""SELECT r.*,s.name supplier_name FROM goods_receipts r
+        rows = execute_compat(c, """SELECT r.*,s.name supplier_name FROM goods_receipts r
             JOIN suppliers s ON s.id=r.supplier_id
             WHERE r.supplier_id=? AND r.status='posted' ORDER BY r.id""",
             (supplier_id,)).fetchall()
@@ -1753,7 +1754,7 @@ def _available_supplier_receipts(c, supplier_id, exclude_bill_id=None):
 
 def submit_supplier_bill(c, bill_id, actor_id):
     begin_write_transaction(c)
-    bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+    bill = execute_compat(c, "SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
     if not bill:
         raise ValueError("فاتورة المورد غير موجودة.")
     if bill["status"] not in {"draft", "rejected"}:
@@ -1762,7 +1763,7 @@ def submit_supplier_bill(c, bill_id, actor_id):
         raise ValueError("الفاتورة مرتبطة بقيد مرحل ولا يمكن إعادة إرسالها.")
     if not bill["supplier_invoice_no"].strip():
         raise ValueError("رقم فاتورة المورد مطلوب.")
-    bill_receipts = c.execute("""SELECT receipt_id,matched_amount FROM supplier_bill_receipts
+    bill_receipts = execute_compat(c, """SELECT receipt_id,matched_amount FROM supplier_bill_receipts
         WHERE bill_id=? ORDER BY receipt_id""", (bill_id,)).fetchall()
     if bill["bill_kind"] == "inventory":
         if not bill_receipts:
@@ -1784,7 +1785,7 @@ def submit_supplier_bill(c, bill_id, actor_id):
         if bill_receipts:
             raise ValueError("فاتورة الأصل الثابت لا يجوز ربطها بإيصالات استلام مخزني.")
         asset_line_exists = _table_exists(c, "supplier_bill_asset_lines")
-        asset_lines = c.execute(
+        asset_lines = execute_compat(c, 
             "SELECT * FROM supplier_bill_asset_lines WHERE bill_id=? ORDER BY line_no",
             (bill_id,),
         ).fetchall() if asset_line_exists else []
@@ -1813,7 +1814,7 @@ def submit_supplier_bill(c, bill_id, actor_id):
             validate_asset_bill_data(c, dict(bill), bill["bill_date"], money(bill["subtotal"]))
     else:
         raise ValueError("نوع فاتورة المورد المخزن غير معروف.")
-    c.execute("""UPDATE supplier_bills SET status='pending_approval',
+    execute_compat(c, """UPDATE supplier_bills SET status='pending_approval',
         submitted_by=?,submitted_at=CURRENT_TIMESTAMP,approved_by=NULL,approved_at=NULL,
         rejected_by=NULL,rejected_at=NULL,rejection_reason=NULL,approval_reason=NULL
         WHERE id=?""", (actor_id, bill_id))
@@ -1821,7 +1822,7 @@ def submit_supplier_bill(c, bill_id, actor_id):
 
 def approve_supplier_bill(c, bill_id, actor_id, reason=""):
     begin_write_transaction(c)
-    bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+    bill = execute_compat(c, "SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
     if not bill:
         raise ValueError("فاتورة المورد غير موجودة.")
     if bill["status"] != "pending_approval":
@@ -1830,7 +1831,7 @@ def approve_supplier_bill(c, bill_id, actor_id, reason=""):
         raise ValueError("لا يجوز اعتماد فاتورة أنشأتها أو أرسلتها للمراجعة بنفسك.")
     if bill["created_by"] is None or bill["submitted_by"] is None:
         raise ValueError("بيانات منشئ أو مرسل فاتورة المورد غير مكتملة؛ راجع المستند.")
-    updated = c.execute("""UPDATE supplier_bills SET status='approved',approved_by=?,
+    updated = execute_compat(c, """UPDATE supplier_bills SET status='approved',approved_by=?,
         approved_at=CURRENT_TIMESTAMP,approval_reason=? WHERE id=? AND status='pending_approval'""",
         (actor_id, (reason or "").strip(), bill_id))
     if updated.rowcount != 1:
@@ -1842,14 +1843,14 @@ def reject_supplier_bill(c, bill_id, actor_id, reason):
     if len(reason) < 5:
         raise ValueError("اكتب سبب رفض واضحًا (5 أحرف على الأقل).")
     begin_write_transaction(c)
-    bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+    bill = execute_compat(c, "SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
     if not bill:
         raise ValueError("فاتورة المورد غير موجودة.")
     if bill["status"] != "pending_approval":
         raise ValueError("فاتورة المورد ليست بانتظار الاعتماد.")
     if bill["created_by"] == actor_id or bill["submitted_by"] == actor_id:
         raise ValueError("لا يجوز رفض فاتورة أنشأتها أو أرسلتها للمراجعة بنفسك.")
-    updated = c.execute("""UPDATE supplier_bills SET status='rejected',rejected_by=?,
+    updated = execute_compat(c, """UPDATE supplier_bills SET status='rejected',rejected_by=?,
         rejected_at=CURRENT_TIMESTAMP,rejection_reason=? WHERE id=? AND status='pending_approval'""",
         (actor_id, reason, bill_id))
     if updated.rowcount != 1:
@@ -1858,7 +1859,7 @@ def reject_supplier_bill(c, bill_id, actor_id, reason):
 
 def post_supplier_bill(c, bill_id, actor_id):
     begin_write_transaction(c)
-    bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+    bill = execute_compat(c, "SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
     if not bill:
         raise ValueError("فاتورة المورد غير موجودة.")
     if bill["journal_entry_id"] is not None or bill["status"] == "posted":
@@ -1884,7 +1885,7 @@ def post_supplier_bill(c, bill_id, actor_id):
             "والأصناف المصروفة حتى لا تختلف تكلفة المخزون عن الأستاذ. استخدم 100% أو أجّل الترحيل."
         )
     if bill["bill_kind"] == "inventory":
-        receipt_rows = c.execute("""SELECT x.receipt_id,x.matched_amount,r.supplier_id,r.status
+        receipt_rows = execute_compat(c, """SELECT x.receipt_id,x.matched_amount,r.supplier_id,r.status
             FROM supplier_bill_receipts x JOIN goods_receipts r ON r.id=x.receipt_id
             WHERE x.bill_id=? ORDER BY x.receipt_id""", (bill_id,)).fetchall()
         if not receipt_rows:
@@ -1936,7 +1937,7 @@ def post_supplier_bill(c, bill_id, actor_id):
             )
     elif bill["bill_kind"] == "expense":
         expense_id = bill["expense_account_id"]
-        expense = c.execute("SELECT account_type,is_group,active FROM accounts WHERE id=?", (expense_id,)).fetchone()
+        expense = execute_compat(c, "SELECT account_type,is_group,active FROM accounts WHERE id=?", (expense_id,)).fetchone()
         if not expense or expense["account_type"] != "expense" or expense["is_group"] or not expense["active"]:
             raise ValueError("حساب مصروف الفاتورة غير صالح أو غير نشط.")
         journal_lines.extend([
@@ -1944,9 +1945,9 @@ def post_supplier_bill(c, bill_id, actor_id):
             (ap, 0, subtotal, "إثبات المورد قبل الضريبة"),
         ])
     elif bill["bill_kind"] == "asset":
-        if c.execute("SELECT 1 FROM supplier_bill_receipts WHERE bill_id=? LIMIT 1", (bill_id,)).fetchone():
+        if execute_compat(c, "SELECT 1 FROM supplier_bill_receipts WHERE bill_id=? LIMIT 1", (bill_id,)).fetchone():
             raise ValueError("فاتورة الأصل الثابت لا يجوز ربطها بإيصالات استلام مخزني.")
-        asset_rows = c.execute("SELECT * FROM supplier_bill_asset_lines WHERE bill_id=? ORDER BY line_no",(bill_id,)).fetchall()
+        asset_rows = execute_compat(c, "SELECT * FROM supplier_bill_asset_lines WHERE bill_id=? ORDER BY line_no",(bill_id,)).fetchall()
         if asset_rows:
             line_total = money("0")
             remaining_non_deductible = non_deductible_tax
@@ -1960,7 +1961,7 @@ def post_supplier_bill(c, bill_id, actor_id):
                 cost = money(base_cost + allocated_non_deductible)
                 stored_cost = str(row["cost"]) if allocated_non_deductible == 0 else str(cost)
                 line_total = money(line_total + cost)
-                c.execute("UPDATE supplier_bill_asset_lines SET cost=? WHERE id=?", (stored_cost, row["id"]))
+                execute_compat(c, "UPDATE supplier_bill_asset_lines SET cost=? WHERE id=?", (stored_cost, row["id"]))
                 journal_lines.append((row["asset_account_id"],cost,0,
                     "رسملة الأصل " + row["asset_code"] + " - " + row["asset_name"] +
                     (" شامل الضريبة غير القابلة للخصم" if allocated_non_deductible else "")))
@@ -1987,13 +1988,13 @@ def post_supplier_bill(c, bill_id, actor_id):
     entry_no = bill["bill_no"]
     entry_id = create_journal(c, bill["bill_date"], entry_no,
         "فاتورة مورد " + bill["supplier_invoice_no"], journal_lines, actor_id, dimensions=dimensions)
-    updated = c.execute("""UPDATE supplier_bills SET journal_entry_id=?,status='posted'
+    updated = execute_compat(c, """UPDATE supplier_bills SET journal_entry_id=?,status='posted'
         WHERE id=? AND status='approved' AND journal_entry_id IS NULL""", (entry_id, bill_id))
     if updated.rowcount != 1:
         raise ValueError("تغيرت حالة فاتورة المورد أثناء الترحيل.")
     if bill["bill_kind"] == "asset":
         from fixed_assets import create_asset_from_supplier_bill
-        posted_bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+        posted_bill = execute_compat(c, "SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
         create_asset_from_supplier_bill(c, posted_bill, actor_id)
     return entry_id
 
@@ -2016,7 +2017,7 @@ def new_bill():
                 raise ValueError("رقم فاتورة المورد مطلوب.")
             begin_write_transaction(c)
             dimensions = validate_journal_dimensions(c, request.form)
-            if c.execute("SELECT 1 FROM supplier_bills WHERE supplier_id=? AND lower(trim(supplier_invoice_no))=lower(trim(?)) LIMIT 1",
+            if execute_compat(c, "SELECT 1 FROM supplier_bills WHERE supplier_id=? AND lower(trim(supplier_invoice_no))=lower(trim(?)) LIMIT 1",
                          (supplier,supplier_invoice_no)).fetchone():
                 raise ValueError("رقم فاتورة المورد مسجل بالفعل لهذا المورد.")
             bill_kind=request.form.get("bill_kind","inventory").strip()
@@ -2034,7 +2035,7 @@ def new_bill():
                 supplier_ap_account(c)
             if bill_kind=="expense":
                 expense_account_id=int(request.form.get("expense_account_id","0"))
-                expense_row=c.execute("SELECT account_type,is_group,active FROM accounts WHERE id=?",(expense_account_id,)).fetchone()
+                expense_row=execute_compat(c, "SELECT account_type,is_group,active FROM accounts WHERE id=?",(expense_account_id,)).fetchone()
                 if not expense_row or expense_row["account_type"]!="expense" or expense_row["is_group"] or not expense_row["active"]:
                     raise ValueError("اختر حساب مصروف تفصيليًا ونشطًا.")
                 if receipts:
@@ -2074,7 +2075,7 @@ def new_bill():
                  asset_data.get("asset_accum_account_id"),asset_data.get("asset_expense_account_id")))
             if bill_kind == "asset":
                 for line_no, line in enumerate(asset_lines, 1):
-                    c.execute("""INSERT INTO supplier_bill_asset_lines(
+                    execute_compat(c, """INSERT INTO supplier_bill_asset_lines(
                         bill_id,line_no,asset_code,asset_name,asset_category,cost,ready_date,
                         residual_value,useful_life_months,depreciation_method,annual_rate,
                         asset_account_id,accum_account_id,expense_account_id
@@ -2084,10 +2085,10 @@ def new_bill():
                      line["asset_depreciation_method"],line["asset_annual_rate"],line["asset_account_id"],
                      line["asset_accum_account_id"],line["asset_expense_account_id"]))
             for rid,amt in receipt_allocations:
-                c.execute("INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
+                execute_compat(c, "INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES(?,?,?)",
                           (bid,rid,str(amt)))
             for line_no, line in enumerate(inventory_lines, 1):
-                c.execute("""INSERT INTO supplier_bill_inventory_lines(
+                execute_compat(c, """INSERT INTO supplier_bill_inventory_lines(
                     bill_id,line_no,receipt_line_id,product_id,billed_quantity,invoice_unit_price,line_total
                 ) VALUES(?,?,?,?,?,?,?)""",
                 (bid,line_no,line["receipt_line_id"],line["product_id"],str(line["quantity"]),
@@ -2099,9 +2100,9 @@ def new_bill():
             return redirect(url_for("purchase.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
             c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
-    su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
-    expense_accounts=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code").fetchall()
-    asset_accounts=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=0 AND active=1 ORDER BY code").fetchall()
+    su=execute_compat(c, "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
+    expense_accounts=execute_compat(c, "SELECT id,code,name_ar FROM accounts WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code").fetchall()
+    asset_accounts=execute_compat(c, "SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=0 AND active=1 ORDER BY code").fetchall()
     receipts = _available_supplier_receipts(c, None)
     receipt_lines = _supplier_receipt_line_rows(c, [row["id"] for row in receipts])
     dimension_options=active_dimension_options(c)
@@ -2114,7 +2115,7 @@ def new_bill():
 @require("purchases.manage")
 def edit_bill(bill_id):
     c = db()
-    bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+    bill = execute_compat(c, "SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
     if not bill:
         c.close()
         from flask import abort
@@ -2149,11 +2150,11 @@ def edit_bill(bill_id):
                 raise ValueError("نوع فاتورة المورد غير صحيح.")
 
             begin_write_transaction(c)
-            current = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+            current = execute_compat(c, "SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
             if not current or current["status"] not in {"draft", "rejected"} or current["journal_entry_id"] is not None:
                 raise ValueError("تغيرت حالة الفاتورة؛ لا يمكن تعديلها الآن.")
             dimensions = validate_journal_dimensions(c, request.form)
-            duplicate = c.execute("""SELECT 1 FROM supplier_bills
+            duplicate = execute_compat(c, """SELECT 1 FROM supplier_bills
                 WHERE supplier_id=? AND lower(trim(supplier_invoice_no))=lower(trim(?)) AND id<>? LIMIT 1""",
                 (supplier, supplier_invoice_no, bill_id)).fetchone()
             if duplicate:
@@ -2163,7 +2164,7 @@ def edit_bill(bill_id):
             asset_data = {}
             if bill_kind == "expense":
                 expense_account_id = int(request.form.get("expense_account_id", "0"))
-                expense_row = c.execute("""SELECT account_type,is_group,active FROM accounts WHERE id=?""",
+                expense_row = execute_compat(c, """SELECT account_type,is_group,active FROM accounts WHERE id=?""",
                                         (expense_account_id,)).fetchone()
                 if not expense_row or expense_row["account_type"] != "expense" or expense_row["is_group"] or not expense_row["active"]:
                     raise ValueError("اختر حساب مصروف تفصيليًا ونشطًا.")
@@ -2195,7 +2196,7 @@ def edit_bill(bill_id):
                 ensure_detail_account(c, _activity_tax_roles(c)["input_vat"],
                                       "ضريبة مدخلات قابلة للخصم", "asset", "1100")
 
-            updated = c.execute("""UPDATE supplier_bills SET supplier_id=?,bill_date=?,due_date=?,
+            updated = execute_compat(c, """UPDATE supplier_bills SET supplier_id=?,bill_date=?,due_date=?,
                 supplier_invoice_no=?,subtotal=?,tax_rate=?,tax_amount=?,total_amount=?,input_vat_deductible_percent=?,
                 branch_id=?,cost_center_id=?,project_id=?,bill_kind=?,expense_account_id=?,
                 asset_code=?,asset_name=?,asset_category=?,asset_ready_date=?,asset_residual_value=?,
@@ -2214,10 +2215,10 @@ def edit_bill(bill_id):
                  asset_data.get("asset_accum_account_id"),asset_data.get("asset_expense_account_id"),bill_id))
             if updated.rowcount != 1:
                 raise ValueError("لم يتم تحديث الفاتورة؛ أعد تحميل الصفحة.")
-            c.execute("DELETE FROM supplier_bill_asset_lines WHERE bill_id=?", (bill_id,))
+            execute_compat(c, "DELETE FROM supplier_bill_asset_lines WHERE bill_id=?", (bill_id,))
             if bill_kind == "asset":
                 for line_no, line in enumerate(asset_lines, 1):
-                    c.execute("""INSERT INTO supplier_bill_asset_lines(
+                    execute_compat(c, """INSERT INTO supplier_bill_asset_lines(
                         bill_id,line_no,asset_code,asset_name,asset_category,cost,ready_date,
                         residual_value,useful_life_months,depreciation_method,annual_rate,
                         asset_account_id,accum_account_id,expense_account_id
@@ -2226,13 +2227,13 @@ def edit_bill(bill_id):
                      line["asset_ready_date"],line["asset_residual_value"],line["asset_useful_life_months"],
                      line["asset_depreciation_method"],line["asset_annual_rate"],line["asset_account_id"],
                      line["asset_accum_account_id"],line["asset_expense_account_id"]))
-            c.execute("DELETE FROM supplier_bill_inventory_lines WHERE bill_id=?", (bill_id,))
-            c.execute("DELETE FROM supplier_bill_receipts WHERE bill_id=?", (bill_id,))
+            execute_compat(c, "DELETE FROM supplier_bill_inventory_lines WHERE bill_id=?", (bill_id,))
+            execute_compat(c, "DELETE FROM supplier_bill_receipts WHERE bill_id=?", (bill_id,))
             for receipt_id, amount in allocations:
-                c.execute("""INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount)
+                execute_compat(c, """INSERT INTO supplier_bill_receipts(bill_id,receipt_id,matched_amount)
                     VALUES(?,?,?)""", (bill_id, receipt_id, str(amount)))
             for line_no, line in enumerate(inventory_lines, 1):
-                c.execute("""INSERT INTO supplier_bill_inventory_lines(
+                execute_compat(c, """INSERT INTO supplier_bill_inventory_lines(
                     bill_id,line_no,receipt_line_id,product_id,billed_quantity,invoice_unit_price,line_total
                 ) VALUES(?,?,?,?,?,?,?)""",
                 (bill_id,line_no,line["receipt_line_id"],line["product_id"],str(line["quantity"]),
@@ -2243,24 +2244,24 @@ def edit_bill(bill_id):
         except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
             c.rollback()
             flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
-            bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+            bill = execute_compat(c, "SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
 
-    suppliers = c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
-    expense_accounts = c.execute("""SELECT id,code,name_ar FROM accounts
+    suppliers = execute_compat(c, "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
+    expense_accounts = execute_compat(c, """SELECT id,code,name_ar FROM accounts
         WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code""").fetchall()
-    asset_accounts = c.execute("""SELECT id,code,name_ar FROM accounts
+    asset_accounts = execute_compat(c, """SELECT id,code,name_ar FROM accounts
         WHERE account_type='asset' AND is_group=0 AND active=1 ORDER BY code""").fetchall()
     receipts = _available_supplier_receipts(c, bill["supplier_id"], exclude_bill_id=bill_id)
-    existing_allocations = {row["receipt_id"]: money(row["matched_amount"]) for row in c.execute(
+    existing_allocations = {row["receipt_id"]: money(row["matched_amount"]) for row in execute_compat(c, 
         "SELECT receipt_id,matched_amount FROM supplier_bill_receipts WHERE bill_id=?", (bill_id,)).fetchall()}
     selected_receipt_ids = set(existing_allocations)
     receipt_lines = _supplier_receipt_line_rows(c, [row["id"] for row in receipts])
     existing_invoice_lines = {
-        row["receipt_line_id"]: row for row in c.execute(
+        row["receipt_line_id"]: row for row in execute_compat(c, 
             "SELECT * FROM supplier_bill_inventory_lines WHERE bill_id=?", (bill_id,)
         ).fetchall()
     }
-    existing_asset_lines = c.execute("SELECT * FROM supplier_bill_asset_lines WHERE bill_id=? ORDER BY line_no",(bill_id,)).fetchall()
+    existing_asset_lines = execute_compat(c, "SELECT * FROM supplier_bill_asset_lines WHERE bill_id=? ORDER BY line_no",(bill_id,)).fetchall()
     dimension_options = active_dimension_options(c)
     c.close()
     return render_template("purchase_bill_new.html", suppliers=suppliers, receipts=receipts,
@@ -2328,17 +2329,17 @@ def post_bill(bill_id):
 @require("purchases.view")
 def bill_print(bill_id):
     c=db()
-    bill=c.execute("""SELECT b.*,s.code supplier_code,s.name supplier_name,s.tax_number supplier_tax_number
+    bill=execute_compat(c, """SELECT b.*,s.code supplier_code,s.name supplier_name,s.tax_number supplier_tax_number
       FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id WHERE b.id=?""",(bill_id,)).fetchone()
     if not bill:
         c.close(); from flask import abort; abort(404)
-    journal_lines=c.execute("""SELECT a.code,a.name_ar,jl.debit,jl.credit,jl.memo
+    journal_lines=execute_compat(c, """SELECT a.code,a.name_ar,jl.debit,jl.credit,jl.memo
       FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
       WHERE jl.entry_id=? ORDER BY jl.id""",(bill["journal_entry_id"],)).fetchall()
-    receipts=c.execute("""SELECT r.receipt_no,r.receipt_date,r.total_value
+    receipts=execute_compat(c, """SELECT r.receipt_no,r.receipt_date,r.total_value
       FROM supplier_bill_receipts x JOIN goods_receipts r ON r.id=x.receipt_id
       WHERE x.bill_id=? ORDER BY r.id""",(bill_id,)).fetchall()
-    settings={r["setting_key"]:r["setting_value"] for r in c.execute(
+    settings={r["setting_key"]:r["setting_value"] for r in execute_compat(c, 
       "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
       "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
     branch = None
@@ -2349,7 +2350,7 @@ def bill_print(bill_id):
             column if column in branch_columns else "'' AS " + column
             for column in ("address", "phone", "email", "tax_number")
         ]
-        branch = c.execute(
+        branch = execute_compat(c, 
             "SELECT code,name_ar," + ",".join(branch_fields) + " FROM branches WHERE id=?",
             (bill["branch_id"],),
         ).fetchone()
@@ -2360,14 +2361,14 @@ def bill_print(bill_id):
 
 def _supplier_bill_returnable_quantity(c, bill_id, product_id, warehouse_id):
     """Quantity invoiced on this bill for a product/warehouse, less posted prior returns."""
-    billed = c.execute("""
+    billed = execute_compat(c, """
         SELECT COALESCE(SUM(x.billed_quantity),'0') quantity
         FROM supplier_bill_inventory_lines x
         JOIN goods_receipt_lines gl ON gl.id=x.receipt_line_id
         JOIN goods_receipts gr ON gr.id=gl.receipt_id
         WHERE x.bill_id=? AND x.product_id=? AND gr.warehouse_id=?
     """, (bill_id, product_id, warehouse_id)).fetchone()
-    returned = c.execute("""
+    returned = execute_compat(c, """
         SELECT COALESCE(SUM(l.quantity),'0') quantity
         FROM supplier_credit_note_lines l
         JOIN supplier_credit_notes n ON n.id=l.credit_note_id
@@ -2555,7 +2556,7 @@ def new_credit_note():
             if not product_ids or not (len(product_ids)==len(warehouse_ids)==len(quantities)==len(uom_keys)):
                 raise ValueError("أضف صنفًا واحدًا على الأقل وحدد المخزن والكمية لكل صنف.")
             begin_write_transaction(c)
-            bill=c.execute("SELECT * FROM supplier_bills WHERE id=? AND supplier_id=? AND status='posted'",(bill_id,supplier)).fetchone()
+            bill=execute_compat(c, "SELECT * FROM supplier_bills WHERE id=? AND supplier_id=? AND status='posted'",(bill_id,supplier)).fetchone()
             if not bill:
                 raise ValueError("فاتورة المورد غير موجودة أو لا تتبع المورد المحدد.")
             dimensions = validate_journal_dimensions(c, {
@@ -2564,16 +2565,16 @@ def new_credit_note():
             })
             if request.form["credit_date"] < bill["bill_date"]:
                 raise ValueError("تاريخ إشعار الدائن لا يمكن أن يسبق تاريخ فاتورة المورد.")
-            if not c.execute("SELECT 1 FROM supplier_bill_receipts WHERE bill_id=? LIMIT 1",(bill_id,)).fetchone():
+            if not execute_compat(c, "SELECT 1 FROM supplier_bill_receipts WHERE bill_id=? LIMIT 1",(bill_id,)).fetchone():
                 raise ValueError("إشعار الدائن المخزني متاح فقط لفواتير الأصناف المرتبطة باستلام مشتريات، وليس فواتير المصروفات والخدمات.")
-            if c.execute("SELECT 1 FROM supplier_credit_notes WHERE supplier_id=? AND lower(trim(supplier_credit_no))=lower(trim(?))",(supplier,supplier_credit_no)).fetchone():
+            if execute_compat(c, "SELECT 1 FROM supplier_credit_notes WHERE supplier_id=? AND lower(trim(supplier_credit_no))=lower(trim(?))",(supplier,supplier_credit_no)).fetchone():
                 raise ValueError("رقم إشعار الدائن مسجل بالفعل لهذا المورد.")
             inventory_code=activity_inventory_code(c)
             if not inventory_code:
                 raise ValueError("النشاط الحالي لا يملك حساب مخزون معرفًا.")
             ap_id=supplier_ap_account(c)
             tax_rate=Decimal(bill["tax_rate"] or "0")
-            method_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
+            method_row=execute_compat(c, "SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
             method=method_row["setting_value"] if method_row else "average"
             line_data=[]; movement_ids=[]; subtotal=Decimal("0")
             remaining_returnable={}
@@ -2595,11 +2596,11 @@ def new_credit_note():
                         f"المتاح للمرتجع: {remaining_returnable[return_key]}."
                     )
                 remaining_returnable[return_key]-=qty
-                product=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(product_id,)).fetchone()
-                warehouse=c.execute("SELECT id FROM stock_warehouses WHERE id=? AND active=1",(warehouse_id,)).fetchone()
+                product=execute_compat(c, "SELECT * FROM stock_products WHERE id=? AND active=1",(product_id,)).fetchone()
+                warehouse=execute_compat(c, "SELECT id FROM stock_warehouses WHERE id=? AND active=1",(warehouse_id,)).fetchone()
                 if not product or product["product_type"]=="service" or not warehouse:
                     raise ValueError("اختر صنفًا مخزنيًا ومخزنًا نشطًا.")
-                belongs_to_bill=c.execute("""SELECT 1 FROM supplier_bill_receipts sb
+                belongs_to_bill=execute_compat(c, """SELECT 1 FROM supplier_bill_receipts sb
                   JOIN goods_receipts gr ON gr.id=sb.receipt_id
                   JOIN goods_receipt_lines gl ON gl.receipt_id=gr.id
                   WHERE sb.bill_id=? AND gl.product_id=? AND gr.warehouse_id=? LIMIT 1""",
@@ -2659,7 +2660,7 @@ def new_credit_note():
                    item["entered_uom_name"],str(item["conversion_factor"])))
 
                 for allocation in item["layer_allocations"]:
-                    c.execute("""INSERT INTO supplier_credit_note_layer_allocations(
+                    execute_compat(c, """INSERT INTO supplier_credit_note_layer_allocations(
                       credit_note_line_id,stock_movement_id,source_layer_id,lot_id,location_id,
                       quantity,unit_cost,total_cost) VALUES(?,?,?,?,?,?,?,?)""",
                       (credit_line_id,allocation["movement_id"],allocation["source_layer_id"],
@@ -2685,11 +2686,11 @@ def new_credit_note():
                 journal_lines.append((vat_id,0,tax,"عكس ضريبة المدخلات حسب إشعار المورد"))
             entry_id=create_journal(c,request.form["credit_date"],credit_no,
                 "إشعار دائن مشتريات — "+supplier_credit_no,journal_lines,session["user_id"],dimensions=dimensions)
-            c.execute("UPDATE supplier_credit_notes SET journal_entry_id=? WHERE id=?",(entry_id,note_id))
-            c.execute("UPDATE supplier_bills SET credited_amount=? WHERE id=?",
+            execute_compat(c, "UPDATE supplier_credit_notes SET journal_entry_id=? WHERE id=?",(entry_id,note_id))
+            execute_compat(c, "UPDATE supplier_bills SET credited_amount=? WHERE id=?",
                       (str(money(already_credited+total)),bill_id))
             for movement_id in movement_ids:
-                c.execute("UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?",(entry_id,movement_id))
+                execute_compat(c, "UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?",(entry_id,movement_id))
             c.commit()
             c.close()
             flash(f"تم ترحيل إشعار الدائن {credit_no} وربطه بالمخزون وفاتورة المورد.","success")
@@ -2697,15 +2698,15 @@ def new_credit_note():
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
             c.rollback()
             flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
-    suppliers=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
-    bills=c.execute("""SELECT b.id,b.bill_no,b.supplier_id,b.bill_date,b.total_amount,b.credited_amount,s.name supplier_name
+    suppliers=execute_compat(c, "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
+    bills=execute_compat(c, """SELECT b.id,b.bill_no,b.supplier_id,b.bill_date,b.total_amount,b.credited_amount,s.name supplier_name
       FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
       WHERE b.status='posted' AND EXISTS(SELECT 1 FROM supplier_bill_receipts sb WHERE sb.bill_id=b.id)
       ORDER BY b.bill_date DESC,b.id DESC""").fetchall()
     bills=[b for b in bills if Decimal(b["total_amount"])>Decimal(b["credited_amount"] or "0")]
-    products=c.execute("SELECT id,sku,name_ar,uom FROM stock_products WHERE active=1 AND product_type!='service' ORDER BY name_ar").fetchall()
+    products=execute_compat(c, "SELECT id,sku,name_ar,uom FROM stock_products WHERE active=1 AND product_type!='service' ORDER BY name_ar").fetchall()
     products=[dict(p,uom_options=([u for u in product_uom_options(c,p["id"]) if u.get("purchase_enabled",1)] or [{"id":"","name_ar":p["uom"],"is_base":1}])) for p in products]
-    warehouses=c.execute("SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
+    warehouses=execute_compat(c, "SELECT id,code,name_ar FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     c.close()
     return render_template("purchase_credit_note_new.html",suppliers=suppliers,bills=bills,products=products,warehouses=warehouses,today=date.today().isoformat())
 
@@ -2717,7 +2718,7 @@ def new_payment():
         try:
             supplier=int(request.form["supplier_id"]); amount=money(request.form["amount"]); cash=int(request.form["cash_account_id"])
             if amount<=0: raise ValueError("قيمة السداد يجب أن تكون أكبر من صفر.")
-            cash_row=c.execute("SELECT code,name_ar,account_type,is_group,active FROM accounts WHERE id=?",(cash,)).fetchone()
+            cash_row=execute_compat(c, "SELECT code,name_ar,account_type,is_group,active FROM accounts WHERE id=?",(cash,)).fetchone()
             cash_name=(cash_row["name_ar"] or "").lower() if cash_row else ""
             cash_codes={"1000","1110","1120","1121","1122"}
             cash_words=("صندوق","بنك","بنوك","مصرف","نقد","cash","bank")
@@ -2731,20 +2732,20 @@ def new_payment():
             payment_id=insert_and_get_id(c,"INSERT INTO supplier_payments(payment_no,supplier_id,payment_date,amount,cash_account_id,journal_entry_id,reference,created_by) VALUES(?,?,?,?,?,?,?,?)",
               (no,supplier,request.form["payment_date"],str(amount),cash,eid,request.form.get("reference",""),session["user_id"]))
             remaining=amount
-            bills=c.execute("""SELECT * FROM supplier_bills WHERE supplier_id=? AND status='posted' ORDER BY bill_date,id""",(supplier,)).fetchall()
+            bills=execute_compat(c, """SELECT * FROM supplier_bills WHERE supplier_id=? AND status='posted' ORDER BY bill_date,id""",(supplier,)).fetchall()
             bills=[b for b in bills if Decimal(b["total_amount"])>Decimal(b["paid_amount"] or "0")+Decimal(b["credited_amount"] or "0")]
             for b in bills:
                 due=money(Decimal(b["total_amount"])-Decimal(b["paid_amount"] or "0")-Decimal(b["credited_amount"] or "0")); alloc=min(due,remaining)
                 if alloc>0:
-                    c.execute("INSERT INTO supplier_payment_allocations(payment_id,bill_id,amount) VALUES(?,?,?)",(payment_id,b["id"],str(alloc)))
-                    c.execute("UPDATE supplier_bills SET paid_amount=? WHERE id=?",(str(money(Decimal(b["paid_amount"])+alloc)),b["id"]))
+                    execute_compat(c, "INSERT INTO supplier_payment_allocations(payment_id,bill_id,amount) VALUES(?,?,?)",(payment_id,b["id"],str(alloc)))
+                    execute_compat(c, "UPDATE supplier_bills SET paid_amount=? WHERE id=?",(str(money(Decimal(b["paid_amount"])+alloc)),b["id"]))
                     remaining-=alloc
                 if remaining<=0: break
             if remaining>0: raise ValueError("المبلغ أكبر من مديونية الفواتير المفتوحة؛ لا يتم تسجيل دفعة مقدمة تلقائيًا.")
             c.commit(); g.audit_created_record = ("supplier_payments", payment_id, "supplier_payment_allocations", "payment_id"); flash(f"تم تسجيل السداد {no} وتوزيعه على أقدم الفواتير.","success"); return redirect(url_for("purchase.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
-    su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
-    cash=c.execute("""SELECT * FROM accounts WHERE active=1 AND is_group=0 AND account_type='asset'
+    su=execute_compat(c, "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
+    cash=execute_compat(c, """SELECT * FROM accounts WHERE active=1 AND is_group=0 AND account_type='asset'
       AND (lower(name_ar) LIKE '%صندوق%' OR lower(name_ar) LIKE '%بنك%' OR lower(name_ar) LIKE '%نقد%' OR lower(name_ar) LIKE '%نقاط البيع%'
            OR code IN ('1000','1110','1120')) ORDER BY code""").fetchall()
     c.close(); return render_template("purchase_payment_new.html",suppliers=su,cash_accounts=cash,today=date.today().isoformat())
@@ -2754,7 +2755,7 @@ def new_payment():
 @require("purchases.view")
 def payment_print(payment_id):
     c = db()
-    payment = c.execute("""SELECT p.*,s.code supplier_code,s.name supplier_name,
+    payment = execute_compat(c, """SELECT p.*,s.code supplier_code,s.name supplier_name,
         a.code cash_code,a.name_ar cash_name FROM supplier_payments p
         JOIN suppliers s ON s.id=p.supplier_id
         JOIN accounts a ON a.id=p.cash_account_id WHERE p.id=?""", (payment_id,)).fetchone()
@@ -2762,10 +2763,10 @@ def payment_print(payment_id):
         c.close()
         from flask import abort
         abort(404)
-    allocations = c.execute("""SELECT b.bill_no,b.bill_date,a.amount
+    allocations = execute_compat(c, """SELECT b.bill_no,b.bill_date,a.amount
         FROM supplier_payment_allocations a JOIN supplier_bills b ON b.id=a.bill_id
         WHERE a.payment_id=? ORDER BY b.bill_date,b.id""", (payment_id,)).fetchall()
-    settings = {r["setting_key"]: r["setting_value"] for r in c.execute(
+    settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(c, 
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
         "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
     c.close()
