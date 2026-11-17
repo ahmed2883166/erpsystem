@@ -58,6 +58,22 @@ class StockValuationTests(unittest.TestCase):
         self.db.close()
         self.tmp.cleanup()
 
+    def test_legacy_reorder_threshold_backfill_preserves_tiny_decimal_values(self):
+        precise_minimum = "0.00000000000000000001"
+        self.db.execute(
+            "UPDATE stock_products SET min_qty=?,reorder_point='0',reorder_qty='0' WHERE id=?",
+            (precise_minimum, self.product_id),
+        )
+        self.db.commit()
+
+        stock.initialize_stock_schema()
+
+        setting = self.db.execute(
+            "SELECT min_qty FROM stock_warehouse_product_settings WHERE product_id=? AND warehouse_id=?",
+            (self.product_id, self.warehouse_id),
+        ).fetchone()
+        self.assertIsNotNone(setting)
+        self.assertEqual(setting["min_qty"], precise_minimum)
     def test_product_uom_options_reads_custom_code_column(self):
         unit=self.db.execute(
             "SELECT id,category_id FROM stock_uoms WHERE code='PCS'"
