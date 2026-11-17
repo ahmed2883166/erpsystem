@@ -112,12 +112,12 @@ def _latest_fx_date(c, kind, transaction_id):
 
 def _audit(c, action, details):
     if _table_exists(c, "audit_log"):
-        c.execute("INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
+        execute_compat(c, "INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
                   (session.get("user_id"), action, details))
 
 
 def _account(c, account_id):
-    row = c.execute("SELECT id,is_group,active FROM accounts WHERE id=?", (account_id,)).fetchone()
+    row = execute_compat(c, "SELECT id,is_group,active FROM accounts WHERE id=?", (account_id,)).fetchone()
     if not row or row["is_group"] or not row["active"]:
         raise ValueError("اختر حسابًا تفصيليًا ونشطًا من دليل الحسابات.")
     return row["id"]
@@ -130,7 +130,7 @@ def update_open_fx_balance(c, transaction_id, expected_balance, remaining_foreig
     stored_foreign = "0" if remaining == 0 else str(remaining)
     stored_base = "0.00" if D(remaining_base) == 0 else str(remaining_base)
     status = "settled" if remaining == 0 else "open"
-    updated = c.execute("""UPDATE fx_transactions
+    updated = execute_compat(c, """UPDATE fx_transactions
         SET balance_foreign=?,balance_base=?,status=?
         WHERE id=? AND status='open' AND balance_foreign=?""",
         (stored_foreign, stored_base, status, transaction_id, str(expected_balance))).rowcount
@@ -143,12 +143,12 @@ def _rate(c, currency, rate_date, supplied=None):
         rate = D(supplied)
         if rate <= 0:
             raise ValueError("سعر الصرف يجب أن يكون أكبر من صفر.")
-        c.execute("""INSERT INTO fx_exchange_rates(currency_code,rate_date,rate_to_base,created_by)
+        execute_compat(c, """INSERT INTO fx_exchange_rates(currency_code,rate_date,rate_to_base,created_by)
                      VALUES(?,?,?,?) ON CONFLICT(currency_code,rate_date)
                      DO UPDATE SET rate_to_base=excluded.rate_to_base,source='manual',created_by=excluded.created_by""",
                   (currency,rate_date,str(rate),session.get("user_id")))
         return rate
-    row = c.execute("SELECT rate_to_base FROM fx_exchange_rates WHERE currency_code=? AND rate_date<=? ORDER BY rate_date DESC LIMIT 1",
+    row = execute_compat(c, "SELECT rate_to_base FROM fx_exchange_rates WHERE currency_code=? AND rate_date<=? ORDER BY rate_date DESC LIMIT 1",
                     (currency,rate_date)).fetchone()
     if not row:
         raise ValueError("لا يوجد سعر صرف مسجل لهذه العملة في التاريخ المحدد.")
@@ -323,14 +323,8 @@ def revalue(transaction_id):
         revalue_date = date.fromisoformat(request.form["revaluation_date"]).isoformat()
         if revalue_date < t["transaction_date"]:
             raise ValueError("تاريخ إعادة التقييم لا يجوز أن يسبق تاريخ المعاملة.")
-        latest_settlement = c.execute(
-            "SELECT MAX(settlement_date) FROM fx_settlements WHERE transaction_id=?",
-            (transaction_id,),
-        ).fetchone()[0]
-        latest_revaluation = c.execute(
-            "SELECT MAX(revaluation_date) FROM fx_revaluations WHERE transaction_id=?",
-            (transaction_id,),
-        ).fetchone()[0]
+        latest_settlement = _latest_fx_date(c, "settlement", transaction_id)
+        latest_revaluation = _latest_fx_date(c, "revaluation", transaction_id)
         if latest_settlement and revalue_date < latest_settlement:
             raise ValueError("تاريخ إعادة التقييم يسبق آخر تسوية للمعاملة؛ راجع ترتيب التسويات وإعادة التقييم.")
         if latest_revaluation and revalue_date <= latest_revaluation:
