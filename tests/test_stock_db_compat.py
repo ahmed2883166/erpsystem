@@ -64,6 +64,12 @@ class StockMetadataPostgreSQLTests(unittest.TestCase):
                     conn.execute(f'CREATE SCHEMA "{schema}"')
                     conn.execute(f'SET LOCAL search_path TO "{schema}"')
                     conn.execute("""
+                        CREATE TABLE stock_warehouses (
+                            id BIGINT PRIMARY KEY
+                        )
+                    """)
+                    conn.execute("INSERT INTO stock_warehouses(id) VALUES (3)")
+                    conn.execute("""
                         CREATE TABLE stock_valuation_layers (
                             id BIGINT PRIMARY KEY,
                             product_id BIGINT NOT NULL,
