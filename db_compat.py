@@ -140,7 +140,7 @@ def _split_sql_statements(script):
                 state = "normal"
         elif state == "line_comment":
             current.append(char)
-            if char == "\\n":
+            if char == "\n":
                 state = "normal"
         elif state == "block_comment":
             current.append(char)
@@ -174,7 +174,7 @@ def _split_sql_statements(script):
                 state = "block_comment"
                 continue
             elif char == "$":
-                match = re.match(r"\\$[A-Za-z_][A-Za-z0-9_]*\\$|\\$\\$", script[i:])
+                match = re.match(r"\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$", script[i:])
                 if match:
                     dollar_tag = match.group(0)
                     current.append(dollar_tag)
