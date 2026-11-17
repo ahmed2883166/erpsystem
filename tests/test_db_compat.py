@@ -73,6 +73,8 @@ class _FakePsycopgConnection:
 
     def execute(self, statement):
         self.statements.append(statement)
+        if statement.strip().upper() == "BEGIN":
+            self.info.transaction_status = SimpleNamespace(name="INTRANS")
 
 
 class PortableTransactionStateTests(unittest.TestCase):
