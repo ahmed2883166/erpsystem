@@ -83,6 +83,7 @@ class StockReconciliationReportTests(unittest.TestCase):
         report = self.run_report()
         codes = {issue["code"] for issue in report["layer_integrity_issues"]}
         self.assertEqual(report["layer_integrity_issue_count"], 5)
+        self.assertEqual(report["reconciliation_status"], "review")
         self.assertTrue({
             "negative_quantity", "negative_value", "value_without_quantity",
             "remaining_exceeds_received", "source_product_mismatch",
