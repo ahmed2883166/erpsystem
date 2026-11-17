@@ -1,9 +1,7 @@
 """Shared NEXUS ERP posting, integrity checks, and operational reconciliation."""
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from datetime import datetime, date
-import sqlite3
-
-from db_compat import database_dialect, table_columns, table_exists
+from db_compat import database_dialect, table_columns, table_exists, DB_ERROR
 from db_insert import insert_one_returning_id
 from db_sql import execute_compat, executemany_compat
 
@@ -44,8 +42,7 @@ def _decimal_sum_expression(connection, expression):
 
 def safe_error_message(exc, fallback="تعذر إتمام العملية بسبب خطأ في البيانات. لم يتم حفظ أي تغييرات."):
     """Keep raw SQLite/SQL details out of user-facing flash messages."""
-    if (isinstance(exc, sqlite3.Error) or
-            type(exc).__module__.split(".", 1)[0] == "psycopg"):
+    if isinstance(exc, DB_ERROR):
         return fallback
     return str(exc)
 
