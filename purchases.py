@@ -1596,12 +1596,19 @@ def _supplier_grni_price_variance_lines(c, receipt_rows, discount_amount, matche
     posting = _activity_posting_accounts(c)
     default_inventory = posting.get("purchase_inventory")
     default_cogs = posting.get("cogs")
+    # Price-discount posting rewrites remaining valuation layers. Lock every
+    # affected warehouse in a stable order before reading any layer so it
+    # serializes with issues, transfers, receipts and stocktakes on PostgreSQL.
+    receipt_headers = [
+        execute_compat(c, "SELECT receipt_no,warehouse_id FROM goods_receipts WHERE id=?",
+                       (receipt["receipt_id"],)).fetchone()
+        for receipt in receipt_rows
+    ]
+    if any(header is None for header in receipt_headers):
+        raise ValueError("إيصال GRNI غير موجود أثناء تسوية فرق السعر.")
+    lock_stock_warehouses(c, *(header["warehouse_id"] for header in receipt_headers))
     source_lines = []
-    for receipt in receipt_rows:
-        header = execute_compat(c, 
-            "SELECT receipt_no,warehouse_id FROM goods_receipts WHERE id=?",
-            (receipt["receipt_id"],),
-        ).fetchone()
+    for receipt, header in zip(receipt_rows, receipt_headers):
         if not header:
             raise ValueError("إيصال GRNI غير موجود أثناء تسوية فرق السعر.")
         receipt_lines = execute_compat(c, 
