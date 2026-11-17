@@ -315,8 +315,9 @@ def execute_script(connection, script):
     if database_dialect(connection) == "sqlite":
         connection.executescript(script)
         return
+    from db_sql import adapt_sql_for_postgresql
     for statement in _split_sql_statements(str(script)):
-        connection.execute(statement)
+        connection.execute(adapt_sql_for_postgresql(statement))
 
 
 def begin_write_transaction(connection):
