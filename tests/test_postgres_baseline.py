@@ -80,6 +80,31 @@ class PostgreSQLBaselineIntegrationTests(unittest.TestCase):
             2,
         )
 
+    def test_refuses_existing_function_even_when_schema_has_no_relations(self):
+        self.connection.execute(f'CREATE SCHEMA "{self.schema}"')
+        self.connection.execute(
+            f'CREATE FUNCTION "{self.schema}".preexisting_function() '
+            "RETURNS integer LANGUAGE SQL AS 'SELECT 1'"
+        )
+        with self.assertRaisesRegex(RuntimeError, "is not empty"):
+            install_postgres_baseline(
+                self.connection,
+                "BEGIN; CREATE TABLE should_not_exist (id BIGINT); COMMIT;",
+                schema=self.schema,
+            )
+        self.assertIsNotNone(
+            self.connection.execute(
+                "SELECT to_regprocedure(%s) AS function",
+                (self.schema + ".preexisting_function()",),
+            ).fetchone()["function"]
+        )
+        self.assertIsNone(
+            self.connection.execute(
+                "SELECT to_regclass(%s) AS relation",
+                (self.schema + ".should_not_exist",),
+            ).fetchone()["relation"]
+        )
+
     def test_refuses_non_empty_schema_without_modifying_it(self):
         self.connection.execute(f'CREATE SCHEMA "{self.schema}"')
         self.connection.execute(f'CREATE TABLE "{self.schema}".keep_me (id BIGINT)')

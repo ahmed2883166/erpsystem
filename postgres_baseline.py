@@ -71,15 +71,52 @@ def install_postgres_baseline(connection, baseline_sql: str, *, schema: str = "n
         connection.execute(f"SET search_path TO {quoted_schema}")
         existing = connection.execute(
             """
-            SELECT COUNT(*) AS relation_count
-              FROM pg_catalog.pg_class c
-              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-             WHERE n.nspname = %s
-               AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+            SELECT COUNT(*) AS object_count
+              FROM (
+                    SELECT c.oid
+                      FROM pg_catalog.pg_class c
+                      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                     WHERE n.nspname = %s
+                    UNION ALL
+                    SELECT p.oid
+                      FROM pg_catalog.pg_proc p
+                      JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+                     WHERE n.nspname = %s
+                    UNION ALL
+                    SELECT t.oid
+                      FROM pg_catalog.pg_type t
+                      JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+                     WHERE n.nspname = %s
+                    UNION ALL
+                    SELECT c.oid
+                      FROM pg_catalog.pg_collation c
+                      JOIN pg_catalog.pg_namespace n ON n.oid = c.collnamespace
+                     WHERE n.nspname = %s
+                    UNION ALL
+                    SELECT c.oid
+                      FROM pg_catalog.pg_conversion c
+                      JOIN pg_catalog.pg_namespace n ON n.oid = c.connamespace
+                     WHERE n.nspname = %s
+                    UNION ALL
+                    SELECT o.oid
+                      FROM pg_catalog.pg_operator o
+                      JOIN pg_catalog.pg_namespace n ON n.oid = o.oprnamespace
+                     WHERE n.nspname = %s
+                    UNION ALL
+                    SELECT o.oid
+                      FROM pg_catalog.pg_opclass o
+                      JOIN pg_catalog.pg_namespace n ON n.oid = o.opcnamespace
+                     WHERE n.nspname = %s
+                    UNION ALL
+                    SELECT o.oid
+                      FROM pg_catalog.pg_opfamily o
+                      JOIN pg_catalog.pg_namespace n ON n.oid = o.opfnamespace
+                     WHERE n.nspname = %s
+              ) schema_objects
             """,
-            (schema,),
+            (schema,) * 8,
         ).fetchone()
-        count = existing["relation_count"] if isinstance(existing, dict) else existing[0]
+        count = existing["object_count"] if isinstance(existing, dict) else existing[0]
         if int(count) != 0:
             raise RuntimeError(
                 f"Refusing to install PostgreSQL baseline: schema {schema!r} is not empty."
