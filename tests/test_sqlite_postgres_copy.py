@@ -8,6 +8,8 @@ from scripts.verify_sqlite_postgres_copy import (
     _missing_control_columns,
     _journal_entry_key,
     _inventory_valuation_required,
+    _sqlite_foreign_key_map,
+    _foreign_key_differences,
     _sqlite_grouped_sum,
     _verification_passed,
     verify_copy,
@@ -123,6 +125,40 @@ class SQLitePostgresVerifierUnitTests(unittest.TestCase):
         )
         self.assertEqual(source_missing, ["customer_id"])
         self.assertEqual(target_missing, ["entry_id"])
+
+    def test_sqlite_foreign_key_map_preserves_composite_order_and_actions(self):
+        import sqlite3
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.executescript("""
+                CREATE TABLE parent (a INTEGER, b INTEGER, PRIMARY KEY(a,b));
+                CREATE TABLE child (
+                    x INTEGER, y INTEGER,
+                    FOREIGN KEY(x,y) REFERENCES parent(a,b)
+                    ON UPDATE CASCADE ON DELETE RESTRICT
+                );
+            """)
+            mapped = _sqlite_foreign_key_map(conn, ["child", "parent"])
+            self.assertEqual(mapped, [
+                ("child", ("x", "y"), "parent", ("a", "b"), "CASCADE", "RESTRICT")
+            ])
+        finally:
+            conn.close()
+
+    def test_foreign_key_comparison_detects_missing_and_extra_relations(self):
+        source = [
+            ("child", ("parent_id",), "parent", ("id",), "NO ACTION", "CASCADE"),
+            ("line", ("entry_id",), "entry", ("id",), "NO ACTION", "NO ACTION"),
+        ]
+        target = [
+            ("child", ("parent_id",), "parent", ("id",), "NO ACTION", "CASCADE"),
+            ("line", ("wrong_id",), "entry", ("id",), "NO ACTION", "NO ACTION"),
+            ("extra", ("x_id",), "x", ("id",), "NO ACTION", "NO ACTION"),
+        ]
+        missing, extra = _foreign_key_differences(source, target)
+        self.assertEqual(missing, [source[1]])
+        self.assertEqual(extra, [target[1], target[2]])
 
     def test_inventory_valuation_is_required_when_inventory_is_present(self):
         self.assertTrue(_inventory_valuation_required({"stock_products", "stock_movements"}))

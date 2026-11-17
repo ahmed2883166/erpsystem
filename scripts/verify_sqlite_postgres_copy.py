@@ -101,6 +101,85 @@ def _inventory_valuation_required(source_tables):
     return bool(set(source_tables) & inventory_core)
 
 
+def _sqlite_foreign_key_map(conn, tables):
+    """Return normalized FK definitions, preserving composite-key column order."""
+    result = []
+    for table in sorted(tables):
+        quoted = '"' + table.replace('"', '""') + '"'
+        rows = conn.execute(f"PRAGMA foreign_key_list({quoted})").fetchall()
+        grouped = {}
+        for row in rows:
+            grouped.setdefault(row["id"], []).append(row)
+        for key in sorted(grouped):
+            parts = sorted(grouped[key], key=lambda item: item["seq"])
+            result.append((
+                table,
+                tuple(item["from"] for item in parts),
+                parts[0]["table"],
+                tuple(item["to"] for item in parts),
+                str(parts[0]["on_update"]).upper(),
+                str(parts[0]["on_delete"]).upper(),
+            ))
+    return sorted(result)
+
+
+def _pg_foreign_key_map(conn, schema):
+    """Read PostgreSQL FK definitions in a normalized, comparable shape."""
+    rows = conn.execute(
+        """
+        SELECT tc.table_name, kcu.column_name,
+               ccu.table_name AS foreign_table_name,
+               ccu.column_name AS foreign_column_name,
+               rc.update_rule, rc.delete_rule,
+               kcu.ordinal_position, tc.constraint_name
+          FROM information_schema.table_constraints tc
+          JOIN information_schema.key_column_usage kcu
+            ON kcu.constraint_catalog = tc.constraint_catalog
+           AND kcu.constraint_schema = tc.constraint_schema
+           AND kcu.constraint_name = tc.constraint_name
+           AND kcu.table_name = tc.table_name
+          JOIN information_schema.constraint_column_usage ccu
+            ON ccu.constraint_catalog = tc.constraint_catalog
+           AND ccu.constraint_schema = tc.constraint_schema
+           AND ccu.constraint_name = tc.constraint_name
+          JOIN information_schema.referential_constraints rc
+            ON rc.constraint_catalog = tc.constraint_catalog
+           AND rc.constraint_schema = tc.constraint_schema
+           AND rc.constraint_name = tc.constraint_name
+         WHERE tc.constraint_schema = %s
+           AND tc.constraint_type = 'FOREIGN KEY'
+         ORDER BY tc.table_name, tc.constraint_name, kcu.ordinal_position
+        """,
+        (schema,),
+    ).fetchall()
+    grouped = {}
+    for row in rows:
+        key = (row["table_name"], row["constraint_name"])
+        grouped.setdefault(key, []).append(row)
+    result = []
+    for (table, _), parts in grouped.items():
+        parts.sort(key=lambda item: item["ordinal_position"])
+        result.append((
+            table,
+            tuple(item["column_name"] for item in parts),
+            parts[0]["foreign_table_name"],
+            tuple(item["foreign_column_name"] for item in parts),
+            str(parts[0]["update_rule"]).upper(),
+            str(parts[0]["delete_rule"]).upper(),
+        ))
+    return sorted(result)
+
+
+def _foreign_key_differences(source, target):
+    """Report missing and unexpected FK relationships without hiding duplicates."""
+    from collections import Counter
+    source_counts = Counter(source)
+    target_counts = Counter(target)
+    missing = list((source_counts - target_counts).elements())
+    extra = list((target_counts - source_counts).elements())
+    return sorted(missing), sorted(extra)
+
+
 def _verification_passed(issues, controls_skipped, row_counts, source_tables):
     """A copy cannot pass while any required financial control was skipped."""
     return (
@@ -190,6 +269,17 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
 
         controls = []
         controls_skipped = []
+        sqlite_fks = _sqlite_foreign_key_map(src, source_tables)
+        postgres_fks = _pg_foreign_key_map(dst, schema)
+        missing_fks, extra_fks = _foreign_key_differences(sqlite_fks, postgres_fks)
+        if missing_fks or extra_fks:
+            issues.append({
+                "control": "foreign_key_coverage",
+                "missing_in_postgres": [list(item) for item in missing_fks[:200]],
+                "extra_in_postgres": [list(item) for item in extra_fks[:200]],
+                "source_count": len(sqlite_fks),
+                "target_count": len(postgres_fks),
+            })
         def compare_control(table, amount, groups, label):
             if table not in source_tables or table not in target_tables:
                 controls_skipped.append({
