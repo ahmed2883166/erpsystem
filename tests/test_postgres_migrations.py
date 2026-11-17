@@ -5,6 +5,7 @@ application schema or a company database.
 """
 import hashlib
 import os
+from decimal import Decimal
 import tempfile
 import unittest
 import uuid
@@ -494,7 +495,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
             f"SELECT unit_cost FROM {schema}.stock_movements WHERE id=%s",
             (movement_id,),
         ).fetchone()["unit_cost"]
-        self.assertEqual(str(amount), "12.345678")
+        self.assertEqual(Decimal(str(amount)), Decimal("12.345678"))
         layer_id = self.connection.execute(
             f"INSERT INTO {schema}.stock_valuation_layers(product_id,warehouse_id,source_movement_id,"
             "qty_in,qty_remaining,unit_cost) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
@@ -504,7 +505,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
             f"SELECT value_remaining FROM {schema}.stock_valuation_layers WHERE id=%s",
             (layer_id,),
         ).fetchone()["value_remaining"]
-        self.assertEqual(str(layer_value), "26.23456575")
+        self.assertEqual(Decimal(str(layer_value)), Decimal("26.23456575"))
         # Keep the valid fixture rows while testing each rejected insert in isolation.
         self.connection.commit()
 
