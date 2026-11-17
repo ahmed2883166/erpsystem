@@ -299,6 +299,7 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
                 {"name": "audit_log_block_delete", "table_name": "audit_log"},
                 {"name": "trg_dashboard_version_accounts_insert", "table_name": "accounts"},
                 {"name": "trg_stock_product_locations_same_wh_insert", "table_name": "stock_product_locations"},
+                {"name": "trg_stock_locations_prevent_default_deactivation", "table_name": "stock_locations"},
             ],
         }
         ddl, review = generate_postgres_ddl(
@@ -312,10 +313,13 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         self.assertIn('CREATE UNIQUE INDEX "uq_parent_code_nocase" ON "parent" (lower("code"));', ddl)
         self.assertEqual(review["table_count"], 5)
         self.assertEqual(review["foreign_key_count"], 1)
-        self.assertEqual(review["trigger_count"], 3)
+        self.assertEqual(review["trigger_count"], 4)
         self.assertIn('CREATE TRIGGER "audit_log_block_delete" BEFORE DELETE', ddl)
         self.assertIn("EXECUTE FUNCTION nexus_bump_dashboard_version()", ddl)
         self.assertIn("RAISE EXCEPTION 'موقع الصنف الافتراضي", ddl)
+        self.assertIn("nexus_prevent_default_stock_location_deactivation()", ddl)
+        self.assertIn("BEFORE UPDATE OF active ON stock_locations", ddl)
+        self.assertIn("p.location_id = OLD.id", ddl)
         self.assertIn("child.amount", review["text_numeric_candidates"])
 
     def test_rejects_untranslated_views_instead_of_silently_omitting_them(self):
