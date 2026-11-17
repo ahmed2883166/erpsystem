@@ -14,7 +14,7 @@ class SQLiteDecimalAggregationCompatibilityTests(unittest.TestCase):
         try:
             register_decimal_aggregates(connection)
             connection.execute("CREATE TABLE values_to_sum(kind TEXT, amount TEXT)")
-            connection.executemany(
+            connection.cursor().executemany(
                 "INSERT INTO values_to_sum VALUES(?,?)",
                 [("debit", "0.10"), ("debit", "0.20"), ("credit", "0.30")],
             )
@@ -47,7 +47,7 @@ class PostgreSQLDecimalAggregationCompatibilityTests(unittest.TestCase):
                 connection.execute(
                     "CREATE TABLE values_to_sum(kind TEXT, amount TEXT)"
                 )
-                connection.executemany(
+                connection.cursor().executemany(
                     "INSERT INTO values_to_sum VALUES(%s,%s)",
                     [("debit", "0.10"), ("debit", "0.20"), ("credit", "0.30")],
                 )
