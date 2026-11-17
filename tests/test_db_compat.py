@@ -13,6 +13,7 @@ from db_compat import (
     begin_write_transaction,
     transaction_is_active,
     insert_and_get_id,
+    execute_script,
 )
 
 
@@ -81,6 +82,46 @@ class _FakePsycopgConnection:
         self.statements.append(statement)
         if statement.strip().upper() == "BEGIN":
             self.info.transaction_status = SimpleNamespace(name="INTRANS")
+
+
+class PortableScriptExecutionTests(unittest.TestCase):
+    def test_sqlite_script_uses_native_execution(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            execute_script(connection, """
+                CREATE TABLE script_probe (id INTEGER PRIMARY KEY, label TEXT);
+                INSERT INTO script_probe(label) VALUES('a;b');
+            """)
+            self.assertEqual(
+                connection.execute("SELECT label FROM script_probe").fetchone()[0],
+                "a;b",
+            )
+        finally:
+            connection.close()
+
+    def test_postgresql_script_splits_only_statement_delimiters(self):
+        connection = _FakePsycopgConnection("IDLE")
+        execute_script(connection, """
+            -- leading comment with ; delimiter
+            CREATE TABLE script_probe (id BIGINT, label TEXT);
+            INSERT INTO script_probe(label) VALUES('a;b');
+            /* a block comment ; */
+            DO $nexus$
+            BEGIN
+                PERFORM 1;
+            END
+            $nexus$;
+        """)
+        self.assertEqual(len(connection.statements), 3)
+        self.assertIn("CREATE TABLE script_probe", connection.statements[0])
+        self.assertIn("'a;b'", connection.statements[1])
+        self.assertIn("PERFORM 1;", connection.statements[2])
+
+    def test_postgresql_script_rejects_unterminated_quotes(self):
+        connection = _FakePsycopgConnection("IDLE")
+        with self.assertRaises(ValueError):
+            execute_script(connection, "INSERT INTO probe(label) VALUES('unfinished)")
+        self.assertEqual(connection.statements, [])
 
 
 class PortableTransactionStateTests(unittest.TestCase):
