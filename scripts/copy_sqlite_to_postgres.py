@@ -146,12 +146,13 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
         raise RuntimeError("Install psycopg[binary]>=3.2,<4.0 first.") from exc
 
     src = open_sqlite_readonly(sqlite_path)
-    # Pin one read snapshot for the entire copy so concurrent application writes
-    # cannot produce a cross-table mixture of different source moments.
-    src.execute("BEGIN")
-    dst = psycopg.connect(postgres_dsn, connect_timeout=10, autocommit=False,
-                          row_factory=dict_row)
+    dst = None
     try:
+        # Pin one read snapshot for the entire copy so concurrent application
+        # writes cannot produce a cross-table mixture of different source moments.
+        src.execute("BEGIN")
+        dst = psycopg.connect(postgres_dsn, connect_timeout=10, autocommit=False,
+                              row_factory=dict_row)
         integrity = [r[0] for r in src.execute("PRAGMA integrity_check")]
         if integrity != ["ok"]:
             raise ValueError("SQLite integrity_check failed; source copy is blocked.")
@@ -180,6 +181,8 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
 
         qschema = quote_ident(schema)
         try:
+            # PostgreSQL transaction characteristics must be set before
+            # any other statement starts the implicit transaction.
             dst.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
             dst.execute("SET LOCAL search_path TO " + qschema)
             target_tables = {
@@ -295,7 +298,8 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
             raise
     finally:
         src.close()
-        dst.close()
+        if dst is not None:
+            dst.close()
 
 
 def main(argv=None) -> int:
