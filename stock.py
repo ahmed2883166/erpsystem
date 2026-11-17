@@ -1501,12 +1501,8 @@ def build_demand_replenishment_forecast(conn, warehouse_totals, product_lookup, 
     existing_tables = {name for name in required_tables if _table_exists(conn, name)}
     if not set(required_tables).issubset(existing_tables):
         return [], False
-    invoice_columns = {
-        row["name"] for row in conn.execute("PRAGMA table_info(sales_invoice_lines)")
-    }
-    credit_columns = {
-        row["name"] for row in conn.execute("PRAGMA table_info(sales_credit_note_lines)")
-    }
+    invoice_columns = _columns(conn, "sales_invoice_lines")
+    credit_columns = _columns(conn, "sales_credit_note_lines")
     if not {"product_id", "quantity", "invoice_id"}.issubset(invoice_columns):
         return [], False
     if not {"product_id", "quantity", "credit_note_id"}.issubset(credit_columns):
