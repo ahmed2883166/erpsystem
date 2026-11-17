@@ -382,11 +382,12 @@ def initialize_workforce_schema():
     CREATE INDEX IF NOT EXISTS idx_eos_payments_settlement
       ON employee_end_of_service_payments(settlement_id,payment_date,id);
     """)
-    c.execute("""INSERT OR IGNORE INTO employee_pay_item_catalog(name,item_type)
-        SELECT DISTINCT item_name,item_type FROM employee_pay_items WHERE trim(item_name)<>''""")
-    c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('annual','إجازة سنوية',1,1)")
-    c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('unpaid','إجازة بدون أجر',0,0)")
-    c.execute("INSERT OR IGNORE INTO leave_types(code,name,is_paid,requires_balance) VALUES('sick','إجازة مرضية',1,0)")
+    c.execute("""INSERT INTO employee_pay_item_catalog(name,item_type)
+        SELECT DISTINCT item_name,item_type FROM employee_pay_items WHERE trim(item_name)<>''
+        ON CONFLICT DO NOTHING""")
+    c.execute("INSERT INTO leave_types(code,name,is_paid,requires_balance) VALUES('annual','إجازة سنوية',1,1) ON CONFLICT DO NOTHING")
+    c.execute("INSERT INTO leave_types(code,name,is_paid,requires_balance) VALUES('unpaid','إجازة بدون أجر',0,0) ON CONFLICT DO NOTHING")
+    c.execute("INSERT INTO leave_types(code,name,is_paid,requires_balance) VALUES('sick','إجازة مرضية',1,0) ON CONFLICT DO NOTHING")
     attendance_sql = c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='attendance_records'").fetchone()
     if attendance_sql and "'annual_leave'" not in (attendance_sql["sql"] or ""):
         c.execute("PRAGMA foreign_keys=OFF")
@@ -1287,7 +1288,7 @@ def pay_items():
                 raise ValueError("بعض الموظفين المختارين غير نشطين أو غير موجودين.")
             begin_write_transaction(c)
             if not catalog_id:
-                c.execute("INSERT OR IGNORE INTO employee_pay_item_catalog(name,item_type) VALUES(?,?)",
+                c.execute("INSERT INTO employee_pay_item_catalog(name,item_type) VALUES(?,?) ON CONFLICT DO NOTHING",
                           (item_name,item_type))
             created_count = 0
             updated_count = 0
