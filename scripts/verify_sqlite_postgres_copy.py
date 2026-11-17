@@ -85,6 +85,16 @@ def _missing_control_columns(required, source_available, target_available):
     return source_missing, target_missing
 
 
+def _journal_entry_key(columns):
+    """Identify the journal-line FK needed for per-entry control totals."""
+    available = set(columns)
+    return next(
+        (name for name in ("journal_entry_id", "entry_id", "journal_id")
+         if name in available),
+        None,
+    )
+
+
 def _verification_passed(issues, controls_skipped, row_counts, source_tables):
     """A copy cannot pass while any required financial control was skipped."""
     return (
@@ -207,11 +217,7 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
             # migration that preserves grand totals but assigns lines to the
             # wrong entry. Support the common legacy FK column spellings.
             journal_columns = set(source_columns["journal_lines"])
-            entry_key = next(
-                (name for name in ("journal_entry_id", "entry_id", "journal_id")
-                 if name in journal_columns),
-                None,
-            )
+            entry_key = _journal_entry_key(journal_columns)
             if entry_key:
                 compare_control(
                     "journal_lines", "debit", (entry_key,),
@@ -221,6 +227,12 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
                     "journal_lines", "credit", (entry_key,),
                     "journal_lines.credit_by_entry",
                 )
+            else:
+                controls_skipped.append({
+                    "control": "journal_lines.by_entry",
+                    "reason": "journal_entry_reference_missing",
+                    "expected_one_of": ["journal_entry_id", "entry_id", "journal_id"],
+                })
             if "customer_id" in journal_columns:
                 compare_control("journal_lines", "debit", ("customer_id",), "customer.debit_by_id")
                 compare_control("journal_lines", "credit", ("customer_id",), "customer.credit_by_id")

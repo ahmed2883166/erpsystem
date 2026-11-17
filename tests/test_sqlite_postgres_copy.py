@@ -6,6 +6,7 @@ from scripts.verify_sqlite_postgres_copy import (
     _compare_decimal_maps,
     _decimal,
     _missing_control_columns,
+    _journal_entry_key,
     _sqlite_grouped_sum,
     _verification_passed,
     verify_copy,
@@ -107,6 +108,11 @@ class SQLitePostgresVerifierUnitTests(unittest.TestCase):
             {tuple(item["key"]) for item in issues},
             {(1,), (2,), (3,)},
         )
+
+    def test_journal_entry_reference_detection_supports_legacy_names(self):
+        self.assertEqual(_journal_entry_key({"debit", "entry_id"}), "entry_id")
+        self.assertEqual(_journal_entry_key({"journal_entry_id", "credit"}), "journal_entry_id")
+        self.assertIsNone(_journal_entry_key({"debit", "credit"}))
 
     def test_missing_control_columns_are_reported_for_both_databases(self):
         source_missing, target_missing = _missing_control_columns(
