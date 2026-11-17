@@ -216,7 +216,7 @@ def _split_sql_statements(script):
                 state = "normal"
         elif state == "line_comment":
             current.append(char)
-            if char == "\\n":
+            if char == "\n":
                 state = "normal"
         elif state == "block_comment":
             if char == "/" and nxt == "*":
