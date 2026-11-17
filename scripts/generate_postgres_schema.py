@@ -93,7 +93,7 @@ def extract_nocase_unique_columns(create_sql):
     """Find SQLite columns whose UNIQUE constraint uses COLLATE NOCASE."""
     if not create_sql:
         return set()
-    pattern = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)\\s+[^,]*?COLLATE\\s+NOCASE[^,]*?\\bUNIQUE\\b', re.I | re.S)
+    pattern = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)\s+[^,]*?COLLATE\s+NOCASE[^,]*?\bUNIQUE\b', re.I | re.S)
     return {match.group(1) for match in pattern.finditer(create_sql)}
 
 
