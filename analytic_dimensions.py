@@ -3,7 +3,7 @@
 Legacy journal lines remain valid: all dimension references are nullable and
 are introduced through additive SQLite/PostgreSQL migrations.
 """
-from db_compat import execute_script, table_columns, table_exists
+from db_compat import database_dialect, execute_script, table_columns, table_exists
 from db_sql import execute_compat
 
 
@@ -51,7 +51,8 @@ def initialize_analytic_dimensions_schema(conn):
             branch_columns.add(column)
 
     if not table_exists(conn, "journal_lines"):
-        conn.commit()
+        if database_dialect(conn) == "sqlite":
+            conn.commit()
         return
 
     columns = table_columns(conn, "journal_lines")
@@ -99,7 +100,8 @@ def initialize_analytic_dimensions_schema(conn):
                 conn,
                 f"CREATE INDEX IF NOT EXISTS {index} ON journal_lines({column},entry_id)",
             )
-    conn.commit()
+    if database_dialect(conn) == "sqlite":
+        conn.commit()
 
 
 def active_dimension_options(conn):
