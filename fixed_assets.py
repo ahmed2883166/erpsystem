@@ -598,8 +598,8 @@ def index():
     assets=[dict(row,
         accumulated=Decimal(str(row["accumulated"] or "0")),
         net_book_value=(Decimal("0") if row["status"] in {"disposed","reversed"} else
-            max(Decimal(row["cost"])-Decimal(str(row["accumulated"] or "0")),
-                Decimal(row["residual_value"]))))
+            max(Decimal(str(row["cost"] or "0"))-Decimal(str(row["accumulated"] or "0")),
+                Decimal(str(row["residual_value"] or "0")))))
         for row in assets]
     accounts=c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
     asset_accounts=[row for row in accounts if row["account_type"]=="asset"]
