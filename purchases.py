@@ -124,8 +124,17 @@ def init_purchase_schema():
       warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
       quantity TEXT NOT NULL, unit_cost TEXT NOT NULL, total_cost TEXT NOT NULL,
       entered_quantity TEXT, uom_id INTEGER REFERENCES stock_uoms(id), uom_key TEXT,
-      entered_uom_name TEXT, conversion_factor TEXT NOT NULL DEFAULT '1'
+      entered_uom_name TEXT, conversion_factor TEXT NOT NULL DEFAULT '1',
+      supplier_total TEXT
     );
+    CREATE TABLE IF NOT EXISTS supplier_credit_note_bill_line_allocations(
+      id INTEGER PRIMARY KEY,
+      credit_note_line_id INTEGER NOT NULL REFERENCES supplier_credit_note_lines(id) ON DELETE CASCADE,
+      supplier_bill_line_id INTEGER NOT NULL REFERENCES supplier_bill_inventory_lines(id),
+      quantity TEXT NOT NULL, unit_price TEXT NOT NULL, total_value TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_supplier_credit_bill_line
+      ON supplier_credit_note_bill_line_allocations(supplier_bill_line_id);
     CREATE TABLE IF NOT EXISTS supplier_credit_note_layer_allocations(
       id INTEGER PRIMARY KEY,
       credit_note_line_id INTEGER NOT NULL REFERENCES supplier_credit_note_lines(id) ON DELETE CASCADE,
@@ -165,7 +174,8 @@ def init_purchase_schema():
             execute_compat(c, "ALTER TABLE supplier_credit_notes ADD COLUMN "+name+" "+declaration)
     credit_line_columns=_columns(c, "supplier_credit_note_lines")
     for name,declaration in (("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),
-        ("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'")):
+        ("uom_key","TEXT"),("entered_uom_name","TEXT"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"),
+        ("supplier_total","TEXT")):
         if name not in credit_line_columns:
             execute_compat(c, "ALTER TABLE supplier_credit_note_lines ADD COLUMN "+name+" "+declaration)
     # suppliers now exists: install the supplier_id column on journal lines
@@ -2358,6 +2368,66 @@ def bill_print(bill_id):
                            receipts=receipts,settings=settings,branch=branch)
 
 
+def _allocate_supplier_bill_return_value(bill_lines, requested_quantity, legacy_returned_quantity=Decimal("0")):
+    """Allocate a supplier return to original invoice lines at their billed prices."""
+    remaining_legacy = Decimal(str(legacy_returned_quantity or "0"))
+    remaining_request = Decimal(str(requested_quantity or "0"))
+    if not remaining_request.is_finite() or remaining_request <= 0:
+        raise ValueError("كمية مرتجع المورد غير صالحة.")
+    allocations = []
+    total_value = Decimal("0")
+    for row in bill_lines:
+        available = Decimal(str(row["billed_quantity"] or "0")) - Decimal(str(row["allocated_quantity"] or "0"))
+        if available < 0:
+            raise ValueError("تخصيصات مرتجعات المورد تجاوزت كمية بند الفاتورة الأصلية.")
+        legacy_take = min(available, remaining_legacy)
+        available -= legacy_take
+        remaining_legacy -= legacy_take
+        take = min(available, remaining_request)
+        if take <= 0:
+            continue
+        unit_price = Decimal(str(row["invoice_unit_price"] or "0"))
+        if not unit_price.is_finite() or unit_price < 0:
+            raise ValueError("سعر بند فاتورة المورد الأصلية غير صالح.")
+        line_value = money(take * unit_price)
+        allocations.append({"supplier_bill_line_id": int(row["bill_line_id"]),
+            "quantity": take, "unit_price": unit_price, "total_value": line_value})
+        total_value += line_value
+        remaining_request -= take
+        if remaining_request == 0:
+            break
+    if remaining_legacy > 0:
+        raise ValueError("تعذر ربط مرتجعات المورد القديمة ببنود الفاتورة الأصلية؛ يلزم مراجعة يدوية.")
+    if remaining_request > 0:
+        raise ValueError("كمية المرتجع تتجاوز الكمية المفوترة المتبقية بسعر الفاتورة الأصلية.")
+    return money(total_value), allocations
+
+
+def _supplier_bill_return_value_allocations(c, bill_id, product_id, warehouse_id, requested_quantity):
+    rows = execute_compat(c, """
+        SELECT x.id AS bill_line_id,x.billed_quantity,x.invoice_unit_price,
+               COALESCE(SUM(CASE WHEN cn.status='posted' THEN a.quantity ELSE '0' END),'0') AS allocated_quantity
+        FROM supplier_bill_inventory_lines x
+        JOIN goods_receipt_lines gl ON gl.id=x.receipt_line_id
+        JOIN goods_receipts gr ON gr.id=gl.receipt_id
+        LEFT JOIN supplier_credit_note_bill_line_allocations a ON a.supplier_bill_line_id=x.id
+        LEFT JOIN supplier_credit_note_lines cnl ON cnl.id=a.credit_note_line_id
+        LEFT JOIN supplier_credit_notes cn ON cn.id=cnl.credit_note_id
+        WHERE x.bill_id=? AND x.product_id=? AND gr.warehouse_id=?
+        GROUP BY x.id,x.billed_quantity,x.invoice_unit_price
+        ORDER BY x.id
+    """, (bill_id, product_id, warehouse_id)).fetchall()
+    legacy = execute_compat(c, """
+        SELECT COALESCE(SUM(l.quantity),'0') AS quantity
+        FROM supplier_credit_note_lines l
+        JOIN supplier_credit_notes n ON n.id=l.credit_note_id
+        WHERE n.bill_id=? AND n.status='posted' AND l.product_id=? AND l.warehouse_id=?
+          AND NOT EXISTS (SELECT 1 FROM supplier_credit_note_bill_line_allocations a
+                          WHERE a.credit_note_line_id=l.id)
+    """, (bill_id, product_id, warehouse_id)).fetchone()
+    return _allocate_supplier_bill_return_value(rows, requested_quantity, legacy["quantity"] if legacy else "0")
+
+
 def _supplier_bill_returnable_quantity(c, bill_id, product_id, warehouse_id):
     """Quantity invoiced on this bill for a product/warehouse, less posted prior returns."""
     billed = execute_compat(c, """
@@ -2595,6 +2665,9 @@ def new_credit_note():
                         f"المتاح للمرتجع: {remaining_returnable[return_key]}."
                     )
                 remaining_returnable[return_key]-=qty
+                supplier_return_value,bill_line_allocations=_supplier_bill_return_value_allocations(
+                    c,bill_id,product_id,warehouse_id,qty
+                )
                 product=execute_compat(c, "SELECT * FROM stock_products WHERE id=? AND active=1",(product_id,)).fetchone()
                 warehouse=execute_compat(c, "SELECT id FROM stock_warehouses WHERE id=? AND active=1",(warehouse_id,)).fetchone()
                 if not product or product["product_type"]=="service" or not warehouse:
@@ -2609,9 +2682,11 @@ def new_credit_note():
                 cost,allocations,layer_details=consume_layers(
                 c,product_id,warehouse_id,qty,method,include_layer_details=True
             )
-                subtotal+=cost
+                subtotal+=supplier_return_value
                 line_item={"product_id":product_id,"warehouse_id":warehouse_id,"quantity":qty,
-                    "cost":cost,"entered_quantity":entered_qty,"uom_id":uom_id,"uom_key":raw_uom_key,
+                    "cost":cost,"supplier_return_value":supplier_return_value,
+                    "bill_line_allocations":bill_line_allocations,
+                    "entered_quantity":entered_qty,"uom_id":uom_id,"uom_key":raw_uom_key,
                     "entered_uom_name":entered_uom_name or stored_uom_name,
                     "conversion_factor":conversion_factor,"layer_details":layer_details,
                     "layer_allocations":[]}
@@ -2651,13 +2726,20 @@ def new_credit_note():
             for item in line_data:
                 credit_line_id=insert_and_get_id(c,"""INSERT INTO supplier_credit_note_lines(
                   credit_note_id,product_id,warehouse_id,quantity,unit_cost,total_cost,
-                  entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
-                  VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                  entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor,supplier_total)
+                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                   (note_id,item["product_id"],item["warehouse_id"],str(item["quantity"]),
                    str(money(item["cost"]/item["quantity"])),str(item["cost"]),
                    str(item["entered_quantity"]),item["uom_id"],item["uom_key"],
-                   item["entered_uom_name"],str(item["conversion_factor"])))
+                   item["entered_uom_name"],str(item["conversion_factor"]),str(item["supplier_return_value"])))
 
+                for bill_allocation in item["bill_line_allocations"]:
+                    execute_compat(c, """INSERT INTO supplier_credit_note_bill_line_allocations(
+                      credit_note_line_id,supplier_bill_line_id,quantity,unit_price,total_value
+                    ) VALUES(?,?,?,?,?)""",
+                    (credit_line_id,bill_allocation["supplier_bill_line_id"],
+                     str(bill_allocation["quantity"]),str(bill_allocation["unit_price"]),
+                     str(bill_allocation["total_value"])))
                 for allocation in item["layer_allocations"]:
                     execute_compat(c, """INSERT INTO supplier_credit_note_layer_allocations(
                       credit_note_line_id,stock_movement_id,source_layer_id,lot_id,location_id,
@@ -2683,6 +2765,19 @@ def new_credit_note():
             if tax:
                 vat_id=account(c,_activity_tax_roles(c)["input_vat"],"asset")
                 journal_lines.append((vat_id,0,tax,"عكس ضريبة المدخلات حسب إشعار المورد"))
+            posting_accounts=_activity_posting_accounts(c)
+            default_cogs=posting_accounts.get("cogs")
+            for item in line_data:
+                variance=money(item["cost"]-item["supplier_return_value"])
+                if variance:
+                    cogs_code=resolve_product_account_code(c,item["product_id"],"cogs",default_cogs)
+                    cogs_id=account(c,cogs_code,"expense")
+                    if variance>0:
+                        journal_lines.append((cogs_id,variance,0,
+                            "فرق سعر مرتجع المورد بين تكلفة المخزون وقيمة فاتورة المورد الأصلية"))
+                    else:
+                        journal_lines.append((cogs_id,0,-variance,
+                            "فرق سعر مرتجع المورد بين تكلفة المخزون وقيمة فاتورة المورد الأصلية"))
             entry_id=create_journal(c,request.form["credit_date"],credit_no,
                 "إشعار دائن مشتريات — "+supplier_credit_no,journal_lines,session["user_id"],dimensions=dimensions)
             execute_compat(c, "UPDATE supplier_credit_notes SET journal_entry_id=? WHERE id=?",(entry_id,note_id))
