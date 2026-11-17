@@ -52,6 +52,10 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
         self.assertTrue(any("debit NUMERIC(24, 6)" in item for item in statements))
         self.assertTrue(any("CREATE TABLE IF NOT EXISTS customers" in item for item in _split_sql_statements(migrations[1].sql)))
         self.assertTrue(any("CREATE TABLE IF NOT EXISTS bank_statement_balances" in item for item in _split_sql_statements(migrations[1].sql)))
+        inventory_statements = _split_sql_statements(migrations[2].sql)
+        self.assertTrue(any("CREATE TABLE IF NOT EXISTS stock_products" in item for item in inventory_statements))
+        self.assertTrue(any("CREATE TABLE IF NOT EXISTS stock_valuation_layers" in item for item in inventory_statements))
+        self.assertTrue(any("NUMERIC(24, 8)" in item for item in inventory_statements))
 
     def test_rejects_invalid_or_empty_migration_files(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -332,7 +336,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
             f"INSERT INTO {schema}.stock_movements(movement_no,movement_type,product_id,"
             "target_warehouse_id,quantity,unit_cost,total_cost,movement_date) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
-            ("RCV-001", "receipt", product_id, warehouse_id, "2.125", "12.345678", "26.234? ", "2026-01-01"),
+            ("RCV-001", "receipt", product_id, warehouse_id, "2.125", "12.345678", "26.23456575", "2026-01-01"),
         ).fetchone()["id"]
         amount = self.connection.execute(
             f"SELECT unit_cost FROM {schema}.stock_movements WHERE id=%s",
