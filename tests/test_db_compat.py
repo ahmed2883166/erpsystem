@@ -5,6 +5,8 @@ import unittest
 import uuid
 from types import SimpleNamespace
 
+from db_sql import qmark_to_format
+
 from db_compat import (
     database_dialect,
     table_columns,
@@ -16,6 +18,27 @@ from db_compat import (
     execute_script,
     table_column_info,
 )
+
+
+class SQLPlaceholderTranslationTests(unittest.TestCase):
+    def test_translates_only_unquoted_qmark_placeholders(self):
+        sql = """SELECT ?, '?', "?", $?;$, $body$?$body$
+            -- ?
+            /* outer ? /* nested ? */ still ? */
+            WHERE value=?"""
+        self.assertEqual(
+            qmark_to_format(sql),
+            """SELECT %s, '?', "?", $?;$, $body$?$body$
+            -- ?
+            /* outer ? /* nested ? */ still ? */
+            WHERE value=%s""",
+        )
+
+    def test_rejects_unterminated_sql_constructs(self):
+        for sql in ("SELECT 'unfinished ?", 'SELECT "unfinished ?', "SELECT /* unfinished ?", "SELECT $body$unfinished ?"):
+            with self.subTest(sql=sql):
+                with self.assertRaises(ValueError):
+                    qmark_to_format(sql)
 
 
 class SQLiteSchemaCompatibilityTests(unittest.TestCase):
