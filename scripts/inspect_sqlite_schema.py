@@ -30,7 +30,7 @@ def _temporary_database_path(value):
 
 
 def inspect_database(database_path, include_row_counts=False):
-    """Return schema metadata only; never return application row values."""
+    """Return schema metadata and integrity checks; never return row values."""
     path = _temporary_database_path(database_path)
     uri_path = quote(path.as_posix(), safe="/:")
     connection = sqlite3.connect(
@@ -42,13 +42,14 @@ def inspect_database(database_path, include_row_counts=False):
         objects = connection.execute(
             """SELECT type, name, tbl_name, sql
                FROM sqlite_master
-               WHERE type IN ('table', 'view', 'index')
+               WHERE type IN ('table', 'view', 'index', 'trigger')
                  AND name NOT LIKE 'sqlite_%'
                ORDER BY type, name"""
         ).fetchall()
         tables = []
         views = []
         indexes = []
+        triggers = []
         for obj in objects:
             item = {
                 "name": obj["name"],
@@ -60,6 +61,9 @@ def inspect_database(database_path, include_row_counts=False):
                 continue
             if obj["type"] == "index":
                 indexes.append(item)
+                continue
+            if obj["type"] == "trigger":
+                triggers.append(item)
                 continue
 
             table = dict(item)
@@ -94,16 +98,28 @@ def inspect_database(database_path, include_row_counts=False):
                 ).fetchone()[0]
             tables.append(table)
 
+        foreign_key_violations = [
+            dict(row) for row in connection.execute("PRAGMA foreign_key_check")
+        ]
+        integrity_rows = connection.execute("PRAGMA integrity_check").fetchall()
+        integrity_check = [row[0] for row in integrity_rows]
         return {
             "database_file": path.name,
             "sqlite_version": sqlite3.sqlite_version,
+            "user_version": connection.execute("PRAGMA user_version").fetchone()[0],
             "tables": tables,
             "views": views,
             "indexes": indexes,
+            "triggers": triggers,
+            "foreign_key_violations": foreign_key_violations,
+            "integrity_check": integrity_check,
             "summary": {
                 "table_count": len(tables),
                 "view_count": len(views),
                 "index_count": len(indexes),
+                "trigger_count": len(triggers),
+                "column_count": sum(len(table["columns"]) for table in tables),
+                "foreign_key_count": sum(len(table["foreign_keys"]) for table in tables),
             },
         }
     finally:
