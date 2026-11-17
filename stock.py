@@ -1793,6 +1793,70 @@ def reports():
         forecast_days=forecast_days,target_cover_days=target_cover_days)
 
 
+
+def _stock_valuation_layer_integrity(conn, limit=200):
+    """Find valuation-layer defects that a value-to-GL total alone cannot expose."""
+    if not _table_exists(conn, "stock_valuation_layers"):
+        return 0, []
+    columns = _columns(conn, "stock_valuation_layers")
+    if not {"id", "qty_remaining", "unit_cost"}.issubset(columns):
+        return 0, []
+    joins = ""
+    if (_table_exists(conn, "stock_movements") and
+            {"id", "product_id", "target_warehouse_id"}.issubset(_columns(conn, "stock_movements")) and
+            "source_movement_id" in columns):
+        joins = " LEFT JOIN stock_movements sm ON sm.id=l.source_movement_id "
+    select = ["l.*"]
+    if joins:
+        select.extend(["sm.id AS integrity_source_found",
+                       "sm.product_id AS integrity_source_product_id",
+                       "sm.target_warehouse_id AS integrity_source_warehouse_id"])
+    rows = _execute(conn, "SELECT " + ",".join(select) +
+                    " FROM stock_valuation_layers l" + joins + " ORDER BY l.id").fetchall()
+    issues, issue_count = [], 0
+
+    def add(row, code, message):
+        nonlocal issue_count
+        issue_count += 1
+        if len(issues) < limit:
+            issues.append({
+                "layer_id": int(row["id"]),
+                "product_id": row["product_id"] if "product_id" in columns else None,
+                "warehouse_id": row["warehouse_id"] if "warehouse_id" in columns else None,
+                "source_movement_id": row["source_movement_id"] if "source_movement_id" in columns else None,
+                "code": code, "message": message,
+            })
+
+    for row in rows:
+        qty = D(str(row["qty_remaining"] or "0"))
+        value = (D(str(row["value_remaining"])) if "value_remaining" in columns
+                 and row["value_remaining"] not in (None, "") else
+                 qty * D(str(row["unit_cost"] or "0")))
+        if qty < 0:
+            add(row, "negative_quantity", "كمية متبقية سالبة في طبقة التقييم.")
+        if value < 0:
+            add(row, "negative_value", "قيمة متبقية سالبة في طبقة التقييم.")
+        if "qty_in" in columns and row["qty_in"] not in (None, ""):
+            qty_in = D(str(row["qty_in"]))
+            if qty_in <= 0 and (qty != 0 or value != 0):
+                add(row, "invalid_original_quantity", "الطبقة تحمل رصيدًا رغم أن كمية الإدخال الأصلية غير موجبة.")
+            elif qty > qty_in:
+                add(row, "remaining_exceeds_received", "الكمية المتبقية أكبر من كمية الإدخال الأصلية.")
+        if qty == 0 and abs(value) >= D("0.01"):
+            add(row, "value_without_quantity", "توجد قيمة دفترية متبقية دون كمية مقابلة.")
+        if joins and row["source_movement_id"] is not None:
+            if row["integrity_source_found"] is None:
+                add(row, "missing_source_movement", "طبقة التقييم مرتبطة بحركة مخزون غير موجودة.")
+            else:
+                if ("product_id" in columns and
+                        row["product_id"] != row["integrity_source_product_id"]):
+                    add(row, "source_product_mismatch", "الصنف في طبقة التقييم لا يطابق صنف الحركة المصدر.")
+                if ("warehouse_id" in columns and
+                        row["warehouse_id"] != row["integrity_source_warehouse_id"]):
+                    add(row, "source_warehouse_mismatch", "مخزن طبقة التقييم لا يطابق مخزن وجهة الحركة المصدر.")
+    return issue_count, issues
+
+
 @stock_bp.route("/reconciliation")
 @stock_permission("stock.view")
 def valuation_reconciliation():
@@ -1804,6 +1868,7 @@ def valuation_reconciliation():
         default_inventory = posting.get("inventory")
         if not default_inventory:
             raise ValueError("لا يوجد حساب مخزون مضبوط في ملف النشاط الحالي.")
+        layer_integrity_issue_count, layer_integrity_issues = _stock_valuation_layer_integrity(conn)
         products = _execute(conn, "SELECT id,sku,name_ar FROM stock_products ORDER BY sku").fetchall()
         valuation_by_code = {}
         valuation_by_warehouse = {}
@@ -1961,6 +2026,8 @@ def valuation_reconciliation():
             total_valuation=total_valuation,total_ledger=total_ledger,
             total_difference=total_difference,matched_account_count=matched_account_count,
             difference_account_count=difference_account_count,reconciliation_status=reconciliation_status,
+            layer_integrity_issue_count=layer_integrity_issue_count,
+            layer_integrity_issues=layer_integrity_issues,
             report_generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     except (ValueError, *DB_ERROR) as exc:
         flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
@@ -1969,6 +2036,7 @@ def valuation_reconciliation():
             detail_matched_count=0,detail_difference_count=0,
             total_valuation=D("0"),total_ledger=D("0"),total_difference=D("0"),
             matched_account_count=0,difference_account_count=0,reconciliation_status="error",
+            layer_integrity_issue_count=0,layer_integrity_issues=[],
             report_generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),error=True)
     finally:
         conn.close()
