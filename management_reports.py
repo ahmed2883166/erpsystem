@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from income_statement import build_income_statement, comparison_period
 from cash_commitments import list_cash_commitments_forecast
+from db_compat import table_columns, table_exists
 from receivables import (
     _customer_aging_documents, _customer_aging_movements,
     _supplier_aging_documents, _supplier_aging_movements,
@@ -11,13 +12,13 @@ from receivables import (
 
 
 def _exists(conn, table):
-    return conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-    ).fetchone() is not None
+    """Use shared metadata inspection for both supported database drivers."""
+    return table_exists(conn, table)
 
 
 def _cols(conn, table):
-    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    """Return validated column metadata for the selected database schema."""
+    return table_columns(conn, table)
 
 
 def _d(value):
