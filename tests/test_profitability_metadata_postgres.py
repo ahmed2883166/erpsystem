@@ -17,6 +17,7 @@ class ProfitabilityMetadataPostgreSQLTests(unittest.TestCase):
         import psycopg
         from psycopg.rows import dict_row
         from profitability_reports import _columns, _table_exists
+        from management_reports import _cols, _exists
 
         schema = "nexus_profit_meta_" + uuid.uuid4().hex[:12]
         connection = psycopg.connect(
@@ -38,6 +39,10 @@ class ProfitabilityMetadataPostgreSQLTests(unittest.TestCase):
                         {"id", "branch_id", "debit"},
                     )
                     self.assertEqual(_columns(connection, "missing_table"), set())
+                    self.assertTrue(_exists(connection, "journal_lines"))
+                    self.assertFalse(_exists(connection, "missing_table"))
+                    self.assertEqual(_cols(connection, "journal_lines"), {"id", "branch_id", "debit"})
+                    self.assertEqual(_cols(connection, "missing_table"), set())
                     raise RuntimeError("rollback disposable schema")
             except RuntimeError as exc:
                 self.assertEqual(str(exc), "rollback disposable schema")
