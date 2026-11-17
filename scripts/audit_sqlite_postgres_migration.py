@@ -106,9 +106,15 @@ def build_report(sqlite_info: dict, postgres_info: dict) -> dict:
     missing_foreign_keys, extra_foreign_keys = _foreign_key_differences(
         sqlite_info.get("foreign_keys", []), postgres_info.get("foreign_keys", [])
     )
+    def foreign_key_json(item):
+        return [
+            list(value) if isinstance(value, tuple) else value
+            for value in item
+        ]
+
     foreign_key_differences = {
-        "missing_in_postgres": [list(item) for item in missing_foreign_keys],
-        "extra_in_postgres": [list(item) for item in extra_foreign_keys],
+        "missing_in_postgres": [foreign_key_json(item) for item in missing_foreign_keys],
+        "extra_in_postgres": [foreign_key_json(item) for item in extra_foreign_keys],
     }
     for table, details in source.items():
         if table not in target:

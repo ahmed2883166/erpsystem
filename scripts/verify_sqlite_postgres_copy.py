@@ -181,9 +181,19 @@ def _foreign_key_differences(source, target):
     from collections import Counter
     source_counts = Counter(source)
     target_counts = Counter(target)
-    missing = list((source_counts - target_counts).elements())
-    extra = list((target_counts - source_counts).elements())
-    return sorted(missing), sorted(extra)
+    missing = []
+    extra = []
+    for item in source:
+        if target_counts[item]:
+            target_counts[item] -= 1
+        else:
+            missing.append(item)
+    for item in target:
+        if source_counts[item]:
+            source_counts[item] -= 1
+        else:
+            extra.append(item)
+    return missing, extra
 
 
 def _verification_passed(issues, controls_skipped, row_counts, source_tables):

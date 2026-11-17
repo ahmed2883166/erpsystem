@@ -250,10 +250,11 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                 for rows in row_batches:
                     if not rows:
                         break
-                    dst.executemany(
-                        insert_sql,
-                        [tuple(normalize_value(row[column]) for column in columns) for row in rows],
-                    )
+                    with dst.cursor() as insert_cursor:
+                        insert_cursor.executemany(
+                            insert_sql,
+                            [tuple(normalize_value(row[column]) for column in columns) for row in rows],
+                        )
                     copied += len(rows)
                 target_count = dst.execute(
                     f"SELECT COUNT(*) AS n FROM {qname}"
