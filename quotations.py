@@ -10,7 +10,7 @@ from flask import Blueprint,flash,g,redirect,render_template,request,session,url
 from sales import post_invoice
 from analytic_dimensions import validate_journal_dimensions, active_dimension_options
 from stock import consume_layers, post_issue_journal, ensure_stock_date_open
-from db_compat import table_columns, table_exists, execute_script, begin_write_transaction
+from db_compat import table_columns, table_exists, execute_script, begin_write_transaction, insert_and_get_id
 
 quotes_bp=Blueprint("quotes",__name__,url_prefix="/sales/quotations")
 
