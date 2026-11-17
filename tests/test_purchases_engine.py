@@ -548,7 +548,7 @@ class PurchasingAccountingTests(unittest.TestCase):
         # Keep the purchase page template real while replacing only the shared
         # base layout, whose many unrelated endpoints belong to the full app.
         return_app.jinja_loader = ChoiceLoader([
-            DictLoader({"base.html": "{% block content %}{% endblock %}"}),
+            DictLoader({"base.html": "{% with messages = get_flashed_messages() %}{% for message in messages %}{{ message }}{% endfor %}{% endwith %}{% block content %}{% endblock %}"}),
             return_app.jinja_loader,
         ])
         return_app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
@@ -578,7 +578,7 @@ class PurchasingAccountingTests(unittest.TestCase):
                 "quantity": "2",
                 "uom_key": "",
             })
-        self.assertEqual(return_response.status_code, 302)
+        self.assertEqual(return_response.status_code, 302, return_response.get_data(as_text=True))
         credit_note = self.db.execute(
             """SELECT id,status,journal_entry_id,total_amount
                FROM supplier_credit_notes WHERE supplier_credit_no='SUP-FIFO-CYCLE-RETURN'"""
