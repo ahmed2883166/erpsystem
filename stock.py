@@ -806,8 +806,8 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
             allocations.append((layer["lot_id"], take, unit_cost, cost))
             if include_layer_details:
                 layer_details.append({"layer_id": int(layer["id"]), "lot_id": layer["lot_id"],
-                    "location_id": layer["location_id"], "quantity": take,
-                    "unit_cost": unit_cost, "total_cost": cost})
+                    "location_id": layer["location_id"], "receipt_line_id": layer["receipt_line_id"],
+                    "quantity": take, "unit_cost": unit_cost, "total_cost": cost})
         cost_total += cost
         remaining -= take
     return (money(cost_total), allocations, layer_details) if include_layer_details else (money(cost_total), allocations)
