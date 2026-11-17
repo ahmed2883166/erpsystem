@@ -3539,8 +3539,8 @@ def delete_employee_grant(grant_id):
         if c.execute("SELECT 1 FROM employee_grant_payments WHERE grant_id=? LIMIT 1", (grant_id,)).fetchone():
             raise ValueError("لا يمكن حذف حافز له أي عملية صرف مسجلة.")
         c.execute("DELETE FROM employee_grant_lines WHERE grant_id=?", (grant_id,))
-        c.execute("DELETE FROM employee_grants WHERE id=? AND status='draft' AND journal_entry_id IS NULL", (grant_id,))
-        if c.total_changes == 0:
+        delete_cursor = c.execute("DELETE FROM employee_grants WHERE id=? AND status='draft' AND journal_entry_id IS NULL", (grant_id,))
+        if delete_cursor.rowcount != 1:
             raise ValueError("لم يتم حذف الحافز؛ ربما تم إغلاقه في عملية أخرى.")
         _audit(c, "employee_grant_draft_deleted", "grant=" + str(grant_id))
         c.commit()
