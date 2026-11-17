@@ -82,3 +82,24 @@ def table_columns(connection, table_name, *, schema=None):
             (table_name,),
         ).fetchall()
     return {row["column_name"] if isinstance(row, dict) else row[0] for row in rows}
+
+
+def begin_write_transaction(connection):
+    """Start a write transaction without nesting an existing transaction.
+
+    SQLite keeps BEGIN IMMEDIATE. Psycopg starts BEGIN only while idle; an
+    existing transaction remains owned by its caller.
+    """
+    dialect = database_dialect(connection)
+    if dialect == "sqlite":
+        if not connection.in_transaction:
+            connection.execute("BEGIN IMMEDIATE")
+            return True
+        return False
+
+    transaction_status = getattr(connection.info, "transaction_status", None)
+    status_name = getattr(transaction_status, "name", str(transaction_status))
+    if status_name == "IDLE":
+        connection.execute("BEGIN")
+        return True
+    return False
