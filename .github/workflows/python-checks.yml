@@ -1,4 +1,8 @@
 name: Python checks
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 on:
   push:
     branches: [main, feature/company-setup-currency-tax-activity]
