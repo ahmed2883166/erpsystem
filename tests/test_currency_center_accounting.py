@@ -209,6 +209,7 @@ class CurrencyBalanceUpdatePostgreSQLTests(unittest.TestCase):
         dsn = os.environ["NEXUS_TEST_POSTGRES_DSN"]
         first = psycopg.connect(dsn, row_factory=dict_row)
         second = psycopg.connect(dsn, row_factory=dict_row)
+        monitor = psycopg.connect(dsn, autocommit=True, row_factory=dict_row)
         started = threading.Event()
         acquired = threading.Event()
         observed = {}
@@ -249,11 +250,25 @@ class CurrencyBalanceUpdatePostgreSQLTests(unittest.TestCase):
             worker = threading.Thread(target=waiter, daemon=True)
             worker.start()
             self.assertTrue(started.wait(2), "second connection did not start")
-            time.sleep(0.25)
-            self.assertFalse(
-                acquired.is_set(),
-                "second connection acquired the row while the first transaction held its lock",
+            second_pid = second.execute("SELECT pg_backend_pid() AS pid").fetchone()["pid"]
+            deadline = time.monotonic() + 5
+            waiting_on_lock = False
+            while time.monotonic() < deadline:
+                activity = monitor.execute(
+                    "SELECT wait_event_type FROM pg_stat_activity WHERE pid=%s",
+                    (second_pid,),
+                ).fetchone()
+                if activity and activity["wait_event_type"] == "Lock":
+                    waiting_on_lock = True
+                    break
+                if acquired.is_set():
+                    break
+                time.sleep(0.02)
+            self.assertTrue(
+                waiting_on_lock,
+                "second connection never entered a PostgreSQL lock wait while first held the row",
             )
+            self.assertFalse(acquired.is_set())
 
             first.execute(
                 "UPDATE fx_transactions SET balance_foreign='60.00' WHERE id=1"
@@ -273,6 +288,7 @@ class CurrencyBalanceUpdatePostgreSQLTests(unittest.TestCase):
             finally:
                 first.close()
                 second.close()
+                monitor.close()
 
 
 if __name__ == "__main__":
