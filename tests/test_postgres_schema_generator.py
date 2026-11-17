@@ -111,6 +111,28 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
             ["review_metadata.net_amount"],
         )
 
+    def test_numeric_review_skips_known_enum_and_generic_metadata_columns(self):
+        snapshot = _with_required_numeric_override_tables({
+            "tables": [
+                {"name": "accounts", "columns": [
+                    {"name": "normal_balance", "type": "TEXT", "pk": 0},
+                ], "foreign_keys": [], "indexes": []},
+                {"name": "company_settings", "columns": [
+                    {"name": "setting_value", "type": "TEXT", "pk": 0},
+                ], "foreign_keys": [], "indexes": []},
+                {"name": "management_dashboard_meta", "columns": [
+                    {"name": "meta_value", "type": "TEXT", "pk": 0},
+                ], "foreign_keys": [], "indexes": []},
+            ]
+        })
+        _, review = generate_postgres_ddl(snapshot)
+        candidates = set(review["text_numeric_candidates"])
+        self.assertFalse({
+            "accounts.normal_balance",
+            "company_settings.setting_value",
+            "management_dashboard_meta.meta_value",
+        } & candidates)
+
     def test_ddl_applies_numeric_overrides_by_table_and_column(self):
         snapshot = {
             "tables": [
