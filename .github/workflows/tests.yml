@@ -29,3 +29,14 @@ jobs:
         run: ruff check app.py accounting_core.py stock.py sales.py purchases.py party_reports.py report_exports.py license_server.py financial_planning.py tests --select F401,F841 --output-format=github
       - name: Run unit and integration tests
         run: python run_tests.py
+      - name: Export fully initialized SQLite schema from isolated temporary database
+        run: |
+          python scripts/export_initialized_sqlite_schema.py \
+            --output "$RUNNER_TEMP/nexus-initialized-sqlite-schema.json"
+      - name: Upload initialized schema inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-initialized-sqlite-schema
+          path: ${{ runner.temp }}/nexus-initialized-sqlite-schema.json
+          if-no-files-found: error
+          retention-days: 7
