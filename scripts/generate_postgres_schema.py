@@ -139,10 +139,11 @@ def generate_trigger_ddl(triggers):
         "trg_stock_product_locations_same_wh_insert": ("INSERT", "stock_product_locations"),
         "trg_stock_product_locations_same_wh_update": ("UPDATE", "stock_product_locations"),
     }
+    stock_location_deactivation = "trg_stock_locations_prevent_default_deactivation"
     dashboard = []
     for trigger in triggers:
         name = trigger["name"]
-        if name in known_audit or name in stock_triggers:
+        if name in known_audit or name in stock_triggers or name == stock_location_deactivation:
             continue
         match = dashboard_pattern.fullmatch(name)
         if match and match.group(1) == trigger.get("table_name"):
@@ -224,6 +225,26 @@ def generate_trigger_ddl(triggers):
                 f"{quote_ident(table_name)} FOR EACH ROW "
                 "EXECUTE FUNCTION nexus_validate_stock_product_location();"
             )
+    if stock_location_deactivation in by_name:
+        trigger = by_name[stock_location_deactivation]
+        if trigger.get("table_name") != "stock_locations":
+            raise ValueError("Stock location deactivation trigger is attached to an unexpected table.")
+        lines.extend([
+            "CREATE OR REPLACE FUNCTION nexus_prevent_default_stock_location_deactivation()",
+            "RETURNS trigger LANGUAGE plpgsql AS $",
+            "BEGIN",
+            "    IF OLD.active = 1 AND NEW.active = 0 AND EXISTS (",
+            "        SELECT 1 FROM stock_product_locations p WHERE p.location_id = OLD.id",
+            "    ) THEN",
+            "        RAISE EXCEPTION 'لا يمكن تعطيل موقع مستخدم كموقع افتراضي لصنف. غيّر الموقع الافتراضي أولًا.';",
+            "    END IF;",
+            "    RETURN NEW;",
+            "END;",
+            "$;",
+            "",
+            f"CREATE TRIGGER {quote_ident(stock_location_deactivation)} BEFORE UPDATE OF active ON stock_locations "
+            "FOR EACH ROW EXECUTE FUNCTION nexus_prevent_default_stock_location_deactivation();",
+        ])
     return lines
 
 
