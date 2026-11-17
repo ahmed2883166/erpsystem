@@ -1875,42 +1875,40 @@ def _stock_valuation_layer_integrity(conn, limit=200):
             {"source_movement_id", "qty_in"}.issubset(columns)):
         movement_rows = _execute(conn, """
             SELECT m.id,m.product_id,m.target_warehouse_id,m.quantity,m.movement_type,
-                   COUNT(l.id) AS layer_count
+                   l.id AS layer_id,l.qty_in
             FROM stock_movements m
             LEFT JOIN stock_valuation_layers l ON l.source_movement_id=m.id
             WHERE m.movement_type IN ('receipt','transfer','relocate')
-            GROUP BY m.id,m.product_id,m.target_warehouse_id,m.quantity,m.movement_type
-            ORDER BY m.id
+            ORDER BY m.id,l.id
         """).fetchall()
+        coverage = {}
         for movement in movement_rows:
-            linked = _execute(conn, """
-                SELECT qty_in FROM stock_valuation_layers
-                WHERE source_movement_id=? ORDER BY id
-            """, (movement["id"],)).fetchall()
+            bucket = coverage.setdefault(int(movement["id"]), {
+                "movement": movement, "layer_quantities": []
+            })
+            if movement["layer_id"] is not None:
+                bucket["layer_quantities"].append(movement["qty_in"])
+        for movement_id, bucket in coverage.items():
+            movement = bucket["movement"]
+            linked = bucket["layer_quantities"]
+            issue_row = {"id": None, "product_id": movement["product_id"],
+                         "warehouse_id": movement["target_warehouse_id"],
+                         "source_movement_id": movement_id}
             if not linked:
-                add({"id": None, "product_id": movement["product_id"],
-                     "warehouse_id": movement["target_warehouse_id"],
-                     "source_movement_id": movement["id"]},
-                    "inbound_movement_without_layer",
+                add(issue_row, "inbound_movement_without_layer",
                     "حركة استلام أو تحويل واردة لا تحتوي على أي طبقة تقييم مرتبطة.")
                 continue
             try:
                 movement_qty = D(str(movement["quantity"] or "0"))
-                layer_qty = sum((D(str(layer["qty_in"] or "0")) for layer in linked), D("0"))
+                layer_qty = sum((D(str(quantity or "0")) for quantity in linked), D("0"))
                 if not movement_qty.is_finite() or not layer_qty.is_finite():
                     raise InvalidOperation
             except (InvalidOperation, TypeError, ValueError):
-                add({"id": movement["id"], "product_id": movement["product_id"],
-                     "warehouse_id": movement["target_warehouse_id"],
-                     "source_movement_id": movement["id"]},
-                    "invalid_inbound_quantity",
+                add(issue_row, "invalid_inbound_quantity",
                     "كمية الحركة الواردة أو كميات طبقاتها غير رقمية.")
                 continue
             if abs(layer_qty - movement_qty) > QTY:
-                add({"id": movement["id"], "product_id": movement["product_id"],
-                     "warehouse_id": movement["target_warehouse_id"],
-                     "source_movement_id": movement["id"]},
-                    "inbound_layer_quantity_mismatch",
+                add(issue_row, "inbound_layer_quantity_mismatch",
                     "إجمالي كمية طبقات التقييم لا يساوي كمية حركة الاستلام أو التحويل.")
     return issue_count, issues
 
