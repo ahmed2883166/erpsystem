@@ -74,10 +74,10 @@ class PostgreSQLPurchaseReceiptLockTests(unittest.TestCase):
         self.assertEqual(lines[0]["id"], 21)
         self.assertIn("FOR UPDATE", connection.calls[0][0])
         self.assertIn("ORDER BY id FOR UPDATE", connection.calls[1][0])
-        self.assertEqual(connection.calls, [
-            (connection.calls[0][0], (11,)),
-            (connection.calls[1][0], (11, 8)),
-        ])
+        self.assertIn("FROM purchase_orders", connection.calls[0][0])
+        self.assertIn("FROM purchase_order_lines", connection.calls[1][0])
+        self.assertEqual(connection.calls[0][1], (11,))
+        self.assertEqual(connection.calls[1][1], (11, 8))
 
 
 POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
