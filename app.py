@@ -44,6 +44,7 @@ from activity_profiles import (initialize_activity_profiles_schema, list_activit
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
+from db_compat import begin_write_transaction
 from report_request_control import (ReportRequestGate, bounded_env_int,
                                     is_expensive_report_request,
                                     set_current_report_deadline,
@@ -2251,7 +2252,7 @@ def management_account_mapping():
                         raise ValueError("يوجد حساب غير تفصيلي أو غير نشط أو من نوع غير مناسب في الربط.")
                     ids.append(account_id)
                 selections[role] = set(ids)
-            connection.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(connection)
             connection.execute("DELETE FROM management_account_roles")
             connection.execute("""INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_customized','1') ON CONFLICT(meta_key) DO UPDATE SET meta_value='1'""")
             for role, ids in selections.items():
@@ -3345,7 +3346,7 @@ def reverse_journal(entry_id):
     connection = db()
     # Serialize reversal checks and posting so two simultaneous requests cannot
     # create duplicate reversals for the same journal.
-    connection.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(connection)
     original = connection.execute("SELECT * FROM journal_entries WHERE id=? AND status='posted'", (entry_id,)).fetchone()
     if not original:
         connection.close()
@@ -4141,7 +4142,7 @@ def import_data_wizard():
         inserted = skipped = 0
         errors = []
         try:
-            connection.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(connection)
             if dataset == "opening_balances":
                 connection.execute("""CREATE TABLE IF NOT EXISTS opening_balance_import_refs (
                     id INTEGER PRIMARY KEY, record_type TEXT NOT NULL, reference TEXT NOT NULL,
