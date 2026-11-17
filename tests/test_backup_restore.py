@@ -62,6 +62,37 @@ class BackupRestoreTests(unittest.TestCase):
                 extract_validated_backup(archive_path, root / "candidate.db")
             self.assertFalse((root / "candidate.db").exists())
 
+    def test_rejects_unexpected_archive_members(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            database = root / "source.db"
+            archive_path = root / "extra.zip"
+            make_database(database, "trusted-data")
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.write(database, "nexus.db")
+                archive.writestr("unexpected.txt", "not part of a NEXUS backup")
+            candidate = root / "candidate.db"
+            with self.assertRaisesRegex(ValueError, "ملفات إضافية"):
+                extract_validated_backup(archive_path, candidate)
+            self.assertFalse(candidate.exists())
+
+    def test_rejects_malformed_database_checksum(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            database = root / "source.db"
+            archive_path = root / "bad-manifest.zip"
+            make_database(database, "trusted-data")
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.write(database, "nexus.db")
+                archive.writestr("manifest.json", json.dumps({
+                    "application": "NEXUS ERP",
+                    "database_sha256": "not-a-sha256",
+                }))
+            candidate = root / "candidate.db"
+            with self.assertRaisesRegex(ValueError, "بصمة قاعدة البيانات داخل Manifest"):
+                extract_validated_backup(archive_path, candidate)
+            self.assertFalse(candidate.exists())
+
     def test_rejects_zip_without_nexus_database(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

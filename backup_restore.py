@@ -19,13 +19,19 @@ def extract_validated_backup(archive_path, candidate_path,
     """Extract only nexus.db and validate its identity, size, schema and integrity."""
     archive_path, candidate_path = Path(archive_path), Path(candidate_path)
     with zipfile.ZipFile(archive_path, "r") as archive:
-        database_members = [item for item in archive.infolist() if item.filename == "nexus.db"]
+        members = archive.infolist()
+        if len(members) > 16 or any(item.is_dir() for item in members):
+            raise ValueError("هيكل ملف النسخة الاحتياطية غير مسموح به.")
+        allowed_names = {"nexus.db", "manifest.json"}
+        if any(item.filename not in allowed_names for item in members):
+            raise ValueError("ملف النسخة يحتوي على ملفات إضافية غير معتمدة.")
+        database_members = [item for item in members if item.filename == "nexus.db"]
         if len(database_members) != 1:
             raise ValueError("يجب أن تحتوي النسخة على ملف قاعدة بيانات واحد باسم nexus.db.")
         member = database_members[0]
         if member.file_size <= 0 or member.file_size > max_database_bytes:
             raise ValueError("حجم قاعدة البيانات داخل النسخة غير مسموح به.")
-        manifests = [item for item in archive.infolist() if item.filename == "manifest.json"]
+        manifests = [item for item in members if item.filename == "manifest.json"]
         if len(manifests) > 1:
             raise ValueError("ملف النسخة يحتوي على أكثر من Manifest.")
         if manifests:
@@ -40,21 +46,30 @@ def extract_validated_backup(archive_path, candidate_path,
             if manifest.get("application") not in (None, "NEXUS ERP"):
                 raise ValueError("النسخة لا تخص نظام NEXUS ERP.")
         expected_sha256 = manifest.get("database_sha256") if manifests else None
+        if expected_sha256 is not None and (
+            not isinstance(expected_sha256, str)
+            or len(expected_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in expected_sha256.lower())
+        ):
+            raise ValueError("بصمة قاعدة البيانات داخل Manifest غير صالحة.")
         hasher = hashlib.sha256()
         written = 0
-        with archive.open(member, "r") as source, candidate_path.open("wb") as target:
-            while True:
-                chunk = source.read(1024 * 1024)
-                if not chunk:
-                    break
-                written += len(chunk)
-                if written > max_database_bytes:
-                    raise ValueError("حجم قاعدة البيانات المستخرجة تجاوز الحد المسموح.")
-                hasher.update(chunk)
-                target.write(chunk)
-        if expected_sha256 is not None and hasher.hexdigest() != expected_sha256:
+        try:
+            with archive.open(member, "r") as source, candidate_path.open("wb") as target:
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > max_database_bytes:
+                        raise ValueError("حجم قاعدة البيانات المستخرجة تجاوز الحد المسموح.")
+                    hasher.update(chunk)
+                    target.write(chunk)
+            if expected_sha256 is not None and hasher.hexdigest() != expected_sha256.lower():
+                raise ValueError("فشل التحقق من بصمة قاعدة البيانات داخل النسخة الاحتياطية.")
+        except Exception:
             candidate_path.unlink(missing_ok=True)
-            raise ValueError("فشل التحقق من بصمة قاعدة البيانات داخل النسخة الاحتياطية.")
+            raise
     connection = sqlite3.connect(str(candidate_path))
     try:
         integrity = sqlite_integrity_check(connection)
