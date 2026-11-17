@@ -139,18 +139,18 @@ def generate_trigger_ddl(triggers):
     if any(name in by_name for name in known_audit):
         lines.extend([
             "CREATE OR REPLACE FUNCTION nexus_block_audit_log_mutation()",
-            "RETURNS trigger LANGUAGE plpgsql AS $",
+            "RETURNS trigger LANGUAGE plpgsql AS $$",
             "BEGIN",
             "    RAISE EXCEPTION 'audit_log is append-only';",
             "END;",
-            "$;",
+            "$$;",
             "",
             "CREATE OR REPLACE FUNCTION nexus_block_budget_audit_mutation()",
-            "RETURNS trigger LANGUAGE plpgsql AS $",
+            "RETURNS trigger LANGUAGE plpgsql AS $$",
             "BEGIN",
             "    RAISE EXCEPTION 'Budget audit history is immutable';",
             "END;",
-            "$;",
+            "$$;",
             "",
         ])
         for name, (function_name, operation) in known_audit.items():
@@ -165,14 +165,14 @@ def generate_trigger_ddl(triggers):
     if dashboard:
         lines.extend([
             "CREATE OR REPLACE FUNCTION nexus_bump_dashboard_version()",
-            "RETURNS trigger LANGUAGE plpgsql AS $",
+            "RETURNS trigger LANGUAGE plpgsql AS $$",
             "BEGIN",
             "    UPDATE management_dashboard_data_version",
             "       SET version = version + 1 WHERE id = 1;",
             "    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;",
             "    RETURN NEW;",
             "END;",
-            "$;",
+            "$$;",
             "",
         ])
         for trigger, operation in dashboard:
@@ -185,7 +185,7 @@ def generate_trigger_ddl(triggers):
     if any(name in by_name for name in stock_triggers):
         lines.extend([
             "CREATE OR REPLACE FUNCTION nexus_validate_stock_product_location()",
-            "RETURNS trigger LANGUAGE plpgsql AS $",
+            "RETURNS trigger LANGUAGE plpgsql AS $$",
             "BEGIN",
             "    IF NOT EXISTS (",
             "        SELECT 1 FROM stock_locations l",
@@ -197,7 +197,7 @@ def generate_trigger_ddl(triggers):
             "    END IF;",
             "    RETURN NEW;",
             "END;",
-            "$;",
+            "$$;",
             "",
         ])
         for name, (operation, table_name) in stock_triggers.items():
