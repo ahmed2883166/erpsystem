@@ -92,6 +92,17 @@ def apply_migrations(connection, migrations, *, schema="nexus") -> list[int]:
         raise ValueError("Migration versions must be positive integers.")
     if any(not item.sql.strip() for item in ordered):
         raise ValueError("Migration SQL cannot be empty.")
+    for item in ordered:
+        match = _MIGRATION_FILE.fullmatch(str(item.name))
+        if match is None or int(match.group(1)) != item.version:
+            raise ValueError(
+                f"Migration name {item.name!r} does not match version {item.version}."
+            )
+        expected_checksum = hashlib.sha256(item.sql.encode("utf-8")).hexdigest()
+        if not re.fullmatch(r"[0-9a-f]{64}", str(item.checksum)):
+            raise ValueError(f"Migration {item.name!r} has an invalid SHA-256 checksum.")
+        if item.checksum != expected_checksum:
+            raise ValueError(f"Migration {item.name!r} checksum does not match its SQL.")
 
     applied = []
     try:
