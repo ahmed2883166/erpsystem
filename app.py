@@ -45,6 +45,7 @@ from activity_profiles import (initialize_activity_profiles_schema, list_activit
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
+from database_backend import require_supported_runtime_backend
 from db_compat import begin_write_transaction, insert_and_get_id, execute_script, table_exists, table_columns, table_names, table_column_info
 from report_request_control import (ReportRequestGate, bounded_env_int,
                                     is_expensive_report_request,
@@ -417,6 +418,7 @@ REPORT_REQUEST_GATE = ReportRequestGate(
 
 
 def db():
+    require_supported_runtime_backend()
     return connect_database(DB_PATH, isolation_level="")
 
 
@@ -515,6 +517,8 @@ def password_hash_needs_upgrade(stored_hash):
 
 
 def initialize_database():
+    # Do not silently initialize SQLite when an operator explicitly requested PostgreSQL.
+    require_supported_runtime_backend()
     ensure_data_directory()
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     enable_wal(DB_PATH)
