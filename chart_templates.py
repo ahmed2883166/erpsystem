@@ -3,6 +3,8 @@ These are practical starting templates, not a substitute for a country-specific 
 """
 
 from db_compat import table_columns
+from db_insert import insert_one_returning_id
+from db_sql import execute_compat
 CHARTS = {
     "commercial": [
         ("1000","الأصول","asset",None,1),("1100","الأصول المتداولة","asset","1000",1),
@@ -276,10 +278,10 @@ def ensure_account_metadata(conn):
     }
     for column, declaration in declarations.items():
         if column not in columns:
-            conn.execute(f"ALTER TABLE accounts ADD COLUMN {column} {declaration}")
-    for row in conn.execute("SELECT id,code,name_ar,account_type FROM accounts").fetchall():
+            execute_compat(conn, f"ALTER TABLE accounts ADD COLUMN {column} {declaration}")
+    for row in execute_compat(conn, "SELECT id,code,name_ar,account_type FROM accounts").fetchall():
         metadata = account_metadata_for(row["account_type"], row["code"], row["name_ar"])
-        conn.execute(
+        execute_compat(conn, 
             """UPDATE accounts SET normal_balance=?,statement_section=?,
                cash_flow_category=?,account_subtype=?,is_control_account=? WHERE id=?""",
             (metadata["normal_balance"], metadata["statement_section"],
@@ -390,17 +392,17 @@ def seed_activity_chart(conn, activity):
     ids = {}
     for code, name, account_type, parent_code, is_group in chart:
         parent_id = ids.get(parent_code) if parent_code else None
-        cur = conn.execute(
+        ids[code] = insert_one_returning_id(
+            conn,
             "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
             (code, name, account_type, parent_id, int(is_group)),
         )
-        ids[code] = cur.lastrowid
     return ids
 
 
 def ensure_common_activity_accounts(conn):
     """Add missing standard branches without changing existing account IDs or balances."""
-    existing = {row["code"]: row for row in conn.execute(
+    existing = {row["code"]: row for row in execute_compat(conn, 
         "SELECT id,code,account_type,is_group FROM accounts"
     )}
     for code, name, account_type, parent_code, is_group in _COMMON_ACTIVITY_ACCOUNTS:
@@ -408,18 +410,19 @@ def ensure_common_activity_accounts(conn):
             continue
         parent = existing.get(parent_code)
         parent_id = parent["id"] if parent and parent["is_group"] and parent["account_type"] == account_type else None
-        cur = conn.execute(
+        new_id = insert_one_returning_id(
+            conn,
             "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
             (code, name, account_type, parent_id, int(is_group)),
         )
-        existing[code] = {"id": cur.lastrowid, "code": code,
+        existing[code] = {"id": new_id, "code": code,
                           "account_type": account_type, "is_group": int(is_group)}
 
 
 def migrate_legacy_duplicate_account_labels(conn, activity):
     """Rename only known legacy labels; preserve account IDs, balances and journal links."""
     if activity == "service":
-        conn.execute(
+        execute_compat(conn, 
             """UPDATE accounts SET name_ar=?
                WHERE code='2110' AND account_type='liability' AND is_group=0
                  AND name_ar='مصروفات مستحقة - التزامات تشغيلية'""",
@@ -430,7 +433,7 @@ def migrate_legacy_duplicate_account_labels(conn, activity):
 def ensure_activity_chart_accounts(conn, activity):
     """Append missing accounts from the selected chart without altering legacy accounts."""
     chart = CHARTS.get(activity, CHARTS["commercial"])
-    existing = {row["code"]: row for row in conn.execute(
+    existing = {row["code"]: row for row in execute_compat(conn, 
         "SELECT id,code,account_type,is_group FROM accounts"
     )}
     for code, name, account_type, parent_code, is_group in chart:
@@ -438,11 +441,12 @@ def ensure_activity_chart_accounts(conn, activity):
             continue
         parent = existing.get(parent_code) if parent_code else None
         parent_id = parent["id"] if parent and parent["is_group"] and parent["account_type"] == account_type else None
-        cur = conn.execute(
+        new_id = insert_one_returning_id(
+            conn,
             "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
             (code, name, account_type, parent_id, int(is_group)),
         )
-        existing[code] = {"id": cur.lastrowid, "code": code,
+        existing[code] = {"id": new_id, "code": code,
                           "account_type": account_type, "is_group": int(is_group)}
 
 
@@ -458,7 +462,7 @@ def migrate_vat_accounts(conn, activity):
         "restaurant": ("2140", "إكراميات مستحقة للعاملين"),
         "industrial": ("2210", "قروض طويلة الأجل"),
     }
-    old_2130 = conn.execute(
+    old_2130 = execute_compat(conn, 
         "SELECT id, name_ar, account_type, is_group, parent_id FROM accounts WHERE code='2130'"
     ).fetchone()
     moved_legacy_2130 = False
@@ -468,7 +472,7 @@ def migrate_vat_accounts(conn, activity):
         destination = legacy_destinations.get(activity)
         if destination:
             new_code, new_name = destination
-            collision = conn.execute("SELECT id FROM accounts WHERE code=?", (new_code,)).fetchone()
+            collision = execute_compat(conn, "SELECT id FROM accounts WHERE code=?", (new_code,)).fetchone()
             if collision:
                 raise ValueError(
                     f"تعذر توحيد الضريبة: الحساب البديل {new_code} موجود بالفعل. "
@@ -476,19 +480,19 @@ def migrate_vat_accounts(conn, activity):
                 )
             parent_id = old_2130["parent_id"]
             if activity == "industrial":
-                parent = conn.execute("SELECT id,account_type,is_group FROM accounts WHERE code='2200'").fetchone()
+                parent = execute_compat(conn, "SELECT id,account_type,is_group FROM accounts WHERE code='2200'").fetchone()
                 if parent and (parent["account_type"] != "liability" or not parent["is_group"]):
                     raise ValueError("الحساب 2200 موجود لكنه ليس مجموعة التزامات صالحة.")
                 if not parent:
-                    root = conn.execute("SELECT id FROM accounts WHERE code='2000'").fetchone()
-                    cur = conn.execute(
+                    root = execute_compat(conn, "SELECT id FROM accounts WHERE code='2000'").fetchone()
+                    parent_id = insert_one_returning_id(
+                        conn,
                         "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,1)",
                         ("2200", "التزامات طويلة الأجل", "liability", root["id"] if root else None),
                     )
-                    parent_id = cur.lastrowid
                 else:
                     parent_id = parent["id"]
-            conn.execute(
+            execute_compat(conn, 
                 "UPDATE accounts SET code=?, name_ar=?, parent_id=? WHERE id=?",
                 (new_code, new_name, parent_id, old_2130["id"]),
             )
@@ -502,43 +506,43 @@ def migrate_vat_accounts(conn, activity):
     # account actually used by sales postings for output VAT. Recode that same
     # account ID only when 2130 was a non-VAT account and has just been freed.
     if activity in {"medical", "restaurant", "industrial"} and moved_legacy_2130:
-        old_vat = conn.execute(
+        old_vat = execute_compat(conn, 
             "SELECT id,account_type,is_group FROM accounts WHERE code='2120'"
         ).fetchone()
         if old_vat:
             if old_vat["account_type"] != "liability" or old_vat["is_group"]:
                 raise ValueError("الحساب 2120 القديم لا يصلح لنقل ضريبة المخرجات إلى 2130.")
-            conn.execute(
+            execute_compat(conn, 
                 "UPDATE accounts SET code='2130', name_ar='ضريبة القيمة المضافة - مخرجات' WHERE id=?",
                 (old_vat["id"],),
             )
 
-    vat = conn.execute(
+    vat = execute_compat(conn, 
         "SELECT id,account_type,is_group FROM accounts WHERE code='2130'"
     ).fetchone()
     if vat:
         if vat["account_type"] != "liability" or vat["is_group"]:
             raise ValueError("الحساب 2130 يجب أن يكون حسابًا تفصيليًا من نوع الالتزامات.")
-        conn.execute(
+        execute_compat(conn, 
             "UPDATE accounts SET name_ar='ضريبة القيمة المضافة - مخرجات' WHERE id=?",
             (vat["id"],),
         )
     else:
         parent_code = "2100" if activity == "commercial" else "2000"
-        parent = conn.execute("SELECT id,account_type,is_group FROM accounts WHERE code=?", (parent_code,)).fetchone()
+        parent = execute_compat(conn, "SELECT id,account_type,is_group FROM accounts WHERE code=?", (parent_code,)).fetchone()
         if parent and (parent["account_type"] != "liability" or not parent["is_group"]):
-            parent = conn.execute("SELECT id FROM accounts WHERE code='2000'").fetchone()
-        conn.execute(
+            parent = execute_compat(conn, "SELECT id FROM accounts WHERE code='2000'").fetchone()
+        execute_compat(conn, 
             "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,0)",
             ("2130", "ضريبة القيمة المضافة - مخرجات", "liability", parent["id"] if parent else None),
         )
 
-    input_vat = conn.execute("SELECT id,account_type,is_group FROM accounts WHERE code='1165'").fetchone()
+    input_vat = execute_compat(conn, "SELECT id,account_type,is_group FROM accounts WHERE code='1165'").fetchone()
     if input_vat and (input_vat["account_type"] != "asset" or input_vat["is_group"]):
         raise ValueError("الحساب 1165 محجوز لضريبة القيمة المضافة - مدخلات قابلة للخصم ويجب أن يكون أصلًا تفصيليًا.")
     if not input_vat:
-        parent = conn.execute("SELECT id FROM accounts WHERE code='1100' AND is_group=1 AND account_type='asset'").fetchone()
-        conn.execute(
+        parent = execute_compat(conn, "SELECT id FROM accounts WHERE code='1100' AND is_group=1 AND account_type='asset'").fetchone()
+        execute_compat(conn, 
             "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,0)",
             ("1165", "ضريبة قيمة مضافة مدخلات قابلة للخصم", "asset", parent["id"] if parent else None),
         )
