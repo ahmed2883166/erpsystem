@@ -1,5 +1,4 @@
 """Controlled period-end accounting adjustments (prepaids, accruals, deferred items and provisions)."""
-import sqlite3
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
@@ -9,7 +8,10 @@ from flask import Blueprint, abort, flash, redirect, render_template, request, s
 from app_paths import DB_PATH
 from database import connect_database
 from accounting_core import post_journal
+from db_compat import DB_ERROR, begin_write_transaction, execute_script, table_columns
+from db_sql import execute_compat
 from db_insert import insert_one_returning_id
+from code_sequences import next_code
 
 adjustments_bp = Blueprint("adjustments", __name__)
 CENT = Decimal("0.01")
@@ -37,7 +39,7 @@ def _money(value):
 
 
 def initialize_adjustments_schema(conn):
-    conn.executescript("""
+    execute_script(conn, """
     CREATE TABLE IF NOT EXISTS period_adjustments(
       id INTEGER PRIMARY KEY,
       adjustment_no TEXT NOT NULL UNIQUE,
@@ -72,17 +74,18 @@ def initialize_adjustments_schema(conn):
     );
     CREATE INDEX IF NOT EXISTS idx_period_adjustment_posts_schedule
       ON period_adjustment_posts(adjustment_id,period_start,period_end);
-    INSERT OR IGNORE INTO company_settings(setting_key,setting_value)
-      VALUES('period_adjustment_frequency','monthly');
+    INSERT INTO company_settings(setting_key,setting_value)
+      VALUES('period_adjustment_frequency','monthly')
+      ON CONFLICT(setting_key) DO NOTHING;
     """)
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(period_adjustments)")}
+    columns = table_columns(conn, "period_adjustments")
     for name, declaration in (
         ("cancelled_by", "INTEGER"),
         ("cancelled_at", "TEXT"),
         ("cancellation_reason", "TEXT NOT NULL DEFAULT ''"),
     ):
         if name not in columns:
-            conn.execute(f"ALTER TABLE period_adjustments ADD COLUMN {name} {declaration}")
+            execute_compat(conn, f"ALTER TABLE period_adjustments ADD COLUMN {name} {declaration}")
     conn.commit()
 
 
@@ -122,7 +125,7 @@ def _periods(adjustment):
 
 
 def _account(conn, account_id):
-    row = conn.execute("""SELECT id,code,name_ar,account_type,is_group,active
+    row = execute_compat(conn, """SELECT id,code,name_ar,account_type,is_group,active
         FROM accounts WHERE id=?""", (account_id,)).fetchone()
     if not row or row["is_group"] or not row["active"]:
         raise ValueError("اختر حسابًا تفصيليًا ونشطًا من دليل الحسابات.")
@@ -162,15 +165,16 @@ def create_adjustment(conn, description, kind, total_amount, start_date, end_dat
         raise ValueError("اختر دورية شهرية أو سنوية.")
     amount = _money(total_amount)
     _validate_accounts(conn, kind, int(debit_account_id), int(credit_account_id))
-    conn.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(conn)
     try:
+        adjustment_no = next_code(
+            conn, "period_adjustment", "ADJ", "period_adjustments", "adjustment_no"
+        )
         adjustment_id = insert_one_returning_id(conn, """INSERT INTO period_adjustments(
             adjustment_no,description,adjustment_type,total_amount,start_date,end_date,
             frequency,debit_account_id,credit_account_id,created_by)
             VALUES(?,?,?,?,?,?,?,?,?,?)""",
-            ("ADJ-" + date.today().strftime("%Y%m%d") + "-" +
-             str(conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM period_adjustments").fetchone()[0]),
-             description, kind, str(amount), start, end, frequency,
+            (adjustment_no, description, kind, str(amount), start, end, frequency,
              int(debit_account_id), int(credit_account_id), created_by))
         conn.commit()
         return adjustment_id
@@ -180,12 +184,12 @@ def create_adjustment(conn, description, kind, total_amount, start_date, end_dat
 
 
 def preview_adjustment(conn, adjustment_id):
-    adjustment = conn.execute("SELECT * FROM period_adjustments WHERE id=?",
+    adjustment = execute_compat(conn, "SELECT * FROM period_adjustments WHERE id=?",
                               (adjustment_id,)).fetchone()
     if not adjustment:
         raise ValueError("التسوية غير موجودة.")
     posted = { (row["period_start"], row["period_end"]): row
-        for row in conn.execute("""SELECT * FROM period_adjustment_posts
+        for row in execute_compat(conn, """SELECT * FROM period_adjustment_posts
             WHERE adjustment_id=?""", (adjustment_id,)).fetchall() }
     periods = []
     for item in _periods(adjustment):
@@ -199,7 +203,7 @@ def preview_adjustment(conn, adjustment_id):
 
 
 def post_adjustment_period(conn, adjustment_id, period_start, period_end, created_by=None):
-    conn.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(conn)
     try:
         preview = preview_adjustment(conn, adjustment_id)
         adjustment = preview["adjustment"]
@@ -219,7 +223,7 @@ def post_adjustment_period(conn, adjustment_id, period_start, period_end, create
             f"تسوية {adjustment['description']} — {period_start} إلى {period_end}",
             [(debit["id"], amount, 0, adjustment["description"]),
              (credit["id"], 0, amount, adjustment["description"])], created_by)
-        conn.execute("""INSERT INTO period_adjustment_posts(
+        execute_compat(conn, """INSERT INTO period_adjustment_posts(
             adjustment_id,period_start,period_end,amount,journal_entry_id,created_by)
             VALUES(?,?,?,?,?,?)""",
             (adjustment_id, period_start, period_end, str(amount), entry_id, created_by))
@@ -238,9 +242,9 @@ def reverse_adjustment_period(conn, post_id, reversal_date, reason, created_by=N
     reason = str(reason or "").strip()
     if not reason or len(reason) > 500:
         raise ValueError("اكتب سببًا للعكس لا يزيد عن 500 حرف.")
-    conn.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(conn)
     try:
-        row = conn.execute("""SELECT p.*,a.adjustment_no FROM period_adjustment_posts p
+        row = execute_compat(conn, """SELECT p.*,a.adjustment_no FROM period_adjustment_posts p
             JOIN period_adjustments a ON a.id=p.adjustment_id WHERE p.id=?""", (post_id,)).fetchone()
         if not row:
             raise ValueError("قيد التسوية غير موجود.")
@@ -248,11 +252,11 @@ def reverse_adjustment_period(conn, post_id, reversal_date, reason, created_by=N
             raise ValueError("تم عكس قيد هذه الفترة بالفعل.")
         if normalized_date < row["period_end"]:
             raise ValueError("تاريخ عكس التسوية لا يمكن أن يسبق تاريخ القيد الأصلي.")
-        original = conn.execute("SELECT status FROM journal_entries WHERE id=?",
+        original = execute_compat(conn, "SELECT status FROM journal_entries WHERE id=?",
                                 (row["journal_entry_id"],)).fetchone()
         if not original or original["status"] != "posted":
             raise ValueError("القيد الأصلي غير موجود أو غير مرحّل.")
-        lines = conn.execute("""SELECT account_id,debit,credit,memo FROM journal_lines
+        lines = execute_compat(conn, """SELECT account_id,debit,credit,memo FROM journal_lines
             WHERE entry_id=? ORDER BY id""", (row["journal_entry_id"],)).fetchall()
         if len(lines) < 2:
             raise ValueError("القيد الأصلي لا يحتوي على سطور كافية للعكس.")
@@ -262,7 +266,7 @@ def reverse_adjustment_period(conn, post_id, reversal_date, reason, created_by=N
             f"{row['adjustment_no']}-REV-{post_id}",
             f"عكس تسوية الفترة {row['period_start']} — {reason}",
             reversal_lines, created_by)
-        conn.execute("""UPDATE period_adjustment_posts
+        execute_compat(conn, """UPDATE period_adjustment_posts
             SET reversal_journal_entry_id=?,reversal_reason=? WHERE id=?""",
             (reversal_id, reason, post_id))
         conn.commit()
@@ -297,7 +301,7 @@ def index():
                 frequency = request.form.get("frequency")
                 if frequency not in {"monthly", "yearly"}:
                     raise ValueError("اختر دورية شهرية أو سنوية.")
-                conn.execute("""INSERT INTO company_settings(setting_key,setting_value)
+                execute_compat(conn, """INSERT INTO company_settings(setting_key,setting_value)
                     VALUES('period_adjustment_frequency',?)
                     ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value""",
                     (frequency,))
@@ -305,7 +309,7 @@ def index():
                 flash("تم حفظ دورية التسويات الافتراضية.", "success")
                 return redirect(url_for("adjustments.index"))
             kind = request.form.get("adjustment_type")
-            default_frequency = conn.execute("""SELECT setting_value FROM company_settings
+            default_frequency = execute_compat(conn, """SELECT setting_value FROM company_settings
                 WHERE setting_key='period_adjustment_frequency'""").fetchone()
             frequency = request.form.get("frequency") or (default_frequency["setting_value"] if default_frequency else "monthly")
             adjustment_id = create_adjustment(conn, request.form.get("description"), kind,
@@ -316,19 +320,19 @@ def index():
             flash(f"تم حفظ جدول التسوية رقم {adjustment_id}. لم يتم إنشاء أي قيد محاسبي؛ راجع المعاينة ثم رحّل كل فترة يدويًا.", "success")
             return redirect(url_for("adjustments.index", selected=adjustment_id))
         selected = request.args.get("selected", type=int)
-        schedules = conn.execute("""SELECT a.*,d.name_ar debit_name,c.name_ar credit_name
+        schedules = execute_compat(conn, """SELECT a.*,d.name_ar debit_name,c.name_ar credit_name
             FROM period_adjustments a JOIN accounts d ON d.id=a.debit_account_id
             JOIN accounts c ON c.id=a.credit_account_id ORDER BY a.id DESC""").fetchall()
         preview = preview_adjustment(conn, selected) if selected else None
-        accounts = conn.execute("""SELECT id,code,name_ar,account_type FROM accounts
+        accounts = execute_compat(conn, """SELECT id,code,name_ar,account_type FROM accounts
             WHERE active=1 AND is_group=0 ORDER BY code""").fetchall()
-        setting = conn.execute("""SELECT setting_value FROM company_settings
+        setting = execute_compat(conn, """SELECT setting_value FROM company_settings
             WHERE setting_key='period_adjustment_frequency'""").fetchone()
         return render_template("period_adjustments.html", schedules=schedules,
             preview=preview, accounts=accounts,
             default_frequency=setting["setting_value"] if setting else "monthly",
             kinds=KINDS)
-    except (ValueError, sqlite3.Error) as exc:
+    except (ValueError,) + DB_ERROR as exc:
         conn.rollback()
         flash(str(exc) if isinstance(exc, ValueError) else "تعذر حفظ التسوية بسبب تعارض في البيانات.", "error")
         return redirect(url_for("adjustments.index"))
@@ -345,7 +349,7 @@ def post_period(adjustment_id):
             request.form.get("period_start", ""), request.form.get("period_end", ""),
             session.get("user_id"))
         flash(f"تم ترحيل قيد التسوية رقم {entry_id}.", "success")
-    except (ValueError, sqlite3.Error) as exc:
+    except (ValueError,) + DB_ERROR as exc:
         conn.rollback()
         flash(str(exc) if isinstance(exc, ValueError) else "تعذر ترحيل التسوية؛ لم يتم حفظ أي تغييرات.", "error")
     finally:
@@ -361,18 +365,18 @@ def cancel_adjustment(adjustment_id):
         reason = str(request.form.get("reason") or "").strip()
         if not reason or len(reason) > 500:
             raise ValueError("اكتب سبب إلغاء جدول التسوية بما لا يزيد عن 500 حرف.")
-        conn.execute("BEGIN IMMEDIATE")
-        adjustment = conn.execute(
+        begin_write_transaction(conn)
+        adjustment = execute_compat(conn, 
             "SELECT status FROM period_adjustments WHERE id=?", (adjustment_id,)
         ).fetchone()
         if not adjustment or adjustment["status"] != "active":
             raise ValueError("جدول التسوية غير موجود أو سبق إلغاؤه.")
-        un_reversed = conn.execute("""SELECT COUNT(*) FROM period_adjustment_posts
+        un_reversed = execute_compat(conn, """SELECT COUNT(*) FROM period_adjustment_posts
             WHERE adjustment_id=? AND reversal_journal_entry_id IS NULL""",
             (adjustment_id,)).fetchone()[0]
         if un_reversed:
             raise ValueError("لا يمكن إلغاء الجدول قبل عكس كل الفترات المرحلة. اعكس القيود أولًا ثم ألغِ الجدول.")
-        changed = conn.execute("""UPDATE period_adjustments SET status='cancelled',
+        changed = execute_compat(conn, """UPDATE period_adjustments SET status='cancelled',
             cancelled_by=?,cancelled_at=CURRENT_TIMESTAMP,cancellation_reason=?
             WHERE id=? AND status='active'""",
             (session.get("user_id"), reason, adjustment_id)).rowcount
@@ -380,7 +384,7 @@ def cancel_adjustment(adjustment_id):
             raise ValueError("تغيرت حالة جدول التسوية أثناء الإلغاء.")
         conn.commit()
         flash("تم إلغاء جدول التسوية. لم يتم حذف أي قيد أو سجل.", "success")
-    except (ValueError, sqlite3.Error) as exc:
+    except (ValueError,) + DB_ERROR as exc:
         conn.rollback()
         flash(str(exc) if isinstance(exc, ValueError) else "تعذر إلغاء جدول التسوية.", "error")
     finally:
@@ -397,7 +401,7 @@ def reverse_period(post_id):
             request.form.get("reversal_date", ""), request.form.get("reason", ""),
             session.get("user_id"))
         flash(f"تم إنشاء القيد العكسي رقم {entry_id} مع الاحتفاظ بالقيد الأصلي.", "success")
-    except (ValueError, sqlite3.Error) as exc:
+    except (ValueError,) + DB_ERROR as exc:
         conn.rollback()
         flash(str(exc) if isinstance(exc, ValueError) else "تعذر عكس التسوية؛ لم يتم حفظ أي تغييرات.", "error")
     finally:

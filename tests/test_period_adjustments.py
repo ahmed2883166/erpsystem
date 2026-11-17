@@ -45,6 +45,30 @@ class PeriodAdjustmentTests(unittest.TestCase):
             "2026-01-01", "2026-03-31", frequency, 1, 2, 7
         )
 
+    def test_schema_initializer_is_idempotent_and_preserves_existing_frequency(self):
+        self.conn.execute(
+            "INSERT INTO company_settings(setting_key,setting_value) VALUES(?,?)",
+            ("period_adjustment_frequency", "yearly"),
+        )
+        initialize_adjustments_schema(self.conn)
+        value = self.conn.execute(
+            "SELECT setting_value FROM company_settings WHERE setting_key=?",
+            ("period_adjustment_frequency",),
+        ).fetchone()[0]
+        self.assertEqual(value, "yearly")
+
+    def test_adjustment_numbers_are_sequential_and_unique(self):
+        first = self._schedule()
+        second = self._schedule()
+        numbers = self.conn.execute(
+            "SELECT adjustment_no FROM period_adjustments WHERE id IN (?,?) ORDER BY id",
+            (first, second),
+        ).fetchall()
+        self.assertEqual(len(numbers), 2)
+        self.assertNotEqual(numbers[0][0], numbers[1][0])
+        self.assertTrue(numbers[0][0].startswith("ADJ-"))
+        self.assertTrue(numbers[1][0].startswith("ADJ-"))
+
     def test_monthly_allocation_preserves_exact_total(self):
         adjustment_id = self._schedule()
         preview = preview_adjustment(self.conn, adjustment_id)
