@@ -183,10 +183,6 @@ class CurrencyBalanceUpdatePostgreSQLTests(unittest.TestCase):
             conn.close()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
     def test_row_lock_serializes_two_connections_and_prevents_stale_balance(self):
         """A waiter must read the balance committed by the transaction holding FOR UPDATE."""
         import threading
@@ -263,3 +259,7 @@ if __name__ == "__main__":
             finally:
                 first.close()
                 second.close()
+
+
+if __name__ == "__main__":
+    unittest.main()
