@@ -2,7 +2,6 @@
 import sqlite3
 import unittest
 from decimal import Decimal
-from types import SimpleNamespace
 
 from accounting_core import register_decimal_aggregates
 from stock import current_qty, consume_layers, lock_stock_warehouses
