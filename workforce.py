@@ -302,7 +302,7 @@ def initialize_workforce_schema():
     CREATE INDEX IF NOT EXISTS idx_payroll_period ON payroll_runs(period);
     CREATE INDEX IF NOT EXISTS idx_custody_employee ON employee_custodies(employee_id,status);
     """)
-    final_payroll_columns = {row["name"] for row in [{"name": column} for column in table_columns(c, "employee_final_payrolls")]}
+    final_payroll_columns = table_columns(c, "employee_final_payrolls")
     if "journal_entry_id" not in final_payroll_columns:
         c.execute("ALTER TABLE employee_final_payrolls ADD COLUMN journal_entry_id INTEGER")
     c.executescript("""
@@ -319,7 +319,7 @@ def initialize_workforce_schema():
       ON employee_final_payroll_payments(final_payroll_id,payment_date,id);
     """)
     # Backward-compatible additions for the company-specific end-of-service policy.
-    eos_columns = {row["name"] for row in [{"name": column} for column in table_columns(c, "employee_end_of_service_settlements")]}
+    eos_columns = table_columns(c, "employee_end_of_service_settlements")
     for column, definition in (
         ("basic_salary_snapshot", "TEXT NOT NULL DEFAULT '0'"),
         ("service_months", "INTEGER NOT NULL DEFAULT 0"),
@@ -363,9 +363,7 @@ def initialize_workforce_schema():
             "rejection_reason": "TEXT NOT NULL DEFAULT ''",
         },
     }.items():
-        existing_columns = {row["name"] for row in c.execute(
-            f'PRAGMA table_info("{table}")'
-        ).fetchall()}
+        existing_columns = table_columns(c, table)
         for column, declaration in additions.items():
             if column not in existing_columns:
                 c.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {declaration}')
@@ -1491,9 +1489,7 @@ def payroll_reconciliation():
             LEFT JOIN payroll_payment_allocations a ON a.payment_id=p.id
             WHERE p.run_id=?
             GROUP BY p.id ORDER BY p.payment_date,p.id
-        """, (run["id"],)).fetchall() if c.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'"
-        ).fetchone() else c.execute("""
+        """, (run["id"],)).fetchall() if table_exists(c, "payroll_payment_allocations") else c.execute("""
             SELECT p.id,p.amount,p.payment_date,p.reference,p.journal_entry_id,
                    0 AS allocated_total,0 AS allocation_count
             FROM payroll_payments p WHERE p.run_id=? ORDER BY p.payment_date,p.id
@@ -2635,8 +2631,7 @@ def payroll_run(run_id):
         FROM accounts a JOIN cash_accounts ca ON ca.account_id=a.id
         WHERE a.active=1 AND a.is_group=0 AND a.account_type='asset' AND ca.active=1
         ORDER BY a.code""").fetchall()
-    allocation_count_expr = "(SELECT COUNT(*) FROM payroll_payment_allocations pa WHERE pa.payment_id=p.id)" if c.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'").fetchone() else "0"
+    allocation_count_expr = "(SELECT COUNT(*) FROM payroll_payment_allocations pa WHERE pa.payment_id=p.id)" if table_exists(c, "payroll_payment_allocations") else "0"
     payments = c.execute("""SELECT p.*,a.code AS account_code,a.name_ar AS account_name,"""+
         allocation_count_expr+""" AS allocation_count
         FROM payroll_payments p JOIN accounts a ON a.id=p.cash_account_id
@@ -2988,7 +2983,7 @@ def reverse_payroll(run_id):
         reason = request.form.get("reason", "").strip()
         if not reason:
             raise ValueError("سبب عكس قيد المرتبات مطلوب ويجب توثيقه.")
-        available_columns = {row["name"] for row in [{"name": column} for column in table_columns(c, "journal_lines")]}
+        available_columns = table_columns(c, "journal_lines")
         dimension_keys = ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id", "supplier_id")
         selected_dimensions = [key for key in dimension_keys if key in available_columns]
         select_columns = ["account_id", "debit", "credit", "memo"] + selected_dimensions
