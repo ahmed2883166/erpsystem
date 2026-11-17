@@ -6,6 +6,8 @@ from decimal import Decimal, ROUND_HALF_UP
 import sqlite3
 from functools import wraps
 
+from db_compat import table_columns, table_exists
+
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 
 tax_bp = Blueprint("tax", __name__)
@@ -17,11 +19,19 @@ def _db():
     return connect_database(DB_PATH)
 
 
+def _table_exists(conn, name):
+    return table_exists(conn, name)
+
+
+def _columns(conn, name):
+    return table_columns(conn, name)
+
+
 def initialize_tax_schema():
     """Additive migration; never rewrites existing invoice values."""
     conn = _db()
     for table in ("sales_invoices", "supplier_bills", "sales_credit_notes", "supplier_credit_notes"):
-        cols = {r["name"] for r in conn.execute('PRAGMA table_info("' + table + '")')}
+        cols = _columns(conn, table)
         if not cols:
             continue
         additions = {
@@ -80,7 +90,7 @@ def _editor(fn):
 
 def _party_tax_number_expr(conn, table, alias):
     """Use party tax identifiers when the installed schema has the optional column."""
-    columns = {row["name"] for row in conn.execute(f'PRAGMA table_info("{table}")')}
+    columns = _columns(conn, table)
     return f"COALESCE({alias}.tax_number,'')" if "tax_number" in columns else "''"
 
 
@@ -94,8 +104,7 @@ def _tax_ledger_reconciliation(conn, summary):
         "output_difference": Decimal("0"), "input_difference": Decimal("0"),
         "issues": [],
     }
-    tables = {row["name"] for row in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'")}
+    tables = {name for name in ("accounts", "journal_entries", "journal_lines") if _table_exists(conn, name)}
     if not {"accounts", "journal_entries", "journal_lines"}.issubset(tables):
         result["issues"].append("تعذر إجراء المطابقة: جداول الأستاذ العام غير متاحة.")
         return result
@@ -239,8 +248,8 @@ def build_tax_report_snapshot(conn, period_value):
     # Posted sales credit notes reduce output VAT in the period of the credit note.
     # Group by the original line tax treatment so mixed-treatment invoices remain classified correctly.
     sales_credits = []
-    sales_credit_columns = {row["name"] for row in conn.execute('PRAGMA table_info("sales_credit_notes")')}
-    sales_credit_line_columns = {row["name"] for row in conn.execute('PRAGMA table_info("sales_credit_note_lines")')}
+    sales_credit_columns = _columns(conn, "sales_credit_notes")
+    sales_credit_line_columns = _columns(conn, "sales_credit_note_lines")
     required_sales_credit = {"id", "credit_note_no", "credit_date", "invoice_id", "status"}
     required_sales_credit_lines = {"credit_note_id", "line_total", "tax_amount", "tax_treatment"}
     if required_sales_credit.issubset(sales_credit_columns) and required_sales_credit_lines.issubset(sales_credit_line_columns):
@@ -309,7 +318,7 @@ def build_tax_report_snapshot(conn, period_value):
     # Supplier credit notes reduce input VAT in their own posting period. The
     # deductible percentage and tax treatment are inherited from the source bill.
     purchase_credits = []
-    purchase_credit_columns = {row["name"] for row in conn.execute('PRAGMA table_info("supplier_credit_notes")')}
+    purchase_credit_columns = _columns(conn, "supplier_credit_notes")
     required_purchase_credit = {"id", "credit_no", "credit_date", "supplier_id", "bill_id", "status"}
     if required_purchase_credit.issubset(purchase_credit_columns):
         pc_base = "cn.subtotal" if "subtotal" in purchase_credit_columns else "0"
@@ -318,7 +327,7 @@ def build_tax_report_snapshot(conn, period_value):
         pc_total = "cn.total_amount" if "total_amount" in purchase_credit_columns else f"({pc_base}+{pc_tax})"
         pc_reference = "COALESCE(cn.tax_reference,'')" if "tax_reference" in purchase_credit_columns else "''"
         pc_notes = "COALESCE(cn.tax_notes,cn.reason)" if "tax_notes" in purchase_credit_columns else "COALESCE(cn.reason,'')"
-        supplier_bill_columns = {row["name"] for row in conn.execute('PRAGMA table_info("supplier_bills")')}
+        supplier_bill_columns = _columns(conn, "supplier_bills")
         bill_treatment = "COALESCE(b.tax_treatment,'standard')" if "tax_treatment" in supplier_bill_columns else "'standard'"
         bill_deductible = "COALESCE(b.input_vat_deductible_percent,'100')" if "input_vat_deductible_percent" in supplier_bill_columns else "'100'"
         credit_rows = conn.execute(f"""
@@ -434,13 +443,8 @@ def build_tax_report_snapshot(conn, period_value):
         quality_issues.append({"severity": "error", "document": str(row["document_no"]),
                                "issue": "التصنيف الضريبي لا يتفق مع قيمة/نسبة الضريبة"})
     tax_audit = []
-    audit_table = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tax_document_reference_audit'"
-    ).fetchone()
-    if audit_table:
-        audit_columns = {row["name"] for row in conn.execute(
-            'PRAGMA table_info("tax_document_reference_audit")'
-        )}
+    if _table_exists(conn, "tax_document_reference_audit"):
+        audit_columns = _columns(conn, "tax_document_reference_audit")
         required_audit_columns = {
             "document_kind", "document_id", "old_reference", "new_reference",
             "old_deductible_percent", "new_deductible_percent", "actor_id",
