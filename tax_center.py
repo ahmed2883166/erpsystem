@@ -3,10 +3,9 @@ from database import connect_database
 """Tax center: auditable VAT classification and monthly control report."""
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
-import sqlite3
 from functools import wraps
 
-from db_compat import table_columns, table_exists
+from db_compat import table_columns, table_exists, DB_ERROR, begin_write_transaction
 from db_sql import execute_compat
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
@@ -14,6 +13,7 @@ from flask import Blueprint, flash, redirect, render_template, request, session,
 tax_bp = Blueprint("tax", __name__)
 
 TREATMENTS = {"standard", "zero_rated", "exempt", "out_of_scope"}
+TAX_REPORT_ERRORS = (ImportError, KeyError, ValueError) + DB_ERROR
 
 
 def _db():
@@ -44,8 +44,8 @@ def initialize_tax_schema():
             additions["input_vat_deductible_percent"] = "TEXT NOT NULL DEFAULT '100'"
         for name, definition in additions.items():
             if name not in cols:
-                conn.execute('ALTER TABLE "' + table + '" ADD COLUMN "' + name + '" ' + definition)
-    conn.execute("""CREATE TABLE IF NOT EXISTS tax_document_reference_audit(
+                execute_compat(conn, 'ALTER TABLE "' + table + '" ADD COLUMN "' + name + '" ' + definition)
+    execute_compat(conn, """CREATE TABLE IF NOT EXISTS tax_document_reference_audit(
         id INTEGER PRIMARY KEY,
         document_kind TEXT NOT NULL,
         document_id INTEGER NOT NULL,
@@ -59,7 +59,7 @@ def initialize_tax_schema():
         actor_id INTEGER,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )""")
-    conn.execute("""CREATE INDEX IF NOT EXISTS idx_tax_document_audit_document
+    execute_compat(conn, """CREATE INDEX IF NOT EXISTS idx_tax_document_audit_document
         ON tax_document_reference_audit(document_kind,document_id,created_at,id)""")
     conn.commit()
     conn.close()
@@ -204,7 +204,7 @@ def _build_saudi_tax_preparation(conn, period, summary):
             "negative_asset_accounts": balance_sheet["negative_asset_accounts"],
         })
         result["available"] = True
-    except (ImportError, sqlite3.Error, KeyError, ValueError) as exc:
+    except TAX_REPORT_ERRORS as exc:
         result["notice"] = "تعذر استخراج بيانات القوائم السنوية من الأستاذ العام: " + str(exc)
     return result
 
@@ -499,8 +499,8 @@ def update_document_reference(kind, document_id):
     notes = str(request.form.get("tax_notes", "")).strip()[:500]
     conn = _db()
     try:
-        conn.execute("BEGIN")
-        row = conn.execute(
+        begin_write_transaction(conn)
+        row = execute_compat(conn, 
             "SELECT * FROM " + table + " WHERE id=? AND status='posted'", (document_id,)
         ).fetchone()
         if not row:
@@ -520,16 +520,16 @@ def update_document_reference(kind, document_id):
             if not percent.is_finite() or percent < 0 or percent > 100:
                 raise ValueError("نسبة خصم ضريبة المدخلات يجب أن تكون من 0 إلى 100.")
             new_percent = str(percent)
-            conn.execute(
+            execute_compat(conn, 
                 "UPDATE supplier_bills SET tax_reference=?,tax_notes=?,input_vat_deductible_percent=? WHERE id=? AND status='posted'",
                 (reference, notes, new_percent, document_id)
             )
         else:
-            conn.execute(
+            execute_compat(conn, 
                 "UPDATE " + table + " SET tax_reference=?,tax_notes=? WHERE id=? AND status='posted'",
                 (reference, notes, document_id)
             )
-        conn.execute("""INSERT INTO tax_document_reference_audit(
+        execute_compat(conn, """INSERT INTO tax_document_reference_audit(
             document_kind,document_id,old_reference,new_reference,old_notes,new_notes,
             old_deductible_percent,new_deductible_percent,actor_id
         ) VALUES(?,?,?,?,?,?,?,?,?)""",
@@ -537,7 +537,7 @@ def update_document_reference(kind, document_id):
          old_percent, new_percent, session.get("user_id")))
         conn.commit()
         flash("تم حفظ مرجع المستند وملاحظاته في سجل مراجعة ضريبي مستقل، دون تغيير المبالغ أو القيود المرحلة.", "success")
-    except (sqlite3.Error, ValueError) as exc:
+    except (ValueError,) + DB_ERROR as exc:
         conn.rollback()
         flash(str(exc) if isinstance(exc, ValueError) else "تعذر حفظ بيانات المراجعة الضريبية.", "error")
     finally:
@@ -553,7 +553,7 @@ def classify_document(kind, document_id):
         return redirect(url_for("tax.tax_report"))
     table = "sales_invoices" if kind == "sale" else "supplier_bills"
     conn = _db()
-    row = conn.execute(
+    row = execute_compat(conn, 
         "SELECT id FROM " + table + " WHERE id=? AND status='posted'",
         (document_id,)
     ).fetchone()
