@@ -7,6 +7,7 @@ not on every request connection.
 import sqlite3
 from pathlib import Path
 from report_request_control import current_report_deadline, make_sqlite_deadline_callback
+from db_sql import execute_compat
 
 
 DEFAULT_TIMEOUT_SECONDS = 20
@@ -52,6 +53,16 @@ def enable_wal(path, *, timeout=DEFAULT_TIMEOUT_SECONDS):
         connection.close()
 
 
+def _first_column_value(row):
+    """Read the first selected value from SQLite rows, tuples, or mapping rows."""
+    if row is None:
+        return None
+    keys = row.keys() if hasattr(row, "keys") else None
+    if keys:
+        return row[next(iter(keys))]
+    return row[0]
+
+
 def fetch_page(connection, query, count_query, params=(), count_params=None, page=1, per_page=50):
     """Execute a bounded, stable SQL page and return pagination metadata."""
     try:
@@ -65,10 +76,12 @@ def fetch_page(connection, query, count_query, params=(), count_params=None, pag
     if per_page not in (50, 100):
         per_page = 50
     count_params = params if count_params is None else count_params
-    total = int(connection.execute(count_query, count_params).fetchone()[0] or 0)
+    count_row = execute_compat(connection, count_query, count_params).fetchone()
+    total = int(_first_column_value(count_row) or 0)
     pages = max(1, (total + per_page - 1) // per_page)
     page = min(page, pages)
-    rows = connection.execute(
+    rows = execute_compat(
+        connection,
         query.rstrip().rstrip(";") + " LIMIT ? OFFSET ?",
         tuple(params) + (per_page, (page - 1) * per_page),
     ).fetchall()
