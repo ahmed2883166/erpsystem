@@ -9,6 +9,7 @@ from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
 from db_compat import table_exists
+from db_sql import execute_compat
 
 currency_bp = Blueprint("currency_center", __name__)
 
@@ -86,6 +87,27 @@ def _role(fn):
 def _table_exists(c, name):
     """Check optional currency-center tables using the active DB dialect."""
     return table_exists(c, name)
+
+
+def _latest_fx_date(c, kind, transaction_id):
+    """Return the latest settlement/revaluation date with a stable mapping row.
+
+    Aliased mapping access works with both sqlite3.Row and psycopg dict_row.
+    The allow-list keeps table and column identifiers out of user input.
+    """
+    sources = {
+        "settlement": ("fx_settlements", "settlement_date"),
+        "revaluation": ("fx_revaluations", "revaluation_date"),
+    }
+    if kind not in sources:
+        raise ValueError("نوع سجل العملة غير معروف.")
+    table, column = sources[kind]
+    row = execute_compat(
+        c,
+        f"SELECT MAX({column}) AS latest_date FROM {table} WHERE transaction_id=?",
+        (transaction_id,),
+    ).fetchone()
+    return row["latest_date"] if row else None
 
 
 def _audit(c, action, details):
@@ -241,16 +263,10 @@ def settle(transaction_id):
         settle_date = date.fromisoformat(request.form["settlement_date"]).isoformat()
         if settle_date < t["transaction_date"]:
             raise ValueError("تاريخ التسوية لا يجوز أن يسبق تاريخ المعاملة.")
-        latest_settlement = c.execute(
-            "SELECT MAX(settlement_date) FROM fx_settlements WHERE transaction_id=?",
-            (transaction_id,),
-        ).fetchone()[0]
+        latest_settlement = _latest_fx_date(c, "settlement", transaction_id)
         if latest_settlement and settle_date < latest_settlement:
             raise ValueError("تاريخ التسوية يسبق تسوية سابقة؛ يجب تسجيل التسويات بترتيبها الزمني.")
-        latest_revaluation = c.execute(
-            "SELECT MAX(revaluation_date) FROM fx_revaluations WHERE transaction_id=?",
-            (transaction_id,),
-        ).fetchone()[0]
+        latest_revaluation = _latest_fx_date(c, "revaluation", transaction_id)
         if latest_revaluation and settle_date <= latest_revaluation:
             raise ValueError("تاريخ التسوية يجب أن يأتي بعد آخر إعادة تقييم مسجلة.")
         rate = _rate(c,t["currency_code"],settle_date,request.form.get("rate"))
