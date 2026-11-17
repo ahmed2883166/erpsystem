@@ -86,3 +86,45 @@ class StockLocationTriggerDialectTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StockNullSafeComparisonTests(unittest.TestCase):
+    def test_null_lot_comparison_is_portable_and_matches_unassigned_lot(self):
+        from db_sql import execute_compat, qmark_to_format
+
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.execute("CREATE TABLE stock_movements (lot_id INTEGER, quantity TEXT)")
+            conn.executemany(
+                "INSERT INTO stock_movements(lot_id,quantity) VALUES(?,?)",
+                [(None, "4"), (7, "3")],
+            )
+            predicate = "(lot_id = ? OR (lot_id IS NULL AND ? IS NULL))"
+            row = execute_compat(
+                conn, "SELECT SUM(CAST(quantity AS INTEGER)) total FROM stock_movements WHERE " + predicate,
+                (None, None),
+            ).fetchone()
+            self.assertEqual(row[0], 4)
+            self.assertEqual(
+                qmark_to_format("SELECT 1 WHERE " + predicate),
+                "SELECT 1 WHERE (lot_id = %s OR (lot_id IS NULL AND %s IS NULL))",
+            )
+        finally:
+            conn.close()
+
+    def test_null_parent_comparison_is_portable(self):
+        from db_sql import execute_compat, qmark_to_format
+
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.execute("CREATE TABLE stock_locations (warehouse_id INTEGER, parent_id INTEGER, code TEXT)")
+            conn.execute("INSERT INTO stock_locations VALUES(1,NULL,'FLOOR')")
+            predicate = "(parent_id = ? OR (parent_id IS NULL AND ? IS NULL))"
+            row = execute_compat(
+                conn, "SELECT 1 FROM stock_locations WHERE warehouse_id=? AND " + predicate + " AND lower(code)=lower(?)",
+                (1, None, None, "floor"),
+            ).fetchone()
+            self.assertIsNotNone(row)
+            self.assertIn("parent_id IS NULL", qmark_to_format(predicate))
+        finally:
+            conn.close()
