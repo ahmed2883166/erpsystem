@@ -292,6 +292,9 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6, 7, 8, 9])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         schema = quote_schema_name(self.schema)
+        # Trigger functions intentionally resolve their tables through the
+        # active tenant schema, as they do in a tenant-configured app connection.
+        self.connection.execute("SET search_path TO " + schema)
 
         account_id = self.connection.execute(
             f"INSERT INTO {schema}.accounts(code,name_ar,account_type) VALUES (%s,%s,%s) RETURNING id",
