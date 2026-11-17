@@ -41,14 +41,15 @@ def pg_type(column):
     return "TEXT"
 
 
-def default_sql(value):
+def default_sql(value, target_type=None):
     if value is None:
         return None
     value = str(value).strip()
     if not value:
         return None
     if value.upper() in ("CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME"):
-        return value.upper()
+        expression = value.upper()
+        return f"({expression}::text)" if target_type == "TEXT" else expression
     if ";" in value or "--" in value or "/*" in value:
         raise ValueError(f"Unexpected SQL syntax in column default: {value!r}")
     return value
@@ -256,7 +257,7 @@ def generate_postgres_ddl(snapshot):
                 definition += " PRIMARY KEY"
             if column.get("notnull") and not is_single_integer_pk:
                 definition += " NOT NULL"
-            default = default_sql(column.get("dflt_value"))
+            default = default_sql(column.get("dflt_value"), pg_type(column))
             if default is not None:
                 definition += f" DEFAULT {default}"
             definitions.append(definition)
