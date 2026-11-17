@@ -8,7 +8,8 @@ from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal
 from chart_templates import ensure_account_metadata
-from db_compat import table_columns, table_exists, begin_write_transaction
+from db_compat import table_columns, table_exists, begin_write_transaction, execute_script
+from db_sql import execute_compat
 from db_insert import insert_one_returning_id
 
 bank_bp = Blueprint("bank", __name__, url_prefix="/bank")
@@ -65,17 +66,17 @@ def count_same_amount_candidates(rows, amount):
 
 def refresh_bank_transaction_reconciled(conn, entry_id):
     """Mark a bank transaction reconciled only after every bank-side journal line is matched."""
-    tx=conn.execute("""SELECT id,bank_account_id,destination_bank_account_id
+    tx=execute_compat(conn, """SELECT id,bank_account_id,destination_bank_account_id
         FROM bank_transactions WHERE journal_entry_id=?""",(entry_id,)).fetchone()
     if not tx:
         return False
     bank_ids=sorted({int(x) for x in (tx["bank_account_id"],tx["destination_bank_account_id"]) if x is not None})
     marks=",".join("?" for _ in bank_ids)
-    unmatched=conn.execute(f"""SELECT COUNT(*) FROM journal_lines jl
+    unmatched=execute_compat(conn, f"""SELECT COUNT(*) FROM journal_lines jl
         LEFT JOIN bank_statement_lines sl ON sl.matched_journal_line_id=jl.id
         WHERE jl.entry_id=? AND jl.account_id IN ({marks}) AND sl.id IS NULL""",
         (entry_id,*bank_ids)).fetchone()[0]
-    cur=conn.execute("UPDATE bank_transactions SET reconciled=? WHERE id=?",
+    cur=execute_compat(conn, "UPDATE bank_transactions SET reconciled=? WHERE id=?",
         (1 if int(unmatched or 0)==0 else 0,tx["id"]))
     return cur.rowcount==1
 
@@ -87,7 +88,7 @@ def bank_opening_ledger_balance(conn, account_id, period_start):
     cutoff=(date.fromisoformat(period_start)-timedelta(days=1)).isoformat()
     excluded=sorted(_copied_opening_entry_ids(conn,cutoff))
     exclusion=(" AND je.id NOT IN ("+",".join("?" for _ in excluded)+")") if excluded else ""
-    rows=conn.execute(f"""SELECT jl.debit,jl.credit FROM journal_lines jl
+    rows=execute_compat(conn, f"""SELECT jl.debit,jl.credit FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<?{exclusion}""",
         (account_id,period_start,*excluded)).fetchall()
@@ -96,7 +97,7 @@ def bank_opening_ledger_balance(conn, account_id, period_start):
 
 def save_statement_line_match(c, line_id, journal_line_id, matched_at, matched_by):
     """Claim an unmatched statement line exactly once, even if callers race."""
-    updated = c.execute("""UPDATE bank_statement_lines
+    updated = execute_compat(c, """UPDATE bank_statement_lines
         SET matched_journal_line_id=?,matched_at=?,matched_by=?
         WHERE id=? AND matched_transaction_id IS NULL
           AND matched_journal_line_id IS NULL""",
@@ -107,7 +108,7 @@ def save_statement_line_match(c, line_id, journal_line_id, matched_at, matched_b
 
 def init_bank_schema():
     c = db()
-    c.executescript("""
+    execute_script(c, """
     CREATE TABLE IF NOT EXISTS bank_transactions(
       id INTEGER PRIMARY KEY, transaction_no TEXT NOT NULL UNIQUE,
       transaction_date TEXT NOT NULL, bank_account_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -169,13 +170,13 @@ def init_bank_schema():
     """)
     statement_columns=_columns(c, "bank_statement_lines")
     if "matched_journal_line_id" not in statement_columns:
-        c.execute("ALTER TABLE bank_statement_lines ADD COLUMN matched_journal_line_id INTEGER REFERENCES journal_lines(id)")
+        execute_compat(c, "ALTER TABLE bank_statement_lines ADD COLUMN matched_journal_line_id INTEGER REFERENCES journal_lines(id)")
     balance_columns=_columns(c, "bank_statement_balances")
     if "opening_reviewed" not in balance_columns:
-        c.execute("ALTER TABLE bank_statement_balances ADD COLUMN opening_reviewed INTEGER NOT NULL DEFAULT 0")
+        execute_compat(c, "ALTER TABLE bank_statement_balances ADD COLUMN opening_reviewed INTEGER NOT NULL DEFAULT 0")
     if "opening_review_note" not in balance_columns:
-        c.execute("ALTER TABLE bank_statement_balances ADD COLUMN opening_review_note TEXT NOT NULL DEFAULT ''")
-    c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_statement_journal_line
+        execute_compat(c, "ALTER TABLE bank_statement_balances ADD COLUMN opening_review_note TEXT NOT NULL DEFAULT ''")
+    execute_compat(c, """CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_statement_journal_line
         ON bank_statement_lines(matched_journal_line_id)
         WHERE matched_journal_line_id IS NOT NULL""")
     c.close()
@@ -199,22 +200,22 @@ def index():
     c=db()
     if request.method=="POST":
         try:
-            base_currency_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
+            base_currency_row=execute_compat(c, "SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
             base_currency=base_currency_row["setting_value"] if base_currency_row else "EGP"
             kind=request.form["transaction_type"]
             bank_id=int(request.form["bank_account_id"])
             amount=Decimal(request.form["amount"]).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)
             if amount<=0: raise ValueError("المبلغ يجب أن يكون أكبر من صفر.")
             def valid_account(aid):
-                r=c.execute("SELECT id,code,name_ar,account_type,is_group,active FROM accounts WHERE id=?",(aid,)).fetchone()
+                r=execute_compat(c, "SELECT id,code,name_ar,account_type,is_group,active FROM accounts WHERE id=?",(aid,)).fetchone()
                 if not r or r["account_type"]!="asset" or r["is_group"] or not r["active"]:
                     raise ValueError("اختر حساب بنك/نقد تفصيليًا ونشطًا.")
-                registry=c.execute("SELECT active,currency_code,branch_id FROM cash_accounts WHERE account_id=?",(aid,)).fetchone()
+                registry=execute_compat(c, "SELECT active,currency_code,branch_id FROM cash_accounts WHERE account_id=?",(aid,)).fetchone()
                 if registry and not registry["active"]:
                     raise ValueError("الخزنة أو البنك معطل؛ فعّله أولًا قبل تسجيل حركة جديدة.")
                 if registry and registry["currency_code"]!=base_currency:
                     raise ValueError("حسابات الخزائن والبنوك في هذه النسخة تُرحّل بالعملة الأساسية فقط؛ لا تسجل حركة بعملة أجنبية قبل تفعيل معالجة فروق وأسعار الصرف.")
-                if registry and registry["branch_id"] and not c.execute(
+                if registry and registry["branch_id"] and not execute_compat(c, 
                     "SELECT 1 FROM branches WHERE id=? AND active=1",(registry["branch_id"],)
                 ).fetchone():
                     raise ValueError("الفرع المرتبط بالخزنة/البنك غير نشط؛ راجع ربط الحساب بالفرع قبل تسجيل الحركة.")
@@ -227,25 +228,25 @@ def index():
             if kind=="transfer":
                 valid_account(destination_id)
                 if destination_id==bank_id: raise ValueError("حساب التحويل المستفيد يجب أن يختلف عن حساب المصدر.")
-                source_currency=c.execute("SELECT currency_code FROM cash_accounts WHERE account_id=? AND active=1",(bank_id,)).fetchone()
-                target_currency=c.execute("SELECT currency_code FROM cash_accounts WHERE account_id=? AND active=1",(destination_id,)).fetchone()
+                source_currency=execute_compat(c, "SELECT currency_code FROM cash_accounts WHERE account_id=? AND active=1",(bank_id,)).fetchone()
+                target_currency=execute_compat(c, "SELECT currency_code FROM cash_accounts WHERE account_id=? AND active=1",(destination_id,)).fetchone()
                 if source_currency and target_currency and source_currency["currency_code"]!=target_currency["currency_code"]:
                     raise ValueError("لا يمكن تحويل نفس المبلغ بين خزنة/بنك بعملتين مختلفتين؛ استخدم قيد صرف عملة مستقلًا.")
-                source_registry=c.execute("SELECT branch_id FROM cash_accounts WHERE account_id=? AND active=1",(bank_id,)).fetchone()
-                target_registry=c.execute("SELECT branch_id FROM cash_accounts WHERE account_id=? AND active=1",(destination_id,)).fetchone()
+                source_registry=execute_compat(c, "SELECT branch_id FROM cash_accounts WHERE account_id=? AND active=1",(bank_id,)).fetchone()
+                target_registry=execute_compat(c, "SELECT branch_id FROM cash_accounts WHERE account_id=? AND active=1",(destination_id,)).fetchone()
                 source_dimensions={"branch_id":source_registry["branch_id"]} if source_registry and source_registry["branch_id"] else {}
                 target_dimensions={"branch_id":target_registry["branch_id"]} if target_registry and target_registry["branch_id"] else {}
                 lines=[(destination_id,amount,0,"تحويل وارد إلى حساب النقدية/البنك",target_dimensions),
                        (bank_id,0,amount,"تحويل صادر من حساب النقدية/البنك",source_dimensions)]
             else:
                 if not counter_id: raise ValueError("حدد الحساب المقابل للحركة.")
-                counter=c.execute("SELECT id,code,name_ar,is_group,active FROM accounts WHERE id=?",(counter_id,)).fetchone()
+                counter=execute_compat(c, "SELECT id,code,name_ar,is_group,active FROM accounts WHERE id=?",(counter_id,)).fetchone()
                 if not counter or counter["is_group"] or not counter["active"]: raise ValueError("الحساب المقابل يجب أن يكون تفصيليًا ونشطًا.")
-                if c.execute("SELECT 1 FROM cash_accounts WHERE account_id=?",(counter_id,)).fetchone() or any(
+                if execute_compat(c, "SELECT 1 FROM cash_accounts WHERE account_id=?",(counter_id,)).fetchone() or any(
                     term in (counter["name_ar"] or "") for term in ("صندوق","بنك","بنوك","مصرف")
                 ):
                     raise ValueError("الحساب المقابل خزنة أو بنك؛ استخدم نوع الحركة تحويل بين الخزائن والبنوك حتى يظهر الطرفان في دفترهما دون تكرار.")
-                registry=c.execute("SELECT branch_id FROM cash_accounts WHERE account_id=? AND active=1",(bank_id,)).fetchone()
+                registry=execute_compat(c, "SELECT branch_id FROM cash_accounts WHERE account_id=? AND active=1",(bank_id,)).fetchone()
                 branch_dimensions={"branch_id":registry["branch_id"]} if registry and registry["branch_id"] else {}
                 if kind in ("deposit",): lines=[(bank_id,amount,0,"إيداع بنكي",branch_dimensions),(counter_id,0,amount,"الحساب المقابل",branch_dimensions)]
                 elif kind in ("withdrawal","fee"): lines=[(counter_id,amount,0,"مصروف/سحب بنكي",branch_dimensions),(bank_id,0,amount,"الحساب البنكي",branch_dimensions)]
@@ -261,7 +262,7 @@ def index():
             return redirect(url_for("bank.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
             c.rollback(); flash(str(e),"error")
-    accounts=c.execute("""SELECT a.id,a.code,a.name_ar,ca.kind,ca.name_ar display_name,ca.currency_code
+    accounts=execute_compat(c, """SELECT a.id,a.code,a.name_ar,ca.kind,ca.name_ar display_name,ca.currency_code
         FROM cash_accounts ca JOIN accounts a ON a.id=ca.account_id
         WHERE ca.active=1 AND a.active=1
           AND ca.currency_code=(SELECT setting_value FROM company_settings WHERE setting_key='base_currency')
@@ -271,7 +272,7 @@ def index():
           AND (lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%' OR lower(a.name_ar) LIKE '%صندوق%')
           AND NOT EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id)
         ORDER BY code""").fetchall()
-    all_accounts=c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
+    all_accounts=execute_compat(c, """SELECT a.id,a.code,a.name_ar FROM accounts a
         WHERE a.is_group=0 AND a.active=1
           AND NOT EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id)
         ORDER BY a.code""").fetchall()
@@ -282,7 +283,7 @@ def index():
         page=request.args.get("bank_page",1,type=int),
         per_page=request.args.get("bank_per_page",50,type=int))
     rows=bank_page["rows"]
-    bank_balances=c.execute("""SELECT a.id,a.code,a.name_ar,
+    bank_balances=execute_compat(c, """SELECT a.id,a.code,a.name_ar,
         COALESCE(DECIMAL_NET(CASE WHEN je.status='posted' THEN jl.debit ELSE '0' END,
                              CASE WHEN je.status='posted' THEN jl.credit ELSE '0' END),0) balance
         FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
@@ -300,7 +301,7 @@ def index():
 @require()
 def reconcile(transaction_id):
     c=db()
-    row=c.execute("SELECT bank_account_id FROM bank_transactions WHERE id=?",(transaction_id,)).fetchone()
+    row=execute_compat(c, "SELECT bank_account_id FROM bank_transactions WHERE id=?",(transaction_id,)).fetchone()
     c.close()
     if not row:
         flash("الحركة البنكية غير موجودة.","error")
@@ -324,14 +325,14 @@ def statement_reconciliation():
                 description=request.form.get("description","").strip()
                 if amount==0: raise ValueError("قيمة حركة كشف البنك لا يمكن أن تكون صفرًا.")
                 date.fromisoformat(statement_date)
-                account=c.execute("""SELECT a.id FROM accounts a
+                account=execute_compat(c, """SELECT a.id FROM accounts a
                     WHERE a.id=? AND a.account_type='asset' AND a.is_group=0 AND a.active=1
                     AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.kind='bank' AND ca.active=1
                         AND ca.currency_code=(SELECT setting_value FROM company_settings WHERE setting_key='base_currency'))
                       OR lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%')""",
                     (account_id,)).fetchone()
                 if not account: raise ValueError("اختر حساب بنك نشطًا من سجل الخزائن والبنوك.")
-                duplicate=c.execute("""SELECT id FROM bank_statement_lines
+                duplicate=execute_compat(c, """SELECT id FROM bank_statement_lines
                     WHERE bank_account_id=? AND statement_date=? AND signed_amount=? AND bank_reference=?""",
                     (account_id,statement_date,str(amount),reference)).fetchone() if reference else None
                 if duplicate: raise ValueError("سطر كشف البنك موجود بالفعل بنفس الحساب والتاريخ والمبلغ والمرجع.")
@@ -352,7 +353,7 @@ def statement_reconciliation():
                 closing=Decimal(request.form.get("closing_balance","0")).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)
                 date.fromisoformat(period_start); date.fromisoformat(period_end)
                 if period_end<period_start: raise ValueError("تاريخ نهاية كشف البنك يجب ألا يسبق تاريخ بدايته.")
-                if not c.execute("""SELECT 1 FROM accounts a WHERE a.id=? AND a.account_type='asset'
+                if not execute_compat(c, """SELECT 1 FROM accounts a WHERE a.id=? AND a.account_type='asset'
                     AND a.is_group=0 AND a.active=1
                     AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.kind='bank' AND ca.active=1
                         AND ca.currency_code=(SELECT setting_value FROM company_settings WHERE setting_key='base_currency'))
@@ -360,14 +361,14 @@ def statement_reconciliation():
                     (account_id,)).fetchone():
                     raise ValueError("اختر حساب بنك تفصيليًا ونشطًا من سجل الخزائن والبنوك.")
                 begin_write_transaction(c)
-                c.execute("""INSERT INTO bank_statement_balances(bank_account_id,period_start,period_end,opening_balance,closing_balance,created_by)
+                execute_compat(c, """INSERT INTO bank_statement_balances(bank_account_id,period_start,period_end,opening_balance,closing_balance,created_by)
                     VALUES(?,?,?,?,?,?)
                     ON CONFLICT(bank_account_id,period_start,period_end) DO UPDATE SET
                     opening_balance=excluded.opening_balance,closing_balance=excluded.closing_balance,
                     opening_reviewed=0,opening_review_note='',
                     created_by=excluded.created_by,updated_at=CURRENT_TIMESTAMP""",
                     (account_id,period_start,period_end,str(opening),str(closing),session.get("user_id")))
-                c.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
+                execute_compat(c, """INSERT INTO audit_log(user_id,action,details,created_at)
                     VALUES(?,?,?,?)""",(session.get("user_id"),"bank_statement_balance",
                     f"حفظ رصيد افتتاحي وختامي لكشف البنك للحساب {account_id} للفترة {period_start} إلى {period_end}",
                     datetime.now().isoformat(timespec="seconds")))
@@ -385,11 +386,11 @@ def statement_reconciliation():
                     raise ValueError("أكد صراحة أنك راجعت فرق الرصيد الافتتاحي قبل تسجيل المراجعة.")
                 if len(note)<10: raise ValueError("اكتب سببًا واضحًا لمراجعة فرق الرصيد الافتتاحي (10 أحرف على الأقل).")
                 begin_write_transaction(c)
-                updated=c.execute("""UPDATE bank_statement_balances SET opening_reviewed=1,opening_review_note=?,updated_at=CURRENT_TIMESTAMP
+                updated=execute_compat(c, """UPDATE bank_statement_balances SET opening_reviewed=1,opening_review_note=?,updated_at=CURRENT_TIMESTAMP
                     WHERE bank_account_id=? AND period_start=? AND period_end=?""",
                     (note,account_id,period_start,period_end)).rowcount
                 if not updated: raise ValueError("احفظ أرصدة كشف البنك أولًا قبل اعتماد مراجعة الرصيد الافتتاحي.")
-                c.execute("""INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,?)""",
+                execute_compat(c, """INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,?)""",
                     (session.get("user_id"),"bank_opening_balance_review",
                      f"مراجعة فرق رصيد افتتاحي للبنك {account_id} للفترة {period_start} إلى {period_end}: {note}",
                      datetime.now().isoformat(timespec="seconds")))
@@ -401,8 +402,8 @@ def statement_reconciliation():
                 begin_write_transaction(c)
                 line_id=request.form.get("line_id",type=int)
                 journal_line_id=request.form.get("journal_line_id",type=int)
-                line=c.execute("SELECT * FROM bank_statement_lines WHERE id=?",(line_id,)).fetchone()
-                journal_line=c.execute("""SELECT jl.id,jl.account_id,jl.debit,jl.credit,je.id entry_id,
+                line=execute_compat(c, "SELECT * FROM bank_statement_lines WHERE id=?",(line_id,)).fetchone()
+                journal_line=execute_compat(c, """SELECT jl.id,jl.account_id,jl.debit,jl.credit,je.id entry_id,
                     je.reference,je.description,je.entry_date
                     FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                     WHERE jl.id=? AND je.status='posted'""",(journal_line_id,)).fetchone()
@@ -422,7 +423,7 @@ def statement_reconciliation():
                     raise ValueError("سطر كشف البنك خارج فترة التسوية الحالية.")
                 if not (period_start<=journal_line["entry_date"]<=period_end):
                     raise ValueError("القيد المختار خارج فترة التسوية الحالية.")
-                possible_rows=c.execute("""SELECT jl.debit,jl.credit FROM journal_lines jl
+                possible_rows=execute_compat(c, """SELECT jl.debit,jl.credit FROM journal_lines jl
                     JOIN journal_entries je ON je.id=jl.entry_id
                     LEFT JOIN bank_statement_lines matched ON matched.matched_journal_line_id=jl.id
                     WHERE jl.account_id=? AND je.status='posted' AND je.entry_date BETWEEN ? AND ?
@@ -431,7 +432,7 @@ def statement_reconciliation():
                 possible=count_same_amount_candidates(possible_rows,expected)
                 if possible>1 and request.form.get("confirm_multiple")!="1":
                     raise ValueError(f"يوجد {possible} قيود بنفس المبلغ والاتجاه. راجع رقم القيد والتاريخ والبيان، ثم أكد أنك اخترت القيد الصحيح.")
-                already=c.execute("SELECT 1 FROM bank_statement_lines WHERE matched_journal_line_id=? LIMIT 1",
+                already=execute_compat(c, "SELECT 1 FROM bank_statement_lines WHERE matched_journal_line_id=? LIMIT 1",
                                   (journal_line_id,)).fetchone()
                 if already: raise ValueError("سطر الأستاذ تمت مطابقته مع سطر كشف آخر بالفعل.")
                 save_statement_line_match(
@@ -439,7 +440,7 @@ def statement_reconciliation():
                     datetime.now().isoformat(timespec="seconds"), session.get("user_id")
                 )
                 refresh_bank_transaction_reconciled(c,journal_line["entry_id"])
-                c.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
+                execute_compat(c, """INSERT INTO audit_log(user_id,action,details,created_at)
                     VALUES(?,?,?,?)""",(session.get("user_id"),"bank_statement_match",
                     f"مطابقة سطر كشف #{line_id} مع سطر الأستاذ #{journal_line_id} بالقيد #{journal_line['entry_id']}؛ عدد القيود المحتملة بنفس المبلغ والاتجاه: {possible}",
                     datetime.now().isoformat(timespec="seconds")))
@@ -449,7 +450,7 @@ def statement_reconciliation():
                     start_date=period_start,end_date=period_end))
             raise ValueError("الإجراء المطلوب غير معروف.")
         account_id=request.args.get("account_id",type=int)
-        accounts=c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
+        accounts=execute_compat(c, """SELECT a.id,a.code,a.name_ar FROM accounts a
             WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
             AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.kind='bank' AND ca.active=1
                 AND ca.currency_code=(SELECT setting_value FROM company_settings WHERE setting_key='base_currency'))
@@ -461,14 +462,14 @@ def statement_reconciliation():
         period_start=request.args.get("start_date",today.replace(day=1).isoformat())
         period_end=request.args.get("end_date",today.isoformat())
         if account_id:
-            lines=c.execute("""SELECT l.*,COALESCE(t.transaction_no,'قيد #'||mje.id) transaction_no
+            lines=execute_compat(c, """SELECT l.*,COALESCE(t.transaction_no,'قيد #'||mje.id) transaction_no
                 FROM bank_statement_lines l
                 LEFT JOIN bank_transactions t ON t.id=l.matched_transaction_id
                 LEFT JOIN journal_lines mjl ON mjl.id=l.matched_journal_line_id
                 LEFT JOIN journal_entries mje ON mje.id=mjl.entry_id
                 WHERE l.bank_account_id=? AND l.statement_date BETWEEN ? AND ?
                 ORDER BY l.statement_date,l.id""",(account_id,period_start,period_end)).fetchall()
-            gl_lines=c.execute("""SELECT jl.id journal_line_id,je.id entry_id,je.entry_date transaction_date,
+            gl_lines=execute_compat(c, """SELECT jl.id journal_line_id,je.id entry_id,je.entry_date transaction_date,
                 je.reference transaction_no,je.description,jl.memo,jl.debit,jl.credit,
                 sl.id matched_statement_line_id
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
@@ -491,7 +492,7 @@ def statement_reconciliation():
             lines=candidate_lines
             statement_total=sum((Decimal(str(line["signed_amount"])) for line in lines),Decimal("0"))
             matched_count=sum(1 for line in lines if line["matched_transaction_id"] or line["matched_journal_line_id"])
-            balances=c.execute("""SELECT opening_balance,closing_balance,opening_reviewed,opening_review_note
+            balances=execute_compat(c, """SELECT opening_balance,closing_balance,opening_reviewed,opening_review_note
                 FROM bank_statement_balances WHERE bank_account_id=? AND period_start=? AND period_end=?""",
                 (account_id,period_start,period_end)).fetchone()
             opening_ledger_balance=bank_opening_ledger_balance(c,account_id,period_start)
@@ -540,24 +541,24 @@ def cash_accounts():
             if kind not in {"cash","bank"} or not name:
                 raise ValueError("حدد نوع الحساب واكتب اسم الخزنة أو البنك.")
             branch_id=request.form.get("branch_id",type=int)
-            if branch_id and not c.execute("SELECT 1 FROM branches WHERE id=? AND active=1",(branch_id,)).fetchone():
+            if branch_id and not execute_compat(c, "SELECT 1 FROM branches WHERE id=? AND active=1",(branch_id,)).fetchone():
                 raise ValueError("الفرع المحدد غير موجود أو غير نشط.")
             currency=(request.form.get("currency_code") or "EGP").strip().upper()
-            base_currency_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
+            base_currency_row=execute_compat(c, "SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
             base_currency=base_currency_row["setting_value"] if base_currency_row else "EGP"
             if currency!=base_currency:
                 raise ValueError("حاليًا تُرحّل حركات الخزائن والبنوك بالعملة الأساسية فقط؛ لا تختَر عملة أجنبية حتى تُضاف معالجة فروق وأسعار الصرف.")
-            if not c.execute("SELECT 1 FROM currencies WHERE code=? AND active=1",(currency,)).fetchone():
+            if not execute_compat(c, "SELECT 1 FROM currencies WHERE code=? AND active=1",(currency,)).fetchone():
                 raise ValueError("العملة الأساسية غير مفعلة في إعدادات العملات.")
             if mode=="new":
                 parent_id=request.form.get("parent_id",type=int)
-                parent=c.execute("SELECT id,code,account_type,is_group,active FROM accounts WHERE id=?",(parent_id,)).fetchone()
+                parent=execute_compat(c, "SELECT id,code,account_type,is_group,active FROM accounts WHERE id=?",(parent_id,)).fetchone()
                 if not parent or parent["account_type"]!="asset" or not parent["is_group"] or not parent["active"] or str(parent["code"])!="1100":
                     raise ValueError("لإنشاء خزنة أو بنك اختر مجموعة الأصول المتداولة النقدية (مثل 1100) حتى يظهر الحساب في التصنيف الصحيح بالقوائم المالية.")
                 code=None
                 for sequence in range(1,1000):
                     candidate=str(parent["code"])+f"{sequence:03d}"
-                    if not c.execute("SELECT 1 FROM accounts WHERE code=?",(candidate,)).fetchone():
+                    if not execute_compat(c, "SELECT 1 FROM accounts WHERE code=?",(candidate,)).fetchone():
                         code=candidate
                         break
                 if not code:
@@ -568,12 +569,12 @@ def cash_accounts():
                 ensure_account_metadata(c)
             elif mode=="existing":
                 account_id=request.form.get("account_id",type=int)
-                account=c.execute("SELECT id,code,account_type,is_group,active FROM accounts WHERE id=?",(account_id,)).fetchone()
+                account=execute_compat(c, "SELECT id,code,account_type,is_group,active FROM accounts WHERE id=?",(account_id,)).fetchone()
                 if not account or account["account_type"]!="asset" or account["is_group"] or not account["active"]:
                     raise ValueError("اربط الحساب بحساب أصول تفصيلي ونشط فقط.")
                 from activity_profiles import active_account_role_ids
                 cash_role_ids=active_account_role_ids(c).get("cash", set())
-                already_registered=c.execute("SELECT 1 FROM cash_accounts WHERE account_id=?",(account_id,)).fetchone()
+                already_registered=execute_compat(c, "SELECT 1 FROM cash_accounts WHERE account_id=?",(account_id,)).fetchone()
                 if account_id not in cash_role_ids and not already_registered:
                     raise ValueError("الحساب المحدد ليس ضمن حسابات النقدية/البنوك المعتمدة. اختر حسابًا من دور النقدية في ملف النشاط أو أنشئ حسابًا تحت مجموعة النقدية.")
             else:
@@ -590,19 +591,19 @@ def cash_accounts():
         except (ValueError,sqlite3.Error) as exc:
             c.rollback()
             flash(str(exc),"error")
-    rows=c.execute("""SELECT ca.*,a.code account_code,a.name_ar account_name,
+    rows=execute_compat(c, """SELECT ca.*,a.code account_code,a.name_ar account_name,
         b.code branch_code,b.name_ar branch_name
         FROM cash_accounts ca JOIN accounts a ON a.id=ca.account_id
         LEFT JOIN branches b ON b.id=ca.branch_id ORDER BY ca.kind,ca.name_ar""").fetchall()
-    groups=c.execute("SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=1 AND active=1 ORDER BY code").fetchall()
-    available=c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
+    groups=execute_compat(c, "SELECT id,code,name_ar FROM accounts WHERE account_type='asset' AND is_group=1 AND active=1 ORDER BY code").fetchall()
+    available=execute_compat(c, """SELECT a.id,a.code,a.name_ar FROM accounts a
         WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
         AND NOT EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id)
         ORDER BY a.code""").fetchall()
-    branches=c.execute("SELECT id,code,name_ar FROM branches WHERE active=1 ORDER BY code").fetchall()
-    base_currency_row=c.execute("SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
+    branches=execute_compat(c, "SELECT id,code,name_ar FROM branches WHERE active=1 ORDER BY code").fetchall()
+    base_currency_row=execute_compat(c, "SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
     base_currency=base_currency_row["setting_value"] if base_currency_row else "EGP"
-    currencies=c.execute("SELECT code,name_ar FROM currencies WHERE code=? AND active=1",(base_currency,)).fetchall()
+    currencies=execute_compat(c, "SELECT code,name_ar FROM currencies WHERE code=? AND active=1",(base_currency,)).fetchall()
     c.close()
     return render_template("cash_accounts.html",rows=rows,groups=groups,available=available,
         branches=branches,currencies=currencies,today=date.today().isoformat())
@@ -614,20 +615,20 @@ def toggle_cash_account(cash_account_id):
     c=db()
     try:
         begin_write_transaction(c)
-        row=c.execute("SELECT id,name_ar,active,account_id FROM cash_accounts WHERE id=?",(cash_account_id,)).fetchone()
+        row=execute_compat(c, "SELECT id,name_ar,active,account_id FROM cash_accounts WHERE id=?",(cash_account_id,)).fetchone()
         if not row:
             raise ValueError("الخزنة أو البنك غير موجود.")
         active=0 if row["active"] else 1
         if not active:
-            balance_rows=c.execute("""SELECT jl.debit,jl.credit FROM journal_lines jl
+            balance_rows=execute_compat(c, """SELECT jl.debit,jl.credit FROM journal_lines jl
                 JOIN journal_entries je ON je.id=jl.entry_id
                 WHERE jl.account_id=? AND je.status='posted'""",(row["account_id"],)).fetchall()
             balance=sum((Decimal(str(item["debit"] or "0"))-Decimal(str(item["credit"] or "0"))
                          for item in balance_rows),Decimal("0"))
             if balance != 0:
                 raise ValueError(f"لا يمكن تعطيل {row['name_ar']} لأن رصيد دفتر الأستاذ الحالي {balance:.2f}. صفّر الرصيد أو حوّله إلى حساب نقدية آخر أولًا.")
-        c.execute("UPDATE cash_accounts SET active=? WHERE id=?",(active,cash_account_id))
-        c.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
+        execute_compat(c, "UPDATE cash_accounts SET active=? WHERE id=?",(active,cash_account_id))
+        execute_compat(c, """INSERT INTO audit_log(user_id,action,details,created_at)
             VALUES(?,?,?,?)""",(session.get("user_id"),"cash_account_activated" if active else "cash_account_deactivated",
             ("تفعيل " if active else "تعطيل ")+row["name_ar"]+"؛ السجل والحركات التاريخية محفوظة.",
             datetime.now().isoformat(timespec="seconds")))
