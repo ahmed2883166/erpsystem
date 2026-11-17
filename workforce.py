@@ -1,6 +1,7 @@
 from app_paths import DB_PATH
 from database import connect_database, fetch_page
 from db_compat import (begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names, execute_script, database_dialect, DB_ERROR, DB_INTEGRITY_ERROR)
+from db_sql import execute_compat
 """Employee master, payroll preparation and employee custody workflows."""
 import io
 import os
@@ -324,7 +325,7 @@ def initialize_workforce_schema():
     """)
     final_payroll_columns = table_columns(c, "employee_final_payrolls")
     if "journal_entry_id" not in final_payroll_columns:
-        c.execute("ALTER TABLE employee_final_payrolls ADD COLUMN journal_entry_id INTEGER")
+        execute_compat(c,"ALTER TABLE employee_final_payrolls ADD COLUMN journal_entry_id INTEGER")
     execute_script(c,"""
     CREATE TABLE IF NOT EXISTS employee_final_payroll_payments(
       id INTEGER PRIMARY KEY,
@@ -348,10 +349,10 @@ def initialize_workforce_schema():
         ("stamp_duty", "TEXT NOT NULL DEFAULT '0'"),
     ):
         if column not in eos_columns:
-            c.execute(f"ALTER TABLE employee_end_of_service_settlements ADD COLUMN {column} {definition}")
+            execute_compat(c,f"ALTER TABLE employee_end_of_service_settlements ADD COLUMN {column} {definition}")
     if "journal_entry_id" not in eos_columns:
-        c.execute("ALTER TABLE employee_end_of_service_settlements ADD COLUMN journal_entry_id INTEGER")
-    c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_eos_journal_entry
+        execute_compat(c,"ALTER TABLE employee_end_of_service_settlements ADD COLUMN journal_entry_id INTEGER")
+    execute_compat(c,"""CREATE UNIQUE INDEX IF NOT EXISTS idx_eos_journal_entry
         ON employee_end_of_service_settlements(journal_entry_id) WHERE journal_entry_id IS NOT NULL""")
     # Additive approval metadata for maker-checker workflows; preserve existing rows.
     for table, additions in {
@@ -386,7 +387,7 @@ def initialize_workforce_schema():
         existing_columns = table_columns(c, table)
         for column, declaration in additions.items():
             if column not in existing_columns:
-                c.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {declaration}')
+                execute_compat(c,f'ALTER TABLE "{table}" ADD COLUMN "{column}" {declaration}')
     execute_script(c,"""
     CREATE TABLE IF NOT EXISTS employee_end_of_service_payments(
       id INTEGER PRIMARY KEY,
@@ -400,21 +401,21 @@ def initialize_workforce_schema():
     CREATE INDEX IF NOT EXISTS idx_eos_payments_settlement
       ON employee_end_of_service_payments(settlement_id,payment_date,id);
     """)
-    c.execute("""INSERT INTO employee_pay_item_catalog(name,item_type)
+    execute_compat(c,"""INSERT INTO employee_pay_item_catalog(name,item_type)
         SELECT DISTINCT item_name,item_type FROM employee_pay_items WHERE trim(item_name)<>''
         ON CONFLICT DO NOTHING""")
-    c.execute("INSERT INTO leave_types(code,name,is_paid,requires_balance) VALUES('annual','إجازة سنوية',1,1) ON CONFLICT DO NOTHING")
-    c.execute("INSERT INTO leave_types(code,name,is_paid,requires_balance) VALUES('unpaid','إجازة بدون أجر',0,0) ON CONFLICT DO NOTHING")
-    c.execute("INSERT INTO leave_types(code,name,is_paid,requires_balance) VALUES('sick','إجازة مرضية',1,0) ON CONFLICT DO NOTHING")
+    execute_compat(c,"INSERT INTO leave_types(code,name,is_paid,requires_balance) VALUES('annual','إجازة سنوية',1,1) ON CONFLICT DO NOTHING")
+    execute_compat(c,"INSERT INTO leave_types(code,name,is_paid,requires_balance) VALUES('unpaid','إجازة بدون أجر',0,0) ON CONFLICT DO NOTHING")
+    execute_compat(c,"INSERT INTO leave_types(code,name,is_paid,requires_balance) VALUES('sick','إجازة مرضية',1,0) ON CONFLICT DO NOTHING")
     if database_dialect(c) == "sqlite":
-        attendance_sql = c.execute(
+        attendance_sql = execute_compat(c,
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='attendance_records'"
         ).fetchone()
         if attendance_sql and "'annual_leave'" not in (attendance_sql["sql"] or ""):
-            c.execute("PRAGMA foreign_keys=OFF")
+            execute_compat(c,"PRAGMA foreign_keys=OFF")
             try:
                 begin_write_transaction(c)
-                c.execute("""CREATE TABLE attendance_records_rebuilt(
+                execute_compat(c,"""CREATE TABLE attendance_records_rebuilt(
                     id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id),
                     attendance_date TEXT NOT NULL,
                     status TEXT NOT NULL CHECK(status IN ('present','absent','permission','holiday','annual_leave','sick_leave','unpaid_leave')),
@@ -422,22 +423,22 @@ def initialize_workforce_schema():
                     absence_hours TEXT NOT NULL DEFAULT '0', approved_overtime_hours TEXT NOT NULL DEFAULT '0',
                     notes TEXT NOT NULL DEFAULT '', recorded_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(employee_id,attendance_date))""")
-                c.execute("""INSERT INTO attendance_records_rebuilt
+                execute_compat(c,"""INSERT INTO attendance_records_rebuilt
                     SELECT id,employee_id,attendance_date,status,check_in,check_out,absence_hours,
                            approved_overtime_hours,notes,recorded_by,created_at FROM attendance_records""")
-                c.execute("DROP TABLE attendance_records")
-                c.execute("ALTER TABLE attendance_records_rebuilt RENAME TO attendance_records")
-                c.execute("CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance_records(attendance_date,employee_id)")
+                execute_compat(c,"DROP TABLE attendance_records")
+                execute_compat(c,"ALTER TABLE attendance_records_rebuilt RENAME TO attendance_records")
+                execute_compat(c,"CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance_records(attendance_date,employee_id)")
                 c.commit()
             except Exception:
                 c.rollback()
                 raise
             finally:
-                c.execute("PRAGMA foreign_keys=ON")
+                execute_compat(c,"PRAGMA foreign_keys=ON")
     elif table_exists(c, "attendance_records"):
         # PostgreSQL stores CHECK constraints separately; replace only an old
         # status constraint and preserve every attendance row and other constraint.
-        checks = c.execute("""
+        checks = execute_compat(c,"""
             SELECT conname, pg_get_constraintdef(oid) AS definition
             FROM pg_constraint
             WHERE conrelid='attendance_records'::regclass AND contype='c'
@@ -451,8 +452,8 @@ def initialize_workforce_schema():
                 and "annual_leave" not in definition
             ):
                 constraint = str(check["conname"]).replace('"', '""')
-                c.execute(f'ALTER TABLE attendance_records DROP CONSTRAINT "{constraint}"')
-        remaining_checks = c.execute("""
+                execute_compat(c,f'ALTER TABLE attendance_records DROP CONSTRAINT "{constraint}"')
+        remaining_checks = execute_compat(c,"""
             SELECT pg_get_constraintdef(oid) AS definition
             FROM pg_constraint
             WHERE conrelid='attendance_records'::regclass AND contype='c'
@@ -460,40 +461,40 @@ def initialize_workforce_schema():
         if not any("status" in str(row["definition"]).lower()
                    and "annual_leave" in str(row["definition"])
                    for row in remaining_checks):
-            c.execute("""ALTER TABLE attendance_records
+            execute_compat(c,"""ALTER TABLE attendance_records
                 ADD CONSTRAINT attendance_records_status_check
                 CHECK (status IN ('present','absent','permission','holiday',
                                   'annual_leave','sick_leave','unpaid_leave'))""")
     # Allow a reversed payroll period to be prepared again while keeping only one
     # non-reversed payroll run per period. Preserve run IDs and all linked history.
     if database_dialect(c) == "sqlite":
-        payroll_runs_sql = c.execute(
+        payroll_runs_sql = execute_compat(c,
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='payroll_runs'"
         ).fetchone()
         if payroll_runs_sql and "period TEXT NOT NULL UNIQUE" in (payroll_runs_sql["sql"] or ""):
-            c.execute("PRAGMA foreign_keys=OFF")
+            execute_compat(c,"PRAGMA foreign_keys=OFF")
             try:
                 begin_write_transaction(c)
-                c.execute("""CREATE TABLE payroll_runs_rebuilt(
+                execute_compat(c,"""CREATE TABLE payroll_runs_rebuilt(
                     id INTEGER PRIMARY KEY, period TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft',
                     journal_entry_id INTEGER UNIQUE, created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )""")
-                c.execute("""INSERT INTO payroll_runs_rebuilt(id,period,status,journal_entry_id,created_by,created_at)
+                execute_compat(c,"""INSERT INTO payroll_runs_rebuilt(id,period,status,journal_entry_id,created_by,created_at)
                     SELECT id,period,status,journal_entry_id,created_by,created_at FROM payroll_runs""")
-                c.execute("DROP TABLE payroll_runs")
-                c.execute("ALTER TABLE payroll_runs_rebuilt RENAME TO payroll_runs")
-                c.execute("CREATE UNIQUE INDEX uq_payroll_runs_non_reversed_period ON payroll_runs(period) WHERE status!='reversed'")
-                c.execute("CREATE INDEX IF NOT EXISTS idx_payroll_period ON payroll_runs(period)")
+                execute_compat(c,"DROP TABLE payroll_runs")
+                execute_compat(c,"ALTER TABLE payroll_runs_rebuilt RENAME TO payroll_runs")
+                execute_compat(c,"CREATE UNIQUE INDEX uq_payroll_runs_non_reversed_period ON payroll_runs(period) WHERE status!='reversed'")
+                execute_compat(c,"CREATE INDEX IF NOT EXISTS idx_payroll_period ON payroll_runs(period)")
                 c.commit()
             except Exception:
                 c.rollback()
                 raise
             finally:
-                c.execute("PRAGMA foreign_keys=ON")
+                execute_compat(c,"PRAGMA foreign_keys=ON")
     elif table_exists(c, "payroll_runs"):
         # Remove the legacy global UNIQUE(period), then enforce uniqueness only
         # for active runs. Duplicate active periods cause a safe migration failure.
-        unique_constraints = c.execute("""
+        unique_constraints = execute_compat(c,"""
             SELECT conname, pg_get_constraintdef(oid) AS definition
             FROM pg_constraint
             WHERE conrelid='payroll_runs'::regclass AND contype='u'
@@ -501,10 +502,10 @@ def initialize_workforce_schema():
         for constraint_row in unique_constraints:
             if str(constraint_row["definition"]).replace(" ", "").lower() == "unique(period)":
                 constraint = str(constraint_row["conname"]).replace('"', '""')
-                c.execute(f'ALTER TABLE payroll_runs DROP CONSTRAINT "{constraint}"')
-        c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_payroll_runs_non_reversed_period
+                execute_compat(c,f'ALTER TABLE payroll_runs DROP CONSTRAINT "{constraint}"')
+        execute_compat(c,"""CREATE UNIQUE INDEX IF NOT EXISTS uq_payroll_runs_non_reversed_period
             ON payroll_runs(period) WHERE status <> 'reversed'""")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_payroll_period ON payroll_runs(period)")
+        execute_compat(c,"CREATE INDEX IF NOT EXISTS idx_payroll_period ON payroll_runs(period)")
     payroll_run_cols = table_columns(c, "payroll_runs")
     for column, declaration in {
         "posted_at": "TEXT",
@@ -516,11 +517,11 @@ def initialize_workforce_schema():
         "rejection_reason": "TEXT NOT NULL DEFAULT ''",
     }.items():
         if column not in payroll_run_cols:
-            c.execute(f"ALTER TABLE payroll_runs ADD COLUMN {column} {declaration}")
+            execute_compat(c,f"ALTER TABLE payroll_runs ADD COLUMN {column} {declaration}")
     employee_cols = table_columns(c, "employees")
     for name in ("branch_id", "cost_center_id", "project_id"):
         if name not in employee_cols:
-            c.execute("ALTER TABLE employees ADD COLUMN " + name + " INTEGER")
+            execute_compat(c,"ALTER TABLE employees ADD COLUMN " + name + " INTEGER")
 
     for name, definition in {
         "address": "TEXT NOT NULL DEFAULT ''",
@@ -540,9 +541,9 @@ def initialize_workforce_schema():
         "termination_date": "TEXT NOT NULL DEFAULT ''",
     }.items():
         if name not in employee_cols:
-            c.execute("ALTER TABLE employees ADD COLUMN " + name + " " + definition)
+            execute_compat(c,"ALTER TABLE employees ADD COLUMN " + name + " " + definition)
     if "friday_work_eligible" not in employee_cols:
-        c.execute("ALTER TABLE employees ADD COLUMN friday_work_eligible INTEGER NOT NULL DEFAULT 0")
+        execute_compat(c,"ALTER TABLE employees ADD COLUMN friday_work_eligible INTEGER NOT NULL DEFAULT 0")
     payroll_cols = table_columns(c, "payroll_lines")
     for name, definition in {
         "loan_deduction": "TEXT NOT NULL DEFAULT '0'",
@@ -570,14 +571,14 @@ def initialize_workforce_schema():
         "basic_salary_approved_at": "TEXT",
     }.items():
         if name not in payroll_cols:
-            c.execute("ALTER TABLE payroll_lines ADD COLUMN " + name + " " + definition)
+            execute_compat(c,"ALTER TABLE payroll_lines ADD COLUMN " + name + " " + definition)
     # Backfill legacy payroll runs without changing their original net amounts.
     migration_key = "backfill_payroll_totals_v1"
-    already_migrated = c.execute(
+    already_migrated = execute_compat(c,
         "SELECT 1 FROM workforce_migrations WHERE migration_key=?", (migration_key,)
     ).fetchone()
     if not already_migrated:
-        legacy_rows = c.execute("""SELECT id,gross_pay,employer_insurance,employee_insurance,
+        legacy_rows = execute_compat(c,"""SELECT id,gross_pay,employer_insurance,employee_insurance,
             taxable_income_tax,advance_deduction,other_deductions,absence_deduction
             FROM payroll_lines WHERE total_entitlements='0' AND total_deductions='0'""").fetchall()
         for row in legacy_rows:
@@ -586,12 +587,12 @@ def initialize_workforce_schema():
             deductions = M(employer + D(row["employee_insurance"]) + D(row["taxable_income_tax"])
                            + D(row["advance_deduction"]) + D(row["other_deductions"])
                            + D(row["absence_deduction"]))
-            c.execute("UPDATE payroll_lines SET total_entitlements=?,total_deductions=? WHERE id=?",
+            execute_compat(c,"UPDATE payroll_lines SET total_entitlements=?,total_deductions=? WHERE id=?",
                       (str(entitlements),str(deductions),row["id"]))
-        c.execute("INSERT INTO workforce_migrations(migration_key) VALUES(?)", (migration_key,))
+        execute_compat(c,"INSERT INTO workforce_migrations(migration_key) VALUES(?)", (migration_key,))
     # Add a starting point for employees that existed before the history screen.
     # This is an additive audit snapshot; it does not modify employee or payroll data.
-    c.execute("""INSERT INTO employee_employment_history
+    execute_compat(c,"""INSERT INTO employee_employment_history
         (employee_id,from_status,to_status,effective_date,reason)
         SELECT e.id,'',e.work_status,COALESCE(NULLIF(e.hire_date,''),?),
                'تسجيل الحالة الحالية للملفات السابقة عند تفعيل السجل الوظيفي'
