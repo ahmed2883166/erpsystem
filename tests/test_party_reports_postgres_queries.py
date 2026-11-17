@@ -19,34 +19,36 @@ class PartyReportsPostgreSQLQueryTests(unittest.TestCase):
         try:
             connection.execute(f'CREATE SCHEMA "{schema}"')
             connection.execute(f'SET search_path TO "{schema}"')
-            connection.execute("""
-                CREATE TABLE sales_invoices (
+            ddl_statements = (
+                """CREATE TABLE sales_invoices (
                     id BIGINT PRIMARY KEY, customer_id BIGINT, invoice_date TEXT,
                     invoice_no TEXT, status TEXT, total_amount NUMERIC(18,2)
-                );
-                CREATE TABLE customer_receipts (
+                )""",
+                """CREATE TABLE customer_receipts (
                     id BIGINT PRIMARY KEY, invoice_id BIGINT, receipt_date TEXT,
                     receipt_no TEXT, reference TEXT, amount NUMERIC(18,2)
-                );
-                CREATE TABLE sales_credit_notes (
+                )""",
+                """CREATE TABLE sales_credit_notes (
                     id BIGINT PRIMARY KEY, invoice_id BIGINT, credit_date TEXT,
                     credit_note_no TEXT, reason TEXT, total_amount NUMERIC(18,2),
                     status TEXT
-                );
-                CREATE TABLE supplier_bills (
+                )""",
+                """CREATE TABLE supplier_bills (
                     id BIGINT PRIMARY KEY, supplier_id BIGINT, bill_date TEXT,
                     bill_no TEXT, status TEXT, total_amount NUMERIC(18,2)
-                );
-                CREATE TABLE supplier_credit_notes (
+                )""",
+                """CREATE TABLE supplier_credit_notes (
                     id BIGINT PRIMARY KEY, supplier_id BIGINT, credit_date TEXT,
                     credit_no TEXT, reason TEXT, total_amount NUMERIC(18,2),
                     status TEXT
-                );
-                CREATE TABLE supplier_payments (
+                )""",
+                """CREATE TABLE supplier_payments (
                     id BIGINT PRIMARY KEY, supplier_id BIGINT, payment_date TEXT,
                     payment_no TEXT, reference TEXT, amount NUMERIC(18,2)
-                );
-            """)
+                )""",
+            )
+            for statement in ddl_statements:
+                connection.execute(statement)
             connection.execute(
                 "INSERT INTO sales_invoices VALUES (1, 10, '2026-11-01', 'SI-1', 'posted', 125.00)"
             )
