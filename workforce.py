@@ -1,6 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database, fetch_page
-from db_compat import begin_write_transaction
+from db_compat import begin_write_transaction, insert_and_get_id
 """Employee master, payroll preparation and employee custody workflows."""
 import sqlite3
 import io
@@ -804,13 +804,12 @@ def salary_changes():
             preview = _salary_change_preview(c, request.form, allow_future=request.form.get("confirm") != "1")
             if request.form.get("confirm") == "1":
                 begin_write_transaction(c)
-                c.execute("""INSERT INTO salary_change_batches(decision_no,decision_date,effective_date,title,
+                batch_id = insert_and_get_id(c, """INSERT INTO salary_change_batches(decision_no,decision_date,effective_date,title,
                     employee_scope,calculation_type,calculation_base,calculation_value,treatment,notes,created_by)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                     (preview["decision_no"],preview["decision_date"],preview["effective_date"],preview["title"],
                      preview["scope"],preview["calc_type"],preview["calc_base"],str(preview["value"]),
                      preview["treatment"],preview["notes"],session.get("user_id")))
-                batch_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
                 for item in preview["employees"]:
                     allowance_item_id = None
                     if preview["treatment"] == "basic":
@@ -820,10 +819,9 @@ def salary_changes():
                         c.execute("""UPDATE employees SET raise_type='fixed',raise_value='0',
                             raise_mode='basic',raise_effective_date='' WHERE id=?""",(item["id"],))
                     else:
-                        c.execute("""INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount,active)
+                        allowance_item_id = insert_and_get_id(c, """INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount,active)
                             VALUES(?,?,'allowance',?,1)""",
                             (item["id"],preview["title"]+" ("+preview["decision_no"]+")",str(item["amount"])))
-                        allowance_item_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
                     c.execute("""INSERT INTO employee_salary_history(batch_id,employee_id,effective_date,
                         old_basic_salary,increase_amount,new_basic_salary,calculation_base_amount,treatment,allowance_item_id)
                         VALUES(?,?,?,?,?,?,?,?,?)""",
@@ -929,13 +927,12 @@ def employees():
             values = (next_code(c, "employee", "EMP", "employees", "employee_code"), *values[1:])
             _validate_employee_dimensions(c, values)
             photo_path = _save_employee_photo(request.files.get("photo"))
-            c.execute("""INSERT INTO employees(employee_code,full_name,job_title,department,hire_date,basic_salary,
+            employee_id = insert_and_get_id(c, """INSERT INTO employees(employee_code,full_name,job_title,department,hire_date,basic_salary,
                 standard_hours,variable_salary,legal_category,insurance_number,insured_wage,insurance_enabled,address,national_id,
                 work_status,raise_type,raise_value,raise_mode,raise_effective_date,overtime_rate_percent,
                 branch_id,cost_center_id,project_id,termination_date,friday_work_eligible,photo_path)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (*values, photo_path or ""))
-            employee_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
             c.execute("""INSERT INTO employee_employment_history
                 (employee_id,from_status,to_status,effective_date,reason,created_by)
                 VALUES(?,?,?,?,?,?)""",(employee_id,"",values[14],values[23] or values[4],"تسجيل الحالة عند إنشاء ملف الموظف",session.get("user_id")))
@@ -2276,9 +2273,8 @@ def payroll():
             if period != start.strftime("%Y-%m"):
                 raise ValueError()
             begin_write_transaction(c)
-            cur = c.execute("INSERT INTO payroll_runs(period,status,created_by) VALUES(?,'draft',?)",
+            run_id = insert_and_get_id(c, "INSERT INTO payroll_runs(period,status,created_by) VALUES(?,'draft',?)",
                             (period, session["user_id"]))
-            run_id = cur.lastrowid
             month_end = (date(start.year + (start.month == 12), 1 if start.month == 12 else start.month + 1, 1) - date.resolution)
             period_end = month_end.isoformat()
             # Resigned/retired employees are excluded from ordinary payroll.
@@ -2501,7 +2497,7 @@ def payroll():
                        absence, incentives, advance_deduction, other_deductions, tax, stamp_duty, emp_ins,
                        employer_ins, gross, total_entitlements, total_deductions, net) < 0:
                     raise ValueError("لا يمكن أن تكون الأجور أو الساعات أو الاستقطاعات أو صافي المرتب سالبة.")
-                c.execute("""INSERT INTO payroll_lines(run_id,employee_id,basic_salary,allowances,overtime_hours,
+                payroll_line_id = insert_and_get_id(c, """INSERT INTO payroll_lines(run_id,employee_id,basic_salary,allowances,overtime_hours,
                     overtime_amount,absent_hours,absence_deduction,other_deductions,taxable_income_tax,
                     employee_insurance,employer_insurance,gross_pay,net_pay,stamp_duty,rule_set_id,taxable_annual,insured_wage,
                     incentives,advance_deduction,loan_deduction,total_entitlements,total_deductions,salary_raise,
@@ -2516,7 +2512,6 @@ def payroll():
                      str(raise_amount),str(overtime_rate),None,"",
                       "0","",str(overtime_calculated_amount),
                      int(overtime_manual_override),overtime_override_reason))
-                payroll_line_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
                 salary_reference_snapshot = (
                     Decimal("0") if e["work_status"] == "unpaid_leave"
                     else (M(salary_reference * payroll_factor) if payroll_days < 30 else salary_reference)
@@ -3102,11 +3097,10 @@ def pay_payroll(run_id):
               amount, 0, "إقفال صافي مستحقات الموظفين"),
              (cash_account_id, 0, amount, "صرف صافي المرتبات من البنك/الصندوق")],
             session["user_id"])
-        c.execute("""INSERT INTO payroll_payments(run_id,payment_date,amount,cash_account_id,
+        payment_id = insert_and_get_id(c, """INSERT INTO payroll_payments(run_id,payment_date,amount,cash_account_id,
             journal_entry_id,reference,notes,created_by) VALUES(?,?,?,?,?,?,?,?)""",
             (run_id,payment_date,str(amount),cash_account_id,journal_id,reference,
              request.form.get("notes","").strip(),session["user_id"]))
-        payment_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
         if request.form.get("allocation_mode") == "manual":
             allocation_rows = c.execute("SELECT id,employee_id,net_pay FROM payroll_lines WHERE run_id=? ORDER BY id",(run_id,)).fetchall()
             allocation_total = Decimal("0")
@@ -3465,12 +3459,11 @@ def create_employee_grant():
             snapshots.append((emp,basic,amount))
         total=M(sum((x[2] for x in snapshots),Decimal("0")))
         begin_write_transaction(c)
-        c.execute("""INSERT INTO employee_grants(grant_type_id,grant_name_snapshot,calculation_method,calculation_value,
+        grant_id=insert_and_get_id(c, """INSERT INTO employee_grants(grant_type_id,grant_name_snapshot,calculation_method,calculation_value,
             days_count,expense_account_id,payable_account_id,grant_date,total_amount,notes,created_by)
             VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (grant_type_id,grant_type["name"],method,str(value),str(M(days_count)),expense_id,payable_id,
              grant_date,str(total),request.form.get("notes","").strip(),session["user_id"]))
-        grant_id=c.execute("SELECT last_insert_rowid()").fetchone()[0]
         for emp,basic,amount in snapshots:
             c.execute("""INSERT INTO employee_grant_lines(grant_id,employee_id,employee_code_snapshot,
                 employee_name_snapshot,basic_salary_snapshot,amount) VALUES(?,?,?,?,?,?)""",
@@ -3663,10 +3656,9 @@ def friday_allowance():
                     total_amount='0' WHERE id=? AND status='draft'""",
                     (expense_account_id,payable_account_id,batch_id))
             else:
-                c.execute("""INSERT INTO friday_allowance_batches(period,expense_account_id,payable_account_id,
+                batch_id = insert_and_get_id(c, """INSERT INTO friday_allowance_batches(period,expense_account_id,payable_account_id,
                     total_amount,created_by) VALUES(?,?,?,'0',?)""",
                     (period,expense_account_id,payable_account_id,session["user_id"]))
-                batch_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
             selected_employee_ids = sorted({int(value) for value in request.form.getlist("employee_ids")})
             if not selected_employee_ids:
                 raise ValueError("أضف موظفًا واحدًا على الأقل إلى جدول بدل الجمعة.")
