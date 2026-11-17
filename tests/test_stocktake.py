@@ -338,6 +338,48 @@ class StocktakeRouteTests(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0],2)
         conn.close()
 
+    def test_zero_cost_stocktake_variance_does_not_create_broken_posted_link(self):
+        self._login()
+        conn = stock.get_db()
+        conn.execute("UPDATE stock_valuation_layers SET unit_cost='0',value_remaining='0' WHERE product_id=?",
+                     (self.product_id,))
+        conn.execute("CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT)")
+        conn.executemany("INSERT INTO company_settings VALUES(?,?)", [
+            ("activity", "industrial"), ("inventory_cost_method", "fifo"),
+        ])
+        initialize_activity_profiles_schema(conn)
+        create_profile_id = create_activity_profile(conn, "zero_cost_count", "جرد تكلفة صفرية", "industrial")
+        conn.execute("INSERT INTO company_settings VALUES('activity_profile_code','zero_cost_count')")
+        conn.commit()
+        conn.close()
+
+        self.client.post("/stock/counts", data={
+            "warehouse_id": str(self.warehouse_id), "count_date": "2026-11-11",
+        })
+        conn = stock.get_db()
+        header = conn.execute("SELECT * FROM stocktakes").fetchone()
+        line = conn.execute("SELECT * FROM stocktake_lines").fetchone()
+        conn.close()
+        self.client.post("/stock/counts/" + str(header["id"]), data={
+            "counted_" + str(line["id"]): "8", "cost_" + str(line["id"]): "0",
+        })
+        with self.client.session_transaction() as session:
+            session["user_id"] = 8
+            session["username"] = "reviewer"
+
+        with patch("stock.post_journal") as post:
+            response = self.client.post("/stock/counts/" + str(header["id"]) + "/approve")
+        self.assertEqual(response.status_code, 302)
+        post.assert_not_called()
+        conn = stock.get_db()
+        movement = conn.execute("""SELECT accounting_status,journal_entry_id,total_cost
+            FROM stock_movements WHERE notes='عجز جرد فعلي' ORDER BY id DESC LIMIT 1""").fetchone()
+        self.assertIsNotNone(movement)
+        self.assertEqual(movement["accounting_status"], "not_required")
+        self.assertIsNone(movement["journal_entry_id"])
+        self.assertEqual(Decimal(movement["total_cost"]), Decimal("0"))
+        conn.close()
+
     def test_stocktake_approval_is_blocked_if_year_closed_after_count(self):
         self._login()
         self.client.post("/stock/counts", data={
