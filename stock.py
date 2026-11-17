@@ -1266,6 +1266,10 @@ def product_locations():
                               (location_id, warehouse_id)).fetchone()
             if not _execute(c, "SELECT 1 FROM stock_products WHERE id=? AND active=1", (product_id,)).fetchone() or not valid:
                 raise ValueError("الصنف أو موقع التخزين غير صحيح.")
+            # Serialize location reassignment with all stock movements that
+            # can consume or create valuation layers in this warehouse.
+            begin_write_transaction(c)
+            lock_stock_warehouses(c, warehouse_id)
             _execute(c, """INSERT INTO stock_product_locations(product_id,warehouse_id,location_id,is_default)
                 VALUES(?,?,?,1) ON CONFLICT(product_id,warehouse_id)
                 DO UPDATE SET location_id=excluded.location_id,is_default=1""",
