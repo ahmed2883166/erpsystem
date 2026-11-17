@@ -4,6 +4,7 @@ import sqlite3
 import unittest
 
 from db_sql import execute_compat, executemany_compat, qmark_to_format
+from db_compat import execute_script
 
 
 class QmarkTranslationTests(unittest.TestCase):
@@ -123,6 +124,41 @@ class PostgreSQLQmarkExecutionTests(unittest.TestCase):
             self.assertEqual(row["id"], row_id)
             self.assertEqual(row["label"], "identity works")
         finally:
+            connection.rollback()
+            connection.close()
+
+    def test_execute_script_runs_multiple_postgresql_statements_safely(self):
+        import uuid
+        from postgres_database import connect_postgres
+
+        connection = connect_postgres(POSTGRES_DSN)
+        schema = "nexus_script_probe_" + uuid.uuid4().hex
+        try:
+            connection.execute(f'CREATE SCHEMA "{schema}"')
+            connection.execute(f'SET LOCAL search_path TO "{schema}"')
+            execute_script(connection, """
+                CREATE TABLE script_probe (
+                    id INTEGER PRIMARY KEY,
+                    label TEXT NOT NULL
+                );
+                INSERT INTO script_probe(label) VALUES('semicolon; stays inside text');
+                CREATE TABLE script_probe_audit (
+                    note TEXT NOT NULL
+                );
+                INSERT INTO script_probe_audit(note)
+                    VALUES('second statement group');
+            """)
+            row = connection.execute(
+                "SELECT id,label FROM script_probe"
+            ).fetchone()
+            self.assertEqual(row["id"], 1)
+            self.assertEqual(row["label"], "semicolon; stays inside text")
+            audit = connection.execute(
+                "SELECT note FROM script_probe_audit"
+            ).fetchone()
+            self.assertEqual(audit["note"], "second statement group")
+        finally:
+            # The schema and all test objects are rolled back, not persisted.
             connection.rollback()
             connection.close()
 
