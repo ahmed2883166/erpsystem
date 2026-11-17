@@ -320,6 +320,8 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         self.assertIn("nexus_prevent_default_location_deactivation()", ddl)
         self.assertIn("RETURNS trigger LANGUAGE plpgsql AS $", ddl)
         self.assertIn("$;", ddl)
+        self.assertIn("RETURNS trigger LANGUAGE plpgsql AS $", ddl)
+        self.assertIn("$;", ddl)
         self.assertIn("BEFORE UPDATE OF active ON stock_locations", ddl)
         self.assertIn("p.location_id = OLD.id", ddl)
         self.assertIn("child.amount", review["text_numeric_candidates"])
