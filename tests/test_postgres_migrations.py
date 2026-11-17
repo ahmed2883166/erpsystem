@@ -34,7 +34,7 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
                 "CREATE TABLE first_table (id BIGINT);", encoding="utf-8"
             )
             migrations = load_migrations(root)
-        self.assertEqual([item.version for item in migrations], [1, 2])
+        self.assertEqual([item.version for item in migrations], [1, 2, 3])
         self.assertEqual(migrations[0].name, "0001_create_first.sql")
         self.assertEqual(len(migrations[0].checksum), 64)
 
@@ -139,7 +139,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
             self._migration(1, "0001_create_probe.sql",
                             'CREATE TABLE "probe" (id BIGINT PRIMARY KEY)')
         ]
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         row = self.connection.execute(
             "SELECT COUNT(*) AS count FROM "
@@ -296,6 +296,62 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
                 ("BAD-TRANSFER", "2026-01-01", account_id, "transfer", "10", "Missing destination"),
             )
         self.connection.rollback()
+
+    def test_inventory_schema_uses_exact_quantities_and_enforces_location_scope(self):
+        migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
+        migrations = load_migrations(migration_dir)
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
+        schema = quote_schema_name(self.schema)
+
+        warehouse_id = self.connection.execute(
+            f"INSERT INTO {schema}.stock_warehouses(code,name_ar) VALUES (%s,%s) RETURNING id",
+            ("WH-01", "Main Warehouse"),
+        ).fetchone()["id"]
+        other_warehouse_id = self.connection.execute(
+            f"INSERT INTO {schema}.stock_warehouses(code,name_ar) VALUES (%s,%s) RETURNING id",
+            ("WH-02", "Secondary Warehouse"),
+        ).fetchone()["id"]
+        product_id = self.connection.execute(
+            f"INSERT INTO {schema}.stock_products(sku,name_ar,purchase_price) "
+            "VALUES (%s,%s,%s) RETURNING id",
+            ("SKU-001", "Test Product", "12.345678"),
+        ).fetchone()["id"]
+        location_id = self.connection.execute(
+            f"INSERT INTO {schema}.stock_locations(warehouse_id,code,name_ar,location_type) "
+            "VALUES (%s,%s,%s,%s) RETURNING id",
+            (warehouse_id, "F-01", "Floor 1", "floor"),
+        ).fetchone()["id"]
+        self.connection.execute(
+            f"INSERT INTO {schema}.stock_product_locations(product_id,warehouse_id,location_id) "
+            "VALUES (%s,%s,%s)",
+            (product_id, warehouse_id, location_id),
+        )
+
+        movement_id = self.connection.execute(
+            f"INSERT INTO {schema}.stock_movements(movement_no,movement_type,product_id,"
+            "target_warehouse_id,quantity,unit_cost,total_cost,movement_date) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            ("RCV-001", "receipt", product_id, warehouse_id, "2.125", "12.345678", "26.234? ", "2026-01-01"),
+        ).fetchone()["id"]
+        amount = self.connection.execute(
+            f"SELECT unit_cost FROM {schema}.stock_movements WHERE id=%s",
+            (movement_id,),
+        ).fetchone()["unit_cost"]
+        self.assertEqual(str(amount), "12.345678")
+
+        with self.assertRaises(Exception):
+            self.connection.execute(
+                f"INSERT INTO {schema}.stock_product_locations(product_id,warehouse_id,location_id) "
+                "VALUES (%s,%s,%s)",
+                (product_id, other_warehouse_id, location_id),
+            )
+        self.connection.rollback()
+
+        unit_count = self.connection.execute(
+            f"SELECT COUNT(*) AS count FROM {schema}.stock_uoms"
+        ).fetchone()["count"]
+        self.assertGreaterEqual(unit_count, 18)
 
     def test_failed_batch_rolls_back_schema_and_migration_records(self):
         migrations = [
