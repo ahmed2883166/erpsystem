@@ -34,7 +34,7 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
                 "CREATE TABLE first_table (id BIGINT);", encoding="utf-8"
             )
             migrations = load_migrations(root)
-        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4])
+        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5])
         self.assertEqual(migrations[0].name, "0001_create_first.sql")
         self.assertEqual(len(migrations[0].checksum), 64)
 
@@ -143,7 +143,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
             self._migration(1, "0001_create_probe.sql",
                             'CREATE TABLE "probe" (id BIGINT PRIMARY KEY)')
         ]
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         row = self.connection.execute(
             "SELECT COUNT(*) AS count FROM "
@@ -173,7 +173,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
                 """,
             )
         ]
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5])
         row = self.connection.execute(
             'SELECT label FROM ' + quote_schema_name(self.schema) + '."multi_probe" WHERE id=1'
         ).fetchone()
@@ -363,6 +363,62 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
                 f"SELECT total_amount FROM {schema}.supplier_bills WHERE id=%s", (bill_id,)
             ).fetchone()["total_amount"]),
             "53.12500000",
+        )
+
+    def test_sales_schema_links_invoice_lines_receipts_and_credit_notes(self):
+        migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
+        migrations = load_migrations(migration_dir)
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
+        schema = quote_schema_name(self.schema)
+        user_id = self.connection.execute(
+            f"INSERT INTO {schema}.users(username,full_name,password_hash,role,created_at) "
+            "VALUES (%s,%s,%s,%s,%s) RETURNING id",
+            ("sales_test", "Sales Test", "hash", "admin", "2026-01-01"),
+        ).fetchone()["id"]
+        account_id = self.connection.execute(
+            f"INSERT INTO {schema}.accounts(code,name_ar,account_type) VALUES (%s,%s,%s) RETURNING id",
+            ("1010", "Cash", "asset"),
+        ).fetchone()["id"]
+        customer_id = self.connection.execute(
+            f"INSERT INTO {schema}.customers(code,name) VALUES (%s,%s) RETURNING id",
+            ("C-PG-1", "Customer PG"),
+        ).fetchone()["id"]
+        invoice_id = self.connection.execute(
+            f"INSERT INTO {schema}.sales_invoices(invoice_no,customer_id,invoice_date,subtotal,total_amount,created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+            ("SI-PG-1", customer_id, "2026-01-05", "100.125", "115.14375", user_id),
+        ).fetchone()["id"]
+        product_id = self.connection.execute(
+            f"INSERT INTO {schema}.stock_products(sku,name_ar) VALUES (%s,%s) RETURNING id",
+            ("SKU-SALES-1", "Sales Product"),
+        ).fetchone()["id"]
+        line_id = self.connection.execute(
+            f"INSERT INTO {schema}.sales_invoice_lines(invoice_id,product_id,description,quantity,unit_price,"
+            "line_total,cost_total) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            (invoice_id, product_id, "Sales Product", "2.5", "40.05", "100.125", "62.5"),
+        ).fetchone()["id"]
+        receipt_id = self.connection.execute(
+            f"INSERT INTO {schema}.customer_receipts(receipt_no,invoice_id,receipt_date,amount,cash_account_id,created_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+            ("CR-PG-1", invoice_id, "2026-01-06", "50", account_id, user_id),
+        ).fetchone()["id"]
+        credit_id = self.connection.execute(
+            f"INSERT INTO {schema}.sales_credit_notes(credit_note_no,invoice_id,credit_date,reason,subtotal,"
+            "tax_amount,total_amount) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            ("CN-PG-1", invoice_id, "2026-01-07", "Return", "20", "3", "23"),
+        ).fetchone()["id"]
+        self.connection.execute(
+            f"INSERT INTO {schema}.sales_credit_note_lines(credit_note_id,invoice_line_id,product_id,description,"
+            "quantity,unit_price,line_total,tax_rate,tax_treatment,tax_amount,cost_total) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (credit_id, line_id, product_id, "Returned item", "0.5", "40", "20", "15", "standard", "3", "12.5"),
+        )
+        self.assertEqual(
+            str(self.connection.execute(
+                f"SELECT amount FROM {schema}.customer_receipts WHERE id=%s", (receipt_id,)
+            ).fetchone()["amount"]),
+            "50.00000000",
         )
 
     def test_inventory_schema_uses_exact_quantities_and_enforces_location_scope(self):
