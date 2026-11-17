@@ -74,6 +74,35 @@ class PostgreSQLBackupTests(unittest.TestCase):
                     )
 
 
+    def test_restore_rejects_archive_replaced_after_initial_validation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            archive = self._archive(folder)
+            original_validate = postgres_backup.validate_postgres_backup_archive
+
+            def validate_then_replace(path, **kwargs):
+                with patch.object(postgres_backup, "_run"):
+                    manifest = original_validate(path, **kwargs)
+                with zipfile.ZipFile(path, "r") as current:
+                    original_manifest = current.read("manifest.json")
+                with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as replaced:
+                    replaced.writestr("nexus.dump", b"replaced-after-validation")
+                    replaced.writestr("manifest.json", original_manifest)
+                return manifest
+
+            with patch.object(
+                postgres_backup,
+                "validate_postgres_backup_archive",
+                side_effect=validate_then_replace,
+            ):
+                with self.assertRaisesRegex(ValueError, "checksum changed"):
+                    postgres_backup.restore_postgres_backup_to_new_database(
+                        archive,
+                        "dbname=nexus",
+                        database_name="nexus_restore_test",
+                        pg_restore_path="pg_restore",
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()
 
