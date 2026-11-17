@@ -84,8 +84,8 @@ def build_inventory_ageing(conn, as_of):
     product_cols = _cols(conn, "stock_products")
     if not {"product_id", "warehouse_id", "qty_remaining", "unit_cost"}.issubset(layer_cols):
         return {"available": False, "rows": [], "totals": {}, "as_of": as_of}
-    created_expr = "substr(l.created_at,1,10)" if "created_at" in layer_cols else (
-        "substr(m.movement_date,1,10)" if _exists(conn, "stock_movements") else "?"
+    created_expr = _date_prefix_sql(conn, "l.created_at") if "created_at" in layer_cols else (
+        _date_prefix_sql(conn, "m.movement_date") if _exists(conn, "stock_movements") else "?"
     )
     join_movement = "LEFT JOIN stock_movements m ON m.id=l.source_movement_id" if _exists(conn, "stock_movements") else ""
     lot_join = "LEFT JOIN stock_lots lot ON lot.id=l.lot_id" if _exists(conn, "stock_lots") else ""
@@ -94,11 +94,11 @@ def build_inventory_ageing(conn, as_of):
     name_expr = "p.name_ar" if "name_ar" in product_cols else "CAST(p.id AS TEXT)"
     has_movements = _exists(conn, "stock_movements")
     last_movement_expr = (
-        """(SELECT MAX(mv.movement_date) FROM stock_movements mv
+        f"""(SELECT MAX({_date_prefix_sql(conn, "mv.movement_date")}) FROM stock_movements mv
              WHERE mv.product_id=l.product_id
                AND (mv.source_warehouse_id=l.warehouse_id
                     OR mv.target_warehouse_id=l.warehouse_id)
-               AND substr(mv.movement_date,1,10)<=?)"""
+               AND {_date_prefix_sql(conn, "mv.movement_date")}<=?)"""
         if has_movements else "NULL"
     )
     layer_date_filter = f"{created_expr}<=?"
