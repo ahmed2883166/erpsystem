@@ -11,7 +11,7 @@ from flask import Blueprint, flash, redirect, render_template, request, session,
 from accounting_core import post_journal, money, safe_error_message, decimal_sum_expression
 from db_compat import table_columns, table_exists, table_indexes, begin_write_transaction, insert_and_get_id, execute_script, DB_ERROR, DB_INTEGRITY_ERROR
 from db_sql import execute_compat
-from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options, product_uom_storage
+from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options, product_uom_storage, lock_stock_warehouses
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 from code_sequences import next_code
 
@@ -1362,6 +1362,7 @@ def new_receipt():
             qty=q4(entered_qty*factor); unit=entered_unit/factor; total=money(entered_qty*entered_unit)
             stored_uom_id,entered_uom_name=product_uom_storage(c,product,request.form.get("uom_id"))
             begin_write_transaction(c)
+            lock_stock_warehouses(c, wh)
             dimensions = validate_journal_dimensions(c, {**request.form, "supplier_id": supplier})
             product_row=execute_compat(c, "SELECT * FROM stock_products WHERE id=? AND active=1",(product,)).fetchone()
             if not product_row or product_row["product_type"]=="service": raise ValueError("اختر صنفًا مخزنيًا نشطًا.")
