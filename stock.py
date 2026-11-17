@@ -346,9 +346,9 @@ def initialize_stock_schema():
                     ORDER BY m.id""").fetchall()
                 for movement in candidates:
                     movement_count = _execute(c, 
-                        "SELECT COUNT(*) FROM stock_movements WHERE journal_entry_id=?",
+                        "SELECT COUNT(*) AS movement_count FROM stock_movements WHERE journal_entry_id=?",
                         (movement["journal_entry_id"],)
-                    ).fetchone()[0]
+                    ).fetchone()["movement_count"]
                     if movement_count != 1:
                         continue
                     product = _execute(c, "SELECT id FROM stock_products WHERE id=?", (movement["product_id"],)).fetchone()
@@ -1487,7 +1487,7 @@ def movements():
     movement_per_page = request.args.get("movement_per_page", 50, type=int) or 50
     if movement_per_page not in (50, 100):
         movement_per_page = 50
-    movement_total = _execute(c, "SELECT COUNT(*) FROM stock_movements").fetchone()[0]
+    movement_total = _execute(c, "SELECT COUNT(*) AS movement_total FROM stock_movements").fetchone()["movement_total"]
     movement_pages = max(1, (movement_total + movement_per_page - 1) // movement_per_page)
     movement_page = min(movement_page, movement_pages)
     rows=_execute(c, """SELECT m.*,p.sku,p.name_ar,s.name_ar source_name,t.name_ar target_name
@@ -2018,9 +2018,9 @@ def counts():
             begin_write_transaction(c)
             ensure_stock_date_open(c, count_date, "تاريخ الجرد")
             count_no = "STK-" + date.fromisoformat(count_date).strftime("%Y%m%d") + "-" + uuid.uuid4().hex[:6].upper()
-            movement_cutoff = _execute(c, """SELECT COALESCE(MAX(id),0) FROM stock_movements
+            movement_cutoff = _execute(c, """SELECT COALESCE(MAX(id),0) AS movement_cutoff FROM stock_movements
                 WHERE source_warehouse_id=? OR target_warehouse_id=?""",
-                (warehouse_id,warehouse_id)).fetchone()[0]
+                (warehouse_id,warehouse_id)).fetchone()["movement_cutoff"]
             stocktake_id = insert_and_get_id(c, """INSERT INTO stocktakes(count_no,warehouse_id,count_date,notes,created_by,movement_cutoff_id)
                 VALUES(?,?,?,?,?,?)""",
                 (count_no, warehouse_id, count_date, request.form.get("notes", "").strip(),
