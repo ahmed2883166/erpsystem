@@ -1327,7 +1327,7 @@ def cancel_credit_note(conn, credit_note_id, cancellation_date, reason, created_
     # quantity; quantity-only checks would then reverse the original GL value while
     # deleting a differently-valued stock layer.
     movements = execute_compat(conn,
-        """SELECT DISTINCT m.id,m.movement_no,m.total_cost,l.id layer_id,
+        """SELECT DISTINCT m.id,m.movement_no,m.total_cost,m.target_warehouse_id warehouse_id,l.id layer_id,
                   l.qty_in,l.qty_remaining,l.value_remaining
            FROM stock_movements m
            LEFT JOIN stock_valuation_layers l ON l.source_movement_id=m.id
@@ -1341,6 +1341,7 @@ def cancel_credit_note(conn, credit_note_id, cancellation_date, reason, created_
            )""",
         (credit_note_id, credit_note_id),
     ).fetchall()
+    lock_stock_warehouses(conn, *(row["warehouse_id"] for row in movements))
     for movement in movements:
         if movement["layer_id"] is None:
             continue
