@@ -1147,10 +1147,10 @@ def convert_purchase_request(request_id):
              session["user_id"]))
         c.execute("""INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price)
             VALUES(?,?,?,?)""", (po_id,row["product_id"],row["quantity"],str(unit_price)))
-        c.execute("""UPDATE purchase_requests SET status='converted',
+        updated = c.execute("""UPDATE purchase_requests SET status='converted',
             converted_to_po_id=?,converted_at=CURRENT_TIMESTAMP
             WHERE id=? AND status='approved' AND converted_to_po_id IS NULL""", (po_id,request_id))
-        if c.execute("SELECT changes()").fetchone()[0] != 1:
+        if updated.rowcount != 1:
             raise ValueError("تم تحويل الطلب بواسطة مستخدم آخر؛ لم يتم إنشاء أمر إضافي.")
         c.commit()
         flash(f"تم تحويل الطلب إلى أمر الشراء {po_no}. يجب إرسال أمر الشراء للمراجعة كالمعتاد.", "success")
