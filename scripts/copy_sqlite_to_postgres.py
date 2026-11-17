@@ -55,6 +55,69 @@ def dependency_order(tables: list[str], foreign_keys: dict[str, set[str]]) -> li
     return ordered
 
 
+def order_self_referencing_rows(rows, foreign_key_rows, table: str):
+    """Parent-before-child ordering for self-FKs (e.g. account parent_id)."""
+    groups = {}
+    for fk in foreign_key_rows:
+        groups.setdefault(fk["id"], []).append(fk)
+    key_groups = []
+    for group in groups.values():
+        group.sort(key=lambda item: item["seq"])
+        key_groups.append((
+            [item["from"] for item in group],
+            [item["to"] for item in group],
+        ))
+    if not key_groups or not rows:
+        return rows
+    if len(rows) > 250000:
+        raise ValueError(
+            f"Self-referencing table {table} exceeds the safe in-memory ordering limit."
+        )
+
+    parents_by_key = {}
+    for index, row in enumerate(rows):
+        for _, target_columns in key_groups:
+            key = tuple(row[column] for column in target_columns)
+            if any(value is None for value in key):
+                continue
+            parents_by_key.setdefault(tuple(target_columns), {})[key] = index
+
+    dependencies = [set() for _ in rows]
+    children = [[] for _ in rows]
+    for child_index, row in enumerate(rows):
+        for source_columns, target_columns in key_groups:
+            child_key = tuple(row[column] for column in source_columns)
+            if any(value is None for value in child_key):
+                continue
+            parent_index = parents_by_key[tuple(target_columns)].get(child_key)
+            if parent_index is None:
+                raise ValueError(
+                    f"Self-reference in {table} points to a missing row; copy blocked."
+                )
+            if parent_index == child_index:
+                raise ValueError(f"Self-reference cycle detected in {table}.")
+            dependencies[child_index].add(parent_index)
+
+    for child_index, parents in enumerate(dependencies):
+        for parent_index in parents:
+            children[parent_index].append(child_index)
+
+    ready = [index for index, parents in enumerate(dependencies) if not parents]
+    ready.sort()
+    ordered = []
+    while ready:
+        parent_index = ready.pop(0)
+        ordered.append(rows[parent_index])
+        for child_index in children[parent_index]:
+            dependencies[child_index].discard(parent_index)
+            if not dependencies[child_index] and child_index not in ready:
+                ready.append(child_index)
+        ready.sort()
+    if len(ordered) != len(rows):
+        raise ValueError(f"Self-reference cycle detected in table {table}; copy blocked.")
+    return ordered
+
+
 def open_sqlite_readonly(path: str):
     source = Path(path).expanduser().resolve(strict=True)
     if not source.is_file():
@@ -100,14 +163,15 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
 
         source_columns = {}
         foreign_keys = {}
+        self_foreign_keys = {}
         for table in tables:
             qtable = quote_ident(table)
             source_columns[table] = [
                 r["name"] for r in src.execute(f"PRAGMA table_info({qtable})")
             ]
-            foreign_keys[table] = {
-                r["table"] for r in src.execute(f"PRAGMA foreign_key_list({qtable})")
-            }
+            fk_rows = [dict(r) for r in src.execute(f"PRAGMA foreign_key_list({qtable})")]
+            foreign_keys[table] = {r["table"] for r in fk_rows if r["table"] != table}
+            self_foreign_keys[table] = [r for r in fk_rows if r["table"] == table]
 
         qschema = quote_ident(schema)
         try:
@@ -154,9 +218,25 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                 placeholders = ", ".join(["%s"] * len(columns))
                 insert_sql = f"INSERT INTO {qname} ({qcols}) VALUES ({placeholders})"
                 cursor = src.execute(f"SELECT {qcols} FROM {quote_ident(table)}")
+                self_fk_rows = self_foreign_keys[table]
                 copied = 0
-                while True:
-                    rows = cursor.fetchmany(batch_size)
+                if self_fk_rows:
+                    ordered_rows = order_self_referencing_rows(
+                        cursor.fetchall(), self_fk_rows, table
+                    )
+                    row_batches = (
+                        ordered_rows[index:index + batch_size]
+                        for index in range(0, len(ordered_rows), batch_size)
+                    )
+                else:
+                    def fetch_batches():
+                        while True:
+                            batch = cursor.fetchmany(batch_size)
+                            if not batch:
+                                break
+                            yield batch
+                    row_batches = fetch_batches()
+                for rows in row_batches:
                     if not rows:
                         break
                     dst.executemany(
