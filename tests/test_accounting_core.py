@@ -348,7 +348,8 @@ class PostgreSQLDecimalAggregateIntegrationTests(unittest.TestCase):
         self.connection.execute(
             "CREATE TABLE decimal_probe (amount NUMERIC(30,8) NOT NULL)"
         )
-        self.connection.executemany(
+        cursor = self.connection.cursor()
+        cursor.executemany(
             "INSERT INTO decimal_probe(amount) VALUES (%s)",
             [
                 ("99999999999999999999.12345678",),
