@@ -32,6 +32,11 @@ class SQLPlaceholderTranslationTests(unittest.TestCase):
             WHERE value=%s'''
         self.assertEqual(qmark_to_format(sql), expected)
 
+    def test_respects_postgresql_escape_string_literals(self):
+        sql = "SELECT E'escaped \\' ?' AS label, ? AS value"
+        expected = "SELECT E'escaped \\' ?' AS label, %s AS value"
+        self.assertEqual(qmark_to_format(sql), expected)
+
     def test_rejects_unterminated_sql_constructs(self):
         cases = (
             "SELECT 'unfinished ?",
