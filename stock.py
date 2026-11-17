@@ -424,9 +424,8 @@ def initialize_stock_schema():
             # A profile/account mapping that cannot be resolved is not grounds
             # to guess; the balance remains explicitly unallocated in the report.
             pass
+    c.commit()
     c.close()
-
-
 
 def product_uom_factor(c, product_id, uom_id, purpose=None):
     """Return the exact multiplier converting one selected product unit to base stock units."""
