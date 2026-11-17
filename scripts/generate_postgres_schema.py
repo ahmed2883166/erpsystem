@@ -305,7 +305,8 @@ def generate_postgres_ddl(snapshot):
             col_name = name.lower()
             name_parts = col_name.split("_")
             metadata_suffixes = {
-                "code", "date", "id", "json", "name", "number", "status", "type",
+                "at", "code", "date", "id", "json", "method", "name", "no",
+                "notes", "number", "reason", "reference", "status", "treatment", "type",
             }
             numeric_name_match = (
                 bool(name_parts)
