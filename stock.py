@@ -1200,7 +1200,7 @@ def product_locations():
                 (product_id, warehouse_id, location_id))
             # Existing stock without a recorded bin is assigned to the location
             # explicitly chosen by the user as this product's default location.
-            c.execute("""UPDATE stock_valuation_layers SET location_id=?
+            c.execute(f"""UPDATE stock_valuation_layers SET location_id=?
                 WHERE product_id=? AND warehouse_id=? AND location_id IS NULL
                   AND {decimal_compare_expression(c, "qty_remaining")} > 0""", (location_id, product_id, warehouse_id))
             c.commit()
@@ -1698,7 +1698,7 @@ def reports():
             sl.code location_code,sl.name_ar location_name
             FROM stock_valuation_layers vl LEFT JOIN stock_warehouses w ON w.id=vl.warehouse_id
             LEFT JOIN stock_locations sl ON sl.id=vl.location_id
-            WHERE vl.lot_id=? AND CAST(vl.qty_remaining AS REAL)>0""",(lot["id"],)).fetchall():
+            WHERE vl.lot_id=? AND {decimal_compare_expression(c, "vl.qty_remaining")} > 0""",(lot["id"],)).fetchall():
             qty=Decimal(str(layer["qty_remaining"] or "0"))
             if qty<=0: continue
             expiry_alerts.append({"sku":lot["sku"],"name_ar":lot["name_ar"],"uom":lot["uom"],
@@ -1979,7 +1979,7 @@ def barcode_lookup():
 
 
 def _stocktake_layer_balance(c, product_id, warehouse_id, location_id=None, lot_id=None):
-    sql = """SELECT qty_remaining,unit_cost,value_remaining
+    sql = f"""SELECT qty_remaining,unit_cost,value_remaining
         FROM stock_valuation_layers WHERE product_id=? AND warehouse_id=?
         AND {decimal_compare_expression(c, "qty_remaining")} > 0"""
     args = [product_id, warehouse_id]
@@ -2022,7 +2022,7 @@ def counts():
             locations = [row["id"] for row in c.execute("""SELECT id FROM stock_locations
                 WHERE warehouse_id=? AND active=1 AND location_type='bin' ORDER BY id""", (warehouse_id,)).fetchall()]
             for product in c.execute("SELECT id,track_lot FROM stock_products WHERE active=1 ORDER BY sku").fetchall():
-                existing_scopes = c.execute("""SELECT DISTINCT location_id,lot_id FROM stock_valuation_layers
+                existing_scopes = c.execute(f"""SELECT DISTINCT location_id,lot_id FROM stock_valuation_layers
                     WHERE product_id=? AND warehouse_id=? AND {decimal_compare_expression(c, "qty_remaining")} > 0""",
                     (product["id"], warehouse_id)).fetchall()
                 existing_locations = {row["location_id"] for row in existing_scopes}
