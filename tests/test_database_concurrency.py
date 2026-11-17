@@ -503,6 +503,8 @@ class TenClientWriteConcurrencyTests(unittest.TestCase):
             start = threading.Barrier(client_count)
             metrics_lock = threading.Lock()
             writer_latencies = []
+            writer_lock_wait_latencies = []
+            writer_transaction_latencies = []
             report_latencies = []
             failures = []
             began = time.perf_counter()
@@ -515,8 +517,10 @@ class TenClientWriteConcurrencyTests(unittest.TestCase):
                     for sequence in range(posts_per_writer):
                         reference = f"THIRTY-{stream.upper()}-{client_number:02d}-{sequence:04d}"
                         tx_started = time.perf_counter()
+                        lock_acquired = None
                         try:
                             connection.execute("BEGIN IMMEDIATE")
+                            lock_acquired = time.perf_counter()
                             post_journal(
                                 connection, "2026-11-16", reference,
                                 f"اختبار ترحيل متزامن - {stream}",
@@ -531,8 +535,12 @@ class TenClientWriteConcurrencyTests(unittest.TestCase):
                             connection.rollback()
                             raise
                         finally:
+                            finished = time.perf_counter()
                             with metrics_lock:
-                                writer_latencies.append(time.perf_counter() - tx_started)
+                                writer_latencies.append(finished - tx_started)
+                                if lock_acquired is not None:
+                                    writer_lock_wait_latencies.append(lock_acquired - tx_started)
+                                    writer_transaction_latencies.append(finished - lock_acquired)
                 except Exception as exc:
                     with metrics_lock:
                         failures.append(("writer", client_number, repr(exc)))
@@ -589,8 +597,12 @@ class TenClientWriteConcurrencyTests(unittest.TestCase):
             self.assertEqual(len(report_latencies), reader_count * reads_per_reader)
 
             ordered_writes = sorted(writer_latencies)
+            ordered_lock_waits = sorted(writer_lock_wait_latencies)
+            ordered_transaction_work = sorted(writer_transaction_latencies)
             ordered_reports = sorted(report_latencies)
             write_p95 = ordered_writes[int(len(ordered_writes) * 0.95) - 1]
+            lock_wait_p95 = ordered_lock_waits[int(len(ordered_lock_waits) * 0.95) - 1]
+            transaction_work_p95 = ordered_transaction_work[int(len(ordered_transaction_work) * 0.95) - 1]
             report_p95 = ordered_reports[int(len(ordered_reports) * 0.95) - 1]
             print(
                 "LAN_THIRTY_CLIENT_METRICS "
@@ -599,6 +611,10 @@ class TenClientWriteConcurrencyTests(unittest.TestCase):
                 f"new_entries={writer_count * posts_per_writer} report_reads={len(report_latencies)} "
                 f"elapsed_seconds={elapsed:.3f} write_p95_seconds={write_p95:.4f} "
                 f"write_max_seconds={max(ordered_writes):.4f} "
+                f"lock_wait_p95_seconds={lock_wait_p95:.4f} "
+                f"lock_wait_max_seconds={max(ordered_lock_waits):.4f} "
+                f"transaction_work_p95_seconds={transaction_work_p95:.4f} "
+                f"transaction_work_max_seconds={max(ordered_transaction_work):.4f} "
                 f"report_p95_seconds={report_p95:.4f} report_max_seconds={max(ordered_reports):.4f}"
             )
             self.assertLess(elapsed, 150, "30-client mixed workload exceeded 150 seconds")
