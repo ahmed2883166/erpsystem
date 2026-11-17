@@ -1,6 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database, fetch_page
-from db_compat import begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names
+from db_compat import begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names, execute_script
 """Employee master, payroll preparation and employee custody workflows."""
 import sqlite3
 import io
@@ -44,7 +44,7 @@ def _db():
 
 def initialize_workforce_schema():
     c = _db()
-    c.executescript("""
+    execute_script(c,"""
     CREATE TABLE IF NOT EXISTS employees(
       id INTEGER PRIMARY KEY, employee_code TEXT NOT NULL UNIQUE, full_name TEXT NOT NULL,
       job_title TEXT NOT NULL DEFAULT '', department TEXT NOT NULL DEFAULT '',
@@ -305,7 +305,7 @@ def initialize_workforce_schema():
     final_payroll_columns = table_columns(c, "employee_final_payrolls")
     if "journal_entry_id" not in final_payroll_columns:
         c.execute("ALTER TABLE employee_final_payrolls ADD COLUMN journal_entry_id INTEGER")
-    c.executescript("""
+    execute_script(c,"""
     CREATE TABLE IF NOT EXISTS employee_final_payroll_payments(
       id INTEGER PRIMARY KEY,
       final_payroll_id INTEGER NOT NULL REFERENCES employee_final_payrolls(id),
@@ -367,7 +367,7 @@ def initialize_workforce_schema():
         for column, declaration in additions.items():
             if column not in existing_columns:
                 c.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {declaration}')
-    c.executescript("""
+    execute_script(c,"""
     CREATE TABLE IF NOT EXISTS employee_end_of_service_payments(
       id INTEGER PRIMARY KEY,
       settlement_id INTEGER NOT NULL REFERENCES employee_end_of_service_settlements(id),
