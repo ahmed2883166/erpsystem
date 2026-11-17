@@ -922,9 +922,11 @@ class PurchasingAccountingTests(unittest.TestCase):
              }), \
              patch("activity_profiles.resolve_product_account_code",
                    side_effect=lambda _c, _p, role, default: "1150" if role == "inventory" else "5100"), \
+             patch("purchases.lock_stock_warehouses") as warehouse_lock, \
              patch("purchases.create_journal", return_value=777) as journal:
             entry_id = purchases.post_supplier_bill(self.db, bill_id, 2)
 
+        warehouse_lock.assert_called_once_with(self.db, warehouse_id)
         self.assertEqual(entry_id, 777)
         journal_lines = journal.call_args.args[4]
         self.assertEqual(
