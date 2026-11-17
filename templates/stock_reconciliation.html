@@ -49,4 +49,17 @@
   {% for p in warehouse_product_rows %}<tr><td>{{ p.warehouse_code }} - {{ p.warehouse_name }}</td><td>{{ p.sku }}</td><td>{{ p.name }}</td><td>{{ p.account_code }}</td><td>{{ p.qty }}</td><td>{{ p.value|money }}</td></tr>{% else %}<tr><td colspan="6">لا توجد أرصدة مخزنية تفصيلية.</td></tr>{% endfor %}
   </tbody></table></div>
 </section>
+
+<section class="panel">
+  <h3>سلامة طبقات تقييم المخزون</h3>
+  <p class="muted">فحوصات مستقلة عن إجمالي المطابقة: تكشف الكميات أو القيم السالبة، والكمية المتبقية التي تتجاوز الإدخال، والقيمة بلا كمية، وعدم تطابق الطبقة مع حركة مصدرها.</p>
+  {% if layer_integrity_issue_count %}
+    <p class="status danger">تم رصد {{ layer_integrity_issue_count }} ملاحظة سلامة في طبقات التقييم. المعروض حتى 200 ملاحظة؛ راجع الطبقات قبل اعتماد المطابقة.</p>
+  {% else %}
+    <p class="status success">لم تُكتشف مخالفات في سلامة طبقات التقييم بالفحوصات المتاحة.</p>
+  {% endif %}
+  <div class="table-wrap"><table><thead><tr><th>رقم الطبقة</th><th>الصنف</th><th>المخزن</th><th>الحركة المصدر</th><th>نوع المشكلة</th><th>التفصيل</th></tr></thead><tbody>
+  {% for issue in layer_integrity_issues %}<tr><td>{{ issue.layer_id }}</td><td>{{ issue.product_id or '—' }}</td><td>{{ issue.warehouse_id or '—' }}</td><td>{{ issue.source_movement_id or '—' }}</td><td>{{ issue.code }}</td><td>{{ issue.message }}</td></tr>{% else %}<tr><td colspan="6">لا توجد ملاحظات مسجلة.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
 {% endblock %}
