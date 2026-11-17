@@ -431,10 +431,7 @@ def void_cash_commitment(conn, commitment_id):
 
 def list_cash_commitments_forecast(conn, as_of, end_date):
     """Return unpaid commitment balances due within the forecast horizon."""
-    exists = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_commitments'"
-    ).fetchone()
-    if not exists:
+    if not db_table_exists(conn, "cash_commitments"):
         return []
     rows = conn.execute(
         """SELECT c.* FROM cash_commitments c
