@@ -2791,12 +2791,16 @@ def new_credit_note():
                 if variance:
                     cogs_code=resolve_product_account_code(c,item["product_id"],"cogs",default_cogs)
                     cogs_id=account(c,cogs_code,"expense")
+                    variance_dimensions={"stock_product_id":item["product_id"],
+                                         "stock_warehouse_id":item["warehouse_id"]}
                     if variance>0:
                         journal_lines.append((cogs_id,variance,0,
-                            "فرق سعر مرتجع المورد بين تكلفة المخزون وقيمة فاتورة المورد الأصلية"))
+                            "فرق سعر مرتجع المورد بين تكلفة المخزون وقيمة فاتورة المورد الأصلية",
+                            variance_dimensions))
                     else:
                         journal_lines.append((cogs_id,0,-variance,
-                            "فرق سعر مرتجع المورد بين تكلفة المخزون وقيمة فاتورة المورد الأصلية"))
+                            "فرق سعر مرتجع المورد بين تكلفة المخزون وقيمة فاتورة المورد الأصلية",
+                            variance_dimensions))
             entry_id=create_journal(c,request.form["credit_date"],credit_no,
                 "إشعار دائن مشتريات — "+supplier_credit_no,journal_lines,session["user_id"],dimensions=dimensions)
             execute_compat(c, "UPDATE supplier_credit_notes SET journal_entry_id=? WHERE id=?",(entry_id,note_id))
