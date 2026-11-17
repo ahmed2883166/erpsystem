@@ -28,6 +28,13 @@ def _group_concat_expression(connection, expression):
     if database_dialect(connection) == "sqlite":
         return "GROUP_CONCAT(" + expression + ", ', ')"
     return "STRING_AGG(CAST(" + expression + " AS TEXT), ', ')"
+
+
+def _friday_attendance_predicate(connection):
+    """Return the SQL predicate matching Friday for the active DB dialect."""
+    if database_dialect(connection) == "sqlite":
+        return "strftime('%w',a.attendance_date)='5'"
+    return "EXTRACT(DOW FROM CAST(a.attendance_date AS DATE))=5"
 from accounting_core import post_journal, safe_error_message, decimal_sum_expression
 from code_sequences import next_code
 from cash_commitments import create_cash_commitment
@@ -3728,11 +3735,11 @@ def friday_allowance():
             if not selected_employee_ids:
                 raise ValueError("أضف موظفًا واحدًا على الأقل إلى جدول بدل الجمعة.")
             selected_marks = ",".join("?" for _ in selected_employee_ids)
-            eligible = c.execute("""SELECT e.id,e.employee_code,e.full_name,e.basic_salary,
+            eligible = c.execute(f"""SELECT e.id,e.employee_code,e.full_name,e.basic_salary,
                     e.branch_id,e.cost_center_id,e.project_id,COUNT(a.id) AS attendance_days
                 FROM employees e JOIN attendance_records a ON a.employee_id=e.id
                 WHERE e.active=1 AND e.friday_work_eligible=1
-                  AND e.id IN ("""+selected_marks+""")
+                  AND e.id IN ({selected_marks})
                   AND a.status='present' AND {_friday_attendance_predicate(c)}
                   AND a.attendance_date>=? AND a.attendance_date<?
                   AND e.hire_date<=a.attendance_date
@@ -3791,7 +3798,7 @@ def friday_allowance():
         selected_period = selected_start.strftime("%Y-%m")
     next_month = date(selected_start.year + (1 if selected_start.month == 12 else 0),
                        1 if selected_start.month == 12 else selected_start.month + 1, 1)
-    eligible_rows = c.execute("""SELECT e.id,e.employee_code,e.full_name,e.basic_salary,e.work_status,e.department,
+    eligible_rows = c.execute(f"""SELECT e.id,e.employee_code,e.full_name,e.basic_salary,e.work_status,e.department,
             COUNT(a.id) AS attendance_days
         FROM employees e JOIN attendance_records a ON a.employee_id=e.id
         WHERE e.active=1 AND e.friday_work_eligible=1
