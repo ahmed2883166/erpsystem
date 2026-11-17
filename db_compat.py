@@ -103,3 +103,11 @@ def begin_write_transaction(connection):
         connection.execute("BEGIN")
         return True
     return False
+
+
+def transaction_is_active(connection):
+    """Return whether the DB-API connection currently owns a transaction."""
+    if database_dialect(connection) == "sqlite":
+        return connection.in_transaction
+    status = getattr(connection.info, "transaction_status", None)
+    return getattr(status, "name", str(status)) != "IDLE"
