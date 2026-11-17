@@ -11,8 +11,16 @@ import argparse
 import json
 import os
 import sqlite3
+from decimal import Decimal
 from pathlib import Path
 from urllib.parse import quote
+
+
+def normalize_value(value):
+    """Avoid carrying SQLite binary floats into exact PostgreSQL NUMERIC columns."""
+    if isinstance(value, float):
+        return Decimal(str(value))
+    return value
 
 
 def quote_ident(value: str) -> str:
@@ -150,7 +158,7 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                         break
                     dst.executemany(
                         insert_sql,
-                        [tuple(row[column] for column in columns) for row in rows],
+                        [tuple(normalize_value(row[column]) for column in columns) for row in rows],
                     )
                     copied += len(rows)
                 target_count = dst.execute(
