@@ -55,6 +55,14 @@ def _sales_invoice_for_update(conn, invoice_id, posted_only=False):
     return execute_compat(conn, sql, (invoice_id,)).fetchone()
 
 
+def _sales_credit_note_for_update(conn, credit_note_id):
+    """Prevent two concurrent cancellation requests from reversing one credit note."""
+    sql = "SELECT * FROM sales_credit_notes WHERE id=? AND status='posted'"
+    if database_dialect(conn) == "postgresql":
+        sql += " FOR UPDATE"
+    return execute_compat(conn, sql, (credit_note_id,)).fetchone()
+
+
 def init_sales_schema():
     c = db()
     initialize_analytic_dimensions_schema(c)
@@ -1279,10 +1287,7 @@ def post_customer_refund(conn, credit_note_id, refund_date, amount, cash_account
                          created_by=None, reference=""):
     refund_date = _validate_customer_advance_date(refund_date)
     amount = _validated_customer_advance_amount(amount, "قيمة رد المبلغ")
-    note_sql = "SELECT * FROM sales_credit_notes WHERE id=? AND status='posted'"
-    if database_dialect(conn) == "postgresql":
-        note_sql += " FOR UPDATE"
-    note = execute_compat(conn, note_sql, (credit_note_id,)).fetchone()
+    note = _sales_credit_note_for_update(conn, credit_note_id)
     if not note:
         raise ValueError("الإشعار الدائن غير موجود أو غير مرحل.")
     refunded_rows = execute_compat(conn, 
