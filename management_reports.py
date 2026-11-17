@@ -28,6 +28,14 @@ def _d(value):
     except Exception:
         return Decimal("0")
 
+def _first_value(row):
+    """Read a one-column aggregate from SQLite rows or PostgreSQL mappings."""
+    if row is None:
+        return "0"
+    if hasattr(row, "values"):
+        return next(iter(row.values()), "0")
+    return row[0]
+
 
 def build_period_comparison(conn, date_from, date_to, mode="previous_period"):
     if mode not in {"previous_period", "previous_year"}:
@@ -240,14 +248,14 @@ def _cash_forecast_payroll(conn, as_of):
         due_date = _month_end(run["period"])
         if not due_date:
             continue
-        net_payable = _d(execute_compat(conn, 
-            "SELECT COALESCE(SUM(CAST(net_pay AS NUMERIC)),0) FROM payroll_lines WHERE run_id=?",
+        net_payable = _d(_first_value(execute_compat(conn,
+            "SELECT COALESCE(SUM(CAST(net_pay AS NUMERIC)),0) AS total FROM payroll_lines WHERE run_id=?",
             (run["id"],),
-        ).fetchone()[0])
-        paid = _d(execute_compat(conn, 
-            """SELECT COALESCE(SUM(CAST(amount AS NUMERIC)),0) FROM payroll_payments
+        ).fetchone()))
+        paid = _d(_first_value(execute_compat(conn,
+            """SELECT COALESCE(SUM(CAST(amount AS NUMERIC)),0) AS total FROM payroll_payments
                WHERE run_id=? AND payment_date<=?""", (run["id"], as_of)
-        ).fetchone()[0])
+        ).fetchone()))
         balance = max(net_payable - paid, Decimal("0"))
         if balance:
             items.append({
@@ -269,14 +277,14 @@ def _cash_forecast_grants(conn, as_of):
            WHERE status IN ('approved','partially_paid') ORDER BY grant_date,id"""
     ).fetchall()
     for grant in grants:
-        total = _d(execute_compat(conn, 
-            "SELECT COALESCE(SUM(CAST(amount AS NUMERIC)),0) FROM employee_grant_lines WHERE grant_id=?",
+        total = _d(_first_value(execute_compat(conn,
+            "SELECT COALESCE(SUM(CAST(amount AS NUMERIC)),0) AS total FROM employee_grant_lines WHERE grant_id=?",
             (grant["id"],),
-        ).fetchone()[0])
-        paid = _d(execute_compat(conn, 
-            """SELECT COALESCE(SUM(CAST(amount AS NUMERIC)),0) FROM employee_grant_payments
+        ).fetchone()))
+        paid = _d(_first_value(execute_compat(conn,
+            """SELECT COALESCE(SUM(CAST(amount AS NUMERIC)),0) AS total FROM employee_grant_payments
                WHERE grant_id=? AND payment_date<=?""", (grant["id"], as_of)
-        ).fetchone()[0])
+        ).fetchone()))
         balance = max(total - paid, Decimal("0"))
         if balance:
             due_date = str(grant["grant_date"] or as_of)[:10]
