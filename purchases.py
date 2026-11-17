@@ -55,6 +55,26 @@ def _lock_supplier_receipts(conn, receipt_ids):
         raise ValueError("أحد إيصالات GRNI غير موجود أثناء قفل التخصيص.")
     return rows
 
+
+def _purchase_order_for_receipt_update(conn, order_id):
+    """Lock the PO header before receiving against it on PostgreSQL."""
+    sql = "SELECT * FROM purchase_orders WHERE id=?"
+    if database_dialect(conn) == "postgresql":
+        sql += " FOR UPDATE"
+    return execute_compat(conn, sql, (order_id,)).fetchone()
+
+
+def _purchase_order_lines_for_receipt_update(conn, order_id, product_id):
+    """Lock the matching PO line so concurrent receipts cannot over-receive it."""
+    sql = (
+        "SELECT * FROM purchase_order_lines "
+        "WHERE po_id=? AND product_id=? ORDER BY id"
+    )
+    if database_dialect(conn) == "postgresql":
+        sql += " FOR UPDATE"
+    return execute_compat(conn, sql, (order_id, product_id)).fetchall()
+
+
 def init_purchase_schema():
     c=db()
     initialize_analytic_dimensions_schema(c)
@@ -1403,11 +1423,10 @@ def new_receipt():
                 request.form.get("production_date",""),request.form.get("expiry_date",""),request.form["receipt_date"])
             po_line_id=None
             if po_id:
-                po=execute_compat(c, "SELECT * FROM purchase_orders WHERE id=? AND supplier_id=? AND status IN ('approved','partially_received')",
-                             (po_id,supplier)).fetchone()
-                if not po: raise ValueError("أمر الشراء غير موجود أو لا يتبع المورد أو مغلق.")
-                po_lines=execute_compat(c, "SELECT * FROM purchase_order_lines WHERE po_id=? AND product_id=? ORDER BY id",
-                                   (po_id,product)).fetchall()
+                po = _purchase_order_for_receipt_update(c, po_id)
+                if not po or po["supplier_id"] != supplier or po["status"] not in {"approved", "partially_received"}:
+                    raise ValueError("أمر الشراء غير موجود أو لا يتبع المورد أو مغلق.")
+                po_lines = _purchase_order_lines_for_receipt_update(c, po_id, product)
                 if len(po_lines)!=1: raise ValueError("الصنف يجب أن يقابل سطرًا واحدًا فقط في أمر الشراء.")
                 po_line=po_lines[0]
                 outstanding=Decimal(po_line["quantity"])-Decimal(po_line["received_qty"])
