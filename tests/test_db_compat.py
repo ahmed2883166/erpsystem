@@ -4,10 +4,24 @@ import sqlite3
 import unittest
 import uuid
 
-from db_compat import database_dialect, table_columns, table_exists
+from db_compat import database_dialect, table_columns, table_exists, begin_write_transaction
 
 
 class SQLiteSchemaCompatibilityTests(unittest.TestCase):
+    def test_begin_write_transaction_preserves_existing_sqlite_transaction(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.execute("CREATE TABLE probe (id INTEGER PRIMARY KEY)")
+            self.assertTrue(begin_write_transaction(connection))
+            self.assertTrue(connection.in_transaction)
+            connection.execute("INSERT INTO probe DEFAULT VALUES")
+            self.assertFalse(begin_write_transaction(connection))
+            connection.commit()
+            self.assertFalse(connection.in_transaction)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM probe").fetchone()[0], 1)
+        finally:
+            connection.close()
+
     def setUp(self):
         self.connection = sqlite3.connect(":memory:")
         self.connection.row_factory = sqlite3.Row
