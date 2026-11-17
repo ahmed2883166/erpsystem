@@ -96,7 +96,7 @@ def _begin_fx_write(c):
     else:
         # psycopg starts a transaction lazily with autocommit=False.
         status = getattr(getattr(c, "info", None), "transaction_status", None)
-        if status is not None and str(status).endswith("IDLE"):
+        if status is not None and getattr(status, "name", None) == "IDLE":
             execute_compat(c, "BEGIN")
 
 
