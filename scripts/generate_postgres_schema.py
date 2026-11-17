@@ -249,6 +249,21 @@ def generate_postgres_ddl(snapshot):
         "",
     ]
     table_names = {table["name"] for table in tables}
+    columns_by_table = {
+        table["name"]: {column.get("name") for column in table.get("columns", [])}
+        for table in tables
+    }
+    unknown_overrides = sorted(
+        f"{table_name}.{column_name}"
+        for table_name, column_name in POSTGRES_TYPE_OVERRIDES
+        if table_name not in columns_by_table
+        or column_name not in columns_by_table[table_name]
+    )
+    if unknown_overrides:
+        raise ValueError(
+            "PostgreSQL type overrides reference missing schema columns: "
+            + ", ".join(unknown_overrides)
+        )
     pending_fks = []
     pending_indexes = []
     nocase_unique_columns = {table['name']: extract_nocase_unique_columns(table.get('sql')) for table in tables}
