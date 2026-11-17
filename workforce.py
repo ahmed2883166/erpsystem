@@ -22,6 +22,12 @@ _DB_VALUE_KEY_ERRORS = (ValueError, KeyError) + DB_ERROR
 _DB_VALUE_TYPE_ERRORS = (ValueError, TypeError) + DB_ERROR
 _DB_VALUE_ERRORS = (ValueError,) + DB_ERROR
 _DB_VALUE_INVALID_KEY_ERRORS = (ValueError, InvalidOperation, KeyError) + DB_ERROR
+
+def _group_concat_expression(connection, expression):
+    """Return a dialect-specific aggregate for a fixed internal SQL expression."""
+    if database_dialect(connection) == "sqlite":
+        return "GROUP_CONCAT(" + expression + ", ', ')"
+    return "STRING_AGG(CAST(" + expression + " AS TEXT), ', ')"
 from accounting_core import post_journal, safe_error_message, decimal_sum_expression
 from code_sequences import next_code
 from cash_commitments import create_cash_commitment
@@ -580,10 +586,11 @@ def initialize_workforce_schema():
     # This is an additive audit snapshot; it does not modify employee or payroll data.
     c.execute("""INSERT INTO employee_employment_history
         (employee_id,from_status,to_status,effective_date,reason)
-        SELECT e.id,'',e.work_status,COALESCE(NULLIF(e.hire_date,''),date('now')),
+        SELECT e.id,'',e.work_status,COALESCE(NULLIF(e.hire_date,''),?),
                'تسجيل الحالة الحالية للملفات السابقة عند تفعيل السجل الوظيفي'
         FROM employees e
-        WHERE NOT EXISTS (SELECT 1 FROM employee_employment_history h WHERE h.employee_id=e.id)""")
+        WHERE NOT EXISTS (SELECT 1 FROM employee_employment_history h WHERE h.employee_id=e.id)""",
+        (date.today().isoformat(),))
     c.close()
 
 
@@ -1649,8 +1656,8 @@ def payroll_reconciliation():
             "issue_count":len(run_issues)
         })
 
-    duplicate_periods = c.execute("""
-        SELECT period,COUNT(*) AS run_count,GROUP_CONCAT(id,', ') AS run_ids
+    duplicate_periods = c.execute(f"""
+        SELECT period,COUNT(*) AS run_count,{_group_concat_expression(c, 'id')} AS run_ids
         FROM payroll_runs WHERE status='posted'
         """ + (" AND period>=?" if month_from else "") +
         (" AND period<=?" if month_to else "") + """
@@ -1660,9 +1667,9 @@ def payroll_reconciliation():
         issues.append({"period":duplicate["period"],"run_id":"—",
             "message":"أكثر من كشف مرتبات مرحّل لنفس الشهر: " + str(duplicate["run_ids"])})
 
-    duplicate_employees = c.execute("""
+    duplicate_employees = c.execute(f"""
         SELECT r.period,e.employee_code,e.full_name,COUNT(*) AS occurrences,
-               GROUP_CONCAT(r.id,', ') AS run_ids
+               {_group_concat_expression(c, 'r.id')} AS run_ids
         FROM payroll_runs r
         JOIN payroll_lines l ON l.run_id=r.id
         JOIN employees e ON e.id=l.employee_id
@@ -1696,9 +1703,9 @@ def payroll_reconciliation():
             overlap["employee_code"] + " - " + overlap["full_name"] +
             " (كشف نهائي " + overlap["final_payroll_no"] + ")."})
 
-    duplicate_final = c.execute("""
+    duplicate_final = c.execute(f"""
         SELECT period,e.employee_code,e.full_name,COUNT(*) AS occurrences,
-               GROUP_CONCAT(final_payroll_no,', ') AS final_numbers
+               {_group_concat_expression(c, 'final_payroll_no')} AS final_numbers
         FROM employee_final_payrolls f JOIN employees e ON e.id=f.employee_id
         WHERE f.status IN ('approved','paid')
         """ + (" AND period>=?" if month_from else "") +
@@ -1711,8 +1718,8 @@ def payroll_reconciliation():
             "message":"أكثر من كشف مرتب نهائي معتمد للموظف " + duplicate["employee_code"] +
             " - " + duplicate["full_name"] + ": " + duplicate["final_numbers"]})
 
-    journal_duplicates = c.execute("""
-        SELECT reference,COUNT(*) AS occurrences,GROUP_CONCAT(id,', ') AS journal_ids
+    journal_duplicates = c.execute(f"""
+        SELECT reference,COUNT(*) AS occurrences,{_group_concat_expression(c, 'id')} AS journal_ids
         FROM journal_entries WHERE reference LIKE 'PAYROLL-%'
         GROUP BY reference HAVING COUNT(*)>1
         ORDER BY reference
