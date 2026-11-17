@@ -43,6 +43,27 @@ def _columns(conn, name):
     return table_columns(conn, name)
 
 
+def lock_stock_warehouses(conn, *warehouse_ids):
+    """Serialize stock mutations per warehouse on PostgreSQL; SQLite uses BEGIN IMMEDIATE."""
+    ids = sorted({int(value) for value in warehouse_ids if value not in (None, 0, "")})
+    if not ids or database_dialect(conn) != "postgresql":
+        return []
+    placeholders = ",".join("?" for _ in ids)
+    rows = _execute(conn, f"SELECT id FROM stock_warehouses WHERE id IN ({placeholders}) ORDER BY id FOR UPDATE", ids).fetchall()
+    locked = {int(row["id"]) for row in rows}
+    missing = [warehouse_id for warehouse_id in ids if warehouse_id not in locked]
+    if missing:
+        raise ValueError("المخزن المحدد غير موجود أو لم يعد متاحًا.")
+    return rows
+
+
+def _stocktake_for_update(conn, stocktake_id):
+    sql = "SELECT * FROM stocktakes WHERE id=?"
+    if database_dialect(conn) == "postgresql":
+        sql += " FOR UPDATE"
+    return _execute(conn, sql, (stocktake_id,)).fetchone()
+
+
 def _install_stock_location_triggers(conn):
     """Install SQLite guards; PostgreSQL equivalents live in its schema migrations."""
     if database_dialect(conn) != "sqlite":
@@ -1432,6 +1453,7 @@ def movements():
                 if target_location_id and not _execute(c, "SELECT 1 FROM stock_locations WHERE id=? AND warehouse_id=? AND active=1",(target_location_id,dst)).fetchone():
                     raise ValueError("موقع الوجهة لا يتبع مخزن الوجهة.")
             begin_write_transaction(c)
+            lock_stock_warehouses(c, src, dst)
             movement_date=request.form.get("movement_date") or date.today().isoformat()
             ensure_stock_date_open(c, movement_date)
             lot_id=None
@@ -2047,6 +2069,7 @@ def counts():
             if not _execute(c, "SELECT 1 FROM stock_warehouses WHERE id=? AND active=1", (warehouse_id,)).fetchone():
                 raise ValueError("اختر مخزنًا نشطًا.")
             begin_write_transaction(c)
+            lock_stock_warehouses(c, warehouse_id)
             ensure_stock_date_open(c, count_date, "تاريخ الجرد")
             count_no = "STK-" + date.fromisoformat(count_date).strftime("%Y%m%d") + "-" + uuid.uuid4().hex[:6].upper()
             movement_cutoff = _execute(c, """SELECT COALESCE(MAX(id),0) AS movement_cutoff FROM stock_movements
@@ -2122,9 +2145,10 @@ def count_detail(stocktake_id):
     if request.method == "POST":
         try:
             begin_write_transaction(c)
-            # Re-read status and lines after acquiring the write lock. The page
-            # may have been opened before another user approved this stocktake.
-            stocktake = _execute(c, "SELECT * FROM stocktakes WHERE id=?", (stocktake_id,)).fetchone()
+            # Lock the document and warehouse so approvals and stock movements serialize.
+            stocktake = _stocktake_for_update(c, stocktake_id)
+            if stocktake:
+                lock_stock_warehouses(c, stocktake["warehouse_id"])
             if not stocktake or stocktake["status"] not in ("draft", "counted"):
                 raise ValueError("لا يمكن تعديل جرد تم اعتماده.")
             lines = _execute(c, "SELECT id,snapshot_qty FROM stocktake_lines WHERE stocktake_id=?", (stocktake_id,)).fetchall()
@@ -2175,7 +2199,9 @@ def approve_count(stocktake_id):
     c = get_db()
     try:
         begin_write_transaction(c)
-        stocktake = _execute(c, "SELECT * FROM stocktakes WHERE id=?", (stocktake_id,)).fetchone()
+        stocktake = _stocktake_for_update(c, stocktake_id)
+        if stocktake:
+            lock_stock_warehouses(c, stocktake["warehouse_id"])
         if not stocktake or stocktake["status"] != "counted":
             raise ValueError("يجب حفظ العد أولًا، ولا يمكن اعتماد أمر غير جاهز للمراجعة.")
         if int(stocktake["created_by"] or 0) == int(session.get("user_id") or 0):
