@@ -39,8 +39,21 @@ def validate(ddl_path, dsn, expected_review_path=None):
                    WHERE constraint_schema = %s AND constraint_type = 'FOREIGN KEY'""",
                 (schema_name,),
             ).fetchone()[0]
+            # The generator's review count represents explicit source indexes;
+            # PostgreSQL also creates one backing index for each PRIMARY KEY (and
+            # UNIQUE constraint). Exclude those constraint-owned indexes here so
+            # both sides count the same objects. Keep invalid-index validation
+            # separate below, where every physical index must still be valid.
             index_count = connection.execute(
-                """SELECT COUNT(*) FROM pg_indexes WHERE schemaname = %s""",
+                """SELECT COUNT(*)
+                   FROM pg_index i
+                   JOIN pg_class index_class ON index_class.oid = i.indexrelid
+                   JOIN pg_namespace n ON n.oid = index_class.relnamespace
+                   LEFT JOIN pg_constraint constraint_owner
+                     ON constraint_owner.conindid = i.indexrelid
+                    AND constraint_owner.contype IN ('p', 'u')
+                   WHERE n.nspname = %s
+                     AND constraint_owner.oid IS NULL""",
                 (schema_name,),
             ).fetchone()[0]
             trigger_count = connection.execute(
