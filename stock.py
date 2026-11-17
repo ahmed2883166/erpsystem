@@ -373,7 +373,7 @@ def initialize_stock_schema():
                     _execute(c, """UPDATE journal_lines SET stock_product_id=?,stock_warehouse_id=?
                         WHERE id=? AND stock_product_id IS NULL AND stock_warehouse_id IS NULL""",
                         (movement["product_id"], warehouse_id, matching_lines[0]["id"]))
-        except (ValueError, DB_ERROR):
+        except (ValueError, *DB_ERROR):
             # A profile/account mapping that cannot be resolved is not grounds
             # to guess; the balance remains explicitly unallocated in the report.
             pass
@@ -960,7 +960,7 @@ def products():
               int(request.form.get("track_lot")=="on"),int(request.form.get("track_expiry")=="on"),
               str(purchase_price),str(sale_price)))
             c.commit(); flash("تم حفظ الصنف.", "success")
-        except (ValueError,DB_INTEGRITY_ERROR) as e:
+        except (ValueError,*DB_INTEGRITY_ERROR) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود الصنف أو الباركود مستخدم بالفعل.", "error")
         finally: c.close()
         return redirect(url_for("stock.products"))
@@ -1008,7 +1008,7 @@ def product_uoms():
                 (product_id,code,name,str(factor),int(request.form.get("purchase_enabled")=="on"),
                  int(request.form.get("sales_enabled")=="on")))
             c.commit(); flash("تمت إضافة وحدة التعبئة الخاصة بالصنف.","success")
-        except (ValueError,DB_INTEGRITY_ERROR) as exc:
+        except (ValueError,*DB_INTEGRITY_ERROR) as exc:
             c.rollback(); flash(str(exc) if isinstance(exc,ValueError) else "كود الوحدة مستخدم لهذا الصنف بالفعل.","error")
         finally: c.close()
         return redirect(url_for("stock.product_uoms"))
@@ -1051,7 +1051,7 @@ def uoms():
                     (category_id,code,name,str(factor),is_base))
                 flash("تم حفظ وحدة القياس.","success")
             c.commit()
-        except (ValueError,DB_INTEGRITY_ERROR) as exc:
+        except (ValueError,*DB_INTEGRITY_ERROR) as exc:
             c.rollback(); flash(str(exc) if isinstance(exc,ValueError) else "الكود أو الاسم مستخدم بالفعل.","error")
         finally: c.close()
         return redirect(url_for("stock.uoms"))
@@ -1079,7 +1079,7 @@ def categories():
                 code=next_code(c, "stock_category", "CAT", "stock_categories", "code")
                 _execute(c, "INSERT INTO stock_categories(code,name_ar,description) VALUES(?,?,?)",(code,name,description))
             c.commit();flash("تم حفظ مجموعة المنتجات.","success")
-        except (ValueError,DB_INTEGRITY_ERROR) as e:
+        except (ValueError,*DB_INTEGRITY_ERROR) as e:
             c.rollback();flash(str(e) if isinstance(e,ValueError) else "كود المجموعة أو اسمها مستخدم بالفعل.","error")
         finally:c.close()
         return redirect(url_for("stock.categories"))
@@ -1096,7 +1096,7 @@ def delete_category(category_id):
         used=_execute(c, "SELECT COUNT(*) n FROM stock_products WHERE category_id=?",(category_id,)).fetchone()["n"]
         if used: raise ValueError("لا يمكن حذف المجموعة لوجود أصناف مرتبطة بها؛ انقل الأصناف أولًا.")
         _execute(c, "DELETE FROM stock_categories WHERE id=?",(category_id,));c.commit();flash("تم حذف المجموعة.","success")
-    except (ValueError,DB_INTEGRITY_ERROR) as e:
+    except (ValueError,*DB_INTEGRITY_ERROR) as e:
         c.rollback();flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     finally:c.close()
     return redirect(url_for("stock.categories"))
@@ -1116,7 +1116,7 @@ def warehouses():
             _execute(c, "INSERT INTO stock_warehouses(code,name_ar,branch,branch_id) VALUES(?,?,?,?)",
                       (code,name,branch["name_ar"] if branch else "",branch_id))
             c.commit(); flash("تم حفظ المخزن وربطه بالفرع المحدد.", "success")
-        except (ValueError,DB_INTEGRITY_ERROR) as e:
+        except (ValueError,*DB_INTEGRITY_ERROR) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود المخزن مستخدم بالفعل.", "error")
         finally: c.close()
         return redirect(url_for("stock.warehouses"))
@@ -1157,7 +1157,7 @@ def locations():
                       (warehouse_id, parent_id, code, name, location_type))
             c.commit()
             flash("تم إنشاء موقع التخزين.", "success")
-        except (ValueError, DB_INTEGRITY_ERROR) as exc:
+        except (ValueError, *DB_INTEGRITY_ERROR) as exc:
             c.rollback()
             flash(str(exc) if isinstance(exc, ValueError) else "كود الموقع مستخدم في نفس المستوى.", "error")
         finally:
@@ -1213,7 +1213,7 @@ def product_locations():
                   AND {decimal_compare_expression(c, "qty_remaining")} > 0""", (location_id, product_id, warehouse_id))
             c.commit()
             flash("تم تحديد الموقع الافتراضي وإسناد الأرصدة القديمة غير المحددة إليه.", "success")
-        except (ValueError, DB_ERROR) as exc:
+        except (ValueError, *DB_ERROR) as exc:
             c.rollback()
             flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
         finally:
@@ -1280,7 +1280,7 @@ def edit_product(product_id):
                     _execute(c, """INSERT INTO stock_product_uoms(product_id,uom_id,custom_code,custom_name,factor_to_base,is_base)
                         VALUES(?,?,?,?, '1',1)""",(product_id,base_uom_id,base_unit["code"],base_unit["name_ar"]))
             c.commit(); c.close(); flash("تم تعديل الصنف.","success"); return redirect(url_for("stock.products"))
-        except (ValueError,DB_INTEGRITY_ERROR) as e:
+        except (ValueError,*DB_INTEGRITY_ERROR) as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "الكود أو الباركود مستخدم بالفعل.","error")
     c.close(); return render_template("stock_product_edit.html",product=product,used=used,categories=categories,uoms=uoms)
 
@@ -1321,7 +1321,7 @@ def edit_warehouse(warehouse_id):
             _execute(c, "UPDATE stock_warehouses SET code=?,name_ar=?,branch=?,branch_id=? WHERE id=?",
                       (code,name,branch["name_ar"] if branch else "",branch_id,warehouse_id))
             c.commit(); c.close(); flash("تم تعديل المخزن وربطه بالفرع المحدد.","success"); return redirect(url_for("stock.warehouses"))
-        except (ValueError,DB_INTEGRITY_ERROR) as e: c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود المخزن مستخدم بالفعل.","error")
+        except (ValueError,*DB_INTEGRITY_ERROR) as e: c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود المخزن مستخدم بالفعل.","error")
     branches=_execute(c, "SELECT id,code,name_ar FROM branches WHERE active=1 ORDER BY code").fetchall()
     c.close(); return render_template("stock_warehouse_edit.html",warehouse=warehouse,branches=branches)
 
@@ -1475,7 +1475,7 @@ def movements():
                 flash(f"تم حفظ الحركة {movement_no} وربطها بالمخزون؛ استكمل مستند الشراء/المرتجع الأصلي لإتمام القيد.","warning")
             else:
                 flash(f"تم حفظ الحركة {movement_no}.","success")
-        except (ValueError,InvalidOperation,DB_INTEGRITY_ERROR) as e:
+        except (ValueError,InvalidOperation,*DB_INTEGRITY_ERROR) as e:
             c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
         finally: c.close()
         return redirect(url_for("stock.movements"))
@@ -1889,7 +1889,7 @@ def valuation_reconciliation():
             total_difference=total_difference,matched_account_count=matched_account_count,
             difference_account_count=difference_account_count,reconciliation_status=reconciliation_status,
             report_generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    except (ValueError, DB_ERROR) as exc:
+    except (ValueError, *DB_ERROR) as exc:
         flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
         return render_template("stock_reconciliation.html", rows=[], warehouse_rows=[], warehouse_product_rows=[],
             detail_rows=[],unallocated_rows=[],unallocated_total=D("0"),detail_tagged_total=D("0"),
@@ -1967,7 +1967,7 @@ def resolve_pending_movement(movement_id):
             flash("تمت معالجة الحركة وترحيل قيدها المحاسبي.", "success")
         else:
             flash("لم تُرحّل الحركة؛ ما زالت معلقة بسبب نقص إعدادات الحسابات. راجع ملف النشاط وربط الحسابات ثم أعد المحاولة.", "warning")
-    except (ValueError, DB_ERROR) as exc:
+    except (ValueError, *DB_ERROR) as exc:
         conn.rollback()
         flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     finally:
@@ -2059,7 +2059,7 @@ def counts():
             c.commit()
             flash("تم إنشاء أمر الجرد وحفظ الأرصدة الدفترية وقت الإنشاء. أدخل الكميات الفعلية ثم احفظ العد.", "success")
             return redirect(url_for("stock.count_detail", stocktake_id=stocktake_id))
-        except (ValueError, DB_INTEGRITY_ERROR) as exc:
+        except (ValueError, *DB_INTEGRITY_ERROR) as exc:
             c.rollback()
             flash(str(exc) if isinstance(exc, ValueError) else "تعذر إنشاء أمر الجرد.", "error")
         finally:
@@ -2116,7 +2116,7 @@ def count_detail(stocktake_id):
             c.commit()
             flash("تم حفظ العد الفعلي وحساب فروق الجرد. راجع التقرير قبل الاعتماد والترحيل.", "success")
             return redirect(url_for("stock.count_detail", stocktake_id=stocktake_id))
-        except (ValueError, DB_ERROR) as exc:
+        except (ValueError, *DB_ERROR) as exc:
             c.rollback()
             flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     lines = _execute(c, """WITH RECURSIVE location_paths(id,warehouse_id,path) AS (
@@ -2267,7 +2267,7 @@ def approve_count(stocktake_id):
         c.commit()
         flash("تم اعتماد الجرد وتحديث طبقات المخزون وترحيل قيد التسوية." if journal_id
               else "تم اعتماد الجرد؛ لا توجد فروق تستلزم قيدًا محاسبيًا.", "success")
-    except (ValueError, DB_ERROR) as exc:
+    except (ValueError, *DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
