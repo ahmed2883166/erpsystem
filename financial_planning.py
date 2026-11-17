@@ -4,6 +4,7 @@ from database import connect_database
 import sqlite3
 from db_compat import (
     database_dialect, table_columns, table_exists, execute_script,
+    begin_write_transaction, insert_and_get_id, DB_INTEGRITY_ERROR, DB_ERROR,
 )
 from db_sql import execute_compat, executemany_compat
 
@@ -220,22 +221,22 @@ def create_financial_year(conn, year_name, start_date, end_date, created_by=None
         raise ValueError("تواريخ السنة المالية غير صحيحة؛ استخدم YYYY-MM-DD.")
     if end < start:
         raise ValueError("تاريخ نهاية السنة يجب ألا يسبق تاريخ بدايتها.")
-    conn.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(conn)
     try:
-        overlap = conn.execute(
+        overlap = _execute(conn, 
             """SELECT year_name FROM financial_years
                WHERE start_date <= ? AND end_date >= ? LIMIT 1""",
             (end, start),
         ).fetchone()
         if overlap:
             raise ValueError(f"الفترة تتداخل مع السنة المالية: {overlap[0]}.")
-        cur = conn.execute(
+        year_id = insert_and_get_id(conn,
             """INSERT INTO financial_years(year_name,start_date,end_date,created_by)
                VALUES(?,?,?,?)""",
             (name, start, end, created_by),
         )
         conn.commit()
-        return cur.lastrowid
+        return year_id
     except Exception:
         conn.rollback()
         raise
@@ -243,32 +244,32 @@ def create_financial_year(conn, year_name, start_date, end_date, created_by=None
 
 def list_financial_years(conn):
     """Return financial years in descending chronological order."""
-    return conn.execute(
+    return _execute(conn, 
         "SELECT * FROM financial_years ORDER BY start_date DESC,id DESC"
     ).fetchall()
 
 def _start_financial_year_transaction(conn):
     if conn.in_transaction:
         raise ValueError("هناك عملية قاعدة بيانات مفتوحة؛ احفظها أو أغلقها قبل تنفيذ الإجراء.")
-    conn.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(conn)
 
 
 def _financial_year_or_error(conn, year_id):
-    year = conn.execute("SELECT * FROM financial_years WHERE id=?", (year_id,)).fetchone()
+    year = _execute(conn, "SELECT * FROM financial_years WHERE id=?", (year_id,)).fetchone()
     if not year:
         raise ValueError("السنة المالية غير موجودة.")
     return year
 
 
 def _history_sequence(conn, year_id, entry_kind, action):
-    row = conn.execute("""SELECT COUNT(*) FROM financial_year_journal_history
+    row = _execute(conn, """SELECT COUNT(*) FROM financial_year_journal_history
         WHERE financial_year_id=? AND entry_kind=? AND action=?""",
         (year_id, entry_kind, action)).fetchone()
     return int(row[0]) + 1
 
 
 def _previous_closed_financial_year(conn, start_date):
-    return conn.execute("""SELECT * FROM financial_years
+    return _execute(conn, """SELECT * FROM financial_years
         WHERE end_date < ? ORDER BY end_date DESC,id DESC LIMIT 1""",
         (start_date,)).fetchone()
 
@@ -279,7 +280,7 @@ def _opening_balance_mismatches(conn, cutoff_date, normalized):
     Any unclosed prior-period profit/loss is included in the retained-earnings
     account, so an unclosed previous financial year cannot bypass validation.
     """
-    account_rows = conn.execute("""SELECT id,code,name_ar,account_type FROM accounts
+    account_rows = _execute(conn, """SELECT id,code,name_ar,account_type FROM accounts
         WHERE account_type IN ('asset','liability','equity') AND is_group=0""").fetchall()
     expected_balances = {row["id"]: Decimal("0") for row in account_rows}
     metadata = {row["id"]: row for row in account_rows}
@@ -288,7 +289,7 @@ def _opening_balance_mismatches(conn, cutoff_date, normalized):
     opening_exclusion = (" AND je.id NOT IN (" + ",".join("?" for _ in excluded_openings) + ")"
                          if excluded_openings else "")
     opening_params = (cutoff_date, *excluded_openings)
-    rows = conn.execute(f"""SELECT jl.account_id,a.account_type,jl.debit,jl.credit
+    rows = _execute(conn, f"""SELECT jl.account_id,a.account_type,jl.debit,jl.credit
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
@@ -305,7 +306,7 @@ def _opening_balance_mismatches(conn, cutoff_date, normalized):
 
     # If prior P&L has not yet been closed, carry its net result into retained earnings
     # for comparison with the opening balance entered for the new financial year.
-    pnl_rows = conn.execute(f"""SELECT a.account_type,jl.debit,jl.credit
+    pnl_rows = _execute(conn, f"""SELECT a.account_type,jl.debit,jl.credit
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
@@ -322,7 +323,7 @@ def _opening_balance_mismatches(conn, cutoff_date, normalized):
         retained_id = retained["id"]
         expected_balances[retained_id] = expected_balances.get(retained_id, Decimal("0")) + prior_net_result
         if retained_id not in metadata:
-            account = conn.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE id=?",
+            account = _execute(conn, "SELECT id,code,name_ar,account_type FROM accounts WHERE id=?",
                                    (retained_id,)).fetchone()
             if account:
                 metadata[retained_id] = account
@@ -342,7 +343,7 @@ def _opening_balance_mismatches(conn, cutoff_date, normalized):
 def _retained_earnings_account(conn):
     activity = "commercial"
     if _table_exists_financial(conn, "company_settings"):
-        row = conn.execute("""SELECT setting_value FROM company_settings
+        row = _execute(conn, """SELECT setting_value FROM company_settings
             WHERE setting_key='activity' LIMIT 1""").fetchone()
         if row and row["setting_value"] in ACTIVITY_ACCOUNT_ROLES:
             activity = row["setting_value"]
@@ -350,7 +351,7 @@ def _retained_earnings_account(conn):
     if isinstance(role_codes, str):
         role_codes = (role_codes,)
     for code in role_codes:
-        account = conn.execute("""SELECT id FROM accounts
+        account = _execute(conn, """SELECT id FROM accounts
             WHERE code=? AND account_type='equity' AND is_group=0 AND active=1 LIMIT 1""",
             (code,)).fetchone()
         if account:
@@ -367,7 +368,7 @@ def create_opening_entry(conn, year_id, balances, created_by=None):
             raise ValueError("لا يمكن إنشاء قيد افتتاح لسنة غير مفتوحة.")
         if year["opening_entry_id"]:
             raise ValueError("تم إنشاء قيد افتتاح لهذه السنة بالفعل. صححه بعكس القيد أولًا.")
-        posted_before_opening = conn.execute("""SELECT COUNT(*) FROM journal_entries
+        posted_before_opening = _execute(conn, """SELECT COUNT(*) FROM journal_entries
             WHERE status='posted' AND entry_date>=? AND entry_date<=?
               AND id NOT IN (SELECT entry_id FROM financial_year_journal_history
                   WHERE financial_year_id=? AND entry_kind='opening')""",
@@ -389,7 +390,7 @@ def create_opening_entry(conn, year_id, balances, created_by=None):
                 raise ValueError("يوجد حساب مكرر أو غير صحيح.")
             normalized[account_id] = _signed_money(raw_amount)
         marks = ",".join("?" for _ in normalized)
-        accounts = conn.execute(
+        accounts = _execute(conn, 
             f"SELECT id,code,name_ar,account_type,is_group,active FROM accounts WHERE id IN ({marks})",
             tuple(normalized),
         ).fetchall()
@@ -418,7 +419,7 @@ def create_opening_entry(conn, year_id, balances, created_by=None):
         if not lines:
             raise ValueError("لا يمكن ترحيل قيد افتتاح بدون أرصدة فعلية.")
         previous_year = _previous_closed_financial_year(conn, year["start_date"])
-        prior_posted = conn.execute("""SELECT COUNT(*) FROM journal_entries
+        prior_posted = _execute(conn, """SELECT COUNT(*) FROM journal_entries
             WHERE status='posted' AND entry_date<?""", (year["start_date"],)).fetchone()[0]
         # Validate whenever a prior financial-year record OR any prior posted
         # ledger activity exists. This also covers legacy companies with no
@@ -448,8 +449,8 @@ def create_opening_entry(conn, year_id, balances, created_by=None):
             f"قيد الأرصدة الافتتاحية للسنة المالية {year['year_name']}",
             lines, created_by,
         )
-        conn.execute("UPDATE financial_years SET opening_entry_id=? WHERE id=?", (entry_id, year_id))
-        conn.execute("""INSERT INTO financial_year_journal_history
+        _execute(conn, "UPDATE financial_years SET opening_entry_id=? WHERE id=?", (entry_id, year_id))
+        _execute(conn, """INSERT INTO financial_year_journal_history
             (financial_year_id,entry_kind,action,entry_id,created_by)
             VALUES(?,'opening','created',?,?)""", (year_id, entry_id, created_by))
         conn.commit()
@@ -470,13 +471,13 @@ def build_financial_year_preclose_report(conn, year_id):
                        "count": int(count or 0), "details": details,
                        "blocking": bool(blocking)})
 
-    drafts = conn.execute("""SELECT COUNT(*) FROM journal_entries
+    drafts = _execute(conn, """SELECT COUNT(*) FROM journal_entries
         WHERE status='draft' AND entry_date>=? AND entry_date<=?""", (start, end)).fetchone()[0]
     add("draft_entries", "قيود مسودة داخل السنة", "danger" if drafts else "success",
         drafts, "يجب معالجة القيود المسودة قبل الإقفال.", drafts > 0)
 
     register_decimal_aggregates(conn)
-    grouped_totals = conn.execute("""SELECT je.id,
+    grouped_totals = _execute(conn, """SELECT je.id,
             COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
             COALESCE(DECIMAL_SUM(jl.credit),'0') credit
         FROM journal_entries je LEFT JOIN journal_lines jl ON jl.entry_id=je.id
@@ -489,7 +490,7 @@ def build_financial_year_preclose_report(conn, year_id):
     add("unbalanced_entries", "قيود مرحلة غير متوازنة", "danger" if unbalanced else "success",
         unbalanced, "راجع القيود وصححها بقيود تسوية معتمدة.", unbalanced > 0)
 
-    empty = conn.execute("""SELECT COUNT(*) FROM journal_entries je
+    empty = _execute(conn, """SELECT COUNT(*) FROM journal_entries je
         WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
           AND NOT EXISTS (SELECT 1 FROM journal_lines jl WHERE jl.entry_id=je.id)""",
         (start, end)).fetchone()[0]
@@ -502,7 +503,7 @@ def build_financial_year_preclose_report(conn, year_id):
         "قيد الافتتاح مرتبط بالسنة." if has_opening else
         "لا يوجد قيد افتتاح مرتبط؛ راجع ما إذا كانت الأرصدة الافتتاحية مطلوبة.", False)
     if has_opening:
-        opening = conn.execute("""SELECT je.entry_date,je.status,
+        opening = _execute(conn, """SELECT je.entry_date,je.status,
                 COUNT(jl.id) line_count,
                 COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
                 COALESCE(DECIMAL_SUM(jl.credit),'0') credit,
@@ -531,13 +532,13 @@ def build_financial_year_preclose_report(conn, year_id):
         if opening_valid:
             from datetime import date, timedelta
             cutoff_date = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
-            prior_posted = conn.execute(
+            prior_posted = _execute(conn, 
                 "SELECT COUNT(*) FROM journal_entries WHERE status='posted' AND entry_date<?",
                 (start,),
             ).fetchone()[0]
             previous_year = _previous_closed_financial_year(conn, start)
             if previous_year or prior_posted:
-                opening_rows = conn.execute("""SELECT jl.account_id,a.account_type,
+                opening_rows = _execute(conn, """SELECT jl.account_id,a.account_type,
                         jl.debit,jl.credit
                     FROM journal_lines jl
                     JOIN accounts a ON a.id=jl.account_id
@@ -564,7 +565,7 @@ def build_financial_year_preclose_report(conn, year_id):
                     f"أرصدة قيد الافتتاح تطابق الأستاذ حتى {cutoff_date}.",
                     bool(mismatches))
 
-    invalid_account_lines = conn.execute("""SELECT COUNT(*) FROM journal_lines jl
+    invalid_account_lines = _execute(conn, """SELECT COUNT(*) FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
         WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
@@ -575,7 +576,7 @@ def build_financial_year_preclose_report(conn, year_id):
         invalid_account_lines > 0)
 
     if _table_exists_financial(conn, "accounting_periods"):
-        locked_period = conn.execute("""SELECT period_name FROM accounting_periods
+        locked_period = _execute(conn, """SELECT period_name FROM accounting_periods
             WHERE locked=1 AND start_date<=? AND end_date>=? LIMIT 1""", (end, end)).fetchone()
         add("year_end_period", "الفترة المحاسبية في تاريخ نهاية السنة",
             "danger" if locked_period else "success", 1 if locked_period else 0,
@@ -583,9 +584,9 @@ def build_financial_year_preclose_report(conn, year_id):
             "لا توجد فترة مقفولة تمنع إجراء الإقفال.", bool(locked_period))
 
     if _table_exists_financial(conn, "bank_transactions"):
-        bank_columns = {row["name"] for row in conn.execute("PRAGMA table_info(bank_transactions)")}
+        bank_columns = table_columns(conn, "bank_transactions")
         if {"transaction_date", "reconciled"}.issubset(bank_columns):
-            unreconciled_bank = conn.execute("""SELECT COUNT(*) FROM bank_transactions
+            unreconciled_bank = _execute(conn, """SELECT COUNT(*) FROM bank_transactions
                 WHERE transaction_date>=? AND transaction_date<=? AND reconciled=0""",
                 (start, end)).fetchone()[0]
             add("bank_reconciliation", "حركات بنكية غير مسوّاة", "warning" if unreconciled_bank else "success",
@@ -593,9 +594,9 @@ def build_financial_year_preclose_report(conn, year_id):
 
     # Fixed-asset depreciation must have a posted journal for every recorded run.
     if _table_exists_financial(conn, "asset_depreciations"):
-        depreciation_columns = {row["name"] for row in conn.execute("PRAGMA table_info(asset_depreciations)")}
+        depreciation_columns = table_columns(conn, "asset_depreciations")
         if {"period", "journal_entry_id"}.issubset(depreciation_columns):
-            unposted_depreciation = conn.execute("""SELECT COUNT(*) FROM asset_depreciations d
+            unposted_depreciation = _execute(conn, """SELECT COUNT(*) FROM asset_depreciations d
                 LEFT JOIN journal_entries je ON je.id=d.journal_entry_id
                 WHERE d.period>=? AND d.period<=?
                   AND (d.journal_entry_id IS NULL OR je.status!='posted')""",
@@ -607,7 +608,7 @@ def build_financial_year_preclose_report(conn, year_id):
                 "كل سجلات الإهلاك المسجلة داخل السنة مرتبطة بقيود مرحلة.",
                 bool(unposted_depreciation))
             if _table_exists_financial(conn, "fixed_assets"):
-                no_run_assets = conn.execute("""SELECT COUNT(*) FROM fixed_assets f
+                no_run_assets = _execute(conn, """SELECT COUNT(*) FROM fixed_assets f
                     WHERE f.ready_date<=? AND f.status='active'
                       AND NOT EXISTS (SELECT 1 FROM asset_depreciations d
                         WHERE d.asset_id=f.id AND d.period>=? AND d.period<=?)""",
@@ -624,12 +625,12 @@ def build_financial_year_preclose_report(conn, year_id):
     if (_table_exists_financial(conn, "fx_transactions")
             and _table_exists_financial(conn, "fx_revaluations")):
         try:
-            settlement_rows = conn.execute("""SELECT t.id,t.original_foreign,
+            settlement_rows = _execute(conn, """SELECT t.id,t.original_foreign,
                     s.settlement_date,s.foreign_amount
                 FROM fx_transactions t
                 LEFT JOIN fx_settlements s ON s.transaction_id=t.id
                 WHERE t.transaction_date<=? ORDER BY t.id,s.settlement_date""",
-                (end,)).fetchall() if _table_exists_financial(conn, "fx_settlements") else conn.execute(
+                (end,)).fetchall() if _table_exists_financial(conn, "fx_settlements") else _execute(conn, 
                     "SELECT id,original_foreign,NULL settlement_date,NULL foreign_amount FROM fx_transactions WHERE transaction_date<=?",
                     (end,)).fetchall()
             grouped_fx = {}
@@ -645,7 +646,7 @@ def build_financial_year_preclose_report(conn, year_id):
             for fx_id, balances in grouped_fx.items():
                 if balances["original"] - balances["settled"] <= 0:
                     continue
-                has_year_end_revaluation = conn.execute("""SELECT 1 FROM fx_revaluations r
+                has_year_end_revaluation = _execute(conn, """SELECT 1 FROM fx_revaluations r
                     JOIN journal_entries je ON je.id=r.journal_entry_id
                     WHERE r.transaction_id=? AND r.revaluation_date=?
                       AND je.status='posted' LIMIT 1""",
@@ -669,7 +670,7 @@ def build_financial_year_preclose_report(conn, year_id):
     if _table_exists_financial(conn, "period_adjustments") and _table_exists_financial(conn, "period_adjustment_posts"):
         try:
             from period_adjustments import preview_adjustment
-            schedules = conn.execute("""SELECT id FROM period_adjustments
+            schedules = _execute(conn, """SELECT id FROM period_adjustments
                 WHERE status='active' AND start_date<=? AND end_date>=? ORDER BY id""",
                 (end, start)).fetchall()
             pending_adjustment_periods = []
@@ -749,18 +750,18 @@ def close_financial_year(conn, year_id, created_by=None, allow_warnings=False):
             raise ValueError(f"فشل فحص ما قبل الإقفال: {first['title']} — {first['count']}. {first['details']}")
         if preclose["warnings"] and not allow_warnings:
             raise ValueError("توجد تحذيرات قبل الإقفال. راجع تقرير ما قبل الإقفال، ولا تعتمد الاستثناء إلا بصلاحية المدير.")
-        drafts = conn.execute("""SELECT COUNT(*) FROM journal_entries
+        drafts = _execute(conn, """SELECT COUNT(*) FROM journal_entries
             WHERE status='draft' AND entry_date>=? AND entry_date<=?""",
             (year["start_date"], year["end_date"])).fetchone()[0]
         if drafts:
             raise ValueError(f"لا يمكن الإقفال؛ توجد {drafts} قيود مسودة داخل السنة المالية.")
         if _table_exists_financial(conn, "accounting_periods"):
-            locked = conn.execute("""SELECT period_name FROM accounting_periods
+            locked = _execute(conn, """SELECT period_name FROM accounting_periods
                 WHERE locked=1 AND start_date<=? AND end_date>=? LIMIT 1""",
                 (year["end_date"], year["end_date"])).fetchone()
             if locked:
                 raise ValueError(f"لا يمكن الإقفال؛ الفترة المحاسبية {locked['period_name']} مغلقة بالفعل.")
-        rows = conn.execute("""SELECT a.id,a.code,a.name_ar,a.account_type,a.is_group,a.active,
+        rows = _execute(conn, """SELECT a.id,a.code,a.name_ar,a.account_type,a.is_group,a.active,
                 jl.debit,jl.credit
             FROM journal_lines jl
             JOIN journal_entries je ON je.id=jl.entry_id
@@ -814,14 +815,14 @@ def close_financial_year(conn, year_id, created_by=None, allow_warnings=False):
             f"قيد إقفال الإيرادات والمصروفات للسنة المالية {year['year_name']}",
             closing_lines, created_by,
         )
-        conn.execute("UPDATE journal_entries SET entry_type='year_end_closing' WHERE id=?", (entry_id,))
-        conn.execute("UPDATE financial_years SET closing_entry_id=?,status='closed' WHERE id=?",
+        _execute(conn, "UPDATE journal_entries SET entry_type='year_end_closing' WHERE id=?", (entry_id,))
+        _execute(conn, "UPDATE financial_years SET closing_entry_id=?,status='closed' WHERE id=?",
                      (entry_id, year_id))
-        conn.execute("""INSERT INTO financial_year_journal_history
+        _execute(conn, """INSERT INTO financial_year_journal_history
             (financial_year_id,entry_kind,action,entry_id,created_by)
             VALUES(?,'closing','created',?,?)""", (year_id, entry_id, created_by))
         if preclose["warnings"] and allow_warnings and _table_exists_financial(conn, "audit_log"):
-            conn.execute("""INSERT INTO audit_log(user_id,action,details,created_at)
+            _execute(conn, """INSERT INTO audit_log(user_id,action,details,created_at)
                 VALUES(?,?,?,CURRENT_TIMESTAMP)""",
                 (created_by, "financial_year_warnings_approved",
                  f"اعتماد تحذيرات الإقفال للسنة {year_id} — قيد الإقفال {entry_id}"))
@@ -833,8 +834,7 @@ def close_financial_year(conn, year_id, created_by=None, allow_warnings=False):
 
 
 def _table_exists_financial(conn, table_name):
-    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-                        (table_name,)).fetchone() is not None
+    return table_exists(conn, table_name)
 
 
 def reverse_financial_year_entry(conn, year_id, entry_kind, reversal_date, reason, created_by=None):
@@ -862,12 +862,12 @@ def reverse_financial_year_entry(conn, year_id, entry_kind, reversal_date, reaso
         else:
             if year["status"] != "closed":
                 raise ValueError("عكس قيد الإقفال متاح فقط بعد إقفال السنة.")
-            drafts = conn.execute("""SELECT COUNT(*) FROM journal_entries
+            drafts = _execute(conn, """SELECT COUNT(*) FROM journal_entries
                 WHERE status='draft' AND entry_date>=? AND entry_date<=?""",
                 (year["start_date"], year["end_date"])).fetchone()[0]
             if drafts:
                 raise ValueError("لا يمكن عكس الإقفال قبل معالجة القيود المسودة داخل السنة.")
-            later_year = conn.execute("""SELECT fy.year_name FROM financial_years fy
+            later_year = _execute(conn, """SELECT fy.year_name FROM financial_years fy
                 WHERE fy.start_date>?
                   AND (
                     fy.opening_entry_id IS NOT NULL OR fy.closing_entry_id IS NOT NULL
@@ -881,7 +881,7 @@ def reverse_financial_year_entry(conn, year_id, entry_kind, reversal_date, reaso
                     f"لا يمكن عكس إقفال السنة؛ السنة التالية ({later_year['year_name']}) "
                     "لها قيد افتتاح أو قيود مسجلة. يجب معالجة السنة التالية أولًا."
                 )
-            later_entries = conn.execute("""SELECT id,entry_date FROM journal_entries
+            later_entries = _execute(conn, """SELECT id,entry_date FROM journal_entries
                 WHERE entry_date>? AND status IN ('draft','posted')
                 ORDER BY entry_date,id LIMIT 1""", (year["end_date"],)).fetchone()
             if later_entries:
@@ -890,12 +890,12 @@ def reverse_financial_year_entry(conn, year_id, entry_kind, reversal_date, reaso
                     f"بتاريخ {later_entries['entry_date']} بعد نهاية السنة. "
                     "يجب معالجة القيود اللاحقة أولًا."
                 )
-            conn.execute("UPDATE financial_years SET status='open' WHERE id=?", (year_id,))
-        original = conn.execute("SELECT id,description,status FROM journal_entries WHERE id=?",
+            _execute(conn, "UPDATE financial_years SET status='open' WHERE id=?", (year_id,))
+        original = _execute(conn, "SELECT id,description,status FROM journal_entries WHERE id=?",
                                  (original_id,)).fetchone()
         if not original or original["status"] != "posted":
             raise ValueError("القيد الأصلي غير موجود أو غير مرحّل.")
-        original_lines = conn.execute("""SELECT account_id,debit,credit,memo
+        original_lines = _execute(conn, """SELECT account_id,debit,credit,memo
             FROM journal_lines WHERE entry_id=? ORDER BY id""", (original_id,)).fetchall()
         if len(original_lines) < 2:
             raise ValueError("القيد الأصلي لا يحتوي على سطور كافية للعكس.")
@@ -912,14 +912,14 @@ def reverse_financial_year_entry(conn, year_id, entry_kind, reversal_date, reaso
             reversal_lines, created_by,
         )
         if entry_kind == "closing":
-            conn.execute("UPDATE journal_entries SET entry_type='year_end_closing_reversal' WHERE id=?", (reversal_id,))
+            _execute(conn, "UPDATE journal_entries SET entry_type='year_end_closing_reversal' WHERE id=?", (reversal_id,))
         else:
-            conn.execute("UPDATE journal_entries SET entry_type='opening_reversal' WHERE id=?", (reversal_id,))
+            _execute(conn, "UPDATE journal_entries SET entry_type='opening_reversal' WHERE id=?", (reversal_id,))
         if entry_kind == "closing":
-            conn.execute("UPDATE financial_years SET closing_entry_id=NULL,status='open' WHERE id=?", (year_id,))
+            _execute(conn, "UPDATE financial_years SET closing_entry_id=NULL,status='open' WHERE id=?", (year_id,))
         else:
-            conn.execute("UPDATE financial_years SET opening_entry_id=NULL WHERE id=?", (year_id,))
-        conn.execute("""INSERT INTO financial_year_journal_history
+            _execute(conn, "UPDATE financial_years SET opening_entry_id=NULL WHERE id=?", (year_id,))
+        _execute(conn, """INSERT INTO financial_year_journal_history
             (financial_year_id,entry_kind,action,entry_id,related_entry_id,created_by)
             VALUES(?,?,'reversed',?,?,?)""",
             (year_id, entry_kind, reversal_id, original_id, created_by))
@@ -979,7 +979,7 @@ def financial_years():
             conn.close()
         return redirect(url_for("planning.financial_years"))
     years = list_financial_years(conn)
-    history = conn.execute("""SELECT h.id,h.entry_kind,h.action,h.entry_id,
+    history = _execute(conn, """SELECT h.id,h.entry_kind,h.action,h.entry_id,
             h.related_entry_id,h.created_at,fy.year_name,je.entry_date,je.reference
         FROM financial_year_journal_history h
         JOIN financial_years fy ON fy.id=h.financial_year_id
@@ -1017,7 +1017,7 @@ def financial_year_opening(year_id):
         if year["opening_entry_id"]:
             flash("قيد الافتتاح موجود بالفعل؛ استخدم إجراء العكس لتصحيحه.", "warning")
             return redirect(url_for("planning.financial_years"))
-        accounts = conn.execute("""SELECT id,code,name_ar,account_type FROM accounts
+        accounts = _execute(conn, """SELECT id,code,name_ar,account_type FROM accounts
             WHERE active=1 AND is_group=0 AND account_type IN ('asset','liability','equity')
             ORDER BY CASE account_type WHEN 'asset' THEN 1 WHEN 'liability' THEN 2 ELSE 3 END,code""").fetchall()
         if request.method == "POST":
@@ -1075,7 +1075,7 @@ def financial_year_reverse(year_id, entry_kind):
 
 def build_budget_comparison(conn, budget_id):
     """Compare posted ledger activity with a budget, scoped to its optional dimensions."""
-    plan = conn.execute("SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
+    plan = _execute(conn, "SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
     if not plan:
         raise ValueError("الموازنة غير موجودة.")
     dimensions = []
@@ -1085,7 +1085,7 @@ def build_budget_comparison(conn, budget_id):
             dimensions.append(f"jl.{key}=?")
             params.append(plan[key])
     dimension_sql = (" AND " + " AND ".join(dimensions)) if dimensions else ""
-    rows = conn.execute(f"""
+    rows = _execute(conn, f"""
       SELECT a.id,a.code,a.name_ar,a.account_type,b.amount,
         COALESCE((SELECT DECIMAL_NET(
             CASE WHEN a.account_type='revenue' THEN jl.credit ELSE jl.debit END,
@@ -1118,7 +1118,7 @@ def build_budget_comparison(conn, budget_id):
 
 
 def build_budget_monthly_comparison(conn, budget_id):
-    plan = conn.execute("SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
+    plan = _execute(conn, "SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
     if not plan:
         raise ValueError("الموازنة غير موجودة.")
     dimensions = []
@@ -1128,7 +1128,7 @@ def build_budget_monthly_comparison(conn, budget_id):
             dimensions.append(f"jl.{key}=?")
             params.append(plan[key])
     dimension_sql = (" AND " + " AND ".join(dimensions)) if dimensions else ""
-    actual_rows = conn.execute(f"""
+    actual_rows = _execute(conn, f"""
       SELECT jl.account_id,substr(je.entry_date,1,7) period,
         DECIMAL_NET(
           CASE WHEN a.account_type='revenue' THEN jl.credit ELSE jl.debit END,
@@ -1139,7 +1139,7 @@ def build_budget_monthly_comparison(conn, budget_id):
       GROUP BY jl.account_id,substr(je.entry_date,1,7)
     """, params).fetchall()
     actuals = {(r["account_id"], r["period"]): Decimal(str(r["actual"] or "0")) for r in actual_rows}
-    planned = conn.execute("""
+    planned = _execute(conn, """
       SELECT ml.account_id,ml.period,ml.amount,a.code,a.name_ar,a.account_type
       FROM budget_monthly_lines ml JOIN accounts a ON a.id=ml.account_id
       WHERE ml.budget_id=? ORDER BY ml.period,a.account_type,a.code
@@ -1180,7 +1180,7 @@ def budget_index():
                 raw = request.form.get(key, "").strip()
                 dimensions[key] = int(raw) if raw else None
                 if dimensions[key] is not None:
-                    valid = conn.execute(f"SELECT 1 FROM {table} WHERE id=? AND active=1", (dimensions[key],)).fetchone()
+                    valid = _execute(conn, f"SELECT 1 FROM {table} WHERE id=? AND active=1", (dimensions[key],)).fetchone()
                     if not valid:
                         raise ValueError("أحد الأبعاد التحليلية المحددة غير موجود أو غير نشط.")
             ids = request.form.getlist("account_id")
@@ -1189,36 +1189,35 @@ def budget_index():
             lines = []
             for account_id in ids:
                 raw_amount = request.form.get("amount_" + str(account_id), "0")
-                account = conn.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (int(account_id),)).fetchone()
+                account = _execute(conn, "SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (int(account_id),)).fetchone()
                 if not account or account["is_group"] or not account["active"] or account["account_type"] not in {"revenue","expense"}:
                     raise ValueError("الموازنة تقبل حسابات الإيرادات والمصروفات التفصيلية النشطة فقط.")
                 lines.append((int(account_id), str(_money(raw_amount))))
             if len({x[0] for x in lines}) != len(lines):
                 raise ValueError("لا تكرر الحساب داخل الموازنة نفسها.")
-            conn.execute("BEGIN IMMEDIATE")
-            cur = conn.execute("""INSERT INTO budget_plans
+            begin_write_transaction(conn)
+            budget_id = insert_and_get_id(conn, """INSERT INTO budget_plans
                 (name,date_from,date_to,created_by,branch_id,cost_center_id,project_id,status)
                 VALUES(?,?,?,?,?,?,?,'draft')""",
                 (name,start,end,session["user_id"],dimensions["branch_id"],
                  dimensions["cost_center_id"],dimensions["project_id"]))
-            budget_id = cur.lastrowid
-            conn.executemany("INSERT INTO budget_lines(budget_id,account_id,amount) VALUES(?,?,?)",
+            _executemany(conn, "INSERT INTO budget_lines(budget_id,account_id,amount) VALUES(?,?,?)",
                              [(budget_id, aid, amount) for aid,amount in lines])
             months = _budget_months(start, end)
             monthly_values = []
             for account_id, amount in lines:
                 monthly_values.extend((budget_id, account_id, month, str(value))
                     for month, value in zip(months, _split_monthly_amount(_money(amount), months)))
-            conn.executemany("""INSERT INTO budget_monthly_lines
+            _executemany(conn, """INSERT INTO budget_monthly_lines
                 (budget_id,account_id,period,amount) VALUES(?,?,?,?)""", monthly_values)
             _budget_audit(conn, budget_id, "created", session["user_id"], "إنشاء الموازنة وتوزيعها مبدئيًا بالتساوي على الأشهر")
             conn.commit()
             flash("تم حفظ الموازنة كمسودة. راجع التوزيع الشهري ثم أرسلها للاعتماد.", "success")
-            return redirect(url_for("planning.budget_detail", budget_id=cur.lastrowid))
+            return redirect(url_for("planning.budget_detail", budget_id=budget_id))
         except (ValueError, TypeError, InvalidOperation, sqlite3.IntegrityError) as exc:
             conn.rollback()
             flash(str(exc) or "تعذر حفظ الموازنة.", "error")
-    plans = conn.execute("""SELECT bp.*,
+    plans = _execute(conn, """SELECT bp.*,
         COALESCE(br.name_ar,'كل الفروع') branch_name,
         COALESCE(cc.name_ar,'كل مراكز التكلفة') cost_center_name,
         COALESCE(p.name_ar,'كل المشروعات') project_name
@@ -1226,11 +1225,11 @@ def budget_index():
         LEFT JOIN cost_centers cc ON cc.id=bp.cost_center_id
         LEFT JOIN projects p ON p.id=bp.project_id
         ORDER BY bp.date_from DESC,bp.id DESC""").fetchall()
-    accounts = conn.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 AND account_type IN ('revenue','expense') ORDER BY account_type,code").fetchall()
+    accounts = _execute(conn, "SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 AND account_type IN ('revenue','expense') ORDER BY account_type,code").fetchall()
     dimension_options = {
-        "branches": conn.execute("SELECT id,code,name_ar FROM branches WHERE active=1 ORDER BY code").fetchall(),
-        "cost_centers": conn.execute("SELECT id,code,name_ar FROM cost_centers WHERE active=1 ORDER BY code").fetchall(),
-        "projects": conn.execute("SELECT id,code,name_ar FROM projects WHERE active=1 ORDER BY code").fetchall(),
+        "branches": _execute(conn, "SELECT id,code,name_ar FROM branches WHERE active=1 ORDER BY code").fetchall(),
+        "cost_centers": _execute(conn, "SELECT id,code,name_ar FROM cost_centers WHERE active=1 ORDER BY code").fetchall(),
+        "projects": _execute(conn, "SELECT id,code,name_ar FROM projects WHERE active=1 ORDER BY code").fetchall(),
     }
     conn.close()
     return render_template("budget.html", plans=plans, accounts=accounts, dimension_options=dimension_options)
@@ -1245,9 +1244,9 @@ def budget_detail(budget_id):
         plan, monthly_rows = build_budget_monthly_comparison(conn, budget_id)
         months = _budget_months(plan["date_from"], plan["date_to"])
         monthly_matrix = {}
-        for row in conn.execute("SELECT account_id,period,amount FROM budget_monthly_lines WHERE budget_id=?", (budget_id,)):
+        for row in _execute(conn, "SELECT account_id,period,amount FROM budget_monthly_lines WHERE budget_id=?", (budget_id,)):
             monthly_matrix.setdefault(row["account_id"], {})[row["period"]] = row["amount"]
-        history = conn.execute("""SELECT l.*,u.username FROM budget_audit_log l
+        history = _execute(conn, """SELECT l.*,u.username FROM budget_audit_log l
             LEFT JOIN users u ON u.id=l.actor_id WHERE l.budget_id=? ORDER BY l.id DESC""", (budget_id,)).fetchall()
     except ValueError:
         conn.close()
@@ -1262,14 +1261,14 @@ def budget_detail(budget_id):
 def budget_update_distribution(budget_id):
     conn = _connect()
     try:
-        conn.execute("BEGIN IMMEDIATE")
-        plan = conn.execute("SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
+        begin_write_transaction(conn)
+        plan = _execute(conn, "SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
         if not plan:
             abort(404)
         if plan["status"] not in {"draft", "rejected"}:
             abort(409, "لا يمكن تعديل توزيع موازنة مرسلة أو معتمدة.")
         months = _budget_months(plan["date_from"], plan["date_to"])
-        lines = conn.execute("SELECT account_id,amount FROM budget_lines WHERE budget_id=?", (budget_id,)).fetchall()
+        lines = _execute(conn, "SELECT account_id,amount FROM budget_lines WHERE budget_id=?", (budget_id,)).fetchall()
         updates = []
         revised_totals = []
         for line in lines:
@@ -1279,9 +1278,9 @@ def budget_update_distribution(budget_id):
                 values.append(value)
                 updates.append((str(value), budget_id, line["account_id"], month))
             revised_totals.append((str(sum(values, Decimal("0"))), budget_id, line["account_id"]))
-        conn.executemany("""UPDATE budget_monthly_lines SET amount=?
+        _executemany(conn, """UPDATE budget_monthly_lines SET amount=?
             WHERE budget_id=? AND account_id=? AND period=?""", updates)
-        conn.executemany("UPDATE budget_lines SET amount=? WHERE budget_id=? AND account_id=?", revised_totals)
+        _executemany(conn, "UPDATE budget_lines SET amount=? WHERE budget_id=? AND account_id=?", revised_totals)
         _budget_audit(conn, budget_id, "distribution_updated", session["user_id"],
             "حفظ التوزيع الشهري وإعادة احتساب إجمالي الموازنة لكل حساب من مجموع الأشهر")
         conn.commit()
@@ -1299,20 +1298,20 @@ def budget_update_distribution(budget_id):
 def budget_submit(budget_id):
     conn = _connect()
     try:
-        conn.execute("BEGIN IMMEDIATE")
-        plan = conn.execute("SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
+        begin_write_transaction(conn)
+        plan = _execute(conn, "SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
         if not plan:
             abort(404)
         if plan["status"] not in {"draft", "rejected"}:
             abort(409)
-        mismatch = conn.execute("""SELECT b.account_id,b.amount,COALESCE(DECIMAL_SUM(ml.amount),'0') monthly_total
+        mismatch = _execute(conn, """SELECT b.account_id,b.amount,COALESCE(DECIMAL_SUM(ml.amount),'0') monthly_total
             FROM budget_lines b LEFT JOIN budget_monthly_lines ml
               ON ml.budget_id=b.budget_id AND ml.account_id=b.account_id
             WHERE b.budget_id=? GROUP BY b.account_id,b.amount""", (budget_id,)).fetchall()
         for row in mismatch:
             if _money(row["amount"]) != _money(row["monthly_total"]):
                 raise ValueError("لا يمكن إرسال الموازنة قبل تساوي إجمالي التوزيع الشهري مع المبلغ السنوي لكل حساب.")
-        conn.execute("""UPDATE budget_plans SET status='pending',submitted_by=?,submitted_at=CURRENT_TIMESTAMP,
+        _execute(conn, """UPDATE budget_plans SET status='pending',submitted_by=?,submitted_at=CURRENT_TIMESTAMP,
             rejection_reason=NULL WHERE id=?""", (session["user_id"], budget_id))
         _budget_audit(conn, budget_id, "submitted", session["user_id"], "إرسال الموازنة للاعتماد")
         conn.commit()
@@ -1330,15 +1329,15 @@ def budget_submit(budget_id):
 def budget_approve(budget_id):
     conn = _connect()
     try:
-        conn.execute("BEGIN IMMEDIATE")
-        plan = conn.execute("SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
+        begin_write_transaction(conn)
+        plan = _execute(conn, "SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
         if not plan:
             abort(404)
         if plan["status"] != "pending":
             abort(409)
         if plan["created_by"] == session["user_id"]:
             abort(403, "لا يجوز لمنشئ الموازنة اعتمادها بنفسه.")
-        conn.execute("UPDATE budget_plans SET status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP WHERE id=?",
+        _execute(conn, "UPDATE budget_plans SET status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP WHERE id=?",
                      (session["user_id"], budget_id))
         _budget_audit(conn, budget_id, "approved", session["user_id"], "اعتماد الموازنة")
         conn.commit()
@@ -1356,13 +1355,13 @@ def budget_reject(budget_id):
         reason = request.form.get("reason", "").strip()
         if not reason:
             raise ValueError("يجب كتابة سبب رفض الموازنة.")
-        conn.execute("BEGIN IMMEDIATE")
-        plan = conn.execute("SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
+        begin_write_transaction(conn)
+        plan = _execute(conn, "SELECT * FROM budget_plans WHERE id=?", (budget_id,)).fetchone()
         if not plan:
             abort(404)
         if plan["status"] != "pending" or plan["created_by"] == session["user_id"]:
             abort(409)
-        conn.execute("UPDATE budget_plans SET status='rejected',rejection_reason=? WHERE id=?",
+        _execute(conn, "UPDATE budget_plans SET status='rejected',rejection_reason=? WHERE id=?",
                      (reason[:1000], budget_id))
         _budget_audit(conn, budget_id, "rejected", session["user_id"], reason)
         conn.commit()
@@ -1383,8 +1382,8 @@ def budget_export(budget_id, fmt):
     conn = _connect()
     try:
         plan, rows = build_budget_monthly_comparison(conn, budget_id)
-        company = conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='company_name'").fetchone()
-        currency = conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
+        company = _execute(conn, "SELECT setting_value FROM company_settings WHERE setting_key='company_name'").fetchone()
+        currency = _execute(conn, "SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
         company_name = company["setting_value"] if company else "NEXUS ERP"
         currency_code = currency["setting_value"] if currency else ""
         if not rows:
@@ -1490,7 +1489,7 @@ def budget_export(budget_id, fmt):
 
 
 def build_balance_sheet_snapshot(conn, as_of):
-    account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+    account_columns = table_columns(conn, "accounts")
     section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
     subtype_expr = "a.account_subtype" if "account_subtype" in account_columns else "NULL"
 
@@ -1503,7 +1502,7 @@ def build_balance_sheet_snapshot(conn, as_of):
     if _table_exists_financial(conn, "financial_years") and _table_exists_financial(
         conn, "financial_year_journal_history"
     ):
-        opening_rows = conn.execute("""
+        opening_rows = _execute(conn, """
             SELECT h.entry_id,fy.start_date
             FROM financial_year_journal_history h
             JOIN financial_years fy ON fy.id=h.financial_year_id
@@ -1517,7 +1516,7 @@ def build_balance_sheet_snapshot(conn, as_of):
         excluded_opening_ids = {int(row["entry_id"]) for row in opening_rows}
         if excluded_opening_ids:
             marks = ",".join("?" for _ in excluded_opening_ids)
-            reversal_rows = conn.execute(f"""
+            reversal_rows = _execute(conn, f"""
                 SELECT entry_id FROM financial_year_journal_history
                 WHERE entry_kind='opening' AND action='reversed'
                   AND related_entry_id IN ({marks})
@@ -1531,7 +1530,7 @@ def build_balance_sheet_snapshot(conn, as_of):
         exclusion_sql = f" AND je.id NOT IN ({marks})"
         exclusion_params = sorted(excluded_opening_ids)
 
-    rows = conn.execute(f"""SELECT a.id,a.code,a.name_ar,a.account_type,a.parent_id,a.is_group,
+    rows = _execute(conn, f"""SELECT a.id,a.code,a.name_ar,a.account_type,a.parent_id,a.is_group,
         {section_expr} statement_section,{subtype_expr} account_subtype,
         COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
         COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
@@ -1620,7 +1619,7 @@ def balance_sheet():
     conn=_connect()
     try:
         snapshot=build_balance_sheet_snapshot(conn,as_of.isoformat())
-        currency_row=conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
+        currency_row=_execute(conn, "SELECT setting_value FROM company_settings WHERE setting_key='base_currency'").fetchone()
         base_currency=currency_row["setting_value"] if currency_row else ""
     finally:
         conn.close()
@@ -1632,27 +1631,27 @@ def build_cash_flow_snapshot(conn, start, end):
     from management_dashboard import load_management_account_roles
     role_mapping = load_management_account_roles(conn)
     cash_ids = set(role_mapping.get("cash", set()))
-    custom_mapping = conn.execute(
+    custom_mapping = _execute(conn, 
         "SELECT meta_value FROM management_dashboard_meta WHERE meta_key='roles_customized'"
     ).fetchone()
     if not cash_ids and not (custom_mapping and custom_mapping["meta_value"] == "1"):
-        account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+        account_columns = table_columns(conn, "accounts")
         if "cash_flow_category" in account_columns:
-            cash_ids = {r["id"] for r in conn.execute(
+            cash_ids = {r["id"] for r in _execute(conn, 
                 """SELECT id FROM accounts WHERE is_group=0 AND
                    (cash_flow_category='cash_equivalents' OR code IN ('1110','1120')
                     OR name_ar LIKE '%صندوق%' OR name_ar LIKE '%بنك%')"""
             )}
         else:
-            cash_ids = {r["id"] for r in conn.execute(
+            cash_ids = {r["id"] for r in _execute(conn, 
                 "SELECT id FROM accounts WHERE is_group=0 AND (code IN ('1110','1120') OR name_ar LIKE '%صندوق%' OR name_ar LIKE '%بنك%')"
             )}
-    mapping_exists = conn.execute(
+    mapping_exists = _execute(conn, 
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_flow_account_mappings'"
     ).fetchone()
     cash_flow_mappings = {
         row["account_id"]: row["category"]
-        for row in conn.execute("SELECT account_id,category FROM cash_flow_account_mappings")
+        for row in _execute(conn, "SELECT account_id,category FROM cash_flow_account_mappings")
     } if mapping_exists else {}
 
     # Current assets and current liabilities are operating working capital by
@@ -1660,9 +1659,9 @@ def build_cash_flow_snapshot(conn, start, end):
     # the account tree so new detail accounts do not remain "unmapped" or get
     # incorrectly classified as investing/financing solely by their code.
     inferred_operating_account_ids = set()
-    account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+    account_columns = table_columns(conn, "accounts")
     if {"parent_id", "code", "name_ar", "is_group"}.issubset(account_columns):
-        inferred_working_capital = conn.execute(
+        inferred_working_capital = _execute(conn, 
             """WITH RECURSIVE ancestry(account_id,parent_id,account_type,depth) AS (
                    SELECT id,parent_id,account_type,0 FROM accounts WHERE is_group=0
                    UNION ALL
@@ -1691,7 +1690,7 @@ def build_cash_flow_snapshot(conn, start, end):
     # Legacy/custom charts may not have parent_id relationships. In this chart,
     # 11xx detail assets and 21xx detail liabilities are current working capital.
     # Respect an explicit non-operating classification if the user configured one.
-    for row in conn.execute(
+    for row in _execute(conn, 
         "SELECT id,code,account_type FROM accounts WHERE is_group=0"
     ).fetchall():
         code = str(row["code"] or "")
@@ -1722,21 +1721,21 @@ def build_cash_flow_snapshot(conn, start, end):
             " AND je.id NOT IN (" + ",".join("?" for _ in copied_openings) + ")"
             if copied_openings else ""
         )
-        opening_row = conn.execute(f"""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) value
+        opening_row = _execute(conn, f"""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) value
             FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
             WHERE jl.account_id IN ({marks}) AND je.status='posted' AND je.entry_date<?
               {opening_exclusion}""",
             (*ids, start, *copied_openings)).fetchone()
         opening = Decimal(str(opening_row["value"] or "0"))
         sections = {k: {"in": Decimal("0"), "out": Decimal("0")} for k in ("operating", "investing", "financing")}
-        journal_columns={row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
+        journal_columns=table_columns(conn, "journal_entries")
         reference_expr="COALESCE(je.reference,'')" if "reference" in journal_columns else "''"
         copied_period_openings = sorted(_copied_opening_entry_ids(conn, end))
         period_opening_exclusion = (
             " AND je.id NOT IN (" + ",".join("?" for _ in copied_period_openings) + ")"
             if copied_period_openings else ""
         )
-        entries = conn.execute(f"""SELECT je.id,{reference_expr} reference,
+        entries = _execute(conn, f"""SELECT je.id,{reference_expr} reference,
             COALESCE(DECIMAL_NET(CASE WHEN jl.account_id IN ({marks}) THEN jl.debit ELSE '0' END,
                                  CASE WHEN jl.account_id IN ({marks}) THEN jl.credit ELSE '0' END),0) cash_net
             FROM journal_entries je JOIN journal_lines jl ON jl.entry_id=je.id
@@ -1757,7 +1756,7 @@ def build_cash_flow_snapshot(conn, start, end):
             # according to the actual bill allocations so asset acquisitions are
             # investing cash flows, not operating merely because AP was credited.
             payment_tables = {
-                row["name"] for row in conn.execute(
+                row["name"] for row in _execute(conn, 
                     "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
                     "('supplier_payments','supplier_payment_allocations','supplier_bills')"
                 )
@@ -1765,11 +1764,11 @@ def build_cash_flow_snapshot(conn, start, end):
             if net < 0 and payment_tables == {
                 "supplier_payments", "supplier_payment_allocations", "supplier_bills"
             }:
-                payment = conn.execute(
+                payment = _execute(conn, 
                     "SELECT id FROM supplier_payments WHERE journal_entry_id=?", (entry["id"],)
                 ).fetchone()
                 if payment:
-                    allocations = conn.execute("""
+                    allocations = _execute(conn, """
                         SELECT COALESCE(DECIMAL_SUM(pa.amount),'0') total_allocated,
                                COALESCE(DECIMAL_SUM(CASE WHEN sb.bill_kind='asset'
                                    THEN pa.amount ELSE '0' END),'0') asset_allocated
@@ -1789,9 +1788,9 @@ def build_cash_flow_snapshot(conn, start, end):
                         sections["investing"]["out"] += investing_out
                         sections["operating"]["out"] += abs(net) - investing_out
                         continue
-            account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+            account_columns = table_columns(conn, "accounts")
             section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
-            counterpart = conn.execute(f"""SELECT jl.account_id,a.account_type,a.code,a.name_ar,
+            counterpart = _execute(conn, f"""SELECT jl.account_id,a.account_type,a.code,a.name_ar,
                 {section_expr} statement_section,jl.debit,jl.credit
                 FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
                 WHERE jl.entry_id=? AND jl.account_id NOT IN ({marks})""",
@@ -1876,7 +1875,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
             " AND je.id NOT IN (" + ",".join("?" for _ in excluded) + ")"
             if excluded else ""
         )
-        rows = conn.execute(f"""
+        rows = _execute(conn, f"""
             SELECT a.id,a.account_type,
                    COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),'0') debit,
                    COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),'0') credit
@@ -1899,9 +1898,9 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     def role_balance(account_ids, balances):
         return sum((balances.get(account_id, Decimal("0")) for account_id in account_ids), Decimal("0"))
 
-    entry_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
+    entry_columns = table_columns(conn, "journal_entries")
     closing_filter = "AND COALESCE(je.entry_type,'general') NOT IN ('year_end_closing','year_end_closing_reversal')" if "entry_type" in entry_columns else ""
-    period_rows = conn.execute(f"""
+    period_rows = _execute(conn, f"""
         SELECT a.id account_id,a.account_type,a.code,a.name_ar,
                COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
                COALESCE(DECIMAL_SUM(jl.credit),'0') credit
@@ -1918,30 +1917,30 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
                     for r in period_rows if r["account_type"]=="expense"), Decimal("0"))
     net_profit = revenue-expenses
     depreciation_account_ids=set()
-    fixed_assets_exists=conn.execute(
+    fixed_assets_exists=_execute(conn, 
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fixed_assets'"
     ).fetchone()
     if fixed_assets_exists:
         fixed_asset_columns={
-            row["name"] for row in conn.execute("PRAGMA table_info(fixed_assets)")
+            row["name"] for row in _execute(conn, "PRAGMA table_info(fixed_assets)")
         }
         if "expense_account_id" in fixed_asset_columns:
             depreciation_account_ids={
-                row["expense_account_id"] for row in conn.execute(
+                row["expense_account_id"] for row in _execute(conn, 
                     "SELECT DISTINCT expense_account_id FROM fixed_assets"
                 ).fetchall()
             }
     asset_depreciation_total=Decimal("0")
     depreciation_entry_ids=set()
-    asset_depreciation_exists=conn.execute(
+    asset_depreciation_exists=_execute(conn, 
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_depreciations'"
     ).fetchone()
     if asset_depreciation_exists:
         asset_depreciation_columns={
-            row["name"] for row in conn.execute("PRAGMA table_info(asset_depreciations)")
+            row["name"] for row in _execute(conn, "PRAGMA table_info(asset_depreciations)")
         }
         if {"amount","journal_entry_id"}.issubset(asset_depreciation_columns):
-            posted_asset_depreciation=conn.execute("""
+            posted_asset_depreciation=_execute(conn, """
                 SELECT d.amount,d.journal_entry_id FROM asset_depreciations d
                 JOIN journal_entries je ON je.id=d.journal_entry_id
                 WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
@@ -1972,7 +1971,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
             " AND je.id NOT IN ("+",".join("?" for _ in depreciation_entry_ids)+")"
             if depreciation_entry_ids else ""
         )
-        depreciation_row=conn.execute(f"""
+        depreciation_row=_execute(conn, f"""
             SELECT COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
                    COALESCE(DECIMAL_SUM(jl.credit),'0') credit
             FROM journal_lines jl
@@ -1988,15 +1987,15 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
         )
     depreciation=asset_depreciation_total+other_depreciation
     disposal_gain_loss=Decimal("0")
-    disposals_exists=conn.execute(
+    disposals_exists=_execute(conn, 
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_disposals'"
     ).fetchone()
     if disposals_exists:
         disposal_columns={
-            row["name"] for row in conn.execute("PRAGMA table_info(asset_disposals)")
+            row["name"] for row in _execute(conn, "PRAGMA table_info(asset_disposals)")
         }
         if {"gain_loss_amount","disposal_date"}.issubset(disposal_columns):
-            disposal_row=conn.execute(
+            disposal_row=_execute(conn, 
                 "SELECT COALESCE(DECIMAL_SUM(gain_loss_amount),'0') amount FROM asset_disposals WHERE disposal_date>=? AND disposal_date<=?",
                 (start,end),
             ).fetchone()
@@ -2016,9 +2015,9 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     # First infer current working-capital accounts from the chart hierarchy.
     # This covers detailed accounts below the current-asset/current-liability
     # parent groups even when an explicit cash-flow role has not been assigned.
-    account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+    account_columns = table_columns(conn, "accounts")
     if {"parent_id", "code", "name_ar", "is_group"}.issubset(account_columns):
-        current_group_rows = conn.execute(
+        current_group_rows = _execute(conn, 
             """WITH RECURSIVE ancestry(account_id,parent_id,account_type,depth) AS (
                    SELECT id,parent_id,account_type,0 FROM accounts WHERE is_group=0
                    UNION ALL
@@ -2045,11 +2044,11 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     # Explicit operating mappings are an additional source for custom charts
     # whose parent groups do not use standard current-asset/current-liability
     # codes or names.
-    mapping_table = conn.execute(
+    mapping_table = _execute(conn, 
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_flow_account_mappings'"
     ).fetchone()
     if mapping_table:
-        mapped_operating = conn.execute(
+        mapped_operating = _execute(conn, 
             """SELECT m.account_id,a.account_type FROM cash_flow_account_mappings m
                JOIN accounts a ON a.id=m.account_id
                WHERE m.category='operating' AND a.is_group=0"""
@@ -2062,14 +2061,14 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
 
     # Fallback for charts where detailed current liabilities use the standard
     # 21xx range but are not linked to a 2100 parent (e.g. payroll payable/GRNI).
-    mapping_table = conn.execute(
+    mapping_table = _execute(conn, 
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_flow_account_mappings'"
     ).fetchone()
     configured_categories = {
         row["account_id"]: row["category"]
-        for row in conn.execute("SELECT account_id,category FROM cash_flow_account_mappings")
+        for row in _execute(conn, "SELECT account_id,category FROM cash_flow_account_mappings")
     } if mapping_table else {}
-    for row in conn.execute(
+    for row in _execute(conn, 
         "SELECT id,code,name_ar,account_type FROM accounts WHERE is_group=0 AND account_type='liability'"
     ).fetchall():
         code = str(row["code"] or "")
@@ -2143,24 +2142,24 @@ def cash_flow_mapping():
     try:
         initialize_planning_schema(conn)
         if request.method == "POST":
-            rows = conn.execute(
+            rows = _execute(conn, 
                 "SELECT id FROM accounts WHERE is_group=0 AND active=1"
             ).fetchall()
             allowed_ids = {str(row["id"]) for row in rows}
             categories = {"operating", "investing", "financing"}
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute("DELETE FROM cash_flow_account_mappings")
+            begin_write_transaction(conn)
+            _execute(conn, "DELETE FROM cash_flow_account_mappings")
             for account_id in sorted(allowed_ids, key=int):
                 category = request.form.get(f"category_{account_id}", "").strip()
                 if category in categories:
-                    conn.execute(
+                    _execute(conn, 
                         """INSERT INTO cash_flow_account_mappings(account_id,category)
                            VALUES(?,?)""", (int(account_id), category)
                     )
             conn.commit()
             flash("تم حفظ تصنيف حسابات التدفقات النقدية. الحسابات غير المحددة ستظهر في تقرير المراجعة.", "success")
             return redirect(url_for("planning.cash_flow_mapping"))
-        accounts = conn.execute("""
+        accounts = _execute(conn, """
             SELECT a.id,a.code,a.name_ar,a.account_type,m.category
             FROM accounts a
             LEFT JOIN cash_flow_account_mappings m ON m.account_id=a.id
