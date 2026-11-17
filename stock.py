@@ -161,13 +161,15 @@ def initialize_stock_schema():
     BEGIN SELECT RAISE(ABORT,'موقع الصنف الافتراضي يجب أن يكون نشطًا ويتبع نفس المخزن.'); END;
     """)
     # Carry legacy product-level reorder thresholds forward as initial per-warehouse settings.
-    c.execute("""INSERT INTO stock_warehouse_product_settings
+    c.execute(f"""INSERT INTO stock_warehouse_product_settings
         (product_id,warehouse_id,min_qty,reorder_point,reorder_qty)
         SELECT p.id,w.id,p.min_qty,COALESCE(p.reorder_point,'0'),COALESCE(p.reorder_qty,'0')
         FROM stock_products p CROSS JOIN stock_warehouses w
-        WHERE p.active=1 AND (CAST(COALESCE(p.min_qty,'0') AS REAL)>0
-          OR CAST(COALESCE(p.reorder_point,'0') AS REAL)>0
-          OR CAST(COALESCE(p.reorder_qty,'0') AS REAL)>0)
+        WHERE p.active=1 AND (
+          {decimal_compare_expression(c, "COALESCE(p.min_qty, '0')")} > 0
+          OR {decimal_compare_expression(c, "COALESCE(p.reorder_point, '0')")} > 0
+          OR {decimal_compare_expression(c, "COALESCE(p.reorder_qty, '0')")} > 0
+        )
         ON CONFLICT DO NOTHING""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_stock_locations_wh_parent ON stock_locations(warehouse_id,parent_id,active)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_stock_layers_location ON stock_valuation_layers(location_id,product_id)")
