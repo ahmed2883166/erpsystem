@@ -144,6 +144,31 @@ class StockLocationTriggerDialectTests(unittest.TestCase):
 
 
 class StockWarehouseLockTests(unittest.TestCase):
+    def test_postgresql_locks_pending_movement_during_resolution(self):
+        from stock import _stock_movement_for_update
+
+        class Cursor:
+            def fetchone(self):
+                return {"id": 9, "accounting_status": "pending_setup"}
+
+        class FakePostgresConnection:
+            __module__ = "psycopg"
+
+            def __init__(self):
+                self.sql = None
+                self.params = None
+
+            def execute(self, sql, params=()):
+                self.sql = sql
+                self.params = params
+                return Cursor()
+
+        conn = FakePostgresConnection()
+        row = _stock_movement_for_update(conn, 9)
+        self.assertEqual(row["id"], 9)
+        self.assertIn("FOR UPDATE OF m", conn.sql)
+        self.assertEqual(tuple(conn.params), (9,))
+
     def test_postgresql_locks_warehouses_in_stable_order(self):
         from stock import lock_stock_warehouses
 
