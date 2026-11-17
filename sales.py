@@ -13,7 +13,7 @@ from functools import wraps
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, safe_error_message, decimal_sum_expression
-from db_compat import table_columns, table_exists, insert_and_get_id, begin_write_transaction
+from db_compat import table_columns, table_exists, insert_and_get_id, begin_write_transaction, execute_script
 from database import connect_database, fetch_page
 from stock import consume_layers, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
@@ -41,7 +41,7 @@ def _columns(conn, name):
 def init_sales_schema():
     c = db()
     initialize_analytic_dimensions_schema(c)
-    c.executescript("""
+    execute_script(c, """
     CREATE TABLE IF NOT EXISTS salespersons(
       id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
       active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
