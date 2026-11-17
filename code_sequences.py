@@ -5,8 +5,8 @@ from db_compat import database_dialect
 from db_sql import execute_compat
 
 
-_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\\Z")
-_PREFIX = re.compile(r"[A-Z][A-Z0-9]*\\Z")
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+_PREFIX = re.compile(r"[A-Z][A-Z0-9]*\Z")
 
 
 def _next_legacy_number(connection, table, column, prefix):
