@@ -85,6 +85,75 @@ def table_columns(connection, table_name, *, schema=None):
 
 
 
+
+def table_column_info(connection, table_name, *, schema=None):
+    """Return portable column metadata keyed by name (type and PK position)."""
+    table_name = _identifier(table_name, "table name")
+    dialect = database_dialect(connection)
+    if dialect == "sqlite":
+        if not table_exists(connection, table_name):
+            return {}
+        rows = connection.execute(f'PRAGMA table_info("{table_name}")').fetchall()
+        return {
+            (row["name"] if isinstance(row, sqlite3.Row) else row[1]): {
+                "name": row["name"] if isinstance(row, sqlite3.Row) else row[1],
+                "type": row["type"] if isinstance(row, sqlite3.Row) else row[2],
+                "pk": row["pk"] if isinstance(row, sqlite3.Row) else row[5],
+            }
+            for row in rows
+        }
+
+    schema_name = _identifier(schema, "schema name") if schema else None
+    if schema_name:
+        rows = connection.execute(
+            """
+            SELECT c.column_name AS name, c.data_type AS type,
+                   COALESCE(k.ordinal_position, 0) AS pk
+            FROM information_schema.columns AS c
+            LEFT JOIN information_schema.key_column_usage AS k
+              ON k.table_schema=c.table_schema AND k.table_name=c.table_name
+             AND k.column_name=c.column_name
+            LEFT JOIN information_schema.table_constraints AS t
+              ON t.constraint_schema=k.constraint_schema
+             AND t.constraint_name=k.constraint_name
+             AND t.table_name=k.table_name
+             AND t.constraint_type='PRIMARY KEY'
+            WHERE c.table_schema=%s AND c.table_name=%s
+              AND (k.constraint_name IS NULL OR t.constraint_name IS NOT NULL)
+            ORDER BY c.ordinal_position
+            """,
+            (schema_name, table_name),
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            """
+            SELECT c.column_name AS name, c.data_type AS type,
+                   COALESCE(k.ordinal_position, 0) AS pk
+            FROM information_schema.columns AS c
+            LEFT JOIN information_schema.key_column_usage AS k
+              ON k.table_schema=c.table_schema AND k.table_name=c.table_name
+             AND k.column_name=c.column_name
+            LEFT JOIN information_schema.table_constraints AS t
+              ON t.constraint_schema=k.constraint_schema
+             AND t.constraint_name=k.constraint_name
+             AND t.table_name=k.table_name
+             AND t.constraint_type='PRIMARY KEY'
+            WHERE c.table_schema=current_schema() AND c.table_name=%s
+              AND (k.constraint_name IS NULL OR t.constraint_name IS NOT NULL)
+            ORDER BY c.ordinal_position
+            """,
+            (table_name,),
+        ).fetchall()
+    return {
+        (row["name"] if isinstance(row, dict) else row[0]): {
+            "name": row["name"] if isinstance(row, dict) else row[0],
+            "type": row["type"] if isinstance(row, dict) else row[1],
+            "pk": row["pk"] if isinstance(row, dict) else row[2],
+        }
+        for row in rows
+    }
+
+
 def table_names(connection, *, schema=None):
     """Return base-table names visible in the current SQLite/PostgreSQL schema."""
     dialect = database_dialect(connection)
