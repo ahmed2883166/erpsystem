@@ -233,18 +233,18 @@ def _cash_forecast_payroll(conn, as_of):
     items = []
     if not all(_exists(conn, table) for table in ("payroll_runs", "payroll_lines", "payroll_payments")):
         return items
-    for run in conn.execute(
+    for run in execute_compat(conn, 
         """SELECT id,period FROM payroll_runs
            WHERE status='posted' AND journal_entry_id IS NOT NULL ORDER BY period,id"""
     ).fetchall():
         due_date = _month_end(run["period"])
         if not due_date:
             continue
-        net_payable = _d(conn.execute(
+        net_payable = _d(execute_compat(conn, 
             "SELECT COALESCE(SUM(CAST(net_pay AS NUMERIC)),0) FROM payroll_lines WHERE run_id=?",
             (run["id"],),
         ).fetchone()[0])
-        paid = _d(conn.execute(
+        paid = _d(execute_compat(conn, 
             """SELECT COALESCE(SUM(CAST(amount AS NUMERIC)),0) FROM payroll_payments
                WHERE run_id=? AND payment_date<=?""", (run["id"], as_of)
         ).fetchone()[0])
@@ -264,16 +264,16 @@ def _cash_forecast_grants(conn, as_of):
     required = {"employee_grants", "employee_grant_lines", "employee_grant_payments"}
     if not all(_exists(conn, table) for table in required):
         return items
-    grants = conn.execute(
+    grants = execute_compat(conn, 
         """SELECT id,grant_name_snapshot,grant_date FROM employee_grants
            WHERE status IN ('approved','partially_paid') ORDER BY grant_date,id"""
     ).fetchall()
     for grant in grants:
-        total = _d(conn.execute(
+        total = _d(execute_compat(conn, 
             "SELECT COALESCE(SUM(CAST(amount AS NUMERIC)),0) FROM employee_grant_lines WHERE grant_id=?",
             (grant["id"],),
         ).fetchone()[0])
-        paid = _d(conn.execute(
+        paid = _d(execute_compat(conn, 
             """SELECT COALESCE(SUM(CAST(amount AS NUMERIC)),0) FROM employee_grant_payments
                WHERE grant_id=? AND payment_date<=?""", (grant["id"], as_of)
         ).fetchone()[0])
