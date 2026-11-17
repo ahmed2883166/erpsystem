@@ -642,10 +642,17 @@ class StocktakeRouteTests(unittest.TestCase):
                 f"/stock/pending/{pending_purpose_id}/resolve",
                 data={"issue_purpose": "sale"},
             )
+            # A repeated request must see the now-posted row and never create
+            # a second journal entry for the same stock movement.
+            replay = self.client.post(
+                f"/stock/pending/{pending_purpose_id}/resolve",
+                data={"issue_purpose": "sale"},
+            )
             second = self.client.post(
                 f"/stock/pending/{pending_setup_id}/resolve", data={},
             )
         self.assertEqual(first.status_code, 302)
+        self.assertEqual(replay.status_code, 302)
         self.assertEqual(second.status_code, 302)
         self.assertEqual(post.call_count, 2)
 
