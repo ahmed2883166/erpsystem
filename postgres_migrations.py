@@ -58,14 +58,12 @@ def load_migrations(directory: str | Path) -> list[Migration]:
             raise ValueError(f"Migration must be UTF-8: {path.name}") from exc
         if not sql.strip():
             raise ValueError(f"Migration cannot be empty: {path.name}")
-        migrations.append(
-            Migration(
-                version=version,
-                name=path.name,
-                sql=sql,
-                checksum=hashlib.sha256(raw).hexdigest(),
-            )
-        )
+        migrations.append(Migration(
+            version=version,
+            name=path.name,
+            sql=sql,
+            checksum=hashlib.sha256(raw).hexdigest(),
+        ))
     return migrations
 
 
@@ -100,6 +98,8 @@ def apply_migrations(connection, migrations, *, schema="nexus") -> list[int]:
             (_ADVISORY_LOCK_NAMESPACE, _ADVISORY_LOCK_ID),
         )
         connection.execute(f"CREATE SCHEMA IF NOT EXISTS {quoted_schema}")
+        # Unqualified migration DDL is confined to the explicitly selected schema.
+        connection.execute(f"SET LOCAL search_path TO {quoted_schema}")
         connection.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {quoted_schema}."schema_migrations" (
