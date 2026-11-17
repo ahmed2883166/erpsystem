@@ -9,7 +9,7 @@ from functools import wraps
 from datetime import date, datetime, timedelta
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, money, safe_error_message, decimal_sum_expression
-from db_compat import table_columns, table_exists, table_indexes, begin_write_transaction, insert_and_get_id, execute_script, DB_ERROR, DB_INTEGRITY_ERROR
+from db_compat import table_columns, table_exists, table_indexes, begin_write_transaction, insert_and_get_id, execute_script, database_dialect, DB_ERROR, DB_INTEGRITY_ERROR
 from db_sql import execute_compat
 from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options, product_uom_storage, lock_stock_warehouses
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
@@ -29,6 +29,31 @@ def _table_exists(conn, name):
 def _columns(conn, name):
     """Database-neutral column metadata for a known table."""
     return table_columns(conn, name)
+
+
+def _supplier_bill_for_update(conn, bill_id):
+    """Lock a supplier bill before checking/posting it on PostgreSQL."""
+    sql = "SELECT * FROM supplier_bills WHERE id=?"
+    if database_dialect(conn) == "postgresql":
+        sql += " FOR UPDATE"
+    return execute_compat(conn, sql, (bill_id,)).fetchone()
+
+
+def _lock_supplier_receipts(conn, receipt_ids):
+    """Serialize GRNI allocations for the same receipts in a stable order."""
+    ids = sorted({int(value) for value in receipt_ids if value not in (None, 0, "")})
+    if not ids or database_dialect(conn) != "postgresql":
+        return []
+    placeholders = ",".join("?" for _ in ids)
+    rows = execute_compat(
+        conn,
+        f"SELECT id FROM goods_receipts WHERE id IN ({placeholders}) ORDER BY id FOR UPDATE",
+        ids,
+    ).fetchall()
+    locked = {int(row["id"]) for row in rows}
+    if locked != set(ids):
+        raise ValueError("أحد إيصالات GRNI غير موجود أثناء قفل التخصيص.")
+    return rows
 
 def init_purchase_schema():
     c=db()
@@ -1771,7 +1796,7 @@ def _available_supplier_receipts(c, supplier_id, exclude_bill_id=None):
 
 def submit_supplier_bill(c, bill_id, actor_id):
     begin_write_transaction(c)
-    bill = execute_compat(c, "SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+    bill = _supplier_bill_for_update(c, bill_id)
     if not bill:
         raise ValueError("فاتورة المورد غير موجودة.")
     if bill["status"] not in {"draft", "rejected"}:
@@ -1907,6 +1932,10 @@ def post_supplier_bill(c, bill_id, actor_id):
             WHERE x.bill_id=? ORDER BY x.receipt_id""", (bill_id,)).fetchall()
         if not receipt_rows:
             raise ValueError("لا توجد استلامات مرتبطة بفاتورة الأصناف.")
+        # A receipt can be allocated to only the remaining unbilled value.
+        # Lock all selected receipts before checking reservations so two
+        # concurrent supplier bills cannot consume the same GRNI balance.
+        _lock_supplier_receipts(c, (row["receipt_id"] for row in receipt_rows))
         matched_total = money("0")
         grni = account(c, "2190", "liability")
         for receipt in receipt_rows:
