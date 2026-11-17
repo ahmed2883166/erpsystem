@@ -304,12 +304,18 @@ def generate_postgres_ddl(snapshot):
 
             col_name = name.lower()
             name_parts = col_name.split("_")
+            non_numeric_metadata_columns = {
+                ("accounts", "normal_balance"),
+                ("company_settings", "setting_value"),
+                ("management_dashboard_meta", "meta_value"),
+            }
             metadata_suffixes = {
                 "at", "code", "date", "id", "json", "method", "name", "no",
                 "notes", "number", "reason", "reference", "status", "treatment", "type",
             }
             numeric_name_match = (
                 bool(name_parts)
+                and (table_name, name) not in non_numeric_metadata_columns
                 and name_parts[-1] not in metadata_suffixes
                 and any(
                     token in name_parts for token in (
