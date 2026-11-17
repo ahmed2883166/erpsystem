@@ -7,6 +7,7 @@ import sqlite3
 from functools import wraps
 
 from db_compat import table_columns, table_exists
+from db_sql import execute_compat
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 
@@ -115,8 +116,10 @@ def _tax_ledger_reconciliation(conn, summary):
         result["issues"].append("تعذر تحديد حسابات ضريبة المدخلات والمخرجات من ملف النشاط.")
         return result
     result["input_report"] = summary.get("purchase_tax_total", Decimal("0"))
-    from accounting_core import register_decimal_aggregates
+    from accounting_core import decimal_sum_expression, register_decimal_aggregates
     register_decimal_aggregates(conn)
+    debit_sum = decimal_sum_expression(conn, 'jl.debit')
+    credit_sum = decimal_sum_expression(conn, 'jl.credit')
     for role, target in (("output_vat", "output"), ("input_vat", "input")):
         code = roles.get(role) if isinstance(roles, dict) else None
         if isinstance(code, (list, tuple)):
@@ -127,10 +130,10 @@ def _tax_ledger_reconciliation(conn, summary):
             result["issues"].append("لم يتم تحديد حساب دفتر الأستاذ لدور " + role + ".")
             continue
         placeholders = ",".join("?" for _ in codes)
-        rows = conn.execute(f"""
+        rows = execute_compat(conn, f"""
             SELECT a.code,
-                   COALESCE(DECIMAL_SUM(jl.debit),0) debit,
-                   COALESCE(DECIMAL_SUM(jl.credit),0) credit
+                   {debit_sum} debit,
+                   {credit_sum} credit
             FROM accounts a
             LEFT JOIN journal_entries je ON je.status='posted'
                  AND je.entry_date>=? AND je.entry_date<?
