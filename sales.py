@@ -1094,14 +1094,12 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
 
     stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
     credit_no = "SCN-" + stamp
-    cur = conn.execute(
+    credit_id = insert_and_get_id(conn,
         """INSERT INTO sales_credit_notes(credit_note_no,invoice_id,credit_date,reason,
            subtotal,tax_amount,total_amount,refundable_amount,created_by)
            VALUES(?,?,?,?,?,?,?,?,?)""",
         (credit_no, invoice_id, credit_date, reason, str(subtotal), str(tax_total), str(total),
-         str(refundable_amount), created_by),
-    )
-    credit_id = cur.lastrowid
+         str(refundable_amount), created_by))
     journal_lines = [(revenue, subtotal, 0, "عكس إيراد بموجب إشعار دائن " + credit_no)]
     if tax_total:
         journal_lines.append((vat_account, tax_total, 0, "عكس ضريبة مخرجات بموجب " + credit_no))
@@ -1118,7 +1116,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         original = item["original"]
         movement_id = None
         product_id = original["product_id"]
-        credit_line_cursor = conn.execute(
+        credit_line_id = insert_and_get_id(conn,
             """INSERT INTO sales_credit_note_lines(credit_note_id,invoice_line_id,product_id,
                description,quantity,unit_price,line_total,tax_rate,tax_treatment,tax_amount,
                cost_total,stock_movement_id,entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
@@ -1127,9 +1125,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
              str(item["unit_price"]), str(item["line_total"]), str(item["tax_rate"]),
              item["tax_treatment"], str(item["tax_amount"]), str(item["cost_total"]),
              str(item["entered_quantity"]), item["uom_id"], item["uom_key"],
-             item["entered_uom_name"], str(item["conversion_factor"])),
-        )
-        credit_line_id = credit_line_cursor.lastrowid
+             item["entered_uom_name"], str(item["conversion_factor"])))
         if product_id:
             warehouse_id = invoice["warehouse_id"]
             if not warehouse_id:
@@ -1142,7 +1138,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
                 movement_no = credit_no + "-" + str(stock_index)
                 part_qty, part_cost = lot_part["quantity"], lot_part["cost_total"]
                 unit_cost = part_cost / part_qty
-                movement = conn.execute(
+                movement_id = insert_and_get_id(conn,
                     """INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,target_location_id,
                        lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,issue_purpose,
                        entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name)
@@ -1150,9 +1146,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
                     (movement_no, product_id, warehouse_id, return_location_id, lot_part["lot_id"], str(part_qty), str(unit_cost),
                      str(part_cost), credit_date, "مرتجع مبيعات بموجب " + credit_no, created_by,
                      str(lot_part["quantity"] / item["conversion_factor"]), item["uom_id"], item["uom_key"],
-                     item["entered_uom_name"]),
-                )
-                movement_id = movement.lastrowid
+                     item["entered_uom_name"]))
                 conn.execute(
                     """INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,lot_id,source_movement_id,
                        qty_in,qty_remaining,unit_cost,value_remaining) VALUES(?,?,?,?,?,?,?,?,?)""",
@@ -1478,11 +1472,10 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
         conn, receipt_date, receipt_no, "تحصيل مجمع من العميل " + customer["name"],
         journal_lines, created_by,
     )
-    cursor = conn.execute("""INSERT INTO customer_receipt_batches
+    batch_id = insert_and_get_id(conn, """INSERT INTO customer_receipt_batches
         (receipt_no,customer_id,receipt_date,total_amount,cash_account_id,journal_entry_id,reference,created_by)
         VALUES(?,?,?,?,?,?,?,?)""",
         (receipt_no, customer_id, receipt_date, str(total), cash_account_id, journal_id, reference, created_by))
-    batch_id = cursor.lastrowid
     for invoice, amount in normalized:
         conn.execute("INSERT INTO customer_receipt_allocations(batch_id,invoice_id,amount) VALUES(?,?,?)",
                      (batch_id, invoice["id"], str(amount)))
@@ -1631,14 +1624,13 @@ def post_customer_advance_receipt(conn, customer_id, receipt_date, amount,
          (advance_account, 0, amount, "التزام دفعات مقدمة من العميل")],
         created_by, dimensions=dimensions,
     )
-    cur = conn.execute(
+    advance_receipt_id = insert_and_get_id(conn,
         """INSERT INTO customer_advance_receipts
            (receipt_no,customer_id,receipt_date,amount,cash_account_id,journal_entry_id,reference,created_by)
            VALUES(?,?,?,?,?,?,?,?)""",
         (receipt_no, customer_id, receipt_date, str(amount), cash_account_id,
-         journal_id, reference, created_by),
-    )
-    return {"advance_receipt_id": cur.lastrowid, "receipt_no": receipt_no,
+         journal_id, reference, created_by))
+    return {"advance_receipt_id": advance_receipt_id, "receipt_no": receipt_no,
             "journal_entry_id": journal_id, "amount": amount}
 
 
@@ -1788,16 +1780,15 @@ def reverse_customer_advance_transaction(
                 (str(Decimal(str(row["paid_amount"] or "0")) - Decimal(str(row["amount"]))),
                  row["invoice_id"]),
             )
-    reversal_record = conn.execute(
+    reversal_id = insert_and_get_id(conn,
         """INSERT INTO customer_advance_reversals
            (source_type,source_id,original_journal_entry_id,reversal_journal_entry_id,
             reversal_date,reason,created_by)
            VALUES(?,?,?,?,?,?,?)""",
         (source_type, source_id, original_journal_id, reversal_journal_id,
-         reversal_date, reason, created_by),
-    )
+         reversal_date, reason, created_by))
     return {
-        "reversal_id": reversal_record.lastrowid,
+        "reversal_id": reversal_id,
         "source_type": source_type, "source_id": source_id,
         "original_journal_entry_id": original_journal_id,
         "reversal_journal_entry_id": reversal_journal_id,
@@ -2389,17 +2380,15 @@ def new_invoice():
                 }
                 c.execute("BEGIN IMMEDIATE")
                 request_no = "SDR-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
-                cursor = c.execute(
+                request_id = insert_and_get_id(c,
                     """INSERT INTO sales_discount_approval_requests(
                          request_no,customer_id,invoice_date,due_date,gross_subtotal,
                          discount_amount,discount_percent,payload_json,created_by)
                        VALUES(?,?,?,?,?,?,?,?,?)""",
                     (request_no, payload["customer_id"], payload["invoice_date"], due_date,
                      str(gross_subtotal), str(discount_amount), str(discount_percent),
-                     json.dumps(payload, ensure_ascii=False), session["user_id"])
-                )
+                     json.dumps(payload, ensure_ascii=False), session["user_id"]))
                 c.commit()
-                request_id = cursor.lastrowid
                 c.close()
                 from app import log
                 log("sales_discount_approval_requested", request_no,
