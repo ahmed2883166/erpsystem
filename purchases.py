@@ -2657,7 +2657,7 @@ def new_credit_note():
                    str(money(item["cost"]/item["quantity"])),str(item["cost"]),
                    str(item["entered_quantity"]),item["uom_id"],item["uom_key"],
                    item["entered_uom_name"],str(item["conversion_factor"])))
-                credit_line_id=line_cur.lastrowid
+
                 for allocation in item["layer_allocations"]:
                     c.execute("""INSERT INTO supplier_credit_note_layer_allocations(
                       credit_note_line_id,stock_movement_id,source_layer_id,lot_id,location_id,
