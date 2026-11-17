@@ -35,6 +35,13 @@ def validate(ddl_path, dsn):
                 """SELECT COUNT(*) FROM pg_indexes WHERE schemaname = %s""",
                 (schema_name,),
             ).fetchone()[0]
+            trigger_count = connection.execute(
+                """SELECT COUNT(*) FROM pg_trigger t
+                   JOIN pg_class c ON c.oid = t.tgrelid
+                   JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE n.nspname = %s AND NOT t.tgisinternal""",
+                (schema_name,),
+            ).fetchone()[0]
             invalid_indexes = connection.execute(
                 """SELECT COUNT(*) FROM pg_index i
                    JOIN pg_class c ON c.oid = i.indexrelid
@@ -49,6 +56,7 @@ def validate(ddl_path, dsn):
                 "table_count": table_count,
                 "foreign_key_count": foreign_key_count,
                 "index_count": index_count,
+                "trigger_count": trigger_count,
                 "invalid_index_count": invalid_indexes,
             }
         except Exception:
