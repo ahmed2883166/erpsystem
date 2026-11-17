@@ -2,7 +2,12 @@ import unittest
 from decimal import Decimal
 
 from scripts.copy_sqlite_to_postgres import copy_database, dependency_order, normalize_value, order_self_referencing_rows, quote_ident
-from scripts.verify_sqlite_postgres_copy import verify_copy
+from scripts.verify_sqlite_postgres_copy import (
+    _compare_decimal_maps,
+    _decimal,
+    _sqlite_grouped_sum,
+    verify_copy,
+)
 
 
 class SQLitePostgresCopyPlanningTests(unittest.TestCase):
@@ -58,6 +63,48 @@ class SQLitePostgresCopyPlanningTests(unittest.TestCase):
 
     def test_identifiers_are_quoted(self):
         self.assertEqual(quote_ident('odd"name'), '"odd""name"')
+
+
+class SQLitePostgresVerifierUnitTests(unittest.TestCase):
+    def test_decimal_parser_keeps_exact_financial_precision(self):
+        self.assertEqual(_decimal("1250.10"), Decimal("1250.10"))
+        self.assertEqual(_decimal(None), Decimal("0"))
+        with self.assertRaisesRegex(ValueError, "Non-numeric"):
+            _decimal("not-a-number")
+
+    def test_sqlite_grouped_sums_preserve_party_keys_and_decimal_values(self):
+        import sqlite3
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.execute(
+                "CREATE TABLE journal_lines (customer_id INTEGER, debit TEXT)"
+            )
+            conn.executemany(
+                "INSERT INTO journal_lines(customer_id, debit) VALUES (?, ?)",
+                [(10, "10.10"), (10, "0.20"), (20, "5.00"), (None, "1.25")],
+            )
+            totals = _sqlite_grouped_sum(
+                conn, "journal_lines", "debit", ("customer_id",)
+            )
+            self.assertEqual(totals[(10,)], Decimal("10.30"))
+            self.assertEqual(totals[(20,)], Decimal("5.00"))
+            self.assertEqual(totals[(None,)], Decimal("1.25"))
+        finally:
+            conn.close()
+
+    def test_control_comparison_reports_missing_and_mismatched_totals(self):
+        issues = []
+        _compare_decimal_maps(
+            "journal.debit",
+            {(1,): Decimal("100.00"), (2,): Decimal("25.00")},
+            {(1,): Decimal("99.99"), (3,): Decimal("5.00")},
+            issues,
+        )
+        self.assertEqual(len(issues), 3)
+        self.assertEqual(
+            {tuple(item["key"]) for item in issues},
+            {(1,), (2,), (3,)},
+        )
 
 
 if __name__ == "__main__":
