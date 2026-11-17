@@ -1,23 +1,19 @@
 from app_paths import DB_PATH
 from database import connect_database, fetch_page
 """Foreign currency transaction subledger, settlement and period-end revaluation."""
-import sqlite3
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
-from db_compat import begin_write_transaction, database_dialect, table_exists
+from db_compat import begin_write_transaction, database_dialect, table_exists, execute_script, DB_ERROR
 from db_sql import execute_compat
 
 
 def _is_database_error(exc):
-    """Recognize database-driver errors without requiring psycopg at import time."""
-    return (
-        isinstance(exc, sqlite3.Error)
-        or type(exc).__module__.split(".", 1)[0] == "psycopg"
-    )
+    """Recognize supported database-driver errors without swallowing programming bugs."""
+    return isinstance(exc, DB_ERROR) or type(exc).__module__.split(".", 1)[0] == "psycopg"
 
 
 def _database_error_message():
@@ -26,6 +22,7 @@ def _database_error_message():
 currency_bp = Blueprint("currency_center", __name__)
 
 CENT = Decimal("0.01")
+CURRENCY_ERRORS = (ValueError, KeyError, ZeroDivisionError) + DB_ERROR
 
 
 def D(v):
@@ -48,7 +45,7 @@ def _db():
 
 def initialize_currency_schema():
     c = _db()
-    c.executescript("""
+    execute_script(c, """
     CREATE TABLE IF NOT EXISTS fx_exchange_rates(
       id INTEGER PRIMARY KEY, currency_code TEXT NOT NULL, rate_date TEXT NOT NULL,
       rate_to_base TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manual',
@@ -201,7 +198,7 @@ def index():
             _audit(c, "fx_rate_updated", currency + " " + rate_date + " " + str(rate))
             c.commit()
             flash("تم حفظ سعر الصرف بتاريخ السريان المحدد.", "success")
-        except (ValueError, KeyError, sqlite3.Error) as e:
+        except CURRENCY_ERRORS as e:
             c.rollback()
             flash(str(e), "error")
         except Exception as e:
@@ -273,7 +270,7 @@ def create_transaction():
         _audit(c, "fx_transaction_created", reference + " " + currency + " " + str(foreign))
         c.commit()
         flash("تم تسجيل المعاملة الأجنبية وترحيل قيدها بسعر تاريخ العملية.", "success")
-    except (ValueError, KeyError, sqlite3.Error) as e:
+    except CURRENCY_ERRORS as e:
         c.rollback()
         flash(str(e), "error")
     except Exception as e:
@@ -337,7 +334,7 @@ def settle(transaction_id):
         _audit(c, "fx_transaction_settled", t["reference"] + " foreign=" + str(amount) + " diff=" + str(diff))
         c.commit()
         flash("تم تسجيل التحصيل/السداد وإثبات فرق العملة المحقق.", "success")
-    except (ValueError, KeyError, sqlite3.Error, ZeroDivisionError) as e:
+    except CURRENCY_ERRORS as e:
         c.rollback()
         flash(str(e), "error")
     except Exception as e:
@@ -398,7 +395,7 @@ def revalue(transaction_id):
         _audit(c, "fx_revalued", t["reference"] + " date=" + revalue_date + " diff=" + str(delta))
         c.commit()
         flash("تمت إعادة تقييم الرصيد وإثبات الفرق غير المحقق.", "success")
-    except (ValueError, KeyError, sqlite3.Error) as e:
+    except CURRENCY_ERRORS as e:
         c.rollback()
         flash(str(e), "error")
     except Exception as e:
