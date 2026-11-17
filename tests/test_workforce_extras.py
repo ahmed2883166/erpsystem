@@ -443,6 +443,7 @@ class WorkforceExtrasTests(unittest.TestCase):
                 employee_insurance,employer_insurance,gross_pay,net_pay
             ) VALUES(?,1,'10000','500','0','0','0','0','100','250','1000','1500','10500','9150')
         """, (run_id,))
+        conn.execute("UPDATE payroll_lines SET salary_raise='200' WHERE run_id=?", (run_id,))
         conn.execute(
             "DELETE FROM workforce_migrations WHERE migration_key='payroll_line_items_legacy_snapshot_v1'"
         )
@@ -456,6 +457,14 @@ class WorkforceExtrasTests(unittest.TestCase):
         ).fetchone()[0]
         conn.close()
         self.assertGreater(first_count, 0)
+        conn = sqlite3.connect(self.db_path)
+        self.assertEqual(
+            conn.execute(
+                "SELECT amount FROM payroll_line_items WHERE payroll_line_id=1 AND item_name='العلاوة المطبقة (بيان تاريخي)'"
+            ).fetchone()[0],
+            "200.00",
+        )
+        conn.close()
 
         workforce_extras.initialize_workforce_extras_schema()
         conn = sqlite3.connect(self.db_path)
