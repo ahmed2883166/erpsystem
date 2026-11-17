@@ -126,11 +126,14 @@ def _account(c, account_id):
 def update_open_fx_balance(c, transaction_id, expected_balance, remaining_foreign, remaining_base):
     """Update an FX balance only if it is still the balance used by the calculation."""
     remaining = D(remaining_foreign)
+    # Keep a consistent two-decimal representation for a fully settled balance.
+    stored_foreign = "0.00" if remaining == 0 else str(remaining)
+    stored_base = "0.00" if D(remaining_base) == 0 else str(remaining_base)
     status = "settled" if remaining == 0 else "open"
     updated = c.execute("""UPDATE fx_transactions
         SET balance_foreign=?,balance_base=?,status=?
         WHERE id=? AND status='open' AND balance_foreign=?""",
-        (str(remaining), str(remaining_base), status, transaction_id, str(expected_balance))).rowcount
+        (stored_foreign, stored_base, status, transaction_id, str(expected_balance))).rowcount
     if updated != 1:
         raise ValueError("تغير رصيد المعاملة أثناء التسوية؛ أعد تحميل الصفحة وحاول مرة أخرى.")
 
