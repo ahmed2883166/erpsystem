@@ -85,8 +85,11 @@ class PostgreSQLPaginationTests(unittest.TestCase):
             connection.execute(
                 "CREATE TEMP TABLE pagination_probe (id BIGINT PRIMARY KEY, group_id BIGINT NOT NULL)"
             )
-            connection.executemany(
-                "INSERT INTO pagination_probe(id, group_id) VALUES (%s, %s)",
+            from db_sql import executemany_compat
+
+            executemany_compat(
+                connection,
+                "INSERT INTO pagination_probe(id, group_id) VALUES (?, ?)",
                 [(value, 1 if value <= 75 else 2) for value in range(1, 176)],
             )
             result = fetch_page(
