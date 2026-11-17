@@ -480,7 +480,16 @@ def product_uom_options(c, product_id):
 def post_interbranch_transfer_journal(c, movement_id, movement_no, product, movement_date,
                                       total_cost, created_by, source_branch_id, target_branch_id):
     """Post branch-tagged inventory transfer clearing lines without changing consolidated stock value."""
-    if not source_branch_id or not target_branch_id or source_branch_id == target_branch_id:
+    if source_branch_id is None and target_branch_id is None:
+        _execute(c, "UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
+        set_stock_accounting_note(c,movement_id,None)
+        return None
+    if source_branch_id is None or target_branch_id is None:
+        raise ValueError(
+            "لا يمكن اعتماد التحويل قبل ربط مخزني المصدر والوجهة بفرعيهما؛ "
+            "تحديد فرع واحد فقط لا يكفي لتسجيل قيد التحويل البيني."
+        )
+    if source_branch_id == target_branch_id:
         _execute(c, "UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
         set_stock_accounting_note(c,movement_id,None)
         return None
