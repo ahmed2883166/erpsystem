@@ -49,6 +49,42 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "cannot be empty"):
                 load_migrations(root)
 
+    def test_rejects_migration_checksum_mismatch_before_execution(self):
+        class Connection:
+            autocommit = False
+            info = None
+
+            def execute(self, *_args):
+                raise AssertionError("No SQL should execute for an invalid migration.")
+
+        sql = 'CREATE TABLE "probe" (id BIGINT)'
+        migration = Migration(
+            version=1,
+            name="0001_probe.sql",
+            sql=sql,
+            checksum=hashlib.sha256(b"different SQL").hexdigest(),
+        )
+        with self.assertRaisesRegex(ValueError, "checksum does not match"):
+            apply_migrations(Connection(), [migration], schema="nexus_test")
+
+    def test_rejects_migration_name_version_mismatch_before_execution(self):
+        class Connection:
+            autocommit = False
+            info = None
+
+            def execute(self, *_args):
+                raise AssertionError("No SQL should execute for an invalid migration.")
+
+        sql = 'CREATE TABLE "probe" (id BIGINT)'
+        migration = Migration(
+            version=2,
+            name="0001_probe.sql",
+            sql=sql,
+            checksum=hashlib.sha256(sql.encode("utf-8")).hexdigest(),
+        )
+        with self.assertRaisesRegex(ValueError, "does not match version"):
+            apply_migrations(Connection(), [migration], schema="nexus_test")
+
     def test_rejects_autocommit_connections_before_execution(self):
         class Connection:
             autocommit = True
