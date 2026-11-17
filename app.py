@@ -846,9 +846,7 @@ def _operational_audit_snapshot(endpoint, view_args, created_record=None):
         if child_table:
             child_exists = table_exists(connection, child_table,)
             if child_exists:
-                child_info = connection.execute(
-                    f'PRAGMA table_info("{child_table}")'
-                ).fetchall()
+                child_info = table_column_info(connection, child_table).values()
                 # Some operational detail tables use a composite primary key
                 # and intentionally have no id column. Order by declared PK.
                 primary_columns = sorted(
@@ -964,7 +962,7 @@ def refresh_session_authorization():
     connection = db()
     try:
         user_table = table_exists(connection, "users")
-        user_columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)").fetchall()} if user_table else set()
+        user_columns = table_columns(connection, "users") if user_table else set()
         required_columns = {"id", "role", "active", "permissions_json", "must_change_password", "full_name"}
         # Lightweight route tests often use isolated legacy schemas. Do not turn a
         # missing fixture table/column into HTTP 500; production remains fail-closed.
@@ -2330,10 +2328,7 @@ def approval_inbox():
 
         if "workforce.approve" in permissions:
             def approval_table_exists(table_name):
-                return connection.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-                    (table_name,),
-                ).fetchone() is not None
+                return table_exists(connection, table_name)
 
             if approval_table_exists("payroll_runs") and approval_table_exists("payroll_lines"):
                 for row in connection.execute("""
@@ -2461,9 +2456,7 @@ def approval_inbox():
                         "can_act": not own,
                         "blocked_reason": "لا يجوز اعتماد طلب الخصم الذي أنشأته بنفسك." if own else "",
                     })
-            sales_order_columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(sales_orders)")
-            }
+            sales_order_columns = table_columns(connection, "sales_orders")
             discount_status_expr = (
                 "COALESCE(so.discount_approval_status,'approved')"
                 if "discount_approval_status" in sales_order_columns else "'approved'"
