@@ -145,3 +145,15 @@ def execute_compat(connection, sql, params=()):
     if dialect == "sqlite":
         return connection.execute(sql, params)
     return connection.execute(qmark_to_format(sql), params)
+
+
+
+def executemany_compat(connection, sql, seq_of_params):
+    """Execute a qmark-parameterized batch on SQLite or psycopg 3.
+
+    This helper does not commit; the caller owns the transaction.
+    """
+    dialect = database_dialect(connection)
+    if dialect == "sqlite":
+        return connection.executemany(sql, seq_of_params)
+    return connection.executemany(qmark_to_format(sql), seq_of_params)

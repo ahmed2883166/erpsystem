@@ -3,9 +3,25 @@ from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from datetime import datetime, date
 import sqlite3
 
+from db_compat import database_dialect, table_columns, table_exists
+from db_insert import insert_one_returning_id
+from db_sql import execute_compat, executemany_compat
+
+
+def _execute(connection, sql, params=()):
+    return execute_compat(connection, sql, params)
+
+
+def _decimal_sum_expression(connection, expression):
+    if database_dialect(connection) == "sqlite":
+        return f"COALESCE(DECIMAL_SUM({expression}), '0')"
+    return f"COALESCE(SUM(CAST({expression} AS NUMERIC)), 0)"
+
+
 def safe_error_message(exc, fallback="تعذر إتمام العملية بسبب خطأ في البيانات. لم يتم حفظ أي تغييرات."):
     """Keep raw SQLite/SQL details out of user-facing flash messages."""
-    if isinstance(exc, sqlite3.Error):
+    if (isinstance(exc, sqlite3.Error) or
+            type(exc).__module__.split(".", 1)[0] == "psycopg"):
         return fallback
     return str(exc)
 
@@ -68,7 +84,9 @@ class _DecimalRunningNet:
 
 
 def register_decimal_aggregates(conn):
-    """Register exact SQLite aggregate functions for TEXT monetary columns."""
+    """Register exact SQLite aggregate functions; PostgreSQL uses native NUMERIC."""
+    if database_dialect(conn) != "sqlite":
+        return
     conn.create_aggregate("DECIMAL_SUM", 1, _DecimalSum)
     conn.create_aggregate("DECIMAL_NET", 2, _DecimalNet)
     conn.create_aggregate("DECIMAL_LAYER_VALUE_SUM", 3, _DecimalLayerValueSum)
@@ -85,13 +103,13 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
     if normalized_date != str(entry_date):
         raise ValueError("تاريخ القيد غير صحيح؛ استخدم YYYY-MM-DD.")
     if _table_exists(conn, "accounting_periods"):
-        locked = conn.execute("""SELECT period_name FROM accounting_periods
+        locked = _execute(conn, """SELECT period_name FROM accounting_periods
             WHERE locked=1 AND start_date<=? AND end_date>=? LIMIT 1""",
             (normalized_date, normalized_date)).fetchone()
         if locked:
             raise ValueError(f"الفترة المحاسبية مغلقة: {locked['period_name']}.")
     if _table_exists(conn, "financial_years"):
-        financial_year = conn.execute("""SELECT year_name,status FROM financial_years
+        financial_year = _execute(conn, """SELECT year_name,status FROM financial_years
             WHERE start_date<=? AND end_date>=? LIMIT 1""",
             (normalized_date, normalized_date)).fetchone()
         if financial_year and financial_year["status"] != "open":
@@ -137,7 +155,7 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
         if dr < 0 or cr < 0 or (dr and cr):
             raise ValueError("كل سطر يجب أن يكون مدينًا أو دائنًا فقط وبقيمة غير سالبة.")
         if dr or cr:
-            account = conn.execute(
+            account = _execute(conn, 
                 "SELECT id,is_group,active,account_type FROM accounts WHERE id=?", (account_id,)
             ).fetchone()
             if not account or account["is_group"] or not account["active"]:
@@ -149,14 +167,14 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
     credit = sum((x[2] for x in normalized), Decimal("0"))
     if debit <= 0 or debit != credit:
         raise ValueError(f"القيد غير متوازن: مدين {debit} مقابل دائن {credit}.")
-    existing = conn.execute(
+    existing = _execute(conn, 
         "SELECT id,entry_date,description FROM journal_entries WHERE reference=? AND status='posted' ORDER BY id LIMIT 1",
         (reference,),
     ).fetchone()
     if existing:
         has_dimensions = bool(available_dimension_keys)
         selected = "account_id,debit,credit,memo" + ("," + ",".join(available_dimension_keys) if has_dimensions else "")
-        existing_lines = conn.execute(
+        existing_lines = _execute(conn, 
             f"SELECT {selected} FROM journal_lines WHERE entry_id=? ORDER BY id",
             (existing["id"],),
         ).fetchall()
@@ -188,22 +206,22 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
                 actual_lines != expected_lines):
             raise ValueError("رقم مرجع القيد مستخدم بالفعل في قيد مختلف. راجع المستند ورقم المرجع قبل الترحيل.")
         return existing["id"]
-    cur = conn.execute(
+    entry_id = insert_one_returning_id(
+        conn,
         "INSERT INTO journal_entries(entry_date,reference,description,status,created_by,created_at) "
         "VALUES(?,?,?,'posted',?,?)",
         (entry_date, reference, description, created_by, datetime.now().isoformat(timespec="seconds")),
     )
-    entry_id = cur.lastrowid
     if available_dimension_keys:
         columns = ("entry_id", "account_id", "debit", "credit", "memo", *available_dimension_keys)
         placeholders = ",".join("?" for _ in columns)
-        conn.executemany(
+        executemany_compat(conn, 
             "INSERT INTO journal_lines(" + ",".join(columns) + ") VALUES(" + placeholders + ")",
             [(entry_id, aid, format(dr, 'f'), format(cr, 'f'), memo, *dims)
              for aid, dr, cr, memo, *dims in normalized],
         )
     else:
-        conn.executemany(
+        executemany_compat(conn, 
             "INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?)",
             [(entry_id, aid, format(dr, 'f'), format(cr, 'f'), memo) for aid, dr, cr, memo, *_dims in normalized],
         )
@@ -211,19 +229,15 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
 
 
 def _table_exists(conn, table):
-    return conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-    ).fetchone() is not None
+    return table_exists(conn, table)
 
 
 def _columns(conn, table):
-    if not _table_exists(conn, table):
-        return set()
-    return {row["name"] for row in conn.execute(f'PRAGMA table_info("{table}")')}
+    return table_columns(conn, table)
 
 
 def _scalar(conn, sql, params=()):
-    row = conn.execute(sql, params).fetchone()
+    row = _execute(conn, sql, params).fetchone()
     return row[0] if row else 0
 
 
@@ -254,10 +268,12 @@ def reconciliation_snapshot(conn):
     # implementation issued one additional SELECT per entry (N+1), which
     # became expensive on large ledgers. DECIMAL_SUM keeps TEXT money exact.
     register_decimal_aggregates(conn)
-    entries = conn.execute(
-        """SELECT je.id,je.reference,
-                  COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
-                  COALESCE(DECIMAL_SUM(jl.credit),'0') credit
+    debit_sum_sql = _decimal_sum_expression(conn, "jl.debit")
+    credit_sum_sql = _decimal_sum_expression(conn, "jl.credit")
+    entries = _execute(conn,
+        f"""SELECT je.id,je.reference,
+                  {debit_sum_sql} debit,
+                  {credit_sum_sql} credit
            FROM journal_entries je
            LEFT JOIN journal_lines jl ON jl.entry_id=je.id
            WHERE je.status='posted'
@@ -276,7 +292,7 @@ def reconciliation_snapshot(conn):
                                "debit": _money(debit), "credit": _money(credit)})
 
     journal_totals = {"debit": _money(all_debit), "credit": _money(all_credit)}
-    settings = {r["setting_key"]: r["setting_value"] for r in conn.execute(
+    settings = {r["setting_key"]: r["setting_value"] for r in _execute(conn, 
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','company_name','base_currency')"
     )} if _table_exists(conn, "company_settings") else {}
     # Custom activity profiles may override inventory and GRNI control accounts.
@@ -301,7 +317,7 @@ def reconciliation_snapshot(conn):
     if _table_exists(conn, "stock_valuation_layers"):
         layer_cols = _columns(conn, "stock_valuation_layers")
         value_col = "value_remaining" if "value_remaining" in layer_cols else None
-        for row in conn.execute("SELECT * FROM stock_valuation_layers").fetchall():
+        for row in _execute(conn, "SELECT * FROM stock_valuation_layers").fetchall():
             qty = Decimal(str(row["qty_remaining"] or "0"))
             if qty <= 0:
                 continue
@@ -313,12 +329,12 @@ def reconciliation_snapshot(conn):
     found_codes, missing_codes, gl_stock = [], [], None
     if codes:
         placeholders = ",".join("?" for _ in codes)
-        found_codes = [r["code"] for r in conn.execute(
+        found_codes = [r["code"] for r in _execute(conn, 
             f"SELECT code FROM accounts WHERE code IN ({placeholders}) AND is_group=0 AND active=1 ORDER BY code", codes
         )]
         missing_codes = [code for code in codes if code not in found_codes]
         if found_codes:
-            ids = [r["id"] for r in conn.execute(
+            ids = [r["id"] for r in _execute(conn, 
                 f"SELECT id FROM accounts WHERE code IN ({','.join('?' for _ in found_codes)}) AND is_group=0 AND active=1",
                 found_codes
             )]
@@ -328,7 +344,7 @@ def reconciliation_snapshot(conn):
                 from management_dashboard import _copied_opening_entry_ids
                 excluded_openings=sorted(_copied_opening_entry_ids(conn,date.today().isoformat()))
                 opening_exclusion=(" AND je.id NOT IN ("+",".join("?" for _ in excluded_openings)+")") if excluded_openings else ""
-                for row in conn.execute(
+                for row in _execute(conn, 
                     f"""SELECT jl.debit,jl.credit FROM journal_lines jl
                         JOIN journal_entries je ON je.id=jl.entry_id
                         WHERE je.status='posted' AND jl.account_id IN ({marks}){opening_exclusion}""",
@@ -352,7 +368,7 @@ def reconciliation_snapshot(conn):
                 {"bill_id", "receipt_id", "matched_amount"}.issubset(receipt_link_columns) and
                 {"id", "status"}.issubset(bill_columns)):
             matched_by_receipt = {}
-            for row in conn.execute("""SELECT x.receipt_id,x.matched_amount
+            for row in _execute(conn, """SELECT x.receipt_id,x.matched_amount
                 FROM supplier_bill_receipts x
                 JOIN supplier_bills b ON b.id=x.bill_id
                 WHERE b.status='posted'"""):
@@ -379,7 +395,7 @@ def reconciliation_snapshot(conn):
                 {"source_movement_id", "qty_remaining", "unit_cost"}.issubset(layer_columns)
             )
             value_remaining_select = "value_remaining" if "value_remaining" in layer_columns else "NULL"
-            for row in conn.execute(
+            for row in _execute(conn, 
                 f"""SELECT r.id,{receipt_no_select} receipt_no,{receipt_date_select} receipt_date,
                            r.total_value,{supplier_select}
                     FROM goods_receipts r {supplier_join}
@@ -392,13 +408,13 @@ def reconciliation_snapshot(conn):
                 remaining_qty = None
                 remaining_value = None
                 if can_trace_layers:
-                    movement = conn.execute(
+                    movement = _execute(conn, 
                         "SELECT id FROM stock_movements WHERE movement_no=?",
                         ("PUR-" + str(row["receipt_no"]),)
                     ).fetchone()
                     if movement:
                         movement_id = int(movement["id"])
-                        layer_rows = conn.execute(
+                        layer_rows = _execute(conn, 
                             f"SELECT qty_remaining,unit_cost,{value_remaining_select} value_remaining FROM stock_valuation_layers "
                             "WHERE source_movement_id=?", (movement_id,)
                         ).fetchall()
@@ -442,7 +458,7 @@ def reconciliation_snapshot(conn):
             {"id", "status"}.issubset(_columns(conn, "journal_entries"))):
         grni_codes = grni_codes_for_profile
         grni_marks = ",".join("?" for _ in grni_codes)
-        grni_accounts = conn.execute(
+        grni_accounts = _execute(conn, 
             f"SELECT id FROM accounts WHERE code IN ({grni_marks}) AND is_group=0 ORDER BY id",
             tuple(grni_codes),
         ).fetchall()
@@ -455,7 +471,7 @@ def reconciliation_snapshot(conn):
                 if excluded_grni_openings else ""
             )
             grni_ledger = Decimal("0")
-            for line in conn.execute(
+            for line in _execute(conn, 
                 """SELECT jl.debit,jl.credit FROM journal_lines jl
                    JOIN journal_entries je ON je.id=jl.entry_id
                    WHERE je.status='posted' AND jl.account_id IN ({})""".format(
@@ -472,7 +488,7 @@ def reconciliation_snapshot(conn):
         cols = _columns(conn, "supplier_bills")
         if {"total_amount", "paid_amount", "status"}.issubset(cols):
             credited_expr = "credited_amount" if "credited_amount" in cols else "'0'"
-            for row in conn.execute(
+            for row in _execute(conn, 
                 f"SELECT total_amount,paid_amount,{credited_expr} credited_amount "
                 "FROM supplier_bills WHERE status='posted'"
             ):

@@ -3,7 +3,7 @@ import os
 import sqlite3
 import unittest
 
-from db_sql import execute_compat, qmark_to_format
+from db_sql import execute_compat, executemany_compat, qmark_to_format
 
 
 class QmarkTranslationTests(unittest.TestCase):
@@ -43,6 +43,21 @@ class QmarkTranslationTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_sqlite_executemany_compat_preserves_qmark_parameters(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.execute("CREATE TABLE batch_probe(value INTEGER)")
+            executemany_compat(
+                connection, "INSERT INTO batch_probe(value) VALUES(?)",
+                [(1,), (2,), (3,)],
+            )
+            self.assertEqual(
+                connection.execute("SELECT value FROM batch_probe ORDER BY value").fetchall(),
+                [(1,), (2,), (3,)],
+            )
+        finally:
+            connection.close()
+
 
 POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
 
@@ -61,6 +76,15 @@ class PostgreSQLQmarkExecutionTests(unittest.TestCase):
             ).fetchone()
             self.assertEqual(row["value"], 42)
             self.assertEqual(str(row["exact_amount"]), "1234567890.123456")
+            connection.execute("CREATE TEMP TABLE batch_probe(value INTEGER)")
+            executemany_compat(
+                connection, "INSERT INTO batch_probe(value) VALUES(?)",
+                [(4,), (5,), (6,)],
+            )
+            values = connection.execute(
+                "SELECT value FROM batch_probe ORDER BY value"
+            ).fetchall()
+            self.assertEqual([item["value"] for item in values], [4, 5, 6])
         finally:
             connection.rollback()
             connection.close()
