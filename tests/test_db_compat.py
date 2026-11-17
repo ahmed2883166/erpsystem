@@ -123,6 +123,8 @@ class SQLiteSchemaCompatibilityTests(unittest.TestCase):
         self.assertIn("normalized_amount", info)
         self.assertEqual(info["normalized_amount"]["type"].upper(), "TEXT")
         self.assertEqual(info["normalized_amount"]["pk"], 0)
+        self.assertTrue(info["normalized_amount"]["generated"])
+        self.assertFalse(info["amount"]["generated"])
 
     def test_returns_portable_column_types_and_primary_key_position(self):
         info = table_column_info(self.connection, "compatibility_probe")
@@ -130,6 +132,8 @@ class SQLiteSchemaCompatibilityTests(unittest.TestCase):
         self.assertEqual(info["id"]["type"].upper(), "INTEGER")
         self.assertEqual(info["amount"]["type"].upper(), "TEXT")
         self.assertEqual(info["active"]["pk"], 0)
+        self.assertFalse(info["id"]["generated"])
+        self.assertFalse(info["amount"]["generated"])
         self.assertEqual(table_column_info(self.connection, "missing_table"), {})
 
     def test_lists_tables_in_current_schema(self):
