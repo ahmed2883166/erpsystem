@@ -99,7 +99,7 @@ def _customer_aging_movements(conn, as_of):
     paid_as_of[invoice_id]=paid_as_of.get(invoice_id,Decimal("0"))+_amount(amount)
   for sql,params in all_sources:
    for row in execute_compat(conn, sql,params).fetchall():
-   invoice_id,amount=_pair_values(row,"invoice_id","amount")
+    invoice_id,amount=_pair_values(row,"invoice_id","amount")
     paid_all[invoice_id]=paid_all.get(invoice_id,Decimal("0"))+_amount(amount)
  credited_as_of={}
  credited_all={}
