@@ -95,7 +95,7 @@ def initialize_workforce_extras_schema():
     if not _execute(c, "SELECT 1 FROM workforce_migrations WHERE migration_key=?", (migration,)).fetchone():
         rows = _execute(c, """SELECT id,basic_salary,allowances,incentives,overtime_amount,
             absence_deduction,advance_deduction,other_deductions,taxable_income_tax,
-            employee_insurance,employer_insurance FROM payroll_lines""").fetchall()
+            employee_insurance,employer_insurance,salary_raise FROM payroll_lines""").fetchall()
         for row in rows:
             line_id = row["id"]
             legacy = [
