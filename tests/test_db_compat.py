@@ -202,6 +202,10 @@ class PostgreSQLSchemaCompatibilityTests(unittest.TestCase):
                 table_columns(connection, "compatibility_probe"),
                 {"id", "amount"},
             )
+            info = table_column_info(connection, "compatibility_probe")
+            self.assertEqual(info["id"]["pk"], 1)
+            self.assertEqual(info["amount"]["type"], "numeric")
+            self.assertEqual(info["amount"]["pk"], 0)
             self.assertFalse(table_exists(connection, "missing_table"))
         finally:
             connection.rollback()
