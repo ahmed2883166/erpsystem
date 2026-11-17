@@ -349,12 +349,16 @@ def reconciliation_snapshot(conn):
         value_col = "value_remaining" if "value_remaining" in layer_cols else None
         for row in _execute(conn, "SELECT * FROM stock_valuation_layers").fetchall():
             qty = Decimal(str(row["qty_remaining"] or "0"))
-            if qty <= 0:
-                continue
-            if value_col and row["value_remaining"] not in (None, ""):
-                stock_value += Decimal(str(row["value_remaining"]))
-            else:
-                stock_value += qty * Decimal(str(row["unit_cost"] or "0"))
+            remaining_value = (
+                Decimal(str(row["value_remaining"]))
+                if value_col and row["value_remaining"] not in (None, "")
+                else qty * Decimal(str(row["unit_cost"] or "0"))
+            )
+            # Match the stock valuation reconciliation: include every layer
+            # with a non-zero remaining quantity OR value. A zero-quantity
+            # layer can still carry a residual value that must be reconciled.
+            if qty != 0 or remaining_value != 0:
+                stock_value += remaining_value
 
     found_codes, missing_codes, gl_stock = [], [], None
     if codes:
