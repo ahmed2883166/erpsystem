@@ -1248,7 +1248,7 @@ def company_setup():
             # Activity changes are append-only: never delete or rewrite existing accounts.
             ensure_activity_chart_accounts(connection, activity)
         connection.execute("INSERT INTO tax_rates(code,name_ar,rate,active) VALUES('VAT',?,?,1) ON CONFLICT(code) DO UPDATE SET name_ar=excluded.name_ar,rate=excluded.rate,active=1",
-                           ("ضريبة القيمة المضافة", vat_rate))
+                           ("ضريبة القيمة المضافة", str(vat_rate)))
         connection.commit()
         connection.close()
         log_change(
