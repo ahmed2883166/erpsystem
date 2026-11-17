@@ -87,7 +87,7 @@ class PostgreSQLPaginationTests(unittest.TestCase):
             )
             connection.executemany(
                 "INSERT INTO pagination_probe(id, group_id) VALUES (%s, %s)",
-                [(value, 1 if value <= 75 else 2) for value in range(1, 126)],
+                [(value, 1 if value <= 75 else 2) for value in range(1, 176)],
             )
             result = fetch_page(
                 connection,
@@ -97,10 +97,10 @@ class PostgreSQLPaginationTests(unittest.TestCase):
                 page=2,
                 per_page=50,
             )
-            self.assertEqual(result["total"], 50)
-            self.assertEqual(result["pages"], 1)
-            self.assertEqual(result["page"], 1)
-            self.assertEqual([row["id"] for row in result["rows"]], list(range(76, 126)))
+            self.assertEqual(result["total"], 100)
+            self.assertEqual(result["pages"], 2)
+            self.assertEqual(result["page"], 2)
+            self.assertEqual([row["id"] for row in result["rows"]], list(range(126, 176))
         finally:
             connection.rollback()
             connection.close()
