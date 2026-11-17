@@ -113,6 +113,17 @@ class SQLiteSchemaCompatibilityTests(unittest.TestCase):
         )
         self.assertEqual(table_columns(self.connection, "missing_table"), set())
 
+    def test_schema_introspection_includes_generated_columns(self):
+        self.connection.execute(
+            "ALTER TABLE compatibility_probe ADD COLUMN normalized_amount "
+            "TEXT GENERATED ALWAYS AS (lower(amount)) STORED"
+        )
+        self.assertIn("normalized_amount", table_columns(self.connection, "compatibility_probe"))
+        info = table_column_info(self.connection, "compatibility_probe")
+        self.assertIn("normalized_amount", info)
+        self.assertEqual(info["normalized_amount"]["type"].upper(), "TEXT")
+        self.assertEqual(info["normalized_amount"]["pk"], 0)
+
     def test_returns_portable_column_types_and_primary_key_position(self):
         info = table_column_info(self.connection, "compatibility_probe")
         self.assertEqual(info["id"]["pk"], 1)
