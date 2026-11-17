@@ -64,6 +64,15 @@ def _stocktake_for_update(conn, stocktake_id):
     return _execute(conn, sql, (stocktake_id,)).fetchone()
 
 
+def _stock_movement_for_update(conn, movement_id):
+    sql = """SELECT m.*,p.id product_id,p.name_ar,p.sku
+        FROM stock_movements m JOIN stock_products p ON p.id=m.product_id
+        WHERE m.id=?"""
+    if database_dialect(conn) == "postgresql":
+        sql += " FOR UPDATE OF m"
+    return _execute(conn, sql, (movement_id,)).fetchone()
+
+
 def _install_stock_location_triggers(conn):
     """Install SQLite guards; PostgreSQL equivalents live in its schema migrations."""
     if database_dialect(conn) != "sqlite":
@@ -1982,9 +1991,7 @@ def resolve_pending_movement(movement_id):
     conn = get_db()
     try:
         begin_write_transaction(conn)
-        movement_row = _execute(conn, """SELECT m.*,p.id product_id,p.name_ar,p.sku
-            FROM stock_movements m JOIN stock_products p ON p.id=m.product_id WHERE m.id=?""",
-            (movement_id,)).fetchone()
+        movement_row = _stock_movement_for_update(conn, movement_id)
         movement = dict(movement_row) if movement_row else None
         if movement:
             # The journal helpers expect product["id"]; keep movement_id separate.
