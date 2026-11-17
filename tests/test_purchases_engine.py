@@ -541,7 +541,7 @@ class PurchasingAccountingTests(unittest.TestCase):
             )
         self.db.commit()
 
-        return_app = Flask(__name__)
+        return_app = Flask(__name__, template_folder=str(Path(purchases.__file__).resolve().parent / "templates"))
         return_app.secret_key = "test"
         return_app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
         return_app.register_blueprint(purchases.purchase_bp)
