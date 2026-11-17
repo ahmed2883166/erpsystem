@@ -13,6 +13,12 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import quote
 
+from scripts.verify_sqlite_postgres_copy import (
+    _foreign_key_differences,
+    _pg_foreign_key_map,
+    _sqlite_foreign_key_map,
+)
+
 
 def inspect_sqlite(path: str) -> dict:
     source = Path(path).expanduser().resolve(strict=True)
@@ -38,10 +44,12 @@ def inspect_sqlite(path: str) -> dict:
             )]
             count = conn.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()[0]
             tables[name] = {"columns": columns, "row_count": count}
+        foreign_keys = _sqlite_foreign_key_map(conn, list(tables))
         return {
             "path": str(source),
             "integrity_check": integrity,
             "foreign_key_violations": fk_issues,
+            "foreign_keys": foreign_keys,
             "tables": tables,
         }
     finally:
@@ -71,6 +79,7 @@ def inspect_postgres(dsn: str, schema: str) -> dict:
         for row in rows:
             tables.setdefault(row["table_name"], {"columns": [], "row_count": None})
             tables[row["table_name"]]["columns"].append(row["column_name"])
+        foreign_keys = _pg_foreign_key_map(conn, schema)
         for name in tables:
             # Identifiers are quoted after validation against information_schema.
             quoted_schema = '"' + schema + '"'
@@ -79,7 +88,7 @@ def inspect_postgres(dsn: str, schema: str) -> dict:
                 f"SELECT COUNT(*) FROM {quoted_schema}.{quoted_table}"
             ).fetchone()[0]
         conn.rollback()
-        return {"schema": schema, "tables": tables}
+        return {"schema": schema, "tables": tables, "foreign_keys": foreign_keys}
     except Exception:
         conn.rollback()
         raise
@@ -94,6 +103,13 @@ def build_report(sqlite_info: dict, postgres_info: dict) -> dict:
     extra_tables = sorted(set(target) - set(source))
     column_issues = []
     count_differences = []
+    missing_foreign_keys, extra_foreign_keys = _foreign_key_differences(
+        sqlite_info.get("foreign_keys", []), postgres_info.get("foreign_keys", [])
+    )
+    foreign_key_differences = {
+        "missing_in_postgres": [list(item) for item in missing_foreign_keys],
+        "extra_in_postgres": [list(item) for item in extra_foreign_keys],
+    }
     for table, details in source.items():
         if table not in target:
             continue
@@ -117,7 +133,8 @@ def build_report(sqlite_info: dict, postgres_info: dict) -> dict:
     source_ok = sqlite_info["integrity_check"] == ["ok"]
     fk_ok = not sqlite_info["foreign_key_violations"]
     ready = (source_ok and fk_ok and not missing_tables and not extra_tables
-             and not column_issues and not count_differences)
+             and not column_issues and not count_differences
+             and not missing_foreign_keys and not extra_foreign_keys)
     return {
         "read_only": True,
         "source_integrity_ok": source_ok,
@@ -125,6 +142,7 @@ def build_report(sqlite_info: dict, postgres_info: dict) -> dict:
         "missing_postgres_tables": missing_tables,
         "extra_postgres_tables": extra_tables,
         "column_differences": column_issues,
+        "foreign_key_differences": foreign_key_differences,
         "nonempty_postgres_tables": count_differences,
         "source_table_count": len(source),
         "source_row_count": sum(t["row_count"] for t in source.values()),

@@ -9,11 +9,49 @@ from scripts.verify_sqlite_postgres_copy import (
     _journal_entry_key,
     _inventory_valuation_required,
     _sqlite_foreign_key_map,
+    _pg_foreign_key_map,
     _foreign_key_differences,
     _sqlite_grouped_sum,
     _verification_passed,
     verify_copy,
 )
+from scripts.audit_sqlite_postgres_migration import build_report
+
+
+class SQLitePostgresPreflightForeignKeyTests(unittest.TestCase):
+    def _info(self, target_foreign_keys):
+        fk = ("child", ("parent_id",), "parent", ("id",), "NO ACTION", "CASCADE")
+        tables = {
+            "parent": {"columns": ["id"], "row_count": 0},
+            "child": {"columns": ["id", "parent_id"], "row_count": 0},
+        }
+        return (
+            {
+                "integrity_check": ["ok"],
+                "foreign_key_violations": [],
+                "foreign_keys": [fk],
+                "tables": tables,
+            },
+            {"foreign_keys": target_foreign_keys, "tables": tables},
+        )
+
+    def test_preflight_blocks_missing_postgres_foreign_key(self):
+        source, target = self._info([])
+        report = build_report(source, target)
+        self.assertFalse(report["preflight_passed"])
+        self.assertEqual(
+            report["foreign_key_differences"]["missing_in_postgres"],
+            [["child", ["parent_id"], "parent", ["id"], "NO ACTION", "CASCADE"]],
+        )
+
+    def test_preflight_passes_when_foreign_key_definition_matches(self):
+        fk = ("child", ("parent_id",), "parent", ("id",), "NO ACTION", "CASCADE")
+        source, target = self._info([fk])
+        report = build_report(source, target)
+        self.assertTrue(report["preflight_passed"])
+        self.assertEqual(report["foreign_key_differences"], {
+            "missing_in_postgres": [], "extra_in_postgres": []
+        })
 
 
 class SQLitePostgresCopyPlanningTests(unittest.TestCase):
