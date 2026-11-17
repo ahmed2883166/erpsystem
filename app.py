@@ -46,7 +46,7 @@ from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
 from database_backend import require_supported_runtime_backend
-from core_schema import initialize_core_schema
+from core_schema import initialize_core_schema, ensure_legacy_core_columns
 from sqlite_audit_schema import initialize_sqlite_audit_schema
 from db_compat import begin_write_transaction, insert_and_get_id, execute_script, table_exists, table_columns, table_names, table_column_info
 from report_request_control import (ReportRequestGate, bounded_env_int,
@@ -527,17 +527,8 @@ def initialize_database():
     connection = db()
     initialize_core_schema(connection)
     initialize_sqlite_audit_schema(connection)
-
-
-    user_columns = table_columns(connection, "users")
-    if "must_change_password" not in user_columns:
-        connection.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
-    if "permissions_json" not in user_columns:
-        connection.execute("ALTER TABLE users ADD COLUMN permissions_json TEXT")
+    ensure_legacy_core_columns(connection)
     initialize_roles_schema(connection)
-    account_columns = table_columns(connection, "accounts")
-    if "is_group" not in account_columns:
-        connection.execute("ALTER TABLE accounts ADD COLUMN is_group INTEGER NOT NULL DEFAULT 0")
     currency_seed = [
         ("SAR","ريال سعودي","ر.س"),("EGP","جنيه مصري","ج.م"),("USD","دولار أمريكي","$"),
         ("EUR","يورو","€"),("AED","درهم إماراتي","د.إ"),("GBP","جنيه إسترليني","£"),
