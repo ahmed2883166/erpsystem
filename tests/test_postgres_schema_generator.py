@@ -173,6 +173,13 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
                     ],
                     "foreign_keys": [],
                     "indexes": [],
+                },                {
+                    "name": "stock_products",
+                    "columns": [
+                        {"name": "reorder_point", "type": "TEXT", "pk": 0},
+                    ],
+                    "foreign_keys": [],
+                    "indexes": [],
                 },
             ]
         }
@@ -186,12 +193,16 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         self.assertIn("journal_lines.amount", review["text_numeric_candidates"])
         self.assertNotIn("journal_lines.debit", review["text_numeric_candidates"])
         self.assertNotIn("journal_lines.credit", review["text_numeric_candidates"])
-        self.assertEqual(review["text_numeric_candidate_count"], 1)
+        self.assertIn("stock_products.reorder_point", review["text_numeric_candidates"])
+        self.assertEqual(review["text_numeric_candidate_count"], 2)
         self.assertEqual(
             review["text_numeric_candidates_by_table"],
-            {"journal_lines": ["amount"]},
+            {
+                "journal_lines": ["amount"],
+                "stock_products": ["reorder_point"],
+            },
         )
-        self.assertEqual(review["numeric_review_candidate_count"], 2)
+        self.assertEqual(review["numeric_review_candidate_count"], 3)
         self.assertNotIn(
             ("tax_rates", "tax_number"),
             [
@@ -207,6 +218,7 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
             [
                 ("journal_lines", "amount", "TEXT", "TEXT"),
                 ("journal_lines", "unit_cost", "REAL", "DOUBLE PRECISION"),
+                ("stock_products", "reorder_point", "TEXT", "TEXT"),
             ],
         )
 
