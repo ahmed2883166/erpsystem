@@ -7,6 +7,7 @@ onto payroll lines when a run is created.
 from app_paths import DB_PATH
 from database import connect_database
 from db_compat import DB_ERROR, execute_script, table_columns, table_exists, begin_write_transaction, insert_and_get_id
+from db_sql import execute_compat, executemany_compat
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
@@ -17,6 +18,16 @@ from accounting_core import post_journal
 payroll_compliance_bp = Blueprint("payroll_compliance", __name__)
 
 CENT = Decimal("0.01")
+
+
+def _execute(conn, sql, params=()):
+    """Run qmark SQL through the active SQLite/PostgreSQL adapter."""
+    return execute_compat(conn, sql, params)
+
+
+def _executemany(conn, sql, rows):
+    """Run a qmark SQL batch through the active database adapter."""
+    return executemany_compat(conn, sql, rows)
 
 
 def _d(value):
@@ -92,7 +103,7 @@ def initialize_payroll_compliance_schema():
     """)
     rule_cols = table_columns(conn, "payroll_rule_sets")
     if "taxable_rounding_unit" not in rule_cols:
-        conn.execute("ALTER TABLE payroll_rule_sets ADD COLUMN taxable_rounding_unit TEXT NOT NULL DEFAULT '1'")
+        _execute(conn, "ALTER TABLE payroll_rule_sets ADD COLUMN taxable_rounding_unit TEXT NOT NULL DEFAULT '1'")
     employee_cols = table_columns(conn, "employees")
     for name, definition in {
         "legal_category": "TEXT NOT NULL DEFAULT 'local'",
@@ -101,7 +112,7 @@ def initialize_payroll_compliance_schema():
         "insurance_enabled": "INTEGER NOT NULL DEFAULT 1",
     }.items():
         if name not in employee_cols:
-            conn.execute("ALTER TABLE employees ADD COLUMN " + name + " " + definition)
+            _execute(conn, "ALTER TABLE employees ADD COLUMN " + name + " " + definition)
     line_cols = table_columns(conn, "payroll_lines")
     for name, definition in {
         "rule_set_id": "INTEGER REFERENCES payroll_rule_sets(id)",
@@ -109,11 +120,11 @@ def initialize_payroll_compliance_schema():
         "insured_wage": "TEXT NOT NULL DEFAULT '0'",
     }.items():
         if name not in line_cols:
-            conn.execute("ALTER TABLE payroll_lines ADD COLUMN " + name + " " + definition)
+            _execute(conn, "ALTER TABLE payroll_lines ADD COLUMN " + name + " " + definition)
     # Seed the Egypt baseline once on existing and new installations. Never
     # overwrite a rule set that an accountant has already reviewed or edited.
     if current_tax_country(conn) == "EG":
-        existing_egypt = conn.execute(
+        existing_egypt = _execute(conn, 
             "SELECT 1 FROM payroll_rule_sets WHERE country_code='EG' "
             "AND category_code='local' AND effective_from='2026-01-01' LIMIT 1"
         ).fetchone()
@@ -124,7 +135,7 @@ def initialize_payroll_compliance_schema():
 
 
 def current_tax_country(conn):
-    row = conn.execute(
+    row = _execute(conn, 
         "SELECT setting_value FROM company_settings WHERE setting_key='tax_country'"
     ).fetchone()
     return (row["setting_value"] if row else "EG").upper()
@@ -132,7 +143,7 @@ def current_tax_country(conn):
 
 def _active_rule(conn, country_code, category_code, period):
     period_date = date.fromisoformat(period + "-01").isoformat()
-    return conn.execute("""
+    return _execute(conn, """
         SELECT * FROM payroll_rule_sets
         WHERE country_code=? AND category_code=? AND enabled=1 AND effective_from<=?
         ORDER BY effective_from DESC,id DESC LIMIT 1
@@ -143,7 +154,7 @@ def ensure_default_payroll_rules(conn):
     """Ensure the built-in Egypt baseline exists without overwriting user edits."""
     country = current_tax_country(conn)
     if country == "EG":
-        exists = conn.execute(
+        exists = _execute(conn, 
             "SELECT 1 FROM payroll_rule_sets WHERE country_code='EG' "
             "AND category_code='local' AND effective_from='2026-01-01' LIMIT 1"
         ).fetchone()
@@ -158,7 +169,7 @@ def missing_payroll_rule_categories(conn, employees, period):
     period_start = date.fromisoformat(period + "-01").isoformat()
     for employee in employees:
         category = (employee["legal_category"] or "local").strip().lower()
-        rule = conn.execute("""
+        rule = _execute(conn, """
             SELECT 1 FROM payroll_rule_sets
             WHERE country_code=? AND category_code=? AND enabled=1 AND effective_from<=?
             ORDER BY effective_from DESC,id DESC LIMIT 1
@@ -204,7 +215,7 @@ def calculate_payroll_deductions(conn, employee, gross_monthly, period, taxable_
     rounding_unit = _d(rule["taxable_rounding_unit"] if "taxable_rounding_unit" in rule.keys() else "1")
     if rounding_unit > 0:
         annual_taxable = (annual_taxable // rounding_unit) * rounding_unit
-    tier_rows = conn.execute("""
+    tier_rows = _execute(conn, """
         SELECT income_max,lower_bound,upper_bound,rate FROM payroll_tax_tier_brackets
         WHERE rule_set_id=? ORDER BY CASE WHEN income_max IS NULL THEN 1 ELSE 0 END,
           CAST(income_max AS NUMERIC),CAST(lower_bound AS NUMERIC),id
@@ -225,7 +236,7 @@ def calculate_payroll_deductions(conn, employee, gross_monthly, period, taxable_
             chosen_max = None
         brackets = tiers[chosen_max]
     else:
-        brackets = conn.execute("""
+        brackets = _execute(conn, """
             SELECT lower_bound,upper_bound,rate FROM payroll_tax_brackets
             WHERE rule_set_id=? ORDER BY CAST(lower_bound AS NUMERIC),id
         """, (rule["id"],)).fetchall()
@@ -263,13 +274,13 @@ def calculate_payroll_deductions(conn, employee, gross_monthly, period, taxable_
 
 def seed_egypt_2026(conn):
     """Insert a reviewable Egypt 2026 baseline only when it does not already exist."""
-    existing = conn.execute(
+    existing = _execute(conn, 
         "SELECT id FROM payroll_rule_sets WHERE country_code='EG' "
         "AND category_code='local' AND effective_from='2026-01-01' LIMIT 1"
     ).fetchone()
     if existing:
         raise ValueError("إعداد مصر 2026 موجود بالفعل؛ لن يتم استبدال أي تعديلات أو شرائح محفوظة. أنشئ مجموعة جديدة بتاريخ سريان جديد إذا أردت تحديثها.")
-    inserted = conn.execute("""
+    inserted = _execute(conn, """
         INSERT INTO payroll_rule_sets(country_code,category_code,effective_from,
           personal_exemption_annual,taxable_rounding_unit,insurance_floor,insurance_ceiling,
           employee_insurance_rate,employer_insurance_rate,notes)
@@ -281,7 +292,7 @@ def seed_egypt_2026(conn):
     # Never use the conflict row as permission to overwrite its rules or brackets.
     if inserted.rowcount != 1:
         raise ValueError("تم إنشاء إعداد مصر 2026 بواسطة عملية أخرى؛ لم يتم تعديل أي قواعد محفوظة.")
-    rule = conn.execute("""
+    rule = _execute(conn, """
         SELECT id FROM payroll_rule_sets
         WHERE country_code='EG' AND category_code='local' AND effective_from='2026-01-01'
     """).fetchone()
@@ -299,7 +310,7 @@ def seed_egypt_2026(conn):
         ("1200000", [("0","400000","22.5"),("400000",None,"25")]),
         (None, [("0",None,"27.5")]),
     ]
-    conn.executemany("""
+    _executemany(conn, """
         INSERT INTO payroll_tax_tier_brackets(rule_set_id,income_max,lower_bound,upper_bound,rate)
         VALUES(?,?,?,?,?)
     """, [(rule_id, income_max, lower, upper, rate)
@@ -368,16 +379,16 @@ def rules():
                 rate = _d(request.form.get("rate"))
                 if lower < 0 or (upper is not None and upper <= lower) or rate < 0 or rate > 100:
                     raise ValueError("راجع بداية/نهاية الشريحة ونسبة الضريبة.")
-                rule = conn.execute("SELECT id FROM payroll_rule_sets WHERE id=?", (rule_id,)).fetchone()
+                rule = _execute(conn, "SELECT id FROM payroll_rule_sets WHERE id=?", (rule_id,)).fetchone()
                 if not rule:
                     raise ValueError("مجموعة القواعد غير موجودة.")
-                existing = conn.execute("SELECT lower_bound,upper_bound FROM payroll_tax_brackets WHERE rule_set_id=? ORDER BY CAST(lower_bound AS NUMERIC)", (rule_id,)).fetchall()
+                existing = _execute(conn, "SELECT lower_bound,upper_bound FROM payroll_tax_brackets WHERE rule_set_id=? ORDER BY CAST(lower_bound AS NUMERIC)", (rule_id,)).fetchall()
                 expected = _d(existing[-1]["upper_bound"]) if existing and existing[-1]["upper_bound"] else (Decimal("0") if not existing else None)
                 if expected is None or lower != expected:
                     raise ValueError("ابدأ أول شريحة من صفر، واجعل بداية كل شريحة مساوية لنهاية الشريحة السابقة.")
                 if existing and existing[-1]["upper_bound"] in (None, ""):
                     raise ValueError("لا يمكن إضافة شريحة بعد شريحة مفتوحة النهاية.")
-                conn.execute("INSERT INTO payroll_tax_brackets(rule_set_id,lower_bound,upper_bound,rate) VALUES(?,?,?,?)",
+                _execute(conn, "INSERT INTO payroll_tax_brackets(rule_set_id,lower_bound,upper_bound,rate) VALUES(?,?,?,?)",
                              (rule_id,str(lower),str(upper) if upper is not None else None,str(rate)))
                 _audit(conn, "payroll_tax_bracket_created", "rule=" + str(rule_id) + " from=" + str(lower))
                 conn.commit()
@@ -388,7 +399,7 @@ def rules():
         conn.rollback()
         flash(str(exc) or "تعذر حفظ قواعد الرواتب.", "error")
     country = current_tax_country(conn)
-    rule_sets = conn.execute("""
+    rule_sets = _execute(conn, """
         SELECT r.*,
           (SELECT COUNT(*) FROM payroll_tax_brackets b WHERE b.rule_set_id=r.id) +
           (SELECT COUNT(*) FROM payroll_tax_tier_brackets t WHERE t.rule_set_id=r.id) bracket_count
@@ -396,7 +407,7 @@ def rules():
     """).fetchall()
     # SQLite compound SELECTs only allow ORDER BY output columns/aliases.
     # Put the UNION in a subquery so numeric sorting is legal and deterministic.
-    brackets = conn.execute("""
+    brackets = _execute(conn, """
         SELECT * FROM (
             SELECT b.id,b.rule_set_id,b.lower_bound,b.upper_bound,b.rate,
                    r.country_code,r.category_code,NULL AS income_max,'standard' AS bracket_kind
@@ -416,7 +427,7 @@ def rules():
 
 def _audit(conn, action, details):
     if table_exists(conn, "audit_log"):
-        conn.execute("INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
+        _execute(conn, "INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
                      (session.get("user_id"), action, details))
 
 
@@ -429,7 +440,7 @@ def report():
     except ValueError:
         period = date.today().strftime("%Y-%m")
     conn = _db()
-    rows = conn.execute("""
+    rows = _execute(conn, """
         SELECT l.*,e.employee_code,e.full_name,e.legal_category,r.status
         FROM payroll_lines l
         JOIN payroll_runs r ON r.id=l.run_id
@@ -453,7 +464,7 @@ def report():
 
 
 def _payroll_obligations(conn, period):
-    rows = conn.execute("""
+    rows = _execute(conn, """
         SELECT l.taxable_income_tax,l.employee_insurance,l.employer_insurance
         FROM payroll_lines l JOIN payroll_runs r ON r.id=l.run_id
         WHERE r.period=? AND r.status='posted'
@@ -463,7 +474,7 @@ def _payroll_obligations(conn, period):
         "social_insurance": sum((_d(row["employee_insurance"]) + _d(row["employer_insurance"])
                                 for row in rows), Decimal("0")),
     }
-    paid_rows = conn.execute("""
+    paid_rows = _execute(conn, """
         SELECT payment_type,amount FROM payroll_statutory_payments WHERE period=?
     """, (period,)).fetchall()
     paid = {"salary_tax": Decimal("0"), "social_insurance": Decimal("0")}
@@ -497,10 +508,10 @@ def payments():
             cash_id = int(request.form.get("cash_account_id"))
             if amount <= 0:
                 raise ValueError("قيمة السداد يجب أن تكون أكبر من صفر.")
-            liability = conn.execute(
+            liability = _execute(conn, 
                 "SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (liability_id,)
             ).fetchone()
-            cash = conn.execute(
+            cash = _execute(conn, 
                 "SELECT id,code,name_ar,account_type,is_group,active FROM accounts WHERE id=?", (cash_id,)
             ).fetchone()
             if not liability or liability["account_type"] != "liability" or liability["is_group"] or not liability["active"]:
@@ -520,7 +531,7 @@ def payments():
             reference = (request.form.get("reference", "").strip() or prefix + period + "-" + stamp)
             if len(reference) > 100:
                 raise ValueError("مرجع السداد لا يجب أن يتجاوز 100 حرف.")
-            if conn.execute("SELECT 1 FROM payroll_statutory_payments WHERE reference=?", (reference,)).fetchone():
+            if _execute(conn, "SELECT 1 FROM payroll_statutory_payments WHERE reference=?", (reference,)).fetchone():
                 raise ValueError("مرجع السداد مستخدم بالفعل.")
             description = "سداد ضريبة مرتبات عن " + period if payment_type == "salary_tax" else "سداد تأمينات اجتماعية عن " + period
             journal_id = post_journal(
@@ -529,7 +540,7 @@ def payments():
                  (cash_id, 0, amount, "سداد نقدي/بنكي للجهة المختصة")],
                 session.get("user_id"),
             )
-            conn.execute("""
+            _execute(conn, """
                 INSERT INTO payroll_statutory_payments(period,payment_type,payment_date,amount,
                     liability_account_id,cash_account_id,journal_entry_id,reference,created_by)
                 VALUES(?,?,?,?,?,?,?,?,?)
@@ -542,12 +553,12 @@ def payments():
             conn.rollback()
             flash(str(exc) or "تعذر تسجيل السداد.", "error")
     obligations = _payroll_obligations(conn, period)
-    accounts = conn.execute("""
+    accounts = _execute(conn, """
         SELECT id,code,name_ar,account_type FROM accounts
         WHERE active=1 AND is_group=0 AND account_type IN ('asset','liability')
         ORDER BY code
     """).fetchall()
-    payment_rows = conn.execute("""
+    payment_rows = _execute(conn, """
         SELECT p.*,a.code liability_code,a.name_ar liability_name,c.code cash_code,c.name_ar cash_name
         FROM payroll_statutory_payments p
         JOIN accounts a ON a.id=p.liability_account_id
