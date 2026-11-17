@@ -50,14 +50,24 @@ startup. This runbook describes a controlled rehearsal, not a production cutover
      --apply
    ```
 
-5. Retain the JSON report and independently reconcile row counts, journal debit
-   and credit totals, opening balances, inventory quantities/values, and
-   customer/supplier balances against the source before considering a cutover.
+5. Run the independent, read-only post-copy verification against the same
+   source backup and isolated target:
+
+   ```bash
+   python scripts/verify_sqlite_postgres_copy.py \
+     --sqlite /path/to/company-backup.sqlite \
+     --postgres-dsn "$NEXUS_POSTGRES_DSN" \
+     --schema nexus_rehearsal
+   ```
+
+6. Retain both JSON reports. The verifier checks every table/column and row
+   count, exact-decimal journal debit/credit totals, customer/supplier journal
+   balances by party ID, and inventory valuation-layer quantity/value totals
+   overall and by product/warehouse. Any mismatch blocks approval.
 
 ## Important limitations
 
-The copy utility currently verifies SQLite integrity and foreign keys, exact
-table/column coverage, empty target tables, per-table copied row counts, and
-identity sequence positions. It does not yet perform NEXUS-specific accounting
-or inventory balance reconciliation, and it does not switch Flask to
-PostgreSQL. Do not treat a successful row copy as approval to cut over.
+The verifier is a reconciliation gate, not a migration or cutover tool. It does
+not yet prove every operational workflow, tax report, opening/closing balance,
+or bank statement reconciliation. It does not switch Flask to PostgreSQL.
+Do not treat matching row counts and control totals as approval to cut over.
