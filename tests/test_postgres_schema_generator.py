@@ -1,6 +1,7 @@
 import unittest
 
 from scripts.generate_postgres_schema import (
+    default_sql,
     extract_check_constraints,
     generate_postgres_ddl,
     pg_type,
@@ -14,6 +15,8 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         self.assertEqual(pg_type({"type": "REAL"}), "DOUBLE PRECISION")
         self.assertEqual(pg_type({"type": "TEXT"}), "TEXT")
         self.assertEqual(pg_type({"type": ""}), "TEXT")
+        self.assertEqual(default_sql("CURRENT_TIMESTAMP", "TEXT"), "(CURRENT_TIMESTAMP::text)")
+        self.assertEqual(default_sql("CURRENT_TIMESTAMP", "BIGINT"), "CURRENT_TIMESTAMP")
 
     def test_extracts_balanced_check_constraints(self):
         sql = """CREATE TABLE sample (
