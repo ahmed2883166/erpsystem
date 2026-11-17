@@ -113,13 +113,14 @@ def table_column_info(connection, table_name, *, schema=None):
             LEFT JOIN information_schema.key_column_usage AS k
               ON k.table_schema=c.table_schema AND k.table_name=c.table_name
              AND k.column_name=c.column_name
-            LEFT JOIN information_schema.table_constraints AS t
-              ON t.constraint_schema=k.constraint_schema
-             AND t.constraint_name=k.constraint_name
-             AND t.table_name=k.table_name
-             AND t.constraint_type='PRIMARY KEY'
+             AND EXISTS (
+                 SELECT 1 FROM information_schema.table_constraints AS t
+                 WHERE t.constraint_schema=k.constraint_schema
+                   AND t.constraint_name=k.constraint_name
+                   AND t.table_name=k.table_name
+                   AND t.constraint_type='PRIMARY KEY'
+             )
             WHERE c.table_schema=%s AND c.table_name=%s
-              AND (k.constraint_name IS NULL OR t.constraint_name IS NOT NULL)
             ORDER BY c.ordinal_position
             """,
             (schema_name, table_name),
@@ -133,13 +134,14 @@ def table_column_info(connection, table_name, *, schema=None):
             LEFT JOIN information_schema.key_column_usage AS k
               ON k.table_schema=c.table_schema AND k.table_name=c.table_name
              AND k.column_name=c.column_name
-            LEFT JOIN information_schema.table_constraints AS t
-              ON t.constraint_schema=k.constraint_schema
-             AND t.constraint_name=k.constraint_name
-             AND t.table_name=k.table_name
-             AND t.constraint_type='PRIMARY KEY'
+             AND EXISTS (
+                 SELECT 1 FROM information_schema.table_constraints AS t
+                 WHERE t.constraint_schema=k.constraint_schema
+                   AND t.constraint_name=k.constraint_name
+                   AND t.table_name=k.table_name
+                   AND t.constraint_type='PRIMARY KEY'
+             )
             WHERE c.table_schema=current_schema() AND c.table_name=%s
-              AND (k.constraint_name IS NULL OR t.constraint_name IS NOT NULL)
             ORDER BY c.ordinal_position
             """,
             (table_name,),
