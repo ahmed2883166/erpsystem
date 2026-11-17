@@ -124,6 +124,7 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
             issues.append({"control": "table_coverage", "missing": missing, "extra": extra})
 
         row_counts = {}
+        target_columns_by_table = {}
         for table in source_tables:
             if table not in target_tables:
                 continue
@@ -133,6 +134,7 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
                 "WHERE table_schema=%s AND table_name=%s ORDER BY ordinal_position",
                 (schema, table),
             ).fetchall()]
+            target_columns_by_table[table] = target_cols
             if set(src_cols) != set(target_cols):
                 issues.append({
                     "control": "column_coverage", "table": table,
@@ -154,8 +156,26 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
                 })
 
         controls = []
+        controls_skipped = []
         def compare_control(table, amount, groups, label):
             if table not in source_tables or table not in target_tables:
+                controls_skipped.append({
+                    "control": label,
+                    "reason": "table_missing",
+                })
+                return
+            required = {amount, *groups}
+            source_available = set(source_columns.get(table, []))
+            target_available = set(target_columns_by_table.get(table, []))
+            missing_source = sorted(required - source_available)
+            missing_target = sorted(required - target_available)
+            if missing_source or missing_target:
+                controls_skipped.append({
+                    "control": label,
+                    "reason": "required_columns_missing",
+                    "missing_in_sqlite": missing_source,
+                    "missing_in_postgres": missing_target,
+                })
                 return
             source_map = _sqlite_grouped_sum(src, table, amount, groups)
             target_map = _pg_grouped_sum(dst, schema, table, amount, groups)
@@ -190,6 +210,7 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
             "source_row_count": sum(item["sqlite"] for item in row_counts.values()),
             "target_row_count": sum(item["postgres"] for item in row_counts.values()),
             "financial_and_inventory_controls": controls,
+            "financial_and_inventory_controls_skipped": controls_skipped,
             "issue_count": len(issues),
             "issues": issues[:200],
             "passed": not issues and len(row_counts) == len(source_tables),
