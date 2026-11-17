@@ -34,7 +34,7 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
                 "CREATE TABLE first_table (id BIGINT);", encoding="utf-8"
             )
             migrations = load_migrations(root)
-        self.assertEqual([item.version for item in migrations], [1, 2, 3])
+        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4])
         self.assertEqual(migrations[0].name, "0001_create_first.sql")
         self.assertEqual(len(migrations[0].checksum), 64)
 
@@ -143,7 +143,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
             self._migration(1, "0001_create_probe.sql",
                             'CREATE TABLE "probe" (id BIGINT PRIMARY KEY)')
         ]
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         row = self.connection.execute(
             "SELECT COUNT(*) AS count FROM "
@@ -173,7 +173,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
                 """,
             )
         ]
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4])
         row = self.connection.execute(
             'SELECT label FROM ' + quote_schema_name(self.schema) + '."multi_probe" WHERE id=1'
         ).fetchone()
@@ -262,7 +262,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
     def test_party_and_banking_schema_supports_independent_ledgers(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         schema = quote_schema_name(self.schema)
 
@@ -300,6 +300,70 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
                 ("BAD-TRANSFER", "2026-01-01", account_id, "transfer", "10", "Missing destination"),
             )
         self.connection.rollback()
+
+    def test_purchasing_schema_creates_order_receipt_and_bill_links(self):
+        migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
+        migrations = load_migrations(migration_dir)
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
+        schema = quote_schema_name(self.schema)
+        user_id = self.connection.execute(
+            f"INSERT INTO {schema}.users(username,full_name,password_hash,role,created_at) "
+            "VALUES (%s,%s,%s,%s,%s) RETURNING id",
+            ("purchase_test", "Purchase Test", "hash", "admin", "2026-01-01"),
+        ).fetchone()["id"]
+        supplier_id = self.connection.execute(
+            f"INSERT INTO {schema}.suppliers(code,name) VALUES (%s,%s) RETURNING id",
+            ("SUP-PG-1", "Supplier PG"),
+        ).fetchone()["id"]
+        product_id = self.connection.execute(
+            f"INSERT INTO {schema}.stock_products(sku,name_ar) VALUES (%s,%s) RETURNING id",
+            ("SKU-PG-1", "Test Product"),
+        ).fetchone()["id"]
+        warehouse_id = self.connection.execute(
+            f"INSERT INTO {schema}.stock_warehouses(code,name_ar) VALUES (%s,%s) RETURNING id",
+            ("WH-PG-1", "Main Warehouse"),
+        ).fetchone()["id"]
+        po_id = self.connection.execute(
+            f"INSERT INTO {schema}.purchase_orders(po_no,supplier_id,order_date,created_by) "
+            "VALUES (%s,%s,%s,%s) RETURNING id",
+            ("PO-PG-1", supplier_id, "2026-01-02", user_id),
+        ).fetchone()["id"]
+        po_line_id = self.connection.execute(
+            f"INSERT INTO {schema}.purchase_order_lines(po_id,product_id,quantity,unit_price) "
+            "VALUES (%s,%s,%s,%s) RETURNING id",
+            (po_id, product_id, "12.5", "4.25"),
+        ).fetchone()["id"]
+        receipt_id = self.connection.execute(
+            f"INSERT INTO {schema}.goods_receipts(receipt_no,po_id,supplier_id,warehouse_id,receipt_date) "
+            "VALUES (%s,%s,%s,%s,%s) RETURNING id",
+            ("GR-PG-1", po_id, supplier_id, warehouse_id, "2026-01-03"),
+        ).fetchone()["id"]
+        receipt_line_id = self.connection.execute(
+            f"INSERT INTO {schema}.goods_receipt_lines(receipt_id,po_line_id,product_id,quantity,unit_cost,total_cost) "
+            "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+            (receipt_id, po_line_id, product_id, "12.5", "4.25", "53.125"),
+        ).fetchone()["id"]
+        bill_id = self.connection.execute(
+            f"INSERT INTO {schema}.supplier_bills(bill_no,supplier_id,bill_date,supplier_invoice_no,subtotal,total_amount) "
+            "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+            ("BILL-PG-1", supplier_id, "2026-01-04", "INV-1", "53.125", "53.125"),
+        ).fetchone()["id"]
+        self.connection.execute(
+            f"INSERT INTO {schema}.supplier_bill_receipts(bill_id,receipt_id,matched_amount) VALUES (%s,%s,%s)",
+            (bill_id, receipt_id, "53.125"),
+        )
+        self.connection.execute(
+            f"INSERT INTO {schema}.supplier_bill_inventory_lines(bill_id,line_no,receipt_line_id,product_id,"
+            "billed_quantity,invoice_unit_price,line_total) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (bill_id, 1, receipt_line_id, product_id, "12.5", "4.25", "53.125"),
+        )
+        self.assertEqual(
+            str(self.connection.execute(
+                f"SELECT total_amount FROM {schema}.supplier_bills WHERE id=%s", (bill_id,)
+            ).fetchone()["total_amount"]),
+            "53.12500000",
+        )
 
     def test_inventory_schema_uses_exact_quantities_and_enforces_location_scope(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
