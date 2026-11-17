@@ -157,7 +157,8 @@ def restore_postgres_backup_to_new_database(
     archive_path, admin_dsn, *, database_name=None, pg_restore_path=None,
     timeout=3600,
 ):
-    """Restore into a newly-created database; refuse to overwrite any existing DB."""
+    """Restore verified dump bytes into a new DB; never overwrite an existing DB."""
+    archive_path = Path(archive_path)
     manifest = validate_postgres_backup_archive(
         archive_path, pg_restore_path=pg_restore_path, timeout=min(timeout, 300)
     )
@@ -174,36 +175,59 @@ def restore_postgres_backup_to_new_database(
     except ImportError as exc:
         raise RuntimeError("PostgreSQL restore requires psycopg 3.") from exc
 
-    with psycopg.connect(admin_dsn, autocommit=True) as admin:
-        exists = admin.execute(
-            "SELECT 1 FROM pg_database WHERE datname=%s", (target_name,)
-        ).fetchone()
-        if exists:
-            raise FileExistsError("Restore target already exists; no existing database was changed.")
-        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(target_name)))
-
-    try:
-        with zipfile.ZipFile(archive_path, "r") as archive:
-            with tempfile.NamedTemporaryFile(prefix="nexus-pg-restore-", suffix=".dump") as dump:
-                with archive.open(DUMP_MEMBER, "r") as source:
+    # Pin the exact dump bytes that passed checksum validation BEFORE creating
+    # the destination database. Re-read and verify the manifest and checksum so
+    # replacing the ZIP between validation and restore cannot swap the payload.
+    with tempfile.TemporaryDirectory(prefix="nexus-pg-restore-") as temporary:
+        dump_path = Path(temporary) / DUMP_MEMBER
+        hasher = hashlib.sha256()
+        try:
+            with zipfile.ZipFile(archive_path, "r") as archive:
+                current_manifest = json.loads(
+                    archive.read(MANIFEST_MEMBER).decode("utf-8")
+                )
+                if current_manifest != manifest:
+                    raise ValueError("PostgreSQL backup changed after validation.")
+                with archive.open(DUMP_MEMBER, "r") as source, dump_path.open("wb") as target:
                     for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                        dump.write(chunk)
-                dump.flush()
-                restore_env = dict(env)
-                restore_env["PGDATABASE"] = target_name
-                _run([
-                    pg_restore, "--no-password", "--exit-on-error",
-                    "--single-transaction", "--no-owner", "--no-acl",
-                    "--dbname", target_name, dump.name,
-                ], env=restore_env, timeout=timeout)
-    except Exception as restore_error:
+                        hasher.update(chunk)
+                        target.write(chunk)
+        except (KeyError, UnicodeDecodeError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
+            raise ValueError("PostgreSQL backup changed or became invalid after validation.") from exc
+        if not dump_path.is_file() or dump_path.stat().st_size <= 0:
+            raise ValueError("PostgreSQL backup dump is empty.")
+        if hasher.hexdigest() != manifest.get("dump_sha256"):
+            raise ValueError("PostgreSQL backup checksum changed after validation.")
+
         with psycopg.connect(admin_dsn, autocommit=True) as admin:
-            admin.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(target_name)))
-        if isinstance(restore_error, subprocess.CalledProcessError):
-            diagnostic = (restore_error.stderr or restore_error.stdout or "").strip()
-            if diagnostic:
-                restore_error.add_note("pg_restore diagnostic: " + diagnostic[-4000:])
-        raise
+            exists = admin.execute(
+                "SELECT 1 FROM pg_database WHERE datname=%s", (target_name,)
+            ).fetchone()
+            if exists:
+                raise FileExistsError(
+                    "Restore target already exists; no existing database was changed."
+                )
+            admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(target_name)))
+
+        try:
+            restore_env = dict(env)
+            restore_env["PGDATABASE"] = target_name
+            _run([
+                pg_restore, "--no-password", "--exit-on-error",
+                "--single-transaction", "--no-owner", "--no-acl",
+                "--dbname", target_name, str(dump_path),
+            ], env=restore_env, timeout=timeout)
+        except Exception as restore_error:
+            with psycopg.connect(admin_dsn, autocommit=True) as admin:
+                admin.execute(
+                    sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(target_name))
+                )
+            if isinstance(restore_error, subprocess.CalledProcessError):
+                diagnostic = (restore_error.stderr or restore_error.stdout or "").strip()
+                if diagnostic:
+                    restore_error.add_note("pg_restore diagnostic: " + diagnostic[-4000:])
+            raise
+
     return {
         "database_name": target_name,
         "source_database_name": manifest.get("database_name", ""),
