@@ -3,7 +3,7 @@ import os
 import unittest
 import uuid
 
-from financial_planning import initialize_planning_schema
+from financial_planning import create_financial_year, initialize_planning_schema
 
 
 POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
@@ -41,6 +41,14 @@ class FinancialPlanningPostgreSQLSchemaTests(unittest.TestCase):
             connection.commit()
 
             initialize_planning_schema(connection)
+            year_id = create_financial_year(
+                connection, "FY 2026 PostgreSQL", "2026-01-01", "2026-12-31", 1
+            )
+            self.assertGreater(year_id, 0)
+            with self.assertRaisesRegex(ValueError, "FY 2026 PostgreSQL"):
+                create_financial_year(
+                    connection, "Overlapping FY", "2026-06-01", "2027-05-31", 1
+                )
             columns = connection.execute("""
                 SELECT column_name FROM information_schema.columns
                 WHERE table_schema=%s AND table_name='journal_entries'
