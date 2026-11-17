@@ -473,6 +473,7 @@ def generate_postgres_ddl(snapshot):
 
     review = {
         "table_count": len(tables),
+        "column_count": sum(len(table.get("columns", [])) for table in tables),
         "numeric_review_candidate_count": len(numeric_review_candidates),
         "numeric_review_candidates": numeric_review_candidates,
         "numeric_review_candidates_by_table": numeric_review_candidates_by_table,
@@ -512,7 +513,7 @@ def main(argv=None):
     print(json.dumps({
         "output": str(Path(args.output)),
         "review_output": str(Path(args.review_output)),
-        "summary": {key: review[key] for key in ("table_count", "foreign_key_count", "index_count")},
+        "summary": {key: review[key] for key in ("table_count", "column_count", "foreign_key_count", "index_count", "trigger_count")},
         "numeric_candidates": len(review["text_numeric_candidates"]),
     }, ensure_ascii=False))
     return 0

@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 
 
-def validate(ddl_path, dsn):
+def validate(ddl_path, dsn, expected_review_path=None):
     try:
         import psycopg
     except ImportError as exc:
@@ -27,6 +27,11 @@ def validate(ddl_path, dsn):
             table_count = connection.execute(
                 """SELECT COUNT(*) FROM information_schema.tables
                    WHERE table_schema = %s AND table_type = 'BASE TABLE'""",
+                (schema_name,),
+            ).fetchone()[0]
+            column_count = connection.execute(
+                """SELECT COUNT(*) FROM information_schema.columns
+                   WHERE table_schema = %s""",
                 (schema_name,),
             ).fetchone()[0]
             foreign_key_count = connection.execute(
@@ -54,9 +59,30 @@ def validate(ddl_path, dsn):
             ).fetchone()[0]
             if invalid_indexes:
                 raise AssertionError(f"{invalid_indexes} invalid PostgreSQL indexes.")
+            actual_counts = {
+                "table_count": table_count,
+                "column_count": column_count,
+                "foreign_key_count": foreign_key_count,
+                "index_count": index_count,
+                "trigger_count": trigger_count,
+            }
+            if expected_review_path:
+                expected_review = json.loads(Path(expected_review_path).read_text(encoding="utf-8"))
+                mismatches = {
+                    key: {"expected": expected_review.get(key), "actual": actual_counts[key]}
+                    for key in actual_counts
+                    if not isinstance(expected_review.get(key), int)
+                    or expected_review[key] != actual_counts[key]
+                }
+                if mismatches:
+                    raise AssertionError(
+                        "Generated PostgreSQL schema counts do not match the source review: "
+                        + json.dumps(mismatches, ensure_ascii=False, sort_keys=True)
+                    )
             return {
                 "schema": schema_name,
-                "table_count": table_count,
+                **actual_counts,
+                "expected_counts_verified": bool(expected_review_path),
                 "foreign_key_count": foreign_key_count,
                 "index_count": index_count,
                 "trigger_count": trigger_count,
@@ -79,10 +105,15 @@ def main(argv=None):
         default=os.environ.get("NEXUS_TEST_POSTGRES_DSN", ""),
         help="Disposable PostgreSQL test database DSN",
     )
+    parser.add_argument(
+        "--expected-review",
+        default="",
+        help="Optional generator review JSON; verify PostgreSQL object counts match it",
+    )
     args = parser.parse_args(argv)
     if not args.dsn:
         parser.error("Provide --dsn or NEXUS_TEST_POSTGRES_DSN.")
-    result = validate(args.ddl, args.dsn)
+    result = validate(args.ddl, args.dsn, args.expected_review or None)
     print(json.dumps(result, ensure_ascii=False))
     return 0
 
