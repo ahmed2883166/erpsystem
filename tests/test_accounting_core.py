@@ -274,7 +274,7 @@ class SharedAccountingCoreTests(unittest.TestCase):
 
     def test_reconciliation_snapshot_includes_residual_value_on_zero_quantity_layer(self):
         self.db.execute("ALTER TABLE stock_valuation_layers ADD COLUMN value_remaining TEXT")
-        self.db.execute("UPDATE stock_valuation_layers SET value_remaining='0'")
+        self.db.execute("UPDATE stock_valuation_layers SET value_remaining=CAST(qty_remaining AS INTEGER)*CAST(unit_cost AS INTEGER)")
         self.db.execute(
             "INSERT INTO stock_valuation_layers(id,qty_remaining,unit_cost,value_remaining) VALUES(3,'0','99','7.25')"
         )
