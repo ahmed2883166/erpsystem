@@ -326,15 +326,16 @@ class DecimalSumDialectTests(unittest.TestCase):
         connection = sqlite3.connect(":memory:")
         try:
             register_decimal_aggregates(connection)
+            connection.execute("CREATE TABLE quantity_probe(quantity TEXT)")
+            connection.executemany(
+                "INSERT INTO quantity_probe(quantity) VALUES (?)",
+                [("0.00000000000000000001",), ("-0.00000000000000000001",)],
+            )
             expression = decimal_compare_expression(connection, "quantity")
-            positive = connection.execute(
-                "SELECT " + expression + " > 0",
-                {"quantity": "0.00000000000000000001"},
-            ).fetchone()[0]
-            negative = connection.execute(
-                "SELECT " + expression + " > 0",
-                {"quantity": "-0.00000000000000000001"},
-            ).fetchone()[0]
+            results = connection.execute(
+                "SELECT " + expression + " > 0 FROM quantity_probe ORDER BY rowid"
+            ).fetchall()
+            positive, negative = (row[0] for row in results)
             self.assertEqual((positive, negative), (1, 0))
         finally:
             connection.close()
