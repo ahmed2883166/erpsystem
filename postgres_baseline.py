@@ -59,13 +59,14 @@ def install_postgres_baseline(connection, baseline_sql: str, *, schema: str = "n
     digest = hashlib.sha256(baseline_sql.encode("utf-8")).hexdigest()
 
     connection.execute("SELECT pg_advisory_lock(%s, %s)", (_LOCK_NAMESPACE, _LOCK_ID))
-    previous_search_path = connection.execute("SHOW search_path").fetchone()
-    previous_search_path = (
-        previous_search_path["search_path"]
-        if isinstance(previous_search_path, dict)
-        else previous_search_path[0]
-    )
+    previous_search_path = None
     try:
+        previous_search_path_row = connection.execute("SHOW search_path").fetchone()
+        previous_search_path = (
+            previous_search_path_row["search_path"]
+            if isinstance(previous_search_path_row, dict)
+            else previous_search_path_row[0]
+        )
         connection.execute(f"CREATE SCHEMA IF NOT EXISTS {quoted_schema}")
         connection.execute(f"SET search_path TO {quoted_schema}")
         existing = connection.execute(
@@ -102,11 +103,14 @@ def install_postgres_baseline(connection, baseline_sql: str, *, schema: str = "n
             )
         return digest
     finally:
-        connection.execute(
-            "SELECT set_config('search_path', %s, false)",
-            (previous_search_path,),
-        )
-        connection.execute("SELECT pg_advisory_unlock(%s, %s)", (_LOCK_NAMESPACE, _LOCK_ID))
+        try:
+            if previous_search_path is not None:
+                connection.execute(
+                    "SELECT set_config('search_path', %s, false)",
+                    (previous_search_path,),
+                )
+        finally:
+            connection.execute("SELECT pg_advisory_unlock(%s, %s)", (_LOCK_NAMESPACE, _LOCK_ID))
 
 
 def install_postgres_baseline_file(connection, baseline_path: str | Path, *, schema: str = "nexus") -> str:
