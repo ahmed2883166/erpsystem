@@ -114,7 +114,15 @@ class StockLocationTriggerDialectTests(unittest.TestCase):
             self.assertEqual(names, {
                 "trg_stock_product_locations_same_wh_insert",
                 "trg_stock_product_locations_same_wh_update",
+                "trg_stock_locations_prevent_default_deactivation",
             })
+            conn.execute("INSERT INTO stock_locations(id,warehouse_id,active) VALUES(1,10,1)")
+            conn.execute("INSERT INTO stock_product_locations(id,product_id,warehouse_id,location_id) VALUES(1,20,10,1)")
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "لا يمكن تعطيل موقع"):
+                conn.execute("UPDATE stock_locations SET active=0 WHERE id=1")
+            conn.execute("DELETE FROM stock_product_locations WHERE id=1")
+            conn.execute("UPDATE stock_locations SET active=0 WHERE id=1")
+            self.assertEqual(conn.execute("SELECT active FROM stock_locations WHERE id=1").fetchone()[0], 0)
         finally:
             conn.close()
 
