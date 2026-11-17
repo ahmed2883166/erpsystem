@@ -11,6 +11,18 @@ from accounting_core import post_journal
 from db_compat import database_dialect, table_exists
 from db_sql import execute_compat
 
+
+def _is_database_error(exc):
+    """Recognize database-driver errors without requiring psycopg at import time."""
+    return (
+        isinstance(exc, sqlite3.Error)
+        or type(exc).__module__.split(".", 1)[0] == "psycopg"
+    )
+
+
+def _database_error_message():
+    return "تعذر حفظ العملية بسبب خطأ في قاعدة البيانات. لم يتم اعتماد أي تغييرات."
+
 currency_bp = Blueprint("currency_center", __name__)
 
 CENT = Decimal("0.01")
@@ -265,6 +277,11 @@ def create_transaction():
     except (ValueError, KeyError, sqlite3.Error) as e:
         c.rollback()
         flash(str(e), "error")
+    except Exception as e:
+        if not _is_database_error(e):
+            raise
+        c.rollback()
+        flash(_database_error_message(), "error")
     c.close()
     return redirect(url_for("currency_center.index"))
 
@@ -324,6 +341,11 @@ def settle(transaction_id):
     except (ValueError, KeyError, sqlite3.Error, ZeroDivisionError) as e:
         c.rollback()
         flash(str(e), "error")
+    except Exception as e:
+        if not _is_database_error(e):
+            raise
+        c.rollback()
+        flash(_database_error_message(), "error")
     c.close()
     return redirect(url_for("currency_center.index"))
 
@@ -380,5 +402,10 @@ def revalue(transaction_id):
     except (ValueError, KeyError, sqlite3.Error) as e:
         c.rollback()
         flash(str(e), "error")
+    except Exception as e:
+        if not _is_database_error(e):
+            raise
+        c.rollback()
+        flash(_database_error_message(), "error")
     c.close()
     return redirect(url_for("currency_center.index"))
