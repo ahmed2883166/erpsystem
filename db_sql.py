@@ -11,7 +11,7 @@ from db_compat import database_dialect
 
 
 _POSTGRES_IDENTITY_DDL = re.compile(
-    r"(\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[^ (]+\s*\([^;]*?)(\bid\s+)INTEGER(\s+PRIMARY\s+KEY\b)",
+    r"(\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[^ (]+\s*\([^;]*?)(\bid\s+)INTEGER(\s+PRIMARY\s+KEY\b)(?:\s+AUTOINCREMENT\b)?",
     re.IGNORECASE | re.DOTALL,
 )
 
