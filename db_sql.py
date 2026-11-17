@@ -133,6 +133,8 @@ def qmark_to_format(sql):
             i += 1
             continue
 
+    if state in {"single", "double", "block_comment", "dollar"}:
+        raise ValueError(f"Unterminated SQL construct while translating placeholders: {state}.")
     return "".join(out)
 
 
