@@ -123,6 +123,16 @@ class SQLitePostgresVerifierUnitTests(unittest.TestCase):
         self.assertEqual(source_missing, ["customer_id"])
         self.assertEqual(target_missing, ["entry_id"])
 
+    def test_missing_journal_table_is_not_a_successful_verification(self):
+        skipped = [{"control": "journal_lines.required", "reason": "source_table_missing"}]
+        self.assertFalse(
+            _verification_passed(
+                [], skipped,
+                {"accounts": {"sqlite": 1, "postgres": 1}},
+                ["accounts"],
+            )
+        )
+
     def test_verification_fails_closed_when_any_control_is_skipped(self):
         complete_rows = {"accounts": {"sqlite": 2, "postgres": 2}}
         self.assertTrue(_verification_passed([], [], complete_rows, ["accounts"]))

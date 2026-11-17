@@ -210,6 +210,11 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
             _compare_decimal_maps(label, source_map, target_map, issues)
             controls.append(label)
 
+        if "journal_lines" not in source_tables:
+            controls_skipped.append({
+                "control": "journal_lines.required",
+                "reason": "source_table_missing",
+            })
         if "journal_lines" in source_tables:
             compare_control("journal_lines", "debit", (), "journal_lines.debit_total")
             compare_control("journal_lines", "credit", (), "journal_lines.credit_total")
