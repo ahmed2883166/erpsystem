@@ -2572,6 +2572,7 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
            JOIN supplier_credit_note_lines l ON l.id=a.credit_note_line_id
            WHERE l.credit_note_id=? ORDER BY a.id""",(credit_note_id,)
     ).fetchall()
+    lock_stock_warehouses(conn, *(row["movement_warehouse_id"] for row in allocations))
     line_count=execute_compat(conn, 
         "SELECT COUNT(*) FROM supplier_credit_note_lines WHERE credit_note_id=?",(credit_note_id,)
     ).fetchone()[0]
