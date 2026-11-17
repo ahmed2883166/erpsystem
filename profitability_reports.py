@@ -20,7 +20,6 @@ def _table_exists(conn, name):
 def _columns(conn, table):
     return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
 
-
 def _amount(value):
     return Decimal(str(value or "0"))
 
