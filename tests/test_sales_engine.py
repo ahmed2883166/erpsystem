@@ -7,6 +7,7 @@ from decimal import Decimal
 
 import analytic_dimensions
 import sales
+from unittest.mock import patch
 import party_reports
 import quotations
 import stock
@@ -66,6 +67,39 @@ class SalesIntegrationTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
         self.tmp.cleanup()
+
+    def test_postgresql_credit_note_operations_lock_invoice_and_note_rows(self):
+        calls = []
+
+        class Cursor:
+            def __init__(self, row):
+                self.row = row
+
+            def fetchone(self):
+                return self.row
+
+        def fake_execute(_conn, sql, params=()):
+            calls.append((sql, tuple(params)))
+            return Cursor({"id": params[0]})
+
+        with patch("sales.database_dialect", return_value="postgresql"), \
+             patch("sales.execute_compat", side_effect=fake_execute):
+            invoice = sales._sales_invoice_for_update(self.db, 44, posted_only=True)
+            note = sales._sales_credit_note_for_update(self.db, 55)
+
+        self.assertEqual(invoice["id"], 44)
+        self.assertEqual(note["id"], 55)
+        self.assertIn("status='posted' FOR UPDATE", calls[0][0])
+        self.assertIn("status='posted' FOR UPDATE", calls[1][0])
+        self.assertEqual(calls[0][1], (44,))
+        self.assertEqual(calls[1][1], (55,))
+
+        with patch("sales.database_dialect", return_value="sqlite"), \
+             patch("sales.execute_compat", side_effect=fake_execute):
+            sales._sales_invoice_for_update(self.db, 44, posted_only=True)
+            sales._sales_credit_note_for_update(self.db, 55)
+        self.assertNotIn("FOR UPDATE", calls[2][0])
+        self.assertNotIn("FOR UPDATE", calls[3][0])
 
     def test_invoice_draft_and_approval_record_do_not_post_stock_or_journal(self):
         payload = {
