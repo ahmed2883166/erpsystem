@@ -2649,7 +2649,7 @@ def new_credit_note():
               (credit_no,supplier,bill_id,request.form["credit_date"],supplier_credit_no,reason,
                str(subtotal),str(tax_rate),str(tax),str(total),session["user_id"]))
             for item in line_data:
-                line_cur=c.execute("""INSERT INTO supplier_credit_note_lines(
+                credit_line_id=insert_and_get_id(c,"""INSERT INTO supplier_credit_note_lines(
                   credit_note_id,product_id,warehouse_id,quantity,unit_cost,total_cost,
                   entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
