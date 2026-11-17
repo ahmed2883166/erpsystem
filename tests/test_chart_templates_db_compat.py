@@ -75,6 +75,13 @@ class AccountChartMetadataPostgreSQLTests(unittest.TestCase):
                         INSERT INTO accounts(id,code,name_ar,account_type,parent_id,is_group)
                         VALUES (42,'1000','الأصول','asset',NULL,1)
                     """)
+                    # Explicit IDs in a fixture do not advance an identity sequence.
+                    conn.execute("""
+                        SELECT setval(
+                            pg_get_serial_sequence('accounts', 'id'),
+                            (SELECT MAX(id) FROM accounts)
+                        )
+                    """)
                     ensure_activity_chart_accounts(conn, "commercial")
                     first_ids = {
                         row["code"]: row["id"]
