@@ -1,6 +1,14 @@
 -- Initialize carrying value for stock layers created by the operational receipt flow.
 -- The SQLite workflow inserts qty_in and unit_cost and relies on the database default
--- for value_remaining. Keep that behavior safe on PostgreSQL without rewriting old layers.
+-- for value_remaining. Repair only untouched, fully available legacy layers; partially
+-- consumed layers are deliberately left unchanged because their valuation history matters.
+UPDATE stock_valuation_layers
+SET value_remaining = qty_remaining * unit_cost
+WHERE value_remaining = 0
+  AND qty_in > 0
+  AND qty_remaining = qty_in
+  AND unit_cost > 0;
+
 CREATE OR REPLACE FUNCTION nexus_initialize_stock_layer_value()
 RETURNS TRIGGER
 LANGUAGE plpgsql
