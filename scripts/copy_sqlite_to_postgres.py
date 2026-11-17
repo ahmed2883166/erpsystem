@@ -258,7 +258,7 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                 for col in source_columns[table]:
                     seq = dst.execute(
                         "SELECT pg_get_serial_sequence(%s, %s) AS sequence_name",
-                        (f"{schema}.{table}", col),
+                        (f"{quote_ident(schema)}.{quote_ident(table)}", col),
                     ).fetchone()["sequence_name"]
                     if seq:
                         qname = qschema + "." + quote_ident(table)
