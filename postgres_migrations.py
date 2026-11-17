@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from db_compat import execute_script
+
 _MIGRATION_FILE = re.compile(r"^(\d{4,})_([a-z0-9][a-z0-9_]*)\.sql$")
 _SCHEMA_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ADVISORY_LOCK_NAMESPACE = 1313162835
@@ -132,7 +134,7 @@ def apply_migrations(connection, migrations, *, schema="nexus") -> list[int]:
                     )
                 continue
 
-            connection.execute(migration.sql)
+            execute_script(connection, migration.sql)
             connection.execute(
                 f"""
                 INSERT INTO {quoted_schema}."schema_migrations"
