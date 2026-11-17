@@ -60,6 +60,34 @@ class StockReconciliationReportTests(unittest.TestCase):
                  }):
                 return stock.valuation_reconciliation.__wrapped__()
 
+
+    def test_valuation_reconciliation_reports_broken_layer_integrity(self):
+        self.conn.executescript("""
+            ALTER TABLE stock_valuation_layers ADD COLUMN qty_in TEXT;
+            ALTER TABLE stock_valuation_layers ADD COLUMN source_movement_id INTEGER;
+            UPDATE stock_valuation_layers SET qty_in=qty_remaining;
+            CREATE TABLE stock_movements(
+                id INTEGER PRIMARY KEY, product_id INTEGER, target_warehouse_id INTEGER
+            );
+            INSERT INTO stock_movements VALUES(101,1,1),(102,1,1),(103,2,1);
+            UPDATE stock_valuation_layers SET source_movement_id=101 WHERE id=1;
+            UPDATE stock_valuation_layers SET source_movement_id=102 WHERE id=2;
+            INSERT INTO stock_valuation_layers(
+                id,product_id,warehouse_id,qty_in,qty_remaining,unit_cost,value_remaining,source_movement_id
+            ) VALUES
+                (3,1,1,'2','-1','10','-10',101),
+                (4,1,1,'3','0','10','5',102),
+                (5,1,1,'1','2','10','20',102),
+                (6,1,1,'1','1','10','10',103);
+        """)
+        report = self.run_report()
+        codes = {issue["code"] for issue in report["layer_integrity_issues"]}
+        self.assertEqual(report["layer_integrity_issue_count"], 5)
+        self.assertTrue({
+            "negative_quantity", "negative_value", "value_without_quantity",
+            "remaining_exceeds_received", "source_product_mismatch",
+        }.issubset(codes))
+
     def test_unallocated_legacy_balance_is_not_falsely_matched_to_product_detail(self):
         self.conn.execute(
             """INSERT INTO journal_lines(
