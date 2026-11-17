@@ -124,48 +124,54 @@ def _sqlite_foreign_key_map(conn, tables):
 
 
 def _pg_foreign_key_map(conn, schema):
-    """Read PostgreSQL FK definitions in a normalized, comparable shape."""
+    """Read PostgreSQL FK definitions in ordinal order, including composite keys."""
     rows = conn.execute(
         """
-        SELECT tc.table_name, kcu.column_name,
-               ccu.table_name AS foreign_table_name,
-               ccu.column_name AS foreign_column_name,
-               rc.update_rule, rc.delete_rule,
-               kcu.ordinal_position, tc.constraint_name
-          FROM information_schema.table_constraints tc
-          JOIN information_schema.key_column_usage kcu
-            ON kcu.constraint_catalog = tc.constraint_catalog
-           AND kcu.constraint_schema = tc.constraint_schema
-           AND kcu.constraint_name = tc.constraint_name
-           AND kcu.table_name = tc.table_name
-          JOIN information_schema.constraint_column_usage ccu
-            ON ccu.constraint_catalog = tc.constraint_catalog
-           AND ccu.constraint_schema = tc.constraint_schema
-           AND ccu.constraint_name = tc.constraint_name
-          JOIN information_schema.referential_constraints rc
-            ON rc.constraint_catalog = tc.constraint_catalog
-           AND rc.constraint_schema = tc.constraint_schema
-           AND rc.constraint_name = tc.constraint_name
-         WHERE tc.constraint_schema = %s
-           AND tc.constraint_type = 'FOREIGN KEY'
-         ORDER BY tc.table_name, tc.constraint_name, kcu.ordinal_position
+        SELECT src.relname AS table_name,
+               src_att.attname AS column_name,
+               tgt.relname AS foreign_table_name,
+               tgt_att.attname AS foreign_column_name,
+               con.confupdtype AS update_action,
+               con.confdeltype AS delete_action,
+               ord.ordinality,
+               con.conname AS constraint_name
+          FROM pg_constraint con
+          JOIN pg_class src ON src.oid = con.conrelid
+          JOIN pg_namespace src_ns ON src_ns.oid = src.relnamespace
+          JOIN pg_class tgt ON tgt.oid = con.confrelid
+          JOIN LATERAL unnest(con.conkey, con.confkey)
+               WITH ORDINALITY AS ord(source_attnum, target_attnum, ordinality)
+            ON TRUE
+          JOIN pg_attribute src_att
+            ON src_att.attrelid = src.oid AND src_att.attnum = ord.source_attnum
+          JOIN pg_attribute tgt_att
+            ON tgt_att.attrelid = tgt.oid AND tgt_att.attnum = ord.target_attnum
+         WHERE con.contype = 'f' AND src_ns.nspname = %s
+         ORDER BY src.relname, con.conname, ord.ordinality
         """,
         (schema,),
     ).fetchall()
+    actions = {
+        "a": "NO ACTION",
+        "r": "RESTRICT",
+        "c": "CASCADE",
+        "n": "SET NULL",
+        "d": "SET DEFAULT",
+    }
     grouped = {}
     for row in rows:
         key = (row["table_name"], row["constraint_name"])
         grouped.setdefault(key, []).append(row)
     result = []
     for (table, _), parts in grouped.items():
-        parts.sort(key=lambda item: item["ordinal_position"])
+        parts.sort(key=lambda item: item["ordinality"])
         result.append((
             table,
             tuple(item["column_name"] for item in parts),
             parts[0]["foreign_table_name"],
             tuple(item["foreign_column_name"] for item in parts),
-            str(parts[0]["update_rule"]).upper(),
-            str(parts[0]["delete_rule"]).upper(),
+            actions[parts[0]["update_action"]],
+            actions[parts[0]["delete_action"]],
         ))
     return sorted(result)
 
