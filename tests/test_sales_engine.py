@@ -1050,11 +1050,29 @@ class SalesIntegrationTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(Decimal(layer["qty_remaining"]), Decimal(layer["qty_in"]))
         self.assertEqual(Decimal(layer["total_cost"]), Decimal("10.00"))
-        # Simulate an average-cost rebase: quantity is untouched, carrying value changed.
+        # A new receipt at a different cost followed by an average-cost issue
+        # rebases the returned layer value without consuming its quantity.
+        receipt_move = self.db.execute(
+            """INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,
+               quantity,unit_cost,total_cost,movement_date)
+               VALUES('AVG-REBASE-RECEIPT','receipt',?,?, '1','20','20','2026-11-11')""",
+            (self.product_id, self.warehouse_id)
+        ).lastrowid
         self.db.execute(
-            "UPDATE stock_valuation_layers SET value_remaining='9.50' WHERE id=?",
-            (layer["layer_id"],)
+            """INSERT INTO stock_valuation_layers(product_id,warehouse_id,source_movement_id,
+               qty_in,qty_remaining,unit_cost,value_remaining)
+               VALUES(?,?,?,'1','1','20','20')""",
+            (self.product_id, self.warehouse_id, receipt_move)
         )
+        stock.consume_layers(
+            self.db, self.product_id, self.warehouse_id, Decimal("1"), "average"
+        )
+        rebased_layer = self.db.execute(
+            "SELECT qty_remaining,value_remaining FROM stock_valuation_layers WHERE id=?",
+            (layer["layer_id"],)
+        ).fetchone()
+        self.assertEqual(Decimal(rebased_layer["qty_remaining"]), Decimal("1"))
+        self.assertEqual(Decimal(rebased_layer["value_remaining"]), Decimal("12.00"))
         journal_count = self.db.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
         with self.assertRaisesRegex(ValueError, "القيمة الدفترية لطبقة المرتجع تغيرت"):
             sales.cancel_credit_note(
