@@ -48,7 +48,7 @@ class IncomeStatementPostgreSQLTests(unittest.TestCase):
                             account_id BIGINT, role TEXT
                         )
                     """)
-                    connection.executemany(
+                    connection.cursor().executemany(
                         "INSERT INTO accounts VALUES(%s,%s,%s,%s,%s,%s,%s,%s)",
                         [
                             (1, "4100", "الإيرادات", "revenue", 0, 1, "revenue", None),
@@ -59,7 +59,7 @@ class IncomeStatementPostgreSQLTests(unittest.TestCase):
                     connection.execute(
                         "INSERT INTO journal_entries VALUES(1,'2026-11-10','posted','general')"
                     )
-                    connection.executemany(
+                    connection.cursor().executemany(
                         "INSERT INTO journal_lines VALUES(%s,1,%s,%s,%s)",
                         [
                             (1, 1, "0", "0.10"),
