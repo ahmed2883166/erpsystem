@@ -340,8 +340,8 @@ def init_sales_schema():
             execute_compat(c, f"ALTER TABLE sales_invoices ADD COLUMN {name} {definition}")
     # Re-run after creating customers and salespersons so their journal dimensions exist.
     initialize_analytic_dimensions_schema(c)
+    c.commit()
     c.close()
-
 
 def require(permission):
     def deco(fn):
