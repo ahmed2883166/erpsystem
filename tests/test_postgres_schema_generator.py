@@ -281,7 +281,7 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
             _with_required_numeric_override_tables(snapshot)
         )
         self.assertIn('CREATE TABLE "sample"', ddl)
-        self.assertEqual(review["table_count"], 1)
+        self.assertEqual(review["table_count"], 4)
 
     def test_rejects_foreign_key_to_unknown_table(self):
         snapshot = {
