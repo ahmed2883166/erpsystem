@@ -6,7 +6,6 @@ recognize receivables, revenue and VAT.
 """
 from app_paths import DB_PATH
 import json
-import sqlite3
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
