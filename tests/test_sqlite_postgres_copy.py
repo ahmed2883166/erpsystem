@@ -99,6 +99,7 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
         conn = sqlite3.connect(path)
         try:
             conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA defer_foreign_keys = ON")
             conn.executescript("""
                 CREATE TABLE accounts (
                     id INTEGER PRIMARY KEY,
