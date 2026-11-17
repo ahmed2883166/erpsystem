@@ -3,7 +3,8 @@ from app_paths import DB_PATH
 from database import connect_database
 from db_compat import (
     database_dialect, table_columns, table_exists, execute_script,
-    begin_write_transaction, insert_and_get_id, DB_INTEGRITY_ERROR, DB_ERROR,
+    begin_write_transaction, insert_and_get_id, transaction_is_active,
+    DB_INTEGRITY_ERROR, DB_ERROR,
 )
 from db_sql import execute_compat, executemany_compat
 
@@ -249,7 +250,7 @@ def list_financial_years(conn):
     ).fetchall()
 
 def _start_financial_year_transaction(conn):
-    if conn.in_transaction:
+    if transaction_is_active(conn):
         raise ValueError("هناك عملية قاعدة بيانات مفتوحة؛ احفظها أو أغلقها قبل تنفيذ الإجراء.")
     begin_write_transaction(conn)
 
