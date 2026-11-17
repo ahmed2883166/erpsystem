@@ -42,7 +42,6 @@ def main(argv=None):
     review_path = output_dir / "nexus_full_schema_review.json"
     ddl_path.write_text(ddl, encoding="utf-8")
     review_path.write_text(
-        json.dumps(review, ensure_ascii=False, indent=2) + "\\n",
         json.dumps(review, ensure_ascii=False, indent=2) + "\n",
     )
     print(json.dumps({
