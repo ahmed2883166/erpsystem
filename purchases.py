@@ -1476,9 +1476,13 @@ def _supplier_receipt_available_amount(c, receipt_id, exclude_bill_id=None):
 
 def _validate_supplier_receipt_allocations(c, supplier_id, receipt_ids, subtotal, form,
                                            exclude_bill_id=None):
+    receipt_ids = list(dict.fromkeys(int(value) for value in receipt_ids))
+    # Reserve the GRNI balance under the receipt-row lock before calculating
+    # availability, not only later when the bill is posted.
+    _lock_supplier_receipts(c, receipt_ids)
     allocations = []
     total_allocated = money("0")
-    for receipt_id in dict.fromkeys(receipt_ids):
+    for receipt_id in receipt_ids:
         receipt = execute_compat(c, """SELECT id,total_value FROM goods_receipts
             WHERE id=? AND supplier_id=? AND status='posted'""",
             (receipt_id, supplier_id)).fetchone()
