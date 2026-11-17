@@ -1828,24 +1828,35 @@ def _stock_valuation_layer_integrity(conn, limit=200):
             })
 
     for row in rows:
-        qty = D(str(row["qty_remaining"] or "0"))
-        value = (D(str(row["value_remaining"])) if "value_remaining" in columns
-                 and row["value_remaining"] not in (None, "") else
-                 qty * D(str(row["unit_cost"] or "0")))
+        try:
+            qty = D(str(row["qty_remaining"] or "0"))
+            unit_cost = D(str(row["unit_cost"] or "0"))
+            value = (D(str(row["value_remaining"])) if "value_remaining" in columns
+                     and row["value_remaining"] not in (None, "") else qty * unit_cost)
+            qty_in = (D(str(row["qty_in"])) if "qty_in" in columns
+                      and row["qty_in"] not in (None, "") else None)
+            if not all(number.is_finite() for number in (qty, unit_cost, value)):
+                raise InvalidOperation
+            if qty_in is not None and not qty_in.is_finite():
+                raise InvalidOperation
+        except (InvalidOperation, TypeError, ValueError):
+            add(row, "invalid_numeric_value", "تحتوي الطبقة على كمية أو تكلفة أو قيمة غير رقمية أو غير منتهية.")
+            continue
         if qty < 0:
             add(row, "negative_quantity", "كمية متبقية سالبة في طبقة التقييم.")
         if value < 0:
             add(row, "negative_value", "قيمة متبقية سالبة في طبقة التقييم.")
-        if "qty_in" in columns and row["qty_in"] not in (None, ""):
-            qty_in = D(str(row["qty_in"]))
+        if qty_in is not None:
             if qty_in <= 0 and (qty != 0 or value != 0):
                 add(row, "invalid_original_quantity", "الطبقة تحمل رصيدًا رغم أن كمية الإدخال الأصلية غير موجبة.")
             elif qty > qty_in:
                 add(row, "remaining_exceeds_received", "الكمية المتبقية أكبر من كمية الإدخال الأصلية.")
         if qty == 0 and abs(value) >= D("0.01"):
             add(row, "value_without_quantity", "توجد قيمة دفترية متبقية دون كمية مقابلة.")
-        if joins and row["source_movement_id"] is not None:
-            if row["integrity_source_found"] is None:
+        if joins and "source_movement_id" in columns:
+            if row["source_movement_id"] is None:
+                add(row, "missing_source_reference", "طبقة التقييم غير مرتبطة بحركة مصدر.")
+            elif row["integrity_source_found"] is None:
                 add(row, "missing_source_movement", "طبقة التقييم مرتبطة بحركة مخزون غير موجودة.")
             else:
                 if ("product_id" in columns and
@@ -1854,6 +1865,53 @@ def _stock_valuation_layer_integrity(conn, limit=200):
                 if ("warehouse_id" in columns and
                         row["warehouse_id"] != row["integrity_source_warehouse_id"]):
                     add(row, "source_warehouse_mismatch", "مخزن طبقة التقييم لا يطابق مخزن وجهة الحركة المصدر.")
+
+    # Also audit the opposite direction: every inbound movement must have a
+    # matching valuation layer, and the total original layer quantity must equal
+    # the movement quantity. This catches orphan receipts/transfers that a
+    # layer-to-movement join cannot discover.
+    if (_table_exists(conn, "stock_movements") and
+            {"id", "product_id", "target_warehouse_id", "movement_type", "quantity"}.issubset(_columns(conn, "stock_movements")) and
+            {"source_movement_id", "qty_in"}.issubset(columns)):
+        movement_rows = _execute(conn, """
+            SELECT m.id,m.product_id,m.target_warehouse_id,m.quantity,m.movement_type,
+                   COUNT(l.id) AS layer_count
+            FROM stock_movements m
+            LEFT JOIN stock_valuation_layers l ON l.source_movement_id=m.id
+            WHERE m.movement_type IN ('receipt','transfer','relocate')
+            GROUP BY m.id,m.product_id,m.target_warehouse_id,m.quantity,m.movement_type
+            ORDER BY m.id
+        """).fetchall()
+        for movement in movement_rows:
+            linked = _execute(conn, """
+                SELECT qty_in FROM stock_valuation_layers
+                WHERE source_movement_id=? ORDER BY id
+            """, (movement["id"],)).fetchall()
+            if not linked:
+                add({"id": movement["id"], "product_id": movement["product_id"],
+                     "warehouse_id": movement["target_warehouse_id"],
+                     "source_movement_id": movement["id"]},
+                    "inbound_movement_without_layer",
+                    "حركة استلام أو تحويل واردة لا تحتوي على أي طبقة تقييم مرتبطة.")
+                continue
+            try:
+                movement_qty = D(str(movement["quantity"] or "0"))
+                layer_qty = sum((D(str(layer["qty_in"] or "0")) for layer in linked), D("0"))
+                if not movement_qty.is_finite() or not layer_qty.is_finite():
+                    raise InvalidOperation
+            except (InvalidOperation, TypeError, ValueError):
+                add({"id": movement["id"], "product_id": movement["product_id"],
+                     "warehouse_id": movement["target_warehouse_id"],
+                     "source_movement_id": movement["id"]},
+                    "invalid_inbound_quantity",
+                    "كمية الحركة الواردة أو كميات طبقاتها غير رقمية.")
+                continue
+            if abs(layer_qty - movement_qty) > QTY:
+                add({"id": movement["id"], "product_id": movement["product_id"],
+                     "warehouse_id": movement["target_warehouse_id"],
+                     "source_movement_id": movement["id"]},
+                    "inbound_layer_quantity_mismatch",
+                    "إجمالي كمية طبقات التقييم لا يساوي كمية حركة الاستلام أو التحويل.")
     return issue_count, issues
 
 
