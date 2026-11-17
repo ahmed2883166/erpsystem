@@ -1,7 +1,6 @@
 """Budget planning and cash-flow reporting for NEXUS ERP."""
 from app_paths import DB_PATH
 from database import connect_database
-import sqlite3
 from db_compat import (
     database_dialect, table_columns, table_exists, execute_script,
     begin_write_transaction, insert_and_get_id, DB_INTEGRITY_ERROR, DB_ERROR,
@@ -663,7 +662,7 @@ def build_financial_year_preclose_report(conn, year_id):
                 f"لا توجد معاملات ذمم مفتوحة في {end} دون إعادة تقييم مسجلة. "
                 "راجع أرصدة البنوك والصناديق الأجنبية المسجلة خارج مركز العملات يدويًا.",
                 False)
-        except (sqlite3.Error, KeyError, TypeError, ValueError, InvalidOperation):
+        except (*DB_ERROR, KeyError, TypeError, ValueError, InvalidOperation):
             add("fx_year_end_revaluation", "فحص إعادة تقييم العملات الأجنبية", "warning", 1,
                 "تعذر استكمال فحص معاملات العملات؛ راجع مركز العملات يدويًا قبل الإقفال.", False)
 
@@ -694,7 +693,7 @@ def build_financial_year_preclose_report(conn, year_id):
                 details if pending_adjustment_periods else
                 "لا توجد فترات تسوية معلقة داخل السنة المالية.",
                 bool(pending_adjustment_periods))
-        except (sqlite3.Error, KeyError, TypeError, ValueError):
+        except (*DB_ERROR, KeyError, TypeError, ValueError):
             add("period_adjustments", "فحص التسويات الدورية", "danger", 1,
                 "تعذر التحقق من جداول التسويات؛ لا يمكن تأكيد جاهزية الإقفال قبل مراجعتها.",
                 True)
@@ -724,7 +723,7 @@ def build_financial_year_preclose_report(conn, year_id):
             "warning" if has_difference else "success", 1 if has_difference else 0,
             f"فرق المخزون على مستوى النظام: {difference}." if has_difference else
             "لا يوجد فرق ظاهر بين قيمة المخزون والتقييم.", False)
-    except (sqlite3.Error, KeyError, TypeError, ValueError):
+    except (*DB_ERROR, KeyError, TypeError, ValueError):
         add("operational_checks", "فحوصات الربط التشغيلي والمخزون", "warning", 1,
             "تعذر استكمال بعض فحوصات الربط أو المخزون؛ راجعها يدويًا.", False)
 
@@ -973,7 +972,7 @@ def financial_years():
             )
             flash("تم إنشاء السنة المالية بنجاح. لم يتم إنشاء أي قيود محاسبية.", "success")
             return redirect(url_for("planning.financial_years"))
-        except (ValueError, sqlite3.IntegrityError) as exc:
+        except (ValueError, *DB_INTEGRITY_ERROR) as exc:
             flash(str(exc) or "تعذر إنشاء السنة المالية؛ تحقق من الاسم والتواريخ.", "error")
         finally:
             conn.close()
@@ -1027,7 +1026,7 @@ def financial_year_opening(year_id):
             flash(f"تم ترحيل قيد الافتتاح رقم {entry_id} بتاريخ {year['start_date']}.", "success")
             return redirect(url_for("planning.financial_years"))
         return render_template("financial_year_opening.html", year=year, accounts=accounts)
-    except (ValueError, sqlite3.IntegrityError) as exc:
+    except (ValueError, *DB_INTEGRITY_ERROR) as exc:
         flash(str(exc) or "تعذر تنفيذ قيد الافتتاح.", "error")
         return redirect(url_for("planning.financial_years"))
     finally:
@@ -1045,7 +1044,7 @@ def financial_year_close(year_id):
         entry_id = close_financial_year(conn, year_id, session.get("user_id"),
                                         allow_warnings=allow_warnings)
         flash(f"تم إقفال السنة المالية بقيد رقم {entry_id}.", "success")
-    except (ValueError, sqlite3.IntegrityError) as exc:
+    except (ValueError, *DB_INTEGRITY_ERROR) as exc:
         flash(str(exc) or "تعذر إقفال السنة المالية.", "error")
     finally:
         conn.close()
@@ -1066,7 +1065,7 @@ def financial_year_reverse(year_id, entry_kind):
             session.get("user_id"),
         )
         flash(f"تم إنشاء القيد العكسي رقم {reversal_id}، مع الاحتفاظ بالقيد الأصلي.", "success")
-    except (ValueError, sqlite3.IntegrityError) as exc:
+    except (ValueError, *DB_INTEGRITY_ERROR) as exc:
         flash(str(exc) or "تعذر عكس القيد.", "error")
     finally:
         conn.close()
@@ -1214,7 +1213,7 @@ def budget_index():
             conn.commit()
             flash("تم حفظ الموازنة كمسودة. راجع التوزيع الشهري ثم أرسلها للاعتماد.", "success")
             return redirect(url_for("planning.budget_detail", budget_id=budget_id))
-        except (ValueError, TypeError, InvalidOperation, sqlite3.IntegrityError) as exc:
+        except (ValueError, TypeError, InvalidOperation, *DB_INTEGRITY_ERROR) as exc:
             conn.rollback()
             flash(str(exc) or "تعذر حفظ الموازنة.", "error")
     plans = _execute(conn, """SELECT bp.*,
@@ -1646,9 +1645,7 @@ def build_cash_flow_snapshot(conn, start, end):
             cash_ids = {r["id"] for r in _execute(conn, 
                 "SELECT id FROM accounts WHERE is_group=0 AND (code IN ('1110','1120') OR name_ar LIKE '%صندوق%' OR name_ar LIKE '%بنك%')"
             )}
-    mapping_exists = _execute(conn, 
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_flow_account_mappings'"
-    ).fetchone()
+    mapping_exists = table_exists(conn, "cash_flow_account_mappings")
     cash_flow_mappings = {
         row["account_id"]: row["category"]
         for row in _execute(conn, "SELECT account_id,category FROM cash_flow_account_mappings")
@@ -1756,10 +1753,8 @@ def build_cash_flow_snapshot(conn, start, end):
             # according to the actual bill allocations so asset acquisitions are
             # investing cash flows, not operating merely because AP was credited.
             payment_tables = {
-                row["name"] for row in _execute(conn, 
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
-                    "('supplier_payments','supplier_payment_allocations','supplier_bills')"
-                )
+                name for name in ("supplier_payments", "supplier_payment_allocations", "supplier_bills")
+                if table_exists(conn, name)
             }
             if net < 0 and payment_tables == {
                 "supplier_payments", "supplier_payment_allocations", "supplier_bills"
@@ -1917,9 +1912,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
                     for r in period_rows if r["account_type"]=="expense"), Decimal("0"))
     net_profit = revenue-expenses
     depreciation_account_ids=set()
-    fixed_assets_exists=_execute(conn, 
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fixed_assets'"
-    ).fetchone()
+    fixed_assets_exists=table_exists(conn, "fixed_assets")
     if fixed_assets_exists:
         fixed_asset_columns={
             row["name"] for row in _execute(conn, "PRAGMA table_info(fixed_assets)")
@@ -1932,9 +1925,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
             }
     asset_depreciation_total=Decimal("0")
     depreciation_entry_ids=set()
-    asset_depreciation_exists=_execute(conn, 
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_depreciations'"
-    ).fetchone()
+    asset_depreciation_exists=table_exists(conn, "asset_depreciations")
     if asset_depreciation_exists:
         asset_depreciation_columns={
             row["name"] for row in _execute(conn, "PRAGMA table_info(asset_depreciations)")
@@ -1987,9 +1978,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
         )
     depreciation=asset_depreciation_total+other_depreciation
     disposal_gain_loss=Decimal("0")
-    disposals_exists=_execute(conn, 
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_disposals'"
-    ).fetchone()
+    disposals_exists=table_exists(conn, "asset_disposals")
     if disposals_exists:
         disposal_columns={
             row["name"] for row in _execute(conn, "PRAGMA table_info(asset_disposals)")
@@ -2044,9 +2033,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     # Explicit operating mappings are an additional source for custom charts
     # whose parent groups do not use standard current-asset/current-liability
     # codes or names.
-    mapping_table = _execute(conn, 
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_flow_account_mappings'"
-    ).fetchone()
+    mapping_table = table_exists(conn, "cash_flow_account_mappings")
     if mapping_table:
         mapped_operating = _execute(conn, 
             """SELECT m.account_id,a.account_type FROM cash_flow_account_mappings m
@@ -2061,9 +2048,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
 
     # Fallback for charts where detailed current liabilities use the standard
     # 21xx range but are not linked to a 2100 parent (e.g. payroll payable/GRNI).
-    mapping_table = _execute(conn, 
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_flow_account_mappings'"
-    ).fetchone()
+    mapping_table = table_exists(conn, "cash_flow_account_mappings")
     configured_categories = {
         row["account_id"]: row["category"]
         for row in _execute(conn, "SELECT account_id,category FROM cash_flow_account_mappings")
@@ -2170,7 +2155,7 @@ def cash_flow_mapping():
         try:
             from management_dashboard import load_management_account_roles
             cash_roles = set(load_management_account_roles(conn).get("cash", set()))
-        except (sqlite3.Error, KeyError, ValueError):
+        except (*DB_ERROR, KeyError, ValueError):
             pass
         return render_template(
             "cash_flow_mapping.html", accounts=accounts,
