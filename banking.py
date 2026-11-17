@@ -1,18 +1,18 @@
 from app_paths import DB_PATH
 from database import connect_database, fetch_page
 """Bank register and reconciliation support for NEXUS ERP."""
-import sqlite3
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal
 from chart_templates import ensure_account_metadata
-from db_compat import table_columns, table_exists, begin_write_transaction, execute_script
+from db_compat import table_columns, table_exists, begin_write_transaction, execute_script, DB_ERROR
 from db_sql import execute_compat
 from db_insert import insert_one_returning_id
 
 bank_bp = Blueprint("bank", __name__, url_prefix="/bank")
+BANK_ERRORS = (ValueError, InvalidOperation, KeyError) + DB_ERROR
 
 def db():
     return connect_database(DB_PATH, isolation_level=None)
@@ -260,7 +260,7 @@ def index():
             g.audit_created_record = ("bank_transactions", bank_transaction_id, None, None)
             flash("تم تسجيل الحركة البنكية وترحيل قيدها المحاسبي.","success")
             return redirect(url_for("bank.index"))
-        except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
+        except BANK_ERRORS as e:
             c.rollback(); flash(str(e),"error")
     accounts=execute_compat(c, """SELECT a.id,a.code,a.name_ar,ca.kind,ca.name_ar display_name,ca.currency_code
         FROM cash_accounts ca JOIN accounts a ON a.id=ca.account_id
@@ -522,7 +522,7 @@ def statement_reconciliation():
             opening_difference=opening_difference,opening_reviewed=opening_reviewed,
             opening_review_note=opening_review_note,opening_ready=opening_ready,
             start_date=period_start,end_date=period_end,today=today.isoformat())
-    except (ValueError,InvalidOperation,sqlite3.Error) as exc:
+    except BANK_ERRORS as exc:
         c.rollback()
         flash(str(exc),"error")
         c.close()
@@ -588,7 +588,7 @@ def cash_accounts():
             g.audit_created_record=("cash_accounts",row_id,None,None)
             flash("تم ربط الخزنة/البنك بحساب أستاذ مستقل. ستظهر حركاته في دفتر الحساب المرتبط.","success")
             return redirect(url_for("bank.cash_accounts"))
-        except (ValueError,sqlite3.Error) as exc:
+        except BANK_ERRORS as exc:
             c.rollback()
             flash(str(exc),"error")
     rows=execute_compat(c, """SELECT ca.*,a.code account_code,a.name_ar account_name,
@@ -634,7 +634,7 @@ def toggle_cash_account(cash_account_id):
             datetime.now().isoformat(timespec="seconds")))
         c.commit()
         flash(("تم تفعيل " if active else "تم تعطيل ")+row["name_ar"]+" مع الاحتفاظ بالحركات والرصيد التاريخي.","success")
-    except (ValueError,sqlite3.Error) as exc:
+    except BANK_ERRORS as exc:
         c.rollback(); flash(str(exc),"error")
     finally:
         c.close()
