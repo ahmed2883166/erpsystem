@@ -533,6 +533,45 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         ).fetchone()["count"]
         self.assertGreaterEqual(unit_count, 18)
 
+    def test_movement_uom_fk_preserves_legacy_rows_but_blocks_new_invalid_references(self):
+        migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
+        migrations = load_migrations(migration_dir)
+        self.assertEqual(apply_migrations(self.connection, migrations[:7], schema=self.schema),
+                         [1, 2, 3, 4, 5, 6, 7])
+        schema = quote_schema_name(self.schema)
+        product_id = self.connection.execute(
+            f"INSERT INTO {schema}.stock_products(sku,name_ar) VALUES (%s,%s) RETURNING id",
+            ("SKU-LEGACY-UOM", "Legacy UOM Product"),
+        ).fetchone()["id"]
+        warehouse_id = self.connection.execute(
+            f"INSERT INTO {schema}.stock_warehouses(code,name_ar) VALUES (%s,%s) RETURNING id",
+            ("WH-LEGACY-UOM", "Legacy UOM Warehouse"),
+        ).fetchone()["id"]
+        legacy_movement_id = self.connection.execute(
+            f"INSERT INTO {schema}.stock_movements(movement_no,movement_type,product_id,"
+            "target_warehouse_id,quantity,movement_date,entered_uom_id) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            ("RCV-LEGACY-UOM", "receipt", product_id, warehouse_id, "1", "2026-01-01", 999999),
+        ).fetchone()["id"]
+        self.connection.commit()
+
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [8])
+        preserved = self.connection.execute(
+            f"SELECT entered_uom_id FROM {schema}.stock_movements WHERE id=%s",
+            (legacy_movement_id,),
+        ).fetchone()
+        self.assertEqual(preserved["entered_uom_id"], 999999)
+        self.connection.commit()
+
+        with self.assertRaises(Exception):
+            self.connection.execute(
+                f"INSERT INTO {schema}.stock_movements(movement_no,movement_type,product_id,"
+                "target_warehouse_id,quantity,movement_date,entered_uom_id) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                ("RCV-NEW-BAD-UOM", "receipt", product_id, warehouse_id, "1", "2026-01-02", 999998),
+            )
+        self.connection.rollback()
+
     def test_failed_batch_rolls_back_schema_and_migration_records(self):
         migrations = [
             self._migration(1, "0001_ok.sql", 'CREATE TABLE "first_probe" (id BIGINT)'),
