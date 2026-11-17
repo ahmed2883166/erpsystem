@@ -114,6 +114,14 @@ def apply_migrations(connection, migrations, *, schema="nexus") -> list[int]:
             f'SELECT version, name, checksum FROM {quoted_schema}."schema_migrations"'
         ).fetchall()
         existing = {int(row["version"]): row for row in rows}
+        available_versions = set(versions)
+        unknown_versions = sorted(set(existing) - available_versions)
+        if unknown_versions:
+            rendered = ", ".join(str(version) for version in unknown_versions)
+            raise RuntimeError(
+                "Applied PostgreSQL migrations are missing from the supplied "
+                f"migration set: {rendered}."
+            )
 
         for migration in ordered:
             previous = existing.get(migration.version)
