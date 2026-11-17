@@ -1962,7 +1962,7 @@ def create_customer_advance_receipt():
         )
         c.commit()
         flash("تم تسجيل مقدم العميل وترحيل قيده بنجاح: " + result["receipt_no"], "success")
-    except (ValueError, DB_ERROR) as exc:
+    except (ValueError, *DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
@@ -1997,7 +1997,7 @@ def allocate_customer_advance_route(advance_id):
             f"تم تخصيص {result['total_amount']:.2f} على {result['invoice_count']} فاتورة بنجاح.",
             "success",
         )
-    except (ValueError, DB_ERROR) as exc:
+    except (ValueError, *DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
@@ -2021,7 +2021,7 @@ def reverse_customer_advance_route(source_type, source_id):
             "customer_advance_reversals", result["reversal_id"]
         )
         flash("تم عكس العملية بقيد عكسي مرتبط دون حذف المستند أو القيد الأصلي.", "success")
-    except (ValueError, DB_ERROR) as exc:
+    except (ValueError, *DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
@@ -2043,7 +2043,7 @@ def refund_customer_advance_route(advance_id):
         )
         c.commit()
         flash("تم رد مقدم العميل وترحيل القيد: " + result["refund_no"], "success")
-    except (ValueError, DB_ERROR) as exc:
+    except (ValueError, *DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
@@ -2223,7 +2223,7 @@ def edit_customer(customer_id):
                          discount_type=?,discount_value=? WHERE id=?""",
               (request.form["code"].strip(),request.form["name"].strip(),request.form.get("tax_number","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("address","").strip(),str(limit),discount_type,str(discount_value),customer_id))
             c.commit(); c.close(); flash("تم تعديل بيانات العميل.","success"); return redirect(url_for("sales.customer_list"))
-        except (ValueError,InvalidOperation,DB_INTEGRITY_ERROR) as e:
+        except (ValueError,InvalidOperation,*DB_INTEGRITY_ERROR) as e:
             c.rollback(); flash(str(e) if isinstance(e,(ValueError,InvalidOperation)) else "كود العميل مستخدم بالفعل.","error")
     c.close(); return render_template("sales_customer_edit.html",customer=customer,used=used)
 
@@ -2254,7 +2254,7 @@ def salesperson_list():
             execute_compat(c, "INSERT INTO salespersons(code,name) VALUES(?,?)", (code, name))
             c.commit()
             flash("تم إضافة مندوب المبيعات.", "success")
-        except (ValueError, DB_INTEGRITY_ERROR) as exc:
+        except (ValueError, *DB_INTEGRITY_ERROR) as exc:
             c.rollback()
             flash(safe_error_message(exc, "كود مندوب المبيعات مستخدم بالفعل."), "error")
     rows = execute_compat(c, "SELECT * FROM salespersons ORDER BY code").fetchall()
@@ -2419,7 +2419,7 @@ def new_invoice():
                       " | المديونية السابقة: " + str(result["current_exposure"]) +
                       " | المديونية بعد الفاتورة: " + str(result["new_exposure"]), "warning")
             return redirect(url_for("sales.invoice_print", invoice_id=result["invoice_id"]))
-        except (ValueError, InvalidOperation, KeyError, DB_ERROR) as exc:
+        except (ValueError, InvalidOperation, KeyError, *DB_ERROR) as exc:
             c.rollback()
             flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     customers = execute_compat(c, "SELECT * FROM customers WHERE active=1 ORDER BY name").fetchall()
@@ -2553,7 +2553,7 @@ def edit_invoice_workflow(workflow_id):
                                     is_admin=(session.get("role") == "admin"))
             flash("تم حفظ تعديلات المسودة. لم يتم إنشاء قيد أو خصم مخزون.", "success")
             return redirect(url_for("sales.invoice_workflow", workflow_id=workflow_id))
-        except (ValueError, InvalidOperation, KeyError, TypeError, DB_ERROR) as exc:
+        except (ValueError, InvalidOperation, KeyError, TypeError, *DB_ERROR) as exc:
             c.rollback()
             flash(safe_error_message(exc, "تعذر تعديل المسودة. لم يتم حفظ أي تغييرات."), "error")
             workflow = execute_compat(c, """SELECT w.*,cu.name customer_name
@@ -2603,7 +2603,7 @@ def submit_invoice_workflow(workflow_id):
             raise ValueError("لا يمكن إرسال المسودة؛ قد تكون عولجت أو تغيرت حالتها.")
         c.commit()
         flash("تم إرسال الفاتورة للاعتماد. لم يتم ترحيلها أو خصم المخزون.", "success")
-    except (ValueError, DB_ERROR) as exc:
+    except (ValueError, *DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر إرسال المسودة للاعتماد."), "error")
     finally:
@@ -2653,7 +2653,7 @@ def decide_invoice_workflow(workflow_id):
             flash("تم اعتماد الفاتورة. ما زالت غير مرحلة ولم يتم خصم المخزون؛ يلزم تنفيذ الترحيل كخطوة مستقلة.", "success")
         else:
             raise ValueError("اختر اعتماد الفاتورة أو رفضها.")
-    except (ValueError, DB_ERROR) as exc:
+    except (ValueError, *DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر حفظ قرار الاعتماد."), "error")
     finally:
@@ -2693,7 +2693,7 @@ def post_invoice_workflow(workflow_id):
         g.audit_created_record = ("sales_invoices", result["invoice_id"], "sales_invoice_lines", "invoice_id")
         flash("تم ترحيل الفاتورة المعتمدة وإنشاء القيد وحركة المخزون مرة واحدة: " + result["invoice_no"], "success")
         return redirect(url_for("sales.invoice_print", invoice_id=result["invoice_id"]))
-    except (ValueError, InvalidOperation, KeyError, TypeError, DB_ERROR) as exc:
+    except (ValueError, InvalidOperation, KeyError, TypeError, *DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر ترحيل الفاتورة المعتمدة. لم يتم حفظ أي تغييرات."), "error")
     finally:
@@ -2718,7 +2718,7 @@ def cancel_invoice_workflow(workflow_id):
             raise ValueError("لا يمكن إلغاء الفاتورة؛ قد تكون مرحلة بالفعل. الفاتورة المرحلة تُعالج بإشعار دائن أو قيد عكسي.")
         c.commit()
         flash("تم إلغاء مسودة الفاتورة دون إنشاء قيد أو حركة مخزون.", "success")
-    except (ValueError, DB_ERROR) as exc:
+    except (ValueError, *DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر إلغاء مسودة الفاتورة."), "error")
     finally:
@@ -2860,7 +2860,7 @@ def discount_approval(request_id):
                 reason=reason)
             flash("تم اعتماد الخصم وترحيل الفاتورة وقيدها وحركة المخزون مرة واحدة.", "success")
             return redirect(url_for("sales.invoice_print", invoice_id=result["invoice_id"]))
-        except (ValueError, InvalidOperation, KeyError, TypeError, DB_ERROR) as exc:
+        except (ValueError, InvalidOperation, KeyError, TypeError, *DB_ERROR) as exc:
             c.rollback()
             flash(safe_error_message(exc, "تعذر معالجة طلب الخصم. لم يتم حفظ أي تغييرات."), "error")
     c.close()
@@ -2971,7 +2971,7 @@ def new_credit_note():
             c.commit()
             flash("تم ترحيل الإشعار الدائن " + result["credit_note_no"], "success")
             return redirect(url_for("sales.index"))
-        except (ValueError, InvalidOperation, KeyError, DB_ERROR) as exc:
+        except (ValueError, InvalidOperation, KeyError, *DB_ERROR) as exc:
             c.rollback()
             flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     invoices = execute_compat(c, 
@@ -3016,7 +3016,7 @@ def new_receipt():
             else:
                 raise ValueError("حدد الفواتير التي تريد تحصيلها.")
             return redirect(url_for("sales.index"))
-        except (ValueError, InvalidOperation, KeyError, DB_ERROR) as exc:
+        except (ValueError, InvalidOperation, KeyError, *DB_ERROR) as exc:
             c.rollback()
             flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     customers = execute_compat(c, "SELECT id,code,name FROM customers WHERE active=1 ORDER BY name").fetchall()
@@ -3126,7 +3126,7 @@ def refund_credit_note(credit_note_id):
             c.commit()
             flash("تم تسجيل رد المبلغ " + result["refund_no"], "success")
             return redirect(url_for("sales.index"))
-        except (ValueError, InvalidOperation, KeyError, DB_ERROR) as exc:
+        except (ValueError, InvalidOperation, KeyError, *DB_ERROR) as exc:
             c.rollback()
             flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     from activity_profiles import active_account_role_ids
@@ -3157,7 +3157,7 @@ def cancel_credit_note_route(credit_note_id):
         )
         c.commit()
         flash("تم إلغاء الإشعار الدائن بقيد عكسي رقم " + str(result["reversal_journal_id"]), "success")
-    except (ValueError, InvalidOperation, KeyError, DB_ERROR) as exc:
+    except (ValueError, InvalidOperation, KeyError, *DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
