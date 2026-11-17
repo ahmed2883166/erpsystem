@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import uuid
 from pathlib import Path
 
 
@@ -14,7 +15,11 @@ def validate(ddl_path, dsn):
         ) from exc
 
     ddl = Path(ddl_path).read_text(encoding="utf-8")
-    schema_name = "nexus_schema_validation"
+    # Never reuse or drop a fixed schema name: callers may point this tool at
+    # a shared development database. A unique, owned schema keeps validation
+    # isolated and makes cleanup incapable of deleting another run's objects.
+    schema_name = "nexus_schema_validation_" + uuid.uuid4().hex
+    quoted_schema = '"' + schema_name + '"'
     with psycopg.connect(dsn, autocommit=True) as connection:
         connection.execute(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE')
         connection.execute(f'CREATE SCHEMA "{schema_name}"')
