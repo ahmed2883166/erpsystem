@@ -50,7 +50,7 @@ from core_schema import initialize_core_schema, ensure_legacy_core_columns
 from company_defaults import seed_company_defaults
 from sqlite_accounting_migrations import migrate_journal_line_amounts_to_text
 from sqlite_audit_schema import initialize_sqlite_audit_schema
-from db_compat import begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names, table_column_info
+from db_compat import (begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names, table_column_info, DB_ERROR, DB_INTEGRITY_ERROR)
 from report_request_control import (ReportRequestGate, bounded_env_int,
                                     is_expensive_report_request,
                                     set_current_report_deadline,
@@ -377,7 +377,7 @@ def role_default_permissions(role):
             return []
         values = json.loads(row["permissions_json"] or "[]")
         return normalize_user_permissions(values if isinstance(values, (list, tuple, set)) else [])
-    except (sqlite3.Error, TypeError, ValueError, json.JSONDecodeError):
+    except (*DB_ERROR, TypeError, ValueError, json.JSONDecodeError):
         return []
     finally:
         connection.close()
@@ -645,7 +645,7 @@ def log(action, details="", entity_type=None, entity_id=None, outcome="success",
         if user_id is not None:
             try:
                 actor = connection.execute("SELECT username,full_name FROM users WHERE id=?", (user_id,)).fetchone()
-            except sqlite3.Error:
+            except DB_ERROR:
                 actor = None
             if actor:
                 actor_name = actor["full_name"] or actor["username"]
@@ -1241,7 +1241,7 @@ def activity_profiles():
                     flash("تم تعطيل ملف النشاط.", "success")
             else:
                 raise ValueError("العملية المطلوبة غير معروفة.")
-        except (ValueError, TypeError, sqlite3.IntegrityError) as exc:
+        except (ValueError, TypeError, *DB_INTEGRITY_ERROR) as exc:
             connection.rollback()
             flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
         connection.close()
@@ -1304,7 +1304,7 @@ def accounts():
                 details=code, reason=request.form.get("change_reason", "").strip(),
             )
             flash("تمت إضافة الحساب.", "success")
-        except sqlite3.IntegrityError:
+        except DB_INTEGRITY_ERROR:
             connection.rollback()
             flash("رمز الحساب مستخدم بالفعل.", "error")
         except ValueError as exc:
@@ -1371,7 +1371,7 @@ def delete_account(account_id):
                     details=account["code"], reason=request.form.get("change_reason", "").strip(),
                 )
                 flash("تم حذف الحساب لعدم وجود حسابات فرعية أو حركات مرتبطة.", "success")
-            except sqlite3.IntegrityError:
+            except DB_INTEGRITY_ERROR:
                 connection.rollback()
                 flash("لا يمكن حذف الحساب لأنه مرتبط بمستند أو سجل آخر.", "error")
     connection.close()
@@ -1437,7 +1437,7 @@ def edit_account(account_id):
                     connection.close()
                     flash("تم تعديل الحساب.", "success")
                     return redirect(url_for("accounts"))
-                except sqlite3.IntegrityError:
+                except DB_INTEGRITY_ERROR:
                     connection.rollback()
                     flash("كود الحساب مستخدم بالفعل.", "error")
     groups = connection.execute("SELECT * FROM accounts WHERE is_group=1 AND active=1 AND id<>? ORDER BY code", (account_id,)).fetchall()
@@ -1915,7 +1915,7 @@ def journal():
                     f'WHERE journal_entry_id IN ({marks}) ORDER BY id',
                     entry_ids,
                 ).fetchall()
-            except sqlite3.Error:
+            except DB_ERROR:
                 continue
             for link in linked:
                 if link["journal_entry_id"] not in origin_by_entry:
@@ -2046,7 +2046,7 @@ def management_minimum_cash():
             details=normalized_value, reason=request.form.get("change_reason", "").strip(),
         )
         flash("تم حفظ الحد الأدنى للنقدية.", "success")
-    except (InvalidOperation, ValueError, sqlite3.Error):
+    except (InvalidOperation, ValueError, *DB_ERROR):
         flash("أدخل حدًا أدنى صحيحًا لا يقل عن صفر.", "error")
     return redirect(url_for("management_dashboard"))
 
@@ -2107,7 +2107,7 @@ def analytic_dimensions_settings():
             connection.close()
             flash("تمت إضافة " + label + " بنجاح.", "success")
             return redirect(url_for("analytic_dimensions_settings"))
-        except (ValueError, sqlite3.IntegrityError) as exc:
+        except (ValueError, *DB_INTEGRITY_ERROR) as exc:
             connection.rollback()
             flash(safe_error_message(exc, "تعذر إضافة البُعد. تأكد من عدم تكرار الكود."), "error")
     options = active_dimension_options(connection)
@@ -2152,7 +2152,7 @@ def management_account_mapping():
             )
             flash("تم حفظ ربط حسابات لوحة الإدارة بشجرة الحسابات الحالية.", "success")
             return redirect(url_for("management_account_mapping"))
-        except (ValueError, sqlite3.Error) as exc:
+        except (ValueError, *DB_ERROR) as exc:
             connection.rollback()
             flash(safe_error_message(exc, "تعذر حفظ ربط الحسابات."), "error")
     roles = load_management_account_roles(connection)
@@ -2802,7 +2802,7 @@ def cash_commitments_register():
                     flash("تم إيقاف الجدول. الاستحقاقات التي أُنشئت سابقًا لم تتغير.", "success")
                 else:
                     raise ValueError("الإجراء المطلوب غير معروف.")
-            except (ValueError, TypeError, sqlite3.IntegrityError) as exc:
+            except (ValueError, TypeError, *DB_INTEGRITY_ERROR) as exc:
                 flash(safe_error_message(exc, "تعذر حفظ العملية. لم يتم إجراء أي تغيير."), "error")
             return redirect(url_for("cash_commitments_register"))
         rows = connection.execute(
@@ -3480,7 +3480,7 @@ def users():
                 details=username, reason=request.form.get("change_reason", "").strip(),
             )
             flash("تم إنشاء المستخدم.", "success")
-        except sqlite3.IntegrityError:
+        except DB_INTEGRITY_ERROR:
             connection.rollback()
             flash("اسم المستخدم مستخدم بالفعل.", "error")
         except ValueError as exc:
@@ -3591,7 +3591,7 @@ def manage_user_roles():
             flash("تم تعطيل الدور المخصص.", "success")
         else:
             raise ValueError("عملية إدارة الدور غير معروفة.")
-    except sqlite3.IntegrityError:
+    except DB_INTEGRITY_ERROR:
         connection.rollback()
         flash("اسم الدور مستخدم بالفعل. اختر اسمًا مختلفًا.", "error")
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
@@ -3680,7 +3680,7 @@ def edit_user(user_id):
                     details=after_values["username"], reason=request.form.get("change_reason", "").strip())
                 flash("تم تعديل المستخدم.", "success")
                 return redirect(url_for("users"))
-            except sqlite3.IntegrityError:
+            except DB_INTEGRITY_ERROR:
                 connection.rollback()
                 flash("اسم المستخدم مستخدم بالفعل.", "error")
             except ValueError as exc:
@@ -3736,7 +3736,7 @@ def delete_user(user_id):
                     details=user["username"], reason=request.form.get("change_reason", "").strip(),
                 )
                 flash("تم حذف المستخدم.","success")
-            except sqlite3.IntegrityError: connection.rollback(); flash("لا يمكن حذف المستخدم لوجود سجلات مرتبطة به.","error")
+            except DB_INTEGRITY_ERROR: connection.rollback(); flash("لا يمكن حذف المستخدم لوجود سجلات مرتبطة به.","error")
     connection.close(); return redirect(url_for("users"))
 
 
@@ -4225,7 +4225,7 @@ def import_data_wizard():
                         raise ValueError("وجهة الاستيراد غير مدعومة.")
                     inserted += 1
                     connection.execute("RELEASE SAVEPOINT import_row")
-                except (ValueError, InvalidOperation, sqlite3.IntegrityError) as exc:
+                except (ValueError, InvalidOperation, *DB_INTEGRITY_ERROR) as exc:
                     connection.execute("ROLLBACK TO SAVEPOINT import_row")
                     connection.execute("RELEASE SAVEPOINT import_row")
                     skipped += 1
@@ -4291,7 +4291,7 @@ def import_accounts():
                 connection.execute("INSERT INTO accounts(code,name_ar,account_type) VALUES(?,?,?)",
                                    (code, name, account_type))
                 inserted += 1
-            except sqlite3.IntegrityError:
+            except DB_INTEGRITY_ERROR:
                 skipped += 1
         ensure_account_metadata(connection)
         connection.commit()
@@ -4461,7 +4461,7 @@ def reset_company_data():
             summary = clear_company_data(reset_connection)
         finally:
             reset_connection.close()
-    except (OSError, sqlite3.Error, RuntimeError, ValueError) as exc:
+    except (OSError, *DB_ERROR, RuntimeError, ValueError) as exc:
         app.logger.exception("Company data reset failed before completion.")
         try:
             log("company_data_reset_failed", str(exc)[:500], entity_type="system", outcome="failure")
@@ -4544,7 +4544,7 @@ def restore_backup():
 
         log("backup_restored", upload.filename)
         flash("تم استرجاع النسخة بنجاح بعد فحصها، مع الاحتفاظ بنسخة أمان من البيانات السابقة.", "success")
-    except (zipfile.BadZipFile, ValueError, sqlite3.DatabaseError, OSError, RuntimeError) as exc:
+    except (zipfile.BadZipFile, ValueError, *DB_ERROR, OSError, RuntimeError) as exc:
         flash(f"تعذرت الاستعادة: {exc}", "error")
     finally:
         for path in temp_paths:
