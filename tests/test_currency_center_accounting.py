@@ -275,6 +275,7 @@ class CurrencyBalanceUpdatePostgreSQLTests(unittest.TestCase):
         acquired = threading.Event()
         observed = {}
         errors = []
+        worker = None
         try:
             first.execute(f'CREATE SCHEMA "{schema}"')
             first.commit()
@@ -342,13 +343,21 @@ class CurrencyBalanceUpdatePostgreSQLTests(unittest.TestCase):
             self.assertEqual(observed.get("balance"), "60.00")
         finally:
             try:
+                # Release the row lock before waiting for the worker, then ensure
+                # its connection is no longer using the disposable schema.
                 first.rollback()
+                if worker is not None:
+                    worker.join(timeout=5)
                 second.rollback()
+                if worker is not None and worker.is_alive():
+                    second.close()
+                    worker.join(timeout=5)
                 first.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
                 first.commit()
             finally:
                 first.close()
-                second.close()
+                if not second.closed:
+                    second.close()
                 monitor.close()
 
 
