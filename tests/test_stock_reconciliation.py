@@ -6,12 +6,14 @@ from unittest.mock import patch
 from flask import Flask
 
 import stock
+from accounting_core import register_decimal_aggregates
 
 
 class StockReconciliationReportTests(unittest.TestCase):
     def setUp(self):
         self.conn = sqlite3.connect(":memory:")
         self.conn.row_factory = sqlite3.Row
+        register_decimal_aggregates(self.conn)
         self.conn.executescript("""
             CREATE TABLE stock_products(
                 id INTEGER PRIMARY KEY, sku TEXT, name_ar TEXT
