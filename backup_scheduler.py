@@ -12,6 +12,8 @@ import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from sqlite_maintenance import online_backup_sqlite
+
 _scheduler_thread = None
 _scheduler_lock = threading.Lock()
 BACKUP_PREFIX = "nexus-backup-"
@@ -76,16 +78,7 @@ def create_backup_archive(db_path, backup_dir, keep_count=30):
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     archive_path = backup_dir / f"{BACKUP_PREFIX}{stamp}.zip"
     snapshot_path = backup_dir / f".snapshot-{stamp}-{os.getpid()}.db"
-    source = _connect(db_path)
-    destination = sqlite3.connect(str(snapshot_path), timeout=20)
-    try:
-        source.backup(destination)
-        integrity = destination.execute("PRAGMA integrity_check").fetchone()[0]
-        if integrity != "ok":
-            raise RuntimeError("فشل فحص سلامة قاعدة البيانات في النسخة الاحتياطية.")
-    finally:
-        destination.close()
-        source.close()
+    online_backup_sqlite(db_path, snapshot_path, timeout=20)
     try:
         with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.write(snapshot_path, "nexus.db")
