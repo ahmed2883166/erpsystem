@@ -41,7 +41,7 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
     def test_repository_core_migration_is_loadable_and_splits_function_body_safely(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual([item.version for item in migrations], [1])
+        self.assertEqual([item.version for item in migrations], [1, 2])
         statements = _split_sql_statements(migrations[0].sql)
         audit_function = next(
             item for item in statements
@@ -137,7 +137,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
             self._migration(1, "0001_create_probe.sql",
                             'CREATE TABLE "probe" (id BIGINT PRIMARY KEY)')
         ]
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         row = self.connection.execute(
             "SELECT COUNT(*) AS count FROM "
@@ -250,6 +250,47 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
                 f"INSERT INTO {schema}.journal_lines(entry_id,account_id,debit,credit) "
                 "VALUES (%s,%s,%s,%s)",
                 (entry_id, account_id, "1", "1"),
+            )
+        self.connection.rollback()
+
+    def test_party_and_banking_schema_supports_independent_ledgers(self):
+        migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
+        migrations = load_migrations(migration_dir)
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2])
+        schema = quote_schema_name(self.schema)
+
+        account_id = self.connection.execute(
+            f"INSERT INTO {schema}.accounts(code,name_ar,account_type) VALUES (%s,%s,%s) RETURNING id",
+            ("1100", "Main Bank", "asset"),
+        ).fetchone()["id"]
+        self.connection.execute(
+            f"INSERT INTO {schema}.currencies(code,name_ar,symbol,active,is_base,rate_to_base) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            ("EGP", "Egyptian Pound", "EGP", 1, 1, "1"),
+        )
+        cash_id = self.connection.execute(
+            f"INSERT INTO {schema}.cash_accounts(kind,name_ar,account_id,currency_code,opening_date) "
+            "VALUES (%s,%s,%s,%s,%s) RETURNING id",
+            ("bank", "Main Bank", account_id, "EGP", "2026-01-01"),
+        ).fetchone()["id"]
+        self.assertGreater(cash_id, 0)
+
+        customer_id = self.connection.execute(
+            f"INSERT INTO {schema}.customers(code,name) VALUES (%s,%s) RETURNING id",
+            ("C-0001", "Customer One"),
+        ).fetchone()["id"]
+        supplier_id = self.connection.execute(
+            f"INSERT INTO {schema}.suppliers(code,name) VALUES (%s,%s) RETURNING id",
+            ("S-0001", "Supplier One"),
+        ).fetchone()["id"]
+        self.assertGreater(customer_id, 0)
+        self.assertGreater(supplier_id, 0)
+
+        with self.assertRaises(Exception):
+            self.connection.execute(
+                f"INSERT INTO {schema}.bank_transactions(transaction_no,transaction_date,bank_account_id,"
+                "transaction_type,amount,description) VALUES (%s,%s,%s,%s,%s,%s)",
+                ("BAD-TRANSFER", "2026-01-01", account_id, "transfer", "10", "Missing destination"),
             )
         self.connection.rollback()
 
