@@ -1935,15 +1935,26 @@ def valuation_reconciliation():
             code = resolve_product_account_code(conn, product["id"], "inventory", default_inventory)
             if not code:
                 raise ValueError("تعذر تحديد حساب المخزون للصنف " + product["sku"] + ".")
-            nonzero_qty_sql = decimal_compare_expression(conn, "COALESCE(qty_remaining,'0')") + " <> 0"
-            nonzero_value_sql = decimal_compare_expression(conn, "COALESCE(value_remaining,'0')") + " <> 0"
-            layers = _execute(conn, f"""SELECT warehouse_id,qty_remaining,unit_cost,value_remaining
-                FROM stock_valuation_layers WHERE product_id=? AND ({nonzero_qty_sql} OR {nonzero_value_sql})""",
+            # Read all product layers and parse with Decimal in Python. The
+            # integrity audit may have found malformed legacy text values; a
+            # database-side numeric comparison must not turn that finding into
+            # a report crash.
+            layers = _execute(conn, """SELECT warehouse_id,qty_remaining,unit_cost,value_remaining
+                FROM stock_valuation_layers WHERE product_id=?""",
                 (product["id"],)).fetchall()
             value = D("0")
             for layer in layers:
-                layer_value = (D(str(layer["value_remaining"])) if layer["value_remaining"] not in (None, "")
-                               else D(str(layer["qty_remaining"] or "0")) * D(str(layer["unit_cost"] or "0")))
+                try:
+                    layer_qty = D(str(layer["qty_remaining"] or "0"))
+                    layer_unit_cost = D(str(layer["unit_cost"] or "0"))
+                    layer_value = (D(str(layer["value_remaining"])) if layer["value_remaining"] not in (None, "")
+                                   else layer_qty * layer_unit_cost)
+                    if not all(number.is_finite() for number in (layer_qty, layer_unit_cost, layer_value)):
+                        raise InvalidOperation
+                except (InvalidOperation, TypeError, ValueError):
+                    continue
+                if layer_qty == 0 and layer_value == 0:
+                    continue
                 value += layer_value
                 warehouse_id = layer["warehouse_id"]
                 valuation_by_warehouse[warehouse_id] = valuation_by_warehouse.get(warehouse_id, D("0")) + layer_value
