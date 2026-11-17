@@ -51,7 +51,7 @@ def _pg_grouped_sum(conn, schema, table, amount_column, group_columns=()):
     group_sql = ", ".join(qgroups)
     select_sql = (group_sql + ", " if group_sql else "") + (
         "COALESCE(SUM(COALESCE(NULLIF(BTRIM(" + qamount +
-        "::text), ''), '0')::numeric), 0)"
+        "::text), ''), '0')::numeric), 0) AS total_value"
     )
     sql = f"SELECT {select_sql} FROM {qtable}"
     if group_sql:
@@ -59,7 +59,7 @@ def _pg_grouped_sum(conn, schema, table, amount_column, group_columns=()):
     result = {}
     for row in conn.execute(sql).fetchall():
         key = tuple(row[col] for col in group_columns)
-        result[key] = _decimal(row[len(group_columns)])
+        result[key] = _decimal(row["total_value"])
     return result
 
 
