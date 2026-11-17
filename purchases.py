@@ -1400,7 +1400,7 @@ def new_receipt():
               branch_id,cost_center_id,project_id) VALUES(?,?,?,?,?,?,?,?,?,?)""",
               (no,po_id,supplier,wh,request.form["receipt_date"],str(total),session["user_id"],
                dimensions["branch_id"],dimensions["cost_center_id"],dimensions["project_id"]))
-            execute_compat(c, """INSERT INTO goods_receipt_lines(receipt_id,po_line_id,product_id,quantity,unit_cost,total_cost,location_id,entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
+            receipt_line_id=insert_and_get_id(c, """INSERT INTO goods_receipt_lines(receipt_id,po_line_id,product_id,quantity,unit_cost,total_cost,location_id,entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                       (rid,po_line_id,product,str(qty),str(unit),str(total),location_id,str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,str(factor)))
             if po_id:
@@ -1412,8 +1412,8 @@ def new_receipt():
             mid=insert_and_get_id(c, """INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,target_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name)
               VALUES(?,'receipt',?,?,?,?,?,?,?,?,?,?, 'pending_document',?,?,?,?)""",
               (move_no,product,wh,location_id,lot_id,str(qty),str(unit),str(total),request.form["receipt_date"],"استلام مشتريات "+no,session["user_id"],str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name))
-            execute_compat(c, "INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost) VALUES(?,?,?,?,?,?,?,?)",
-              (product,wh,location_id,lot_id,mid,str(qty),str(qty),str(unit)))
+            execute_compat(c, "INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost,receipt_line_id) VALUES(?,?,?,?,?,?,?,?,?)",
+              (product,wh,location_id,lot_id,mid,str(qty),str(qty),str(unit),receipt_line_id))
             stock_line_dimensions = {
                 "stock_product_id": int(product),
                 "stock_warehouse_id": int(wh),
@@ -2404,9 +2404,9 @@ def _allocate_supplier_bill_return_value(bill_lines, requested_quantity, legacy_
 
 
 def _supplier_bill_return_value_allocations(c, bill_id, product_id, warehouse_id, requested_quantity,
-                                            pending_allocations=None):
+                                            pending_allocations=None, layer_details=None):
     rows = execute_compat(c, """
-        SELECT x.id AS bill_line_id,x.billed_quantity,x.invoice_unit_price,
+        SELECT x.id AS bill_line_id,x.receipt_line_id,x.billed_quantity,x.invoice_unit_price,
                COALESCE(SUM(CASE WHEN cn.status='posted' THEN a.quantity ELSE '0' END),'0') AS allocated_quantity
         FROM supplier_bill_inventory_lines x
         JOIN goods_receipt_lines gl ON gl.id=x.receipt_line_id
@@ -2415,7 +2415,7 @@ def _supplier_bill_return_value_allocations(c, bill_id, product_id, warehouse_id
         LEFT JOIN supplier_credit_note_lines cnl ON cnl.id=a.credit_note_line_id
         LEFT JOIN supplier_credit_notes cn ON cn.id=cnl.credit_note_id
         WHERE x.bill_id=? AND x.product_id=? AND gr.warehouse_id=?
-        GROUP BY x.id,x.billed_quantity,x.invoice_unit_price
+        GROUP BY x.id,x.receipt_line_id,x.billed_quantity,x.invoice_unit_price
         ORDER BY x.id
     """, (bill_id, product_id, warehouse_id)).fetchall()
     legacy = execute_compat(c, """
@@ -2430,11 +2430,68 @@ def _supplier_bill_return_value_allocations(c, bill_id, product_id, warehouse_id
     adjusted_rows = []
     for row in rows:
         item = dict(row)
-        item["allocated_quantity"] = str(
+        item["allocated_quantity"] = (
             Decimal(str(item["allocated_quantity"] or "0"))
             + Decimal(str(pending_allocations.get(int(item["bill_line_id"]), "0")))
         )
         adjusted_rows.append(item)
+
+    # New receipt layers retain their originating receipt line. Allocate the
+    # supplier credit to the invoice line for the exact stock layers returned,
+    # rather than the first matching invoice line for the product.
+    if layer_details and all(detail.get("receipt_line_id") is not None for detail in layer_details):
+        remaining_legacy = Decimal(str(legacy["quantity"] if legacy else "0"))
+        for item in adjusted_rows:
+            legacy_take = min(
+                max(Decimal("0"), Decimal(str(item["billed_quantity"])) - item["allocated_quantity"]),
+                remaining_legacy,
+            )
+            item["allocated_quantity"] += legacy_take
+            remaining_legacy -= legacy_take
+        if remaining_legacy > 0:
+            raise ValueError("تعذر ربط مرتجعات المورد القديمة ببنود الفاتورة الأصلية؛ يلزم مراجعة يدوية.")
+
+        remaining_request = Decimal(str(requested_quantity or "0"))
+        if not remaining_request.is_finite() or remaining_request <= 0:
+            raise ValueError("كمية مرتجع المورد غير صالحة.")
+        allocations = []
+        total_value = Decimal("0")
+        for detail in layer_details:
+            layer_remaining = Decimal(str(detail["quantity"]))
+            receipt_line_id = int(detail["receipt_line_id"])
+            for item in adjusted_rows:
+                if int(item["receipt_line_id"]) != receipt_line_id:
+                    continue
+                available = Decimal(str(item["billed_quantity"])) - item["allocated_quantity"]
+                if available < 0:
+                    raise ValueError("تخصيصات مرتجعات المورد تجاوزت كمية بند الفاتورة الأصلية.")
+                take = min(available, layer_remaining, remaining_request)
+                if take <= 0:
+                    continue
+                unit_price = Decimal(str(item["invoice_unit_price"] or "0"))
+                if not unit_price.is_finite() or unit_price < 0:
+                    raise ValueError("سعر بند فاتورة المورد الأصلية غير صالح.")
+                line_value = money(take * unit_price)
+                allocations.append({
+                    "supplier_bill_line_id": int(item["bill_line_id"]),
+                    "quantity": take, "unit_price": unit_price, "total_value": line_value,
+                })
+                item["allocated_quantity"] += take
+                total_value += line_value
+                layer_remaining -= take
+                remaining_request -= take
+                if layer_remaining == 0 or remaining_request == 0:
+                    break
+            if layer_remaining > 0:
+                raise ValueError("طبقة المخزون المرتجعة غير مرتبطة ببند مفوتر متاح في فاتورة المورد.")
+            if remaining_request == 0:
+                break
+        if remaining_request > 0:
+            raise ValueError("كمية المرتجع تتجاوز الكمية المفوترة المتبقية بسعر الفاتورة الأصلية.")
+        return money(total_value), allocations
+
+    for item in adjusted_rows:
+        item["allocated_quantity"] = str(item["allocated_quantity"])
     return _allocate_supplier_bill_return_value(
         adjusted_rows, requested_quantity, legacy["quantity"] if legacy else "0"
     )
@@ -2678,15 +2735,6 @@ def new_credit_note():
                         f"المتاح للمرتجع: {remaining_returnable[return_key]}."
                     )
                 remaining_returnable[return_key]-=qty
-                supplier_return_value,bill_line_allocations=_supplier_bill_return_value_allocations(
-                    c,bill_id,product_id,warehouse_id,qty,pending_bill_line_quantities
-                )
-                for bill_allocation in bill_line_allocations:
-                    bill_line_id=bill_allocation["supplier_bill_line_id"]
-                    pending_bill_line_quantities[bill_line_id]=(
-                        pending_bill_line_quantities.get(bill_line_id,Decimal("0"))
-                        + bill_allocation["quantity"]
-                    )
                 product=execute_compat(c, "SELECT * FROM stock_products WHERE id=? AND active=1",(product_id,)).fetchone()
                 warehouse=execute_compat(c, "SELECT id FROM stock_warehouses WHERE id=? AND active=1",(warehouse_id,)).fetchone()
                 if not product or product["product_type"]=="service" or not warehouse:
@@ -2701,6 +2749,15 @@ def new_credit_note():
                 cost,allocations,layer_details=consume_layers(
                 c,product_id,warehouse_id,qty,method,include_layer_details=True
             )
+                supplier_return_value,bill_line_allocations=_supplier_bill_return_value_allocations(
+                    c,bill_id,product_id,warehouse_id,qty,pending_bill_line_quantities,layer_details
+                )
+                for bill_allocation in bill_line_allocations:
+                    bill_line_id=bill_allocation["supplier_bill_line_id"]
+                    pending_bill_line_quantities[bill_line_id]=(
+                        pending_bill_line_quantities.get(bill_line_id,Decimal("0"))
+                        + bill_allocation["quantity"]
+                    )
                 subtotal+=supplier_return_value
                 line_item={"product_id":product_id,"warehouse_id":warehouse_id,"quantity":qty,
                     "cost":cost,"supplier_return_value":supplier_return_value,
