@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from flask import Flask
+from jinja2 import ChoiceLoader, DictLoader
 from unittest.mock import patch
 
 import purchases
@@ -543,10 +544,13 @@ class PurchasingAccountingTests(unittest.TestCase):
 
         return_app = Flask(__name__, template_folder=str(Path(purchases.__file__).resolve().parent / "templates"))
         return_app.secret_key = "test"
-        # The production base template renders Flask-WTF's CSRF token.
-        # This isolated test app does not install CSRFProtect, so provide the
-        # template helper without weakening CSRF behavior in the real app.
-        return_app.jinja_env.globals["csrf_token"] = lambda: "test-csrf-token"
+        # This isolated route test does not mount the full ERP navigation.
+        # Keep the purchase page template real while replacing only the shared
+        # base layout, whose many unrelated endpoints belong to the full app.
+        return_app.jinja_loader = ChoiceLoader([
+            DictLoader({"base.html": "{% block content %}{% endblock %}"}),
+            return_app.jinja_loader,
+        ])
         return_app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
         return_app.register_blueprint(purchases.purchase_bp)
         return_client = return_app.test_client()
