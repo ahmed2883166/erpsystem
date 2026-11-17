@@ -197,7 +197,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
     def test_native_core_schema_preserves_exact_accounting_amounts(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1])
+        self.assertEqual(apply_migrations(self.connection, migrations[:1], schema=self.schema), [1])
 
         schema = quote_schema_name(self.schema)
         user_id = self.connection.execute(
