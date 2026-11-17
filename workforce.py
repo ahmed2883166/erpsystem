@@ -424,7 +424,12 @@ def initialize_workforce_schema():
         """).fetchall()
         for check in checks:
             definition = str(check["definition"])
-            if ("status" in definition.lower() and "present" in definition.lower()\n                    and "absent" in definition.lower() and "annual_leave" not in definition):
+            if (
+                "status" in definition.lower()
+                and "present" in definition.lower()
+                and "absent" in definition.lower()
+                and "annual_leave" not in definition
+            ):
                 constraint = str(check["conname"]).replace('"', '""')
                 c.execute(f'ALTER TABLE attendance_records DROP CONSTRAINT "{constraint}"')
         remaining_checks = c.execute("""
