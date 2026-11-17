@@ -8,7 +8,7 @@ from functools import wraps
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
-from db_compat import database_dialect, table_exists
+from db_compat import begin_write_transaction, database_dialect, table_exists
 from db_sql import execute_compat
 
 
@@ -102,14 +102,8 @@ def _table_exists(c, name):
 
 
 def _begin_fx_write(c):
-    """Start an FX write unit using the active driver's transaction policy."""
-    if database_dialect(c) == "sqlite":
-        execute_compat(c, "BEGIN IMMEDIATE")
-    else:
-        # psycopg starts a transaction lazily with autocommit=False.
-        status = getattr(getattr(c, "info", None), "transaction_status", None)
-        if status is not None and getattr(status, "name", None) == "IDLE":
-            execute_compat(c, "BEGIN")
+    """Start an FX write unit using the shared cross-database transaction policy."""
+    return begin_write_transaction(c)
 
 
 def _open_fx_transaction_for_update(c, transaction_id):
