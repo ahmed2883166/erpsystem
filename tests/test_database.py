@@ -100,7 +100,7 @@ class PostgreSQLPaginationTests(unittest.TestCase):
             self.assertEqual(result["total"], 100)
             self.assertEqual(result["pages"], 2)
             self.assertEqual(result["page"], 2)
-            self.assertEqual([row["id"] for row in result["rows"]], list(range(126, 176))
+            self.assertEqual([row["id"] for row in result["rows"]], list(range(126, 176)))
         finally:
             connection.rollback()
             connection.close()
