@@ -1,6 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database, fetch_page
-from db_compat import begin_write_transaction, insert_and_get_id, table_exists, table_columns
+from db_compat import begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names
 """Employee master, payroll preparation and employee custody workflows."""
 import sqlite3
 import io
@@ -434,7 +434,7 @@ def initialize_workforce_schema():
             raise
         finally:
             c.execute("PRAGMA foreign_keys=ON")
-    payroll_run_cols = {r["name"] for r in [{"name": column} for column in table_columns(c, "payroll_runs")]}
+    payroll_run_cols = table_columns(c, "payroll_runs")
     for column, declaration in {
         "posted_at": "TEXT",
         "approved_by": "INTEGER",
@@ -446,7 +446,7 @@ def initialize_workforce_schema():
     }.items():
         if column not in payroll_run_cols:
             c.execute(f"ALTER TABLE payroll_runs ADD COLUMN {column} {declaration}")
-    employee_cols = {r["name"] for r in [{"name": column} for column in table_columns(c, "employees")]}
+    employee_cols = table_columns(c, "employees")
     for name in ("branch_id", "cost_center_id", "project_id"):
         if name not in employee_cols:
             c.execute("ALTER TABLE employees ADD COLUMN " + name + " INTEGER")
@@ -472,7 +472,7 @@ def initialize_workforce_schema():
             c.execute("ALTER TABLE employees ADD COLUMN " + name + " " + definition)
     if "friday_work_eligible" not in employee_cols:
         c.execute("ALTER TABLE employees ADD COLUMN friday_work_eligible INTEGER NOT NULL DEFAULT 0")
-    payroll_cols = {r["name"] for r in [{"name": column} for column in table_columns(c, "payroll_lines")]}
+    payroll_cols = table_columns(c, "payroll_lines")
     for name, definition in {
         "loan_deduction": "TEXT NOT NULL DEFAULT '0'",
         "stamp_duty": "TEXT NOT NULL DEFAULT '0'",
@@ -616,7 +616,7 @@ def _employee_salary_basis(c, employee_id, as_of_date=None):
 
 
 def _dimension_options(c):
-    tables = {row["name"] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    tables = table_names(c)
     return {
         key: c.execute(f"SELECT id,code,name_ar FROM {table} WHERE active=1 ORDER BY code").fetchall()
         if table in tables else []
