@@ -34,14 +34,14 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
                 "CREATE TABLE first_table (id BIGINT);", encoding="utf-8"
             )
             migrations = load_migrations(root)
-        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5])
+        self.assertEqual([item.version for item in migrations], [1, 2])
         self.assertEqual(migrations[0].name, "0001_create_first.sql")
         self.assertEqual(len(migrations[0].checksum), 64)
 
     def test_repository_core_migration_is_loadable_and_splits_function_body_safely(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual([item.version for item in migrations], [1, 2])
+        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5])
         statements = _split_sql_statements(migrations[0].sql)
         audit_function = next(
             item for item in statements
