@@ -9,6 +9,7 @@ from flask import Blueprint, flash, redirect, render_template, request, session,
 from accounting_core import post_journal
 from chart_templates import ensure_account_metadata
 from db_compat import table_columns, table_exists
+from db_insert import insert_one_returning_id
 
 bank_bp = Blueprint("bank", __name__, url_prefix="/bank")
 
@@ -252,10 +253,10 @@ def index():
             c.execute("BEGIN IMMEDIATE")
             no="BANK-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             jid=post_journal(c,request.form["transaction_date"],no,request.form["description"].strip() or "حركة بنكية",lines,session["user_id"])
-            bank_cursor = c.execute("""INSERT INTO bank_transactions(transaction_no,transaction_date,bank_account_id,transaction_type,amount,counter_account_id,destination_bank_account_id,description,bank_reference,journal_entry_id,created_by)
+            bank_transaction_id = insert_one_returning_id(c, """INSERT INTO bank_transactions(transaction_no,transaction_date,bank_account_id,transaction_type,amount,counter_account_id,destination_bank_account_id,description,bank_reference,journal_entry_id,created_by)
                          VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(no,request.form["transaction_date"],bank_id,kind,str(amount),counter_id,destination_id,request.form["description"].strip() or "حركة بنكية",request.form.get("bank_reference","").strip(),jid,session["user_id"]))
             c.commit()
-            g.audit_created_record = ("bank_transactions", bank_cursor.lastrowid, None, None)
+            g.audit_created_record = ("bank_transactions", bank_transaction_id, None, None)
             flash("تم تسجيل الحركة البنكية وترحيل قيدها المحاسبي.","success")
             return redirect(url_for("bank.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
@@ -334,12 +335,12 @@ def statement_reconciliation():
                     WHERE bank_account_id=? AND statement_date=? AND signed_amount=? AND bank_reference=?""",
                     (account_id,statement_date,str(amount),reference)).fetchone() if reference else None
                 if duplicate: raise ValueError("سطر كشف البنك موجود بالفعل بنفس الحساب والتاريخ والمبلغ والمرجع.")
-                cur=c.execute("""INSERT INTO bank_statement_lines(
+                statement_line_id=insert_one_returning_id(c, """INSERT INTO bank_statement_lines(
                     bank_account_id,statement_date,signed_amount,description,bank_reference,created_by)
                     VALUES(?,?,?,?,?,?)""",
                     (account_id,statement_date,str(amount),description,reference,session.get("user_id")))
                 c.commit()
-                g.audit_created_record=("bank_statement_lines",cur.lastrowid,None,None)
+                g.audit_created_record=("bank_statement_lines",statement_line_id,None,None)
                 flash("تمت إضافة سطر كشف البنك للمطابقة.","success")
                 return redirect(url_for("bank.statement_reconciliation",account_id=account_id,
                     start_date=request.form.get("start_date") or None,end_date=request.form.get("end_date") or None))
@@ -562,9 +563,8 @@ def cash_accounts():
                 if not code:
                     raise ValueError("تعذر توليد كود حساب فرعي جديد تحت المجموعة المختارة.")
                 account_name=("خزنة - " if kind=="cash" else "بنك - ")+name
-                cur=c.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group,active) VALUES(?,?,'asset',?,0,1)",
+                account_id=insert_one_returning_id(c, "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group,active) VALUES(?,?,'asset',?,0,1)",
                               (code,account_name,parent_id))
-                account_id=cur.lastrowid
                 ensure_account_metadata(c)
             elif mode=="existing":
                 account_id=request.form.get("account_id",type=int)
@@ -580,10 +580,9 @@ def cash_accounts():
                 raise ValueError("طريقة ربط حساب الأستاذ غير صحيحة.")
             bank_name=request.form.get("bank_name","").strip() if kind=="bank" else ""
             iban=request.form.get("iban","").strip() if kind=="bank" else ""
-            c.execute("""INSERT INTO cash_accounts(kind,name_ar,account_id,branch_id,currency_code,bank_name,iban,opening_date,created_by)
+            row_id=insert_one_returning_id(c, """INSERT INTO cash_accounts(kind,name_ar,account_id,branch_id,currency_code,bank_name,iban,opening_date,created_by)
                 VALUES(?,?,?,?,?,?,?,?,?)""",(kind,name,account_id,branch_id,currency,bank_name,iban,
                 request.form.get("opening_date") or date.today().isoformat(),session.get("user_id")))
-            row_id=c.execute("SELECT last_insert_rowid() id").fetchone()["id"]
             c.commit()
             g.audit_created_record=("cash_accounts",row_id,None,None)
             flash("تم ربط الخزنة/البنك بحساب أستاذ مستقل. ستظهر حركاته في دفتر الحساب المرتبط.","success")
