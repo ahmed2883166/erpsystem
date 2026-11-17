@@ -43,6 +43,7 @@ def main(argv=None):
     ddl_path.write_text(ddl, encoding="utf-8")
     review_path.write_text(
         json.dumps(review, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
     )
     print(json.dumps({
         "ddl": str(ddl_path),
