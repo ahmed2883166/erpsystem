@@ -3,11 +3,50 @@ import os
 import unittest
 
 from party_reports import _all_party_events, _events
+from management_dashboard import _copied_opening_entry_ids
 
 
 @unittest.skipUnless(os.environ.get("NEXUS_TEST_POSTGRES_DSN"),
                      "NEXUS_TEST_POSTGRES_DSN is not configured")
 class PartyReportsPostgreSQLQueryTests(unittest.TestCase):
+    def test_copied_opening_entry_exclusion_executes_on_postgresql(self):
+        import psycopg
+        from psycopg.rows import dict_row
+
+        connection = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"], row_factory=dict_row
+        )
+        schema = "nexus_party_opening_test"
+        try:
+            connection.execute(f'CREATE SCHEMA "{schema}"')
+            connection.execute(f'SET search_path TO "{schema}"')
+            statements = (
+                "CREATE TABLE journal_entries (id BIGINT PRIMARY KEY, entry_date TEXT, status TEXT)",
+                "CREATE TABLE financial_years (id BIGINT PRIMARY KEY, start_date TEXT)",
+                """CREATE TABLE financial_year_journal_history (
+                    id BIGINT PRIMARY KEY, financial_year_id BIGINT,
+                    entry_kind TEXT, action TEXT, entry_id BIGINT,
+                    related_entry_id BIGINT
+                )""",
+            )
+            for statement in statements:
+                connection.execute(statement)
+            connection.execute(
+                "INSERT INTO journal_entries VALUES (1, '2026-12-31', 'posted'), (2, '2027-01-01', 'posted'), (3, '2027-01-02', 'posted')"
+            )
+            connection.execute("INSERT INTO financial_years VALUES (1, '2027-01-01')")
+            connection.execute(
+                """INSERT INTO financial_year_journal_history
+                   VALUES (1, 1, 'opening', 'created', 2, NULL),
+                          (2, 1, 'opening', 'reversed', 3, 2)"""
+            )
+            self.assertEqual(
+                _copied_opening_entry_ids(connection, "2027-02-01"), {2, 3}
+            )
+        finally:
+            connection.rollback()
+            connection.close()
+
     def test_customer_and_supplier_statement_queries_execute_on_postgresql(self):
         import psycopg
         from psycopg.rows import dict_row
