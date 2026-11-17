@@ -84,6 +84,32 @@ def table_columns(connection, table_name, *, schema=None):
     return {row["column_name"] if isinstance(row, dict) else row[0] for row in rows}
 
 
+
+def table_names(connection, *, schema=None):
+    """Return base-table names visible in the current SQLite/PostgreSQL schema."""
+    dialect = database_dialect(connection)
+    if dialect == "sqlite":
+        rows = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+        ).fetchall()
+        return {row["name"] if isinstance(row, sqlite3.Row) else row[0] for row in rows}
+
+    schema_name = _identifier(schema, "schema name") if schema else None
+    if schema_name:
+        rows = connection.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema=%s AND table_type='BASE TABLE' ORDER BY table_name",
+            (schema_name,),
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema=current_schema() AND table_type='BASE TABLE' "
+            "ORDER BY table_name"
+        ).fetchall()
+    return {row["table_name"] if isinstance(row, dict) else row[0] for row in rows}
+
+
 def begin_write_transaction(connection):
     """Start a write transaction without nesting an existing transaction.
 
