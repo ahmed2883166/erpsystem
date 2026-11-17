@@ -48,7 +48,7 @@ def install_postgres_baseline(connection, baseline_sql: str, *, schema: str = "n
         raise ValueError("PostgreSQL baseline contains nested transaction control.")
     if not ddl:
         raise ValueError("PostgreSQL baseline contains no schema DDL.")
-    allowed_prefixes = ("CREATE ", "CREATE\\n", "ALTER ")
+    allowed_prefixes = ("CREATE ", "ALTER ")
     for statement in ddl:
         keyword = command_keyword(statement)
         if not keyword.startswith(allowed_prefixes):
