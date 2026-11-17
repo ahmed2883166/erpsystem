@@ -50,5 +50,39 @@ class StockMetadataPostgreSQLTests(unittest.TestCase):
             conn.close()
 
 
+
+
+class StockLocationTriggerDialectTests(unittest.TestCase):
+    def test_sqlite_installs_location_integrity_triggers(self):
+        from stock import _install_stock_location_triggers
+
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.executescript("""
+                CREATE TABLE stock_locations(id INTEGER PRIMARY KEY, warehouse_id INTEGER, active INTEGER);
+                CREATE TABLE stock_product_locations(
+                    id INTEGER PRIMARY KEY, product_id INTEGER, warehouse_id INTEGER, location_id INTEGER
+                );
+            """)
+            _install_stock_location_triggers(conn)
+            names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'")}
+            self.assertEqual(names, {
+                "trg_stock_product_locations_same_wh_insert",
+                "trg_stock_product_locations_same_wh_update",
+            })
+        finally:
+            conn.close()
+
+    def test_postgresql_skips_sqlite_raise_trigger_ddl(self):
+        from stock import _install_stock_location_triggers
+
+        class FakePostgresConnection:
+            __module__ = "psycopg"
+            def execute(self, *args, **kwargs):
+                raise AssertionError("SQLite trigger SQL must not run on PostgreSQL")
+
+        _install_stock_location_triggers(FakePostgresConnection())
+
+
 if __name__ == "__main__":
     unittest.main()
