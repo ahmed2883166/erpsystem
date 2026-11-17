@@ -185,3 +185,81 @@ class CurrencyBalanceUpdatePostgreSQLTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_row_lock_serializes_two_connections_and_prevents_stale_balance(self):
+        """A waiter must read the balance committed by the transaction holding FOR UPDATE."""
+        import threading
+        import time
+        import uuid
+        import psycopg
+        from psycopg.rows import dict_row
+
+        schema = "nexus_fx_race_" + uuid.uuid4().hex[:12]
+        dsn = os.environ["NEXUS_TEST_POSTGRES_DSN"]
+        first = psycopg.connect(dsn, row_factory=dict_row)
+        second = psycopg.connect(dsn, row_factory=dict_row)
+        started = threading.Event()
+        acquired = threading.Event()
+        observed = {}
+        errors = []
+        try:
+            first.execute(f'CREATE SCHEMA "{schema}"')
+            first.commit()
+            first.execute(f'SET search_path TO "{schema}"')
+            second.execute(f'SET search_path TO "{schema}"')
+            first.execute("""
+                CREATE TABLE fx_transactions (
+                    id BIGINT PRIMARY KEY,
+                    balance_foreign TEXT NOT NULL,
+                    status TEXT NOT NULL
+                )
+            """)
+            first.execute(
+                "INSERT INTO fx_transactions(id,balance_foreign,status) VALUES(1,'100.00','open')"
+            )
+            first.commit()
+
+            currency_center._begin_fx_write(first)
+            row = currency_center._open_fx_transaction_for_update(first, 1)
+            self.assertEqual(row["balance_foreign"], "100.00")
+
+            def waiter():
+                try:
+                    _ = currency_center._begin_fx_write(second)
+                    started.set()
+                    locked_row = currency_center._open_fx_transaction_for_update(second, 1)
+                    observed["balance"] = locked_row["balance_foreign"]
+                    acquired.set()
+                    second.commit()
+                except Exception as exc:  # surfaced in the main test thread
+                    errors.append(exc)
+                    acquired.set()
+
+            worker = threading.Thread(target=waiter, daemon=True)
+            worker.start()
+            self.assertTrue(started.wait(2), "second connection did not start")
+            time.sleep(0.25)
+            self.assertFalse(
+                acquired.is_set(),
+                "second connection acquired the row while the first transaction held its lock",
+            )
+
+            first.execute(
+                "UPDATE fx_transactions SET balance_foreign='60.00' WHERE id=1"
+            )
+            first.commit()
+            self.assertTrue(acquired.wait(5), "second connection stayed blocked after commit")
+            worker.join(timeout=2)
+            self.assertFalse(worker.is_alive(), "row-lock waiter did not finish")
+            self.assertFalse(errors, f"row-lock waiter failed: {errors!r}")
+            self.assertEqual(observed.get("balance"), "60.00")
+        finally:
+            try:
+                first.rollback()
+                second.rollback()
+                first.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+                first.commit()
+            finally:
+                first.close()
+                second.close()
