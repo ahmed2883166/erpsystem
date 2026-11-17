@@ -91,7 +91,7 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
                 },
             ]
         }
-        ddl, _ = generate_postgres_ddl(snapshot)
+        ddl, review = generate_postgres_ddl(snapshot)
         self.assertIn('"debit" NUMERIC', ddl)
         self.assertIn('"credit" NUMERIC', ddl)
         self.assertIn('"rate_to_base" NUMERIC', ddl)
