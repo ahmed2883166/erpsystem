@@ -2,7 +2,7 @@
 import os
 import unittest
 
-from party_reports import _all_party_events, _events
+from party_reports import _all_party_events, _events, _gl_control_balance
 from management_dashboard import _copied_opening_entry_ids
 
 
@@ -22,6 +22,8 @@ class PartyReportsPostgreSQLQueryTests(unittest.TestCase):
             connection.execute(f'SET search_path TO "{schema}"')
             statements = (
                 "CREATE TABLE journal_entries (id BIGINT PRIMARY KEY, entry_date TEXT, status TEXT)",
+                "CREATE TABLE accounts (id BIGINT PRIMARY KEY, code TEXT, is_group BOOLEAN, active BOOLEAN)",
+                "CREATE TABLE journal_lines (id BIGINT PRIMARY KEY, entry_id BIGINT, account_id BIGINT, debit NUMERIC(24,6), credit NUMERIC(24,6))",
                 "CREATE TABLE financial_years (id BIGINT PRIMARY KEY, start_date TEXT)",
                 """CREATE TABLE financial_year_journal_history (
                     id BIGINT PRIMARY KEY, financial_year_id BIGINT,
@@ -35,6 +37,10 @@ class PartyReportsPostgreSQLQueryTests(unittest.TestCase):
                 "INSERT INTO journal_entries VALUES (1, '2026-12-31', 'posted'), (2, '2027-01-01', 'posted'), (3, '2027-01-02', 'posted')"
             )
             connection.execute("INSERT INTO financial_years VALUES (1, '2027-01-01')")
+            connection.execute("INSERT INTO accounts VALUES (1, '1100', FALSE, TRUE)")
+            connection.execute(
+                "INSERT INTO journal_lines VALUES (1, 1, 1, 100.00, 0), (2, 2, 1, 100.00, 0), (3, 3, 1, 0, 100.00)"
+            )
             connection.execute(
                 """INSERT INTO financial_year_journal_history
                    VALUES (1, 1, 'opening', 'created', 2, NULL),
@@ -43,6 +49,11 @@ class PartyReportsPostgreSQLQueryTests(unittest.TestCase):
             self.assertEqual(
                 _copied_opening_entry_ids(connection, "2027-02-01"), {2, 3}
             )
+            balance, matched_codes = _gl_control_balance(
+                connection, ["1100"], "2027-02-01", "debit"
+            )
+            self.assertEqual(balance, 100)
+            self.assertEqual(matched_codes, ["1100"])
         finally:
             connection.rollback()
             connection.close()
