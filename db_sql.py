@@ -33,7 +33,11 @@ def qmark_to_format(sql):
 
         if state == "normal":
             if char == "'":
-                state = "single"
+                previous_is_e = (
+                    i > 0 and sql[i - 1] in "eE"
+                    and (i < 2 or not (sql[i - 2].isalnum() or sql[i - 2] == "_"))
+                )
+                state = "escape_single" if previous_is_e else "single"
                 out.append(char)
                 i += 1
                 continue
@@ -72,13 +76,13 @@ def qmark_to_format(sql):
             i += 1
             continue
 
-        if state == "single":
+        if state in {"single", "escape_single"}:
             out.append(char)
             if char == "'" and nxt == "'":
                 out.append(nxt)
                 i += 2
                 continue
-            if char == "\\" and nxt:
+            if state == "escape_single" and char == "\\" and nxt:
                 out.append(nxt)
                 i += 2
                 continue
@@ -133,7 +137,7 @@ def qmark_to_format(sql):
             i += 1
             continue
 
-    if state in {"single", "double", "block_comment", "dollar"}:
+    if state in {"single", "escape_single", "double", "block_comment", "dollar"}:
         raise ValueError(f"Unterminated SQL construct while translating placeholders: {state}.")
     return "".join(out)
 
