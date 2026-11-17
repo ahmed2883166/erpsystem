@@ -48,9 +48,23 @@ def install_postgres_baseline(connection, baseline_sql: str, *, schema: str = "n
         raise ValueError("PostgreSQL baseline contains nested transaction control.")
     if not ddl:
         raise ValueError("PostgreSQL baseline contains no schema DDL.")
+    allowed_prefixes = ("CREATE ", "CREATE\\n", "ALTER ")
+    for statement in ddl:
+        keyword = command_keyword(statement)
+        if not keyword.startswith(allowed_prefixes):
+            raise ValueError(
+                "PostgreSQL baseline may contain only CREATE/ALTER statements; "
+                f"found {keyword.split(None, 1)[0] if keyword else 'empty SQL'}."
+            )
     digest = hashlib.sha256(baseline_sql.encode("utf-8")).hexdigest()
 
     connection.execute("SELECT pg_advisory_lock(%s, %s)", (_LOCK_NAMESPACE, _LOCK_ID))
+    previous_search_path = connection.execute("SHOW search_path").fetchone()
+    previous_search_path = (
+        previous_search_path["search_path"]
+        if isinstance(previous_search_path, dict)
+        else previous_search_path[0]
+    )
     try:
         connection.execute(f"CREATE SCHEMA IF NOT EXISTS {quoted_schema}")
         connection.execute(f"SET search_path TO {quoted_schema}")
@@ -88,6 +102,10 @@ def install_postgres_baseline(connection, baseline_sql: str, *, schema: str = "n
             )
         return digest
     finally:
+        connection.execute(
+            "SELECT set_config('search_path', %s, false)",
+            (previous_search_path,),
+        )
         connection.execute("SELECT pg_advisory_unlock(%s, %s)", (_LOCK_NAMESPACE, _LOCK_ID))
 
 
