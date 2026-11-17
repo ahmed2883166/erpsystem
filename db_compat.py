@@ -105,6 +105,23 @@ def begin_write_transaction(connection):
     return False
 
 
+def insert_and_get_id(connection, sql, params=()):
+    """Insert one row and return its generated id across SQLite and PostgreSQL."""
+    statement = str(sql).strip().rstrip(";")
+    if re.search(r"\\bRETURNING\\b", statement, re.IGNORECASE):
+        raise ValueError("insert_and_get_id adds RETURNING id automatically; do not supply RETURNING.")
+    if database_dialect(connection) == "sqlite":
+        value = connection.execute(statement, params).lastrowid
+    else:
+        row = connection.execute(statement + " RETURNING id", params).fetchone()
+        if row is None:
+            raise RuntimeError("INSERT ... RETURNING id did not return a row.")
+        value = row["id"] if isinstance(row, dict) else row[0]
+    if value is None:
+        raise RuntimeError("The inserted row did not return a generated id.")
+    return int(value)
+
+
 def transaction_is_active(connection):
     """Return whether the DB-API connection currently owns a transaction."""
     if database_dialect(connection) == "sqlite":
