@@ -37,6 +37,13 @@ class SQLPlaceholderTranslationTests(unittest.TestCase):
         expected = "SELECT E'escaped \\' ?' AS label, %s AS value"
         self.assertEqual(qmark_to_format(sql), expected)
 
+    def test_dollar_inside_unquoted_identifier_is_not_a_dollar_quote(self):
+        sql = "SELECT column$tag$ FROM probe WHERE id=?"
+        self.assertEqual(
+            qmark_to_format(sql),
+            "SELECT column$tag$ FROM probe WHERE id=%s",
+        )
+
     def test_rejects_unterminated_sql_constructs(self):
         cases = (
             "SELECT 'unfinished ?",
@@ -159,6 +166,16 @@ class PortableScriptExecutionTests(unittest.TestCase):
         self.assertIn("'a;b'", connection.statements[1])
         self.assertIn("E'escaped \\' ; still string'", connection.statements[2])
         self.assertIn("PERFORM 1;", connection.statements[3])
+
+    def test_postgresql_script_keeps_dollar_inside_identifier(self):
+        connection = _FakePsycopgConnection("IDLE")
+        execute_script(
+            connection,
+            "CREATE TABLE dollar_identifier_probe (column$tag$ TEXT); SELECT 1;",
+        )
+        self.assertEqual(len(connection.statements), 2)
+        self.assertIn("column$tag$", connection.statements[0])
+        self.assertEqual(connection.statements[1], "SELECT 1")
 
     def test_postgresql_script_rejects_unterminated_quotes(self):
         connection = _FakePsycopgConnection("IDLE")

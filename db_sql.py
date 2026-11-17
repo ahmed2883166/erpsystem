@@ -57,7 +57,7 @@ def qmark_to_format(sql):
                 out.extend((char, nxt))
                 i += 2
                 continue
-            if char == "$":
+            if char == "$" and (i == 0 or not (sql[i - 1].isalnum() or sql[i - 1] in "_$")):
                 end = sql.find("$", i + 1)
                 if end != -1:
                     tag_body = sql[i + 1:end]

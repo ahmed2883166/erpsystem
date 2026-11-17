@@ -261,7 +261,7 @@ def _split_sql_statements(script):
                 block_depth = 1
                 state = "block_comment"
                 continue
-            elif char == "$":
+            elif char == "$" and (i == 0 or not (script[i - 1].isalnum() or script[i - 1] in "_$")):
                 match = re.match(r"\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$", script[i:])
                 if match:
                     dollar_tag = match.group(0)
