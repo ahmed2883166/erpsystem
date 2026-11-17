@@ -3726,7 +3726,7 @@ def friday_allowance():
                 FROM employees e JOIN attendance_records a ON a.employee_id=e.id
                 WHERE e.active=1 AND e.friday_work_eligible=1
                   AND e.id IN ("""+selected_marks+""")
-                  AND a.status='present' AND strftime('%w',a.attendance_date)='5'
+                  AND a.status='present' AND {_friday_attendance_predicate(c)}
                   AND a.attendance_date>=? AND a.attendance_date<?
                   AND e.hire_date<=a.attendance_date
                   AND (e.work_status NOT IN ('resigned','retired')
@@ -3788,7 +3788,7 @@ def friday_allowance():
             COUNT(a.id) AS attendance_days
         FROM employees e JOIN attendance_records a ON a.employee_id=e.id
         WHERE e.active=1 AND e.friday_work_eligible=1
-          AND a.status='present' AND strftime('%w',a.attendance_date)='5'
+          AND a.status='present' AND {_friday_attendance_predicate(c)}
           AND a.attendance_date>=? AND a.attendance_date<?
           AND e.hire_date<=a.attendance_date
           AND (e.work_status NOT IN ('resigned','retired') OR e.termination_date>=a.attendance_date)
