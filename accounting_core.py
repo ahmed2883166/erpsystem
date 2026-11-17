@@ -25,6 +25,18 @@ def decimal_sum_expression(connection, expression):
     return f"COALESCE(SUM(CAST({expression} AS NUMERIC)), 0)"
 
 
+def decimal_compare_expression(connection, expression, value="0"):
+    """Build an exact numeric comparison for legacy TEXT quantities.
+
+    SQLite delegates comparison to Decimal in a registered scalar function;
+    PostgreSQL casts the stored text to NUMERIC. Both arguments are trusted
+    SQL fragments supplied by application code, never request input.
+    """
+    if database_dialect(connection) == "sqlite":
+        return f"DECIMAL_CMP({expression}, '{value}')"
+    return f"(CAST({expression} AS NUMERIC) - CAST('{value}' AS NUMERIC))"
+
+
 def _decimal_sum_expression(connection, expression):
     """Backward-compatible internal alias; prefer decimal_sum_expression."""
     return decimal_sum_expression(connection, expression)
@@ -99,6 +111,12 @@ def register_decimal_aggregates(conn):
     """Register exact SQLite aggregate functions; PostgreSQL uses native NUMERIC."""
     if database_dialect(conn) != "sqlite":
         return
+    def _decimal_compare(left, right):
+        a = Decimal(str(left or "0"))
+        b = Decimal(str(right or "0"))
+        return (a > b) - (a < b)
+
+    conn.create_function("DECIMAL_CMP", 2, _decimal_compare)
     conn.create_aggregate("DECIMAL_SUM", 1, _DecimalSum)
     conn.create_aggregate("DECIMAL_NET", 2, _DecimalNet)
     conn.create_aggregate("DECIMAL_LAYER_VALUE_SUM", 3, _DecimalLayerValueSum)
