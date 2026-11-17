@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import date, timedelta
 from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
-from accounting_core import post_journal, safe_error_message
+from accounting_core import post_journal, safe_error_message, decimal_sum_expression
 from code_sequences import next_code
 from db_insert import insert_one_returning_id
 from db_compat import table_columns, table_exists
@@ -586,7 +586,7 @@ def index():
       COALESCE(f.supplier_bill_id,l.bill_id) linked_supplier_bill_id,
       sb.bill_no supplier_bill_no,sb.supplier_invoice_no,
       p.entry_id linked_journal_entry_id,
-      COALESCE((SELECT DECIMAL_SUM(d.amount) FROM asset_depreciations d WHERE d.asset_id=f.id),0) accumulated
+      {decimal_sum_expression(c, "d.amount").replace("d.amount", "d.amount")} accumulated
       FROM fixed_assets f JOIN accounts a ON a.id=f.asset_account_id
       JOIN accounts aa ON aa.id=f.accum_account_id
       JOIN accounts ea ON ea.id=f.expense_account_id
@@ -886,8 +886,6 @@ def dispose(asset_id):
 
 def build_asset_reconciliation_rows(conn, as_of):
     """Reconcile register balances once per GL account, even when assets share a cost account."""
-    from accounting_core import register_decimal_aggregates
-    register_decimal_aggregates(conn)
     assets=conn.execute("""SELECT f.id,f.asset_account_id,f.accum_account_id,f.cost
         FROM fixed_assets f LEFT JOIN asset_disposals x ON x.asset_id=f.id
         WHERE f.purchase_date<=? AND f.status<>'reversed'

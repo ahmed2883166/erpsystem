@@ -13,6 +13,17 @@ from fixed_assets import (_asset_disposal_journal_lines, _asset_period_amount,
 
 
 
+class FixedAssetPostgresSqlCompatibilityTests(unittest.TestCase):
+    def test_accumulated_depreciation_uses_postgresql_numeric_sum(self):
+        class FakePsycopgConnection:
+            __module__ = "psycopg.fake"
+
+        expression = fixed_assets.decimal_sum_expression(
+            FakePsycopgConnection(), "d.amount"
+        )
+        self.assertEqual(expression, "COALESCE(SUM(CAST(d.amount AS NUMERIC)), 0)")
+
+
 class ManualAssetAcquisitionJournalTests(unittest.TestCase):
     def test_manual_asset_creation_builds_one_balanced_cost_journal(self):
         lines = _manual_asset_journal_lines(10, 20, Decimal("12500.50"), "سيارة نقل")

@@ -4,9 +4,9 @@ from decimal import Decimal, ROUND_HALF_UP
 from collections import OrderedDict
 from copy import deepcopy
 from threading import RLock
-from accounting_core import decimal_sum_expression
+from accounting_core import register_decimal_aggregates
 from income_statement import build_income_statement
-from db_compat import table_exists, table_columns
+from db_compat import table_exists
 from db_sql import execute_compat
 
 CENT = Decimal("0.01")
@@ -52,11 +52,13 @@ def account_balances(conn, date_from=None, date_to=None, dimensions=None, exclud
     conditions = ["je.status='posted'"]
     params = []
     if exclude_closing_entries:
-        entry_columns = table_columns(conn, "journal_entries")
+        entry_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
         if "entry_type" in entry_columns:
             conditions.append("COALESCE(je.entry_type,'general') NOT IN ('year_end_closing','year_end_closing_reversal')")
         else:
-            history_exists = table_exists(conn, "financial_year_journal_history")
+            history_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_year_journal_history'"
+            ).fetchone()
             if history_exists:
                 conditions.append("""je.id NOT IN (
                     SELECT entry_id FROM financial_year_journal_history WHERE entry_kind='closing'
@@ -71,7 +73,7 @@ def account_balances(conn, date_from=None, date_to=None, dimensions=None, exclud
         conditions.append("je.entry_date<=?")
         params.append(date_to)
     dimensions = dimensions or {}
-    available_columns = table_columns(conn, "journal_lines")
+    available_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")}
     for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id"):
         value = dimensions.get(key)
         if value not in (None, ""):
@@ -79,14 +81,13 @@ def account_balances(conn, date_from=None, date_to=None, dimensions=None, exclud
                 raise ValueError("مخطط الأبعاد التحليلية غير محدث. أعد تشغيل البرنامج لإكمال التحديث.")
             conditions.append(f"jl.{key}=?")
             params.append(int(value))
-    # Use the database-specific exact SUM expression: SQLite registers a
-    # Decimal aggregate, while PostgreSQL casts legacy TEXT values to NUMERIC.
-    debit_sum_sql = decimal_sum_expression(conn, "jl.debit")
-    credit_sum_sql = decimal_sum_expression(conn, "jl.credit")
-    rows = execute_compat(conn, f"""
+    # Aggregate monetary TEXT values inside SQLite with exact Decimal aggregates.
+    # This avoids transferring every journal line to Python as the ledger grows.
+    register_decimal_aggregates(conn)
+    rows = conn.execute(f"""
         SELECT a.id,a.code,a.name_ar,a.account_type,a.is_group,
-               {debit_sum_sql} debit,
-               {credit_sum_sql} credit
+               COALESCE(DECIMAL_SUM(jl.debit),0) debit,
+               COALESCE(DECIMAL_SUM(jl.credit),0) credit
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
@@ -105,10 +106,12 @@ def account_balances(conn, date_from=None, date_to=None, dimensions=None, exclud
 
 
 def _closing_entry_condition(conn):
-    columns = table_columns(conn, "journal_entries")
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
     if "entry_type" in columns:
         return "COALESCE(je.entry_type,'general') NOT IN ('year_end_closing','year_end_closing_reversal')"
-    history_exists = table_exists(conn, "financial_year_journal_history")
+    history_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_year_journal_history'"
+    ).fetchone()
     if history_exists:
         return """je.id NOT IN (
             SELECT entry_id FROM financial_year_journal_history WHERE entry_kind='closing'
@@ -155,7 +158,7 @@ def dashboard_period_balances(conn, current_start, current_end, previous_start, 
     posted closing entries so retained earnings and opening equity stay correct.
     """
     dimensions = dimensions or {}
-    available_columns = table_columns(conn, "journal_lines")
+    available_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_lines)")}
     dimension_conditions, dimension_params = [], []
     for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id"):
         value = dimensions.get(key)
@@ -177,26 +180,25 @@ def dashboard_period_balances(conn, current_start, current_end, previous_start, 
         "je.id NOT IN (" + ",".join("?" for _ in asof_excluded) + ")"
         if asof_excluded else "1=1"
     )
-    # Each aggregate keeps its CASE predicates and bind markers inside the
-    # expression so SQLite and PostgreSQL calculate the same exact totals.
-    current_debit_sql = decimal_sum_expression(conn, f"CASE WHEN je.entry_date BETWEEN ? AND ? AND ({closing_filter}) THEN jl.debit ELSE '0' END")
-    current_credit_sql = decimal_sum_expression(conn, f"CASE WHEN je.entry_date BETWEEN ? AND ? AND ({closing_filter}) THEN jl.credit ELSE '0' END")
-    previous_debit_sql = decimal_sum_expression(conn, f"CASE WHEN je.entry_date BETWEEN ? AND ? AND ({closing_filter}) THEN jl.debit ELSE '0' END")
-    previous_credit_sql = decimal_sum_expression(conn, f"CASE WHEN je.entry_date BETWEEN ? AND ? AND ({closing_filter}) THEN jl.credit ELSE '0' END")
-    opening_debit_sql = decimal_sum_expression(conn, f"CASE WHEN je.entry_date < ?{opening_exclusion_sql} THEN jl.debit ELSE '0' END")
-    opening_credit_sql = decimal_sum_expression(conn, f"CASE WHEN je.entry_date < ?{opening_exclusion_sql} THEN jl.credit ELSE '0' END")
-    asof_debit_sql = decimal_sum_expression(conn, f"CASE WHEN {asof_exclusion_sql} THEN jl.debit ELSE '0' END")
-    asof_credit_sql = decimal_sum_expression(conn, f"CASE WHEN {asof_exclusion_sql} THEN jl.credit ELSE '0' END")
-    rows = execute_compat(conn, f"""
+    register_decimal_aggregates(conn)
+    rows = conn.execute(f"""
         SELECT a.id,a.code,a.name_ar,a.account_type,a.is_group,
-          {current_debit_sql} current_debit,
-          {current_credit_sql} current_credit,
-          {previous_debit_sql} previous_debit,
-          {previous_credit_sql} previous_credit,
-          {opening_debit_sql} opening_debit,
-          {opening_credit_sql} opening_credit,
-          {asof_debit_sql} asof_debit,
-          {asof_credit_sql} asof_credit
+          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date BETWEEN ? AND ?
+            AND ({closing_filter}) THEN jl.debit ELSE '0' END),'0') current_debit,
+          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date BETWEEN ? AND ?
+            AND ({closing_filter}) THEN jl.credit ELSE '0' END),'0') current_credit,
+          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date BETWEEN ? AND ?
+            AND ({closing_filter}) THEN jl.debit ELSE '0' END),'0') previous_debit,
+          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date BETWEEN ? AND ?
+            AND ({closing_filter}) THEN jl.credit ELSE '0' END),'0') previous_credit,
+          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date < ?{opening_exclusion_sql}
+            THEN jl.debit ELSE '0' END),'0') opening_debit,
+          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date < ?{opening_exclusion_sql}
+            THEN jl.credit ELSE '0' END),'0') opening_credit,
+          COALESCE(DECIMAL_SUM(CASE WHEN {asof_exclusion_sql}
+            THEN jl.debit ELSE '0' END),'0') asof_debit,
+          COALESCE(DECIMAL_SUM(CASE WHEN {asof_exclusion_sql}
+            THEN jl.credit ELSE '0' END),'0') asof_credit
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
@@ -275,7 +277,7 @@ def initialize_management_dashboard_schema(conn, activity):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry ON journal_lines(account_id,entry_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry_id ON journal_lines(account_id,entry_id,id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_entry_date ON journal_entries(entry_date,id)")
-    journal_columns = table_columns(conn, "journal_entries")
+    journal_columns = {row["name"] for row in conn.execute("PRAGMA table_info(journal_entries)")}
     if "reference" in journal_columns:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_reference ON journal_entries(reference)")
     conn.execute("""CREATE TABLE IF NOT EXISTS management_dashboard_data_version(
@@ -292,7 +294,7 @@ def initialize_management_dashboard_schema(conn, activity):
     # Forecast balances depend on open sales and supplier invoices as well as the GL.
     # These tables are initialized before this schema in app.initialize_database().
     for table in ("sales_invoices", "supplier_bills"):
-        if table_exists(conn, table):
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
             for event in ("INSERT", "UPDATE", "DELETE"):
                 trigger = "trg_dashboard_version_" + table + "_" + event.lower()
                 conn.execute(f"""CREATE TRIGGER IF NOT EXISTS {trigger} AFTER {event} ON {table}
@@ -345,7 +347,9 @@ def load_management_account_roles(conn):
     is_custom_profile = profile["code"] != profile["base_activity"]
     customization_row = conn.execute(
         "SELECT meta_value FROM management_dashboard_meta WHERE meta_key='roles_customized'"
-    ).fetchone() if table_exists(conn, "management_dashboard_meta") else None
+    ).fetchone() if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='management_dashboard_meta'"
+    ).fetchone() else None
     management_roles_customized = bool(
         customization_row and customization_row["meta_value"] == "1"
     )
@@ -399,7 +403,9 @@ def cached_management_snapshot(conn, start, end, dimensions=None):
         settings_fingerprint = tuple(
             (row["setting_key"], row["setting_value"])
             for row in conn.execute("SELECT setting_key,setting_value FROM company_settings ORDER BY setting_key")
-        ) if table_exists(conn, "company_settings") else ()
+        ) if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
+        ).fetchone() else ()
         dashboard_today = date.today()
         key = (
             version, start.isoformat(), end.isoformat(), dashboard_today.isoformat(),
@@ -438,7 +444,7 @@ def build_management_snapshot(conn, start, end, dimensions=None):
         raise ValueError("تاريخ النهاية لازم يكون بعد تاريخ البداية.")
     dimensions = dimensions or {}
     settings = {}
-    if table_exists(conn, "company_settings"):
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'").fetchone():
         settings = {row["setting_key"]: row["setting_value"] for row in conn.execute(
             "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','base_currency','company_name')"
         )}
@@ -452,7 +458,7 @@ def build_management_snapshot(conn, start, end, dimensions=None):
         previous_start.isoformat(), previous_end.isoformat(),
         dimensions=dimensions, exclude_closing_entries=True,
     )
-    account_columns = table_columns(conn, "accounts")
+    account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
     direct_cost_ids = set(roles["direct_cost"])
     if "statement_section" in account_columns:
         direct_cost_ids.update(row["id"] for row in conn.execute(
@@ -460,9 +466,11 @@ def build_management_snapshot(conn, start, end, dimensions=None):
         ).fetchall())
 
     def disposal_loss_ids(date_from, date_to):
-        if not table_exists(conn, "asset_disposals"):
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_disposals'"
+        ).fetchone():
             return set()
-        columns = table_columns(conn, "asset_disposals")
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(asset_disposals)")}
         if not {"gain_loss_account_id", "gain_loss_amount", "disposal_date"}.issubset(columns):
             return set()
         return {
@@ -684,7 +692,9 @@ def cash_forecast(conn, today=None, weeks=8):
 
     threshold_row = conn.execute(
         "SELECT setting_value FROM company_settings WHERE setting_key='minimum_cash_balance'"
-    ).fetchone() if table_exists(conn, "company_settings") else None
+    ).fetchone() if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
+    ).fetchone() else None
     threshold = _decimal(threshold_row["setting_value"]) if threshold_row else Decimal("0")
     return {
         "opening": _rounded(opening), "weeks": result, "minimum": threshold,
@@ -703,14 +713,13 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
     """
     from bisect import bisect_left
 
-    columns = table_columns(conn, "journal_entries")
+    register_decimal_aggregates(conn)
+    columns = {x["name"] for x in conn.execute("PRAGMA table_info(journal_entries)")}
     ref_expr = "je.reference" if "reference" in columns else "''"
     desc_expr = "je.description" if "description" in columns else "''"
     closing_filter = _closing_entry_condition(conn)
-    debit_sum_sql = decimal_sum_expression(conn, "jl.debit")
-    credit_sum_sql = decimal_sum_expression(conn, "jl.credit")
-    entries = execute_compat(conn, f"""SELECT je.id,je.entry_date,{ref_expr} reference,{desc_expr} description,
-        {debit_sum_sql} debit,{credit_sum_sql} credit
+    entries = conn.execute(f"""SELECT je.id,je.entry_date,{ref_expr} reference,{desc_expr} description,
+        COALESCE(DECIMAL_SUM(jl.debit),'0') debit,COALESCE(DECIMAL_SUM(jl.credit),'0') credit
         FROM journal_entries je JOIN journal_lines jl ON jl.entry_id=je.id
         WHERE je.status='posted' AND je.entry_date BETWEEN ? AND ?
           AND ({closing_filter})
@@ -719,7 +728,7 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
     if not entries:
         return []
 
-    candidate_lines = execute_compat(conn,f"""SELECT jl.id line_id,jl.entry_id,jl.account_id,
+    candidate_lines = conn.execute(f"""SELECT jl.id line_id,jl.entry_id,jl.account_id,
         jl.debit,jl.credit,a.code,a.name_ar
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
@@ -734,7 +743,7 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
         placeholders = ",".join("?" for _ in account_ids)
         history_start = (period_start - timedelta(days=90)).isoformat()
         history_end = (period_end + timedelta(days=1)).isoformat()
-        history_rows = execute_compat(conn,f"""SELECT h.account_id,e.entry_date,h.debit,h.credit
+        history_rows = conn.execute(f"""SELECT h.account_id,e.entry_date,h.debit,h.credit
             FROM journal_lines h
             JOIN journal_entries e ON e.id=h.entry_id
             WHERE e.status='posted' AND h.account_id IN ({placeholders})
