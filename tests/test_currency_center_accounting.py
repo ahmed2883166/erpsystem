@@ -247,10 +247,10 @@ class CurrencyBalanceUpdatePostgreSQLTests(unittest.TestCase):
                     errors.append(exc)
                     acquired.set()
 
+            second_pid = second.execute("SELECT pg_backend_pid() AS pid").fetchone()["pid"]
             worker = threading.Thread(target=waiter, daemon=True)
             worker.start()
             self.assertTrue(started.wait(2), "second connection did not start")
-            second_pid = second.execute("SELECT pg_backend_pid() AS pid").fetchone()["pid"]
             deadline = time.monotonic() + 5
             waiting_on_lock = False
             while time.monotonic() < deadline:
