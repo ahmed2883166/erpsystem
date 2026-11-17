@@ -326,7 +326,7 @@ def generate_postgres_ddl(snapshot):
                         "amount", "debit", "credit", "balance", "price", "cost",
                         "salary", "wage", "tax", "discount", "quantity", "qty",
                         "rate", "value", "subtotal", "total", "paid", "deduction",
-                        "allowance", "proceeds", "depreciation", "insured",
+                        "allowance", "proceeds", "depreciation", "insured", "reorder",
                     )
                 )
             )
