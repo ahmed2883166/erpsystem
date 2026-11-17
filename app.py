@@ -326,9 +326,9 @@ def initialize_roles_schema(connection):
     timestamp = datetime.now().isoformat(timespec="seconds")
     for role_key, permissions in PERMISSIONS.items():
         connection.execute(
-            """INSERT OR IGNORE INTO roles(
+            """INSERT INTO roles(
                  role_key,role_name,permissions_json,is_system,active,created_at,updated_at
-               ) VALUES(?,?,?,?,1,?,?)""",
+               ) VALUES(?,?,?,?,1,?,?) ON CONFLICT DO NOTHING""",
             (role_key, ROLE_SYSTEM_NAMES[role_key],
              json.dumps(sorted(permissions), ensure_ascii=False), 1, timestamp, timestamp),
         )
@@ -607,12 +607,12 @@ def initialize_database():
         ("EUR","يورو","€"),("AED","درهم إماراتي","د.إ"),("GBP","جنيه إسترليني","£"),
         ("KWD","دينار كويتي","د.ك"),("QAR","ريال قطري","ر.ق")
     ]
-    connection.executemany("INSERT OR IGNORE INTO currencies(code,name_ar,symbol,active,is_base,rate_to_base) VALUES(?,?,?,0,0,0)", currency_seed)
+    connection.executemany("INSERT INTO currencies(code,name_ar,symbol,active,is_base,rate_to_base) VALUES(?,?,?,0,0,0) ON CONFLICT DO NOTHING", currency_seed)
     defaults = {"company_name":"ADMRAIL ERP Demo", "tax_country":"EG", "tax_regime":"EG_VAT",
                 "tax_number":"", "activity":"commercial", "base_currency":"EGP", "default_vat_rate":"14", "inventory_cost_method":"average"}
     for key, value in defaults.items():
-        connection.execute("INSERT OR IGNORE INTO company_settings(setting_key,setting_value) VALUES(?,?)", (key,value))
-    connection.execute("INSERT OR IGNORE INTO currencies(code,name_ar,symbol,active,is_base,rate_to_base) VALUES('EGP','جنيه مصري','ج.م',1,1,1)")
+        connection.execute("INSERT INTO company_settings(setting_key,setting_value) VALUES(?,?) ON CONFLICT DO NOTHING", (key,value))
+    connection.execute("INSERT INTO currencies(code,name_ar,symbol,active,is_base,rate_to_base) VALUES('EGP','جنيه مصري','ج.م',1,1,1) ON CONFLICT DO NOTHING")
     admin = connection.execute(
         "SELECT id,password_hash,must_change_password FROM users WHERE username='admin'"
     ).fetchone()
