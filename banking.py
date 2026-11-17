@@ -8,11 +8,22 @@ from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal
 from chart_templates import ensure_account_metadata
+from db_compat import table_columns, table_exists
 
 bank_bp = Blueprint("bank", __name__, url_prefix="/bank")
 
 def db():
     return connect_database(DB_PATH, isolation_level=None)
+
+
+def _table_exists(conn, name):
+    """Database-neutral table existence check; SQL execution remains opt-in."""
+    return table_exists(conn, name)
+
+
+def _columns(conn, name):
+    """Database-neutral column metadata for a known table."""
+    return table_columns(conn, name)
 
 
 def signed_ledger_amount(debit, credit):
@@ -155,10 +166,10 @@ def init_bank_schema():
       UNIQUE(bank_account_id,period_start,period_end)
     );
     """)
-    statement_columns={row["name"] for row in c.execute("PRAGMA table_info(bank_statement_lines)")}
+    statement_columns=_columns(c, "bank_statement_lines")
     if "matched_journal_line_id" not in statement_columns:
         c.execute("ALTER TABLE bank_statement_lines ADD COLUMN matched_journal_line_id INTEGER REFERENCES journal_lines(id)")
-    balance_columns={row["name"] for row in c.execute("PRAGMA table_info(bank_statement_balances)")}
+    balance_columns=_columns(c, "bank_statement_balances")
     if "opening_reviewed" not in balance_columns:
         c.execute("ALTER TABLE bank_statement_balances ADD COLUMN opening_reviewed INTEGER NOT NULL DEFAULT 0")
     if "opening_review_note" not in balance_columns:
