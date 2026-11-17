@@ -2211,7 +2211,7 @@ def approve_count(stocktake_id):
         if (not surplus_account or surplus_account["is_group"] or not surplus_account["active"]
                 or surplus_account["account_type"] != "expense"):
             raise ValueError("يجب ضبط حساب زيادة المخزون في ملف النشاط كحساب مصروف تفصيلي نشط قبل اعتماد الجرد.")
-        journal_lines, movement_ids = [], []
+        journal_lines, movement_ids, non_journal_movement_ids = [], [], []
         for line in lines:
             product_inventory_code = resolve_product_account_code(
                 c, line["product_id"], "inventory", inventory_code
@@ -2246,14 +2246,17 @@ def approve_count(stocktake_id):
                     VALUES(?,'issue',?,?,?,?,?,?,?,?,?,?, 'pending')""",
                     (movement_no,line["product_id"],stocktake["warehouse_id"],line["location_id"],line["lot_id"],str(qty),
                      str(cost / qty),str(cost),stocktake["count_date"],"عجز جرد فعلي",session.get("user_id")))
-                movement_ids.append(movement_id)
                 if cost > 0:
+                    movement_ids.append(movement_id)
                     journal_lines.append((shortage_account["id"],cost,0,"عجز جرد - " + line["name_ar"]))
                     journal_lines.append((
                         product_inventory["id"],0,cost,"تخفيض مخزون - " + line["name_ar"],
                         {"stock_product_id": int(line["product_id"]),
                          "stock_warehouse_id": int(stocktake["warehouse_id"])}
                     ))
+                else:
+                    # Zero-value layers can be consumed without a journal entry.
+                    non_journal_movement_ids.append(movement_id)
                 _execute(c, "UPDATE stocktake_lines SET variance_value=? WHERE id=?", (str(-cost),line["id"]))
             else:
                 unit_cost = D(str(line["counted_unit_cost"] or "0"))
@@ -2271,11 +2274,14 @@ def approve_count(stocktake_id):
                     VALUES(?,?,?,?,?,?,?,?,?)""",
                     (line["product_id"],stocktake["warehouse_id"],line["location_id"],line["lot_id"],
                      movement_id,str(variance),str(variance),str(unit_cost),str(cost)))
-                movement_ids.append(movement_id)
-                journal_lines.extend([(product_inventory["id"],cost,0,"زيادة مخزون - " + line["name_ar"],
-                                      {"stock_product_id": int(line["product_id"]),
-                                       "stock_warehouse_id": int(stocktake["warehouse_id"])}),
-                                      (surplus_account["id"],0,cost,"زيادة مخزون - عكس مصروف فروق الجرد - " + line["name_ar"])])
+                if cost > 0:
+                    movement_ids.append(movement_id)
+                    journal_lines.extend([(product_inventory["id"],cost,0,"زيادة مخزون - " + line["name_ar"],
+                                          {"stock_product_id": int(line["product_id"]),
+                                           "stock_warehouse_id": int(stocktake["warehouse_id"])}),
+                                          (surplus_account["id"],0,cost,"زيادة مخزون - عكس مصروف فروق الجرد - " + line["name_ar"])])
+                else:
+                    non_journal_movement_ids.append(movement_id)
                 _execute(c, "UPDATE stocktake_lines SET variance_value=? WHERE id=?", (str(cost),line["id"]))
         journal_id = None
         if journal_lines:
@@ -2284,6 +2290,9 @@ def approve_count(stocktake_id):
         for movement_id in movement_ids:
             _execute(c, "UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?",
                       (journal_id,movement_id))
+        for movement_id in non_journal_movement_ids:
+            _execute(c, "UPDATE stock_movements SET journal_entry_id=NULL,accounting_status='not_required' WHERE id=?",
+                      (movement_id,))
         _execute(c, """UPDATE stocktakes SET status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP,
             journal_entry_id=? WHERE id=?""", (session.get("user_id"),journal_id,stocktake_id))
         c.commit()
