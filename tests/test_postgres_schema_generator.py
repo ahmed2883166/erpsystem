@@ -108,6 +108,13 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
             {"journal_lines": ["amount"]},
         )
         self.assertEqual(review["numeric_review_candidate_count"], 2)
+        self.assertNotIn(
+            ("tax_rates", "tax_number"),
+            [
+                (item["table"], item["column"])
+                for item in review["numeric_review_candidates"]
+            ],
+        )
         self.assertEqual(
             [
                 (item["table"], item["column"], item["source_type"], item["postgres_type"])
