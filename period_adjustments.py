@@ -167,6 +167,13 @@ def create_adjustment(conn, description, kind, total_amount, start_date, end_dat
     _validate_accounts(conn, kind, int(debit_account_id), int(credit_account_id))
     begin_write_transaction(conn)
     try:
+        execute_compat(conn, """CREATE TABLE IF NOT EXISTS document_sequences (
+            sequence_key TEXT PRIMARY KEY,
+            next_value INTEGER NOT NULL CHECK(next_value > 0)
+        )""")
+        execute_compat(conn, """INSERT INTO document_sequences(sequence_key,next_value)
+            VALUES('period_adjustment',(SELECT COALESCE(MAX(id),0)+1 FROM period_adjustments))
+            ON CONFLICT(sequence_key) DO NOTHING""")
         adjustment_no = next_code(
             conn, "period_adjustment", "ADJ", "period_adjustments", "adjustment_no"
         )
