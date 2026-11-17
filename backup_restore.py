@@ -4,6 +4,11 @@ import sqlite3
 import zipfile
 from pathlib import Path
 
+from sqlite_maintenance import (
+    online_backup_sqlite, restore_sqlite_snapshot,
+    sqlite_integrity_check, sqlite_table_names,
+)
+
 MAX_RESTORE_DATABASE_BYTES = 2 * 1024 * 1024 * 1024
 REQUIRED_TABLES = {"users", "accounts", "journal_entries", "journal_lines"}
 
@@ -45,10 +50,8 @@ def extract_validated_backup(archive_path, candidate_path,
                 target.write(chunk)
     connection = sqlite3.connect(str(candidate_path))
     try:
-        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
-        tables = {row[0] for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )}
+        integrity = sqlite_integrity_check(connection)
+        tables = sqlite_table_names(connection)
         if integrity != "ok" or not REQUIRED_TABLES.issubset(tables):
             raise ValueError("قاعدة البيانات غير سليمة أو لا تطابق هيكل NEXUS ERP.")
     finally:
@@ -58,41 +61,18 @@ def extract_validated_backup(archive_path, candidate_path,
 
 def create_database_safety_copy(database_path, safety_path):
     """Create and verify a consistent SQLite snapshot before restoration."""
-    source = sqlite3.connect(str(database_path), timeout=30)
-    destination = sqlite3.connect(str(safety_path), timeout=30)
-    try:
-        source.backup(destination)
-        integrity = destination.execute("PRAGMA integrity_check").fetchone()[0]
-        if integrity != "ok":
-            raise RuntimeError("تعذر إنشاء نسخة أمان سليمة من قاعدة البيانات الحالية.")
-    finally:
-        destination.close()
-        source.close()
+    online_backup_sqlite(database_path, safety_path, timeout=30)
     return Path(safety_path)
 
 
 def restore_database_with_rollback(candidate_path, database_path, safety_path,
                                    initialize_callback):
     """Restore into SQLite and roll back to the safety snapshot if initialization fails."""
-    candidate = sqlite3.connect(str(candidate_path), timeout=60)
-    destination = sqlite3.connect(str(database_path), timeout=60)
-    try:
-        candidate.backup(destination, pages=256, sleep=0.05)
-        destination.commit()
-    finally:
-        destination.close()
-        candidate.close()
+    restore_sqlite_snapshot(candidate_path, database_path, timeout=60)
     try:
         initialize_callback()
     except Exception as restore_error:
-        safety = sqlite3.connect(str(safety_path), timeout=60)
-        destination = sqlite3.connect(str(database_path), timeout=60)
-        try:
-            safety.backup(destination, pages=256, sleep=0.05)
-            destination.commit()
-        finally:
-            destination.close()
-            safety.close()
+        restore_sqlite_snapshot(safety_path, database_path, timeout=60)
         raise RuntimeError(
             "فشل تهيئة قاعدة البيانات بعد الاسترجاع؛ تمت إعادة قاعدة البيانات السابقة من نسخة الأمان."
         ) from restore_error
