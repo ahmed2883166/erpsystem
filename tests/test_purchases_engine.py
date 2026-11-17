@@ -57,6 +57,43 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.assertIn("supplier_payment_allocations", names)
         self.assertIn("purchase_requests", names)
 
+    def test_postgresql_supplier_bill_and_grni_receipts_are_locked_before_posting(self):
+        calls = []
+
+        class Cursor:
+            def __init__(self, one=None, many=None):
+                self.one = one
+                self.many = many or []
+
+            def fetchone(self):
+                return self.one
+
+            def fetchall(self):
+                return self.many
+
+        def fake_execute(_conn, sql, params=()):
+            calls.append((sql, tuple(params)))
+            if "supplier_bills" in sql:
+                return Cursor(one={"id": 17})
+            return Cursor(many=[{"id": 2}, {"id": 5}])
+
+        with patch("purchases.database_dialect", return_value="postgresql"), \
+             patch("purchases.execute_compat", side_effect=fake_execute):
+            bill = purchases._supplier_bill_for_update(self.db, 17)
+            locked = purchases._lock_supplier_receipts(self.db, iter([5, 2, 5]))
+
+        self.assertEqual(bill["id"], 17)
+        self.assertEqual([row["id"] for row in locked], [2, 5])
+        self.assertIn("FOR UPDATE", calls[0][0])
+        self.assertEqual(calls[0][1], (17,))
+        self.assertIn("ORDER BY id FOR UPDATE", calls[1][0])
+        self.assertEqual(calls[1][1], (2, 5))
+
+        with patch("purchases.database_dialect", return_value="sqlite"), \
+             patch("purchases.execute_compat") as execute:
+            self.assertEqual(purchases._lock_supplier_receipts(self.db, [2, 5]), [])
+        execute.assert_not_called()
+
     def test_supplier_credit_note_route_persists_real_layer_allocations(self):
         purchases.init_purchase_schema()
         self.db.execute("INSERT INTO company_settings(setting_key,setting_value) VALUES('activity','commercial')")
