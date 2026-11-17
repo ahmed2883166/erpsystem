@@ -1457,6 +1457,16 @@ def movements():
                     raise ValueError("موقع الوجهة لا يتبع مخزن الوجهة.")
             begin_write_transaction(c)
             lock_stock_warehouses(c, src, dst)
+            source_branch_id = target_branch_id = None
+            if kind == "transfer":
+                source_branch = _execute(c, "SELECT branch_id FROM stock_warehouses WHERE id=?", (src,)).fetchone()
+                target_branch = _execute(c, "SELECT branch_id FROM stock_warehouses WHERE id=?", (dst,)).fetchone()
+                if not source_branch or not target_branch:
+                    raise ValueError("مخزن المصدر أو الوجهة غير موجود.")
+                source_branch_id = source_branch["branch_id"]
+                target_branch_id = target_branch["branch_id"]
+                if bool(source_branch_id) != bool(target_branch_id):
+                    raise ValueError("اربط المخزنين بفرعين محددين قبل التحويل؛ لا يمكن اعتبار تحويل فرع إلى مخزن بلا فرع تحويلًا داخليًا.")
             movement_date=request.form.get("movement_date") or date.today().isoformat()
             ensure_stock_date_open(c, movement_date)
             lot_id=None
@@ -1495,12 +1505,6 @@ def movements():
                 post_scrap_journal(c,mid,movement_no,product,movement_date,total,session.get("user_id"))
             elif kind in {"transfer","relocate"}:
                 if kind == "transfer":
-                    source_branch = _execute(c, "SELECT branch_id FROM stock_warehouses WHERE id=?", (src,)).fetchone()
-                    target_branch = _execute(c, "SELECT branch_id FROM stock_warehouses WHERE id=?", (dst,)).fetchone()
-                    source_branch_id = source_branch["branch_id"] if source_branch else None
-                    target_branch_id = target_branch["branch_id"] if target_branch else None
-                    if bool(source_branch_id) != bool(target_branch_id):
-                        raise ValueError("اربط المخزنين بفرعين محددين قبل التحويل؛ لا يمكن اعتبار تحويل فرع إلى مخزن بلا فرع تحويلًا داخليًا.")
                     if source_branch_id and target_branch_id and source_branch_id != target_branch_id:
                         post_interbranch_transfer_journal(
                             c, mid, movement_no, product, movement_date, total,
