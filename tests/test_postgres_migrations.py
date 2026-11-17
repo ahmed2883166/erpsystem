@@ -560,7 +560,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         ).fetchone()["id"]
         self.connection.commit()
 
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [8])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [8, 9])
         preserved = self.connection.execute(
             f"SELECT entered_uom_id FROM {schema}.stock_movements WHERE id=%s",
             (legacy_movement_id,),
