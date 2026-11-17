@@ -12,7 +12,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for, g
-from accounting_core import post_journal, safe_error_message
+from accounting_core import post_journal, safe_error_message, decimal_sum_expression
 from db_compat import table_columns, table_exists
 from database import connect_database, fetch_page
 from stock import consume_layers, product_uom_factor, product_uom_options, product_uom_storage
@@ -2196,16 +2196,21 @@ def customer_list():
         per_page=request.args.get("customers_per_page",50,type=int))
     rows = customers_page["rows"]
     invoices_by_customer = {}
-    for balance_row in c.execute("""WITH refunds_by_invoice AS (
-            SELECT cn.invoice_id, COALESCE(DECIMAL_SUM(r.amount),'0') refunded
+    refund_sum_sql = decimal_sum_expression(c, "r.amount")
+    invoice_total_sum_sql = decimal_sum_expression(c, "i.total_amount")
+    invoice_paid_sum_sql = decimal_sum_expression(c, "i.paid_amount")
+    invoice_credited_sum_sql = decimal_sum_expression(c, "i.credited_amount")
+    refunded_total_sum_sql = decimal_sum_expression(c, "COALESCE(r.refunded,'0')")
+    for balance_row in c.execute(f"""WITH refunds_by_invoice AS (
+            SELECT cn.invoice_id, {refund_sum_sql} refunded
             FROM sales_credit_notes cn JOIN customer_refunds r ON r.credit_note_id=cn.id
             GROUP BY cn.invoice_id
         )
         SELECT i.customer_id,
-            COALESCE(DECIMAL_SUM(i.total_amount),'0') total_amount,
-            COALESCE(DECIMAL_SUM(i.paid_amount),'0') paid_amount,
-            COALESCE(DECIMAL_SUM(i.credited_amount),'0') credited_amount,
-            COALESCE(DECIMAL_SUM(COALESCE(r.refunded,'0')),'0') refunded_amount
+            {invoice_total_sum_sql} total_amount,
+            {invoice_paid_sum_sql} paid_amount,
+            {invoice_credited_sum_sql} credited_amount,
+            {refunded_total_sum_sql} refunded_amount
         FROM sales_invoices i LEFT JOIN refunds_by_invoice r ON r.invoice_id=i.id
         WHERE i.status='posted' GROUP BY i.customer_id"""):
         invoices_by_customer[balance_row["customer_id"]] = (
