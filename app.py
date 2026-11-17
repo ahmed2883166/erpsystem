@@ -48,6 +48,7 @@ from database import connect_database, enable_wal, fetch_page
 from database_backend import require_supported_runtime_backend
 from core_schema import initialize_core_schema, ensure_legacy_core_columns
 from company_defaults import seed_company_defaults
+from sqlite_accounting_migrations import migrate_journal_line_amounts_to_text
 from sqlite_audit_schema import initialize_sqlite_audit_schema
 from db_compat import begin_write_transaction, insert_and_get_id, execute_script, table_exists, table_columns, table_names, table_column_info
 from report_request_control import (ReportRequestGate, bounded_env_int,
@@ -558,27 +559,7 @@ def initialize_database():
     ensure_activity_chart_accounts(connection, selected_activity)
     migrate_legacy_duplicate_account_labels(connection, selected_activity)
     ensure_account_metadata(connection)
-    # SQLite CREATE TABLE IF NOT EXISTS does not change a legacy REAL
-    # declaration. Rebuild journal_lines once with TEXT amount columns so
-    # existing installations use the same decimal-safe storage as new ones.
-    journal_columns = table_column_info(connection, "journal_lines")
-    debit_type = str(journal_columns.get("debit")["type"]).upper() if "debit" in journal_columns else ""
-    credit_type = str(journal_columns.get("credit")["type"]).upper() if "credit" in journal_columns else ""
-    if debit_type != "TEXT" or credit_type != "TEXT":
-        connection.execute("""CREATE TABLE journal_lines_decimal_new(
-            id INTEGER PRIMARY KEY,
-            entry_id INTEGER NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
-            account_id INTEGER NOT NULL REFERENCES accounts(id),
-            debit TEXT NOT NULL DEFAULT '0',
-            credit TEXT NOT NULL DEFAULT '0',
-            memo TEXT
-        )""")
-        connection.execute("""INSERT INTO journal_lines_decimal_new(id,entry_id,account_id,debit,credit,memo)
-            SELECT id,entry_id,account_id,CAST(debit AS TEXT),CAST(credit AS TEXT),memo
-            FROM journal_lines ORDER BY id""")
-        connection.execute("DROP TABLE journal_lines")
-        connection.execute("ALTER TABLE journal_lines_decimal_new RENAME TO journal_lines")
-        connection.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_entry ON journal_lines(entry_id)")
+    migrate_journal_line_amounts_to_text(connection)
     connection.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry ON journal_lines(account_id,entry_id)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_account ON journal_lines(entry_id,account_id)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_entry_date ON journal_entries(entry_date,id)")
