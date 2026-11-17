@@ -1139,13 +1139,12 @@ def convert_purchase_request(request_id):
         if not unit_price.is_finite() or unit_price < 0:
             raise ValueError("سعر الوحدة يجب أن يكون رقمًا صالحًا ولا يمكن أن يكون سالبًا.")
         po_no = "PO-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
-        cur = c.execute("""INSERT INTO purchase_orders(
+        po_id = insert_and_get_id(c, """INSERT INTO purchase_orders(
             po_no,supplier_id,order_date,expected_date,notes,created_by
         ) VALUES(?,?,?,?,?,?)""",
             (po_no,supplier_id,date.today().isoformat(),row["required_date"],
              "من طلب الشراء الداخلي " + row["request_no"] + " — " + row["purpose"],
              session["user_id"]))
-        po_id = cur.lastrowid
         c.execute("""INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price)
             VALUES(?,?,?,?)""", (po_id,row["product_id"],row["quantity"],str(unit_price)))
         c.execute("""UPDATE purchase_requests SET status='converted',
@@ -1177,10 +1176,10 @@ def new_order():
             stored_uom_id,entered_uom_name=product_uom_storage(c,product,request.form.get("uom_id"))
             begin_write_transaction(c)
             no="PO-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
-            cur=c.execute("INSERT INTO purchase_orders(po_no,supplier_id,order_date,expected_date,notes,created_by) VALUES(?,?,?,?,?,?)",
+            order_id=insert_and_get_id(c,"INSERT INTO purchase_orders(po_no,supplier_id,order_date,expected_date,notes,created_by) VALUES(?,?,?,?,?,?)",
               (no,supplier,request.form["order_date"],request.form.get("expected_date") or None,request.form.get("notes",""),session["user_id"]))
             c.execute("""INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price,entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
-              VALUES(?,?,?,?,?,?,?,?,?)""",(cur.lastrowid,product,str(qty),str(price),str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,str(factor)))
+              VALUES(?,?,?,?,?,?,?,?,?)""",(order_id,product,str(qty),str(price),str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,str(factor)))
             c.commit(); flash(f"تم إنشاء أمر الشراء {no}.","success"); return redirect(url_for("purchase.index"))
         except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     su=c.execute("SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
@@ -2059,7 +2058,7 @@ def new_bill():
             no="BILL-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             due_date=request.form.get("due_date") or request.form["bill_date"]
             if due_date < request.form["bill_date"]: raise ValueError("تاريخ استحقاق المورد لا يمكن أن يسبق تاريخ الفاتورة.")
-            cur=c.execute("""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,
+            bid=insert_and_get_id(c,"""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,
                 subtotal,tax_rate,tax_amount,total_amount,input_vat_deductible_percent,created_by,branch_id,cost_center_id,project_id,
                 status,bill_kind,expense_account_id,asset_code,asset_name,asset_category,asset_ready_date,
                 asset_residual_value,asset_useful_life_months,asset_depreciation_method,asset_annual_rate,
@@ -2073,7 +2072,6 @@ def new_bill():
                  asset_data.get("asset_useful_life_months"),asset_data.get("asset_depreciation_method","straight_line"),
                  asset_data.get("asset_annual_rate","0"),asset_data.get("asset_account_id"),
                  asset_data.get("asset_accum_account_id"),asset_data.get("asset_expense_account_id")))
-            bid=cur.lastrowid
             if bill_kind == "asset":
                 for line_no, line in enumerate(asset_lines, 1):
                     c.execute("""INSERT INTO supplier_bill_asset_lines(
@@ -2648,12 +2646,11 @@ def new_credit_note():
             if total>bill_remaining:
                 raise ValueError("قيمة إشعار الدائن تتجاوز المتبقي من قيمة فاتورة المورد بعد الإشعارات السابقة.")
             credit_no="SCN-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
-            cur=c.execute("""INSERT INTO supplier_credit_notes(
+            note_id=insert_and_get_id(c,"""INSERT INTO supplier_credit_notes(
               credit_no,supplier_id,bill_id,credit_date,supplier_credit_no,reason,subtotal,tax_rate,tax_amount,total_amount,created_by)
               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
               (credit_no,supplier,bill_id,request.form["credit_date"],supplier_credit_no,reason,
                str(subtotal),str(tax_rate),str(tax),str(total),session["user_id"]))
-            note_id=cur.lastrowid
             for item in line_data:
                 line_cur=c.execute("""INSERT INTO supplier_credit_note_lines(
                   credit_note_id,product_id,warehouse_id,quantity,unit_cost,total_cost,
@@ -2734,9 +2731,9 @@ def new_payment():
             dimensions = validate_journal_dimensions(c, {"supplier_id": supplier})
             no="PAY-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             eid=create_journal(c,request.form["payment_date"],no,"سداد مورد",[(ap,amount,0,"تخفيض مديونية المورد"),(cash,0,amount,"سداد نقدي/بنكي")],session["user_id"],dimensions=dimensions)
-            cur=c.execute("INSERT INTO supplier_payments(payment_no,supplier_id,payment_date,amount,cash_account_id,journal_entry_id,reference,created_by) VALUES(?,?,?,?,?,?,?,?)",
+            payment_id=insert_and_get_id(c,"INSERT INTO supplier_payments(payment_no,supplier_id,payment_date,amount,cash_account_id,journal_entry_id,reference,created_by) VALUES(?,?,?,?,?,?,?,?)",
               (no,supplier,request.form["payment_date"],str(amount),cash,eid,request.form.get("reference",""),session["user_id"]))
-            payment_id=cur.lastrowid; remaining=amount
+            remaining=amount
             bills=c.execute("""SELECT * FROM supplier_bills WHERE supplier_id=? AND status='posted' ORDER BY bill_date,id""",(supplier,)).fetchall()
             bills=[b for b in bills if Decimal(b["total_amount"])>Decimal(b["paid_amount"] or "0")+Decimal(b["credited_amount"] or "0")]
             for b in bills:
