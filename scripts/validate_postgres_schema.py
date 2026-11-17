@@ -83,9 +83,6 @@ def validate(ddl_path, dsn, expected_review_path=None):
                 "schema": schema_name,
                 **actual_counts,
                 "expected_counts_verified": bool(expected_review_path),
-                "foreign_key_count": foreign_key_count,
-                "index_count": index_count,
-                "trigger_count": trigger_count,
                 "invalid_index_count": invalid_indexes,
             }
         except Exception:

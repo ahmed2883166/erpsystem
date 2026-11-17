@@ -83,7 +83,7 @@ jobs:
       - name: Validate PostgreSQL DDL in disposable PostgreSQL 16 schema
         run: |
           python scripts/validate_postgres_schema.py \
-            --ddl "$RUNNER_TEMP/nexus-postgresql-schema.sql" \\
+            --ddl "$RUNNER_TEMP/nexus-postgresql-schema.sql" \
             --expected-review "$RUNNER_TEMP/nexus-postgresql-schema-review.json"
       - name: Upload database migration design artifacts
         uses: actions/upload-artifact@v4
