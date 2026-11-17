@@ -113,7 +113,7 @@ class GeneratedIdCompatibilityTests(unittest.TestCase):
                 return Cursor()
         connection = Connection("IDLE")
         self.assertEqual(insert_and_get_id(connection, "INSERT INTO generated_probe(label) VALUES(?)", ("x",)), 42)
-        self.assertEqual(connection.statements, [("INSERT INTO generated_probe(label) VALUES(?) RETURNING id", ("x",))])
+        self.assertEqual(connection.statements, [("INSERT INTO generated_probe(label) VALUES(%s) RETURNING id", ("x",))])
 
     def test_rejects_existing_returning_clause(self):
         connection = sqlite3.connect(":memory:")
