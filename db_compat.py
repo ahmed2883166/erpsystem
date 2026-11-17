@@ -108,7 +108,7 @@ def begin_write_transaction(connection):
 def insert_and_get_id(connection, sql, params=()):
     """Insert one row and return its generated id across SQLite and PostgreSQL."""
     statement = str(sql).strip().rstrip(";")
-    if re.search(r"\\bRETURNING\\b", statement, re.IGNORECASE):
+    if re.search(r"\bRETURNING\b", statement, re.IGNORECASE):
         raise ValueError("insert_and_get_id adds RETURNING id automatically; do not supply RETURNING.")
     if database_dialect(connection) == "sqlite":
         value = connection.execute(statement, params).lastrowid
