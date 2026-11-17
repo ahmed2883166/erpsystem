@@ -47,6 +47,7 @@ from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
 from database_backend import require_supported_runtime_backend
 from core_schema import initialize_core_schema, ensure_legacy_core_columns
+from company_defaults import seed_company_defaults
 from sqlite_audit_schema import initialize_sqlite_audit_schema
 from db_compat import begin_write_transaction, insert_and_get_id, execute_script, table_exists, table_columns, table_names, table_column_info
 from report_request_control import (ReportRequestGate, bounded_env_int,
@@ -529,17 +530,7 @@ def initialize_database():
     initialize_sqlite_audit_schema(connection)
     ensure_legacy_core_columns(connection)
     initialize_roles_schema(connection)
-    currency_seed = [
-        ("SAR","ريال سعودي","ر.س"),("EGP","جنيه مصري","ج.م"),("USD","دولار أمريكي","$"),
-        ("EUR","يورو","€"),("AED","درهم إماراتي","د.إ"),("GBP","جنيه إسترليني","£"),
-        ("KWD","دينار كويتي","د.ك"),("QAR","ريال قطري","ر.ق")
-    ]
-    connection.executemany("INSERT INTO currencies(code,name_ar,symbol,active,is_base,rate_to_base) VALUES(?,?,?,0,0,0) ON CONFLICT DO NOTHING", currency_seed)
-    defaults = {"company_name":"ADMRAIL ERP Demo", "tax_country":"EG", "tax_regime":"EG_VAT",
-                "tax_number":"", "activity":"commercial", "base_currency":"EGP", "default_vat_rate":"14", "inventory_cost_method":"average"}
-    for key, value in defaults.items():
-        connection.execute("INSERT INTO company_settings(setting_key,setting_value) VALUES(?,?) ON CONFLICT DO NOTHING", (key,value))
-    connection.execute("INSERT INTO currencies(code,name_ar,symbol,active,is_base,rate_to_base) VALUES('EGP','جنيه مصري','ج.م',1,1,1) ON CONFLICT DO NOTHING")
+    seed_company_defaults(connection)
     admin = connection.execute(
         "SELECT id,password_hash,must_change_password FROM users WHERE username='admin'"
     ).fetchone()
