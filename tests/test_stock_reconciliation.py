@@ -89,6 +89,47 @@ class StockReconciliationReportTests(unittest.TestCase):
             "remaining_exceeds_received", "source_product_mismatch",
         }.issubset(codes))
 
+    def test_inbound_movements_require_complete_valuation_layer_coverage(self):
+        self.conn.executescript("""
+            ALTER TABLE stock_valuation_layers ADD COLUMN qty_in TEXT;
+            ALTER TABLE stock_valuation_layers ADD COLUMN source_movement_id INTEGER;
+            CREATE TABLE stock_movements(
+                id INTEGER PRIMARY KEY, product_id INTEGER, target_warehouse_id INTEGER,
+                movement_type TEXT, quantity TEXT
+            );
+            INSERT INTO stock_movements VALUES
+                (200,1,1,'receipt','10'),
+                (201,1,1,'receipt','5'),
+                (202,1,1,'transfer','3'),
+                (203,1,1,'issue','9');
+            UPDATE stock_valuation_layers
+                SET qty_in='10',source_movement_id=200 WHERE id=1;
+            INSERT INTO stock_valuation_layers(
+                id,product_id,warehouse_id,qty_in,qty_remaining,unit_cost,
+                value_remaining,source_movement_id
+            ) VALUES
+                (2,1,1,'4','4','10','40',201),
+                (3,1,1,'1','1','10','10',NULL);
+        """)
+
+        report = self.run_report()
+        codes = {issue["code"] for issue in report["layer_integrity_issues"]}
+
+        self.assertEqual(report["layer_integrity_issue_count"], 3)
+        self.assertEqual(report["reconciliation_status"], "review")
+        self.assertTrue({
+            "missing_source_reference",
+            "inbound_layer_quantity_mismatch",
+            "inbound_movement_without_layer",
+        }.issubset(codes))
+        movement_findings = [
+            issue for issue in report["layer_integrity_issues"]
+            if issue["code"] in {
+                "inbound_layer_quantity_mismatch", "inbound_movement_without_layer"
+            }
+        ]
+        self.assertTrue(all(issue["layer_id"] is None for issue in movement_findings))
+
     def test_unallocated_legacy_balance_is_not_falsely_matched_to_product_detail(self):
         self.conn.execute(
             """INSERT INTO journal_lines(
