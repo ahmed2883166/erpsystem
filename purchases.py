@@ -10,7 +10,7 @@ from functools import wraps
 from datetime import date, datetime, timedelta
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, money, safe_error_message, decimal_sum_expression
-from db_compat import table_columns, table_exists, table_indexes
+from db_compat import table_columns, table_exists, table_indexes, begin_write_transaction
 from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 from code_sequences import next_code
@@ -292,7 +292,7 @@ def require(permission):
     return deco
 
 def submit_purchase_order(c, order_id, actor_id):
-    c.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(c)
     order = c.execute("SELECT * FROM purchase_orders WHERE id=?", (order_id,)).fetchone()
     if not order:
         raise ValueError("أمر الشراء غير موجود.")
@@ -307,7 +307,7 @@ def submit_purchase_order(c, order_id, actor_id):
 
 
 def approve_purchase_order(c, order_id, actor_id, reason=""):
-    c.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(c)
     order = c.execute("SELECT * FROM purchase_orders WHERE id=?", (order_id,)).fetchone()
     if not order:
         raise ValueError("أمر الشراء غير موجود.")
@@ -328,7 +328,7 @@ def reject_purchase_order(c, order_id, actor_id, reason):
     reason = (reason or "").strip()
     if len(reason) < 5:
         raise ValueError("اكتب سبب رفض واضحًا (5 أحرف على الأقل).")
-    c.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(c)
     order = c.execute("SELECT * FROM purchase_orders WHERE id=?", (order_id,)).fetchone()
     if not order:
         raise ValueError("أمر الشراء غير موجود.")
@@ -855,7 +855,7 @@ def integrity_issues():
 def resolve_integrity_issue(issue_id):
     c = db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         issue = c.execute(
             "SELECT * FROM purchase_integrity_issues WHERE id=? AND resolved=0",
             (issue_id,),
@@ -1018,7 +1018,7 @@ def new_purchase_request():
                 raise ValueError("صيغة تاريخ الطلب أو الاحتياج غير صحيحة.")
             if required_date and required_date < request_date:
                 raise ValueError("تاريخ الاحتياج لا يمكن أن يسبق تاريخ الطلب.")
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             request_no = "PR-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
             c.execute("""INSERT INTO purchase_requests(
                 request_no,request_date,required_date,department,purpose,product_id,
@@ -1042,7 +1042,7 @@ def new_purchase_request():
 def submit_purchase_request(request_id):
     c = db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         row = c.execute("SELECT * FROM purchase_requests WHERE id=?", (request_id,)).fetchone()
         if not row:
             raise ValueError("طلب الشراء غير موجود.")
@@ -1067,7 +1067,7 @@ def submit_purchase_request(request_id):
 def approve_purchase_request(request_id):
     c = db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         row = c.execute("SELECT * FROM purchase_requests WHERE id=?", (request_id,)).fetchone()
         if not row or row["status"] != "pending_approval":
             raise ValueError("طلب الشراء غير موجود أو ليس بانتظار الاعتماد.")
@@ -1099,7 +1099,7 @@ def reject_purchase_request(request_id):
         reason = (request.form.get("reason") or "").strip()
         if len(reason) < 5:
             raise ValueError("سبب الرفض مطلوب (5 أحرف على الأقل).")
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         row = c.execute("SELECT * FROM purchase_requests WHERE id=?", (request_id,)).fetchone()
         if not row or row["status"] != "pending_approval":
             raise ValueError("طلب الشراء غير موجود أو ليس بانتظار الاعتماد.")
@@ -1127,7 +1127,7 @@ def convert_purchase_request(request_id):
     try:
         supplier_id = int(request.form["supplier_id"])
         unit_price = money(request.form["unit_price"])
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         row = c.execute("""SELECT r.*,p.active AS product_active
             FROM purchase_requests r JOIN stock_products p ON p.id=r.product_id
             WHERE r.id=?""", (request_id,)).fetchone()
@@ -1175,7 +1175,7 @@ def new_order():
             factor,uom_name=product_uom_factor(c,product,request.form.get("uom_id"),"purchase")
             qty=q4(entered_qty*factor); price=entered_price/factor
             stored_uom_id,entered_uom_name=product_uom_storage(c,product,request.form.get("uom_id"))
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             no="PO-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             cur=c.execute("INSERT INTO purchase_orders(po_no,supplier_id,order_date,expected_date,notes,created_by) VALUES(?,?,?,?,?,?)",
               (no,supplier,request.form["order_date"],request.form.get("expected_date") or None,request.form.get("notes",""),session["user_id"]))
@@ -1352,7 +1352,7 @@ def new_receipt():
             factor,uom_name=product_uom_factor(c,product,request.form.get("uom_id"),"purchase")
             qty=q4(entered_qty*factor); unit=entered_unit/factor; total=money(entered_qty*entered_unit)
             stored_uom_id,entered_uom_name=product_uom_storage(c,product,request.form.get("uom_id"))
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             dimensions = validate_journal_dimensions(c, {**request.form, "supplier_id": supplier})
             product_row=c.execute("SELECT * FROM stock_products WHERE id=? AND active=1",(product,)).fetchone()
             if not product_row or product_row["product_type"]=="service": raise ValueError("اختر صنفًا مخزنيًا نشطًا.")
@@ -1755,7 +1755,7 @@ def _available_supplier_receipts(c, supplier_id, exclude_bill_id=None):
 
 
 def submit_supplier_bill(c, bill_id, actor_id):
-    c.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(c)
     bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
     if not bill:
         raise ValueError("فاتورة المورد غير موجودة.")
@@ -1823,7 +1823,7 @@ def submit_supplier_bill(c, bill_id, actor_id):
 
 
 def approve_supplier_bill(c, bill_id, actor_id, reason=""):
-    c.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(c)
     bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
     if not bill:
         raise ValueError("فاتورة المورد غير موجودة.")
@@ -1844,7 +1844,7 @@ def reject_supplier_bill(c, bill_id, actor_id, reason):
     reason = (reason or "").strip()
     if len(reason) < 5:
         raise ValueError("اكتب سبب رفض واضحًا (5 أحرف على الأقل).")
-    c.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(c)
     bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
     if not bill:
         raise ValueError("فاتورة المورد غير موجودة.")
@@ -1860,7 +1860,7 @@ def reject_supplier_bill(c, bill_id, actor_id, reason):
 
 
 def post_supplier_bill(c, bill_id, actor_id):
-    c.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(c)
     bill = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
     if not bill:
         raise ValueError("فاتورة المورد غير موجودة.")
@@ -2017,7 +2017,7 @@ def new_bill():
             supplier_invoice_no=request.form["supplier_invoice_no"].strip()
             if not supplier_invoice_no:
                 raise ValueError("رقم فاتورة المورد مطلوب.")
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             dimensions = validate_journal_dimensions(c, request.form)
             if c.execute("SELECT 1 FROM supplier_bills WHERE supplier_id=? AND lower(trim(supplier_invoice_no))=lower(trim(?)) LIMIT 1",
                          (supplier,supplier_invoice_no)).fetchone():
@@ -2152,7 +2152,7 @@ def edit_bill(bill_id):
             if bill_kind not in {"inventory", "expense", "asset"}:
                 raise ValueError("نوع فاتورة المورد غير صحيح.")
 
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             current = c.execute("SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
             if not current or current["status"] not in {"draft", "rejected"} or current["journal_entry_id"] is not None:
                 raise ValueError("تغيرت حالة الفاتورة؛ لا يمكن تعديلها الآن.")
@@ -2525,7 +2525,7 @@ def cancel_credit_note(credit_note_id):
         return redirect(url_for("purchase.index"))
     c=db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         result=cancel_supplier_credit_note(
             c,credit_note_id,request.form.get("cancellation_date") or date.today().isoformat(),
             request.form.get("reason",""),session["user_id"]
@@ -2561,7 +2561,7 @@ def new_credit_note():
             uom_keys=request.form.getlist("uom_key")
             if not product_ids or not (len(product_ids)==len(warehouse_ids)==len(quantities)==len(uom_keys)):
                 raise ValueError("أضف صنفًا واحدًا على الأقل وحدد المخزن والكمية لكل صنف.")
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             bill=c.execute("SELECT * FROM supplier_bills WHERE id=? AND supplier_id=? AND status='posted'",(bill_id,supplier)).fetchone()
             if not bill:
                 raise ValueError("فاتورة المورد غير موجودة أو لا تتبع المورد المحدد.")
@@ -2732,7 +2732,7 @@ def new_payment():
             if (not cash_row or cash_row["account_type"]!="asset" or cash_row["is_group"] or not cash_row["active"]
                 or (cash_row["code"] not in cash_codes and not any(word in cash_name for word in cash_words))):
                 raise ValueError("حساب السداد يجب أن يكون حساب صندوق أو بنك تفصيليًا ونشطًا، وليس حساب إيراد أو مصروف أو أصل آخر.")
-            ap=supplier_ap_account(c); c.execute("BEGIN IMMEDIATE")
+            ap=supplier_ap_account(c); begin_write_transaction(c)
             dimensions = validate_journal_dimensions(c, {"supplier_id": supplier})
             no="PAY-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             eid=create_journal(c,request.form["payment_date"],no,"سداد مورد",[(ap,amount,0,"تخفيض مديونية المورد"),(cash,0,amount,"سداد نقدي/بنكي")],session["user_id"],dimensions=dimensions)
