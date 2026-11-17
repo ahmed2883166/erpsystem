@@ -578,6 +578,25 @@ class ManualAssetRouteIntegrationTests(unittest.TestCase):
             "notes": "اختبار تكامل",
         }
 
+    def test_index_handles_legacy_asset_rows_with_null_cost_fields(self):
+        self.conn.execute("""
+            INSERT INTO fixed_assets(
+                asset_code,asset_name,category,purchase_date,ready_date,cost,
+                residual_value,useful_life_months,depreciation_method,annual_rate,
+                total_units,asset_account_id,accum_account_id,expense_account_id,
+                notes,created_by,status
+            ) VALUES('AST-LEGACY-NULL','أصل قديم','معدات','2020-01-01','2020-01-01',
+                NULL,NULL,48,'straight_line','0','0',10,11,12,'',7,'active')
+        """)
+        self.conn.commit()
+        response = self.client.get("/assets/")
+        self.assertEqual(response.status_code, 200)
+        asset = self.conn.execute(
+            "SELECT cost,residual_value FROM fixed_assets WHERE asset_code='AST-LEGACY-NULL'"
+        ).fetchone()
+        self.assertIsNone(asset["cost"])
+        self.assertIsNone(asset["residual_value"])
+
     def test_manual_asset_post_creates_asset_balanced_journal_and_link(self):
         response = self.client.post("/assets/", data=self._payload())
         self.assertEqual(response.status_code, 302)
