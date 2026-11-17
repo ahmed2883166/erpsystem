@@ -2,7 +2,10 @@
 import os
 import unittest
 
-from party_reports import _all_party_events, _events, _gl_control_balance
+from party_reports import (
+    _all_party_events, _events, _gl_control_balance,
+    _gl_party_control_balances,
+)
 from management_dashboard import _copied_opening_entry_ids
 
 
@@ -140,6 +143,78 @@ class PartyReportsPostgreSQLQueryTests(unittest.TestCase):
         finally:
             connection.rollback()
             connection.close()
+
+
+    def test_party_level_gl_balances_and_unassigned_dimension_on_postgresql(self):
+        import psycopg
+        from psycopg.rows import dict_row
+
+        connection = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"], row_factory=dict_row
+        )
+        schema = "nexus_party_dimension_test"
+        try:
+            connection.execute(f'CREATE SCHEMA "{schema}"')
+            connection.execute(f'SET search_path TO "{schema}"')
+            connection.execute("""
+                CREATE TABLE accounts (
+                    id BIGINT PRIMARY KEY, code TEXT, is_group BIGINT, active BIGINT
+                )
+            """)
+            connection.execute("""
+                CREATE TABLE journal_entries (
+                    id BIGINT PRIMARY KEY, entry_date TEXT, status TEXT
+                )
+            """)
+            connection.execute("""
+                CREATE TABLE journal_lines (
+                    id BIGINT PRIMARY KEY, entry_id BIGINT, account_id BIGINT,
+                    customer_id BIGINT, supplier_id BIGINT,
+                    debit NUMERIC(24,6), credit NUMERIC(24,6)
+                )
+            """)
+            connection.execute(
+                "INSERT INTO accounts VALUES (1, '1130', 0, 1), (2, '2110', 0, 1)"
+            )
+            connection.execute(
+                "INSERT INTO journal_entries VALUES (1, '2026-11-01', 'posted')"
+            )
+            connection.execute("""
+                INSERT INTO journal_lines
+                    (id, entry_id, account_id, customer_id, supplier_id, debit, credit)
+                VALUES
+                    (1, 1, 1, 10, NULL, 150, 0),
+                    (2, 1, 1, 10, NULL, 0, 25),
+                    (3, 1, 1, 11, NULL, 80, 0),
+                    (4, 1, 2, NULL, 20, 0, 200),
+                    (5, 1, 2, NULL, 20, 30, 0)
+            """)
+            customer_balances, customer_available = _gl_party_control_balances(
+                connection, ["1130"], "2026-12-31", "debit", "customer_id"
+            )
+            self.assertTrue(customer_available)
+            self.assertEqual(customer_balances, {10: 125, 11: 80})
+
+            supplier_balances, supplier_available = _gl_party_control_balances(
+                connection, ["2110"], "2026-12-31", "credit", "supplier_id"
+            )
+            self.assertTrue(supplier_available)
+            self.assertEqual(supplier_balances, {20: 170})
+
+            connection.execute("""
+                INSERT INTO journal_lines
+                    (id, entry_id, account_id, customer_id, supplier_id, debit, credit)
+                VALUES (6, 1, 1, NULL, NULL, 10, 0)
+            """)
+            unassigned_balances, unassigned_available = _gl_party_control_balances(
+                connection, ["1130"], "2026-12-31", "debit", "customer_id"
+            )
+            self.assertFalse(unassigned_available)
+            self.assertEqual(unassigned_balances, {})
+        finally:
+            connection.rollback()
+            connection.close()
+
 
 
 if __name__ == "__main__":
