@@ -17,7 +17,10 @@ from management_reports import build_inventory_ageing
 class ManagementReportsPostgreSQLIntegrationTests(unittest.TestCase):
     def test_inventory_ageing_uses_postgresql_date_expressions(self):
         schema = "nexus_report_" + uuid.uuid4().hex[:12]
-        connection = psycopg.connect(\n            os.environ["NEXUS_TEST_POSTGRES_DSN"],\n            row_factory=psycopg.rows.dict_row,\n        )
+        connection = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"],
+            row_factory=psycopg.rows.dict_row,
+        )
         try:
             connection.execute(f'CREATE SCHEMA "{schema}"')
             connection.execute(f'SET search_path TO "{schema}"')
