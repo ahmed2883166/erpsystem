@@ -552,6 +552,7 @@ class PurchasingAccountingTests(unittest.TestCase):
             return_app.jinja_loader,
         ])
         return_app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
+        return_app.add_url_rule("/__test_stock_movements", endpoint="stock.movements", view_func=lambda: "")
         return_app.register_blueprint(purchases.purchase_bp)
         return_client = return_app.test_client()
         with return_client.session_transaction() as session:
