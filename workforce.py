@@ -1,6 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database, fetch_page
-from db_compat import begin_write_transaction, insert_and_get_id
+from db_compat import begin_write_transaction, insert_and_get_id, table_exists, table_columns
 """Employee master, payroll preparation and employee custody workflows."""
 import sqlite3
 import io
@@ -302,7 +302,7 @@ def initialize_workforce_schema():
     CREATE INDEX IF NOT EXISTS idx_payroll_period ON payroll_runs(period);
     CREATE INDEX IF NOT EXISTS idx_custody_employee ON employee_custodies(employee_id,status);
     """)
-    final_payroll_columns = {row["name"] for row in c.execute("PRAGMA table_info(employee_final_payrolls)").fetchall()}
+    final_payroll_columns = {row["name"] for row in [{"name": column} for column in table_columns(c, "employee_final_payrolls")]}
     if "journal_entry_id" not in final_payroll_columns:
         c.execute("ALTER TABLE employee_final_payrolls ADD COLUMN journal_entry_id INTEGER")
     c.executescript("""
@@ -319,7 +319,7 @@ def initialize_workforce_schema():
       ON employee_final_payroll_payments(final_payroll_id,payment_date,id);
     """)
     # Backward-compatible additions for the company-specific end-of-service policy.
-    eos_columns = {row["name"] for row in c.execute("PRAGMA table_info(employee_end_of_service_settlements)").fetchall()}
+    eos_columns = {row["name"] for row in [{"name": column} for column in table_columns(c, "employee_end_of_service_settlements")]}
     for column, definition in (
         ("basic_salary_snapshot", "TEXT NOT NULL DEFAULT '0'"),
         ("service_months", "INTEGER NOT NULL DEFAULT 0"),
@@ -436,7 +436,7 @@ def initialize_workforce_schema():
             raise
         finally:
             c.execute("PRAGMA foreign_keys=ON")
-    payroll_run_cols = {r["name"] for r in c.execute("PRAGMA table_info(payroll_runs)")}
+    payroll_run_cols = {r["name"] for r in [{"name": column} for column in table_columns(c, "payroll_runs")]}
     for column, declaration in {
         "posted_at": "TEXT",
         "approved_by": "INTEGER",
@@ -448,7 +448,7 @@ def initialize_workforce_schema():
     }.items():
         if column not in payroll_run_cols:
             c.execute(f"ALTER TABLE payroll_runs ADD COLUMN {column} {declaration}")
-    employee_cols = {r["name"] for r in c.execute("PRAGMA table_info(employees)")}
+    employee_cols = {r["name"] for r in [{"name": column} for column in table_columns(c, "employees")]}
     for name in ("branch_id", "cost_center_id", "project_id"):
         if name not in employee_cols:
             c.execute("ALTER TABLE employees ADD COLUMN " + name + " INTEGER")
@@ -474,7 +474,7 @@ def initialize_workforce_schema():
             c.execute("ALTER TABLE employees ADD COLUMN " + name + " " + definition)
     if "friday_work_eligible" not in employee_cols:
         c.execute("ALTER TABLE employees ADD COLUMN friday_work_eligible INTEGER NOT NULL DEFAULT 0")
-    payroll_cols = {r["name"] for r in c.execute("PRAGMA table_info(payroll_lines)")}
+    payroll_cols = {r["name"] for r in [{"name": column} for column in table_columns(c, "payroll_lines")]}
     for name, definition in {
         "loan_deduction": "TEXT NOT NULL DEFAULT '0'",
         "stamp_duty": "TEXT NOT NULL DEFAULT '0'",
@@ -553,7 +553,7 @@ def _role(*roles, permission=None):
 
 
 def _audit(c, action, details):
-    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='audit_log'").fetchone():
+    if table_exists(c, "audit_log"):
         c.execute("INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
                   (session.get("user_id"), action, details))
 
@@ -567,7 +567,7 @@ def _employee_advance_account(c, account_id):
         WHERE id=?""", (account_id,)).fetchone()
     if not account or not account["active"] or account["is_group"] or account["account_type"] != "asset":
         raise ValueError("اختر حساب سلف موظفين تفصيليًا ونشطًا من الأصول.")
-    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_accounts'").fetchone():
+    if not table_exists(c, "cash_accounts"):
         raise ValueError("سجل الخزائن والبنوك غير مهيأ؛ لا يمكن التحقق من حساب السلف.")
     if c.execute("SELECT 1 FROM cash_accounts WHERE account_id=?", (account_id,)).fetchone():
         raise ValueError("حساب سلف الموظفين لا يجوز أن يكون حساب بنك أو صندوق.")
@@ -579,7 +579,7 @@ def _cash_or_bank_account(c, account_id):
         WHERE id=?""", (account_id,)).fetchone()
     if not account or not account["active"] or account["is_group"] or account["account_type"] != "asset":
         raise ValueError("اختر حساب بنك أو صندوق تفصيليًا ونشطًا.")
-    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cash_accounts'").fetchone():
+    if not table_exists(c, "cash_accounts"):
         raise ValueError("سجل الخزائن والبنوك غير مهيأ؛ لا يمكن التحقق من حساب الصرف.")
     if not c.execute("SELECT 1 FROM cash_accounts WHERE account_id=? AND active=1", (account_id,)).fetchone():
         raise ValueError("الحساب المختار غير مسجل كخزينة أو بنك نشط.")
@@ -633,7 +633,7 @@ def _validate_employee_dimensions(c, values):
                                    ("الفرع","مركز التكلفة","المشروع")):
         if value is None:
             continue
-        if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+        if not table_exists(c, table):
             raise ValueError("جدول " + label + " غير مهيأ.")
         if not c.execute(f"SELECT 1 FROM {table} WHERE id=? AND active=1", (value,)).fetchone():
             raise ValueError("اختر " + label + " نشطًا وصحيحًا.")
@@ -1545,7 +1545,7 @@ def payroll_reconciliation():
                 ") يتجاوز صافي المرتبات (" + str(M(run["net_total"])) + ")."
             )
 
-        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'").fetchone():
+        if table_exists(c, "payroll_payment_allocations"):
             invalid_allocations = c.execute("""
                 SELECT a.id,a.payment_id,a.payroll_line_id,p.run_id AS payment_run_id,
                        pl.run_id AS line_run_id
@@ -1739,14 +1739,14 @@ def payroll_report():
     rows = [dict(row) for row in rows]
     run_net_pay = {}
     allocated_total_by_run = {}
-    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'").fetchone():
+    if table_exists(c, "payroll_payment_allocations"):
         for allocation_row in c.execute("""SELECT l.run_id,a.amount FROM payroll_payment_allocations a
             JOIN payroll_lines l ON l.id=a.payroll_line_id""").fetchall():
             run_key = allocation_row["run_id"]
             allocated_total_by_run[run_key] = allocated_total_by_run.get(run_key,Decimal("0")) + D(allocation_row["amount"])
     for row in rows:
         allocated = Decimal("0")
-        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'").fetchone():
+        if table_exists(c, "payroll_payment_allocations"):
             allocated = sum((D(x["amount"]) for x in c.execute(
                 "SELECT amount FROM payroll_payment_allocations WHERE payroll_line_id=?",
                 (row["payroll_line_id"],)).fetchall()),Decimal("0"))
@@ -2426,7 +2426,7 @@ def payroll():
                 other_deductions = M(other_deductions + fixed_deductions)
                 penalty_rows = []
                 penalty_deduction = Decimal("0")
-                if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='employee_penalties'").fetchone():
+                if table_exists(c, "employee_penalties"):
                     penalty_rows = c.execute("""SELECT id,amount,duration_days,reason FROM employee_penalties
                         WHERE employee_id=? AND effective_period=? AND status='approved' ORDER BY id""",
                         (e["id"],period)).fetchall()
@@ -2533,7 +2533,7 @@ def payroll():
                            " variance=" + str(salary_variance_percent) +
                            "% limit=" + str(salary_variance_limit) +
                            "% reason=" + salary_change_reason[:250])
-                if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_line_items'").fetchone():
+                if table_exists(c, "payroll_line_items"):
                     c.execute("UPDATE payroll_lines SET penalty_deduction=? WHERE id=?",
                               (str(penalty_deduction),payroll_line_id))
                     def snapshot_item(section, item_name, amount, source_type="payroll_input", source_id=None, sort_order=0):
@@ -2642,7 +2642,7 @@ def payroll_run(run_id):
         FROM payroll_payments p JOIN accounts a ON a.id=p.cash_account_id
         WHERE p.run_id=? ORDER BY p.payment_date,p.id""", (run_id,)).fetchall()
     line_paid = {}
-    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'").fetchone():
+    if table_exists(c, "payroll_payment_allocations"):
         for payroll_row in rows:
             line_paid[payroll_row["id"]] = M(sum((D(x["amount"]) for x in c.execute(
                 "SELECT amount FROM payroll_payment_allocations WHERE payroll_line_id=?",
@@ -2725,11 +2725,11 @@ def payroll_employee_payslip(run_id, employee_id):
     data["total_deductions"] = M(data["total_deductions"])
     data["gross_pay"] = M(data["gross_pay"])
     detail_items = []
-    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_line_items'").fetchone():
+    if table_exists(c, "payroll_line_items"):
         detail_items = c.execute("""SELECT * FROM payroll_line_items WHERE payroll_line_id=?
             ORDER BY section,sort_order,id""",(row["id"],)).fetchall()
     payments = []
-    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_payment_allocations'").fetchone():
+    if table_exists(c, "payroll_payment_allocations"):
         payments = c.execute("""SELECT a.amount,p.payment_date,p.reference,p.journal_entry_id
             FROM payroll_payment_allocations a JOIN payroll_payments p ON p.id=a.payment_id
             WHERE a.payroll_line_id=? ORDER BY p.payment_date,p.id""",(row["id"],)).fetchall()
@@ -2756,7 +2756,7 @@ def print_payroll_run(run_id):
         flash("لا توجد تفاصيل لطباعة المرتبات.", "error")
         return redirect(url_for("workforce.payroll_run", run_id=run_id))
     details = {}
-    has_items = c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payroll_line_items'").fetchone()
+    has_items = table_exists(c, "payroll_line_items")
     for row in rows:
         details[row["id"]] = c.execute("""SELECT section,item_name,amount FROM payroll_line_items
             WHERE payroll_line_id=? ORDER BY section,sort_order,id""", (row["id"],)).fetchall() if has_items else []
@@ -2806,7 +2806,7 @@ def delete_payroll_run(run_id):
                               (str(balance),"closed" if balance<=0 else "active",loan_id))
             c.execute("DELETE FROM payroll_loan_allocations WHERE payroll_line_id IN ("+marks+")", line_ids)
         for dependent_table in ("payroll_line_items","payroll_payment_allocations"):
-            if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(dependent_table,)).fetchone():
+            if table_exists(c, dependent_table):
                 c.execute("DELETE FROM "+dependent_table+" WHERE payroll_line_id IN ("+
                           (",".join("?" for _ in line_ids) if line_ids else "NULL")+")", line_ids)
         c.execute("DELETE FROM payroll_lines WHERE run_id=?", (run_id,))
@@ -2947,7 +2947,7 @@ def post_payroll(run_id):
             balance = M(max(Decimal("0"),D(loan["approved_amount"])-paid))
             c.execute("UPDATE employee_loans SET remaining_balance=?,status=? WHERE id=?",
                       (str(balance),"closed" if balance<=0 else "active",loan["id"]))
-        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='employee_penalties'").fetchone():
+        if table_exists(c, "employee_penalties"):
             for payroll_line in rows:
                 if "penalty_deduction" in payroll_line.keys() and D(payroll_line["penalty_deduction"]) > 0:
                     c.execute("""UPDATE employee_penalties SET status='deducted',payroll_line_id=?,decided_by=COALESCE(decided_by,?)
@@ -2988,7 +2988,7 @@ def reverse_payroll(run_id):
         reason = request.form.get("reason", "").strip()
         if not reason:
             raise ValueError("سبب عكس قيد المرتبات مطلوب ويجب توثيقه.")
-        available_columns = {row["name"] for row in c.execute("PRAGMA table_info(journal_lines)").fetchall()}
+        available_columns = {row["name"] for row in [{"name": column} for column in table_columns(c, "journal_lines")]}
         dimension_keys = ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id", "supplier_id")
         selected_dimensions = [key for key in dimension_keys if key in available_columns]
         select_columns = ["account_id", "debit", "credit", "memo"] + selected_dimensions
@@ -3035,7 +3035,7 @@ def reverse_payroll(run_id):
             remaining = M(max(Decimal("0"), D(loan["approved_amount"]) - total_paid))
             c.execute("UPDATE employee_loans SET remaining_balance=?,status=? WHERE id=?",
                       (str(remaining), "closed" if remaining <= 0 else "active", loan_id))
-        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='employee_penalties'").fetchone():
+        if table_exists(c, "employee_penalties"):
             c.execute("""UPDATE employee_penalties SET status='approved',payroll_line_id=NULL
                 WHERE payroll_line_id IN (SELECT id FROM payroll_lines WHERE run_id=?) AND status='deducted'""",
                 (run_id,))
