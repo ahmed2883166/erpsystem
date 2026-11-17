@@ -599,6 +599,7 @@ def initialize_workforce_schema():
         FROM employees e
         WHERE NOT EXISTS (SELECT 1 FROM employee_employment_history h WHERE h.employee_id=e.id)""",
         (date.today().isoformat(),))
+    c.commit()
     c.close()
 
 
