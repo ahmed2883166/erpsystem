@@ -49,6 +49,12 @@ def _amount(value):
   raise ValueError("يوجد مبلغ غير محدود في مستندات الأعمار.")
  return amount
 
+def _pair_values(row, first, second):
+ # sqlite3.Row supports named lookup; psycopg dict_row is a mapping.
+ if hasattr(row, "keys") and not isinstance(row, (tuple, list)):
+  return row[first], row[second]
+ return row[0], row[1]
+
 
 def _table_exists(conn, name):
  return table_exists(conn, name)
@@ -88,10 +94,12 @@ def _customer_aging_movements(conn, as_of):
    sources += (("SELECT invoice_id,amount FROM customer_advance_allocations WHERE allocation_date<=?",(as_of,)),)
    all_sources += (("SELECT invoice_id,amount FROM customer_advance_allocations",()),)
   for sql,params in sources:
-   for invoice_id,amount in execute_compat(conn, sql,params).fetchall():
+   for row in execute_compat(conn, sql,params).fetchall():
+    invoice_id,amount=_pair_values(row,"invoice_id","amount")
     paid_as_of[invoice_id]=paid_as_of.get(invoice_id,Decimal("0"))+_amount(amount)
   for sql,params in all_sources:
-   for invoice_id,amount in execute_compat(conn, sql,params).fetchall():
+   for row in execute_compat(conn, sql,params).fetchall():
+   invoice_id,amount=_pair_values(row,"invoice_id","amount")
     paid_all[invoice_id]=paid_all.get(invoice_id,Decimal("0"))+_amount(amount)
  credited_as_of={}
  credited_all={}
@@ -108,19 +116,21 @@ def _customer_aging_movements(conn, as_of):
    sql="""SELECT invoice_id,total_amount amount FROM sales_credit_notes
           WHERE status='posted' AND credit_date<=?"""
   params=(as_of,as_of) if "reversal" in sql else (as_of,)
-  for invoice_id,amount in execute_compat(conn, 
+  for row in execute_compat(conn, 
    """SELECT invoice_id,total_amount amount FROM sales_credit_notes WHERE status='posted'""",()
   ).fetchall():
+   invoice_id,amount=_pair_values(row,"invoice_id","amount")
    credited_all[invoice_id]=credited_all.get(invoice_id,Decimal("0"))+_amount(amount)
   for invoice_id,amount in execute_compat(conn, sql,params).fetchall():
    credited_as_of[invoice_id]=credited_as_of.get(invoice_id,Decimal("0"))+_amount(amount)
  refunds_as_of={}
  if _table_exists(conn,"customer_refunds") and _table_exists(conn,"sales_credit_notes"):
-  for invoice_id,amount in execute_compat(conn, 
+  for row in execute_compat(conn, 
    """SELECT cn.invoice_id,rf.amount FROM customer_refunds rf
       JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id
       WHERE cn.credit_date<=? AND rf.refund_date<=?""",(as_of,as_of)
   ).fetchall():
+   invoice_id,amount=_pair_values(row,"invoice_id","amount")
    refunds_as_of[invoice_id]=refunds_as_of.get(invoice_id,Decimal("0"))+_amount(amount)
  return has_detail,paid_as_of,paid_all,credited_as_of,credited_all,refunds_as_of
 
@@ -190,27 +200,31 @@ def _supplier_aging_movements(conn, as_of):
  paid_as_of={}
  paid_all={}
  if has_detail:
-  for bill_id,amount in execute_compat(conn, 
+  for row in execute_compat(conn, 
    """SELECT a.bill_id,a.amount FROM supplier_payment_allocations a
       JOIN supplier_payments p ON p.id=a.payment_id
       WHERE p.payment_date<=?""",(as_of,)
   ).fetchall():
+   bill_id,amount=_pair_values(row,"bill_id","amount")
    paid_as_of[bill_id]=paid_as_of.get(bill_id,Decimal("0"))+_amount(amount)
-  for bill_id,amount in execute_compat(conn, 
+  for row in execute_compat(conn, 
    "SELECT bill_id,amount FROM supplier_payment_allocations",()
   ).fetchall():
+   bill_id,amount=_pair_values(row,"bill_id","amount")
    paid_all[bill_id]=paid_all.get(bill_id,Decimal("0"))+_amount(amount)
  credited_as_of={}
  credited_all={}
  if _supplier_credit_notes_linked(conn):
-  for bill_id,amount in execute_compat(conn, 
+  for row in execute_compat(conn, 
    "SELECT bill_id,total_amount FROM supplier_credit_notes WHERE status='posted'",()
   ).fetchall():
+   bill_id,amount=_pair_values(row,"bill_id","total_amount")
    credited_all[bill_id]=credited_all.get(bill_id,Decimal("0"))+_amount(amount)
-  for bill_id,amount in execute_compat(conn, 
+  for row in execute_compat(conn, 
    """SELECT bill_id,total_amount FROM supplier_credit_notes
       WHERE status='posted' AND credit_date<=?""",(as_of,)
   ).fetchall():
+   bill_id,amount=_pair_values(row,"bill_id","total_amount")
    credited_as_of[bill_id]=credited_as_of.get(bill_id,Decimal("0"))+_amount(amount)
  return has_detail,paid_as_of,paid_all,credited_as_of,credited_all
 
