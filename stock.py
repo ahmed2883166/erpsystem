@@ -1,6 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database, fetch_page
-from db_compat import table_columns, table_exists
+from db_compat import table_columns, table_exists, begin_write_transaction, insert_and_get_id
 """NEXUS ERP inventory foundation (v0.2).
 
 Implements product master, warehouses, stock receipts/issues/transfers/scrap,
@@ -122,7 +122,7 @@ def initialize_stock_schema():
     for index, legacy in enumerate(legacy_categories, 1):
         label = legacy["value"]
         code = f"LEGACY-{index:04d}"
-        c.execute("INSERT OR IGNORE INTO stock_categories(code,name_ar) VALUES(?,?)", (code, label))
+        c.execute("INSERT INTO stock_categories(code,name_ar) VALUES(?,?) ON CONFLICT DO NOTHING", (code, label))
         c.execute("UPDATE stock_products SET category_id=(SELECT id FROM stock_categories WHERE name_ar=?) WHERE TRIM(category)=? AND category_id IS NULL", (label, label))
     movement_columns = _columns(c, "stock_movements")
     if "journal_entry_id" not in movement_columns:
@@ -161,13 +161,14 @@ def initialize_stock_schema():
     BEGIN SELECT RAISE(ABORT,'موقع الصنف الافتراضي يجب أن يكون نشطًا ويتبع نفس المخزن.'); END;
     """)
     # Carry legacy product-level reorder thresholds forward as initial per-warehouse settings.
-    c.execute("""INSERT OR IGNORE INTO stock_warehouse_product_settings
+    c.execute("""INSERT INTO stock_warehouse_product_settings
         (product_id,warehouse_id,min_qty,reorder_point,reorder_qty)
         SELECT p.id,w.id,p.min_qty,COALESCE(p.reorder_point,'0'),COALESCE(p.reorder_qty,'0')
         FROM stock_products p CROSS JOIN stock_warehouses w
         WHERE p.active=1 AND (CAST(COALESCE(p.min_qty,'0') AS REAL)>0
           OR CAST(COALESCE(p.reorder_point,'0') AS REAL)>0
-          OR CAST(COALESCE(p.reorder_qty,'0') AS REAL)>0)""")
+          OR CAST(COALESCE(p.reorder_qty,'0') AS REAL)>0)
+        ON CONFLICT DO NOTHING""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_stock_locations_wh_parent ON stock_locations(warehouse_id,parent_id,active)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_stock_layers_location ON stock_valuation_layers(location_id,product_id)")
     # One summarized COGS journal may cover multiple stock issue movements.
@@ -254,7 +255,7 @@ def initialize_stock_schema():
     CREATE INDEX IF NOT EXISTS idx_stock_uoms_category ON stock_uoms(category_id,active);
     """)
     for code,label in [("count","العدد"),("mass","الوزن"),("volume","الحجم"),("length","الطول"),("area","المساحة"),("time","الزمن")]:
-        c.execute("INSERT OR IGNORE INTO stock_uom_categories(code,name_ar) VALUES(?,?)",(code,label))
+        c.execute("INSERT INTO stock_uom_categories(code,name_ar) VALUES(?,?) ON CONFLICT DO NOTHING",(code,label))
     seeded_units = [
       ("count","PCS","قطعة","1",1),("count","DOZ","دستة","12",0),
       ("mass","MG","ملليجرام","0.001",0),("mass","G","جرام","1",1),("mass","KG","كيلوجرام","1000",0),("mass","TON","طن متري","1000000",0),
@@ -265,7 +266,7 @@ def initialize_stock_schema():
     ]
     for category_code,code,label,factor,is_base in seeded_units:
         category=c.execute("SELECT id FROM stock_uom_categories WHERE code=?",(category_code,)).fetchone()
-        c.execute("INSERT OR IGNORE INTO stock_uoms(category_id,code,name_ar,factor_to_base,is_base) VALUES(?,?,?,?,?)",
+        c.execute("INSERT INTO stock_uoms(category_id,code,name_ar,factor_to_base,is_base) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING",
             (category["id"],code,label,factor,is_base))
     product_columns=_columns(c, "stock_products")
     if "base_uom_id" not in product_columns:
@@ -289,9 +290,9 @@ def initialize_stock_schema():
     for product in c.execute("SELECT id,base_uom_id FROM stock_products WHERE base_uom_id IS NOT NULL").fetchall():
         unit=c.execute("SELECT code,name_ar FROM stock_uoms WHERE id=?",(product["base_uom_id"],)).fetchone()
         if unit:
-            c.execute("""INSERT OR IGNORE INTO stock_product_uoms
+            c.execute("""INSERT INTO stock_product_uoms
                 (product_id,uom_id,custom_code,custom_name,factor_to_base,is_base,purchase_enabled,sales_enabled)
-                VALUES(?,?,?,?, '1',1,1,1)""",
+                VALUES(?,?,?,?, '1',1,1,1) ON CONFLICT DO NOTHING""",
                 (product["id"],product["base_uom_id"],unit["code"],unit["name_ar"]))
     for table, fields in (
       ("purchase_order_lines",(("entered_quantity","TEXT"),("uom_id","INTEGER REFERENCES stock_uoms(id)"),("conversion_factor","TEXT NOT NULL DEFAULT '1'"))),
@@ -830,8 +831,8 @@ def make_lot(c, product, lot_number, production_date, expiry_date, as_of=None):
             raise ValueError("لا يمكن استلام تشغيلة منتهية الصلاحية.")
         if production and exp < production:
             raise ValueError("تاريخ الصلاحية لا يمكن أن يسبق تاريخ الإنتاج.")
-    c.execute("""INSERT OR IGNORE INTO stock_lots(product_id,lot_number,production_date,expiry_date)
-                 VALUES(?,?,?,?)""", (product["id"],lot_number,production_date or None,expiry_date or None))
+    c.execute("""INSERT INTO stock_lots(product_id,lot_number,production_date,expiry_date)
+                 VALUES(?,?,?,?) ON CONFLICT DO NOTHING""", (product["id"],lot_number,production_date or None,expiry_date or None))
     lot = c.execute("SELECT * FROM stock_lots WHERE product_id=? AND lot_number=?", (product["id"],lot_number)).fetchone()
     if lot["expiry_date"] != (expiry_date or None) or lot["production_date"] != (production_date or None):
         raise ValueError("رقم التشغيلة موجود بتواريخ إنتاج أو صلاحية مختلفة.")
@@ -1392,7 +1393,7 @@ def movements():
                     target_location_id=default_location["location_id"] if default_location else None
                 if target_location_id and not c.execute("SELECT 1 FROM stock_locations WHERE id=? AND warehouse_id=? AND active=1",(target_location_id,dst)).fetchone():
                     raise ValueError("موقع الوجهة لا يتبع مخزن الوجهة.")
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             movement_date=request.form.get("movement_date") or date.today().isoformat()
             ensure_stock_date_open(c, movement_date)
             lot_id=None
@@ -1417,10 +1418,9 @@ def movements():
             issue_purpose=request.form.get("issue_purpose") if kind=="issue" else None
             if kind=="issue" and issue_purpose not in {"sale","internal"}:
                 raise ValueError("حدد غرض الصرف: تكلفة مبيعات أو استخدام داخلي.")
-            cur=c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,source_warehouse_id,target_warehouse_id,
+            mid=insert_and_get_id(c, """INSERT INTO stock_movements(movement_no,movement_type,product_id,source_warehouse_id,target_warehouse_id,
               source_location_id,target_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,issue_purpose,entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name)
               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(movement_no,kind,product["id"],src,dst,source_location_id,target_location_id,lot_id,str(qty),str(unit_cost),str(total),movement_date,request.form.get("notes","").strip(),session.get("user_id"),issue_purpose,str(entered_qty),entered_uom_id,entered_uom_key,entered_uom_name))
-            mid=cur.lastrowid
             if kind=="receipt":
                 c.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost)
                   VALUES(?,?,?,?,?,?,?)""",(product["id"],dst,lot_id,mid,str(qty),str(qty),str(unit_cost)))
@@ -1914,7 +1914,7 @@ def pending_movements():
 def resolve_pending_movement(movement_id):
     conn = get_db()
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(conn)
         movement_row = conn.execute("""SELECT m.*,p.id product_id,p.name_ar,p.sku
             FROM stock_movements m JOIN stock_products p ON p.id=m.product_id WHERE m.id=?""",
             (movement_id,)).fetchone()
@@ -2008,17 +2008,16 @@ def counts():
             date.fromisoformat(count_date)
             if not c.execute("SELECT 1 FROM stock_warehouses WHERE id=? AND active=1", (warehouse_id,)).fetchone():
                 raise ValueError("اختر مخزنًا نشطًا.")
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             ensure_stock_date_open(c, count_date, "تاريخ الجرد")
             count_no = "STK-" + date.fromisoformat(count_date).strftime("%Y%m%d") + "-" + uuid.uuid4().hex[:6].upper()
             movement_cutoff = c.execute("""SELECT COALESCE(MAX(id),0) FROM stock_movements
                 WHERE source_warehouse_id=? OR target_warehouse_id=?""",
                 (warehouse_id,warehouse_id)).fetchone()[0]
-            c.execute("""INSERT INTO stocktakes(count_no,warehouse_id,count_date,notes,created_by,movement_cutoff_id)
+            stocktake_id = insert_and_get_id(c, """INSERT INTO stocktakes(count_no,warehouse_id,count_date,notes,created_by,movement_cutoff_id)
                 VALUES(?,?,?,?,?,?)""",
                 (count_no, warehouse_id, count_date, request.form.get("notes", "").strip(),
                  session.get("user_id"), movement_cutoff))
-            stocktake_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
             locations = [row["id"] for row in c.execute("""SELECT id FROM stock_locations
                 WHERE warehouse_id=? AND active=1 AND location_type='bin' ORDER BY id""", (warehouse_id,)).fetchall()]
             for product in c.execute("SELECT id,track_lot FROM stock_products WHERE active=1 ORDER BY sku").fetchall():
@@ -2084,7 +2083,7 @@ def count_detail(stocktake_id):
         return redirect(url_for("stock.counts"))
     if request.method == "POST":
         try:
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             # Re-read status and lines after acquiring the write lock. The page
             # may have been opened before another user approved this stocktake.
             stocktake = c.execute("SELECT * FROM stocktakes WHERE id=?", (stocktake_id,)).fetchone()
@@ -2137,7 +2136,7 @@ def count_detail(stocktake_id):
 def approve_count(stocktake_id):
     c = get_db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         stocktake = c.execute("SELECT * FROM stocktakes WHERE id=?", (stocktake_id,)).fetchone()
         if not stocktake or stocktake["status"] != "counted":
             raise ValueError("يجب حفظ العد أولًا، ولا يمكن اعتماد أمر غير جاهز للمراجعة.")
@@ -2213,12 +2212,12 @@ def approve_count(stocktake_id):
                 cost, _ = consume_layers(c, line["product_id"], stocktake["warehouse_id"], qty, method,
                                          lot_id=scope_lot, location_id=scope_location)
                 movement_no = stocktake["count_no"] + "-" + str(line["id"]) + "-S"
-                cur = c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,
+                movement_id = insert_and_get_id(c, """INSERT INTO stock_movements(movement_no,movement_type,product_id,
                     source_warehouse_id,source_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status)
                     VALUES(?,'issue',?,?,?,?,?,?,?,?,?,?, 'pending')""",
                     (movement_no,line["product_id"],stocktake["warehouse_id"],line["location_id"],line["lot_id"],str(qty),
                      str(cost / qty),str(cost),stocktake["count_date"],"عجز جرد فعلي",session.get("user_id")))
-                movement_ids.append(cur.lastrowid)
+                movement_ids.append(movement_id)
                 if cost > 0:
                     journal_lines.append((shortage_account["id"],cost,0,"عجز جرد - " + line["name_ar"]))
                     journal_lines.append((
@@ -2233,12 +2232,11 @@ def approve_count(stocktake_id):
                     raise ValueError("أدخل تكلفة الوحدة للصنف " + line["sku"] + " ذي الزيادة قبل الاعتماد.")
                 cost = money(variance * unit_cost)
                 movement_no = stocktake["count_no"] + "-" + str(line["id"]) + "-P"
-                cur = c.execute("""INSERT INTO stock_movements(movement_no,movement_type,product_id,
+                movement_id = insert_and_get_id(c, """INSERT INTO stock_movements(movement_no,movement_type,product_id,
                     target_warehouse_id,target_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status)
                     VALUES(?,'receipt',?,?,?,?,?,?,?,?,?, ?, 'pending')""",
                     (movement_no,line["product_id"],stocktake["warehouse_id"],line["location_id"],line["lot_id"],
                      str(variance),str(unit_cost),str(cost),stocktake["count_date"],"زيادة جرد فعلي",session.get("user_id")))
-                movement_id = cur.lastrowid
                 c.execute("""INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,lot_id,
                     source_movement_id,qty_in,qty_remaining,unit_cost,value_remaining)
                     VALUES(?,?,?,?,?,?,?,?,?)""",
