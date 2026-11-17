@@ -593,6 +593,7 @@ def index():
       LEFT JOIN fixed_asset_supplier_bill_links l ON l.asset_id=f.id
       LEFT JOIN supplier_bills sb ON sb.id=COALESCE(f.supplier_bill_id,l.bill_id)
       LEFT JOIN fixed_asset_journal_lines p ON p.fixed_asset_id=f.id
+      LEFT JOIN asset_depreciations d ON d.asset_id=f.id
       ORDER BY f.asset_code""").fetchall()
     assets=[dict(row,
         accumulated=Decimal(str(row["accumulated"] or "0")),
