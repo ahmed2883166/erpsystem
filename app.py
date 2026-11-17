@@ -44,7 +44,7 @@ from activity_profiles import (initialize_activity_profiles_schema, list_activit
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
-from db_compat import begin_write_transaction, insert_and_get_id, execute_script
+from db_compat import begin_write_transaction, insert_and_get_id, execute_script, table_exists, table_columns, table_names, table_column_info
 from report_request_control import (ReportRequestGate, bounded_env_int,
                                     is_expensive_report_request,
                                     set_current_report_deadline,
@@ -564,7 +564,7 @@ def initialize_database():
             end_date TEXT NOT NULL, locked INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
         );
     """)
-    audit_columns = {row["name"] for row in connection.execute("PRAGMA table_info(audit_log)")}
+    audit_columns = table_columns(connection, "audit_log")
     for column, declaration in (
         ("entity_type", "TEXT"),
         ("entity_id", "TEXT"),
@@ -593,13 +593,13 @@ def initialize_database():
         BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
     """)
 
-    user_columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
+    user_columns = table_columns(connection, "users")
     if "must_change_password" not in user_columns:
         connection.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
     if "permissions_json" not in user_columns:
         connection.execute("ALTER TABLE users ADD COLUMN permissions_json TEXT")
     initialize_roles_schema(connection)
-    account_columns = {row["name"] for row in connection.execute("PRAGMA table_info(accounts)")}
+    account_columns = table_columns(connection, "accounts")
     if "is_group" not in account_columns:
         connection.execute("ALTER TABLE accounts ADD COLUMN is_group INTEGER NOT NULL DEFAULT 0")
     currency_seed = [
@@ -643,7 +643,7 @@ def initialize_database():
     # SQLite CREATE TABLE IF NOT EXISTS does not change a legacy REAL
     # declaration. Rebuild journal_lines once with TEXT amount columns so
     # existing installations use the same decimal-safe storage as new ones.
-    journal_columns = {row["name"]: row for row in connection.execute("PRAGMA table_info(journal_lines)")}
+    journal_columns = table_column_info(connection, "journal_lines")
     debit_type = str(journal_columns.get("debit")["type"]).upper() if "debit" in journal_columns else ""
     credit_type = str(journal_columns.get("credit")["type"]).upper() if "credit" in journal_columns else ""
     if debit_type != "TEXT" or credit_type != "TEXT":
@@ -829,9 +829,7 @@ def _operational_audit_snapshot(endpoint, view_args, created_record=None):
         return None
     connection = db()
     try:
-        exists = connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-        ).fetchone()
+        exists = table_exists(connection, table,)
         if not exists:
             return None
         row = connection.execute(
@@ -846,9 +844,7 @@ def _operational_audit_snapshot(endpoint, view_args, created_record=None):
             record_values.pop("payload_json", None)
         snapshot = {"record": record_values}
         if child_table:
-            child_exists = connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (child_table,)
-            ).fetchone()
+            child_exists = table_exists(connection, child_table,)
             if child_exists:
                 child_info = connection.execute(
                     f'PRAGMA table_info("{child_table}")'
@@ -967,9 +963,7 @@ def refresh_session_authorization():
         return None
     connection = db()
     try:
-        user_table = connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'"
-        ).fetchone()
+        user_table = table_exists(connection, "users")
         user_columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)").fetchall()} if user_table else set()
         required_columns = {"id", "role", "active", "permissions_json", "must_change_password", "full_name"}
         # Lightweight route tests often use isolated legacy schemas. Do not turn a
@@ -1566,14 +1560,12 @@ def global_search():
         conn = db()
 
         def exists(table):
-            return conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-            ).fetchone() is not None
+            return table_exists(conn, table,)
 
         def columns(table):
             if not exists(table):
                 return set()
-            return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+            return table_columns(conn, table)
 
         like = f"%{q}%"
 
@@ -1913,17 +1905,13 @@ def journal():
         "stocktakes": ("stock.count_detail", "stocktake_id", "id", "فتح مستند الجرد"),
         "friday_allowance_batches": ("workforce.friday_allowance", "period", "period", "فتح كشف بدل الجمعة"),
     }
-    existing_tables = {row["name"] for row in connection.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    )}
+    existing_tables = table_names(connection)
     source_table_columns = {}
     source_journal_columns = {}
     for category, names in source_tables.items():
         for table_name in names:
             if table_name in existing_tables:
-                cols = {row["name"] for row in connection.execute(
-                    f'PRAGMA table_info("{table_name}")'
-                )}
+                cols = table_columns(connection, table_name)
                 journal_col = ("journal_entry_id" if "journal_entry_id" in cols
                                else "reversal_journal_entry_id" if "reversal_journal_entry_id" in cols
                                else None)
@@ -1960,7 +1948,7 @@ def journal():
         filters.append("entry_date<=?"); filter_params.append(date_to)
     if status_filter:
         filters.append("status=?"); filter_params.append(status_filter)
-    entry_columns = {row["name"] for row in connection.execute("PRAGMA table_info(journal_entries)")}
+    entry_columns = table_columns(connection, "journal_entries")
     if entry_type_filter and "entry_type" in entry_columns:
         filters.append("entry_type=?"); filter_params.append(entry_type_filter)
     if account_filter:
@@ -2014,9 +2002,7 @@ def journal():
         doc_columns = ("invoice_no", "bill_no", "receipt_no", "payment_no",
                        "batch_no", "grant_no", "reference", "period", "document_no")
         for table_name, category in source_table_columns.items():
-            cols = {row["name"] for row in connection.execute(
-                f'PRAGMA table_info("{table_name}")'
-            )}
+            cols = table_columns(connection, table_name)
             doc_col = next((name for name in doc_columns if name in cols), "id")
             link_spec = source_link_specs.get(table_name)
             route_id_col = link_spec[2] if link_spec and link_spec[2] in cols else None
@@ -2326,9 +2312,7 @@ def approval_inbox():
                     "can_act": not own,
                     "blocked_reason": "لا يجوز اعتماد أو رفض المستند الذي أنشأته أو أرسلته للمراجعة." if own else "",
                 })
-            request_table = connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='purchase_requests'"
-            ).fetchone()
+            request_table = table_exists(connection, "purchase_requests")
             if request_table:
                 for row in connection.execute("""
                     SELECT request_no,request_date,department,purpose,created_by,submitted_by
@@ -2456,9 +2440,7 @@ def approval_inbox():
                     })
 
         if "sales.approve" in permissions:
-            approval_table = connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sales_discount_approval_requests'"
-            ).fetchone()
+            approval_table = table_exists(connection, "sales_discount_approval_requests")
             if approval_table:
                 for row in connection.execute("""
                     SELECT r.id,r.request_no,r.invoice_date,r.discount_amount,r.created_by,
@@ -2693,7 +2675,7 @@ def trial_balance():
             join_conditions.append("je.entry_date >= ?"); join_params.append(period["date_from"])
         if period["date_to"]:
             join_conditions.append("je.entry_date <= ?"); join_params.append(period["date_to"])
-        account_columns = {row["name"] for row in connection.execute("PRAGMA table_info(accounts)")}
+        account_columns = table_columns(connection, "accounts")
         section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
         subtype_expr = "a.account_subtype" if "account_subtype" in account_columns else "NULL"
         normal_expr = "a.normal_balance" if "normal_balance" in account_columns else "NULL"
@@ -2780,9 +2762,7 @@ def profitability_report():
                 "SELECT setting_key,setting_value FROM company_settings "
                 "WHERE setting_key IN ('base_currency','company_name')"
             )
-        } if connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
-        ).fetchone() else {}
+        } if table_exists(connection, "company_settings") else {}
     finally:
         connection.close()
     branch_rows = report["branches"]
@@ -2810,9 +2790,7 @@ def period_comparison_report():
         report = build_period_comparison(connection, date_from, date_to, mode)
         settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
             "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency','company_name')"
-        )} if connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
-        ).fetchone() else {}
+        )} if table_exists(connection, "company_settings") else {}
     finally:
         connection.close()
     return render_template("period_comparison.html", **report,
@@ -2832,9 +2810,7 @@ def inventory_ageing_report():
         report = build_inventory_ageing(connection, as_of)
         settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
             "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='base_currency'"
-        )} if connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
-        ).fetchone() else {}
+        )} if table_exists(connection, "company_settings") else {}
     finally:
         connection.close()
     return render_template("inventory_ageing.html", report=report,
@@ -3270,9 +3246,7 @@ def accounting_periods():
                 (start_date, end_date)).fetchone()
             if overlap:
                 raise ValueError("توجد فترة محاسبية أخرى تتداخل مع هذا النطاق.")
-            has_years = connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_years'"
-            ).fetchone()
+            has_years = table_exists(connection, "financial_years")
             if has_years and connection.execute("SELECT 1 FROM financial_years LIMIT 1").fetchone():
                 containing_year = connection.execute("""SELECT 1 FROM financial_years
                     WHERE start_date<=? AND end_date>=? LIMIT 1""",
@@ -3314,9 +3288,7 @@ def accounting_period_state(period_id):
         flash("الفترة المحاسبية غير موجودة.", "error")
         return redirect(url_for("accounting_periods"))
     closed_year_overlap = False
-    has_financial_years = connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_years'"
-    ).fetchone()
+    has_financial_years = table_exists(connection, "financial_years")
     if state == "0" and has_financial_years:
         closed_year_overlap = connection.execute("""SELECT 1 FROM financial_years
             WHERE status='closed' AND NOT(end_date<? OR start_date>?) LIMIT 1""",
@@ -3392,15 +3364,13 @@ def reverse_journal(entry_id):
         return redirect(url_for("journal_detail", entry_id=entry_id))
     # Financial-year opening/closing journals must use their dedicated
     # reversal workflow so the year pointers and status remain consistent.
-    has_financial_year_schema = connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_years'").fetchone()
+    has_financial_year_schema = table_exists(connection, "financial_years")
     financial_year_link = None
     if has_financial_year_schema:
         financial_year_link = connection.execute("""SELECT id,year_name FROM financial_years
             WHERE opening_entry_id=? OR closing_entry_id=? LIMIT 1""",
             (entry_id, entry_id)).fetchone()
-        if not financial_year_link and connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_year_journal_history'").fetchone():
+        if not financial_year_link and table_exists(connection, "financial_year_journal_history"):
             financial_year_link = connection.execute("""SELECT financial_year_id AS id
                 FROM financial_year_journal_history WHERE entry_id=? LIMIT 1""",
                 (entry_id,)).fetchone()
@@ -3411,9 +3381,7 @@ def reverse_journal(entry_id):
     # If this is the reversal of a fixed-asset acquisition reversal, reinstate
     # the original asset only after checking that no depreciation/disposal exists.
     reinstated_asset_rows = []
-    if reversal_parent_id is not None and connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fixed_asset_journal_lines'"
-    ).fetchone():
+    if reversal_parent_id is not None and table_exists(connection, "fixed_asset_journal_lines"):
         reinstated_asset_rows = connection.execute("""
             SELECT p.journal_line_id,p.status,p.fixed_asset_id
             FROM fixed_asset_journal_lines p WHERE p.entry_id=?
@@ -3434,9 +3402,7 @@ def reverse_journal(entry_id):
     # A journal line tagged as a fixed-asset acquisition must also update
     # its asset-register link when reversed. Once depreciation/disposal exists,
     # the acquisition cannot be reversed as a plain journal entry.
-    asset_link_exists = connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fixed_asset_journal_lines'"
-    ).fetchone()
+    asset_link_exists = table_exists(connection, "fixed_asset_journal_lines")
     linked_asset_rows = []
     if asset_link_exists:
         linked_asset_rows = connection.execute("""
