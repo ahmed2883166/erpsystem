@@ -321,6 +321,30 @@ class DecimalSumDialectTests(unittest.TestCase):
             "COALESCE(SUM(CAST(jl.debit AS NUMERIC)), 0)",
         )
 
+    def test_sqlite_large_decimal_fixture_matches_postgresql_expected_total(self):
+        from accounting_core import decimal_sum_expression, register_decimal_aggregates
+        from decimal import Decimal
+        connection = sqlite3.connect(":memory:")
+        try:
+            register_decimal_aggregates(connection)
+            connection.execute("CREATE TABLE decimal_probe(amount TEXT)")
+            connection.executemany(
+                "INSERT INTO decimal_probe(amount) VALUES (?)",
+                [
+                    ("99999999999999999999.12345678",),
+                    ("0.00000002",),
+                    ("-0.00000001",),
+                ],
+            )
+            expression = decimal_sum_expression(connection, "amount")
+            total = connection.execute(
+                "SELECT " + expression + " FROM decimal_probe"
+            ).fetchone()[0]
+            self.assertEqual(Decimal(str(total)), Decimal("99999999999999999999.12345679"))
+        finally:
+            connection.close()
+
+
 
 POSTGRES_DSN = __import__("os").environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
 
