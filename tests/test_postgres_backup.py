@@ -38,10 +38,13 @@ class PostgreSQLBackupTests(unittest.TestCase):
     def test_rejects_checksum_mismatch_before_pg_restore(self):
         with tempfile.TemporaryDirectory() as folder:
             archive = self._archive(folder, payload=b"tampered")
-            with zipfile.ZipFile(archive, "a") as zipped:
-                manifest = json.loads(zipped.read("manifest.json"))
-                manifest["dump_sha256"] = "0" * 64
-                zipped.writestr("manifest.json", json.dumps(manifest))
+            with zipfile.ZipFile(archive, "r") as original:
+                payload = original.read("nexus.dump")
+                manifest = json.loads(original.read("manifest.json"))
+            manifest["dump_sha256"] = "0" * 64
+            with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as corrupted:
+                corrupted.writestr("nexus.dump", payload)
+                corrupted.writestr("manifest.json", json.dumps(manifest))
             with patch.object(postgres_backup, "_run") as run:
                 with self.assertRaisesRegex(ValueError, "checksum"):
                     postgres_backup.validate_postgres_backup_archive(
