@@ -93,12 +93,13 @@ def build_inventory_ageing(conn, as_of):
     sku_expr = "p.sku" if "sku" in product_cols else "CAST(p.id AS TEXT)"
     name_expr = "p.name_ar" if "name_ar" in product_cols else "CAST(p.id AS TEXT)"
     has_movements = _exists(conn, "stock_movements")
+    movement_date_expr = _date_prefix_sql(conn, "mv.movement_date")
     last_movement_expr = (
-        f"""(SELECT MAX({_date_prefix_sql(conn, "mv.movement_date")}) FROM stock_movements mv
+        f"""(SELECT MAX({movement_date_expr}) FROM stock_movements mv
              WHERE mv.product_id=l.product_id
                AND (mv.source_warehouse_id=l.warehouse_id
                     OR mv.target_warehouse_id=l.warehouse_id)
-               AND {_date_prefix_sql(conn, "mv.movement_date")}<=?)"""
+               AND {movement_date_expr}<=?)"""
         if has_movements else "NULL"
     )
     layer_date_filter = f"{created_expr}<=?"
