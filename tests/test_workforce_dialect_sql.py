@@ -61,7 +61,7 @@ class WorkforcePostgreSQLDialectIntegrationTests(unittest.TestCase):
                     attendance_date TEXT NOT NULL
                 )
             """)
-            connection.executemany(
+            connection.cursor().executemany(
                 "INSERT INTO attendance_records(employee_id,attendance_date) VALUES (%s,%s)",
                 [
                     (10, "2026-11-20"),  # Friday
