@@ -185,10 +185,30 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
         if "journal_lines" in source_tables:
             compare_control("journal_lines", "debit", (), "journal_lines.debit_total")
             compare_control("journal_lines", "credit", (), "journal_lines.credit_total")
-            compare_control("journal_lines", "debit", ("customer_id",), "customer.debit_by_id") if "customer_id" in source_columns["journal_lines"] else None
-            compare_control("journal_lines", "credit", ("customer_id",), "customer.credit_by_id") if "customer_id" in source_columns["journal_lines"] else None
-            compare_control("journal_lines", "debit", ("supplier_id",), "supplier.debit_by_id") if "supplier_id" in source_columns["journal_lines"] else None
-            compare_control("journal_lines", "credit", ("supplier_id",), "supplier.credit_by_id") if "supplier_id" in source_columns["journal_lines"] else None
+            # Compare totals per journal as well as globally. This catches a
+            # migration that preserves grand totals but assigns lines to the
+            # wrong entry. Support the common legacy FK column spellings.
+            journal_columns = set(source_columns["journal_lines"])
+            entry_key = next(
+                (name for name in ("journal_entry_id", "entry_id", "journal_id")
+                 if name in journal_columns),
+                None,
+            )
+            if entry_key:
+                compare_control(
+                    "journal_lines", "debit", (entry_key,),
+                    "journal_lines.debit_by_entry",
+                )
+                compare_control(
+                    "journal_lines", "credit", (entry_key,),
+                    "journal_lines.credit_by_entry",
+                )
+            if "customer_id" in journal_columns:
+                compare_control("journal_lines", "debit", ("customer_id",), "customer.debit_by_id")
+                compare_control("journal_lines", "credit", ("customer_id",), "customer.credit_by_id")
+            if "supplier_id" in journal_columns:
+                compare_control("journal_lines", "debit", ("supplier_id",), "supplier.debit_by_id")
+                compare_control("journal_lines", "credit", ("supplier_id",), "supplier.credit_by_id")
 
         if "stock_valuation_layers" in source_tables:
             for amount in ("qty_in", "qty_remaining", "value_remaining"):
