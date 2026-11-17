@@ -238,7 +238,7 @@ def calculate_tax_input_totals(purchases):
 def build_tax_report_snapshot(conn, period_value):
     period, start, end = _period(period_value)
     customer_tax_number = _party_tax_number_expr(conn, "customers", "c")
-    sales = conn.execute(f"""
+    sales = execute_compat(conn, f"""
         SELECT i.id, i.invoice_no document_no, i.invoice_date document_date, c.name party_name, {customer_tax_number} party_tax_number,
                i.subtotal taxable_base, i.tax_rate tax_rate,
                i.tax_amount tax_amount, i.total_amount total_amount,
@@ -258,7 +258,7 @@ def build_tax_report_snapshot(conn, period_value):
     if required_sales_credit.issubset(sales_credit_columns) and required_sales_credit_lines.issubset(sales_credit_line_columns):
         credit_reference = "COALESCE(cn.tax_reference,'')" if "tax_reference" in sales_credit_columns else "''"
         credit_notes = "COALESCE(cn.tax_notes,cn.reason)" if "tax_notes" in sales_credit_columns else "COALESCE(cn.reason,'')"
-        credit_rows = conn.execute(f"""
+        credit_rows = execute_compat(conn, f"""
             SELECT cn.id, cn.credit_note_no document_no, cn.credit_date document_date,
                    c.name party_name, {customer_tax_number} party_tax_number,
                    cl.line_total taxable_base, cl.tax_amount,
@@ -294,7 +294,7 @@ def build_tax_report_snapshot(conn, period_value):
                 "document_type": "إشعار دائن", "document_kind": "sales_credit",
             })
     supplier_tax_number = _party_tax_number_expr(conn, "suppliers", "s")
-    purchases = conn.execute(f"""
+    purchases = execute_compat(conn, f"""
         SELECT b.id, b.bill_no document_no, b.bill_date document_date, s.name party_name, {supplier_tax_number} party_tax_number,
                b.subtotal taxable_base, b.tax_rate tax_rate,
                b.tax_amount tax_amount, b.total_amount total_amount,
@@ -333,7 +333,7 @@ def build_tax_report_snapshot(conn, period_value):
         supplier_bill_columns = _columns(conn, "supplier_bills")
         bill_treatment = "COALESCE(b.tax_treatment,'standard')" if "tax_treatment" in supplier_bill_columns else "'standard'"
         bill_deductible = "COALESCE(b.input_vat_deductible_percent,'100')" if "input_vat_deductible_percent" in supplier_bill_columns else "'100'"
-        credit_rows = conn.execute(f"""
+        credit_rows = execute_compat(conn, f"""
             SELECT cn.id, cn.credit_no document_no, cn.credit_date document_date,
                    s.name party_name, {supplier_tax_number} party_tax_number,
                    {pc_base} taxable_base, {pc_rate} tax_rate, {pc_tax} tax_amount, {pc_total} total_amount,
@@ -357,7 +357,7 @@ def build_tax_report_snapshot(conn, period_value):
             })
             purchase_credits.append(item)
     purchases.extend(purchase_credits)
-    settings = {r["setting_key"]: r["setting_value"] for r in conn.execute(
+    settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(conn, 
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
         "('company_name','tax_country','tax_regime','tax_number','base_currency')")}
 
@@ -454,7 +454,7 @@ def build_tax_report_snapshot(conn, period_value):
             "created_at", "id",
         }
         if required_audit_columns.issubset(audit_columns):
-            tax_audit = conn.execute("""SELECT document_kind,document_id,old_reference,new_reference,
+            tax_audit = execute_compat(conn, """SELECT document_kind,document_id,old_reference,new_reference,
                     old_deductible_percent,new_deductible_percent,actor_id,created_at
                 FROM tax_document_reference_audit
                 ORDER BY created_at DESC,id DESC LIMIT 100""").fetchall()
