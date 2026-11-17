@@ -50,6 +50,50 @@ class StockMetadataPostgreSQLTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_postgresql_issue_consumes_locked_valuation_layer(self):
+        import uuid
+        import psycopg
+        from psycopg.rows import dict_row
+        from stock import consume_layers
+
+        schema = "nexus_stock_issue_" + uuid.uuid4().hex[:12]
+        conn = psycopg.connect(os.environ["NEXUS_TEST_POSTGRES_DSN"], row_factory=dict_row)
+        try:
+            try:
+                with conn.transaction():
+                    conn.execute(f'CREATE SCHEMA "{schema}"')
+                    conn.execute(f'SET LOCAL search_path TO "{schema}"')
+                    conn.execute("""
+                        CREATE TABLE stock_valuation_layers (
+                            id BIGINT PRIMARY KEY,
+                            product_id BIGINT NOT NULL,
+                            warehouse_id BIGINT NOT NULL,
+                            lot_id BIGINT,
+                            location_id BIGINT,
+                            qty_remaining NUMERIC(24,8) NOT NULL,
+                            value_remaining NUMERIC(24,8) NOT NULL,
+                            unit_cost NUMERIC(24,8) NOT NULL
+                        )
+                    """)
+                    conn.execute("""
+                        INSERT INTO stock_valuation_layers
+                        (id,product_id,warehouse_id,lot_id,location_id,qty_remaining,value_remaining,unit_cost)
+                        VALUES (1,12,3,NULL,NULL,5,50,10)
+                    """)
+                    cost, allocations = consume_layers(conn, 12, 3, Decimal("2"), "fifo")
+                    self.assertEqual(cost, Decimal("20.00"))
+                    self.assertEqual(allocations[0][1], Decimal("2"))
+                    remaining = conn.execute(
+                        "SELECT qty_remaining,value_remaining FROM stock_valuation_layers WHERE id=1"
+                    ).fetchone()
+                    self.assertEqual(remaining["qty_remaining"], Decimal("3.00000000"))
+                    self.assertEqual(remaining["value_remaining"], Decimal("30.00000000"))
+                    raise RuntimeError("rollback disposable stock issue")
+            except RuntimeError as exc:
+                self.assertEqual(str(exc), "rollback disposable stock issue")
+        finally:
+            conn.close()
+
 
 
 
