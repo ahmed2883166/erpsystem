@@ -107,9 +107,12 @@ class CurrencyBalanceUpdatePostgreSQLTests(unittest.TestCase):
     def test_fx_write_lock_and_row_lock_work_in_disposable_schema(self):
         import uuid
         import psycopg
+        from psycopg.rows import dict_row
 
         schema = "nexus_fx_lock_" + uuid.uuid4().hex[:12]
-        conn = psycopg.connect(os.environ["NEXUS_TEST_POSTGRES_DSN"])
+        conn = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"], row_factory=dict_row
+        )
         try:
             with conn.transaction():
                 conn.execute(f'CREATE SCHEMA "{schema}"')
