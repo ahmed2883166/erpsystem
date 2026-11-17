@@ -145,6 +145,9 @@ def initialize_stock_schema():
     layer_columns = _columns(c, "stock_valuation_layers")
     if "location_id" not in layer_columns:
         _execute(c, "ALTER TABLE stock_valuation_layers ADD COLUMN location_id INTEGER REFERENCES stock_locations(id)")
+    if "receipt_line_id" not in layer_columns:
+        # Purchases schema initializes immediately after stock schema in app startup.
+        _execute(c, "ALTER TABLE stock_valuation_layers ADD COLUMN receipt_line_id INTEGER")
     execute_script(c,"""
     CREATE TABLE IF NOT EXISTS stock_warehouse_product_settings(
       product_id INTEGER NOT NULL REFERENCES stock_products(id),
