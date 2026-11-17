@@ -54,6 +54,7 @@ class WorkforceExtrasTests(unittest.TestCase):
             "payroll.html": "{{ get_flashed_messages()|join('|') }}",
             "payroll_run.html": "run",
             "friday_allowance.html": "friday",
+            "attendance_report.html": "{{ totals.absent_hours }}|{{ rows[0].absent_hours }}",
         }.items():
             (template_dir / name).write_text(body, encoding="utf-8")
         self.app = Flask(__name__, template_folder=str(template_dir))
@@ -430,6 +431,24 @@ class WorkforceExtrasTests(unittest.TestCase):
         conn=sqlite3.connect(self.db_path)
         self.assertEqual(conn.execute("SELECT friday_work_eligible FROM employees WHERE id=1").fetchone()[0],1)
         conn.close()
+
+    def test_attendance_report_sums_absence_hours_without_float_rounding(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.executemany("""INSERT INTO attendance_records(
+            employee_id,attendance_date,status,absence_hours
+        ) VALUES(1,?,"absent",?)""", [
+            ("2026-11-01", "0.1"),
+            ("2026-11-02", "0.2"),
+            ("2026-11-03", "0.00000000000000000001"),
+        ])
+        conn.commit()
+        conn.close()
+
+        response = self.client.get(
+            "/hr/attendance/report?date_from=2026-11-01&date_to=2026-11-30"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("0.30|0.30000000000000000001", response.get_data(as_text=True))
 
 
 if __name__ == "__main__":
