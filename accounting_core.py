@@ -550,8 +550,29 @@ def reconciliation_snapshot(conn):
         if count:
             unlinked_documents.append({"label": label, "count": count})
 
-    pending_stock = int(_scalar(conn, """SELECT COUNT(*) FROM stock_movements
-        WHERE accounting_status LIKE 'pending%'""") or 0) if "accounting_status" in _columns(conn, "stock_movements") else 0
+    pending_stock = 0
+    pending_stock_by_status = {}
+    stock_linkage_issues = 0
+    if _table_exists(conn, "stock_movements"):
+        movement_columns = _columns(conn, "stock_movements")
+        if "accounting_status" in movement_columns:
+            pending_rows = _execute(conn, """SELECT accounting_status,COUNT(*) movement_count
+                FROM stock_movements WHERE accounting_status LIKE 'pending%'
+                GROUP BY accounting_status ORDER BY accounting_status""").fetchall()
+            pending_stock_by_status = {
+                str(row["accounting_status"] or "pending"): int(row["movement_count"] or 0)
+                for row in pending_rows
+            }
+            pending_stock = sum(pending_stock_by_status.values())
+        if ("journal_entry_id" in movement_columns and
+                _table_exists(conn, "journal_entries") and
+                {"id", "status"}.issubset(_columns(conn, "journal_entries"))):
+            stock_linkage_issues = int(_scalar(conn, """SELECT COUNT(*)
+                FROM stock_movements sm
+                LEFT JOIN journal_entries je ON je.id=sm.journal_entry_id
+                WHERE (sm.accounting_status='posted' AND
+                       (sm.journal_entry_id IS NULL OR je.id IS NULL OR je.status<>'posted'))
+                   OR (sm.journal_entry_id IS NOT NULL AND je.id IS NULL)""") or 0)
     difference = _money(gl_stock - stock_value) if gl_stock is not None else None
     return {
         "unbalanced": unbalanced, "journal_totals": journal_totals,
@@ -562,5 +583,7 @@ def reconciliation_snapshot(conn):
         "grni_ledger": grni_ledger, "grni_difference": grni_difference,
         "grni_consumed_value": _money(grni_consumed_value),
         "grni_stock_gap": _money(grni - stock_value),
-        "unlinked_documents": unlinked_documents, "pending_stock": pending_stock, "settings": settings,
+        "unlinked_documents": unlinked_documents, "pending_stock": pending_stock,
+        "pending_stock_by_status": pending_stock_by_status,
+        "stock_linkage_issues": stock_linkage_issues, "settings": settings,
     }
