@@ -1,5 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database, fetch_page
+from db_compat import begin_write_transaction
 """Employee master, payroll preparation and employee custody workflows."""
 import sqlite3
 import io
@@ -390,7 +391,7 @@ def initialize_workforce_schema():
     if attendance_sql and "'annual_leave'" not in (attendance_sql["sql"] or ""):
         c.execute("PRAGMA foreign_keys=OFF")
         try:
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             c.execute("""CREATE TABLE attendance_records_rebuilt(
                 id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id),
                 attendance_date TEXT NOT NULL,
@@ -417,7 +418,7 @@ def initialize_workforce_schema():
     if payroll_runs_sql and "period TEXT NOT NULL UNIQUE" in (payroll_runs_sql["sql"] or ""):
         c.execute("PRAGMA foreign_keys=OFF")
         try:
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             c.execute("""CREATE TABLE payroll_runs_rebuilt(
                 id INTEGER PRIMARY KEY, period TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft',
                 journal_entry_id INTEGER UNIQUE, created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -802,7 +803,7 @@ def salary_changes():
         try:
             preview = _salary_change_preview(c, request.form, allow_future=request.form.get("confirm") != "1")
             if request.form.get("confirm") == "1":
-                c.execute("BEGIN IMMEDIATE")
+                begin_write_transaction(c)
                 c.execute("""INSERT INTO salary_change_batches(decision_no,decision_date,effective_date,title,
                     employee_scope,calculation_type,calculation_base,calculation_value,treatment,notes,created_by)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
@@ -1036,7 +1037,7 @@ def employee_employment_history(employee_id):
             if status not in allowed or not reason:
                 raise ValueError("اختر حالة وظيفية صحيحة واكتب سبب التغيير.")
             termination_date = effective_date if status in {"resigned", "retired"} else ""
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             current = c.execute("SELECT work_status,termination_date,hire_date FROM employees WHERE id=?", (employee_id,)).fetchone()
             if not current:
                 raise ValueError("الموظف غير موجود.")
@@ -1287,7 +1288,7 @@ def pay_items():
                 "SELECT id FROM employees WHERE active=1 AND id IN ("+placeholders+")", employee_ids).fetchall()}
             if valid_ids != set(employee_ids):
                 raise ValueError("بعض الموظفين المختارين غير نشطين أو غير موجودين.")
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             if not catalog_id:
                 c.execute("INSERT OR IGNORE INTO employee_pay_item_catalog(name,item_type) VALUES(?,?)",
                           (item_name,item_type))
@@ -1877,7 +1878,7 @@ def final_payroll():
                 raise ValueError("راجع الاستقطاعات؛ يجب ألا تكون سالبة أو تتجاوز إجمالي المستحق.")
             net = M(gross - deductions)
             final_no = "FINAL-" + employee["employee_code"] + "-" + termination.strftime("%Y%m%d")
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             c.execute("""INSERT INTO employee_final_payrolls
                 (final_payroll_no,employee_id,period,termination_date,days_worked,basic_salary_snapshot,
                  allowances_snapshot,gross_pay,tax_deduction,employee_insurance,employer_insurance,
@@ -1954,7 +1955,7 @@ def edit_final_payroll(final_id):
     c = _db()
     try:
         if request.method == "POST":
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             row = c.execute("SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
             if not row or row["status"] != "draft":
                 raise ValueError("التعديل متاح لمسودة المرتب النهائي فقط.")
@@ -2002,7 +2003,7 @@ def edit_final_payroll(final_id):
 def cancel_final_payroll(final_id):
     c = _db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         row = c.execute("SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
         if not row or row["status"] != "draft":
             raise ValueError("إلغاء المرتب النهائي متاح للمسودة فقط.")
@@ -2027,7 +2028,7 @@ def cancel_final_payroll(final_id):
 def reopen_final_payroll(final_id):
     c = _db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         row = c.execute("SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
         if not row or row["status"] != "cancelled" or row["journal_entry_id"]:
             raise ValueError("إعادة الفتح متاحة للمسودة الملغاة فقط بشرط عدم وجود قيد أو دفعات.")
@@ -2055,7 +2056,7 @@ def reopen_final_payroll(final_id):
 def approve_final_payroll(final_id):
     c = _db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         row = c.execute("""SELECT f.*,e.full_name,e.employee_code FROM employee_final_payrolls f
             JOIN employees e ON e.id=f.employee_id WHERE f.id=?""", (final_id,)).fetchone()
         if not row or row["status"] != "draft" or row["journal_entry_id"] or row["approval_status"] != "pending":
@@ -2131,7 +2132,7 @@ def pay_final_payroll(final_id):
         if amount <= 0:
             raise ValueError("مبلغ صرف المرتب النهائي يجب أن يكون أكبر من صفر.")
         cash_id = int(request.form["cash_account_id"])
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         _cash_or_bank_account(c, cash_id)
         row = c.execute("SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
         if not row or row["status"] not in ("approved", "paid") or not row["journal_entry_id"]:
@@ -2227,7 +2228,7 @@ def approve_payroll_basic_salary_change(run_id, line_id):
         flash("اعتماد فروق الراتب الأساسي متاح لمدير النظام فقط.", "error")
         return redirect(url_for("workforce.payroll_run", run_id=run_id))
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         run = c.execute("SELECT status,created_by FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         line = c.execute("""SELECT l.*,e.full_name,e.employee_code
             FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
@@ -2274,7 +2275,7 @@ def payroll():
             start = date.fromisoformat(period + "-01")
             if period != start.strftime("%Y-%m"):
                 raise ValueError()
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             cur = c.execute("INSERT INTO payroll_runs(period,status,created_by) VALUES(?,'draft',?)",
                             (period, session["user_id"]))
             run_id = cur.lastrowid
@@ -2777,7 +2778,7 @@ def print_payroll_run(run_id):
 def delete_payroll_run(run_id):
     c = _db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         if not run or run["status"] != "draft" or run["journal_entry_id"]:
             raise ValueError("لا يمكن حذف كشف المرتبات بعد اعتماده أو إقفاله. الحذف متاح للمسودة فقط.")
@@ -2833,7 +2834,7 @@ def post_payroll(run_id):
     try:
         # Acquire the write lock before reading the run status. This prevents two
         # concurrent requests from both observing a draft and posting it twice.
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         if not run or run["status"] != "draft" or run["approval_status"] != "pending":
             raise ValueError("كشف المرتبات غير موجود أو ليس بانتظار الاعتماد.")
@@ -2978,7 +2979,7 @@ def post_payroll(run_id):
 def reverse_payroll(run_id):
     c = _db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         if not run or run["status"] != "posted" or not run["journal_entry_id"]:
             raise ValueError("لا يمكن عكس قيد مرتبات غير مرحّل. لا يمكن عكس قيد مرتبات غير مرحّل أو سبق عكسه.")
@@ -3076,7 +3077,7 @@ def pay_payroll(run_id):
         cash_account_id = int(request.form["cash_account_id"])
         _cash_or_bank_account(c, cash_account_id)
         reference = "PAYROLL-PAY-" + str(run_id) + "-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         # Re-read the payroll state after acquiring the write lock. A reversal may
         # have completed after the initial page read but before this payment began.
         run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
@@ -3181,7 +3182,7 @@ def employee_loans():
 def approve_employee_loan(loan_id):
     c = _db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         loan = c.execute("SELECT * FROM employee_loans WHERE id=?", (loan_id,)).fetchone()
         if not loan or loan["status"] != "requested":
             raise ValueError("طلب السلفة غير موجود أو سبق اتخاذ قرار.")
@@ -3214,7 +3215,7 @@ def approve_employee_loan(loan_id):
 def reject_employee_loan(loan_id):
     c = _db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         loan = c.execute("SELECT * FROM employee_loans WHERE id=?", (loan_id,)).fetchone()
         if not loan or loan["status"] != "requested":
             raise ValueError("لا يمكن رفض الطلب في حالته الحالية.")
@@ -3254,7 +3255,7 @@ def disburse_employee_loan(loan_id):
         amount = M(loan["approved_amount"])
         cents = int(amount * 100)
         base, rem = divmod(cents, int(loan["installment_count"]))
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         journal = post_journal(c,disb_date,"EMP-LOAN-DISB-"+str(loan_id),
             "صرف سلفة للموظف "+loan["full_name"],
             [(loan_account_id,amount,0,"إثبات سلفة موظف"),(cash_id,0,amount,"صرف سلفة من البنك/الصندوق")],
@@ -3284,7 +3285,7 @@ def disburse_employee_loan(loan_id):
 def defer_loan_installment(loan_id, installment_id):
     c = _db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         installment = c.execute("""SELECT i.*,l.employee_id,l.status AS loan_status,l.loan_no
             FROM employee_loan_installments i JOIN employee_loans l ON l.id=i.loan_id
             WHERE i.id=? AND i.loan_id=?""",(installment_id,loan_id)).fetchone()
@@ -3463,7 +3464,7 @@ def create_employee_grant():
             if amount<=0: raise ValueError("قيمة المنحة الناتجة يجب أن تكون أكبر من صفر.")
             snapshots.append((emp,basic,amount))
         total=M(sum((x[2] for x in snapshots),Decimal("0")))
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         c.execute("""INSERT INTO employee_grants(grant_type_id,grant_name_snapshot,calculation_method,calculation_value,
             days_count,expense_account_id,payable_account_id,grant_date,total_amount,notes,created_by)
             VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
@@ -3488,7 +3489,7 @@ def create_employee_grant():
 def delete_employee_grant(grant_id):
     c = _db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         grant = c.execute("SELECT * FROM employee_grants WHERE id=?", (grant_id,)).fetchone()
         if not grant or grant["status"] != "draft" or grant["journal_entry_id"]:
             raise ValueError("لا يمكن حذف الحافز بعد اعتماده أو إغلاقه. الحذف متاح للمسودة المفتوحة فقط.")
@@ -3514,7 +3515,7 @@ def approve_employee_grant(grant_id):
     c=_db()
     try:
         # Lock before reading draft state so concurrent approvals cannot post twice.
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         grant=c.execute("SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
         if not grant:
             raise ValueError("المنحة غير موجودة.")
@@ -3562,7 +3563,7 @@ def pay_employee_grant(grant_id):
             raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
         payment_date=date.fromisoformat(request.form.get("payment_date") or date.today().isoformat()).isoformat()
         reference="EMP-GRANT-PAY-"+str(grant_id)+"-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         grant=c.execute("SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
         if not grant or grant["status"] not in {"approved","partially_paid"}:
             raise ValueError("المنحة لم تعد متاحة للصرف.")
@@ -3649,7 +3650,7 @@ def friday_allowance():
             if (not payable_account or not payable_account["active"] or payable_account["is_group"]
                 or payable_account["account_type"] != "liability"):
                 raise ValueError("اختر حساب أجور إضافية مستحقة تفصيليًا ونشطًا.")
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             existing = c.execute("SELECT * FROM friday_allowance_batches WHERE period=?", (period,)).fetchone()
             if existing and existing["status"] == "posted":
                 raise ValueError("تم ترحيل بدل الجمعة لهذا الشهر بالفعل ولا يمكن إعادة تكوينه.")
@@ -3772,7 +3773,7 @@ def friday_allowance():
 def approve_friday_allowance(batch_id):
     c = _db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         batch = c.execute(
             "SELECT * FROM friday_allowance_batches WHERE id=?", (batch_id,)
         ).fetchone()
@@ -3826,7 +3827,7 @@ def approve_friday_allowance(batch_id):
 def delete_friday_allowance(batch_id):
     c = _db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         batch = c.execute("SELECT * FROM friday_allowance_batches WHERE id=?", (batch_id,)).fetchone()
         if not batch or batch["status"] != "draft" or batch["journal_entry_id"] or batch["approved_by"] is not None:
             raise ValueError("لا يمكن حذف بدل الجمعة بعد اعتماده أو ترحيله. الحذف متاح للمسودة غير المعتمدة فقط.")
@@ -3849,7 +3850,7 @@ def delete_friday_allowance(batch_id):
 def post_friday_allowance(batch_id):
     c = _db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         batch = c.execute("SELECT * FROM friday_allowance_batches WHERE id=?",(batch_id,)).fetchone()
         if not batch or batch["status"] != "draft":
             raise ValueError("كشف بدل الجمعة غير موجود أو سبق ترحيله.")
@@ -3926,7 +3927,7 @@ def attendance():
             days_count = (next_month-month_start).days
             allowed = {"present","absent","permission","holiday","annual_leave","sick_leave","unpaid_leave",""}
             employee_ids = [int(x["id"]) for x in c.execute("SELECT id FROM employees WHERE active=1").fetchall()]
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             for employee_id in employee_ids:
                 for day_number in range(1,days_count+1):
                     status = request.form.get(f"status_{employee_id}_{day_number}","").strip()
@@ -4140,7 +4141,7 @@ def set_leave_balance():
 def decide_leave(request_id):
     c=_db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         leave=c.execute("""SELECT r.*,t.is_paid,t.requires_balance,t.name leave_name
             FROM employee_leave_requests r JOIN leave_types t ON t.id=r.leave_type_id WHERE r.id=?""",
             (request_id,)).fetchone()
@@ -4177,7 +4178,7 @@ def custody():
             cash_id = int(request.form["cash_account_id"])
             custody_id = int(request.form["custody_account_id"])
             no = "CUST-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             journal_id = post_journal(c, request.form.get("issue_date") or date.today().isoformat(), no,
                 "صرف عهدة موظف", [(custody_id, amount, 0, "عهدة موظف"),
                                   (cash_id, 0, amount, "صرف العهدة من الصندوق/البنك")], session["user_id"])
@@ -4250,7 +4251,7 @@ def settle_custody(custody_id):
         if returned:
             lines.append((int(row["cash_account_id"]), returned, 0, "رد المتبقي من العهدة"))
         lines.append((int(row["custody_account_id"]), 0, total, "تسوية عهدة الموظف"))
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         journal_id = post_journal(c, request.form.get("settlement_date") or date.today().isoformat(),
             "CUST-SETTLE-" + row["custody_no"], "تسوية عهدة " + row["custody_no"], lines, session["user_id"])
         c.execute("UPDATE employee_custodies SET remaining_amount='0',status='settled' WHERE id=?", (custody_id,))
@@ -4311,7 +4312,7 @@ def end_of_service():
             net = M(gross - stamp_duty)
             years = Decimal((termination_date - service_start).days) / Decimal("365.2425")
             settlement_no = "EOS-" + employee["employee_code"] + "-" + termination_date.strftime("%Y%m%d")
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             c.execute("""INSERT INTO employee_end_of_service_settlements
                 (settlement_no,employee_id,termination_date,reason,service_start_date,service_years,
                  gross_entitlement,deductions,net_payable,notes,created_by,basic_salary_snapshot,
@@ -4372,7 +4373,7 @@ def end_of_service():
 def delete_end_of_service_draft(settlement_id):
     c=_db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         row=c.execute("SELECT * FROM employee_end_of_service_settlements WHERE id=?",(settlement_id,)).fetchone()
         if not row or row["status"]!="draft" or row["journal_entry_id"]:
             raise ValueError("حذف تسوية نهاية الخدمة متاح للمسودة غير المعتمدة فقط.")
@@ -4393,7 +4394,7 @@ def delete_end_of_service_draft(settlement_id):
 def approve_end_of_service(settlement_id):
     c=_db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         row=c.execute("""SELECT s.*,e.full_name,e.employee_code FROM employee_end_of_service_settlements s
             JOIN employees e ON e.id=s.employee_id WHERE s.id=?""",(settlement_id,)).fetchone()
         if not row or row["status"]!="draft" or row["journal_entry_id"] or row["approval_status"]!="pending":
@@ -4443,7 +4444,7 @@ def pay_end_of_service(settlement_id):
         amount=M(request.form.get("amount","0"))
         if amount<=0: raise ValueError("مبلغ الصرف يجب أن يكون أكبر من صفر.")
         cash_id=int(request.form["cash_account_id"])
-        c.execute("BEGIN IMMEDIATE"); _cash_or_bank_account(c,cash_id)
+        begin_write_transaction(c); _cash_or_bank_account(c,cash_id)
         row=c.execute("SELECT * FROM employee_end_of_service_settlements WHERE id=?",(settlement_id,)).fetchone()
         if not row or row["status"]!="approved" or not row["journal_entry_id"]:
             raise ValueError("يجب اعتماد مكافأة نهاية الخدمة وترحيل قيدها قبل الصرف.")
