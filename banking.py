@@ -8,7 +8,7 @@ from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal
 from chart_templates import ensure_account_metadata
-from db_compat import table_columns, table_exists
+from db_compat import table_columns, table_exists, begin_write_transaction
 from db_insert import insert_one_returning_id
 
 bank_bp = Blueprint("bank", __name__, url_prefix="/bank")
@@ -250,7 +250,7 @@ def index():
                 if kind in ("deposit",): lines=[(bank_id,amount,0,"إيداع بنكي",branch_dimensions),(counter_id,0,amount,"الحساب المقابل",branch_dimensions)]
                 elif kind in ("withdrawal","fee"): lines=[(counter_id,amount,0,"مصروف/سحب بنكي",branch_dimensions),(bank_id,0,amount,"الحساب البنكي",branch_dimensions)]
                 else: raise ValueError("نوع الحركة غير صحيح.")
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             no="BANK-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             jid=post_journal(c,request.form["transaction_date"],no,request.form["description"].strip() or "حركة بنكية",lines,session["user_id"])
             bank_transaction_id = insert_one_returning_id(c, """INSERT INTO bank_transactions(transaction_no,transaction_date,bank_account_id,transaction_type,amount,counter_account_id,destination_bank_account_id,description,bank_reference,journal_entry_id,created_by)
@@ -359,7 +359,7 @@ def statement_reconciliation():
                       OR lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%')""",
                     (account_id,)).fetchone():
                     raise ValueError("اختر حساب بنك تفصيليًا ونشطًا من سجل الخزائن والبنوك.")
-                c.execute("BEGIN IMMEDIATE")
+                begin_write_transaction(c)
                 c.execute("""INSERT INTO bank_statement_balances(bank_account_id,period_start,period_end,opening_balance,closing_balance,created_by)
                     VALUES(?,?,?,?,?,?)
                     ON CONFLICT(bank_account_id,period_start,period_end) DO UPDATE SET
@@ -384,7 +384,7 @@ def statement_reconciliation():
                 if request.form.get("confirm_opening_review")!="1":
                     raise ValueError("أكد صراحة أنك راجعت فرق الرصيد الافتتاحي قبل تسجيل المراجعة.")
                 if len(note)<10: raise ValueError("اكتب سببًا واضحًا لمراجعة فرق الرصيد الافتتاحي (10 أحرف على الأقل).")
-                c.execute("BEGIN IMMEDIATE")
+                begin_write_transaction(c)
                 updated=c.execute("""UPDATE bank_statement_balances SET opening_reviewed=1,opening_review_note=?,updated_at=CURRENT_TIMESTAMP
                     WHERE bank_account_id=? AND period_start=? AND period_end=?""",
                     (note,account_id,period_start,period_end)).rowcount
@@ -398,7 +398,7 @@ def statement_reconciliation():
                 return redirect(url_for("bank.statement_reconciliation",account_id=account_id,start_date=period_start,end_date=period_end))
             if action=="match":
                 # Lock before reading either row; competing requests re-check after the lock.
-                c.execute("BEGIN IMMEDIATE")
+                begin_write_transaction(c)
                 line_id=request.form.get("line_id",type=int)
                 journal_line_id=request.form.get("journal_line_id",type=int)
                 line=c.execute("SELECT * FROM bank_statement_lines WHERE id=?",(line_id,)).fetchone()
@@ -533,7 +533,7 @@ def cash_accounts():
     c=db()
     if request.method=="POST":
         try:
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             kind=request.form.get("kind","").strip()
             name=request.form.get("name_ar","").strip()
             mode=request.form.get("account_mode","existing")
@@ -613,7 +613,7 @@ def cash_accounts():
 def toggle_cash_account(cash_account_id):
     c=db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         row=c.execute("SELECT id,name_ar,active,account_id FROM cash_accounts WHERE id=?",(cash_account_id,)).fetchone()
         if not row:
             raise ValueError("الخزنة أو البنك غير موجود.")
