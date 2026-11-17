@@ -4,7 +4,6 @@ from database import connect_database
 import sqlite3
 from db_compat import (
     database_dialect, table_columns, table_exists, execute_script,
-    DB_ERROR, DB_INTEGRITY_ERROR,
 )
 from db_sql import execute_compat, executemany_compat
 
