@@ -68,6 +68,7 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
                         {"name": "debit", "type": "TEXT", "pk": 0},
                         {"name": "credit", "type": "TEXT", "pk": 0},
                         {"name": "amount", "type": "TEXT", "pk": 0},
+                        {"name": "unit_cost", "type": "REAL", "pk": 0},
                     ],
                     "foreign_keys": [],
                     "indexes": [],
@@ -105,6 +106,17 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         self.assertEqual(
             review["text_numeric_candidates_by_table"],
             {"journal_lines": ["amount"]},
+        )
+        self.assertEqual(review["numeric_review_candidate_count"], 2)
+        self.assertEqual(
+            [
+                (item["table"], item["column"], item["source_type"], item["postgres_type"])
+                for item in review["numeric_review_candidates"]
+            ],
+            [
+                ("journal_lines", "amount", "TEXT", "TEXT"),
+                ("journal_lines", "unit_cost", "REAL", "DOUBLE PRECISION"),
+            ],
         )
 
     def test_rejects_numeric_overrides_missing_from_schema_snapshot(self):
