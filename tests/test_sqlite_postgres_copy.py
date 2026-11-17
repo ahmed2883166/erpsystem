@@ -9,7 +9,6 @@ from scripts.verify_sqlite_postgres_copy import (
     _journal_entry_key,
     _inventory_valuation_required,
     _sqlite_foreign_key_map,
-    _pg_foreign_key_map,
     _foreign_key_differences,
     _sqlite_grouped_sum,
     _verification_passed,
