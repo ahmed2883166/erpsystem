@@ -5,6 +5,7 @@ from decimal import Decimal
 from income_statement import build_income_statement, comparison_period
 from cash_commitments import list_cash_commitments_forecast
 from db_compat import table_columns, table_exists
+from db_sql import execute_compat
 from receivables import (
     _customer_aging_documents, _customer_aging_movements,
     _supplier_aging_documents, _supplier_aging_movements,
@@ -92,7 +93,7 @@ def build_inventory_ageing(conn, as_of):
     params.append(as_of)
     if has_movements:
         params.append(as_of)
-    rows = conn.execute(
+    rows = execute_compat(conn, 
         f"""SELECT l.product_id,l.warehouse_id,{sku_expr} sku,{name_expr} product_name,
                    w.code warehouse_code,w.name_ar warehouse_name,
                    {created_expr} layer_date,{expiry_expr} expiry_date,
