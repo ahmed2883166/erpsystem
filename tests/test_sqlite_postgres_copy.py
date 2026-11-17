@@ -1,7 +1,7 @@
 import unittest
 from decimal import Decimal
 
-from scripts.copy_sqlite_to_postgres import dependency_order, normalize_value, quote_ident
+from scripts.copy_sqlite_to_postgres import copy_database, dependency_order, normalize_value, quote_ident
 
 
 class SQLitePostgresCopyPlanningTests(unittest.TestCase):
@@ -24,6 +24,10 @@ class SQLitePostgresCopyPlanningTests(unittest.TestCase):
     def test_float_values_are_normalized_without_binary_float(self):
         self.assertEqual(normalize_value(0.1), Decimal("0.1"))
         self.assertEqual(normalize_value("0.10"), "0.10")
+
+    def test_copy_requires_explicit_apply_before_any_connection(self):
+        with self.assertRaisesRegex(ValueError, "disabled by default"):
+            copy_database("missing.sqlite", "postgresql://invalid", apply=False)
 
     def test_identifiers_are_quoted(self):
         self.assertEqual(quote_ident('odd"name'), '"odd""name"')
