@@ -32,7 +32,7 @@ class CrossDatabaseErrorTypeTests(unittest.TestCase):
         from db_compat import DB_ERROR, DB_INTEGRITY_ERROR
 
         for error_type in DB_INTEGRITY_ERROR:
-            self.assertIn(error_type, DB_ERROR)
+            self.assertTrue(issubclass(error_type, DB_ERROR))
 
 
 class SQLPlaceholderTranslationTests(unittest.TestCase):
