@@ -1,8 +1,7 @@
 """Read-only preflight audit for moving a NEXUS SQLite database to PostgreSQL.
 
-This command never writes to either database. It reports missing tables/columns,
-row counts, and SQLite foreign-key violations before a separate reviewed copy
-tool is allowed to be built or run.
+This command never writes to either database. It checks exact table/column
+coverage, target emptiness, and SQLite integrity before a separate copy run.
 """
 from __future__ import annotations
 
@@ -92,6 +91,7 @@ def build_report(sqlite_info: dict, postgres_info: dict) -> dict:
     source = sqlite_info["tables"]
     target = postgres_info["tables"]
     missing_tables = sorted(set(source) - set(target))
+    extra_tables = sorted(set(target) - set(source))
     column_issues = []
     count_differences = []
     for table, details in source.items():
@@ -116,12 +116,14 @@ def build_report(sqlite_info: dict, postgres_info: dict) -> dict:
             })
     source_ok = sqlite_info["integrity_check"] == ["ok"]
     fk_ok = not sqlite_info["foreign_key_violations"]
-    ready = source_ok and fk_ok and not missing_tables and not column_issues and not count_differences
+    ready = (source_ok and fk_ok and not missing_tables and not extra_tables
+             and not column_issues and not count_differences)
     return {
         "read_only": True,
         "source_integrity_ok": source_ok,
         "source_foreign_keys_ok": fk_ok,
         "missing_postgres_tables": missing_tables,
+        "extra_postgres_tables": extra_tables,
         "column_differences": column_issues,
         "nonempty_postgres_tables": count_differences,
         "source_table_count": len(source),
