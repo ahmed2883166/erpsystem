@@ -336,7 +336,22 @@ class StocktakeRouteTests(unittest.TestCase):
         self.assertEqual(same["accounting_status"],"not_required")
         self.assertIsNone(same["journal_entry_id"])
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0],2)
+
+        # A one-sided branch assignment must not silently bypass interbranch accounting.
+        conn.execute("INSERT INTO stock_warehouses(code,name_ar) VALUES('W-UNASSIGNED','مخزن بلا فرع')")
+        unassigned_warehouse = conn.execute(
+            "SELECT id FROM stock_warehouses WHERE code='W-UNASSIGNED'"
+        ).fetchone()["id"]
+        movement_count_before = conn.execute("SELECT COUNT(*) FROM stock_movements").fetchone()[0]
         conn.close()
+        transfer(self.warehouse_id,unassigned_warehouse,1,"تحويل إلى مخزن غير مربوط بفرع")
+        conn = stock.get_db()
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM stock_movements").fetchone()[0],
+                         movement_count_before)
+        conn.close()
+        with self.client.session_transaction() as session:
+            flashes = session.get("_flashes", [])
+        self.assertTrue(any("ربط مخزني المصدر والوجهة" in message for _category, message in flashes))
 
     def test_zero_cost_stocktake_variance_does_not_create_broken_posted_link(self):
         self._login()
