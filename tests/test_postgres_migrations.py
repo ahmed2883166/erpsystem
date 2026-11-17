@@ -577,6 +577,29 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
             )
         self.connection.rollback()
 
+    def test_supplier_return_pricing_schema_preserves_invoice_line_links(self):
+        migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
+        migrations = load_migrations(migration_dir)
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema),
+                         [1, 2, 3, 4, 5, 6, 7, 8, 9])
+        columns = self.connection.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema=%s AND table_name=%s",
+            (self.schema, "supplier_credit_note_lines"),
+        ).fetchall()
+        self.assertIn("supplier_total", {row["column_name"] for row in columns})
+        table = self.connection.execute(
+            "SELECT to_regclass(%s) AS table_name",
+            (self.schema + ".supplier_credit_note_bill_line_allocations",),
+        ).fetchone()
+        self.assertIsNotNone(table["table_name"])
+        constraints = self.connection.execute(
+            "SELECT COUNT(*) AS count FROM pg_constraint "
+            "WHERE conrelid=to_regclass(%s) AND contype='f'",
+            (self.schema + ".supplier_credit_note_bill_line_allocations",),
+        ).fetchone()
+        self.assertEqual(constraints["count"], 2)
+
     def test_failed_batch_rolls_back_schema_and_migration_records(self):
         migrations = [
             self._migration(1, "0001_ok.sql", 'CREATE TABLE "first_probe" (id BIGINT)'),
