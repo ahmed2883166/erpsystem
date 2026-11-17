@@ -44,7 +44,7 @@ from activity_profiles import (initialize_activity_profiles_schema, list_activit
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
-from db_compat import begin_write_transaction
+from db_compat import begin_write_transaction, insert_and_get_id
 from report_request_control import (ReportRequestGate, bounded_env_int,
                                     is_expensive_report_request,
                                     set_current_report_deadline,
@@ -3279,9 +3279,8 @@ def accounting_periods():
                     (start_date, end_date)).fetchone()
                 if not containing_year:
                     raise ValueError("يجب أن تقع الفترة المحاسبية بالكامل داخل سنة مالية مسجلة.")
-            connection.execute("""INSERT INTO accounting_periods(period_name,start_date,end_date,locked,created_at)
+            period_id = insert_and_get_id(connection, """INSERT INTO accounting_periods(period_name,start_date,end_date,locked,created_at)
                 VALUES(?,?,?,0,?)""", (name, start_date, end_date, now()))
-            period_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
             connection.commit()
             log_change(
                 "accounting_period_created", "accounting_period", period_id, None,
@@ -4200,7 +4199,7 @@ def import_data_wizard():
                             invoice_no = "OB-C-" + document_suffix
                             due_date = clean.get("due_date") or entry_date
                             if due_date: date.fromisoformat(due_date)
-                            cur = connection.execute("""INSERT INTO sales_invoices
+                            invoice_id = insert_and_get_id(connection, """INSERT INTO sales_invoices
                                 (invoice_no,customer_id,invoice_date,due_date,subtotal,tax_rate,tax_amount,
                                  total_amount,paid_amount,status,created_by)
                                 VALUES(?,?,?,?,?,'0','0',?,'0','posted',?)""",
@@ -4208,7 +4207,7 @@ def import_data_wizard():
                             connection.execute("""INSERT INTO sales_invoice_lines
                                 (invoice_id,description,quantity,unit_price,line_total,cost_total)
                                 VALUES(?,?, '1', ?, ?, '0')""",
-                                (cur.lastrowid, "رصيد افتتاحي - " + ref, str(amount), str(amount)))
+                                (invoice_id, "رصيد افتتاحي - " + ref, str(amount), str(amount)))
                             entity_key = customer["code"]
                             journal_lines = [(ar["id"], amount, Decimal("0"), "رصيد عميل افتتاحي: " + customer["name"]),
                                              (retained["id"], Decimal("0"), amount, "مقابل الأرصدة الافتتاحية")]
@@ -4216,7 +4215,7 @@ def import_data_wizard():
                             journal_id = post_journal(connection, entry_date, journal_ref,
                                 "إثبات رصيد افتتاحي للعميل " + customer["name"], journal_lines, session.get("user_id"))
                             connection.execute("UPDATE sales_invoices SET journal_entry_id=? WHERE id=?",
-                                (journal_id, cur.lastrowid))
+                                (journal_id, invoice_id))
                         elif record_type == "supplier":
                             supplier = connection.execute("SELECT * FROM suppliers WHERE code=? AND active=1",
                                 (clean.get("supplier_code", ""),)).fetchone()
@@ -4230,7 +4229,7 @@ def import_data_wizard():
                             bill_no = "OB-S-" + document_suffix
                             due_date = clean.get("due_date") or entry_date
                             if due_date: date.fromisoformat(due_date)
-                            cur = connection.execute("""INSERT INTO supplier_bills
+                            bill_id = insert_and_get_id(connection, """INSERT INTO supplier_bills
                                 (bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,subtotal,tax_rate,
                                  tax_amount,total_amount,paid_amount,status,created_by)
                                 VALUES(?,?,?,?,?,?,'0','0',?,'0','posted',?)""",
@@ -4242,7 +4241,7 @@ def import_data_wizard():
                             journal_id = post_journal(connection, entry_date, journal_ref,
                                 "إثبات رصيد افتتاحي للمورد " + supplier["name"], journal_lines, session.get("user_id"))
                             connection.execute("UPDATE supplier_bills SET journal_entry_id=? WHERE id=?",
-                                (journal_id, cur.lastrowid))
+                                (journal_id, bill_id))
                         elif record_type == "inventory":
                             product = connection.execute("SELECT * FROM stock_products WHERE sku=? AND active=1",
                                 (clean.get("sku", ""),)).fetchone()
@@ -4266,7 +4265,7 @@ def import_data_wizard():
                                  (retained["id"], Decimal("0"), amount, "مقابل الأرصدة الافتتاحية")],
                                 session.get("user_id"))
                             movement_no = "OB-STK-" + document_suffix
-                            cur = connection.execute("""INSERT INTO stock_movements
+                            movement_id = insert_and_get_id(connection, """INSERT INTO stock_movements
                                 (movement_no,movement_type,product_id,target_warehouse_id,quantity,unit_cost,total_cost,
                                  movement_date,notes,created_by,journal_entry_id,accounting_status)
                                 VALUES(?,'receipt',?,?,?,?,?,?,?,?,?,'posted')""",
@@ -4275,7 +4274,7 @@ def import_data_wizard():
                             connection.execute("""INSERT INTO stock_valuation_layers
                                 (product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost,value_remaining)
                                 VALUES(?,?,?,?,?,?,?)""",
-                                (product["id"], warehouse["id"], cur.lastrowid, str(qty), str(qty), str(unit_cost), str(amount)))
+                                (product["id"], warehouse["id"], movement_id, str(qty), str(qty), str(unit_cost), str(amount)))
                         else:
                             raise ValueError("نوع الرصيد يجب أن يكون customer أو supplier أو inventory.")
                         connection.execute("""INSERT INTO opening_balance_import_refs
