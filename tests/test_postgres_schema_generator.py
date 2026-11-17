@@ -6,6 +6,7 @@ from scripts.generate_postgres_schema import (
     generate_postgres_ddl,
     pg_type,
     short_identifier,
+    POSTGRES_TYPE_OVERRIDES,
 )
 
 
@@ -17,6 +18,84 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         self.assertEqual(pg_type({"type": ""}), "TEXT")
         self.assertEqual(default_sql("CURRENT_TIMESTAMP", "TEXT"), "(CURRENT_TIMESTAMP::text)")
         self.assertEqual(default_sql("CURRENT_TIMESTAMP", "BIGINT"), "CURRENT_TIMESTAMP")
+
+    def test_uses_only_explicit_numeric_overrides(self):
+        self.assertEqual(
+            pg_type({"name": "debit", "type": "TEXT"}, "journal_lines"),
+            "NUMERIC",
+        )
+        self.assertEqual(
+            pg_type({"name": "credit", "type": "TEXT"}, "journal_lines"),
+            "NUMERIC",
+        )
+        self.assertEqual(
+            pg_type({"name": "rate_to_base", "type": "REAL"}, "currencies"),
+            "NUMERIC",
+        )
+        self.assertEqual(
+            pg_type({"name": "rate", "type": "REAL"}, "tax_rates"),
+            "NUMERIC",
+        )
+        # Similar-looking identifiers and metadata must not be coerced.
+        self.assertEqual(
+            pg_type({"name": "tax_number", "type": "TEXT"}, "customers"),
+            "TEXT",
+        )
+        self.assertEqual(
+            pg_type({"name": "tax_roles_json", "type": "TEXT"}, "activity_profiles"),
+            "TEXT",
+        )
+        self.assertEqual(
+            pg_type({"name": "rate_date", "type": "TEXT"}, "fx_exchange_rates"),
+            "TEXT",
+        )
+        self.assertEqual(
+            set(POSTGRES_TYPE_OVERRIDES),
+            {
+                ("journal_lines", "debit"),
+                ("journal_lines", "credit"),
+                ("currencies", "rate_to_base"),
+                ("tax_rates", "rate"),
+            },
+        )
+
+    def test_ddl_applies_numeric_overrides_by_table_and_column(self):
+        snapshot = {
+            "tables": [
+                {
+                    "name": "journal_lines",
+                    "columns": [
+                        {"name": "debit", "type": "TEXT", "pk": 0},
+                        {"name": "credit", "type": "TEXT", "pk": 0},
+                    ],
+                    "foreign_keys": [],
+                    "indexes": [],
+                },
+                {
+                    "name": "currencies",
+                    "columns": [
+                        {"name": "rate_to_base", "type": "REAL", "pk": 0},
+                    ],
+                    "foreign_keys": [],
+                    "indexes": [],
+                },
+                {
+                    "name": "tax_rates",
+                    "columns": [
+                        {"name": "rate", "type": "REAL", "pk": 0},
+                        {"name": "tax_number", "type": "TEXT", "pk": 0},
+                    ],
+                    "foreign_keys": [],
+                    "indexes": [],
+                },
+            ]
+        }
+        ddl, _ = generate_postgres_ddl(snapshot)
+        self.assertIn('"debit" NUMERIC', ddl)
+        self.assertIn('"credit" NUMERIC', ddl)
+        self.assertIn('"rate_to_base" NUMERIC', ddl)
+        self.assertIn('"rate" NUMERIC', ddl)
+        self.assertIn('"tax_number" TEXT', ddl)
 
     def test_extracts_balanced_check_constraints(self):
         sql = """CREATE TABLE sample (
