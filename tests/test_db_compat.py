@@ -14,6 +14,7 @@ from db_compat import (
     transaction_is_active,
     insert_and_get_id,
     execute_script,
+    table_column_info,
 )
 
 
@@ -57,6 +58,14 @@ class SQLiteSchemaCompatibilityTests(unittest.TestCase):
             {"id", "amount", "active"},
         )
         self.assertEqual(table_columns(self.connection, "missing_table"), set())
+
+    def test_returns_portable_column_types_and_primary_key_position(self):
+        info = table_column_info(self.connection, "compatibility_probe")
+        self.assertEqual(info["id"]["pk"], 1)
+        self.assertEqual(info["id"]["type"].upper(), "INTEGER")
+        self.assertEqual(info["amount"]["type"].upper(), "TEXT")
+        self.assertEqual(info["active"]["pk"], 0)
+        self.assertEqual(table_column_info(self.connection, "missing_table"), {})
 
     def test_lists_tables_in_current_schema(self):
         self.assertIn("compatibility_probe", table_names(self.connection))
