@@ -4,8 +4,8 @@
 
 مخطط PostgreSQL الحالي هو **خط أساس بنيوي فقط** وليس مخطط تشغيل متوافقًا مع التطبيق بعد. في لقطة المخطط المؤقتة:
 
-- 916 عمودًا معلنًا في SQLite على أنه TEXT.
-- 624 عمودًا INTEGER.
+- 920 عمودًا معلنًا في SQLite على أنه TEXT.
+- 628 عمودًا INTEGER.
 - عمودان REAL.
 - مولّد PostgreSQL يحافظ على TEXT كـTEXT عمدًا.
 
@@ -62,7 +62,7 @@
 - الحقول التصنيفية مثل `tax_treatment`, `discount_type`, `depreciation_method`, `normal_balance`.
 - المراجع التي قد تكون نصوصًا أو أكوادًا.
 
-قائمة `text_numeric_candidates` الحالية مبنية على مطابقة أجزاء من أسماء الأعمدة، وعددها 270؛ وهي قائمة استكشافية وليست خريطة تحويل. تتضمن نتائج موجبة كاذبة مثل `branches.tax_number`, `activity_profiles.tax_roles_json`, `fx_exchange_rates.rate_date`, و`sales_invoice_lines.tax_treatment`.
+قائمة المراجعة المستخرجة من artifact النسخة `605c9d3` تحتوي على 227 حقلًا من نوع TEXT في 90 جدولًا؛ وهي قائمة استكشافية وليست خريطة تحويل. تتضمن نتائج موجبة كاذبة مثل `branches.tax_number`, `activity_profiles.tax_roles_json`, `fx_exchange_rates.rate_date`, و`sales_invoice_lines.tax_treatment`.
 
 ## بوابات القبول قبل ربط التطبيق بـPostgreSQL
 

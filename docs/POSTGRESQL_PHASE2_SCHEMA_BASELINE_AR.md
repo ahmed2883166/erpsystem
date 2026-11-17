@@ -4,7 +4,7 @@
 
 هذا المستند يصف خط أساس توليد DDL من المخطط الفعلي. لا يعني أن التطبيق أصبح يعمل على PostgreSQL، ولا يغير محرك SQLite الحالي.
 
-مصدر المخطط: GitHub Actions artifact باسم `nexus-postgresql-schema-baseline`، الناتج من تهيئة التطبيق على قاعدة جديدة مؤقتة. نسخة المصدر: `898034189f4ae7848d4eda6ec714658d39378c69` على الفرع `feature/company-setup-currency-tax-activity`.
+مصدر المخطط: GitHub Actions artifact باسم `nexus-postgresql-schema-baseline`، الناتج من تهيئة التطبيق على قاعدة جديدة مؤقتة. نسخة المصدر: `605c9d37ef8e10d1be2db4ad9e80a8ca5a1f4e2e` على الفرع `feature/company-setup-currency-tax-activity`.
 
 ## نتائج المخطط الفعلي — 17 نوفمبر 2026
 
@@ -61,7 +61,18 @@ Workflow `tests.yml` يستخدم PostgreSQL 16 مؤقتًا، ثم:
 4. يتحقق من الجداول والمفاتيح والفهارس وصلاحية الفهارس.
 5. يحذف schema الاختبار في النهاية.
 
-تشغيل `unit-tests` و`checks` على النسخة `8980341` انتهى بنجاح، بما في ذلك تنفيذ اختبارات التكامل على PostgreSQL 16 والتحقق من DDL.
+تشغيل GitHub Actions على النسخة `605c9d3` انتهى بنجاح: `Python checks` (Run `44184984666`) و`NEXUS ERP tests` (Run `44184984849`). نجحت اختبارات الوحدات والتكامل، واستخراج المخطط من قاعدة مؤقتة، وتوليد DDL، والتحقق منه على PostgreSQL 16. تم رفع artifact `nexus-postgresql-schema-baseline` (Artifact ID `14375110923`).
+
+## تدقيق ملف الـartifact على النسخة 605c9d3
+
+تم تنزيل وفحص artifact الناتج من التشغيل نفسه، وليس الاعتماد على ملخص الـworkflow فقط:
+
+- `nexus-initialized-sqlite-schema.json`: 141 جدولًا و1,550 عمودًا، و262 مفتاحًا خارجيًا، و108 فهارس SQLite صريحة، و22 Trigger، ولا توجد Views.
+- فحص SQLite أعاد `integrity_check = ok` وصفر مخالفات مفاتيح خارجية.
+- `nexus-postgresql-schema.sql`: يحتوي على 141 جدولًا و262 مفتاحًا خارجيًا و253 فهرس PostgreSQL (يشمل فهارس المفاتيح الأساسية والفريدة التي ينشئها PostgreSQL) و22 Trigger. تم تنفيذ الملف بنجاح في schema مؤقتة على PostgreSQL 16.
+- `nexus-postgresql-schema-review.json`: يسجل 227 عمود TEXT مرشحًا للمراجعة الرقمية في 90 جدولًا. لم تُحوّل هذه الحقول تلقائيًا؛ ظلت TEXT لحين اعتماد النوع والدقة منطقياً وبيانيًا. التحويلات الرقمية الصريحة الحالية محصورة في `journal_lines.debit`, `journal_lines.credit`, `currencies.rate_to_base`, و`tax_rates.rate`.
+
+هذه نتيجة تحقق بنيوي للمخطط، وليست اختبار تشغيل لكل شاشات Flask على PostgreSQL.
 
 ## ما لم يتم بعد
 
