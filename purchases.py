@@ -10,7 +10,7 @@ from functools import wraps
 from datetime import date, datetime, timedelta
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, money, safe_error_message, decimal_sum_expression
-from db_compat import table_columns, table_exists
+from db_compat import table_columns, table_exists, table_indexes
 from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 from code_sequences import next_code
@@ -839,11 +839,7 @@ def integrity_issues():
             if len(rows)>1:
                 details.append({"issue":issue,"kind":"duplicate_receipt_link","rows":rows,
                     "summary":"إيصال استلام مربوط بأكثر من فاتورة"})
-    indexes = {
-        row["name"] for row in c.execute(
-            "SELECT name FROM sqlite_master WHERE type='index'"
-        ).fetchall()
-    }
+    indexes = table_indexes(c)
     index_status = {
         "supplier_invoice": "uq_supplier_bill_invoice_no" in indexes,
         "receipt_partial_allocation": "uq_supplier_bill_receipt_once" not in indexes,

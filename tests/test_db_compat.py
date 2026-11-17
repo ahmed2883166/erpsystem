@@ -17,6 +17,7 @@ from db_compat import (
     insert_and_get_id,
     execute_script,
     table_column_info,
+    table_indexes,
 )
 
 
@@ -130,6 +131,52 @@ class _FakePsycopgConnection:
         self.statements.append(statement)
         if statement.strip().upper() == "BEGIN":
             self.info.transaction_status = SimpleNamespace(name="INTRANS")
+
+
+class PortableIndexInspectionTests(unittest.TestCase):
+    def test_sqlite_returns_index_names(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.execute("CREATE TABLE index_probe (id INTEGER PRIMARY KEY, code TEXT)")
+            connection.execute("CREATE INDEX idx_index_probe_code ON index_probe(code)")
+            self.assertIn("idx_index_probe_code", table_indexes(connection))
+        finally:
+            connection.close()
+
+    def test_postgresql_uses_current_schema_catalog(self):
+        class Cursor:
+            def fetchall(self):
+                return [("idx_probe_code",), ("idx_probe_pk",)]
+
+        class Connection(_FakePsycopgConnection):
+            __module__ = "psycopg.fake"
+
+            def execute(self, statement, params=()):
+                self.statements.append((statement, tuple(params)))
+                return Cursor()
+
+        connection = Connection("IDLE")
+        self.assertEqual(table_indexes(connection), {"idx_probe_code", "idx_probe_pk"})
+        self.assertIn("pg_catalog.pg_indexes", connection.statements[0][0])
+        self.assertIn("current_schema()", connection.statements[0][0])
+
+    def test_postgresql_schema_is_bound_and_validated(self):
+        class Cursor:
+            def fetchall(self):
+                return [("idx_probe_code",)]
+
+        class Connection(_FakePsycopgConnection):
+            __module__ = "psycopg.fake"
+
+            def execute(self, statement, params=()):
+                self.statements.append((statement, tuple(params)))
+                return Cursor()
+
+        connection = Connection("IDLE")
+        self.assertEqual(table_indexes(connection, schema="tenant_1"), {"idx_probe_code"})
+        self.assertEqual(connection.statements[0][1], ("tenant_1",))
+        with self.assertRaises(ValueError):
+            table_indexes(connection, schema="tenant_1; DROP SCHEMA public")
 
 
 class PortableScriptExecutionTests(unittest.TestCase):

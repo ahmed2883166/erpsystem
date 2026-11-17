@@ -156,6 +156,30 @@ def table_column_info(connection, table_name, *, schema=None):
     }
 
 
+def table_indexes(connection, *, schema=None):
+    """Return index names visible in the current SQLite/PostgreSQL schema."""
+    dialect = database_dialect(connection)
+    if dialect == "sqlite":
+        rows = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' ORDER BY name"
+        ).fetchall()
+        return {row["name"] if isinstance(row, sqlite3.Row) else row[0] for row in rows}
+
+    schema_name = _identifier(schema, "schema name") if schema else None
+    if schema_name:
+        rows = connection.execute(
+            "SELECT indexname FROM pg_catalog.pg_indexes "
+            "WHERE schemaname=%s ORDER BY indexname",
+            (schema_name,),
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            "SELECT indexname FROM pg_catalog.pg_indexes "
+            "WHERE schemaname=current_schema() ORDER BY indexname"
+        ).fetchall()
+    return {row["indexname"] if isinstance(row, dict) else row[0] for row in rows}
+
+
 def table_names(connection, *, schema=None):
     """Return base-table names visible in the current SQLite/PostgreSQL schema."""
     dialect = database_dialect(connection)
