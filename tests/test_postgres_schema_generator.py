@@ -98,6 +98,7 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
                     {"name": "tax_notes", "type": "TEXT", "pk": 0},
                     {"name": "tax_treatment", "type": "TEXT", "pk": 0},
                     {"name": "credit_note_no", "type": "TEXT", "pk": 0},
+                    {"name": "basic_salary_reference", "type": "TEXT", "pk": 0},
                     {"name": "net_amount", "type": "TEXT", "pk": 0},
                 ],
                 "foreign_keys": [],
@@ -114,7 +115,10 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         _, review = generate_postgres_ddl(snapshot)
         self.assertEqual(
             review["text_numeric_candidates"],
-            ["review_metadata.net_amount"],
+            [
+                "review_metadata.basic_salary_reference",
+                "review_metadata.net_amount",
+            ],
         )
 
     def test_numeric_review_skips_known_enum_and_generic_metadata_columns(self):
