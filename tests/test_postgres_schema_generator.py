@@ -101,6 +101,11 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         self.assertIn("journal_lines.amount", review["text_numeric_candidates"])
         self.assertNotIn("journal_lines.debit", review["text_numeric_candidates"])
         self.assertNotIn("journal_lines.credit", review["text_numeric_candidates"])
+        self.assertEqual(review["text_numeric_candidate_count"], 1)
+        self.assertEqual(
+            review["text_numeric_candidates_by_table"],
+            {"journal_lines": ["amount"]},
+        )
 
     def test_rejects_numeric_overrides_missing_from_schema_snapshot(self):
         snapshot = {
