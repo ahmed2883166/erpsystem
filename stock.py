@@ -798,6 +798,9 @@ def available_layers(c, product_id, warehouse_id, lot_id=None, location_id=None)
 
 
 def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=None, location_id=None, include_layer_details=False):
+    # Lock the warehouse before valuation rows so sales, returns, transfers and counts
+    # share one deterministic serialization point on PostgreSQL.
+    lock_stock_warehouses(c, warehouse_id)
     layers = available_layers(c, product_id, warehouse_id, lot_id, location_id)
     available = sum((D(x["qty_remaining"]) for x in layers), D("0"))
     if available < qty:
