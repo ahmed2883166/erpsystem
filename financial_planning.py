@@ -2,6 +2,19 @@
 from app_paths import DB_PATH
 from database import connect_database
 import sqlite3
+from db_compat import (
+    database_dialect, table_columns, table_exists, execute_script,
+    DB_ERROR, DB_INTEGRITY_ERROR,
+)
+from db_sql import execute_compat, executemany_compat
+
+
+def _execute(conn, sql, params=()):
+    return execute_compat(conn, sql, params)
+
+
+def _executemany(conn, sql, rows):
+    return executemany_compat(conn, sql, rows)
 from accounting_core import post_journal, register_decimal_aggregates, reconciliation_snapshot
 from chart_templates import ACTIVITY_ACCOUNT_ROLES
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -58,14 +71,15 @@ def _split_monthly_amount(total, months):
 
 
 def _budget_audit(conn, budget_id, action, actor_id, details=""):
-    conn.execute(
+    _execute(
+        conn,
         "INSERT INTO budget_audit_log(budget_id,action,actor_id,details) VALUES(?,?,?,?)",
         (budget_id, action, actor_id, str(details or "")[:1000])
     )
 
 
 def initialize_planning_schema(conn):
-    conn.executescript("""
+    execute_script(conn, """
     CREATE TABLE IF NOT EXISTS budget_plans(
       id INTEGER PRIMARY KEY, name TEXT NOT NULL, date_from TEXT NOT NULL,
       date_to TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
@@ -92,10 +106,6 @@ def initialize_planning_schema(conn):
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_budget_audit_history ON budget_audit_log(budget_id,id);
-    CREATE TRIGGER IF NOT EXISTS budget_audit_no_update
-      BEFORE UPDATE ON budget_audit_log BEGIN SELECT RAISE(ABORT,'Budget audit history is immutable'); END;
-    CREATE TRIGGER IF NOT EXISTS budget_audit_no_delete
-      BEFORE DELETE ON budget_audit_log BEGIN SELECT RAISE(ABORT,'Budget audit history is immutable'); END;
     CREATE TABLE IF NOT EXISTS cash_flow_account_mappings(
       account_id INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
       category TEXT NOT NULL CHECK(category IN ('operating','investing','financing')),
@@ -130,46 +140,71 @@ def initialize_planning_schema(conn):
     CREATE INDEX IF NOT EXISTS idx_financial_year_journal_history
       ON financial_year_journal_history(financial_year_id,entry_kind,id);
     """)
-    budget_columns = {row[1] for row in conn.execute("PRAGMA table_info(budget_plans)")}
+    if database_dialect(conn) == "sqlite":
+        execute_script(conn, """
+        CREATE TRIGGER IF NOT EXISTS budget_audit_no_update
+          BEFORE UPDATE ON budget_audit_log
+          BEGIN SELECT RAISE(ABORT,'Budget audit history is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS budget_audit_no_delete
+          BEFORE DELETE ON budget_audit_log
+          BEGIN SELECT RAISE(ABORT,'Budget audit history is immutable'); END;
+        """)
+    else:
+        execute_script(conn, """
+        CREATE OR REPLACE FUNCTION nexus_reject_budget_audit_mutation()
+        RETURNS trigger LANGUAGE plpgsql AS $nexus$
+        BEGIN
+          RAISE EXCEPTION 'Budget audit history is immutable';
+        END;
+        $nexus$;
+        DROP TRIGGER IF EXISTS budget_audit_no_update ON budget_audit_log;
+        DROP TRIGGER IF EXISTS budget_audit_no_delete ON budget_audit_log;
+        CREATE TRIGGER budget_audit_no_update
+          BEFORE UPDATE ON budget_audit_log
+          FOR EACH ROW EXECUTE FUNCTION nexus_reject_budget_audit_mutation();
+        CREATE TRIGGER budget_audit_no_delete
+          BEFORE DELETE ON budget_audit_log
+          FOR EACH ROW EXECUTE FUNCTION nexus_reject_budget_audit_mutation();
+        """)
+
+    budget_columns = table_columns(conn, "budget_plans")
     for column in ("branch_id", "cost_center_id", "project_id"):
         if column not in budget_columns:
-            conn.execute(f"ALTER TABLE budget_plans ADD COLUMN {column} INTEGER")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_budget_dimensions ON budget_plans(branch_id,cost_center_id,project_id)")
-    budget_columns = {row[1] for row in conn.execute("PRAGMA table_info(budget_plans)")}
+            _execute(conn, f"ALTER TABLE budget_plans ADD COLUMN {column} INTEGER")
+    _execute(conn, "CREATE INDEX IF NOT EXISTS idx_budget_dimensions ON budget_plans(branch_id,cost_center_id,project_id)")
+    budget_columns = table_columns(conn, "budget_plans")
     for column, declaration in (("submitted_by", "INTEGER"), ("submitted_at", "TEXT"),
                                 ("approved_by", "INTEGER"), ("approved_at", "TEXT"),
                                 ("rejection_reason", "TEXT")):
         if column not in budget_columns:
-            conn.execute(f"ALTER TABLE budget_plans ADD COLUMN {column} {declaration}")
-    conn.execute("UPDATE budget_plans SET status='approved' WHERE status='active'")
-    plans = conn.execute("SELECT id,date_from,date_to FROM budget_plans").fetchall()
+            _execute(conn, f"ALTER TABLE budget_plans ADD COLUMN {column} {declaration}")
+    _execute(conn, "UPDATE budget_plans SET status='approved' WHERE status='active'")
+    plans = _execute(conn, "SELECT id,date_from,date_to FROM budget_plans").fetchall()
     for plan in plans:
-        budget_id, date_from, date_to = plan[0], plan[1], plan[2]
-        existing = conn.execute("SELECT 1 FROM budget_monthly_lines WHERE budget_id=? LIMIT 1", (budget_id,)).fetchone()
+        budget_id, date_from, date_to = plan["id"], plan["date_from"], plan["date_to"]
+        existing = _execute(conn, "SELECT 1 FROM budget_monthly_lines WHERE budget_id=? LIMIT 1", (budget_id,)).fetchone()
         if existing:
             continue
         months = _budget_months(date_from, date_to)
-        lines = conn.execute("SELECT account_id,amount FROM budget_lines WHERE budget_id=?", (budget_id,)).fetchall()
+        lines = _execute(conn, "SELECT account_id,amount FROM budget_lines WHERE budget_id=?", (budget_id,)).fetchall()
         for line in lines:
-            allocations = _split_monthly_amount(_money(line[1]), months)
-            conn.executemany(
-                "INSERT OR IGNORE INTO budget_monthly_lines(budget_id,account_id,period,amount) VALUES(?,?,?,?)",
-                [(budget_id, line[0], month, str(amount)) for month, amount in zip(months, allocations)]
+            allocations = _split_monthly_amount(_money(line["amount"]), months)
+            _executemany(
+                conn,
+                "INSERT INTO budget_monthly_lines(budget_id,account_id,period,amount) VALUES(?,?,?,?) "
+                "ON CONFLICT(budget_id,account_id,period) DO NOTHING",
+                [(budget_id, line["account_id"], month, str(amount))
+                 for month, amount in zip(months, allocations)]
             )
-    journal_table_exists = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='journal_entries'"
-    ).fetchone()
-    if journal_table_exists:
-        if "entry_type" not in {row[1] for row in conn.execute("PRAGMA table_info(journal_entries)")}:
-            conn.execute("ALTER TABLE journal_entries ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'general'")
-        # Migrate historical closing journals using the dedicated history table.
-        conn.execute("""UPDATE journal_entries SET entry_type='year_end_closing'
+    if table_exists(conn, "journal_entries"):
+        if "entry_type" not in table_columns(conn, "journal_entries"):
+            _execute(conn, "ALTER TABLE journal_entries ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'general'")
+        _execute(conn, """UPDATE journal_entries SET entry_type='year_end_closing'
             WHERE id IN (SELECT entry_id FROM financial_year_journal_history
                          WHERE entry_kind='closing' AND action='created')""")
-        conn.execute("""UPDATE journal_entries SET entry_type='year_end_closing_reversal'
+        _execute(conn, """UPDATE journal_entries SET entry_type='year_end_closing_reversal'
             WHERE id IN (SELECT entry_id FROM financial_year_journal_history
                          WHERE entry_kind='closing' AND action='reversed')""")
-        conn.commit()
     conn.commit()
 
 
