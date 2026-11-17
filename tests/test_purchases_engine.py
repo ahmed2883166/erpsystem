@@ -544,6 +544,7 @@ class PurchasingAccountingTests(unittest.TestCase):
 
         return_app = Flask(__name__, template_folder=str(Path(purchases.__file__).resolve().parent / "templates"))
         return_app.secret_key = "test"
+        return_app.config["TESTING"] = True  # Propagate unexpected route errors with their real traceback.
         # This isolated route test does not mount the full ERP navigation.
         # Keep the purchase page template real while replacing only the shared
         # base layout, whose many unrelated endpoints belong to the full app.
