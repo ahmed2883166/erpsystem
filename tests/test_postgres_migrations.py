@@ -101,6 +101,28 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         ).fetchone()
         self.assertIsNotNone(table["table_name"])
 
+    def test_executes_multi_statement_migration_with_dollar_quoted_block(self):
+        migrations = [
+            self._migration(
+                1,
+                "0001_multi_statement.sql",
+                """
+                CREATE TABLE "multi_probe" (id BIGINT PRIMARY KEY, label TEXT);
+                INSERT INTO "multi_probe"(id, label) VALUES (1, 'first; value');
+                DO $nexus$
+                BEGIN
+                    UPDATE "multi_probe" SET label = 'done; value' WHERE id = 1;
+                END
+                $nexus$;
+                """,
+            )
+        ]
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1])
+        row = self.connection.execute(
+            'SELECT label FROM ' + quote_schema_name(self.schema) + '."multi_probe" WHERE id=1'
+        ).fetchone()
+        self.assertEqual(row["label"], "done; value")
+
     def test_rejects_migration_set_missing_previously_applied_versions(self):
         original = self._migration(1, "0001_probe.sql", 'CREATE TABLE "probe" (id BIGINT)')
         apply_migrations(self.connection, [original], schema=self.schema)
