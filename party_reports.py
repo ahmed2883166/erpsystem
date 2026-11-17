@@ -1,6 +1,7 @@
 from app_paths import DB_PATH
 from database import connect_database
 from db_compat import table_columns, table_exists
+from db_sql import execute_compat
 """Customer and supplier subledger statements with opening and running balances."""
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
@@ -9,6 +10,12 @@ from functools import wraps
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
 
 party_bp = Blueprint("party_reports", __name__)
+
+
+def _execute(connection, sql, params=()):
+    """Execute a qmark-parameterized party-report query on either supported driver."""
+    return execute_compat(connection, sql, params)
+
 
 def _db():
     return connect_database(DB_PATH)
@@ -37,23 +44,23 @@ def _columns(c, name):
 def _events(c, kind, party_id):
     events = []
     if kind == "customer":
-        for r in c.execute("""SELECT invoice_date event_date,invoice_no reference,
+        for r in _execute(c, """SELECT invoice_date event_date,invoice_no reference,
             'فاتورة مبيعات' description,total_amount debit,0 credit,0 priority
             FROM sales_invoices WHERE customer_id=? AND status='posted'""", (party_id,)):
             events.append(dict(r))
-        for r in c.execute("""SELECT cr.receipt_date event_date,cr.receipt_no reference,
+        for r in _execute(c, """SELECT cr.receipt_date event_date,cr.receipt_no reference,
             'مقبوضات عميل ' || COALESCE(cr.reference,'') description,0 debit,
             cr.amount credit,1 priority
             FROM customer_receipts cr JOIN sales_invoices i ON i.id=cr.invoice_id
             WHERE i.customer_id=?""", (party_id,)):
             events.append(dict(r))
         if _table_exists(c, "customer_receipt_batches"):
-            for r in c.execute("""SELECT receipt_date event_date,receipt_no reference,
+            for r in _execute(c, """SELECT receipt_date event_date,receipt_no reference,
                 'تحصيل مجمع من العميل' description,0 debit,total_amount credit,1 priority
                 FROM customer_receipt_batches WHERE customer_id=?""", (party_id,)):
                 events.append(dict(r))
         if _table_exists(c, "customer_advance_allocations"):
-            for r in c.execute("""SELECT a.allocation_date event_date,
+            for r in _execute(c, """SELECT a.allocation_date event_date,
                 'CADVA-' || a.id reference,'تخصيص مقدم عميل على فاتورة ' || i.invoice_no description,
                 0 debit,a.amount credit,2 priority
                 FROM customer_advance_allocations a
@@ -61,7 +68,7 @@ def _events(c, kind, party_id):
                 WHERE i.customer_id=?""", (party_id,)):
                 events.append(dict(r))
         if _table_exists(c, "customer_advance_reversals"):
-            for r in c.execute("""SELECT x.reversal_date event_date,
+            for r in _execute(c, """SELECT x.reversal_date event_date,
                 'CADVA-REV-' || x.id reference,
                 'عكس تخصيص مقدم عميل على فاتورة ' || i.invoice_no description,
                 a.amount debit,0 credit,3 priority
@@ -70,14 +77,14 @@ def _events(c, kind, party_id):
                 JOIN sales_invoices i ON i.id=a.invoice_id
                 WHERE x.source_type='allocation' AND i.customer_id=?""", (party_id,)):
                 events.append(dict(r))
-        for r in c.execute("""SELECT cn.credit_date event_date,cn.credit_note_no reference,
+        for r in _execute(c, """SELECT cn.credit_date event_date,cn.credit_note_no reference,
             'إشعار دائن / مرتجع بيع: ' || cn.reason description,0 debit,
             cn.total_amount credit,2 priority
             FROM sales_credit_notes cn JOIN sales_invoices i ON i.id=cn.invoice_id
             WHERE i.customer_id=? AND cn.status IN ('posted','cancelled')""", (party_id,)):
             events.append(dict(r))
         if _table_exists(c, "customer_refunds"):
-            for r in c.execute("""SELECT rf.refund_date event_date,rf.refund_no reference,
+            for r in _execute(c, """SELECT rf.refund_date event_date,rf.refund_no reference,
                 'رد مبلغ للعميل عن إشعار دائن' description,rf.amount debit,0 credit,3 priority
                 FROM customer_refunds rf
                 JOIN sales_credit_notes cn ON cn.id=rf.credit_note_id
@@ -85,7 +92,7 @@ def _events(c, kind, party_id):
                 WHERE i.customer_id=?""", (party_id,)):
                 events.append(dict(r))
         if "cancel_journal_entry_id" in _columns(c, "sales_credit_notes"):
-            for r in c.execute("""SELECT je.entry_date event_date,cn.credit_note_no || '-CANCEL' reference,
+            for r in _execute(c, """SELECT je.entry_date event_date,cn.credit_note_no || '-CANCEL' reference,
                 'إلغاء إشعار دائن: ' || cn.cancellation_reason description,
                 cn.total_amount debit,0 credit,4 priority
                 FROM sales_credit_notes cn
@@ -94,16 +101,16 @@ def _events(c, kind, party_id):
                 WHERE i.customer_id=? AND cn.status='cancelled'""", (party_id,)):
                 events.append(dict(r))
     else:
-        for r in c.execute("""SELECT bill_date event_date,bill_no reference,
+        for r in _execute(c, """SELECT bill_date event_date,bill_no reference,
             'فاتورة مشتريات' description,0 debit,total_amount credit,0 priority
             FROM supplier_bills WHERE supplier_id=? AND status='posted'""", (party_id,)):
             events.append(dict(r))
-        for r in c.execute("""SELECT cn.credit_date event_date,cn.credit_no reference,
+        for r in _execute(c, """SELECT cn.credit_date event_date,cn.credit_no reference,
             'إشعار دائن مشتريات / مرتجع مورد: ' || cn.reason description,
             cn.total_amount debit,0 credit,1 priority
             FROM supplier_credit_notes cn WHERE cn.supplier_id=? AND cn.status='posted'""", (party_id,)):
             events.append(dict(r))
-        for r in c.execute("""SELECT payment_date event_date,payment_no reference,
+        for r in _execute(c, """SELECT payment_date event_date,payment_no reference,
             'مدفوعات مورد ' || COALESCE(reference,'') description,amount debit,0 credit,2 priority
             FROM supplier_payments WHERE supplier_id=?""", (party_id,)):
             events.append(dict(r))
@@ -130,14 +137,14 @@ def _gl_control_balance(c, account_codes, as_of, normal_side):
     codes=sorted({str(code) for code in account_codes if code not in (None,"")})
     if not codes: return None,[]
     placeholders=",".join("?" for _ in codes)
-    accounts=c.execute(
+    accounts=_execute(c, 
         f"SELECT id,code FROM accounts WHERE code IN ({placeholders}) AND is_group=0 AND active=1",
         codes).fetchall()
     account_ids=[row["id"] for row in accounts]
     if not account_ids: return None,codes
     marks=",".join("?" for _ in account_ids)
     exclusion,excluded=_opening_copy_exclusion(c,as_of)
-    rows=c.execute(f"""SELECT jl.debit,jl.credit FROM journal_lines jl
+    rows=_execute(c, f"""SELECT jl.debit,jl.credit FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         WHERE je.status='posted' AND je.entry_date<=?{exclusion}
           AND jl.account_id IN ({marks})""",(as_of,*excluded,*account_ids)).fetchall()
@@ -196,9 +203,9 @@ def _customer_advance_subledger(c, as_of):
         allocations_sql = "SELECT amount FROM customer_advance_allocations WHERE allocation_date<=?"
         refunds_sql = "SELECT amount FROM customer_advance_refunds WHERE refund_date<=?"
         receipt_params = allocation_params = refund_params = (as_of,)
-    receipts = sum((_decimal(row["amount"]) for row in c.execute(receipts_sql, receipt_params)), Decimal("0"))
-    allocations = sum((_decimal(row["amount"]) for row in c.execute(allocations_sql, allocation_params)), Decimal("0"))
-    refunds = sum((_decimal(row["amount"]) for row in c.execute(refunds_sql, refund_params)), Decimal("0"))
+    receipts = sum((_decimal(row["amount"]) for row in _execute(c, receipts_sql, receipt_params)), Decimal("0"))
+    allocations = sum((_decimal(row["amount"]) for row in _execute(c, allocations_sql, allocation_params)), Decimal("0"))
+    refunds = sum((_decimal(row["amount"]) for row in _execute(c, refunds_sql, refund_params)), Decimal("0"))
     return receipts - allocations - refunds, True
 
 
@@ -312,7 +319,7 @@ def _all_party_events(c, kind):
                 amount debit,0 credit,2 priority FROM supplier_payments""", ()),
         ]
     for sql, params in queries:
-        for row in c.execute(sql, params):
+        for row in _execute(c, sql, params):
             event = dict(row)
             event["debit"] = _decimal(event["debit"])
             event["credit"] = _decimal(event["credit"])
@@ -329,17 +336,17 @@ def _gl_party_control_balance(c, account_codes, party_id, as_of, normal_side, di
     codes=sorted({str(code) for code in account_codes if code not in (None,"")})
     if not codes: return None,False
     placeholders=",".join("?" for _ in codes)
-    accounts=c.execute(f"SELECT id FROM accounts WHERE code IN ({placeholders}) AND is_group=0 AND active=1",codes).fetchall()
+    accounts=_execute(c, f"SELECT id FROM accounts WHERE code IN ({placeholders}) AND is_group=0 AND active=1",codes).fetchall()
     account_ids=[row["id"] for row in accounts]
     if not account_ids: return None,False
     marks=",".join("?" for _ in account_ids)
     exclusion,excluded=_opening_copy_exclusion(c,as_of)
-    unassigned=c.execute(f"""SELECT 1 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+    unassigned=_execute(c, f"""SELECT 1 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
         WHERE je.status='posted' AND je.entry_date<=?{exclusion}
           AND jl.account_id IN ({marks}) AND jl.{dimension} IS NULL LIMIT 1""",
         (as_of,*excluded,*account_ids)).fetchone()
     if unassigned: return None,False
-    rows=c.execute(f"""SELECT jl.debit,jl.credit FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+    rows=_execute(c, f"""SELECT jl.debit,jl.credit FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
         WHERE je.status='posted' AND je.entry_date<=?{exclusion}
           AND jl.account_id IN ({marks}) AND jl.{dimension}=?""",
         (as_of,*excluded,*account_ids,party_id)).fetchall()
@@ -356,17 +363,17 @@ def _gl_party_control_balances(c, account_codes, as_of, normal_side, dimension):
     codes=sorted({str(code) for code in account_codes if code not in (None,"")})
     if not codes: return {},False
     placeholders=",".join("?" for _ in codes)
-    accounts=c.execute(f"SELECT id FROM accounts WHERE code IN ({placeholders}) AND is_group=0 AND active=1",codes).fetchall()
+    accounts=_execute(c, f"SELECT id FROM accounts WHERE code IN ({placeholders}) AND is_group=0 AND active=1",codes).fetchall()
     account_ids=[row["id"] for row in accounts]
     if not account_ids: return {},False
     marks=",".join("?" for _ in account_ids)
     exclusion,excluded=_opening_copy_exclusion(c,as_of)
-    unassigned=c.execute(f"""SELECT 1 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+    unassigned=_execute(c, f"""SELECT 1 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
         WHERE je.status='posted' AND je.entry_date<=?{exclusion}
           AND jl.account_id IN ({marks}) AND jl.{dimension} IS NULL LIMIT 1""",
         (as_of,*excluded,*account_ids)).fetchone()
     if unassigned: return {},False
-    rows=c.execute(f"""SELECT jl.{dimension} party_id,jl.debit,jl.credit
+    rows=_execute(c, f"""SELECT jl.{dimension} party_id,jl.debit,jl.credit
         FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
         WHERE je.status='posted' AND je.entry_date<=?{exclusion}
           AND jl.account_id IN ({marks}) AND jl.{dimension} IS NOT NULL""",
@@ -390,7 +397,7 @@ def build_party_reconciliation(c, kind, as_of, selected_party_id=None):
     profile = get_active_activity_profile(c)
     posting = profile.get("posting_accounts") or {}
     account_code = posting.get("ar" if kind == "customer" else "supplier_ap")
-    parties = c.execute(f"SELECT id,code,name FROM {table} ORDER BY code,id").fetchall()
+    parties = _execute(c, f"SELECT id,code,name FROM {table} ORDER BY code,id").fetchall()
     gl_balances, gl_dimension_available = _gl_party_control_balances(
         c, (account_code,), as_of, normal_side, dimension
     )
@@ -455,7 +462,7 @@ def party_statement():
     if date_from and date_to and date_from > date_to:
         abort(400)
     c = _db()
-    parties = c.execute("SELECT id,code,name FROM customers WHERE active=1 ORDER BY code").fetchall() if kind == "customer" else c.execute(
+    parties = _execute(c, "SELECT id,code,name FROM customers WHERE active=1 ORDER BY code").fetchall() if kind == "customer" else _execute(c, 
         "SELECT id,code,name FROM suppliers WHERE active=1 ORDER BY code").fetchall()
     selected = next((p for p in parties if p["id"] == party_id), None)
     opening = Decimal("0")
@@ -504,7 +511,7 @@ def _customer_advance_details(c, as_of):
     if not {"advance_receipt_id", "refund_date", "amount"}.issubset(refund_cols):
         return [], False
     reference_expr = "COALESCE(r.reference,'')" if "reference" in receipt_cols else "''"
-    rows = c.execute(
+    rows = _execute(c, 
         f"""SELECT r.id,r.receipt_no,r.customer_id,r.receipt_date,r.amount,
                   {reference_expr} reference,cu.code customer_code,cu.name customer_name
            FROM customer_advance_receipts r
@@ -526,7 +533,7 @@ def _customer_advance_details(c, as_of):
                   SELECT 1 FROM customer_advance_reversals x
                   WHERE x.source_type='refund' AND x.source_id=r.id AND x.reversal_date<=?)"""
             allocation_params = refund_params = (row["id"], as_of, as_of)
-            receipt_reversed = c.execute(
+            receipt_reversed = _execute(c, 
                 """SELECT 1 FROM customer_advance_reversals
                    WHERE source_type='receipt' AND source_id=? AND reversal_date<=?""",
                 (row["id"], as_of),
@@ -536,8 +543,8 @@ def _customer_advance_details(c, as_of):
             refund_sql = "SELECT amount FROM customer_advance_refunds WHERE advance_receipt_id=? AND refund_date<=?"
             allocation_params = refund_params = (row["id"], as_of)
             receipt_reversed = False
-        allocated = sum((_decimal(item["amount"]) for item in c.execute(allocation_sql, allocation_params)), Decimal("0"))
-        refunded = sum((_decimal(item["amount"]) for item in c.execute(refund_sql, refund_params)), Decimal("0"))
+        allocated = sum((_decimal(item["amount"]) for item in _execute(c, allocation_sql, allocation_params)), Decimal("0"))
+        refunded = sum((_decimal(item["amount"]) for item in _execute(c, refund_sql, refund_params)), Decimal("0"))
         received = Decimal("0") if receipt_reversed else _decimal(row["amount"])
         result.append({
             **dict(row), "received": received, "allocated": allocated,
@@ -581,7 +588,7 @@ def party_reconciliation():
     try:
         rows, details = build_party_reconciliation(c, kind, as_of, party_id)
         table = "customers" if kind == "customer" else "suppliers"
-        parties = c.execute(f"SELECT id,code,name FROM {table} ORDER BY code,id").fetchall()
+        parties = _execute(c, f"SELECT id,code,name FROM {table} ORDER BY code,id").fetchall()
         selected = next((party for party in parties if party["id"] == party_id), None)
     finally:
         c.close()
