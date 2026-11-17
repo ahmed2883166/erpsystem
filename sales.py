@@ -2746,13 +2746,13 @@ def reject_discount_approval_request(conn, current, reviewer_id, reason, request
     if changed != 1:
         raise ValueError("تمت معالجة طلب الخصم بواسطة مستخدم آخر.")
     if current["request_type"] == "sales_order":
-        conn.execute(
+        changed = conn.execute(
             """UPDATE sales_orders SET status='rejected',discount_approval_status='rejected',
                rejection_reason=?,rejected_by=?,rejected_at=CURRENT_TIMESTAMP
                WHERE id=? AND discount_approval_request_id=? AND status='pending_approval'""",
             (reason, reviewer_id, current["sales_order_id"], request_id),
-        )
-        if conn.execute("SELECT changes()").fetchone()[0] != 1:
+        ).rowcount
+        if changed != 1:
             raise ValueError("تعذر تثبيت رفض الخصم على أمر البيع.")
     return True
 
@@ -2815,12 +2815,12 @@ def discount_approval(request_id):
                 ).rowcount
                 if changed != 1:
                     raise ValueError("تمت معالجة طلب الخصم بواسطة مستخدم آخر.")
-                c.execute(
+                changed = c.execute(
                     """UPDATE sales_orders SET discount_approval_status='approved'
                        WHERE id=? AND discount_approval_request_id=? AND status='pending_approval'""",
                     (current["sales_order_id"], request_id),
-                )
-                if c.execute("SELECT changes()").fetchone()[0] != 1:
+                ).rowcount
+                if changed != 1:
                     raise ValueError("تعذر تثبيت موافقة الخصم على أمر البيع.")
                 c.commit()
                 from app import log
