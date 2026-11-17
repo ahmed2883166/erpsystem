@@ -2,6 +2,7 @@
 import os
 import sqlite3
 import unittest
+from decimal import Decimal
 
 from stock import _columns, _table_exists
 
@@ -164,6 +165,11 @@ class StockValuationLayerLockTests(unittest.TestCase):
                     qty_remaining TEXT
                 )
             """)
+            conn.create_function(
+                "DECIMAL_CMP", 2,
+                lambda left, right: (Decimal(str(left or "0")) > Decimal(str(right or "0")))
+                - (Decimal(str(left or "0")) < Decimal(str(right or "0"))),
+            )
             self.assertEqual(available_layers(conn, 12, 3), [])
         finally:
             conn.close()
