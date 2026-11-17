@@ -1914,9 +1914,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     depreciation_account_ids=set()
     fixed_assets_exists=table_exists(conn, "fixed_assets")
     if fixed_assets_exists:
-        fixed_asset_columns={
-            row["name"] for row in _execute(conn, "PRAGMA table_info(fixed_assets)")
-        }
+        fixed_asset_columns=table_columns(conn, "fixed_assets")
         if "expense_account_id" in fixed_asset_columns:
             depreciation_account_ids={
                 row["expense_account_id"] for row in _execute(conn, 
@@ -1927,9 +1925,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     depreciation_entry_ids=set()
     asset_depreciation_exists=table_exists(conn, "asset_depreciations")
     if asset_depreciation_exists:
-        asset_depreciation_columns={
-            row["name"] for row in _execute(conn, "PRAGMA table_info(asset_depreciations)")
-        }
+        asset_depreciation_columns=table_columns(conn, "asset_depreciations")
         if {"amount","journal_entry_id"}.issubset(asset_depreciation_columns):
             posted_asset_depreciation=_execute(conn, """
                 SELECT d.amount,d.journal_entry_id FROM asset_depreciations d
@@ -1980,9 +1976,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     disposal_gain_loss=Decimal("0")
     disposals_exists=table_exists(conn, "asset_disposals")
     if disposals_exists:
-        disposal_columns={
-            row["name"] for row in _execute(conn, "PRAGMA table_info(asset_disposals)")
-        }
+        disposal_columns=table_columns(conn, "asset_disposals")
         if {"gain_loss_amount","disposal_date"}.issubset(disposal_columns):
             disposal_row=_execute(conn, 
                 "SELECT COALESCE(DECIMAL_SUM(gain_loss_amount),'0') amount FROM asset_disposals WHERE disposal_date>=? AND disposal_date<=?",
