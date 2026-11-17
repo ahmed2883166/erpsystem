@@ -6,6 +6,7 @@ from datetime import date
 import calendar
 
 from db_insert import insert_one_returning_id
+from db_compat import table_columns, begin_write_transaction
 from decimal import Decimal, InvalidOperation
 
 COMMITMENT_TYPES = {"tax", "recurring_expense", "friday_overtime"}
@@ -106,9 +107,7 @@ def initialize_cash_commitments_schema(conn):
         CREATE INDEX IF NOT EXISTS idx_cash_commitment_schedules_active
             ON cash_commitment_schedules(active,next_due_date);
     """)
-    payment_columns = {
-        row[1] for row in conn.execute("PRAGMA table_info(cash_commitment_payments)")
-    }
+    payment_columns = table_columns(conn, "cash_commitment_payments")
     if "reversal_journal_entry_id" not in payment_columns:
         conn.execute(
             "ALTER TABLE cash_commitment_payments ADD COLUMN reversal_journal_entry_id "
@@ -150,9 +149,7 @@ def create_cash_commitment(conn, commitment_type, title, amount, due_date,
 
 def _journal_entry_effect_is_active(conn, journal_entry_id, as_of=None):
     """Whether a posted journal still has its original accounting effect at a date."""
-    columns = {
-        row[1] for row in conn.execute("PRAGMA table_info(journal_entries)")
-    }
+    columns = table_columns(conn, "journal_entries")
     selected = ["status"]
     if "reference" in columns:
         selected.append("reference")
@@ -228,9 +225,7 @@ def cash_commitment_payment_summary(conn, commitment_id):
     ).fetchone()
     if not commitment:
         raise ValueError("الالتزام غير موجود.")
-    journal_columns = {
-        row[1] for row in conn.execute("PRAGMA table_info(journal_entries)")
-    }
+    journal_columns = table_columns(conn, "journal_entries")
     journal_fields = ["j.status journal_status"]
     journal_fields.append("j.reference journal_reference" if "reference" in journal_columns
                           else "'' journal_reference")
@@ -267,7 +262,7 @@ def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
                                    created_by=None, payable_account_id=None):
     payment_date = date.fromisoformat(str(payment_date)).isoformat()
     amount = _amount(amount)
-    conn.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(conn)
     try:
         commitment = conn.execute(
             "SELECT id,amount,status,payable_account_id FROM cash_commitments WHERE id=?", (commitment_id,)
@@ -341,7 +336,7 @@ def reverse_cash_commitment_payment(conn, payment_id, reversal_date,
     reason = str(reason or "").strip()
     if not reason or len(reason) > 500:
         raise ValueError("اكتب سببًا لعكس السداد (بحد أقصى 500 حرف).")
-    conn.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(conn)
     try:
         payment = conn.execute(
             """SELECT p.*,c.id commitment_id,c.amount commitment_amount,c.status commitment_status,
@@ -414,7 +409,7 @@ def reverse_cash_commitment_payment(conn, payment_id, reversal_date,
 
 
 def void_cash_commitment(conn, commitment_id):
-    conn.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(conn)
     try:
         row = conn.execute(
             "SELECT status FROM cash_commitments WHERE id=?", (commitment_id,)
@@ -494,9 +489,7 @@ def sync_friday_allowance_commitments(conn, created_by=None):
     if missing:
         raise ValueError("تعذر مراجعة الكشوف؛ جداول مطلوبة غير موجودة: " + "، ".join(missing))
 
-    settings_columns = {
-        row["name"] for row in conn.execute("PRAGMA table_info(company_settings)")
-    } if table_exists("company_settings") else set()
+    settings_columns = table_columns(conn, "company_settings") if table_exists("company_settings") else set()
     currency_code = ""
     if {"setting_key", "setting_value"}.issubset(settings_columns):
         setting = conn.execute(
@@ -507,7 +500,7 @@ def sync_friday_allowance_commitments(conn, created_by=None):
     owns_transaction = not conn.in_transaction
     savepoint = "sync_friday_allowance_commitments"
     if owns_transaction:
-        conn.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(conn)
     else:
         conn.execute(f"SAVEPOINT {savepoint}")
     imported = 0
@@ -638,7 +631,7 @@ def create_recurring_schedule(conn, title, amount, first_due_date, frequency,
 def generate_recurring_schedule_occurrences(conn, schedule_id, through_date):
     """Explicitly materialize scheduled expense occurrences; safe to repeat."""
     through_date = date.fromisoformat(str(through_date)).isoformat()
-    conn.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(conn)
     try:
         schedule = conn.execute(
             "SELECT * FROM cash_commitment_schedules WHERE id=?", (schedule_id,)
