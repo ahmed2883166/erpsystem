@@ -94,6 +94,44 @@ class PurchasingAccountingTests(unittest.TestCase):
             self.assertEqual(purchases._lock_supplier_receipts(self.db, [2, 5]), [])
         execute.assert_not_called()
 
+    def test_grni_receipt_lock_is_taken_before_allocation_availability_check(self):
+        events = []
+
+        class Cursor:
+            def __init__(self, one=None, many=None):
+                self.one = one
+                self.many = many or []
+
+            def fetchone(self):
+                return self.one
+
+            def fetchall(self):
+                return self.many
+
+        def fake_execute(_conn, sql, params=()):
+            events.append(("query", sql, tuple(params)))
+            if "SELECT id,total_value FROM goods_receipts" in sql:
+                return Cursor(one={"id": 2, "total_value": "100"})
+            if "SELECT x.matched_amount" in sql:
+                return Cursor(many=[])
+            if "SELECT total_value FROM goods_receipts" in sql:
+                return Cursor(one={"total_value": "100"})
+            raise AssertionError("Unexpected GRNI allocation query: " + sql)
+
+        def fake_lock(_conn, receipt_ids):
+            events.append(("lock", tuple(receipt_ids)))
+            return [{"id": 2}]
+
+        with patch("purchases._lock_supplier_receipts", side_effect=fake_lock), \
+             patch("purchases.execute_compat", side_effect=fake_execute):
+            allocations = purchases._validate_supplier_receipt_allocations(
+                self.db, 7, [2], Decimal("100"), {"receipt_amount_2": "100"}
+            )
+
+        self.assertEqual(allocations, [(2, Decimal("100.00"))])
+        self.assertEqual(events[0], ("lock", (2,)))
+        self.assertEqual(events[1][0], "query")
+
     def test_supplier_credit_note_route_persists_real_layer_allocations(self):
         purchases.init_purchase_schema()
         self.db.execute("INSERT INTO company_settings(setting_key,setting_value) VALUES('activity','commercial')")
