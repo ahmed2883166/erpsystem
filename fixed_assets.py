@@ -10,7 +10,6 @@ from flask import Blueprint, flash, redirect, render_template, request, session,
 from accounting_core import post_journal, safe_error_message
 from code_sequences import next_code
 from db_insert import insert_one_returning_id
-from db_compat import table_columns, table_exists
 
 assets_bp = Blueprint("assets", __name__, url_prefix="/assets")
 
@@ -91,7 +90,7 @@ def initialize_assets_schema():
     );
     CREATE INDEX IF NOT EXISTS idx_asset_disposals_date ON asset_disposals(disposal_date);
     """)
-    asset_columns = table_columns(c, "fixed_assets")
+    asset_columns = {row["name"] for row in c.execute("PRAGMA table_info(fixed_assets)")}
     if "supplier_bill_id" not in asset_columns:
         c.execute("ALTER TABLE fixed_assets ADD COLUMN supplier_bill_id INTEGER REFERENCES supplier_bills(id)")
     c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_fixed_asset_supplier_bill ON fixed_assets(supplier_bill_id) WHERE supplier_bill_id IS NOT NULL")
@@ -100,7 +99,7 @@ def initialize_assets_schema():
         asset_id INTEGER NOT NULL UNIQUE REFERENCES fixed_assets(id),
         PRIMARY KEY(bill_id,asset_id)
     )""")
-    disposal_columns = table_columns(c, "asset_disposals")
+    disposal_columns = {row["name"] for row in c.execute("PRAGMA table_info(asset_disposals)")}
     if "disposal_type" not in disposal_columns:
         c.execute("ALTER TABLE asset_disposals ADD COLUMN disposal_type TEXT NOT NULL DEFAULT 'other'")
     if "document_number" not in disposal_columns:
@@ -179,7 +178,9 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
         "SELECT 1 FROM fixed_asset_supplier_bill_links WHERE bill_id=? LIMIT 1",(bill["id"],)
     ).fetchone():
         raise ValueError("فاتورة المورد مرتبطة بسجل أصول بالفعل.")
-    has_lines = table_exists(conn, "supplier_bill_asset_lines")
+    has_lines = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='supplier_bill_asset_lines'"
+    ).fetchone()
     rows = conn.execute(
         "SELECT * FROM supplier_bill_asset_lines WHERE bill_id=? ORDER BY line_no",(bill["id"],)
     ).fetchall() if has_lines else []
