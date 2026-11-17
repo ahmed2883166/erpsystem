@@ -5,6 +5,7 @@ SQLite TEXT values as PostgreSQL TEXT (including exact Decimal strings) until
 each numeric field has an explicitly reviewed precision/scale mapping.
 """
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -20,16 +21,23 @@ def quote_ident(value):
     return '"' + value + '"'
 
 
+def short_identifier(value, limit=63):
+    value = str(value)
+    if len(value) <= limit:
+        return value
+    suffix = hashlib.sha1(value.encode("utf-8")).hexdigest()[:10]
+    return value[:limit - len(suffix) - 1] + "_" + suffix
+
+
 def pg_type(column):
     declared = (column.get("type") or "").strip().upper()
     if declared == "INTEGER":
         return "BIGINT"
     if declared == "REAL":
         return "DOUBLE PRECISION"
-    if declared in ("BLOB",):
+    if declared == "BLOB":
         return "BYTEA"
-    # TEXT, empty declarations, NUMERIC affinities and unfamiliar declarations
-    # are deliberately not guessed. The current ERP stores money as TEXT.
+    # Money/quantity TEXT remains TEXT until precision and scale are reviewed.
     return "TEXT"
 
 
@@ -39,14 +47,46 @@ def default_sql(value):
     value = str(value).strip()
     if not value:
         return None
-    # SQLite's bare CURRENT_TIMESTAMP is also valid in PostgreSQL.
     if value.upper() in ("CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME"):
         return value.upper()
-    # Preserve SQL literals and expressions from the generated schema snapshot.
-    # Refuse statement separators and comments in defaults.
     if ";" in value or "--" in value or "/*" in value:
         raise ValueError(f"Unexpected SQL syntax in column default: {value!r}")
     return value
+
+
+def extract_check_constraints(create_sql):
+    """Extract simple balanced CHECK(...) clauses from SQLite CREATE TABLE SQL."""
+    if not create_sql:
+        return []
+    checks = []
+    pattern = re.compile(r"\bCHECK\s*\(", re.I)
+    for match in pattern.finditer(create_sql):
+        start = match.end()
+        depth = 1
+        quote = None
+        i = start
+        while i < len(create_sql) and depth:
+            char = create_sql[i]
+            if quote:
+                if char == quote:
+                    if i + 1 < len(create_sql) and create_sql[i + 1] == quote:
+                        i += 1
+                    else:
+                        quote = None
+            elif char in ("'", '"', "`"):
+                quote = char
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            i += 1
+        if depth:
+            raise ValueError("Unbalanced CHECK expression in SQLite schema SQL.")
+        expression = create_sql[start:i - 1].strip()
+        if not expression or ";" in expression or "--" in expression or "/*" in expression:
+            raise ValueError("Unsupported or unsafe CHECK expression in SQLite schema SQL.")
+        checks.append(expression)
+    return checks
 
 
 def _index_sql_by_name(snapshot):
@@ -118,6 +158,10 @@ def generate_postgres_ddl(snapshot):
         if primary and len(primary) > 1:
             pk_cols = ", ".join(quote_ident(c["name"]) for c in primary)
             definitions.append(f"    PRIMARY KEY ({pk_cols})")
+
+        for check in extract_check_constraints(table.get("sql")):
+            definitions.append(f"    CHECK ({check})")
+
         lines.append(f"CREATE TABLE {qtable} (")
         lines.append(",\n".join(definitions))
         lines.append(");")
@@ -134,19 +178,16 @@ def generate_postgres_ddl(snapshot):
         for index in table.get("indexes", []):
             if index.get("origin") == "pk":
                 continue
-            cols = [column["name"] for column in index.get("columns", [])]
-            if not cols:
-                continue
+            cols = [column.get("name") for column in index.get("columns", [])]
             pending_indexes.append((table_name, index, cols))
 
-    # Add foreign keys only after every table exists; this supports cycles.
-    fk_counter = 0
-    for table_name, fk in pending_fks:
-        fk_counter += 1
+    # Add foreign keys after every table exists; this supports cyclic references.
+    for counter, (table_name, fk) in enumerate(pending_fks, start=1):
         target_table = fk["table"]
         source_col = quote_ident(fk["from"])
         target_col = quote_ident(fk["to"])
-        constraint = quote_ident(f"fk_{table_name}_{fk['from']}_{fk_counter}")
+        raw_constraint = f"fk_{table_name}_{fk['from']}_{counter}"
+        constraint = quote_ident(short_identifier(raw_constraint))
         action = str(fk.get("on_delete") or "NO ACTION").upper()
         if action not in {"NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"}:
             action = "NO ACTION"
@@ -162,26 +203,34 @@ def generate_postgres_ddl(snapshot):
 
     named_index_sql = _index_sql_by_name(snapshot)
     for table_name, index, cols in pending_indexes:
-        name = index.get("name") or f"ix_{table_name}_{'_'.join(cols)}"
+        name = index.get("name") or f"ix_{table_name}_{'_'.join(str(c) for c in cols)}"
+        name = short_identifier(name)
         qindex = quote_ident(name)
-        qtable = quote_ident(table_name)
+        original_sql = named_index_sql.get(index.get("name"))
+        # Expression indexes cannot be reconstructed from PRAGMA index_info
+        # (SQLite reports cid=-2 and a NULL column name); preserve their SQL.
+        if any(column is None for column in cols):
+            if not original_sql:
+                raise ValueError(f"Expression index {name} has no source SQL.")
+            if ";" in original_sql.rstrip().rstrip(";") or "--" in original_sql or "/*" in original_sql:
+                raise ValueError(f"Unsafe expression-index SQL for {name}.")
+            lines.append(original_sql.strip().rstrip(";") + ";")
+            continue
+        if not cols:
+            raise ValueError(f"Index {name} has no columns.")
         unique = "UNIQUE " if index.get("unique") else ""
-        original_sql = named_index_sql.get(name)
+        where_clause = ""
         if original_sql:
-            # Rebuild known SQLite CREATE INDEX statements using metadata columns.
-            # Preserve partial-index predicates only when a safe WHERE suffix exists.
             where_match = re.search(r"\bWHERE\b(.+)$", original_sql, re.I | re.S)
-            where_clause = ""
             if where_match:
                 predicate = where_match.group(1).strip().rstrip(";")
                 if ";" in predicate or "--" in predicate or "/*" in predicate:
                     raise ValueError(f"Unsafe partial-index predicate for {name}.")
                 where_clause = " WHERE " + predicate
-        else:
-            where_clause = ""
         columns_sql = ", ".join(quote_ident(col) for col in cols)
         lines.append(
-            f"CREATE {unique}INDEX {qindex} ON {qtable} ({columns_sql}){where_clause};"
+            f"CREATE {unique}INDEX {qindex} ON {quote_ident(table_name)} "
+            f"({columns_sql}){where_clause};"
         )
 
     lines.extend(["", "COMMIT;", ""])
@@ -193,8 +242,9 @@ def generate_postgres_ddl(snapshot):
         "text_numeric_candidates": sorted(set(numeric_candidates)),
         "notes": [
             "TEXT monetary and quantity columns remain TEXT intentionally.",
-            "Review all candidate fields before any NUMERIC(p,s) conversion.",
-            "SQLite CHECK constraints and table-level SQL clauses are not inferred from PRAGMA metadata.",
+            "Review candidate fields before any NUMERIC(p,s) conversion.",
+            "CHECK constraints are copied from the SQLite CREATE TABLE definitions.",
+            "Expression indexes are copied from their SQLite CREATE INDEX definitions.",
             "Validate generated DDL on the target PostgreSQL major version before production use.",
         ],
     }
