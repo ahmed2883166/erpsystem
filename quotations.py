@@ -10,6 +10,7 @@ from flask import Blueprint,flash,g,redirect,render_template,request,session,url
 from sales import post_invoice
 from analytic_dimensions import validate_journal_dimensions, active_dimension_options
 from stock import consume_layers, post_issue_journal, ensure_stock_date_open
+from db_compat import table_columns, table_exists, execute_script, begin_write_transaction
 
 quotes_bp=Blueprint("quotes",__name__,url_prefix="/sales/quotations")
 
@@ -19,7 +20,7 @@ def db():
  return connect_database(DB_PATH, isolation_level=None)
 
 def initialize_quotes_schema():
- c=db(); c.executescript("""
+ c=db(); execute_script(c, """
  CREATE TABLE IF NOT EXISTS customer_price_rules(
   id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(id),
   product_id INTEGER NOT NULL REFERENCES stock_products(id), unit_price TEXT NOT NULL,
@@ -89,9 +90,9 @@ def initialize_quotes_schema():
  CREATE INDEX IF NOT EXISTS idx_delivery_line_order_line ON delivery_note_lines(sales_order_line_id,delivery_note_id);
 
  """);
- qcols={r["name"] for r in c.execute("PRAGMA table_info(quotations)")}
+ qcols=table_columns(c, "quotations")
  if "sales_order_id" not in qcols: c.execute("ALTER TABLE quotations ADD COLUMN sales_order_id INTEGER")
- so_cols={r["name"] for r in c.execute("PRAGMA table_info(sales_orders)")}
+ so_cols=table_columns(c, "sales_orders")
  for name,definition in {
   "discount_type":"TEXT NOT NULL DEFAULT 'none'",
   "discount_value":"TEXT NOT NULL DEFAULT '0'",
@@ -107,7 +108,7 @@ def initialize_quotes_schema():
   "discount_approval_request_id":"INTEGER",
  }.items():
   if name not in so_cols: c.execute(f"ALTER TABLE sales_orders ADD COLUMN {name} {definition}")
- sol_cols={r["name"] for r in c.execute("PRAGMA table_info(sales_order_lines)")}
+ sol_cols=table_columns(c, "sales_order_lines")
  if "ordered_value" not in sol_cols:
   c.execute("ALTER TABLE sales_order_lines ADD COLUMN ordered_value TEXT NOT NULL DEFAULT '0'")
   for line in c.execute(
@@ -115,9 +116,9 @@ def initialize_quotes_schema():
       JOIN quotation_lines ql ON ql.id=sol.quotation_line_id"""
   ).fetchall():
    c.execute("UPDATE sales_order_lines SET ordered_value=? WHERE id=?",(line["line_total"],line["id"]))
- dcols={r["name"] for r in c.execute("PRAGMA table_info(delivery_note_lines)")}
+ dcols=table_columns(c, "delivery_note_lines")
  if "invoiced_cost" not in dcols: c.execute("ALTER TABLE delivery_note_lines ADD COLUMN invoiced_cost TEXT NOT NULL DEFAULT '0'")
- lcols={r["name"] for r in c.execute("PRAGMA table_info(delivery_note_line_lots)")}
+ lcols=table_columns(c, "delivery_note_line_lots")
  if "invoiced_qty" not in lcols: c.execute("ALTER TABLE delivery_note_line_lots ADD COLUMN invoiced_qty TEXT NOT NULL DEFAULT '0'")
  if "invoiced_cost" not in lcols: c.execute("ALTER TABLE delivery_note_line_lots ADD COLUMN invoiced_cost TEXT NOT NULL DEFAULT '0'")
  c.close()
@@ -575,7 +576,7 @@ def status(quote_id):
 def convert(quote_id):
  c=db()
  try:
-  c.execute("BEGIN IMMEDIATE")
+  begin_write_transaction(c)
   result=create_sales_order_from_quotation(
    c,quote_id,session["user_id"],request.form.get("warehouse_id",type=int),
    request.form.get("expected_date") or None,
@@ -660,8 +661,8 @@ def sales_order_print(order_id):
   "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
   "('company_name','base_currency','tax_number','company_address','company_phone','company_email','company_website','company_logo_data')")}
  branch=None
- branch_exists=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='branches'").fetchone()
- branch_columns={row["name"] for row in c.execute("PRAGMA table_info(branches)")} if branch_exists else set()
+ branch_exists=table_exists(c, "branches")
+ branch_columns=table_columns(c, "branches") if branch_exists else set()
  if order["branch_id"] and branch_exists:
   branch_fields=[column if column in branch_columns else "'' AS "+column
                  for column in ("address","phone","email","tax_number")]
@@ -682,7 +683,7 @@ def sales_order_print(order_id):
 def approve_order_route(order_id):
  c=db()
  try:
-  c.execute("BEGIN IMMEDIATE")
+  begin_write_transaction(c)
   approve_sales_order(c,order_id,session["user_id"])
   c.commit(); flash("تم اعتماد أمر البيع. يمكن الآن إنشاء أذون التسليم.","success")
  except (ValueError,InvalidOperation,sqlite3.Error) as e:
@@ -696,7 +697,7 @@ def approve_order_route(order_id):
 def reject_order_route(order_id):
  c=db()
  try:
-  c.execute("BEGIN IMMEDIATE")
+  begin_write_transaction(c)
   reject_sales_order(c,order_id,session["user_id"],request.form.get("reason",""))
   c.commit(); flash("تم رفض أمر البيع وتسجيل سبب الرفض.","success")
  except (ValueError,InvalidOperation,sqlite3.Error) as e:
@@ -714,7 +715,7 @@ def create_delivery_note_route(order_id):
   quantities=request.form.getlist("quantity")
   lines=[{"sales_order_line_id":line_id,"quantity":qty}
          for line_id,qty in zip(ids,quantities) if str(qty).strip()]
-  c.execute("BEGIN IMMEDIATE")
+  begin_write_transaction(c)
   result=create_delivery_note(c,order_id,request.form.get("delivery_date",""),
    lines,session["user_id"],request.form.get("notes",""))
   g.audit_created_record=("delivery_notes",result["delivery_note_id"],"delivery_note_lines","delivery_note_id")
@@ -731,7 +732,7 @@ def post_delivery_note_route(note_id):
  c=db()
  order_id=None
  try:
-  c.execute("BEGIN IMMEDIATE")
+  begin_write_transaction(c)
   note=c.execute("SELECT sales_order_id FROM delivery_notes WHERE id=?",(note_id,)).fetchone()
   if not note: raise ValueError("إذن التسليم غير موجود.")
   order_id=note["sales_order_id"]
@@ -748,7 +749,7 @@ def post_delivery_note_route(note_id):
 def invoice_order_route(order_id):
  c=db()
  try:
-  c.execute("BEGIN IMMEDIATE")
+  begin_write_transaction(c)
   result=invoice_sales_order(c,order_id,request.form.get("invoice_date") or date.today().isoformat(),
    request.form.get("due_date") or date.today().isoformat(),session["user_id"],dimensions=request.form)
   g.audit_created_record=("sales_invoices",result["invoice_id"],"sales_invoice_lines","invoice_id")
