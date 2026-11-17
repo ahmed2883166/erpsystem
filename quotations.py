@@ -10,7 +10,7 @@ from flask import Blueprint,flash,g,redirect,render_template,request,session,url
 from sales import post_invoice
 from analytic_dimensions import validate_journal_dimensions, active_dimension_options
 from stock import consume_layers, post_issue_journal, ensure_stock_date_open
-from db_compat import table_columns, table_exists, execute_script, begin_write_transaction
+from db_compat import table_columns, table_exists, execute_script, begin_write_transaction, insert_and_get_id
 
 quotes_bp=Blueprint("quotes",__name__,url_prefix="/sales/quotations")
 
@@ -203,7 +203,7 @@ def create_sales_order_from_quotation(conn, quote_id, created_by, warehouse_id=N
  dimensions=validate_journal_dimensions(conn, dimensions or {})
  dimensions["customer_id"]=int(q["customer_id"])
  order_no="SO-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
- cur=conn.execute(
+ order_id=insert_and_get_id(conn,
   """INSERT INTO sales_orders(order_no,quotation_id,customer_id,warehouse_id,order_date,
      expected_date,status,discount_type,discount_value,discount_amount,branch_id,cost_center_id,
      project_id,salesperson_id,created_by,submitted_by)
@@ -212,7 +212,6 @@ def create_sales_order_from_quotation(conn, quote_id, created_by, warehouse_id=N
    expected_date or None,discount_type,str(discount_value),str(discount_amount),
    dimensions.get("branch_id"),dimensions.get("cost_center_id"),dimensions.get("project_id"),
    dimensions.get("salesperson_id"),created_by,created_by))
- order_id=cur.lastrowid
  limit_row=conn.execute(
   "SELECT setting_value FROM company_settings WHERE setting_key='sales_discount_limit_percent'"
  ).fetchone()
@@ -225,7 +224,7 @@ def create_sales_order_from_quotation(conn, quote_id, created_by, warehouse_id=N
  if discount_amount>0 and discount_percent>discount_limit:
   request_no="SODR-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
   request_payload={"request_type":"sales_order","sales_order_id":order_id}
-  request_cur=conn.execute(
+  request_id=insert_and_get_id(conn,
    """INSERT INTO sales_discount_approval_requests(
       request_no,customer_id,invoice_date,due_date,gross_subtotal,discount_amount,
       discount_percent,payload_json,created_by,request_type,sales_order_id)
@@ -233,7 +232,6 @@ def create_sales_order_from_quotation(conn, quote_id, created_by, warehouse_id=N
    (request_no,q["customer_id"],date.today().isoformat(),date.today().isoformat(),
     str(gross_subtotal),str(discount_amount),str(discount_percent),
     json.dumps(request_payload,ensure_ascii=False),created_by,order_id))
-  request_id=request_cur.lastrowid
   discount_request_id=request_id
   conn.execute(
    """UPDATE sales_orders SET discount_approval_status='pending',
@@ -299,11 +297,10 @@ def create_delivery_note(conn, order_id, delivery_date, lines, created_by, notes
   raise ValueError("تاريخ إذن التسليم لا يمكن أن يسبق تاريخ أمر البيع.")
  if not lines: raise ValueError("أضف بندًا واحدًا على الأقل لإذن التسليم.")
  delivery_no="DN-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
- cur=conn.execute(
+ note_id=insert_and_get_id(conn,
   """INSERT INTO delivery_notes(delivery_no,sales_order_id,delivery_date,warehouse_id,
      status,notes,created_by) VALUES(?,?,?,?,'draft',?,?)""",
   (delivery_no,order_id,delivery_date,order["warehouse_id"],notes,created_by))
- note_id=cur.lastrowid
  seen=set()
  for item in lines:
   line_id=int(item["sales_order_line_id"])
@@ -363,13 +360,12 @@ def post_delivery_note(conn, note_id, posted_by):
   cost,allocations=consume_layers(conn,row["product_id"],note["warehouse_id"],qty,method)
   unit_cost=(cost/qty).quantize(M,rounding=ROUND_HALF_UP)
   movement_no=note["delivery_no"]+"-"+str(row["id"])
-  cur=conn.execute(
+  movement_id=insert_and_get_id(conn,
    """INSERT INTO stock_movements(movement_no,movement_type,product_id,source_warehouse_id,
       quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,issue_purpose)
       VALUES(?,'issue',?,?,?,?,?,?,?,?, 'pending','sale')""",
    (movement_no,row["product_id"],note["warehouse_id"],str(qty),str(unit_cost),str(cost),
     note["delivery_date"],"صرف إذن تسليم "+note["delivery_no"],posted_by))
-  movement_id=cur.lastrowid
   posting_dimensions={key: order[key] for key in ("branch_id","cost_center_id","project_id","salesperson_id")}
   posting_dimensions["customer_id"]=order["customer_id"]
   post_issue_journal(conn,movement_id,movement_no,product,note["delivery_date"],cost,posted_by,"sale",dimensions=posting_dimensions)
@@ -537,9 +533,8 @@ def index():
    if not lines: raise ValueError("أضف بندًا واحدًا على الأقل.")
    rate=Decimal(request.form.get("tax_rate","0")); tax=(subtotal*rate/100).quantize(M,rounding=ROUND_HALF_UP)
    no="QT-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
-   cur=c.execute("INSERT INTO quotations(quote_no,customer_id,quote_date,valid_until,subtotal,tax_rate,tax_amount,total_amount,notes,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)",
+   qid=insert_and_get_id(c, "INSERT INTO quotations(quote_no,customer_id,quote_date,valid_until,subtotal,tax_rate,tax_amount,total_amount,notes,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)",
     (no,customer,qdate,valid, str(subtotal),str(rate),str(tax),str(subtotal+tax),request.form.get("notes",""),session["user_id"]))
-   qid=cur.lastrowid
    c.executemany("INSERT INTO quotation_lines(quotation_id,product_id,description,quantity,unit_price,line_total) VALUES(?,?,?,?,?,?)",[(qid,*x) for x in lines])
    c.commit(); flash("تم حفظ عرض السعر "+no,"success"); return redirect(url_for("quotes.view",quote_id=qid))
   except (ValueError,KeyError,sqlite3.Error) as e: c.rollback(); flash(str(e),"error")
