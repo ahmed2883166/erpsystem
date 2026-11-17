@@ -457,6 +457,8 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6, 7, 8, 9])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         schema = quote_schema_name(self.schema)
+        # PostgreSQL trigger functions resolve tenant tables using search_path.
+        self.connection.execute("SET search_path TO " + schema)
 
         warehouse_id = self.connection.execute(
             f"INSERT INTO {schema}.stock_warehouses(code,name_ar) VALUES (%s,%s) RETURNING id",
