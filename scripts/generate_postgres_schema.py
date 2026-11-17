@@ -281,7 +281,7 @@ def generate_postgres_ddl(snapshot):
                 definition += " PRIMARY KEY"
             if column.get("notnull") and not is_single_integer_pk:
                 definition += " NOT NULL"
-            default = default_sql(column.get("dflt_value"), pg_type(column))
+            default = default_sql(column.get("dflt_value"), pg_type(column, table_name))
             if default is not None:
                 definition += f" DEFAULT {default}"
             definitions.append(definition)
@@ -395,8 +395,8 @@ def generate_postgres_ddl(snapshot):
         "identity_columns": identity_columns,
         "text_numeric_candidates": sorted(set(numeric_candidates)),
         "notes": [
-            "TEXT monetary and quantity columns remain TEXT intentionally.",
-            "Review candidate fields before any NUMERIC(p,s) conversion.",
+            "Only explicitly reviewed accounting/rate columns use PostgreSQL NUMERIC; other TEXT fields remain TEXT.",
+            "NUMERIC overrides are intentionally unconstrained until business precision/scale is approved.",
             "CHECK constraints are copied from the SQLite CREATE TABLE definitions.",
             "Expression indexes are copied from their SQLite CREATE INDEX definitions.",
             "SQLite COLLATE NOCASE unique columns are represented by unique lower(column) indexes.",
