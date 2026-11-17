@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - feature/company-setup-currency-tax-activity
+      - draft/postgresql-stock-compat
   pull_request:
     branches:
       - main
