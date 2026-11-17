@@ -1,7 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database
 """NEXUS ERP fixed assets register and IAS 16 depreciation posting."""
-import sqlite3
 import calendar
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import date, timedelta
@@ -10,11 +9,13 @@ from flask import Blueprint, flash, redirect, render_template, request, session,
 from accounting_core import post_journal, safe_error_message, decimal_sum_expression, register_decimal_aggregates
 from code_sequences import next_code
 from db_insert import insert_one_returning_id
-from db_compat import table_columns, table_exists
+from db_sql import execute_compat
+from db_compat import table_columns, table_exists, execute_script, begin_write_transaction, DB_ERROR
 
 assets_bp = Blueprint("assets", __name__, url_prefix="/assets")
 
 M = Decimal("0.01")
+ASSET_ERRORS = (ValueError, InvalidOperation, KeyError) + DB_ERROR
 
 ASSET_DISPOSAL_TYPES = {
     "sale": "بيع", "damage": "تلف", "theft": "سرقة",
@@ -48,7 +49,7 @@ def require(write=False):
 
 def initialize_assets_schema():
     c=db()
-    c.executescript("""
+    execute_script(c, """
     CREATE TABLE IF NOT EXISTS fixed_assets(
       id INTEGER PRIMARY KEY, asset_code TEXT NOT NULL UNIQUE, asset_name TEXT NOT NULL,
       category TEXT NOT NULL DEFAULT '', purchase_date TEXT NOT NULL, ready_date TEXT NOT NULL,
@@ -93,20 +94,20 @@ def initialize_assets_schema():
     """)
     asset_columns = table_columns(c, "fixed_assets")
     if "supplier_bill_id" not in asset_columns:
-        c.execute("ALTER TABLE fixed_assets ADD COLUMN supplier_bill_id INTEGER REFERENCES supplier_bills(id)")
-    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_fixed_asset_supplier_bill ON fixed_assets(supplier_bill_id) WHERE supplier_bill_id IS NOT NULL")
-    c.execute("""CREATE TABLE IF NOT EXISTS fixed_asset_supplier_bill_links(
+        execute_compat(c, "ALTER TABLE fixed_assets ADD COLUMN supplier_bill_id INTEGER REFERENCES supplier_bills(id)")
+    execute_compat(c, "CREATE UNIQUE INDEX IF NOT EXISTS uq_fixed_asset_supplier_bill ON fixed_assets(supplier_bill_id) WHERE supplier_bill_id IS NOT NULL")
+    execute_compat(c, """CREATE TABLE IF NOT EXISTS fixed_asset_supplier_bill_links(
         bill_id INTEGER NOT NULL REFERENCES supplier_bills(id),
         asset_id INTEGER NOT NULL UNIQUE REFERENCES fixed_assets(id),
         PRIMARY KEY(bill_id,asset_id)
     )""")
     disposal_columns = table_columns(c, "asset_disposals")
     if "disposal_type" not in disposal_columns:
-        c.execute("ALTER TABLE asset_disposals ADD COLUMN disposal_type TEXT NOT NULL DEFAULT 'other'")
+        execute_compat(c, "ALTER TABLE asset_disposals ADD COLUMN disposal_type TEXT NOT NULL DEFAULT 'other'")
     if "document_number" not in disposal_columns:
-        c.execute("ALTER TABLE asset_disposals ADD COLUMN document_number TEXT NOT NULL DEFAULT ''")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_fixed_asset_bill_links_bill ON fixed_asset_supplier_bill_links(bill_id)")
-    c.execute("""CREATE TABLE IF NOT EXISTS fixed_asset_journal_lines(
+        execute_compat(c, "ALTER TABLE asset_disposals ADD COLUMN document_number TEXT NOT NULL DEFAULT ''")
+    execute_compat(c, "CREATE INDEX IF NOT EXISTS idx_fixed_asset_bill_links_bill ON fixed_asset_supplier_bill_links(bill_id)")
+    execute_compat(c, """CREATE TABLE IF NOT EXISTS fixed_asset_journal_lines(
         journal_line_id INTEGER PRIMARY KEY REFERENCES journal_lines(id),
         entry_id INTEGER NOT NULL REFERENCES journal_entries(id),
         asset_name TEXT NOT NULL, category TEXT NOT NULL DEFAULT '',
@@ -115,7 +116,7 @@ def initialize_assets_schema():
         fixed_asset_id INTEGER UNIQUE REFERENCES fixed_assets(id),
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )""")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_fixed_asset_journal_pending ON fixed_asset_journal_lines(status,entry_id)")
+    execute_compat(c, "CREATE INDEX IF NOT EXISTS idx_fixed_asset_journal_pending ON fixed_asset_journal_lines(status,entry_id)")
     c.close()
 
 
@@ -123,14 +124,14 @@ def register_assets_from_journal_lines(conn, entry_id, line_details, actor_id):
     """Stage fixed assets from posted debit journal lines; never posts a second purchase entry."""
     if not line_details:
         return []
-    posted = conn.execute(
+    posted = execute_compat(conn, 
         "SELECT id,account_id,debit,credit FROM journal_lines WHERE entry_id=? ORDER BY id",
         (entry_id,),
     ).fetchall()
     if len(posted) != len(line_details):
         raise ValueError("تعذر مطابقة بيانات الأصول مع سطور القيد المرحّل.")
     created = []
-    entry = conn.execute("SELECT entry_date FROM journal_entries WHERE id=? AND status='posted'", (entry_id,)).fetchone()
+    entry = execute_compat(conn, "SELECT entry_date FROM journal_entries WHERE id=? AND status='posted'", (entry_id,)).fetchone()
     if not entry:
         raise ValueError("لا يمكن تسجيل أصل من قيد غير مرحّل.")
     for line, detail in zip(posted, line_details):
@@ -138,7 +139,7 @@ def register_assets_from_journal_lines(conn, entry_id, line_details, actor_id):
             continue
         if Decimal(str(line["debit"] or "0")) <= 0 or Decimal(str(line["credit"] or "0")) != 0:
             raise ValueError("يجب أن يكون سطر الأصل مدينًا فقط.")
-        account = conn.execute(
+        account = execute_compat(conn, 
             "SELECT account_type,is_group,active FROM accounts WHERE id=?", (line["account_id"],)
         ).fetchone()
         if not account or account["account_type"] != "asset" or account["is_group"] or not account["active"]:
@@ -149,7 +150,7 @@ def register_assets_from_journal_lines(conn, entry_id, line_details, actor_id):
         if not name or len(name) > 200 or ready < entry["entry_date"]:
             raise ValueError("اسم الأصل مطلوب وتاريخ الجاهزية لا يسبق تاريخ قيد الشراء.")
         cost = Decimal(str(line["debit"]))
-        conn.execute("""INSERT INTO fixed_asset_journal_lines(
+        execute_compat(conn, """INSERT INTO fixed_asset_journal_lines(
             journal_line_id,entry_id,asset_name,category,ready_date,cost,status
         ) VALUES(?,?,?,?,?,?,'pending')""",
             (line["id"], entry_id, name, category, ready, str(cost)))
@@ -159,11 +160,11 @@ def register_assets_from_journal_lines(conn, entry_id, line_details, actor_id):
 
 def _validate_dedicated_accum_account(conn, account_id):
     """Reject a reserve account already used by another asset or any posted journal."""
-    if conn.execute(
+    if execute_compat(conn, 
         "SELECT 1 FROM fixed_assets WHERE accum_account_id=? LIMIT 1", (account_id,)
     ).fetchone():
         raise ValueError("حساب مجمع الإهلاك مستخدم لأصل آخر. خصص حسابًا تفصيليًا مستقلًا لهذا الأصل.")
-    if conn.execute(
+    if execute_compat(conn, 
         "SELECT 1 FROM journal_lines WHERE account_id=? LIMIT 1", (account_id,)
     ).fetchone():
         raise ValueError("حساب مجمع الإهلاك يحتوي على حركات سابقة؛ لا تستخدمه لأصل جديد. أنشئ حسابًا تفصيليًا مستقلًا.")
@@ -175,12 +176,12 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
         raise ValueError("فاتورة المورد ليست من نوع أصل ثابت.")
     if not bill["journal_entry_id"]:
         raise ValueError("يجب ترحيل فاتورة المورد قبل إنشاء سجل الأصل.")
-    if conn.execute("SELECT 1 FROM fixed_assets WHERE supplier_bill_id=? LIMIT 1",(bill["id"],)).fetchone() or conn.execute(
+    if execute_compat(conn, "SELECT 1 FROM fixed_assets WHERE supplier_bill_id=? LIMIT 1",(bill["id"],)).fetchone() or execute_compat(conn, 
         "SELECT 1 FROM fixed_asset_supplier_bill_links WHERE bill_id=? LIMIT 1",(bill["id"],)
     ).fetchone():
         raise ValueError("فاتورة المورد مرتبطة بسجل أصول بالفعل.")
     has_lines = table_exists(conn, "supplier_bill_asset_lines")
-    rows = conn.execute(
+    rows = execute_compat(conn, 
         "SELECT * FROM supplier_bill_asset_lines WHERE bill_id=? ORDER BY line_no",(bill["id"],)
     ).fetchall() if has_lines else []
     deductible_percent = Decimal(str(bill["input_vat_deductible_percent"] or "100"))
@@ -214,7 +215,7 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
         if not code or not name or code in codes:
             raise ValueError("كود أو اسم أصل غير صالح أو مكرر داخل الفاتورة.")
         codes.add(code)
-        if conn.execute("SELECT 1 FROM fixed_assets WHERE asset_code=? LIMIT 1",(code,)).fetchone():
+        if execute_compat(conn, "SELECT 1 FROM fixed_assets WHERE asset_code=? LIMIT 1",(code,)).fetchone():
             raise ValueError("كود الأصل مستخدم بالفعل: " + code)
         cost=Decimal(str(row["cost"]))
         residual=Decimal(str(row["residual_value"] or "0"))
@@ -231,7 +232,7 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
         for account_id,expected in ((row["asset_account_id"],"asset"),
                                     (row["accum_account_id"],"asset"),
                                     (row["expense_account_id"],"expense")):
-            account_row=conn.execute(
+            account_row=execute_compat(conn, 
                 "SELECT account_type,is_group,active FROM accounts WHERE id=?",(account_id,)
             ).fetchone()
             if not account_row or account_row["account_type"]!=expected or account_row["is_group"] or not account_row["active"]:
@@ -264,7 +265,7 @@ def create_asset_from_supplier_bill(conn, bill, actor_id):
              "تم الإنشاء تلقائيًا من فاتورة المورد " + bill["bill_no"], actor_id,
              bill["id"] if len(prepared)==1 else None))
         if len(prepared)>1:
-            conn.execute("INSERT INTO fixed_asset_supplier_bill_links(bill_id,asset_id) VALUES(?,?)",
+            execute_compat(conn, "INSERT INTO fixed_asset_supplier_bill_links(bill_id,asset_id) VALUES(?,?)",
                          (bill["id"],asset_id))
         created.append(asset_id)
     return created
@@ -360,7 +361,7 @@ def _asset_disposal_journal_lines(asset, cost, accumulated, proceeds, vat,
 
 def _post_asset_depreciation(conn, asset, period, user_id, cutoff_date=None, replace_existing=False):
     """Post one asset's depreciation exactly once, or replace it after an audited reversal."""
-    existing = conn.execute(
+    existing = execute_compat(conn, 
         "SELECT id,amount,journal_entry_id FROM asset_depreciations WHERE asset_id=? AND period=?",
         (asset["id"], period),
     ).fetchone()
@@ -373,7 +374,7 @@ def _post_asset_depreciation(conn, asset, period, user_id, cutoff_date=None, rep
     offset = (first_day.year - ready.year) * 12 + first_day.month - ready.month
     if offset > 0:
         previous_month = (first_day.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
-        if not conn.execute(
+        if not execute_compat(conn, 
             "SELECT 1 FROM asset_depreciations WHERE asset_id=? AND period=?",
             (asset["id"], previous_month),
         ).fetchone():
@@ -386,7 +387,7 @@ def _post_asset_depreciation(conn, asset, period, user_id, cutoff_date=None, rep
         accumulated_query += " AND period<>?"
         params.append(period)
     accumulated = sum(
-        (Decimal(str(row["amount"])) for row in conn.execute(accumulated_query, params).fetchall()),
+        (Decimal(str(row["amount"])) for row in execute_compat(conn, accumulated_query, params).fetchall()),
         Decimal("0"),
     )
     amount = _asset_period_amount(asset, accumulated, period, cutoff_date=cutoff_date)
@@ -406,12 +407,12 @@ def _post_asset_depreciation(conn, asset, period, user_id, cutoff_date=None, rep
         ], user_id,
     )
     if replace_existing:
-        conn.execute(
+        execute_compat(conn, 
             "UPDATE asset_depreciations SET amount=?,journal_entry_id=?,posted_at=CURRENT_TIMESTAMP WHERE id=?",
             (str(amount), entry, existing["id"]),
         )
     else:
-        conn.execute(
+        execute_compat(conn, 
             "INSERT INTO asset_depreciations(asset_id,period,amount,journal_entry_id) VALUES(?,?,?,?)",
             (asset["id"], period, str(amount), entry),
         )
@@ -420,7 +421,7 @@ def _post_asset_depreciation(conn, asset, period, user_id, cutoff_date=None, rep
 
 def _reverse_full_period_depreciation_for_disposal(conn, asset, period, disposal_date, user_id):
     """Reverse a full-month depreciation and replace it with a daily prorated entry."""
-    posted = conn.execute(
+    posted = execute_compat(conn, 
         "SELECT id,amount,journal_entry_id FROM asset_depreciations WHERE asset_id=? AND period=?",
         (asset["id"], period),
     ).fetchone()
@@ -430,7 +431,7 @@ def _reverse_full_period_depreciation_for_disposal(conn, asset, period, disposal
     last_day = calendar.monthrange(cutoff.year, cutoff.month)[1]
     if cutoff.day == last_day:
         return None
-    later = conn.execute(
+    later = execute_compat(conn, 
         "SELECT period FROM asset_depreciations WHERE asset_id=? AND period>? ORDER BY period LIMIT 1",
         (asset["id"], period),
     ).fetchone()
@@ -439,26 +440,26 @@ def _reverse_full_period_depreciation_for_disposal(conn, asset, period, disposal
             f"لا يمكن تعديل إهلاك {period} لوجود إهلاك لاحق مرحّل عن {later['period']}. "
             "يجب معالجة الفترات اللاحقة بالعكس المتتابع أولًا."
         )
-    if conn.execute(
+    if execute_compat(conn, 
         "SELECT 1 FROM asset_depreciation_revisions WHERE depreciation_id=?",
         (posted["id"],),
     ).fetchone():
         raise ValueError("سبق تعديل إهلاك هذه الفترة. راجع سجل تعديلات الإهلاك قبل إعادة المحاولة.")
-    original = conn.execute(
+    original = execute_compat(conn, 
         "SELECT id,reference,status FROM journal_entries WHERE id=?",
         (posted["journal_entry_id"],),
     ).fetchone()
     expected_reference = "DEP-" + str(asset["id"]) + "-" + period
     if not original or original["status"] != "posted" or original["reference"] != expected_reference:
         raise ValueError("تعذر التحقق من قيد الإهلاك الأصلي؛ لم يتم إجراء أي تعديل.")
-    original_lines = conn.execute(
+    original_lines = execute_compat(conn, 
         "SELECT account_id,debit,credit,memo FROM journal_lines WHERE entry_id=? ORDER BY id",
         (posted["journal_entry_id"],),
     ).fetchall()
     if len(original_lines) < 2:
         raise ValueError("قيد الإهلاك الأصلي غير مكتمل؛ لا يمكن عكسه بأمان.")
     reversal_reference = "ASSET-DEP-REV-" + str(posted["id"])
-    if conn.execute(
+    if execute_compat(conn, 
         "SELECT 1 FROM journal_entries WHERE reference=? AND status='posted'",
         (reversal_reference,),
     ).fetchone():
@@ -476,7 +477,7 @@ def _reverse_full_period_depreciation_for_disposal(conn, asset, period, disposal
     replacement_amount, replacement_entry = _post_asset_depreciation(
         conn, asset, period, user_id, cutoff_date=disposal_date, replace_existing=True
     )
-    conn.execute(
+    execute_compat(conn, 
         """INSERT INTO asset_depreciation_revisions(
             depreciation_id,original_journal_entry_id,reversal_journal_entry_id,
             replacement_journal_entry_id,original_amount,replacement_amount,
@@ -512,7 +513,7 @@ def index():
             flash("لا تملك صلاحية إدارة الأصول الثابتة.","error")
             return redirect(url_for("assets.index"))
         try:
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             cost=Decimal(request.form["cost"]); residual=Decimal(request.form.get("residual_value","0"))
             life=int(request.form["useful_life_months"])
             if not cost.is_finite() or not residual.is_finite() or cost<=0 or residual<0 or residual>=cost or life<=0:
@@ -531,13 +532,13 @@ def index():
                 raise ValueError("يجب أن يكون حساب تكلفة الأصل مختلفًا عن حساب مجمع الإهلاك.")
             _validate_dedicated_accum_account(c, ids[1])
             for aid in ids:
-                row=c.execute("SELECT is_group,active,account_type FROM accounts WHERE id=?",(aid,)).fetchone()
+                row=execute_compat(c, "SELECT is_group,active,account_type FROM accounts WHERE id=?",(aid,)).fetchone()
                 if not row or row["is_group"] or not row["active"]: raise ValueError("اختر حسابات تفصيلية نشطة.")
-            account_types=[c.execute("SELECT account_type FROM accounts WHERE id=?",(aid,)).fetchone()["account_type"] for aid in ids]
+            account_types=[execute_compat(c, "SELECT account_type FROM accounts WHERE id=?",(aid,)).fetchone()["account_type"] for aid in ids]
             if account_types[0]!="asset" or account_types[1]!="asset" or account_types[2]!="expense":
                 raise ValueError("حساب الأصل ومجمع الإهلاك يجب أن يكونا من الأصول، ومصروف الإهلاك من المصروفات.")
             if method=="declining_balance" and not (Decimal("0") < Decimal(request.form.get("annual_rate","0")) <= Decimal("100")): raise ValueError("معدل الإهلاك السنوي يجب أن يكون أكبر من صفر ولا يتجاوز 100%.")
-            counterpart=c.execute("SELECT is_group,active,account_type FROM accounts WHERE id=?",(counterpart_id,)).fetchone()
+            counterpart=execute_compat(c, "SELECT is_group,active,account_type FROM accounts WHERE id=?",(counterpart_id,)).fetchone()
             if (not counterpart or counterpart["is_group"] or not counterpart["active"]
                     or counterpart["account_type"] not in {"asset","liability","equity"}):
                 raise ValueError("اختر حسابًا مقابلًا تفصيليًا ونشطًا من النقدية أو الالتزامات أو حقوق الملكية.")
@@ -554,14 +555,14 @@ def index():
                 "إثبات تكلفة أصل ثابت "+request.form["asset_name"].strip(),
                 journal_lines,session["user_id"]
             )
-            debit_line=next((row for row in c.execute(
+            debit_line=next((row for row in execute_compat(c, 
                 "SELECT id,debit,credit FROM journal_lines WHERE entry_id=? AND account_id=? ORDER BY id",
                 (entry_id,ids[0])
             ).fetchall() if Decimal(str(row["debit"] or "0"))==cost.quantize(M,rounding=ROUND_HALF_UP)
                 and Decimal(str(row["credit"] or "0"))==Decimal("0")),None)
             if not debit_line:
                 raise ValueError("تم إنشاء قيد الأصل لكن تعذر ربط سطر التكلفة بسجل الأصل؛ أُلغيت العملية بالكامل.")
-            c.execute("""INSERT INTO fixed_asset_journal_lines(
+            execute_compat(c, """INSERT INTO fixed_asset_journal_lines(
                 journal_line_id,entry_id,asset_name,category,ready_date,cost,status,fixed_asset_id
             ) VALUES(?,?,?,?,?,?,?,?)""",
                 (debit_line["id"],entry_id,request.form["asset_name"].strip(),
@@ -570,9 +571,9 @@ def index():
             g.audit_created_record = ("fixed_assets", asset_id, None, None)
             flash("تم تسجيل الأصل وترحيل قيد تكلفته وربطه بسجل الأصول دون تكرار.","success")
             return redirect(url_for("assets.index"))
-        except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
+        except ASSET_ERRORS as e:
             c.rollback(); flash(str(e) if isinstance(e,ValueError) else "كود الأصل مستخدم أو توجد بيانات غير صحيحة.","error")
-    pending_assets=c.execute("""SELECT p.*,je.entry_date,je.reference,
+    pending_assets=execute_compat(c, """SELECT p.*,je.entry_date,je.reference,
         a.code account_code,a.name_ar account_name
         FROM fixed_asset_journal_lines p
         JOIN journal_entries je ON je.id=p.entry_id
@@ -580,7 +581,7 @@ def index():
         JOIN accounts a ON a.id=jl.account_id
         WHERE p.status='pending' AND je.status='posted'
         ORDER BY je.entry_date,p.journal_line_id""").fetchall()
-    assets=c.execute(f"""SELECT f.*,a.code asset_code_gl,a.name_ar asset_account_name,
+    assets=execute_compat(c, f"""SELECT f.*,a.code asset_code_gl,a.name_ar asset_account_name,
       aa.code accum_account_code,aa.name_ar accum_account_name,
       ea.code expense_account_code,ea.name_ar expense_account_name,
       COALESCE(f.supplier_bill_id,l.bill_id) linked_supplier_bill_id,
@@ -601,10 +602,10 @@ def index():
             max(Decimal(str(row["cost"] or "0"))-Decimal(str(row["accumulated"] or "0")),
                 Decimal(str(row["residual_value"] or "0")))))
         for row in assets]
-    accounts=c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
+    accounts=execute_compat(c, "SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
     asset_accounts=[row for row in accounts if row["account_type"]=="asset"]
     expense_accounts=[row for row in accounts if row["account_type"]=="expense"]
-    accum_accounts=c.execute("""SELECT a.id,a.code,a.name_ar,a.account_type
+    accum_accounts=execute_compat(c, """SELECT a.id,a.code,a.name_ar,a.account_type
         FROM accounts a
         WHERE a.active=1 AND a.is_group=0 AND a.account_type='asset'
           AND NOT EXISTS (SELECT 1 FROM fixed_assets f WHERE f.accum_account_id=a.id)
@@ -621,8 +622,8 @@ def index():
 def configure_journal_asset(journal_line_id):
     c=db()
     try:
-        c.execute("BEGIN IMMEDIATE")
-        pending=c.execute("""SELECT p.*,je.entry_date,jl.account_id,a.account_type,a.is_group,a.active
+        begin_write_transaction(c)
+        pending=execute_compat(c, """SELECT p.*,je.entry_date,jl.account_id,a.account_type,a.is_group,a.active
             FROM fixed_asset_journal_lines p
             JOIN journal_entries je ON je.id=p.entry_id
             JOIN journal_lines jl ON jl.id=p.journal_line_id
@@ -649,7 +650,7 @@ def configure_journal_asset(journal_line_id):
         expense_id=int(request.form["expense_account_id"])
         _validate_dedicated_accum_account(c,accum_id)
         for aid,expected in ((accum_id,"asset"),(expense_id,"expense")):
-            row=c.execute("SELECT account_type,is_group,active FROM accounts WHERE id=?",(aid,)).fetchone()
+            row=execute_compat(c, "SELECT account_type,is_group,active FROM accounts WHERE id=?",(aid,)).fetchone()
             if not row or row["account_type"]!=expected or row["is_group"] or not row["active"]:
                 raise ValueError("اختر حساب مجمع إهلاك ومصروف إهلاك تفصيليين ونشطين.")
         if accum_id==pending["account_id"]:
@@ -664,14 +665,14 @@ def configure_journal_asset(journal_line_id):
              str(cost),str(residual),life,method,str(rate),pending["account_id"],
              accum_id,expense_id,"تم الربط تلقائيًا بقيد الشراء رقم "+str(pending["entry_id"]),
              session["user_id"]))
-        c.execute("UPDATE fixed_asset_journal_lines SET status='configured',fixed_asset_id=? WHERE journal_line_id=? AND status='pending'",
+        configuration_cursor = execute_compat(c, "UPDATE fixed_asset_journal_lines SET status='configured',fixed_asset_id=? WHERE journal_line_id=? AND status='pending'",
                   (asset_id,journal_line_id))
-        if c.execute("SELECT changes()").fetchone()[0]!=1:
+        if configuration_cursor.rowcount != 1:
             raise ValueError("تم تجهيز الأصل بالفعل؛ أعد تحميل الصفحة.")
         g.audit_created_record=("fixed_assets",asset_id,None,None)
         c.commit()
         flash("تم تجهيز الأصل وربطه بقيد الشراء دون إنشاء قيد تكلفة جديد.", "success")
-    except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as exc:
+    except ASSET_ERRORS as exc:
         c.rollback()
         flash(str(exc) if isinstance(exc,ValueError) else "تعذر تجهيز الأصل؛ راجع الحسابات والبيانات.", "error")
     finally:
@@ -682,16 +683,16 @@ def configure_journal_asset(journal_line_id):
 @assets_bp.route("/<int:asset_id>/schedule")
 @require()
 def schedule(asset_id):
-    c=db(); asset=c.execute("SELECT * FROM fixed_assets WHERE id=?",(asset_id,)).fetchone()
+    c=db(); asset=execute_compat(c, "SELECT * FROM fixed_assets WHERE id=?",(asset_id,)).fetchone()
     if not asset: c.close(); flash("الأصل غير موجود.","error"); return redirect(url_for("assets.index"))
-    rows=c.execute("SELECT * FROM asset_depreciations WHERE asset_id=? ORDER BY period",(asset_id,)).fetchall()
-    disposal=c.execute("SELECT * FROM asset_disposals WHERE asset_id=?",(asset_id,)).fetchone()
-    depreciation_revisions=c.execute(
+    rows=execute_compat(c, "SELECT * FROM asset_depreciations WHERE asset_id=? ORDER BY period",(asset_id,)).fetchall()
+    disposal=execute_compat(c, "SELECT * FROM asset_disposals WHERE asset_id=?",(asset_id,)).fetchone()
+    depreciation_revisions=execute_compat(c, 
         "SELECT * FROM asset_depreciation_revisions WHERE depreciation_id IN "
         "(SELECT id FROM asset_depreciations WHERE asset_id=?) ORDER BY disposal_date,id",
         (asset_id,),
     ).fetchall()
-    accounts=c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
+    accounts=execute_compat(c, "SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
     posted={x["period"]:Decimal(x["amount"]) for x in rows}
     posted_entry_ids={x["period"]:x["journal_entry_id"] for x in rows}
     accumulated=sum(posted.values(),Decimal("0"))
@@ -731,13 +732,13 @@ def depreciate(asset_id):
     try:
         period=request.form["period"]
         date.fromisoformat(period+"-01")
-        c.execute("BEGIN IMMEDIATE")
-        asset=c.execute("SELECT * FROM fixed_assets WHERE id=? AND status='active'",(asset_id,)).fetchone()
+        begin_write_transaction(c)
+        asset=execute_compat(c, "SELECT * FROM fixed_assets WHERE id=? AND status='active'",(asset_id,)).fetchone()
         if not asset: raise ValueError("الأصل غير موجود أو غير نشط.")
         amount,entry=_post_asset_depreciation(c,asset,period,session["user_id"])
         c.commit()
         flash("تم ترحيل قيد الإهلاك بقيمة "+str(amount),"success")
-    except (ValueError,KeyError,sqlite3.Error) as e:
+    except ASSET_ERRORS as e:
         c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     finally:
         c.close()
@@ -753,13 +754,13 @@ def depreciation_run():
     if request.method=="POST":
         try:
             date.fromisoformat(period+"-01")
-            c.execute("BEGIN IMMEDIATE")
-            assets=c.execute("SELECT * FROM fixed_assets WHERE status='active' AND ready_date<=? ORDER BY asset_code",
+            begin_write_transaction(c)
+            assets=execute_compat(c, "SELECT * FROM fixed_assets WHERE status='active' AND ready_date<=? ORDER BY asset_code",
                              (period+"-31",)).fetchall()
             posted=0
             skipped=[]
             for asset in assets:
-                if c.execute("SELECT 1 FROM asset_depreciations WHERE asset_id=? AND period=?",
+                if execute_compat(c, "SELECT 1 FROM asset_depreciations WHERE asset_id=? AND period=?",
                              (asset["id"],period)).fetchone():
                     skipped.append(asset["asset_code"]+" (مرحل بالفعل)")
                     continue
@@ -767,7 +768,7 @@ def depreciation_run():
                 current=date.fromisoformat(period+"-01")
                 offset=(current.year-ready.year)*12+current.month-ready.month
                 final_offset=int(asset["useful_life_months"])-(1 if ready.day==1 else 0)
-                accumulated=sum((Decimal(str(row["amount"])) for row in c.execute(
+                accumulated=sum((Decimal(str(row["amount"])) for row in execute_compat(c, 
                     "SELECT amount FROM asset_depreciations WHERE asset_id=?",(asset["id"],)).fetchall()),Decimal("0"))
                 remaining=Decimal(asset["cost"])-Decimal(asset["residual_value"])-accumulated
                 if offset>final_offset:
@@ -785,7 +786,7 @@ def depreciation_run():
                     raise ValueError(f"{asset['asset_code']}: {exc}")
             c.commit()
             flash(f"تم ترحيل إهلاك {posted} أصلًا عن {period}. تم تجاوز {len(skipped)} أصلًا سبق ترحيلها.","success")
-        except (ValueError,KeyError,sqlite3.Error) as e:
+        except ASSET_ERRORS as e:
             c.rollback(); results=[]; flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     c.close()
     return render_template("asset_depreciation_run.html",period=period,results=results)
@@ -818,13 +819,13 @@ def dispose(asset_id):
             raise ValueError("ضريبة المخرجات تُستخدم عند بيع الأصل فقط.")
         if vat and not output_vat_account_id:
             raise ValueError("اختر حساب ضريبة المخرجات عند إدخال ضريبة على بيع الأصل.")
-        c.execute("BEGIN IMMEDIATE")
-        asset=c.execute("SELECT * FROM fixed_assets WHERE id=? AND status='active'",(asset_id,)).fetchone()
+        begin_write_transaction(c)
+        asset=execute_compat(c, "SELECT * FROM fixed_assets WHERE id=? AND status='active'",(asset_id,)).fetchone()
         if not asset: raise ValueError("الأصل غير موجود أو سبق استبعاده.")
         if disposal_date < asset["ready_date"]:
             raise ValueError("تاريخ الاستبعاد لا يمكن أن يسبق جاهزية الأصل.")
         def checked_account(account_id, allowed_types, label):
-            row=c.execute("SELECT account_type,is_group,active FROM accounts WHERE id=?",(account_id,)).fetchone()
+            row=execute_compat(c, "SELECT account_type,is_group,active FROM accounts WHERE id=?",(account_id,)).fetchone()
             if not row or row["is_group"] or not row["active"] or row["account_type"] not in allowed_types:
                 raise ValueError("اختر "+label+" تفصيليًا ونشطًا ومن النوع المحاسبي الصحيح.")
         checked_account(proceeds_account_id,{"asset"},"حساب النقدية أو العملاء")
@@ -834,13 +835,13 @@ def dispose(asset_id):
         if output_vat_account_id:
             checked_account(output_vat_account_id,{"liability"},"حساب ضريبة المخرجات")
         period=disposal_date[:7]
-        already_depreciated=c.execute("SELECT id,amount,journal_entry_id FROM asset_depreciations WHERE asset_id=? AND period=?",
+        already_depreciated=execute_compat(c, "SELECT id,amount,journal_entry_id FROM asset_depreciations WHERE asset_id=? AND period=?",
                                        (asset_id,period)).fetchone()
         ready=date.fromisoformat(asset["ready_date"])
         disposal_period=date.fromisoformat(period+"-01")
         offset=(disposal_period.year-ready.year)*12+disposal_period.month-ready.month
         final_offset=int(asset["useful_life_months"])-(1 if ready.day==1 else 0)
-        accumulated_before=sum((Decimal(str(x["amount"])) for x in c.execute(
+        accumulated_before=sum((Decimal(str(x["amount"])) for x in execute_compat(c, 
             "SELECT amount FROM asset_depreciations WHERE asset_id=? AND period<>?",(asset_id,period)).fetchall()),Decimal("0"))
         remaining_before=Decimal(asset["cost"])-Decimal(asset["residual_value"])-accumulated_before
         if offset>final_offset and remaining_before>0:
@@ -854,7 +855,7 @@ def dispose(asset_id):
                 _amount,_entry=_post_asset_depreciation(
                     c,asset,period,session["user_id"],cutoff_date=disposal_date
                 )
-        accumulated=sum((Decimal(str(x["amount"])) for x in c.execute(
+        accumulated=sum((Decimal(str(x["amount"])) for x in execute_compat(c, 
             "SELECT amount FROM asset_depreciations WHERE asset_id=?",(asset_id,)).fetchall()),Decimal("0"))
         cost=Decimal(asset["cost"])
         nbv=max(cost-accumulated,Decimal(asset["residual_value"]))
@@ -874,11 +875,11 @@ def dispose(asset_id):
             (asset_id,disposal_date,proceeds_account_id,str(proceeds),output_vat_account_id,
              str(vat),gain_loss_account_id,str(gain_loss),str(nbv),entry,reason,
              session["user_id"],disposal_type,document_number))
-        c.execute("UPDATE fixed_assets SET status='disposed' WHERE id=?",(asset_id,))
+        execute_compat(c, "UPDATE fixed_assets SET status='disposed' WHERE id=?",(asset_id,))
         g.audit_created_record=("asset_disposals",disposal_id,None,None)
         c.commit()
         flash("تم استبعاد الأصل وترحيل قيد البيع/الاستبعاد. ربح أو خسارة الاستبعاد: "+str(gain_loss),"success")
-    except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
+    except ASSET_ERRORS as e:
         c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     finally:
         c.close()
@@ -890,7 +891,7 @@ def build_asset_reconciliation_rows(conn, as_of):
     # This public helper also accepts caller-managed SQLite connections, not only
     # connections created by database.connect_database(). Keep exact aggregates available.
     register_decimal_aggregates(conn)
-    assets=conn.execute("""SELECT f.id,f.asset_account_id,f.accum_account_id,f.cost
+    assets=execute_compat(conn, """SELECT f.id,f.asset_account_id,f.accum_account_id,f.cost
         FROM fixed_assets f LEFT JOIN asset_disposals x ON x.asset_id=f.id
         WHERE f.purchase_date<=? AND f.status<>'reversed'
           AND (x.id IS NULL OR x.disposal_date>?)
@@ -900,7 +901,7 @@ def build_asset_reconciliation_rows(conn, as_of):
         cost_key=(asset["asset_account_id"],"تكلفة الأصول")
         accum_key=(asset["accum_account_id"],"مجمع الإهلاك")
         expected[cost_key]=expected.get(cost_key,Decimal("0"))+Decimal(str(asset["cost"]))
-        depreciation=conn.execute("""SELECT d.amount FROM asset_depreciations d
+        depreciation=execute_compat(conn, """SELECT d.amount FROM asset_depreciations d
             JOIN journal_entries je ON je.id=d.journal_entry_id
             WHERE d.asset_id=? AND je.status='posted' AND je.entry_date<=?""",
             (asset["id"],as_of)).fetchall()
@@ -908,13 +909,13 @@ def build_asset_reconciliation_rows(conn, as_of):
             (Decimal(str(row["amount"])) for row in depreciation),Decimal("0"))
     rows=[]
     for (account_id,kind),register in sorted(expected.items(),key=lambda item:(item[0][0],item[0][1])):
-        gl=conn.execute("""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) balance
+        gl=execute_compat(conn, """SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) balance
             FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
             WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<=?""",
             (account_id,as_of)).fetchone()
         raw=Decimal(str(gl["balance"] or "0"))
         gl_balance=raw if kind=="تكلفة الأصول" else -raw
-        account=conn.execute("SELECT code,name_ar FROM accounts WHERE id=?",(account_id,)).fetchone()
+        account=execute_compat(conn, "SELECT code,name_ar FROM accounts WHERE id=?",(account_id,)).fetchone()
         rows.append({"account_id":account_id,"code":account["code"],"name":account["name_ar"],
             "kind":kind,"register":register,"gl":gl_balance,"difference":gl_balance-register})
     return rows
