@@ -121,7 +121,8 @@ def _customer_aging_movements(conn, as_of):
   ).fetchall():
    invoice_id,amount=_pair_values(row,"invoice_id","amount")
    credited_all[invoice_id]=credited_all.get(invoice_id,Decimal("0"))+_amount(amount)
-  for invoice_id,amount in execute_compat(conn, sql,params).fetchall():
+  for row in execute_compat(conn, sql,params).fetchall():
+   invoice_id,amount=_pair_values(row,"invoice_id","amount")
    credited_as_of[invoice_id]=credited_as_of.get(invoice_id,Decimal("0"))+_amount(amount)
  refunds_as_of={}
  if _table_exists(conn,"customer_refunds") and _table_exists(conn,"sales_credit_notes"):
