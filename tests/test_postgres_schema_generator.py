@@ -38,7 +38,7 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
             "tables": [
                 {
                     "name": "parent",
-                    "sql": "CREATE TABLE parent (id INTEGER PRIMARY KEY, code TEXT UNIQUE)",
+                    "sql": "CREATE TABLE parent (id INTEGER PRIMARY KEY, code TEXT NOT NULL COLLATE NOCASE UNIQUE)",
                     "columns": [
                         {"name": "id", "type": "INTEGER", "pk": 1, "notnull": 0, "dflt_value": None},
                         {"name": "code", "type": "TEXT", "pk": 0, "notnull": 1, "dflt_value": None},
@@ -80,7 +80,7 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         self.assertIn("REFERENCES \"parent\" (\"id\")", ddl)
         self.assertIn("ON DELETE CASCADE", ddl)
         self.assertIn("CREATE UNIQUE INDEX idx_child_expr ON child(lower(trim(amount)));", ddl)
-        self.assertIn('CREATE UNIQUE INDEX "sqlite_autoindex_parent_1"', ddl)
+        self.assertIn('CREATE UNIQUE INDEX "uq_parent_code_nocase" ON "parent" (lower("code"));', ddl)
         self.assertEqual(review["table_count"], 2)
         self.assertEqual(review["foreign_key_count"], 1)
         self.assertIn("child.amount", review["text_numeric_candidates"])
