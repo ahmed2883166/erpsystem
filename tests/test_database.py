@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -5,6 +6,9 @@ from pathlib import Path
 
 from database import connect_database, enable_wal, fetch_page
 from app_paths import ensure_data_directory
+
+
+POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
 
 
 class SharedDatabaseTests(unittest.TestCase):
@@ -68,6 +72,38 @@ class SharedDatabaseTests(unittest.TestCase):
                 self.assertEqual(conn.execute("PRAGMA journal_mode").fetchone()[0].lower(), "wal")
             finally:
                 conn.close()
+
+
+
+@unittest.skipUnless(POSTGRES_DSN, "NEXUS_TEST_POSTGRES_DSN is not configured")
+class PostgreSQLPaginationTests(unittest.TestCase):
+    def test_fetch_page_supports_dict_rows_and_postgres_placeholders(self):
+        from postgres_database import connect_postgres
+
+        connection = connect_postgres(POSTGRES_DSN)
+        try:
+            connection.execute(
+                "CREATE TEMP TABLE pagination_probe (id BIGINT PRIMARY KEY, group_id BIGINT NOT NULL)"
+            )
+            connection.executemany(
+                "INSERT INTO pagination_probe(id, group_id) VALUES (%s, %s)",
+                [(value, 1 if value <= 75 else 2) for value in range(1, 126)],
+            )
+            result = fetch_page(
+                connection,
+                "SELECT id FROM pagination_probe WHERE group_id = ? ORDER BY id",
+                "SELECT COUNT(*) AS total FROM pagination_probe WHERE group_id = ?",
+                params=(2,),
+                page=2,
+                per_page=50,
+            )
+            self.assertEqual(result["total"], 50)
+            self.assertEqual(result["pages"], 1)
+            self.assertEqual(result["page"], 1)
+            self.assertEqual([row["id"] for row in result["rows"]], list(range(76, 126)))
+        finally:
+            connection.rollback()
+            connection.close()
 
 
 if __name__ == "__main__":
