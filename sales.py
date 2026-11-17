@@ -13,7 +13,7 @@ from functools import wraps
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, safe_error_message, decimal_sum_expression
-from db_compat import table_columns, table_exists, insert_and_get_id
+from db_compat import table_columns, table_exists, insert_and_get_id, begin_write_transaction
 from database import connect_database, fetch_page
 from stock import consume_layers, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
@@ -811,7 +811,7 @@ def create_invoice_workflow(conn, payload, status, created_by, gross_subtotal,
     percent = Decimal(str(discount_percent)).quantize(CENT, rounding=ROUND_HALF_UP)
     if not gross.is_finite() or gross <= 0 or not discount.is_finite() or discount < 0 or discount >= gross:
         raise ValueError("إجمالي المسودة أو الخصم غير صحيح.")
-    conn.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(conn)
     try:
         workflow_no = "SIVD-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
         workflow_id = insert_and_get_id(conn, """INSERT INTO sales_invoice_workflows(
@@ -880,7 +880,7 @@ def update_invoice_workflow(conn, workflow_id, payload, user_id, gross_subtotal,
         "customer_id": customer_id, "invoice_date": invoice_date,
         "due_date": due_date, "items": normalized_items,
     })
-    conn.execute("BEGIN IMMEDIATE")
+    begin_write_transaction(conn)
     try:
         existing = conn.execute("""SELECT status,created_by FROM sales_invoice_workflows
             WHERE id=?""", (workflow_id,)).fetchone()
@@ -1953,7 +1953,7 @@ def customer_advances():
 def create_customer_advance_receipt():
     c = db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         result = post_customer_advance_receipt(
             c, request.form.get("customer_id", type=int),
             request.form.get("receipt_date", ""), request.form.get("amount", ""),
@@ -1975,7 +1975,7 @@ def create_customer_advance_receipt():
 def allocate_customer_advance_route(advance_id):
     c = db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         selected_ids = request.form.getlist("invoice_ids")
         if selected_ids:
             allocations = [
@@ -2010,7 +2010,7 @@ def allocate_customer_advance_route(advance_id):
 def reverse_customer_advance_route(source_type, source_id):
     c = db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         result = reverse_customer_advance_transaction(
             c, source_type, source_id,
             request.form.get("reversal_date", ""),
@@ -2034,7 +2034,7 @@ def reverse_customer_advance_route(source_type, source_id):
 def refund_customer_advance_route(advance_id):
     c = db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         result = post_customer_advance_refund(
             c, advance_id, request.form.get("refund_date", ""),
             request.form.get("amount", ""),
@@ -2378,7 +2378,7 @@ def new_invoice():
                     },
                     "credit_override": bool(session.get("role") == "admin" and request.form.get("credit_override") == "1"),
                 }
-                c.execute("BEGIN IMMEDIATE")
+                begin_write_transaction(c)
                 request_no = "SDR-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
                 request_id = insert_and_get_id(c,
                     """INSERT INTO sales_discount_approval_requests(
@@ -2402,7 +2402,7 @@ def new_invoice():
                 )
                 return redirect(url_for("sales.index"))
 
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             result = post_invoice(c, int(request.form["customer_id"]), request.form["invoice_date"],
                                   request.form.get("warehouse_id", type=int), items,
                                   request.form.get("tax_rate", "0"), session["user_id"],
@@ -2594,7 +2594,7 @@ def edit_invoice_workflow(workflow_id):
 def submit_invoice_workflow(workflow_id):
     c = db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         changed = c.execute("""UPDATE sales_invoice_workflows
             SET status='pending_approval',submitted_by=?,submitted_at=?,updated_at=CURRENT_TIMESTAMP
             WHERE id=? AND status='draft'""",
@@ -2616,7 +2616,7 @@ def submit_invoice_workflow(workflow_id):
 def decide_invoice_workflow(workflow_id):
     c = db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         row = c.execute("""SELECT * FROM sales_invoice_workflows
             WHERE id=? AND status='pending_approval'""", (workflow_id,)).fetchone()
         if not row:
@@ -2666,7 +2666,7 @@ def decide_invoice_workflow(workflow_id):
 def post_invoice_workflow(workflow_id):
     c = db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         workflow = c.execute("""SELECT * FROM sales_invoice_workflows
             WHERE id=? AND status='approved' AND posted_invoice_id IS NULL""",
             (workflow_id,)).fetchone()
@@ -2782,7 +2782,7 @@ def discount_approval(request_id):
                 raise ValueError("قرار الاعتماد غير صحيح.")
             if action == "reject" and not reason:
                 raise ValueError("سبب رفض الخصم مطلوب.")
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             current = c.execute(
                 "SELECT * FROM sales_discount_approval_requests WHERE id=? AND status='pending'",
                 (request_id,),
@@ -2963,7 +2963,7 @@ def new_credit_note():
             ):
                 if qty and Decimal(qty) > 0:
                     selected.append({"invoice_line_id": int(line_id), "quantity": qty, "uom_key": uom_key})
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             result = post_credit_note(
                 c, invoice_id, request.form["credit_date"], request.form.get("reason", ""),
                 selected, session["user_id"],
@@ -2995,7 +2995,7 @@ def new_receipt():
     c = db()
     if request.method == "POST":
         try:
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             selected_ids = request.form.getlist("invoice_ids")
             if selected_ids:
                 customer_id = int(request.form["customer_id"])
@@ -3118,7 +3118,7 @@ def refund_credit_note(credit_note_id):
     remaining_refundable = max(Decimal("0"), Decimal(note["refundable_amount"] or "0") - already_refunded)
     if request.method == "POST":
         try:
-            c.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(c)
             result = post_customer_refund(
                 c, credit_note_id, request.form["refund_date"], request.form["amount"],
                 int(request.form["cash_account_id"]), session["user_id"], request.form.get("reference", "")
@@ -3150,7 +3150,7 @@ def refund_credit_note(credit_note_id):
 def cancel_credit_note_route(credit_note_id):
     c = db()
     try:
-        c.execute("BEGIN IMMEDIATE")
+        begin_write_transaction(c)
         result = cancel_credit_note(
             c, credit_note_id, request.form.get("cancellation_date") or date.today().isoformat(),
             request.form.get("reason", ""), session["user_id"]
