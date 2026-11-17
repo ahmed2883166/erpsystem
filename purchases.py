@@ -10,7 +10,7 @@ from functools import wraps
 from datetime import date, datetime, timedelta
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, money, safe_error_message, decimal_sum_expression
-from db_compat import table_columns, table_exists, table_indexes, begin_write_transaction, insert_and_get_id, execute_script
+from db_compat import table_columns, table_exists, table_indexes, begin_write_transaction, insert_and_get_id, execute_script, DB_ERROR, DB_INTEGRITY_ERROR
 from db_sql import execute_compat
 from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options, product_uom_storage
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
@@ -892,7 +892,7 @@ def resolve_integrity_issue(issue_id):
         )
         c.commit()
         flash("تم إغلاق حالة المراجعة وتسجيل المستخدم وتاريخ الحل.", "success")
-    except (ValueError, sqlite3.Error) as exc:
+    except (ValueError, DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
@@ -910,7 +910,7 @@ def suppliers():
             execute_compat(c, "INSERT INTO suppliers(code,name,tax_number,phone,email,address) VALUES(?,?,?,?,?,?)",
               (supplier_code,request.form["name"].strip(),request.form.get("tax_number","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("address","").strip()))
             c.commit(); flash("تم حفظ المورد.","success")
-        except sqlite3.IntegrityError: c.rollback(); flash("كود المورد مستخدم بالفعل.","error")
+        except DB_INTEGRITY_ERROR: c.rollback(); flash("كود المورد مستخدم بالفعل.","error")
     suppliers_page = fetch_page(c,"SELECT * FROM suppliers ORDER BY name",
         "SELECT COUNT(*) FROM suppliers",
         page=request.args.get("suppliers_page",1,type=int),
@@ -949,7 +949,7 @@ def edit_supplier(supplier_id):
             execute_compat(c, "UPDATE suppliers SET code=?,name=?,tax_number=?,phone=?,email=?,address=? WHERE id=?",
               (request.form["code"].strip(),request.form["name"].strip(),request.form.get("tax_number","").strip(),request.form.get("phone","").strip(),request.form.get("email","").strip(),request.form.get("address","").strip(),supplier_id))
             c.commit(); c.close(); flash("تم تعديل بيانات المورد.","success"); return redirect(url_for("purchase.suppliers"))
-        except sqlite3.IntegrityError: c.rollback(); flash("كود المورد مستخدم بالفعل.","error")
+        except DB_INTEGRITY_ERROR: c.rollback(); flash("كود المورد مستخدم بالفعل.","error")
     c.close(); return render_template("purchase_supplier_edit.html",supplier=supplier,used=used)
 
 
@@ -968,7 +968,7 @@ def delete_supplier(supplier_id):
         if used: flash("لا يمكن حذف المورد لوجود "+used+" مرتبطة به.","error")
         else:
             try: execute_compat(c, "DELETE FROM suppliers WHERE id=?",(supplier_id,)); c.commit(); flash("تم حذف المورد.","success")
-            except sqlite3.IntegrityError: c.rollback(); flash("لا يمكن حذف المورد لوجود مستند مرتبط به.","error")
+            except DB_INTEGRITY_ERROR: c.rollback(); flash("لا يمكن حذف المورد لوجود مستند مرتبط به.","error")
     c.close(); return redirect(url_for("purchase.suppliers"))
 
 
@@ -1030,7 +1030,7 @@ def new_purchase_request():
             c.commit()
             flash(f"تم إنشاء طلب الشراء الداخلي {request_no}.", "success")
             return redirect(url_for("purchase.purchase_requests"))
-        except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
+        except (ValueError, InvalidOperation, KeyError, DB_ERROR) as exc:
             c.rollback()
             flash(safe_error_message(exc, "تعذر حفظ طلب الشراء. لم يتم حفظ أي تغييرات."), "error")
     products = execute_compat(c, "SELECT id,sku,name_ar,uom FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
@@ -1055,7 +1055,7 @@ def submit_purchase_request(request_id):
             WHERE id=?""", (session["user_id"], request_id))
         c.commit()
         flash("تم إرسال طلب الشراء للاعتماد.", "success")
-    except (ValueError, sqlite3.Error) as exc:
+    except (ValueError, DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر إرسال الطلب."), "error")
     finally:
@@ -1084,7 +1084,7 @@ def approve_purchase_request(request_id):
             raise ValueError("تغيرت حالة الطلب؛ أعد تحميل الصفحة.")
         c.commit()
         flash("تم اعتماد طلب الشراء الداخلي.", "success")
-    except (ValueError, sqlite3.Error) as exc:
+    except (ValueError, DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر اعتماد الطلب."), "error")
     finally:
@@ -1113,7 +1113,7 @@ def reject_purchase_request(request_id):
             raise ValueError("تغيرت حالة الطلب؛ أعد تحميل الصفحة.")
         c.commit()
         flash("تم رفض الطلب مع حفظ السبب.", "success")
-    except (ValueError, sqlite3.Error) as exc:
+    except (ValueError, DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر رفض الطلب."), "error")
     finally:
@@ -1155,7 +1155,7 @@ def convert_purchase_request(request_id):
             raise ValueError("تم تحويل الطلب بواسطة مستخدم آخر؛ لم يتم إنشاء أمر إضافي.")
         c.commit()
         flash(f"تم تحويل الطلب إلى أمر الشراء {po_no}. يجب إرسال أمر الشراء للمراجعة كالمعتاد.", "success")
-    except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
+    except (ValueError, InvalidOperation, KeyError, DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر تحويل الطلب. لم يتم إنشاء أمر شراء."), "error")
     finally:
@@ -1182,7 +1182,7 @@ def new_order():
             execute_compat(c, """INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price,entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
               VALUES(?,?,?,?,?,?,?,?,?)""",(order_id,product,str(qty),str(price),str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,str(factor)))
             c.commit(); flash(f"تم إنشاء أمر الشراء {no}.","success"); return redirect(url_for("purchase.index"))
-        except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
+        except (ValueError,InvalidOperation,KeyError,DB_ERROR) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     su=execute_compat(c, "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     products=execute_compat(c, "SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     product_uoms={p["id"]:product_uom_options(c,p["id"]) for p in products}
@@ -1197,7 +1197,7 @@ def submit_order(order_id):
         submit_purchase_order(c, order_id, session["user_id"])
         c.commit()
         flash("تم إرسال أمر الشراء للمراجعة والاعتماد.", "success")
-    except (ValueError, sqlite3.Error) as exc:
+    except (ValueError, DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
@@ -1213,7 +1213,7 @@ def approve_order(order_id):
         approve_purchase_order(c, order_id, session["user_id"], request.form.get("reason", ""))
         c.commit()
         flash("تم اعتماد أمر الشراء. أصبح الاستلام مسموحًا.", "success")
-    except (ValueError, sqlite3.Error) as exc:
+    except (ValueError, DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
@@ -1229,7 +1229,7 @@ def reject_order(order_id):
         reject_purchase_order(c, order_id, session["user_id"], request.form.get("reason", ""))
         c.commit()
         flash("تم رفض أمر الشراء وإعادته للتعديل مع حفظ سبب الرفض.", "success")
-    except (ValueError, sqlite3.Error) as exc:
+    except (ValueError, DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
     finally:
@@ -1262,7 +1262,7 @@ def edit_order(order_id):
             execute_compat(c, """UPDATE purchase_order_lines SET product_id=?,quantity=?,unit_price=?,entered_quantity=?,uom_id=?,uom_key=?,entered_uom_name=?,conversion_factor=? WHERE id=?""",
               (product,str(qty),str(price),str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,str(factor),order["line_id"]))
             c.commit(); c.close(); flash("تم تعديل أمر الشراء.","success"); return redirect(url_for("purchase.index"))
-        except (ValueError,InvalidOperation,sqlite3.Error) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
+        except (ValueError,InvalidOperation,DB_ERROR) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     suppliers=execute_compat(c, "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     products=execute_compat(c, "SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     product_uoms={p["id"]:product_uom_options(c,p["id"]) for p in products}
@@ -1316,7 +1316,7 @@ def delete_order(order_id):
         flash("لا يمكن حذف أمر الشراء لوجود استلام مرتبط به.","error")
     else:
         try: execute_compat(c, "DELETE FROM purchase_orders WHERE id=?",(order_id,)); c.commit(); flash("تم حذف أمر الشراء غير المستلم.","success")
-        except sqlite3.IntegrityError: c.rollback(); flash("لا يمكن حذف أمر الشراء لوجود مستند مرتبط به.","error")
+        except DB_INTEGRITY_ERROR: c.rollback(); flash("لا يمكن حذف أمر الشراء لوجود مستند مرتبط به.","error")
     c.close(); return redirect(url_for("purchase.index"))
 
 def refresh_purchase_order_receipt_status(c, po_id):
@@ -1415,7 +1415,7 @@ def new_receipt():
             execute_compat(c, "UPDATE goods_receipts SET journal_entry_id=? WHERE id=?",(eid,rid))
             execute_compat(c, "UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?",(eid,mid))
             c.commit(); g.audit_created_record = ("goods_receipts", rid, "goods_receipt_lines", "receipt_id"); flash(f"تم الاستلام وترحيل قيد GRNI رقم {no}.","success"); return redirect(url_for("purchase.index"))
-        except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
+        except (ValueError,InvalidOperation,KeyError,DB_ERROR) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     su=execute_compat(c, "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     wh=execute_compat(c, "SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
     pr=execute_compat(c, "SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
@@ -2098,7 +2098,7 @@ def new_bill():
             c.close()
             flash(f"تم إنشاء مسودة فاتورة المورد {no}. أرسلها للمراجعة قبل الترحيل.","success")
             return redirect(url_for("purchase.index"))
-        except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
+        except (ValueError,InvalidOperation,KeyError,DB_ERROR) as e:
             c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     su=execute_compat(c, "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     expense_accounts=execute_compat(c, "SELECT id,code,name_ar FROM accounts WHERE account_type='expense' AND is_group=0 AND active=1 ORDER BY code").fetchall()
@@ -2241,7 +2241,7 @@ def edit_bill(bill_id):
             c.commit()
             flash("تم حفظ التعديلات كمسودة. يجب إرسال الفاتورة للمراجعة من جديد.", "success")
             return redirect(url_for("purchase.index"))
-        except (ValueError, InvalidOperation, KeyError, sqlite3.Error) as exc:
+        except (ValueError, InvalidOperation, KeyError, DB_ERROR) as exc:
             c.rollback()
             flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
             bill = execute_compat(c, "SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
@@ -2278,7 +2278,7 @@ def submit_bill(bill_id):
     try:
         submit_supplier_bill(c,bill_id,session["user_id"]); c.commit()
         flash("تم إرسال فاتورة المورد للمراجعة والاعتماد.","success")
-    except (ValueError,sqlite3.Error) as exc:
+    except (ValueError,DB_ERROR) as exc:
         c.rollback(); flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     finally: c.close()
     return redirect(url_for("purchase.index"))
@@ -2291,7 +2291,7 @@ def approve_bill(bill_id):
     try:
         approve_supplier_bill(c,bill_id,session["user_id"],request.form.get("reason","")); c.commit()
         flash("تم اعتماد فاتورة المورد. أصبحت جاهزة للترحيل بواسطة المحاسب.","success")
-    except (ValueError,sqlite3.Error) as exc:
+    except (ValueError,DB_ERROR) as exc:
         c.rollback(); flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     finally: c.close()
     return redirect(url_for("purchase.index"))
@@ -2304,7 +2304,7 @@ def reject_bill(bill_id):
     try:
         reject_supplier_bill(c,bill_id,session["user_id"],request.form.get("reason","")); c.commit()
         flash("تم رفض فاتورة المورد مع حفظ سبب الرفض.","success")
-    except (ValueError,sqlite3.Error) as exc:
+    except (ValueError,DB_ERROR) as exc:
         c.rollback(); flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     finally: c.close()
     return redirect(url_for("purchase.index"))
@@ -2319,7 +2319,7 @@ def post_bill(bill_id):
         g.audit_created_record = ("supplier_bills", bill_id, None, None)
         flash(f"تم ترحيل فاتورة المورد وربطها بالقيد رقم {entry_id}.","success")
         return redirect(url_for("purchase.bill_print",bill_id=bill_id))
-    except (ValueError,sqlite3.Error) as exc:
+    except (ValueError,DB_ERROR) as exc:
         c.rollback(); flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     finally: c.close()
     return redirect(url_for("purchase.index"))
@@ -2526,7 +2526,7 @@ def cancel_credit_note(credit_note_id):
         )
         c.commit()
         flash("تم إلغاء إشعار المورد وإعادة المخزون بالقيد العكسي رقم "+str(result["reversal_journal_id"]),"success")
-    except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as exc:
+    except (ValueError,InvalidOperation,KeyError,DB_ERROR) as exc:
         c.rollback()
         flash(safe_error_message(exc,"تعذر إلغاء إشعار المورد. لم يتم حفظ أي تغييرات."),"error")
     finally:
@@ -2695,7 +2695,7 @@ def new_credit_note():
             c.close()
             flash(f"تم ترحيل إشعار الدائن {credit_no} وربطه بالمخزون وفاتورة المورد.","success")
             return redirect(url_for("purchase.index"))
-        except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e:
+        except (ValueError,InvalidOperation,KeyError,DB_ERROR) as e:
             c.rollback()
             flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     suppliers=execute_compat(c, "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
@@ -2743,7 +2743,7 @@ def new_payment():
                 if remaining<=0: break
             if remaining>0: raise ValueError("المبلغ أكبر من مديونية الفواتير المفتوحة؛ لا يتم تسجيل دفعة مقدمة تلقائيًا.")
             c.commit(); g.audit_created_record = ("supplier_payments", payment_id, "supplier_payment_allocations", "payment_id"); flash(f"تم تسجيل السداد {no} وتوزيعه على أقدم الفواتير.","success"); return redirect(url_for("purchase.index"))
-        except (ValueError,InvalidOperation,KeyError,sqlite3.Error) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
+        except (ValueError,InvalidOperation,KeyError,DB_ERROR) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
     su=execute_compat(c, "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     cash=execute_compat(c, """SELECT * FROM accounts WHERE active=1 AND is_group=0 AND account_type='asset'
       AND (lower(name_ar) LIKE '%صندوق%' OR lower(name_ar) LIKE '%بنك%' OR lower(name_ar) LIKE '%نقد%' OR lower(name_ar) LIKE '%نقاط البيع%'
