@@ -268,6 +268,7 @@ def generate_postgres_ddl(snapshot):
     pending_indexes = []
     nocase_unique_columns = {table['name']: extract_nocase_unique_columns(table.get('sql')) for table in tables}
     numeric_candidates = []
+    numeric_review_candidates = []
     identity_columns = []
 
     for table in tables:
@@ -302,15 +303,30 @@ def generate_postgres_ddl(snapshot):
             definitions.append(definition)
 
             col_name = name.lower()
-            if pg_type(column, table_name) == "TEXT" and any(
+            numeric_name_match = any(
                 token in col_name for token in (
                     "amount", "debit", "credit", "balance", "price", "cost",
                     "salary", "wage", "tax", "discount", "quantity", "qty",
                     "rate", "value", "subtotal", "total", "paid", "deduction",
                     "allowance", "proceeds", "depreciation", "insured",
                 )
-            ):
-                numeric_candidates.append(f"{table_name}.{name}")
+            )
+            source_type = (column.get("type") or "").strip().upper()
+            target_type = pg_type(column, table_name)
+            if numeric_name_match and source_type in {"TEXT", "REAL"} and target_type != "NUMERIC":
+                numeric_review_candidates.append({
+                    "table": table_name,
+                    "column": name,
+                    "source_type": source_type,
+                    "postgres_type": target_type,
+                    "reason": (
+                        "SQLite REAL may carry binary floating-point monetary values."
+                        if source_type == "REAL"
+                        else "SQLite TEXT may contain decimal values requiring exact NUMERIC semantics."
+                    ),
+                })
+                if source_type == "TEXT":
+                    numeric_candidates.append(f"{table_name}.{name}")
 
         if primary and len(primary) > 1:
             pk_cols = ", ".join(quote_ident(c["name"]) for c in primary)
@@ -406,9 +422,20 @@ def generate_postgres_ddl(snapshot):
     for candidate in sorted(set(numeric_candidates)):
         candidate_table, candidate_column = candidate.split(".", 1)
         numeric_candidates_by_table.setdefault(candidate_table, []).append(candidate_column)
+    numeric_review_candidates_by_table = {}
+    for candidate in numeric_review_candidates:
+        numeric_review_candidates_by_table.setdefault(candidate["table"], []).append({
+            "column": candidate["column"],
+            "source_type": candidate["source_type"],
+            "postgres_type": candidate["postgres_type"],
+            "reason": candidate["reason"],
+        })
 
     review = {
         "table_count": len(tables),
+        "numeric_review_candidate_count": len(numeric_review_candidates),
+        "numeric_review_candidates": numeric_review_candidates,
+        "numeric_review_candidates_by_table": numeric_review_candidates_by_table,
         "text_numeric_candidate_count": len(set(numeric_candidates)),
         "text_numeric_candidates_by_table": numeric_candidates_by_table,
         "foreign_key_count": len(pending_fks),
@@ -418,6 +445,8 @@ def generate_postgres_ddl(snapshot):
         "text_numeric_candidates": sorted(set(numeric_candidates)),
         "notes": [
             "Only explicitly reviewed accounting/rate columns use PostgreSQL NUMERIC; other TEXT fields remain TEXT.",
+            "Numeric review candidates include matching SQLite TEXT and REAL columns; candidates are warnings, not automatic type conversions.",
+            "SQLite REAL candidates require source-data and arithmetic review before selecting NUMERIC precision/scale.",
             "NUMERIC overrides are intentionally unconstrained until business precision/scale is approved.",
             "CHECK constraints are copied from the SQLite CREATE TABLE definitions.",
             "Expression indexes are copied from their SQLite CREATE INDEX definitions.",
