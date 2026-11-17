@@ -212,6 +212,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
             "VALUES (%s,%s,%s) RETURNING id",
             ("test", "immutable", "2026-01-01"),
         ).fetchone()["id"]
+        self.connection.commit()
         with self.assertRaises(Exception):
             self.connection.execute(
                 f"UPDATE {schema}.audit_log SET details=%s WHERE id=%s",
