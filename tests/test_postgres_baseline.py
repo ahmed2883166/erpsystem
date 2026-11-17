@@ -1,0 +1,86 @@
+"""Fresh-schema PostgreSQL baseline installer tests.
+
+All database objects are isolated in disposable schemas; no company data is used.
+"""
+import os
+import unittest
+import uuid
+
+from postgres_database import connect_postgres
+from postgres_baseline import install_postgres_baseline
+
+POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
+
+
+class PostgreSQLBaselineUnitTests(unittest.TestCase):
+    def test_rejects_missing_transaction_wrapper(self):
+        class NeverCalledConnection:
+            autocommit = True
+
+        with self.assertRaisesRegex(ValueError, "BEGIN/COMMIT"):
+            install_postgres_baseline(NeverCalledConnection(), "CREATE TABLE sample (id BIGINT);")
+
+    def test_rejects_non_autocommit_connection(self):
+        class NeverCalledConnection:
+            autocommit = False
+
+        with self.assertRaisesRegex(ValueError, "autocommit=True"):
+            install_postgres_baseline(NeverCalledConnection(), "BEGIN; CREATE TABLE sample (id BIGINT); COMMIT;")
+
+
+@unittest.skipUnless(POSTGRES_DSN, "NEXUS_TEST_POSTGRES_DSN is not configured")
+class PostgreSQLBaselineIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        self.schema = "nexus_baseline_" + uuid.uuid4().hex[:12]
+        self.connection = connect_postgres(POSTGRES_DSN, autocommit=True)
+
+    def tearDown(self):
+        try:
+            self.connection.execute(f'DROP SCHEMA IF EXISTS "{self.schema}" CASCADE')
+        finally:
+            self.connection.close()
+
+    def test_installs_baseline_atomically_and_records_checksum(self):
+        sql = (
+            "BEGIN; "
+            'CREATE TABLE "accounts" (id BIGINT PRIMARY KEY, code TEXT NOT NULL); '
+            "COMMIT;"
+        )
+        digest = install_postgres_baseline(self.connection, sql, schema=self.schema)
+        row = self.connection.execute(
+            f'SELECT baseline_sha256 FROM "{self.schema}".nexus_schema_installation WHERE id=1'
+        ).fetchone()
+        self.assertEqual(row["baseline_sha256"].strip(), digest)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema=%s",
+                (self.schema,),
+            ).fetchone()["n"],
+            2,
+        )
+
+    def test_refuses_non_empty_schema_without_modifying_it(self):
+        self.connection.execute(f'CREATE SCHEMA "{self.schema}"')
+        self.connection.execute(f'CREATE TABLE "{self.schema}".keep_me (id BIGINT)')
+        with self.assertRaisesRegex(RuntimeError, "is not empty"):
+            install_postgres_baseline(
+                self.connection,
+                "BEGIN; CREATE TABLE should_not_exist (id BIGINT); COMMIT;",
+                schema=self.schema,
+            )
+        self.assertTrue(
+            self.connection.execute(
+                "SELECT to_regclass(%s) AS relation",
+                (self.schema + ".keep_me",),
+            ).fetchone()["relation"]
+        )
+        self.assertIsNone(
+            self.connection.execute(
+                "SELECT to_regclass(%s) AS relation",
+                (self.schema + ".should_not_exist",),
+            ).fetchone()["relation"]
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
