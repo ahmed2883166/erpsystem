@@ -110,6 +110,103 @@ def table_names(connection, *, schema=None):
     return {row["table_name"] if isinstance(row, dict) else row[0] for row in rows}
 
 
+
+def _split_sql_statements(script):
+    """Split SQL on semicolons outside quoted strings, identifiers and comments."""
+    statements = []
+    current = []
+    i = 0
+    state = "normal"
+    dollar_tag = None
+    length = len(script)
+    while i < length:
+        char = script[i]
+        nxt = script[i + 1] if i + 1 < length else ""
+        if state == "single":
+            current.append(char)
+            if char == "'" and nxt == "'":
+                current.append(nxt)
+                i += 2
+                continue
+            if char == "'":
+                state = "normal"
+        elif state == "double":
+            current.append(char)
+            if char == '"' and nxt == '"':
+                current.append(nxt)
+                i += 2
+                continue
+            if char == '"':
+                state = "normal"
+        elif state == "line_comment":
+            current.append(char)
+            if char == "\\n":
+                state = "normal"
+        elif state == "block_comment":
+            current.append(char)
+            if char == "*" and nxt == "/":
+                current.append(nxt)
+                i += 2
+                state = "normal"
+                continue
+        elif state == "dollar":
+            if script.startswith(dollar_tag, i):
+                current.append(dollar_tag)
+                i += len(dollar_tag)
+                state = "normal"
+                continue
+            current.append(char)
+        else:
+            if char == "'":
+                state = "single"
+                current.append(char)
+            elif char == '"':
+                state = "double"
+                current.append(char)
+            elif char == "-" and nxt == "-":
+                current.extend((char, nxt))
+                i += 2
+                state = "line_comment"
+                continue
+            elif char == "/" and nxt == "*":
+                current.extend((char, nxt))
+                i += 2
+                state = "block_comment"
+                continue
+            elif char == "$":
+                match = re.match(r"\\$[A-Za-z_][A-Za-z0-9_]*\\$|\\$\\$", script[i:])
+                if match:
+                    dollar_tag = match.group(0)
+                    current.append(dollar_tag)
+                    i += len(dollar_tag)
+                    state = "dollar"
+                    continue
+                current.append(char)
+            elif char == ";":
+                statement = "".join(current).strip()
+                if statement:
+                    statements.append(statement)
+                current = []
+            else:
+                current.append(char)
+        i += 1
+    if state in {"single", "double", "block_comment", "dollar"}:
+        raise ValueError("Unterminated quoted SQL or comment in script.")
+    tail = "".join(current).strip()
+    if tail:
+        statements.append(tail)
+    return statements
+
+
+def execute_script(connection, script):
+    """Execute a multi-statement DDL script without SQLite-only executescript API."""
+    if database_dialect(connection) == "sqlite":
+        connection.executescript(script)
+        return
+    for statement in _split_sql_statements(str(script)):
+        connection.execute(statement)
+
+
 def begin_write_transaction(connection):
     """Start a write transaction without nesting an existing transaction.
 
