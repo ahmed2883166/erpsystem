@@ -231,6 +231,9 @@ class AnalyticDimensionsPostgreSQLTests(unittest.TestCase):
                         "supplier_id": None,
                     },
                 )
+                raise RuntimeError("rollback disposable schema")
+        except RuntimeError as exc:
+            self.assertEqual(str(exc), "rollback disposable schema")
         finally:
             conn.close()
 
