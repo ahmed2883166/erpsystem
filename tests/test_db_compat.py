@@ -22,20 +22,24 @@ from db_compat import (
 
 class SQLPlaceholderTranslationTests(unittest.TestCase):
     def test_translates_only_unquoted_qmark_placeholders(self):
-        sql = """SELECT ?, '?', "?", $?;$, $body$?$body$
+        sql = '''SELECT ?, '?', "?", $tag$?;$tag$
             -- ?
             /* outer ? /* nested ? */ still ? */
-            WHERE value=?"""
-        self.assertEqual(
-            qmark_to_format(sql),
-            """SELECT %s, '?', "?", $?;$, $body$?$body$
+            WHERE value=?'''
+        expected = '''SELECT %s, '?', "?", $tag$?;$tag$
             -- ?
             /* outer ? /* nested ? */ still ? */
-            WHERE value=%s""",
-        )
+            WHERE value=%s'''
+        self.assertEqual(qmark_to_format(sql), expected)
 
     def test_rejects_unterminated_sql_constructs(self):
-        for sql in ("SELECT 'unfinished ?", 'SELECT "unfinished ?', "SELECT /* unfinished ?", "SELECT $body$unfinished ?"):
+        cases = (
+            "SELECT 'unfinished ?",
+            'SELECT "unfinished ?',
+            "SELECT /* unfinished ?",
+            "SELECT $body$unfinished ?",
+        )
+        for sql in cases:
             with self.subTest(sql=sql):
                 with self.assertRaises(ValueError):
                     qmark_to_format(sql)
