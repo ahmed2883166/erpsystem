@@ -429,8 +429,10 @@ class SalesIntegrationTests(unittest.TestCase):
 
     def test_invoice_posts_revenue_tax_cogs_and_stock_issue(self):
         self.db.execute("BEGIN IMMEDIATE")
-        result = sales.post_invoice(self.db, self.customer_id, "2026-11-10", self.warehouse_id,
-            [{"product_id": self.product_id, "quantity": "2", "unit_price": "20"}], "14", 1)
+        with patch("sales.lock_stock_warehouses", wraps=sales.lock_stock_warehouses) as warehouse_lock:
+            result = sales.post_invoice(self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+                [{"product_id": self.product_id, "quantity": "2", "unit_price": "20"}], "14", 1)
+            warehouse_lock.assert_called_once_with(self.db, self.warehouse_id)
         self.db.commit()
         self.assertEqual(result["subtotal"], Decimal("40.00"))
         self.assertEqual(result["tax_amount"], Decimal("5.60"))
