@@ -65,8 +65,10 @@ startup. This runbook describes a controlled rehearsal, not a production cutover
    and credit totals by party ID when those columns exist, and inventory
    valuation-layer quantity/value totals overall and by product/warehouse.
    Controls whose required table or columns are unavailable are listed
-   separately as skipped; review those skips and resolve schema gaps before
-   approval. Any reported mismatch blocks approval.
+   separately as skipped. A skipped financial/inventory control now makes
+   the verifier return `passed: false` and `requires_review: true`; resolve
+   every skip and rerun verification before approval. Any mismatch also blocks
+   approval.
 
 ## Important limitations
 

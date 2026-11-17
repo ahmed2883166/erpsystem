@@ -7,6 +7,7 @@ from scripts.verify_sqlite_postgres_copy import (
     _decimal,
     _missing_control_columns,
     _sqlite_grouped_sum,
+    _verification_passed,
     verify_copy,
 )
 
@@ -115,6 +116,18 @@ class SQLitePostgresVerifierUnitTests(unittest.TestCase):
         )
         self.assertEqual(source_missing, ["customer_id"])
         self.assertEqual(target_missing, ["entry_id"])
+
+    def test_verification_fails_closed_when_any_control_is_skipped(self):
+        complete_rows = {"accounts": {"sqlite": 2, "postgres": 2}}
+        self.assertTrue(_verification_passed([], [], complete_rows, ["accounts"]))
+        self.assertFalse(
+            _verification_passed(
+                [], [{"control": "journal.debit", "reason": "required_columns_missing"}],
+                complete_rows, ["accounts"],
+            )
+        )
+        self.assertFalse(_verification_passed([{"control": "row_count"}], [], complete_rows, ["accounts"]))
+        self.assertFalse(_verification_passed([], [], {}, ["accounts"]))
 
     def test_journal_control_grouping_detects_reassigned_entry_lines(self):
         import sqlite3

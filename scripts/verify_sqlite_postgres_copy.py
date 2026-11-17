@@ -85,6 +85,15 @@ def _missing_control_columns(required, source_available, target_available):
     return source_missing, target_missing
 
 
+def _verification_passed(issues, controls_skipped, row_counts, source_tables):
+    """A copy cannot pass while any required financial control was skipped."""
+    return (
+        not issues
+        and not controls_skipped
+        and len(row_counts) == len(source_tables)
+    )
+
+
 def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> dict:
     try:
         import psycopg
@@ -242,7 +251,10 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
             "financial_and_inventory_controls_skipped": controls_skipped,
             "issue_count": len(issues),
             "issues": issues[:200],
-            "passed": not issues and len(row_counts) == len(source_tables),
+            "passed": _verification_passed(
+                issues, controls_skipped, row_counts, source_tables
+            ),
+            "requires_review": bool(controls_skipped),
             "row_counts": row_counts,
         }
     finally:
