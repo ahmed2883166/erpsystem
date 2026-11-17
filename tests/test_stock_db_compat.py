@@ -128,3 +128,42 @@ class StockNullSafeComparisonTests(unittest.TestCase):
             self.assertIn("parent_id IS NULL", qmark_to_format(predicate))
         finally:
             conn.close()
+
+
+class StockValuationLayerLockTests(unittest.TestCase):
+    def test_postgresql_consumption_locks_valuation_layers(self):
+        from stock import available_layers
+
+        class Cursor:
+            def fetchall(self):
+                return []
+
+        class FakePostgresConnection:
+            __module__ = "psycopg"
+            def __init__(self):
+                self.sql = None
+                self.params = None
+            def execute(self, sql, params=()):
+                self.sql = sql
+                self.params = params
+                return Cursor()
+
+        conn = FakePostgresConnection()
+        self.assertEqual(available_layers(conn, 12, 3), [])
+        self.assertIn("ORDER BY id FOR UPDATE", conn.sql)
+        self.assertEqual(conn.params, (12, 3))
+
+    def test_sqlite_layer_query_does_not_add_postgresql_lock_clause(self):
+        from stock import available_layers
+
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.execute("""
+                CREATE TABLE stock_valuation_layers (
+                    id INTEGER PRIMARY KEY, product_id INTEGER, warehouse_id INTEGER,
+                    qty_remaining TEXT
+                )
+            """)
+            self.assertEqual(available_layers(conn, 12, 3), [])
+        finally:
+            conn.close()
