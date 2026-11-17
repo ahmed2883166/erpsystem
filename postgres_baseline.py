@@ -6,6 +6,7 @@ migration. It refuses non-empty schemas and records the exact baseline hash.
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 
 from db_compat import _split_sql_statements
@@ -31,10 +32,20 @@ def install_postgres_baseline(connection, baseline_sql: str, *, schema: str = "n
     statements = _split_sql_statements(baseline_sql)
     if not statements:
         raise ValueError("PostgreSQL baseline contains no SQL statements.")
-    normalized = [item.strip().rstrip(";").strip().upper() for item in statements]
+    def command_keyword(statement):
+        without_comments = re.sub(
+            r"(?s)^\\s*(?:(?:--[^\\n]*(?:\\n|$))|(?:/\\*.*?\\*/\\s*))*",
+            "",
+            statement,
+        )
+        return without_comments.strip().rstrip(";").strip().upper()
+
+    normalized = [command_keyword(item) for item in statements]
     if normalized[0] != "BEGIN" or normalized[-1] != "COMMIT":
         raise ValueError("Generated PostgreSQL baseline must be wrapped in BEGIN/COMMIT.")
     ddl = statements[1:-1]
+    if any(command_keyword(item) in {"BEGIN", "COMMIT", "ROLLBACK"} for item in ddl):
+        raise ValueError("PostgreSQL baseline contains nested transaction control.")
     if not ddl:
         raise ValueError("PostgreSQL baseline contains no schema DDL.")
     digest = hashlib.sha256(baseline_sql.encode("utf-8")).hexdigest()
