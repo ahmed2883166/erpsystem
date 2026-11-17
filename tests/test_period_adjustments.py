@@ -47,8 +47,8 @@ class PeriodAdjustmentTests(unittest.TestCase):
 
     def test_schema_initializer_is_idempotent_and_preserves_existing_frequency(self):
         self.conn.execute(
-            "INSERT INTO company_settings(setting_key,setting_value) VALUES(?,?)",
-            ("period_adjustment_frequency", "yearly"),
+            "UPDATE company_settings SET setting_value=? WHERE setting_key=?",
+            ("yearly", "period_adjustment_frequency"),
         )
         initialize_adjustments_schema(self.conn)
         value = self.conn.execute(
