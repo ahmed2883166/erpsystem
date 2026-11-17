@@ -297,5 +297,73 @@ class SharedAccountingCoreTests(unittest.TestCase):
         self.assertEqual(snapshot["gl_stock"],Decimal("100.00"))
         self.assertEqual(snapshot["stock_difference"],Decimal("0.00"))
 
+
+class DecimalSumDialectTests(unittest.TestCase):
+    class FakePostgreSQLConnection:
+        __module__ = "psycopg.fake"
+
+    def test_sqlite_uses_registered_decimal_aggregate(self):
+        from accounting_core import decimal_sum_expression
+        connection = sqlite3.connect(":memory:")
+        try:
+            expression = decimal_sum_expression(connection, "jl.debit")
+            self.assertEqual(expression, "COALESCE(DECIMAL_SUM(jl.debit), '0')")
+        finally:
+            connection.close()
+
+    def test_postgresql_uses_native_exact_numeric_aggregate(self):
+        from accounting_core import decimal_sum_expression
+        expression = decimal_sum_expression(
+            self.FakePostgreSQLConnection(), "jl.debit"
+        )
+        self.assertEqual(
+            expression,
+            "COALESCE(SUM(CAST(jl.debit AS NUMERIC)), 0)",
+        )
+
+
+POSTGRES_DSN = __import__("os").environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
+
+
+@unittest.skipUnless(POSTGRES_DSN, "NEXUS_TEST_POSTGRES_DSN is not configured")
+class PostgreSQLDecimalAggregateIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        import uuid
+        from postgres_database import connect_postgres
+        self.connection = connect_postgres(POSTGRES_DSN)
+        self.schema = "nexus_decimal_" + uuid.uuid4().hex[:12]
+        self.connection.execute('CREATE SCHEMA "' + self.schema + '"')
+        self.connection.execute('SET LOCAL search_path TO "' + self.schema + '"')
+
+    def tearDown(self):
+        if getattr(self, "connection", None):
+            self.connection.rollback()
+            self.connection.execute('DROP SCHEMA IF EXISTS "' + self.schema + '" CASCADE')
+            self.connection.commit()
+            self.connection.close()
+
+    def test_postgresql_aggregates_money_without_float_drift(self):
+        from decimal import Decimal
+        from accounting_core import decimal_sum_expression
+        self.connection.execute(
+            "CREATE TABLE decimal_probe (amount NUMERIC(30,8) NOT NULL)"
+        )
+        self.connection.executemany(
+            "INSERT INTO decimal_probe(amount) VALUES (%s)",
+            [
+                ("99999999999999999999.12345678",),
+                ("0.00000002",),
+                ("-0.00000001",),
+            ],
+        )
+        expression = decimal_sum_expression(self.connection, "amount")
+        result = self.connection.execute(
+            "SELECT " + expression + " AS total FROM decimal_probe"
+        ).fetchone()
+        self.assertEqual(
+            result["total"],
+            Decimal("99999999999999999999.12345679"),
+        )
+
 if __name__ == "__main__":
     unittest.main()
