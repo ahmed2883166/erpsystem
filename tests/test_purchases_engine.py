@@ -337,16 +337,23 @@ class PurchasingAccountingTests(unittest.TestCase):
                             row["accounting_status"] == "posted" and row["journal_entry_id"]
                             for row in movement_rows))
         layers = self.db.execute(
-            """SELECT qty_in,qty_remaining,unit_cost FROM stock_valuation_layers
+            """SELECT qty_in,qty_remaining,unit_cost,receipt_line_id FROM stock_valuation_layers
                WHERE product_id=? ORDER BY id""",
             (product_id,),
         ).fetchall()
+        receipt_line_ids = [row["id"] for row in self.db.execute(
+            """SELECT gl.id FROM goods_receipt_lines gl
+               JOIN goods_receipts gr ON gr.id=gl.receipt_id
+               WHERE gr.po_id=? ORDER BY gr.id""",
+            (po_id,),
+        )]
         self.assertEqual(
             [(Decimal(row["qty_in"]), Decimal(row["qty_remaining"]), Decimal(row["unit_cost"]))
              for row in layers],
             [(Decimal("4"), Decimal("4"), Decimal("10")),
              (Decimal("6"), Decimal("6"), Decimal("12"))],
         )
+        self.assertEqual([row["receipt_line_id"] for row in layers], receipt_line_ids)
 
         fifo_cost, allocations = stock.consume_layers(
             self.db, product_id, warehouse_id, Decimal("5"), "fifo"
