@@ -721,8 +721,8 @@ def current_qty(c, product_id, warehouse_id, lot_id=None):
                OR (movement_type IN ('issue','scrap') AND source_warehouse_id=?)
                OR (movement_type='transfer' AND
                    (source_warehouse_id=? OR target_warehouse_id=?)))
-             AND lot_id IS ?""",
-        (product_id, warehouse_id, warehouse_id, warehouse_id, warehouse_id, lot_id)
+             AND (lot_id = ? OR (lot_id IS NULL AND ? IS NULL))""",
+        (product_id, warehouse_id, warehouse_id, warehouse_id, warehouse_id, lot_id, lot_id)
     ).fetchall()
     balance = D("0")
     for row in rows:
