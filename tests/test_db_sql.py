@@ -100,6 +100,7 @@ class PostgreSQLQmarkExecutionTests(unittest.TestCase):
     def test_postgresql_identity_ddl_generates_inserted_ids(self):
         import uuid
         from db_compat import insert_and_get_id
+        from postgres_database import connect_postgres
 
         connection = connect_postgres(POSTGRES_DSN)
         schema = "nexus_identity_probe_" + uuid.uuid4().hex
