@@ -73,7 +73,7 @@ def table_columns(connection, table_name, *, schema=None):
         if not table_exists(connection, table_name):
             return set()
         # The identifier was validated above; SQLite PRAGMA cannot bind it.
-        rows = connection.execute(f'PRAGMA table_info("{table_name}")').fetchall()
+        rows = connection.execute(f'PRAGMA table_xinfo("{table_name}")').fetchall()
         return {row["name"] if isinstance(row, sqlite3.Row) else row[1] for row in rows}
 
     schema_name = _identifier(schema, "schema name") if schema else None
@@ -102,7 +102,7 @@ def table_column_info(connection, table_name, *, schema=None):
     if dialect == "sqlite":
         if not table_exists(connection, table_name):
             return {}
-        rows = connection.execute(f'PRAGMA table_info("{table_name}")').fetchall()
+        rows = connection.execute(f'PRAGMA table_xinfo("{table_name}")').fetchall()
         return {
             (row["name"] if isinstance(row, sqlite3.Row) else row[1]): {
                 "name": row["name"] if isinstance(row, sqlite3.Row) else row[1],
