@@ -42,7 +42,7 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
     def test_repository_core_migration_is_loadable_and_splits_function_body_safely(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9])
+        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
         statements = _split_sql_statements(migrations[0].sql)
         audit_function = next(
             item for item in statements
@@ -71,6 +71,11 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
                             for item in location_integrity_statements))
         self.assertTrue(any("CREATE TRIGGER trg_stock_product_locations_active_update" in item
                             for item in location_integrity_statements))
+        default_location_statements = _split_sql_statements(migrations[9].sql)
+        self.assertTrue(any("nexus_prevent_default_location_deactivation" in item
+                            for item in default_location_statements))
+        self.assertTrue(any("trg_stock_locations_prevent_default_deactivation" in item
+                            for item in default_location_statements))
         stock_value_statements = _split_sql_statements(migrations[6].sql)
         self.assertTrue(any("CREATE OR REPLACE FUNCTION nexus_initialize_stock_layer_value" in item
                             for item in stock_value_statements))
