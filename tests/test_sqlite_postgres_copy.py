@@ -114,8 +114,8 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
             """)
             # executescript commits its own transaction; defer constraints only
             # after it, for the fixture's intentionally unordered parent rows.
-            conn.execute("PRAGMA defer_foreign_keys = ON")
             conn.execute("BEGIN")
+            conn.execute("PRAGMA defer_foreign_keys = ON")
             conn.executemany(
                 "INSERT INTO accounts(id, parent_id, name) VALUES (?, ?, ?)",
                 [(3, 2, "Child"), (1, None, "Root"), (2, 1, "Group")],
