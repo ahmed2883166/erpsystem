@@ -119,6 +119,9 @@ def initialize_workforce_extras_schema():
                         VALUES(?,?,?,?, 'legacy_aggregate')""",
                         (line_id,section,label,str(amount)))
         _execute(c, "INSERT INTO workforce_migrations(migration_key) VALUES(?)",(migration,))
+    # PostgreSQL connections are transactional by default; persist the
+    # additive schema and one-time legacy snapshots before closing.
+    c.commit()
     c.close()
 
 
