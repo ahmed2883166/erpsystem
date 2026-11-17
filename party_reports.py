@@ -1,5 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database
+from db_compat import table_columns, table_exists
 """Customer and supplier subledger statements with opening and running balances."""
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
@@ -26,11 +27,11 @@ def _authorized(fn):
 
 
 def _table_exists(c, name):
-    return c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+    return table_exists(c, name)
 
 
 def _columns(c, name):
-    return {row["name"] for row in c.execute(f'PRAGMA table_info("{name}")')} if _table_exists(c, name) else set()
+    return table_columns(c, name)
 
 
 def _events(c, kind, party_id):
