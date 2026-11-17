@@ -1,6 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database, fetch_page
-from db_compat import begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names, execute_script
+from db_compat import begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names, execute_script, database_dialect
 """Employee master, payroll preparation and employee custody workflows."""
 import sqlite3
 import io
@@ -386,54 +386,100 @@ def initialize_workforce_schema():
     c.execute("INSERT INTO leave_types(code,name,is_paid,requires_balance) VALUES('annual','إجازة سنوية',1,1) ON CONFLICT DO NOTHING")
     c.execute("INSERT INTO leave_types(code,name,is_paid,requires_balance) VALUES('unpaid','إجازة بدون أجر',0,0) ON CONFLICT DO NOTHING")
     c.execute("INSERT INTO leave_types(code,name,is_paid,requires_balance) VALUES('sick','إجازة مرضية',1,0) ON CONFLICT DO NOTHING")
-    attendance_sql = c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='attendance_records'").fetchone()
-    if attendance_sql and "'annual_leave'" not in (attendance_sql["sql"] or ""):
-        c.execute("PRAGMA foreign_keys=OFF")
-        try:
-            begin_write_transaction(c)
-            c.execute("""CREATE TABLE attendance_records_rebuilt(
-                id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id),
-                attendance_date TEXT NOT NULL,
-                status TEXT NOT NULL CHECK(status IN ('present','absent','permission','holiday','annual_leave','sick_leave','unpaid_leave')),
-                check_in TEXT NOT NULL DEFAULT '', check_out TEXT NOT NULL DEFAULT '',
-                absence_hours TEXT NOT NULL DEFAULT '0', approved_overtime_hours TEXT NOT NULL DEFAULT '0',
-                notes TEXT NOT NULL DEFAULT '', recorded_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(employee_id,attendance_date))""")
-            c.execute("""INSERT INTO attendance_records_rebuilt
-                SELECT id,employee_id,attendance_date,status,check_in,check_out,absence_hours,
-                       approved_overtime_hours,notes,recorded_by,created_at FROM attendance_records""")
-            c.execute("DROP TABLE attendance_records")
-            c.execute("ALTER TABLE attendance_records_rebuilt RENAME TO attendance_records")
-            c.execute("CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance_records(attendance_date,employee_id)")
-            c.commit()
-        except Exception:
-            c.rollback()
-            raise
-        finally:
-            c.execute("PRAGMA foreign_keys=ON")
+    if database_dialect(c) == "sqlite":
+        attendance_sql = c.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='attendance_records'"
+        ).fetchone()
+        if attendance_sql and "'annual_leave'" not in (attendance_sql["sql"] or ""):
+            c.execute("PRAGMA foreign_keys=OFF")
+            try:
+                begin_write_transaction(c)
+                c.execute("""CREATE TABLE attendance_records_rebuilt(
+                    id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id),
+                    attendance_date TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('present','absent','permission','holiday','annual_leave','sick_leave','unpaid_leave')),
+                    check_in TEXT NOT NULL DEFAULT '', check_out TEXT NOT NULL DEFAULT '',
+                    absence_hours TEXT NOT NULL DEFAULT '0', approved_overtime_hours TEXT NOT NULL DEFAULT '0',
+                    notes TEXT NOT NULL DEFAULT '', recorded_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(employee_id,attendance_date))""")
+                c.execute("""INSERT INTO attendance_records_rebuilt
+                    SELECT id,employee_id,attendance_date,status,check_in,check_out,absence_hours,
+                           approved_overtime_hours,notes,recorded_by,created_at FROM attendance_records""")
+                c.execute("DROP TABLE attendance_records")
+                c.execute("ALTER TABLE attendance_records_rebuilt RENAME TO attendance_records")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance_records(attendance_date,employee_id)")
+                c.commit()
+            except Exception:
+                c.rollback()
+                raise
+            finally:
+                c.execute("PRAGMA foreign_keys=ON")
+    elif table_exists(c, "attendance_records"):
+        # PostgreSQL stores CHECK constraints separately; replace only an old
+        # status constraint and preserve every attendance row and other constraint.
+        checks = c.execute("""
+            SELECT conname, pg_get_constraintdef(oid) AS definition
+            FROM pg_constraint
+            WHERE conrelid='attendance_records'::regclass AND contype='c'
+        """).fetchall()
+        for check in checks:
+            definition = str(check["definition"])
+            if "status" in definition.lower() and "annual_leave" not in definition:
+                constraint = str(check["conname"]).replace('"', '""')
+                c.execute(f'ALTER TABLE attendance_records DROP CONSTRAINT "{constraint}"')
+        remaining_checks = c.execute("""
+            SELECT pg_get_constraintdef(oid) AS definition
+            FROM pg_constraint
+            WHERE conrelid='attendance_records'::regclass AND contype='c'
+        """).fetchall()
+        if not any("status" in str(row["definition"]).lower()
+                   and "annual_leave" in str(row["definition"])
+                   for row in remaining_checks):
+            c.execute("""ALTER TABLE attendance_records
+                ADD CONSTRAINT attendance_records_status_check
+                CHECK (status IN ('present','absent','permission','holiday',
+                                  'annual_leave','sick_leave','unpaid_leave'))""")
     # Allow a reversed payroll period to be prepared again while keeping only one
     # non-reversed payroll run per period. Preserve run IDs and all linked history.
-    payroll_runs_sql = c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='payroll_runs'").fetchone()
-    if payroll_runs_sql and "period TEXT NOT NULL UNIQUE" in (payroll_runs_sql["sql"] or ""):
-        c.execute("PRAGMA foreign_keys=OFF")
-        try:
-            begin_write_transaction(c)
-            c.execute("""CREATE TABLE payroll_runs_rebuilt(
-                id INTEGER PRIMARY KEY, period TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft',
-                journal_entry_id INTEGER UNIQUE, created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )""")
-            c.execute("""INSERT INTO payroll_runs_rebuilt(id,period,status,journal_entry_id,created_by,created_at)
-                SELECT id,period,status,journal_entry_id,created_by,created_at FROM payroll_runs""")
-            c.execute("DROP TABLE payroll_runs")
-            c.execute("ALTER TABLE payroll_runs_rebuilt RENAME TO payroll_runs")
-            c.execute("CREATE UNIQUE INDEX uq_payroll_runs_non_reversed_period ON payroll_runs(period) WHERE status!='reversed'")
-            c.execute("CREATE INDEX IF NOT EXISTS idx_payroll_period ON payroll_runs(period)")
-            c.commit()
-        except Exception:
-            c.rollback()
-            raise
-        finally:
-            c.execute("PRAGMA foreign_keys=ON")
+    if database_dialect(c) == "sqlite":
+        payroll_runs_sql = c.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='payroll_runs'"
+        ).fetchone()
+        if payroll_runs_sql and "period TEXT NOT NULL UNIQUE" in (payroll_runs_sql["sql"] or ""):
+            c.execute("PRAGMA foreign_keys=OFF")
+            try:
+                begin_write_transaction(c)
+                c.execute("""CREATE TABLE payroll_runs_rebuilt(
+                    id INTEGER PRIMARY KEY, period TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft',
+                    journal_entry_id INTEGER UNIQUE, created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""")
+                c.execute("""INSERT INTO payroll_runs_rebuilt(id,period,status,journal_entry_id,created_by,created_at)
+                    SELECT id,period,status,journal_entry_id,created_by,created_at FROM payroll_runs""")
+                c.execute("DROP TABLE payroll_runs")
+                c.execute("ALTER TABLE payroll_runs_rebuilt RENAME TO payroll_runs")
+                c.execute("CREATE UNIQUE INDEX uq_payroll_runs_non_reversed_period ON payroll_runs(period) WHERE status!='reversed'")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_payroll_period ON payroll_runs(period)")
+                c.commit()
+            except Exception:
+                c.rollback()
+                raise
+            finally:
+                c.execute("PRAGMA foreign_keys=ON")
+    elif table_exists(c, "payroll_runs"):
+        # Remove the legacy global UNIQUE(period), then enforce uniqueness only
+        # for active runs. Duplicate active periods cause a safe migration failure.
+        unique_constraints = c.execute("""
+            SELECT conname, pg_get_constraintdef(oid) AS definition
+            FROM pg_constraint
+            WHERE conrelid='payroll_runs'::regclass AND contype='u'
+        """).fetchall()
+        for constraint_row in unique_constraints:
+            if str(constraint_row["definition"]).replace(" ", "").lower() == "unique(period)":
+                constraint = str(constraint_row["conname"]).replace('"', '""')
+                c.execute(f'ALTER TABLE payroll_runs DROP CONSTRAINT "{constraint}"')
+        c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_payroll_runs_non_reversed_period
+            ON payroll_runs(period) WHERE status <> 'reversed'""")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_payroll_period ON payroll_runs(period)")
     payroll_run_cols = table_columns(c, "payroll_runs")
     for column, declaration in {
         "posted_at": "TEXT",
