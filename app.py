@@ -9,7 +9,6 @@ from logging.handlers import RotatingFileHandler
 import os
 import re
 import secrets
-import sqlite3
 import tempfile
 import time
 import zipfile
