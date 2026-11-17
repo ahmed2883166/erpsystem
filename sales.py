@@ -1362,11 +1362,6 @@ def cancel_credit_note(conn, credit_note_id, cancellation_date, reason, created_
             "CANCEL-" + note["credit_note_no"] + "-COGS",
             "إلغاء عكس تكلفة المبيعات " + note["credit_note_no"], created_by,
         )
-    for movement in movements:
-        execute_compat(conn, "UPDATE stock_valuation_layers SET qty_remaining='0',value_remaining='0' WHERE id=?",
-                     (movement["layer_id"],))
-        execute_compat(conn, "UPDATE stock_movements SET movement_type='cancelled_receipt',accounting_status='reversed' WHERE id=?",
-                     (movement["id"],))
     # All linked movements (including legacy line-level links) were checked above.
     for movement in movements:
         if movement["layer_id"] is not None:
