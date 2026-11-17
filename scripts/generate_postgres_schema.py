@@ -303,12 +303,20 @@ def generate_postgres_ddl(snapshot):
             definitions.append(definition)
 
             col_name = name.lower()
-            numeric_name_match = any(
-                token in col_name for token in (
-                    "amount", "debit", "credit", "balance", "price", "cost",
-                    "salary", "wage", "tax", "discount", "quantity", "qty",
-                    "rate", "value", "subtotal", "total", "paid", "deduction",
-                    "allowance", "proceeds", "depreciation", "insured",
+            name_parts = col_name.split("_")
+            metadata_suffixes = {
+                "code", "date", "id", "json", "name", "number", "status", "type",
+            }
+            numeric_name_match = (
+                bool(name_parts)
+                and name_parts[-1] not in metadata_suffixes
+                and any(
+                    token in name_parts for token in (
+                        "amount", "debit", "credit", "balance", "price", "cost",
+                        "salary", "wage", "tax", "discount", "quantity", "qty",
+                        "rate", "value", "subtotal", "total", "paid", "deduction",
+                        "allowance", "proceeds", "depreciation", "insured",
+                    )
                 )
             )
             source_type = (column.get("type") or "").strip().upper()
