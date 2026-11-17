@@ -9,16 +9,18 @@ from decimal import Decimal
 
 from accounting_core import register_decimal_aggregates
 from income_statement import closing_entries_exclusion_sql
+from db_compat import table_columns, table_exists
 
 
 def _table_exists(conn, name):
-    return conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
-    ).fetchone() is not None
+    """Use the shared metadata adapter for SQLite and PostgreSQL connections."""
+    return table_exists(conn, name)
 
 
 def _columns(conn, table):
-    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    """Return validated table metadata without SQLite-only PRAGMA at call sites."""
+    return table_columns(conn, table)
+
 
 def _amount(value):
     return Decimal(str(value or "0"))
