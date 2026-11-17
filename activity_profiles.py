@@ -6,6 +6,9 @@ inherit a supported base activity and can be selected independently.
 """
 import json
 import re
+from db_compat import table_exists
+from db_sql import execute_compat
+
 from chart_templates import (
     ACTIVITY_LABELS, ACTIVITY_ACCOUNT_ROLES, ACTIVITY_POSTING_ACCOUNTS,
     ACTIVITY_TAX_ACCOUNT_ROLES, CHARTS,
@@ -222,21 +225,16 @@ def validate_activity_profile(conn, profile):
 
 def get_active_activity_profile(conn):
     """Resolve the selected profile; legacy databases safely fall back to built-ins."""
-    settings_table = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
-    ).fetchone()
     settings = {}
-    if settings_table:
-        settings = {row["setting_key"]: row["setting_value"] for row in conn.execute(
+    if table_exists(conn, "company_settings"):
+        settings = {row["setting_key"]: row["setting_value"] for row in execute_compat(
+            conn,
             "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity_profile_code','activity')"
         )}
     code = settings.get("activity_profile_code") or settings.get("activity") or "commercial"
-    profile_table = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='activity_profiles'"
-    ).fetchone()
-    row = conn.execute(
-        "SELECT * FROM activity_profiles WHERE code=? AND active=1", (code,)
-    ).fetchone() if profile_table else None
+    row = execute_compat(
+        conn, "SELECT * FROM activity_profiles WHERE code=? AND active=1", (code,)
+    ).fetchone() if table_exists(conn, "activity_profiles") else None
     if not row:
         activity = settings.get("activity") or code
         from chart_templates import ACTIVITY_POSTING_ACCOUNTS, ACTIVITY_TAX_ACCOUNT_ROLES
