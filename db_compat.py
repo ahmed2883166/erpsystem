@@ -7,6 +7,15 @@ SQL or select the database used by the Flask application.
 import re
 import sqlite3
 
+try:
+    import psycopg
+except ImportError:  # SQLite-only installations remain supported during migration.
+    psycopg = None
+
+
+DB_ERROR = (sqlite3.Error,) + ((psycopg.Error,) if psycopg is not None else ())
+DB_INTEGRITY_ERROR = (sqlite3.IntegrityError,) + ((psycopg.IntegrityError,) if psycopg is not None else ())
+
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
