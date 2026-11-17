@@ -141,6 +141,42 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class StockWarehouseLockTests(unittest.TestCase):
+    def test_postgresql_locks_warehouses_in_stable_order(self):
+        from stock import lock_stock_warehouses
+
+        class Cursor:
+            def fetchall(self):
+                return [{"id": 3}, {"id": 12}]
+
+        class FakePostgresConnection:
+            __module__ = "psycopg"
+
+            def __init__(self):
+                self.sql = None
+                self.params = None
+
+            def execute(self, sql, params=()):
+                self.sql = sql
+                self.params = params
+                return Cursor()
+
+        conn = FakePostgresConnection()
+        rows = lock_stock_warehouses(conn, 12, 3, 12, None)
+        self.assertEqual([row["id"] for row in rows], [3, 12])
+        self.assertIn("ORDER BY id FOR UPDATE", conn.sql)
+        self.assertEqual(tuple(conn.params), (3, 12))
+
+    def test_sqlite_warehouse_lock_uses_existing_writer_serialization(self):
+        from stock import lock_stock_warehouses
+
+        conn = sqlite3.connect(":memory:")
+        try:
+            self.assertEqual(lock_stock_warehouses(conn, 12, 3), [])
+        finally:
+            conn.close()
+
+
 class StockNullSafeComparisonTests(unittest.TestCase):
     def test_null_lot_comparison_is_portable_and_matches_unassigned_lot(self):
         from db_sql import execute_compat, qmark_to_format
