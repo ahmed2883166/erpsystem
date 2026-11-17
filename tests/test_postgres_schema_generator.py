@@ -97,6 +97,20 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         self.assertIn('"rate" NUMERIC', ddl)
         self.assertIn('"tax_number" TEXT', ddl)
 
+    def test_rejects_numeric_overrides_missing_from_schema_snapshot(self):
+        snapshot = {
+            "tables": [{
+                "name": "journal_lines",
+                "columns": [{"name": "debit", "type": "TEXT", "pk": 0}],
+                "foreign_keys": [],
+                "indexes": [],
+            }]
+        }
+        with self.assertRaisesRegex(
+            ValueError, "credit|currencies.rate_to_base|tax_rates.rate"
+        ):
+            generate_postgres_ddl(snapshot)
+
     def test_extracts_balanced_check_constraints(self):
         sql = """CREATE TABLE sample (
             id INTEGER PRIMARY KEY,
