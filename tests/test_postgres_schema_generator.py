@@ -97,6 +97,38 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         self.assertIn("RAISE EXCEPTION 'موقع الصنف الافتراضي", ddl)
         self.assertIn("child.amount", review["text_numeric_candidates"])
 
+    def test_rejects_untranslated_views_instead_of_silently_omitting_them(self):
+        snapshot = {
+            "tables": [{
+                "name": "sample",
+                "columns": [{"name": "id", "type": "INTEGER", "pk": 1}],
+                "foreign_keys": [],
+                "indexes": [],
+            }],
+            "views": [{
+                "name": "sample_balance_view",
+                "sql": "CREATE VIEW sample_balance_view AS SELECT id FROM sample",
+            }],
+        }
+        with self.assertRaisesRegex(
+            ValueError, "views are not translated.*sample_balance_view"
+        ):
+            generate_postgres_ddl(snapshot)
+
+    def test_accepts_initialized_schema_snapshot_with_no_views(self):
+        snapshot = {
+            "tables": [{
+                "name": "sample",
+                "columns": [{"name": "id", "type": "INTEGER", "pk": 1}],
+                "foreign_keys": [],
+                "indexes": [],
+            }],
+            "views": [],
+        }
+        ddl, review = generate_postgres_ddl(snapshot)
+        self.assertIn('CREATE TABLE "sample"', ddl)
+        self.assertEqual(review["table_count"], 1)
+
     def test_rejects_foreign_key_to_unknown_table(self):
         snapshot = {
             "tables": [{
