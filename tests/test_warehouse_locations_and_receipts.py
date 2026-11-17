@@ -5,12 +5,14 @@ from unittest.mock import patch
 
 from sales import post_customer_receipt_batch
 from stock import consume_layers
+from accounting_core import register_decimal_aggregates
 
 
 class WarehouseLocationTests(unittest.TestCase):
     def setUp(self):
         self.conn = sqlite3.connect(":memory:")
         self.conn.row_factory = sqlite3.Row
+        register_decimal_aggregates(self.conn)
         self.conn.executescript("""
             CREATE TABLE stock_valuation_layers(
                 id INTEGER PRIMARY KEY, product_id INTEGER, warehouse_id INTEGER,
