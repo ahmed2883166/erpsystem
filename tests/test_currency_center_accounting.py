@@ -7,6 +7,20 @@ from decimal import Decimal
 import currency_center
 
 
+class CurrencyDatabaseErrorDetectionTests(unittest.TestCase):
+    def test_sqlite_errors_are_recognized(self):
+        self.assertTrue(currency_center._is_database_error(sqlite3.OperationalError("locked")))
+
+    def test_psycopg_errors_are_recognized_without_importing_driver(self):
+        class DriverError(Exception):
+            pass
+        DriverError.__module__ = "psycopg.errors"
+        self.assertTrue(currency_center._is_database_error(DriverError("database failure")))
+
+    def test_unexpected_programming_errors_are_not_swallowed(self):
+        self.assertFalse(currency_center._is_database_error(RuntimeError("bug")))
+
+
 class CurrencyAmountTests(unittest.TestCase):
     def test_decimal_parser_rejects_invalid_and_non_finite_values(self):
         for value in ("not-a-number", "NaN", "Infinity", "-Infinity"):
