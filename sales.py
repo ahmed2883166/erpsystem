@@ -45,6 +45,16 @@ def _columns(conn, name):
     return table_columns(conn, name)
 
 
+def _sales_invoice_for_update(conn, invoice_id, posted_only=False):
+    """Serialize credit-note quantity/value checks against the same invoice."""
+    sql = "SELECT * FROM sales_invoices WHERE id=?"
+    if posted_only:
+        sql += " AND status='posted'"
+    if database_dialect(conn) == "postgresql":
+        sql += " FOR UPDATE"
+    return execute_compat(conn, sql, (invoice_id,)).fetchone()
+
+
 def init_sales_schema():
     c = db()
     initialize_analytic_dimensions_schema(c)
@@ -912,9 +922,7 @@ def update_invoice_workflow(conn, workflow_id, payload, user_id, gross_subtotal,
 
 def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=None):
     """Post a sales credit note against an unpaid invoice and restore returned stock."""
-    invoice = execute_compat(conn, 
-        "SELECT * FROM sales_invoices WHERE id=? AND status='posted'", (invoice_id,)
-    ).fetchone()
+    invoice = _sales_invoice_for_update(conn, invoice_id, posted_only=True)
     if not invoice:
         raise ValueError("فاتورة البيع غير موجودة أو غير مرحلة.")
     if credit_date < invoice["invoice_date"]:
@@ -1271,9 +1279,10 @@ def post_customer_refund(conn, credit_note_id, refund_date, amount, cash_account
                          created_by=None, reference=""):
     refund_date = _validate_customer_advance_date(refund_date)
     amount = _validated_customer_advance_amount(amount, "قيمة رد المبلغ")
-    note = execute_compat(conn, 
-        "SELECT * FROM sales_credit_notes WHERE id=? AND status='posted'", (credit_note_id,)
-    ).fetchone()
+    note_sql = "SELECT * FROM sales_credit_notes WHERE id=? AND status='posted'"
+    if database_dialect(conn) == "postgresql":
+        note_sql += " FOR UPDATE"
+    note = execute_compat(conn, note_sql, (credit_note_id,)).fetchone()
     if not note:
         raise ValueError("الإشعار الدائن غير موجود أو غير مرحل.")
     refunded_rows = execute_compat(conn, 
@@ -1388,8 +1397,7 @@ def cancel_credit_note(conn, credit_note_id, cancellation_date, reason, created_
            cancellation_reason=? WHERE id=?""",
         (reversal_id, cogs_reversal_id, created_by, reason, credit_note_id),
     )
-    invoice = execute_compat(conn, "SELECT credited_amount FROM sales_invoices WHERE id=?",
-                           (note["invoice_id"],)).fetchone()
+    invoice = _sales_invoice_for_update(conn, note["invoice_id"])
     new_credited = Decimal(invoice["credited_amount"] or "0") - Decimal(note["total_amount"])
     if new_credited < 0:
         raise ValueError("رصيد الإشعارات الدائنة على الفاتورة غير متسق؛ راجع سلامة البيانات.")
