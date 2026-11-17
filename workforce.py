@@ -4103,7 +4103,7 @@ def attendance_report():
     rows = c.execute(f"""SELECT e.id AS employee_id,e.employee_code,e.full_name,e.department,
             COUNT(a.id) AS recorded_days,
             SUM(CASE WHEN a.status='absent' THEN 1 ELSE 0 END) AS absent_days,
-            ${decimal_sum_expression(c, "CASE WHEN a.status='absent' THEN a.absence_hours ELSE '0' END")} AS absent_hours,
+            {decimal_sum_expression(c, "CASE WHEN a.status='absent' THEN a.absence_hours ELSE '0' END")} AS absent_hours,
             SUM(CASE WHEN a.status='unpaid_leave' THEN 1 ELSE 0 END) AS unpaid_leave_days,
             SUM(CASE WHEN a.status='permission' THEN 1 ELSE 0 END) AS permission_days
         FROM employees e
