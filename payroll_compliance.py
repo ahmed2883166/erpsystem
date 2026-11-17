@@ -5,7 +5,8 @@ rates that may become obsolete. Rule sets are effective-dated and snapshotted
 onto payroll lines when a run is created.
 """
 from app_paths import DB_PATH
-import sqlite3
+from database import connect_database
+from db_compat import DB_ERROR, execute_script, table_columns, table_exists, begin_write_transaction
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
@@ -33,16 +34,12 @@ def _m(value):
 
 
 def _db():
-    conn = sqlite3.connect(DB_PATH, timeout=20, isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=20000")
-    return conn
+    return connect_database(DB_PATH, timeout=20, isolation_level=None)
 
 
 def initialize_payroll_compliance_schema():
     conn = _db()
-    conn.executescript("""
+    execute_script(conn, """
     CREATE TABLE IF NOT EXISTS payroll_rule_sets(
       id INTEGER PRIMARY KEY,
       country_code TEXT NOT NULL,
@@ -93,10 +90,10 @@ def initialize_payroll_compliance_schema():
     CREATE INDEX IF NOT EXISTS idx_payroll_statutory_payment_period
       ON payroll_statutory_payments(period,payment_type);
     """)
-    rule_cols = {r["name"] for r in conn.execute("PRAGMA table_info(payroll_rule_sets)")}
+    rule_cols = table_columns(conn, "payroll_rule_sets")
     if "taxable_rounding_unit" not in rule_cols:
         conn.execute("ALTER TABLE payroll_rule_sets ADD COLUMN taxable_rounding_unit TEXT NOT NULL DEFAULT '1'")
-    employee_cols = {r["name"] for r in conn.execute("PRAGMA table_info(employees)")}
+    employee_cols = table_columns(conn, "employees")
     for name, definition in {
         "legal_category": "TEXT NOT NULL DEFAULT 'local'",
         "insurance_number": "TEXT NOT NULL DEFAULT ''",
@@ -105,7 +102,7 @@ def initialize_payroll_compliance_schema():
     }.items():
         if name not in employee_cols:
             conn.execute("ALTER TABLE employees ADD COLUMN " + name + " " + definition)
-    line_cols = {r["name"] for r in conn.execute("PRAGMA table_info(payroll_lines)")}
+    line_cols = table_columns(conn, "payroll_lines")
     for name, definition in {
         "rule_set_id": "INTEGER REFERENCES payroll_rule_sets(id)",
         "taxable_annual": "TEXT NOT NULL DEFAULT '0'",
@@ -273,11 +270,12 @@ def seed_egypt_2026(conn):
     if existing:
         raise ValueError("إعداد مصر 2026 موجود بالفعل؛ لن يتم استبدال أي تعديلات أو شرائح محفوظة. أنشئ مجموعة جديدة بتاريخ سريان جديد إذا أردت تحديثها.")
     inserted = conn.execute("""
-        INSERT OR IGNORE INTO payroll_rule_sets(country_code,category_code,effective_from,
+        INSERT INTO payroll_rule_sets(country_code,category_code,effective_from,
           personal_exemption_annual,taxable_rounding_unit,insurance_floor,insurance_ceiling,
           employee_insurance_rate,employer_insurance_rate,notes)
         VALUES('EG','local','2026-01-01','20000','10','2700','16700','11','18.75',
           'إعداد مبدئي لمصر 2026؛ راجع المعاملة القانونية قبل الاعتماد')
+        ON CONFLICT(country_code,category_code,effective_from) DO NOTHING
     """)
     # Another worker may have inserted the same preset after our initial read.
     # Never use the conflict row as permission to overwrite its rules or brackets.
@@ -387,7 +385,7 @@ def rules():
                 flash("تم حفظ الشريحة الضريبية.", "success")
             else:
                 raise ValueError("نوع العملية غير معروف.")
-    except (ValueError, KeyError, sqlite3.Error) as exc:
+    except (ValueError, KeyError) + DB_ERROR as exc:
         conn.rollback()
         flash(str(exc) or "تعذر حفظ قواعد الرواتب.", "error")
     country = current_tax_country(conn)
@@ -418,7 +416,7 @@ def rules():
 
 
 def _audit(conn, action, details):
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='audit_log'").fetchone():
+    if table_exists(conn, "audit_log"):
         conn.execute("INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
                      (session.get("user_id"), action, details))
 
@@ -514,7 +512,7 @@ def payments():
             if (not cash or cash["account_type"] != "asset" or cash["is_group"] or not cash["active"]
                 or (cash["code"] not in cash_codes and not any(word in cash_name for word in cash_words))):
                 raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
-            conn.execute("BEGIN IMMEDIATE")
+            begin_write_transaction(conn)
             obligation = _payroll_obligations(conn, period)[payment_type]
             if amount > obligation["remaining"]:
                 raise ValueError("قيمة السداد تتجاوز الرصيد المستحق للمسير. المتبقي: " + str(obligation["remaining"]))
@@ -541,7 +539,7 @@ def payments():
             _audit(conn, "payroll_statutory_payment", reference + " amount=" + str(amount))
             conn.commit()
             flash("تم تسجيل السداد وترحيل قيده المحاسبي.", "success")
-        except (ValueError, KeyError, TypeError, sqlite3.Error) as exc:
+        except (ValueError, KeyError, TypeError) + DB_ERROR as exc:
             conn.rollback()
             flash(str(exc) or "تعذر تسجيل السداد.", "error")
     obligations = _payroll_obligations(conn, period)
