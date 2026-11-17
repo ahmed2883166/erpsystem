@@ -107,3 +107,21 @@ CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_account ON journal_lines(entr
 CREATE INDEX IF NOT EXISTS idx_journal_entries_entry_date ON journal_entries(entry_date, id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at, id);
 CREATE INDEX IF NOT EXISTS idx_login_attempts_username_time ON login_attempts(username, attempted_at);
+
+-- Audit history is append-only on PostgreSQL, matching the SQLite safeguards.
+CREATE OR REPLACE FUNCTION reject_audit_log_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $nexus_audit$
+BEGIN
+    RAISE EXCEPTION 'Audit log records are immutable';
+END;
+$nexus_audit$;
+
+CREATE TRIGGER audit_log_block_update
+BEFORE UPDATE ON audit_log
+FOR EACH ROW EXECUTE FUNCTION reject_audit_log_mutation();
+
+CREATE TRIGGER audit_log_block_delete
+BEFORE DELETE ON audit_log
+FOR EACH ROW EXECUTE FUNCTION reject_audit_log_mutation();
