@@ -1,7 +1,7 @@
 import sqlite3
 import unittest
 
-from core_schema import initialize_core_schema
+from core_schema import initialize_core_schema, ensure_legacy_core_columns
 from db_compat import table_columns, table_names
 from db_sql import adapt_sql_for_postgresql
 from db_compat import _split_sql_statements
@@ -50,6 +50,41 @@ class CoreSchemaTests(unittest.TestCase):
             self.connection.execute(
                 "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(1,1,'10','0')"
             )
+
+    def test_legacy_column_upgrades_are_idempotent_and_preserve_existing_rows(self):
+        self.connection.execute("""
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY, username TEXT NOT NULL,
+                full_name TEXT NOT NULL, password_hash TEXT NOT NULL,
+                role TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL
+            )
+        """)
+        self.connection.execute("""
+            CREATE TABLE accounts (
+                id INTEGER PRIMARY KEY, code TEXT NOT NULL,
+                name_ar TEXT NOT NULL, account_type TEXT NOT NULL,
+                parent_id INTEGER, active INTEGER NOT NULL DEFAULT 1
+            )
+        """)
+        self.connection.execute(
+            "INSERT INTO users(id,username,full_name,password_hash,role,created_at) "
+            "VALUES(7,'legacy','Legacy User','hash','admin','2025-01-01')"
+        )
+        self.connection.execute(
+            "INSERT INTO accounts(id,code,name_ar,account_type) "
+            "VALUES(42,'1000','Cash','asset')"
+        )
+        self.assertTrue(ensure_legacy_core_columns(self.connection))
+        self.assertTrue(ensure_legacy_core_columns(self.connection))
+        user = self.connection.execute(
+            "SELECT id,username,password_hash,must_change_password FROM users WHERE id=7"
+        ).fetchone()
+        account = self.connection.execute(
+            "SELECT id,code,is_group FROM accounts WHERE id=42"
+        ).fetchone()
+        self.assertEqual(user, (7, "legacy", "hash", 0))
+        self.assertEqual(account, (42, "1000", 0))
 
     def test_core_schema_identity_columns_have_postgresql_ddl_adapter(self):
         statements = _split_sql_statements(__import__("core_schema").CORE_SCHEMA_SQL)
