@@ -34,7 +34,7 @@ def install_postgres_baseline(connection, baseline_sql: str, *, schema: str = "n
         raise ValueError("PostgreSQL baseline contains no SQL statements.")
     def command_keyword(statement):
         without_comments = re.sub(
-            r"(?s)^\\s*(?:(?:--[^\\n]*(?:\\n|$))|(?:/\\*.*?\\*/\\s*))*",
+            r"(?s)^\s*(?:(?:--[^\n]*(?:\n|$))|(?:/\*.*?\*/\s*))*",
             "",
             statement,
         )
