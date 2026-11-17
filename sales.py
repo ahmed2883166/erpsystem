@@ -531,6 +531,10 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     tax_amount = Decimal("0.00")
     if preissued_costs is not None and len(preissued_costs) != len(lines):
         raise ValueError("بيانات تكلفة إذن التسليم لا تطابق بنود الفاتورة.")
+    # Lock the warehouse before reading or mutating valuation layers. This makes
+    # concurrent PostgreSQL invoices serialize on the same stock warehouse.
+    if warehouse_id and any(item.get("product_id") for item in lines):
+        lock_stock_warehouses(conn, warehouse_id)
     for line_index, item in enumerate(lines):
         entered_qty = Decimal(str(item.get("quantity", "1")))
         entered_unit_price = Decimal(str(item.get("unit_price", "0"))).quantize(CENT, rounding=ROUND_HALF_UP)
