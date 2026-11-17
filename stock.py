@@ -58,6 +58,11 @@ def _install_stock_location_triggers(conn):
     WHEN NOT EXISTS(SELECT 1 FROM stock_locations l WHERE l.id=NEW.location_id
       AND l.warehouse_id=NEW.warehouse_id AND l.active=1)
     BEGIN SELECT RAISE(ABORT,'موقع الصنف الافتراضي يجب أن يكون نشطًا ويتبع نفس المخزن.'); END;
+    CREATE TRIGGER IF NOT EXISTS trg_stock_locations_prevent_default_deactivation
+    BEFORE UPDATE OF active ON stock_locations
+    WHEN OLD.active=1 AND NEW.active=0
+      AND EXISTS(SELECT 1 FROM stock_product_locations p WHERE p.location_id=OLD.id)
+    BEGIN SELECT RAISE(ABORT,'لا يمكن تعطيل موقع مستخدم كموقع افتراضي لصنف. غيّر الموقع الافتراضي أولًا.'); END;
     """)
 
 
