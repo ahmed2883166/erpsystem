@@ -1,7 +1,8 @@
-from db_compat import table_columns
 """Activity-specific starter charts for NEXUS ERP.
 These are practical starting templates, not a substitute for a country-specific statutory chart.
 """
+
+from db_compat import table_columns
 CHARTS = {
     "commercial": [
         ("1000","الأصول","asset",None,1),("1100","الأصول المتداولة","asset","1000",1),
