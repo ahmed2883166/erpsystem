@@ -135,6 +135,8 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
         raise ValueError("Copy is disabled by default. Pass apply=True only after reviewing the isolated target.")
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", schema):
         raise ValueError("PostgreSQL schema must be a simple identifier.")
+    if schema.lower() == "public":
+        raise ValueError("Copy requires a dedicated, isolated PostgreSQL schema; public is blocked.")
     if batch_size < 1 or batch_size > 10000:
         raise ValueError("batch_size must be between 1 and 10000.")
     try:
@@ -185,8 +187,11 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                 ).fetchall()
             }
             missing = sorted(set(tables) - target_tables)
+            extra = sorted(target_tables - set(tables))
             if missing:
                 raise ValueError("Target schema is missing tables: " + ", ".join(missing))
+            if extra:
+                raise ValueError("Target schema contains tables outside the source schema: " + ", ".join(extra))
 
             for table in tables:
                 target_cols = [
