@@ -3,6 +3,7 @@
 Integration tests use unique disposable schemas only. They never touch the
 application schema or a company database.
 """
+import hashlib
 import os
 import tempfile
 import unittest
@@ -10,12 +11,7 @@ import uuid
 from pathlib import Path
 
 from postgres_database import connect_postgres
-from postgres_migrations import (
-    Migration,
-    apply_migrations,
-    load_migrations,
-    quote_schema_name,
-)
+from postgres_migrations import Migration, apply_migrations, load_migrations, quote_schema_name
 
 POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
 
@@ -53,7 +49,7 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "cannot be empty"):
                 load_migrations(root)
 
-    def test_rejects_non_idle_or_autocommit_connections_before_execution(self):
+    def test_rejects_autocommit_connections_before_execution(self):
         class Connection:
             autocommit = True
             info = None
@@ -71,15 +67,14 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
     def tearDown(self):
         if getattr(self, "connection", None):
             self.connection.rollback()
-            self.connection.execute(f'"') if False else None
             self.connection.execute(
                 "DROP SCHEMA IF EXISTS " + quote_schema_name(self.schema) + " CASCADE"
             )
             self.connection.commit()
             self.connection.close()
 
-    def _migration(self, version, name, sql):
-        import hashlib
+    @staticmethod
+    def _migration(version, name, sql):
         return Migration(
             version=version,
             name=name,
@@ -87,18 +82,11 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
             checksum=hashlib.sha256(sql.encode("utf-8")).hexdigest(),
         )
 
-    def test_applies_once_and_is_idempotent(self):
+    def test_applies_once_and_is_idempotent_in_target_schema(self):
         migrations = [
-            self._migration(
-                1,
-                "0001_create_probe.sql",
-                f'CREATE TABLE {quote_schema_name(self.schema)}."probe" (id BIGINT PRIMARY KEY)',
-            )
+            self._migration(1, "0001_create_probe.sql",
+                            'CREATE TABLE "probe" (id BIGINT PRIMARY KEY)')
         ]
-        # The runner owns schema creation, so use a table created within it.
-        migrations[0] = self._migration(
-            1, "0001_create_probe.sql", 'CREATE TABLE "probe" (id BIGINT PRIMARY KEY)'
-        )
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         row = self.connection.execute(
@@ -107,6 +95,11 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
             + '."schema_migrations"'
         ).fetchone()
         self.assertEqual(row["count"], 1)
+        table = self.connection.execute(
+            "SELECT to_regclass(%s) AS table_name",
+            (self.schema + ".probe",),
+        ).fetchone()
+        self.assertIsNotNone(table["table_name"])
 
     def test_modified_applied_migration_is_rejected(self):
         original = self._migration(1, "0001_probe.sql", 'CREATE TABLE "probe" (id BIGINT)')
