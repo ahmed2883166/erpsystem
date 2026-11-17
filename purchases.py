@@ -317,10 +317,10 @@ def approve_purchase_order(c, order_id, actor_id, reason=""):
         raise ValueError("لا يجوز اعتماد أمر شراء أنشأته أو أرسلته للمراجعة بنفسك.")
     if order["created_by"] is None or order["submitted_by"] is None:
         raise ValueError("بيانات منشئ أو مرسل أمر الشراء غير مكتملة؛ راجع المستند.")
-    c.execute("""UPDATE purchase_orders SET status='approved', approved_by=?,
+    updated = c.execute("""UPDATE purchase_orders SET status='approved', approved_by=?,
         approved_at=CURRENT_TIMESTAMP, approval_reason=? WHERE id=? AND status='pending_approval'""",
         (actor_id, reason.strip(), order_id))
-    if c.execute("SELECT changes()").fetchone()[0] != 1:
+    if updated.rowcount != 1:
         raise ValueError("تغيرت حالة أمر الشراء؛ أعد تحميل الصفحة.")
 
 
@@ -336,10 +336,10 @@ def reject_purchase_order(c, order_id, actor_id, reason):
         raise ValueError("أمر الشراء ليس بانتظار الاعتماد.")
     if order["created_by"] == actor_id or order["submitted_by"] == actor_id:
         raise ValueError("لا يجوز رفض مستند أنشأته أو أرسلته للمراجعة بنفسك.")
-    c.execute("""UPDATE purchase_orders SET status='rejected', rejected_by=?,
+    updated = c.execute("""UPDATE purchase_orders SET status='rejected', rejected_by=?,
         rejected_at=CURRENT_TIMESTAMP, rejection_reason=? WHERE id=? AND status='pending_approval'""",
         (actor_id, reason, order_id))
-    if c.execute("SELECT changes()").fetchone()[0] != 1:
+    if updated.rowcount != 1:
         raise ValueError("تغيرت حالة أمر الشراء؛ أعد تحميل الصفحة.")
 
 def account(c, code, typ=None):
@@ -1075,11 +1075,11 @@ def approve_purchase_request(request_id):
             raise ValueError("لا يجوز اعتماد طلب أنشأته أو أرسلته للمراجعة بنفسك.")
         if row["created_by"] is None or row["submitted_by"] is None:
             raise ValueError("بيانات منشئ أو مرسل الطلب غير مكتملة.")
-        c.execute("""UPDATE purchase_requests SET status='approved',approved_by=?,
+        updated = c.execute("""UPDATE purchase_requests SET status='approved',approved_by=?,
             approved_at=CURRENT_TIMESTAMP,approval_reason=?
             WHERE id=? AND status='pending_approval'""",
             (session["user_id"], (request.form.get("reason") or "").strip(), request_id))
-        if c.execute("SELECT changes()").fetchone()[0] != 1:
+        if updated.rowcount != 1:
             raise ValueError("تغيرت حالة الطلب؛ أعد تحميل الصفحة.")
         c.commit()
         flash("تم اعتماد طلب الشراء الداخلي.", "success")
@@ -1105,10 +1105,10 @@ def reject_purchase_request(request_id):
             raise ValueError("طلب الشراء غير موجود أو ليس بانتظار الاعتماد.")
         if row["created_by"] == session["user_id"] or row["submitted_by"] == session["user_id"]:
             raise ValueError("لا يجوز رفض طلب أنشأته أو أرسلته للمراجعة بنفسك.")
-        c.execute("""UPDATE purchase_requests SET status='rejected',rejected_by=?,
+        updated = c.execute("""UPDATE purchase_requests SET status='rejected',rejected_by=?,
             rejected_at=CURRENT_TIMESTAMP,rejection_reason=?
             WHERE id=? AND status='pending_approval'""", (session["user_id"],reason,request_id))
-        if c.execute("SELECT changes()").fetchone()[0] != 1:
+        if updated.rowcount != 1:
             raise ValueError("تغيرت حالة الطلب؛ أعد تحميل الصفحة.")
         c.commit()
         flash("تم رفض الطلب مع حفظ السبب.", "success")
@@ -1830,10 +1830,10 @@ def approve_supplier_bill(c, bill_id, actor_id, reason=""):
         raise ValueError("لا يجوز اعتماد فاتورة أنشأتها أو أرسلتها للمراجعة بنفسك.")
     if bill["created_by"] is None or bill["submitted_by"] is None:
         raise ValueError("بيانات منشئ أو مرسل فاتورة المورد غير مكتملة؛ راجع المستند.")
-    c.execute("""UPDATE supplier_bills SET status='approved',approved_by=?,
+    updated = c.execute("""UPDATE supplier_bills SET status='approved',approved_by=?,
         approved_at=CURRENT_TIMESTAMP,approval_reason=? WHERE id=? AND status='pending_approval'""",
         (actor_id, (reason or "").strip(), bill_id))
-    if c.execute("SELECT changes()").fetchone()[0] != 1:
+    if updated.rowcount != 1:
         raise ValueError("تغيرت حالة فاتورة المورد؛ أعد تحميل الصفحة.")
 
 
@@ -1849,10 +1849,10 @@ def reject_supplier_bill(c, bill_id, actor_id, reason):
         raise ValueError("فاتورة المورد ليست بانتظار الاعتماد.")
     if bill["created_by"] == actor_id or bill["submitted_by"] == actor_id:
         raise ValueError("لا يجوز رفض فاتورة أنشأتها أو أرسلتها للمراجعة بنفسك.")
-    c.execute("""UPDATE supplier_bills SET status='rejected',rejected_by=?,
+    updated = c.execute("""UPDATE supplier_bills SET status='rejected',rejected_by=?,
         rejected_at=CURRENT_TIMESTAMP,rejection_reason=? WHERE id=? AND status='pending_approval'""",
         (actor_id, reason, bill_id))
-    if c.execute("SELECT changes()").fetchone()[0] != 1:
+    if updated.rowcount != 1:
         raise ValueError("تغيرت حالة فاتورة المورد؛ أعد تحميل الصفحة.")
 
 
@@ -1987,9 +1987,9 @@ def post_supplier_bill(c, bill_id, actor_id):
     entry_no = bill["bill_no"]
     entry_id = create_journal(c, bill["bill_date"], entry_no,
         "فاتورة مورد " + bill["supplier_invoice_no"], journal_lines, actor_id, dimensions=dimensions)
-    c.execute("""UPDATE supplier_bills SET journal_entry_id=?,status='posted'
+    updated = c.execute("""UPDATE supplier_bills SET journal_entry_id=?,status='posted'
         WHERE id=? AND status='approved' AND journal_entry_id IS NULL""", (entry_id, bill_id))
-    if c.execute("SELECT changes()").fetchone()[0] != 1:
+    if updated.rowcount != 1:
         raise ValueError("تغيرت حالة فاتورة المورد أثناء الترحيل.")
     if bill["bill_kind"] == "asset":
         from fixed_assets import create_asset_from_supplier_bill
@@ -2195,7 +2195,7 @@ def edit_bill(bill_id):
                 ensure_detail_account(c, _activity_tax_roles(c)["input_vat"],
                                       "ضريبة مدخلات قابلة للخصم", "asset", "1100")
 
-            c.execute("""UPDATE supplier_bills SET supplier_id=?,bill_date=?,due_date=?,
+            updated = c.execute("""UPDATE supplier_bills SET supplier_id=?,bill_date=?,due_date=?,
                 supplier_invoice_no=?,subtotal=?,tax_rate=?,tax_amount=?,total_amount=?,input_vat_deductible_percent=?,
                 branch_id=?,cost_center_id=?,project_id=?,bill_kind=?,expense_account_id=?,
                 asset_code=?,asset_name=?,asset_category=?,asset_ready_date=?,asset_residual_value=?,
@@ -2212,7 +2212,7 @@ def edit_bill(bill_id):
                  asset_data.get("asset_useful_life_months"),asset_data.get("asset_depreciation_method","straight_line"),
                  asset_data.get("asset_annual_rate","0"),asset_data.get("asset_account_id"),
                  asset_data.get("asset_accum_account_id"),asset_data.get("asset_expense_account_id"),bill_id))
-            if c.execute("SELECT changes()").fetchone()[0] != 1:
+            if updated.rowcount != 1:
                 raise ValueError("لم يتم تحديث الفاتورة؛ أعد تحميل الصفحة.")
             c.execute("DELETE FROM supplier_bill_asset_lines WHERE bill_id=?", (bill_id,))
             if bill_kind == "asset":
