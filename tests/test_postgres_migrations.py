@@ -207,6 +207,29 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.assertEqual(str(amount), "1234567890123.123456")
         self.assertGreater(entry_id, 0)
 
+        audit_id = self.connection.execute(
+            f"INSERT INTO {schema}.audit_log(action,details,created_at) "
+            "VALUES (%s,%s,%s) RETURNING id",
+            ("test", "immutable", "2026-01-01"),
+        ).fetchone()["id"]
+        with self.assertRaises(Exception):
+            self.connection.execute(
+                f"UPDATE {schema}.audit_log SET details=%s WHERE id=%s",
+                ("tampered", audit_id),
+            )
+        self.connection.rollback()
+        with self.assertRaises(Exception):
+            self.connection.execute(
+                f"DELETE FROM {schema}.audit_log WHERE id=%s",
+                (audit_id,),
+            )
+        self.connection.rollback()
+        audit_count = self.connection.execute(
+            f"SELECT COUNT(*) AS count FROM {schema}.audit_log WHERE id=%s",
+            (audit_id,),
+        ).fetchone()["count"]
+        self.assertEqual(audit_count, 1)
+
         with self.assertRaises(Exception):
             self.connection.execute(
                 f"INSERT INTO {schema}.journal_lines(entry_id,account_id,debit,credit) "
