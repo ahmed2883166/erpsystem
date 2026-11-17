@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from db_compat import (
     database_dialect,
     table_columns,
+    table_names,
     table_exists,
     begin_write_transaction,
     transaction_is_active,
@@ -55,6 +56,10 @@ class SQLiteSchemaCompatibilityTests(unittest.TestCase):
             {"id", "amount", "active"},
         )
         self.assertEqual(table_columns(self.connection, "missing_table"), set())
+
+    def test_lists_tables_in_current_schema(self):
+        self.assertIn("compatibility_probe", table_names(self.connection))
+        self.assertNotIn("missing_table", table_names(self.connection))
 
     def test_rejects_unsafe_identifiers(self):
         with self.assertRaises(ValueError):
