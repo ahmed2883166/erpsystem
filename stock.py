@@ -1694,7 +1694,7 @@ def reports():
         WHERE l.expiry_date IS NOT NULL AND p.track_expiry=1 ORDER BY l.expiry_date""").fetchall():
         days_left=(date.fromisoformat(lot["expiry_date"])-today).days
         if days_left>expiry_window: continue
-        for layer in c.execute("""SELECT vl.qty_remaining,vl.warehouse_id,vl.location_id,w.code warehouse_code,w.name_ar warehouse_name,
+        for layer in c.execute(f"""SELECT vl.qty_remaining,vl.warehouse_id,vl.location_id,w.code warehouse_code,w.name_ar warehouse_name,
             sl.code location_code,sl.name_ar location_name
             FROM stock_valuation_layers vl LEFT JOIN stock_warehouses w ON w.id=vl.warehouse_id
             LEFT JOIN stock_locations sl ON sl.id=vl.location_id
