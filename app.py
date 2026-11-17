@@ -47,6 +47,7 @@ from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page
 from database_backend import require_supported_runtime_backend
 from core_schema import initialize_core_schema
+from sqlite_audit_schema import initialize_sqlite_audit_schema
 from db_compat import begin_write_transaction, insert_and_get_id, execute_script, table_exists, table_columns, table_names, table_column_info
 from report_request_control import (ReportRequestGate, bounded_env_int,
                                     is_expensive_report_request,
@@ -525,34 +526,8 @@ def initialize_database():
     enable_wal(DB_PATH)
     connection = db()
     initialize_core_schema(connection)
-    audit_columns = table_columns(connection, "audit_log")
-    for column, declaration in (
-        ("entity_type", "TEXT"),
-        ("entity_id", "TEXT"),
-        ("remote_addr", "TEXT"),
-        ("outcome", "TEXT NOT NULL DEFAULT 'success'"),
-        ("actor_name", "TEXT"),
-        ("before_values", "TEXT"),
-        ("after_values", "TEXT"),
-        ("submitted_values", "TEXT"),
-        ("reason", "TEXT"),
-        ("request_id", "TEXT"),
-    ):
-        if column not in audit_columns:
-            connection.execute(f"ALTER TABLE audit_log ADD COLUMN {column} {declaration}")
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at,id)")
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user_action ON audit_log(user_id,action,created_at)")
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_request_id ON audit_log(request_id)")
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_entity_created ON audit_log(entity_type,created_at,id)")
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_outcome_created ON audit_log(outcome,created_at,id)")
-    execute_script(connection,"""
-        CREATE TRIGGER IF NOT EXISTS audit_log_block_update
-        BEFORE UPDATE ON audit_log
-        BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
-        CREATE TRIGGER IF NOT EXISTS audit_log_block_delete
-        BEFORE DELETE ON audit_log
-        BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
-    """)
+    initialize_sqlite_audit_schema(connection)
+
 
     user_columns = table_columns(connection, "users")
     if "must_change_password" not in user_columns:
