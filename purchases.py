@@ -2470,7 +2470,7 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
     )
     for allocation in allocations:
         movement_no="SUPCANCEL-"+datetime.now().strftime("%Y%m%d%H%M%S%f")+"-"+uuid.uuid4().hex[:5].upper()
-        cur=conn.execute(
+        movement_id=insert_and_get_id(conn,
             """INSERT INTO stock_movements(
               movement_no,movement_type,product_id,target_warehouse_id,target_location_id,lot_id,
               quantity,unit_cost,total_cost,movement_date,notes,created_by,journal_entry_id,accounting_status)
@@ -2482,10 +2482,7 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
             (movement_no,allocation["location_id"],allocation["lot_id"],allocation["quantity"],
              allocation["unit_cost"],allocation["total_cost"],cancellation_date,
              "إعادة مخزون عند إلغاء مرتجع المورد "+note["credit_no"],created_by,reversal_id,
-             allocation["credit_note_line_id"])
-        )
-        if cur.rowcount!=1:
-            raise ValueError("تعذر إنشاء حركة إعادة المخزون لإحدى طبقات المرتجع.")
+             allocation["credit_note_line_id"]))
         conn.execute(
             """INSERT INTO stock_valuation_layers(
               product_id,warehouse_id,location_id,lot_id,source_movement_id,
@@ -2494,7 +2491,7 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
               FROM supplier_credit_note_lines cnl
               JOIN stock_products l ON l.id=cnl.product_id
               WHERE cnl.id=?""",
-            (allocation["location_id"],allocation["lot_id"],cur.lastrowid,
+            (allocation["location_id"],allocation["lot_id"],movement_id,
              allocation["quantity"],allocation["quantity"],allocation["unit_cost"],
              allocation["total_cost"],allocation["credit_note_line_id"])
         )
@@ -2622,7 +2619,7 @@ def new_credit_note():
                 for allocation_index,(lot_id,allocated_qty,unit_cost,allocated_total) in enumerate(allocations):
                     layer_detail=layer_details[allocation_index]
                     movement_no="SUPRET-"+datetime.now().strftime("%Y%m%d%H%M%S%f")+"-"+uuid.uuid4().hex[:5].upper()
-                    cur=c.execute("""INSERT INTO stock_movements(
+                    movement_id=insert_and_get_id(c,"""INSERT INTO stock_movements(
                       movement_no,movement_type,product_id,source_warehouse_id,lot_id,quantity,unit_cost,total_cost,
                       movement_date,notes,created_by,issue_purpose,accounting_status,
                       entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name)
@@ -2630,9 +2627,9 @@ def new_credit_note():
                       (movement_no,product_id,warehouse_id,lot_id,str(allocated_qty),str(unit_cost),str(allocated_total),
                        request.form["credit_date"],"مرتجع مورد — "+supplier_credit_no,session["user_id"],
                        str(allocated_qty/conversion_factor),uom_id,raw_uom_key,entered_uom_name or stored_uom_name))
-                    movement_ids.append(cur.lastrowid)
+                    movement_ids.append(movement_id)
                     line_item["layer_allocations"].append({
-                        "movement_id":cur.lastrowid,"source_layer_id":layer_detail["layer_id"],
+                        "movement_id":movement_id,"source_layer_id":layer_detail["layer_id"],
                         "lot_id":layer_detail["lot_id"],"location_id":layer_detail["location_id"],
                         "quantity":layer_detail["quantity"],"unit_cost":layer_detail["unit_cost"],
                         "total_cost":layer_detail["total_cost"],
