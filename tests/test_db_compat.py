@@ -11,6 +11,7 @@ from db_compat import (
     table_exists,
     begin_write_transaction,
     transaction_is_active,
+    insert_and_get_id,
 )
 
 
@@ -90,6 +91,37 @@ class PortableTransactionStateTests(unittest.TestCase):
         self.assertTrue(transaction_is_active(connection))
         self.assertFalse(begin_write_transaction(connection))
         self.assertEqual(connection.statements, [])
+
+class GeneratedIdCompatibilityTests(unittest.TestCase):
+    def test_sqlite_insert_returns_id_without_committing(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.execute("CREATE TABLE generated_probe (id INTEGER PRIMARY KEY, label TEXT)")
+            row_id = insert_and_get_id(connection, "INSERT INTO generated_probe(label) VALUES(?)", ("x",))
+            self.assertEqual(row_id, 1)
+            self.assertTrue(connection.in_transaction)
+        finally:
+            connection.close()
+
+    def test_postgresql_insert_uses_returning_id(self):
+        class Cursor:
+            def fetchone(self):
+                return {"id": 42}
+        class Connection(_FakePsycopgConnection):
+            def execute(self, statement, params=()):
+                self.statements.append((statement, tuple(params)))
+                return Cursor()
+        connection = Connection("IDLE")
+        self.assertEqual(insert_and_get_id(connection, "INSERT INTO generated_probe(label) VALUES(?)", ("x",)), 42)
+        self.assertEqual(connection.statements, [("INSERT INTO generated_probe(label) VALUES(?) RETURNING id", ("x",))])
+
+    def test_rejects_existing_returning_clause(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            with self.assertRaises(ValueError):
+                insert_and_get_id(connection, "INSERT INTO probe DEFAULT VALUES RETURNING id")
+        finally:
+            connection.close()
 
 
 POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
