@@ -477,6 +477,8 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
             (movement_id,),
         ).fetchone()["unit_cost"]
         self.assertEqual(str(amount), "12.345678")
+        # Keep the valid fixture rows while testing each rejected insert in isolation.
+        self.connection.commit()
 
         with self.assertRaises(Exception):
             self.connection.execute(
