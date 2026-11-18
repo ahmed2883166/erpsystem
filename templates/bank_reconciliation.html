@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}التسوية البنكية | NEXUS ERP{% endblock %}
 {% block content %}
-<header class="report-page-header">
+<header class="report-page-header page-heading">
   <div><h2>التسوية البنكية ومطابقة كشف الحساب</h2><p class="muted">أدخل سطور كشف البنك، ثم طابق كل سطر مع حركة دفترية على الحساب نفسه وبنفس المبلغ والاتجاه. التحويل بين حسابين يظهر كطرف صادر وطرف وارد.</p></div>
   <a class="btn secondary" href="{{ url_for('bank.index') }}">العودة للخزائن والبنوك</a>
 </header>
