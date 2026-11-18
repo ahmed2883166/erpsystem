@@ -29,7 +29,7 @@
 قبل أول تشغيل، يمكن تنفيذ فحص الجاهزية الآمن (لا ينشئ قاعدة البيانات ولا يغيّرها):
 
 ```powershell
-.\\.venv\\Scripts\\python.exe scripts\\check_runtime_readiness.py
+python scripts\\check_runtime_readiness.py
 ```
 
 للتثبيت اليدوي لأول مرة، يمكن إنشاء البيئة وتثبيت المتطلبات من PowerShell:
