@@ -36,17 +36,23 @@ def dependency_order(tables: list[str], foreign_keys: dict[str, set[str]]) -> li
         table: set(foreign_keys.get(table, set())) & known
         for table in tables
     }
+    dependents = {table: [] for table in tables}
+    for child, parents in dependencies.items():
+        for parent in parents:
+            dependents[parent].append(child)
+    for children in dependents.values():
+        children.sort()
+
     ordered = []
     ready = [table for table, deps in dependencies.items() if not deps]
     heapq.heapify(ready)
     while ready:
         table = heapq.heappop(ready)
         ordered.append(table)
-        for child in sorted(dependencies):
-            if table in dependencies[child]:
-                dependencies[child].remove(table)
-                if not dependencies[child] and child not in ordered:
-                    heapq.heappush(ready, child)
+        for child in dependents[table]:
+            dependencies[child].discard(table)
+            if not dependencies[child]:
+                heapq.heappush(ready, child)
     if len(ordered) != len(tables):
         cyclic = sorted(table for table, deps in dependencies.items() if deps)
         raise ValueError(
