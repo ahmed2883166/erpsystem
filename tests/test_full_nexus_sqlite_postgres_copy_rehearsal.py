@@ -104,6 +104,10 @@ class FullNEXUSSQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
         self.assertGreater(result["table_row_counts"].get("accounts", 0), 0)
         self.assertEqual(result["table_row_counts"].get("journal_entries"), 1)
         self.assertEqual(result["table_row_counts"].get("journal_lines"), 2)
+        self.assertEqual(result["table_row_counts"].get("stock_products"), 1)
+        self.assertEqual(result["table_row_counts"].get("stock_warehouses"), 1)
+        self.assertEqual(result["table_row_counts"].get("stock_movements"), 1)
+        self.assertEqual(result["table_row_counts"].get("stock_valuation_layers"), 1)
 
         report = verify_copy(str(self.sqlite_path), POSTGRES_DSN, schema=self.schema)
         self.assertTrue(report["source_integrity_ok"])
@@ -120,6 +124,10 @@ class FullNEXUSSQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
         self.assertIn("journal_lines.credit_total", report["financial_and_inventory_controls"])
         self.assertIn("journal_lines.debit_by_entry", report["financial_and_inventory_controls"])
         self.assertIn("journal_lines.credit_by_entry", report["financial_and_inventory_controls"])
+        self.assertIn("stock_valuation_layers.qty_in_total", report["financial_and_inventory_controls"])
+        self.assertIn("stock_valuation_layers.qty_remaining_total", report["financial_and_inventory_controls"])
+        self.assertIn("stock_valuation_layers.value_remaining_total", report["financial_and_inventory_controls"])
+        self.assertIn("stock_valuation_layers.value_remaining_by_product_warehouse", report["financial_and_inventory_controls"])
         self.assertTrue(report["passed"], report)
 
 
