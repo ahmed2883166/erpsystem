@@ -183,13 +183,13 @@ class BankStatementCsvImportTests(unittest.TestCase):
             banking.parse_statement_csv("Date;Amount\n2026-11-01;1,20,30\n")
 
     def test_rejects_csv_without_required_columns(self):
-        with self.assertRaisesRegex(ValueError, "التاريخ"):
+        with self.assertRaisesRegex(ValueError, "عمود للتاريخ وعمود للمبلغ"):
             banking.parse_statement_csv("Reference,Description\n1,Deposit\n")
 
     def test_rejects_invalid_date_and_zero_amount(self):
         with self.assertRaisesRegex(ValueError, "تاريخ غير صحيح"):
             banking.parse_statement_csv("Date,Amount\nnot-a-date,10\n")
-        with self.assertRaisesRegex(ValueError, "لا يمكن أن تكون صفرًا"):
+        with self.assertRaisesRegex(ValueError, "لا يمكن أن يكون صفرًا"):
             banking.parse_statement_csv("Date,Amount\n2026-11-01,0\n")
 
     def test_rejects_empty_and_oversized_row_sets(self):
