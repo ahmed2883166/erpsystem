@@ -1995,7 +1995,7 @@ def post_supplier_bill(c, bill_id, actor_id):
     if activity_code:
         from company_activities import resolve_activity_profile
         resolve_activity_profile(c, activity_code)
-    ap = supplier_ap_account(c, activity_code)
+    ap = (supplier_ap_account(c, activity_code) if activity_code else supplier_ap_account(c)) if activity_code else supplier_ap_account(c)
     subtotal = money(bill["subtotal"])
     tax = money(bill["tax_amount"])
     journal_lines = []
@@ -2178,7 +2178,7 @@ def new_bill():
                 # Keep the first asset in legacy header fields for older screens,
                 # while the complete asset list remains in supplier_bill_asset_lines.
                 asset_data=dict(asset_lines[0])
-                supplier_ap_account(c, activity_code)
+                (supplier_ap_account(c, activity_code) if activity_code else supplier_ap_account(c))
             if bill_kind=="expense":
                 expense_account_id=int(request.form.get("expense_account_id","0"))
                 expense_row=execute_compat(c, "SELECT account_type,is_group,active FROM accounts WHERE id=?",(expense_account_id,)).fetchone()
@@ -2189,7 +2189,7 @@ def new_bill():
             elif bill_kind=="inventory":
                 if not receipts:
                     raise ValueError("فاتورة الأصناف المخزنية تتطلب إيصال استلام.")
-                supplier_ap_account(c, activity_code)
+                (supplier_ap_account(c, activity_code) if activity_code else supplier_ap_account(c))
             receipt_allocations=[]
             if bill_kind=="inventory":
                 receipt_allocations = _validate_supplier_receipt_allocations(
@@ -2325,11 +2325,11 @@ def edit_bill(bill_id):
                 asset_lines = validate_asset_bill_lines(c, request.form, bill_date, subtotal)
                 # Preserve the first asset's details in legacy header columns.
                 asset_data = dict(asset_lines[0])
-                supplier_ap_account(c, activity_code)
+                (supplier_ap_account(c, activity_code) if activity_code else supplier_ap_account(c))
             else:
                 if not receipts:
                     raise ValueError("فاتورة الأصناف المخزنية تتطلب إيصال استلام.")
-                supplier_ap_account(c, activity_code)
+                (supplier_ap_account(c, activity_code) if activity_code else supplier_ap_account(c))
 
             allocations = []
             if bill_kind == "inventory":
@@ -2756,8 +2756,15 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
     )
     for allocation in allocations:
         movement_no="SUPCANCEL-"+datetime.now().strftime("%Y%m%d%H%M%S%f")+"-"+uuid.uuid4().hex[:5].upper()
-        movement_id=insert_and_get_id(conn,
-            """INSERT INTO stock_movements(
+        movement_params = (
+            movement_no,allocation["location_id"],allocation["lot_id"],allocation["quantity"],
+            allocation["unit_cost"],allocation["total_cost"],cancellation_date,
+            "إعادة مخزون عند إلغاء مرتجع المورد "+note["credit_no"],created_by,reversal_id,
+            allocation["credit_note_line_id"])
+        movement_columns = _columns(conn, "stock_movements")
+        bill_columns = _columns(conn, "supplier_bills")
+        if "activity_code" in movement_columns and "activity_code" in bill_columns:
+            movement_sql = """INSERT INTO stock_movements(
               movement_no,movement_type,product_id,target_warehouse_id,target_location_id,lot_id,
               quantity,unit_cost,total_cost,movement_date,notes,created_by,journal_entry_id,accounting_status,activity_code)
               SELECT ?, 'receipt',cnl.product_id,cnl.warehouse_id,?, ?,?,?,?,?,?,?,?,'posted',b.activity_code
@@ -2765,11 +2772,17 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
               JOIN supplier_credit_notes n ON n.id=cnl.credit_note_id
               JOIN supplier_bills b ON b.id=n.bill_id
               JOIN stock_products l ON l.id=cnl.product_id
-              WHERE cnl.id=?""",
-            (movement_no,allocation["location_id"],allocation["lot_id"],allocation["quantity"],
-             allocation["unit_cost"],allocation["total_cost"],cancellation_date,
-             "إعادة مخزون عند إلغاء مرتجع المورد "+note["credit_no"],created_by,reversal_id,
-             allocation["credit_note_line_id"]))
+              WHERE cnl.id=?"""
+        else:
+            movement_sql = """INSERT INTO stock_movements(
+              movement_no,movement_type,product_id,target_warehouse_id,target_location_id,lot_id,
+              quantity,unit_cost,total_cost,movement_date,notes,created_by,journal_entry_id,accounting_status)
+              SELECT ?, 'receipt',cnl.product_id,cnl.warehouse_id,?, ?,?,?,?,?,?,?,?,'posted'
+              FROM supplier_credit_note_lines cnl
+              JOIN supplier_credit_notes n ON n.id=cnl.credit_note_id
+              JOIN stock_products l ON l.id=cnl.product_id
+              WHERE cnl.id=?"""
+        movement_id = insert_and_get_id(conn, movement_sql, movement_params)
         execute_compat(conn, 
             """INSERT INTO stock_valuation_layers(
               product_id,warehouse_id,location_id,lot_id,source_movement_id,
@@ -2866,7 +2879,7 @@ def new_credit_note():
             inventory_code=activity_inventory_code(c, activity_code)
             if not inventory_code:
                 raise ValueError("النشاط الحالي لا يملك حساب مخزون معرفًا.")
-            ap_id=supplier_ap_account(c, activity_code)
+            ap_id=(supplier_ap_account(c, activity_code) if activity_code else supplier_ap_account(c))
             tax_rate=Decimal(bill["tax_rate"] or "0")
             method_row=execute_compat(c, "SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
             method=method_row["setting_value"] if method_row else "average"
