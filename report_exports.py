@@ -17,7 +17,7 @@ from db_sql import execute_compat
 from accounting_core import decimal_sum_expression, decimal_layer_value_sum_expression
 
 
-_EXPORT_ISO_DATE = re.compile(r"(?<!\\d)(\\d{4})-(\\d{2})-(\\d{2})(?:T(\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d+)?)?))?(?!\\d)")
+_EXPORT_ISO_DATE = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?))?(?!\d)")
 
 
 def _format_export_dates(value):
