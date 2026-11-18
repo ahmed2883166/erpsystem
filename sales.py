@@ -45,6 +45,14 @@ def _columns(conn, name):
     return table_columns(conn, name)
 
 
+def _customer_for_update(conn, customer_id):
+    """Serialize credit-limit checks for concurrent invoices of the same customer."""
+    sql = "SELECT * FROM customers WHERE id=? AND active=1"
+    if database_dialect(conn) == "postgresql":
+        sql += " FOR UPDATE"
+    return execute_compat(conn, sql, (customer_id,)).fetchone()
+
+
 def _sales_invoice_for_update(conn, invoice_id, posted_only=False):
     """Serialize credit-note quantity/value checks against the same invoice."""
     sql = "SELECT * FROM sales_invoices WHERE id=?"
@@ -495,7 +503,8 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     # independently. Exempt/zero-rated invoices must not fail on an unused header rate.
     allowed_rates = _allowed_vat_rates(conn)
 
-    customer = execute_compat(conn, "SELECT * FROM customers WHERE id=? AND active=1", (customer_id,)).fetchone()
+    # A customer-row lock serializes credit exposure checks across concurrent invoices.
+    customer = _customer_for_update(conn, customer_id)
     if not customer:
         raise ValueError("العميل غير موجود أو غير نشط.")
     dimensions = validate_journal_dimensions(conn, dimensions or {})
