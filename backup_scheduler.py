@@ -112,6 +112,15 @@ def create_backup_archive(db_path, backup_dir, keep_count=30):
     return archive_path
 
 
+def ensure_initial_backup(db_path, backup_dir):
+    """Create a one-time baseline archive when this company has no backup yet."""
+    backup_dir = Path(backup_dir)
+    existing = list(backup_dir.glob(f"{BACKUP_PREFIX}*.zip")) if backup_dir.exists() else []
+    if existing:
+        return None
+    return create_backup_archive(db_path, backup_dir)
+
+
 def _settings(connection):
     return {row["setting_key"]: row["setting_value"] for row in connection.execute(
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key LIKE 'backup_%'"
