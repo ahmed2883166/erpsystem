@@ -281,11 +281,13 @@ def main() -> int:
             with nexus_app.app.app_context():
                 verification_connection = nexus_app.db()
                 try:
-                    invoice_after_repeat = verification_connection.execute(
+                    invoice_after_repeat = execute_compat(
+                        verification_connection,
                         "SELECT journal_entry_id,cogs_journal_entry_id FROM sales_invoices WHERE id=?",
                         (sales_flow["invoice_id"],),
                     ).fetchone()
-                    bill_after_repeat = verification_connection.execute(
+                    bill_after_repeat = execute_compat(
+                        verification_connection,
                         "SELECT status,journal_entry_id FROM supplier_bills WHERE id=?",
                         (purchase_flow["bill_id"],),
                     ).fetchone()
