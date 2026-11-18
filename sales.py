@@ -2531,9 +2531,14 @@ def new_invoice():
     settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(c, 
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','default_vat_rate')")}
     dimension_options = active_dimension_options(c)
+    from company_activities import list_company_activities
+    activity_options = [row for row in list_company_activities(c) if row["enabled"]]
+    primary_activity = next((row["activity_code"] for row in activity_options if row["is_primary"]), None)
+    selected_activity = primary_activity or settings.get("activity", "commercial")
     c.close()
     return render_template("sales_invoice_new.html", customers=customers, products=products, product_uoms=product_uoms,
                            warehouses=warehouses, settings=settings, dimension_options=dimension_options,
+                           activity_options=activity_options, selected_activity=selected_activity,
                            today=date.today().isoformat())
 
 
