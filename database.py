@@ -16,13 +16,20 @@ from sqlite_maintenance import enable_sqlite_wal
 DEFAULT_TIMEOUT_SECONDS = 20
 
 
+class _TrackedSQLiteConnection(sqlite3.Connection):
+    """SQLite connection that can be weakly tracked without extending its lifetime."""
+    __slots__ = ("__weakref__",)
+
+
 def _close_app_context_connections(connections):
-    """Close every connection tracked for the current Flask app context."""
-    for connection in tuple(connections):
-        try:
-            connection.close()
-        except sqlite3.Error:
-            pass
+    """Close only still-live connections at the end of the Flask app context."""
+    for reference in tuple(connections):
+        connection = reference()
+        if connection is not None:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                pass
     connections.clear()
 
 
@@ -33,13 +40,14 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
     default deferred transactions (empty string), while modules that historically
     used autocommit continue to pass isolation_level=None.
     """
-    # Track every connection created in this Flask app context without
-    # reusing it: many existing routes explicitly close their own connection,
-    # and each call must retain its historical independent transaction scope.
+    # Track weak references only. A strong list here changes historical behavior:
+    # it keeps otherwise-unreferenced connections alive until request teardown.
+    # Weak tracking preserves prompt refcount/GC closure while still allowing
+    # teardown to close a connection that a caller deliberately retained.
     if has_app_context():
         connections = getattr(g, "_nexus_database_connections", None)
         if connections is None:
-            connections = []
+            connections = set()
             g._nexus_database_connections = connections
             g._nexus_database_finalizer = weakref.finalize(
                 g._get_current_object(),
@@ -47,7 +55,8 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
                 connections,
             )
     connection = sqlite3.connect(
-        str(Path(path)), timeout=timeout, isolation_level=isolation_level
+        str(Path(path)), timeout=timeout, isolation_level=isolation_level,
+        factory=_TrackedSQLiteConnection,
     )
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
@@ -62,7 +71,7 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
         # Covers connections opened inside blueprints as well as app.db().
         connection.set_progress_handler(make_sqlite_deadline_callback(deadline), 10000)
     if has_app_context():
-        connections.append(connection)
+        connections.add(weakref.ref(connection, connections.discard))
     return connection
 
 
