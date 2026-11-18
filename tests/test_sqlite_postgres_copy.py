@@ -398,6 +398,10 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
                 f'INSERT INTO "{self.schema}"."nexus_schema_installation"(id,baseline_sha256) VALUES (1,%s)',
                 ("a" * 64,),
             )
+            conn.execute(
+                f'CREATE INDEX accounts_parent_lookup_idx '
+                f'ON "{self.schema}"."accounts"(parent_id)'
+            )
 
     def test_real_postgres_copy_preserves_ids_relationships_decimals_and_sequences(self):
         import psycopg
@@ -408,6 +412,7 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
         )
         self.assertTrue(result["committed"])
         self.assertEqual(result["total_rows"], 6)
+        self.assertEqual(result["secondary_indexes_rebuilt"], 1)
         verification = verify_copy(source_path, self.dsn, self.schema)
         self.assertTrue(verification["passed"], verification["issues"])
         self.assertEqual(verification["source_table_count"], 3)
@@ -426,6 +431,12 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
                 "VALUES (1, 'Sequence check') RETURNING id"
             ).fetchone()[0]
             self.assertEqual(next_id, 4)
+            index_count = conn.execute(
+                "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = %s "
+                "AND indexname = 'accounts_parent_lookup_idx'",
+                (self.schema,),
+            ).fetchone()[0]
+            self.assertEqual(index_count, 1)
 
     def test_real_postgres_copy_rolls_back_all_tables_on_insert_failure(self):
         import psycopg
@@ -442,8 +453,14 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
             entry_count = conn.execute(
                 f'SELECT COUNT(*) FROM "{self.schema}"."entries"'
             ).fetchone()[0]
+            index_count = conn.execute(
+                "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = %s "
+                "AND indexname = 'accounts_parent_lookup_idx'",
+                (self.schema,),
+            ).fetchone()[0]
         self.assertEqual(account_count, 0)
         self.assertEqual(entry_count, 0)
+        self.assertEqual(index_count, 1)
 
 class PostgresCopyStreamingUnitTests(unittest.TestCase):
     def test_copy_streams_normalized_rows_through_psycopg_copy_api(self):
