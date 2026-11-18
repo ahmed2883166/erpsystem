@@ -439,3 +439,212 @@ main .report-filter { grid-template-columns: repeat(auto-fit, minmax(min(100%, 1
   main form.erp-journal-form .journal-description,
   main form.erp-journal-form .journal-memo-field { grid-column: 1; }
 }
+
+
+/* NEXUS shared screen system — consistent headings, action groups and dense workflows. */
+main > header.page-heading,
+main > header:not(.dashboard-page-header) {
+  align-items: flex-start;
+  gap: 1rem 1.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.1rem;
+}
+main > header.page-heading > div:first-child,
+main > header:not(.dashboard-page-header) > div:first-child {
+  min-width: min(100%, 260px);
+  flex: 1 1 360px;
+}
+main > header.page-heading h2,
+main > header:not(.dashboard-page-header) h2 {
+  margin: 0;
+  font-size: clamp(1.2rem, 1.7vw, 1.55rem);
+  font-weight: 800;
+  letter-spacing: -.015em;
+}
+main > header.page-heading p,
+main > header:not(.dashboard-page-header) p {
+  margin: .25rem 0 0;
+  color: var(--muted);
+  font-size: .9rem;
+}
+main .page-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .55rem;
+  padding: .2rem 0;
+}
+main .page-shortcuts a,
+main .page-shortcuts .btn,
+main .page-shortcuts button {
+  min-height: 40px;
+  padding: .48rem .85rem;
+  font-size: .86rem;
+  white-space: normal;
+  text-align: center;
+}
+main > .panel > .page-shortcuts {
+  margin: 0;
+}
+main .panel > h3,
+main .panel > .section-heading h3 {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  font-size: 1.02rem;
+  font-weight: 800;
+}
+main .panel > h3 {
+  padding-bottom: .55rem;
+  border-bottom: 1px solid var(--line);
+}
+main .status-legend {
+  gap: .45rem;
+  margin-bottom: .85rem;
+}
+main .status-legend .legend-item {
+  min-height: 29px;
+  padding: .22rem .65rem;
+  font-size: .76rem;
+}
+main .table-wrap {
+  border-color: var(--line);
+  border-radius: 11px;
+}
+main .table-wrap table th {
+  font-weight: 800;
+}
+main .table-wrap table td,
+main .table-wrap table th {
+  vertical-align: middle;
+}
+main .table-wrap form {
+  margin: 0;
+}
+main .table-wrap .table-actions {
+  min-width: max-content;
+}
+main .pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .6rem;
+  flex-wrap: wrap;
+}
+main .pagination > * {
+  margin: 0;
+}
+main .payroll-nav-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  gap: .65rem;
+  margin-top: .9rem;
+}
+main .payroll-nav-group {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+  overflow: hidden;
+}
+main .payroll-nav-group > summary {
+  cursor: pointer;
+  padding: .65rem .85rem;
+  background: var(--surface2);
+  color: var(--text);
+  font-weight: 800;
+}
+main .payroll-nav-group > .actions {
+  padding: .35rem .7rem .65rem;
+  margin: 0;
+}
+main .employee-import-panel,
+main .employee-create-panel,
+main .employee-list-panel {
+  min-width: 0;
+}
+main .employee-data-table {
+  min-width: 1050px;
+}
+main .employee-data-table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+main .employee-data-table td {
+  white-space: nowrap;
+}
+main .employee-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: .35rem;
+}
+main .employee-actions .btn,
+main .employee-actions button {
+  min-height: 35px;
+  padding: .3rem .55rem;
+  font-size: .78rem;
+}
+main form.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: .75rem 1rem;
+  align-items: end;
+}
+main form.form-grid > label {
+  min-width: 0;
+  margin: 0;
+}
+main form.form-grid > label input,
+main form.form-grid > label select,
+main form.form-grid > label textarea {
+  width: 100%;
+  margin-top: .3rem;
+}
+main form.form-grid > button,
+main form.form-grid > .notice,
+main form.form-grid > .flash,
+main form.form-grid > .form-actions {
+  grid-column: 1 / -1;
+}
+main form.form-grid > button {
+  justify-self: start;
+  min-width: 145px;
+}
+main details > summary {
+  cursor: pointer;
+}
+main details > summary:focus-visible {
+  outline: 3px solid rgba(var(--bs-primary-rgb), .3);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+@media (max-width: 640px) {
+  main > header.page-heading,
+  main > header:not(.dashboard-page-header) {
+    display: flex;
+    align-items: stretch;
+    margin-bottom: .85rem;
+  }
+  main .page-shortcuts a,
+  main .page-shortcuts .btn,
+  main .page-shortcuts button {
+    flex: 1 1 145px;
+  }
+  main form.form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  main form.form-grid > button,
+  main form.form-grid > .notice,
+  main form.form-grid > .flash,
+  main form.form-grid > .form-actions {
+    grid-column: 1;
+  }
+  main form.form-grid > button {
+    width: 100%;
+  }
+  main .pagination {
+    justify-content: center;
+  }
+}
