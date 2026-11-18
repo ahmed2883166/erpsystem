@@ -23,6 +23,23 @@ def decimal_sum_expression(connection, expression):
     return f"COALESCE(SUM(CAST({expression} AS NUMERIC)), 0)"
 
 
+def decimal_net_expression(connection, debit_expression, credit_expression):
+    """Aggregate signed debit-minus-credit amounts exactly across databases."""
+    if database_dialect(connection) == "sqlite":
+        return f"COALESCE(DECIMAL_NET({debit_expression}, {credit_expression}), '0')"
+    return (
+        "COALESCE(SUM(CAST((" + debit_expression + ") AS NUMERIC) - "
+        "CAST((" + credit_expression + ") AS NUMERIC)), 0)"
+    )
+
+
+def month_key_expression(connection, date_expression):
+    """Return YYYY-MM from a DATE/TEXT column on either supported database."""
+    if database_dialect(connection) == "sqlite":
+        return f"substr({date_expression}, 1, 7)"
+    return f"TO_CHAR({date_expression}, 'YYYY-MM')"
+
+
 def decimal_layer_value_sum_expression(connection, value_remaining, quantity, unit_cost):
     """Aggregate stock layer values exactly across SQLite and PostgreSQL."""
     if database_dialect(connection) == "sqlite":
