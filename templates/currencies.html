@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block title %}العملات وفروق الصرف | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>العملات وفروق الصرف</h2><p>تسجيل أسعار الصرف، إثبات ذمم بعملة أجنبية، التحصيل/السداد الجزئي، وإعادة التقييم.</p></header>
+<header class="page-heading"><h2>العملات وفروق الصرف</h2><p>تسجيل أسعار الصرف، إثبات ذمم بعملة أجنبية، التحصيل/السداد الجزئي، وإعادة التقييم.</p></header>
 <section class="panel"><h3>أسعار الصرف</h3><form method="post" class="form-grid">
 <label>العملة<select name="currency_code" required>{% for x in currencies %}<option value="{{x.code}}">{{x.code}} - {{x.name_ar}}</option>{% endfor %}</select></label>
 <label>تاريخ السريان<input type="date" name="rate_date" value="{{today}}" required></label>
