@@ -314,6 +314,35 @@ class GeneratedIdCompatibilityTests(unittest.TestCase):
         self.assertEqual(insert_and_get_id(connection, "INSERT INTO generated_probe(label) VALUES(?)", ("x",)), 42)
         self.assertEqual(connection.statements, [("INSERT INTO generated_probe(label) VALUES(%s) RETURNING id", ("x",))])
 
+    def test_postgresql_generated_id_uses_json_operator_aware_adapter(self):
+        class Cursor:
+            def fetchone(self):
+                return {"id": 43}
+
+        class Connection(_FakePsycopgConnection):
+            __module__ = "psycopg.fake"
+
+            def execute(self, statement, params=()):
+                self.statements.append((statement, tuple(params)))
+                return Cursor()
+
+        connection = Connection("IDLE")
+        row_id = insert_and_get_id(
+            connection,
+            "INSERT INTO generated_probe(label) "
+            "SELECT ? WHERE ?::jsonb ?? 'enabled'",
+            ("x", '{"enabled": true}'),
+        )
+        self.assertEqual(row_id, 43)
+        self.assertEqual(
+            connection.statements,
+            [(
+                "INSERT INTO generated_probe(label) "
+                "SELECT %s WHERE %s::jsonb ?? 'enabled' RETURNING id",
+                ("x", '{"enabled": true}'),
+            )],
+        )
+
     def test_rejects_existing_returning_clause(self):
         connection = sqlite3.connect(":memory:")
         try:
