@@ -6,7 +6,70 @@ import unittest
 from purchases import (
     _purchase_order_for_receipt_update,
     _purchase_order_lines_for_receipt_update,
+    _supplier_bill_for_update,
+    _supplier_bills_for_payment_update,
 )
+
+
+class SQLiteSupplierPostingLockTests(unittest.TestCase):
+    def setUp(self):
+        self.connection = sqlite3.connect(":memory:")
+        self.connection.row_factory = sqlite3.Row
+        self.connection.executescript("""
+            CREATE TABLE supplier_bills (
+                id INTEGER PRIMARY KEY, supplier_id INTEGER NOT NULL,
+                bill_date TEXT NOT NULL, status TEXT NOT NULL
+            );
+            INSERT INTO supplier_bills VALUES
+                (12, 4, '2026-01-02', 'posted'),
+                (11, 4, '2026-01-01', 'posted'),
+                (13, 5, '2026-01-01', 'posted');
+        """)
+
+    def tearDown(self):
+        self.connection.close()
+
+    def test_sqlite_supplier_bill_reads_keep_compatibility_and_allocation_order(self):
+        bill = _supplier_bill_for_update(self.connection, 11)
+        bills = _supplier_bills_for_payment_update(self.connection, 4)
+        self.assertEqual(bill["id"], 11)
+        self.assertEqual([row["id"] for row in bills], [11, 12])
+
+
+class PostgreSQLSupplierPostingLockTests(unittest.TestCase):
+    def test_postgresql_supplier_bill_and_payment_queries_lock_rows(self):
+        class Cursor:
+            def __init__(self, row=None, rows=None):
+                self.row = row
+                self.rows = rows or []
+
+            def fetchone(self):
+                return self.row
+
+            def fetchall(self):
+                return self.rows
+
+        class Connection:
+            __module__ = "psycopg.fake"
+
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, statement, params=()):
+                self.calls.append((statement, tuple(params)))
+                if "WHERE id=?" in statement:
+                    return Cursor({"id": 11})
+                return Cursor(rows=[{"id": 11}, {"id": 12}])
+
+        connection = Connection()
+        bill = _supplier_bill_for_update(connection, 11)
+        bills = _supplier_bills_for_payment_update(connection, 4)
+        self.assertEqual(bill["id"], 11)
+        self.assertEqual([row["id"] for row in bills], [11, 12])
+        self.assertIn("FOR UPDATE", connection.calls[0][0])
+        self.assertIn("ORDER BY bill_date,id FOR UPDATE", connection.calls[1][0])
+        self.assertEqual(connection.calls[0][1], (11,))
+        self.assertEqual(connection.calls[1][1], (4,))
 
 
 class SQLitePurchaseReceiptLockTests(unittest.TestCase):

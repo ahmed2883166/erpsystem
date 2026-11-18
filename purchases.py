@@ -56,6 +56,25 @@ def _lock_supplier_receipts(conn, receipt_ids):
     return rows
 
 
+def _supplier_bill_for_update(conn, bill_id):
+    """Serialize supplier-bill posting so concurrent requests cannot post twice."""
+    sql = "SELECT * FROM supplier_bills WHERE id=?"
+    if database_dialect(conn) == "postgresql":
+        sql += " FOR UPDATE"
+    return execute_compat(conn, sql, (bill_id,)).fetchone()
+
+
+def _supplier_bills_for_payment_update(conn, supplier_id):
+    """Lock open posted bills in allocation order before applying a supplier payment."""
+    sql = (
+        "SELECT * FROM supplier_bills WHERE supplier_id=? AND status='posted' "
+        "ORDER BY bill_date,id"
+    )
+    if database_dialect(conn) == "postgresql":
+        sql += " FOR UPDATE"
+    return execute_compat(conn, sql, (supplier_id,)).fetchall()
+
+
 def _purchase_order_for_receipt_update(conn, order_id):
     """Lock the PO header before receiving against it on PostgreSQL."""
     sql = "SELECT * FROM purchase_orders WHERE id=?"
@@ -1888,7 +1907,7 @@ def submit_supplier_bill(c, bill_id, actor_id):
 
 def approve_supplier_bill(c, bill_id, actor_id, reason=""):
     begin_write_transaction(c)
-    bill = execute_compat(c, "SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+    bill = _supplier_bill_for_update(c, bill_id)
     if not bill:
         raise ValueError("فاتورة المورد غير موجودة.")
     if bill["status"] != "pending_approval":
@@ -2968,7 +2987,7 @@ def new_payment():
             payment_id=insert_and_get_id(c,"INSERT INTO supplier_payments(payment_no,supplier_id,payment_date,amount,cash_account_id,journal_entry_id,reference,created_by) VALUES(?,?,?,?,?,?,?,?)",
               (no,supplier,request.form["payment_date"],str(amount),cash,eid,request.form.get("reference",""),session["user_id"]))
             remaining=amount
-            bills=execute_compat(c, """SELECT * FROM supplier_bills WHERE supplier_id=? AND status='posted' ORDER BY bill_date,id""",(supplier,)).fetchall()
+            bills=_supplier_bills_for_payment_update(c, supplier)
             bills=[b for b in bills if Decimal(b["total_amount"])>Decimal(b["paid_amount"] or "0")+Decimal(b["credited_amount"] or "0")]
             for b in bills:
                 due=money(Decimal(b["total_amount"])-Decimal(b["paid_amount"] or "0")-Decimal(b["credited_amount"] or "0")); alloc=min(due,remaining)
