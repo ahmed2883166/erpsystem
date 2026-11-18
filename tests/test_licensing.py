@@ -7,6 +7,16 @@ import licensing
 from licensing import get_license_status, verify_license_token
 
 class LicensingTests(unittest.TestCase):
+    def setUp(self):
+        # Windows runners may have a persistent per-user registry from earlier
+        # test cases. Licensing unit tests must use only their isolated temp state.
+        self.registry_read = patch.object(licensing, "_registry_read", return_value={})
+        self.registry_write = patch.object(licensing, "_registry_write", return_value=None)
+        self.registry_read.start()
+        self.registry_write.start()
+        self.addCleanup(self.registry_write.stop)
+        self.addCleanup(self.registry_read.stop)
+
     def test_missing_remote_trial_authority_fails_closed(self):
         import os
         old = os.environ.pop("NEXUS_LICENSE_TRIAL_URL", None)
