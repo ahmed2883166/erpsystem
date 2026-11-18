@@ -2287,6 +2287,7 @@ def edit_bill(bill_id):
             current = execute_compat(c, "SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
             if not current or current["status"] not in {"draft", "rejected"} or current["journal_entry_id"] is not None:
                 raise ValueError("تغيرت حالة الفاتورة؛ لا يمكن تعديلها الآن.")
+            activity_code = current["activity_code"] if "activity_code" in current.keys() else None
             dimensions = validate_journal_dimensions(c, request.form)
             duplicate = execute_compat(c, """SELECT 1 FROM supplier_bills
                 WHERE supplier_id=? AND lower(trim(supplier_invoice_no))=lower(trim(?)) AND id<>? LIMIT 1""",
@@ -2843,7 +2844,8 @@ def new_credit_note():
                 raise ValueError("إشعار الدائن المخزني متاح فقط لفواتير الأصناف المرتبطة باستلام مشتريات، وليس فواتير المصروفات والخدمات.")
             if execute_compat(c, "SELECT 1 FROM supplier_credit_notes WHERE supplier_id=? AND lower(trim(supplier_credit_no))=lower(trim(?))",(supplier,supplier_credit_no)).fetchone():
                 raise ValueError("رقم إشعار الدائن مسجل بالفعل لهذا المورد.")
-            inventory_code=activity_inventory_code(c)
+            activity_code = bill["activity_code"] if "activity_code" in bill.keys() else None
+            inventory_code=activity_inventory_code(c, activity_code)
             if not inventory_code:
                 raise ValueError("النشاط الحالي لا يملك حساب مخزون معرفًا.")
             ap_id=supplier_ap_account(c, activity_code)
@@ -2977,7 +2979,7 @@ def new_credit_note():
             if tax:
                 vat_id=account(c,_activity_tax_roles(c, activity_code)["input_vat"],"asset")
                 journal_lines.append((vat_id,0,tax,"عكس ضريبة المدخلات حسب إشعار المورد"))
-            posting_accounts=_activity_posting_accounts(c)
+            posting_accounts=_activity_posting_accounts(c, activity_code)
             default_cogs=posting_accounts.get("cogs")
             for item in line_data:
                 variance=money(item["cost"]-item["supplier_return_value"])
@@ -3035,7 +3037,7 @@ def new_payment():
             if (not cash_row or cash_row["account_type"]!="asset" or cash_row["is_group"] or not cash_row["active"]
                 or (cash_row["code"] not in cash_codes and not any(word in cash_name for word in cash_words))):
                 raise ValueError("حساب السداد يجب أن يكون حساب صندوق أو بنك تفصيليًا ونشطًا، وليس حساب إيراد أو مصروف أو أصل آخر.")
-            ap=supplier_ap_account(c, activity_code); begin_write_transaction(c)
+            ap=supplier_ap_account(c); begin_write_transaction(c)
             dimensions = validate_journal_dimensions(c, {"supplier_id": supplier})
             no="PAY-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             eid=create_journal(c,request.form["payment_date"],no,"سداد مورد",[(ap,amount,0,"تخفيض مديونية المورد"),(cash,0,amount,"سداد نقدي/بنكي")],session["user_id"],dimensions=dimensions)
