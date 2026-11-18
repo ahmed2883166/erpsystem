@@ -436,9 +436,9 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
             )
             conn.execute(
                 f'CREATE FUNCTION "{self.schema}".nexus_bump_management_dashboard_version() '
-                f'RETURNS trigger LANGUAGE plpgsql AS $ BEGIN '
+                f'RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN '
                 f'UPDATE "{self.schema}".management_dashboard_data_version '
-                f'SET version=version+1 WHERE id=1; RETURN NEW; END $'
+                f'SET version=version+1 WHERE id=1; RETURN NEW; END $$'
             )
             for table in ("accounts", "entries", "journal_lines", "sales_invoices", "supplier_bills"):
                 for event in ("INSERT", "UPDATE", "DELETE"):
@@ -449,8 +449,8 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
                     )
             conn.execute(
                 f'CREATE FUNCTION "{self.schema}".nexus_reject_audit_log_mutation() '
-                f'RETURNS trigger LANGUAGE plpgsql AS $ BEGIN '
-                f'RAISE EXCEPTION \'audit log is immutable\'; END $'
+                f'RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN '
+                f'RAISE EXCEPTION \'audit log is immutable\'; END $$'
             )
             conn.execute(
                 f'CREATE TRIGGER audit_log_block_update BEFORE UPDATE ON "{self.schema}"."audit_log" '
