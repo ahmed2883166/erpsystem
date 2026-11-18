@@ -260,24 +260,24 @@ MANAGEMENT_ROLES = {
 
 def initialize_management_dashboard_schema(conn, activity):
     """Create dashboard support schema and seed defaults once during app initialization."""
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_status_date ON journal_entries(status,entry_date,id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_account ON journal_lines(entry_id,account_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry ON journal_lines(account_id,entry_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry_id ON journal_lines(account_id,entry_id,id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_entry_date ON journal_entries(entry_date,id)")
+    execute_compat(conn, "CREATE INDEX IF NOT EXISTS idx_journal_entries_status_date ON journal_entries(status,entry_date,id)")
+    execute_compat(conn, "CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_account ON journal_lines(entry_id,account_id)")
+    execute_compat(conn, "CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry ON journal_lines(account_id,entry_id)")
+    execute_compat(conn, "CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry_id ON journal_lines(account_id,entry_id,id)")
+    execute_compat(conn, "CREATE INDEX IF NOT EXISTS idx_journal_entries_entry_date ON journal_entries(entry_date,id)")
     journal_columns = table_columns(conn, "journal_entries")
     if "reference" in journal_columns:
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_reference ON journal_entries(reference)")
-    conn.execute("""CREATE TABLE IF NOT EXISTS management_dashboard_data_version(
+        execute_compat(conn, "CREATE INDEX IF NOT EXISTS idx_journal_entries_reference ON journal_entries(reference)")
+    execute_compat(conn, """CREATE TABLE IF NOT EXISTS management_dashboard_data_version(
         id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL DEFAULT 0)""")
-    conn.execute("INSERT OR IGNORE INTO management_dashboard_data_version(id,version) VALUES(1,0)")
+    execute_compat(conn, "INSERT OR IGNORE INTO management_dashboard_data_version(id,version) VALUES(1,0)")
     for table, event in (
         ("journal_entries","INSERT"),("journal_entries","UPDATE"),("journal_entries","DELETE"),
         ("journal_lines","INSERT"),("journal_lines","UPDATE"),("journal_lines","DELETE"),
         ("accounts","INSERT"),("accounts","UPDATE"),("accounts","DELETE"),
     ):
         trigger = "trg_dashboard_version_" + table + "_" + event.lower()
-        conn.execute(f"""CREATE TRIGGER IF NOT EXISTS {trigger} AFTER {event} ON {table}
+        execute_compat(conn, f"""CREATE TRIGGER IF NOT EXISTS {trigger} AFTER {event} ON {table}
             BEGIN UPDATE management_dashboard_data_version SET version=version+1 WHERE id=1; END""")
     # Forecast balances depend on open sales and supplier invoices as well as the GL.
     # These tables are initialized before this schema in app.initialize_database().
@@ -285,14 +285,14 @@ def initialize_management_dashboard_schema(conn, activity):
         if table_exists(conn, table):
             for event in ("INSERT", "UPDATE", "DELETE"):
                 trigger = "trg_dashboard_version_" + table + "_" + event.lower()
-                conn.execute(f"""CREATE TRIGGER IF NOT EXISTS {trigger} AFTER {event} ON {table}
+                execute_compat(conn, f"""CREATE TRIGGER IF NOT EXISTS {trigger} AFTER {event} ON {table}
                     BEGIN UPDATE management_dashboard_data_version SET version=version+1 WHERE id=1; END""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS management_account_roles(
+    execute_compat(conn, """CREATE TABLE IF NOT EXISTS management_account_roles(
         account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
         role TEXT NOT NULL, PRIMARY KEY(account_id,role))""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS management_dashboard_meta(
+    execute_compat(conn, """CREATE TABLE IF NOT EXISTS management_dashboard_meta(
         meta_key TEXT PRIMARY KEY, meta_value TEXT NOT NULL)""")
-    meta = {row["meta_key"]: row["meta_value"] for row in conn.execute("SELECT meta_key,meta_value FROM management_dashboard_meta")}
+    meta = {row["meta_key"]: row["meta_value"] for row in execute_compat(conn, "SELECT meta_key,meta_value FROM management_dashboard_meta")}
     customized = meta.get("roles_customized") == "1"
     previous_activity = meta.get("seed_activity")
     needs_seed = meta.get("roles_initialized") != "1"
@@ -301,15 +301,15 @@ def initialize_management_dashboard_schema(conn, activity):
     # Legacy auto-seeded rows without metadata must be rebuilt for the current
     # activity; otherwise a commercial mapping can misclassify industrial 1120/1130.
     if (needs_seed or activity_changed) and not customized:
-        conn.execute("DELETE FROM management_account_roles")
+        execute_compat(conn, "DELETE FROM management_account_roles")
         defaults = ACTIVITY_ACCOUNTS.get(activity, ACTIVITY_ACCOUNTS["commercial"])
         for role, codes in defaults.items():
             for code in codes:
-                conn.execute("""INSERT OR IGNORE INTO management_account_roles(account_id,role)
+                execute_compat(conn, """INSERT OR IGNORE INTO management_account_roles(account_id,role)
                     SELECT id,? FROM accounts WHERE code=? AND is_group=0 AND active=1""", (role, code))
-        conn.execute("""INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_initialized','1')
+        execute_compat(conn, """INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_initialized','1')
             ON CONFLICT(meta_key) DO UPDATE SET meta_value='1'""")
-        conn.execute("""INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('seed_activity',?)
+        execute_compat(conn, """INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('seed_activity',?)
             ON CONFLICT(meta_key) DO UPDATE SET meta_value=excluded.meta_value""", (activity,))
     # Add newly introduced chart roles for untouched default mappings without
     # overwriting user-customized role assignments on existing installations.
@@ -317,7 +317,7 @@ def initialize_management_dashboard_schema(conn, activity):
         defaults = ACTIVITY_ACCOUNTS.get(activity, ACTIVITY_ACCOUNTS["commercial"])
         for role, codes in defaults.items():
             for code in codes:
-                conn.execute("""INSERT OR IGNORE INTO management_account_roles(account_id,role)
+                execute_compat(conn, """INSERT OR IGNORE INTO management_account_roles(account_id,role)
                     SELECT id,? FROM accounts WHERE code=? AND is_group=0 AND active=1""", (role, code))
     conn.commit()
 
@@ -325,7 +325,7 @@ def initialize_management_dashboard_schema(conn, activity):
 def load_management_account_roles(conn):
     """Read configured account-role mappings only; never create schema or seed data."""
     result = {role: set() for role in MANAGEMENT_ROLES}
-    for row in conn.execute("SELECT account_id,role FROM management_account_roles"):
+    for row in execute_compat(conn, "SELECT account_id,role FROM management_account_roles"):
         if row["role"] in result:
             result[row["role"]].add(row["account_id"])
     # Use profile defaults only when no explicit management mapping exists.
@@ -333,7 +333,7 @@ def load_management_account_roles(conn):
     profile = get_active_activity_profile(conn)
     profile_roles = active_account_role_ids(conn)
     is_custom_profile = profile["code"] != profile["base_activity"]
-    customization_row = conn.execute(
+    customization_row = execute_compat(conn, 
         "SELECT meta_value FROM management_dashboard_meta WHERE meta_key='roles_customized'"
     ).fetchone() if table_exists(conn, "management_dashboard_meta") else None
     management_roles_customized = bool(
@@ -376,9 +376,9 @@ def cached_management_snapshot(conn, start, end, dimensions=None):
     dimensions = dimensions or {}
     started_transaction = not conn.in_transaction
     if started_transaction:
-        conn.execute("BEGIN")
+        execute_compat(conn, "BEGIN")
     try:
-        version_row = conn.execute(
+        version_row = execute_compat(conn, 
             "SELECT version FROM management_dashboard_data_version WHERE id=1"
         ).fetchone()
         version = int(version_row["version"]) if version_row else 0
@@ -388,7 +388,7 @@ def cached_management_snapshot(conn, start, end, dimensions=None):
         )
         settings_fingerprint = tuple(
             (row["setting_key"], row["setting_value"])
-            for row in conn.execute("SELECT setting_key,setting_value FROM company_settings ORDER BY setting_key")
+            for row in execute_compat(conn, "SELECT setting_key,setting_value FROM company_settings ORDER BY setting_key")
         ) if table_exists(conn, "company_settings") else ()
         dashboard_today = date.today()
         key = (
@@ -429,7 +429,7 @@ def build_management_snapshot(conn, start, end, dimensions=None):
     dimensions = dimensions or {}
     settings = {}
     if table_exists(conn, "company_settings"):
-        settings = {row["setting_key"]: row["setting_value"] for row in conn.execute(
+        settings = {row["setting_key"]: row["setting_value"] for row in execute_compat(conn, 
             "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','base_currency','company_name')"
         )}
     activity = settings.get("activity", "commercial")
@@ -445,7 +445,7 @@ def build_management_snapshot(conn, start, end, dimensions=None):
     account_columns = table_columns(conn, "accounts")
     direct_cost_ids = set(roles["direct_cost"])
     if "statement_section" in account_columns:
-        direct_cost_ids.update(row["id"] for row in conn.execute(
+        direct_cost_ids.update(row["id"] for row in execute_compat(conn, 
             "SELECT id FROM accounts WHERE is_group=0 AND statement_section='direct_costs'"
         ).fetchall())
 
@@ -456,7 +456,7 @@ def build_management_snapshot(conn, start, end, dimensions=None):
         if not {"gain_loss_account_id", "gain_loss_amount", "disposal_date"}.issubset(columns):
             return set()
         return {
-            row["gain_loss_account_id"] for row in conn.execute(
+            row["gain_loss_account_id"] for row in execute_compat(conn, 
                 """SELECT DISTINCT gain_loss_account_id FROM asset_disposals
                    WHERE disposal_date>=? AND disposal_date<=?
                      AND CAST(gain_loss_amount AS NUMERIC)<0
@@ -672,7 +672,7 @@ def cash_forecast(conn, today=None, weeks=8):
             "net": _rounded(net), "closing": _rounded(running),
         })
 
-    threshold_row = conn.execute(
+    threshold_row = execute_compat(conn, 
         "SELECT setting_value FROM company_settings WHERE setting_key='minimum_cash_balance'"
     ).fetchone() if table_exists(conn, "company_settings") else None
     threshold = _decimal(threshold_row["setting_value"]) if threshold_row else Decimal("0")
