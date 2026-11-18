@@ -115,6 +115,12 @@ def analyze_activity_pack_compatibility(activities):
 
     chart_conflicts = []
     for code, rows in sorted(chart_rows.items()):
+        # A pack is internally consistent by design; this report is specifically
+        # about collisions introduced when two or more activity packs share a chart.
+        # Do not classify repeated definitions inside one starter pack as a
+        # cross-activity incompatibility.
+        if len({row["activity"] for row in rows}) < 2:
+            continue
         signatures = {
             (row["name"], row["account_type"], row["parent_code"], row["is_group"])
             for row in rows

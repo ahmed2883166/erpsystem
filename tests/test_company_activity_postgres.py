@@ -119,10 +119,13 @@ class CompanyActivityPostgreSQLIntegrationTests(unittest.TestCase):
         self.connection.execute(
             "INSERT INTO stock_movements VALUES(1,'commercial','receipt',80,'posted',4)"
         )
-        self.connection.executemany(
-            "INSERT INTO journal_lines(entry_id,debit,credit) VALUES(%s,%s,%s)",
-            [(1,114,114),(2,25,25),(4,80,80)],
-        )
+        # psycopg Connection intentionally has no executemany(); execute each
+        # parameterized row on the same transaction instead.
+        for values in [(1,114,114),(2,25,25),(4,80,80)]:
+            self.connection.execute(
+                "INSERT INTO journal_lines(entry_id,debit,credit) VALUES(%s,%s,%s)",
+                values,
+            )
         report = build_activity_performance_report(self.connection)
         self.assertEqual(report["journal_entry_count"], 3)
         self.assertEqual(report["activities"][0]["sales_total"], Decimal("114.00"))
