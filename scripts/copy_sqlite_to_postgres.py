@@ -118,6 +118,19 @@ def order_self_referencing_rows(rows, foreign_key_rows, table: str):
     return ordered
 
 
+def copy_rows_with_postgres_copy(connection, copy_sql: str, rows, columns: list[str]) -> int:
+    """Stream adapted row tuples through psycopg 3 COPY FROM STDIN."""
+    copied = 0
+    with connection.cursor() as cursor:
+        with cursor.copy(copy_sql) as copy:
+            for row in rows:
+                copy.write_row(
+                    tuple(normalize_value(row[column]) for column in columns)
+                )
+                copied += 1
+    return copied
+
+
 def open_sqlite_readonly(path: str):
     source = Path(path).expanduser().resolve(strict=True)
     if not source.is_file():
@@ -227,8 +240,7 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                 columns = source_columns[table]
                 qcols = ", ".join(quote_ident(c) for c in columns)
                 qname = qschema + "." + quote_ident(table)
-                placeholders = ", ".join(["%s"] * len(columns))
-                insert_sql = f"INSERT INTO {qname} ({qcols}) OVERRIDING SYSTEM VALUE VALUES ({placeholders})"
+                copy_sql = f"COPY {qname} ({qcols}) FROM STDIN"
                 cursor = src.execute(f"SELECT {qcols} FROM {quote_ident(table)}")
                 self_fk_rows = self_foreign_keys[table]
                 copied = 0
@@ -251,12 +263,9 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                 for rows in row_batches:
                     if not rows:
                         break
-                    with dst.cursor() as insert_cursor:
-                        insert_cursor.executemany(
-                            insert_sql,
-                            [tuple(normalize_value(row[column]) for column in columns) for row in rows],
-                        )
-                    copied += len(rows)
+                    copied += copy_rows_with_postgres_copy(
+                        dst, copy_sql, rows, columns
+                    )
                 target_count = dst.execute(
                     f"SELECT COUNT(*) AS n FROM {qname}"
                 ).fetchone()["n"]
