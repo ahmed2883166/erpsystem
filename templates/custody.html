@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block title %}عهد الموظفين | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>عهد الموظفين</h2><p>صرف العهدة بقيد آلي، تسجيل المصروفات، ثم تسوية كاملة وإرجاع المتبقي.</p></header>
+<header class="page-heading"><h2>عهد الموظفين</h2><p>صرف العهدة بقيد آلي، تسجيل المصروفات، ثم تسوية كاملة وإرجاع المتبقي.</p></header>
 <section class="panel"><h3>صرف عهدة جديدة</h3><form method="post" class="form-grid">
 <label>الموظف<select name="employee_id" required>{% for e in employees %}<option value="{{e.id}}">{{e.employee_code}} - {{e.full_name}}</option>{% endfor %}</select></label>
 <label>التاريخ<input type="date" name="issue_date" value="{{today}}" required></label><label>المبلغ<input type="number" name="amount" min="0.01" step="0.01" required></label>
