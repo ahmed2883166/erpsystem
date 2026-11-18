@@ -79,6 +79,52 @@ def validate(ddl_path, dsn, expected_review_path=None):
                 "index_count": index_count,
                 "trigger_count": trigger_count,
             }
+            actual_foreign_keys = connection.execute(
+                """
+                SELECT src.relname,
+                       array_agg(src_att.attname ORDER BY ord.ordinality),
+                       tgt.relname,
+                       array_agg(tgt_att.attname ORDER BY ord.ordinality),
+                       con.confupdtype,
+                       con.confdeltype
+                  FROM pg_constraint con
+                  JOIN pg_class src ON src.oid = con.conrelid
+                  JOIN pg_namespace src_ns ON src_ns.oid = src.relnamespace
+                  JOIN pg_class tgt ON tgt.oid = con.confrelid
+                  JOIN LATERAL unnest(con.conkey, con.confkey)
+                       WITH ORDINALITY AS ord(source_attnum, target_attnum, ordinality)
+                    ON TRUE
+                  JOIN pg_attribute src_att
+                    ON src_att.attrelid = src.oid AND src_att.attnum = ord.source_attnum
+                  JOIN pg_attribute tgt_att
+                    ON tgt_att.attrelid = tgt.oid AND tgt_att.attnum = ord.target_attnum
+                 WHERE con.contype = 'f' AND src_ns.nspname = %s
+                 GROUP BY src.relname, tgt.relname, con.conname,
+                          con.confupdtype, con.confdeltype
+                """,
+                (schema_name,),
+            ).fetchall()
+            action_names = {
+                "a": "NO ACTION", "r": "RESTRICT", "c": "CASCADE",
+                "n": "SET NULL", "d": "SET DEFAULT",
+            }
+            actual_fk_manifest = sorted(
+                [
+                    {
+                        "table": row[0],
+                        "columns": list(row[1]),
+                        "referenced_table": row[2],
+                        "referenced_columns": list(row[3]),
+                        "on_update": action_names[row[4]],
+                        "on_delete": action_names[row[5]],
+                    }
+                    for row in actual_foreign_keys
+                ],
+                key=lambda item: (
+                    item["table"], tuple(item["columns"]),
+                    item["referenced_table"], tuple(item["referenced_columns"]),
+                ),
+            )
             if expected_review_path:
                 expected_review = json.loads(Path(expected_review_path).read_text(encoding="utf-8"))
                 mismatches = {
@@ -91,6 +137,26 @@ def validate(ddl_path, dsn, expected_review_path=None):
                     raise AssertionError(
                         "Generated PostgreSQL schema counts do not match the source review: "
                         + json.dumps(mismatches, ensure_ascii=False, sort_keys=True)
+                    )
+                expected_fk_manifest = expected_review.get("foreign_keys")
+                if not isinstance(expected_fk_manifest, list):
+                    raise AssertionError(
+                        "Schema review is missing the exact foreign_keys manifest."
+                    )
+                expected_fk_manifest = sorted(
+                    expected_fk_manifest,
+                    key=lambda item: (
+                        item["table"], tuple(item["columns"]),
+                        item["referenced_table"], tuple(item["referenced_columns"]),
+                    ),
+                )
+                if expected_fk_manifest != actual_fk_manifest:
+                    raise AssertionError(
+                        "Generated PostgreSQL foreign keys differ from the source review: "
+                        + json.dumps({
+                            "expected": expected_fk_manifest[:200],
+                            "actual": actual_fk_manifest[:200],
+                        }, ensure_ascii=False, sort_keys=True)
                     )
             return {
                 "schema": schema_name,
