@@ -147,3 +147,114 @@ input:focus, select:focus, textarea:focus {
   .dashboard-kpis .kpi-card { min-height: 140px; }
   .dashboard-summary .dashboard-balance-row { grid-template-columns: 1fr; }
 }
+
+
+/* Lively, polished button micro-interactions */
+:root {
+  --nexus-motion-fast: 150ms;
+  --nexus-motion: 220ms;
+  --nexus-ease: cubic-bezier(.2,.75,.25,1);
+}
+main .btn, main button, main input[type="submit"],
+main input[type="button"], main a.button, main .button-link,
+nav a, .actions a, .actions button {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: 10px;
+  font-weight: 700;
+  transition:
+    transform var(--nexus-motion) var(--nexus-ease),
+    box-shadow var(--nexus-motion) var(--nexus-ease),
+    background-color var(--nexus-motion-fast) ease,
+    border-color var(--nexus-motion-fast) ease,
+    color var(--nexus-motion-fast) ease,
+    filter var(--nexus-motion-fast) ease;
+  -webkit-tap-highlight-color: transparent;
+}
+main .btn:not(:disabled):not(.disabled):hover,
+main button:not(:disabled):not(.disabled):hover,
+main input[type="submit"]:not(:disabled):hover,
+main input[type="button"]:not(:disabled):hover,
+main a.button:hover, main .button-link:hover,
+.actions a:hover, .actions button:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.045);
+  box-shadow: 0 7px 18px rgba(15, 30, 50, .16);
+}
+main .btn:active:not(:disabled),
+main button:active:not(:disabled),
+main input[type="submit"]:active:not(:disabled),
+main input[type="button"]:active:not(:disabled),
+main a.button:active, main .button-link:active,
+.actions a:active, .actions button:active {
+  transform: translateY(0) scale(.975);
+  box-shadow: 0 2px 6px rgba(15, 30, 50, .12);
+  filter: brightness(.98);
+}
+main .btn::after, main button::after,
+main input[type="submit"]::after, main input[type="button"]::after,
+main a.button::after, main .button-link::after,
+.actions a::after, .actions button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(110deg, transparent 20%, rgba(255,255,255,.22) 48%, transparent 76%);
+  transform: translateX(-120%);
+}
+main .btn:not(:disabled):hover::after,
+main button:not(:disabled):hover::after,
+main a.button:hover::after, main .button-link:hover::after,
+.actions a:hover::after, .actions button:hover::after {
+  opacity: 1;
+  transform: translateX(120%);
+  transition: transform 650ms ease, opacity 120ms ease;
+}
+.nexus-ripple {
+  position: absolute;
+  z-index: 2;
+  left: var(--nexus-ripple-x, 50%);
+  top: var(--nexus-ripple-y, 50%);
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: rgba(255,255,255,.38);
+  transform: translate(-50%, -50%) scale(0);
+  animation: nexus-ripple 520ms ease-out forwards;
+}
+@keyframes nexus-ripple {
+  to { transform: translate(-50%, -50%) scale(18); opacity: 0; }
+}
+main .btn:focus-visible, main button:focus-visible,
+main a.button:focus-visible, main .button-link:focus-visible {
+  outline: 3px solid rgba(var(--bs-primary-rgb), .38);
+  outline-offset: 3px;
+}
+main button:disabled, main .btn:disabled,
+main input:disabled, main .button-link[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: .58;
+  transform: none;
+  box-shadow: none;
+}
+nav a {
+  transition: transform 180ms var(--nexus-ease), background-color 180ms ease, border-color 180ms ease;
+}
+nav a:hover { transform: translateX(-3px); }
+nav details.nav-group > summary {
+  transition: background-color 180ms ease, color 180ms ease;
+}
+nav details.nav-group > summary:hover { background: rgba(255,255,255,.06); }
+@media (prefers-reduced-motion: reduce) {
+  main .btn, main button, main input[type="submit"], main input[type="button"],
+  main a.button, main .button-link, nav a, .actions a, .actions button {
+    transition: none !important;
+    transform: none !important;
+  }
+  main .btn::after, main button::after, main a.button::after,
+  main .button-link::after, .nexus-ripple { display: none !important; animation: none !important; }
+}
