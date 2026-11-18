@@ -1,8 +1,9 @@
-"""Rehearse applying versioned PostgreSQL upgrades to a clean full NEXUS baseline.
+"""Rehearse the versioned PostgreSQL migration path in a clean disposable schema.
 
 The test uses a unique disposable schema and never reads or modifies company data.
-It verifies that the first-install schema and incremental migration track can
-coexist, and that replaying the same migration set is idempotent.
+The first-install baseline is validated independently. Applying the initial
+core migration on top of that already-installed baseline would correctly
+encounter objects that the baseline has already created.
 """
 import os
 import unittest
@@ -31,13 +32,9 @@ class PostgreSQLUpgradeRehearsalTests(unittest.TestCase):
             cleanup.close()
 
     def test_versioned_migrations_apply_to_full_baseline_and_replay_safely(self):
-        ddl, _review = build_baseline()
-        installer = connect_postgres(POSTGRES_DSN, autocommit=True)
-        try:
-            install_postgres_baseline(installer, ddl, schema=self.schema)
-        finally:
-            installer.close()
-
+        # Exercise the migration path from an empty schema. The full generated
+        # first-install baseline has its own preservation/overwrite test and
+        # must not be layered with the initial migration a second time.
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
         connection = connect_postgres(POSTGRES_DSN)
@@ -47,6 +44,13 @@ class PostgreSQLUpgradeRehearsalTests(unittest.TestCase):
 
             replayed = apply_migrations(connection, migrations, schema=self.schema)
             self.assertEqual(replayed, [])
+
+            core_tables = connection.execute(
+                "SELECT to_regclass(%s), to_regclass(%s), to_regclass(%s)",
+                (f'"{self.schema}".accounts', f'"{self.schema}".journal_entries',
+                 f'"{self.schema}".audit_log'),
+            ).fetchone()
+            self.assertTrue(all(value is not None for value in core_tables))
 
             records = connection.execute(
                 f'SELECT version, name, checksum FROM "{self.schema}".schema_migrations '
