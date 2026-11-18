@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}الجرد الفعلي | NEXUS ERP{% endblock %}
 {% block content %}
-<header><div><h2>الجرد الفعلي ومطابقة المخزون</h2><p class="muted">أنشئ أمر جرد، أدخل الكميات الفعلية، ثم راجع الفروق واعتمد التسوية.</p></div></header>
+<header class="page-heading"><div><h2>الجرد الفعلي ومطابقة المخزون</h2><p class="muted">أنشئ أمر جرد، أدخل الكميات الفعلية، ثم راجع الفروق واعتمد التسوية.</p></div></header>
 <section class="panel"><h3>إنشاء أمر جرد جديد</h3>
 <form method="post" class="form-row">
 <label>المخزن<select name="warehouse_id" required><option value="">اختر المخزن</option>{% for w in warehouses %}<option value="{{ w.id }}">{{ w.code }} - {{ w.name_ar }}</option>{% endfor %}</select></label>
