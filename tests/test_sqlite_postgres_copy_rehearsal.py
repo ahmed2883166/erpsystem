@@ -47,6 +47,134 @@ class SQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
                 version BIGINT NOT NULL
             )
         ''')
+        self.pg.execute(f'''
+            CREATE TABLE "{self.schema}".nexus_schema_installation (
+                id SMALLINT PRIMARY KEY CHECK (id = 1),
+                baseline_sha256 TEXT NOT NULL
+                    CHECK (baseline_sha256 ~ '^[0-9a-f]{{64}}
+        self.temp_dir = tempfile.TemporaryDirectory(prefix="nexus-copy-rehearsal-")
+        self.sqlite_path = str(Path(self.temp_dir.name) / "source.sqlite")
+        source = sqlite3.connect(self.sqlite_path)
+        try:
+            source.execute("PRAGMA foreign_keys = ON")
+            source.executescript("""
+                CREATE TABLE accounts (
+                    id INTEGER PRIMARY KEY,
+                    code TEXT NOT NULL
+                );
+                CREATE TABLE journal_entries (
+                    id INTEGER PRIMARY KEY,
+                    entry_date TEXT NOT NULL
+                );
+                CREATE TABLE journal_lines (
+                    id INTEGER PRIMARY KEY,
+                    entry_id INTEGER NOT NULL REFERENCES journal_entries(id),
+                    account_id INTEGER NOT NULL REFERENCES accounts(id),
+                    debit NUMERIC NOT NULL,
+                    credit NUMERIC NOT NULL
+                );
+                CREATE TABLE management_dashboard_data_version (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    version INTEGER NOT NULL
+                );
+                INSERT INTO accounts(id,code) VALUES (10,'1000'),(20,'2000');
+                INSERT INTO journal_entries(id,entry_date)
+                    VALUES (100,'2026-01-01'),(200,'2026-01-02');
+                INSERT INTO journal_lines(id,entry_id,account_id,debit,credit)
+                    VALUES
+                    (1000,100,10,'125.10','0'),
+                    (1001,100,20,'0','125.10'),
+                    (2000,200,10,'50.00','0'),
+                    (2001,200,20,'0','50.00');
+                INSERT INTO management_dashboard_data_version(id,version) VALUES (1,0);
+            """)
+            source.commit()
+        finally:
+            source.close()
+
+    def tearDown(self):
+        try:
+            self.pg.execute(f'DROP SCHEMA IF EXISTS "{self.schema}" CASCADE')
+        finally:
+            self.pg.close()
+            self.temp_dir.cleanup()
+
+    def test_failed_mid_copy_rolls_back_every_target_table_and_preserves_source(self):
+        self.pg.execute(f"""
+            CREATE FUNCTION "{self.schema}".reject_journal_line()
+            RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                RAISE EXCEPTION 'intentional migration rollback rehearsal';
+            END;
+            $$;
+            CREATE TRIGGER reject_journal_line
+            BEFORE INSERT ON "{self.schema}".journal_lines
+            FOR EACH ROW EXECUTE FUNCTION "{self.schema}".reject_journal_line();
+        """)
+
+        with self.assertRaises(Exception):
+            copy_database(
+                self.sqlite_path,
+                POSTGRES_DSN,
+                schema=self.schema,
+                batch_size=1,
+                apply=True,
+            )
+
+        # Parent rows were inserted before the journal-line trigger fired.
+        # The transaction must roll all of them back, not leave a partial copy.
+        for table in ("accounts", "journal_entries", "journal_lines"):
+            count = self.pg.execute(
+                f'SELECT COUNT(*) AS n FROM "{self.schema}"."{table}"'
+            ).fetchone()["n"]
+            self.assertEqual(count, 0, f"partial rows remained in {table}")
+
+        source = sqlite3.connect(f"file:{self.sqlite_path}?mode=ro", uri=True)
+        try:
+            self.assertEqual(source.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            self.assertEqual(source.execute("SELECT COUNT(*) FROM accounts").fetchone()[0], 2)
+            self.assertEqual(source.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 2)
+            self.assertEqual(source.execute("SELECT COUNT(*) FROM journal_lines").fetchone()[0], 4)
+            with self.assertRaises(sqlite3.OperationalError):
+                source.execute("INSERT INTO accounts(id, code) VALUES (99, 'blocked')")
+        finally:
+            source.close()
+
+    def test_copy_and_financial_verification_preserve_all_rows_and_totals(self):
+        result = copy_database(
+            self.sqlite_path,
+            POSTGRES_DSN,
+            schema=self.schema,
+            batch_size=2,
+            apply=True,
+        )
+        self.assertTrue(result["committed"])
+        self.assertTrue(result["source_read_only"])
+        self.assertEqual(result["total_rows"], 9)
+        self.assertEqual(
+            result["table_row_counts"],
+            {"accounts": 2, "journal_entries": 2, "journal_lines": 4, "management_dashboard_data_version": 1},
+        )
+
+        report = verify_copy(self.sqlite_path, POSTGRES_DSN, schema=self.schema)
+        self.assertTrue(report["passed"], report["issues"])
+        self.assertEqual(report["issue_count"], 0)
+        self.assertEqual(report["source_row_count"], 9)
+        self.assertEqual(report["target_row_count"], 9)
+        self.assertIn("journal_lines.debit_total", report["financial_and_inventory_controls"])
+        self.assertIn("journal_lines.credit_total", report["financial_and_inventory_controls"])
+        self.assertIn("journal_lines.debit_by_entry", report["financial_and_inventory_controls"])
+        self.assertIn("journal_lines.credit_by_entry", report["financial_and_inventory_controls"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+),
+                installed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO "{this.schema}".nexus_schema_installation
+                (id, baseline_sha256) VALUES (1, '{"0".repeat(64)}');
+        ''')
         self.temp_dir = tempfile.TemporaryDirectory(prefix="nexus-copy-rehearsal-")
         self.sqlite_path = str(Path(self.temp_dir.name) / "source.sqlite")
         source = sqlite3.connect(self.sqlite_path)
