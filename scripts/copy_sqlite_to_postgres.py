@@ -246,6 +246,11 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
             # PostgreSQL transaction characteristics must be set before
             # any other statement starts the implicit transaction.
             dst.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+            # Migration-only tuning: scoped to this transaction/connection.
+            # The destination is an isolated, disposable schema; if a server
+            # crash occurs before durable flush, rerun the copy and verification.
+            dst.execute("SET LOCAL synchronous_commit TO OFF")
+            dst.execute("SET LOCAL maintenance_work_mem TO '128MB'")
             dst.execute("SET LOCAL search_path TO " + qschema)
             target_tables = {
                 r["table_name"] for r in dst.execute(
