@@ -23,7 +23,7 @@ class PostgreSQLWorkforcePostingTests(unittest.TestCase):
         self.schema = "nexus_workforce_post_" + uuid.uuid4().hex[:12]
         self.conn = connect_postgres(POSTGRES_DSN)
         self.conn.execute(f'CREATE SCHEMA "{self.schema}"')
-        self.conn.execute(f'SET LOCAL search_path TO "{self.schema}"')
+        self.conn.execute(f'SET search_path TO "{self.schema}"')
         self.conn.execute("""
             CREATE TABLE accounts(
                 id BIGINT PRIMARY KEY, code TEXT NOT NULL, name_ar TEXT NOT NULL,
