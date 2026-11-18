@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}المطابقة التفصيلية للعملاء والموردين | NEXUS ERP{% endblock %}
 {% block content %}
-<header>
+<header class="page-heading">
   <h2>المطابقة التفصيلية للعملاء والموردين</h2>
   <div class="table-actions no-print">
     <a class="btn secondary" href="{{ url_for('party_reports.subledger_reconciliation', as_of=as_of) }}">العودة للمطابقة الإجمالية</a>
