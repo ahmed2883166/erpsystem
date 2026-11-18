@@ -17,6 +17,29 @@ from db_sql import execute_compat
 from accounting_core import decimal_sum_expression, decimal_layer_value_sum_expression
 
 
+_EXPORT_ISO_DATE = re.compile(r"(?<!\\d)(\\d{4})-(\\d{2})-(\\d{2})(?:T(\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d+)?)?))?(?!\\d)")
+
+
+def _format_export_dates(value):
+    """Format ISO calendar dates for exported presentation without changing stored values."""
+    if isinstance(value, datetime):
+        return value.strftime("%d/%m/%Y %H:%M")
+    if not isinstance(value, str):
+        return value
+
+    def replace_date(match):
+        try:
+            day = datetime.strptime(
+                f"{match.group(1)}-{match.group(2)}-{match.group(3)}", "%Y-%m-%d"
+            ).strftime("%d/%m/%Y")
+        except ValueError:
+            return match.group(0)
+        time_part = match.group(4)
+        return day + (f" {time_part}" if time_part else "")
+
+    return _EXPORT_ISO_DATE.sub(replace_date, value)
+
+
 def register_report_exports(app, db_path, permissions):
     bp = Blueprint("report_exports", __name__)
 
@@ -695,7 +718,7 @@ def register_report_exports(app, db_path, permissions):
                 pdfmetrics.registerFont(TTFont("NexusArabic", font_path))
 
             def pdf_text(value):
-                text_value = "" if value is None else str(value)
+                text_value = "" if value is None else str(_format_export_dates(value))
                 shaped = get_display(arabic_reshaper.reshape(text_value))
                 return escape(shaped).replace("\n", "<br/>")
 
@@ -730,7 +753,7 @@ def register_report_exports(app, db_path, permissions):
                     pass
             story.extend([
                 Paragraph(pdf_text(company_name), heading_style),
-                Paragraph(pdf_text(locals().get("title", report)), heading_style),
+                Paragraph(pdf_text(_format_export_dates(locals().get("title", report))), heading_style),
                 Paragraph(pdf_text(" · ".join(value for value in (
                     company_profile.get("company_address", ""),
                     company_profile.get("company_phone", ""),
@@ -739,7 +762,7 @@ def register_report_exports(app, db_path, permissions):
                 ) if value)), cell_style),
                 Paragraph(pdf_text("الرقم الضريبي: " + company_profile.get("tax_number", "")), cell_style),
                 Paragraph(pdf_text("العملة الأساسية: " + base_currency), cell_style),
-                Paragraph(pdf_text("تاريخ إعداد التقرير: " + datetime.now().strftime("%Y-%m-%d %H:%M")), cell_style),
+                Paragraph(pdf_text("تاريخ إعداد التقرير: " + datetime.now().strftime("%d/%m/%Y %H:%M")), cell_style),
                 Spacer(1, 5*mm),
             ])
             table_data = [[Paragraph(pdf_text(value), header_style) for value in reversed(headers)]]
@@ -805,7 +828,7 @@ def register_report_exports(app, db_path, permissions):
         sheet["A1"].font = Font(name="Arial", size=12, bold=True, color="FFFFFF")
         sheet["A1"].fill = PatternFill("solid", fgColor="17365D")
         sheet["A1"].alignment = Alignment(horizontal="center")
-        sheet.append([title])
+        sheet.append([_format_export_dates(title)])
         sheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(headers))
         sheet["A2"].font = Font(name="Arial", size=16, bold=True, color="FFFFFF")
         sheet["A2"].fill = PatternFill("solid", fgColor="17365D")
@@ -820,7 +843,7 @@ def register_report_exports(app, db_path, permissions):
             cell.fill = PatternFill("solid", fgColor="167D8D")
             cell.alignment = Alignment(horizontal="center", vertical="center")
         for row in data:
-            sheet.append(row)
+            sheet.append([_format_export_dates(value) for value in row])
         for row in sheet.iter_rows(min_row=5):
             for cell in row:
                 cell.font = Font(name="Arial", size=11)
@@ -909,7 +932,7 @@ def register_report_exports(app, db_path, permissions):
             sheet["A1"].font = Font(name="Arial", bold=True, color="FFFFFF", size=12)
             sheet["A1"].fill = PatternFill("solid", fgColor="17365D")
             sheet["A1"].alignment = Alignment(horizontal="center")
-            sheet.append([raw_title])
+            sheet.append([_format_export_dates(raw_title)])
             sheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=width)
             sheet["A2"].font = Font(name="Arial", bold=True, color="FFFFFF", size=15)
             sheet["A2"].fill = PatternFill("solid", fgColor="17365D")
@@ -928,7 +951,7 @@ def register_report_exports(app, db_path, permissions):
                 # Append a complete row after converting values.
                 converted = []
                 for value in row[:80]:
-                    text_value = "" if value is None else str(value).strip()
+                    text_value = "" if value is None else str(_format_export_dates(str(value).strip())).strip()
                     numeric = text_value.replace(",", "")
                     if re.fullmatch(r"-?\d+(?:\.\d+)?", numeric):
                         converted.append(Decimal(numeric))
@@ -1064,7 +1087,7 @@ def register_report_exports(app, db_path, permissions):
             for row in raw_rows:
                 if not isinstance(row, list):
                     continue
-                rows.append([str(value if value is not None else "")[:2000] for value in row[:80]])
+                rows.append([str(_format_export_dates(value if value is not None else ""))[:2000] for value in row[:80]])
             if not rows:
                 continue
             columns = max(1, min(80, max(len(row) for row in rows)))
