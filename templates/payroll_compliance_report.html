@@ -13,7 +13,7 @@
 .tax-scroll{overflow-x:auto}
 @media print{.no-print,header,nav,.sidebar{display:none!important}.panel{box-shadow:none!important;border:0!important}.tax-scroll{overflow:visible}.tax-report-table{font-size:9px;min-width:0}.tax-report-table th,.tax-report-table td{padding:4px 3px}}
 </style>
-<header><h2>تقرير ضرائب وتأمينات الموظفين</h2><p>يعرض كشوف المرتبات المرحلة فقط، ولا يضم المسودات.</p></header>
+<header class="page-heading"><div><h2>تقرير ضرائب وتأمينات الموظفين</h2><p>يعرض كشوف المرتبات المرحلة فقط، ولا يضم المسودات.</p></div></header>
 <section class="panel no-print"><form method="get" class="form-grid"><label>الشهر<input type="month" name="period" value="{{period}}" required></label><button type="submit">عرض التقرير</button><button type="button" class="secondary" onclick="window.print()">طباعة التقرير</button></form></section>
 <section class="panel">
 <h3>ملخص الشهر {{period}}</h3>
