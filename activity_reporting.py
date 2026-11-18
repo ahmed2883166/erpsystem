@@ -142,7 +142,8 @@ def build_activity_performance_report(conn, activity_code=None):
                 continue
             item = _bucket(report, code)
             item["receipt_count"] += 1
-            item["stock_receipt_value"] += _decimal(row["total_value"])
+            # Value is counted from the stock subledger below, not twice from
+            # both the GRN header and its linked stock movement.
             register_journal(row["journal_entry_id"], code, "receipt")
 
     if table_exists(conn, "stock_movements"):

@@ -65,7 +65,7 @@ class ActivityReportingTests(unittest.TestCase):
         commercial = next(x for x in result["activities"] if x["activity_code"] == "commercial")
         service = next(x for x in result["activities"] if x["activity_code"] == "service")
         self.assertEqual(commercial["sales_total"], Decimal("114.00"))
-        self.assertEqual(commercial["stock_receipt_value"], Decimal("160.00"))
+        self.assertEqual(commercial["stock_receipt_value"], Decimal("80.00"))
         self.assertEqual(commercial["stock_issue_value"], Decimal("25.00"))
         self.assertEqual(service["purchase_total"], Decimal("57.00"))
         self.assertEqual(result["unbalanced_journal_count"], 0)
