@@ -151,6 +151,47 @@ class PostgreSQLPoolLifecycleTests(unittest.TestCase):
                         )
         self.assertEqual(FakeConnectionPool.instances, [])
 
+
+class PostgreSQLDirectConnectionTests(unittest.TestCase):
+    def test_connection_factory_passes_explicit_driver_settings(self):
+        from postgres_database import connect_postgres
+        psycopg_module = ModuleType("psycopg")
+        psycopg_module.__path__ = []
+        sentinel = object()
+        psycopg_module.connect = unittest.mock.Mock(return_value=sentinel)
+        rows_module = ModuleType("psycopg.rows")
+        rows_module.dict_row = object()
+        with patch.dict(
+            sys.modules, {"psycopg": psycopg_module, "psycopg.rows": rows_module}
+        ):
+            connection = connect_postgres(
+                "postgresql://example.invalid/nexus",
+                autocommit=True,
+                connect_timeout=8,
+                application_name="NEXUS direct test",
+            )
+        self.assertIs(connection, sentinel)
+        args, kwargs = psycopg_module.connect.call_args
+        self.assertEqual(args, ("postgresql://example.invalid/nexus",))
+        self.assertTrue(kwargs["autocommit"])
+        self.assertEqual(kwargs["connect_timeout"], 8)
+        self.assertEqual(kwargs["application_name"], "NEXUS direct test")
+        self.assertIs(kwargs["row_factory"], rows_module.dict_row)
+
+    def test_invalid_connection_settings_are_rejected_before_driver_call(self):
+        from postgres_database import connect_postgres
+        for kwargs in (
+            {"connect_timeout": 0},
+            {"connect_timeout": 31},
+            {"application_name": ""},
+            {"autocommit": "yes"},
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises((TypeError, ValueError)):
+                    connect_postgres(
+                        "postgresql://example.invalid/nexus", **kwargs
+                    )
+
 POSTGRES_DSN = __import__("os").environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
 
 
