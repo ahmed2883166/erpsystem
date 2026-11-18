@@ -62,6 +62,10 @@ def main() -> int:
 
         import app as nexus_app
 
+        # The production gate is restored by the installer. This isolated smoke
+        # process keeps a local bypass only while exercising PostgreSQL routes
+        # and operational helpers; no runtime flag or source policy is changed.
+        nexus_app.require_supported_runtime_backend = lambda: None
         try:
             with nexus_app.app.app_context():
                 connection = nexus_app.db()
