@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block title %}وحدات القياس | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>وحدات القياس والتحويلات</h2></header>
+<header class="page-heading"><h2>وحدات القياس والتحويلات</h2></header>
 <div class="actions stock-shortcuts"><a class="button-link" href="{{ url_for('stock.products') }}">الأصناف</a><a class="button-link" href="{{ url_for('stock.movements') }}">حركات المخزون</a></div>
 <div class="grid">
 <section class="panel"><h3>إضافة مجموعة وحدات</h3><form method="post"><input type="hidden" name="action" value="category"><label>الكود</label><input name="code" placeholder="مثال: WEIGHT" required><label>اسم المجموعة</label><input name="name_ar" placeholder="مثال: الوزن" required><button>حفظ المجموعة</button></form>
