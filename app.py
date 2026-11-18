@@ -4682,6 +4682,18 @@ def restore_backup():
         os.close(archive_fd)
         archive_path = Path(archive_name)
         temp_paths.append(archive_path)
+        max_archive_bytes = 2 * 1024 * 1024 * 1024
+        written = 0
+        with archive_path.open("wb") as target:
+            while True:
+                chunk = upload.stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_archive_bytes:
+                    raise ValueError("حجم ملف النسخة الاحتياطية أكبر من الحد المسموح.")
+                target.write(chunk)
+
         if configured_database_backend() == "postgresql":
             admin_dsn = (
                 os.environ.get("NEXUS_POSTGRES_ADMIN_DSN")
@@ -4698,18 +4710,6 @@ def restore_backup():
                 "success",
             )
             return redirect(url_for("backup_settings"))
-
-        max_archive_bytes = 2 * 1024 * 1024 * 1024
-        written = 0
-        with archive_path.open("wb") as target:
-            while True:
-                chunk = upload.stream.read(1024 * 1024)
-                if not chunk:
-                    break
-                written += len(chunk)
-                if written > max_archive_bytes:
-                    raise ValueError("حجم ملف النسخة الاحتياطية أكبر من الحد المسموح.")
-                target.write(chunk)
 
         candidate_fd, candidate_name = tempfile.mkstemp(prefix="restore-candidate-", suffix=".db", dir=BACKUP_DIR)
         os.close(candidate_fd)
