@@ -534,8 +534,37 @@ def generate_postgres_ddl(snapshot):
             "reason": candidate["reason"],
         })
 
+    foreign_key_manifest = []
+    action_names = {
+        "NO ACTION": "NO ACTION",
+        "RESTRICT": "RESTRICT",
+        "CASCADE": "CASCADE",
+        "SET NULL": "SET NULL",
+        "SET DEFAULT": "SET DEFAULT",
+    }
+    for table_name, fk_parts, resolved_target_columns in pending_fks:
+        foreign_key_manifest.append({
+            "table": table_name,
+            "columns": [part["from"] for part in fk_parts],
+            "referenced_table": fk_parts[0]["table"],
+            "referenced_columns": list(resolved_target_columns),
+            "on_update": action_names.get(
+                str(fk_parts[0].get("on_update") or "NO ACTION").upper(), "NO ACTION"
+            ),
+            "on_delete": action_names.get(
+                str(fk_parts[0].get("on_delete") or "NO ACTION").upper(), "NO ACTION"
+            ),
+        })
+    foreign_key_manifest.sort(
+        key=lambda item: (
+            item["table"], tuple(item["columns"]),
+            item["referenced_table"], tuple(item["referenced_columns"]),
+        )
+    )
+
     review = {
         "table_count": len(tables),
+        "foreign_keys": foreign_key_manifest,
         "column_count": sum(len(table.get("columns", [])) for table in tables),
         "numeric_review_candidate_count": len(numeric_review_candidates),
         "numeric_review_candidates": numeric_review_candidates,
