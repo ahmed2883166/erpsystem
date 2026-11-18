@@ -180,12 +180,12 @@ class PostgreSQLPoolIntegrationTests(unittest.TestCase):
                     f'SELECT value FROM "{table}"'
                 ).fetchone()
                 self.assertEqual(row["value"], 10)
-                with self.assertRaisesRegex(RuntimeError, "force rollback"):
-                    with pool.connection() as nested:
-                        nested.execute(
-                            f'INSERT INTO "{table}" (value) VALUES (%s)', (20,)
-                        )
-                        raise RuntimeError("force rollback")
+            with self.assertRaisesRegex(RuntimeError, "force rollback"):
+                with pool.connection() as connection:
+                    connection.execute(
+                        f'INSERT INTO "{table}" (value) VALUES (%s)', (20,)
+                    )
+                    raise RuntimeError("force rollback")
 
             with pool.connection() as connection:
                 rows = connection.execute(
