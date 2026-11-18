@@ -581,33 +581,36 @@ def index():
         JOIN accounts a ON a.id=jl.account_id
         WHERE p.status='pending' AND je.status='posted'
         ORDER BY je.entry_date,p.journal_line_id""").fetchall()
-    assets=execute_compat(c, f"""SELECT f.*,a.code asset_code_gl,a.name_ar asset_account_name,
+    asset_rows=execute_compat(c, f"""SELECT f.*,a.code asset_code_gl,a.name_ar asset_account_name,
       aa.code accum_account_code,aa.name_ar accum_account_name,
       ea.code expense_account_code,ea.name_ar expense_account_name,
-      COALESCE(f.supplier_bill_id,l.bill_id) linked_supplier_bill_id,
-      sb.bill_no supplier_bill_no,sb.supplier_invoice_no,
-      p.entry_id linked_journal_entry_id,
       COALESCE((SELECT {decimal_sum_expression(c, "d.amount")}
         FROM asset_depreciations d WHERE d.asset_id=f.id),0) accumulated
       FROM fixed_assets f JOIN accounts a ON a.id=f.asset_account_id
       JOIN accounts aa ON aa.id=f.accum_account_id
       JOIN accounts ea ON ea.id=f.expense_account_id
-      LEFT JOIN (
-        SELECT asset_id,MAX(bill_id) bill_id
-        FROM fixed_asset_supplier_bill_links GROUP BY asset_id
-      ) l ON l.asset_id=f.id
-      LEFT JOIN supplier_bills sb ON sb.id=COALESCE(f.supplier_bill_id,l.bill_id)
-      LEFT JOIN (
-        SELECT fixed_asset_id,MAX(entry_id) entry_id
-        FROM fixed_asset_journal_lines GROUP BY fixed_asset_id
-      ) p ON p.fixed_asset_id=f.id
       ORDER BY f.asset_code""").fetchall()
-    assets=[dict(row,
-        accumulated=Decimal(str(row["accumulated"] or "0")),
-        net_book_value=(Decimal("0") if row["status"] in {"disposed","reversed"} else
-            max(Decimal(str(row["cost"] or "0"))-Decimal(str(row["accumulated"] or "0")),
-                Decimal(str(row["residual_value"] or "0")))))
-        for row in assets]
+    assets=[]
+    for row in asset_rows:
+        asset=dict(row,
+            accumulated=Decimal(str(row["accumulated"] or "0")),
+            net_book_value=(Decimal("0") if row["status"] in {"disposed","reversed"} else
+                max(Decimal(str(row["cost"] or "0"))-Decimal(str(row["accumulated"] or "0")),
+                    Decimal(str(row["residual_value"] or "0")))))
+        bill_links=execute_compat(c, """SELECT DISTINCT sb.id bill_id,sb.bill_no,sb.supplier_invoice_no
+            FROM supplier_bills sb
+            WHERE sb.id=? OR EXISTS(
+              SELECT 1 FROM fixed_asset_supplier_bill_links l
+              WHERE l.asset_id=? AND l.bill_id=sb.id)
+            ORDER BY sb.id""", (asset["supplier_bill_id"],asset["id"])).fetchall()
+        journal_links=execute_compat(c, """SELECT DISTINCT je.id entry_id,je.entry_date,je.reference
+            FROM fixed_asset_journal_lines p
+            JOIN journal_entries je ON je.id=p.entry_id
+            WHERE p.fixed_asset_id=?
+            ORDER BY je.entry_date,je.id""", (asset["id"],)).fetchall()
+        asset["supplier_bill_links"]=[dict(link) for link in bill_links]
+        asset["journal_entry_links"]=[dict(link) for link in journal_links]
+        assets.append(asset)
     accounts=execute_compat(c, "SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
     asset_accounts=[row for row in accounts if row["account_type"]=="asset"]
     expense_accounts=[row for row in accounts if row["account_type"]=="expense"]
