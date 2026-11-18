@@ -120,5 +120,82 @@ class ManagementReportsPostgreSQLIntegrationTests(unittest.TestCase):
             connection.commit()
             connection.close()
 
+    def test_stock_layer_value_expression_is_exact(self):
+        from accounting_core import decimal_layer_value_sum_expression
+
+        schema = "nexus_stock_value_" + uuid.uuid4().hex[:12]
+        connection = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"],
+            row_factory=psycopg.rows.dict_row,
+        )
+        try:
+            connection.execute(f'CREATE SCHEMA "{schema}"')
+            connection.execute(f'SET search_path TO "{schema}"')
+            connection.execute("""CREATE TABLE stock_valuation_layers(
+                id BIGINT PRIMARY KEY, value_remaining TEXT,
+                qty_remaining TEXT, unit_cost TEXT
+            )""")
+            connection.execute(
+                "INSERT INTO stock_valuation_layers VALUES"
+                "(1,'30.10','2','15.05'),(2,NULL,'3','2.25')"
+            )
+            expression = decimal_layer_value_sum_expression(
+                connection, "value_remaining", "qty_remaining", "unit_cost"
+            )
+            total = connection.execute(
+                f"SELECT {expression} total FROM stock_valuation_layers"
+            ).fetchone()["total"]
+            self.assertEqual(Decimal(str(total)), Decimal("36.85"))
+        finally:
+            connection.rollback()
+            connection.execute("SET search_path TO public")
+            connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            connection.commit()
+            connection.close()
+
+    def test_unusual_journal_entries_uses_postgresql_queries(self):
+        from datetime import date
+        from management_dashboard import unusual_journal_entries
+
+        schema = "nexus_anomaly_" + uuid.uuid4().hex[:12]
+        connection = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"],
+            row_factory=psycopg.rows.dict_row,
+        )
+        try:
+            connection.execute(f'CREATE SCHEMA "{schema}"')
+            connection.execute(f'SET search_path TO "{schema}"')
+            connection.execute("""CREATE TABLE accounts(
+                id BIGINT PRIMARY KEY, code TEXT, name_ar TEXT
+            )""")
+            connection.execute("""CREATE TABLE journal_entries(
+                id BIGINT PRIMARY KEY, entry_date DATE, status TEXT,
+                entry_type TEXT, reference TEXT, description TEXT
+            )""")
+            connection.execute("""CREATE TABLE journal_lines(
+                id BIGINT PRIMARY KEY, entry_id BIGINT, account_id BIGINT,
+                debit NUMERIC(20,2), credit NUMERIC(20,2)
+            )""")
+            connection.execute("INSERT INTO accounts VALUES(1,'1110','Cash')")
+            connection.execute(
+                "INSERT INTO journal_entries VALUES"
+                "(1,'2026-11-01','posted','general','R-1','Opening'),"
+                "(2,'2026-11-17','posted','general','R-2','Large cash entry')"
+            )
+            connection.execute(
+                "INSERT INTO journal_lines VALUES"
+                "(1,1,1,10,0),(2,2,1,100,0),(3,2,1,0,100)"
+            )
+            rows = unusual_journal_entries(
+                connection, date(2026, 11, 1), date(2026, 11, 18)
+            )
+            self.assertTrue(any(row["id"] == 2 for row in rows))
+        finally:
+            connection.rollback()
+            connection.execute("SET search_path TO public")
+            connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            connection.commit()
+            connection.close()
+
 if __name__ == "__main__":
     unittest.main()
