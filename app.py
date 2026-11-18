@@ -2237,7 +2237,8 @@ def management_account_mapping():
             execute_compat(connection, "DELETE FROM management_account_roles")
             execute_compat(connection, """INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_customized','1') ON CONFLICT(meta_key) DO UPDATE SET meta_value='1'""")
             for role, ids in selections.items():
-                connection.executemany(
+                executemany_compat(
+                    connection,
                     "INSERT INTO management_account_roles(account_id,role) VALUES(?,?)",
                     [(account_id, role) for account_id in sorted(ids)]
                 )
