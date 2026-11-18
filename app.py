@@ -25,7 +25,8 @@ from chart_templates import (CHARTS, ACTIVITY_LABELS, OPERATIONAL_ACCOUNT_CODES,
 from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
 from sales import sales_bp, init_sales_schema
-from accounting_core import post_journal, reconciliation_snapshot, safe_error_message
+from accounting_core import (post_journal, reconciliation_snapshot, safe_error_message,
+                              decimal_sum_expression, decimal_net_expression)
 from banking import bank_bp, init_bank_schema
 from fixed_assets import assets_bp, initialize_assets_schema, register_assets_from_journal_lines
 from receivables import aging_bp, initialize_aging_schema
@@ -50,7 +51,7 @@ from company_defaults import seed_company_defaults
 from sqlite_accounting_migrations import migrate_journal_line_amounts_to_text
 from sqlite_audit_schema import initialize_sqlite_audit_schema
 from db_sql import execute_compat
-from db_compat import (begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names, table_column_info, DB_ERROR, DB_INTEGRITY_ERROR)
+from db_compat import (begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names, table_column_info, database_dialect, DB_ERROR, DB_INTEGRITY_ERROR)
 from report_request_control import (ReportRequestGate, bounded_env_int,
                                     is_expensive_report_request,
                                     set_current_report_deadline,
@@ -321,7 +322,7 @@ def initialize_roles_schema(connection):
     execute_compat(connection, """
         CREATE TABLE IF NOT EXISTS roles (
             role_key TEXT PRIMARY KEY,
-            role_name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            role_name TEXT NOT NULL UNIQUE,
             permissions_json TEXT NOT NULL,
             is_system INTEGER NOT NULL DEFAULT 0,
             active INTEGER NOT NULL DEFAULT 1,
@@ -331,6 +332,7 @@ def initialize_roles_schema(connection):
             updated_at TEXT NOT NULL
         )
     """)
+    execute_compat(connection, "CREATE UNIQUE INDEX IF NOT EXISTS uq_roles_lower_name ON roles(lower(role_name))")
     timestamp = datetime.now().isoformat(timespec="seconds")
     for role_key, permissions in PERMISSIONS.items():
         execute_compat(connection, 
@@ -348,7 +350,7 @@ def role_permissions_catalog(connection, include_role=None):
     custom_roles = []
     rows = execute_compat(connection, 
         """SELECT role_key,role_name,permissions_json,active FROM roles
-           WHERE is_system=0 AND (active=1 OR role_key=?) ORDER BY role_name COLLATE NOCASE""",
+           WHERE is_system=0 AND (active=1 OR role_key=?) ORDER BY lower(role_name),role_name""",
         (include_role or "",),
     ).fetchall()
     for row in rows:
@@ -2692,11 +2694,13 @@ def trial_balance():
         section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
         subtype_expr = "a.account_subtype" if "account_subtype" in account_columns else "NULL"
         normal_expr = "a.normal_balance" if "normal_balance" in account_columns else "NULL"
+        debit_sum = decimal_sum_expression(connection, "CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END")
+        credit_sum = decimal_sum_expression(connection, "CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END")
         rows = execute_compat(connection, f"""SELECT a.id, a.code, a.name_ar, a.account_type,
             {section_expr} statement_section,{subtype_expr} account_subtype,
             {normal_expr} normal_balance,
-            COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
-            COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
+            {debit_sum} debit,
+            {credit_sum} credit
             FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
             LEFT JOIN journal_entries je ON {' AND '.join(join_conditions)}
             WHERE {' AND '.join(conditions)}
@@ -3110,7 +3114,8 @@ def ledger():
 
             base_opening = Decimal("0")
             if date_from:
-                opening_row = execute_compat(connection, """SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),'0') balance
+                opening_net = decimal_net_expression(connection, "jl.debit", "jl.credit")
+                opening_row = execute_compat(connection, f"""SELECT {opening_net} balance
                     FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                     WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<?""",
                     (account_id, date_from)).fetchone()
@@ -3139,6 +3144,12 @@ def ledger():
                 ORDER BY entry_date {sort_sql},line_id {sort_sql}"""
                 query_params = [str(base_opening), *date_params, *search_params]
             else:
+                history_net = decimal_net_expression(connection, "hist.debit", "hist.credit")
+                counterpart_aggregate = (
+                    "GROUP_CONCAT(a2.code || ' - ' || a2.name_ar, '، ')"
+                    if database_dialect(connection) == "sqlite"
+                    else "STRING_AGG(a2.code || ' - ' || a2.name_ar, '، ')"
+                )
                 history_conditions = ["hist.account_id=jl.account_id", "he.status='posted'",
                     "(he.entry_date<je.entry_date OR (he.entry_date=je.entry_date AND hist.id<=jl.id))"]
                 history_params = []
@@ -3146,10 +3157,10 @@ def ledger():
                     history_conditions.append("he.entry_date>=?"); history_params.append(date_from)
                 query = f"""SELECT je.id entry_id,je.entry_date,je.reference,je.description,
                     jl.id line_id,jl.account_id,jl.debit,jl.credit,jl.memo,
-                    (SELECT GROUP_CONCAT(a2.code || ' - ' || a2.name_ar, '، ')
+                    (SELECT {counterpart_aggregate}
                        FROM journal_lines jl2 JOIN accounts a2 ON a2.id=jl2.account_id
                       WHERE jl2.entry_id=je.id AND jl2.account_id<>jl.account_id) counterpart_accounts,
-                    (? + COALESCE((SELECT DECIMAL_NET(hist.debit,hist.credit)
+                    (? + COALESCE((SELECT {history_net}
                         FROM journal_lines hist JOIN journal_entries he ON he.id=hist.entry_id
                         WHERE {' AND '.join(history_conditions)}),'0')) running_balance
                     FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
@@ -3173,15 +3184,18 @@ def ledger():
             else:
                 opening_balance = base_opening
 
+            debit_total_expr = decimal_sum_expression(connection, "jl.debit")
+            credit_total_expr = decimal_sum_expression(connection, "jl.credit")
             filtered_totals = execute_compat(connection, f"""SELECT
-                COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
-                COALESCE(DECIMAL_SUM(jl.credit),'0') credit
+                {debit_total_expr} debit,
+                {credit_total_expr} credit
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                 WHERE {' AND '.join(display_conditions)}""", display_params).fetchone()
             total_debit = Decimal(str(filtered_totals["debit"] or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             total_credit = Decimal(str(filtered_totals["credit"] or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-            period_net = execute_compat(connection, f"""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),'0') net
+            period_net_expr = decimal_net_expression(connection, "jl.debit", "jl.credit")
+            period_net = execute_compat(connection, f"""SELECT {period_net_expr} net
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                 WHERE {' AND '.join(date_conditions)}""", date_params).fetchone()
             closing_balance = (base_opening + Decimal(str(period_net["net"] or "0"))).quantize(
@@ -3229,7 +3243,9 @@ def journal_detail(entry_id):
         WHERE jl.entry_id=? ORDER BY jl.id""", (entry_id,)).fetchall()
     lines = [dict(row, debit=Decimal(str(row["debit"] or "0")),
                   credit=Decimal(str(row["credit"] or "0"))) for row in lines]
-    totals_row = execute_compat(connection, """SELECT COALESCE(DECIMAL_SUM(debit),0) debit,COALESCE(DECIMAL_SUM(credit),0) credit
+    debit_total_expr = decimal_sum_expression(connection, "debit")
+    credit_total_expr = decimal_sum_expression(connection, "credit")
+    totals_row = execute_compat(connection, f"""SELECT {debit_total_expr} debit,{credit_total_expr} credit
         FROM journal_lines WHERE entry_id=?""", (entry_id,)).fetchone()
     totals = {"debit":Decimal(str(totals_row["debit"] or "0")),
               "credit":Decimal(str(totals_row["credit"] or "0"))}
