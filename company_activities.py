@@ -7,7 +7,7 @@ explicitly when posting; legacy documents retain the old active-profile path.
 """
 import json
 
-from db_compat import execute_script, table_exists
+from db_compat import execute_script
 from db_sql import execute_compat
 from chart_templates import CHARTS
 from activity_profiles import (
