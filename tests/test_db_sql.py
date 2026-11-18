@@ -32,6 +32,11 @@ class QmarkTranslationTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             qmark_to_format(None)
 
+    def test_preserves_escaped_postgresql_json_question_mark_operators(self):
+        sql = "SELECT payload ?? 'customer', payload ??| array['a'], id=? FROM events"
+        expected = "SELECT payload ?? 'customer', payload ??| array['a'], id=%s FROM events"
+        self.assertEqual(qmark_to_format(sql), expected)
+
     def test_sqlite_execution_keeps_qmark_parameters(self):
         connection = sqlite3.connect(":memory:")
         try:
