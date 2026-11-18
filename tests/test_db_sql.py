@@ -53,7 +53,7 @@ class QmarkTranslationTests(unittest.TestCase):
 
     def test_preserves_escaped_postgresql_json_question_mark_operators(self):
         sql = "SELECT payload ?? 'customer', payload ??| array['a'], id=? FROM events"
-        expected = "SELECT payload ?? 'customer', payload ??| array['a'], id=%s FROM events"
+        expected = "SELECT payload ? 'customer', payload ?| array['a'], id=%s FROM events"
         self.assertEqual(qmark_to_format(sql), expected)
 
     def test_sqlite_execution_keeps_qmark_parameters(self):
@@ -77,7 +77,7 @@ class QmarkTranslationTests(unittest.TestCase):
         )
         self.assertEqual(
             connection.executed,
-            [("SELECT payload ?? 'key' FROM events WHERE id=%s", (19,))],
+            [("SELECT payload ? 'key' FROM events WHERE id=%s", (19,))],
         )
 
     def test_postgresql_executemany_uses_same_placeholder_adapter(self):
