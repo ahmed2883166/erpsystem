@@ -328,6 +328,33 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
             dst.execute("SET LOCAL synchronous_commit TO ON")
             dst.execute("SET LOCAL maintenance_work_mem TO '128MB'")
             dst.execute("SET LOCAL search_path TO " + qschema)
+            # A matching set of table/column names is not enough: only a
+            # schema installed by the reviewed baseline installer is eligible
+            # for data copy. Require its immutable installation fingerprint
+            # before touching any target table.
+            marker_exists = dst.execute(
+                """SELECT 1 FROM information_schema.tables
+                   WHERE table_schema = %s AND table_name = 'nexus_schema_installation'
+                     AND table_type = 'BASE TABLE'""",
+                (schema,),
+            ).fetchone()
+            if marker_exists is None:
+                raise ValueError(
+                    "Target schema has no NEXUS baseline installation marker; "
+                    "install the reviewed PostgreSQL baseline first."
+                )
+            marker = dst.execute(
+                "SELECT baseline_sha256 FROM " + qschema +
+                "." + quote_ident("nexus_schema_installation") + " WHERE id = 1 FOR SHARE"
+            ).fetchone()
+            baseline_sha256 = marker["baseline_sha256"] if marker else None
+            if not isinstance(baseline_sha256, str) or not re.fullmatch(
+                r"[0-9a-f]{64}", baseline_sha256.strip()
+            ):
+                raise ValueError(
+                    "Target schema baseline fingerprint is missing or invalid; copy blocked."
+                )
+
             target_tables = {
                 r["table_name"] for r in dst.execute(
                     """SELECT table_name FROM information_schema.tables
@@ -448,6 +475,7 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                 "committed": True,
                 "source_read_only": True,
                 "schema": schema,
+                "baseline_sha256": baseline_sha256.strip(),
                 "table_order": order,
                 "table_row_counts": counts,
                 "total_rows": sum(counts.values()),
