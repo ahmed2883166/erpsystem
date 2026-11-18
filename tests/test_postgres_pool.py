@@ -141,6 +141,12 @@ class PostgreSQLPoolLifecycleTests(unittest.TestCase):
                 create_postgres_pool(None)
         self.assertEqual(FakeConnectionPool.instances, [])
 
+    def test_missing_optional_pool_dependency_fails_with_clear_message(self):
+        with patch.dict(sys.modules, {"psycopg_pool": None}):
+            with self.assertRaisesRegex(RuntimeError, "pooling is optional"):
+                create_postgres_pool("postgresql://example.invalid/nexus")
+        self.assertEqual(FakeConnectionPool.instances, [])
+
     def test_non_finite_or_non_positive_pool_timeout_is_rejected(self):
         with patch.dict(sys.modules, fake_pool_modules()):
             for timeout in (0, -1, True, float("inf"), float("nan")):
