@@ -135,6 +135,34 @@ class StockValuationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"الرصيد غير كافٍ"):
             stock.consume_layers(self.db,self.product_id,self.warehouse_id,stock.D("201"),"fifo")
 
+    def test_invalid_issue_quantities_are_rejected_without_layer_mutation(self):
+        before = [tuple(row) for row in self.db.execute(
+            "SELECT qty_remaining,value_remaining FROM stock_valuation_layers ORDER BY id"
+        )]
+        for invalid_qty in (stock.D("0"), stock.D("-1"), stock.D("NaN"), stock.D("Infinity")):
+            with self.subTest(quantity=str(invalid_qty)):
+                with self.assertRaisesRegex(ValueError, "كمية الصرف"):
+                    stock.consume_layers(
+                        self.db, self.product_id, self.warehouse_id, invalid_qty, "fifo"
+                    )
+        after = [tuple(row) for row in self.db.execute(
+            "SELECT qty_remaining,value_remaining FROM stock_valuation_layers ORDER BY id"
+        )]
+        self.assertEqual(after, before)
+
+    def test_unsupported_valuation_method_is_rejected_without_layer_mutation(self):
+        before = [tuple(row) for row in self.db.execute(
+            "SELECT qty_remaining,value_remaining FROM stock_valuation_layers ORDER BY id"
+        )]
+        with self.assertRaisesRegex(ValueError, "طريقة تقييم المخزون"):
+            stock.consume_layers(
+                self.db, self.product_id, self.warehouse_id, stock.D("1"), "last_in_first_out"
+            )
+        after = [tuple(row) for row in self.db.execute(
+            "SELECT qty_remaining,value_remaining FROM stock_valuation_layers ORDER BY id"
+        )]
+        self.assertEqual(after, before)
+
 
     def test_interbranch_transfer_posts_destination_debit_and_source_credit(self):
         self.db.execute("""CREATE TABLE accounts(

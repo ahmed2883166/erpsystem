@@ -806,6 +806,21 @@ def available_layers(c, product_id, warehouse_id, lot_id=None, location_id=None)
 
 
 def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=None, location_id=None, include_layer_details=False):
+    # Validate the public costing boundary before acquiring locks or touching layers.
+    # A malformed quantity or unknown method must never be interpreted as a zero-cost
+    # issue or silently fall through to FIFO.
+    try:
+        qty = D(str(qty))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError("كمية الصرف يجب أن تكون رقمًا موجبًا وصالحًا.")
+
+    if not qty.is_finite() or qty <= 0:
+        raise ValueError("كمية الصرف يجب أن تكون أكبر من صفر.")
+
+    valuation_method = str(valuation_method or "").strip().lower()
+    if valuation_method not in {"fifo", "average"}:
+        raise ValueError("طريقة تقييم المخزون غير معتمدة. اختر FIFO أو المتوسط المرجح.")
+
     # Lock the warehouse before valuation rows so sales, returns, transfers and counts
     # share one deterministic serialization point on PostgreSQL.
     lock_stock_warehouses(c, warehouse_id)
