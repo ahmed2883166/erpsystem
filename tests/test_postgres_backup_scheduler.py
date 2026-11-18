@@ -36,7 +36,11 @@ class PostgreSQLBackupSchedulerTests(unittest.TestCase):
 
         admin_dsn = os.environ["NEXUS_TEST_POSTGRES_DSN"]
         database_name = "nexus_bksched_" + uuid.uuid4().hex[:12]
-        with tempfile.TemporaryDirectory(prefix="nexus-pg-scheduler-") as folder:
+        # Anchor scratch files to this test module, never the process CWD.
+        with tempfile.TemporaryDirectory(
+            prefix="nexus-pg-scheduler-",
+            dir=Path(__file__).resolve().parent,
+        ) as folder:
             try:
                 with psycopg.connect(admin_dsn, autocommit=True) as admin:
                     admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
