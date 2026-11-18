@@ -1,0 +1,78 @@
+/* NEXUS ERP — Bootstrap 5.3 RTL integration layer.
+   Keep legacy selectors intact while progressively migrating screens. */
+:root {
+  --bs-primary: #0f9b8e;
+  --bs-primary-rgb: 15, 155, 142;
+  --bs-link-color: var(--accent);
+  --bs-link-hover-color: var(--accent-hover);
+  --bs-border-color: var(--line);
+  --bs-body-font-family: Cairo, Tahoma, Arial, sans-serif;
+}
+body { font-family: var(--bs-body-font-family); }
+button:focus-visible, a:focus-visible, input:focus-visible,
+select:focus-visible, textarea:focus-visible {
+  outline: 3px solid rgba(var(--bs-primary-rgb), .32);
+  outline-offset: 2px;
+}
+nav a.active {
+  background: linear-gradient(135deg, rgba(var(--bs-primary-rgb), .30), #172333);
+  border-color: rgba(var(--bs-primary-rgb), .75);
+  color: #fff;
+}
+nav details.nav-group {
+  border: 1px solid #344256;
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(255,255,255,.025);
+}
+nav details.nav-group > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 11px 13px;
+  color: #e7eef8;
+  font-weight: 700;
+}
+nav details.nav-group > summary::-webkit-details-marker { display: none; }
+nav details.nav-group > summary::after {
+  content: "+";
+  float: left;
+  margin-top: -27px;
+  color: #9fb3c8;
+  font-size: 19px;
+}
+nav details.nav-group[open] > summary::after { content: "−"; }
+nav details.nav-group .nav-links {
+  display: grid;
+  gap: 5px;
+  padding: 0 8px 9px;
+}
+nav details.nav-group .nav-links a {
+  min-height: 39px;
+  padding: 7px 11px;
+  font-size: 13px;
+  background: rgba(255,255,255,.045);
+  box-shadow: none;
+}
+.panel, .cards article {
+  transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+.panel:hover, .cards article:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+.table-wrap { scrollbar-width: thin; scrollbar-color: var(--muted) transparent; }
+.table-wrap table { margin-bottom: 0; }
+input, select, textarea { transition: border-color .15s ease, box-shadow .15s ease; }
+input:focus, select:focus, textarea:focus {
+  box-shadow: 0 0 0 .2rem rgba(var(--bs-primary-rgb), .12);
+}
+.btn, button, a.button { transition: transform .15s ease, background-color .15s ease, box-shadow .15s ease; }
+.btn:active, button:active, a.button:active { transform: translateY(1px); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
+@media (max-width: 850px) {
+  nav details.nav-group .nav-links a { min-height: 44px; }
+}
