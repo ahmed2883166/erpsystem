@@ -23,6 +23,20 @@ def decimal_sum_expression(connection, expression):
     return f"COALESCE(SUM(CAST({expression} AS NUMERIC)), 0)"
 
 
+def decimal_layer_value_sum_expression(connection, value_remaining, quantity, unit_cost):
+    """Aggregate stock layer values exactly across SQLite and PostgreSQL."""
+    if database_dialect(connection) == "sqlite":
+        return (
+            f"COALESCE(DECIMAL_LAYER_VALUE_SUM({value_remaining}, {quantity}, {unit_cost}), '0')"
+        )
+    return (
+        "COALESCE(SUM(CASE "
+        f"WHEN {value_remaining} IS NOT NULL AND {value_remaining}<>'' "
+        f"THEN CAST({value_remaining} AS NUMERIC) "
+        f"ELSE CAST({quantity} AS NUMERIC)*CAST({unit_cost} AS NUMERIC) END), 0)"
+    )
+
+
 def decimal_compare_expression(connection, expression, value="0"):
     """Build an exact numeric comparison for legacy TEXT quantities.
 
