@@ -9,6 +9,7 @@ from company_activities import (
     set_activity_posting_account,
     resolve_activity_profile,
     resolve_activity_posting_account,
+    prepare_company_activity,
 )
 
 
@@ -22,8 +23,10 @@ class CompanyActivityPackTests(unittest.TestCase):
             active INTEGER NOT NULL DEFAULT 1)""")
         self.conn.executemany(
             "INSERT INTO accounts(code,account_type) VALUES(?,?)",
-            [("1110","asset"),("1130","asset"),("4100","revenue"),
-             ("5100","expense"),("2110","liability"),("1165","asset")],
+            [("1110","asset"),("1130","asset"),("1140","asset"),("1150","asset"),
+             ("4100","revenue"),("5100","expense"),("2110","liability"),
+             ("1165","asset"),("2130","liability"),("2160","liability"),
+             ("2190","liability"),("3200","equity"),("5510","expense")],
         )
         self.conn.execute("""CREATE TABLE company_settings(
             setting_key TEXT PRIMARY KEY, setting_value TEXT)""")
@@ -61,6 +64,35 @@ class CompanyActivityPackTests(unittest.TestCase):
         set_activity_posting_account(self.conn, "service", "revenue", "4100")
         self.assertEqual(resolve_activity_posting_account(self.conn, "revenue", "service"), "4100")
         self.assertEqual(resolve_activity_profile(self.conn, "service")["base_activity"], "service")
+
+    def test_prepared_activity_can_be_mapped_then_enabled_without_chart_reseed(self):
+        from industry_packs import analyze_activity_pack_compatibility
+
+        enable_company_activity(self.conn, "commercial", primary=True)
+        prepare_company_activity(self.conn, "service")
+        report = analyze_activity_pack_compatibility(["commercial", "service"])
+        family_accounts = {
+            "cash": "1110", "receivables": "1130", "contract_assets": "1140",
+            "inventory": "1150", "payables": "2110", "grni": "2190",
+            "customer_advances": "2160", "direct_cost": "5100", "equity": "3200",
+            "revenue": "4100", "output_vat": "2130", "input_vat": "1165",
+            "stock_adjustment_expense": "5510",
+        }
+        for conflict in report["role_conflicts"]:
+            for assignment in conflict["assignments"]:
+                self.assertIn(assignment["family"], family_accounts)
+                set_activity_posting_account(
+                    self.conn, assignment["activity"], assignment["role"],
+                    family_accounts[assignment["family"]],
+                )
+        enable_company_activity(self.conn, "service")
+        profile = resolve_activity_profile(self.conn, "service")
+        self.assertEqual(profile["posting_accounts"]["ar"], "1130")
+        self.assertEqual(profile["account_roles"]["receivables"], ["1130"])
+        self.assertEqual(
+            [x["activity_code"] for x in list_company_activities(self.conn)],
+            ["commercial", "service"],
+        )
 
     def test_invalid_mapping_type_is_rejected(self):
         enable_company_activity(self.conn, "commercial", primary=True)

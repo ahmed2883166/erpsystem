@@ -22,6 +22,13 @@ POSTING_ACCOUNT_TYPES = {
     "input_vat": "asset", "stocktake_shortage": "expense",
     "stocktake_surplus": "expense",
 }
+ACCOUNT_ROLE_TYPES = {
+    "cash": "asset", "receivables": "asset", "contract_assets": "asset",
+    "payables": "liability", "grni": "liability", "customer_advances": "liability",
+    "inventory": "asset", "direct_cost": "expense", "retained_earnings": "equity",
+}
+TAX_ROLE_TYPES = {"output_vat": "liability", "input_vat": "asset"}
+ACTIVITY_ROLE_TYPES = {**ACCOUNT_ROLE_TYPES, **POSTING_ACCOUNT_TYPES, **TAX_ROLE_TYPES}
 
 
 def initialize_company_activity_schema(conn):
@@ -50,6 +57,69 @@ def initialize_company_activity_schema(conn):
     """)
 
 
+def prepare_company_activity(conn, activity_code, profile_code=None):
+    """Create a disabled activity pack so its roles can be mapped before activation."""
+    activity_code = str(activity_code or "").strip().lower()
+    if activity_code not in CHARTS:
+        raise ValueError("النشاط غير مدعوم.")
+    initialize_company_activity_schema(conn)
+    profile_code = str(profile_code or activity_code).strip().lower()
+    profile = execute_compat(
+        conn, "SELECT code,base_activity,active FROM activity_profiles WHERE code=?",
+        (profile_code,),
+    ).fetchone()
+    if not profile or not profile["active"] or profile["base_activity"] != activity_code:
+        raise ValueError("ملف النشاط غير موجود أو غير نشط أو لا يطابق النشاط.")
+    execute_compat(conn, """
+      INSERT INTO company_activity_packs(activity_code,profile_code,enabled,is_primary)
+      VALUES(?,?,0,0)
+      ON CONFLICT(activity_code) DO UPDATE SET
+        profile_code=excluded.profile_code,updated_at=CURRENT_TIMESTAMP
+    """, (activity_code, profile_code))
+    return activity_code
+
+
+def _unresolved_role_conflicts(conn, report):
+    """Return missing/overlapping role mappings for every conflicting account code."""
+    unresolved = []
+    for conflict in report["role_conflicts"]:
+        family_codes = {}
+        missing = []
+        for assignment in conflict["assignments"]:
+            activity = assignment["activity"]
+            role = assignment["role"]
+            family = assignment["family"]
+            expected = ACTIVITY_ROLE_TYPES.get(role)
+            mapping = execute_compat(
+                conn,
+                "SELECT account_code FROM company_activity_account_map WHERE activity_code=? AND role=?",
+                (activity, role),
+            ).fetchone()
+            if not expected or not mapping:
+                missing.append(f"{activity}.{role}")
+                continue
+            code = mapping["account_code"]
+            account = execute_compat(
+                conn, "SELECT account_type,is_group,active FROM accounts WHERE code=?", (code,)
+            ).fetchone()
+            if not account or account["account_type"] != expected or account["is_group"] or not account["active"]:
+                missing.append(f"{activity}.{role}({code})")
+                continue
+            family_codes.setdefault(family, set()).add(str(code))
+        if missing:
+            unresolved.extend(missing)
+            continue
+        families = sorted(family_codes)
+        for index, left in enumerate(families):
+            for right in families[index + 1:]:
+                overlap = family_codes[left] & family_codes[right]
+                if overlap:
+                    unresolved.append(
+                        f"{conflict['account_code']}:{left}/{right}→{','.join(sorted(overlap))}"
+                    )
+    return sorted(set(unresolved))
+
+
 def enable_company_activity(conn, activity_code, profile_code=None, primary=False):
     """Enable one supported pack; primary changes are explicit and reversible."""
     activity_code = str(activity_code or "").strip().lower()
@@ -65,9 +135,9 @@ def enable_company_activity(conn, activity_code, profile_code=None, primary=Fals
         raise ValueError("ملف النشاط غير موجود أو غير نشط.")
     if profile["base_activity"] != activity_code:
         raise ValueError("ملف النشاط لا يطابق النشاط المطلوب.")
-    # Never enable a second activity while starter-chart codes or posting roles
-    # collide. The registry can hold multiple packs only after a unified chart
-    # and explicit role mappings have made the combination safe.
+    # Prepare the disabled pack first so users can map all of its roles before
+    # activation. The existing company chart is never reseeded or overwritten.
+    prepare_company_activity(conn, activity_code, profile_code)
     existing = [
         row["activity_code"] for row in execute_compat(
             conn,
@@ -79,11 +149,12 @@ def enable_company_activity(conn, activity_code, profile_code=None, primary=Fals
         from industry_packs import analyze_activity_pack_compatibility
 
         report = analyze_activity_pack_compatibility(existing + [activity_code])
-        if not report["compatible"]:
+        unresolved = _unresolved_role_conflicts(conn, report)
+        if unresolved:
+            preview = "، ".join(unresolved[:8])
             raise ValueError(
-                "لا يمكن تفعيل النشاط مع الأنشطة الحالية قبل إعداد خريطة الحسابات الموحدة "
-                f"(تعارضات دليل الحسابات: {report['chart_conflict_count']}، "
-                f"تعارضات أدوار الترحيل: {report['role_conflict_count']})."
+                "لا يمكن تفعيل النشاط قبل ربط الأدوار المتعارضة بحسابات تفصيلية مختلفة. "
+                f"الأدوار غير المحسومة: {preview}"
             )
     if primary:
         execute_compat(conn, "UPDATE company_activity_packs SET is_primary=0 WHERE is_primary=1")
@@ -123,14 +194,14 @@ def list_company_activities(conn):
 
 def set_activity_posting_account(conn, activity_code, role, account_code):
     """Set a validated posting account override for one enabled activity."""
-    if role not in POSTING_ACCOUNT_TYPES:
-        raise ValueError("دور حساب الترحيل غير مدعوم.")
+    if role not in ACTIVITY_ROLE_TYPES:
+        raise ValueError("دور حساب النشاط غير مدعوم.")
     pack = execute_compat(
         conn, "SELECT enabled FROM company_activity_packs WHERE activity_code=?",
         (activity_code,),
     ).fetchone()
-    if not pack or not pack["enabled"]:
-        raise ValueError("يجب تفعيل النشاط قبل ربط حساباته.")
+    if not pack:
+        raise ValueError("جهّز حزمة النشاط أولًا قبل ربط حساباتها.")
     account = execute_compat(
         conn, "SELECT account_type,is_group,active FROM accounts WHERE code=?",
         (str(account_code),),
@@ -139,7 +210,7 @@ def set_activity_posting_account(conn, activity_code, role, account_code):
         raise ValueError(f"الحساب {account_code} غير موجود.")
     if account["is_group"] or not account["active"]:
         raise ValueError(f"الحساب {account_code} تجميعي أو غير نشط.")
-    expected = POSTING_ACCOUNT_TYPES[role]
+    expected = ACTIVITY_ROLE_TYPES[role]
     if account["account_type"] != expected:
         raise ValueError(f"نوع الحساب {account_code} لا يتوافق مع الدور {role}; المتوقع {expected}.")
     execute_compat(conn, """
@@ -177,20 +248,25 @@ def resolve_activity_profile(conn, activity_code=None):
     ).fetchall()
     for override in overrides:
         role, code = override["role"], override["account_code"]
-        expected = POSTING_ACCOUNT_TYPES.get(role)
+        expected = ACTIVITY_ROLE_TYPES.get(role)
         account = execute_compat(
             conn, "SELECT account_type,is_group,active FROM accounts WHERE code=?", (code,)
         ).fetchone()
         if not expected or not account or account["account_type"] != expected or account["is_group"] or not account["active"]:
             raise ValueError(f"ربط حساب النشاط للدور {role} غير صالح؛ أوقف الترحيل.")
-        profile["posting_accounts"][role] = code
+        if role in POSTING_ACCOUNT_TYPES:
+            profile["posting_accounts"][role] = code
+        if role in ACCOUNT_ROLE_TYPES:
+            profile["account_roles"][role] = [code]
+        if role in TAX_ROLE_TYPES:
+            profile["tax_roles"][role] = code
     profile["company_activity_code"] = str(activity_code).strip().lower()
     return profile
 
 
 def resolve_activity_posting_account(conn, role, activity_code=None):
     profile = resolve_activity_profile(conn, activity_code)
-    code = profile.get("posting_accounts", {}).get(role)
+    code = profile.get("posting_accounts", {}).get(role) or profile.get("tax_roles", {}).get(role)
     if not code:
         raise ValueError(f"لا يوجد حساب ترحيل مضبوط للدور {role}.")
     return code
