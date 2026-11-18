@@ -143,7 +143,7 @@ class PostgreSQLPoolLifecycleTests(unittest.TestCase):
 
     def test_non_finite_or_non_positive_pool_timeout_is_rejected(self):
         with patch.dict(sys.modules, fake_pool_modules()):
-            for timeout in (0, -1, float("inf"), float("nan")):
+            for timeout in (0, -1, True, float("inf"), float("nan")):
                 with self.subTest(timeout=timeout):
                     with self.assertRaises(ValueError):
                         create_postgres_pool(
@@ -183,6 +183,7 @@ class PostgreSQLDirectConnectionTests(unittest.TestCase):
         for kwargs in (
             {"connect_timeout": 0},
             {"connect_timeout": 31},
+            {"connect_timeout": 1.5},
             {"connect_timeout": True},
             {"application_name": ""},
             {"autocommit": "yes"},
