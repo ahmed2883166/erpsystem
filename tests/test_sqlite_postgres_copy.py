@@ -522,6 +522,7 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
             self.assertEqual(audit_trigger_count, 2)
 
     def test_copy_refuses_target_without_installed_baseline_marker(self):
+        import psycopg
         self._create_target()
         with psycopg.connect(self.dsn) as conn:
             conn.execute(f'DROP TABLE "{self.schema}"."nexus_schema_installation"')
