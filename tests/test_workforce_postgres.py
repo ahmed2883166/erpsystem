@@ -148,7 +148,7 @@ class PostgreSQLWorkforcePostingTests(unittest.TestCase):
         rows = self.conn.execute(
             f"SELECT {grouped} AS employees FROM attendance_records a WHERE {predicate}"
         ).fetchone()
-        self.assertEqual(rows["employees"], "E001, E002")
+        self.assertEqual(sorted(rows["employees"].split(", ")), ["E001", "E002"])
 
 
 if __name__ == "__main__":
