@@ -511,6 +511,14 @@ def product_uom_options(c, product_id):
     return result
 
 
+def _movement_activity_code(c, movement_id):
+    columns = _columns(c, "stock_movements")
+    if "activity_code" not in columns:
+        return None
+    row = _execute(c, "SELECT activity_code FROM stock_movements WHERE id=?", (movement_id,)).fetchone()
+    return str(row["activity_code"]).strip().lower() if row and row["activity_code"] else None
+
+
 def post_interbranch_transfer_journal(c, movement_id, movement_no, product, movement_date,
                                       total_cost, created_by, source_branch_id, target_branch_id):
     """Post branch-tagged inventory transfer clearing lines without changing consolidated stock value."""
@@ -530,11 +538,16 @@ def post_interbranch_transfer_journal(c, movement_id, movement_no, product, move
     existing = _execute(c, "SELECT journal_entry_id FROM stock_movements WHERE id=?", (movement_id,)).fetchone()
     if existing and existing["journal_entry_id"]:
         return existing["journal_entry_id"]
-    clearing = _execute(c, 
-        "SELECT id,is_group,active,account_type FROM accounts WHERE code='1185'"
+    activity_code = _movement_activity_code(c, movement_id)
+    clearing_code = "1185"
+    if activity_code:
+        from company_activities import resolve_activity_profile
+        clearing_code = resolve_activity_profile(c, activity_code).get("posting_accounts", {}).get("interbranch_transfer") or clearing_code
+    clearing = _execute(c,
+        "SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (clearing_code,)
     ).fetchone()
     if not clearing or clearing["is_group"] or not clearing["active"] or clearing["account_type"] != "asset":
-        raise ValueError("لا يمكن ترحيل التحويل بين الفروع قبل تفعيل الحساب التفصيلي 1185 (تحويلات مخزون بين الفروع) من نوع أصل.")
+        raise ValueError(f"لا يمكن ترحيل التحويل بين الفروع قبل تفعيل الحساب التفصيلي {clearing_code} (تحويلات مخزون بين الفروع) من نوع أصل.")
     amount = money(D(str(total_cost)))
     if amount <= 0:
         _execute(c, "UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
@@ -566,11 +579,19 @@ def post_scrap_journal(c, movement_id, movement_no, product, movement_date, tota
     existing = _execute(c, "SELECT journal_entry_id FROM stock_movements WHERE id=?", (movement_id,)).fetchone()
     if existing and existing["journal_entry_id"]:
         return existing["journal_entry_id"]
-    settings = {row["setting_key"]: row["setting_value"] for row in _execute(c, 
-        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='activity'") }
-    activity = settings.get("activity", "commercial")
-    from chart_templates import ACTIVITY_POSTING_ACCOUNTS
-    default_inventory_code = ACTIVITY_POSTING_ACCOUNTS.get(activity, {}).get("inventory")
+    activity_code = _movement_activity_code(c, movement_id)
+    if activity_code:
+        from company_activities import resolve_activity_profile
+        profile = resolve_activity_profile(c, activity_code)
+        posting_accounts = profile.get("posting_accounts", {})
+        activity = activity_code
+    else:
+        settings = {row["setting_key"]: row["setting_value"] for row in _execute(c,
+            "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='activity'")}
+        activity = settings.get("activity", "commercial")
+        from chart_templates import ACTIVITY_POSTING_ACCOUNTS
+        posting_accounts = ACTIVITY_POSTING_ACCOUNTS.get(activity, {})
+    default_inventory_code = posting_accounts.get("inventory")
     if not default_inventory_code:
         _execute(c, "UPDATE stock_movements SET accounting_status='pending_setup' WHERE id=?", (movement_id,))
         set_stock_accounting_note(c,movement_id,"النشاط الحالي لا يحتوي حساب مخزون؛ لا يمكن ترحيل الإعدام قبل ضبط ملف النشاط.")
@@ -581,7 +602,7 @@ def post_scrap_journal(c, movement_id, movement_no, product, movement_date, tota
     )
     inventory = _execute(c, "SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (inventory_code,)).fetchone()
     # Restaurant waste is classified in the dedicated spoilage expense account.
-    writeoff_code = "5300" if activity == "restaurant" else "6990"
+    writeoff_code = posting_accounts.get("stock_scrap_expense") or ("5300" if activity == "restaurant" else "6990")
     writeoff = _execute(c, "SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (writeoff_code,)).fetchone()
     writeoff_id = writeoff["id"] if writeoff and not writeoff["is_group"] and writeoff["active"] and writeoff["account_type"]=="expense" else None
     if (not inventory or inventory["is_group"] or not inventory["active"]
@@ -626,15 +647,21 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
     existing = _execute(c, "SELECT journal_entry_id FROM stock_movements WHERE id=?", (movement_id,)).fetchone()
     if existing and existing["journal_entry_id"]:
         return existing["journal_entry_id"]
-    settings = {row["setting_key"]: row["setting_value"] for row in _execute(c, 
-        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='activity'")}
-    activity = settings.get("activity", "commercial")
-    from chart_templates import ACTIVITY_POSTING_ACCOUNTS
-    if purpose == "sale":
-        from activity_profiles import active_posting_accounts
-        posting_accounts = active_posting_accounts(c)
+    activity_code = _movement_activity_code(c, movement_id)
+    if activity_code:
+        from company_activities import resolve_activity_profile
+        posting_accounts = resolve_activity_profile(c, activity_code).get("posting_accounts", {})
+        activity = activity_code
     else:
-        posting_accounts = ACTIVITY_POSTING_ACCOUNTS.get(activity, {})
+        settings = {row["setting_key"]: row["setting_value"] for row in _execute(c,
+            "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='activity'")}
+        activity = settings.get("activity", "commercial")
+        from chart_templates import ACTIVITY_POSTING_ACCOUNTS
+        if purpose == "sale":
+            from activity_profiles import active_posting_accounts
+            posting_accounts = active_posting_accounts(c)
+        else:
+            posting_accounts = ACTIVITY_POSTING_ACCOUNTS.get(activity, {})
     if purpose == "sale":
         from activity_profiles import resolve_product_account_code
         expense_code = resolve_product_account_code(
@@ -642,7 +669,7 @@ def post_issue_journal(c, movement_id, movement_no, product, movement_date, tota
         )
         expense_name = "تكلفة المبيعات / تكلفة الخدمات المصروفة"
     elif purpose == "internal":
-        expense_code = "6991"
+        expense_code = posting_accounts.get("internal_stock_use", "6991")
         expense_name = "مصروف استخدام داخلي من المخزون"
         existing_expense = _execute(c, "SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (expense_code,)).fetchone()
         expense_id = existing_expense["id"] if existing_expense and not existing_expense["is_group"] and existing_expense["active"] and existing_expense["account_type"]=="expense" else None

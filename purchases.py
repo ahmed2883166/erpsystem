@@ -445,12 +445,12 @@ def ensure_detail_account(c, code, name, typ, preferred_parent):
     return found["id"]
 
 def _activity_posting_accounts(c, activity_code=None):
-    if activity_code:
-        from company_activities import resolve_activity_profile
-        mapping = resolve_activity_profile(c, activity_code).get("posting_accounts", {})
-    else:
-        from activity_profiles import active_posting_accounts
-        mapping = active_posting_accounts(c)
+    from company_activities import resolve_activity_profile
+    profile = resolve_activity_profile(c, activity_code)
+    mapping = dict(profile.get("posting_accounts", {}))
+    grni_roles = profile.get("account_roles", {}).get("grni", ())
+    if not mapping.get("grni") and grni_roles:
+        mapping["grni"] = grni_roles[0]
     if not mapping or not mapping.get("supplier_ap"):
         raise ValueError("ملف النشاط الحالي لا يحتوي حساب الموردين المطلوب للمشتريات.")
     return mapping
@@ -1492,7 +1492,8 @@ def new_receipt():
             if not invcode: raise ValueError("النشاط الحالي لا يملك حساب مخزون تلقائيًا؛ اضبط الربط أولًا.")
             inv=account(c,invcode,"asset")
             # GRNI must be explicitly configured as a detailed liability account.
-            grni=ensure_detail_account(c,"2190","بضاعة مستلمة غير مفوترة GRNI","liability","2000")
+            grni_code = _activity_posting_accounts(c, activity_code).get("grni") or "2190"
+            grni=ensure_detail_account(c,grni_code,"بضاعة مستلمة غير مفوترة GRNI","liability","2000")
             no="GRN-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             rid=insert_and_get_id(c, """INSERT INTO goods_receipts(receipt_no,po_id,supplier_id,warehouse_id,receipt_date,total_value,created_by,
               branch_id,cost_center_id,project_id,activity_code) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
@@ -2020,7 +2021,8 @@ def post_supplier_bill(c, bill_id, actor_id):
         # concurrent supplier bills cannot consume the same GRNI balance.
         _lock_supplier_receipts(c, (row["receipt_id"] for row in receipt_rows))
         matched_total = money("0")
-        grni = account(c, "2190", "liability")
+        grni_code = _activity_posting_accounts(c, activity_code).get("grni") or "2190"
+        grni = account(c, grni_code, "liability")
         for receipt in receipt_rows:
             if receipt["supplier_id"] != bill["supplier_id"] or receipt["status"] != "posted":
                 raise ValueError("يوجد إيصال استلام غير صالح أو لا يتبع المورد.")

@@ -150,9 +150,12 @@ ACTIVITY_TAX_ACCOUNT_ROLES = {
 
 # Operational stock accounts are present in every activity chart template.
 for _posting_accounts in ACTIVITY_POSTING_ACCOUNTS.values():
+    _posting_accounts["grni"] = "2190"
     _posting_accounts["interbranch_transfer"] = "1185"
     _posting_accounts["stock_scrap_expense"] = "6990"
     _posting_accounts["internal_stock_use"] = "6991"
+# Restaurant spoilage remains in its dedicated food-waste expense account.
+ACTIVITY_POSTING_ACCOUNTS["restaurant"]["stock_scrap_expense"] = "5300"
 
 _CONTROL_ROLE_NAMES = {"cash", "receivables", "payables", "inventory", "customer_advances"}
 CONTROL_ACCOUNT_CODES = frozenset(

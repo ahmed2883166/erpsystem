@@ -19,8 +19,10 @@ POSTING_ACCOUNT_TYPES = {
     "ar": "asset", "revenue": "revenue", "vat": "liability",
     "inventory": "asset", "cogs": "expense",
     "purchase_inventory": "asset", "supplier_ap": "liability",
-    "input_vat": "asset", "stocktake_shortage": "expense",
-    "stocktake_surplus": "expense",
+    "input_vat": "asset", "grni": "liability",
+    "stocktake_shortage": "expense", "stocktake_surplus": "expense",
+    "interbranch_transfer": "asset", "stock_scrap_expense": "expense",
+    "internal_stock_use": "expense",
 }
 ACCOUNT_ROLE_TYPES = {
     "cash": "asset", "receivables": "asset", "contract_assets": "asset",
