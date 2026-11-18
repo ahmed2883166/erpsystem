@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}تعديل مستخدم{% endblock %}
 {% block content %}
-<header><h2>تعديل المستخدم {{ user.username }}</h2><a class="btn secondary" href="{{ url_for('users') }}">رجوع</a></header>
+<header class="page-heading"><h2>تعديل المستخدم {{ user.username }}</h2><a class="btn secondary" href="{{ url_for('users') }}">رجوع</a></header>
 <section class="panel">
 <form method="post">
 <label>اسم المستخدم<input name="username" value="{{ user.username }}" required></label>
