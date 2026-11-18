@@ -130,7 +130,12 @@ def analyze_activity_pack_compatibility(activities):
 
     role_conflicts = []
     for code, families in sorted(role_families.items()):
-        if len(families) > 1:
+        # A collision only exists when separate activity packs assign the same
+        # account code to incompatible posting families. Multiple roles within
+        # one starter pack are not a cross-activity conflict.
+        if len(families) > 1 and len({
+            item["activity"] for item in role_details[code]
+        }) > 1:
             role_conflicts.append({
                 "account_code": code,
                 "role_families": sorted(families),
