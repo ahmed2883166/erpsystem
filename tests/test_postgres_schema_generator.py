@@ -437,5 +437,64 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         self.assertEqual(review["foreign_key_count"], 1)
 
 
+    def test_resolves_implicit_sqlite_foreign_key_target_to_parent_primary_key(self):
+        snapshot = _with_required_numeric_override_tables({
+            "tables": [
+                {
+                    "name": "parent",
+                    "columns": [
+                        {"name": "tenant_id", "type": "INTEGER", "pk": 1},
+                        {"name": "record_id", "type": "INTEGER", "pk": 2},
+                    ],
+                    "foreign_keys": [],
+                    "indexes": [],
+                },
+                {
+                    "name": "child",
+                    "columns": [
+                        {"name": "tenant_ref", "type": "INTEGER", "pk": 0},
+                        {"name": "record_ref", "type": "INTEGER", "pk": 0},
+                    ],
+                    "foreign_keys": [
+                        {
+                            "id": 0, "seq": 0, "table": "parent",
+                            "from": "tenant_ref", "to": None,
+                            "on_update": "NO ACTION", "on_delete": "CASCADE",
+                        },
+                        {
+                            "id": 0, "seq": 1, "table": "parent",
+                            "from": "record_ref", "to": "",
+                            "on_update": "NO ACTION", "on_delete": "CASCADE",
+                        },
+                    ],
+                    "indexes": [],
+                },
+            ]
+        })
+        ddl, review = generate_postgres_ddl(snapshot)
+        self.assertIn(
+            'FOREIGN KEY ("tenant_ref", "record_ref") '
+            'REFERENCES "parent" ("tenant_id", "record_id")',
+            ddl,
+        )
+        self.assertEqual(review["foreign_key_count"], 1)
+
+    def test_rejects_foreign_key_with_missing_source_column(self):
+        snapshot = _with_required_numeric_override_tables({
+            "tables": [{
+                "name": "child",
+                "columns": [{"name": "id", "type": "INTEGER", "pk": 1}],
+                "foreign_keys": [{
+                    "id": 0, "seq": 0, "table": "journal_lines",
+                    "from": "missing_parent_id", "to": "debit",
+                    "on_update": "NO ACTION", "on_delete": "NO ACTION",
+                }],
+                "indexes": [],
+            }]
+        })
+        with self.assertRaisesRegex(ValueError, "source column.*missing_parent_id"):
+            generate_postgres_ddl(snapshot)
+
+
 if __name__ == "__main__":
     unittest.main()
