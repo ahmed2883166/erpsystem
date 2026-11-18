@@ -42,6 +42,23 @@ def _write_settings(connection, values):
     )
 
 
+def ensure_initial_postgres_backup(dsn, backup_dir):
+    """Create one verified baseline archive for a fresh PostgreSQL company database."""
+    with psycopg.connect(dsn) as connection:
+        connection.execute("SELECT pg_advisory_xact_lock(%s)", (_ADVISORY_LOCK_KEY,))
+        row = connection.execute(
+            "SELECT setting_value FROM company_settings WHERE setting_key=%s",
+            ("backup_initial_baseline",),
+        ).fetchone()
+        if row and row[0]:
+            return None
+        # Keep the advisory lock while pg_dump runs: concurrent workers cannot
+        # create duplicate initial archives for the same database.
+        archive = create_postgres_backup_archive(dsn, backup_dir)
+        _write_settings(connection, {"backup_initial_baseline": archive.name})
+        return archive
+
+
 def run_due_postgres_backup(dsn, backup_dir):
     """Claim and run one due PostgreSQL backup; return its archive or None."""
     with psycopg.connect(dsn) as connection:
