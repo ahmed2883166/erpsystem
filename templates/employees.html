@@ -4,7 +4,7 @@
 <a class="button secondary" href="{{url_for('workforce.export_employees_excel')}}">تصدير الموظفين Excel</a>
 <a class="button" href="{{url_for('workforce.employee_form_2_salary_report')}}">تقرير استمارة 2 لجميع الموظفين</a>
 <a class="button secondary" href="{{url_for('workforce.employee_grants')}}">المنح والمكافآت المستقلة</a>
-<a class="button secondary" href="{{url_for('workforce.download_employee_template')}}">تحميل نموذج Excel</a></div></div></header>
+<a class="button secondary" href="{{url_for('workforce.download_employee_template')}}">تحميل نموذج Excel</a></div></div><span class="pill">ملف الموظف</span></header>
 <section class="panel employee-import-panel"><h3>استيراد بيانات الموظفين من Excel</h3>
 <p class="muted">ارفع ملف XLSX بنفس أعمدة النموذج. كود الموظف هو مفتاح المطابقة: الكود الموجود سيتم تحديث بياناته، والجديد سيتم إضافته. العملية كلها تتم أو تُلغى بالكامل عند وجود خطأ.</p>
 <form method="post" action="{{ url_for('workforce.import_employees_excel') }}" enctype="multipart/form-data" class="form-grid"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
