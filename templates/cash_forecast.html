@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}التدفقات النقدية المتوقعة | NEXUS ERP{% endblock %}
 {% block content %}
-<header class="report-header"><h2>التدفقات النقدية المتوقعة</h2><p class="muted">تقدير التحصيلات والمدفوعات من الأرصدة المفتوحة وتواريخ الاستحقاق، وليس رصيدًا نقديًا فعليًا.</p></header>
+<header class="report-header page-heading"><h2>التدفقات النقدية المتوقعة</h2><p class="muted">تقدير التحصيلات والمدفوعات من الأرصدة المفتوحة وتواريخ الاستحقاق، وليس رصيدًا نقديًا فعليًا.</p></header>
 <section class="panel no-print"><form method="get" class="form-row"><label>اعتبارًا من<input type="date" name="as_of" value="{{ report.as_of }}"></label><label>أفق التوقع<select name="days"><option value="30" {% if report.horizon_days==30 %}selected{% endif %}>30 يومًا</option><option value="60" {% if report.horizon_days==60 %}selected{% endif %}>60 يومًا</option><option value="90" {% if report.horizon_days==90 %}selected{% endif %}>90 يومًا</option><option value="180" {% if report.horizon_days==180 %}selected{% endif %}>180 يومًا</option></select></label><button>عرض التوقع</button><button type="button" class="secondary" onclick="window.print()">طباعة</button></form></section>
 <section class="grid"><article class="panel"><small class="muted">تحصيلات متوقعة</small><h2>{{ report.collections|money }}</h2></article><article class="panel"><small class="muted">مدفوعات متوقعة</small><h2>{{ report.payments|money }}</h2></article><article class="panel"><small class="muted">صافي التدفق المتوقع</small><h2>{{ report.net_expected|money }}</h2></article></section>
 {% for error in report.errors %}<section class="panel"><p class="muted">{{ error }}</p></section>{% endfor %}
