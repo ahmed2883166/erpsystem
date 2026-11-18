@@ -14,6 +14,36 @@ import stock
 
 
 class SalesIntegrationTests(unittest.TestCase):
+    def test_credit_note_cancellation_locks_invoice_before_credit_note(self):
+        calls = []
+
+        class Cursor:
+            def __init__(self, row):
+                self.row = row
+
+            def fetchone(self):
+                return self.row
+
+        def fake_execute(_conn, sql, params=()):
+            calls.append((sql, tuple(params)))
+            if "SELECT invoice_id FROM sales_credit_notes" in sql:
+                return Cursor({"invoice_id": 44})
+            if "FROM sales_invoices WHERE id=?" in sql:
+                return Cursor({"id": 44})
+            if "FROM sales_credit_notes WHERE id=?" in sql:
+                return Cursor({"id": 55, "invoice_id": 44})
+            raise AssertionError("Unexpected SQL: " + sql)
+
+        with patch("sales.database_dialect", return_value="postgresql"), \\
+             patch("sales.execute_compat", side_effect=fake_execute):
+            invoice, note = sales._sales_credit_note_and_invoice_for_update(self.db, 55)
+
+        self.assertEqual(invoice["id"], 44)
+        self.assertEqual(note["id"], 55)
+        self.assertIn("FROM sales_invoices WHERE id=? FOR UPDATE", calls[1][0])
+        self.assertIn("FROM sales_credit_notes WHERE id=? AND status='posted' FOR UPDATE", calls[2][0])
+        self.assertEqual([params for _, params in calls], [(55,), (44,), (55,)])
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         path = Path(self.tmp.name) / "nexus.db"
