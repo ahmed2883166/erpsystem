@@ -198,6 +198,64 @@ def main() -> int:
                         "total": str(posted_invoice["total_amount"]),
                         "cost": str(invoice["total_cost"]),
                     }
+                    # Exercise a supplier expense bill through the real
+                    # purchasing posting engine and verify its AP journal.
+                    import purchases
+
+                    supplier_id = insert_and_get_id(
+                        connection,
+                        "INSERT INTO suppliers(code,name) VALUES(?,?)",
+                        ("PG-SMOKE-SUPPLIER", "مورد اختبار PostgreSQL"),
+                    )
+                    expense_account = execute_compat(
+                        connection,
+                        """SELECT id FROM accounts
+                             WHERE account_type='expense' AND is_group=0 AND active=1
+                             ORDER BY code LIMIT 1""",
+                    ).fetchone()
+                    if not expense_account:
+                        raise AssertionError("PostgreSQL chart has no active detail expense account.")
+                    bill_id = insert_and_get_id(
+                        connection,
+                        """INSERT INTO supplier_bills(
+                               bill_no,supplier_id,bill_date,supplier_invoice_no,
+                               subtotal,total_amount,status,bill_kind,expense_account_id
+                           ) VALUES(?,?,?,?,?,?,'approved','expense',?)""",
+                        ("PG-SMOKE-BILL", supplier_id, today.isoformat(),
+                         "PG-SMOKE-SUPPLIER-INVOICE", "25.50", "25.50",
+                         expense_account["id"]),
+                    )
+                    purchase_journal_id = purchases.post_supplier_bill(
+                        connection, bill_id, admin_id
+                    )
+                    connection.commit()
+                    posted_bill = execute_compat(
+                        connection,
+                        "SELECT status,journal_entry_id FROM supplier_bills WHERE id=?",
+                        (bill_id,),
+                    ).fetchone()
+                    purchase_totals = execute_compat(
+                        connection,
+                        """SELECT SUM(CAST(debit AS NUMERIC)) AS debit,
+                                  SUM(CAST(credit AS NUMERIC)) AS credit
+                             FROM journal_lines WHERE entry_id=?""",
+                        (purchase_journal_id,),
+                    ).fetchone()
+                    if (
+                        not posted_bill
+                        or posted_bill["status"] != "posted"
+                        or posted_bill["journal_entry_id"] != purchase_journal_id
+                        or Decimal(str(purchase_totals["debit"])) != Decimal("25.50")
+                        or Decimal(str(purchase_totals["credit"])) != Decimal("25.50")
+                    ):
+                        raise AssertionError(
+                            "PostgreSQL supplier bill did not post a balanced AP journal."
+                        )
+                    purchase_flow = {
+                        "bill_id": bill_id,
+                        "journal_entry_id": purchase_journal_id,
+                        "total": "25.50",
+                    }
                 finally:
                     connection.close()
 
@@ -213,7 +271,9 @@ def main() -> int:
                 f"schema={schema} users={user_count} accounts={account_count} "
                 f"company_settings={settings_count} login_http={response.status_code} "
                 f"sales_invoice={sales_flow['invoice_id']} sales_total={sales_flow['total']} "
-                f"sales_cost={sales_flow['cost']}"
+                f"sales_cost={sales_flow['cost']} "
+                f"supplier_bill={purchase_flow['bill_id']} "
+                f"supplier_bill_total={purchase_flow['total']}"
             )
             return 0
         finally:
