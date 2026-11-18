@@ -167,6 +167,82 @@ def restore_secondary_indexes(connection, definitions: list[str]) -> int:
     return len(definitions)
 
 
+def suspend_dashboard_version_triggers(connection, schema: str) -> list[dict]:
+    """Temporarily remove only dashboard cache-version triggers in this schema.
+
+    PostgreSQL DDL is transactional: a failed copy rolls the DROP TRIGGER
+    statements back, leaving the target's original triggers in place.
+    Trigger functions and audit-protection triggers are never modified.
+    """
+    rows = connection.execute(
+        """
+        SELECT table_class.relname AS table_name,
+               trigger_info.tgname AS trigger_name,
+               trigger_info.tgenabled AS enabled_state,
+               pg_get_triggerdef(trigger_info.oid, true) AS trigger_definition
+          FROM pg_trigger trigger_info
+          JOIN pg_class table_class ON table_class.oid = trigger_info.tgrelid
+          JOIN pg_namespace table_ns ON table_ns.oid = table_class.relnamespace
+         WHERE table_ns.nspname = %s
+           AND NOT trigger_info.tgisinternal
+           AND left(trigger_info.tgname, length('trg_dashboard_version_')) =
+               'trg_dashboard_version_'
+         ORDER BY table_class.relname, trigger_info.tgname
+        """,
+        (schema,),
+    ).fetchall()
+    suspended = []
+    for row in rows:
+        item = {
+            "table_name": row["table_name"],
+            "trigger_name": row["trigger_name"],
+            "enabled_state": row["enabled_state"],
+            "definition": row["trigger_definition"],
+        }
+        if not isinstance(item["definition"], str) or not item["definition"].lstrip().upper().startswith("CREATE "):
+            raise ValueError("Refusing to suspend a dashboard trigger with an invalid definition.")
+        connection.execute(
+            "DROP TRIGGER " + quote_ident(item["trigger_name"]) +
+            " ON " + quote_ident(schema) + "." + quote_ident(item["table_name"])
+        )
+        suspended.append(item)
+    return suspended
+
+
+def restore_dashboard_version_triggers(connection, schema: str, triggers: list[dict]) -> int:
+    """Restore dashboard triggers and preserve their original enabled states."""
+    for item in triggers:
+        connection.execute(item["definition"])
+        table_name = quote_ident(schema) + "." + quote_ident(item["table_name"])
+        trigger_name = quote_ident(item["trigger_name"])
+        enabled_state = item["enabled_state"]
+        if enabled_state == "D":
+            command = "DISABLE TRIGGER"
+        elif enabled_state == "R":
+            command = "ENABLE REPLICA TRIGGER"
+        elif enabled_state == "A":
+            command = "ENABLE ALWAYS TRIGGER"
+        else:
+            command = "ENABLE TRIGGER"
+        connection.execute(
+            "ALTER TABLE " + table_name + " " + command + " " + trigger_name
+        )
+    return len(triggers)
+
+
+def bump_dashboard_version_once(connection, schema: str) -> int:
+    """Invalidate dashboard snapshots once after all copied rows are loaded."""
+    row = connection.execute(
+        "UPDATE " + quote_ident(schema) + "." + quote_ident("management_dashboard_data_version") +
+        " SET version = version + 1 WHERE id = 1 RETURNING version"
+    ).fetchone()
+    if row is None:
+        raise RuntimeError(
+            "Dashboard version row id=1 is missing; refusing to accept the copy."
+        )
+    return row["version"]
+
+
 def copy_rows_with_postgres_copy(connection, copy_sql: str, rows, columns: list[str]) -> int:
     """Stream adapted row tuples through psycopg 3 COPY FROM STDIN."""
     copied = 0
@@ -291,10 +367,11 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
             order = dependency_order(tables, foreign_keys)
 
             # Keep FK/unique-constraint and replica-identity indexes intact.
-            # Secondary indexes are removed only in this isolated target
-            # transaction, then rebuilt before validation/commit. Triggers
-            # remain enabled so integrity and audit behavior is preserved.
+            # Rebuildable secondary indexes and dashboard cache-version
+            # triggers are suspended only inside this isolated transaction.
+            # Audit-protection triggers remain enabled throughout.
             suspended_indexes = suspend_secondary_indexes(dst, schema)
+            suspended_dashboard_triggers = suspend_dashboard_version_triggers(dst, schema)
             counts = {}
             for table in order:
                 columns = source_columns[table]
@@ -339,6 +416,12 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
             # Any duplicate/data incompatibility fails the transaction and
             # restores the original target indexes on rollback.
             restored_indexes = restore_secondary_indexes(dst, suspended_indexes)
+            restored_dashboard_triggers = restore_dashboard_version_triggers(
+                dst, schema, suspended_dashboard_triggers
+            )
+            # All row-level dashboard invalidations are coalesced into one
+            # version bump after the triggers have been restored.
+            dashboard_version = bump_dashboard_version_once(dst, schema)
 
             # Force all deferred PostgreSQL constraints to be checked before sequence updates/commit.
             # Immediate constraints have already been checked by PostgreSQL during inserts.
@@ -369,6 +452,8 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                 "table_row_counts": counts,
                 "total_rows": sum(counts.values()),
                 "secondary_indexes_rebuilt": restored_indexes,
+                "dashboard_triggers_rebuilt": restored_dashboard_triggers,
+                "dashboard_version_after_copy": dashboard_version,
             }
         except Exception:
             dst.rollback()
