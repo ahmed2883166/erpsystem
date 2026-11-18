@@ -1,0 +1,104 @@
+"""Exercise the complete Flask schema initializer against a generated PostgreSQL baseline.
+
+This is a disposable CI smoke test, not the production runtime enablement switch.
+It installs the reviewed baseline into a unique schema, runs every application
+initializer through the PostgreSQL connection factory, verifies bootstrap data,
+and removes only its own schema.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import tempfile
+import uuid
+from pathlib import Path
+
+import psycopg
+from psycopg.conninfo import make_conninfo
+
+from postgres_baseline import install_postgres_baseline
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--baseline", required=True, type=Path)
+    args = parser.parse_args()
+
+    dsn = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
+    if not dsn:
+        raise SystemExit("NEXUS_TEST_POSTGRES_DSN is required.")
+    if not args.baseline.is_file():
+        raise SystemExit(f"PostgreSQL baseline not found: {args.baseline}")
+
+    schema = "admrail_runtime_smoke_" + uuid.uuid4().hex[:16]
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", schema):
+        raise RuntimeError("Generated unsafe schema name.")
+
+    baseline_sql = args.baseline.read_text(encoding="utf-8")
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        install_postgres_baseline(connection, baseline_sql, schema=schema)
+
+    with tempfile.TemporaryDirectory(prefix="admrail-pg-runtime-") as data_dir:
+        backup_dir = Path(data_dir) / "backups"
+        os.environ["NEXUS_DB_BACKEND"] = "postgresql"
+        os.environ["NEXUS_POSTGRES_DSN"] = make_conninfo(
+            dsn, options=f"-csearch_path={schema}"
+        )
+        os.environ["NEXUS_DATA_DIR"] = str(Path(data_dir) / "data")
+        os.environ["NEXUS_BACKUP_DIR"] = str(backup_dir)
+        os.environ["NEXUS_SKIP_DB_INIT"] = "1"
+        os.environ["NEXUS_SECRET_KEY"] = "postgres-runtime-smoke-secret-key-123456"
+        os.environ["NEXUS_DEMO_MODE"] = "1"
+
+        import app as nexus_app
+
+        # Keep the production gate closed. This test deliberately bypasses only
+        # that gate to prove whether all current initializers are PG-compatible.
+        nexus_app.require_supported_runtime_backend = lambda: None
+        try:
+            nexus_app.initialize_database()
+
+            with nexus_app.app.app_context():
+                connection = nexus_app.db()
+                try:
+                    user_count = connection.execute(
+                        "SELECT COUNT(*) FROM users"
+                    ).fetchone()[0]
+                    account_count = connection.execute(
+                        "SELECT COUNT(*) FROM accounts"
+                    ).fetchone()[0]
+                    settings_count = connection.execute(
+                        "SELECT COUNT(*) FROM company_settings"
+                    ).fetchone()[0]
+                    if user_count < 1 or account_count < 1 or settings_count < 1:
+                        raise AssertionError(
+                            "PostgreSQL bootstrap did not seed the admin, chart of "
+                            f"accounts, and company settings: users={user_count}, "
+                            f"accounts={account_count}, settings={settings_count}"
+                        )
+                finally:
+                    connection.close()
+
+            response = nexus_app.app.test_client().get("/login")
+            if response.status_code != 200:
+                raise AssertionError(
+                    f"Flask login page failed after PostgreSQL initialization: "
+                    f"HTTP {response.status_code}"
+                )
+
+            print(
+                "POSTGRES_FULL_APP_INITIALIZATION=PASS "
+                f"schema={schema} users={user_count} accounts={account_count} "
+                f"company_settings={settings_count} login_http={response.status_code}"
+            )
+            return 0
+        finally:
+            # All application connections are request/app-context scoped and
+            # must be closed before removing this isolated test schema.
+            with psycopg.connect(dsn, autocommit=True) as connection:
+                connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
