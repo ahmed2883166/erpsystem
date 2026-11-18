@@ -117,6 +117,7 @@ def main() -> int:
                     # revenue/COGS journals rather than only schema bootstrap.
                     from decimal import Decimal
                     from db_compat import insert_and_get_id
+                    from db_sql import execute_compat
                     import sales
 
                     customer_id = insert_and_get_id(
@@ -165,12 +166,14 @@ def main() -> int:
                     )
                     connection.commit()
 
-                    posted_invoice = connection.execute(
+                    posted_invoice = execute_compat(
+                        connection,
                         """SELECT total_amount,journal_entry_id,cogs_journal_entry_id
                              FROM sales_invoices WHERE id=?""",
                         (invoice["invoice_id"],),
                     ).fetchone()
-                    remaining_layer = connection.execute(
+                    remaining_layer = execute_compat(
+                        connection,
                         """SELECT qty_remaining,value_remaining
                              FROM stock_valuation_layers WHERE product_id=? AND warehouse_id=?""",
                         (product_id, warehouse_id),
