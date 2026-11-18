@@ -61,12 +61,27 @@ class _TrackedSQLiteConnection(sqlite3.Connection):
             except TimeoutError as exc:
                 raise sqlite3.OperationalError("database is locked") from exc
             self._nexus_write_gate_context = context
+        is_transaction_end = (
+            gate is not None
+            and self._nexus_write_gate_context is not None
+            and re.match(r"^\s*(?:COMMIT|END|ROLLBACK)\b", str(sql), re.IGNORECASE)
+        )
         try:
-            return super().execute(sql, parameters)
+            result = super().execute(sql, parameters)
+            if is_transaction_end and not self.in_transaction:
+                self._release_write_gate()
+            return result
         except Exception:
             if is_immediate_write:
                 self._release_write_gate()
             raise
+
+    def executescript(self, sql_script):
+        try:
+            return super().executescript(sql_script)
+        finally:
+            if not self.in_transaction:
+                self._release_write_gate()
 
     def commit(self):
         result = super().commit()
