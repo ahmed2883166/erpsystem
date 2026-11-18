@@ -7,6 +7,7 @@ idempotency, and drops the schema. No SQLite database or public schema is used.
 import os
 import re
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -34,9 +35,16 @@ def main():
     register_database_connection_teardown(flask_app)
 
     with flask_app.app_context():
-        connection = connect_database(
-            "unused-sqlite-path.db", isolation_level="", decimal_aggregates=False
+        sqlite_fallback_path = Path(tempfile.gettempdir()) / (
+            "admrail-postgres-must-not-fallback-" + uuid.uuid4().hex + ".db"
         )
+        connection = connect_database(
+            str(sqlite_fallback_path), isolation_level="", decimal_aggregates=False
+        )
+        if sqlite_fallback_path.exists():
+            raise AssertionError("PostgreSQL selection unexpectedly created a SQLite file.")
+        if connection.info.transaction_status.name != "IDLE":
+            raise AssertionError("Database factory returned an active PostgreSQL transaction.")
         created = False
         try:
             connection.execute(f'CREATE SCHEMA "{schema}"')
