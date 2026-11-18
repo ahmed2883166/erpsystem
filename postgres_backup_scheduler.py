@@ -32,13 +32,15 @@ def _settings(connection):
 
 
 def _write_settings(connection, values):
-    connection.executemany(
-        """INSERT INTO company_settings(setting_key, setting_value)
-           VALUES (%s, %s)
-           ON CONFLICT(setting_key) DO UPDATE
-             SET setting_value=EXCLUDED.setting_value""",
-        list(values.items()),
-    )
+    # psycopg 3 exposes executemany on cursors, not Connection.
+    with connection.cursor() as cursor:
+        cursor.executemany(
+            """INSERT INTO company_settings(setting_key, setting_value)
+               VALUES (%s, %s)
+               ON CONFLICT(setting_key) DO UPDATE
+                 SET setting_value=EXCLUDED.setting_value""",
+            list(values.items()),
+        )
 
 
 def ensure_initial_postgres_backup(dsn, backup_dir):
