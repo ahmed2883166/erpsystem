@@ -20,8 +20,8 @@ def initialize_aging_schema():
    continue
   cols=table_columns(c, table)
   if "due_date" not in cols:
-   c.execute("ALTER TABLE "+table+" ADD COLUMN due_date TEXT")
-  c.execute(
+   execute_compat(c, "ALTER TABLE "+table+" ADD COLUMN due_date TEXT")
+  execute_compat(c,
    "UPDATE "+table+" SET due_date="+source_date+" WHERE due_date IS NULL OR due_date=''"
   )
  c.commit()
