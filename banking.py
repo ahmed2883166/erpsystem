@@ -2,6 +2,8 @@ from app_paths import DB_PATH
 from database import connect_database, fetch_page
 """Bank register and reconciliation support for NEXUS ERP."""
 from datetime import date, datetime
+import csv
+import io
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
@@ -31,6 +33,73 @@ def _columns(conn, name):
 def signed_ledger_amount(debit, credit):
     """Convert a posted bank-ledger line to statement direction: debit positive, credit negative."""
     return (Decimal(str(debit or "0"))-Decimal(str(credit or "0"))).quantize(Decimal("0.01"))
+
+
+def parse_statement_csv(payload, max_rows=5000):
+    """Parse a bank CSV export without writing anything to the database."""
+    if isinstance(payload, bytes):
+        try:
+            payload = payload.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise ValueError("ملف كشف البنك يجب أن يكون CSV بترميز UTF-8.") from exc
+    if not isinstance(payload, str) or not payload.strip():
+        raise ValueError("ملف كشف البنك فارغ.")
+    try:
+        sample = payload[:4096]
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\\t")
+        except csv.Error:
+            dialect = csv.excel
+        reader = csv.DictReader(io.StringIO(payload, newline=""), dialect=dialect)
+        if not reader.fieldnames:
+            raise ValueError("ملف CSV لا يحتوي على صف عناوين.")
+        normalized = {str(name or "").strip().casefold(): name for name in reader.fieldnames}
+        def column(*aliases):
+            for alias in aliases:
+                key = alias.casefold()
+                if key in normalized:
+                    return normalized[key]
+            return None
+        date_col = column("date", "transaction date", "posting date", "التاريخ", "تاريخ الحركة", "تاريخ العملية")
+        amount_col = column("amount", "transaction amount", "signed amount", "المبلغ", "قيمة الحركة", "صافي المبلغ")
+        ref_col = column("reference", "ref", "transaction reference", "رقم المرجع", "المرجع", "رقم العملية")
+        desc_col = column("description", "details", "narration", "البيان", "الوصف", "تفاصيل")
+        if not date_col or not amount_col:
+            raise ValueError("يلزم وجود عمود للتاريخ وعمود للمبلغ. الأعمدة الاختيارية: المرجع والبيان.")
+        rows = []
+        for row_number, row in enumerate(reader, start=2):
+            if not any(str(value or "").strip() for value in row.values()):
+                continue
+            if len(rows) >= max_rows:
+                raise ValueError(f"الحد الأقصى لاستيراد كشف البنك هو {max_rows} حركة في الملف الواحد.")
+            raw_date = str(row.get(date_col) or "").strip()
+            parsed_date = None
+            for date_format in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+                try:
+                    parsed_date = date.strptime(raw_date, date_format) if hasattr(date, "strptime") else datetime.strptime(raw_date, date_format).date()
+                    break
+                except ValueError:
+                    continue
+            if parsed_date is None:
+                raise ValueError(f"تاريخ غير صحيح في السطر {row_number}: {raw_date}")
+            raw_amount = str(row.get(amount_col) or "").strip().replace(",", "").replace(" ", "")
+            try:
+                amount = Decimal(raw_amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            except InvalidOperation as exc:
+                raise ValueError(f"مبلغ غير صحيح في السطر {row_number}.") from exc
+            if amount == 0:
+                raise ValueError(f"المبلغ في السطر {row_number} لا يمكن أن يكون صفرًا.")
+            rows.append({
+                "statement_date": parsed_date.isoformat(),
+                "signed_amount": amount,
+                "bank_reference": str(row.get(ref_col) or "").strip() if ref_col else "",
+                "description": str(row.get(desc_col) or "").strip() if desc_col else "",
+            })
+        if not rows:
+            raise ValueError("لا توجد حركات صالحة للاستيراد في الملف.")
+        return rows
+    except csv.Error as exc:
+        raise ValueError("تعذر قراءة ملف CSV؛ راجع الفواصل وصف العناوين.") from exc
 
 def opening_reconciliation_state(balances, ledger_opening, book_total):
     """Return an explicit, safe bank opening/closing reconciliation state."""
@@ -322,6 +391,58 @@ def statement_reconciliation():
     try:
         if request.method=="POST":
             action=request.form.get("action","add_line")
+
+            if action=="import_csv":
+                account_id=request.form.get("bank_account_id",type=int)
+                period_start=request.form.get("start_date","").strip()
+                period_end=request.form.get("end_date","").strip()
+                date.fromisoformat(period_start); date.fromisoformat(period_end)
+                if period_end < period_start:
+                    raise ValueError("نهاية الفترة لا يجوز أن تسبق بدايتها.")
+                upload=request.files.get("statement_file")
+                if not upload or not upload.filename:
+                    raise ValueError("اختر ملف كشف بنك بصيغة CSV.")
+                payload=upload.stream.read(5*1024*1024+1)
+                if len(payload)>5*1024*1024:
+                    raise ValueError("حجم ملف كشف البنك يتجاوز 5 ميجابايت.")
+                imported=parse_statement_csv(payload)
+                if any(not (period_start <= row["statement_date"] <= period_end) for row in imported):
+                    raise ValueError("يوجد تاريخ حركة خارج فترة التسوية المحددة.")
+                account=execute_compat(c, """SELECT a.id FROM accounts a
+                    WHERE a.id=? AND a.account_type='asset' AND a.is_group=0 AND a.active=1
+                    AND (EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id AND ca.kind='bank' AND ca.active=1
+                        AND ca.currency_code=(SELECT setting_value FROM company_settings WHERE setting_key='base_currency'))
+                      OR lower(a.name_ar) LIKE '%بنك%' OR lower(a.name_ar) LIKE '%بنوك%' OR lower(a.name_ar) LIKE '%مصرف%')""",
+                    (account_id,)).fetchone()
+                if not account:
+                    raise ValueError("اختر حساب بنك نشطًا من سجل الخزائن والبنوك.")
+                begin_write_transaction(c)
+                inserted=0
+                for row in imported:
+                    duplicate=execute_compat(c, """SELECT id FROM bank_statement_lines
+                        WHERE bank_account_id=? AND statement_date=? AND signed_amount=?
+                          AND bank_reference=? AND description=? LIMIT 1""",
+                        (account_id,row["statement_date"],str(row["signed_amount"]),
+                         row["bank_reference"],row["description"])).fetchone()
+                    if duplicate:
+                        continue
+                    insert_one_returning_id(c, """INSERT INTO bank_statement_lines(
+                        bank_account_id,statement_date,signed_amount,description,bank_reference,created_by)
+                        VALUES(?,?,?,?,?,?)""",
+                        (account_id,row["statement_date"],str(row["signed_amount"]),
+                         row["description"],row["bank_reference"],session.get("user_id")))
+                    inserted+=1
+                if inserted == 0:
+                    raise ValueError("كل حركات الملف موجودة مسبقًا؛ لم تتم إضافة أي حركة مكررة.")
+                execute_compat(c, """INSERT INTO audit_log(user_id,action,details,created_at)
+                    VALUES(?,?,?,?)""",
+                    (session.get("user_id"),"bank_statement_csv_import",
+                     f"استيراد كشف بنك للحساب {account_id}: {inserted} حركة جديدة من أصل {len(imported)}؛ الفترة {period_start} إلى {period_end}",
+                     datetime.now().isoformat(timespec="seconds")))
+                c.commit()
+                flash(f"تم استيراد {inserted} حركة جديدة، وتم تجاوز {len(imported)-inserted} حركة مكررة.", "success")
+                return redirect(url_for("bank.statement_reconciliation",account_id=account_id,
+                    start_date=period_start,end_date=period_end))
             if action=="add_line":
                 account_id=request.form.get("bank_account_id",type=int)
                 statement_date=request.form.get("statement_date","").strip()
