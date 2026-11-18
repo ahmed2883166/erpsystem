@@ -51,7 +51,7 @@ from company_defaults import seed_company_defaults
 from sqlite_accounting_migrations import migrate_journal_line_amounts_to_text
 from sqlite_audit_schema import initialize_sqlite_audit_schema
 from postgres_audit_schema import initialize_postgres_audit_schema
-from db_sql import execute_compat
+from db_sql import execute_compat, executemany_compat
 from db_compat import (begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names, table_column_info, database_dialect, DB_ERROR, DB_INTEGRITY_ERROR)
 from report_request_control import (ReportRequestGate, bounded_env_int,
                                     is_expensive_report_request,
@@ -4514,7 +4514,7 @@ def backup_settings():
                 "backup_last_status": "scheduled" if enabled else "disabled",
                 "backup_last_error": "",
             }
-            connection.executemany("""INSERT INTO company_settings(setting_key,setting_value)
+            executemany_compat(connection, """INSERT INTO company_settings(setting_key,setting_value)
                 VALUES(?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value""",
                 list(values.items()))
             connection.commit()
@@ -4558,7 +4558,7 @@ def backup_run_now():
     connection = db()
     values = {"backup_last_run": now(), "backup_last_status": "success",
               "backup_last_error": "", "backup_last_file": filename.name}
-    connection.executemany("""INSERT INTO company_settings(setting_key,setting_value)
+    executemany_compat(connection, """INSERT INTO company_settings(setting_key,setting_value)
         VALUES(?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value""",
         list(values.items()))
     connection.commit()
