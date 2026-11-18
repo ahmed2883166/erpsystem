@@ -94,9 +94,10 @@ def qmark_to_format(sql):
                         i = end + 1
                         continue
             if char == "?" and nxt == "?":
-                # psycopg uses doubled question marks to escape PostgreSQL's
-                # JSON existence operators from its placeholder parser.
-                out.extend(("?", "?"))
+                # The doubled form is an escape used only in source SQL so
+                # this qmark adapter can distinguish a literal JSON operator
+                # from a positional bind marker. psycopg receives one operator.
+                out.append("?")
                 i += 2
                 continue
             if char == "?":
