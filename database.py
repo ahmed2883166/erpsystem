@@ -33,28 +33,19 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
     default deferred transactions (empty string), while modules that historically
     used autocommit continue to pass isolation_level=None.
     """
-    # Reuse one connection per database/options tuple during a Flask app
-    # context. This prevents route helpers across modules from leaking multiple
-    # handles to the same SQLite file and makes Windows file cleanup reliable.
-    cache_key = (
-        str(Path(path).resolve()), float(timeout), isolation_level, bool(decimal_aggregates)
-    )
+    # Track every connection created in this Flask app context without
+    # reusing it: many existing routes explicitly close their own connection,
+    # and each call must retain its historical independent transaction scope.
     if has_app_context():
         connections = getattr(g, "_nexus_database_connections", None)
         if connections is None:
-            connections = {}
+            connections = []
             g._nexus_database_connections = connections
-            # The finalizer avoids registering teardown handlers after Flask has
-            # started serving requests, and also works with small test Flask apps.
             g._nexus_database_finalizer = weakref.finalize(
-                g._get_current_object() if hasattr(g, "_get_current_object") else g,
+                g._get_current_object(),
                 _close_app_context_connections,
                 connections,
             )
-        cached = connections.get(cache_key)
-        if cached is not None:
-            return cached
-
     connection = sqlite3.connect(
         str(Path(path)), timeout=timeout, isolation_level=isolation_level
     )
@@ -71,7 +62,7 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
         # Covers connections opened inside blueprints as well as app.db().
         connection.set_progress_handler(make_sqlite_deadline_callback(deadline), 10000)
     if has_app_context():
-        connections[cache_key] = connection
+        connections.append(connection)
     return connection
 
 
