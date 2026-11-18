@@ -5,7 +5,7 @@
 <section class="panel"><h3>سجل المراجعة والاعتماد</h3><div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>المستخدم</th><th>الحدث</th><th>التفاصيل</th></tr></thead><tbody>{% for h in history %}<tr><td>{{ h.created_at }}</td><td>{{ h.username or h.actor_id or 'النظام' }}</td><td>{{ h.action }}</td><td>{{ h.details }}</td></tr>{% else %}<tr><td colspan="4">لا توجد أحداث بعد.</td></tr>{% endfor %}</tbody></table></div></section>
 {% endblock %}
 {% block content %}
-<header><h2>{{ plan.name }}</h2><p class="muted">الفترة: {{ plan.date_from }} — {{ plan.date_to }}</p>
+<header class="page-heading"><h2>{{ plan.name }}</h2><p class="muted">الفترة: {{ plan.date_from }} — {{ plan.date_to }}</p>
 <p class="muted">النطاق: {{ plan.branch_id and 'فرع محدد' or 'كل الفروع' }} · {{ plan.cost_center_id and 'مركز تكلفة محدد' or 'كل مراكز التكلفة' }} · {{ plan.project_id and 'مشروع محدد' or 'كل المشروعات' }}</p>
 <span class="badge">{{ {'draft':'مسودة','pending':'بانتظار الاعتماد','approved':'معتمدة','rejected':'مرفوضة'}.get(plan.status,plan.status) }}</span>
 <a class="btn secondary" href="{{ url_for('planning.budget_index') }}">العودة للموازنات</a>
