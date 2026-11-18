@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from backup_scheduler import next_backup_datetime
-from postgres_backup_scheduler import run_due_postgres_backup
+from postgres_backup_scheduler import ensure_initial_postgres_backup, run_due_postgres_backup
 
 
 class PostgreSQLBackupSchedulerTests(unittest.TestCase):
@@ -67,6 +67,10 @@ class PostgreSQLBackupSchedulerTests(unittest.TestCase):
                         "INSERT INTO company_settings(setting_key,setting_value) VALUES(%s,%s)",
                         list(values.items()),
                     )
+
+                initial = ensure_initial_postgres_backup(dsn, folder)
+                self.assertIsNotNone(initial)
+                self.assertIsNone(ensure_initial_postgres_backup(dsn, folder))
 
                 archive = run_due_postgres_backup(dsn, folder)
                 self.assertIsNotNone(archive)
