@@ -445,8 +445,20 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
                 source_sql = "SELECT " + ", ".join(
                     '"' + column.replace('"', '""') + '"' for column in src_cols
                 ) + ' FROM "' + table.replace('"', '""') + '"'
+                target_select = []
+                for column in src_cols:
+                    if table == "management_dashboard_data_version" and column == "version":
+                        # The copy process intentionally bumps this cache token
+                        # once after restoring its triggers. Normalize only that
+                        # documented +1 so the verifier still checks the exact
+                        # source value and rejects any other target mutation.
+                        target_select.append(
+                            "(" + _ident(column) + " - 1) AS " + _ident(column)
+                        )
+                    else:
+                        target_select.append(_ident(column))
                 target_sql = "SELECT " + ", ".join(
-                    _ident(column) for column in src_cols
+                    target_select
                 ) + " FROM " + _ident(schema) + "." + _ident(table)
                 source_cursor = src.execute(source_sql)
                 with dst.cursor(name="nexus_verify_" + str(len(row_counts))) as target_cursor:
