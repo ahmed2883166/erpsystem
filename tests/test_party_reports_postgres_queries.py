@@ -2,6 +2,13 @@
 import os
 import unittest
 
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except ImportError:
+    psycopg = None
+    dict_row = None
+
 from party_reports import (
     _all_party_events, _events, _gl_control_balance,
     _gl_party_control_balances,
@@ -9,13 +16,12 @@ from party_reports import (
 from management_dashboard import _copied_opening_entry_ids
 
 
-@unittest.skipUnless(os.environ.get("NEXUS_TEST_POSTGRES_DSN"),
-                     "NEXUS_TEST_POSTGRES_DSN is not configured")
+@unittest.skipUnless(
+    os.environ.get("NEXUS_TEST_POSTGRES_DSN") and psycopg,
+    "PostgreSQL integration DSN/driver is not configured",
+)
 class PartyReportsPostgreSQLQueryTests(unittest.TestCase):
     def test_copied_opening_entry_exclusion_executes_on_postgresql(self):
-        import psycopg
-        from psycopg.rows import dict_row
-
         connection = psycopg.connect(
             os.environ["NEXUS_TEST_POSTGRES_DSN"], row_factory=dict_row
         )
@@ -62,9 +68,6 @@ class PartyReportsPostgreSQLQueryTests(unittest.TestCase):
             connection.close()
 
     def test_customer_and_supplier_statement_queries_execute_on_postgresql(self):
-        import psycopg
-        from psycopg.rows import dict_row
-
         connection = psycopg.connect(
             os.environ["NEXUS_TEST_POSTGRES_DSN"], row_factory=dict_row
         )
@@ -146,9 +149,6 @@ class PartyReportsPostgreSQLQueryTests(unittest.TestCase):
 
 
     def test_party_level_gl_balances_and_unassigned_dimension_on_postgresql(self):
-        import psycopg
-        from psycopg.rows import dict_row
-
         connection = psycopg.connect(
             os.environ["NEXUS_TEST_POSTGRES_DSN"], row_factory=dict_row
         )
