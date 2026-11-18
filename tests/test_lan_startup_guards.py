@@ -7,11 +7,11 @@ import unittest
 
 class LANStartupGuardTests(unittest.TestCase):
     def _run_app_with_environment(self, data_dir, *, allow_lan=None,
-                                  cookie_secure=None, skip_db_init="1"):
+                                  cookie_secure=None, skip_db_init="1", demo_mode="0"):
         env = os.environ.copy()
         env["NEXUS_DATA_DIR"] = os.path.join(data_dir, "data")
         env["NEXUS_BACKUP_DIR"] = os.path.join(data_dir, "backups")
-        env["NEXUS_DEMO_MODE"] = "1"
+        env["NEXUS_DEMO_MODE"] = demo_mode
         env["HOST"] = "0.0.0.0"
         env["PORT"] = "5055"
         env["NEXUS_SKIP_DB_INIT"] = skip_db_init
@@ -32,7 +32,7 @@ class LANStartupGuardTests(unittest.TestCase):
     def test_lan_binding_is_prohibited_in_demo_mode(self):
         with tempfile.TemporaryDirectory(prefix="nexus-lan-demo-mode-") as data_dir:
             result = self._run_app_with_environment(
-                data_dir, allow_lan="1", cookie_secure="1"
+                data_dir, allow_lan="1", cookie_secure="1", demo_mode="1"
             )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("LAN binding is prohibited in local demo mode", result.stderr)
