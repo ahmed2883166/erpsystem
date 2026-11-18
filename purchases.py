@@ -432,24 +432,31 @@ def ensure_detail_account(c, code, name, typ, preferred_parent):
         raise ValueError("حساب الربط المطلوب "+code+" ("+name+") غير مضبوط. أضفه كحساب تفصيلي نشط بالنوع "+typ+" قبل الترحيل.")
     return found["id"]
 
-def _activity_posting_accounts(c):
-    from activity_profiles import active_posting_accounts
-    mapping = active_posting_accounts(c)
+def _activity_posting_accounts(c, activity_code=None):
+    if activity_code:
+        from company_activities import resolve_activity_profile
+        mapping = resolve_activity_profile(c, activity_code).get("posting_accounts", {})
+    else:
+        from activity_profiles import active_posting_accounts
+        mapping = active_posting_accounts(c)
     if not mapping or not mapping.get("supplier_ap"):
         raise ValueError("ملف النشاط الحالي لا يحتوي حساب الموردين المطلوب للمشتريات.")
     return mapping
 
-def _activity_tax_roles(c):
+def _activity_tax_roles(c, activity_code=None):
+    if activity_code:
+        from company_activities import resolve_activity_profile
+        return resolve_activity_profile(c, activity_code).get("tax_roles", {})
     from activity_profiles import active_tax_roles
     return active_tax_roles(c)
 
 
-def supplier_ap_account(c):
-    mapping=_activity_posting_accounts(c)
+def supplier_ap_account(c, activity_code=None):
+    mapping=_activity_posting_accounts(c, activity_code)
     return account(c,mapping["supplier_ap"],"liability")
 
-def activity_inventory_code(c):
-    return _activity_posting_accounts(c)["purchase_inventory"]
+def activity_inventory_code(c, activity_code=None):
+    return _activity_posting_accounts(c, activity_code)["purchase_inventory"]
 
 
 def validate_asset_bill_lines(c, form, bill_date, subtotal):
@@ -1430,6 +1437,14 @@ def new_receipt():
             dimensions = validate_journal_dimensions(c, {**request.form, "supplier_id": supplier})
             product_row=execute_compat(c, "SELECT * FROM stock_products WHERE id=? AND active=1",(product,)).fetchone()
             if not product_row or product_row["product_type"]=="service": raise ValueError("اختر صنفًا مخزنيًا نشطًا.")
+            activity_code = None
+            if po_id:
+                po_context = _purchase_order_for_receipt_update(c, po_id)
+                activity_code = po_context["activity_code"] if po_context and "activity_code" in po_context.keys() else None
+            activity_code = activity_code or request.form.get("activity_code") or None
+            if activity_code:
+                from company_activities import resolve_activity_profile
+                resolve_activity_profile(c, activity_code)
             location_id=request.form.get("location_id",type=int)
             if not location_id:
                 default_location=execute_compat(c, "SELECT location_id FROM stock_product_locations WHERE product_id=? AND warehouse_id=?",(product,wh)).fetchone()
@@ -1453,7 +1468,7 @@ def new_receipt():
                 po_line_id=po_line["id"]
             from activity_profiles import resolve_product_account_code
             invcode=resolve_product_account_code(
-                c, product_row["id"], "inventory", activity_inventory_code(c)
+                c, product_row["id"], "inventory", activity_inventory_code(c, activity_code)
             )
             if not invcode: raise ValueError("النشاط الحالي لا يملك حساب مخزون تلقائيًا؛ اضبط الربط أولًا.")
             inv=account(c,invcode,"asset")
@@ -1461,9 +1476,9 @@ def new_receipt():
             grni=ensure_detail_account(c,"2190","بضاعة مستلمة غير مفوترة GRNI","liability","2000")
             no="GRN-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             rid=insert_and_get_id(c, """INSERT INTO goods_receipts(receipt_no,po_id,supplier_id,warehouse_id,receipt_date,total_value,created_by,
-              branch_id,cost_center_id,project_id) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+              branch_id,cost_center_id,project_id,activity_code) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
               (no,po_id,supplier,wh,request.form["receipt_date"],str(total),session["user_id"],
-               dimensions["branch_id"],dimensions["cost_center_id"],dimensions["project_id"]))
+               dimensions["branch_id"],dimensions["cost_center_id"],dimensions["project_id"],activity_code))
             receipt_line_id=insert_and_get_id(c, """INSERT INTO goods_receipt_lines(receipt_id,po_line_id,product_id,quantity,unit_cost,total_cost,location_id,entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                       (rid,po_line_id,product,str(qty),str(unit),str(total),location_id,str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,str(factor)))
@@ -1955,7 +1970,11 @@ def post_supplier_bill(c, bill_id, actor_id):
         "branch_id": bill["branch_id"], "cost_center_id": bill["cost_center_id"],
         "project_id": bill["project_id"], "supplier_id": bill["supplier_id"],
     })
-    ap = supplier_ap_account(c)
+    activity_code = bill["activity_code"] if "activity_code" in bill.keys() else None
+    if activity_code:
+        from company_activities import resolve_activity_profile
+        resolve_activity_profile(c, activity_code)
+    ap = supplier_ap_account(c, activity_code)
     subtotal = money(bill["subtotal"])
     tax = money(bill["tax_amount"])
     journal_lines = []
@@ -2066,7 +2085,7 @@ def post_supplier_bill(c, bill_id, actor_id):
     else:
         raise ValueError("نوع فاتورة المورد المخزن غير معروف.")
     if recoverable_tax:
-        vat_code = _activity_tax_roles(c)["input_vat"]
+        vat_code = _activity_tax_roles(c, activity_code)["input_vat"]
         vat = ensure_detail_account(c, vat_code, "ضريبة مدخلات قابلة للخصم", "asset", "1100")
         journal_lines.append((vat, recoverable_tax, 0, "ضريبة مدخلات قابلة للخصم حسب الفاتورة"))
     if tax:
