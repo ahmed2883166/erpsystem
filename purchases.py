@@ -2742,10 +2742,11 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
         movement_id=insert_and_get_id(conn,
             """INSERT INTO stock_movements(
               movement_no,movement_type,product_id,target_warehouse_id,target_location_id,lot_id,
-              quantity,unit_cost,total_cost,movement_date,notes,created_by,journal_entry_id,accounting_status)
-              SELECT ?, 'receipt',cnl.product_id,cnl.warehouse_id,?, ?,?,?,?,?,?,?,?,'posted'
+              quantity,unit_cost,total_cost,movement_date,notes,created_by,journal_entry_id,accounting_status,activity_code)
+              SELECT ?, 'receipt',cnl.product_id,cnl.warehouse_id,?, ?,?,?,?,?,?,?,?,'posted',b.activity_code
               FROM supplier_credit_note_lines cnl
               JOIN supplier_credit_notes n ON n.id=cnl.credit_note_id
+              JOIN supplier_bills b ON b.id=n.bill_id
               JOIN stock_products l ON l.id=cnl.product_id
               WHERE cnl.id=?""",
             (movement_no,allocation["location_id"],allocation["lot_id"],allocation["quantity"],
@@ -2911,11 +2912,11 @@ def new_credit_note():
                     movement_id=insert_and_get_id(c,"""INSERT INTO stock_movements(
                       movement_no,movement_type,product_id,source_warehouse_id,lot_id,quantity,unit_cost,total_cost,
                       movement_date,notes,created_by,issue_purpose,accounting_status,
-                      entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name)
-                      VALUES(?,'issue',?,?,?,?,?,?,?,?,?,'supplier_return','pending_document',?,?,?,?)""",
+                      entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name,activity_code)
+                      VALUES(?,'issue',?,?,?,?,?,?,?,?,?,'supplier_return','pending_document',?,?,?,?,?)""",
                       (movement_no,product_id,warehouse_id,lot_id,str(allocated_qty),str(unit_cost),str(allocated_total),
                        request.form["credit_date"],"مرتجع مورد — "+supplier_credit_no,session["user_id"],
-                       str(allocated_qty/conversion_factor),uom_id,raw_uom_key,entered_uom_name or stored_uom_name))
+                       str(allocated_qty/conversion_factor),uom_id,raw_uom_key,entered_uom_name or stored_uom_name,activity_code))
                     movement_ids.append(movement_id)
                     line_item["layer_allocations"].append({
                         "movement_id":movement_id,"source_layer_id":layer_detail["layer_id"],
