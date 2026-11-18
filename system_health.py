@@ -4,10 +4,16 @@ from flask import Blueprint, render_template, session, redirect, url_for, flash
 from app_paths import DB_PATH
 from database import connect_database
 from accounting_core import reconciliation_snapshot, decimal_sum_expression
-from db_compat import DB_ERROR, table_exists, table_columns
+from db_compat import DB_ERROR, table_exists, table_columns, database_dialect
 from db_sql import execute_compat
 
 health_bp = Blueprint("system_health", __name__)
+
+
+def _recent_window_predicate(connection, column, amount, unit):
+    if database_dialect(connection) == "postgresql":
+        return f"NULLIF({column},'')::timestamptz >= CURRENT_TIMESTAMP - INTERVAL '{amount} {unit}'"
+    return f"datetime({column}) >= datetime('now','-{amount} {unit}')"
 
 
 def _has_table(connection, table):
@@ -126,9 +132,10 @@ def collect_health_checks(connection):
     # pruned after the 15-minute lockout window and cannot represent 24 hours.
     login_audit_columns = _columns(connection, "audit_log")
     if {"created_at", "action", "outcome", "entity_type"}.issubset(login_audit_columns):
-        failed_logins = execute_compat(connection, 
-            """SELECT COUNT(*) FROM audit_log
-               WHERE datetime(created_at) >= datetime('now','-24 hours')
+        login_window = _recent_window_predicate(connection, "created_at", 24, "hours")
+        failed_logins = execute_compat(connection,
+            f"""SELECT COUNT(*) FROM audit_log
+               WHERE {login_window}
                  AND (action IN ('login_failed','login_blocked')
                       OR (entity_type='auth' AND outcome='failure'))"""
         ).fetchone()[0]
@@ -136,8 +143,9 @@ def collect_health_checks(connection):
     elif _has_table(connection, "login_attempts") and {
         "attempted_at", "username", "remote_addr"
     }.issubset(_columns(connection, "login_attempts")):
-        failed_logins = execute_compat(connection, 
-            "SELECT COUNT(*) FROM login_attempts WHERE datetime(attempted_at) >= datetime('now','-24 hours')"
+        login_window = _recent_window_predicate(connection, "attempted_at", 24, "hours")
+        failed_logins = execute_compat(connection,
+            f"SELECT COUNT(*) FROM login_attempts WHERE {login_window}"
         ).fetchone()[0]
         login_source = "سجل المحاولات المؤقت؛ قد لا يشمل المحاولات الأقدم من 15 دقيقة"
     else:
@@ -256,8 +264,9 @@ def index():
                 item["href"] = None
         audit_count = 0
         if _has_table(connection, "audit_log"):
-            audit_count = execute_compat(connection, 
-                "SELECT COUNT(*) FROM audit_log WHERE created_at >= datetime('now','-7 days')"
+            audit_window = _recent_window_predicate(connection, "created_at", 7, "days")
+            audit_count = execute_compat(connection,
+                f"SELECT COUNT(*) FROM audit_log WHERE {audit_window}"
             ).fetchone()[0]
         issues = sum((item["count"] or 0) for item in checks if item["severity"] in {"critical","high"})
         summary = {"checks":len(checks), "issues":issues, "audit_week":audit_count}
