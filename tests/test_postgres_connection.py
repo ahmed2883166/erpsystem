@@ -63,6 +63,20 @@ class PostgreSQLConnectionPrototypeTests(unittest.TestCase):
             connection.rollback()
             connection.close()
 
+    def test_transaction_status_adapter_tracks_postgresql_connection_state(self):
+        from db_compat import transaction_is_active
+
+        connection = connect_postgres(POSTGRES_DSN)
+        try:
+            self.assertFalse(transaction_is_active(connection))
+            connection.execute("SELECT 1")
+            self.assertTrue(transaction_is_active(connection))
+            connection.rollback()
+            self.assertFalse(transaction_is_active(connection))
+        finally:
+            connection.rollback()
+            connection.close()
+
     def test_autocommit_is_explicit_when_requested(self):
         connection = connect_postgres(POSTGRES_DSN, autocommit=True)
         try:
