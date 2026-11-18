@@ -399,6 +399,8 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
 
         row_counts = {}
         target_columns_by_table = {}
+        controls = []
+        controls_skipped = []
         for table in source_tables:
             if table not in target_tables:
                 continue
@@ -470,8 +472,6 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
                     "detail": str(exc)[:300],
                 })
 
-        controls = []
-        controls_skipped = []
         sqlite_fks = _sqlite_foreign_key_map(src, source_tables)
         postgres_fks = _pg_foreign_key_map(dst, schema)
         missing_fks, extra_fks = _foreign_key_differences(sqlite_fks, postgres_fks)
