@@ -1,24 +1,21 @@
 """Read-only operational and accounting health checks for NEXUS ERP."""
-import sqlite3
 from decimal import Decimal, InvalidOperation
 from flask import Blueprint, render_template, session, redirect, url_for, flash
 from app_paths import DB_PATH
 from database import connect_database
-from accounting_core import reconciliation_snapshot
+from accounting_core import reconciliation_snapshot, decimal_sum_expression
+from db_compat import DB_ERROR, table_exists, table_columns
+from db_sql import execute_compat
 
 health_bp = Blueprint("system_health", __name__)
 
 
 def _has_table(connection, table):
-    return connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-    ).fetchone() is not None
+    return table_exists(connection, table)
 
 
 def _columns(connection, table):
-    if not _has_table(connection, table):
-        return set()
-    return {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+    return table_columns(connection, table)
 
 
 def _money(value):
@@ -38,10 +35,12 @@ def collect_health_checks(connection):
     # Posted journal entries must contain balanced debit and credit totals.
     unbalanced, empty = 0, 0
     if _has_table(connection, "journal_entries") and _has_table(connection, "journal_lines"):
-        rows = connection.execute(
-            """SELECT je.id, COUNT(jl.id) line_count,
-                      COALESCE(DECIMAL_SUM(jl.debit),0) debit_total,
-                      COALESCE(DECIMAL_SUM(jl.credit),0) credit_total
+        debit_total_sql = decimal_sum_expression(connection, "jl.debit")
+        credit_total_sql = decimal_sum_expression(connection, "jl.credit")
+        rows = execute_compat(connection, 
+            f"""SELECT je.id, COUNT(jl.id) line_count,
+                      {debit_total_sql} debit_total,
+                      {credit_total_sql} credit_total
                FROM journal_entries je
                LEFT JOIN journal_lines jl ON jl.entry_id=je.id
                WHERE je.status='posted'
@@ -66,7 +65,7 @@ def collect_health_checks(connection):
             cols = _columns(connection, table)
             if {"status", "journal_entry_id"}.issubset(cols):
                 if _has_table(connection, "journal_entries"):
-                    missing = connection.execute(
+                    missing = execute_compat(connection, 
                         f"""SELECT COUNT(*) FROM {table} d
                             LEFT JOIN journal_entries j ON j.id=d.journal_entry_id
                             WHERE lower(COALESCE(d.status,''))='posted'
@@ -74,7 +73,7 @@ def collect_health_checks(connection):
                     ).fetchone()[0]
                 else:
                     # If the journal table is absent, every posted source document is unlinked.
-                    missing = connection.execute(
+                    missing = execute_compat(connection, 
                         f"""SELECT COUNT(*) FROM {table}
                             WHERE lower(COALESCE(status,''))='posted'"""
                     ).fetchone()[0]
@@ -85,7 +84,7 @@ def collect_health_checks(connection):
     # A safe stock check: identify negative remaining quantities in valuation layers.
     if _has_table(connection, "stock_valuation_layers"):
         if "qty_remaining" in _columns(connection, "stock_valuation_layers"):
-            negative = connection.execute(
+            negative = execute_compat(connection, 
                 """SELECT COUNT(*) FROM stock_valuation_layers
                    WHERE CAST(qty_remaining AS REAL) < -0.000001"""
             ).fetchone()[0]
@@ -101,7 +100,7 @@ def collect_health_checks(connection):
 
     # Backup readiness: report persisted scheduler state without triggering a backup.
     if _has_table(connection, "company_settings"):
-        backup_settings = {row["setting_key"]: row["setting_value"] for row in connection.execute(
+        backup_settings = {row["setting_key"]: row["setting_value"] for row in execute_compat(connection, 
             "SELECT setting_key,setting_value FROM company_settings WHERE setting_key LIKE 'backup_%'"
         )}
         enabled = backup_settings.get("backup_enabled", "0") == "1"
@@ -127,7 +126,7 @@ def collect_health_checks(connection):
     # pruned after the 15-minute lockout window and cannot represent 24 hours.
     login_audit_columns = _columns(connection, "audit_log")
     if {"created_at", "action", "outcome", "entity_type"}.issubset(login_audit_columns):
-        failed_logins = connection.execute(
+        failed_logins = execute_compat(connection, 
             """SELECT COUNT(*) FROM audit_log
                WHERE datetime(created_at) >= datetime('now','-24 hours')
                  AND (action IN ('login_failed','login_blocked')
@@ -137,7 +136,7 @@ def collect_health_checks(connection):
     elif _has_table(connection, "login_attempts") and {
         "attempted_at", "username", "remote_addr"
     }.issubset(_columns(connection, "login_attempts")):
-        failed_logins = connection.execute(
+        failed_logins = execute_compat(connection, 
             "SELECT COUNT(*) FROM login_attempts WHERE datetime(attempted_at) >= datetime('now','-24 hours')"
         ).fetchone()[0]
         login_source = "سجل المحاولات المؤقت؛ قد لا يشمل المحاولات الأقدم من 15 دقيقة"
@@ -153,7 +152,7 @@ def collect_health_checks(connection):
     if _has_table(connection, "approval_requests"):
         approval_columns = _columns(connection, "approval_requests")
         if "status" in approval_columns:
-            pending_approvals = connection.execute(
+            pending_approvals = execute_compat(connection, 
                 "SELECT COUNT(*) FROM approval_requests WHERE lower(COALESCE(status,'')) IN ('pending','requested','submitted')"
             ).fetchone()[0]
             add("pending_approvals", "طلبات الموافقة المعلقة", "info", pending_approvals,
@@ -184,7 +183,7 @@ def collect_health_checks(connection):
     if _has_table(connection, "financial_years"):
         year_columns = _columns(connection, "financial_years")
         if {"id", "year_name", "start_date", "opening_entry_id"}.issubset(year_columns):
-            year = connection.execute("""SELECT id,year_name,start_date
+            year = execute_compat(connection, """SELECT id,year_name,start_date
                 FROM financial_years WHERE opening_entry_id IS NOT NULL
                 ORDER BY start_date DESC,id DESC LIMIT 1""").fetchone()
             if year:
@@ -207,7 +206,7 @@ def collect_health_checks(connection):
                                 "high" if item["count"] else "info",
                                 item["count"], f"السنة {year['year_name']}: {item['details']}",
                                 "/financial-years")
-                except (sqlite3.Error, KeyError, TypeError, ValueError):
+                except DB_ERROR + (KeyError, TypeError, ValueError):
                     add("opening_balance_reconciliation", "مطابقة أرصدة الافتتاح مع الأستاذ",
                         "high", 1,
                         f"تعذر التحقق من افتتاح السنة {year['year_name']}؛ يلزم مراجعة تقرير ما قبل الإقفال.",
@@ -257,7 +256,7 @@ def index():
                 item["href"] = None
         audit_count = 0
         if _has_table(connection, "audit_log"):
-            audit_count = connection.execute(
+            audit_count = execute_compat(connection, 
                 "SELECT COUNT(*) FROM audit_log WHERE created_at >= datetime('now','-7 days')"
             ).fetchone()[0]
         issues = sum((item["count"] or 0) for item in checks if item["severity"] in {"critical","high"})

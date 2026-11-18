@@ -6,7 +6,7 @@ from copy import deepcopy
 from threading import RLock
 from accounting_core import register_decimal_aggregates, decimal_sum_expression
 from income_statement import build_income_statement
-from db_compat import table_exists, table_columns, database_dialect
+from db_compat import table_exists, table_columns, database_dialect, database_dialect
 from db_sql import execute_compat
 
 CENT = Decimal("0.01")
