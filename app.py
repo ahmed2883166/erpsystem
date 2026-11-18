@@ -4682,7 +4682,11 @@ def restore_backup():
         os.close(archive_fd)
         archive_path = Path(archive_name)
         temp_paths.append(archive_path)
-        max_archive_bytes = 2 * 1024 * 1024 * 1024
+        max_archive_bytes = (
+            16 * 1024 * 1024 * 1024
+            if configured_database_backend() == "postgresql"
+            else 2 * 1024 * 1024 * 1024
+        )
         written = 0
         with archive_path.open("wb") as target:
             while True:
