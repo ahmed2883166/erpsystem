@@ -580,6 +580,8 @@ def generate_postgres_ddl(snapshot):
     )
 
     review = {
+        "baseline_sha256": baseline_sha256,
+        "installation_marker": "nexus_schema_installation",
         "table_count": len(tables),
         "foreign_keys": foreign_key_manifest,
         "column_count": sum(len(table.get("columns", [])) for table in tables),
