@@ -9,6 +9,7 @@ on:
     branches:
       - feature/company-setup-currency-tax-activity
       - draft/postgresql-stock-compat
+      - work/phase6-industry-packs
   pull_request:
     branches:
       - main
