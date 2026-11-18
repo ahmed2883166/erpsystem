@@ -10,6 +10,7 @@ on:
       - feature/company-setup-currency-tax-activity
       - draft/postgresql-stock-compat
       - work/phase6-industry-packs
+      - work/phase7-bootstrap-ux
   pull_request:
     branches:
       - main
