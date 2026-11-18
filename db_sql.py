@@ -4,7 +4,6 @@ Only positional qmark placeholders outside SQL literals/comments are translated
 for psycopg. This is deliberately opt-in; it is not a general SQL dialect
 translator.
 """
-import sqlite3
 import re
 
 from db_compat import database_dialect
