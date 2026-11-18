@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}مطابقة تقييم المخزون مع الأستاذ | NEXUS ERP{% endblock %}
 {% block content %}
-<header class="page-heading"><div><h2>تقرير المطابقة الرسمي لتقييم المخزون مع دفتر الأستاذ</h2><p class="muted">تقرير رقابي يربط إجمالي تقييم المخزون بحسابات الرقابة في الأستاذ، ويعرض تفصيل الأصناف والمخازن كمساند للمراجعة.</p><p class="muted">تاريخ ووقت إعداد التقرير: {{ report_generated_at }}</p></div><a class="btn secondary" href="{{ url_for('stock.reports') }}">تقارير المخزون</a></div></header>
+<header class="page-heading"><div><h2>تقرير المطابقة الرسمي لتقييم المخزون مع دفتر الأستاذ</h2><p class="muted">تقرير رقابي يربط إجمالي تقييم المخزون بحسابات الرقابة في الأستاذ، ويعرض تفصيل الأصناف والمخازن كمساند للمراجعة.</p><p class="muted">تاريخ ووقت إعداد التقرير: {{ report_generated_at }}</p></div><a class="btn secondary" href="{{ url_for('stock.reports') }}">تقارير المخزون</a></header>
 {% if not error %}<section class="panel">
   {% if reconciliation_status == 'matched' %}<p class="status success">نتيجة المطابقة: إجمالي تقييم المخزون متطابق مع أرصدة حسابات المخزون في الأستاذ حتى وقت إعداد التقرير.</p>
   {% else %}<p class="status danger">نتيجة المطابقة: توجد فروق تحتاج مراجعة بين تقييم المخزون وحسابات الأستاذ.</p>{% endif %}
