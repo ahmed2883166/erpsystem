@@ -393,5 +393,49 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
             generate_postgres_ddl(_with_required_numeric_override_tables(snapshot))
 
 
+    def test_preserves_composite_foreign_keys_as_one_constraint(self):
+        snapshot = _with_required_numeric_override_tables({
+            "tables": [
+                {
+                    "name": "stock_locations",
+                    "columns": [
+                        {"name": "id", "type": "INTEGER", "pk": 0},
+                        {"name": "warehouse_id", "type": "INTEGER", "pk": 0},
+                    ],
+                    "foreign_keys": [],
+                    "indexes": [],
+                },
+                {
+                    "name": "stock_product_locations",
+                    "columns": [
+                        {"name": "location_id", "type": "INTEGER", "pk": 0},
+                        {"name": "warehouse_id", "type": "INTEGER", "pk": 0},
+                    ],
+                    "foreign_keys": [
+                        {
+                            "id": 0, "seq": 0, "table": "stock_locations",
+                            "from": "location_id", "to": "id",
+                            "on_update": "NO ACTION", "on_delete": "NO ACTION",
+                        },
+                        {
+                            "id": 0, "seq": 1, "table": "stock_locations",
+                            "from": "warehouse_id", "to": "warehouse_id",
+                            "on_update": "NO ACTION", "on_delete": "NO ACTION",
+                        },
+                    ],
+                    "indexes": [],
+                },
+            ]
+        })
+        ddl, review = generate_postgres_ddl(snapshot)
+        self.assertIn(
+            'FOREIGN KEY ("location_id", "warehouse_id") '
+            'REFERENCES "stock_locations" ("id", "warehouse_id")',
+            ddl,
+        )
+        self.assertEqual(ddl.count("FOREIGN KEY ("), 1)
+        self.assertEqual(review["foreign_key_count"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
