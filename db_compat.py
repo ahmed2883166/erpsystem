@@ -362,8 +362,10 @@ def insert_and_get_id(connection, sql, params=()):
     if database_dialect(connection) == "sqlite":
         value = connection.execute(statement, params).lastrowid
     else:
-        from db_sql import qmark_to_format
-        row = connection.execute(qmark_to_format(statement + " RETURNING id"), params).fetchone()
+        from db_sql import execute_compat
+        row = execute_compat(
+            connection, statement + " RETURNING id", params
+        ).fetchone()
         if row is None:
             raise RuntimeError("INSERT ... RETURNING id did not return a row.")
         value = row["id"] if isinstance(row, dict) else row[0]
