@@ -5,6 +5,7 @@ import unittest
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from backup_scheduler import next_backup_datetime
 from postgres_backup_scheduler import ensure_initial_postgres_backup, run_due_postgres_backup
@@ -84,6 +85,24 @@ class PostgreSQLBackupSchedulerTests(unittest.TestCase):
                 self.assertEqual(settings["backup_last_status"], "success")
                 self.assertEqual(settings["backup_last_file"], Path(archive).name)
                 self.assertEqual(settings["backup_last_error"], "")
+
+                with psycopg.connect(dsn) as connection:
+                    connection.execute(
+                        "UPDATE company_settings SET setting_value=%s WHERE setting_key='backup_next_run'",
+                        ((datetime.now() - timedelta(days=1)).isoformat(timespec="seconds"),),
+                    )
+                with patch(
+                    "postgres_backup_scheduler.create_postgres_backup_archive",
+                    side_effect=OSError("simulated disk full"),
+                ):
+                    self.assertIsNone(run_due_postgres_backup(dsn, folder))
+                with psycopg.connect(dsn) as connection:
+                    failed_settings = dict(connection.execute(
+                        "SELECT setting_key,setting_value FROM company_settings"
+                    ).fetchall())
+                self.assertEqual(failed_settings["backup_last_status"], "failed")
+                self.assertEqual(failed_settings["backup_last_file"], Path(archive).name)
+                self.assertIn("simulated disk full", failed_settings["backup_last_error"])
             finally:
                 with psycopg.connect(admin_dsn, autocommit=True) as admin:
                     admin.execute(
