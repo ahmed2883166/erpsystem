@@ -778,8 +778,8 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
             reasons.append("القيد غير متوازن بين المدين والدائن")
         if entry_date >= period_end - timedelta(days=1):
             reasons.append("قيد في آخر يومين من الفترة")
-        lower_date = (entry_date - timedelta(days=90)).isoformat()
-        current_date = entry_date.isoformat()
+        lower_date = entry_date - timedelta(days=90)
+        current_date = entry_date
         for line in entry_lines:
             history = history_by_account.get(line["account_id"])
             if not history:
