@@ -9,6 +9,9 @@ import os
 import re
 import sys
 import uuid
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from postgres_database import connect_postgres
 from core_schema import initialize_core_schema
