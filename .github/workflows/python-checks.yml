@@ -5,7 +5,7 @@ concurrency:
   cancel-in-progress: false
 on:
   push:
-    branches: [main, feature/company-setup-currency-tax-activity]
+    branches: [main, feature/company-setup-currency-tax-activity, work/phase7-bootstrap-ux]
   pull_request:
     branches: [main]
 jobs:
