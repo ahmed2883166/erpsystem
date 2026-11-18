@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
-from accounting_core import post_journal
+from accounting_core import post_journal, decimal_net_expression
 from chart_templates import ensure_account_metadata
 from db_compat import table_columns, table_exists, begin_write_transaction, execute_script, DB_ERROR
 from db_sql import execute_compat
@@ -284,9 +284,13 @@ def index():
         page=request.args.get("bank_page",1,type=int),
         per_page=request.args.get("bank_per_page",50,type=int))
     rows=bank_page["rows"]
-    bank_balances=execute_compat(c, """SELECT a.id,a.code,a.name_ar,
-        COALESCE(DECIMAL_NET(CASE WHEN je.status='posted' THEN jl.debit ELSE '0' END,
-                             CASE WHEN je.status='posted' THEN jl.credit ELSE '0' END),0) balance
+    bank_net = decimal_net_expression(
+        c,
+        "CASE WHEN je.status='posted' THEN jl.debit ELSE '0' END",
+        "CASE WHEN je.status='posted' THEN jl.credit ELSE '0' END",
+    )
+    bank_balances=execute_compat(c, f"""SELECT a.id,a.code,a.name_ar,
+        {bank_net} balance
         FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
         LEFT JOIN journal_entries je ON je.id=jl.entry_id
         WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
