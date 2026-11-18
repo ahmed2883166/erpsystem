@@ -1,6 +1,7 @@
 {% extends "base.html" %}{% block title %}استلام مشتريات | NEXUS ERP{% endblock %}{% block content %}
 <header class="page-heading"><div><h2>استلام بضاعة غير مفوترة (GRNI)</h2><p>يرحل النظام المخزون مدينًا وGRNI دائنًا، ولا يسجل ضريبة من إذن الاستلام.</p></div></header>
 <section class="panel"><form method="post"><div class="form-grid">
+{% if activity_options %}<div><label>النشاط</label><select name="activity_code">{% for x in activity_options %}<option value="{{x.activity_code}}" {% if x.activity_code==selected_activity %}selected{% endif %}>{{x.activity_code}}</option>{% endfor %}</select></div>{% endif %}
 <div><label>المورد</label><select name="supplier_id" required>{% for s in suppliers %}<option value="{{s.id}}">{{s.name}}</option>{% endfor %}</select></div>
 <div><label>أمر الشراء (اختياري)</label><select name="po_id"><option value="">استلام بدون أمر شراء</option>{% for o in orders %}<option value="{{o.id}}">{{o.po_no}} — {{o.status}}</option>{% endfor %}</select></div>
 <div><label>المخزن</label><select name="warehouse_id" required>{% for w in warehouses %}<option value="{{w.id}}">{{w.code}} - {{w.name_ar}}</option>{% endfor %}</select></div>

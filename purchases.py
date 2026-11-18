@@ -31,6 +31,14 @@ def _columns(conn, name):
     return table_columns(conn, name)
 
 
+def _company_activity_form_options(conn):
+    """Return enabled activity choices and the designated primary activity."""
+    from company_activities import list_company_activities
+    options = [row for row in list_company_activities(conn) if row["enabled"]]
+    primary = next((row["activity_code"] for row in options if row["is_primary"]), "")
+    return options, primary
+
+
 def _supplier_bill_for_update(conn, bill_id):
     """Lock a supplier bill before checking/posting it on PostgreSQL."""
     sql = "SELECT * FROM supplier_bills WHERE id=?"
@@ -1275,7 +1283,9 @@ def new_order():
     su=execute_compat(c, "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
     products=execute_compat(c, "SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     product_uoms={p["id"]:product_uom_options(c,p["id"]) for p in products}
-    c.close(); return render_template("purchase_order_new.html",suppliers=su,products=products,product_uoms=product_uoms,today=date.today().isoformat())
+    activity_options, selected_activity = _company_activity_form_options(c)
+    c.close(); return render_template("purchase_order_new.html",suppliers=su,products=products,product_uoms=product_uoms,
+        activity_options=activity_options,selected_activity=selected_activity,today=date.today().isoformat())
 
 
 @purchase_bp.route("/orders/<int:order_id>/submit", methods=["POST"])
@@ -1520,7 +1530,9 @@ def new_receipt():
     orders=execute_compat(c, "SELECT id,po_no,supplier_id,status FROM purchase_orders WHERE status IN ('approved','partially_received') ORDER BY id DESC").fetchall()
     locations=execute_compat(c, "SELECT id,warehouse_id,code,name_ar,location_type FROM stock_locations WHERE active=1 ORDER BY warehouse_id,code").fetchall()
     dimension_options=active_dimension_options(c)
-    c.close(); return render_template("purchase_receipt_new.html",suppliers=su,warehouses=wh,products=pr,product_uoms=product_uoms,orders=orders,locations=locations,dimension_options=dimension_options,today=date.today().isoformat())
+    activity_options, selected_activity = _company_activity_form_options(c)
+    c.close(); return render_template("purchase_receipt_new.html",suppliers=su,warehouses=wh,products=pr,product_uoms=product_uoms,orders=orders,locations=locations,dimension_options=dimension_options,
+        activity_options=activity_options,selected_activity=selected_activity,today=date.today().isoformat())
 
 def _supplier_receipt_available_amount(c, receipt_id, exclude_bill_id=None):
     params = [receipt_id]
@@ -2240,9 +2252,11 @@ def new_bill():
     receipts = _available_supplier_receipts(c, None)
     receipt_lines = _supplier_receipt_line_rows(c, [row["id"] for row in receipts])
     dimension_options=active_dimension_options(c)
+    activity_options, selected_activity = _company_activity_form_options(c)
     c.close(); return render_template("purchase_bill_new.html",suppliers=su,receipts=receipts,
         receipt_lines=receipt_lines, expense_accounts=expense_accounts,asset_accounts=asset_accounts,
-        dimension_options=dimension_options,today=date.today().isoformat())
+        dimension_options=dimension_options,activity_options=activity_options,selected_activity=selected_activity,
+        today=date.today().isoformat())
 
 
 @purchase_bp.route("/bills/<int:bill_id>/edit", methods=["GET", "POST"])
@@ -2398,11 +2412,14 @@ def edit_bill(bill_id):
     }
     existing_asset_lines = execute_compat(c, "SELECT * FROM supplier_bill_asset_lines WHERE bill_id=? ORDER BY line_no",(bill_id,)).fetchall()
     dimension_options = active_dimension_options(c)
+    activity_options, selected_activity = _company_activity_form_options(c)
+    selected_activity = bill["activity_code"] or selected_activity
     c.close()
     return render_template("purchase_bill_new.html", suppliers=suppliers, receipts=receipts,
         receipt_lines=receipt_lines, existing_invoice_lines=existing_invoice_lines,
         expense_accounts=expense_accounts, asset_accounts=asset_accounts,
-        dimension_options=dimension_options, today=date.today().isoformat(), bill=bill, selected_receipt_ids=selected_receipt_ids,
+        dimension_options=dimension_options, activity_options=activity_options, selected_activity=selected_activity,
+        today=date.today().isoformat(), bill=bill, selected_receipt_ids=selected_receipt_ids,
         receipt_allocations=existing_allocations, existing_asset_lines=existing_asset_lines, edit_mode=True)
 
 
