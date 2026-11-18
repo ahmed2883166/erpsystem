@@ -6,6 +6,7 @@ recognize receivables, revenue and VAT.
 """
 from app_paths import DB_PATH
 import json
+import uuid
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
@@ -22,6 +23,11 @@ from code_sequences import next_code
 sales_bp = Blueprint("sales", __name__, url_prefix="/sales")
 
 CENT = Decimal("0.01")
+
+
+def _document_stamp():
+    """Return a timestamp plus entropy to avoid collisions on coarse OS clocks."""
+    return _document_stamp() + uuid.uuid4().hex[:8].upper()
 
 
 def db():
@@ -734,7 +740,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             "يلزم اعتماد مدير النظام لإتمامها."
         )
 
-    stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    stamp = _document_stamp()
     invoice_no = "SINV-" + stamp
     effective_rate = (tax_amount * Decimal("100") / subtotal).quantize(CENT, rounding=ROUND_HALF_UP)
     invoice_id = insert_and_get_id(conn,
@@ -882,7 +888,7 @@ def create_invoice_workflow(conn, payload, status, created_by, gross_subtotal,
         raise ValueError("إجمالي المسودة أو الخصم غير صحيح.")
     begin_write_transaction(conn)
     try:
-        workflow_no = "SIVD-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+        workflow_no = "SIVD-" + _document_stamp()
         workflow_id = insert_and_get_id(conn, """INSERT INTO sales_invoice_workflows(
             workflow_no,customer_id,invoice_date,due_date,gross_subtotal,discount_amount,
             discount_percent,payload_json,status,created_by,submitted_by,submitted_at)
@@ -1162,7 +1168,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
     if tax_total > 0:
         vat_account = _sales_output_vat_account(conn, activity)
 
-    stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    stamp = _document_stamp()
     credit_no = "SCN-" + stamp
     credit_id = insert_and_get_id(conn,
         """INSERT INTO sales_credit_notes(credit_note_no,invoice_id,credit_date,reason,
@@ -1349,7 +1355,7 @@ def post_customer_refund(conn, credit_note_id, refund_date, amount, cash_account
     _customer_cash_account(conn, cash_account_id)
     invoice = execute_compat(conn, "SELECT * FROM sales_invoices WHERE id=?", (note["invoice_id"],)).fetchone()
     ar = _account(conn, _sales_account_codes(conn, _activity(conn))["ar"], "asset")
-    refund_no = "SREF-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    refund_no = "SREF-" + _document_stamp()
     dimensions = validate_journal_dimensions(conn, _customer_invoice_dimensions(invoice))
     journal_id = post_journal(
         conn, refund_date, refund_no, "رد مبلغ للعميل عن إشعار " + note["credit_note_no"],
@@ -1481,7 +1487,7 @@ def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_i
     _customer_cash_account(conn, cash_account_id)
     activity = _activity(conn)
     ar = _account(conn, _sales_account_codes(conn, activity)["ar"], "asset")
-    receipt_no = "RCPT-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    receipt_no = "RCPT-" + _document_stamp()
     dimensions = validate_journal_dimensions(conn, {
         "branch_id": invoice["branch_id"], "cost_center_id": invoice["cost_center_id"],
         "project_id": invoice["project_id"], "customer_id": invoice["customer_id"],
@@ -1545,7 +1551,7 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
     _ensure_unique_customer_cash_reference(conn, reference)
     _customer_cash_account(conn, cash_account_id)
     ar = _account(conn, _sales_account_codes(conn, _activity(conn))["ar"], "asset")
-    receipt_no = "RCPTB-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    receipt_no = "RCPTB-" + _document_stamp()
     journal_lines = [
         (cash_account_id, total, 0, "إجمالي التحصيل المجمع", {"customer_id": customer_id})
     ]
@@ -1705,7 +1711,7 @@ def post_customer_advance_receipt(conn, customer_id, receipt_date, amount,
     _ensure_unique_customer_cash_reference(conn, reference)
     _customer_cash_account(conn, cash_account_id)
     advance_account = _customer_advances_account(conn)
-    receipt_no = "CADV-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    receipt_no = "CADV-" + _document_stamp()
     dimensions = validate_journal_dimensions(conn, {"customer_id": customer_id})
     journal_id = post_journal(
         conn, receipt_date, receipt_no, "استلام مقدم من العميل " + customer["name"],
@@ -1772,7 +1778,7 @@ def allocate_customer_advance(conn, advance_receipt_id, allocations, allocation_
         raise ValueError(f"قيمة التخصيص تتجاوز المتبقي من مقدم العميل ({available:.2f}).")
     advance_account = _customer_advances_account(conn)
     ar = _account(conn, _sales_account_codes(conn, _activity(conn))["ar"], "asset")
-    allocation_no = "CADVA-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    allocation_no = "CADVA-" + _document_stamp()
     journal_lines = [
         (advance_account, total, 0, "تخفيض التزام مقدم العميل",
          validate_journal_dimensions(conn, {"customer_id": receipt["customer_id"]}))
@@ -1857,7 +1863,7 @@ def reverse_customer_advance_transaction(
         original_date = source["refund_date"]
     if reversal_date < original_date:
         raise ValueError("تاريخ العكس لا يجوز أن يسبق تاريخ العملية الأصلية.")
-    reversal_no = "CADV-REV-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    reversal_no = "CADV-REV-" + _document_stamp()
     reversal_journal_id = _reverse_posted_journal(
         conn, original_journal_id, reversal_date, reversal_no,
         "عكس عملية مقدم عميل: " + reason, created_by,
@@ -1905,7 +1911,7 @@ def post_customer_advance_refund(conn, advance_receipt_id, refund_date, amount,
     _ensure_unique_customer_cash_reference(conn, reference)
     _customer_cash_account(conn, cash_account_id)
     advance_account = _customer_advances_account(conn)
-    refund_no = "CADVR-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    refund_no = "CADVR-" + _document_stamp()
     dimensions = validate_journal_dimensions(conn, {"customer_id": receipt["customer_id"]})
     journal_id = post_journal(
         conn, refund_date, refund_no,
@@ -2472,7 +2478,7 @@ def new_invoice():
                     "credit_override": bool(session.get("role") == "admin" and request.form.get("credit_override") == "1"),
                 }
                 begin_write_transaction(c)
-                request_no = "SDR-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+                request_no = "SDR-" + _document_stamp()
                 request_id = insert_and_get_id(c,
                     """INSERT INTO sales_discount_approval_requests(
                          request_no,customer_id,invoice_date,due_date,gross_subtotal,
