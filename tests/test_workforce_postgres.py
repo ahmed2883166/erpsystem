@@ -96,8 +96,8 @@ class PostgreSQLWorkforcePostingTests(unittest.TestCase):
         self.assertEqual(snapshot["journal_totals"]["debit"], Decimal("12500.00"))
         self.assertEqual(snapshot["journal_totals"]["credit"], Decimal("12500.00"))
         self.assertEqual(snapshot["unbalanced"], [])
-        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 1)
-        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM journal_lines").fetchone()[0], 9)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) AS row_count FROM journal_entries").fetchone()["row_count"], 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) AS row_count FROM journal_lines").fetchone()["row_count"], 9)
 
         with self.assertRaisesRegex(ValueError, "رقم مرجع القيد مستخدم"):
             post_journal(
