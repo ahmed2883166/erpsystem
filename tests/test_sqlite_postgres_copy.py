@@ -477,6 +477,7 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
         self.assertEqual(result["dashboard_triggers_rebuilt"], 15)
         self.assertEqual(result["dashboard_version_after_copy"], 1)
         verification = verify_copy(source_path, self.dsn, self.schema)
+        self.assertEqual(verification["baseline_sha256"], "a" * 64)
         self.assertTrue(verification["passed"], verification["issues"])
         self.assertEqual(verification["source_table_count"], 7)
         self.assertEqual(verification["source_row_count"], 10)
@@ -526,10 +527,13 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
         self._create_target()
         with psycopg.connect(self.dsn) as conn:
             conn.execute(f'DROP TABLE "{self.schema}"."nexus_schema_installation"')
+        source_path = self._source()
         with self.assertRaisesRegex(ValueError, "no NEXUS baseline installation marker"):
             copy_database(
-                self._source(), self.dsn, self.schema, batch_size=2, apply=True
+                source_path, self.dsn, self.schema, batch_size=2, apply=True
             )
+        with self.assertRaisesRegex(ValueError, "no NEXUS baseline installation marker"):
+            verify_copy(source_path, self.dsn, self.schema)
         with psycopg.connect(self.dsn) as conn:
             account_count = conn.execute(
                 f'SELECT COUNT(*) FROM "{self.schema}"."accounts"'
