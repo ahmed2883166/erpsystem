@@ -8,7 +8,7 @@ from flask import Flask
 from openpyxl import load_workbook
 from unittest.mock import patch
 
-from report_exports import register_report_exports
+from report_exports import register_report_exports, _format_export_dates
 
 
 class TrialBalanceExcelExportTests(unittest.TestCase):
@@ -367,6 +367,26 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         )
         self.assertEqual(pdf.status_code, 200, pdf.data[:200].decode("utf-8", errors="replace"))
         self.assertTrue(pdf.data.startswith(b"%PDF"))
+
+    def test_export_date_formatter_uses_day_month_year_without_changing_invalid_values(self):
+        self.assertEqual(_format_export_dates("2026-11-18"), "18/11/2026")
+        self.assertEqual(_format_export_dates("2026-11-18T14:05:00"), "18/11/2026 14:05:00")
+        self.assertEqual(_format_export_dates("18/11/2026"), "18/11/2026")
+        self.assertEqual(_format_export_dates("2026-19-45"), "2026-19-45")
+
+    def test_current_screen_excel_export_formats_iso_dates(self):
+        response = self.client.post(
+            "/reports/export/current-screen/excel",
+            json={"tables": [{
+                "title": "حركات بتاريخ 2026-11-18",
+                "rows": [["التاريخ", "البيان"], ["2026-11-18", "حركة اختبار"]],
+            }]},
+        )
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(io.BytesIO(response.data), data_only=True)
+        sheet = workbook.active
+        self.assertEqual(sheet["A2"].value, "حركات بتاريخ 18/11/2026")
+        self.assertEqual(sheet["A5"].value, "18/11/2026")
 
     def test_trial_balance_export_rejects_reversed_date_range(self):
         response = self.client.get(
