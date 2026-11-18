@@ -648,3 +648,75 @@ main details > summary:focus-visible {
     justify-content: center;
   }
 }
+
+
+/* Apply the same readable table rhythm to legacy and newer screens alike. */
+main .table-wrap > table,
+main .table-wrap table:not(.table) {
+  width: 100%;
+  margin: 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  color: var(--text);
+  font-size: .88rem;
+  line-height: 1.65;
+}
+main .table-wrap > table thead th,
+main .table-wrap > table > tbody > tr:first-child > th,
+main .table-wrap table:not(.table) thead th {
+  padding: .72rem .8rem;
+  color: var(--text);
+  background: var(--surface2);
+  border-bottom: 2px solid var(--line);
+  font-weight: 800;
+  white-space: nowrap;
+}
+main .table-wrap > table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+main .table-wrap > table tbody td,
+main .table-wrap table:not(.table) tbody td {
+  padding: .62rem .8rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+main .table-wrap > table tbody tr:last-child td {
+  border-bottom: 0;
+}
+main .table-wrap > table tbody tr:hover > td {
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+}
+main .table-wrap > table td form {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  flex-wrap: wrap;
+}
+main .table-wrap > table td input,
+main .table-wrap > table td select {
+  min-width: 95px;
+  max-width: 230px;
+}
+main .table-wrap > table td .btn,
+main .table-wrap > table td button {
+  min-height: 34px;
+  padding: .3rem .6rem;
+  font-size: .8rem;
+}
+main .table-wrap > table td .muted,
+main .table-wrap > table td small {
+  line-height: 1.5;
+}
+@media (max-width: 700px) {
+  main .table-wrap > table,
+  main .table-wrap table:not(.table) {
+    font-size: .82rem;
+  }
+  main .table-wrap > table thead th,
+  main .table-wrap > table > tbody > tr:first-child > th,
+  main .table-wrap > table tbody td {
+    padding: .52rem .58rem;
+  }
+}
