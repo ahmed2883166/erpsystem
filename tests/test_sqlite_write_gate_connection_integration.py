@@ -14,31 +14,40 @@ class SQLiteConnectionWriteGateIntegrationTests(unittest.TestCase):
             with self.subTest(end_statement=end_statement), tempfile.TemporaryDirectory() as folder:
                 path = Path(folder) / "shared-gate.sqlite3"
                 first = connect_database(path, isolation_level=None)
-                second = connect_database(path, isolation_level=None)
-                self.assertIs(first._nexus_write_gate, second._nexus_write_gate)
+                gate = first._nexus_write_gate
                 first.execute("BEGIN IMMEDIATE")
 
                 waiter_started = threading.Event()
                 waiter_acquired = threading.Event()
                 failures = []
+                second_gate = []
 
                 def waiting_writer():
-                    waiter_started.set()
+                    second = None
                     try:
+                        # SQLite connections are thread-affine by default:
+                        # create and close this connection in its owning thread.
+                        second = connect_database(path, isolation_level=None)
+                        second_gate.append(second._nexus_write_gate)
+                        waiter_started.set()
                         second.execute("BEGIN IMMEDIATE")
                         waiter_acquired.set()
                         second.execute("ROLLBACK")
                     except Exception as exc:
                         failures.append(exc)
+                    finally:
+                        if second is not None:
+                            second.close()
 
                 thread = threading.Thread(target=waiting_writer)
                 try:
                     thread.start()
                     self.assertTrue(waiter_started.wait(1))
+                    self.assertIs(second_gate[0], gate)
                     deadline = time.monotonic() + 2
-                    while first._nexus_write_gate.waiting_count < 1 and time.monotonic() < deadline:
+                    while gate.waiting_count < 1 and time.monotonic() < deadline:
                         time.sleep(0.001)
-                    self.assertEqual(first._nexus_write_gate.waiting_count, 1)
+                    self.assertEqual(gate.waiting_count, 1)
                     self.assertFalse(waiter_acquired.wait(0.05))
 
                     first.execute(end_statement)
@@ -51,7 +60,6 @@ class SQLiteConnectionWriteGateIntegrationTests(unittest.TestCase):
                         first.rollback()
                         thread.join(2)
                     first.close()
-                    second.close()
 
 
 if __name__ == "__main__":
