@@ -79,7 +79,9 @@ class PostgreSQLSupplierPostingLockTests(unittest.TestCase):
 
             def execute(self, statement, params=()):
                 self.calls.append((statement, tuple(params)))
-                if "WHERE id=?" in statement:
+                # execute_compat translates PostgreSQL qmark placeholders to %s
+                # before dispatching to the connection.
+                if "WHERE id=" in statement:
                     return Cursor({"id": 11})
                 return Cursor(rows=[{"id": 11}, {"id": 12}])
 
