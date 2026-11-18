@@ -243,8 +243,14 @@ def _canonical_cell(value, postgres_type: str):
         if not number.is_finite():
             return ["number", str(number)]
         if number == 0:
-            number = Decimal(0)
-        return ["number", format(number.normalize(), "f")]
+            canonical_number = "0"
+        else:
+            # Avoid Decimal.normalize(): it obeys the active precision context
+            # and can round high-precision ERP amounts before hashing.
+            canonical_number = format(number, "f")
+            if "." in canonical_number:
+                canonical_number = canonical_number.rstrip("0").rstrip(".")
+        return ["number", canonical_number]
     if kind in {"smallint", "integer", "bigint"}:
         number = Decimal(str(value))
         if number != number.to_integral_value():
