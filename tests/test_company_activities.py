@@ -108,6 +108,8 @@ class CompanyActivityPackTests(unittest.TestCase):
         disable_company_activity(self.conn, "service")
         with self.assertRaisesRegex(ValueError, "غير مفعّل"):
             resolve_activity_profile(self.conn, "service")
+        historical = resolve_activity_profile(self.conn, "service", allow_disabled=True)
+        self.assertEqual(historical["company_activity_code"], "service")
         with self.assertRaisesRegex(ValueError, "النشاط الأساسي"):
             disable_company_activity(self.conn, "commercial")
 
