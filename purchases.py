@@ -1944,7 +1944,7 @@ def reject_supplier_bill(c, bill_id, actor_id, reason):
 
 def post_supplier_bill(c, bill_id, actor_id):
     begin_write_transaction(c)
-    bill = execute_compat(c, "SELECT * FROM supplier_bills WHERE id=?", (bill_id,)).fetchone()
+    bill = _supplier_bill_for_update(c, bill_id)
     if not bill:
         raise ValueError("فاتورة المورد غير موجودة.")
     if bill["journal_entry_id"] is not None or bill["status"] == "posted":
