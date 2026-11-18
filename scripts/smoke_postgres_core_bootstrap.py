@@ -69,7 +69,7 @@ def main():
         connection.commit()
         print(
             "POSTGRES_CORE_BOOTSTRAP=PASS "
-            f"schema={schema} tables=11 journal_entry={entry_id} "
+            f"schema={schema} tables=10 journal_entry={entry_id} "
             f"debit={debit} credit={credit}"
         )
         return 0
