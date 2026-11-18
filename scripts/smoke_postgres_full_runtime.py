@@ -111,6 +111,90 @@ def main() -> int:
                         raise AssertionError(
                             "PostgreSQL dashboard snapshot left an open transaction."
                         )
+                    # Exercise one real inventory-backed sales posting against the
+                    # fully initialized PostgreSQL application schema. This verifies
+                    # operational SQL, generated IDs, stock valuation locks, and both
+                    # revenue/COGS journals rather than only schema bootstrap.
+                    from decimal import Decimal
+                    from db_compat import insert_and_get_id
+                    import sales
+
+                    customer_id = insert_and_get_id(
+                        connection,
+                        "INSERT INTO customers(code,name,credit_limit) VALUES(?,?,?)",
+                        ("PG-SMOKE-CUSTOMER", "عميل اختبار PostgreSQL", "1000000"),
+                    )
+                    warehouse_id = insert_and_get_id(
+                        connection,
+                        "INSERT INTO stock_warehouses(code,name_ar) VALUES(?,?)",
+                        ("PG-SMOKE-WH", "مخزن اختبار PostgreSQL"),
+                    )
+                    product_id = insert_and_get_id(
+                        connection,
+                        "INSERT INTO stock_products(sku,name_ar) VALUES(?,?)",
+                        ("PG-SMOKE-SKU", "صنف اختبار PostgreSQL"),
+                    )
+                    receipt_id = insert_and_get_id(
+                        connection,
+                        """INSERT INTO stock_movements(
+                               movement_no,movement_type,product_id,target_warehouse_id,
+                               quantity,unit_cost,total_cost,movement_date
+                           ) VALUES(?, 'receipt', ?, ?, ?, ?, ?, ?)""",
+                        ("PG-SMOKE-RECEIPT", product_id, warehouse_id,
+                         "10", "5", "50", today.isoformat()),
+                    )
+                    insert_and_get_id(
+                        connection,
+                        """INSERT INTO stock_valuation_layers(
+                               product_id,warehouse_id,source_movement_id,
+                               qty_in,qty_remaining,unit_cost,value_remaining
+                           ) VALUES(?,?,?,?,?,?,?)""",
+                        (product_id, warehouse_id, receipt_id, "10", "10", "5", "50"),
+                    )
+                    admin_id = connection.execute(
+                        "SELECT id FROM users WHERE username='admin'"
+                    ).fetchone()["id"]
+                    invoice = sales.post_invoice(
+                        connection,
+                        customer_id,
+                        today.isoformat(),
+                        warehouse_id,
+                        [{"product_id": product_id, "quantity": "2", "unit_price": "20"}],
+                        Decimal("0"),
+                        created_by=admin_id,
+                    )
+                    connection.commit()
+
+                    posted_invoice = connection.execute(
+                        """SELECT total_amount,journal_entry_id,cogs_journal_entry_id
+                             FROM sales_invoices WHERE id=?""",
+                        (invoice["invoice_id"],),
+                    ).fetchone()
+                    remaining_layer = connection.execute(
+                        """SELECT qty_remaining,value_remaining
+                             FROM stock_valuation_layers WHERE product_id=? AND warehouse_id=?""",
+                        (product_id, warehouse_id),
+                    ).fetchone()
+                    if (
+                        not posted_invoice
+                        or not posted_invoice["journal_entry_id"]
+                        or not posted_invoice["cogs_journal_entry_id"]
+                        or Decimal(str(posted_invoice["total_amount"])) != Decimal("40.00")
+                        or Decimal(str(invoice["total_cost"])) != Decimal("10.00")
+                        or Decimal(str(remaining_layer["qty_remaining"])) != Decimal("8")
+                        or Decimal(str(remaining_layer["value_remaining"])) != Decimal("40")
+                    ):
+                        raise AssertionError(
+                            "PostgreSQL sales workflow did not reconcile invoice, COGS, "
+                            "and remaining inventory valuation."
+                        )
+                    sales_flow = {
+                        "invoice_id": invoice["invoice_id"],
+                        "journal_entry_id": posted_invoice["journal_entry_id"],
+                        "cogs_journal_entry_id": posted_invoice["cogs_journal_entry_id"],
+                        "total": str(posted_invoice["total_amount"]),
+                        "cost": str(invoice["total_cost"]),
+                    }
                 finally:
                     connection.close()
 
