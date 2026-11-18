@@ -113,12 +113,34 @@ def create_backup_archive(db_path, backup_dir, keep_count=30):
 
 
 def ensure_initial_backup(db_path, backup_dir):
-    """Create a one-time baseline archive when this company has no backup yet."""
-    backup_dir = Path(backup_dir)
-    existing = list(backup_dir.glob(f"{BACKUP_PREFIX}*.zip")) if backup_dir.exists() else []
-    if existing:
-        return None
-    return create_backup_archive(db_path, backup_dir)
+    """Create a one-time baseline archive for this database, independent of old archives."""
+    connection = _connect(db_path)
+    try:
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
+        ).fetchone() is None:
+            raise RuntimeError("Company settings must be initialized before the baseline backup.")
+        marker = connection.execute(
+            "SELECT setting_value FROM company_settings WHERE setting_key='backup_initial_baseline'"
+        ).fetchone()
+        if marker and marker["setting_value"]:
+            return None
+    finally:
+        connection.close()
+
+    archive = create_backup_archive(db_path, backup_dir)
+    connection = _connect(db_path)
+    try:
+        connection.execute(
+            """INSERT INTO company_settings(setting_key,setting_value)
+               VALUES('backup_initial_baseline',?)
+               ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value""",
+            (archive.name,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    return archive
 
 
 def _settings(connection):
