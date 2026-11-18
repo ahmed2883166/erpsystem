@@ -15,7 +15,7 @@ POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
 
 @unittest.skipUnless(POSTGRES_DSN, "NEXUS_TEST_POSTGRES_DSN is not configured")
 class PostgreSQLConnectionPrototypeTests(unittest.TestCase):
-    def test_connection_uses_dict_rows_and_preserves_decimal(self):
+    def test_connection_preserves_named_and_positional_rows_and_decimal(self):
         connection = connect_postgres(
             POSTGRES_DSN, application_name="NEXUS ERP adapter test"
         )
@@ -32,6 +32,7 @@ class PostgreSQLConnectionPrototypeTests(unittest.TestCase):
                 "SELECT amount FROM nexus_adapter_decimal_test"
             ).fetchone()
             self.assertEqual(row["amount"], Decimal("1234567890.123456"))
+            self.assertEqual(row[0], Decimal("1234567890.123456"))
             self.assertEqual(
                 connection.info.parameter_status("application_name"),
                 "NEXUS ERP adapter test",
@@ -70,6 +71,25 @@ class PostgreSQLConnectionPrototypeTests(unittest.TestCase):
             self.assertEqual(row["ready"], 1)
         finally:
             connection.close()
+
+
+class HybridPostgreSQLRowTests(unittest.TestCase):
+    def test_rows_support_named_numeric_and_slice_access(self):
+        from types import SimpleNamespace
+        from postgres_database import hybrid_row_factory
+
+        cursor = SimpleNamespace(description=(
+            SimpleNamespace(name="account_code"),
+            SimpleNamespace(name="balance"),
+        ))
+        make_row = hybrid_row_factory(cursor)
+        row = make_row(("1100", Decimal("125.50")))
+
+        self.assertEqual(row["account_code"], "1100")
+        self.assertEqual(row[0], "1100")
+        self.assertEqual(row[1], Decimal("125.50"))
+        self.assertEqual(row[:], ("1100", Decimal("125.50")))
+        self.assertEqual(list(row.keys()), ["account_code", "balance"])
 
 
 class PostgreSQLConnectionConfigurationTests(unittest.TestCase):

@@ -51,14 +51,40 @@ def _connection_settings(
     return resolved_dsn, autocommit, connect_timeout, application_name
 
 
+class HybridRow(dict):
+    """Dictionary row that also preserves sqlite3.Row-style numeric indexing."""
+
+    __slots__ = ("_values",)
+
+    def __init__(self, column_names, values):
+        self._values = tuple(values)
+        super().__init__(zip(column_names, self._values))
+
+    def __getitem__(self, key):
+        if isinstance(key, (int, slice)):
+            return self._values[key]
+        return super().__getitem__(key)
+
+
+def hybrid_row_factory(cursor):
+    """Build rows supporting both row["column"] and row[0] access patterns."""
+    description = cursor.description or ()
+    column_names = tuple(
+        column.name if hasattr(column, "name") else column[0]
+        for column in description
+    )
+
+    def make_row(values):
+        return HybridRow(column_names, values)
+
+    return make_row
+
+
 def _load_driver_row_factory(row_factory):
-    try:
-        from psycopg.rows import dict_row
-    except ImportError as exc:
-        raise RuntimeError(
-            "PostgreSQL support is optional; install psycopg[binary,pool]>=3.2,<4.0."
-        ) from exc
-    return row_factory or dict_row
+    # sqlite3.Row supports both named and positional lookup. The default
+    # PostgreSQL row factory must preserve that contract because existing ERP
+    # modules use both row["field"] and row[0] while migration is in progress.
+    return row_factory or hybrid_row_factory
 
 
 def connect_postgres(
@@ -71,9 +97,9 @@ def connect_postgres(
 ):
     """Open one standalone PostgreSQL connection.
 
-    This remains a low-level prototype, not a drop-in replacement for sqlite3.
-    Application code must not use it until the remaining SQL and lifecycle
-    contracts have been migrated.
+    This remains a low-level prototype, not a complete drop-in replacement for
+    sqlite3. Its default row shape is compatible with sqlite3.Row named and
+    positional indexing; SQL and lifecycle contracts still require migration.
     """
     dsn, autocommit, connect_timeout, application_name = _connection_settings(
         dsn,
