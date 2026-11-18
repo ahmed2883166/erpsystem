@@ -43,30 +43,29 @@ def main() -> int:
     if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", schema):
         raise RuntimeError("Generated unsafe schema name.")
 
-    baseline_sql = args.baseline.read_text(encoding="utf-8")
-    with psycopg.connect(dsn, autocommit=True) as connection:
-        install_postgres_baseline(connection, baseline_sql, schema=schema)
-
     with tempfile.TemporaryDirectory(prefix="admrail-pg-runtime-") as data_dir:
         backup_dir = Path(data_dir) / "backups"
-        os.environ["NEXUS_DB_BACKEND"] = "postgresql"
-        os.environ["NEXUS_POSTGRES_DSN"] = make_conninfo(
-            dsn, options=f"-csearch_path={schema}"
-        )
-        os.environ["NEXUS_DATA_DIR"] = str(Path(data_dir) / "data")
-        os.environ["NEXUS_BACKUP_DIR"] = str(backup_dir)
-        os.environ["NEXUS_SKIP_DB_INIT"] = "1"
         os.environ["NEXUS_SECRET_KEY"] = "postgres-runtime-smoke-secret-key-123456"
         os.environ["NEXUS_DEMO_MODE"] = "1"
 
+        # Exercise the same guarded fresh-install entry point documented for
+        # customer deployments, rather than duplicating its bootstrap logic.
+        from scripts.initialize_postgres_fresh_install import main as fresh_install_main
+        install_result = fresh_install_main([
+            "--ddl", str(args.baseline),
+            "--dsn", dsn,
+            "--schema", schema,
+            "--data-dir", str(Path(data_dir) / "data"),
+            "--backup-dir", str(backup_dir),
+        ])
+        if install_result != 0:
+            raise AssertionError(
+                f"PostgreSQL fresh-install initializer returned {install_result}."
+            )
+
         import app as nexus_app
 
-        # Keep the production gate closed. This test deliberately bypasses only
-        # that gate to prove whether all current initializers are PG-compatible.
-        nexus_app.require_supported_runtime_backend = lambda: None
         try:
-            nexus_app.initialize_database()
-
             with nexus_app.app.app_context():
                 connection = nexus_app.db()
                 try:
