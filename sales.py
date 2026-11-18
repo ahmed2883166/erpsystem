@@ -825,6 +825,14 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             conn, invoice_date, invoice_no + "-COGS", "تكلفة مبيعات " + invoice_no,
             cogs_lines, created_by, dimensions=dimensions
         )
+        # Persist the COGS journal link on the invoice as well as on its stock
+        # issue movements. Without this link, the posted COGS entry exists but
+        # invoice drill-down and reconciliation incorrectly report it as missing.
+        execute_compat(
+            conn,
+            "UPDATE sales_invoices SET cogs_journal_entry_id=? WHERE id=?",
+            (cogs_journal_id, invoice_id),
+        )
     if preissued_costs is None:
         for row in execute_compat(conn, "SELECT id FROM stock_movements WHERE movement_no LIKE ?", (invoice_no + "-%",)).fetchall():
             execute_compat(conn, "UPDATE stock_movements SET journal_entry_id=?,accounting_status=? WHERE id=?",
