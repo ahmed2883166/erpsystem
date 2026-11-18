@@ -26,10 +26,6 @@ from postgres_baseline import install_postgres_baseline
 from postgres_migrations import quote_schema_name
 
 
-def _baseline_digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def _install_or_verify_baseline(dsn: str, schema: str, ddl_path: Path) -> str:
     ddl = ddl_path.read_text(encoding="utf-8")
     expected_digest = hashlib.sha256(ddl.encode("utf-8")).hexdigest()
@@ -68,7 +64,7 @@ def _verify_bootstrap(connection) -> dict:
     required_tables = {
         "users", "accounts", "company_settings", "journal_entries",
         "journal_lines", "customers", "suppliers", "stock_products",
-        "stock_warehouses", "sales_invoices", "purchase_invoices",
+        "stock_warehouses", "sales_invoices", "supplier_bills",
         "bank_transactions", "fixed_assets", "employees", "payroll_runs",
     }
     existing = {
