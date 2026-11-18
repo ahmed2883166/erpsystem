@@ -95,10 +95,17 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
         deadline = current_report_deadline()
         if deadline is not None:
             remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
-            connection.execute(
-                "SELECT set_config('statement_timeout', %s, false)",
-                (f"{remaining_ms}ms",),
-            )
+            original_autocommit = connection.autocommit
+            try:
+                if not original_autocommit:
+                    connection.autocommit = True
+                connection.execute(
+                    "SELECT set_config('statement_timeout', %s, false)",
+                    (f"{remaining_ms}ms",),
+                )
+            finally:
+                if not original_autocommit:
+                    connection.autocommit = False
         return _track_connection(connection)
     # Track weak references only. A strong list here changes historical behavior:
     # it keeps otherwise-unreferenced connections alive until request teardown.
