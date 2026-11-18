@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}طلبات الشراء الداخلية | NEXUS ERP{% endblock %}
 {% block content %}
-<header><h2>طلبات الشراء الداخلية</h2><p>الطلب المعتمد لا يؤثر على المخزون أو الحسابات. التحويل ينشئ أمر شراء مسودة يخضع لدورة الاعتماد الحالية.</p></header>
+<header class="page-heading"><h2>طلبات الشراء الداخلية</h2><p>الطلب المعتمد لا يؤثر على المخزون أو الحسابات. التحويل ينشئ أمر شراء مسودة يخضع لدورة الاعتماد الحالية.</p></header>
 <section class="panel">
 {% if 'purchases.manage' in permissions %}<a class="button" href="{{ url_for('purchase.new_purchase_request') }}">طلب جديد</a>{% endif %}
 <table>
