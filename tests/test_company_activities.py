@@ -40,7 +40,7 @@ class CompanyActivityPackTests(unittest.TestCase):
 
     def test_conflicting_second_activity_is_blocked_without_changing_legacy_setting(self):
         enable_company_activity(self.conn, "commercial", primary=True)
-        with self.assertRaisesRegex(ValueError, "خريطة الحسابات الموحدة"):
+        with self.assertRaisesRegex(ValueError, "الأدوار المتعارضة"):
             enable_company_activity(self.conn, "service")
         self.assertEqual(
             [x["activity_code"] for x in list_company_activities(self.conn)],
@@ -53,7 +53,7 @@ class CompanyActivityPackTests(unittest.TestCase):
 
     def test_primary_is_unique_and_cannot_change_on_rejected_activity(self):
         enable_company_activity(self.conn, "commercial", primary=True)
-        with self.assertRaisesRegex(ValueError, "خريطة الحسابات الموحدة"):
+        with self.assertRaisesRegex(ValueError, "الأدوار المتعارضة"):
             enable_company_activity(self.conn, "service", primary=True)
         rows = list_company_activities(self.conn)
         self.assertEqual(sum(row["is_primary"] for row in rows), 1)
