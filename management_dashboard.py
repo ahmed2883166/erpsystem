@@ -178,7 +178,7 @@ def dashboard_period_balances(conn, current_start, current_end, previous_start, 
         if asof_excluded else "1=1"
     )
     register_decimal_aggregates(conn)
-    rows = conn.execute(f"""
+    rows = execute_compat(conn, f"""
         SELECT a.id,a.code,a.name_ar,a.account_type,a.is_group,
           {decimal_sum_expression(conn, "CASE WHEN je.entry_date BETWEEN ? AND ? AND (" + closing_filter + ") THEN jl.debit ELSE '0' END")} current_debit,
           {decimal_sum_expression(conn, "CASE WHEN je.entry_date BETWEEN ? AND ? AND (" + closing_filter + ") THEN jl.credit ELSE '0' END")} current_credit,
@@ -336,9 +336,7 @@ def load_management_account_roles(conn):
     is_custom_profile = profile["code"] != profile["base_activity"]
     customization_row = conn.execute(
         "SELECT meta_value FROM management_dashboard_meta WHERE meta_key='roles_customized'"
-    ).fetchone() if conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='management_dashboard_meta'"
-    ).fetchone() else None
+    ).fetchone() if table_exists(conn, "management_dashboard_meta") else None
     management_roles_customized = bool(
         customization_row and customization_row["meta_value"] == "1"
     )
@@ -677,9 +675,7 @@ def cash_forecast(conn, today=None, weeks=8):
 
     threshold_row = conn.execute(
         "SELECT setting_value FROM company_settings WHERE setting_key='minimum_cash_balance'"
-    ).fetchone() if conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
-    ).fetchone() else None
+    ).fetchone() if table_exists(conn, "company_settings") else None
     threshold = _decimal(threshold_row["setting_value"]) if threshold_row else Decimal("0")
     return {
         "opening": _rounded(opening), "weeks": result, "minimum": threshold,
