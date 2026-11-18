@@ -52,7 +52,7 @@ class _TrackedSQLiteConnection(sqlite3.Connection):
         is_immediate_write = (
             gate is not None
             and self._nexus_write_gate_context is None
-            and re.match(r"^\\s*BEGIN\\s+IMMEDIATE\\b", str(sql), re.IGNORECASE)
+            and re.match(r"^\s*BEGIN\s+IMMEDIATE\b", str(sql), re.IGNORECASE)
         )
         if is_immediate_write:
             context = gate.hold(timeout=self._nexus_write_gate_timeout)
