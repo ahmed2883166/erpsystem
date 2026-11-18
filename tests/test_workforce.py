@@ -1677,5 +1677,32 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
 
 
+    def test_employee_profile_captures_initial_basic_and_insured_wages(self):
+        values = workforce._employee_form_values({
+            "full_name": "موظف اختبار",
+            "hire_date": "2026-11-01",
+            "basic_salary": "12500.75",
+            "insured_wage": "9000",
+            "standard_hours": "208",
+            "work_status": "permanent",
+        })
+        self.assertEqual(values[5], "12500.75")
+        self.assertEqual(values[10], "9000.00")
+
+    def test_employee_profile_rejects_negative_basic_or_insured_wage(self):
+        for field in ("basic_salary", "insured_wage"):
+            data = {
+                "full_name": "موظف اختبار",
+                "hire_date": "2026-11-01",
+                "basic_salary": "10000",
+                "insured_wage": "8000",
+                "standard_hours": "208",
+                "work_status": "permanent",
+            }
+            data[field] = "-1"
+            with self.assertRaises(ValueError):
+                workforce._employee_form_values(data)
+
+
 if __name__ == "__main__":
     unittest.main()
