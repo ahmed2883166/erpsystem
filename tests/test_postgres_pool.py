@@ -176,7 +176,8 @@ class PostgreSQLDirectConnectionTests(unittest.TestCase):
         self.assertTrue(kwargs["autocommit"])
         self.assertEqual(kwargs["connect_timeout"], 8)
         self.assertEqual(kwargs["application_name"], "NEXUS direct test")
-        self.assertIs(kwargs["row_factory"], rows_module.dict_row)
+        from postgres_database import hybrid_row_factory
+        self.assertIs(kwargs["row_factory"], hybrid_row_factory)
 
     def test_invalid_connection_settings_are_rejected_before_driver_call(self):
         from postgres_database import connect_postgres
