@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}أعمار المخزون والأصناف الراكدة | NEXUS ERP{% endblock %}
 {% block content %}
-<header class="report-header"><div><h2>أعمار المخزون والأصناف الراكدة</h2><p class="muted">القيمة محسوبة من الكميات المتبقية في طبقات التقييم حتى {{ report.as_of }}.</p></div></header>
+<header class="report-header page-heading"><div><h2>أعمار المخزون والأصناف الراكدة</h2><p class="muted">القيمة محسوبة من الكميات المتبقية في طبقات التقييم حتى {{ report.as_of }}.</p></div></header>
 <section class="panel no-print"><h3>تاريخ التقرير</h3><form method="get" class="report-filter"><label>حتى تاريخ<input type="date" name="as_of" value="{{ report.as_of }}"></label><button>عرض التقرير</button><button type="button" class="secondary" onclick="window.print()">طباعة</button></form></section>
 {% if not report.available %}<section class="panel"><p>بيانات طبقات تقييم المخزون غير متاحة في قاعدة البيانات الحالية.</p></section>{% else %}
 <section class="grid">
