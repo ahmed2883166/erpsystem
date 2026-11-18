@@ -60,20 +60,14 @@ def register_sqlite_connection_teardown(app):
 
 def _track_connection(connection):
     if has_app_context():
-        connections = getattr(g, "_nexus_database_connections", None)
+        # Hold every request-scoped connection strongly until app-context teardown.
+        # Weak references can disappear before teardown while SQLite still has
+        # cursors/result objects alive, leaving Windows file handles locked.
+        connections = getattr(g, "_nexus_strong_database_connections", None)
         if connections is None:
-            connections = set()
-            g._nexus_database_connections = connections
-        try:
-            connections.add(weakref.ref(connection, connections.discard))
-        except TypeError:
-            # Some C-extension DB-API connections do not expose weak references.
-            # Retain only those handles until app-context teardown.
-            strong_connections = getattr(g, "_nexus_strong_database_connections", None)
-            if strong_connections is None:
-                strong_connections = []
-                g._nexus_strong_database_connections = strong_connections
-            strong_connections.append(connection)
+            connections = []
+            g._nexus_strong_database_connections = connections
+        connections.append(connection)
     return connection
 
 
