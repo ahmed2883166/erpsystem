@@ -158,7 +158,7 @@ class BankOpeningReconciliationTests(unittest.TestCase):
 class BankStatementCsvImportTests(unittest.TestCase):
     def test_imports_utf8_bom_csv_with_english_headers(self):
         rows = banking.parse_statement_csv(
-            b"\\xef\\xbb\\xbfDate,Amount,Reference,Description\\n2026-11-01,1250.50,TX-1,Customer deposit\\n2026-11-02,-25.00,TX-2,Bank fee\\n"
+            b"\xef\xbb\xbfDate,Amount,Reference,Description\n2026-11-01,1250.50,TX-1,Customer deposit\n2026-11-02,-25.00,TX-2,Bank fee\n"
         )
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["statement_date"], "2026-11-01")
@@ -168,31 +168,39 @@ class BankStatementCsvImportTests(unittest.TestCase):
 
     def test_imports_semicolon_csv_with_arabic_headers_and_local_date(self):
         rows = banking.parse_statement_csv(
-            "التاريخ;المبلغ;المرجع;البيان\\n01/11/2026;1,200.75;مرجع-١;إيداع نقدي\\n"
+            "التاريخ;المبلغ;المرجع;البيان\n01/11/2026;1,200.75;مرجع-١;إيداع نقدي\n"
         )
         self.assertEqual(rows[0]["statement_date"], "2026-11-01")
         self.assertEqual(rows[0]["signed_amount"], Decimal("1200.75"))
         self.assertEqual(rows[0]["description"], "إيداع نقدي")
 
+    def test_accepts_decimal_comma_without_thousands_separator(self):
+        rows = banking.parse_statement_csv("Date,Amount\\n2026-11-01,1250,75\\n")
+        self.assertEqual(rows[0]["signed_amount"], Decimal("1250.75"))
+
+    def test_rejects_ambiguous_comma_amount(self):
+        with self.assertRaisesRegex(ValueError, "تنسيق مبلغ ملتبس"):
+            banking.parse_statement_csv("Date,Amount\\n2026-11-01,1,20,30\\n")
+
     def test_rejects_csv_without_required_columns(self):
         with self.assertRaisesRegex(ValueError, "التاريخ"):
-            banking.parse_statement_csv("Reference,Description\\n1,Deposit\\n")
+            banking.parse_statement_csv("Reference,Description\n1,Deposit\n")
 
     def test_rejects_invalid_date_and_zero_amount(self):
         with self.assertRaisesRegex(ValueError, "تاريخ غير صحيح"):
-            banking.parse_statement_csv("Date,Amount\\nnot-a-date,10\\n")
+            banking.parse_statement_csv("Date,Amount\nnot-a-date,10\n")
         with self.assertRaisesRegex(ValueError, "لا يمكن أن تكون صفرًا"):
-            banking.parse_statement_csv("Date,Amount\\n2026-11-01,0\\n")
+            banking.parse_statement_csv("Date,Amount\n2026-11-01,0\n")
 
     def test_rejects_empty_and_oversized_row_sets(self):
         with self.assertRaisesRegex(ValueError, "فارغ"):
             banking.parse_statement_csv("")
         with self.assertRaisesRegex(ValueError, "الحد الأقصى"):
-            banking.parse_statement_csv("Date,Amount\\n2026-11-01,1\\n2026-11-02,2\\n", max_rows=1)
+            banking.parse_statement_csv("Date,Amount\n2026-11-01,1\n2026-11-02,2\n", max_rows=1)
 
     def test_rejects_non_utf8_bytes(self):
         with self.assertRaisesRegex(ValueError, "UTF-8"):
-            banking.parse_statement_csv(b"Date,Amount\\n2026-11-01,\\xff\\n")
+            banking.parse_statement_csv(b"Date,Amount\n2026-11-01,\xff\n")
 
 
 if __name__ == "__main__":
