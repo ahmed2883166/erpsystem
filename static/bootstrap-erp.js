@@ -41,3 +41,25 @@
     observer.observe(document.documentElement, { childList: true, subtree: true });
   }
 })();
+
+
+/* Pointer-position ripple feedback for interactive controls. */
+(() => {
+  "use strict";
+  const selector = "main .btn, main button, main input[type='submit'], main input[type='button'], main a.button, main .button-link, .actions a, .actions button";
+  document.addEventListener("pointerdown", event => {
+    if (event.button !== 0 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const control = event.target.closest(selector);
+    if (!control || control.matches(":disabled, [aria-disabled='true']")) return;
+    if (control.tagName === "INPUT") return;
+    const rect = control.getBoundingClientRect();
+    const ripple = document.createElement("span");
+    ripple.className = "nexus-ripple";
+    ripple.setAttribute("aria-hidden", "true");
+    ripple.style.setProperty("--nexus-ripple-x", (event.clientX - rect.left) + "px");
+    ripple.style.setProperty("--nexus-ripple-y", (event.clientY - rect.top) + "px");
+    control.querySelectorAll(":scope > .nexus-ripple").forEach(item => item.remove());
+    control.appendChild(ripple);
+    ripple.addEventListener("animationend", () => ripple.remove(), { once: true });
+  }, { passive: true });
+})();
