@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import date, timedelta
 from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
-from accounting_core import post_journal, safe_error_message, decimal_sum_expression, register_decimal_aggregates
+from accounting_core import post_journal, safe_error_message, decimal_sum_expression, decimal_net_expression, register_decimal_aggregates
 from code_sequences import next_code
 from db_insert import insert_one_returning_id
 from db_sql import execute_compat
@@ -918,7 +918,8 @@ def build_asset_reconciliation_rows(conn, as_of):
             (Decimal(str(row["amount"])) for row in depreciation),Decimal("0"))
     rows=[]
     for (account_id,kind),register in sorted(expected.items(),key=lambda item:(item[0][0],item[0][1])):
-        gl=execute_compat(conn, """SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) balance
+        gl_net = decimal_net_expression(conn, "jl.debit", "jl.credit")
+        gl=execute_compat(conn, f"""SELECT {gl_net} balance
             FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
             WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<=?""",
             (account_id,as_of)).fetchone()
