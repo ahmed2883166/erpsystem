@@ -2516,6 +2516,45 @@ def activity_monitor():
     )
 
 
+@app.route("/reports/activities")
+@requires("reports.view")
+def activity_performance_report():
+    from activity_reporting import build_activity_performance_report
+    from company_activities import list_company_activities
+
+    connection = db()
+    selected_activity = request.args.get("activity_code", "").strip() or None
+    try:
+        report = build_activity_performance_report(connection, selected_activity)
+        activity_options = [
+            row for row in list_company_activities(connection) if row["enabled"]
+        ]
+        if not activity_options:
+            activity_options = [{
+                "activity_code": report["legacy_activity"],
+                "enabled": 1,
+                "is_primary": 1,
+            }]
+        valid_codes = {row["activity_code"] for row in activity_options}
+        if selected_activity and selected_activity not in valid_codes:
+            selected_activity = None
+            report = build_activity_performance_report(connection)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        report = {"legacy_activity": "commercial", "activities": [],
+                  "activity_count": 0, "journal_entry_count": 0,
+                  "unbalanced_journal_count": 0}
+        activity_options = []
+    finally:
+        connection.close()
+    return render_template(
+        "activity_performance_report.html",
+        report=report,
+        activity_options=activity_options,
+        selected_activity=selected_activity,
+    )
+
+
 @app.route("/reports/trial-balance")
 @requires("reports.view")
 def trial_balance():

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}أداء الأنشطة | NEXUS ERP{% endblock %}
+{% block content %}
+<header class="page-heading">
+  <div><h2>أداء الأنشطة ومطابقة الأستاذ</h2>
+  <p>تقرير تشغيلي للأنشطة المفعّلة. المستندات القديمة بلا نشاط صريح تُنسب إلى نشاط الشركة الأساسي.</p></div>
+</header>
+<section class="panel">
+  <form method="get" class="form-grid">
+    <label>النشاط
+      <select name="activity_code">
+        <option value="">كل الأنشطة</option>
+        {% for option in activity_options %}
+        <option value="{{ option.activity_code }}" {% if selected_activity==option.activity_code %}selected{% endif %}>{{ option.activity_code }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="actions"><button type="submit">عرض التقرير</button></div>
+  </form>
+</section>
+{% if report.unbalanced_journal_count %}
+<div class="notice error">تنبيه: يوجد {{ report.unbalanced_journal_count }} قيد غير متوازن ضمن القيود المرتبطة بالأنشطة. راجع القيود قبل الاعتماد.</div>
+{% else %}
+<div class="notice">تم فحص {{ report.journal_entry_count }} قيدًا مرتبطًا. لا توجد قيود غير متوازنة في مجموعة التقرير.</div>
+{% endif %}
+<section class="panel">
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>النشاط</th><th>فواتير البيع</th><th>صافي المبيعات</th><th>ضريبة المبيعات</th><th>إجمالي المبيعات</th>
+        <th>تكلفة المبيعات</th><th>فواتير المورد</th><th>إجمالي المشتريات</th><th>إيصالات الاستلام</th>
+        <th>وارد المخزون</th><th>صرف المخزون</th><th>عدد القيود</th><th>مدين الأستاذ</th><th>دائن الأستاذ</th><th>فرق الأستاذ</th>
+      </tr></thead>
+      <tbody>
+      {% for row in report.activities %}
+      <tr>
+        <td>{{ row.activity_code }}</td><td>{{ row.sales_invoice_count }}</td>
+        <td>{{ "%.2f"|format(row.sales_subtotal) }}</td><td>{{ "%.2f"|format(row.sales_tax) }}</td>
+        <td>{{ "%.2f"|format(row.sales_total) }}</td><td>{{ "%.2f"|format(row.cogs_total) }}</td>
+        <td>{{ row.supplier_bill_count }}</td><td>{{ "%.2f"|format(row.purchase_total) }}</td>
+        <td>{{ row.receipt_count }}</td><td>{{ "%.2f"|format(row.stock_receipt_value) }}</td>
+        <td>{{ "%.2f"|format(row.stock_issue_value) }}</td><td>{{ row.journal_entry_count }}</td>
+        <td>{{ "%.2f"|format(row.gl_debit) }}</td><td>{{ "%.2f"|format(row.gl_credit) }}</td>
+        <td>{{ "%.2f"|format(row.gl_difference) }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="15">لا توجد مستندات مرحّلة ضمن الاختيار الحالي.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">التقرير لا ينشئ قيودًا ولا يعدّل الحسابات أو الأرصدة. فرق الأستاذ هو إجمالي المدين ناقص إجمالي الدائن للقيود المرتبطة بالنشاط.</p>
+</section>
+{% endblock %}
