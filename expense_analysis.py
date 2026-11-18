@@ -1,4 +1,4 @@
-"""Analytical expense reporting by account and optional business dimensions."""
+""""Analytical expense reporting by account and optional business dimensions."""
 from decimal import Decimal
 
 from accounting_core import (register_decimal_aggregates, decimal_sum_expression, decimal_net_expression, month_key_expression)
@@ -49,8 +49,10 @@ def build_expense_analysis(conn, date_from, date_to, dimensions=None):
         LEFT JOIN salespersons sp ON sp.id=jl.salesperson_id
         LEFT JOIN suppliers sup ON sup.id=jl.supplier_id
         WHERE {' AND '.join(conditions)}
-        GROUP BY a.id,jl.branch_id,jl.cost_center_id,jl.project_id,
-                 jl.customer_id,jl.salesperson_id,jl.supplier_id
+        GROUP BY a.id,a.code,a.name_ar,jl.branch_id,jl.cost_center_id,jl.project_id,
+                 jl.customer_id,jl.salesperson_id,jl.supplier_id,
+                 b.code,b.name_ar,cc.code,cc.name_ar,p.code,p.name_ar,
+                 c.code,c.name,sp.code,sp.name,sup.code,sup.name
         ORDER BY a.code,branch_code,cost_center_code,project_code,customer_code,salesperson_code,supplier_code""", params).fetchall()
 
     detail_rows=[]
