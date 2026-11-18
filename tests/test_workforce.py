@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import unittest
 import shutil
+from io import BytesIO
 from pathlib import Path
 from decimal import Decimal
 from unittest.mock import patch
@@ -1702,6 +1703,18 @@ class WorkforceTests(unittest.TestCase):
             data[field] = "-1"
             with self.assertRaises(ValueError):
                 workforce._employee_form_values(data)
+
+    def test_employee_excel_template_contains_basic_and_insured_wages(self):
+        response = self.client.get("/hr/template-excel")
+        self.assertEqual(response.status_code, 200)
+        from openpyxl import load_workbook
+        workbook = load_workbook(BytesIO(response.data), read_only=True)
+        headers = list(next(workbook["Employees"].iter_rows(min_row=1, max_row=1, values_only=True)))
+        self.assertIn("الأجر الأساسي", headers)
+        self.assertIn("الأجر التأميني", headers)
+        guide = list(workbook["تعليمات"].values)
+        self.assertTrue(any(row[0] == "الأجر الأساسي" for row in guide[1:]))
+        workbook.close()
 
 
 if __name__ == "__main__":
