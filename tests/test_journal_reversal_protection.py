@@ -1,4 +1,5 @@
 import tempfile
+from contextlib import contextmanager
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -83,6 +84,14 @@ class JournalReversalProtectionTests(unittest.TestCase):
         self.connections.append(connection)
         return connection
 
+    @contextmanager
+    def _database(self):
+        connection = self._connect_database(self.db_path)
+        try:
+            yield connection
+        finally:
+            connection.close()
+
     def tearDown(self):
         for connection in self.connections:
             try:
@@ -99,7 +108,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
             data={"reversal_date": "2026-01-05", "reversal_reason": "إلغاء القيد العكسي الخاطئ"},
         )
         self.assertEqual(response.status_code, 302)
-        with connect_database(self.db_path) as conn:
+        with self._database() as conn:
             row = conn.execute(
                 "SELECT id FROM journal_entries WHERE reference='REV-2'"
             ).fetchone()
@@ -120,7 +129,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
             data={"reversal_date": "2026-01-05", "reversal_reason": "إلغاء العكس الخاطئ"},
         )
         self.assertEqual(first.status_code, 302)
-        with connect_database(self.db_path) as conn:
+        with self._database() as conn:
             counter = conn.execute(
                 "SELECT id FROM journal_entries WHERE reference='REV-2'"
             ).fetchone()
@@ -134,7 +143,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
             data={"reversal_date": "2026-01-06", "reversal_reason": "محاولة عكس عكس العكسي"},
         )
         self.assertEqual(second.status_code, 302)
-        with connect_database(self.db_path) as conn:
+        with self._database() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 5)
             self.assertIsNone(conn.execute(
                 "SELECT id FROM journal_entries WHERE reference=?", (f"REV-{counter_id}",)
@@ -146,7 +155,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
             data={"reversal_date": "2026-01-05", "reversal_reason": "إعادة تفعيل شراء الأصل"},
         )
         self.assertEqual(response.status_code, 302)
-        with connect_database(self.db_path) as conn:
+        with self._database() as conn:
             asset = conn.execute("SELECT status FROM fixed_assets WHERE id=1").fetchone()
             link = conn.execute(
                 "SELECT status FROM fixed_asset_journal_lines WHERE journal_line_id=10"
@@ -158,7 +167,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
             ).fetchone())
 
     def test_operational_reversal_link_is_detected(self):
-        with connect_database(self.db_path) as conn:
+        with self._database() as conn:
             conn.execute("""
                 CREATE TABLE payroll_reversals(
                     id INTEGER PRIMARY KEY, reversal_journal_entry_id INTEGER
@@ -170,7 +179,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
             self.assertEqual(linked_operational_source(conn, 2), "payroll_reversals")
 
     def test_generic_reversal_blocks_module_owned_reversal_journal(self):
-        with connect_database(self.db_path) as conn:
+        with self._database() as conn:
             conn.execute("""
                 CREATE TABLE payroll_reversals(
                     id INTEGER PRIMARY KEY, reversal_journal_entry_id INTEGER
@@ -184,7 +193,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
             data={"reversal_date": "2026-01-05", "reversal_reason": "محاولة عكس قيد عكس المرتبات"},
         )
         self.assertEqual(response.status_code, 302)
-        with connect_database(self.db_path) as conn:
+        with self._database() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 4)
 
     def test_original_journal_cannot_be_reversed_twice(self):
@@ -193,7 +202,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
             data={"reversal_date": "2026-01-05", "reversal_reason": "محاولة عكس مكرر"},
         )
         self.assertEqual(response.status_code, 302)
-        with connect_database(self.db_path) as conn:
+        with self._database() as conn:
             count = conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
         self.assertEqual(count, 4)
 
