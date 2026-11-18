@@ -1,5 +1,5 @@
 from app_paths import DB_PATH
-from database import connect_database, fetch_page
+from database import connect_database, fetch_page, register_database_connection_teardown
 from db_compat import (table_columns, table_exists, database_dialect, begin_write_transaction, insert_and_get_id, execute_script, DB_ERROR, DB_INTEGRITY_ERROR)
 from db_sql import execute_compat
 """NEXUS ERP inventory foundation (v0.2).
@@ -18,6 +18,11 @@ from analytic_dimensions import initialize_analytic_dimensions_schema
 from code_sequences import next_code
 
 stock_bp = Blueprint("stock", __name__, url_prefix="/stock")
+
+
+@stock_bp.record_once
+def _register_database_teardown(state):
+    register_database_connection_teardown(state.app)
 
 D = Decimal
 QTY = D("0.0001")

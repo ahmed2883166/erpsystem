@@ -14,6 +14,14 @@ def main():
         suite = unittest.defaultTestLoader.discover("tests")
         result = unittest.TextTestRunner(verbosity=2).run(suite)
         return 0 if result.wasSuccessful() else 1
+    finally:
+        # Windows locks open rotating log files and prevents TemporaryDirectory cleanup.
+        application = sys.modules.get("app")
+        if application is not None:
+            for handler in tuple(application.app.logger.handlers):
+                if getattr(handler, "_nexus_http_500_handler", False):
+                    application.app.logger.removeHandler(handler)
+                    handler.close()
 
 
 if __name__ == "__main__":

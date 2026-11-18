@@ -1,5 +1,5 @@
 from app_paths import DB_PATH
-from database import connect_database, fetch_page
+from database import connect_database, fetch_page, register_database_connection_teardown
 """NEXUS ERP purchasing v1: suppliers, purchase orders, GRNI receipts, bills and payments.
 All posting is transactional and idempotent. Tax is posted only when an explicit input-tax account exists.
 """
@@ -16,6 +16,12 @@ from analytic_dimensions import initialize_analytic_dimensions_schema, validate_
 from code_sequences import next_code
 
 purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
+
+
+@purchase_bp.record_once
+def _register_database_teardown(state):
+    # Blueprints are also mounted by isolated test/embedded Flask applications.
+    register_database_connection_teardown(state.app)
 
 def db():
     return connect_database(DB_PATH, isolation_level=None)

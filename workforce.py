@@ -1,5 +1,5 @@
 from app_paths import DB_PATH
-from database import connect_database, fetch_page
+from database import connect_database, fetch_page, register_database_connection_teardown
 from db_compat import (begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names, execute_script, database_dialect, DB_ERROR, DB_INTEGRITY_ERROR)
 from db_sql import execute_compat
 """Employee master, payroll preparation and employee custody workflows."""
@@ -41,6 +41,11 @@ from code_sequences import next_code
 from cash_commitments import create_cash_commitment
 
 workforce_bp = Blueprint("workforce", __name__)
+
+
+@workforce_bp.record_once
+def _register_database_teardown(state):
+    register_database_connection_teardown(state.app)
 
 CENT = Decimal("0.01")
 
