@@ -404,12 +404,8 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
                     id SMALLINT PRIMARY KEY CHECK (id = 1), version BIGINT NOT NULL
                 )
             ''')
-            # Match the source fixture's singleton cache-version row. The
-            # copier performs one deliberate invalidation after COPY; without
-            # this seed row, UPDATE ... RETURNING would correctly fail closed.
-            conn.execute(
-                f'INSERT INTO "{self.schema}"."management_dashboard_data_version"(id,version) VALUES (1,0)'
-            )
+            # The target must stay empty; the singleton version row is copied
+            # from the source fixture and incremented once after COPY.
             conn.execute(f'''
                 CREATE TABLE "{self.schema}"."sales_invoices" (
                     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY
