@@ -188,6 +188,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
             conn.execute(
                 "INSERT INTO payroll_reversals(reversal_journal_entry_id) VALUES(2)"
             )
+            conn.commit()
         response = self.client.post(
             "/journal/2/reverse",
             data={"reversal_date": "2026-01-05", "reversal_reason": "محاولة عكس قيد عكس المرتبات"},
