@@ -1,14 +1,93 @@
-{% extends 'base.html' %}{% block title %}الرئيسية | NEXUS ERP{% endblock %}{% block content %}
-<header class="dashboard-page-header"><div><h2>لوحة المؤشرات</h2><p>{{ company_name }} — العملة الأساسية: {{ base_currency }}</p></div></header>
-<div class="cards dashboard-kpis">
- <article><span>دليل الحسابات</span><b>{{ totals.accounts }}</b></article>
- <article><span>القيود المرحلة</span><b>{{ totals.entries }}</b></article>
- <article><span>المستخدمون النشطون</span><b>{{ totals.users }}</b></article>
- <article><span>نتيجة النشاط</span><b>{{ '%.2f'|format(revenue-expenses) }} <small>{{ base_currency }}</small></b></article>
+{% extends 'base.html' %}
+{% block title %}الرئيسية | NEXUS ERP{% endblock %}
+{% block content %}
+<header class="dashboard-page-header d-flex align-items-center justify-content-between flex-wrap gap-3">
+  <div>
+    <h2 class="mb-1">لوحة المؤشرات</h2>
+    <p class="text-muted mb-0">{{ company_name }} — العملة الأساسية: {{ base_currency }}</p>
+  </div>
+  <span class="badge rounded-pill text-bg-light border dashboard-company-badge"><i class="bi bi-building ms-1"></i> NEXUS ERP</span>
+</header>
+
+<div class="row g-3 dashboard-kpis-bs mb-4">
+  <div class="col-12 col-sm-6 col-xxl-3">
+    <article class="card dashboard-kpi-card h-100"><div class="card-body">
+      <div class="dashboard-kpi-label"><i class="bi bi-journal-bookmark"></i><span>دليل الحسابات</span></div>
+      <div class="dashboard-kpi-value">{{ totals.accounts }}</div>
+      <small class="text-muted">إجمالي الحسابات المعرفة</small>
+    </div></article>
+  </div>
+  <div class="col-12 col-sm-6 col-xxl-3">
+    <article class="card dashboard-kpi-card h-100"><div class="card-body">
+      <div class="dashboard-kpi-label"><i class="bi bi-journal-check"></i><span>القيود المرحلة</span></div>
+      <div class="dashboard-kpi-value">{{ totals.entries }}</div>
+      <small class="text-muted">قيود محاسبية مرحلة</small>
+    </div></article>
+  </div>
+  <div class="col-12 col-sm-6 col-xxl-3">
+    <article class="card dashboard-kpi-card h-100"><div class="card-body">
+      <div class="dashboard-kpi-label"><i class="bi bi-people"></i><span>المستخدمون النشطون</span></div>
+      <div class="dashboard-kpi-value">{{ totals.users }}</div>
+      <small class="text-muted">حسابات المستخدمين</small>
+    </div></article>
+  </div>
+  <div class="col-12 col-sm-6 col-xxl-3">
+    <article class="card dashboard-kpi-card dashboard-kpi-primary h-100"><div class="card-body">
+      <div class="dashboard-kpi-label"><i class="bi bi-graph-up-arrow"></i><span>نتيجة النشاط</span></div>
+      <div class="dashboard-kpi-value">{{ '%.2f'|format(revenue-expenses) }} <small>{{ base_currency }}</small></div>
+      <small class="dashboard-kpi-footnote">الإيرادات مطروحًا منها المصروفات</small>
+    </div></article>
+  </div>
 </div>
-<section class="panel dashboard-summary"><h3>ملخص الحركة المحاسبية</h3>
-<div class="dashboard-balance-row"><div><span>إجمالي المدين</span><strong>{{ '%.2f'|format(balance.debit) }} {{ base_currency }}</strong></div><div><span>إجمالي الدائن</span><strong>{{ '%.2f'|format(balance.credit) }} {{ base_currency }}</strong></div></div>
+
+<section class="card dashboard-section-card mb-4">
+  <div class="card-header"><h3 class="h5 mb-0"><i class="bi bi-calculator ms-2"></i>ملخص الحركة المحاسبية</h3></div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-12 col-md-6">
+        <div class="dashboard-balance-tile">
+          <span>إجمالي المدين</span>
+          <strong>{{ '%.2f'|format(balance.debit) }} <small>{{ base_currency }}</small></strong>
+        </div>
+      </div>
+      <div class="col-12 col-md-6">
+        <div class="dashboard-balance-tile">
+          <span>إجمالي الدائن</span>
+          <strong>{{ '%.2f'|format(balance.credit) }} <small>{{ base_currency }}</small></strong>
+        </div>
+      </div>
+    </div>
+  </div>
 </section>
-<section class="panel"><h3>أحدث القيود</h3><div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>المرجع</th><th>البيان</th></tr></thead><tbody>{% for e in recent %}<tr><td>{{ e.entry_date }}</td><td>{{ e.reference }}</td><td>{{ e.description }}</td></tr>{% else %}<tr><td colspan="3">لا توجد قيود بعد.</td></tr>{% endfor %}</tbody></table></div></section>
-{% if 'backup.manage' in permissions %}<section class="panel"><h3>استعادة نسخة احتياطية</h3><form action="{{ url_for('restore_backup') }}" method="post" enctype="multipart/form-data" class="form-grid"><label>ملف النسخة الاحتياطية<input type="file" name="backup" accept=".zip" required></label><button>استعادة</button></form></section>{% endif %}
+
+<section class="card dashboard-section-card mb-4">
+  <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <h3 class="h5 mb-0"><i class="bi bi-clock-history ms-2"></i>أحدث القيود</h3>
+    {% if 'journal.manage' in permissions %}<a class="btn btn-sm btn-outline-primary" href="{{ url_for('journal') }}">عرض القيود <i class="bi bi-arrow-left-short"></i></a>{% endif %}
+  </div>
+  <div class="table-wrap table-responsive border-0 rounded-0">
+    <table class="table table-hover align-middle mb-0">
+      <thead><tr><th>التاريخ</th><th>المرجع</th><th>البيان</th></tr></thead>
+      <tbody>
+      {% for e in recent %}
+        <tr><td class="text-nowrap">{{ e.entry_date }}</td><td class="text-nowrap">{{ e.reference }}</td><td>{{ e.description }}</td></tr>
+      {% else %}
+        <tr><td colspan="3" class="text-center text-muted py-4">لا توجد قيود بعد.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% if 'backup.manage' in permissions %}
+<section class="card dashboard-section-card mb-4">
+  <div class="card-header"><h3 class="h5 mb-0"><i class="bi bi-shield-check ms-2"></i>استعادة نسخة احتياطية</h3></div>
+  <div class="card-body">
+    <form action="{{ url_for('restore_backup') }}" method="post" enctype="multipart/form-data" class="row g-3 align-items-end">
+      <div class="col-12 col-md-8"><label class="form-label" for="dashboardBackup">ملف النسخة الاحتياطية</label><input id="dashboardBackup" class="form-control" type="file" name="backup" accept=".zip" required></div>
+      <div class="col-12 col-md-4"><button class="btn btn-primary w-100" type="submit"><i class="bi bi-upload ms-1"></i>استعادة النسخة</button></div>
+    </form>
+  </div>
+</section>
+{% endif %}
 {% endblock %}
