@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}مراجعة طلب خصم مبيعات | NEXUS ERP{% endblock %}
 {% block content %}
-<header><h2>{% if request_row.request_type == 'sales_order' %}مراجعة خصم أمر بيع{% else %}مراجعة خصم فاتورة مبيعات{% endif %}</h2><a class="btn secondary" href="{{ url_for('approval_inbox') }}">العودة لمركز الموافقات</a></header>
+<header class="page-heading"><h2>{% if request_row.request_type == 'sales_order' %}مراجعة خصم أمر بيع{% else %}مراجعة خصم فاتورة مبيعات{% endif %}</h2><a class="btn secondary" href="{{ url_for('approval_inbox') }}">العودة لمركز الموافقات</a></header>
 <section class="panel">
   <h3>{{ request_row.request_no }}</h3>
   <div class="form-grid">
