@@ -444,13 +444,19 @@ def ensure_detail_account(c, code, name, typ, preferred_parent):
         raise ValueError("حساب الربط المطلوب "+code+" ("+name+") غير مضبوط. أضفه كحساب تفصيلي نشط بالنوع "+typ+" قبل الترحيل.")
     return found["id"]
 
-def _activity_posting_accounts(c, activity_code=None):
+def _activity_posting_accounts(c, activity_code=None, *, allow_disabled=False):
     from company_activities import resolve_activity_profile
-    profile = resolve_activity_profile(c, activity_code)
+    profile = resolve_activity_profile(c, activity_code, allow_disabled=allow_disabled)
     mapping = dict(profile.get("posting_accounts", {}))
     grni_roles = profile.get("account_roles", {}).get("grni", ())
-    if not mapping.get("grni") and grni_roles:
-        mapping["grni"] = grni_roles[0]
+    if not mapping.get("grni"):
+        if len(grni_roles) > 1:
+            raise ValueError(
+                "ملف النشاط يحتوي أكثر من حساب لدور GRNI ولا يوجد حساب ترحيل محدد؛ "
+                "حدد حساب GRNI واحدًا من إعدادات النشاط قبل متابعة العملية."
+            )
+        if len(grni_roles) == 1:
+            mapping["grni"] = grni_roles[0]
     if not mapping or not mapping.get("supplier_ap"):
         raise ValueError("ملف النشاط الحالي لا يحتوي حساب الموردين المطلوب للمشتريات.")
     return mapping
