@@ -2,7 +2,7 @@ name: Python checks
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 on:
   push:
     branches: [main, feature/company-setup-currency-tax-activity, work/phase7-bootstrap-ux]
@@ -11,6 +11,7 @@ on:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
