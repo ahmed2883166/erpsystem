@@ -49,6 +49,7 @@ from core_schema import initialize_core_schema, ensure_legacy_core_columns
 from company_defaults import seed_company_defaults
 from sqlite_accounting_migrations import migrate_journal_line_amounts_to_text
 from sqlite_audit_schema import initialize_sqlite_audit_schema
+from db_sql import execute_compat
 from db_compat import (begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names, table_column_info, DB_ERROR, DB_INTEGRITY_ERROR)
 from report_request_control import (ReportRequestGate, bounded_env_int,
                                     is_expensive_report_request,
@@ -317,7 +318,7 @@ ROLE_SYSTEM_NAMES = {"admin": "مدير النظام", "accountant": "محاسب
 
 
 def initialize_roles_schema(connection):
-    connection.execute("""
+    execute_compat(connection, """
         CREATE TABLE IF NOT EXISTS roles (
             role_key TEXT PRIMARY KEY,
             role_name TEXT NOT NULL COLLATE NOCASE UNIQUE,
@@ -332,7 +333,7 @@ def initialize_roles_schema(connection):
     """)
     timestamp = datetime.now().isoformat(timespec="seconds")
     for role_key, permissions in PERMISSIONS.items():
-        connection.execute(
+        execute_compat(connection, 
             """INSERT INTO roles(
                  role_key,role_name,permissions_json,is_system,active,created_at,updated_at
                ) VALUES(?,?,?,?,1,?,?) ON CONFLICT DO NOTHING""",
@@ -345,7 +346,7 @@ def role_permissions_catalog(connection, include_role=None):
     role_permissions = {key: sorted(values) for key, values in PERMISSIONS.items()}
     role_names = dict(ROLE_SYSTEM_NAMES)
     custom_roles = []
-    rows = connection.execute(
+    rows = execute_compat(connection, 
         """SELECT role_key,role_name,permissions_json,active FROM roles
            WHERE is_system=0 AND (active=1 OR role_key=?) ORDER BY role_name COLLATE NOCASE""",
         (include_role or "",),
@@ -371,7 +372,7 @@ def role_default_permissions(role):
         return normalize_user_permissions(PERMISSIONS[role])
     connection = db()
     try:
-        row = connection.execute(
+        row = execute_compat(connection, 
             "SELECT permissions_json FROM roles WHERE role_key=? AND active=1", (role,)
         ).fetchone()
         if not row:
@@ -533,27 +534,27 @@ def initialize_database():
     ensure_legacy_core_columns(connection)
     initialize_roles_schema(connection)
     seed_company_defaults(connection)
-    admin = connection.execute(
+    admin = execute_compat(connection, 
         "SELECT id,password_hash,must_change_password FROM users WHERE username='admin'"
     ).fetchone()
     credential_path = DATA_DIR / ".nexus_initial_admin_password"
     if not admin or (admin["must_change_password"] and not credential_path.exists()):
         initial_password = secrets.token_urlsafe(24)
         if not admin:
-            connection.execute(
+            execute_compat(connection, 
                 "INSERT INTO users(username, full_name, password_hash, role, created_at, must_change_password) VALUES(?,?,?,?,?,1)",
                 ("admin", "مدير النظام", password_hash(initial_password), "admin", now())
             )
         else:
-            connection.execute(
+            execute_compat(connection, 
                 "UPDATE users SET password_hash=?,must_change_password=1 WHERE id=?",
                 (password_hash(initial_password), admin["id"])
             )
         _save_initial_admin_password(initial_password)
-    if not connection.execute("SELECT 1 FROM accounts LIMIT 1").fetchone():
-        activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+    if not execute_compat(connection, "SELECT 1 FROM accounts LIMIT 1").fetchone():
+        activity_row = execute_compat(connection, "SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
         seed_activity_chart(connection, activity_row["setting_value"] if activity_row else "commercial")
-    activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+    activity_row = execute_compat(connection, "SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
     selected_activity = activity_row["setting_value"] if activity_row else "commercial"
     # Move legacy non-VAT uses of 2130 without changing account IDs or posted journal links.
     migrate_vat_accounts(connection, selected_activity)
@@ -561,9 +562,9 @@ def initialize_database():
     migrate_legacy_duplicate_account_labels(connection, selected_activity)
     ensure_account_metadata(connection)
     migrate_journal_line_amounts_to_text(connection)
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry ON journal_lines(account_id,entry_id)")
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_account ON journal_lines(entry_id,account_id)")
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_entry_date ON journal_entries(entry_date,id)")
+    execute_compat(connection, "CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry ON journal_lines(account_id,entry_id)")
+    execute_compat(connection, "CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_account ON journal_lines(entry_id,account_id)")
+    execute_compat(connection, "CREATE INDEX IF NOT EXISTS idx_journal_entries_entry_date ON journal_entries(entry_date,id)")
     connection.commit()
     connection.close()
     initialize_stock_schema()
@@ -580,7 +581,7 @@ def initialize_database():
     initialize_payroll_compliance_schema()
     initialize_currency_schema()
     dashboard_connection = db()
-    activity_row = dashboard_connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+    activity_row = execute_compat(dashboard_connection, "SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
     initialize_management_dashboard_schema(dashboard_connection, activity_row["setting_value"] if activity_row else "commercial")
     initialize_cash_commitments_schema(dashboard_connection)
     initialize_analytic_dimensions_schema(dashboard_connection)
@@ -645,14 +646,14 @@ def log(action, details="", entity_type=None, entity_id=None, outcome="success",
     try:
         if user_id is not None:
             try:
-                actor = connection.execute("SELECT username,full_name FROM users WHERE id=?", (user_id,)).fetchone()
+                actor = execute_compat(connection, "SELECT username,full_name FROM users WHERE id=?", (user_id,)).fetchone()
             except DB_ERROR:
                 actor = None
             if actor:
                 actor_name = actor["full_name"] or actor["username"]
             else:
                 user_id = None
-        connection.execute(
+        execute_compat(connection, 
             """INSERT INTO audit_log
                (user_id, action, details, created_at, entity_type, entity_id, remote_addr,
                 outcome, actor_name, before_values, after_values, submitted_values, reason, request_id)
@@ -732,7 +733,7 @@ def _operational_audit_snapshot(endpoint, view_args, created_record=None):
         exists = table_exists(connection, table,)
         if not exists:
             return None
-        row = connection.execute(
+        row = execute_compat(connection, 
             f"SELECT * FROM {table} WHERE {primary_key}=?", (record_id,)
         ).fetchone()
         if row is None:
@@ -761,7 +762,7 @@ def _operational_audit_snapshot(endpoint, view_args, created_record=None):
                     if order_columns else ""
                 )
                 snapshot["details"] = [
-                    dict(item) for item in connection.execute(
+                    dict(item) for item in execute_compat(connection, 
                         f'SELECT * FROM "{child_table}" WHERE "{child_key}"=?{order_sql}',
                         (record_id,),
                     ).fetchall()
@@ -871,7 +872,7 @@ def refresh_session_authorization():
                 return None
             session.clear()
             return redirect(url_for("login"))
-        user = connection.execute(
+        user = execute_compat(connection, 
             "SELECT id, role, active, permissions_json, must_change_password, full_name "
             "FROM users WHERE id=?", (user_id,)
         ).fetchone()
@@ -946,22 +947,22 @@ def login():
         connection = db()
         cutoff = datetime.now().timestamp() - 900
         cutoff_text = datetime.fromtimestamp(cutoff).isoformat(timespec="seconds")
-        connection.execute("DELETE FROM login_attempts WHERE attempted_at < ?", (cutoff_text,))
+        execute_compat(connection, "DELETE FROM login_attempts WHERE attempted_at < ?", (cutoff_text,))
         if login_attempts_exceeded(connection, username, remote_addr, cutoff_text):
             connection.close()
             log("login_blocked", f"username={username}", entity_type="auth", outcome="failure")
             flash("تم إيقاف محاولات الدخول مؤقتًا بسبب تكرار المحاولات الفاشلة. حاول بعد 15 دقيقة.", "error")
             return render_template("login.html"), 429
-        user = connection.execute("SELECT * FROM users WHERE username=? AND active=1", (username,)).fetchone()
+        user = execute_compat(connection, "SELECT * FROM users WHERE username=? AND active=1", (username,)).fetchone()
         valid = bool(user and verify_password(request.form.get("password", ""), user["password_hash"]))
         if valid and password_hash_needs_upgrade(user["password_hash"]):
-            connection.execute("UPDATE users SET password_hash=? WHERE id=?",
+            execute_compat(connection, "UPDATE users SET password_hash=? WHERE id=?",
                                (password_hash(request.form["password"]), user["id"]))
             connection.commit()
         if valid:
-            connection.execute("DELETE FROM login_attempts WHERE username=? AND remote_addr=?", (username, remote_addr))
+            execute_compat(connection, "DELETE FROM login_attempts WHERE username=? AND remote_addr=?", (username, remote_addr))
         else:
-            connection.execute("INSERT INTO login_attempts(username,remote_addr,attempted_at) VALUES(?,?,?)",
+            execute_compat(connection, "INSERT INTO login_attempts(username,remote_addr,attempted_at) VALUES(?,?,?)",
                                (username, remote_addr, now()))
         connection.commit()
         connection.close()
@@ -995,12 +996,12 @@ def change_password():
             flash("تأكيد كلمة المرور غير مطابق.", "error")
         else:
             connection = db()
-            user = connection.execute("SELECT username,password_hash FROM users WHERE id=? AND active=1",
+            user = execute_compat(connection, "SELECT username,password_hash FROM users WHERE id=? AND active=1",
                                       (session["user_id"],)).fetchone()
             if not user or not verify_password(current, user["password_hash"]):
                 flash("كلمة المرور الحالية غير صحيحة.", "error")
             else:
-                connection.execute("UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?",
+                execute_compat(connection, "UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?",
                                    (password_hash(new), session["user_id"]))
                 connection.commit()
                 connection.close()
@@ -1041,7 +1042,7 @@ def company_setup():
             flash("اختيارات الإعدادات غير صحيحة.", "error")
             connection.close()
             return redirect(url_for("company_setup"))
-        if not connection.execute("SELECT 1 FROM currencies WHERE code=?", (base_currency,)).fetchone():
+        if not execute_compat(connection, "SELECT 1 FROM currencies WHERE code=?", (base_currency,)).fetchone():
             flash("العملة الأساسية غير مدعومة في قائمة العملات الحالية.", "error")
             connection.close()
             return redirect(url_for("company_setup"))
@@ -1050,7 +1051,7 @@ def company_setup():
             flash("طريقة تقييم المخزون غير صحيحة.", "error")
             connection.close()
             return redirect(url_for("company_setup"))
-        current_discount_limit = connection.execute(
+        current_discount_limit = execute_compat(connection, 
             "SELECT setting_value FROM company_settings WHERE setting_key='sales_discount_limit_percent'"
         ).fetchone()
         discount_limit_value = request.form.get(
@@ -1086,7 +1087,7 @@ def company_setup():
             return redirect(url_for("company_setup"))
         previous_settings = {
             row["setting_key"]: row["setting_value"]
-            for row in connection.execute(
+            for row in execute_compat(connection, 
                 "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
                 "('company_name','tax_country','tax_regime','activity','base_currency','default_vat_rate','inventory_cost_method','company_address','company_phone','company_email','company_website','sales_discount_limit_percent')"
             ).fetchall()
@@ -1113,17 +1114,17 @@ def company_setup():
             settings_values["company_logo_data"] = "data:" + mime + ";base64," + base64.b64encode(logo_bytes).decode("ascii")
         elif request.form.get("remove_company_logo") == "yes":
             settings_values["company_logo_data"] = ""
-        previous_activity_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+        previous_activity_row = execute_compat(connection, "SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
         previous_activity = previous_activity_row["setting_value"] if previous_activity_row else None
-        has_entries = connection.execute("SELECT 1 FROM journal_entries LIMIT 1").fetchone()
+        has_entries = execute_compat(connection, "SELECT 1 FROM journal_entries LIMIT 1").fetchone()
         for key, value in settings_values.items():
-            connection.execute("INSERT INTO company_settings(setting_key,setting_value) VALUES(?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value", (key, value))
+            execute_compat(connection, "INSERT INTO company_settings(setting_key,setting_value) VALUES(?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value", (key, value))
         selected = set(request.form.getlist("active_currencies"))
         selected.add(base_currency)
-        for row in connection.execute("SELECT code FROM currencies").fetchall():
+        for row in execute_compat(connection, "SELECT code FROM currencies").fetchall():
             code = row["code"]
             if code not in selected:
-                connection.execute("UPDATE currencies SET active=0,is_base=0 WHERE code=?", (code,))
+                execute_compat(connection, "UPDATE currencies SET active=0,is_base=0 WHERE code=?", (code,))
                 continue
             try:
                 rate = Decimal("1") if code == base_currency else parse_decimal_setting(
@@ -1136,7 +1137,7 @@ def company_setup():
                 connection.rollback()
                 connection.close()
                 return redirect(url_for("company_setup"))
-            connection.execute("UPDATE currencies SET active=1,is_base=?,rate_to_base=?,updated_at=? WHERE code=?", (1 if code == base_currency else 0, str(rate), now(), code))
+            execute_compat(connection, "UPDATE currencies SET active=1,is_base=?,rate_to_base=?,updated_at=? WHERE code=?", (1 if code == base_currency else 0, str(rate), now(), code))
         if has_entries and previous_activity and previous_activity != activity:
             flash("لا يمكن تغيير النشاط بعد ترحيل قيود؛ لأن ذلك قد يغيّر دلالات وربط الحسابات. أنشئ شركة جديدة أو نفّذ تحويلًا محاسبيًا معتمدًا.", "error")
             connection.rollback()
@@ -1146,7 +1147,7 @@ def company_setup():
         if should_load_chart:
             # Activity changes are append-only: never delete or rewrite existing accounts.
             ensure_activity_chart_accounts(connection, activity)
-        connection.execute("INSERT INTO tax_rates(code,name_ar,rate,active) VALUES('VAT',?,?,1) ON CONFLICT(code) DO UPDATE SET name_ar=excluded.name_ar,rate=excluded.rate,active=1",
+        execute_compat(connection, "INSERT INTO tax_rates(code,name_ar,rate,active) VALUES('VAT',?,?,1) ON CONFLICT(code) DO UPDATE SET name_ar=excluded.name_ar,rate=excluded.rate,active=1",
                            ("ضريبة القيمة المضافة", str(vat_rate)))
         connection.commit()
         connection.close()
@@ -1159,10 +1160,10 @@ def company_setup():
         )
         flash("تم حفظ إعدادات الشركة والعملات والنظام الضريبي.", "success")
         return redirect(url_for("company_setup"))
-    settings = {row["setting_key"]: row["setting_value"] for row in connection.execute("SELECT * FROM company_settings")}
+    settings = {row["setting_key"]: row["setting_value"] for row in execute_compat(connection, "SELECT * FROM company_settings")}
     settings.setdefault("sales_discount_limit_percent", "10")
-    currencies = connection.execute("SELECT * FROM currencies ORDER BY code").fetchall()
-    has_entries = connection.execute("SELECT 1 FROM journal_entries LIMIT 1").fetchone() is not None
+    currencies = execute_compat(connection, "SELECT * FROM currencies ORDER BY code").fetchall()
+    has_entries = execute_compat(connection, "SELECT 1 FROM journal_entries LIMIT 1").fetchone() is not None
     connection.close()
     return render_template("company_setup.html", settings=settings, currencies=currencies, activities=ACTIVITY_LABELS, has_entries=has_entries)
 
@@ -1223,11 +1224,11 @@ def company_activities_settings():
         return redirect(url_for("company_activities_settings"))
 
     activity_packs = list_company_activities(connection)
-    accounts = connection.execute(
+    accounts = execute_compat(connection, 
         "SELECT code,name_ar,account_type FROM accounts "
         "WHERE is_group=0 AND active=1 ORDER BY code"
     ).fetchall()
-    mappings = connection.execute(
+    mappings = execute_compat(connection, 
         "SELECT m.activity_code,m.role,m.account_code,a.name_ar,a.account_type "
         "FROM company_activity_account_map m LEFT JOIN accounts a ON a.code=m.account_code "
         "ORDER BY m.activity_code,m.role"
@@ -1286,10 +1287,10 @@ def activity_profiles():
                 if not profile:
                     raise ValueError("ملف النشاط غير موجود.")
                 if action == "activate":
-                    current_activity = connection.execute(
+                    current_activity = execute_compat(connection, 
                         "SELECT setting_value FROM company_settings WHERE setting_key='activity'"
                     ).fetchone()
-                    has_posted_entries = connection.execute(
+                    has_posted_entries = execute_compat(connection, 
                         "SELECT 1 FROM journal_entries WHERE status='posted' LIMIT 1"
                     ).fetchone()
                     if has_posted_entries and current_activity and current_activity["setting_value"] != profile["base_activity"]:
@@ -1297,12 +1298,12 @@ def activity_profiles():
                     errors = validate_activity_profile(connection, profile)
                     if errors:
                         raise ValueError("لا يمكن تفعيل الملف قبل معالجة الحسابات: " + "؛ ".join(errors[:5]))
-                    connection.execute(
+                    execute_compat(connection, 
                         "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity_profile_code',?) "
                         "ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value",
                         (profile["code"],),
                     )
-                    connection.execute(
+                    execute_compat(connection, 
                         "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity',?) "
                         "ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value",
                         (profile["base_activity"],),
@@ -1311,7 +1312,7 @@ def activity_profiles():
                     log("activity_profile_activated", profile["code"], "activity_profile", profile_id)
                     flash("تم تفعيل ملف النشاط. لم يتم حذف أو تعديل أي حساب قائم.", "success")
                 else:
-                    active_code = connection.execute(
+                    active_code = execute_compat(connection, 
                         "SELECT setting_value FROM company_settings WHERE setting_key='activity_profile_code'"
                     ).fetchone()
                     if active_code and active_code["setting_value"] == profile["code"]:
@@ -1328,7 +1329,7 @@ def activity_profiles():
         connection.close()
         return redirect(url_for("activity_profiles"))
     profiles = list_activity_profiles(connection, True)
-    active_row = connection.execute(
+    active_row = execute_compat(connection, 
         "SELECT setting_value FROM company_settings WHERE setting_key='activity_profile_code'"
     ).fetchone()
     active_code = active_row["setting_value"] if active_row else "commercial"
@@ -1368,14 +1369,14 @@ def accounts():
             if account_type not in {"asset","liability","equity","revenue","expense"} or not code or not name:
                 raise ValueError("بيانات الحساب غير صحيحة.")
             if parent_id:
-                parent = connection.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (parent_id,)).fetchone()
+                parent = execute_compat(connection, "SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (parent_id,)).fetchone()
                 if not parent or not parent["active"] or not parent["is_group"] or parent["account_type"] != account_type:
                     raise ValueError("الحساب الأب يجب أن يكون مجموعة نشطة ومن نفس نوع الحساب.")
             elif not is_group:
                 raise ValueError("الحساب الفرعي يجب أن يرتبط بحساب رئيسي. لإنشاء مستوى أول اختر حسابًا رئيسيًا تجميعيًا.")
-            connection.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
+            execute_compat(connection, "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
                                (code, name, account_type, parent_id, is_group))
-            account_id = connection.execute("SELECT id FROM accounts WHERE code=?", (code,)).fetchone()["id"]
+            account_id = execute_compat(connection, "SELECT id FROM accounts WHERE code=?", (code,)).fetchone()["id"]
             ensure_account_metadata(connection)
             connection.commit()
             log_change(
@@ -1391,7 +1392,7 @@ def accounts():
         except ValueError as exc:
             connection.rollback()
             flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
-    raw_rows = connection.execute("SELECT * FROM accounts ORDER BY code").fetchall()
+    raw_rows = execute_compat(connection, "SELECT * FROM accounts ORDER BY code").fetchall()
     by_id = {row["id"]: dict(row) for row in raw_rows}
     def account_depth(row, seen=None):
         seen = seen or set()
@@ -1432,12 +1433,12 @@ def accounts():
 @requires("accounts.manage")
 def delete_account(account_id):
     connection = db()
-    account = connection.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
+    account = execute_compat(connection, "SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
     if not account:
         flash("الحساب غير موجود.", "error")
     else:
-        child = connection.execute("SELECT 1 FROM accounts WHERE parent_id=? LIMIT 1", (account_id,)).fetchone()
-        used = connection.execute("SELECT 1 FROM journal_lines WHERE account_id=? LIMIT 1", (account_id,)).fetchone()
+        child = execute_compat(connection, "SELECT 1 FROM accounts WHERE parent_id=? LIMIT 1", (account_id,)).fetchone()
+        used = execute_compat(connection, "SELECT 1 FROM journal_lines WHERE account_id=? LIMIT 1", (account_id,)).fetchone()
         if child:
             flash("لا يمكن حذف الحساب: يوجد حساب فرعي مرتبط به. احذف/انقل الحسابات الفرعية أولًا.", "error")
         elif used:
@@ -1445,7 +1446,7 @@ def delete_account(account_id):
         else:
             try:
                 before_values = {key: account[key] for key in ("code", "name_ar", "account_type", "parent_id", "is_group", "active")}
-                connection.execute("DELETE FROM accounts WHERE id=?", (account_id,))
+                execute_compat(connection, "DELETE FROM accounts WHERE id=?", (account_id,))
                 connection.commit()
                 log_change(
                     "account_deleted", "account", account_id, before_values, None,
@@ -1463,12 +1464,12 @@ def delete_account(account_id):
 @requires("accounts.manage")
 def edit_account(account_id):
     connection = db()
-    account = connection.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
+    account = execute_compat(connection, "SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
     if not account:
         connection.close()
         flash("الحساب غير موجود.", "error")
         return redirect(url_for("accounts"))
-    used = connection.execute("SELECT 1 FROM journal_lines WHERE account_id=? LIMIT 1", (account_id,)).fetchone() is not None
+    used = execute_compat(connection, "SELECT 1 FROM journal_lines WHERE account_id=? LIMIT 1", (account_id,)).fetchone() is not None
     if request.method == "POST":
         code, name = request.form.get("code", "").strip(), request.form.get("name_ar", "").strip()
         if not code or not name:
@@ -1484,15 +1485,15 @@ def edit_account(account_id):
             parent_id = request.form.get("parent_id") or None
             new_type = request.form.get("account_type")
             new_group = 1 if request.form.get("is_group")=="yes" else 0
-            parent = connection.execute("SELECT * FROM accounts WHERE id=?", (parent_id,)).fetchone() if parent_id else None
-            descendants = connection.execute("""WITH RECURSIVE tree(id) AS (
+            parent = execute_compat(connection, "SELECT * FROM accounts WHERE id=?", (parent_id,)).fetchone() if parent_id else None
+            descendants = execute_compat(connection, """WITH RECURSIVE tree(id) AS (
                 SELECT id FROM accounts WHERE parent_id=?
                 UNION ALL SELECT a.id FROM accounts a JOIN tree t ON a.parent_id=t.id
             ) SELECT id FROM tree""", (account_id,)).fetchall()
             descendant_ids = {row["id"] for row in descendants}
             if new_type not in {"asset","liability","equity","revenue","expense"}:
                 flash("نوع الحساب غير صحيح.", "error")
-            elif new_group == 0 and connection.execute("SELECT 1 FROM accounts WHERE parent_id=? LIMIT 1",(account_id,)).fetchone():
+            elif new_group == 0 and execute_compat(connection, "SELECT 1 FROM accounts WHERE parent_id=? LIMIT 1",(account_id,)).fetchone():
                 flash("لا يمكن تحويل حساب أب له حسابات فرعية إلى حساب تفصيلي.", "error")
             elif parent_id and (not parent or not parent["is_group"] or not parent["active"] or parent["account_type"] != new_type or int(parent_id)==account_id or int(parent_id) in descendant_ids):
                 flash("الحساب الأب غير صالح أو يؤدي إلى تكوين دورة في الشجرة.", "error")
@@ -1508,7 +1509,7 @@ def edit_account(account_id):
                         "parent_id": int(parent_id) if parent_id else None,
                         "is_group": new_group, "active": account["active"],
                     }
-                    connection.execute("UPDATE accounts SET code=?,name_ar=?,account_type=?,parent_id=?,is_group=? WHERE id=?",
+                    execute_compat(connection, "UPDATE accounts SET code=?,name_ar=?,account_type=?,parent_id=?,is_group=? WHERE id=?",
                         (code,name,new_type,parent_id,new_group,account_id))
                     connection.commit()
                     log_change(
@@ -1521,7 +1522,7 @@ def edit_account(account_id):
                 except DB_INTEGRITY_ERROR:
                     connection.rollback()
                     flash("كود الحساب مستخدم بالفعل.", "error")
-    groups = connection.execute("SELECT * FROM accounts WHERE is_group=1 AND active=1 AND id<>? ORDER BY code", (account_id,)).fetchall()
+    groups = execute_compat(connection, "SELECT * FROM accounts WHERE is_group=1 AND active=1 AND id<>? ORDER BY code", (account_id,)).fetchall()
     connection.close()
     return render_template("account_edit.html", account=account, groups=groups, used=used, code_protected=(used or account["code"] in OPERATIONAL_ACCOUNT_CODES))
 
@@ -1592,7 +1593,7 @@ def global_search():
                 args.append(int(q))
 
             if predicates:
-                for row in conn.execute(
+                for row in execute_compat(conn, 
                     "SELECT j.id,j.entry_date,j.reference,j.description "
                     "FROM journal_entries j WHERE "
                     + " OR ".join(predicates)
@@ -1612,7 +1613,7 @@ def global_search():
             searchable = [column for column in ("name", "code", "phone") if column in customer_columns]
             if searchable:
                 where = " OR ".join(f"{column} LIKE ?" for column in searchable)
-                for row in conn.execute(
+                for row in execute_compat(conn, 
                     f"SELECT * FROM customers WHERE {where} ORDER BY name LIMIT 20",
                     [like] * len(searchable),
                 ):
@@ -1628,7 +1629,7 @@ def global_search():
             searchable = [column for column in ("name", "code", "phone") if column in supplier_columns]
             if searchable:
                 where = " OR ".join(f"{column} LIKE ?" for column in searchable)
-                for row in conn.execute(
+                for row in execute_compat(conn, 
                     f"SELECT * FROM suppliers WHERE {where} ORDER BY name LIMIT 20",
                     [like] * len(searchable),
                 ):
@@ -1640,7 +1641,7 @@ def global_search():
                     })
 
         if "sales.view" in effective_permissions and exists("sales_invoices") and exists("customers"):
-            for row in conn.execute(
+            for row in execute_compat(conn, 
                 """SELECT i.id,i.invoice_no,i.invoice_date,i.total_amount,c.name party
                    FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
                    WHERE i.invoice_no LIKE ? OR c.name LIKE ? OR c.code LIKE ?
@@ -1655,7 +1656,7 @@ def global_search():
                 })
 
         if "purchases.view" in effective_permissions and exists("supplier_bills") and exists("suppliers"):
-            for row in conn.execute(
+            for row in execute_compat(conn, 
                 """SELECT b.id,b.bill_no,b.supplier_invoice_no,b.bill_date,b.total_amount,s.name party
                    FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
                    WHERE b.bill_no LIKE ? OR b.supplier_invoice_no LIKE ?
@@ -1674,7 +1675,7 @@ def global_search():
                 })
 
         if "stock.view" in effective_permissions and exists("stock_products"):
-            for row in conn.execute(
+            for row in execute_compat(conn, 
                 """SELECT id,sku,name_ar,barcode,purchase_price,sale_price
                    FROM stock_products
                    WHERE sku LIKE ? OR name_ar LIKE ? OR barcode LIKE ?
@@ -1692,7 +1693,7 @@ def global_search():
                 })
 
         if ({"accounts.view", "accounts.manage"} & effective_permissions) and exists("accounts"):
-            for row in conn.execute(
+            for row in execute_compat(conn, 
                 "SELECT id,code,name_ar FROM accounts "
                 "WHERE code LIKE ? OR name_ar LIKE ? ORDER BY code LIMIT 20",
                 (like, like),
@@ -1705,7 +1706,7 @@ def global_search():
                 })
 
         if "users.manage" in effective_permissions and exists("company_settings"):
-            for row in conn.execute(
+            for row in execute_compat(conn, 
                 "SELECT setting_key,setting_value FROM company_settings "
                 "WHERE setting_value LIKE ? LIMIT 20",
                 (like,),
@@ -1726,7 +1727,7 @@ def global_search():
 @requires("journal.manage")
 def journal():
     connection = db()
-    accounts_list = connection.execute("SELECT * FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
+    accounts_list = execute_compat(connection, "SELECT * FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
     dimension_options = active_dimension_options(connection)
     if request.method == "POST":
         account_ids = request.form.getlist("account_id")
@@ -1789,11 +1790,11 @@ def journal():
             if any(line_asset_details):
                 register_assets_from_journal_lines(connection, entry_id, line_asset_details, session["user_id"])
             connection.commit()
-            posted_entry = connection.execute(
+            posted_entry = execute_compat(connection, 
                 "SELECT id,entry_date,reference,description,status FROM journal_entries WHERE id=?",
                 (entry_id,),
             ).fetchone()
-            posted_lines = [dict(row) for row in connection.execute(
+            posted_lines = [dict(row) for row in execute_compat(connection, 
                 """SELECT a.code account_code,a.name_ar account_name,jl.debit,jl.credit,jl.memo
                    FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
                    WHERE jl.entry_id=? ORDER BY jl.id""",
@@ -1930,7 +1931,7 @@ def journal():
     if entry_type_filter and "entry_type" in entry_columns:
         filters.append("entry_type=?"); filter_params.append(entry_type_filter)
     if account_filter:
-        valid_account = connection.execute(
+        valid_account = execute_compat(connection, 
             "SELECT 1 FROM accounts WHERE id=? AND is_group=0 AND active=1", (account_filter,)
         ).fetchone()
         if valid_account:
@@ -1962,12 +1963,12 @@ def journal():
     journal_per_page = request.args.get("journal_per_page", 50, type=int) or 50
     if journal_per_page not in (50, 100):
         journal_per_page = 50
-    journal_total = connection.execute(
+    journal_total = execute_compat(connection, 
         "SELECT COUNT(*) FROM journal_entries WHERE " + where_sql, filter_params
     ).fetchone()[0]
     journal_pages = max(1, (journal_total + journal_per_page - 1) // journal_per_page)
     journal_page = min(journal_page, journal_pages)
-    raw_entries = connection.execute(
+    raw_entries = execute_compat(connection, 
         "SELECT * FROM journal_entries WHERE " + where_sql +
         f" ORDER BY id {sort_sql} LIMIT ? OFFSET ?",
         (*filter_params, journal_per_page, (journal_page - 1) * journal_per_page),
@@ -1991,7 +1992,7 @@ def journal():
             else:
                 select_parts.append("NULL AS route_id")
             try:
-                linked = connection.execute(
+                linked = execute_compat(connection, 
                     f'SELECT "{journal_col}" AS journal_entry_id, {", ".join(select_parts)} FROM "{table_name}" '
                     f'WHERE journal_entry_id IN ({marks}) ORDER BY id',
                     entry_ids,
@@ -2109,12 +2110,12 @@ def management_minimum_cash():
         if not value.is_finite() or value < 0:
             raise ValueError()
         connection = db()
-        previous_row = connection.execute(
+        previous_row = execute_compat(connection, 
             "SELECT setting_value FROM company_settings WHERE setting_key='minimum_cash_balance'"
         ).fetchone()
         previous_value = previous_row["setting_value"] if previous_row else None
         normalized_value = str(value.quantize(Decimal("0.01")))
-        connection.execute("""INSERT INTO company_settings(setting_key,setting_value)
+        execute_compat(connection, """INSERT INTO company_settings(setting_key,setting_value)
             VALUES('minimum_cash_balance',?) ON CONFLICT(setting_key)
             DO UPDATE SET setting_value=excluded.setting_value""",
             (normalized_value,))
@@ -2148,9 +2149,9 @@ def analytic_dimensions_settings():
                     "email": request.form.get("email", "").strip()[:120],
                     "tax_number": request.form.get("tax_number", "").strip()[:60],
                 }
-                if not branch_id or not connection.execute("SELECT 1 FROM branches WHERE id=?", (branch_id,)).fetchone():
+                if not branch_id or not execute_compat(connection, "SELECT 1 FROM branches WHERE id=?", (branch_id,)).fetchone():
                     raise ValueError("الفرع المحدد غير موجود.")
-                connection.execute(
+                execute_compat(connection, 
                     "UPDATE branches SET address=?,phone=?,email=?,tax_number=? WHERE id=?",
                     (values["address"], values["phone"], values["email"], values["tax_number"], branch_id),
                 )
@@ -2173,7 +2174,7 @@ def analytic_dimensions_settings():
             if not code or len(code) > 30 or not name or len(name) > 120:
                 raise ValueError("أدخل كودًا واسمًا صحيحين للبُعد.")
             if kind == "branch":
-                connection.execute(
+                execute_compat(connection, 
                     """INSERT INTO branches(code,name_ar,address,phone,email,tax_number)
                        VALUES(?,?,?,?,?,?)""",
                     (code, name, request.form.get("address", "").strip()[:300],
@@ -2182,7 +2183,7 @@ def analytic_dimensions_settings():
                      request.form.get("tax_number", "").strip()[:60]),
                 )
             else:
-                connection.execute(f"INSERT INTO {table}(code,name_ar) VALUES(?,?)", (code, name))
+                execute_compat(connection, f"INSERT INTO {table}(code,name_ar) VALUES(?,?)", (code, name))
             connection.commit()
             log("analytic_dimension_created", f"{kind}:{code}:{name}", entity_type=kind, entity_id=code)
             connection.close()
@@ -2209,7 +2210,7 @@ def management_account_mapping():
                 ids = []
                 for raw_id in request.form.getlist("role_" + role):
                     account_id = int(raw_id)
-                    account = connection.execute(
+                    account = execute_compat(connection, 
                         "SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (account_id,)
                     ).fetchone()
                     if not account or account["is_group"] or not account["active"] or account["account_type"] not in allowed_types:
@@ -2217,8 +2218,8 @@ def management_account_mapping():
                     ids.append(account_id)
                 selections[role] = set(ids)
             begin_write_transaction(connection)
-            connection.execute("DELETE FROM management_account_roles")
-            connection.execute("""INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_customized','1') ON CONFLICT(meta_key) DO UPDATE SET meta_value='1'""")
+            execute_compat(connection, "DELETE FROM management_account_roles")
+            execute_compat(connection, """INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_customized','1') ON CONFLICT(meta_key) DO UPDATE SET meta_value='1'""")
             for role, ids in selections.items():
                 connection.executemany(
                     "INSERT INTO management_account_roles(account_id,role) VALUES(?,?)",
@@ -2237,7 +2238,7 @@ def management_account_mapping():
             connection.rollback()
             flash(safe_error_message(exc, "تعذر حفظ ربط الحسابات."), "error")
     roles = load_management_account_roles(connection)
-    accounts = connection.execute(
+    accounts = execute_compat(connection, 
         "SELECT id,code,name_ar,account_type FROM accounts WHERE is_group=0 AND active=1 ORDER BY code"
     ).fetchall()
     connection.close()
@@ -2261,7 +2262,7 @@ def approval_inbox():
     items = []
     try:
         if "purchases.approve" in permissions:
-            for row in connection.execute("""
+            for row in execute_compat(connection, """
                 SELECT p.id,p.po_no AS document_no,p.order_date AS document_date,
                        s.name AS counterparty,p.created_by,p.submitted_by
                 FROM purchase_orders p JOIN suppliers s ON s.id=p.supplier_id
@@ -2275,7 +2276,7 @@ def approval_inbox():
                     "href": url_for("purchase.index"), "can_act": not own,
                     "blocked_reason": "لا يجوز اعتماد أو رفض المستند الذي أنشأته أو أرسلته للمراجعة." if own else "",
                 })
-            for row in connection.execute("""
+            for row in execute_compat(connection, """
                 SELECT b.id,b.bill_no AS document_no,b.bill_date AS document_date,
                        s.name AS counterparty,b.total_amount,b.created_by,b.submitted_by
                 FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
@@ -2292,7 +2293,7 @@ def approval_inbox():
                 })
             request_table = table_exists(connection, "purchase_requests")
             if request_table:
-                for row in connection.execute("""
+                for row in execute_compat(connection, """
                     SELECT request_no,request_date,department,purpose,created_by,submitted_by
                     FROM purchase_requests WHERE status='pending_approval'
                     ORDER BY request_date DESC,id DESC
@@ -2311,7 +2312,7 @@ def approval_inbox():
                 return table_exists(connection, table_name)
 
             if approval_table_exists("payroll_runs") and approval_table_exists("payroll_lines"):
-                for row in connection.execute("""
+                for row in execute_compat(connection, """
                     SELECT r.id,r.period,r.created_by,COUNT(l.id) AS employee_count,
                            COALESCE(SUM(CAST(l.net_pay AS NUMERIC)),0) AS net_total
                     FROM payroll_runs r JOIN payroll_lines l ON l.run_id=r.id
@@ -2330,7 +2331,7 @@ def approval_inbox():
                     })
 
             if approval_table_exists("employee_final_payrolls"):
-                for row in connection.execute("""
+                for row in execute_compat(connection, """
                     SELECT id,final_payroll_no,period,termination_date,net_pay,created_by
                     FROM employee_final_payrolls
                     WHERE status='draft' AND journal_entry_id IS NULL
@@ -2346,7 +2347,7 @@ def approval_inbox():
                     })
 
             if approval_table_exists("employee_loans") and approval_table_exists("employees"):
-                for row in connection.execute("""
+                for row in execute_compat(connection, """
                     SELECT l.id,l.loan_no,l.request_date,l.requested_amount,l.created_by,e.full_name
                     FROM employee_loans l JOIN employees e ON e.id=l.employee_id
                     WHERE l.status='requested'
@@ -2362,7 +2363,7 @@ def approval_inbox():
                     })
 
             if approval_table_exists("employee_grants"):
-                for row in connection.execute("""
+                for row in execute_compat(connection, """
                     SELECT id,grant_name_snapshot,grant_date,total_amount,created_by
                     FROM employee_grants
                     WHERE status='draft' AND journal_entry_id IS NULL
@@ -2378,7 +2379,7 @@ def approval_inbox():
                     })
 
             if approval_table_exists("employee_end_of_service_settlements"):
-                for row in connection.execute("""
+                for row in execute_compat(connection, """
                     SELECT id,settlement_no,termination_date,net_payable,created_by
                     FROM employee_end_of_service_settlements
                     WHERE status='draft' AND journal_entry_id IS NULL
@@ -2394,7 +2395,7 @@ def approval_inbox():
                     })
 
             if approval_table_exists("friday_allowance_batches"):
-                for row in connection.execute("""
+                for row in execute_compat(connection, """
                     SELECT id,period,total_amount,created_by,approved_by,status
                     FROM friday_allowance_batches
                     WHERE status='draft' AND journal_entry_id IS NULL
@@ -2417,7 +2418,7 @@ def approval_inbox():
         if "sales.approve" in permissions:
             approval_table = table_exists(connection, "sales_discount_approval_requests")
             if approval_table:
-                for row in connection.execute("""
+                for row in execute_compat(connection, """
                     SELECT r.id,r.request_no,r.invoice_date,r.discount_amount,r.created_by,
                            COALESCE(r.request_type,'invoice') AS request_type,
                            c.name AS counterparty
@@ -2441,7 +2442,7 @@ def approval_inbox():
                 "COALESCE(so.discount_approval_status,'approved')"
                 if "discount_approval_status" in sales_order_columns else "'approved'"
             )
-            for row in connection.execute(f"""
+            for row in execute_compat(connection, f"""
                 SELECT so.id,so.order_no AS document_no,so.order_date AS document_date,
                        c.name AS counterparty,so.created_by,
                        {discount_status_expr} AS discount_approval_status
@@ -2462,7 +2463,7 @@ def approval_inbox():
                 })
 
         if "budget.approve" in permissions:
-            for row in connection.execute("""
+            for row in execute_compat(connection, """
                 SELECT id,name AS document_no,date_from AS document_date,
                        date_to,created_by
                 FROM budget_plans WHERE status='pending'
@@ -2575,7 +2576,7 @@ def activity_monitor():
             params, page=request.args.get("page", 1, type=int), per_page=50,
         )
         since = datetime.now().astimezone().date().isoformat()
-        metrics = connection.execute(
+        metrics = execute_compat(connection, 
             """SELECT
                  SUM(CASE WHEN action='login' AND outcome='success' THEN 1 ELSE 0 END) successful_logins,
                  SUM(CASE WHEN action IN ('login_failed','login_blocked') OR (entity_type='auth' AND outcome='failure') THEN 1 ELSE 0 END) failed_logins,
@@ -2654,7 +2655,7 @@ def trial_balance():
     if q:
         conditions.append("(a.code LIKE ? OR a.name_ar LIKE ?)"); params.extend([f"%{q}%", f"%{q}%"])
     connection = db()
-    years = connection.execute(
+    years = execute_compat(connection, 
         "SELECT id,year_name,start_date,end_date,status FROM financial_years ORDER BY start_date DESC,id DESC"
     ).fetchall()
     period_ranges = []
@@ -2691,7 +2692,7 @@ def trial_balance():
         section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
         subtype_expr = "a.account_subtype" if "account_subtype" in account_columns else "NULL"
         normal_expr = "a.normal_balance" if "normal_balance" in account_columns else "NULL"
-        rows = connection.execute(f"""SELECT a.id, a.code, a.name_ar, a.account_type,
+        rows = execute_compat(connection, f"""SELECT a.id, a.code, a.name_ar, a.account_type,
             {section_expr} statement_section,{subtype_expr} account_subtype,
             {normal_expr} normal_balance,
             COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
@@ -2703,7 +2704,7 @@ def trial_balance():
         period_rows = [dict(row, debit=Decimal(str(row["debit"] or "0")),
                             credit=Decimal(str(row["credit"] or "0"))) for row in rows]
         sections.append({**period, "rows": period_rows})
-    settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
+    settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(connection, 
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency')")}
     connection.close()
     types = {"asset":"أصول","liability":"التزامات","equity":"حقوق ملكية","revenue":"إيرادات","expense":"مصروفات"}
@@ -2740,7 +2741,7 @@ def income_statement():
         if compare_dates:
             previous = build_income_statement(connection, *compare_dates, dimensions=selected_dimensions)
             statement = add_income_statement_comparison(statement, previous)
-        settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
+        settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(connection, 
             "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency','company_name')"
         )}
     finally:
@@ -2770,7 +2771,7 @@ def profitability_report():
         report = build_profitability_report(connection, date_from, date_to)
         settings = {
             row["setting_key"]: row["setting_value"]
-            for row in connection.execute(
+            for row in execute_compat(connection, 
                 "SELECT setting_key,setting_value FROM company_settings "
                 "WHERE setting_key IN ('base_currency','company_name')"
             )
@@ -2800,7 +2801,7 @@ def period_comparison_report():
     connection = db()
     try:
         report = build_period_comparison(connection, date_from, date_to, mode)
-        settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
+        settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(connection, 
             "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency','company_name')"
         )} if table_exists(connection, "company_settings") else {}
     finally:
@@ -2820,7 +2821,7 @@ def inventory_ageing_report():
     connection = db()
     try:
         report = build_inventory_ageing(connection, as_of)
-        settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
+        settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(connection, 
             "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='base_currency'"
         )} if table_exists(connection, "company_settings") else {}
     finally:
@@ -2925,7 +2926,7 @@ def cash_commitments_register():
             except (ValueError, TypeError, *DB_INTEGRITY_ERROR) as exc:
                 flash(safe_error_message(exc, "تعذر حفظ العملية. لم يتم إجراء أي تغيير."), "error")
             return redirect(url_for("cash_commitments_register"))
-        rows = connection.execute(
+        rows = execute_compat(connection, 
             """SELECT c.* FROM cash_commitments c
                ORDER BY CASE c.status WHEN 'open' THEN 0 WHEN 'partially_paid' THEN 1
                     WHEN 'paid' THEN 2 ELSE 3 END, c.due_date DESC, c.id DESC"""
@@ -2936,13 +2937,13 @@ def cash_commitments_register():
             item["paid_total"] = payment_summary["paid_total"]
             item["status"] = payment_summary["status"]
             item["payments"] = payment_summary["payments"]
-        schedules = connection.execute(
+        schedules = execute_compat(connection, 
             """SELECT s.*,
                       (SELECT COUNT(*) FROM cash_commitment_schedule_occurrences o
                        WHERE o.schedule_id=s.id) occurrence_count
                FROM cash_commitment_schedules s ORDER BY s.active DESC,s.next_due_date,s.id"""
         ).fetchall()
-        payable_accounts = connection.execute(
+        payable_accounts = execute_compat(connection, 
             """SELECT id,code,name_ar FROM accounts
                WHERE active=1 AND is_group=0 AND account_type='liability' ORDER BY code"""
         ).fetchall()
@@ -3030,7 +3031,7 @@ def expense_analysis():
             return redirect(url_for("expense_analysis", date_from=date_from, date_to=date_to))
         dimension_options = active_dimension_options(connection)
         report = build_expense_analysis(connection, date_from, date_to, selected_dimensions)
-        settings = {r["setting_key"]: r["setting_value"] for r in connection.execute(
+        settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(connection, 
             "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency','company_name')"
         )}
     finally:
@@ -3068,7 +3069,7 @@ def ledger():
         date_from = date_to = ""
 
     connection = db()
-    accounts_list = connection.execute("SELECT * FROM accounts WHERE active=1 ORDER BY code").fetchall()
+    accounts_list = execute_compat(connection, "SELECT * FROM accounts WHERE active=1 ORDER BY code").fetchall()
     rows, selected = [], None
     opening_balance = Decimal("0")
     closing_balance = Decimal("0")
@@ -3076,7 +3077,7 @@ def ledger():
     total_credit = Decimal("0")
     ledger_page = {"rows": [], "total": 0, "page": 1, "pages": 1, "per_page": 50}
     if account_id:
-        selected = connection.execute(
+        selected = execute_compat(connection, 
             "SELECT * FROM accounts WHERE id=? AND is_group=0", (account_id,)
         ).fetchone()
         if selected:
@@ -3109,7 +3110,7 @@ def ledger():
 
             base_opening = Decimal("0")
             if date_from:
-                opening_row = connection.execute("""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),'0') balance
+                opening_row = execute_compat(connection, """SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),'0') balance
                     FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                     WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<?""",
                     (account_id, date_from)).fetchone()
@@ -3172,7 +3173,7 @@ def ledger():
             else:
                 opening_balance = base_opening
 
-            filtered_totals = connection.execute(f"""SELECT
+            filtered_totals = execute_compat(connection, f"""SELECT
                 COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
                 COALESCE(DECIMAL_SUM(jl.credit),'0') credit
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
@@ -3180,7 +3181,7 @@ def ledger():
             total_debit = Decimal(str(filtered_totals["debit"] or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             total_credit = Decimal(str(filtered_totals["credit"] or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-            period_net = connection.execute(f"""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),'0') net
+            period_net = execute_compat(connection, f"""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),'0') net
                 FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
                 WHERE {' AND '.join(date_conditions)}""", date_params).fetchone()
             closing_balance = (base_opening + Decimal(str(period_net["net"] or "0"))).quantize(
@@ -3205,13 +3206,13 @@ def ledger():
 @requires("reports.view")
 def journal_detail(entry_id):
     connection = db()
-    entry = connection.execute("SELECT * FROM journal_entries WHERE id=?", (entry_id,)).fetchone()
+    entry = execute_compat(connection, "SELECT * FROM journal_entries WHERE id=?", (entry_id,)).fetchone()
     if not entry:
         connection.close()
         flash("القيد المحاسبي غير موجود.", "error")
         return redirect(url_for("trial_balance"))
     # Reversal chains are linked by immutable REV-{source_entry_id} references.
-    reversal_entry = connection.execute(
+    reversal_entry = execute_compat(connection, 
         "SELECT id,entry_date,reference,description FROM journal_entries "
         "WHERE reference=? AND status='posted' ORDER BY id LIMIT 1",
         (f"REV-{entry_id}",),
@@ -3219,16 +3220,16 @@ def journal_detail(entry_id):
     original_entry = None
     ref_text = str(entry["reference"] or "")
     if ref_text.startswith("REV-") and ref_text[4:].isdigit():
-        original_entry = connection.execute(
+        original_entry = execute_compat(connection, 
             "SELECT id,entry_date,reference,description FROM journal_entries WHERE id=?",
             (int(ref_text[4:]),),
         ).fetchone()
-    lines = connection.execute("""SELECT jl.*,a.code account_code,a.name_ar account_name
+    lines = execute_compat(connection, """SELECT jl.*,a.code account_code,a.name_ar account_name
         FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
         WHERE jl.entry_id=? ORDER BY jl.id""", (entry_id,)).fetchall()
     lines = [dict(row, debit=Decimal(str(row["debit"] or "0")),
                   credit=Decimal(str(row["credit"] or "0"))) for row in lines]
-    totals_row = connection.execute("""SELECT COALESCE(DECIMAL_SUM(debit),0) debit,COALESCE(DECIMAL_SUM(credit),0) credit
+    totals_row = execute_compat(connection, """SELECT COALESCE(DECIMAL_SUM(debit),0) debit,COALESCE(DECIMAL_SUM(credit),0) credit
         FROM journal_lines WHERE entry_id=?""", (entry_id,)).fetchone()
     totals = {"debit":Decimal(str(totals_row["debit"] or "0")),
               "credit":Decimal(str(totals_row["credit"] or "0"))}
@@ -3253,14 +3254,14 @@ def accounting_periods():
                 raise ValueError()
             if not name or len(name) > 100 or start_date > end_date:
                 raise ValueError()
-            overlap = connection.execute("""SELECT 1 FROM accounting_periods
+            overlap = execute_compat(connection, """SELECT 1 FROM accounting_periods
                 WHERE NOT(end_date < ? OR start_date > ?) LIMIT 1""",
                 (start_date, end_date)).fetchone()
             if overlap:
                 raise ValueError("توجد فترة محاسبية أخرى تتداخل مع هذا النطاق.")
             has_years = table_exists(connection, "financial_years")
-            if has_years and connection.execute("SELECT 1 FROM financial_years LIMIT 1").fetchone():
-                containing_year = connection.execute("""SELECT 1 FROM financial_years
+            if has_years and execute_compat(connection, "SELECT 1 FROM financial_years LIMIT 1").fetchone():
+                containing_year = execute_compat(connection, """SELECT 1 FROM financial_years
                     WHERE start_date<=? AND end_date>=? LIMIT 1""",
                     (start_date, end_date)).fetchone()
                 if not containing_year:
@@ -3281,7 +3282,7 @@ def accounting_periods():
         finally:
             connection.close()
         return redirect(url_for("accounting_periods"))
-    rows = connection.execute("SELECT * FROM accounting_periods ORDER BY start_date DESC").fetchall()
+    rows = execute_compat(connection, "SELECT * FROM accounting_periods ORDER BY start_date DESC").fetchall()
     connection.close()
     return render_template("periods.html", periods=rows)
 
@@ -3294,7 +3295,7 @@ def accounting_period_state(period_id):
         flash("حالة الفترة غير صحيحة.", "error")
         return redirect(url_for("accounting_periods"))
     connection = db()
-    row = connection.execute("SELECT period_name,start_date,end_date,locked FROM accounting_periods WHERE id=?", (period_id,)).fetchone()
+    row = execute_compat(connection, "SELECT period_name,start_date,end_date,locked FROM accounting_periods WHERE id=?", (period_id,)).fetchone()
     if not row:
         connection.close()
         flash("الفترة المحاسبية غير موجودة.", "error")
@@ -3302,14 +3303,14 @@ def accounting_period_state(period_id):
     closed_year_overlap = False
     has_financial_years = table_exists(connection, "financial_years")
     if state == "0" and has_financial_years:
-        closed_year_overlap = connection.execute("""SELECT 1 FROM financial_years
+        closed_year_overlap = execute_compat(connection, """SELECT 1 FROM financial_years
             WHERE status='closed' AND NOT(end_date<? OR start_date>?) LIMIT 1""",
             (row["start_date"], row["end_date"])).fetchone()
     if closed_year_overlap:
         connection.close()
         flash("لا يمكن فتح فترة تتقاطع مع سنة مالية مقفولة. استخدم إجراء عكس الإقفال المعتمد أولًا.", "error")
         return redirect(url_for("accounting_periods"))
-    connection.execute("UPDATE accounting_periods SET locked=? WHERE id=?", (int(state), period_id))
+    execute_compat(connection, "UPDATE accounting_periods SET locked=? WHERE id=?", (int(state), period_id))
     connection.commit()
     connection.close()
     log_change(
@@ -3330,7 +3331,7 @@ def reverse_journal(entry_id):
     # Serialize reversal checks and posting so two simultaneous requests cannot
     # create duplicate reversals for the same journal.
     begin_write_transaction(connection)
-    original = connection.execute("SELECT * FROM journal_entries WHERE id=? AND status='posted'", (entry_id,)).fetchone()
+    original = execute_compat(connection, "SELECT * FROM journal_entries WHERE id=? AND status='posted'", (entry_id,)).fetchone()
     if not original:
         connection.close()
         flash("لا يمكن عكس قيد غير موجود أو غير مرحّل.", "error")
@@ -3350,7 +3351,7 @@ def reverse_journal(entry_id):
     # effect, but keep that restoration terminal. A third-level reversal can
     # desynchronize linked subledgers (for example, fixed-asset status).
     if reversal_parent_id is not None:
-        reversal_parent = connection.execute(
+        reversal_parent = execute_compat(connection, 
             "SELECT reference,description FROM journal_entries WHERE id=?",
             (reversal_parent_id,),
         ).fetchone()
@@ -3366,7 +3367,7 @@ def reverse_journal(entry_id):
             )
             return redirect(url_for("journal_detail", entry_id=entry_id))
     # Refuse a second reversal even if an old record was created without the expected reference.
-    existing_reversal = connection.execute(
+    existing_reversal = execute_compat(connection, 
         "SELECT id FROM journal_entries WHERE reference=? AND status='posted' LIMIT 1",
         (f"REV-{entry_id}",),
     ).fetchone()
@@ -3379,11 +3380,11 @@ def reverse_journal(entry_id):
     has_financial_year_schema = table_exists(connection, "financial_years")
     financial_year_link = None
     if has_financial_year_schema:
-        financial_year_link = connection.execute("""SELECT id,year_name FROM financial_years
+        financial_year_link = execute_compat(connection, """SELECT id,year_name FROM financial_years
             WHERE opening_entry_id=? OR closing_entry_id=? LIMIT 1""",
             (entry_id, entry_id)).fetchone()
         if not financial_year_link and table_exists(connection, "financial_year_journal_history"):
-            financial_year_link = connection.execute("""SELECT financial_year_id AS id
+            financial_year_link = execute_compat(connection, """SELECT financial_year_id AS id
                 FROM financial_year_journal_history WHERE entry_id=? LIMIT 1""",
                 (entry_id,)).fetchone()
     if financial_year_link:
@@ -3394,17 +3395,17 @@ def reverse_journal(entry_id):
     # the original asset only after checking that no depreciation/disposal exists.
     reinstated_asset_rows = []
     if reversal_parent_id is not None and table_exists(connection, "fixed_asset_journal_lines"):
-        reinstated_asset_rows = connection.execute("""
+        reinstated_asset_rows = execute_compat(connection, """
             SELECT p.journal_line_id,p.status,p.fixed_asset_id
             FROM fixed_asset_journal_lines p WHERE p.entry_id=?
         """, (reversal_parent_id,)).fetchall()
         for asset_link in reinstated_asset_rows:
             if asset_link["status"] == "reversed" and asset_link["fixed_asset_id"]:
                 asset_id = asset_link["fixed_asset_id"]
-                has_depreciation = connection.execute(
+                has_depreciation = execute_compat(connection, 
                     "SELECT 1 FROM asset_depreciations WHERE asset_id=? LIMIT 1", (asset_id,)
                 ).fetchone()
-                has_disposal = connection.execute(
+                has_disposal = execute_compat(connection, 
                     "SELECT 1 FROM asset_disposals WHERE asset_id=? LIMIT 1", (asset_id,)
                 ).fetchone()
                 if has_depreciation or has_disposal:
@@ -3417,7 +3418,7 @@ def reverse_journal(entry_id):
     asset_link_exists = table_exists(connection, "fixed_asset_journal_lines")
     linked_asset_rows = []
     if asset_link_exists:
-        linked_asset_rows = connection.execute("""
+        linked_asset_rows = execute_compat(connection, """
             SELECT p.journal_line_id,p.status,p.fixed_asset_id,f.status asset_status
             FROM fixed_asset_journal_lines p
             LEFT JOIN fixed_assets f ON f.id=p.fixed_asset_id
@@ -3426,10 +3427,10 @@ def reverse_journal(entry_id):
     for asset_link in linked_asset_rows:
         if asset_link["fixed_asset_id"]:
             asset_id = asset_link["fixed_asset_id"]
-            has_depreciation = connection.execute(
+            has_depreciation = execute_compat(connection, 
                 "SELECT 1 FROM asset_depreciations WHERE asset_id=? LIMIT 1", (asset_id,)
             ).fetchone()
-            has_disposal = connection.execute(
+            has_disposal = execute_compat(connection, 
                 "SELECT 1 FROM asset_disposals WHERE asset_id=? LIMIT 1", (asset_id,)
             ).fetchone()
             if has_depreciation or has_disposal or asset_link["asset_status"] != "active":
@@ -3465,12 +3466,12 @@ def reverse_journal(entry_id):
         )
         return redirect(url_for("journal_detail", entry_id=entry_id))
     reference = f"REV-{entry_id}"
-    existing = connection.execute("SELECT id FROM journal_entries WHERE reference=? AND status='posted'", (reference,)).fetchone()
+    existing = execute_compat(connection, "SELECT id FROM journal_entries WHERE reference=? AND status='posted'", (reference,)).fetchone()
     if existing:
         connection.close()
         flash(f"تم إنشاء القيد العكسي مسبقًا: رقم {existing['id']}.", "warning")
         return redirect(url_for("journal_detail", entry_id=entry_id))
-    original_lines = connection.execute("SELECT account_id,debit,credit,memo FROM journal_lines WHERE entry_id=? ORDER BY id",
+    original_lines = execute_compat(connection, "SELECT account_id,debit,credit,memo FROM journal_lines WHERE entry_id=? ORDER BY id",
                                         (entry_id,)).fetchall()
     if len(original_lines) < 2:
         connection.close()
@@ -3492,40 +3493,40 @@ def reverse_journal(entry_id):
             reverse_lines, session["user_id"])
         if linked_asset_rows:
             for asset_link in linked_asset_rows:
-                connection.execute(
+                execute_compat(connection, 
                     "UPDATE fixed_asset_journal_lines SET status='reversed' WHERE journal_line_id=?",
                     (asset_link["journal_line_id"],),
                 )
                 if asset_link["fixed_asset_id"]:
-                    connection.execute(
+                    execute_compat(connection, 
                         "UPDATE fixed_assets SET status='reversed' WHERE id=?",
                         (asset_link["fixed_asset_id"],),
                     )
         if reinstated_asset_rows:
             for asset_link in reinstated_asset_rows:
                 if asset_link["status"] == "reversed":
-                    connection.execute(
+                    execute_compat(connection, 
                         "UPDATE fixed_asset_journal_lines SET status=? WHERE journal_line_id=?",
                         ("configured" if asset_link["fixed_asset_id"] else "pending",
                          asset_link["journal_line_id"]),
                     )
                     if asset_link["fixed_asset_id"]:
-                        connection.execute(
+                        execute_compat(connection, 
                             "UPDATE fixed_assets SET status='active' WHERE id=? AND status='reversed'",
                             (asset_link["fixed_asset_id"],),
                         )
         connection.commit()
-        reversal_entry = connection.execute(
+        reversal_entry = execute_compat(connection, 
             "SELECT id,entry_date,reference,description,status FROM journal_entries WHERE id=?",
             (reversal_id,),
         ).fetchone()
-        reversal_snapshot_lines = [dict(row) for row in connection.execute(
+        reversal_snapshot_lines = [dict(row) for row in execute_compat(connection, 
             """SELECT a.code account_code,a.name_ar account_name,jl.debit,jl.credit,jl.memo
                FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
                WHERE jl.entry_id=? ORDER BY jl.id""",
             (reversal_id,),
         ).fetchall()]
-        original_snapshot_lines = [dict(row) for row in connection.execute(
+        original_snapshot_lines = [dict(row) for row in execute_compat(connection, 
             """SELECT a.code account_code,a.name_ar account_name,jl.debit,jl.credit,jl.memo
                FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
                WHERE jl.entry_id=? ORDER BY jl.id""",
@@ -3583,12 +3584,12 @@ def users():
             assert_user_management_scope(requested_role=role, requested_permissions=selected)
             stored_permissions = user_permissions_storage(selected, role, role_permissions)
             username = request.form["username"].strip()
-            connection.execute(
+            execute_compat(connection, 
                 "INSERT INTO users(username,full_name,password_hash,role,created_at,permissions_json) VALUES(?,?,?,?,?,?)",
                 (username, request.form["full_name"].strip(), password_hash(request.form["password"]),
                  role, now(), stored_permissions),
             )
-            created_user_id = connection.execute(
+            created_user_id = execute_compat(connection, 
                 "SELECT id FROM users WHERE username=?", (username,)
             ).fetchone()["id"]
             connection.commit()
@@ -3617,7 +3618,7 @@ def users():
     available_permissions = list(ALL_PERMISSIONS) if is_role_admin else [
         permission for permission in ALL_PERMISSIONS if permission in actor_permissions
     ]
-    rows = [dict(row) for row in connection.execute(
+    rows = [dict(row) for row in execute_compat(connection, 
         "SELECT id,username,full_name,role,active,created_at,permissions_json FROM users ORDER BY id"
     ).fetchall()]
     for row in rows:
@@ -3651,7 +3652,7 @@ def manage_user_roles():
                 raise ValueError("اسم الدور مطلوب من حرفين إلى 80 حرفًا.")
             role_key = "custom_" + uuid.uuid4().hex[:10]
             timestamp = now()
-            connection.execute(
+            execute_compat(connection, 
                 """INSERT INTO roles(role_key,role_name,permissions_json,is_system,active,
                    created_by,updated_by,created_at,updated_at)
                    VALUES(?,?,?,0,1,?,?,?,?)""",
@@ -3664,7 +3665,7 @@ def manage_user_roles():
                 details=role_key, reason=request.form.get("change_reason", "").strip())
             flash("تم إنشاء الدور المخصص.", "success")
         elif action == "update":
-            current = connection.execute(
+            current = execute_compat(connection, 
                 "SELECT * FROM roles WHERE role_key=? AND is_system=0 AND active=1", (role_key,)
             ).fetchone()
             if not current:
@@ -3679,7 +3680,7 @@ def manage_user_roles():
                 "active": current["active"],
             }
             after_values = {"role_name": role_name, "permissions": selected, "active": 1}
-            connection.execute(
+            execute_compat(connection, 
                 """UPDATE roles SET role_name=?,permissions_json=?,updated_by=?,updated_at=?
                    WHERE role_key=? AND is_system=0""",
                 (role_name, json.dumps(selected, ensure_ascii=False), session["user_id"], now(), role_key),
@@ -3689,17 +3690,17 @@ def manage_user_roles():
                 details=role_key, reason=request.form.get("change_reason", "").strip())
             flash("تم تحديث الدور. المستخدمون الذين يرثون صلاحيات الدور سيحصلون على التحديث عند تسجيل الدخول التالي.", "success")
         elif action == "deactivate":
-            current = connection.execute(
+            current = execute_compat(connection, 
                 "SELECT * FROM roles WHERE role_key=? AND is_system=0 AND active=1", (role_key,)
             ).fetchone()
             if not current:
                 raise ValueError("الدور المخصص غير موجود أو غير نشط.")
-            assigned = connection.execute(
+            assigned = execute_compat(connection, 
                 "SELECT COUNT(*) FROM users WHERE role=?", (role_key,)
             ).fetchone()[0]
             if assigned:
                 raise ValueError("لا يمكن تعطيل الدور لأنه مرتبط بمستخدمين. غيّر أدوارهم أولًا.")
-            connection.execute(
+            execute_compat(connection, 
                 "UPDATE roles SET active=0,updated_by=?,updated_at=? WHERE role_key=? AND is_system=0",
                 (session["user_id"], now(), role_key),
             )
@@ -3727,7 +3728,7 @@ def manage_user_roles():
 def edit_user(user_id):
     connection = db()
     initialize_roles_schema(connection)
-    user = connection.execute(
+    user = execute_compat(connection, 
         "SELECT id,username,full_name,role,active,permissions_json FROM users WHERE id=?",
         (user_id,),
     ).fetchone()
@@ -3788,7 +3789,7 @@ def edit_user(user_id):
                     "permissions": selected,
                 }
                 stored_permissions = user_permissions_storage(selected, role, role_permissions)
-                connection.execute(
+                execute_compat(connection, 
                     "UPDATE users SET username=?,full_name=?,role=?,active=?,permissions_json=? WHERE id=?",
                     (after_values["username"], after_values["full_name"], role,
                      after_values["active"], stored_permissions, user_id),
@@ -3818,7 +3819,7 @@ def edit_user(user_id):
 @app.route("/users/<int:user_id>/delete",methods=["POST"])
 @requires("users.manage")
 def delete_user(user_id):
-    connection=db(); user=connection.execute("SELECT * FROM users WHERE id=?",(user_id,)).fetchone()
+    connection=db(); user=execute_compat(connection, "SELECT * FROM users WHERE id=?",(user_id,)).fetchone()
     if not user:
         flash("المستخدم غير موجود.","error")
     elif user_id==session.get("user_id"):
@@ -3840,7 +3841,7 @@ def delete_user(user_id):
           ("SELECT 1 FROM supplier_payments WHERE created_by=? LIMIT 1","مدفوعات الموردين"),
           ("SELECT 1 FROM supplier_credit_notes WHERE created_by=? LIMIT 1","إشعارات دائنة المشتريات"),
           ("SELECT 1 FROM bank_transactions WHERE created_by=? LIMIT 1","الحركات البنكية")]
-        used=next((label for q,label in checks if connection.execute(q,(user_id,)).fetchone()),None)
+        used=next((label for q,label in checks if execute_compat(connection, q,(user_id,)).fetchone()),None)
         if used: flash("لا يمكن حذف المستخدم لوجود نشاط مسجل في "+used+". يمكنك إيقافه بدل الحذف.","error")
         else:
             try:
@@ -3849,7 +3850,7 @@ def delete_user(user_id):
                     "role": user["role"], "active": user["active"],
                     "permissions": stored_user_permissions(user["permissions_json"], user["role"]),
                 }
-                connection.execute("DELETE FROM users WHERE id=?",(user_id,))
+                execute_compat(connection, "DELETE FROM users WHERE id=?",(user_id,))
                 connection.commit()
                 log_change(
                     "user_deleted", "user", user_id, before_values, None,
@@ -3864,9 +3865,9 @@ def delete_user(user_id):
 @requires("import_export.manage")
 def export_data(format):
     connection = db()
-    accounts_data = [dict(row) for row in connection.execute("SELECT code,name_ar,account_type,active FROM accounts ORDER BY code")]
-    entries_data = [dict(row) for row in connection.execute("SELECT * FROM journal_entries ORDER BY id")]
-    lines_data = [dict(row) for row in connection.execute("""
+    accounts_data = [dict(row) for row in execute_compat(connection, "SELECT code,name_ar,account_type,active FROM accounts ORDER BY code")]
+    entries_data = [dict(row) for row in execute_compat(connection, "SELECT * FROM journal_entries ORDER BY id")]
+    lines_data = [dict(row) for row in execute_compat(connection, """
         SELECT jl.id,jl.entry_id,a.code account_code,jl.debit,jl.credit,jl.memo
         FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id ORDER BY jl.entry_id,jl.id
     """)]
@@ -4121,7 +4122,7 @@ def import_data_wizard():
         try:
             begin_write_transaction(connection)
             if dataset == "opening_balances":
-                connection.execute("""CREATE TABLE IF NOT EXISTS opening_balance_import_refs (
+                execute_compat(connection, """CREATE TABLE IF NOT EXISTS opening_balance_import_refs (
                     id INTEGER PRIMARY KEY, record_type TEXT NOT NULL, reference TEXT NOT NULL,
                     entity_key TEXT NOT NULL, journal_entry_id INTEGER NOT NULL REFERENCES journal_entries(id),
                     source_file TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -4130,7 +4131,7 @@ def import_data_wizard():
             for row_number, source_row in enumerate(rows, start=2):
                 values = {key: (source_row[index] if index is not None else "") for key, index in mapping.items()}
                 clean = {key: str(value or "").strip() for key, value in values.items()}
-                connection.execute("SAVEPOINT import_row")
+                execute_compat(connection, "SAVEPOINT import_row")
                 try:
                     if dataset == "opening_balances":
                         profile = get_active_activity_profile(connection)
@@ -4152,11 +4153,11 @@ def import_data_wizard():
                         entry_date = date.fromisoformat(clean.get("balance_date", "")).isoformat()
                         if not ref:
                             raise ValueError("مرجع المستند الأصلي مطلوب لتتبع الرصيد الافتتاحي.")
-                        if connection.execute("""SELECT 1 FROM accounting_periods
+                        if execute_compat(connection, """SELECT 1 FROM accounting_periods
                             WHERE locked=1 AND start_date<=? AND end_date>=? LIMIT 1""",
                             (entry_date, entry_date)).fetchone():
                             raise ValueError("تاريخ الرصيد يقع داخل فترة محاسبية مغلقة.")
-                        retained = connection.execute("SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
+                        retained = execute_compat(connection, "SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
                             (str(retained_code),)).fetchone()
                         if not retained:
                             raise ValueError("حساب الأرباح المحتجزة/الأرصدة الافتتاحية غير مضبوط في ملف النشاط.")
@@ -4165,13 +4166,13 @@ def import_data_wizard():
                         entity_key = ""
                         document_suffix = uuid.uuid4().hex[:10].upper()
                         if record_type == "customer":
-                            customer = connection.execute("SELECT * FROM customers WHERE code=? AND active=1",
+                            customer = execute_compat(connection, "SELECT * FROM customers WHERE code=? AND active=1",
                                 (clean.get("customer_code", ""),)).fetchone()
                             amount = Decimal(clean.get("amount", "")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                             if not customer or not amount.is_finite() or amount <= 0:
                                 raise ValueError("تأكد من كود العميل النشط والمبلغ الموجب.")
                             ar_code = posting.get("ar")
-                            ar = connection.execute("SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
+                            ar = execute_compat(connection, "SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
                                 (str(ar_code),)).fetchone()
                             if not ar: raise ValueError("حساب العملاء المدينين غير مضبوط في ملف النشاط.")
                             invoice_no = "OB-C-" + document_suffix
@@ -4182,7 +4183,7 @@ def import_data_wizard():
                                  total_amount,paid_amount,status,created_by)
                                 VALUES(?,?,?,?,?,'0','0',?,'0','posted',?)""",
                                 (invoice_no, customer["id"], entry_date, due_date, str(amount), str(amount), session.get("user_id")))
-                            connection.execute("""INSERT INTO sales_invoice_lines
+                            execute_compat(connection, """INSERT INTO sales_invoice_lines
                                 (invoice_id,description,quantity,unit_price,line_total,cost_total)
                                 VALUES(?,?, '1', ?, ?, '0')""",
                                 (invoice_id, "رصيد افتتاحي - " + ref, str(amount), str(amount)))
@@ -4192,16 +4193,16 @@ def import_data_wizard():
                             journal_ref = "OPENING-CUSTOMER-" + document_suffix
                             journal_id = post_journal(connection, entry_date, journal_ref,
                                 "إثبات رصيد افتتاحي للعميل " + customer["name"], journal_lines, session.get("user_id"))
-                            connection.execute("UPDATE sales_invoices SET journal_entry_id=? WHERE id=?",
+                            execute_compat(connection, "UPDATE sales_invoices SET journal_entry_id=? WHERE id=?",
                                 (journal_id, invoice_id))
                         elif record_type == "supplier":
-                            supplier = connection.execute("SELECT * FROM suppliers WHERE code=? AND active=1",
+                            supplier = execute_compat(connection, "SELECT * FROM suppliers WHERE code=? AND active=1",
                                 (clean.get("supplier_code", ""),)).fetchone()
                             amount = Decimal(clean.get("amount", "")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                             if not supplier or not amount.is_finite() or amount <= 0:
                                 raise ValueError("تأكد من كود المورد النشط والمبلغ الموجب.")
                             ap_code = posting.get("supplier_ap")
-                            ap = connection.execute("SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
+                            ap = execute_compat(connection, "SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
                                 (str(ap_code),)).fetchone()
                             if not ap: raise ValueError("حساب الموردين الدائنين غير مضبوط في ملف النشاط.")
                             bill_no = "OB-S-" + document_suffix
@@ -4218,12 +4219,12 @@ def import_data_wizard():
                             journal_ref = "OPENING-SUPPLIER-" + document_suffix
                             journal_id = post_journal(connection, entry_date, journal_ref,
                                 "إثبات رصيد افتتاحي للمورد " + supplier["name"], journal_lines, session.get("user_id"))
-                            connection.execute("UPDATE supplier_bills SET journal_entry_id=? WHERE id=?",
+                            execute_compat(connection, "UPDATE supplier_bills SET journal_entry_id=? WHERE id=?",
                                 (journal_id, bill_id))
                         elif record_type == "inventory":
-                            product = connection.execute("SELECT * FROM stock_products WHERE sku=? AND active=1",
+                            product = execute_compat(connection, "SELECT * FROM stock_products WHERE sku=? AND active=1",
                                 (clean.get("sku", ""),)).fetchone()
-                            warehouse = connection.execute("SELECT * FROM stock_warehouses WHERE code=? AND active=1",
+                            warehouse = execute_compat(connection, "SELECT * FROM stock_warehouses WHERE code=? AND active=1",
                                 (clean.get("warehouse_code", ""),)).fetchone()
                             qty = Decimal(clean.get("quantity", "")).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
                             unit_cost = Decimal(clean.get("unit_cost", "")).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
@@ -4232,7 +4233,7 @@ def import_data_wizard():
                             amount = (qty * unit_cost).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                             if amount <= 0: raise ValueError("قيمة المخزون الافتتاحي يجب أن تكون أكبر من صفر.")
                             inv_code = posting.get("inventory")
-                            inv = connection.execute("SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
+                            inv = execute_compat(connection, "SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
                                 (str(inv_code),)).fetchone()
                             if not inv: raise ValueError("حساب المخزون غير مضبوط في ملف النشاط الحالي.")
                             entity_key = product["sku"] + "|" + warehouse["code"]
@@ -4249,13 +4250,13 @@ def import_data_wizard():
                                 VALUES(?,'receipt',?,?,?,?,?,?,?,?,?,'posted')""",
                                 (movement_no, product["id"], warehouse["id"], str(qty), str(unit_cost), str(amount),
                                  entry_date, "رصيد افتتاحي - " + ref, session.get("user_id"), journal_id))
-                            connection.execute("""INSERT INTO stock_valuation_layers
+                            execute_compat(connection, """INSERT INTO stock_valuation_layers
                                 (product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost,value_remaining)
                                 VALUES(?,?,?,?,?,?,?)""",
                                 (product["id"], warehouse["id"], movement_id, str(qty), str(qty), str(unit_cost), str(amount)))
                         else:
                             raise ValueError("نوع الرصيد يجب أن يكون customer أو supplier أو inventory.")
-                        connection.execute("""INSERT INTO opening_balance_import_refs
+                        execute_compat(connection, """INSERT INTO opening_balance_import_refs
                             (record_type,reference,entity_key,journal_entry_id,source_file)
                             VALUES(?,?,?,?,?)""",
                             (record_type, ref, entity_key, journal_id, payload.get("filename", "")))
@@ -4268,12 +4269,12 @@ def import_data_wizard():
                         code, name = clean["code"], clean["name_ar"]
                         if not code or not name or account_type not in allowed_types:
                             raise ValueError("كود الحساب أو اسمه أو نوعه غير صحيح.")
-                        if connection.execute("SELECT 1 FROM accounts WHERE code=?", (code,)).fetchone():
+                        if execute_compat(connection, "SELECT 1 FROM accounts WHERE code=?", (code,)).fetchone():
                             raise ValueError(f"كود الحساب {code} موجود بالفعل.")
                         parent_id = None
                         parent_code = clean.get("parent_code", "")
                         if parent_code:
-                            parent = connection.execute("SELECT id,account_type,is_group,active FROM accounts WHERE code=?",
+                            parent = execute_compat(connection, "SELECT id,account_type,is_group,active FROM accounts WHERE code=?",
                                 (parent_code,)).fetchone()
                             if not parent or not parent["active"] or not parent["is_group"]:
                                 raise ValueError(f"الحساب الأب {parent_code} غير موجود أو غير نشط أو ليس حسابًا تجميعيًا.")
@@ -4284,7 +4285,7 @@ def import_data_wizard():
                         is_group = 1 if group_raw in {"1", "true", "yes", "نعم", "تجميعي", "مجموعة"} else 0
                         if group_raw and group_raw not in {"1", "0", "true", "false", "yes", "no", "نعم", "لا", "تجميعي", "مجموعة", "تفصيلي"}:
                             raise ValueError("قيمة حقل الحساب التجميعي غير صحيحة؛ استخدم 1 أو 0.")
-                        connection.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
+                        execute_compat(connection, "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
                             (code, name, account_type, parent_id, is_group))
                     elif dataset == "employees":
                         if not clean["employee_code"] or not clean["full_name"] or not clean["hire_date"]:
@@ -4301,7 +4302,7 @@ def import_data_wizard():
                             date.fromisoformat(termination_date)
                         if status in {"resigned", "retired"} and not termination_date:
                             raise ValueError("يجب تحديد تاريخ انتهاء الخدمة للموظف المستقيل أو المحال للمعاش.")
-                        connection.execute("""INSERT INTO employees
+                        execute_compat(connection, """INSERT INTO employees
                             (employee_code,full_name,job_title,department,hire_date,basic_salary,address,national_id,work_status,termination_date)
                             VALUES(?,?,?,?,?,?,?,?,?,?)""",
                             (clean["employee_code"], clean["full_name"], clean.get("job_title",""),
@@ -4314,13 +4315,13 @@ def import_data_wizard():
                             limit = Decimal(clean.get("credit_limit") or "0")
                             if not limit.is_finite() or limit < 0:
                                 raise ValueError("حد الائتمان يجب أن يكون رقمًا غير سالب.")
-                            connection.execute("""INSERT INTO customers
+                            execute_compat(connection, """INSERT INTO customers
                                 (code,name,tax_number,phone,email,address,credit_limit)
                                 VALUES(?,?,?,?,?,?,?)""",
                                 (clean["code"],clean["name"],clean.get("tax_number",""),clean.get("phone",""),
                                  clean.get("email",""),clean.get("address",""),str(limit)))
                         else:
-                            connection.execute("""INSERT INTO suppliers
+                            execute_compat(connection, """INSERT INTO suppliers
                                 (code,name,tax_number,phone,email,address) VALUES(?,?,?,?,?,?)""",
                                 (clean["code"],clean["name"],clean.get("tax_number",""),clean.get("phone",""),
                                  clean.get("email",""),clean.get("address","")))
@@ -4335,7 +4336,7 @@ def import_data_wizard():
                         sale_price = Decimal(clean.get("sale_price") or "0")
                         if any(not v.is_finite() or v < 0 for v in (min_qty,purchase_price,sale_price)):
                             raise ValueError("الكميات والأسعار يجب أن تكون أرقامًا غير سالبة.")
-                        connection.execute("""INSERT INTO stock_products
+                        execute_compat(connection, """INSERT INTO stock_products
                             (sku,name_ar,category,product_type,uom,barcode,min_qty,purchase_price,sale_price)
                             VALUES(?,?,?,?,?,?,?,?,?)""",
                             (clean["sku"],clean["name_ar"],clean.get("category",""),product_type,
@@ -4344,10 +4345,10 @@ def import_data_wizard():
                     else:
                         raise ValueError("وجهة الاستيراد غير مدعومة.")
                     inserted += 1
-                    connection.execute("RELEASE SAVEPOINT import_row")
+                    execute_compat(connection, "RELEASE SAVEPOINT import_row")
                 except (ValueError, InvalidOperation, *DB_INTEGRITY_ERROR) as exc:
-                    connection.execute("ROLLBACK TO SAVEPOINT import_row")
-                    connection.execute("RELEASE SAVEPOINT import_row")
+                    execute_compat(connection, "ROLLBACK TO SAVEPOINT import_row")
+                    execute_compat(connection, "RELEASE SAVEPOINT import_row")
                     skipped += 1
                     if len(errors) < 20:
                         reason = str(exc) if isinstance(exc, (ValueError, InvalidOperation)) else "الكود أو المرجع مكرر أو توجد مخالفة لقيد فريد."
@@ -4408,7 +4409,7 @@ def import_accounts():
                 skipped += 1
                 continue
             try:
-                connection.execute("INSERT INTO accounts(code,name_ar,account_type) VALUES(?,?,?)",
+                execute_compat(connection, "INSERT INTO accounts(code,name_ar,account_type) VALUES(?,?,?)",
                                    (code, name, account_type))
                 inserted += 1
             except DB_INTEGRITY_ERROR:
@@ -4429,7 +4430,7 @@ def import_accounts():
 @requires("backup.manage")
 def create_backup():
     connection = db()
-    keep_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='backup_keep_count'").fetchone()
+    keep_row = execute_compat(connection, "SELECT setting_value FROM company_settings WHERE setting_key='backup_keep_count'").fetchone()
     connection.close()
     filename = create_backup_archive(DB_PATH, BACKUP_DIR, int(keep_row["setting_value"]) if keep_row else 30)
     log("backup_created", filename.name)
@@ -4487,7 +4488,7 @@ def backup_settings():
         except (ValueError, TypeError) as exc:
             connection.rollback()
             flash(safe_error_message(exc, "راجع إعدادات النسخ الاحتياطي."), "error")
-    settings = {row["setting_key"]: row["setting_value"] for row in connection.execute(
+    settings = {row["setting_key"]: row["setting_value"] for row in execute_compat(connection, 
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key LIKE 'backup_%'")}
     connection.close()
     files = sorted(BACKUP_DIR.glob("nexus-backup-*.zip"),
@@ -4502,7 +4503,7 @@ def backup_settings():
 @requires("backup.manage")
 def backup_run_now():
     connection = db()
-    keep_row = connection.execute("SELECT setting_value FROM company_settings WHERE setting_key='backup_keep_count'").fetchone()
+    keep_row = execute_compat(connection, "SELECT setting_value FROM company_settings WHERE setting_key='backup_keep_count'").fetchone()
     keep_count = int(keep_row["setting_value"]) if keep_row else 30
     connection.close()
     filename = create_backup_archive(DB_PATH, BACKUP_DIR, keep_count)
@@ -4539,16 +4540,16 @@ def reset_company_data():
         flash("تم إيقاف محاولة التصفير مؤقتًا بسبب تكرار كلمات المرور الخاطئة.", "error")
         return redirect(url_for("backup_settings"))
 
-    current_admin = connection.execute(
+    current_admin = execute_compat(connection, 
         "SELECT id FROM users WHERE id=? AND role='admin' AND active=1",
         (session.get("user_id"),),
     ).fetchone()
-    root_admin = connection.execute(
+    root_admin = execute_compat(connection, 
         "SELECT id,password_hash FROM users "
         "WHERE username='admin' AND role='admin' AND active=1"
     ).fetchone()
     if not current_admin or not root_admin or not verify_password(supplied_password, root_admin["password_hash"]):
-        connection.execute(
+        execute_compat(connection, 
             "INSERT INTO login_attempts(username,remote_addr,attempted_at) VALUES(?,?,?)",
             ("super-admin-reset", remote_addr, now()),
         )
@@ -4559,7 +4560,7 @@ def reset_company_data():
         flash("بيانات مدير النظام الأعلى غير صحيحة. لم يتم حذف أي بيانات.", "error")
         return redirect(url_for("backup_settings"))
 
-    connection.execute(
+    execute_compat(connection, 
         "DELETE FROM login_attempts WHERE username='super-admin-reset' AND remote_addr=?",
         (remote_addr,),
     )
@@ -4568,7 +4569,7 @@ def reset_company_data():
 
     try:
         settings_connection = db()
-        keep_row = settings_connection.execute(
+        keep_row = execute_compat(settings_connection, 
             "SELECT setting_value FROM company_settings WHERE setting_key='backup_keep_count'"
         ).fetchone()
         keep_count = int(keep_row["setting_value"]) if keep_row else 30
@@ -4649,7 +4650,7 @@ def restore_backup():
         extract_validated_backup(archive_path, candidate_path)
 
         settings_connection = db()
-        keep_row = settings_connection.execute(
+        keep_row = execute_compat(settings_connection, 
             "SELECT setting_value FROM company_settings WHERE setting_key='backup_keep_count'"
         ).fetchone()
         keep_count = int(keep_row["setting_value"]) if keep_row else 30
@@ -4693,7 +4694,7 @@ if __name__ == "__main__":
             raise RuntimeError("LAN binding requires NEXUS_COOKIE_SECURE=1. Put NEXUS behind HTTPS before enabling LAN.")
         startup_db = db()
         try:
-            default_admin = startup_db.execute("SELECT password_hash,must_change_password FROM users WHERE username='admin' AND active=1").fetchone()
+            default_admin = execute_compat(startup_db, "SELECT password_hash,must_change_password FROM users WHERE username='admin' AND active=1").fetchone()
             if default_admin and default_admin["must_change_password"]:
                 raise RuntimeError("Complete the administrator's required password change locally before enabling LAN access.")
         finally:
