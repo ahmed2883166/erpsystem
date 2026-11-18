@@ -16,7 +16,8 @@ def _execute(conn, sql, params=()):
 def _executemany(conn, sql, rows):
     return executemany_compat(conn, sql, rows)
 from accounting_core import (post_journal, register_decimal_aggregates, reconciliation_snapshot,
-                             decimal_sum_expression)
+                             decimal_sum_expression, decimal_net_expression,
+                             month_key_expression)
 from chart_templates import ACTIVITY_ACCOUNT_ROLES
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
@@ -1089,12 +1090,10 @@ def build_budget_comparison(conn, budget_id):
     dimension_sql = (" AND " + " AND ".join(dimensions)) if dimensions else ""
     rows = _execute(conn, f"""
       SELECT a.id,a.code,a.name_ar,a.account_type,b.amount,
-        COALESCE((SELECT DECIMAL_NET(
-            CASE WHEN a.account_type='revenue' THEN jl.credit ELSE jl.debit END,
-            CASE WHEN a.account_type='revenue' THEN jl.debit ELSE jl.credit END)
+        (SELECT {decimal_net_expression(conn, "CASE WHEN a.account_type='revenue' THEN jl.credit ELSE jl.debit END", "CASE WHEN a.account_type='revenue' THEN jl.debit ELSE jl.credit END")}
           FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
           WHERE jl.account_id=a.id AND je.status='posted'
-            AND je.entry_date>=? AND je.entry_date<=? {dimension_sql}), '0') actual
+            AND je.entry_date>=? AND je.entry_date<=? {dimension_sql}) actual
       FROM budget_lines b JOIN accounts a ON a.id=b.account_id
       WHERE b.budget_id=? ORDER BY a.account_type,a.code
     """, (*params, budget_id)).fetchall()
@@ -1130,15 +1129,14 @@ def build_budget_monthly_comparison(conn, budget_id):
             dimensions.append(f"jl.{key}=?")
             params.append(plan[key])
     dimension_sql = (" AND " + " AND ".join(dimensions)) if dimensions else ""
+    month_expr = month_key_expression(conn, "je.entry_date")
     actual_rows = _execute(conn, f"""
-      SELECT jl.account_id,substr(je.entry_date,1,7) period,
-        DECIMAL_NET(
-          CASE WHEN a.account_type='revenue' THEN jl.credit ELSE jl.debit END,
-          CASE WHEN a.account_type='revenue' THEN jl.debit ELSE jl.credit END) actual
+      SELECT jl.account_id,{month_expr} period,
+        {decimal_net_expression(conn, "CASE WHEN a.account_type='revenue' THEN jl.credit ELSE jl.debit END", "CASE WHEN a.account_type='revenue' THEN jl.debit ELSE jl.credit END")} actual
       FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
       JOIN accounts a ON a.id=jl.account_id
       WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=? {dimension_sql}
-      GROUP BY jl.account_id,substr(je.entry_date,1,7)
+      GROUP BY jl.account_id,{month_expr}
     """, params).fetchall()
     actuals = {(r["account_id"], r["period"]): Decimal(str(r["actual"] or "0")) for r in actual_rows}
     planned = _execute(conn, """
@@ -1721,7 +1719,7 @@ def build_cash_flow_snapshot(conn, start, end):
             " AND je.id NOT IN (" + ",".join("?" for _ in copied_openings) + ")"
             if copied_openings else ""
         )
-        opening_row = _execute(conn, f"""SELECT COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) value
+        opening_row = _execute(conn, f"""SELECT {decimal_net_expression(conn, "jl.debit", "jl.credit")} value
             FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
             WHERE jl.account_id IN ({marks}) AND je.status='posted' AND je.entry_date<?
               {opening_exclusion}""",
@@ -1736,8 +1734,7 @@ def build_cash_flow_snapshot(conn, start, end):
             if copied_period_openings else ""
         )
         entries = _execute(conn, f"""SELECT je.id,{reference_expr} reference,
-            COALESCE(DECIMAL_NET(CASE WHEN jl.account_id IN ({marks}) THEN jl.debit ELSE '0' END,
-                                 CASE WHEN jl.account_id IN ({marks}) THEN jl.credit ELSE '0' END),0) cash_net
+            {decimal_net_expression(conn, f"CASE WHEN jl.account_id IN ({marks}) THEN jl.debit ELSE '0' END", f"CASE WHEN jl.account_id IN ({marks}) THEN jl.credit ELSE '0' END")} cash_net
             FROM journal_entries je JOIN journal_lines jl ON jl.entry_id=je.id
             WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?{period_opening_exclusion}
             GROUP BY je.id ORDER BY je.entry_date,je.id""",
