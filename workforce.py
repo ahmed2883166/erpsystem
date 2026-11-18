@@ -717,12 +717,13 @@ def _validate_employee_dimensions(c, values):
 
 
 def _employee_form_values(form):
-    # Employee master is identity/employment data only. Payroll amounts are entered
-    # in the monthly payroll screen and are never sourced from this profile.
-    salary = Decimal("0")
+    # The employee master captures the initial basic and insured wages.
+    # Monthly payroll lines keep their own snapshots, so later profile changes
+    # cannot rewrite already prepared or posted payroll/accounting history.
+    salary = M(D(form.get("basic_salary", "0")))
     variable_salary = Decimal("0")
     hours = D(form.get("standard_hours", "208"))
-    insured_wage = Decimal("0")
+    insured_wage = M(D(form.get("insured_wage", "0")))
     legal_category = form.get("legal_category", "local").strip().lower()
     work_status = form.get("work_status", "permanent").strip().lower()
     raise_type = "fixed"
@@ -739,9 +740,11 @@ def _employee_form_values(form):
         raise ValueError("يجب تحديد تاريخ سريان الاستقالة أو بلوغ المعاش.")
     if work_status not in {"resigned", "retired"}:
         termination_date = ""
+    if (salary < 0 or insured_wage < 0):
+        raise ValueError("الأجر الأساسي والأجر التأميني لا يجوز أن يكونا سالبين.")
     if (hours <= 0 or not legal_category or
         work_status not in {"comprehensive_bonus", "permanent", "temporary", "unpaid_leave", "resigned", "retired"}):
-        raise ValueError("راجع الراتب وساعات العمل والحالة الوظيفية والعلاوة ونسبة الإضافي.")
+        raise ValueError("راجع الأجر الأساسي والأجر التأميني وساعات العمل والحالة الوظيفية.")
     return (
         form.get("employee_code", "").strip(), form["full_name"].strip(),
         form.get("job_title", "").strip(), form.get("department", "").strip(),
@@ -1028,9 +1031,16 @@ def employees():
         page=request.args.get("employees_page",1,type=int),
         per_page=request.args.get("employees_per_page",50,type=int))
     rows = employees_page["rows"]
+    employee_rows = []
+    for row in rows:
+        item = dict(row)
+        item["current_basic_salary"], item["current_insured_wage"] = _employee_salary_basis(
+            c, item["id"], date.today().isoformat()
+        )
+        employee_rows.append(item)
     dimensions = _dimension_options(c)
     c.close()
-    return render_template("employees.html", employees=rows,
+    return render_template("employees.html", employees=employee_rows,
                            employees_page=employees_page, dimensions=dimensions)
 
 
@@ -1089,9 +1099,14 @@ def edit_employee(employee_id):
             c.rollback()
             _delete_employee_photo(new_photo_path)
             flash(str(exc) or "تعذر تحديث بيانات الموظف.", "error")
+    current_basic_salary, current_insured_wage = _employee_salary_basis(
+        c, employee_id, date.today().isoformat()
+    )
     dimensions = _dimension_options(c)
     c.close()
-    return render_template("employee_edit.html", e=employee, dimensions=dimensions)
+    return render_template("employee_edit.html", e=employee, dimensions=dimensions,
+                           current_basic_salary=current_basic_salary,
+                           current_insured_wage=current_insured_wage)
 
 
 @workforce_bp.route("/hr/<int:employee_id>/employment-history", methods=["GET", "POST"])
