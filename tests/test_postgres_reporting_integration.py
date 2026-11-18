@@ -197,5 +197,54 @@ class ManagementReportsPostgreSQLIntegrationTests(unittest.TestCase):
             connection.commit()
             connection.close()
 
+    def test_expense_analysis_uses_postgresql_numeric_and_month_queries(self):
+        from expense_analysis import build_expense_analysis
+
+        schema = "nexus_expense_" + uuid.uuid4().hex[:12]
+        connection = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"],
+            row_factory=psycopg.rows.dict_row,
+        )
+        try:
+            connection.execute(f'CREATE SCHEMA "{schema}"')
+            connection.execute(f'SET search_path TO "{schema}"')
+            connection.execute("""CREATE TABLE accounts(
+                id BIGINT PRIMARY KEY, code TEXT, name_ar TEXT,
+                account_type TEXT, is_group BOOLEAN, active BOOLEAN
+            )""")
+            connection.execute("""CREATE TABLE journal_entries(
+                id BIGINT PRIMARY KEY, entry_date DATE, status TEXT, entry_type TEXT
+            )""")
+            connection.execute("""CREATE TABLE journal_lines(
+                id BIGINT PRIMARY KEY, entry_id BIGINT, account_id BIGINT,
+                debit NUMERIC(20,2), credit NUMERIC(20,2),
+                branch_id BIGINT, cost_center_id BIGINT, project_id BIGINT,
+                customer_id BIGINT, salesperson_id BIGINT, supplier_id BIGINT
+            )""")
+            for table, columns in (
+                ("branches", "code TEXT, name_ar TEXT"),
+                ("cost_centers", "code TEXT, name_ar TEXT"),
+                ("projects", "code TEXT, name_ar TEXT"),
+                ("customers", "code TEXT, name TEXT"),
+                ("salespersons", "code TEXT, name TEXT"),
+                ("suppliers", "code TEXT, name TEXT"),
+            ):
+                connection.execute(f'CREATE TABLE "{table}"(id BIGINT PRIMARY KEY,{columns})')
+            connection.execute("INSERT INTO accounts VALUES(1,'6100','Rent','expense',FALSE,TRUE)")
+            connection.execute("INSERT INTO journal_entries VALUES(1,'2026-11-05','posted','general')")
+            connection.execute(
+                "INSERT INTO journal_lines VALUES(1,1,1,55,5,NULL,NULL,NULL,NULL,NULL,NULL)"
+            )
+            report = build_expense_analysis(connection, "2026-11-01", "2026-11-30")
+            self.assertEqual(report["total"], Decimal("50"))
+            self.assertEqual(report["monthly_rows"][0]["month"], "2026-11")
+            self.assertEqual(report["monthly_rows"][0]["amount"], Decimal("50"))
+        finally:
+            connection.rollback()
+            connection.execute("SET search_path TO public")
+            connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            connection.commit()
+            connection.close()
+
 if __name__ == "__main__":
     unittest.main()
