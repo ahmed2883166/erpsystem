@@ -376,9 +376,14 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
             _with_required_numeric_override_tables(snapshot)
         )
         self.assertIn('CREATE TABLE "sample"', ddl)
-        self.assertIn("CREATE TABLE nexus_schema_installation", ddl)
-        self.assertIn(review["baseline_sha256"], ddl)
+        self.assertNotIn("CREATE TABLE nexus_schema_installation", ddl)
+        self.assertNotIn("INSERT INTO nexus_schema_installation", ddl)
+        self.assertTrue(ddl.rstrip().endswith("COMMIT;"))
         self.assertEqual(len(review["baseline_sha256"]), 64)
+        self.assertEqual(
+            review["baseline_sha256"],
+            __import__("hashlib").sha256(ddl.encode("utf-8")).hexdigest(),
+        )
         self.assertEqual(review["installation_marker"], "nexus_schema_installation")
         self.assertEqual(review["table_count"], 4)
 
