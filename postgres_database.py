@@ -157,6 +157,8 @@ class PostgresConnectionPool:
 
 
 def _positive_timeout(value, label):
+    if isinstance(value, bool):
+        raise ValueError(f"{label} must be a positive number.")
     try:
         result = float(value)
     except (TypeError, ValueError) as exc:
