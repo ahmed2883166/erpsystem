@@ -85,6 +85,12 @@ def main() -> int:
                             f"accounts, and company settings: users={user_count}, "
                             f"accounts={account_count}, settings={settings_count}"
                         )
+                    # The three bootstrap verification SELECTs above open a
+                    # psycopg transaction (unlike SQLite's default SELECT
+                    # behavior). End that caller-owned read transaction before
+                    # testing that the dashboard helper closes a transaction
+                    # it starts itself.
+                    connection.commit()
                     # Exercise a real dashboard read on the initialized PostgreSQL
                     # schema. This covers transaction-state handling and the query
                     # layer, not only DDL/bootstrap and the login route.
