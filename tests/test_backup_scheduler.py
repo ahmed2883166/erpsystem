@@ -6,7 +6,8 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from backup_scheduler import create_backup_archive, next_backup_datetime, run_due_backup
+from backup_scheduler import (create_backup_archive, ensure_initial_backup,
+                              next_backup_datetime, run_due_backup)
 
 
 class BackupScheduleTests(unittest.TestCase):
@@ -59,6 +60,24 @@ class BackupScheduleTests(unittest.TestCase):
             restored = sqlite3.connect(extracted)
             self.assertEqual(restored.execute("SELECT value FROM sample").fetchone()[0], "preserved")
             restored.close()
+
+    def test_initial_backup_is_created_once_for_a_fresh_company(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            database = root / "nexus.db"
+            conn = sqlite3.connect(database)
+            conn.execute("CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL)")
+            conn.execute("CREATE TABLE accounts(id INTEGER PRIMARY KEY, code TEXT)")
+            conn.commit()
+            conn.close()
+
+            first = ensure_initial_backup(database, root / "backups")
+            second = ensure_initial_backup(database, root / "backups")
+
+            self.assertIsNotNone(first)
+            self.assertTrue(first.is_file())
+            self.assertIsNone(second)
+            self.assertEqual(len(list((root / "backups").glob("nexus-backup-*.zip"))), 1)
 
     def test_due_backup_runs_once_and_persists_status(self):
         with tempfile.TemporaryDirectory() as temp:
