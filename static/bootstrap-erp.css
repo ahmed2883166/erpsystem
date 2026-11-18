@@ -374,3 +374,68 @@ main form .form-row {
 }
 main form .form-row > div { min-width: 0; }
 main form .form-row small { display: block; margin-top: .35rem; color: var(--muted); }
+
+
+/* Responsive forms for accounting, journals and party directories. */
+main form.erp-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .85rem 1rem;
+  align-items: end;
+}
+main form.erp-form-grid > p,
+main form.erp-form-grid > .notice,
+main form.erp-form-grid > .checkline,
+main form.erp-form-grid > button { grid-column: 1 / -1; }
+main form.erp-form-grid > label { min-width: 0; margin: 0; }
+main form.erp-form-grid > label input,
+main form.erp-form-grid > label select { display: block; width: 100%; margin-top: .35rem; }
+main form.erp-form-grid > button { justify-self: start; min-width: 150px; }
+main form.erp-party-form .form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  align-items: end;
+}
+main form.erp-party-form .form-grid > label,
+main form.erp-party-form .form-grid > div { min-width: 0; }
+main form.erp-party-form .form-grid input,
+main form.erp-party-form .form-grid select { width: 100%; }
+main form.erp-journal-form .journal-basic-grid,
+main form.erp-journal-form .journal-extra-grid,
+main form.erp-journal-form .journal-line-main,
+main form.erp-journal-form .journal-line-extra-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 185px), 1fr));
+  gap: .8rem 1rem;
+  align-items: end;
+}
+main form.erp-journal-form .journal-description,
+main form.erp-journal-form .journal-memo-field { grid-column: span 2; }
+main form.erp-journal-form label { min-width: 0; margin: 0; }
+main form.erp-journal-form label input,
+main form.erp-journal-form label select { width: 100%; }
+main form.erp-journal-form .journal-line-card {
+  min-width: 0;
+  padding: .9rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+main form.erp-journal-form .journal-line-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  margin-bottom: .75rem;
+}
+main form.erp-journal-form .journal-line-extra { margin-top: .75rem; }
+main .report-filter { grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); }
+@media (max-width: 640px) {
+  main form.erp-form-grid { grid-template-columns: minmax(0, 1fr); }
+  main form.erp-form-grid > p,
+  main form.erp-form-grid > .notice,
+  main form.erp-form-grid > .checkline,
+  main form.erp-form-grid > button { grid-column: 1; }
+  main form.erp-form-grid > button { width: 100%; }
+  main form.erp-journal-form .journal-description,
+  main form.erp-journal-form .journal-memo-field { grid-column: 1; }
+}
