@@ -222,6 +222,12 @@ class PostgreSQLQmarkExecutionTests(unittest.TestCase):
             ).fetchone()
             self.assertEqual(row["value"], 42)
             self.assertEqual(str(row["exact_amount"]), "1234567890.123456")
+            json_row = execute_compat(
+                connection,
+                "SELECT ?::jsonb ?? 'key' AS has_key",
+                ('{"key": true}',),
+            ).fetchone()
+            self.assertTrue(json_row["has_key"])
             connection.execute("CREATE TEMP TABLE batch_probe(value INTEGER)")
             executemany_compat(
                 connection, "INSERT INTO batch_probe(value) VALUES(?)",
