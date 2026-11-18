@@ -6,11 +6,14 @@ inventory valuation control totals. It never changes either database.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import itertools
 import json
 import os
 import re
 import sqlite3
 from decimal import Decimal, InvalidOperation
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -222,6 +225,103 @@ def _verification_passed(issues, controls_skipped, row_counts, source_tables):
     )
 
 
+
+def _canonical_cell(value, postgres_type: str):
+    """Canonicalize one SQLite/PG value using the target PostgreSQL type.
+
+    NULL and empty text remain distinct. Numeric values compare by value rather
+    than scale; bytea/memoryview and temporal values use stable representations.
+    """
+    if value is None:
+        return ["null"]
+    kind = (postgres_type or "").lower()
+    if kind in {"numeric", "decimal", "real", "double precision"}:
+        try:
+            number = Decimal(str(value))
+        except (InvalidOperation, ValueError) as exc:
+            raise ValueError(f"Cannot canonicalize numeric value {value!r}") from exc
+        if not number.is_finite():
+            return ["number", str(number)]
+        if number == 0:
+            number = Decimal(0)
+        return ["number", format(number.normalize(), "f")]
+    if kind in {"smallint", "integer", "bigint"}:
+        number = Decimal(str(value))
+        if number != number.to_integral_value():
+            raise ValueError(f"Non-integral value in PostgreSQL {kind} column: {value!r}")
+        return ["integer", str(int(number))]
+    if kind == "boolean":
+        if isinstance(value, bool):
+            flag = value
+        elif str(value).strip().lower() in {"true", "t"}:
+            flag = True
+        elif str(value).strip().lower() in {"false", "f"}:
+            flag = False
+        elif str(value).strip() in {"0", "1"}:
+            flag = str(value).strip() == "1"
+        else:
+            raise ValueError(f"Invalid boolean value: {value!r}")
+        return ["boolean", flag]
+    if kind == "bytea":
+        raw = bytes(value) if isinstance(value, (bytes, bytearray, memoryview)) else None
+        if raw is None:
+            raise ValueError(f"Invalid bytea value: {type(value).__name__}")
+        return ["bytes", raw.hex()]
+    if kind == "date":
+        parsed = value.date() if isinstance(value, datetime) else value
+        if not isinstance(parsed, date):
+            parsed = date.fromisoformat(str(parsed).strip())
+        return ["date", parsed.isoformat()]
+    if "timestamp" in kind:
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(
+            str(value).strip().replace("Z", "+00:00")
+        )
+        if "with time zone" in kind and parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc)
+        return ["timestamp", parsed.isoformat(timespec="microseconds")]
+    if kind in {"time", "time without time zone", "time with time zone"}:
+        parsed = value if isinstance(value, time) else time.fromisoformat(str(value).strip())
+        return ["time", parsed.isoformat(timespec="microseconds")]
+    if kind in {"json", "jsonb"}:
+        parsed = json.loads(value) if isinstance(value, str) else value
+        return ["json", json.dumps(parsed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))]
+    if kind == "uuid":
+        return ["uuid", str(value).lower()]
+    if kind in {"character varying", "character", "text", "name"}:
+        return ["text", str(value)]
+    # Fail closed for uncommon PostgreSQL types rather than silently coercing.
+    raise ValueError(f"Unsupported PostgreSQL type for content verification: {postgres_type!r}")
+
+
+def _content_fingerprint(rows, columns, postgres_types, batch_size=500):
+    """Order-independent, bounded-memory multiset fingerprint for table rows."""
+    modulus = 1 << 256
+    sum_hashes = 0
+    xor_hashes = 0
+    count = 0
+    for row in rows:
+        values = [_canonical_cell(row[column], postgres_types[column]) for column in columns]
+        encoded = json.dumps(values, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        digest = int.from_bytes(hashlib.sha256(encoded).digest(), "big")
+        sum_hashes = (sum_hashes + digest) % modulus
+        xor_hashes ^= digest
+        count += 1
+    return {
+        "count": count,
+        "sum_sha256": f"{sum_hashes:064x}",
+        "xor_sha256": f"{xor_hashes:064x}",
+    }
+
+
+def _cursor_rows(cursor, batch_size=500):
+    while True:
+        batch = cursor.fetchmany(batch_size)
+        if not batch:
+            return
+        yield from batch
+
+
+
 def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> dict:
     try:
         import psycopg
@@ -322,6 +422,47 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
                 issues.append({
                     "control": "row_count", "table": table,
                     "sqlite": source_count, "postgres": target_count,
+                })
+                continue
+
+            # Compare every business row, not only totals. The two fingerprints
+            # are order-independent so differing collations/orderings cannot
+            # hide or manufacture a mismatch; each side is streamed in batches.
+            type_rows = dst.execute(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                "WHERE table_schema=%s AND table_name=%s",
+                (schema, table),
+            ).fetchall()
+            postgres_types = {row["column_name"]: row["data_type"] for row in type_rows}
+            try:
+                source_sql = "SELECT " + ", ".join(
+                    '"' + column.replace('"', '""') + '"' for column in src_cols
+                ) + ' FROM "' + table.replace('"', '""') + '"'
+                target_sql = "SELECT " + ", ".join(
+                    _ident(column) for column in src_cols
+                ) + " FROM " + _ident(schema) + "." + _ident(table)
+                source_cursor = src.execute(source_sql)
+                with dst.cursor(name="nexus_verify_" + str(len(row_counts))) as target_cursor:
+                    target_cursor.execute(target_sql)
+                    source_fingerprint = _content_fingerprint(
+                        _cursor_rows(source_cursor), src_cols, postgres_types
+                    )
+                    target_fingerprint = _content_fingerprint(
+                        _cursor_rows(target_cursor), src_cols, postgres_types
+                    )
+                if source_fingerprint != target_fingerprint:
+                    issues.append({
+                        "control": "row_content",
+                        "table": table,
+                        "sqlite": source_fingerprint,
+                        "postgres": target_fingerprint,
+                    })
+            except (ValueError, TypeError, InvalidOperation) as exc:
+                controls_skipped.append({
+                    "control": "row_content",
+                    "table": table,
+                    "reason": "unsupported_or_invalid_value",
+                    "detail": str(exc)[:300],
                 })
 
         controls = []
