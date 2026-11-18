@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from postgres_database import connect_postgres
 from core_schema import initialize_core_schema
+from accounting_core import post_journal
 
 
 def main():
@@ -48,23 +49,31 @@ def main():
                VALUES (%s, %s, %s, %s, %s) RETURNING id""",
             ("3000", "رأس المال - اختبار", "equity", 0, 1),
         ).fetchone()["id"]
-        entry_id = connection.execute(
-            """INSERT INTO journal_entries(entry_date, reference, description, status, created_at)
-               VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP::text) RETURNING id""",
-            ("2026-01-01", "PG-SMOKE-001", "اختبار قيد PostgreSQL", "posted"),
-        ).fetchone()["id"]
-        connection.execute(
-            """INSERT INTO journal_lines(entry_id, account_id, debit, credit, memo)
-               VALUES (%s, %s, %s, %s, %s), (%s, %s, %s, %s, %s)""",
-            (entry_id, cash_id, "100.00", "0", "مدين",
-             entry_id, capital_id, "0", "100.00", "دائن"),
+        lines = [
+            (cash_id, "100.00", "0", "مدين"),
+            (capital_id, "0", "100.00", "دائن"),
+        ]
+        entry_id = post_journal(
+            connection, "2026-01-01", "PG-SMOKE-001",
+            "اختبار ترحيل قيد PostgreSQL", lines,
         )
+        repeated_entry_id = post_journal(
+            connection, "2026-01-01", "PG-SMOKE-001",
+            "اختبار ترحيل قيد PostgreSQL", lines,
+        )
+        if repeated_entry_id != entry_id:
+            raise AssertionError("Journal posting is not idempotent.")
         totals = connection.execute(
             """SELECT SUM(debit::numeric) AS debit_total,
                       SUM(credit::numeric) AS credit_total
                FROM journal_lines WHERE entry_id = %s""",
             (entry_id,),
         ).fetchone()
+        posted = connection.execute(
+            "SELECT status FROM journal_entries WHERE id = %s", (entry_id,)
+        ).fetchone()
+        if not posted or posted["status"] != "posted":
+            raise AssertionError("Journal posting did not persist posted status.")
         debit = totals["debit_total"]
         credit = totals["credit_total"]
         if debit != credit or debit != 100:
@@ -73,7 +82,7 @@ def main():
         print(
             "POSTGRES_CORE_BOOTSTRAP=PASS "
             f"schema={schema} tables=10 journal_entry={entry_id} "
-            f"debit={debit} credit={credit}"
+            f"idempotent=yes debit={debit} credit={credit}"
         )
         return 0
     except Exception:
