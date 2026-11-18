@@ -2717,7 +2717,10 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
         )
         # Keep the original issue immutable: the new receipt is its stock reversal.
     credited=Decimal(str(note["total_amount"] or "0"))
-    bill=execute_compat(conn, "SELECT credited_amount FROM supplier_bills WHERE id=?",(note["bill_id"],)).fetchone()
+    bill_row = _supplier_bill_for_update(conn, note["bill_id"])
+    bill = ({"credited_amount": bill_row["credited_amount"]} if bill_row else None)
+    if not bill:
+        raise ValueError("فاتورة المورد المرتبطة بالإشعار غير موجودة؛ لا يمكن إتمام الإلغاء بأمان.")
     new_credited=Decimal(str(bill["credited_amount"] or "0"))-credited
     if new_credited<0:
         raise ValueError("رصيد الإشعارات الدائنة على فاتورة المورد غير متسق؛ راجع البيانات قبل الإلغاء.")
@@ -2775,7 +2778,9 @@ def new_credit_note():
             if not product_ids or not (len(product_ids)==len(warehouse_ids)==len(quantities)==len(uom_keys)):
                 raise ValueError("أضف صنفًا واحدًا على الأقل وحدد المخزن والكمية لكل صنف.")
             begin_write_transaction(c)
-            bill=execute_compat(c, "SELECT * FROM supplier_bills WHERE id=? AND supplier_id=? AND status='posted'",(bill_id,supplier)).fetchone()
+            bill=_supplier_bill_for_update(c, bill_id)
+            if bill and (bill["supplier_id"] != supplier or bill["status"] != "posted"):
+                bill = None
             if not bill:
                 raise ValueError("فاتورة المورد غير موجودة أو لا تتبع المورد المحدد.")
             dimensions = validate_journal_dimensions(c, {
