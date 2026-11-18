@@ -820,3 +820,60 @@ main .btn {
     padding-inline: .8rem;
   }
 }
+
+/* NEXUS button system: consistent sizing with semantic action colors. */
+main button, main .btn, main a.button, main .button-link,
+main input[type="submit"], main input[type="button"] {
+  min-height: 40px;
+  padding: .48rem .9rem;
+  border-radius: 9px;
+  font-size: .88rem;
+  line-height: 1.35;
+  font-weight: 750;
+  text-decoration: none;
+}
+main .btn-primary, main button.primary, main input[type="submit"] {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #fff;
+}
+main .btn-secondary, main button.secondary, main .btn.secondary,
+main button.secondary, main a.button.secondary {
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+main .btn-danger, main button.danger, main .btn.danger {
+  background: #b93848;
+  border: 1px solid #b93848;
+  color: #fff;
+}
+main .btn-success, main button.success, main .btn.success {
+  background: #16845b;
+  border: 1px solid #16845b;
+  color: #fff;
+}
+main .btn-warning, main button.warning, main .btn.warning {
+  background: #f0c45a;
+  border: 1px solid #d5a638;
+  color: #332600;
+}
+main .btn-outline-primary, main a.button-link {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--text);
+}
+main .btn:disabled, main button:disabled,
+main input[type="submit"]:disabled, main input[type="button"]:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+  transform: none;
+  box-shadow: none;
+}
+@media (max-width: 640px) {
+  main button, main .btn, main a.button, main .button-link,
+  main input[type="submit"], main input[type="button"] {
+    min-height: 42px;
+    padding: .48rem .72rem;
+  }
+}
