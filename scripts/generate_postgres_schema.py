@@ -390,13 +390,34 @@ def generate_postgres_ddl(snapshot):
         lines.append(");")
         lines.append("")
 
-        for fk in table.get("foreign_keys", []):
-            target_table = fk["table"]
+        foreign_key_groups = {}
+        for fk_index, fk in enumerate(table.get("foreign_keys", [])):
+            # PRAGMA foreign_key_list emits one row per column in a composite
+            # FK. Group by its stable constraint id before producing PostgreSQL
+            # DDL; emitting each row separately silently changes the relation.
+            constraint_id = fk.get("id")
+            group_key = ("id", constraint_id) if constraint_id is not None else ("row", fk_index)
+            foreign_key_groups.setdefault(group_key, []).append(fk)
+
+        for group_key, fk_parts in foreign_key_groups.items():
+            fk_parts.sort(key=lambda item: int(item.get("seq") or 0))
+            target_table = fk_parts[0]["table"]
             if target_table not in table_names:
                 raise ValueError(
-                    f"Foreign key {table_name}.{fk['from']} references missing table {target_table}."
+                    f"Foreign key {table_name}.{fk_parts[0]['from']} references missing table {target_table}."
                 )
-            pending_fks.append((table_name, fk))
+            for part in fk_parts:
+                if (
+                    part.get("table") != target_table
+                    or str(part.get("on_update") or "NO ACTION").upper()
+                    != str(fk_parts[0].get("on_update") or "NO ACTION").upper()
+                    or str(part.get("on_delete") or "NO ACTION").upper()
+                    != str(fk_parts[0].get("on_delete") or "NO ACTION").upper()
+                ):
+                    raise ValueError(
+                        f"Composite foreign key {table_name} has inconsistent target or actions."
+                    )
+            pending_fks.append((table_name, fk_parts))
 
         for index in table.get("indexes", []):
             if index.get("origin") == "pk":
@@ -445,22 +466,22 @@ def generate_postgres_ddl(snapshot):
 
 
     # Add foreign keys after every table exists; this supports cyclic references.
-    for counter, (table_name, fk) in enumerate(pending_fks, start=1):
-        target_table = fk["table"]
-        source_col = quote_ident(fk["from"])
-        target_col = quote_ident(fk["to"])
-        raw_constraint = f"fk_{table_name}_{fk['from']}_{counter}"
+    for counter, (table_name, fk_parts) in enumerate(pending_fks, start=1):
+        target_table = fk_parts[0]["table"]
+        source_cols = ", ".join(quote_ident(part["from"]) for part in fk_parts)
+        target_cols = ", ".join(quote_ident(part["to"]) for part in fk_parts)
+        raw_constraint = f"fk_{table_name}_{fk_parts[0]['from']}_{counter}"
         constraint = quote_ident(short_identifier(raw_constraint))
-        action = str(fk.get("on_delete") or "NO ACTION").upper()
+        action = str(fk_parts[0].get("on_delete") or "NO ACTION").upper()
         if action not in {"NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"}:
             action = "NO ACTION"
-        update_action = str(fk.get("on_update") or "NO ACTION").upper()
+        update_action = str(fk_parts[0].get("on_update") or "NO ACTION").upper()
         if update_action not in {"NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"}:
             update_action = "NO ACTION"
         lines.append(
             f"ALTER TABLE {quote_ident(table_name)} ADD CONSTRAINT {constraint} "
-            f"FOREIGN KEY ({source_col}) REFERENCES {quote_ident(target_table)} "
-            f"({target_col}) ON UPDATE {update_action} ON DELETE {action};"
+            f"FOREIGN KEY ({source_cols}) REFERENCES {quote_ident(target_table)} "
+            f"({target_cols}) ON UPDATE {update_action} ON DELETE {action};"
         )
     lines.append("")
 
