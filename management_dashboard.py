@@ -4,9 +4,10 @@ from decimal import Decimal, ROUND_HALF_UP
 from collections import OrderedDict
 from copy import deepcopy
 from threading import RLock
-from accounting_core import register_decimal_aggregates
+from accounting_core import register_decimal_aggregates, decimal_sum_expression
 from income_statement import build_income_statement
 from db_compat import table_exists, table_columns
+from db_sql import execute_compat
 from db_sql import execute_compat
 
 CENT = Decimal("0.01")
@@ -56,9 +57,7 @@ def account_balances(conn, date_from=None, date_to=None, dimensions=None, exclud
         if "entry_type" in entry_columns:
             conditions.append("COALESCE(je.entry_type,'general') NOT IN ('year_end_closing','year_end_closing_reversal')")
         else:
-            history_exists = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_year_journal_history'"
-            ).fetchone()
+            history_exists = table_exists(conn, "financial_year_journal_history")
             if history_exists:
                 conditions.append("""je.id NOT IN (
                     SELECT entry_id FROM financial_year_journal_history WHERE entry_kind='closing'
@@ -84,10 +83,10 @@ def account_balances(conn, date_from=None, date_to=None, dimensions=None, exclud
     # Aggregate monetary TEXT values inside SQLite with exact Decimal aggregates.
     # This avoids transferring every journal line to Python as the ledger grows.
     register_decimal_aggregates(conn)
-    rows = conn.execute(f"""
+    rows = execute_compat(conn, f"""
         SELECT a.id,a.code,a.name_ar,a.account_type,a.is_group,
-               COALESCE(DECIMAL_SUM(jl.debit),0) debit,
-               COALESCE(DECIMAL_SUM(jl.credit),0) credit
+               {decimal_sum_expression(conn, "jl.debit")} debit,
+               {decimal_sum_expression(conn, "jl.credit")} credit
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
@@ -109,9 +108,7 @@ def _closing_entry_condition(conn):
     columns = table_columns(conn, "journal_entries")
     if "entry_type" in columns:
         return "COALESCE(je.entry_type,'general') NOT IN ('year_end_closing','year_end_closing_reversal')"
-    history_exists = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_year_journal_history'"
-    ).fetchone()
+    history_exists = table_exists(conn, "financial_year_journal_history")
     if history_exists:
         return """je.id NOT IN (
             SELECT entry_id FROM financial_year_journal_history WHERE entry_kind='closing'
@@ -183,22 +180,14 @@ def dashboard_period_balances(conn, current_start, current_end, previous_start, 
     register_decimal_aggregates(conn)
     rows = conn.execute(f"""
         SELECT a.id,a.code,a.name_ar,a.account_type,a.is_group,
-          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date BETWEEN ? AND ?
-            AND ({closing_filter}) THEN jl.debit ELSE '0' END),'0') current_debit,
-          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date BETWEEN ? AND ?
-            AND ({closing_filter}) THEN jl.credit ELSE '0' END),'0') current_credit,
-          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date BETWEEN ? AND ?
-            AND ({closing_filter}) THEN jl.debit ELSE '0' END),'0') previous_debit,
-          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date BETWEEN ? AND ?
-            AND ({closing_filter}) THEN jl.credit ELSE '0' END),'0') previous_credit,
-          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date < ?{opening_exclusion_sql}
-            THEN jl.debit ELSE '0' END),'0') opening_debit,
-          COALESCE(DECIMAL_SUM(CASE WHEN je.entry_date < ?{opening_exclusion_sql}
-            THEN jl.credit ELSE '0' END),'0') opening_credit,
-          COALESCE(DECIMAL_SUM(CASE WHEN {asof_exclusion_sql}
-            THEN jl.debit ELSE '0' END),'0') asof_debit,
-          COALESCE(DECIMAL_SUM(CASE WHEN {asof_exclusion_sql}
-            THEN jl.credit ELSE '0' END),'0') asof_credit
+          {decimal_sum_expression(conn, "CASE WHEN je.entry_date BETWEEN ? AND ? AND (" + closing_filter + ") THEN jl.debit ELSE '0' END")} current_debit,
+          {decimal_sum_expression(conn, "CASE WHEN je.entry_date BETWEEN ? AND ? AND (" + closing_filter + ") THEN jl.credit ELSE '0' END")} current_credit,
+          {decimal_sum_expression(conn, "CASE WHEN je.entry_date BETWEEN ? AND ? AND (" + closing_filter + ") THEN jl.debit ELSE '0' END")} previous_debit,
+          {decimal_sum_expression(conn, "CASE WHEN je.entry_date BETWEEN ? AND ? AND (" + closing_filter + ") THEN jl.credit ELSE '0' END")} previous_credit,
+          {decimal_sum_expression(conn, "CASE WHEN je.entry_date < ?" + opening_exclusion_sql + " THEN jl.debit ELSE '0' END")} opening_debit,
+          {decimal_sum_expression(conn, "CASE WHEN je.entry_date < ?" + opening_exclusion_sql + " THEN jl.credit ELSE '0' END")} opening_credit,
+          {decimal_sum_expression(conn, "CASE WHEN " + asof_exclusion_sql + " THEN jl.debit ELSE '0' END")} asof_debit,
+          {decimal_sum_expression(conn, "CASE WHEN " + asof_exclusion_sql + " THEN jl.credit ELSE '0' END")} asof_credit
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
@@ -403,9 +392,7 @@ def cached_management_snapshot(conn, start, end, dimensions=None):
         settings_fingerprint = tuple(
             (row["setting_key"], row["setting_value"])
             for row in conn.execute("SELECT setting_key,setting_value FROM company_settings ORDER BY setting_key")
-        ) if conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_settings'"
-        ).fetchone() else ()
+        ) if table_exists(conn, "company_settings") else ()
         dashboard_today = date.today()
         key = (
             version, start.isoformat(), end.isoformat(), dashboard_today.isoformat(),
@@ -466,9 +453,7 @@ def build_management_snapshot(conn, start, end, dimensions=None):
         ).fetchall())
 
     def disposal_loss_ids(date_from, date_to):
-        if not conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_disposals'"
-        ).fetchone():
+        if not table_exists(conn, "asset_disposals"):
             return set()
         columns = table_columns(conn, "asset_disposals")
         if not {"gain_loss_account_id", "gain_loss_amount", "disposal_date"}.issubset(columns):
@@ -714,7 +699,7 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
     from bisect import bisect_left
 
     register_decimal_aggregates(conn)
-    columns = {x["name"] for x in conn.execute("PRAGMA table_info(journal_entries)")}
+    columns = {x["name"] for x in [{ "name": name } for name in table_columns(conn, "journal_entries")]}
     ref_expr = "je.reference" if "reference" in columns else "''"
     desc_expr = "je.description" if "description" in columns else "''"
     closing_filter = _closing_entry_condition(conn)
