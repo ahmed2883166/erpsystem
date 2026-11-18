@@ -2134,46 +2134,6 @@ def new_bill():
                 raise ValueError("رقم فاتورة المورد مطلوب.")
             begin_write_transaction(c)
             dimensions = validate_journal_dimensions(c, request.form)
-            if execute_compat(c, "SELECT 1 FROM supplier_bills WHERE supplier_id=? AND lower(trim(supplier_invoice_no))=lower(trim(?)) LIMIT 1",
-                         (supplier,supplier_invoice_no)).fetchone():
-                raise ValueError("رقم فاتورة المورد مسجل بالفعل لهذا المورد.")
-            bill_kind=request.form.get("bill_kind","inventory").strip()
-            if bill_kind not in {"inventory","expense","asset"}:
-                raise ValueError("نوع فاتورة المورد غير صحيح.")
-            expense_account_id=None
-            asset_data={}
-            if bill_kind=="asset":
-                if receipts:
-                    raise ValueError("فاتورة الأصل الثابت لا تُربط بإيصالات استلام مخزني.")
-                asset_lines=validate_asset_bill_lines(c,request.form,request.form["bill_date"],subtotal)
-                # Keep the first asset in legacy header fields for older screens,
-                # while the complete asset list remains in supplier_bill_asset_lines.
-                asset_data=dict(asset_lines[0])
-                supplier_ap_account(c)
-            if bill_kind=="expense":
-                expense_account_id=int(request.form.get("expense_account_id","0"))
-                expense_row=execute_compat(c, "SELECT account_type,is_group,active FROM accounts WHERE id=?",(expense_account_id,)).fetchone()
-                if not expense_row or expense_row["account_type"]!="expense" or expense_row["is_group"] or not expense_row["active"]:
-                    raise ValueError("اختر حساب مصروف تفصيليًا ونشطًا.")
-                if receipts:
-                    raise ValueError("فاتورة المصروف لا تُربط بإيصالات استلام مخزني.")
-            elif bill_kind=="inventory":
-                if not receipts:
-                    raise ValueError("فاتورة الأصناف المخزنية تتطلب إيصال استلام.")
-                supplier_ap_account(c)
-            receipt_allocations=[]
-            if bill_kind=="inventory":
-                receipt_allocations = _validate_supplier_receipt_allocations(
-                    c, supplier, receipts, subtotal, request.form
-                )
-                inventory_lines = _validate_supplier_bill_inventory_lines(
-                    c, supplier, receipts, subtotal, request.form
-                )
-            else:
-                inventory_lines = []
-            if tax:
-                ensure_detail_account(c,_activity_tax_roles(c)["input_vat"],"ضريبة مدخلات قابلة للخصم","asset","1100")
-            no="BILL-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             activity_code = request.form.get("activity_code") or None
             if receipts:
                 receipt_contexts = execute_compat(c,
@@ -2191,6 +2151,45 @@ def new_bill():
                 from company_activities import resolve_activity_profile
                 activity_code = str(activity_code).strip().lower()
                 resolve_activity_profile(c, activity_code)
+            if execute_compat(c, "SELECT 1 FROM supplier_bills WHERE supplier_id=? AND lower(trim(supplier_invoice_no))=lower(trim(?)) LIMIT 1",
+                         (supplier,supplier_invoice_no)).fetchone():
+                raise ValueError("رقم فاتورة المورد مسجل بالفعل لهذا المورد.")
+            bill_kind=request.form.get("bill_kind","inventory").strip()
+            if bill_kind not in {"inventory","expense","asset"}:
+                raise ValueError("نوع فاتورة المورد غير صحيح.")
+            expense_account_id=None
+            asset_data={}
+            if bill_kind=="asset":
+                if receipts:
+                    raise ValueError("فاتورة الأصل الثابت لا تُربط بإيصالات استلام مخزني.")
+                asset_lines=validate_asset_bill_lines(c,request.form,request.form["bill_date"],subtotal)
+                # Keep the first asset in legacy header fields for older screens,
+                # while the complete asset list remains in supplier_bill_asset_lines.
+                asset_data=dict(asset_lines[0])
+                supplier_ap_account(c, activity_code)
+            if bill_kind=="expense":
+                expense_account_id=int(request.form.get("expense_account_id","0"))
+                expense_row=execute_compat(c, "SELECT account_type,is_group,active FROM accounts WHERE id=?",(expense_account_id,)).fetchone()
+                if not expense_row or expense_row["account_type"]!="expense" or expense_row["is_group"] or not expense_row["active"]:
+                    raise ValueError("اختر حساب مصروف تفصيليًا ونشطًا.")
+                if receipts:
+                    raise ValueError("فاتورة المصروف لا تُربط بإيصالات استلام مخزني.")
+            elif bill_kind=="inventory":
+                if not receipts:
+                    raise ValueError("فاتورة الأصناف المخزنية تتطلب إيصال استلام.")
+                supplier_ap_account(c, activity_code)
+            receipt_allocations=[]
+            if bill_kind=="inventory":
+                receipt_allocations = _validate_supplier_receipt_allocations(
+                    c, supplier, receipts, subtotal, request.form
+                )
+                inventory_lines = _validate_supplier_bill_inventory_lines(
+                    c, supplier, receipts, subtotal, request.form
+                )
+            else:
+                inventory_lines = []
+            if tax:
+                ensure_detail_account(c,_activity_tax_roles(c, activity_code)["input_vat"],"ضريبة مدخلات قابلة للخصم","asset","1100")
             no="BILL-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             due_date=request.form.get("due_date") or request.form["bill_date"]
             if due_date < request.form["bill_date"]: raise ValueError("تاريخ استحقاق المورد لا يمكن أن يسبق تاريخ الفاتورة.")
@@ -2311,11 +2310,11 @@ def edit_bill(bill_id):
                 asset_lines = validate_asset_bill_lines(c, request.form, bill_date, subtotal)
                 # Preserve the first asset's details in legacy header columns.
                 asset_data = dict(asset_lines[0])
-                supplier_ap_account(c)
+                supplier_ap_account(c, activity_code)
             else:
                 if not receipts:
                     raise ValueError("فاتورة الأصناف المخزنية تتطلب إيصال استلام.")
-                supplier_ap_account(c)
+                supplier_ap_account(c, activity_code)
 
             allocations = []
             if bill_kind == "inventory":
@@ -2328,7 +2327,7 @@ def edit_bill(bill_id):
             else:
                 inventory_lines = []
             if tax:
-                ensure_detail_account(c, _activity_tax_roles(c)["input_vat"],
+                ensure_detail_account(c, _activity_tax_roles(c, activity_code)["input_vat"],
                                       "ضريبة مدخلات قابلة للخصم", "asset", "1100")
 
             updated = execute_compat(c, """UPDATE supplier_bills SET supplier_id=?,bill_date=?,due_date=?,
@@ -2847,7 +2846,7 @@ def new_credit_note():
             inventory_code=activity_inventory_code(c)
             if not inventory_code:
                 raise ValueError("النشاط الحالي لا يملك حساب مخزون معرفًا.")
-            ap_id=supplier_ap_account(c)
+            ap_id=supplier_ap_account(c, activity_code)
             tax_rate=Decimal(bill["tax_rate"] or "0")
             method_row=execute_compat(c, "SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone()
             method=method_row["setting_value"] if method_row else "average"
@@ -2976,7 +2975,7 @@ def new_credit_note():
                     {"stock_product_id":product_id,"stock_warehouse_id":warehouse_id}
                 ))
             if tax:
-                vat_id=account(c,_activity_tax_roles(c)["input_vat"],"asset")
+                vat_id=account(c,_activity_tax_roles(c, activity_code)["input_vat"],"asset")
                 journal_lines.append((vat_id,0,tax,"عكس ضريبة المدخلات حسب إشعار المورد"))
             posting_accounts=_activity_posting_accounts(c)
             default_cogs=posting_accounts.get("cogs")
@@ -3036,7 +3035,7 @@ def new_payment():
             if (not cash_row or cash_row["account_type"]!="asset" or cash_row["is_group"] or not cash_row["active"]
                 or (cash_row["code"] not in cash_codes and not any(word in cash_name for word in cash_words))):
                 raise ValueError("حساب السداد يجب أن يكون حساب صندوق أو بنك تفصيليًا ونشطًا، وليس حساب إيراد أو مصروف أو أصل آخر.")
-            ap=supplier_ap_account(c); begin_write_transaction(c)
+            ap=supplier_ap_account(c, activity_code); begin_write_transaction(c)
             dimensions = validate_journal_dimensions(c, {"supplier_id": supplier})
             no="PAY-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             eid=create_journal(c,request.form["payment_date"],no,"سداد مورد",[(ap,amount,0,"تخفيض مديونية المورد"),(cash,0,amount,"سداد نقدي/بنكي")],session["user_id"],dimensions=dimensions)
