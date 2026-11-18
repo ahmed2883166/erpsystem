@@ -50,8 +50,15 @@ class SQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
         self.pg.execute(f'''
             CREATE TABLE "{self.schema}".nexus_schema_installation (
                 id SMALLINT PRIMARY KEY CHECK (id = 1),
-                baseline_sha256 TEXT NOT NULL
-                    CHECK (baseline_sha256 ~ '^[0-9a-f]{{64}}
+                baseline_sha256 TEXT NOT NULL CHECK (length(baseline_sha256) = 64),
+                installed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        self.pg.execute(
+            f'INSERT INTO "{self.schema}".nexus_schema_installation '
+            '(id, baseline_sha256) VALUES (1, %s)',
+            ("0" * 64,),
+        )
         self.temp_dir = tempfile.TemporaryDirectory(prefix="nexus-copy-rehearsal-")
         self.sqlite_path = str(Path(self.temp_dir.name) / "source.sqlite")
         source = sqlite3.connect(self.sqlite_path)
