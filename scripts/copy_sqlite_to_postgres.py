@@ -124,6 +124,49 @@ def order_self_referencing_rows(rows, foreign_key_rows, table: str):
     return ordered
 
 
+def suspend_secondary_indexes(connection, schema: str) -> list[str]:
+    """Drop rebuildable, non-constraint indexes inside the current transaction.
+
+    Constraint-backed indexes and replica-identity indexes are retained.
+    The caller must restore returned CREATE INDEX statements before commit.
+    """
+    rows = connection.execute(
+        """
+        SELECT index_class.relname AS index_name,
+               pg_get_indexdef(index_info.indexrelid) AS index_definition
+          FROM pg_index index_info
+          JOIN pg_class table_class ON table_class.oid = index_info.indrelid
+          JOIN pg_namespace table_ns ON table_ns.oid = table_class.relnamespace
+          JOIN pg_class index_class ON index_class.oid = index_info.indexrelid
+          LEFT JOIN pg_constraint constraint_info
+            ON constraint_info.conindid = index_info.indexrelid
+         WHERE table_ns.nspname = %s
+           AND constraint_info.oid IS NULL
+           AND NOT index_info.indisreplident
+         ORDER BY table_class.relname, index_class.relname
+        """,
+        (schema,),
+    ).fetchall()
+    definitions = []
+    for row in rows:
+        index_name = row["index_name"]
+        definition = row["index_definition"]
+        connection.execute(
+            "DROP INDEX " + quote_ident(schema) + "." + quote_ident(index_name)
+        )
+        definitions.append(definition)
+    return definitions
+
+
+def restore_secondary_indexes(connection, definitions: list[str]) -> int:
+    """Recreate indexes captured by suspend_secondary_indexes before commit."""
+    for definition in definitions:
+        if not isinstance(definition, str) or not definition.lstrip().upper().startswith("CREATE "):
+            raise ValueError("Refusing to restore an invalid PostgreSQL index definition.")
+        connection.execute(definition)
+    return len(definitions)
+
+
 def copy_rows_with_postgres_copy(connection, copy_sql: str, rows, columns: list[str]) -> int:
     """Stream adapted row tuples through psycopg 3 COPY FROM STDIN."""
     copied = 0
@@ -241,6 +284,12 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                     )
 
             order = dependency_order(tables, foreign_keys)
+
+            # Keep FK/unique-constraint and replica-identity indexes intact.
+            # Secondary indexes are removed only in this isolated target
+            # transaction, then rebuilt before validation/commit. Triggers
+            # remain enabled so integrity and audit behavior is preserved.
+            suspended_indexes = suspend_secondary_indexes(dst, schema)
             counts = {}
             for table in order:
                 columns = source_columns[table]
@@ -281,6 +330,11 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                     )
                 counts[table] = copied
 
+            # Rebuild every secondary index before the copy can be accepted.
+            # Any duplicate/data incompatibility fails the transaction and
+            # restores the original target indexes on rollback.
+            restored_indexes = restore_secondary_indexes(dst, suspended_indexes)
+
             # Force all deferred PostgreSQL constraints to be checked before sequence updates/commit.
             # Immediate constraints have already been checked by PostgreSQL during inserts.
             dst.execute("SET CONSTRAINTS ALL IMMEDIATE")
@@ -309,6 +363,7 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                 "table_order": order,
                 "table_row_counts": counts,
                 "total_rows": sum(counts.values()),
+                "secondary_indexes_rebuilt": restored_indexes,
             }
         except Exception:
             dst.rollback()
