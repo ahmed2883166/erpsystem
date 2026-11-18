@@ -2182,7 +2182,7 @@ def index():
            LEFT JOIN customer_receipt_allocations a ON a.batch_id=b.id
            LEFT JOIN sales_invoices i ON i.id=a.invoice_id
            GROUP BY b.id ORDER BY b.id DESC""".format(
-               _group_concat_expression(c, "i.invoice_no || ' (' || a.amount || ')")
+               _group_concat_expression(c, "i.invoice_no || ' (' || a.amount || ')'")
            ),
         "SELECT COUNT(*) FROM customer_receipt_batches",
         page=request.args.get("batch_receipts_page",1,type=int),
