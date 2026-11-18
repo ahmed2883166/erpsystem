@@ -113,7 +113,7 @@ class PostgreSQLWarehouseLockTests(unittest.TestCase):
     def test_locks_unique_warehouses_in_stable_order(self):
         class Cursor:
             def fetchall(self):
-                return [{"id": 2}, {"id": 5}]
+                return [{"id": 2, "active": 1}, {"id": 5, "active": 1}]
 
         class Connection:
             __module__ = "psycopg.fake"
@@ -132,10 +132,24 @@ class PostgreSQLWarehouseLockTests(unittest.TestCase):
         self.assertIn("ORDER BY id FOR UPDATE", statement)
         self.assertEqual(params, (2, 5))
 
+    def test_inactive_warehouse_fails_closed(self):
+        class Cursor:
+            def fetchall(self):
+                return [{"id": 2, "active": 0}]
+
+        class Connection:
+            __module__ = "psycopg.fake"
+
+            def execute(self, statement, params=()):
+                return Cursor()
+
+        with self.assertRaisesRegex(ValueError, "مخزن غير نشط"):
+            lock_stock_warehouses(Connection(), 2)
+
     def test_missing_warehouse_fails_closed(self):
         class Cursor:
             def fetchall(self):
-                return [{"id": 2}]
+                return [{"id": 2, "active": 1}]
 
         class Connection:
             __module__ = "psycopg.fake"

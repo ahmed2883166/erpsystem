@@ -49,11 +49,14 @@ def lock_stock_warehouses(conn, *warehouse_ids):
     if not ids or database_dialect(conn) != "postgresql":
         return []
     placeholders = ",".join("?" for _ in ids)
-    rows = _execute(conn, f"SELECT id FROM stock_warehouses WHERE id IN ({placeholders}) ORDER BY id FOR UPDATE", ids).fetchall()
+    rows = _execute(conn, f"SELECT id,active FROM stock_warehouses WHERE id IN ({placeholders}) ORDER BY id FOR UPDATE", ids).fetchall()
     locked = {int(row["id"]) for row in rows}
     missing = [warehouse_id for warehouse_id in ids if warehouse_id not in locked]
     if missing:
         raise ValueError("المخزن المحدد غير موجود أو لم يعد متاحًا.")
+    inactive = [int(row["id"]) for row in rows if not bool(row["active"])]
+    if inactive:
+        raise ValueError("لا يمكن تنفيذ حركة على مخزن غير نشط. أعد تفعيل المخزن أولًا.")
     return rows
 
 
