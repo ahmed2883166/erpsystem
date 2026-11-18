@@ -7,7 +7,7 @@ from pathlib import Path
 
 from flask import Flask
 
-from database import connect_database
+from database import connect_database, register_sqlite_connection_teardown
 
 
 class RequestScopedDatabaseTests(unittest.TestCase):
@@ -15,6 +15,7 @@ class RequestScopedDatabaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "request-scoped.db"
             app = Flask(__name__)
+            register_sqlite_connection_teardown(app)
             with app.app_context():
                 first = connect_database(path, isolation_level=None)
                 second = connect_database(path, isolation_level=None)
