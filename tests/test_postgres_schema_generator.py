@@ -1,3 +1,4 @@
+import hashlib
 import unittest
 
 from scripts.generate_postgres_schema import (
@@ -382,7 +383,7 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         self.assertEqual(len(review["baseline_sha256"]), 64)
         self.assertEqual(
             review["baseline_sha256"],
-            __import__("hashlib").sha256(ddl.encode("utf-8")).hexdigest(),
+            hashlib.sha256(ddl.encode("utf-8")).hexdigest(),
         )
         self.assertEqual(review["installation_marker"], "nexus_schema_installation")
         self.assertEqual(review["table_count"], 4)
