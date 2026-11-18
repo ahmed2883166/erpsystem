@@ -265,6 +265,45 @@ def main() -> int:
                 finally:
                     connection.close()
 
+            # Re-running the documented installer against the same baseline
+            # must be idempotent and must preserve transactions already entered.
+            repeat_install_result = fresh_install_main([
+                "--ddl", str(args.baseline),
+                "--dsn", dsn,
+                "--schema", schema,
+                "--data-dir", str(Path(data_dir) / "data"),
+                "--backup-dir", str(backup_dir),
+            ])
+            if repeat_install_result != 0:
+                raise AssertionError(
+                    f"Repeated PostgreSQL bootstrap returned {repeat_install_result}."
+                )
+            with nexus_app.app.app_context():
+                verification_connection = nexus_app.db()
+                try:
+                    invoice_after_repeat = verification_connection.execute(
+                        "SELECT journal_entry_id,cogs_journal_entry_id FROM sales_invoices WHERE id=?",
+                        (sales_flow["invoice_id"],),
+                    ).fetchone()
+                    bill_after_repeat = verification_connection.execute(
+                        "SELECT status,journal_entry_id FROM supplier_bills WHERE id=?",
+                        (purchase_flow["bill_id"],),
+                    ).fetchone()
+                    if (
+                        not invoice_after_repeat
+                        or not invoice_after_repeat["journal_entry_id"]
+                        or not invoice_after_repeat["cogs_journal_entry_id"]
+                        or not bill_after_repeat
+                        or bill_after_repeat["status"] != "posted"
+                        or bill_after_repeat["journal_entry_id"] != purchase_flow["journal_entry_id"]
+                    ):
+                        raise AssertionError(
+                            "Repeated PostgreSQL bootstrap changed or lost posted "
+                            "sales/purchase records."
+                        )
+                finally:
+                    verification_connection.close()
+
             response = nexus_app.app.test_client().get("/login")
             if response.status_code != 200:
                 raise AssertionError(
