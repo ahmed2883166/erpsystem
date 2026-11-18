@@ -14,7 +14,7 @@ from income_statement import (build_income_statement, normalize_income_statement
                               closing_entries_exclusion_sql)
 from db_compat import table_columns
 from db_sql import execute_compat
-from accounting_core import decimal_sum_expression
+from accounting_core import decimal_sum_expression, decimal_layer_value_sum_expression
 
 
 def register_report_exports(app, db_path, permissions):
@@ -332,10 +332,10 @@ def register_report_exports(app, db_path, permissions):
                 filename = f"nexus-ledger-{account['code']}.xlsx"
                 title = f"دفتر الأستاذ - {account['code']} {account['name_ar']}"
             elif report == "stock":
-                rows = conn.execute("""
+                rows = conn.execute(f"""
                     SELECT p.sku,p.name_ar,p.uom,w.code warehouse_code,w.name_ar warehouse_name,
-                           COALESCE(SUM(CAST(l.qty_remaining AS REAL)),0) qty,
-                           COALESCE(DECIMAL_LAYER_VALUE_SUM(l.value_remaining,l.qty_remaining,l.unit_cost),0) value
+                           COALESCE(SUM(CAST(l.qty_remaining AS NUMERIC)),0) qty,
+                           {decimal_layer_value_sum_expression(conn, "l.value_remaining", "l.qty_remaining", "l.unit_cost")} value
                     FROM stock_products p LEFT JOIN stock_valuation_layers l ON l.product_id=p.id
                     LEFT JOIN stock_warehouses w ON w.id=l.warehouse_id
                     WHERE p.active=1 GROUP BY p.id,w.id ORDER BY p.sku,w.code
