@@ -191,6 +191,7 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                        WHERE table_schema = %s AND table_type = 'BASE TABLE'""",
                     (schema,),
                 ).fetchall()
+                if r["table_name"] != "nexus_schema_installation"
             }
             missing = sorted(set(tables) - target_tables)
             extra = sorted(target_tables - set(tables))
