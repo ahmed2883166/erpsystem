@@ -329,3 +329,37 @@ main .form-row > * { min-width: 0; }
   main table.table tbody td, main table.erp-table tbody td { padding: .55rem .5rem; }
   main .table-actions .btn, main .table-actions button { min-height: 36px; padding: .35rem .6rem; }
 }
+
+
+/* Focused layout improvements for inventory maintenance screens. */
+main form.erp-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .85rem 1rem;
+  align-items: end;
+}
+main form.erp-form-grid > label {
+  min-width: 0;
+  margin: 0;
+}
+main form.erp-form-grid > label input,
+main form.erp-form-grid > label select,
+main form.erp-form-grid > label textarea {
+  display: block;
+  width: 100%;
+  margin-top: .35rem;
+}
+main form.erp-form-grid > .notice,
+main form.erp-form-grid > .checkline,
+main form.erp-form-grid > button,
+main form.erp-form-grid > input[type="hidden"] {
+  grid-column: 1 / -1;
+}
+main form.erp-form-grid > .checkline { margin: 0; }
+main form.erp-form-grid > button { justify-self: start; min-width: 150px; }
+@media (max-width: 640px) {
+  main form.erp-form-grid { grid-template-columns: minmax(0, 1fr); }
+  main form.erp-form-grid > .notice,
+  main form.erp-form-grid > .checkline,
+  main form.erp-form-grid > button { grid-column: 1; }
+}
