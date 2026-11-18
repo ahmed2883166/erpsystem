@@ -285,6 +285,8 @@ def init_sales_schema():
         execute_compat(c, "ALTER TABLE sales_invoices ADD COLUMN sales_channel TEXT NOT NULL DEFAULT 'default'")
     if "revenue_account_code" not in invoice_columns:
         execute_compat(c, "ALTER TABLE sales_invoices ADD COLUMN revenue_account_code TEXT NOT NULL DEFAULT ''")
+    if "activity_code" not in invoice_columns:
+        execute_compat(c, "ALTER TABLE sales_invoices ADD COLUMN activity_code TEXT")
     if "sales_order_line_id" not in line_columns:
         execute_compat(c, "ALTER TABLE sales_invoice_lines ADD COLUMN sales_order_line_id INTEGER")
     execute_compat(c, "CREATE INDEX IF NOT EXISTS idx_sales_invoices_order ON sales_invoices(sales_order_id,id)")
@@ -436,9 +438,13 @@ def _activity(conn):
     return row["setting_value"] if row else "commercial"
 
 
-def _sales_account_codes(conn, activity):
-    from activity_profiles import active_posting_accounts
-    codes = active_posting_accounts(conn)
+def _sales_account_codes(conn, activity, activity_code=None):
+    if activity_code:
+        from company_activities import resolve_activity_profile
+        codes = resolve_activity_profile(conn, activity_code).get("posting_accounts", {})
+    else:
+        from activity_profiles import active_posting_accounts
+        codes = active_posting_accounts(conn)
     if not codes or not codes.get("ar") or not codes.get("revenue"):
         raise ValueError("ملف النشاط لا يحتوي حسابات العملاء والإيرادات المطلوبة للمبيعات.")
     return codes
@@ -480,9 +486,13 @@ def _sales_return_account(conn, activity, fallback_code):
     return _account(conn, fallback_code, "revenue")
 
 
-def _sales_output_vat_account(conn, activity):
-    from activity_profiles import active_tax_roles
-    role_map = active_tax_roles(conn)
+def _sales_output_vat_account(conn, activity, activity_code=None):
+    if activity_code:
+        from company_activities import resolve_activity_profile
+        role_map = resolve_activity_profile(conn, activity_code).get("tax_roles", {})
+    else:
+        from activity_profiles import active_tax_roles
+        role_map = active_tax_roles(conn)
     if not role_map or not role_map.get("output_vat"):
         raise ValueError("لم يتم تعريف دور حساب ضريبة المخرجات لهذا النشاط.")
     return _account(conn, role_map["output_vat"], "liability")
@@ -512,7 +522,7 @@ def _allowed_vat_rates(conn):
         raise ValueError("قائمة نسب الضريبة المعتمدة في إعدادات الشركة غير صحيحة.")
 
 
-def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate, created_by=None, allow_credit_override=False, dimensions=None, preissued_costs=None, sales_order_id=None, discount_override=None, sales_channel="default"):
+def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate, created_by=None, allow_credit_override=False, dimensions=None, preissued_costs=None, sales_order_id=None, discount_override=None, sales_channel="default", activity_code=None):
     """Create invoice and balanced GL; optionally consume stock already issued by delivery notes."""
     rate = Decimal(str(tax_rate)).quantize(CENT, rounding=ROUND_HALF_UP)
     if not rate.is_finite() or rate < 0 or rate > 100:
@@ -532,8 +542,11 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     if not lines:
         raise ValueError("أضف صنفًا أو خدمة واحدة على الأقل.")
 
-    activity = _activity(conn)
-    codes = _sales_account_codes(conn, activity)
+    activity = str(activity_code).strip().lower() if activity_code else _activity(conn)
+    if activity_code:
+        from company_activities import resolve_activity_profile
+        resolve_activity_profile(conn, activity)
+    codes = _sales_account_codes(conn, activity, activity_code)
     ar = _account(conn, codes["ar"], "asset")
     sales_channel = str(sales_channel or "default").strip().lower()
     restaurant_channels = {
@@ -700,7 +713,7 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     if subtotal <= 0:
         raise ValueError("إجمالي الفاتورة يجب أن يكون أكبر من صفر.")
     if tax_amount > 0 and vat is None:
-        vat = _sales_output_vat_account(conn, activity)
+        vat = _sales_output_vat_account(conn, activity, activity_code)
     credit_limit = Decimal(customer["credit_limit"] or "0")
     outstanding_rows = execute_compat(conn, 
         """SELECT i.id,i.total_amount,i.paid_amount,COALESCE(i.credited_amount,'0') credited_amount
@@ -728,13 +741,13 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
         """INSERT INTO sales_invoices(invoice_no,customer_id,invoice_date,warehouse_id,subtotal,
            tax_rate,tax_amount,discount_type,discount_value,discount_amount,total_amount,
            created_by,branch_id,cost_center_id,project_id,salesperson_id,sales_order_id,
-           sales_channel,revenue_account_code)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           sales_channel,revenue_account_code,activity_code)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (invoice_no, customer_id, invoice_date, warehouse_id, str(subtotal), str(effective_rate),
          str(tax_amount), discount_type, str(discount_value), str(discount_amount), str(total_amount),
          created_by, dimensions["branch_id"], dimensions["cost_center_id"],
          dimensions["project_id"], dimensions["salesperson_id"], sales_order_id,
-         sales_channel, revenue_code))
+         sales_channel, revenue_code, activity_code))
     for index, item in enumerate(normalized, 1):
         movement_id = None
         if item["product_id"] and preissued_costs is None:
@@ -742,12 +755,12 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             movement_id = insert_and_get_id(conn,
                 """INSERT INTO stock_movements(movement_no,movement_type,product_id,source_warehouse_id,
                    quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,issue_purpose,
-                   entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name)
-                   VALUES(?,'issue',?,?,?,?,?,?,?,?, 'pending', 'sale',?,?,?,?)""",
+                   entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name,activity_code)
+                   VALUES(?,'issue',?,?,?,?,?,?,?,?, 'pending', 'sale',?,?,?,?,?)""",
                 (movement_no, item["product_id"], warehouse_id, str(item["quantity"]),
                  str((item["cost_total"] / item["quantity"]).quantize(CENT)), str(item["cost_total"]),
                  invoice_date, "صرف مبيعات " + invoice_no, created_by,
-                 str(item["entered_quantity"]),item["uom_id"],item["uom_key"],item["entered_uom_name"]))
+                 str(item["entered_quantity"]),item["uom_id"],item["uom_key"],item["entered_uom_name"],activity_code))
         order_line_id = item.get("sales_order_line_id")
         invoice_line_id = insert_and_get_id(conn,
             """INSERT INTO sales_invoice_lines(invoice_id,product_id,description,quantity,unit_price,
