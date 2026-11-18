@@ -6,6 +6,7 @@ not on every request connection.
 """
 import sqlite3
 from pathlib import Path
+from flask import g, has_app_context
 from report_request_control import current_report_deadline, make_sqlite_deadline_callback
 from db_sql import execute_compat
 from sqlite_maintenance import enable_sqlite_wal
@@ -21,6 +22,21 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
     default deferred transactions (empty string), while modules that historically
     used autocommit continue to pass isolation_level=None.
     """
+    # Reuse one connection per database/options tuple during a Flask app
+    # context. This prevents route helpers across modules from leaking multiple
+    # handles to the same SQLite file and makes Windows file cleanup reliable.
+    cache_key = (
+        str(Path(path).resolve()), float(timeout), isolation_level, bool(decimal_aggregates)
+    )
+    if has_app_context():
+        connections = getattr(g, "_nexus_database_connections", None)
+        if connections is None:
+            connections = {}
+            g._nexus_database_connections = connections
+        cached = connections.get(cache_key)
+        if cached is not None:
+            return cached
+
     connection = sqlite3.connect(
         str(Path(path)), timeout=timeout, isolation_level=isolation_level
     )
@@ -36,6 +52,8 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
     if deadline is not None:
         # Covers connections opened inside blueprints as well as app.db().
         connection.set_progress_handler(make_sqlite_deadline_callback(deadline), 10000)
+    if has_app_context():
+        connections[cache_key] = connection
     return connection
 
 
