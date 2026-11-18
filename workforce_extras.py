@@ -15,6 +15,7 @@ from backup_scheduler import create_backup_archive
 from workforce import workforce_bp, _db, _role, D, M, _audit
 from db_compat import DB_ERROR, execute_script, table_columns, begin_write_transaction
 from db_sql import execute_compat
+from database_backend import configured_database_backend
 
 def _execute(conn, sql, params=()):
     """Execute qmark SQL on the configured database driver."""
@@ -22,7 +23,11 @@ def _execute(conn, sql, params=()):
 
 
 def create_workforce_safety_backup():
-    """Take one verified online SQLite snapshot before workforce schema upgrades."""
+    """Take one verified online SQLite snapshot before SQLite workforce schema upgrades."""
+    # This migration backup is SQLite-specific. PostgreSQL startup must never
+    # inspect or mutate the preserved SQLite fallback database.
+    if configured_database_backend() != "sqlite":
+        return None
     db_path = Path(workforce.DB_PATH)
     if not db_path.exists() or db_path.stat().st_size == 0:
         return None
