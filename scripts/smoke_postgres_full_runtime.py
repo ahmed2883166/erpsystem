@@ -208,7 +208,9 @@ def main() -> int:
             print(
                 "POSTGRES_FULL_APP_INITIALIZATION=PASS "
                 f"schema={schema} users={user_count} accounts={account_count} "
-                f"company_settings={settings_count} login_http={response.status_code}"
+                f"company_settings={settings_count} login_http={response.status_code} "
+                f"sales_invoice={sales_flow['invoice_id']} sales_total={sales_flow['total']} "
+                f"sales_cost={sales_flow['cost']}"
             )
             return 0
         finally:
