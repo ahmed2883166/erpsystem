@@ -26,7 +26,7 @@ class _TrackedSQLiteConnection(sqlite3.Connection):
 def _close_app_context_connections(connections):
     """Close live SQLite or PostgreSQL connections at app-context teardown."""
     for reference in tuple(connections):
-        connection = reference()
+        connection = reference() if isinstance(reference, weakref.ReferenceType) else reference
         if connection is not None:
             try:
                 connection.close()
@@ -41,6 +41,9 @@ def _teardown_database_connections(exception=None):
     connections = getattr(g, "_nexus_database_connections", None)
     if connections is not None:
         _close_app_context_connections(connections)
+    strong_connections = getattr(g, "_nexus_strong_database_connections", None)
+    if strong_connections is not None:
+        _close_app_context_connections(strong_connections)
 
 
 def register_database_connection_teardown(app):
@@ -61,7 +64,16 @@ def _track_connection(connection):
         if connections is None:
             connections = set()
             g._nexus_database_connections = connections
-        connections.add(weakref.ref(connection, connections.discard))
+        try:
+            connections.add(weakref.ref(connection, connections.discard))
+        except TypeError:
+            # Some C-extension DB-API connections do not expose weak references.
+            # Retain only those handles until app-context teardown.
+            strong_connections = getattr(g, "_nexus_strong_database_connections", None)
+            if strong_connections is None:
+                strong_connections = []
+                g._nexus_strong_database_connections = strong_connections
+            strong_connections.append(connection)
     return connection
 
 
