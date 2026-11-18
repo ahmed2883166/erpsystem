@@ -16,6 +16,12 @@ class JournalReversalProtectionTests(unittest.TestCase):
         conn = connect_database(self.db_path)
         conn.executescript("""
             CREATE TABLE users(id INTEGER PRIMARY KEY, username TEXT, role TEXT);
+            CREATE TABLE audit_log(
+                id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT,
+                created_at TEXT, entity_type TEXT, entity_id TEXT, remote_addr TEXT,
+                outcome TEXT, actor_name TEXT, before_values TEXT, after_values TEXT,
+                submitted_values TEXT, reason TEXT, request_id TEXT
+            );
             CREATE TABLE accounts(
                 id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT, account_type TEXT,
                 is_group INTEGER DEFAULT 0, active INTEGER DEFAULT 1
