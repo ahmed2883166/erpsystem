@@ -92,6 +92,12 @@ def qmark_to_format(sql):
                         out.append(dollar_tag)
                         i = end + 1
                         continue
+            if char == "?" and nxt == "?":
+                # psycopg uses doubled question marks to escape PostgreSQL's
+                # JSON existence operators from its placeholder parser.
+                out.extend(("?", "?"))
+                i += 2
+                continue
             if char == "?":
                 out.append("%s")
             else:
@@ -185,6 +191,7 @@ def executemany_compat(connection, sql, seq_of_params):
     dialect = database_dialect(connection)
     if dialect == "sqlite":
         return connection.executemany(sql, seq_of_params)
+    statement = qmark_to_format(adapt_sql_for_postgresql(sql))
     cursor = connection.cursor()
-    cursor.executemany(qmark_to_format(sql), seq_of_params)
+    cursor.executemany(statement, seq_of_params)
     return cursor
