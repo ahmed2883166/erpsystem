@@ -76,7 +76,7 @@ jobs:
           NEXUS_DB_BACKEND: postgresql
         run: python scripts/smoke_postgres_core_bootstrap.py
       - name: Static analysis (unused imports and variables)
-        run: ruff check app.py accounting_core.py stock.py sales.py purchases.py party_reports.py report_exports.py license_server.py financial_planning.py tests --select F401,F841 --output-format=github
+        run: ruff check app.py postgres_backup.py postgres_backup_scheduler.py accounting_core.py stock.py sales.py purchases.py party_reports.py report_exports.py license_server.py financial_planning.py tests --select F401,F841 --output-format=github
       - name: Run unit and integration tests
         run: python run_tests.py
       - name: Export fully initialized SQLite schema from isolated temporary database
