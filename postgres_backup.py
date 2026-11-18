@@ -151,18 +151,22 @@ def validate_postgres_backup_archive(
         if (not isinstance(expected_digest, str) or len(expected_digest) != 64
                 or any(character not in "0123456789abcdef" for character in expected_digest.lower())):
             raise ValueError("PostgreSQL backup checksum metadata is invalid.")
-        with tempfile.NamedTemporaryFile(prefix="nexus-pg-validate-", suffix=".dump") as dump:
+        with tempfile.TemporaryDirectory(prefix="nexus-pg-validate-") as temporary:
+            dump_path = Path(temporary) / DUMP_MEMBER
             hasher = hashlib.sha256()
             total = 0
-            with archive.open(DUMP_MEMBER, "r") as source:
+            with archive.open(DUMP_MEMBER, "r") as source, dump_path.open("xb") as dump:
                 for chunk in iter(lambda: source.read(1024 * 1024), b""):
                     total += len(chunk)
+                    if total > MAX_DUMP_BYTES:
+                        raise ValueError("PostgreSQL backup dump exceeds the allowed size.")
                     hasher.update(chunk)
                     dump.write(chunk)
-            if not total or total > MAX_DUMP_BYTES or hasher.hexdigest() != expected_digest.lower():
+            if not total or hasher.hexdigest() != expected_digest.lower():
                 raise ValueError("PostgreSQL backup checksum verification failed.")
-            dump.flush()
-            _run([pg_restore, "--list", dump.name], env=os.environ.copy(), timeout=timeout)
+            # Close the temporary dump before launching pg_restore; Windows
+            # does not allow another process to reopen a still-held temp handle.
+            _run([pg_restore, "--list", str(dump_path)], env=os.environ.copy(), timeout=timeout)
     return manifest
 
 
