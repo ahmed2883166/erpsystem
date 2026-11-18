@@ -258,6 +258,7 @@ def init_purchase_schema():
         ("approved_by", "INTEGER"), ("approved_at", "TEXT"),
         ("rejected_by", "INTEGER"), ("rejected_at", "TEXT"),
         ("rejection_reason", "TEXT"), ("approval_reason", "TEXT"),
+        ("activity_code", "TEXT"),
     ):
         if name not in order_columns:
             execute_compat(c, "ALTER TABLE purchase_orders ADD COLUMN " + name + " " + declaration)
@@ -286,6 +287,7 @@ def init_purchase_schema():
         ("approved_by", "INTEGER"), ("approved_at", "TEXT"),
         ("rejected_by", "INTEGER"), ("rejected_at", "TEXT"),
         ("rejection_reason", "TEXT"), ("approval_reason", "TEXT"),
+        ("activity_code", "TEXT"),
     ):
         if name not in bill_columns:
             execute_compat(c, "ALTER TABLE supplier_bills ADD COLUMN " + name + " " + declaration)
@@ -319,6 +321,8 @@ def init_purchase_schema():
     for name, table in (("branch_id", "branches"), ("cost_center_id", "cost_centers"), ("project_id", "projects")):
         if name not in receipt_columns:
             execute_compat(c, "ALTER TABLE goods_receipts ADD COLUMN " + name + " INTEGER REFERENCES " + table + "(id)")
+    if "activity_code" not in receipt_columns:
+        execute_compat(c, "ALTER TABLE goods_receipts ADD COLUMN activity_code TEXT")
 
     # Legacy-safe integrity migration: never fail application startup because
     # old posted documents contain duplicates. Keep every financial document,
@@ -1257,8 +1261,13 @@ def new_order():
             stored_uom_id,entered_uom_name=product_uom_storage(c,product,request.form.get("uom_id"))
             begin_write_transaction(c)
             no="PO-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
-            order_id=insert_and_get_id(c,"INSERT INTO purchase_orders(po_no,supplier_id,order_date,expected_date,notes,created_by) VALUES(?,?,?,?,?,?)",
-              (no,supplier,request.form["order_date"],request.form.get("expected_date") or None,request.form.get("notes",""),session["user_id"]))
+            activity_code = request.form.get("activity_code") or None
+            if activity_code:
+                from company_activities import resolve_activity_profile
+                activity_code = str(activity_code).strip().lower()
+                resolve_activity_profile(c, activity_code)
+            order_id=insert_and_get_id(c,"INSERT INTO purchase_orders(po_no,supplier_id,order_date,expected_date,notes,created_by,activity_code) VALUES(?,?,?,?,?,?,?)",
+              (no,supplier,request.form["order_date"],request.form.get("expected_date") or None,request.form.get("notes",""),session["user_id"],activity_code))
             execute_compat(c, """INSERT INTO purchase_order_lines(po_id,product_id,quantity,unit_price,entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
               VALUES(?,?,?,?,?,?,?,?,?)""",(order_id,product,str(qty),str(price),str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,str(factor)))
             c.commit(); flash(f"تم إنشاء أمر الشراء {no}.","success"); return redirect(url_for("purchase.index"))
@@ -1488,9 +1497,9 @@ def new_receipt():
                 refresh_purchase_order_receipt_status(c, po_id)
             # Stock ledger + valuation layer are updated in the same DB transaction.
             move_no="PUR-"+no
-            mid=insert_and_get_id(c, """INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,target_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name)
-              VALUES(?,'receipt',?,?,?,?,?,?,?,?,?,?, 'pending_document',?,?,?,?)""",
-              (move_no,product,wh,location_id,lot_id,str(qty),str(unit),str(total),request.form["receipt_date"],"استلام مشتريات "+no,session["user_id"],str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name))
+            mid=insert_and_get_id(c, """INSERT INTO stock_movements(movement_no,movement_type,product_id,target_warehouse_id,target_location_id,lot_id,quantity,unit_cost,total_cost,movement_date,notes,created_by,accounting_status,entered_quantity,entered_uom_id,entered_uom_key,entered_uom_name,activity_code)
+              VALUES(?,'receipt',?,?,?,?,?,?,?,?,?,?, 'pending_document',?,?,?,?,?)""",
+              (move_no,product,wh,location_id,lot_id,str(qty),str(unit),str(total),request.form["receipt_date"],"استلام مشتريات "+no,session["user_id"],str(entered_qty),stored_uom_id,request.form.get("uom_id"),entered_uom_name,activity_code))
             execute_compat(c, "INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost,receipt_line_id) VALUES(?,?,?,?,?,?,?,?,?)",
               (product,wh,location_id,lot_id,mid,str(qty),str(qty),str(unit),receipt_line_id))
             stock_line_dimensions = {
@@ -2165,14 +2174,32 @@ def new_bill():
             if tax:
                 ensure_detail_account(c,_activity_tax_roles(c)["input_vat"],"ضريبة مدخلات قابلة للخصم","asset","1100")
             no="BILL-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
+            activity_code = request.form.get("activity_code") or None
+            if receipts:
+                receipt_contexts = execute_compat(c,
+                    "SELECT DISTINCT activity_code FROM goods_receipts WHERE id IN (" +
+                    ",".join("?" for _ in receipts) + ") ORDER BY activity_code", receipts
+                ).fetchall()
+                receipt_activities = {row["activity_code"] for row in receipt_contexts if row["activity_code"]}
+                if len(receipt_activities) > 1:
+                    raise ValueError("لا يمكن جمع إيصالات استلام من أنشطة مختلفة في فاتورة مورد واحدة.")
+                receipt_activity = next(iter(receipt_activities), None)
+                if activity_code and receipt_activity and str(activity_code).strip().lower() != receipt_activity:
+                    raise ValueError("نشاط فاتورة المورد لا يطابق نشاط إيصالات الاستلام.")
+                activity_code = activity_code or receipt_activity
+            if activity_code:
+                from company_activities import resolve_activity_profile
+                activity_code = str(activity_code).strip().lower()
+                resolve_activity_profile(c, activity_code)
+            no="BILL-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
             due_date=request.form.get("due_date") or request.form["bill_date"]
             if due_date < request.form["bill_date"]: raise ValueError("تاريخ استحقاق المورد لا يمكن أن يسبق تاريخ الفاتورة.")
             bid=insert_and_get_id(c,"""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,
                 subtotal,tax_rate,tax_amount,total_amount,input_vat_deductible_percent,created_by,branch_id,cost_center_id,project_id,
                 status,bill_kind,expense_account_id,asset_code,asset_name,asset_category,asset_ready_date,
                 asset_residual_value,asset_useful_life_months,asset_depreciation_method,asset_annual_rate,
-                asset_account_id,asset_accum_account_id,asset_expense_account_id)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                asset_account_id,asset_accum_account_id,asset_expense_account_id,activity_code)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (no,supplier,request.form["bill_date"],due_date,supplier_invoice_no,str(subtotal),str(rate),
                  str(tax),str(total),str(deductible_percent),session["user_id"],dimensions["branch_id"],dimensions["cost_center_id"],
                  dimensions["project_id"],bill_kind,expense_account_id,
@@ -2180,7 +2207,7 @@ def new_bill():
                  asset_data.get("asset_ready_date"),asset_data.get("asset_residual_value","0"),
                  asset_data.get("asset_useful_life_months"),asset_data.get("asset_depreciation_method","straight_line"),
                  asset_data.get("asset_annual_rate","0"),asset_data.get("asset_account_id"),
-                 asset_data.get("asset_accum_account_id"),asset_data.get("asset_expense_account_id")))
+                 asset_data.get("asset_accum_account_id"),asset_data.get("asset_expense_account_id"),activity_code))
             if bill_kind == "asset":
                 for line_no, line in enumerate(asset_lines, 1):
                     execute_compat(c, """INSERT INTO supplier_bill_asset_lines(
