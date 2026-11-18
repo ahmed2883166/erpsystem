@@ -693,6 +693,8 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
     """
     from bisect import bisect_left
 
+    period_start = period_start if isinstance(period_start, date) else date.fromisoformat(str(period_start))
+    period_end = period_end if isinstance(period_end, date) else date.fromisoformat(str(period_end))
     register_decimal_aggregates(conn)
     columns = set(table_columns(conn, "journal_entries"))
     ref_expr = "je.reference" if "reference" in columns else "''"
@@ -706,7 +708,7 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
           AND ({closing_filter})
         GROUP BY je.id,je.entry_date,{ref_expr},{desc_expr}
         ORDER BY je.entry_date DESC,je.id DESC""",
-        (period_start.isoformat(),period_end.isoformat())).fetchall()
+        (period_start,period_end)).fetchall()
     if not entries:
         return []
 
@@ -723,8 +725,8 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
     history_by_account = {}
     if account_ids:
         placeholders = ",".join("?" for _ in account_ids)
-        history_start = (period_start - timedelta(days=90)).isoformat()
-        history_end = (period_end + timedelta(days=1)).isoformat()
+        history_start = period_start - timedelta(days=90)
+        history_end = period_end + timedelta(days=1)
         history_rows = execute_compat(conn, f"""SELECT h.account_id,e.entry_date,h.debit,h.credit
             FROM journal_lines h
             JOIN journal_entries e ON e.id=h.entry_id
@@ -736,7 +738,8 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
         for row in history_rows:
             bucket = history_by_account.setdefault(row["account_id"], {"dates": [], "prefix": [Decimal("0")]})
             amount = max(_decimal(row["debit"]), _decimal(row["credit"]))
-            bucket["dates"].append(row["entry_date"])
+            history_date = row["entry_date"] if isinstance(row["entry_date"], date) else date.fromisoformat(str(row["entry_date"]))
+            bucket["dates"].append(history_date)
             bucket["prefix"].append(bucket["prefix"][-1] + amount)
 
     lines_by_entry = {}
@@ -765,7 +768,7 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
 
     result = []
     for entry in entries:
-        entry_date = date.fromisoformat(entry["entry_date"])
+        entry_date = entry["entry_date"] if isinstance(entry["entry_date"], date) else date.fromisoformat(str(entry["entry_date"]))
         reasons = []
         entry_lines = lines_by_entry.get(entry["id"], ())
         duplicate_of = duplicate_entries.get(entry["id"])
@@ -794,7 +797,7 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
             if average > 0 and amount >= average * threshold:
                 reasons.append("مبلغ مرتفع عن متوسط حساب "+line["code"]+" — "+line["name_ar"])
         if reasons:
-            result.append({"id":entry["id"],"date":entry["entry_date"],"reference":entry["reference"] or "",
+            result.append({"id":entry["id"],"date":entry_date.isoformat(),"reference":entry["reference"] or "",
                 "description":entry["description"] or "","debit":_decimal(entry["debit"]),
                 "credit":_decimal(entry["credit"]),"reasons":reasons})
     return result
