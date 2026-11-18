@@ -29,6 +29,14 @@ class LANStartupGuardTests(unittest.TestCase):
             timeout=60,
         )
 
+    def test_lan_binding_is_prohibited_in_demo_mode(self):
+        with tempfile.TemporaryDirectory(prefix="nexus-lan-demo-mode-") as data_dir:
+            result = self._run_app_with_environment(
+                data_dir, allow_lan="1", cookie_secure="1"
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("LAN binding is prohibited in local demo mode", result.stderr)
+
     def test_lan_binding_requires_explicit_opt_in(self):
         with tempfile.TemporaryDirectory(prefix="nexus-lan-opt-in-") as data_dir:
             result = self._run_app_with_environment(data_dir)
