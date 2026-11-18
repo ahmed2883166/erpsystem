@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block title %}تعديل مسودة المرتب النهائي | NEXUS ERP{% endblock %}{% block content %}
-<header><h2>تعديل مسودة المرتب النهائي</h2>
+<header class="page-heading"><h2>تعديل مسودة المرتب النهائي</h2>
 <p>{{row.final_payroll_no}} — {{row.employee_code}} — {{row.full_name}}</p>
 <p>الأيام: {{row.days_worked}} | الأساسي المستحق: {{row.basic_salary_snapshot}} | البدلات: {{row.allowances_snapshot}} | الإجمالي: {{row.gross_pay}}</p>
 <p class="muted">يمكن تعديل الاستقطاعات والملاحظات فقط. لا يمكن تغيير الموظف أو تاريخ انتهاء الخدمة أو الأجر المحفوظ في هذه المسودة.</p>
