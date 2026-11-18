@@ -244,6 +244,7 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
                 "SELECT table_name FROM information_schema.tables "
                 "WHERE table_schema=%s AND table_type='BASE TABLE'", (schema,)
             ).fetchall()
+            if row["table_name"] != "nexus_schema_installation"
         }
         issues = []
         missing = sorted(set(source_tables) - target_tables)
