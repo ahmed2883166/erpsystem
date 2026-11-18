@@ -1,4 +1,4 @@
-"""Full-schema SQLite-to-PostgreSQL rehearsal using disposable databases only.
+""""Full-schema SQLite-to-PostgreSQL rehearsal using disposable databases only.
 
 The SQLite source is initialized by the real NEXUS application in a subprocess.
 The PostgreSQL target is a unique temporary schema built from the generated
@@ -12,6 +12,7 @@ import unittest
 import uuid
 from pathlib import Path
 
+from postgres_baseline import install_postgres_baseline_file
 from postgres_database import connect_postgres
 from scripts.copy_sqlite_to_postgres import copy_database
 from scripts.verify_sqlite_postgres_copy import verify_copy
@@ -67,8 +68,11 @@ class FullNEXUSSQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
         generated_ddl.replace(self.ddl_path)
         generated_review.replace(self.review_path)
 
-        self.pg.execute(f'SET search_path TO "{self.schema}"')
-        self.pg.execute(self.ddl_path.read_text(encoding="utf-8"))
+        # Install through the production baseline installer so the immutable
+        # installation marker and exact DDL fingerprint are present before copy.
+        install_postgres_baseline_file(
+            self.pg, self.ddl_path, schema=self.schema
+        )
 
     def tearDown(self):
         try:
