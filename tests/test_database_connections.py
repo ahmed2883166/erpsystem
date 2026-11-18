@@ -9,18 +9,19 @@ from database import connect_database
 
 
 class RequestScopedDatabaseTests(unittest.TestCase):
-    def test_connections_are_reused_and_closed_with_app_context(self):
+    def test_connections_remain_independent_and_are_closed_with_app_context(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "request-scoped.db"
             app = Flask(__name__)
             with app.app_context():
                 first = connect_database(path, isolation_level=None)
                 second = connect_database(path, isolation_level=None)
-                self.assertIs(first, second)
+                self.assertIsNot(first, second)
                 first.execute("CREATE TABLE probe (id INTEGER PRIMARY KEY)")
                 first.execute("INSERT INTO probe DEFAULT VALUES")
-            with self.assertRaises(sqlite3.ProgrammingError):
-                first.execute("SELECT 1")
+            for connection in (first, second):
+                with self.assertRaises(sqlite3.ProgrammingError):
+                    connection.execute("SELECT 1")
 
     def test_connections_outside_app_context_remain_independent(self):
         with tempfile.TemporaryDirectory() as directory:
