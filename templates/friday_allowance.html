@@ -8,8 +8,8 @@
 .friday-selected-table tbody tr:nth-child(even){background:#f8fafc}
 @media print{.no-print,header,nav,.sidebar{display:none!important}.panel{box-shadow:none!important;border:0!important}}
 </style>
-<header><h2>بدل العمل أيام الجمعة</h2><p>يُحسب للموظفين الذين وافقت الإدارة على استحقاقهم، وفق أيام الجمعة المسجلة «حاضر» في مصفوفة الحضور.</p>
-<p><a class="button secondary" href="{{url_for('workforce.employees')}}">ملفات الموظفين</a> <a class="button secondary" href="{{url_for('workforce.attendance')}}">الحضور والانصراف</a></p></header>
+<header class="page-heading"><div><h2>بدل العمل أيام الجمعة</h2><p>يُحسب للموظفين الذين وافقت الإدارة على استحقاقهم، وفق أيام الجمعة المسجلة «حاضر» في مصفوفة الحضور.</p>
+<p><a class="button secondary" href="{{url_for('workforce.employees')}}">ملفات الموظفين</a> <a class="button secondary" href="{{url_for('workforce.attendance')}}">الحضور والانصراف</a></p></div></header>
 <section class="panel">
 <h3>إعداد كشف الشهر</h3>
 <p class="muted">المعادلة: الراتب الأساسي ÷ 30 × 2 × عدد أيام الجمعة التي حضرها الموظف. الراتب المتغير وأجر التأمين لا يدخلان في الحساب.</p>
