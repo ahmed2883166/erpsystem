@@ -17,15 +17,12 @@ import uuid
 from pathlib import Path
 
 import psycopg
-from psycopg.conninfo import make_conninfo
 
 # Direct script execution places scripts/ (not the repository root) on sys.path.
 # Add the project root explicitly so root-level application modules resolve.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-
-from postgres_baseline import install_postgres_baseline
 
 
 def main() -> int:
