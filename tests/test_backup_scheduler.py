@@ -82,9 +82,13 @@ class BackupScheduleTests(unittest.TestCase):
             self.assertTrue(first.is_file())
             self.assertIsNone(second)
             self.assertEqual(len(list(backup_dir.glob("nexus-backup-*.zip"))), 2)
-            marker = sqlite3.connect(database).execute(
-                "SELECT setting_value FROM company_settings WHERE setting_key='backup_initial_baseline'"
-            ).fetchone()[0]
+            check = sqlite3.connect(database)
+            try:
+                marker = check.execute(
+                    "SELECT setting_value FROM company_settings WHERE setting_key='backup_initial_baseline'"
+                ).fetchone()[0]
+            finally:
+                check.close()
             self.assertEqual(marker, first.name)
 
     def test_due_backup_runs_once_and_persists_status(self):
