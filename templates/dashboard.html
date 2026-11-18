@@ -1,10 +1,10 @@
 {% extends 'base.html' %}{% block title %}الرئيسية | NEXUS ERP{% endblock %}{% block content %}
 <header class="dashboard-page-header"><div><h2>لوحة المؤشرات</h2><p>{{ company_name }} — العملة الأساسية: {{ base_currency }}</p></div></header>
 <div class="cards dashboard-kpis">
- <article><span>دليل الحسابات</span><b>{{ totals.accounts }}</b></article>
- <article><span>القيود المرحلة</span><b>{{ totals.entries }}</b></article>
- <article><span>المستخدمون النشطون</span><b>{{ totals.users }}</b></article>
- <article><span>نتيجة النشاط</span><b>{{ '%.2f'|format(revenue-expenses) }} <small>{{ base_currency }}</small></b></article>
+ <article class="kpi-card"><span class="kpi-icon bi bi-journal-text" aria-hidden="true"></span><span>دليل الحسابات</span><b>{{ totals.accounts }}</b><small class="kpi-caption">الحسابات المسجلة</small></article>
+ <article class="kpi-card"><span class="kpi-icon bi bi-journal-check" aria-hidden="true"></span><span>القيود المرحلة</span><b>{{ totals.entries }}</b><small class="kpi-caption">قيود معتمدة بالأستاذ</small></article>
+ <article class="kpi-card"><span class="kpi-icon bi bi-people" aria-hidden="true"></span><span>المستخدمون النشطون</span><b>{{ totals.users }}</b><small class="kpi-caption">حسابات المستخدمين</small></article>
+ <article class="kpi-card"><span class="kpi-icon bi bi-graph-up-arrow" aria-hidden="true"></span><span>نتيجة النشاط</span><b>{{ '%.2f'|format(revenue-expenses) }} <small>{{ base_currency }}</small></b><small class="kpi-caption">الإيرادات ناقص المصروفات</small></article>
 </div>
 <section class="panel dashboard-summary"><h3>ملخص الحركة المحاسبية</h3>
 <div class="dashboard-balance-row"><div><span>إجمالي المدين</span><strong>{{ '%.2f'|format(balance.debit) }} {{ base_currency }}</strong></div><div><span>إجمالي الدائن</span><strong>{{ '%.2f'|format(balance.credit) }} {{ base_currency }}</strong></div></div>
