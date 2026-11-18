@@ -270,19 +270,31 @@ def initialize_management_dashboard_schema(conn, activity):
         execute_compat(conn, "CREATE INDEX IF NOT EXISTS idx_journal_entries_reference ON journal_entries(reference)")
     execute_compat(conn, """CREATE TABLE IF NOT EXISTS management_dashboard_data_version(
         id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL DEFAULT 0)""")
-    execute_compat(conn, "INSERT OR IGNORE INTO management_dashboard_data_version(id,version) VALUES(1,0)")
-    for table, event in (
-        ("journal_entries","INSERT"),("journal_entries","UPDATE"),("journal_entries","DELETE"),
-        ("journal_lines","INSERT"),("journal_lines","UPDATE"),("journal_lines","DELETE"),
-        ("accounts","INSERT"),("accounts","UPDATE"),("accounts","DELETE"),
-    ):
-        trigger = "trg_dashboard_version_" + table + "_" + event.lower()
-        execute_compat(conn, f"""CREATE TRIGGER IF NOT EXISTS {trigger} AFTER {event} ON {table}
-            BEGIN UPDATE management_dashboard_data_version SET version=version+1 WHERE id=1; END""")
+    execute_compat(conn, "INSERT INTO management_dashboard_data_version(id,version) VALUES(1,0) ON CONFLICT(id) DO NOTHING")
+    trigger_tables = ["journal_entries", "journal_lines", "accounts"]
     # Forecast balances depend on open sales and supplier invoices as well as the GL.
     # These tables are initialized before this schema in app.initialize_database().
-    for table in ("sales_invoices", "supplier_bills"):
-        if table_exists(conn, table):
+    trigger_tables.extend(table for table in ("sales_invoices", "supplier_bills")
+                          if table_exists(conn, table))
+    if database_dialect(conn) == "postgresql":
+        execute_compat(conn, """
+            CREATE OR REPLACE FUNCTION nexus_bump_management_dashboard_version()
+            RETURNS trigger LANGUAGE plpgsql AS $nexus_dashboard$
+            BEGIN
+                UPDATE management_dashboard_data_version
+                   SET version=version+1 WHERE id=1;
+                RETURN COALESCE(NEW, OLD);
+            END;
+            $nexus_dashboard$
+        """)
+        for table in trigger_tables:
+            for event in ("INSERT", "UPDATE", "DELETE"):
+                trigger = "trg_dashboard_version_" + table + "_" + event.lower()
+                execute_compat(conn, f"DROP TRIGGER IF EXISTS {trigger} ON {table}")
+                execute_compat(conn, f"""CREATE TRIGGER {trigger} AFTER {event} ON {table}
+                    FOR EACH ROW EXECUTE FUNCTION nexus_bump_management_dashboard_version()""")
+    else:
+        for table in trigger_tables:
             for event in ("INSERT", "UPDATE", "DELETE"):
                 trigger = "trg_dashboard_version_" + table + "_" + event.lower()
                 execute_compat(conn, f"""CREATE TRIGGER IF NOT EXISTS {trigger} AFTER {event} ON {table}
@@ -305,8 +317,8 @@ def initialize_management_dashboard_schema(conn, activity):
         defaults = ACTIVITY_ACCOUNTS.get(activity, ACTIVITY_ACCOUNTS["commercial"])
         for role, codes in defaults.items():
             for code in codes:
-                execute_compat(conn, """INSERT OR IGNORE INTO management_account_roles(account_id,role)
-                    SELECT id,? FROM accounts WHERE code=? AND is_group=0 AND active=1""", (role, code))
+                execute_compat(conn, """INSERT INTO management_account_roles(account_id,role)
+                    SELECT id,? FROM accounts WHERE code=? AND is_group=0 AND active=1 ON CONFLICT(account_id,role) DO NOTHING""", (role, code))
         execute_compat(conn, """INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_initialized','1')
             ON CONFLICT(meta_key) DO UPDATE SET meta_value='1'""")
         execute_compat(conn, """INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('seed_activity',?)
@@ -317,8 +329,8 @@ def initialize_management_dashboard_schema(conn, activity):
         defaults = ACTIVITY_ACCOUNTS.get(activity, ACTIVITY_ACCOUNTS["commercial"])
         for role, codes in defaults.items():
             for code in codes:
-                execute_compat(conn, """INSERT OR IGNORE INTO management_account_roles(account_id,role)
-                    SELECT id,? FROM accounts WHERE code=? AND is_group=0 AND active=1""", (role, code))
+                execute_compat(conn, """INSERT INTO management_account_roles(account_id,role)
+                    SELECT id,? FROM accounts WHERE code=? AND is_group=0 AND active=1 ON CONFLICT(account_id,role) DO NOTHING""", (role, code))
     conn.commit()
 
 
