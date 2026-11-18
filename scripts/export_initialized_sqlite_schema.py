@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 
-def build_initialized_schema(database_output=None):
+def build_initialized_schema(database_output=None, seed_representative_data=False):
     repository_root = Path(__file__).resolve().parents[1]
     if str(repository_root) not in sys.path:
         sys.path.insert(0, str(repository_root))
@@ -35,6 +35,45 @@ def build_initialized_schema(database_output=None):
         # initialize_database() runs the real application schema initializers,
         # but only against the newly-created temporary database.
         nexus_app.initialize_database()
+        if seed_representative_data:
+            # Deterministic, non-sensitive accounting fixture. This is inserted
+            # only into the disposable DB created above, never a user database.
+            connection = nexus_app.db()
+            try:
+                accounts = connection.execute(
+                    "SELECT id FROM accounts ORDER BY id LIMIT 2"
+                ).fetchall()
+                admin = connection.execute(
+                    "SELECT id FROM users WHERE username='admin'"
+                ).fetchone()
+                if len(accounts) < 2 or not admin:
+                    raise RuntimeError(
+                        "Initialized NEXUS schema lacks seeded accounts or admin user."
+                    )
+                entry = connection.execute(
+                    """INSERT INTO journal_entries
+                       (entry_date,reference,description,created_by,created_at)
+                       VALUES(?,?,?,?,?)""",
+                    (
+                        "2026-01-15",
+                        "MIGRATION-REHEARSAL-001",
+                        "Disposable migration rehearsal opening fixture",
+                        admin["id"],
+                        nexus_app.now(),
+                    ),
+                )
+                connection.executemany(
+                    """INSERT INTO journal_lines
+                       (entry_id,account_id,debit,credit,memo)
+                       VALUES(?,?,?,?,?)""",
+                    [
+                        (entry.lastrowid, accounts[0]["id"], "1234.56", "0", "fixture debit"),
+                        (entry.lastrowid, accounts[1]["id"], "0", "1234.56", "fixture credit"),
+                    ],
+                )
+                connection.commit()
+            finally:
+                connection.close()
         result = inspect_database(nexus_app.DB_PATH, include_row_counts=False)
         if database_output:
             output_path = Path(database_output).expanduser().resolve()
@@ -60,11 +99,19 @@ def main(argv=None):
     )
     parser.add_argument(
         "--database-output",
-        help="Optional path for a copy of the freshly initialized, empty SQLite database.",
+        help="Optional path for a copy of the freshly initialized SQLite database.",
+    )
+    parser.add_argument(
+        "--seed-representative-data",
+        action="store_true",
+        help="Insert a balanced journal fixture into the disposable database only.",
     )
     args = parser.parse_args(argv)
 
-    result = build_initialized_schema(database_output=args.database_output)
+    result = build_initialized_schema(
+        database_output=args.database_output,
+        seed_representative_data=args.seed_representative_data,
+    )
     encoded = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
     if args.output:
         output_path = Path(args.output).expanduser().resolve()
