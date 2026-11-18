@@ -38,7 +38,8 @@ def qmark_to_format(sql):
     Quoted strings/identifiers, line comments, nested block comments, and
     PostgreSQL dollar-quoted strings are preserved. This helper is intended
     only for statements whose unquoted question marks are bind markers.
-    PostgreSQL's JSON '?' operator must not be used in statements passed here.
+    Escape PostgreSQL JSON question-mark operators as '??', '??|' or
+    '??&'; psycopg converts the doubled marker to the literal operator.
     """
     if not isinstance(sql, str):
         raise TypeError("SQL statement must be a string")
