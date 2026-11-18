@@ -5,6 +5,7 @@ PostgreSQL identity behavior required by generated integer primary keys.
 It covers only the ten foundational tables, not the complete ERP schema.
 """
 from db_compat import database_dialect, execute_script, table_columns
+from db_sql import execute_compat
 
 
 CORE_SCHEMA_SQL = """
@@ -87,7 +88,8 @@ def ensure_legacy_core_columns(connection):
     )
     for table_name, column_name, declaration in additions:
         if column_name not in table_columns(connection, table_name):
-            connection.execute(
+            execute_compat(
+                connection,
                 f"ALTER TABLE {table_name} ADD COLUMN {column_name} {declaration}"
             )
     return True
