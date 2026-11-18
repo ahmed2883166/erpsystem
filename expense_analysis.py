@@ -1,8 +1,9 @@
 """Analytical expense reporting by account and optional business dimensions."""
 from decimal import Decimal
 
-from accounting_core import register_decimal_aggregates
-from income_statement import closing_entries_exclusion_sql
+from accounting_core import (register_decimal_aggregates, decimal_sum_expression, decimal_net_expression, month_key_expression)
+from db_compat import table_exists
+from db_sql import execute_compat
 
 
 def build_expense_analysis(conn, date_from, date_to, dimensions=None):
@@ -20,16 +21,14 @@ def build_expense_analysis(conn, date_from, date_to, dimensions=None):
             conditions.append(f"jl.{key}=?")
             params.append(value)
 
-    role_table = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='management_account_roles'"
-    ).fetchone()
+    role_table = table_exists(conn, "management_account_roles")
     direct_ids = {
-        row["account_id"] for row in conn.execute(
-            "SELECT account_id FROM management_account_roles WHERE role='direct_cost'"
+        row["account_id"] for row in execute_compat(
+            conn, "SELECT account_id FROM management_account_roles WHERE role='direct_cost'"
         )
     } if role_table else set()
 
-    rows = conn.execute(f"""SELECT a.id account_id,a.code,a.name_ar,
+    rows = execute_compat(conn, f"""SELECT a.id account_id,a.code,a.name_ar,
         jl.branch_id,jl.cost_center_id,jl.project_id,jl.customer_id,jl.salesperson_id,jl.supplier_id,
         COALESCE(b.code,'') branch_code,COALESCE(b.name_ar,'غير محدد') branch_name,
         COALESCE(cc.code,'') cost_center_code,COALESCE(cc.name_ar,'غير محدد') cost_center_name,
@@ -37,8 +36,8 @@ def build_expense_analysis(conn, date_from, date_to, dimensions=None):
         COALESCE(c.code,'') customer_code,COALESCE(c.name,'غير محدد') customer_name,
         COALESCE(sp.code,'') salesperson_code,COALESCE(sp.name,'غير محدد') salesperson_name,
         COALESCE(sup.code,'') supplier_code,COALESCE(sup.name,'غير محدد') supplier_name,
-        COALESCE(DECIMAL_SUM(jl.debit),0) debit,
-        COALESCE(DECIMAL_SUM(jl.credit),0) credit
+        {decimal_sum_expression(conn, "jl.debit")} debit,
+        {decimal_sum_expression(conn, "jl.credit")} credit
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
@@ -81,12 +80,13 @@ def build_expense_analysis(conn, date_from, date_to, dimensions=None):
             bucket=dimension_totals.setdefault((key,row[key+"_id"],code,name),{"dimension":label,"code":code,"name":name,"amount":Decimal("0")})
             bucket["amount"]+=amount
 
-    month_rows=conn.execute(f"""SELECT substr(je.entry_date,1,7) month,
-        COALESCE(DECIMAL_NET(jl.debit,jl.credit),0) amount
+    month_expr = month_key_expression(conn, "je.entry_date")
+    month_rows=execute_compat(conn, f"""SELECT {month_expr} month,
+        {decimal_net_expression(conn, "jl.debit", "jl.credit")} amount
         FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
         WHERE {' AND '.join(conditions)}
-        GROUP BY substr(je.entry_date,1,7) ORDER BY month""",params).fetchall()
+        GROUP BY {month_expr} ORDER BY month""",params).fetchall()
     monthly=[{"month":r["month"],"amount":Decimal(str(r["amount"] or "0"))} for r in month_rows]
     return {
         "detail_rows":detail_rows,
