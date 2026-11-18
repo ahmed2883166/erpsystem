@@ -15,7 +15,8 @@ def _execute(conn, sql, params=()):
 
 def _executemany(conn, sql, rows):
     return executemany_compat(conn, sql, rows)
-from accounting_core import post_journal, register_decimal_aggregates, reconciliation_snapshot
+from accounting_core import (post_journal, register_decimal_aggregates, reconciliation_snapshot,
+                             decimal_sum_expression)
 from chart_templates import ACTIVITY_ACCOUNT_ROLES
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
@@ -478,9 +479,9 @@ def build_financial_year_preclose_report(conn, year_id):
         drafts, "يجب معالجة القيود المسودة قبل الإقفال.", drafts > 0)
 
     register_decimal_aggregates(conn)
-    grouped_totals = _execute(conn, """SELECT je.id,
-            COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
-            COALESCE(DECIMAL_SUM(jl.credit),'0') credit
+    grouped_totals = _execute(conn, f"""SELECT je.id,
+            {decimal_sum_expression(conn, "jl.debit")} debit,
+            {decimal_sum_expression(conn, "jl.credit")} credit
         FROM journal_entries je LEFT JOIN journal_lines jl ON jl.entry_id=je.id
         WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
         GROUP BY je.id""", (start, end)).fetchall()
@@ -504,10 +505,10 @@ def build_financial_year_preclose_report(conn, year_id):
         "قيد الافتتاح مرتبط بالسنة." if has_opening else
         "لا يوجد قيد افتتاح مرتبط؛ راجع ما إذا كانت الأرصدة الافتتاحية مطلوبة.", False)
     if has_opening:
-        opening = _execute(conn, """SELECT je.entry_date,je.status,
+        opening = _execute(conn, f"""SELECT je.entry_date,je.status,
                 COUNT(jl.id) line_count,
-                COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
-                COALESCE(DECIMAL_SUM(jl.credit),'0') credit,
+                {decimal_sum_expression(conn, "jl.debit")} debit,
+                {decimal_sum_expression(conn, "jl.credit")} credit,
                 COALESCE(SUM(CASE WHEN a.id IS NULL OR a.account_type NOT IN ('asset','liability','equity')
                                   OR a.is_group=1 OR a.active=0 THEN 1 ELSE 0 END),0) invalid_lines
             FROM journal_entries je
@@ -1305,7 +1306,7 @@ def budget_submit(budget_id):
             abort(404)
         if plan["status"] not in {"draft", "rejected"}:
             abort(409)
-        mismatch = _execute(conn, """SELECT b.account_id,b.amount,COALESCE(DECIMAL_SUM(ml.amount),'0') monthly_total
+        mismatch = _execute(conn, f"""SELECT b.account_id,b.amount,{decimal_sum_expression(conn, "ml.amount")} monthly_total
             FROM budget_lines b LEFT JOIN budget_monthly_lines ml
               ON ml.budget_id=b.budget_id AND ml.account_id=b.account_id
             WHERE b.budget_id=? GROUP BY b.account_id,b.amount""", (budget_id,)).fetchall()
@@ -1533,8 +1534,8 @@ def build_balance_sheet_snapshot(conn, as_of):
 
     rows = _execute(conn, f"""SELECT a.id,a.code,a.name_ar,a.account_type,a.parent_id,a.is_group,
         {section_expr} statement_section,{subtype_expr} account_subtype,
-        COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
-        COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
+        {decimal_sum_expression(conn, "CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END")} debit,
+        {decimal_sum_expression(conn, "CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END")} credit
       FROM accounts a
       LEFT JOIN journal_lines jl ON jl.account_id=a.id
       LEFT JOIN journal_entries je ON je.id=jl.entry_id AND je.status='posted'
@@ -1765,10 +1766,9 @@ def build_cash_flow_snapshot(conn, start, end):
                     "SELECT id FROM supplier_payments WHERE journal_entry_id=?", (entry["id"],)
                 ).fetchone()
                 if payment:
-                    allocations = _execute(conn, """
-                        SELECT COALESCE(DECIMAL_SUM(pa.amount),'0') total_allocated,
-                               COALESCE(DECIMAL_SUM(CASE WHEN sb.bill_kind='asset'
-                                   THEN pa.amount ELSE '0' END),'0') asset_allocated
+                    allocations = _execute(conn, f"""
+                        SELECT {decimal_sum_expression(conn, "pa.amount")} total_allocated,
+                               {decimal_sum_expression(conn, "CASE WHEN sb.bill_kind='asset' THEN pa.amount ELSE '0' END")} asset_allocated
                         FROM supplier_payment_allocations pa
                         JOIN supplier_bills sb ON sb.id=pa.bill_id
                         WHERE pa.payment_id=?
@@ -1874,8 +1874,8 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
         )
         rows = _execute(conn, f"""
             SELECT a.id,a.account_type,
-                   COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),'0') debit,
-                   COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),'0') credit
+                   {decimal_sum_expression(conn, "CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END")} debit,
+                   {decimal_sum_expression(conn, "CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END")} credit
             FROM accounts a
             LEFT JOIN journal_lines jl ON jl.account_id=a.id
             LEFT JOIN journal_entries je ON je.id=jl.entry_id
@@ -1899,8 +1899,8 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     closing_filter = "AND COALESCE(je.entry_type,'general') NOT IN ('year_end_closing','year_end_closing_reversal')" if "entry_type" in entry_columns else ""
     period_rows = _execute(conn, f"""
         SELECT a.id account_id,a.account_type,a.code,a.name_ar,
-               COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
-               COALESCE(DECIMAL_SUM(jl.credit),'0') credit
+               {decimal_sum_expression(conn, "jl.debit")} debit,
+               {decimal_sum_expression(conn, "jl.credit")} credit
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
@@ -1961,8 +1961,8 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
             if depreciation_entry_ids else ""
         )
         depreciation_row=_execute(conn, f"""
-            SELECT COALESCE(DECIMAL_SUM(jl.debit),'0') debit,
-                   COALESCE(DECIMAL_SUM(jl.credit),'0') credit
+            SELECT {decimal_sum_expression(conn, "jl.debit")} debit,
+                   {decimal_sum_expression(conn, "jl.credit")} credit
             FROM journal_lines jl
             JOIN journal_entries je ON je.id=jl.entry_id
             JOIN accounts a ON a.id=jl.account_id
@@ -1981,7 +1981,7 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
         disposal_columns=table_columns(conn, "asset_disposals")
         if {"gain_loss_amount","disposal_date"}.issubset(disposal_columns):
             disposal_row=_execute(conn, 
-                "SELECT COALESCE(DECIMAL_SUM(gain_loss_amount),'0') amount FROM asset_disposals WHERE disposal_date>=? AND disposal_date<=?",
+                f"SELECT {decimal_sum_expression(conn, 'gain_loss_amount')} amount FROM asset_disposals WHERE disposal_date>=? AND disposal_date<=?",
                 (start,end),
             ).fetchone()
             disposal_gain_loss=Decimal(str(disposal_row["amount"] or "0"))
