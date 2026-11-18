@@ -50,6 +50,7 @@ from core_schema import initialize_core_schema, ensure_legacy_core_columns
 from company_defaults import seed_company_defaults
 from sqlite_accounting_migrations import migrate_journal_line_amounts_to_text
 from sqlite_audit_schema import initialize_sqlite_audit_schema
+from postgres_audit_schema import initialize_postgres_audit_schema
 from db_sql import execute_compat
 from db_compat import (begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names, table_column_info, database_dialect, DB_ERROR, DB_INTEGRITY_ERROR)
 from report_request_control import (ReportRequestGate, bounded_env_int,
@@ -529,10 +530,15 @@ def initialize_database():
     require_supported_runtime_backend()
     ensure_data_directory()
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    enable_wal(DB_PATH)
     connection = db()
+    backend = database_dialect(connection)
+    if backend == "sqlite":
+        enable_wal(DB_PATH)
     initialize_core_schema(connection)
-    initialize_sqlite_audit_schema(connection)
+    if backend == "postgresql":
+        initialize_postgres_audit_schema(connection)
+    else:
+        initialize_sqlite_audit_schema(connection)
     ensure_legacy_core_columns(connection)
     initialize_roles_schema(connection)
     seed_company_defaults(connection)
@@ -563,7 +569,8 @@ def initialize_database():
     ensure_activity_chart_accounts(connection, selected_activity)
     migrate_legacy_duplicate_account_labels(connection, selected_activity)
     ensure_account_metadata(connection)
-    migrate_journal_line_amounts_to_text(connection)
+    if backend == "sqlite":
+        migrate_journal_line_amounts_to_text(connection)
     execute_compat(connection, "CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry ON journal_lines(account_id,entry_id)")
     execute_compat(connection, "CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_account ON journal_lines(entry_id,account_id)")
     execute_compat(connection, "CREATE INDEX IF NOT EXISTS idx_journal_entries_entry_date ON journal_entries(entry_date,id)")
