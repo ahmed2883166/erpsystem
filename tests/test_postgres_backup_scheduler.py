@@ -12,6 +12,38 @@ from postgres_backup_scheduler import ensure_initial_postgres_backup, run_due_po
 
 
 class PostgreSQLBackupSchedulerTests(unittest.TestCase):
+    def test_settings_are_written_through_cursor_executemany(self):
+        from postgres_backup_scheduler import _write_settings
+
+        class Cursor:
+            def __init__(self):
+                self.calls = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+            def executemany(self, statement, values):
+                self.calls.append((statement, list(values)))
+
+        class Connection:
+            def __init__(self):
+                self.opened_cursor = Cursor()
+
+            def cursor(self):
+                return self.opened_cursor
+
+            def executemany(self, *args, **kwargs):
+                raise AssertionError("executemany must be called on the cursor")
+
+        connection = Connection()
+        _write_settings(connection, {"backup_enabled": "1", "backup_time": "23:00"})
+        statement, values = connection.opened_cursor.calls[0]
+        self.assertIn("ON CONFLICT(setting_key)", statement)
+        self.assertEqual(values, [("backup_enabled", "1"), ("backup_time", "23:00")])
+
     def test_schedule_calculation_reuses_existing_daily_weekly_monthly_rules(self):
         now = datetime(2026, 11, 12, 10, 0)
         self.assertEqual(
