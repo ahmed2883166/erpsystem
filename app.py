@@ -9,6 +9,7 @@ from logging.handlers import RotatingFileHandler
 import os
 import re
 import secrets
+import subprocess
 import tempfile
 import time
 import zipfile
@@ -4737,7 +4738,7 @@ def restore_backup():
 
         log("backup_restored", upload.filename)
         flash("تم استرجاع النسخة بنجاح بعد فحصها، مع الاحتفاظ بنسخة أمان من البيانات السابقة.", "success")
-    except (zipfile.BadZipFile, ValueError, *DB_ERROR, OSError, RuntimeError) as exc:
+    except (zipfile.BadZipFile, ValueError, *DB_ERROR, OSError, RuntimeError, subprocess.SubprocessError) as exc:
         flash(f"تعذرت الاستعادة: {exc}", "error")
     finally:
         for path in temp_paths:
