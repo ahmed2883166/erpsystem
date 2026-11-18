@@ -1,4 +1,4 @@
-""""Analytical expense reporting by account and optional business dimensions."""
+"""Analytical expense reporting by account and optional business dimensions."""
 from decimal import Decimal
 
 from accounting_core import (register_decimal_aggregates, decimal_sum_expression, decimal_net_expression, month_key_expression)
