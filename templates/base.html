@@ -324,4 +324,4 @@
    }));
  }).observe(document.body,{childList:true,subtree:true});
 })();
-</script>{% block scripts %}{% endblock %}<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script></body></html>
+</script>{% block scripts %}{% endblock %}<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script><script src="{{ url_for('static', filename='bootstrap-erp.js') }}" defer></script></body></html>
