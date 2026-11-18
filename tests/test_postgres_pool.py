@@ -196,9 +196,18 @@ class PostgreSQLDirectConnectionTests(unittest.TestCase):
                     )
 
 POSTGRES_DSN = __import__("os").environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
+try:
+    import psycopg_pool as _psycopg_pool  # noqa: F401
+except ImportError:
+    POSTGRES_POOL_AVAILABLE = False
+else:
+    POSTGRES_POOL_AVAILABLE = True
 
 
-@unittest.skipUnless(POSTGRES_DSN, "NEXUS_TEST_POSTGRES_DSN is not configured")
+@unittest.skipUnless(
+    POSTGRES_DSN and POSTGRES_POOL_AVAILABLE,
+    "NEXUS_TEST_POSTGRES_DSN and optional psycopg_pool package are required",
+)
 class PostgreSQLPoolIntegrationTests(unittest.TestCase):
     def test_pool_leases_commit_and_rollback_before_reuse(self):
         import uuid
