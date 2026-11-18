@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}مقارنة الفترات | NEXUS ERP{% endblock %}
 {% block content %}
-<header class="report-header"><h2>مقارنة الأداء بين الفترات</h2><p class="muted">{{ date_from }} إلى {{ date_to }} · الفترة المقارنة {{ previous_date_from }} إلى {{ previous_date_to }}</p></header>
+<header class="report-header page-heading"><h2>مقارنة الأداء بين الفترات</h2><p class="muted">{{ date_from }} إلى {{ date_to }} · الفترة المقارنة {{ previous_date_from }} إلى {{ previous_date_to }}</p></header>
 <section class="panel no-print"><form method="get" class="form-row">
 <label>من تاريخ<input type="date" name="date_from" value="{{ date_from }}"></label>
 <label>إلى تاريخ<input type="date" name="date_to" value="{{ date_to }}"></label>
