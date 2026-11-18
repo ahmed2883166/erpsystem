@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block title %}المرتبات | NEXUS ERP{% endblock %}{% block content %}
-<header class="page-heading"><div><h2>المرتبات</h2><p>إدخال الراتب الأساسي والأجر التأميني والبدلات والعلاوات والإضافي والاستقطاعات. المنح والمكافآت الاستثنائية تُدار خارج كشف المرتبات.</p><p class="muted">أقساط السلف النشطة تُحسب تلقائيًا حسب جدول الاستحقاق ضمن خصم السلف؛ لا تدخل القسط يدويًا مرة أخرى.</p><div class="payroll-nav-groups no-print">
+<header class="page-heading"><div><h2>المرتبات</h2><p>إدخال الراتب الأساسي والأجر التأميني والبدلات والعلاوات والإضافي والاستقطاعات. المنح والمكافآت الاستثنائية تُدار خارج كشف المرتبات.</p><p class="muted">أقساط السلف النشطة تُحسب تلقائيًا حسب جدول الاستحقاق ضمن خصم السلف؛ لا تدخل القسط يدويًا مرة أخرى.</p><span class="pill">إدارة المرتبات</span><div class="payroll-nav-groups no-print">
 <details class="payroll-nav-group" open><summary>تشغيل المرتبات</summary><div class="actions">
 <a class="button secondary" href="{{url_for('workforce.employee_loans')}}">إدارة السلف</a>
 <a class="button secondary" href="{{url_for('workforce.pay_items')}}">الاستحقاقات والاستقطاعات</a>
