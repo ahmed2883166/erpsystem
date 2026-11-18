@@ -27,7 +27,7 @@ CENT = Decimal("0.01")
 
 def _document_stamp():
     """Return a timestamp plus entropy to avoid collisions on coarse OS clocks."""
-    return _document_stamp() + uuid.uuid4().hex[:8].upper()
+    return datetime.now().strftime("%Y%m%d%H%M%S%f") + uuid.uuid4().hex[:8].upper()
 
 
 def db():
