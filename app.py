@@ -4565,6 +4565,8 @@ if __name__ == "__main__":
     requested_host = os.environ.get("HOST", "127.0.0.1").strip()
     lan_binding = requested_host not in {"127.0.0.1", "::1", "localhost"}
     if lan_binding:
+        if NEXUS_DEMO_MODE:
+            raise RuntimeError("LAN binding is prohibited in local demo mode. Disable NEXUS_DEMO_MODE and use a properly secured deployment before enabling LAN.")
         if os.environ.get("NEXUS_ALLOW_LAN", "0").strip().lower() not in {"1", "true", "yes", "on"}:
             raise RuntimeError("LAN binding is disabled by default. Set NEXUS_ALLOW_LAN=1 explicitly only after securing the administrator account and HTTPS.")
         if os.environ.get("NEXUS_COOKIE_SECURE", "0").strip().lower() not in {"1", "true", "yes", "on"}:
