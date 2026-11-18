@@ -77,6 +77,23 @@ def _compare_decimal_maps(label, source, target, issues):
             })
 
 
+def _unbalanced_groups(debit_totals, credit_totals):
+    """Return journal groups whose debit and credit totals do not balance."""
+    unbalanced = []
+    for key in sorted(set(debit_totals) | set(credit_totals),
+                      key=lambda item: tuple(str(value) for value in item)):
+        debit = debit_totals.get(key, Decimal("0"))
+        credit = credit_totals.get(key, Decimal("0"))
+        if debit != credit:
+            unbalanced.append({
+                "key": list(key),
+                "debit": str(debit),
+                "credit": str(credit),
+                "difference": str(debit - credit),
+            })
+    return unbalanced
+
+
 def _missing_control_columns(required, source_available, target_available):
     """Return explicit source/target schema gaps for a requested control."""
     required = set(required)
@@ -345,11 +362,39 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
                     "journal_lines", "credit", (entry_key,),
                     "journal_lines.credit_by_entry",
                 )
+                source_unbalanced = _unbalanced_groups(
+                    _sqlite_grouped_sum(src, "journal_lines", "debit", (entry_key,)),
+                    _sqlite_grouped_sum(src, "journal_lines", "credit", (entry_key,)),
+                )
+                target_unbalanced = _unbalanced_groups(
+                    _pg_grouped_sum(dst, schema, "journal_lines", "debit", (entry_key,)),
+                    _pg_grouped_sum(dst, schema, "journal_lines", "credit", (entry_key,)),
+                )
+                if source_unbalanced or target_unbalanced:
+                    issues.append({
+                        "control": "journal_lines.entry_balance",
+                        "unbalanced_sqlite_entries": source_unbalanced[:200],
+                        "unbalanced_postgres_entries": target_unbalanced[:200],
+                    })
             else:
                 controls_skipped.append({
                     "control": "journal_lines.by_entry",
                     "reason": "journal_entry_reference_missing",
                     "expected_one_of": ["journal_entry_id", "entry_id", "journal_id"],
+                })
+            if "account_id" in journal_columns:
+                compare_control(
+                    "journal_lines", "debit", ("account_id",),
+                    "trial_balance.debit_by_account",
+                )
+                compare_control(
+                    "journal_lines", "credit", ("account_id",),
+                    "trial_balance.credit_by_account",
+                )
+            else:
+                controls_skipped.append({
+                    "control": "trial_balance.by_account",
+                    "reason": "account_reference_missing",
                 })
             if "customer_id" in journal_columns:
                 compare_control("journal_lines", "debit", ("customer_id",), "customer.debit_by_id")
