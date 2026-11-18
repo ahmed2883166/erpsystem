@@ -720,3 +720,103 @@ main .table-wrap > table td small {
     padding: .52rem .58rem;
   }
 }
+
+/* NEXUS shared screen finishing layer — presentation only, all modules. */
+main {
+  min-width: 0;
+}
+main > header,
+main > .page-heading,
+main > .report-page-header,
+main > .dashboard-page-header {
+  gap: 1rem;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+main > header h1,
+main > header h2,
+main > header h3,
+main .page-heading h1,
+main .page-heading h2,
+main .report-page-header h1,
+main .report-page-header h2,
+main .dashboard-page-header h1,
+main .dashboard-page-header h2 {
+  margin: 0;
+  line-height: 1.45;
+  letter-spacing: -.01em;
+}
+main > header p,
+main .page-heading p,
+main .report-page-header p,
+main .dashboard-page-header p {
+  margin: .3rem 0 0;
+  line-height: 1.7;
+}
+main .panel,
+main .card,
+main .kpi-card,
+main .report-card,
+main .filter-panel,
+main .form-panel {
+  min-width: 0;
+  border-radius: 12px;
+}
+main .actions,
+main .page-shortcuts,
+main .stock-shortcuts,
+main .form-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .55rem;
+}
+main input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+main select,
+main textarea {
+  max-width: 100%;
+  min-width: 0;
+}
+main input:focus-visible,
+main select:focus-visible,
+main textarea:focus-visible,
+main button:focus-visible,
+main a:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, white);
+  outline-offset: 2px;
+}
+main .table-wrap,
+main .table-responsive {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+main .empty-state,
+main .notice,
+main .muted {
+  line-height: 1.7;
+}
+main button,
+main .button-link,
+main .btn {
+  white-space: normal;
+}
+@media (max-width: 700px) {
+  main > header,
+  main .page-heading,
+  main .report-page-header,
+  main .dashboard-page-header {
+    align-items: stretch;
+  }
+  main .actions > *,
+  main .page-shortcuts > *,
+  main .stock-shortcuts > * {
+    flex: 1 1 140px;
+  }
+  main .panel,
+  main .card,
+  main .report-card,
+  main .filter-panel {
+    padding-inline: .8rem;
+  }
+}
