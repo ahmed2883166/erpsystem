@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 from decimal import Decimal
 from pathlib import Path
 from flask import Flask
@@ -61,6 +62,26 @@ class GRNIReconciliationTests(unittest.TestCase):
         self.assertEqual(len(report["rows"]), 2)
         receipt = next(row for row in report["rows"] if row["receipt_no"] == "GR-NOV")
         self.assertEqual(receipt["outstanding"], Decimal("30.00"))
+
+    def test_activity_filter_uses_its_mapped_grni_account_and_subledger(self):
+        self.conn.execute("ALTER TABLE goods_receipts ADD COLUMN activity_code TEXT")
+        self.conn.execute("ALTER TABLE supplier_bills ADD COLUMN activity_code TEXT")
+        self.conn.execute("UPDATE goods_receipts SET activity_code='commercial' WHERE id=1")
+        self.conn.execute("UPDATE goods_receipts SET activity_code='service' WHERE id=2")
+        self.conn.execute("UPDATE supplier_bills SET activity_code='commercial' WHERE id=1")
+        self.conn.execute("UPDATE supplier_bills SET activity_code='service' WHERE id=2")
+        self.conn.execute("INSERT INTO accounts VALUES(2,'2290','GRNI خدمات',1,0)")
+        self.conn.execute("INSERT INTO journal_entries VALUES(7,'2026-11-10','posted')")
+        self.conn.execute("INSERT INTO journal_lines VALUES(7,7,2,'0','50.00')")
+        with patch("company_activities.resolve_activity_posting_account", return_value="2290"):
+            report = purchases.build_grni_reconciliation(self.conn, "2026-11", "service")
+        self.assertEqual(report["activity_code"], "service")
+        self.assertEqual(report["account_code"], "2290")
+        self.assertEqual(report["period_receipts"], Decimal("50.00"))
+        self.assertEqual(report["period_bill_settlements"], Decimal("20.00"))
+        self.assertEqual(len(report["rows"]), 1)
+        self.assertEqual(report["rows"][0]["receipt_no"], "GR-NOV")
+        self.assertEqual(report["gl_period_credit"], Decimal("50.00"))
 
     def test_invalid_month_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "شهرًا صحيحًا"):
