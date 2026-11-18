@@ -94,7 +94,13 @@ class FullNEXUSSQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
         self.assertTrue(result["committed"])
         self.assertTrue(result["source_read_only"])
         self.assertEqual(len(result["table_row_counts"]), review["table_count"])
-        self.assertEqual(result["total_rows"], 0)
+        self.assertGreater(result["total_rows"], 0)
+        self.assertEqual(
+            result["total_rows"],
+            sum(result["table_row_counts"].values()),
+        )
+        self.assertGreater(result["table_row_counts"].get("users", 0), 0)
+        self.assertGreater(result["table_row_counts"].get("accounts", 0), 0)
 
         report = verify_copy(str(self.sqlite_path), POSTGRES_DSN, schema=self.schema)
         self.assertTrue(report["source_integrity_ok"])
