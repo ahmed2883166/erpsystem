@@ -529,109 +529,15 @@ def generate_postgres_ddl(snapshot):
         "",
         "CREATE TABLE nexus_schema_installation (",
         "    id SMALLINT PRIMARY KEY CHECK (id = 1),",
-        "    baseline_sha256 TEXT NOT NULL CHECK (baseline_sha256 ~ '^[0-9a-f]{64}
-    for candidate in sorted(set(numeric_candidates)):
-        candidate_table, candidate_column = candidate.split(".", 1)
-        numeric_candidates_by_table.setdefault(candidate_table, []).append(candidate_column)
-    numeric_review_candidates_by_table = {}
-    for candidate in numeric_review_candidates:
-        numeric_review_candidates_by_table.setdefault(candidate["table"], []).append({
-            "column": candidate["column"],
-            "source_type": candidate["source_type"],
-            "postgres_type": candidate["postgres_type"],
-            "reason": candidate["reason"],
-        })
-
-    foreign_key_manifest = []
-    action_names = {
-        "NO ACTION": "NO ACTION",
-        "RESTRICT": "RESTRICT",
-        "CASCADE": "CASCADE",
-        "SET NULL": "SET NULL",
-        "SET DEFAULT": "SET DEFAULT",
-    }
-    for table_name, fk_parts, resolved_target_columns in pending_fks:
-        foreign_key_manifest.append({
-            "table": table_name,
-            "columns": [part["from"] for part in fk_parts],
-            "referenced_table": fk_parts[0]["table"],
-            "referenced_columns": list(resolved_target_columns),
-            "on_update": action_names.get(
-                str(fk_parts[0].get("on_update") or "NO ACTION").upper(), "NO ACTION"
-            ),
-            "on_delete": action_names.get(
-                str(fk_parts[0].get("on_delete") or "NO ACTION").upper(), "NO ACTION"
-            ),
-        })
-    foreign_key_manifest.sort(
-        key=lambda item: (
-            item["table"], tuple(item["columns"]),
-            item["referenced_table"], tuple(item["referenced_columns"]),
-        )
-    )
-
-    review = {
-        "table_count": len(tables),
-        "foreign_keys": foreign_key_manifest,
-        "column_count": sum(len(table.get("columns", [])) for table in tables),
-        "numeric_review_candidate_count": len(numeric_review_candidates),
-        "numeric_review_candidates": numeric_review_candidates,
-        "numeric_review_candidates_by_table": numeric_review_candidates_by_table,
-        "text_numeric_candidate_count": len(set(numeric_candidates)),
-        "text_numeric_candidates_by_table": numeric_candidates_by_table,
-        "foreign_key_count": len(pending_fks),
-        "index_count": len(pending_indexes),
-        "trigger_count": len(snapshot.get("triggers", [])),
-        "baseline_sha256": baseline_sha256,
-        "installation_marker": "nexus_schema_installation",
-        "identity_columns": identity_columns,
-        "text_numeric_candidates": sorted(set(numeric_candidates)),
-        "notes": [
-            "Only explicitly reviewed accounting/rate columns use PostgreSQL NUMERIC; other TEXT fields remain TEXT.",
-            "Numeric review candidates include matching SQLite TEXT and REAL columns; candidates are warnings, not automatic type conversions.",
-            "SQLite REAL candidates require source-data and arithmetic review before selecting NUMERIC precision/scale.",
-            "NUMERIC overrides are intentionally unconstrained until business precision/scale is approved.",
-            "CHECK constraints are copied from the SQLite CREATE TABLE definitions.",
-            "Expression indexes are copied from their SQLite CREATE INDEX definitions.",
-            "SQLite COLLATE NOCASE unique columns are represented by unique lower(column) indexes.",
-            "Validate generated DDL on the target PostgreSQL major version before production use.",
-        ],
-    }
-    return "\n".join(lines), review
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", required=True, help="SQLite schema JSON snapshot")
-    parser.add_argument("--output", required=True, help="Output PostgreSQL SQL file")
-    parser.add_argument("--review-output", required=True, help="Output JSON review report")
-    args = parser.parse_args(argv)
-    snapshot = json.loads(Path(args.input).read_text(encoding="utf-8"))
-    ddl, review = generate_postgres_ddl(snapshot)
-    Path(args.output).write_text(ddl, encoding="utf-8")
-    Path(args.review_output).write_text(
-        json.dumps(review, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-    print(json.dumps({
-        "output": str(Path(args.output)),
-        "review_output": str(Path(args.review_output)),
-        "summary": {key: review[key] for key in ("table_count", "column_count", "foreign_key_count", "index_count", "trigger_count")},
-        "numeric_candidates": len(review["text_numeric_candidates"]),
-    }, ensure_ascii=False))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-),",
+        "    baseline_sha256 TEXT NOT NULL CHECK (length(baseline_sha256) = 64),",
         "    installed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP",
         ");",
-        "INSERT INTO nexus_schema_installation (id, baseline_sha256) VALUES (1, "
-        + "'" + baseline_sha256 + "');",
-        "",
-        "COMMIT;",
-        "",
     ])
+    lines.append(
+        "INSERT INTO nexus_schema_installation (id, baseline_sha256) VALUES (1, '"
+        + baseline_sha256 + "');"
+    )
+    lines.extend(["", "COMMIT;", ""])
     numeric_candidates_by_table = {}
     for candidate in sorted(set(numeric_candidates)):
         candidate_table, candidate_column = candidate.split(".", 1)
