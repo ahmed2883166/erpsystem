@@ -18,7 +18,7 @@
 <div class="grid accounts-layout">
   {% if 'accounts.manage' in permissions %}<section class="panel no-print">
     <h3>إضافة حساب</h3>
-    <form method="post">
+    <form method="post" class="erp-form-grid">
       <label>رمز الحساب<input name="code" required></label>
       <label>اسم الحساب<input name="name_ar" required></label>
       <label>نوع الحساب<select name="account_type" id="accountType"><option value="asset">أصل</option><option value="liability">التزام</option><option value="equity">حقوق ملكية</option><option value="revenue">إيراد</option><option value="expense">مصروف</option></select></label>
