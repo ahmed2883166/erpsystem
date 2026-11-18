@@ -157,6 +157,10 @@ def main(argv=None):
             "database_copy": result.get("database_copy"),
         }, ensure_ascii=False))
     else:
+        # GitHub's Windows runner defaults stdout to cp1252; the schema contains
+        # Arabic text, so emit the JSON as UTF-8 on every platform.
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
         sys.stdout.write(encoded)
     return 0
 
