@@ -26,8 +26,9 @@ def require_supported_runtime_backend(environ=None):
     backend = configured_database_backend(environ)
     if backend not in SUPPORTED_RUNTIME_BACKENDS:
         raise RuntimeError(
-            "PostgreSQL runtime is not enabled yet: application schema initialization, "
-            "backup/restore, and remaining SQLite-specific SQL must be migrated first. "
+            "PostgreSQL runtime is not enabled yet: application schema initialization "
+            "and remaining SQLite-specific SQL must be migrated and verified first. "
+            "PostgreSQL backup/restore support is available but does not enable runtime by itself. "
             "SQLite remains the active supported runtime."
         )
     return backend
