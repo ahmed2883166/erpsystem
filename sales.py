@@ -2463,6 +2463,7 @@ def new_invoice():
                         ("branch_id", "cost_center_id", "project_id", "salesperson_id")
                     },
                     "sales_channel": request.form.get("sales_channel", "default"),
+                    "activity_code": request.form.get("activity_code") or None,
                     "discount_override": {
                         "discount_type": discount_type,
                         "discount_value": str(discount_value),
