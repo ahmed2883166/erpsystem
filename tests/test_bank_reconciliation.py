@@ -175,12 +175,12 @@ class BankStatementCsvImportTests(unittest.TestCase):
         self.assertEqual(rows[0]["description"], "إيداع نقدي")
 
     def test_accepts_decimal_comma_without_thousands_separator(self):
-        rows = banking.parse_statement_csv("Date;Amount\\n2026-11-01;1250,75\\n")
+        rows = banking.parse_statement_csv("Date;Amount\n2026-11-01;1250,75\n")
         self.assertEqual(rows[0]["signed_amount"], Decimal("1250.75"))
 
     def test_rejects_ambiguous_comma_amount(self):
         with self.assertRaisesRegex(ValueError, "تنسيق مبلغ ملتبس"):
-            banking.parse_statement_csv("Date;Amount\\n2026-11-01;1,20,30\\n")
+            banking.parse_statement_csv("Date;Amount\n2026-11-01;1,20,30\n")
 
     def test_rejects_csv_without_required_columns(self):
         with self.assertRaisesRegex(ValueError, "التاريخ"):
