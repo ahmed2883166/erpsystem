@@ -53,10 +53,13 @@
 <label>من تاريخ<input type="date" name="date_from" value="{{ date_from }}"></label>
 <label>إلى تاريخ<input type="date" name="date_to" value="{{ date_to }}"></label>
 <label>الحالة<select name="status"><option value="">كل الحالات</option><option value="posted" {% if status_filter=='posted' %}selected{% endif %}>مرحّل</option><option value="draft" {% if status_filter=='draft' %}selected{% endif %}>مسودة</option></select></label>
+<details class="journal-filter-advanced"><summary>فلاتر إضافية (الحساب والنوع والمصدر والترتيب)</summary>
+<div class="journal-filter-advanced-grid">
 <label>الحساب<select name="account_id"><option value="">كل الحسابات</option>{% for a in accounts %}<option value="{{ a.id }}" {% if account_filter==a.id %}selected{% endif %}>{{ a.code }} — {{ a.name_ar }}</option>{% endfor %}</select></label>
 <label>نوع القيد<select name="entry_type"><option value="">كل الأنواع</option><option value="general" {% if entry_type_filter=='general' %}selected{% endif %}>قيد عادي</option><option value="year_end_closing" {% if entry_type_filter=='year_end_closing' %}selected{% endif %}>إقفال سنة مالية</option><option value="year_end_closing_reversal" {% if entry_type_filter=='year_end_closing_reversal' %}selected{% endif %}>عكس إقفال</option></select></label>
 <label>مصدر القيد<select name="source"><option value="">كل المصادر</option><option value="sales" {% if source_filter=='sales' %}selected{% endif %}>مبيعات وتحصيلات</option><option value="purchases" {% if source_filter=='purchases' %}selected{% endif %}>مشتريات وموردين</option><option value="payroll" {% if source_filter=='payroll' %}selected{% endif %}>المرتبات</option><option value="incentives" {% if source_filter=='incentives' %}selected{% endif %}>حوافز ومنح</option><option value="friday" {% if source_filter=='friday' %}selected{% endif %}>بدل عمل الجمعة</option><option value="inventory" {% if source_filter=='inventory' %}selected{% endif %}>المخزون</option><option value="banking" {% if source_filter=='banking' %}selected{% endif %}>البنوك</option><option value="assets" {% if source_filter=='assets' %}selected{% endif %}>الأصول الثابتة</option><option value="general" {% if source_filter=='general' %}selected{% endif %}>قيود يومية / تسويات غير مرتبطة بمستند</option></select></label>
 <label>ترتيب رقم القيد<select name="sort_order"><option value="asc" {% if sort_order=='asc' %}selected{% endif %}>تصاعدي (الأقدم أولاً)</option><option value="desc" {% if sort_order=='desc' %}selected{% endif %}>تنازلي (الأحدث أولاً)</option></select></label>
+</div></details>
 <button type="submit">تطبيق الفلاتر</button><a class="button secondary" href="{{ url_for('journal') }}">مسح</a>
 </form>
 <p class="muted">القيود المرحلة لا تُعدّل ولا تُحذف مباشرة؛ تصحيحها يكون بقيد عكسي أو قيد تسوية موثق للحفاظ على أثر المراجعة.</p><div class="table-wrap"><table><thead><tr><th>رقم القيد</th><th>التاريخ</th><th>المرجع</th><th>البيان</th><th>مصدر القيد / المستند</th><th>التفاصيل</th></tr></thead><tbody>{% for e in entries %}<tr><td><a class="journal-entry-link" href="{{ url_for('journal_detail',entry_id=e.id) }}">#{{ e.id }}</a></td><td>{{ e.entry_date }}</td><td>{{ e.reference or '—' }}</td><td>{{ e.description }}</td><td><strong>{{ e.source }}</strong><div class="muted">مرجع المصدر: {{ e.source_ref }}</div>{% if e.origin_url %}<div class="origin-action"><a class="btn secondary" href="{{ e.origin_url }}" target="_blank" rel="noopener">{{ e.origin_action }}</a></div>{% else %}<div class="muted origin-unavailable">لا توجد شاشة تفصيلية مباشرة لهذا المستند</div>{% endif %}</td><td><a class="btn secondary" href="{{ url_for('journal_detail',entry_id=e.id) }}">عرض القيد</a></td></tr>{% else %}<tr><td colspan="6">لا توجد قيود بعد.</td></tr>{% endfor %}</tbody></table></div>
@@ -96,6 +99,31 @@
 .origin-action{margin-top:6px}
 .origin-action .btn{display:inline-block;font-size:.86em;padding:5px 9px;text-decoration:none}
 .origin-unavailable{font-size:.78em;margin-top:5px}
+
+/* Journal screen: prioritize the entry and hide secondary filters until requested. */
+.journal-entry-panel{padding:clamp(15px,2vw,24px)}
+.journal-form-heading{padding-bottom:10px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.journal-form-heading .pill{font-size:.78rem}
+.journal-basic-grid{grid-template-columns:minmax(145px,.55fr) minmax(160px,.75fr) minmax(260px,2fr);gap:10px;margin:12px 0}
+.journal-description{grid-column:auto}
+.journal-line-list{gap:8px}
+.journal-line-card{padding:10px 12px;border-color:var(--line);background:var(--surface2)}
+.journal-line-top{margin-bottom:7px}
+.journal-line-number{font-size:.88rem;color:var(--muted)}
+.journal-line-main{grid-template-columns:minmax(230px,2fr) minmax(115px,.72fr) minmax(115px,.72fr) minmax(190px,1.25fr);gap:9px}
+.journal-line-main label{font-size:.9rem}
+.journal-line-main input,.journal-line-main select{min-height:38px;padding:7px 9px}
+.journal-line-extra{margin:7px 0 0;padding:7px 10px}
+.journal-totals{gap:8px;margin:12px 0}
+.journal-totals>div{padding:9px 12px;background:var(--surface2)}
+.journal-totals strong{font-size:1.05rem}
+.journal-filter-advanced{grid-column:1/-1;border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--surface2)}
+.journal-filter-advanced summary{cursor:pointer;font-weight:700;color:var(--accent)}
+.journal-filter-advanced-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:10px}
+.journal-register-panel .report-filter{align-items:end}
+.journal-register-panel .report-filter>label{min-width:0}
+@media(max-width:900px){.journal-basic-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.journal-description{grid-column:1/-1}.journal-line-main{grid-template-columns:repeat(2,minmax(0,1fr))}.journal-filter-advanced-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.journal-basic-grid,.journal-extra-grid,.journal-line-extra-grid,.journal-totals,.journal-line-main,.journal-filter-advanced-grid{grid-template-columns:1fr}.journal-description{grid-column:auto}.journal-form-heading{align-items:flex-start}.journal-totals>div{padding:8px 10px}}
 </style><script>
 (()=>{const form=document.getElementById('journalForm');const body=document.getElementById('lineBody');const add=document.getElementById('addLine');if(!form||!body||!add)return;
 const first=body.querySelector('.journal-line-card');const accountOptions=first.querySelector('[name=account_id]').innerHTML;
