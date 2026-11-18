@@ -488,6 +488,10 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
                 f'SELECT amount FROM "{self.schema}"."entries" WHERE id = 7'
             ).fetchone()[0]
             self.assertEqual(amount, Decimal("12.5"))
+            dashboard_version = conn.execute(
+                f'SELECT version FROM "{self.schema}"."management_dashboard_data_version" WHERE id=1'
+            ).fetchone()[0]
+            self.assertEqual(dashboard_version, 1)
             next_id = conn.execute(
                 f'INSERT INTO "{self.schema}"."accounts"(parent_id, name) '
                 "VALUES (1, 'Sequence check') RETURNING id"
@@ -499,10 +503,6 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
                 (self.schema,),
             ).fetchone()[0]
             self.assertEqual(index_count, 1)
-            dashboard_version = conn.execute(
-                f'SELECT version FROM "{self.schema}"."management_dashboard_data_version" WHERE id=1'
-            ).fetchone()[0]
-            self.assertEqual(dashboard_version, 1)
             dashboard_trigger_count = conn.execute(
                 "SELECT COUNT(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid "
                 "JOIN pg_namespace n ON n.oid=c.relnamespace "
@@ -540,9 +540,9 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
                 "AND indexname = 'accounts_parent_lookup_idx'",
                 (self.schema,),
             ).fetchone()[0]
-            dashboard_version = conn.execute(
+            dashboard_version_row = conn.execute(
                 f'SELECT version FROM "{self.schema}"."management_dashboard_data_version" WHERE id=1'
-            ).fetchone()[0]
+            ).fetchone()
             dashboard_trigger_count = conn.execute(
                 "SELECT COUNT(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid "
                 "JOIN pg_namespace n ON n.oid=c.relnamespace "
@@ -560,7 +560,9 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
         self.assertEqual(account_count, 0)
         self.assertEqual(entry_count, 0)
         self.assertEqual(index_count, 1)
-        self.assertEqual(dashboard_version, 0)
+        # The version singleton is part of the copied source data, so a
+        # failed transaction must leave the target table empty as well.
+        self.assertIsNone(dashboard_version_row)
         self.assertEqual(dashboard_trigger_count, 15)
         self.assertEqual(audit_trigger_count, 2)
 
