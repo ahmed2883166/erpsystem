@@ -5,7 +5,6 @@ import unittest
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
 
 from backup_scheduler import next_backup_datetime
 from postgres_backup_scheduler import run_due_postgres_backup
