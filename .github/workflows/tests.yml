@@ -94,6 +94,12 @@ jobs:
           python scripts/validate_postgres_schema.py \
             --ddl "$RUNNER_TEMP/nexus-postgresql-schema.sql" \
             --expected-review "$RUNNER_TEMP/nexus-postgresql-schema-review.json"
+      - name: Smoke-test full Flask initialization on PostgreSQL
+        env:
+          NEXUS_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/nexus_test
+        run: |
+          python scripts/smoke_postgres_full_runtime.py \
+            --baseline "$RUNNER_TEMP/nexus-postgresql-schema.sql"
       - name: Upload database migration design artifacts
         uses: actions/upload-artifact@v4
         with:
