@@ -41,6 +41,12 @@ class SQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
                 credit NUMERIC(24, 6) NOT NULL
             );
         ''')
+        self.pg.execute(f'''
+            CREATE TABLE "{self.schema}".management_dashboard_data_version (
+                id SMALLINT PRIMARY KEY CHECK (id = 1),
+                version BIGINT NOT NULL
+            )
+        ''')
         self.temp_dir = tempfile.TemporaryDirectory(prefix="nexus-copy-rehearsal-")
         self.sqlite_path = str(Path(self.temp_dir.name) / "source.sqlite")
         source = sqlite3.connect(self.sqlite_path)
@@ -62,6 +68,10 @@ class SQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
                     debit NUMERIC NOT NULL,
                     credit NUMERIC NOT NULL
                 );
+                CREATE TABLE management_dashboard_data_version (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    version INTEGER NOT NULL
+                );
                 INSERT INTO accounts(id,code) VALUES (10,'1000'),(20,'2000');
                 INSERT INTO journal_entries(id,entry_date)
                     VALUES (100,'2026-01-01'),(200,'2026-01-02');
@@ -71,6 +81,7 @@ class SQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
                     (1001,100,20,'0','125.10'),
                     (2000,200,10,'50.00','0'),
                     (2001,200,20,'0','50.00');
+                INSERT INTO management_dashboard_data_version(id,version) VALUES (1,0);
             """)
             source.commit()
         finally:
@@ -134,17 +145,17 @@ class SQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
         )
         self.assertTrue(result["committed"])
         self.assertTrue(result["source_read_only"])
-        self.assertEqual(result["total_rows"], 8)
+        self.assertEqual(result["total_rows"], 9)
         self.assertEqual(
             result["table_row_counts"],
-            {"accounts": 2, "journal_entries": 2, "journal_lines": 4},
+            {"accounts": 2, "journal_entries": 2, "journal_lines": 4, "management_dashboard_data_version": 1},
         )
 
         report = verify_copy(self.sqlite_path, POSTGRES_DSN, schema=self.schema)
         self.assertTrue(report["passed"], report["issues"])
         self.assertEqual(report["issue_count"], 0)
-        self.assertEqual(report["source_row_count"], 8)
-        self.assertEqual(report["target_row_count"], 8)
+        self.assertEqual(report["source_row_count"], 9)
+        self.assertEqual(report["target_row_count"], 9)
         self.assertIn("journal_lines.debit_total", report["financial_and_inventory_controls"])
         self.assertIn("journal_lines.credit_total", report["financial_and_inventory_controls"])
         self.assertIn("journal_lines.debit_by_entry", report["financial_and_inventory_controls"])
