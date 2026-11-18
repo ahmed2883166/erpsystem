@@ -27,6 +27,41 @@ def make_database(path, value):
 
 
 class BackupRestoreTests(unittest.TestCase):
+
+    def test_does_not_overwrite_existing_candidate_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            database = root / "source.db"
+            archive_path = root / "backup.zip"
+            candidate = root / "candidate.db"
+            make_database(database, "backup-data")
+            candidate.write_bytes(b"keep-this-file")
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.write(database, "nexus.db")
+
+            with self.assertRaises(FileExistsError):
+                extract_validated_backup(archive_path, candidate)
+
+            self.assertEqual(candidate.read_bytes(), b"keep-this-file")
+
+    def test_removes_extracted_candidate_when_database_integrity_fails(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            invalid = root / "invalid.db"
+            connection = sqlite3.connect(invalid)
+            connection.execute("CREATE TABLE unrelated(value TEXT)")
+            connection.commit()
+            connection.close()
+            archive_path = root / "invalid.zip"
+            candidate = root / "candidate.db"
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.write(invalid, "nexus.db")
+
+            with self.assertRaisesRegex(ValueError, "هيكل NEXUS"):
+                extract_validated_backup(archive_path, candidate)
+
+            self.assertFalse(candidate.exists())
+
     def test_extracts_and_validates_nexus_backup(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
