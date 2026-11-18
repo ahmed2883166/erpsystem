@@ -904,6 +904,20 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
     return (money(cost_total), allocations, layer_details) if include_layer_details else (money(cost_total), allocations)
 
 
+def ensure_lot_not_expired(lot, movement_date):
+    """Validate lot expiry against the stock movement date, not today's date."""
+    expiry_value = lot["expiry_date"] if lot else None
+    if not expiry_value:
+        return
+    try:
+        expiry = date.fromisoformat(str(expiry_value))
+        effective_date = date.fromisoformat(str(movement_date))
+    except (TypeError, ValueError):
+        raise ValueError("تاريخ الصلاحية أو تاريخ حركة المخزون غير صحيح.")
+    if expiry < effective_date:
+        raise ValueError("لا يمكن صرف تشغيلة منتهية الصلاحية في تاريخ الحركة المحدد.")
+
+
 def make_lot(c, product, lot_number, production_date, expiry_date, as_of=None):
     if not product["track_lot"] and not product["track_expiry"]:
         return None
@@ -1518,7 +1532,7 @@ def movements():
                     if not lot_no: raise ValueError("أدخل رقم التشغيلة للصرف من صنف يتطلب تتبعًا.")
                     lot=_execute(c, "SELECT * FROM stock_lots WHERE product_id=? AND lot_number=?",(product["id"],lot_no)).fetchone()
                     if not lot: raise ValueError("التشغيلة غير مسجلة.")
-                    if lot["expiry_date"] and date.fromisoformat(lot["expiry_date"])<date.today(): raise ValueError("لا يمكن صرف تشغيلة منتهية الصلاحية.")
+                    ensure_lot_not_expired(lot, movement_date)
                     lot_id=lot["id"]
                 settings_table = _table_exists(c, "company_settings")
                 method_row = _execute(c, "SELECT setting_value FROM company_settings WHERE setting_key='inventory_cost_method'").fetchone() if settings_table else None

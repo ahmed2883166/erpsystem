@@ -93,6 +93,19 @@ class StockValuationTests(unittest.TestCase):
             for option in options
         ))
 
+    def test_lot_expiry_is_checked_against_movement_date(self):
+        lot = {"expiry_date": "2026-06-30"}
+        # A backdated issue is valid even if the current system date is later.
+        stock.ensure_lot_not_expired(lot, "2026-06-15")
+        # A movement after expiry must be blocked.
+        with self.assertRaisesRegex(ValueError, "منتهية الصلاحية"):
+            stock.ensure_lot_not_expired(lot, "2026-07-01")
+
+    def test_lot_expiry_rejects_invalid_movement_date(self):
+        with self.assertRaisesRegex(ValueError, "تاريخ الصلاحية أو تاريخ حركة"):
+            stock.ensure_lot_not_expired({"expiry_date": "2026-06-30"}, "not-a-date")
+
+
     def test_fifo_cost(self):
         cost, allocations = stock.consume_layers(self.db,self.product_id,self.warehouse_id,stock.D("50"),"fifo")
         self.assertEqual(cost, stock.D("500.00"))
