@@ -7,7 +7,7 @@ not on every request connection.
 import sqlite3
 import weakref
 from pathlib import Path
-from flask import g, has_app_context
+from flask import current_app, g, has_app_context
 from report_request_control import current_report_deadline, make_sqlite_deadline_callback
 from db_sql import execute_compat
 from sqlite_maintenance import enable_sqlite_wal
@@ -33,6 +33,13 @@ def _close_app_context_connections(connections):
     connections.clear()
 
 
+def _teardown_sqlite_connections(exception=None):
+    """Deterministically close retained connections when Flask pops its app context."""
+    connections = getattr(g, "_nexus_database_connections", None)
+    if connections is not None:
+        _close_app_context_connections(connections)
+
+
 def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="", decimal_aggregates=True):
     """Open a consistently configured SQLite connection.
 
@@ -49,11 +56,10 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
         if connections is None:
             connections = set()
             g._nexus_database_connections = connections
-            g._nexus_database_finalizer = weakref.finalize(
-                g._get_current_object(),
-                _close_app_context_connections,
-                connections,
-            )
+            app = current_app._get_current_object()
+            if not app.extensions.get("nexus_sqlite_connection_teardown"):
+                app.teardown_appcontext(_teardown_sqlite_connections)
+                app.extensions["nexus_sqlite_connection_teardown"] = True
     connection = sqlite3.connect(
         str(Path(path)), timeout=timeout, isolation_level=isolation_level,
         factory=_TrackedSQLiteConnection,
