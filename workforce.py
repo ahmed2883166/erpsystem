@@ -1,4 +1,5 @@
 from app_paths import DB_PATH
+from date_formatting import format_export_dates
 from database import connect_database, fetch_page, register_database_connection_teardown
 from db_compat import (begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names, execute_script, database_dialect, DB_ERROR, DB_INTEGRITY_ERROR)
 from db_sql import execute_compat
@@ -1257,8 +1258,8 @@ def export_employees_excel():
         sheet.append([row["employee_code"],row["full_name"],row["address"],row["national_id"],
                       row["insurance_number"],row["basic_salary"],row["insured_wage"],
                       status_labels.get(row["work_status"],row["work_status"]),
-                      "نعم" if row["active"] else "لا",row["termination_date"] or "",
-                      row["job_title"],row["department"],row["hire_date"]])
+                      "نعم" if row["active"] else "لا",format_export_dates(row["termination_date"] or ""),
+                      row["job_title"],row["department"],format_export_dates(row["hire_date"])])
     for cell in sheet[1]:
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor="244062")
