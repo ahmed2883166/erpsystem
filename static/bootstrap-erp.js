@@ -4,7 +4,20 @@
   "use strict";
   const enhance = root => {
     if (!root || !root.querySelectorAll) return;
-    root.querySelectorAll("main .table-wrap").forEach(wrapper => {
+    /* Wrap legacy tables that were not authored inside a responsive container.
+       Moving a table does not change its fields, links, form submissions or data. */
+    root.querySelectorAll("main table").forEach(table => {
+      const parent = table.parentElement;
+      if (parent && !parent.classList.contains("table-wrap") &&
+          !parent.classList.contains("table-responsive") &&
+          !parent.classList.contains("tax-summary-table-wrap")) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "table-wrap table-responsive erp-table-scroll";
+        parent.insertBefore(wrapper, table);
+        wrapper.appendChild(table);
+      }
+    });
+    root.querySelectorAll("main .table-wrap, main .table-responsive, main .tax-summary-table-wrap").forEach(wrapper => {
       wrapper.classList.add("table-responsive");
     });
     root.querySelectorAll("main table").forEach(table => {
