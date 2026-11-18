@@ -41,5 +41,15 @@ class BaseTemplateJavaScriptTests(unittest.TestCase):
                     Path(script_path).unlink(missing_ok=True)
 
 
+    def test_rendered_iso_dates_are_formatted_without_changing_form_values(self):
+        html = BASE_TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn("const formatDateTextNode=node=>", html)
+        self.assertIn("day+'/'+month+'/'+year", html)
+        self.assertIn("formatRenderedDates(root)", html)
+        self.assertIn("input.value", html)
+        self.assertIn("script,style,textarea,code,pre,kbd,samp,title", html)
+        self.assertIn("input[type=\"date\"]", html)
+
+
 if __name__ == "__main__":
     unittest.main()
