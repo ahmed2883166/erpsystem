@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}مراجعة فاتورة البيع {{ workflow.workflow_no }} | ADMRAIL ERP{% endblock %}
+{% block title %}مراجعة فاتورة البيع {{ workflow.workflow_no }} | NEXUS ERP{% endblock %}
 {% block content %}
-<header>
-  <h2>فاتورة بيع {{ workflow.workflow_no }}</h2>
+<header class="page-heading">
+  <div><h2>فاتورة بيع {{ workflow.workflow_no }}</h2>
   <p>العميل: {{ workflow.customer_code }} — {{ workflow.customer_name }} | التاريخ: {{ workflow.invoice_date }} | الاستحقاق: {{ workflow.due_date }}</p>
   <p>
     {% if workflow.status == 'draft' %}<span class="state-pill state-draft">مسودة</span>
@@ -11,7 +11,7 @@
     {% elif workflow.status == 'rejected' %}<span class="state-pill state-cancelled">مرفوضة</span>
     {% elif workflow.status == 'cancelled' %}<span class="state-pill state-cancelled">ملغاة قبل الترحيل</span>
     {% else %}<span class="state-pill state-paid">مرحّلة</span>{% endif %}
-  </p>
+  </p></div>
 </header>
 <section class="panel">
   <h3>ملخص الفاتورة</h3>
