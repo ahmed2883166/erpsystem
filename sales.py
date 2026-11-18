@@ -2424,6 +2424,7 @@ def new_invoice():
                         ("branch_id", "cost_center_id", "project_id", "salesperson_id")
                     },
                     "sales_channel": request.form.get("sales_channel", "default"),
+                    "activity_code": request.form.get("activity_code") or None,
                     "discount_override": {
                         "discount_type": discount_type,
                         "discount_value": str(discount_value),
@@ -2499,7 +2500,8 @@ def new_invoice():
                                   request.form.get("tax_rate", "0"), session["user_id"],
                                   allow_credit_override=(session.get("role") == "admin" and request.form.get("credit_override") == "1"),
                                   dimensions=request.form,
-                                  sales_channel=request.form.get("sales_channel", "default"))
+                                  sales_channel=request.form.get("sales_channel", "default"),
+                                  activity_code=request.form.get("activity_code") or None)
             execute_compat(c, "UPDATE sales_invoices SET due_date=? WHERE id=?", (due_date, result["invoice_id"]))
             c.commit()
             g.audit_created_record = ("sales_invoices", result["invoice_id"], "sales_invoice_lines", "invoice_id")
@@ -2771,6 +2773,7 @@ def post_invoice_workflow(workflow_id):
             dimensions=payload.get("dimensions") or {},
             discount_override=payload.get("discount_override"),
             sales_channel=payload.get("sales_channel", "default"),
+            activity_code=payload.get("activity_code"),
         )
         execute_compat(c, "UPDATE sales_invoices SET due_date=? WHERE id=?",
                   (payload.get("due_date") or payload["invoice_date"], result["invoice_id"]))
@@ -2930,6 +2933,7 @@ def discount_approval(request_id):
                 dimensions=payload.get("dimensions") or {},
                 discount_override=payload.get("discount_override"),
                 sales_channel=payload.get("sales_channel", "default"),
+                activity_code=payload.get("activity_code"),
             )
             execute_compat(c, "UPDATE sales_invoices SET due_date=? WHERE id=?",
                       (payload.get("due_date") or payload["invoice_date"], result["invoice_id"]))
