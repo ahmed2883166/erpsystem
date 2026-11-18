@@ -98,7 +98,12 @@ def inspect_postgres(dsn: str, schema: str) -> dict:
 
 def build_report(sqlite_info: dict, postgres_info: dict) -> dict:
     source = sqlite_info["tables"]
-    target = postgres_info["tables"]
+    # The PostgreSQL baseline installer owns this metadata table; it is not
+    # application data and must not block a SQLite-to-PostgreSQL preflight.
+    target = {
+        name: details for name, details in postgres_info["tables"].items()
+        if name != "nexus_schema_installation"
+    }
     missing_tables = sorted(set(source) - set(target))
     extra_tables = sorted(set(target) - set(source))
     column_issues = []
