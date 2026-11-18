@@ -587,14 +587,20 @@ def index():
       COALESCE(f.supplier_bill_id,l.bill_id) linked_supplier_bill_id,
       sb.bill_no supplier_bill_no,sb.supplier_invoice_no,
       p.entry_id linked_journal_entry_id,
-      {decimal_sum_expression(c, "d.amount")} accumulated
+      COALESCE((SELECT {decimal_sum_expression(c, "d.amount")}
+        FROM asset_depreciations d WHERE d.asset_id=f.id),0) accumulated
       FROM fixed_assets f JOIN accounts a ON a.id=f.asset_account_id
       JOIN accounts aa ON aa.id=f.accum_account_id
       JOIN accounts ea ON ea.id=f.expense_account_id
-      LEFT JOIN fixed_asset_supplier_bill_links l ON l.asset_id=f.id
+      LEFT JOIN (
+        SELECT asset_id,MAX(bill_id) bill_id
+        FROM fixed_asset_supplier_bill_links GROUP BY asset_id
+      ) l ON l.asset_id=f.id
       LEFT JOIN supplier_bills sb ON sb.id=COALESCE(f.supplier_bill_id,l.bill_id)
-      LEFT JOIN fixed_asset_journal_lines p ON p.fixed_asset_id=f.id
-      LEFT JOIN asset_depreciations d ON d.asset_id=f.id
+      LEFT JOIN (
+        SELECT fixed_asset_id,MAX(entry_id) entry_id
+        FROM fixed_asset_journal_lines GROUP BY fixed_asset_id
+      ) p ON p.fixed_asset_id=f.id
       ORDER BY f.asset_code""").fetchall()
     assets=[dict(row,
         accumulated=Decimal(str(row["accumulated"] or "0")),
