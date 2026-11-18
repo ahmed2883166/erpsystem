@@ -6,12 +6,13 @@ fresh temporary directory before importing app.py.
 import argparse
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
 
 
-def build_initialized_schema():
+def build_initialized_schema(database_output=None):
     repository_root = Path(__file__).resolve().parents[1]
     if str(repository_root) not in sys.path:
         sys.path.insert(0, str(repository_root))
@@ -35,6 +36,11 @@ def build_initialized_schema():
         # but only against the newly-created temporary database.
         nexus_app.initialize_database()
         result = inspect_database(nexus_app.DB_PATH, include_row_counts=False)
+        if database_output:
+            output_path = Path(database_output).expanduser().resolve()
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(nexus_app.DB_PATH, output_path)
+            result["database_copy"] = str(output_path)
         result["source"] = {
             "kind": "fresh_initialized_application_schema",
             "database_engine": "sqlite",
@@ -52,9 +58,13 @@ def main(argv=None):
         "--output",
         help="Optional JSON output file. If omitted, write the schema to stdout.",
     )
+    parser.add_argument(
+        "--database-output",
+        help="Optional path for a copy of the freshly initialized, empty SQLite database.",
+    )
     args = parser.parse_args(argv)
 
-    result = build_initialized_schema()
+    result = build_initialized_schema(database_output=args.database_output)
     encoded = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
     if args.output:
         output_path = Path(args.output).expanduser().resolve()
@@ -64,6 +74,7 @@ def main(argv=None):
             "output": str(output_path),
             "summary": result["summary"],
             "foreign_key_violations": len(result.get("foreign_key_violations", [])),
+            "database_copy": result.get("database_copy"),
         }, ensure_ascii=False))
     else:
         sys.stdout.write(encoded)
