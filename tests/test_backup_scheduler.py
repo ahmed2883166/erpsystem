@@ -71,13 +71,21 @@ class BackupScheduleTests(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            first = ensure_initial_backup(database, root / "backups")
-            second = ensure_initial_backup(database, root / "backups")
+            backup_dir = root / "backups"
+            backup_dir.mkdir()
+            # A leftover archive from another company must not suppress this DB's baseline.
+            (backup_dir / "nexus-backup-old-company.zip").write_bytes(b"old archive")
+            first = ensure_initial_backup(database, backup_dir)
+            second = ensure_initial_backup(database, backup_dir)
 
             self.assertIsNotNone(first)
             self.assertTrue(first.is_file())
             self.assertIsNone(second)
-            self.assertEqual(len(list((root / "backups").glob("nexus-backup-*.zip"))), 1)
+            self.assertEqual(len(list(backup_dir.glob("nexus-backup-*.zip"))), 2)
+            marker = sqlite3.connect(database).execute(
+                "SELECT setting_value FROM company_settings WHERE setting_key='backup_initial_baseline'"
+            ).fetchone()[0]
+            self.assertEqual(marker, first.name)
 
     def test_due_backup_runs_once_and_persists_status(self):
         with tempfile.TemporaryDirectory() as temp:
