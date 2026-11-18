@@ -258,3 +258,74 @@ nav details.nav-group > summary:hover { background: rgba(255,255,255,.06); }
   main .btn::after, main button::after, main a.button::after,
   main .button-link::after, .nexus-ripple { display: none !important; animation: none !important; }
 }
+
+
+/* Consistent data tables and forms across legacy screens */
+main .panel, main .grid, main .cards { min-width: 0; }
+main table:not(.table) { border-collapse: separate; border-spacing: 0; }
+main table.table, main table.erp-table {
+  --bs-table-bg: transparent;
+  --bs-table-color: var(--text);
+  --bs-table-border-color: var(--line);
+  width: 100%;
+  margin-bottom: 0;
+  vertical-align: middle;
+  font-size: .92rem;
+}
+main table.table thead th, main table.erp-table thead th,
+main table.erp-table > tbody > tr:first-child > th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: .8rem .75rem;
+  color: var(--text);
+  background: var(--surface2);
+  border-bottom: 2px solid var(--line);
+  font-weight: 800;
+  white-space: nowrap;
+}
+main table.table tbody td, main table.erp-table tbody td {
+  padding: .7rem .75rem;
+  border-color: var(--line);
+}
+main table.table tbody tr:hover > *, main table.erp-table tbody tr:hover > * {
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+main .table-wrap, main .erp-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+main .table-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+main .table-actions form { display: inline-flex; margin: 0; }
+main form:not(.global-search):not(.no-print) { min-width: 0; }
+main form label { display: block; margin-bottom: .45rem; font-weight: 700; }
+main form .form-control, main form .form-select {
+  min-height: 42px;
+  border-radius: 9px;
+  border-color: var(--line);
+  background-color: var(--surface);
+  color: var(--text);
+}
+main form textarea.form-control { min-height: 100px; }
+main form .form-control::placeholder { color: var(--muted); opacity: .8; }
+main form .form-control:focus, main form .form-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 .22rem color-mix(in srgb, var(--accent) 17%, transparent);
+}
+main form input[type="checkbox"], main form input[type="radio"] {
+  accent-color: var(--accent);
+}
+main form .checkline { display: flex; align-items: center; gap: .55rem; }
+main form .checkline input { flex: 0 0 auto; }
+main .panel > h3 { margin-bottom: 1rem; }
+main .panel form button, main .panel form .btn { min-height: 39px; }
+main .form-row { align-items: end; gap: .65rem; }
+main .form-row > * { min-width: 0; }
+@media (max-width: 700px) {
+  main table.table, main table.erp-table { font-size: .84rem; }
+  main table.table thead th, main table.erp-table thead th,
+  main table.table tbody td, main table.erp-table tbody td { padding: .55rem .5rem; }
+  main .table-actions .btn, main .table-actions button { min-height: 36px; padding: .35rem .6rem; }
+}
