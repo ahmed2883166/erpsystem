@@ -694,21 +694,23 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
     from bisect import bisect_left
 
     register_decimal_aggregates(conn)
-    columns = {x["name"] for x in [{ "name": name } for name in table_columns(conn, "journal_entries")]}
+    columns = set(table_columns(conn, "journal_entries"))
     ref_expr = "je.reference" if "reference" in columns else "''"
     desc_expr = "je.description" if "description" in columns else "''"
     closing_filter = _closing_entry_condition(conn)
-    entries = conn.execute(f"""SELECT je.id,je.entry_date,{ref_expr} reference,{desc_expr} description,
-        COALESCE(DECIMAL_SUM(jl.debit),'0') debit,COALESCE(DECIMAL_SUM(jl.credit),'0') credit
+    entries = execute_compat(conn, f"""SELECT je.id,je.entry_date,{ref_expr} reference,{desc_expr} description,
+        {decimal_sum_expression(conn, "jl.debit")} debit,
+        {decimal_sum_expression(conn, "jl.credit")} credit
         FROM journal_entries je JOIN journal_lines jl ON jl.entry_id=je.id
         WHERE je.status='posted' AND je.entry_date BETWEEN ? AND ?
           AND ({closing_filter})
-        GROUP BY je.id ORDER BY je.entry_date DESC,je.id DESC""",
+        GROUP BY je.id,je.entry_date,{ref_expr},{desc_expr}
+        ORDER BY je.entry_date DESC,je.id DESC""",
         (period_start.isoformat(),period_end.isoformat())).fetchall()
     if not entries:
         return []
 
-    candidate_lines = conn.execute(f"""SELECT jl.id line_id,jl.entry_id,jl.account_id,
+    candidate_lines = execute_compat(conn, f"""SELECT jl.id line_id,jl.entry_id,jl.account_id,
         jl.debit,jl.credit,a.code,a.name_ar
         FROM journal_lines jl
         JOIN journal_entries je ON je.id=jl.entry_id
@@ -723,7 +725,7 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
         placeholders = ",".join("?" for _ in account_ids)
         history_start = (period_start - timedelta(days=90)).isoformat()
         history_end = (period_end + timedelta(days=1)).isoformat()
-        history_rows = conn.execute(f"""SELECT h.account_id,e.entry_date,h.debit,h.credit
+        history_rows = execute_compat(conn, f"""SELECT h.account_id,e.entry_date,h.debit,h.credit
             FROM journal_lines h
             JOIN journal_entries e ON e.id=h.entry_id
             WHERE e.status='posted' AND h.account_id IN ({placeholders})
