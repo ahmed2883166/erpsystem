@@ -435,6 +435,14 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         )
         self.assertEqual(ddl.count("FOREIGN KEY ("), 1)
         self.assertEqual(review["foreign_key_count"], 1)
+        self.assertEqual(review["foreign_keys"], [{
+            "table": "stock_product_locations",
+            "columns": ["location_id", "warehouse_id"],
+            "referenced_table": "stock_locations",
+            "referenced_columns": ["id", "warehouse_id"],
+            "on_update": "NO ACTION",
+            "on_delete": "NO ACTION",
+        }])
 
 
     def test_resolves_implicit_sqlite_foreign_key_target_to_parent_primary_key(self):
@@ -478,6 +486,9 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
             ddl,
         )
         self.assertEqual(review["foreign_key_count"], 1)
+        self.assertEqual(review["foreign_keys"][0]["referenced_columns"], [
+            "tenant_id", "record_id"
+        ])
 
     def test_rejects_foreign_key_with_missing_source_column(self):
         snapshot = _with_required_numeric_override_tables({
