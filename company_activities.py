@@ -223,14 +223,15 @@ def set_activity_posting_account(conn, activity_code, role, account_code):
     """, (activity_code, role, str(account_code)))
 
 
-def resolve_activity_profile(conn, activity_code=None):
-    """Resolve explicit document context, falling back only for legacy documents."""
+def resolve_activity_profile(conn, activity_code=None, *, allow_disabled=False):
+    """Resolve an activity profile; disabled packs are opt-in for historical reversals only."""
     if not activity_code:
         return get_active_activity_profile(conn)
-    row = execute_compat(conn, """
+    enabled_clause = "" if allow_disabled else "AND cap.enabled=1"
+    row = execute_compat(conn, f"""
       SELECT p.* FROM company_activity_packs cap
       JOIN activity_profiles p ON p.code=cap.profile_code
-      WHERE cap.activity_code=? AND cap.enabled=1 AND p.active=1
+      WHERE cap.activity_code=? {enabled_clause} AND p.active=1
     """, (str(activity_code).strip().lower(),)).fetchone()
     if not row:
         raise ValueError("نشاط المستند غير مفعّل للشركة أو ملفه غير نشط.")
