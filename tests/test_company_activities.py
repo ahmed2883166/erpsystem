@@ -35,31 +35,32 @@ class CompanyActivityPackTests(unittest.TestCase):
     def tearDown(self):
         self.conn.close()
 
-    def test_company_can_enable_two_activity_packs_without_changing_legacy_setting(self):
+    def test_conflicting_second_activity_is_blocked_without_changing_legacy_setting(self):
         enable_company_activity(self.conn, "commercial", primary=True)
-        enable_company_activity(self.conn, "service")
+        with self.assertRaisesRegex(ValueError, "خريطة الحسابات الموحدة"):
+            enable_company_activity(self.conn, "service")
         self.assertEqual(
             [x["activity_code"] for x in list_company_activities(self.conn)],
-            ["commercial", "service"],
+            ["commercial"],
         )
         self.assertEqual(
             self.conn.execute("SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()[0],
             "commercial",
         )
 
-    def test_primary_is_unique_and_can_be_changed(self):
+    def test_primary_is_unique_and_cannot_change_on_rejected_activity(self):
         enable_company_activity(self.conn, "commercial", primary=True)
-        enable_company_activity(self.conn, "service", primary=True)
+        with self.assertRaisesRegex(ValueError, "خريطة الحسابات الموحدة"):
+            enable_company_activity(self.conn, "service", primary=True)
         rows = list_company_activities(self.conn)
         self.assertEqual(sum(row["is_primary"] for row in rows), 1)
-        self.assertEqual(next(row["activity_code"] for row in rows if row["is_primary"]), "service")
+        self.assertEqual(next(row["activity_code"] for row in rows if row["is_primary"]), "commercial")
 
     def test_document_context_resolves_activity_specific_posting(self):
-        enable_company_activity(self.conn, "commercial", primary=True)
-        enable_company_activity(self.conn, "service")
+        enable_company_activity(self.conn, "service", primary=True)
         set_activity_posting_account(self.conn, "service", "revenue", "4100")
         self.assertEqual(resolve_activity_posting_account(self.conn, "service", "revenue"), "4100")
-        self.assertEqual(resolve_activity_profile(self.conn, "commercial")["base_activity"], "commercial")
+        self.assertEqual(resolve_activity_profile(self.conn, "service")["base_activity"], "service")
 
     def test_invalid_mapping_type_is_rejected(self):
         enable_company_activity(self.conn, "commercial", primary=True)
@@ -68,7 +69,10 @@ class CompanyActivityPackTests(unittest.TestCase):
 
     def test_disabled_pack_cannot_be_resolved_or_disabled_if_primary(self):
         enable_company_activity(self.conn, "commercial", primary=True)
-        enable_company_activity(self.conn, "service")
+        # Simulate a previously provisioned secondary pack; disable must preserve it.
+        self.conn.execute(
+            "INSERT INTO company_activity_packs(activity_code,profile_code,enabled,is_primary) VALUES('service','service',1,0)"
+        )
         disable_company_activity(self.conn, "service")
         with self.assertRaisesRegex(ValueError, "غير مفعّل"):
             resolve_activity_profile(self.conn, "service")
