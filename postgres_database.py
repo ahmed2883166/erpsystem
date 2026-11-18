@@ -32,13 +32,17 @@ def _connection_settings(
         )
     if not isinstance(autocommit, bool):
         raise TypeError("autocommit must be a bool.")
+    if isinstance(connect_timeout, bool):
+        raise ValueError("connect_timeout must be an integer from 1 to 30 seconds.")
     try:
         connect_timeout = int(connect_timeout)
     except (TypeError, ValueError) as exc:
         raise ValueError("connect_timeout must be an integer from 1 to 30 seconds.") from exc
     if not 1 <= connect_timeout <= MAX_CONNECT_TIMEOUT_SECONDS:
         raise ValueError("connect_timeout must be between 1 and 30 seconds.")
-    application_name = str(application_name or DEFAULT_APPLICATION_NAME).strip()
+    application_name = (
+        DEFAULT_APPLICATION_NAME if application_name is None else str(application_name).strip()
+    )
     if not application_name or len(application_name) > 63:
         raise ValueError("application_name must contain between 1 and 63 characters.")
     return resolved_dsn, autocommit, connect_timeout, application_name
