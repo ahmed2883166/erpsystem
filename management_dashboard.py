@@ -723,7 +723,7 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
           AND ({closing_filter})
         GROUP BY je.id,je.entry_date,{ref_expr},{desc_expr}
         ORDER BY je.entry_date DESC,je.id DESC""",
-        (period_start,period_end)).fetchall()
+        (period_start.isoformat(),period_end.isoformat())).fetchall()
     if not entries:
         return []
 
@@ -749,7 +749,7 @@ def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("
               AND e.entry_date>=? AND e.entry_date<?
               AND ({closing_filter.replace("je.", "e.")})
             ORDER BY h.account_id,e.entry_date,h.id""",
-            (*account_ids, history_start, history_end)).fetchall()
+            (*account_ids, history_start.isoformat(), history_end.isoformat())).fetchall()
         for row in history_rows:
             bucket = history_by_account.setdefault(row["account_id"], {"dates": [], "prefix": [Decimal("0")]})
             amount = max(_decimal(row["debit"]), _decimal(row["credit"]))
