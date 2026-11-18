@@ -8,6 +8,7 @@ schema after its complete NEXUS schema has been independently reviewed.
 from __future__ import annotations
 
 import argparse
+import heapq
 import json
 import os
 import re
@@ -36,16 +37,16 @@ def dependency_order(tables: list[str], foreign_keys: dict[str, set[str]]) -> li
         for table in tables
     }
     ordered = []
-    ready = sorted(table for table, deps in dependencies.items() if not deps)
+    ready = [table for table, deps in dependencies.items() if not deps]
+    heapq.heapify(ready)
     while ready:
-        table = ready.pop(0)
+        table = heapq.heappop(ready)
         ordered.append(table)
         for child in sorted(dependencies):
             if table in dependencies[child]:
                 dependencies[child].remove(table)
-                if not dependencies[child] and child not in ordered and child not in ready:
-                    ready.append(child)
-        ready.sort()
+                if not dependencies[child] and child not in ordered:
+                    heapq.heappush(ready, child)
     if len(ordered) != len(tables):
         cyclic = sorted(table for table, deps in dependencies.items() if deps)
         raise ValueError(
@@ -103,16 +104,15 @@ def order_self_referencing_rows(rows, foreign_key_rows, table: str):
             children[parent_index].append(child_index)
 
     ready = [index for index, parents in enumerate(dependencies) if not parents]
-    ready.sort()
+    heapq.heapify(ready)
     ordered = []
     while ready:
-        parent_index = ready.pop(0)
+        parent_index = heapq.heappop(ready)
         ordered.append(rows[parent_index])
         for child_index in children[parent_index]:
             dependencies[child_index].discard(parent_index)
-            if not dependencies[child_index] and child_index not in ready:
-                ready.append(child_index)
-        ready.sort()
+            if not dependencies[child_index]:
+                heapq.heappush(ready, child_index)
     if len(ordered) != len(rows):
         raise ValueError(f"Self-reference cycle detected in table {table}; copy blocked.")
     return ordered
