@@ -84,22 +84,28 @@ class SalesIntegrationTests(unittest.TestCase):
 
         with patch("sales.database_dialect", return_value="postgresql"), \
              patch("sales.execute_compat", side_effect=fake_execute):
+            customer = sales._customer_for_update(self.db, 33)
             invoice = sales._sales_invoice_for_update(self.db, 44, posted_only=True)
             note = sales._sales_credit_note_for_update(self.db, 55)
 
+        self.assertEqual(customer["id"], 33)
         self.assertEqual(invoice["id"], 44)
         self.assertEqual(note["id"], 55)
-        self.assertIn("status='posted' FOR UPDATE", calls[0][0])
+        self.assertIn("active=1 FOR UPDATE", calls[0][0])
         self.assertIn("status='posted' FOR UPDATE", calls[1][0])
-        self.assertEqual(calls[0][1], (44,))
-        self.assertEqual(calls[1][1], (55,))
+        self.assertIn("status='posted' FOR UPDATE", calls[2][0])
+        self.assertEqual(calls[0][1], (33,))
+        self.assertEqual(calls[1][1], (44,))
+        self.assertEqual(calls[2][1], (55,))
 
         with patch("sales.database_dialect", return_value="sqlite"), \
              patch("sales.execute_compat", side_effect=fake_execute):
+            sales._customer_for_update(self.db, 33)
             sales._sales_invoice_for_update(self.db, 44, posted_only=True)
             sales._sales_credit_note_for_update(self.db, 55)
-        self.assertNotIn("FOR UPDATE", calls[2][0])
         self.assertNotIn("FOR UPDATE", calls[3][0])
+        self.assertNotIn("FOR UPDATE", calls[4][0])
+        self.assertNotIn("FOR UPDATE", calls[5][0])
 
     def test_invoice_draft_and_approval_record_do_not_post_stock_or_journal(self):
         payload = {
