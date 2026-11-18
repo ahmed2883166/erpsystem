@@ -74,6 +74,32 @@ class PostgreSQLBackupTests(unittest.TestCase):
                     )
 
 
+    def test_rejects_invalid_database_name_or_checksum_metadata(self):
+        with tempfile.TemporaryDirectory() as folder:
+            archive = self._archive(folder)
+            with zipfile.ZipFile(archive, "r") as original:
+                dump = original.read("nexus.dump")
+                manifest = json.loads(original.read("manifest.json"))
+            manifest["database_name"] = ""
+            with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as rewritten:
+                rewritten.writestr("nexus.dump", dump)
+                rewritten.writestr("manifest.json", json.dumps(manifest))
+            with patch.object(postgres_backup, "_run") as run:
+                with self.assertRaisesRegex(ValueError, "database name"):
+                    postgres_backup.validate_postgres_backup_archive(
+                        archive, pg_restore_path="pg_restore"
+                    )
+                run.assert_not_called()
+
+    def test_pg_environment_keeps_credentials_out_of_command_arguments(self):
+        env, values = postgres_backup._pg_environment(
+            "host=localhost dbname=nexus user=erp password=secret"
+        )
+        self.assertEqual(env["PGPASSWORD"], "secret")
+        self.assertEqual(env["PGDATABASE"], "nexus")
+        self.assertNotIn("secret", repr(values.get("dbname")))
+        self.assertNotIn("secret", str(["pg_dump", "--dbname", env["PGDATABASE"]]))
+
     def test_restore_rejects_archive_replaced_after_initial_validation(self):
         with tempfile.TemporaryDirectory() as folder:
             archive = self._archive(folder)
@@ -134,6 +160,12 @@ class PostgreSQLBackupRoundTripIntegrationTests(unittest.TestCase):
 
                 source_dsn = make_conninfo(admin_dsn, dbname=source_db)
                 with psycopg.connect(source_dsn) as source:
+                    source.execute("CREATE TABLE users(id BIGINT PRIMARY KEY)")
+                    source.execute("CREATE TABLE accounts(id BIGINT PRIMARY KEY)")
+                    source.execute("CREATE TABLE journal_entries(id BIGINT PRIMARY KEY)")
+                    source.execute(
+                        "CREATE TABLE journal_lines(id BIGINT PRIMARY KEY, entry_id BIGINT REFERENCES journal_entries(id))"
+                    )
                     source.execute("CREATE TABLE backup_probe(id BIGINT PRIMARY KEY, payload TEXT NOT NULL)")
                     source.execute(
                         "INSERT INTO backup_probe(id,payload) VALUES(%s,%s)",
@@ -158,6 +190,14 @@ class PostgreSQLBackupRoundTripIntegrationTests(unittest.TestCase):
                         "SELECT id,payload FROM backup_probe"
                     ).fetchone()
                     self.assertEqual(row, (1, "NEXUS PostgreSQL round-trip"))
+                    restored_tables = {
+                        item[0] for item in restored_connection.execute(
+                            "SELECT tablename FROM pg_tables WHERE schemaname='public'"
+                        ).fetchall()
+                    }
+                    self.assertTrue(
+                        {"users", "accounts", "journal_entries", "journal_lines"}.issubset(restored_tables)
+                    )
 
                 with self.assertRaises(FileExistsError):
                     postgres_backup.restore_postgres_backup_to_new_database(
