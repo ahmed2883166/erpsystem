@@ -21,6 +21,8 @@ BACKUP_PREFIX = "nexus-postgres-backup-"
 DUMP_MEMBER = "nexus.dump"
 MANIFEST_MEMBER = "manifest.json"
 MAX_MANIFEST_BYTES = 1024 * 1024
+MAX_DUMP_BYTES = 16 * 1024 * 1024 * 1024
+REQUIRED_ERP_TABLES = ("users", "accounts", "journal_entries", "journal_lines")
 _DATABASE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 
 
@@ -130,6 +132,10 @@ def validate_postgres_backup_archive(
             raise ValueError("PostgreSQL backup must contain exactly nexus.dump and manifest.json.")
         if archive.getinfo(MANIFEST_MEMBER).file_size > MAX_MANIFEST_BYTES:
             raise ValueError("PostgreSQL backup manifest exceeds the allowed size.")
+        if archive.getinfo(DUMP_MEMBER).file_size <= 0:
+            raise ValueError("PostgreSQL backup dump is empty.")
+        if archive.getinfo(DUMP_MEMBER).file_size > MAX_DUMP_BYTES:
+            raise ValueError("PostgreSQL backup dump exceeds the allowed size.")
         try:
             manifest = json.loads(archive.read(MANIFEST_MEMBER).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -138,6 +144,13 @@ def validate_postgres_backup_archive(
                 or manifest.get("application") != "NEXUS ERP"
                 or manifest.get("backup_format") != "postgresql-custom"):
             raise ValueError("The archive is not a supported NEXUS PostgreSQL backup.")
+        source_name = manifest.get("database_name")
+        if not isinstance(source_name, str) or not source_name.strip() or len(source_name) > 63:
+            raise ValueError("PostgreSQL backup database name is invalid.")
+        expected_digest = manifest.get("dump_sha256")
+        if (not isinstance(expected_digest, str) or len(expected_digest) != 64
+                or any(character not in "0123456789abcdef" for character in expected_digest.lower())):
+            raise ValueError("PostgreSQL backup checksum metadata is invalid.")
         with tempfile.NamedTemporaryFile(prefix="nexus-pg-validate-", suffix=".dump") as dump:
             hasher = hashlib.sha256()
             total = 0
@@ -146,11 +159,38 @@ def validate_postgres_backup_archive(
                     total += len(chunk)
                     hasher.update(chunk)
                     dump.write(chunk)
-            if not total or hasher.hexdigest() != manifest.get("dump_sha256"):
+            if not total or total > MAX_DUMP_BYTES or hasher.hexdigest() != expected_digest.lower():
                 raise ValueError("PostgreSQL backup checksum verification failed.")
             dump.flush()
             _run([pg_restore, "--list", dump.name], env=os.environ.copy(), timeout=timeout)
     return manifest
+
+
+def _verify_restored_erp_database(dsn, expected_database_name):
+    """Confirm the restored target is reachable and contains the ERP core tables."""
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        actual_name = connection.execute("SELECT current_database()").fetchone()[0]
+        if actual_name != expected_database_name:
+            raise RuntimeError("PostgreSQL restore connected to an unexpected database.")
+        missing = []
+        for table in REQUIRED_ERP_TABLES:
+            exists = connection.execute("SELECT to_regclass(%s)", (table,)).fetchone()[0]
+            if exists is None:
+                missing.append(table)
+        if missing:
+            raise RuntimeError(
+                "Restored database is missing required ERP tables: " + ", ".join(missing)
+            )
+        invalid_constraints = connection.execute(
+            "SELECT COUNT(*) FROM pg_constraint WHERE contype='f' AND NOT convalidated"
+        ).fetchone()[0]
+        if invalid_constraints:
+            raise RuntimeError(
+                f"Restored database contains {invalid_constraints} unvalidated foreign-key constraints."
+            )
+    return True
 
 
 def restore_postgres_backup_to_new_database(
@@ -217,6 +257,9 @@ def restore_postgres_backup_to_new_database(
                 "--single-transaction", "--no-owner", "--no-acl",
                 "--dbname", target_name, str(dump_path),
             ], env=restore_env, timeout=timeout)
+            from psycopg.conninfo import make_conninfo
+            restored_dsn = make_conninfo(admin_dsn, dbname=target_name)
+            _verify_restored_erp_database(restored_dsn, target_name)
         except Exception as restore_error:
             with psycopg.connect(admin_dsn, autocommit=True) as admin:
                 admin.execute(
