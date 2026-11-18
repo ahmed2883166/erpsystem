@@ -4,6 +4,7 @@ from decimal import Decimal
 from accounting_core import (register_decimal_aggregates, decimal_sum_expression, decimal_net_expression, month_key_expression)
 from db_compat import table_exists
 from db_sql import execute_compat
+from income_statement import closing_entries_exclusion_sql
 
 
 def build_expense_analysis(conn, date_from, date_to, dimensions=None):
