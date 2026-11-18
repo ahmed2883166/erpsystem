@@ -1,16 +1,18 @@
-"""Shared SQLite connection policy for NEXUS ERP.
+"""Shared SQLite/PostgreSQL connection factory for NEXUS ERP.
 
-Every application connection gets the same lock timeout, foreign-key enforcement,
-row mapping and exact Decimal SQL aggregates. WAL is enabled once during startup,
-not on every request connection.
+SQLite remains the default runtime. PostgreSQL connections are opened only when
+NEXUS_DB_BACKEND=postgresql is explicitly selected; application startup still
+has a separate fail-closed migration gate until every module is compatible.
 """
 import sqlite3
+import time
 import weakref
 from pathlib import Path
 from flask import g, has_app_context
 from report_request_control import current_report_deadline, make_sqlite_deadline_callback
 from db_sql import execute_compat
 from sqlite_maintenance import enable_sqlite_wal
+from database_backend import configured_database_backend
 
 
 DEFAULT_TIMEOUT_SECONDS = 20
@@ -22,49 +24,74 @@ class _TrackedSQLiteConnection(sqlite3.Connection):
 
 
 def _close_app_context_connections(connections):
-    """Close only still-live connections at the end of the Flask app context."""
+    """Close live SQLite or PostgreSQL connections at app-context teardown."""
     for reference in tuple(connections):
         connection = reference()
         if connection is not None:
             try:
                 connection.close()
-            except sqlite3.Error:
+            except Exception:
+                # Teardown must continue closing the remaining retained handles.
                 pass
     connections.clear()
 
 
-def _teardown_sqlite_connections(exception=None):
-    """Deterministically close retained connections when Flask pops its app context."""
+def _teardown_database_connections(exception=None):
+    """Close retained database connections when Flask pops its app context."""
     connections = getattr(g, "_nexus_database_connections", None)
     if connections is not None:
         _close_app_context_connections(connections)
 
 
+def register_database_connection_teardown(app):
+    """Register generic DB cleanup during app setup, before its first request."""
+    if not app.extensions.get("nexus_database_connection_teardown"):
+        app.teardown_appcontext(_teardown_database_connections)
+        app.extensions["nexus_database_connection_teardown"] = True
+
+
 def register_sqlite_connection_teardown(app):
-    """Register connection cleanup during app setup, before its first request."""
-    if not app.extensions.get("nexus_sqlite_connection_teardown"):
-        app.teardown_appcontext(_teardown_sqlite_connections)
-        app.extensions["nexus_sqlite_connection_teardown"] = True
+    """Backward-compatible alias for the generic connection teardown hook."""
+    register_database_connection_teardown(app)
 
 
-def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="", decimal_aggregates=True):
-    """Open a consistently configured SQLite connection.
-
-    Keep transaction behavior explicit at call sites: the main app uses SQLite's
-    default deferred transactions (empty string), while modules that historically
-    used autocommit continue to pass isolation_level=None.
-    """
-    # Track weak references only. A strong list here changes historical behavior:
-    # it keeps otherwise-unreferenced connections alive until request teardown.
-    # Weak tracking preserves prompt refcount/GC closure while still allowing
-    # teardown to close a connection that a caller deliberately retained.
+def _track_connection(connection):
     if has_app_context():
         connections = getattr(g, "_nexus_database_connections", None)
         if connections is None:
             connections = set()
             g._nexus_database_connections = connections
-            # Teardown hooks are registered during Flask app setup, never lazily
-            # from a request after Flask has frozen its setup state.
+        connections.add(weakref.ref(connection, connections.discard))
+    return connection
+
+
+def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="", decimal_aggregates=True):
+    """Open the explicitly selected database using the shared DB-API contract.
+
+    The path argument is used only by SQLite. PostgreSQL requires
+    NEXUS_POSTGRES_DSN and never falls back to the SQLite path. SQLite's
+    isolation_level=None maps to PostgreSQL autocommit=True; all other values
+    retain explicit transaction mode (autocommit=False).
+    """
+    if configured_database_backend() == "postgresql":
+        from postgres_database import connect_postgres
+
+        connection = connect_postgres(
+            autocommit=isolation_level is None,
+            connect_timeout=max(1, min(int(timeout), 30)),
+        )
+        deadline = current_report_deadline()
+        if deadline is not None:
+            remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
+            connection.execute(
+                "SELECT set_config('statement_timeout', %s, false)",
+                (f"{remaining_ms}ms",),
+            )
+        return _track_connection(connection)
+    # Track weak references only. A strong list here changes historical behavior:
+    # it keeps otherwise-unreferenced connections alive until request teardown.
+    # Weak tracking preserves prompt refcount/GC closure while still allowing
+    # teardown to close a connection that a caller deliberately retained.
     connection = sqlite3.connect(
         str(Path(path)), timeout=timeout, isolation_level=isolation_level,
         factory=_TrackedSQLiteConnection,
@@ -81,9 +108,7 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
     if deadline is not None:
         # Covers connections opened inside blueprints as well as app.db().
         connection.set_progress_handler(make_sqlite_deadline_callback(deadline), 10000)
-    if has_app_context():
-        connections.add(weakref.ref(connection, connections.discard))
-    return connection
+    return _track_connection(connection)
 
 
 def enable_wal(path, *, timeout=DEFAULT_TIMEOUT_SECONDS):
