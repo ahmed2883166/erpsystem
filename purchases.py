@@ -670,8 +670,9 @@ def index():
         today=date.today().isoformat())
 
 
-def build_grni_reconciliation(c, month):
-    """Reconcile posted GRNI receipt/bill subledger movements to GL account 2190."""
+def build_grni_reconciliation(c, month, activity_code=None):
+    """Reconcile one activity's posted GRNI subledger to its mapped GL account."""
+
     try:
         period_start = date.fromisoformat(str(month) + "-01")
     except (TypeError, ValueError):
@@ -682,29 +683,61 @@ def build_grni_reconciliation(c, month):
                       1 if period_start.month == 12 else period_start.month + 1, 1)
     period_end = next_month - timedelta(days=1)
     start_text, end_text = period_start.isoformat(), period_end.isoformat()
-    account_row = execute_compat(c, 
-        """SELECT id,code,name_ar FROM accounts WHERE code='2190' AND active=1 AND is_group=0 LIMIT 1"""
-    ).fetchone()
+    legacy_activity_row = execute_compat(
+        c, "SELECT setting_value FROM company_settings WHERE setting_key='activity'"
+    ).fetchone() if table_exists(c, "company_settings") else None
+    legacy_activity = str(legacy_activity_row["setting_value"] or "commercial") if legacy_activity_row else "commercial"
+    resolved_activity = str(activity_code or legacy_activity)
+    grni_code = "2190"
+    if activity_code:
+        try:
+            from company_activities import resolve_activity_posting_account
+            grni_code = str(resolve_activity_posting_account(
+                c, "grni", None if resolved_activity == legacy_activity else resolved_activity
+            ))
+        except (ValueError, KeyError, TypeError):
+            # Only the legacy primary activity may safely use the historical
+            # control account when no activity registry is available.
+            if resolved_activity != legacy_activity:
+                grni_code = None
+
+    def activity_clause(table, alias):
+        if not activity_code:
+            return "", []
+        if "activity_code" not in _columns(c, table):
+            return ("", []) if resolved_activity == legacy_activity else (" AND 1=0", [])
+        if resolved_activity == legacy_activity:
+            return f" AND ({alias}.activity_code=? OR {alias}.activity_code IS NULL OR {alias}.activity_code='')", [resolved_activity]
+        return f" AND {alias}.activity_code=?", [resolved_activity]
+
+    receipt_clause, receipt_params = activity_clause("goods_receipts", "r")
+    account_row = execute_compat(
+        c, "SELECT id,code,name_ar FROM accounts WHERE code=? AND active=1 AND is_group=0 LIMIT 1",
+        (grni_code or "",),
+    ).fetchone() if grni_code else None
     account_available = account_row is not None
-    receipts = execute_compat(c, 
+    receipts = execute_compat(c,
         """SELECT r.id,r.receipt_no,r.receipt_date,r.total_value,s.name AS supplier_name,
                   w.code AS warehouse_code,w.name_ar AS warehouse_name
            FROM goods_receipts r JOIN suppliers s ON s.id=r.supplier_id
            JOIN stock_warehouses w ON w.id=r.warehouse_id
-           WHERE r.status='posted' AND r.receipt_date<=? ORDER BY r.receipt_date,r.id""",
-        (end_text,),
+           WHERE r.status='posted' AND r.receipt_date<=?""" + receipt_clause +
+           " ORDER BY r.receipt_date,r.id",
+        [end_text, *receipt_params],
     ).fetchall()
     receipt_ids = [row["id"] for row in receipts]
     allocations, bill_period_total, bill_opening_total = {}, money("0"), money("0")
     for offset in range(0, len(receipt_ids), 500):
         batch = receipt_ids[offset:offset + 500]
         placeholders = ",".join("?" for _ in batch)
-        rows = execute_compat(c, 
+        bill_clause, bill_params = activity_clause("supplier_bills", "b")
+        rows = execute_compat(c,
             f"""SELECT x.receipt_id,x.matched_amount,b.bill_no,b.bill_date
                 FROM supplier_bill_receipts x JOIN supplier_bills b ON b.id=x.bill_id
                 WHERE b.status='posted' AND b.bill_kind='inventory'
-                  AND b.bill_date<=? AND x.receipt_id IN ({placeholders})
-                ORDER BY b.bill_date,b.id""", [end_text, *batch]
+                  AND b.bill_date<=? AND x.receipt_id IN ({placeholders})""" + bill_clause +
+                  " ORDER BY b.bill_date,b.id",
+            [end_text, *batch, *bill_params]
         ).fetchall()
         for item in rows:
             amount = money(item["matched_amount"] or "0")
@@ -771,8 +804,9 @@ def build_grni_reconciliation(c, month):
     gl_closing = money(gl_opening + gl_period_net)
     return {
         "month": str(month), "period_start": start_text, "period_end": end_text,
+        "activity_code": resolved_activity if activity_code else None,
         "account_available": account_available,
-        "account_code": account_row["code"] if account_available else "2190",
+        "account_code": account_row["code"] if account_available else (grni_code or "غير مضبوط"),
         "account_name": account_row["name_ar"] if account_available else "بضاعة مستلمة غير مفوترة GRNI",
         "opening_receipts": opening_receipts, "opening_bill_settlements": bill_opening_total,
         "subledger_opening": subledger_opening, "period_receipts": period_receipts,
@@ -794,8 +828,11 @@ def grni_reconciliation():
     selected_month = (request.args.get("month") or date.today().strftime("%Y-%m")).strip()
     c = db()
     try:
-        report = build_grni_reconciliation(c, selected_month)
-        return render_template("purchase_grni_reconciliation.html", report=report, selected_month=selected_month)
+        activity_options, primary_activity = _company_activity_form_options(c)
+        selected_activity = (request.args.get("activity_code") or primary_activity or "").strip()
+        report = build_grni_reconciliation(c, selected_month, selected_activity or None)
+        return render_template("purchase_grni_reconciliation.html", report=report, selected_month=selected_month,
+                               activity_options=activity_options, selected_activity=selected_activity)
     except ValueError as exc:
         flash(str(exc), "error")
         return redirect(url_for("purchase.grni_reconciliation", month=date.today().strftime("%Y-%m")))

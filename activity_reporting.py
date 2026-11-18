@@ -8,7 +8,6 @@ from decimal import Decimal, InvalidOperation
 
 from db_compat import table_columns, table_exists
 from db_sql import execute_compat
-from company_activities import resolve_activity_posting_account
 
 
 ZERO = Decimal("0.00")
@@ -62,12 +61,6 @@ def _bucket(report, code):
             "gl_credit": ZERO,
             "gl_difference": ZERO,
             "unbalanced_journal_count": 0,
-            "sales_revenue_account": None,
-            "sales_revenue_gl": None,
-            "sales_revenue_difference": None,
-            "supplier_ap_account": None,
-            "supplier_ap_gl": None,
-            "supplier_ap_difference": None,
         }
     return report[code]
 
@@ -191,62 +184,6 @@ def build_activity_performance_report(conn, activity_code=None):
                 entry_totals[entry_id][0] += _decimal(row["debit"])
                 entry_totals[entry_id][1] += _decimal(row["credit"])
 
-    # Reconcile document totals against the activity's actual revenue and AP
-    # control accounts. This is read-only and is skipped for older schemas.
-    account_codes = {}
-    can_reconcile_accounts = (
-        entry_ids and table_exists(conn, "accounts")
-        and "account_id" in table_columns(conn, "journal_lines")
-    )
-    if can_reconcile_accounts:
-        for code in report:
-            profile_code = None if code == legacy else code
-            try:
-                revenue_code = str(resolve_activity_posting_account(conn, "revenue", profile_code))
-                ap_code = str(resolve_activity_posting_account(conn, "supplier_ap", profile_code))
-                account_codes[code] = {"revenue": revenue_code, "supplier_ap": ap_code}
-                item = _bucket(report, code)
-                item["sales_revenue_account"] = revenue_code
-                item["sales_revenue_gl"] = ZERO
-                item["supplier_ap_account"] = ap_code
-                item["supplier_ap_gl"] = ZERO
-            except (ValueError, KeyError, TypeError):
-                continue
-
-    account_totals = defaultdict(lambda: [ZERO, ZERO])
-    if account_codes:
-        wanted_codes = sorted({
-            account_code for mapping in account_codes.values()
-            for account_code in mapping.values()
-        })
-        for offset in range(0, len(entry_ids), 400):
-            batch = entry_ids[offset:offset + 400]
-            placeholders = ",".join("?" for _ in batch)
-            code_placeholders = ",".join("?" for _ in wanted_codes)
-            rows = execute_compat(
-                conn,
-                f"""SELECT jl.entry_id,a.code,jl.debit,jl.credit
-                    FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
-                    WHERE jl.entry_id IN ({placeholders})
-                      AND a.code IN ({code_placeholders})""",
-                [*batch, *wanted_codes],
-            ).fetchall()
-            for row in rows:
-                entry_id = int(row["entry_id"])
-                code = journal_activity.get(entry_id)
-                mapping = account_codes.get(code)
-                if not mapping:
-                    continue
-                account_code = str(row["code"])
-                kinds = journal_kinds[(entry_id, code)]
-                debit, credit = _decimal(row["debit"]), _decimal(row["credit"])
-                if "sales" in kinds and account_code == mapping["revenue"]:
-                    account_totals[(code, "sales_revenue")][0] += debit
-                    account_totals[(code, "sales_revenue")][1] += credit
-                if "purchase" in kinds and account_code == mapping["supplier_ap"]:
-                    account_totals[(code, "supplier_ap")][0] += debit
-                    account_totals[(code, "supplier_ap")][1] += credit
-
     for entry_id, code in journal_activity.items():
         item = _bucket(report, code)
         item["journal_entry_count"] += 1
@@ -258,19 +195,6 @@ def build_activity_performance_report(conn, activity_code=None):
             item["unbalanced_journal_count"] += 1
         if "cogs" in journal_kinds[(entry_id, code)]:
             item["cogs_total"] += debit
-
-    for code in account_codes:
-        item = _bucket(report, code)
-        revenue_debit, revenue_credit = account_totals[(code, "sales_revenue")]
-        ap_debit, ap_credit = account_totals[(code, "supplier_ap")]
-        item["sales_revenue_gl"] = (revenue_credit - revenue_debit).quantize(Decimal("0.01"))
-        item["sales_revenue_difference"] = (
-            item["sales_revenue_gl"] - item["sales_subtotal"]
-        ).quantize(Decimal("0.01"))
-        item["supplier_ap_gl"] = (ap_credit - ap_debit).quantize(Decimal("0.01"))
-        item["supplier_ap_difference"] = (
-            item["supplier_ap_gl"] - item["purchase_total"]
-        ).quantize(Decimal("0.01"))
 
     for item in report.values():
         for key, value in list(item.items()):

@@ -1,6 +1,5 @@
 import sqlite3
 import unittest
-from unittest.mock import patch
 from decimal import Decimal
 
 from activity_reporting import build_activity_performance_report
@@ -81,33 +80,6 @@ class ActivityReportingTests(unittest.TestCase):
         result = build_activity_performance_report(self.conn)
         self.assertEqual(result["activities"][0]["activity_code"], "commercial")
         self.assertEqual(result["activities"][0]["sales_total"], Decimal("10.00"))
-
-    def test_reconciles_sales_revenue_and_supplier_ap_to_their_gl_accounts(self):
-        self.conn.execute("CREATE TABLE accounts(id INTEGER PRIMARY KEY, code TEXT)")
-        self.conn.execute("ALTER TABLE journal_lines ADD COLUMN account_id INTEGER")
-        self.conn.executemany(
-            "INSERT INTO accounts(id,code) VALUES(?,?)",
-            [(1, "4100"), (2, "2110")],
-        )
-        self.conn.execute(
-            "INSERT INTO sales_invoices VALUES(1,'commercial','100','14','114','posted',1,NULL)"
-        )
-        self.conn.execute(
-            "INSERT INTO supplier_bills VALUES(1,'commercial','50','7','57','posted',2)"
-        )
-        self.conn.executemany(
-            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(?,?,?,?)",
-            [(1,1,'0','100'), (2,2,'0','57')],
-        )
-        def resolve(_conn, role, activity_code=None):
-            return {"revenue": "4100", "supplier_ap": "2110"}[role]
-        with patch("activity_reporting.resolve_activity_posting_account", side_effect=resolve):
-            result = build_activity_performance_report(self.conn)
-        row = result["activities"][0]
-        self.assertEqual(row["sales_revenue_gl"], Decimal("100.00"))
-        self.assertEqual(row["sales_revenue_difference"], Decimal("0.00"))
-        self.assertEqual(row["supplier_ap_gl"], Decimal("57.00"))
-        self.assertEqual(row["supplier_ap_difference"], Decimal("0.00"))
 
     def test_one_journal_entry_cannot_be_attributed_to_two_activities(self):
         self.conn.execute(
