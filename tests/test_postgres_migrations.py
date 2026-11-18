@@ -49,7 +49,7 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
             if "CREATE OR REPLACE FUNCTION reject_audit_log_mutation" in item
         )
         self.assertIn("RAISE EXCEPTION 'Audit log records are immutable';", audit_function)
-        self.assertIn("END;\n$nexus_audit$", audit_function)
+        self.assertIn("END;\n$nexus_audit$", audit_function.replace("\r\n", "\n"))
         self.assertTrue(any("debit NUMERIC(24, 6)" in item for item in statements))
         self.assertTrue(any("CREATE TABLE IF NOT EXISTS customers" in item for item in _split_sql_statements(migrations[1].sql)))
         self.assertTrue(any("CREATE TABLE IF NOT EXISTS bank_statement_balances" in item for item in _split_sql_statements(migrations[1].sql)))
