@@ -66,6 +66,18 @@
   {% endif %}
 </section>
 <section class="panel">
+  <h3>استيراد كشف البنك من CSV</h3>
+  <p class="muted">يدعم أعمدة التاريخ والمبلغ، مع أعمدة اختيارية للمرجع والبيان. يجب أن تكون التواريخ داخل الفترة المحددة، والإيداع موجبًا والسحب سالبًا. لا يُعدّل الاستيراد أي قيود محاسبية.</p>
+  <form method="post" enctype="multipart/form-data" class="form-grid">
+    <input type="hidden" name="action" value="import_csv">
+    <input type="hidden" name="bank_account_id" value="{{ account_id }}">
+    <input type="hidden" name="start_date" value="{{ start_date }}">
+    <input type="hidden" name="end_date" value="{{ end_date }}">
+    <label>ملف كشف البنك CSV<input type="file" name="statement_file" accept=".csv,text/csv" required></label>
+    <button type="submit">استيراد الحركات</button>
+  </form>
+</section>
+<section class="panel">
   <h3>إضافة سطر من كشف البنك</h3>
   <form method="post" class="form-grid">
     <input type="hidden" name="action" value="add_line">
