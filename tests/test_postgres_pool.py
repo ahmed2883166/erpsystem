@@ -183,6 +183,7 @@ class PostgreSQLDirectConnectionTests(unittest.TestCase):
         for kwargs in (
             {"connect_timeout": 0},
             {"connect_timeout": 31},
+            {"connect_timeout": True},
             {"application_name": ""},
             {"autocommit": "yes"},
         ):
