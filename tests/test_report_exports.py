@@ -361,6 +361,7 @@ class TrialBalanceExcelExportTests(unittest.TestCase):
         self.assertEqual(excel.status_code, 200)
         workbook = load_workbook(io.BytesIO(excel.data), data_only=True)
         values = list(workbook.active.values)
+        self.assertEqual(workbook.active["A5"].value, "10/06/2026")
         self.assertTrue(any(row[7] == 70 for row in values if len(row) > 7))
         pdf = self.client.get(
             "/reports/export/customer-advances/pdf?as_of=2026-06-30"
