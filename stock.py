@@ -194,6 +194,8 @@ def initialize_stock_schema():
         _execute(c, "ALTER TABLE stock_movements ADD COLUMN accounting_note TEXT")
     if "issue_purpose" not in movement_columns:
         _execute(c, "ALTER TABLE stock_movements ADD COLUMN issue_purpose TEXT")
+    if "activity_code" not in movement_columns:
+        _execute(c, "ALTER TABLE stock_movements ADD COLUMN activity_code TEXT")
     if "source_location_id" not in movement_columns:
         _execute(c, "ALTER TABLE stock_movements ADD COLUMN source_location_id INTEGER REFERENCES stock_locations(id)")
     if "target_location_id" not in movement_columns:
