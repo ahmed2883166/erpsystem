@@ -63,8 +63,7 @@ from backup_scheduler import (create_backup_archive, ensure_initial_backup,
 from system_health import health_bp
 from backup_restore import extract_validated_backup, restore_database_with_rollback
 from postgres_backup import (
-    create_postgres_backup_archive, validate_postgres_backup_archive,
-    restore_postgres_backup_to_new_database,
+    create_postgres_backup_archive, restore_postgres_backup_to_new_database,
 )
 from postgres_backup_scheduler import (
     ensure_initial_postgres_backup, start_postgres_backup_scheduler,
