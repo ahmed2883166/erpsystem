@@ -12,6 +12,9 @@ from analytic_dimensions import validate_journal_dimensions
 from income_statement import (build_income_statement, normalize_income_statement_period,
                               comparison_period, add_income_statement_comparison,
                               closing_entries_exclusion_sql)
+from db_compat import table_columns
+from db_sql import execute_compat
+from accounting_core import decimal_sum_expression
 
 
 def register_report_exports(app, db_path, permissions):
@@ -96,14 +99,14 @@ def register_report_exports(app, db_path, permissions):
                         periods.append((year["year_name"], "الفترة الحالية / مفتوحة" if year["status"] == "open" else "فترة مالية مقفولة", period_from, period_to))
                 if not years:
                     periods.append(("الفترة المحددة", "الفترة الحالية", date_from, date_to))
-                account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+                account_columns = set(table_columns(conn, "accounts"))
                 if not {"statement_section", "normal_balance"}.issubset(account_columns):
                     # Direct export registrations and older installations may not have run
                     # the account-metadata migration yet. It is additive and does not touch journals.
                     from chart_templates import ensure_account_metadata
                     ensure_account_metadata(conn)
                     conn.commit()
-                    account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+                    account_columns = set(table_columns(conn, "accounts"))
                 section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
                 normal_expr = "a.normal_balance" if "normal_balance" in account_columns else "NULL"
                 headers = ["الفترة", "التصنيف", "من تاريخ", "إلى تاريخ", "كود الحساب", "اسم الحساب", "نوع الحساب", "مدين", "دائن", "صافي الرصيد", "تصنيف القوائم", "الرصيد الطبيعي"]
@@ -125,11 +128,11 @@ def register_report_exports(app, db_path, permissions):
                         join_conditions.append("je.entry_date >= ?"); join_params.append(period_from)
                     if period_to:
                         join_conditions.append("je.entry_date <= ?"); join_params.append(period_to)
-                    rows = conn.execute(f"""
+                    rows = execute_compat(conn, f"""
                         SELECT a.code,a.name_ar,a.account_type,
                                {section_expr} statement_section,{normal_expr} normal_balance,
-                               COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END),0) debit,
-                               COALESCE(DECIMAL_SUM(CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END),0) credit
+                               {decimal_sum_expression(conn, "CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END")} debit,
+                               {decimal_sum_expression(conn, "CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END")} credit
                         FROM accounts a
                         LEFT JOIN journal_lines jl ON jl.account_id=a.id
                         LEFT JOIN journal_entries je ON {' AND '.join(join_conditions)}
@@ -349,9 +352,9 @@ def register_report_exports(app, db_path, permissions):
                     as_of = date_type.fromisoformat(raw_as_of).isoformat() if raw_as_of else date_type.today().isoformat()
                 except ValueError:
                     abort(400)
-                rows = conn.execute("""SELECT f.asset_code,f.asset_name,f.category,f.purchase_date,f.ready_date,
+                rows = execute_compat(conn, f"""SELECT f.asset_code,f.asset_name,f.category,f.purchase_date,f.ready_date,
                   f.cost,f.residual_value,f.useful_life_months,f.depreciation_method,
-                  COALESCE((SELECT DECIMAL_SUM(d.amount)
+                  COALESCE((SELECT {decimal_sum_expression(conn, "d.amount")}
                     FROM asset_depreciations d
                     JOIN journal_entries je ON je.id=d.journal_entry_id AND je.status='posted'
                     WHERE d.asset_id=f.id AND je.entry_date<=?),0) accumulated
