@@ -5,6 +5,7 @@ row mapping and exact Decimal SQL aggregates. WAL is enabled once during startup
 not on every request connection.
 """
 import sqlite3
+import weakref
 from pathlib import Path
 from flask import g, has_app_context
 from report_request_control import current_report_deadline, make_sqlite_deadline_callback
@@ -13,6 +14,16 @@ from sqlite_maintenance import enable_sqlite_wal
 
 
 DEFAULT_TIMEOUT_SECONDS = 20
+
+
+def _close_app_context_connections(connections):
+    """Close every cached connection when its Flask app context is released."""
+    for connection in tuple(connections.values()):
+        try:
+            connection.close()
+        except sqlite3.Error:
+            pass
+    connections.clear()
 
 
 def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="", decimal_aggregates=True):
@@ -33,6 +44,13 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
         if connections is None:
             connections = {}
             g._nexus_database_connections = connections
+            # The finalizer avoids registering teardown handlers after Flask has
+            # started serving requests, and also works with small test Flask apps.
+            g._nexus_database_finalizer = weakref.finalize(
+                g._get_current_object() if hasattr(g, "_get_current_object") else g,
+                _close_app_context_connections,
+                connections,
+            )
         cached = connections.get(cache_key)
         if cached is not None:
             return cached
