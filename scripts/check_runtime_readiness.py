@@ -61,11 +61,13 @@ def check_runtime():
     backup_dir = Path(os.environ.get(
         "NEXUS_BACKUP_DIR", Path.home() / "NEXUS ERP" / "Backups"
     )).expanduser()
-    parent = backup_dir if backup_dir.exists() else backup_dir.parent
-    if parent.exists() and os.access(parent, os.W_OK):
-        print(f"Backup location: parent is writable ({backup_dir})")
+    writable_ancestor = backup_dir
+    while not writable_ancestor.exists() and writable_ancestor != writable_ancestor.parent:
+        writable_ancestor = writable_ancestor.parent
+    if writable_ancestor.exists() and os.access(writable_ancestor, os.W_OK):
+        print(f"Backup location: nearest existing parent is writable ({backup_dir})")
     else:
-        errors.append(f"Backup location is not writable or its parent is missing: {backup_dir}")
+        errors.append(f"Backup location has no writable existing parent: {backup_dir}")
 
     if errors:
         for error in errors:
