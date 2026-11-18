@@ -1,0 +1,31 @@
+/* Bootstrap 5.3 ERP integration layer — additive; legacy screen styles remain intact. */
+:root{--bs-primary:var(--accent);--bs-primary-rgb:15,155,142}
+:root[data-theme="dark"]{--bs-primary-rgb:53,198,180}
+.dashboard-page-header{padding-bottom:1rem;margin-bottom:1.25rem}
+.dashboard-page-header h2{font-weight:800;letter-spacing:-.02em}
+.dashboard-company-badge{color:var(--muted)!important;background:var(--surface)!important}
+.dashboard-kpi-card,.dashboard-section-card{background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+.dashboard-kpi-card .card-body{padding:1.2rem 1.25rem}
+.dashboard-kpi-label{display:flex;align-items:center;gap:.55rem;color:var(--muted);font-size:.9rem;font-weight:700}
+.dashboard-kpi-label .bi{font-size:1.1rem;color:var(--accent)}
+.dashboard-kpi-value{margin:.65rem 0 .15rem;color:var(--text);font-size:clamp(1.45rem,2vw,2rem);font-weight:800;line-height:1.35;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.dashboard-kpi-value small{font-size:.72rem;font-weight:700;color:var(--muted)}
+.dashboard-kpi-primary{border-color:color-mix(in srgb,var(--accent) 35%,var(--line));background:linear-gradient(145deg,color-mix(in srgb,var(--accent) 10%,var(--surface)),var(--surface))}
+.dashboard-kpi-primary .dashboard-kpi-value{color:var(--accent)}
+.dashboard-kpi-footnote{color:var(--muted)}
+.dashboard-section-card .card-header{padding:1rem 1.25rem;background:var(--surface2);border-bottom:1px solid var(--line);color:var(--text)}
+.dashboard-section-card .card-body{padding:1.25rem}
+.dashboard-balance-tile{display:flex;flex-direction:column;gap:.35rem;padding:1rem 1.1rem;border:1px solid var(--line);border-radius:11px;background:var(--surface2)}
+.dashboard-balance-tile span{color:var(--muted);font-size:.9rem;font-weight:700}
+.dashboard-balance-tile strong{color:var(--text);font-size:1.25rem;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.dashboard-balance-tile small{font-size:.78rem;color:var(--muted)}
+.dashboard-section-card .table{--bs-table-bg:var(--surface);--bs-table-color:var(--text);--bs-table-hover-bg:var(--surface2);--bs-table-hover-color:var(--text);margin:0}
+.dashboard-section-card .table thead th{background:var(--surface2);color:var(--text);border-color:var(--line)}
+.dashboard-section-card .table td{border-color:var(--line)}
+.dashboard-section-card .btn.btn-outline-primary{color:var(--accent);border-color:var(--accent);background:transparent}
+.dashboard-section-card .btn.btn-outline-primary:hover{color:#fff;background:var(--accent)}
+.dashboard-section-card .btn.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.dashboard-section-card .btn.btn-primary:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+.form-control,.form-select{border-color:var(--line);background-color:var(--surface2);color:var(--text)}
+.form-control:focus,.form-select:focus{border-color:var(--accent);box-shadow:0 0 0 .2rem color-mix(in srgb,var(--accent) 20%,transparent);background-color:var(--surface)}
+@media(max-width:575.98px){.dashboard-section-card .card-body{padding:1rem}.dashboard-kpi-card .card-body{padding:1rem}}
