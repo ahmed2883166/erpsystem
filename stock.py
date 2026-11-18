@@ -20,7 +20,7 @@ from code_sequences import next_code
 stock_bp = Blueprint("stock", __name__, url_prefix="/stock")
 
 
-@stock_bp.record_once
+@stock_bp.record
 def _register_database_teardown(state):
     register_database_connection_teardown(state.app)
 

@@ -18,7 +18,7 @@ from code_sequences import next_code
 purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
 
 
-@purchase_bp.record_once
+@purchase_bp.record
 def _register_database_teardown(state):
     # Blueprints are also mounted by isolated test/embedded Flask applications.
     register_database_connection_teardown(state.app)

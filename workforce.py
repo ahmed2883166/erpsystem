@@ -43,7 +43,7 @@ from cash_commitments import create_cash_commitment
 workforce_bp = Blueprint("workforce", __name__)
 
 
-@workforce_bp.record_once
+@workforce_bp.record
 def _register_database_teardown(state):
     register_database_connection_teardown(state.app)
 
