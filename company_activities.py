@@ -28,6 +28,7 @@ ACCOUNT_ROLE_TYPES = {
     "cash": "asset", "receivables": "asset", "contract_assets": "asset",
     "payables": "liability", "grni": "liability", "customer_advances": "liability",
     "inventory": "asset", "direct_cost": "expense", "retained_earnings": "equity",
+    "interbranch_transfers": "asset",
 }
 TAX_ROLE_TYPES = {"output_vat": "liability", "input_vat": "asset"}
 ACTIVITY_ROLE_TYPES = {**ACCOUNT_ROLE_TYPES, **POSTING_ACCOUNT_TYPES, **TAX_ROLE_TYPES}

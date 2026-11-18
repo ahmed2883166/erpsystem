@@ -30,6 +30,7 @@ _ROLE_FAMILIES = {
     "inventory": "inventory",
     "direct_cost": "direct_cost",
     "retained_earnings": "equity",
+    "interbranch_transfers": "interbranch_transfer_asset",
 }
 
 
@@ -71,6 +72,10 @@ def _posting_role_families(activity):
         "input_vat": "input_vat",
         "stocktake_shortage": "stock_adjustment_expense",
         "stocktake_surplus": "stock_adjustment_expense",
+        "grni": "grni",
+        "interbranch_transfer": "interbranch_transfer_asset",
+        "stock_scrap_expense": "direct_cost",
+        "internal_stock_use": "internal_stock_use_expense",
     }
     for role, family in posting_families.items():
         add(ACTIVITY_POSTING_ACCOUNTS[activity].get(role), family, role)
