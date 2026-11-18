@@ -43,7 +43,7 @@ from period_adjustments import adjustments_bp, initialize_adjustments_schema
 from activity_profiles import (initialize_activity_profiles_schema, list_activity_profiles, create_activity_profile, create_specialized_activity_profile, SPECIALIZED_ACTIVITY_PRESETS, set_activity_profile_active, validate_activity_profile, update_custom_activity_profile, get_active_activity_profile)
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
-from database import connect_database, enable_wal, fetch_page
+from database import connect_database, enable_wal, fetch_page, register_sqlite_connection_teardown
 from database_backend import require_supported_runtime_backend
 from core_schema import initialize_core_schema, ensure_legacy_core_columns
 from company_defaults import seed_company_defaults
@@ -84,6 +84,7 @@ from security_controls import login_attempts_exceeded, linked_operational_source
 
 
 app = Flask(__name__)
+register_sqlite_connection_teardown(app)
 
 
 def _configure_http_500_file_logging():
