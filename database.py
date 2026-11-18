@@ -7,7 +7,7 @@ not on every request connection.
 import sqlite3
 import weakref
 from pathlib import Path
-from flask import current_app, g, has_app_context
+from flask import g, has_app_context
 from report_request_control import current_report_deadline, make_sqlite_deadline_callback
 from db_sql import execute_compat
 from sqlite_maintenance import enable_sqlite_wal
