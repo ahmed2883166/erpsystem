@@ -833,7 +833,7 @@ def register_report_exports(app, db_path, permissions):
         sheet["A2"].font = Font(name="Arial", size=16, bold=True, color="FFFFFF")
         sheet["A2"].fill = PatternFill("solid", fgColor="17365D")
         sheet["A2"].alignment = Alignment(horizontal="center")
-        sheet.append(["تاريخ إعداد التقرير: " + datetime.now().strftime("%Y-%m-%d %H:%M")])
+        sheet.append(["تاريخ إعداد التقرير: " + datetime.now().strftime("%d/%m/%Y %H:%M")])
         sheet.merge_cells(start_row=3, start_column=1, end_row=3, end_column=len(headers))
         sheet["A3"].font = Font(name="Arial", italic=True, color="666666")
         sheet["A3"].alignment = Alignment(horizontal="right")
@@ -937,7 +937,7 @@ def register_report_exports(app, db_path, permissions):
             sheet["A2"].font = Font(name="Arial", bold=True, color="FFFFFF", size=15)
             sheet["A2"].fill = PatternFill("solid", fgColor="17365D")
             sheet["A2"].alignment = Alignment(horizontal="center")
-            sheet.append(["تاريخ إعداد التقرير: " + datetime.now().strftime("%Y-%m-%d %H:%M")])
+            sheet.append(["تاريخ إعداد التقرير: " + datetime.now().strftime("%d/%m/%Y %H:%M")])
             sheet.merge_cells(start_row=3, start_column=1, end_row=3, end_column=width)
             sheet["A3"].font = Font(name="Arial", italic=True, color="666666")
             sheet.append(rows[0][:80] if isinstance(rows[0], list) else [str(rows[0])])
@@ -1144,7 +1144,7 @@ def register_report_exports(app, db_path, permissions):
             Paragraph(pdf_text("الرقم الضريبي: " + company_profile.get("tax_number", "")), cell_style),
             Paragraph(pdf_text(title), heading_style),
             Paragraph(pdf_text("العملة الأساسية: " + base_currency), cell_style),
-            Paragraph(pdf_text("تاريخ إعداد التقرير: " + datetime.now().strftime("%Y-%m-%d %H:%M")), cell_style),
+            Paragraph(pdf_text("تاريخ إعداد التقرير: " + datetime.now().strftime("%d/%m/%Y %H:%M")), cell_style),
             Paragraph(pdf_text("ملاحظة: يعرض هذا الملف البيانات الظاهرة في الشاشة الحالية فقط؛ وقد توجد صفحات أخرى عند استخدام ترقيم الصفحات."), cell_style),
             Spacer(1, 4*mm),
         ])
