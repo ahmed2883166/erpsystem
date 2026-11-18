@@ -13,6 +13,8 @@ from scripts.verify_sqlite_postgres_copy import (
     _foreign_key_differences,
     _sqlite_grouped_sum,
     _verification_passed,
+    _canonical_cell,
+    _content_fingerprint,
     verify_copy,
 )
 from scripts.audit_sqlite_postgres_migration import build_report
@@ -118,6 +120,59 @@ class SQLitePostgresCopyPlanningTests(unittest.TestCase):
 
 
 class SQLitePostgresVerifierUnitTests(unittest.TestCase):
+    def test_content_fingerprint_detects_changed_rows_when_totals_still_match(self):
+        columns = ["id", "debit", "credit"]
+        types = {"id": "integer", "debit": "numeric", "credit": "numeric"}
+        source = [
+            {"id": 1, "debit": "100.00", "credit": "0.00"},
+            {"id": 2, "debit": "0.00", "credit": "100.00"},
+        ]
+        # Same grand debit/credit totals, but the row-level distribution changed.
+        target = [
+            {"id": 1, "debit": "90.00", "credit": "0.00"},
+            {"id": 2, "debit": "10.00", "credit": "100.00"},
+        ]
+        self.assertEqual(
+            sum(Decimal(row["debit"]) for row in source),
+            sum(Decimal(row["debit"]) for row in target),
+        )
+        self.assertNotEqual(
+            _content_fingerprint(source, columns, types),
+            _content_fingerprint(target, columns, types),
+        )
+
+    def test_content_fingerprint_is_independent_of_row_order(self):
+        columns = ["id", "amount"]
+        types = {"id": "integer", "amount": "numeric"}
+        left = [{"id": 1, "amount": "10.0"}, {"id": 2, "amount": "20.00"}]
+        right = [{"id": 2, "amount": Decimal("20.0")}, {"id": 1, "amount": Decimal("10.00")}]
+        self.assertEqual(
+            _content_fingerprint(left, columns, types),
+            _content_fingerprint(right, columns, types),
+        )
+
+    def test_canonical_content_preserves_null_vs_empty_string(self):
+        self.assertNotEqual(
+            _canonical_cell(None, "text"),
+            _canonical_cell("", "text"),
+        )
+
+    def test_canonical_content_handles_bytes_and_memoryview(self):
+        self.assertEqual(
+            _canonical_cell(b"nexus", "bytea"),
+            _canonical_cell(memoryview(b"nexus"), "bytea"),
+        )
+
+    def test_canonical_content_handles_date_boolean_and_numeric_scale(self):
+        from datetime import date
+        self.assertEqual(_canonical_cell("2026-11-19", "date"), _canonical_cell(date(2026, 11, 19), "date"))
+        self.assertEqual(_canonical_cell(1, "boolean"), _canonical_cell(True, "boolean"))
+        self.assertEqual(_canonical_cell("10.0", "numeric"), _canonical_cell(Decimal("10.00"), "numeric"))
+
+    def test_canonical_content_rejects_unknown_postgres_types(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported PostgreSQL type"):
+            _canonical_cell("value", "USER-DEFINED")
+
     def test_decimal_parser_keeps_exact_financial_precision(self):
         self.assertEqual(_decimal("1250.10"), Decimal("1250.10"))
         self.assertEqual(_decimal(None), Decimal("0"))
