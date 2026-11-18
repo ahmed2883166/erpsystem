@@ -39,7 +39,7 @@ def _execute(connection, sql, params=()):
 
 
 def _table_exists(conn, name):
-    """Database-neutral metadata check; stock operations remain SQLite-only."""
+    """Database-neutral metadata check for SQLite and PostgreSQL stock operations."""
     return table_exists(conn, name)
 
 
@@ -96,8 +96,60 @@ def _stock_movement_for_update(conn, movement_id):
 
 
 def _install_stock_location_triggers(conn):
-    """Install SQLite guards; PostgreSQL equivalents live in its schema migrations."""
-    if database_dialect(conn) != "sqlite":
+    """Enforce default stock-location integrity in both supported SQL dialects."""
+    if database_dialect(conn) == "postgresql":
+        execute_compat(conn, """
+            CREATE OR REPLACE FUNCTION nexus_validate_stock_product_location()
+            RETURNS trigger LANGUAGE plpgsql AS $nexus_stock_location$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM stock_locations l
+                     WHERE l.id=NEW.location_id
+                       AND l.warehouse_id=NEW.warehouse_id
+                       AND l.active=1
+                ) THEN
+                    RAISE EXCEPTION 'موقع الصنف الافتراضي يجب أن يكون نشطًا ويتبع نفس المخزن.';
+                END IF;
+                RETURN NEW;
+            END;
+            $nexus_stock_location$
+        """)
+        execute_compat(conn, """
+            CREATE OR REPLACE FUNCTION nexus_prevent_stock_location_deactivation()
+            RETURNS trigger LANGUAGE plpgsql AS $nexus_stock_deactivation$
+            BEGIN
+                IF OLD.active=1 AND NEW.active=0 AND EXISTS (
+                    SELECT 1 FROM stock_product_locations p WHERE p.location_id=OLD.id
+                ) THEN
+                    RAISE EXCEPTION 'لا يمكن تعطيل موقع مستخدم كموقع افتراضي لصنف. غيّر الموقع الافتراضي أولًا.';
+                END IF;
+                RETURN NEW;
+            END;
+            $nexus_stock_deactivation$
+        """)
+        for trigger in (
+            "trg_stock_product_locations_same_wh_insert",
+            "trg_stock_product_locations_same_wh_update",
+        ):
+            execute_compat(conn, f"DROP TRIGGER IF EXISTS {trigger} ON stock_product_locations")
+        execute_compat(conn, """
+            CREATE TRIGGER trg_stock_product_locations_same_wh_insert
+            BEFORE INSERT ON stock_product_locations
+            FOR EACH ROW EXECUTE FUNCTION nexus_validate_stock_product_location()
+        """)
+        execute_compat(conn, """
+            CREATE TRIGGER trg_stock_product_locations_same_wh_update
+            BEFORE UPDATE OF warehouse_id,location_id ON stock_product_locations
+            FOR EACH ROW EXECUTE FUNCTION nexus_validate_stock_product_location()
+        """)
+        execute_compat(conn, """
+            DROP TRIGGER IF EXISTS trg_stock_locations_prevent_default_deactivation ON stock_locations
+        """)
+        execute_compat(conn, """
+            CREATE TRIGGER trg_stock_locations_prevent_default_deactivation
+            BEFORE UPDATE OF active ON stock_locations
+            FOR EACH ROW EXECUTE FUNCTION nexus_prevent_stock_location_deactivation()
+        """)
         return
     execute_script(conn, """
     CREATE TRIGGER IF NOT EXISTS trg_stock_product_locations_same_wh_insert
