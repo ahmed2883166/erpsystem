@@ -520,24 +520,12 @@ def generate_postgres_ddl(snapshot):
     trigger_lines = generate_trigger_ddl(snapshot.get("triggers", []))
     if trigger_lines:
         lines.extend(["", *trigger_lines])
-    # Bind every generated schema to an immutable installation fingerprint.
-    # The marker is intentionally outside the source-table manifest so the
-    # copy verifier can distinguish installer metadata from application data.
-    baseline_body = "\n".join(lines).rstrip() + "\n"
-    baseline_sha256 = hashlib.sha256(baseline_body.encode("utf-8")).hexdigest()
-    lines.extend([
-        "",
-        "CREATE TABLE nexus_schema_installation (",
-        "    id SMALLINT PRIMARY KEY CHECK (id = 1),",
-        "    baseline_sha256 TEXT NOT NULL CHECK (length(baseline_sha256) = 64),",
-        "    installed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP",
-        ");",
-    ])
-    lines.append(
-        "INSERT INTO nexus_schema_installation (id, baseline_sha256) VALUES (1, '"
-        + baseline_sha256 + "');"
-    )
+    # The installer owns the immutable installation marker. Keep generated
+    # baseline SQL limited to schema DDL so it can be installed atomically
+    # without embedding data mutations in the schema artifact.
     lines.extend(["", "COMMIT;", ""])
+    baseline_sql = "\n".join(lines)
+    baseline_sha256 = hashlib.sha256(baseline_sql.encode("utf-8")).hexdigest()
     numeric_candidates_by_table = {}
     for candidate in sorted(set(numeric_candidates)):
         candidate_table, candidate_column = candidate.split(".", 1)
