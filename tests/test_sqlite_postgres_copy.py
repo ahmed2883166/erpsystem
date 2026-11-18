@@ -427,3 +427,57 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(account_count, 0)
         self.assertEqual(entry_count, 0)
+
+class PostgresCopyStreamingUnitTests(unittest.TestCase):
+    def test_copy_streams_normalized_rows_through_psycopg_copy_api(self):
+        from scripts.copy_sqlite_to_postgres import copy_rows_with_postgres_copy
+
+        class FakeCopy:
+            def __init__(self):
+                self.rows = []
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                return False
+            def write_row(self, row):
+                self.rows.append(row)
+
+        class FakeCursor:
+            def __init__(self):
+                self.stream = FakeCopy()
+                self.sql = None
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                return False
+            def copy(self, sql):
+                self.sql = sql
+                return self.stream
+
+        class FakeConnection:
+            def __init__(self):
+                self.active_cursor = FakeCursor()
+            def cursor(self):
+                return self.active_cursor
+
+        connection = FakeConnection()
+        rows = [
+            {"id": 1, "amount": 0.1},
+            {"id": 2, "amount": 12.35},
+        ]
+        copied = copy_rows_with_postgres_copy(
+            connection,
+            'COPY "nexus"."entries" ("id", "amount") FROM STDIN',
+            rows,
+            ["id", "amount"],
+        )
+        self.assertEqual(copied, 2)
+        self.assertEqual(
+            connection.active_cursor.sql,
+            'COPY "nexus"."entries" ("id", "amount") FROM STDIN',
+        )
+        self.assertEqual(
+            connection.active_cursor.stream.rows,
+            [(1, Decimal("0.1")), (2, Decimal("12.35"))],
+        )
+
