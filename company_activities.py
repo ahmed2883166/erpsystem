@@ -135,9 +135,8 @@ def enable_company_activity(conn, activity_code, profile_code=None, primary=Fals
         raise ValueError("ملف النشاط غير موجود أو غير نشط.")
     if profile["base_activity"] != activity_code:
         raise ValueError("ملف النشاط لا يطابق النشاط المطلوب.")
-    # Prepare the disabled pack first so users can map all of its roles before
-    # activation. The existing company chart is never reseeded or overwritten.
-    prepare_company_activity(conn, activity_code, profile_code)
+    # A conflicting secondary pack must be prepared and mapped explicitly
+    # before activation. The existing company chart is never reseeded.
     existing = [
         row["activity_code"] for row in execute_compat(
             conn,
