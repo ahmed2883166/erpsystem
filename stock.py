@@ -52,7 +52,12 @@ def lock_stock_warehouses(conn, *warehouse_ids, allow_inactive=False):
     if dialect != "postgresql" and not _table_exists(conn, "stock_warehouses"):
         return []
     placeholders = ",".join("?" for _ in ids)
-    sql = f"SELECT id,active FROM stock_warehouses WHERE id IN ({placeholders}) ORDER BY id"
+    # Older/minimal SQLite schemas used by legacy callers may not have the
+    # lifecycle column yet. Treat those rows as active for compatibility;
+    # initialized production schemas include `active` and enforce the guard.
+    has_active = dialect == "postgresql" or "active" in _columns(conn, "stock_warehouses")
+    active_projection = "active" if has_active else "1 AS active"
+    sql = f"SELECT id,{active_projection} FROM stock_warehouses WHERE id IN ({placeholders}) ORDER BY id"
     if dialect == "postgresql":
         sql += " FOR UPDATE"
     rows = _execute(conn, sql, ids).fetchall()
