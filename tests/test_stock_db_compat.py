@@ -65,7 +65,8 @@ class StockMetadataPostgreSQLTests(unittest.TestCase):
                     conn.execute(f'SET LOCAL search_path TO "{schema}"')
                     conn.execute("""
                         CREATE TABLE stock_warehouses (
-                            id BIGINT PRIMARY KEY
+                            id BIGINT PRIMARY KEY,
+                            active INTEGER NOT NULL DEFAULT 1
                         )
                     """)
                     conn.execute("INSERT INTO stock_warehouses(id) VALUES (3)")
@@ -174,7 +175,7 @@ class StockWarehouseLockTests(unittest.TestCase):
 
         class Cursor:
             def fetchall(self):
-                return [{"id": 3}, {"id": 12}]
+                return [{"id": 3, "active": 1}, {"id": 12, "active": 1}]
 
         class FakePostgresConnection:
             __module__ = "psycopg"
