@@ -54,8 +54,10 @@ def extract_validated_backup(archive_path, candidate_path,
             raise ValueError("بصمة قاعدة البيانات داخل Manifest غير صالحة.")
         hasher = hashlib.sha256()
         written = 0
+        candidate_created = False
         try:
-            with archive.open(member, "r") as source, candidate_path.open("wb") as target:
+            with archive.open(member, "r") as source, candidate_path.open("xb") as target:
+                candidate_created = True
                 while True:
                     chunk = source.read(1024 * 1024)
                     if not chunk:
@@ -68,16 +70,21 @@ def extract_validated_backup(archive_path, candidate_path,
             if expected_sha256 is not None and hasher.hexdigest() != expected_sha256.lower():
                 raise ValueError("فشل التحقق من بصمة قاعدة البيانات داخل النسخة الاحتياطية.")
         except Exception:
-            candidate_path.unlink(missing_ok=True)
+            if candidate_created:
+                candidate_path.unlink(missing_ok=True)
             raise
-    connection = sqlite3.connect(str(candidate_path))
     try:
-        integrity = sqlite_integrity_check(connection)
-        tables = sqlite_table_names(connection)
-        if integrity != "ok" or not REQUIRED_TABLES.issubset(tables):
-            raise ValueError("قاعدة البيانات غير سليمة أو لا تطابق هيكل NEXUS ERP.")
-    finally:
-        connection.close()
+        connection = sqlite3.connect(str(candidate_path))
+        try:
+            integrity = sqlite_integrity_check(connection)
+            tables = sqlite_table_names(connection)
+            if integrity != "ok" or not REQUIRED_TABLES.issubset(tables):
+                raise ValueError("قاعدة البيانات غير سليمة أو لا تطابق هيكل NEXUS ERP.")
+        finally:
+            connection.close()
+    except Exception:
+        candidate_path.unlink(missing_ok=True)
+        raise
     return candidate_path
 
 
