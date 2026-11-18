@@ -55,7 +55,8 @@ from report_request_control import (ReportRequestGate, bounded_env_int,
                                     set_current_report_deadline,
                                     reset_current_report_deadline)
 from app_paths import DATA_DIR, DB_PATH, BACKUP_DIR, ensure_data_directory
-from backup_scheduler import create_backup_archive, next_backup_datetime, start_backup_scheduler
+from backup_scheduler import (create_backup_archive, ensure_initial_backup,
+                              next_backup_datetime, start_backup_scheduler)
 from system_health import health_bp
 from backup_restore import extract_validated_backup, restore_database_with_rollback
 from data_reset import clear_company_data
@@ -4555,6 +4556,8 @@ def restore_backup():
 # intended for isolated route tests that provide their own temporary database.
 if os.environ.get("NEXUS_SKIP_DB_INIT", "0").strip() != "1":
     initialize_database()
+    # Preserve the clean, initialized company baseline before any business data is entered.
+    ensure_initial_backup(DB_PATH, BACKUP_DIR)
     start_backup_scheduler(DB_PATH, BACKUP_DIR)
 
 if __name__ == "__main__":
