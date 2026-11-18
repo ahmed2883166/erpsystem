@@ -1,4 +1,6 @@
+import gc
 import sqlite3
+import weakref
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,6 +24,25 @@ class RequestScopedDatabaseTests(unittest.TestCase):
             for connection in (first, second):
                 with self.assertRaises(sqlite3.ProgrammingError):
                     connection.execute("SELECT 1")
+
+
+    def test_unreferenced_request_connection_is_released_before_context_teardown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "released-in-request.db"
+            app = Flask(__name__)
+            with app.app_context():
+                def create_and_release():
+                    connection = connect_database(path, isolation_level=None)
+                    connection.execute("CREATE TABLE probe (id INTEGER PRIMARY KEY)")
+                    return weakref.ref(connection)
+
+                reference = create_and_release()
+                gc.collect()
+                self.assertIsNone(reference())
+                # Windows refuses to unlink an open SQLite database file.
+                path.unlink()
+                self.assertFalse(path.exists())
+
 
     def test_connections_outside_app_context_remain_independent(self):
         with tempfile.TemporaryDirectory() as directory:
