@@ -169,6 +169,17 @@ class SQLitePostgresVerifierUnitTests(unittest.TestCase):
         self.assertEqual(_canonical_cell(1, "boolean"), _canonical_cell(True, "boolean"))
         self.assertEqual(_canonical_cell("10.0", "numeric"), _canonical_cell(Decimal("10.00"), "numeric"))
 
+    def test_canonical_numeric_fingerprint_does_not_round_large_amounts(self):
+        exact = Decimal("123456789012345678901234567890.12345678901234567890")
+        self.assertEqual(
+            _canonical_cell(exact, "numeric"),
+            _canonical_cell("123456789012345678901234567890.1234567890123456789000", "numeric"),
+        )
+        self.assertNotEqual(
+            _canonical_cell(exact, "numeric"),
+            _canonical_cell("123456789012345678901234567890.12345678901234567891", "numeric"),
+        )
+
     def test_canonical_content_rejects_unknown_postgres_types(self):
         with self.assertRaisesRegex(ValueError, "Unsupported PostgreSQL type"):
             _canonical_cell("value", "USER-DEFINED")
