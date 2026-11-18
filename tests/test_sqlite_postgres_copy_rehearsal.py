@@ -83,6 +83,47 @@ class SQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
             self.pg.close()
             self.temp_dir.cleanup()
 
+    def test_failed_mid_copy_rolls_back_every_target_table_and_preserves_source(self):
+        self.pg.execute(f"""
+            CREATE FUNCTION "{self.schema}".reject_journal_line()
+            RETURNS trigger LANGUAGE plpgsql AS $
+            BEGIN
+                RAISE EXCEPTION 'intentional migration rollback rehearsal';
+            END;
+            $;
+            CREATE TRIGGER reject_journal_line
+            BEFORE INSERT ON "{self.schema}".journal_lines
+            FOR EACH ROW EXECUTE FUNCTION "{self.schema}".reject_journal_line();
+        """)
+
+        with self.assertRaises(Exception):
+            copy_database(
+                self.sqlite_path,
+                POSTGRES_DSN,
+                schema=self.schema,
+                batch_size=1,
+                apply=True,
+            )
+
+        # Parent rows were inserted before the journal-line trigger fired.
+        # The transaction must roll all of them back, not leave a partial copy.
+        for table in ("accounts", "journal_entries", "journal_lines"):
+            count = self.pg.execute(
+                f'SELECT COUNT(*) AS n FROM "{self.schema}"."{table}"'
+            ).fetchone()["n"]
+            self.assertEqual(count, 0, f"partial rows remained in {table}")
+
+        source = sqlite3.connect(f"file:{self.sqlite_path}?mode=ro", uri=True)
+        try:
+            self.assertEqual(source.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            self.assertEqual(source.execute("SELECT COUNT(*) FROM accounts").fetchone()[0], 2)
+            self.assertEqual(source.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 2)
+            self.assertEqual(source.execute("SELECT COUNT(*) FROM journal_lines").fetchone()[0], 4)
+            with self.assertRaises(sqlite3.OperationalError):
+                source.execute("INSERT INTO accounts(id, code) VALUES (99, 'blocked')")
+        finally:
+            source.close()
+
     def test_copy_and_financial_verification_preserve_all_rows_and_totals(self):
         result = copy_database(
             self.sqlite_path,
