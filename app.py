@@ -3944,7 +3944,8 @@ IMPORT_DATASETS = {
             {"key": "employee_code", "label": "كود الموظف", "required": True},
             {"key": "full_name", "label": "اسم الموظف", "required": True},
             {"key": "hire_date", "label": "تاريخ التعيين (YYYY-MM-DD)", "required": True},
-            {"key": "basic_salary", "label": "الراتب الأساسي", "required": True},
+            {"key": "basic_salary", "label": "الأجر الأساسي", "required": True},
+            {"key": "insured_wage", "label": "الأجر التأميني", "required": False},
             {"key": "job_title", "label": "الوظيفة", "required": False},
             {"key": "department", "label": "الإدارة / القسم", "required": False},
             {"key": "address", "label": "العنوان", "required": False},
@@ -4323,8 +4324,11 @@ def import_data_wizard():
                             raise ValueError("كود الموظف والاسم وتاريخ التعيين حقول إلزامية.")
                         date.fromisoformat(clean["hire_date"])
                         salary = Decimal(clean["basic_salary"])
+                        insured_wage = Decimal(clean.get("insured_wage") or "0")
                         if not salary.is_finite() or salary < 0:
-                            raise ValueError("الراتب الأساسي يجب أن يكون رقمًا غير سالب.")
+                            raise ValueError("الأجر الأساسي يجب أن يكون رقمًا غير سالب.")
+                        if not insured_wage.is_finite() or insured_wage < 0:
+                            raise ValueError("الأجر التأميني يجب أن يكون رقمًا غير سالب.")
                         status = clean.get("work_status") or "permanent"
                         if status not in {"permanent", "temporary", "comprehensive_bonus", "unpaid_leave", "resigned", "retired"}:
                             raise ValueError("حالة العمل غير معروفة.")
@@ -4334,10 +4338,11 @@ def import_data_wizard():
                         if status in {"resigned", "retired"} and not termination_date:
                             raise ValueError("يجب تحديد تاريخ انتهاء الخدمة للموظف المستقيل أو المحال للمعاش.")
                         execute_compat(connection, """INSERT INTO employees
-                            (employee_code,full_name,job_title,department,hire_date,basic_salary,address,national_id,work_status,termination_date)
-                            VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                            (employee_code,full_name,job_title,department,hire_date,basic_salary,insured_wage,
+                             address,national_id,work_status,termination_date)
+                            VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                             (clean["employee_code"], clean["full_name"], clean.get("job_title",""),
-                             clean.get("department",""), clean["hire_date"], str(salary),
+                             clean.get("department",""), clean["hire_date"], str(salary), str(insured_wage),
                              clean.get("address",""), clean.get("national_id",""), status, termination_date))
                     elif dataset in {"customers", "suppliers"}:
                         if not clean["code"] or not clean["name"]:
