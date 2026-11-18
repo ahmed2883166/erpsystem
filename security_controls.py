@@ -1,17 +1,18 @@
 """Small, database-agnostic helpers for security-sensitive workflows."""
 
 from db_compat import table_columns, table_names
+from db_sql import execute_compat
 
 
 def login_attempts_exceeded(connection, username, remote_addr, cutoff_text,
                             username_limit=5, ip_limit=20):
     """Return True when either the account/IP or aggregate IP limit is reached."""
-    attempts = connection.execute(
+    attempts = execute_compat(connection,
         """SELECT COUNT(*) FROM login_attempts
            WHERE username=? AND remote_addr=? AND attempted_at>=?""",
         (username, remote_addr, cutoff_text),
     ).fetchone()[0]
-    ip_attempts = connection.execute(
+    ip_attempts = execute_compat(connection,
         """SELECT COUNT(*) FROM login_attempts
            WHERE remote_addr=? AND attempted_at>=?""",
         (remote_addr, cutoff_text),
@@ -40,7 +41,7 @@ def linked_operational_source(connection, entry_id):
         quoted_table = '"' + table_name.replace('"', '""') + '"'
         for column in journal_columns:
             quoted_column = '"' + column.replace('"', '""') + '"'
-            if connection.execute(
+            if execute_compat(connection,
                 "SELECT 1 FROM " + quoted_table + " WHERE " +
                 quoted_column + "=? LIMIT 1",
                 (entry_id,),
