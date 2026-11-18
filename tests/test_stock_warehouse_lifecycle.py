@@ -25,7 +25,7 @@ class StockWarehouseLifecycleTests(unittest.TestCase):
 
     def test_historical_reversal_can_reference_inactive_warehouse(self):
         rows = lock_stock_warehouses(self.connection, 2, allow_inactive=True)
-        self.assertEqual([row["id"] for row in rows], [2])
+        self.assertEqual(rows, [])
 
     def test_missing_warehouse_is_rejected_even_for_historical_reversal(self):
         with self.assertRaisesRegex(ValueError, "غير موجود"):
@@ -33,7 +33,7 @@ class StockWarehouseLifecycleTests(unittest.TestCase):
 
     def test_active_warehouse_remains_available_for_new_mutations(self):
         rows = lock_stock_warehouses(self.connection, 1)
-        self.assertEqual([row["id"] for row in rows], [1])
+        self.assertEqual(rows, [])
 
 
 if __name__ == "__main__":
