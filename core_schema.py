@@ -1,9 +1,8 @@
 """Core NEXUS relational schema, separated from Flask startup orchestration.
 
-This first extraction preserves the existing SQLite DDL byte-for-byte in
-meaning. It intentionally does not claim PostgreSQL compatibility yet:
-dialect-specific identity, trigger, and migration behavior still needs a
-separate reviewed migration layer.
+This first extraction preserves the existing SQLite DDL and adds the
+PostgreSQL identity behavior required by generated integer primary keys.
+It covers only the ten foundational tables, not the complete ERP schema.
 """
 from db_compat import database_dialect, execute_script, table_columns
 
