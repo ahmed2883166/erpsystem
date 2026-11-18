@@ -178,18 +178,24 @@ def main() -> int:
                              FROM stock_valuation_layers WHERE product_id=? AND warehouse_id=?""",
                         (product_id, warehouse_id),
                     ).fetchone()
+                    sales_observed = {
+                        "invoice": dict(posted_invoice) if posted_invoice else None,
+                        "returned_total_cost": str(invoice.get("total_cost")),
+                        "remaining_layer": dict(remaining_layer) if remaining_layer else None,
+                    }
                     if (
                         not posted_invoice
                         or not posted_invoice["journal_entry_id"]
                         or not posted_invoice["cogs_journal_entry_id"]
                         or Decimal(str(posted_invoice["total_amount"])) != Decimal("40.00")
                         or Decimal(str(invoice["total_cost"])) != Decimal("10.00")
+                        or not remaining_layer
                         or Decimal(str(remaining_layer["qty_remaining"])) != Decimal("8")
                         or Decimal(str(remaining_layer["value_remaining"])) != Decimal("40")
                     ):
                         raise AssertionError(
                             "PostgreSQL sales workflow did not reconcile invoice, COGS, "
-                            "and remaining inventory valuation."
+                            f"and remaining inventory valuation. Observed={sales_observed!r}"
                         )
                     sales_flow = {
                         "invoice_id": invoice["invoice_id"],
