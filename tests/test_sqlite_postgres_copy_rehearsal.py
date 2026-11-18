@@ -86,11 +86,11 @@ class SQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
     def test_failed_mid_copy_rolls_back_every_target_table_and_preserves_source(self):
         self.pg.execute(f"""
             CREATE FUNCTION "{self.schema}".reject_journal_line()
-            RETURNS trigger LANGUAGE plpgsql AS $
+            RETURNS trigger LANGUAGE plpgsql AS $$
             BEGIN
                 RAISE EXCEPTION 'intentional migration rollback rehearsal';
             END;
-            $;
+            $$;
             CREATE TRIGGER reject_journal_line
             BEFORE INSERT ON "{self.schema}".journal_lines
             FOR EACH ROW EXECUTE FUNCTION "{self.schema}".reject_journal_line();
