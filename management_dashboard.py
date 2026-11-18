@@ -283,7 +283,10 @@ def initialize_management_dashboard_schema(conn, activity):
             BEGIN
                 UPDATE management_dashboard_data_version
                    SET version=version+1 WHERE id=1;
-                IF TG_OP = 'DELETE' THEN\n                    RETURN OLD;\n                END IF;\n                RETURN NEW;
+                IF TG_OP = 'DELETE' THEN
+                    RETURN OLD;
+                END IF;
+                RETURN NEW;
             END;
             $nexus_dashboard$
         """)
