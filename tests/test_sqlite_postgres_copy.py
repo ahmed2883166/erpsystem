@@ -24,6 +24,14 @@ class SQLitePostgresPreflightForeignKeyTests(unittest.TestCase):
             "parent": {"columns": ["id"], "row_count": 0},
             "child": {"columns": ["id", "parent_id"], "row_count": 0},
         }
+        target_tables = {
+            **tables,
+            # Installed by postgres_baseline.py; metadata is not SQLite business data.
+            "nexus_schema_installation": {
+                "columns": ["id", "baseline_sha256", "installed_at"],
+                "row_count": 1,
+            },
+        }
         return (
             {
                 "integrity_check": ["ok"],
@@ -31,7 +39,7 @@ class SQLitePostgresPreflightForeignKeyTests(unittest.TestCase):
                 "foreign_keys": [fk],
                 "tables": tables,
             },
-            {"foreign_keys": target_foreign_keys, "tables": tables},
+            {"foreign_keys": target_foreign_keys, "tables": target_tables},
         )
 
     def test_preflight_blocks_missing_postgres_foreign_key(self):
@@ -362,6 +370,17 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
                     supplier_id BIGINT
                 )
             ''')
+            conn.execute(f'''
+                CREATE TABLE "{self.schema}"."nexus_schema_installation" (
+                    id SMALLINT PRIMARY KEY,
+                    baseline_sha256 CHAR(64) NOT NULL,
+                    installed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            conn.execute(
+                f'INSERT INTO "{self.schema}"."nexus_schema_installation"(id,baseline_sha256) VALUES (1,%s)',
+                ("a" * 64,),
+            )
 
     def test_real_postgres_copy_preserves_ids_relationships_decimals_and_sequences(self):
         import psycopg
