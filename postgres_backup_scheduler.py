@@ -117,14 +117,16 @@ def run_due_postgres_backup(dsn, backup_dir):
             connection.execute("SELECT pg_advisory_xact_lock(%s)", (_ADVISORY_LOCK_KEY,))
             _write_settings(connection, {"backup_next_run": retry_at})
 
+    status_values = {
+        "backup_last_run": datetime.now().isoformat(timespec="seconds"),
+        "backup_last_status": status,
+        "backup_last_error": error,
+    }
+    if status == "success":
+        status_values["backup_last_file"] = filename
     with psycopg.connect(dsn) as connection:
         connection.execute("SELECT pg_advisory_xact_lock(%s)", (_ADVISORY_LOCK_KEY,))
-        _write_settings(connection, {
-            "backup_last_run": datetime.now().isoformat(timespec="seconds"),
-            "backup_last_status": status,
-            "backup_last_error": error,
-            "backup_last_file": filename,
-        })
+        _write_settings(connection, status_values)
     return archive
 
 
