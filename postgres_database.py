@@ -35,7 +35,10 @@ def _connection_settings(
     if isinstance(connect_timeout, bool):
         raise ValueError("connect_timeout must be an integer from 1 to 30 seconds.")
     try:
-        connect_timeout = int(connect_timeout)
+        timeout_text = str(connect_timeout).strip()
+        if not timeout_text.isdecimal():
+            raise ValueError
+        connect_timeout = int(timeout_text)
     except (TypeError, ValueError) as exc:
         raise ValueError("connect_timeout must be an integer from 1 to 30 seconds.") from exc
     if not 1 <= connect_timeout <= MAX_CONNECT_TIMEOUT_SECONDS:
