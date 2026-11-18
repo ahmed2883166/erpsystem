@@ -338,7 +338,7 @@ class GeneratedIdCompatibilityTests(unittest.TestCase):
             connection.statements,
             [(
                 "INSERT INTO generated_probe(label) "
-                "SELECT %s WHERE %s::jsonb ?? 'enabled' RETURNING id",
+                "SELECT %s WHERE %s::jsonb ? 'enabled' RETURNING id",
                 ("x", '{"enabled": true}'),
             )],
         )
