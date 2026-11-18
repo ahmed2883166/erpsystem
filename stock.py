@@ -48,9 +48,12 @@ def lock_stock_warehouses(conn, *warehouse_ids, allow_inactive=False):
     ids = sorted({int(value) for value in warehouse_ids if value not in (None, 0, "")})
     if not ids:
         return []
+    dialect = database_dialect(conn)
+    if dialect != "postgresql" and not _table_exists(conn, "stock_warehouses"):
+        return []
     placeholders = ",".join("?" for _ in ids)
     sql = f"SELECT id,active FROM stock_warehouses WHERE id IN ({placeholders}) ORDER BY id"
-    if database_dialect(conn) == "postgresql":
+    if dialect == "postgresql":
         sql += " FOR UPDATE"
     rows = _execute(conn, sql, ids).fetchall()
     locked = {int(row["id"]) for row in rows}
