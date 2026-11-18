@@ -1717,5 +1717,50 @@ class WorkforceTests(unittest.TestCase):
         workbook.close()
 
 
+    def test_existing_employee_edit_cannot_change_basic_or_insured_wage_directly(self):
+        self.add_employee()
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("UPDATE employees SET insured_wage='8500' WHERE id=1")
+        conn.commit()
+        conn.close()
+
+        response = self.client.post("/hr/1/edit", data={
+            "employee_code": "E001",
+            "full_name": "Employee One Updated",
+            "hire_date": "2026-01-01",
+            "basic_salary": "99999",
+            "insured_wage": "88888",
+            "standard_hours": "200",
+            "legal_category": "local",
+            "insurance_enabled": "1",
+            "work_status": "permanent",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        wages = conn.execute(
+            "SELECT basic_salary,insured_wage FROM employees WHERE id=1"
+        ).fetchone()
+        conn.close()
+        self.assertEqual(wages, ("10000", "8500"))
+
+    def test_invalid_employee_salary_input_returns_validation_redirect_not_500(self):
+        response = self.client.post("/hr", data={
+            "full_name": "Invalid Salary Employee",
+            "hire_date": "2026-11-01",
+            "basic_salary": "not-a-number",
+            "insured_wage": "0",
+            "standard_hours": "208",
+            "legal_category": "local",
+            "work_status": "permanent",
+        })
+        self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        count = conn.execute(
+            "SELECT COUNT(*) FROM employees WHERE full_name='Invalid Salary Employee'"
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(count, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
