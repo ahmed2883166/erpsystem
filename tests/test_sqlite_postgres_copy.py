@@ -4,6 +4,7 @@ from decimal import Decimal
 from scripts.copy_sqlite_to_postgres import copy_database, dependency_order, normalize_value, order_self_referencing_rows, quote_ident
 from scripts.verify_sqlite_postgres_copy import (
     _compare_decimal_maps,
+    _unbalanced_groups,
     _decimal,
     _missing_control_columns,
     _journal_entry_key,
@@ -156,6 +157,18 @@ class SQLitePostgresVerifierUnitTests(unittest.TestCase):
             {tuple(item["key"]) for item in issues},
             {(1,), (2,), (3,)},
         )
+
+    def test_journal_balance_invariant_reports_unbalanced_entries(self):
+        unbalanced = _unbalanced_groups(
+            {(10,): Decimal("100.00"), (20,): Decimal("5.00")},
+            {(10,): Decimal("100.00"), (20,): Decimal("4.00")},
+        )
+        self.assertEqual(unbalanced, [{
+            "key": [20],
+            "debit": "5.00",
+            "credit": "4.00",
+            "difference": "1.00",
+        }])
 
     def test_journal_entry_reference_detection_supports_legacy_names(self):
         self.assertEqual(_journal_entry_key({"debit", "entry_id"}), "entry_id")
@@ -331,9 +344,13 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
                 "INSERT INTO entries(id, account_id, amount) VALUES (7, 3, ?)",
                 (amount,),
             )
-            conn.execute(
+            conn.executemany(
                 "INSERT INTO journal_lines(id, entry_id, account_id, debit, credit, customer_id, supplier_id) "
-                "VALUES (8, 7, 3, '12.50', '0.00', 11, 21)"
+                "VALUES (?, 7, ?, ?, ?, ?, ?)",
+                [
+                    (8, 3, "12.50", "0.00", 11, 21),
+                    (9, 1, "0.00", "12.50", None, None),
+                ],
             )
             conn.commit()
         finally:
@@ -390,11 +407,11 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
             source_path, self.dsn, self.schema, batch_size=2, apply=True
         )
         self.assertTrue(result["committed"])
-        self.assertEqual(result["total_rows"], 5)
+        self.assertEqual(result["total_rows"], 6)
         verification = verify_copy(source_path, self.dsn, self.schema)
         self.assertTrue(verification["passed"], verification["issues"])
         self.assertEqual(verification["source_table_count"], 3)
-        self.assertEqual(verification["source_row_count"], 5)
+        self.assertEqual(verification["source_row_count"], 6)
         with psycopg.connect(self.dsn) as conn:
             accounts = conn.execute(
                 f'SELECT id, parent_id FROM "{self.schema}"."accounts" ORDER BY id'
