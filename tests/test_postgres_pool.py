@@ -151,6 +151,66 @@ class PostgreSQLPoolLifecycleTests(unittest.TestCase):
                         )
         self.assertEqual(FakeConnectionPool.instances, [])
 
+POSTGRES_DSN = __import__("os").environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
+
+
+@unittest.skipUnless(POSTGRES_DSN, "NEXUS_TEST_POSTGRES_DSN is not configured")
+class PostgreSQLPoolIntegrationTests(unittest.TestCase):
+    def test_pool_leases_commit_and_rollback_before_reuse(self):
+        import uuid
+
+        from postgres_database import create_postgres_pool
+
+        table = "pool_probe_" + uuid.uuid4().hex
+        pool = create_postgres_pool(
+            POSTGRES_DSN, min_size=1, max_size=1, timeout=10
+        )
+        try:
+            with pool.connection() as connection:
+                connection.execute(
+                    f'CREATE TEMP TABLE "{table}" (value INTEGER NOT NULL)'
+                )
+                connection.execute(
+                    f'INSERT INTO "{table}" (value) VALUES (%s)', (10,)
+                )
+
+            # A pool lease is returned only after its transaction is committed.
+            with pool.connection() as connection:
+                row = connection.execute(
+                    f'SELECT value FROM "{table}"'
+                ).fetchone()
+                self.assertEqual(row["value"], 10)
+                with self.assertRaisesRegex(RuntimeError, "force rollback"):
+                    with pool.connection() as nested:
+                        nested.execute(
+                            f'INSERT INTO "{table}" (value) VALUES (%s)', (20,)
+                        )
+                        raise RuntimeError("force rollback")
+
+            with pool.connection() as connection:
+                rows = connection.execute(
+                    f'SELECT value FROM "{table}" ORDER BY value'
+                ).fetchall()
+                self.assertEqual([row["value"] for row in rows], [10])
+        finally:
+            pool.close()
+
+    def test_pool_waits_for_initial_connections_and_reports_stats(self):
+        from postgres_database import create_postgres_pool
+
+        pool = create_postgres_pool(
+            POSTGRES_DSN, min_size=1, max_size=2, timeout=10
+        )
+        try:
+            stats = pool.get_stats()
+            self.assertGreaterEqual(stats.get("pool_size", 0), 1)
+            with pool.connection() as connection:
+                self.assertEqual(
+                    connection.execute("SELECT 1 AS ready").fetchone()["ready"], 1
+                )
+        finally:
+            pool.close()
+
 
 if __name__ == "__main__":
     unittest.main()
