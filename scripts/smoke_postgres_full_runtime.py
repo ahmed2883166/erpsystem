@@ -8,6 +8,7 @@ and removes only its own schema.
 from __future__ import annotations
 
 import argparse
+from datetime import date
 import os
 import re
 import sys
@@ -83,6 +84,26 @@ def main() -> int:
                             "PostgreSQL bootstrap did not seed the admin, chart of "
                             f"accounts, and company settings: users={user_count}, "
                             f"accounts={account_count}, settings={settings_count}"
+                        )
+                    # Exercise a real dashboard read on the initialized PostgreSQL
+                    # schema. This covers transaction-state handling and the query
+                    # layer, not only DDL/bootstrap and the login route.
+                    from datetime import date
+                    from management_dashboard import cached_management_snapshot
+                    from db_compat import transaction_is_active
+
+                    today = date.today()
+                    period_start = today.replace(day=1)
+                    dashboard_snapshot = cached_management_snapshot(
+                        connection, period_start, today
+                    )
+                    if not isinstance(dashboard_snapshot, dict) or not dashboard_snapshot:
+                        raise AssertionError(
+                            "PostgreSQL management dashboard returned an empty snapshot."
+                        )
+                    if transaction_is_active(connection):
+                        raise AssertionError(
+                            "PostgreSQL dashboard snapshot left an open transaction."
                         )
                 finally:
                     connection.close()
