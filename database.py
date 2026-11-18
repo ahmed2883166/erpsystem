@@ -40,6 +40,13 @@ def _teardown_sqlite_connections(exception=None):
         _close_app_context_connections(connections)
 
 
+def register_sqlite_connection_teardown(app):
+    """Register connection cleanup during app setup, before its first request."""
+    if not app.extensions.get("nexus_sqlite_connection_teardown"):
+        app.teardown_appcontext(_teardown_sqlite_connections)
+        app.extensions["nexus_sqlite_connection_teardown"] = True
+
+
 def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="", decimal_aggregates=True):
     """Open a consistently configured SQLite connection.
 
@@ -56,10 +63,8 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
         if connections is None:
             connections = set()
             g._nexus_database_connections = connections
-            app = current_app._get_current_object()
-            if not app.extensions.get("nexus_sqlite_connection_teardown"):
-                app.teardown_appcontext(_teardown_sqlite_connections)
-                app.extensions["nexus_sqlite_connection_teardown"] = True
+            # Teardown hooks are registered during Flask app setup, never lazily
+            # from a request after Flask has frozen its setup state.
     connection = sqlite3.connect(
         str(Path(path)), timeout=timeout, isolation_level=isolation_level,
         factory=_TrackedSQLiteConnection,
