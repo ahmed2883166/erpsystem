@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from flask import Flask
+from database import connect_database
 import purchases
 
 
@@ -22,10 +23,7 @@ class PurchaseRequestWorkflowTests(unittest.TestCase):
         self.temp.cleanup()
 
     def _connect(self):
-        conn = sqlite3.connect(self.path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+        return connect_database(self.path)
 
     def _create_schema(self):
         conn = self._connect()
