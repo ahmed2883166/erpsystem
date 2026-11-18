@@ -41,6 +41,7 @@ class FullNEXUSSQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
                 str(REPOSITORY_ROOT / "scripts" / "export_initialized_sqlite_schema.py"),
                 "--database-output",
                 str(self.sqlite_path),
+                "--seed-representative-data",
             ],
             cwd=REPOSITORY_ROOT,
             check=True,
@@ -101,6 +102,8 @@ class FullNEXUSSQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
         )
         self.assertGreater(result["table_row_counts"].get("users", 0), 0)
         self.assertGreater(result["table_row_counts"].get("accounts", 0), 0)
+        self.assertEqual(result["table_row_counts"].get("journal_entries"), 1)
+        self.assertEqual(result["table_row_counts"].get("journal_lines"), 2)
 
         report = verify_copy(str(self.sqlite_path), POSTGRES_DSN, schema=self.schema)
         self.assertTrue(report["source_integrity_ok"])
@@ -113,6 +116,10 @@ class FullNEXUSSQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
             [],
             report["financial_and_inventory_controls_skipped"],
         )
+        self.assertIn("journal_lines.debit_total", report["financial_and_inventory_controls"])
+        self.assertIn("journal_lines.credit_total", report["financial_and_inventory_controls"])
+        self.assertIn("journal_lines.debit_by_entry", report["financial_and_inventory_controls"])
+        self.assertIn("journal_lines.credit_by_entry", report["financial_and_inventory_controls"])
         self.assertTrue(report["passed"], report)
 
 
