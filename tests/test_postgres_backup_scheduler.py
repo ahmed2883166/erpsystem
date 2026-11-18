@@ -64,10 +64,11 @@ class PostgreSQLBackupSchedulerTests(unittest.TestCase):
                         "backup_last_status": "scheduled",
                         "backup_last_error": "",
                     }
-                    connection.executemany(
-                        "INSERT INTO company_settings(setting_key,setting_value) VALUES(%s,%s)",
-                        list(values.items()),
-                    )
+                    with connection.cursor() as cursor:
+                        cursor.executemany(
+                            "INSERT INTO company_settings(setting_key,setting_value) VALUES(%s,%s)",
+                            list(values.items()),
+                        )
 
                 initial = ensure_initial_postgres_backup(dsn, folder)
                 self.assertIsNotNone(initial)
