@@ -45,7 +45,7 @@ from activity_profiles import (initialize_activity_profiles_schema, list_activit
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page, register_sqlite_connection_teardown
-from database_backend import require_supported_runtime_backend
+from database_backend import require_supported_runtime_backend, configured_database_backend
 from core_schema import initialize_core_schema, ensure_legacy_core_columns
 from company_defaults import seed_company_defaults
 from sqlite_accounting_migrations import migrate_journal_line_amounts_to_text
@@ -62,6 +62,13 @@ from backup_scheduler import (create_backup_archive, ensure_initial_backup,
                               next_backup_datetime, start_backup_scheduler)
 from system_health import health_bp
 from backup_restore import extract_validated_backup, restore_database_with_rollback
+from postgres_backup import (
+    create_postgres_backup_archive, validate_postgres_backup_archive,
+    restore_postgres_backup_to_new_database,
+)
+from postgres_backup_scheduler import (
+    ensure_initial_postgres_backup, start_postgres_backup_scheduler,
+)
 from data_reset import clear_company_data
 from income_statement import (build_income_statement, normalize_income_statement_period,
                                comparison_period, add_income_statement_comparison,
@@ -4455,7 +4462,13 @@ def create_backup():
     connection = db()
     keep_row = execute_compat(connection, "SELECT setting_value FROM company_settings WHERE setting_key='backup_keep_count'").fetchone()
     connection.close()
-    filename = create_backup_archive(DB_PATH, BACKUP_DIR, int(keep_row["setting_value"]) if keep_row else 30)
+    keep_count = int(keep_row["setting_value"]) if keep_row else 30
+    if configured_database_backend() == "postgresql":
+        filename = create_postgres_backup_archive(
+            os.environ.get("NEXUS_POSTGRES_DSN"), BACKUP_DIR, keep_count
+        )
+    else:
+        filename = create_backup_archive(DB_PATH, BACKUP_DIR, keep_count)
     log("backup_created", filename.name)
     return send_file(filename, as_attachment=True, download_name=filename.name)
 
@@ -4463,7 +4476,9 @@ def create_backup():
 @app.route("/backup/download/<filename>")
 @requires("backup.manage")
 def backup_download(filename):
-    if (Path(filename).name != filename or not filename.startswith("nexus-backup-")
+    allowed_prefixes = ("nexus-backup-", "nexus-postgres-backup-")
+    if (Path(filename).name != filename
+            or not filename.startswith(allowed_prefixes)
             or not filename.endswith(".zip")):
         return "Not found", 404
     archive_path = BACKUP_DIR / filename
@@ -4514,12 +4529,18 @@ def backup_settings():
     settings = {row["setting_key"]: row["setting_value"] for row in execute_compat(connection, 
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key LIKE 'backup_%'")}
     connection.close()
-    files = sorted(BACKUP_DIR.glob("nexus-backup-*.zip"),
-                   key=lambda item: item.stat().st_mtime, reverse=True)
+    files = sorted(
+        [*BACKUP_DIR.glob("nexus-backup-*.zip"),
+         *BACKUP_DIR.glob("nexus-postgres-backup-*.zip")],
+        key=lambda item: item.stat().st_mtime, reverse=True,
+    )
     backup_files = [{"name": item.name, "size_mb": round(item.stat().st_size / 1024 / 1024, 2),
                      "modified": datetime.fromtimestamp(item.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")}
                     for item in files[:30]]
-    return render_template("backup_settings.html", settings=settings, files=backup_files)
+    return render_template(
+        "backup_settings.html", settings=settings, files=backup_files,
+        database_backend=configured_database_backend(),
+    )
 
 
 @app.route("/backup/run-now", methods=["POST"])
@@ -4529,7 +4550,12 @@ def backup_run_now():
     keep_row = execute_compat(connection, "SELECT setting_value FROM company_settings WHERE setting_key='backup_keep_count'").fetchone()
     keep_count = int(keep_row["setting_value"]) if keep_row else 30
     connection.close()
-    filename = create_backup_archive(DB_PATH, BACKUP_DIR, keep_count)
+    if configured_database_backend() == "postgresql":
+        filename = create_postgres_backup_archive(
+            os.environ.get("NEXUS_POSTGRES_DSN"), BACKUP_DIR, keep_count
+        )
+    else:
+        filename = create_backup_archive(DB_PATH, BACKUP_DIR, keep_count)
     connection = db()
     values = {"backup_last_run": now(), "backup_last_status": "success",
               "backup_last_error": "", "backup_last_file": filename.name}
@@ -4599,6 +4625,9 @@ def reset_company_data():
         settings_connection.close()
 
         # A verified backup must exist before the first destructive statement.
+        if configured_database_backend() == "postgresql":
+            flash("تصفير بيانات PostgreSQL سيُتاح بعد اكتمال اختبارات إعادة ضبط البيانات الخاصة به. لم يتم حذف أي بيانات.", "warning")
+            return redirect(url_for("backup_settings"))
         safety_archive = create_backup_archive(DB_PATH, BACKUP_DIR, keep_count)
         reset_connection = db()
         try:
@@ -4654,6 +4683,23 @@ def restore_backup():
         os.close(archive_fd)
         archive_path = Path(archive_name)
         temp_paths.append(archive_path)
+        if configured_database_backend() == "postgresql":
+            admin_dsn = (
+                os.environ.get("NEXUS_POSTGRES_ADMIN_DSN")
+                or os.environ.get("NEXUS_POSTGRES_DSN")
+            )
+            restored = restore_postgres_backup_to_new_database(
+                archive_path, admin_dsn
+            )
+            log("postgres_backup_restored_to_new_database", restored["database_name"])
+            flash(
+                "تم استرجاع النسخة والتحقق منها في قاعدة PostgreSQL مستقلة باسم "
+                f"{restored['database_name']}. لم يتم تغيير قاعدة التشغيل الحالية. "
+                "لتفعيل النسخة، حدّث NEXUS_POSTGRES_DSN ليشير إلى قاعدة الاستعادة ثم أعد تشغيل النظام.",
+                "success",
+            )
+            return redirect(url_for("backup_settings"))
+
         max_archive_bytes = 2 * 1024 * 1024 * 1024
         written = 0
         with archive_path.open("wb") as target:
@@ -4701,8 +4747,13 @@ def restore_backup():
 if os.environ.get("NEXUS_SKIP_DB_INIT", "0").strip() != "1":
     initialize_database()
     # Preserve the clean, initialized company baseline before any business data is entered.
-    ensure_initial_backup(DB_PATH, BACKUP_DIR)
-    start_backup_scheduler(DB_PATH, BACKUP_DIR)
+    if configured_database_backend() == "postgresql":
+        postgres_dsn = os.environ.get("NEXUS_POSTGRES_DSN")
+        ensure_initial_postgres_backup(postgres_dsn, BACKUP_DIR)
+        start_postgres_backup_scheduler(postgres_dsn, BACKUP_DIR)
+    else:
+        ensure_initial_backup(DB_PATH, BACKUP_DIR)
+        start_backup_scheduler(DB_PATH, BACKUP_DIR)
 
 if __name__ == "__main__":
     from waitress import serve
