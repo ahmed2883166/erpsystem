@@ -1,5 +1,6 @@
 """Budget planning and cash-flow reporting for NEXUS ERP."""
 from app_paths import DB_PATH
+from date_formatting import format_export_dates
 from database import connect_database
 from db_compat import (
     database_dialect, table_columns, table_exists, execute_script,
@@ -1411,7 +1412,7 @@ def budget_export(budget_id, fmt):
         sheet.title = "Budget vs Actual"
         sheet.append([company_name])
         sheet.append(["مقارنة الموازنة بالفعلي", plan["name"]])
-        sheet.append(["الفترة", plan["date_from"], plan["date_to"], "العملة", currency_code])
+        sheet.append(["الفترة", format_export_dates(plan["date_from"]), format_export_dates(plan["date_to"]), "العملة", currency_code])
         sheet.append(headers)
         for row in report_rows:
             sheet.append([float(v) if isinstance(v, Decimal) else v for v in row])
@@ -1468,7 +1469,7 @@ def budget_export(budget_id, fmt):
     head = ParagraphStyle("BudgetHead", parent=cell, textColor=colors.white, alignment=TA_CENTER)
     story = [Paragraph(pdf_text(company_name), heading),
              Paragraph(pdf_text("مقارنة الموازنة بالفعلي — " + plan["name"]), heading),
-             Paragraph(pdf_text(f"الفترة: {plan['date_from']} إلى {plan['date_to']} | العملة: {currency_code}"), cell),
+             Paragraph(pdf_text(f"الفترة: {format_export_dates(plan['date_from'])} إلى {format_export_dates(plan['date_to'])} | العملة: {currency_code}"), cell),
              Spacer(1, 4*mm)]
     data = [[Paragraph(pdf_text(x), head) for x in reversed(headers)]]
     for row in report_rows:
