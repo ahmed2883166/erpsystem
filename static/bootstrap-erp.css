@@ -363,3 +363,14 @@ main form.erp-form-grid > button { justify-self: start; min-width: 150px; }
   main form.erp-form-grid > .checkline,
   main form.erp-form-grid > button { grid-column: 1; }
 }
+
+
+/* Responsive movement-entry layout. */
+main form .form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  align-items: end;
+  gap: .85rem 1rem;
+}
+main form .form-row > div { min-width: 0; }
+main form .form-row small { display: block; margin-top: .35rem; color: var(--muted); }
