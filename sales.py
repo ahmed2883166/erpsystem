@@ -54,7 +54,7 @@ def _customer_for_update(conn, customer_id):
 
 
 def _sales_invoice_for_update(conn, invoice_id, posted_only=False):
-    """Serialize credit-note quantity/value checks against the same invoice."""
+    """Serialize invoice balance, receipt, refund and credit-note updates."""
     sql = "SELECT * FROM sales_invoices WHERE id=?"
     if posted_only:
         sql += " AND status='posted'"
@@ -1434,7 +1434,7 @@ def _inventory_method(conn):
 def post_customer_receipt(conn, invoice_id, receipt_date, amount, cash_account_id, created_by=None, reference=""):
     receipt_date = _validate_customer_advance_date(receipt_date)
     amount = _validated_customer_advance_amount(amount, "قيمة التحصيل")
-    invoice = execute_compat(conn, "SELECT * FROM sales_invoices WHERE id=? AND status='posted'", (invoice_id,)).fetchone()
+    invoice = _sales_invoice_for_update(conn, invoice_id, posted_only=True)
     if not invoice:
         raise ValueError("فاتورة العميل غير موجودة أو غير مرحلة.")
     if "invoice_date" in invoice.keys() and receipt_date < invoice["invoice_date"]:
@@ -1478,15 +1478,24 @@ def post_customer_receipt_batch(conn, customer_id, receipt_date, allocations, ca
     normalized = []
     seen = set()
     total = Decimal("0")
-    for invoice_id, raw_amount in allocations:
+    requested = list(allocations)
+    for invoice_id, _raw_amount in requested:
         if invoice_id in seen:
             raise ValueError("لا يمكن اختيار الفاتورة أكثر من مرة في نفس الإيصال.")
         seen.add(invoice_id)
-        amount = _validated_customer_advance_amount(raw_amount, "قيمة التوزيع على كل فاتورة")
-        invoice = execute_compat(conn, "SELECT * FROM sales_invoices WHERE id=? AND customer_id=? AND status='posted'",
-                               (invoice_id, customer_id)).fetchone()
-        if not invoice:
+
+    # Lock every invoice in a stable ID order before reading balances. This avoids
+    # over-collection by concurrent receipts and reduces deadlock risk in batches.
+    locked_invoices = {}
+    for invoice_id in sorted(seen, key=lambda value: int(value)):
+        invoice = _sales_invoice_for_update(conn, invoice_id, posted_only=True)
+        if not invoice or int(invoice["customer_id"]) != int(customer_id):
             raise ValueError("إحدى الفواتير المحددة لا تتبع العميل أو غير مرحلة.")
+        locked_invoices[invoice_id] = invoice
+
+    for invoice_id, raw_amount in requested:
+        amount = _validated_customer_advance_amount(raw_amount, "قيمة التوزيع على كل فاتورة")
+        invoice = locked_invoices[invoice_id]
         if "invoice_date" in invoice.keys() and receipt_date < invoice["invoice_date"]:
             raise ValueError("لا يمكن تسجيل تحصيل بتاريخ يسبق تاريخ إحدى فواتير البيع.")
         outstanding = (Decimal(invoice["total_amount"]) - Decimal(invoice["paid_amount"] or "0")
