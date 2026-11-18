@@ -274,6 +274,16 @@ def generate_postgres_ddl(snapshot):
         table["name"]: {column.get("name") for column in table.get("columns", [])}
         for table in tables
     }
+    primary_columns_by_table = {
+        table["name"]: [
+            column["name"]
+            for column in sorted(
+                (item for item in table.get("columns", []) if int(item.get("pk") or 0)),
+                key=lambda item: int(item.get("pk") or 0),
+            )
+        ]
+        for table in tables
+    }
     unknown_overrides = sorted(
         f"{table_name}.{column_name}"
         for table_name, column_name in POSTGRES_TYPE_OVERRIDES
@@ -417,7 +427,29 @@ def generate_postgres_ddl(snapshot):
                     raise ValueError(
                         f"Composite foreign key {table_name} has inconsistent target or actions."
                     )
-            pending_fks.append((table_name, fk_parts))
+                if part.get("from") not in columns_by_table[table_name]:
+                    raise ValueError(
+                        f"Foreign key source column {table_name}.{part.get('from')} is missing."
+                    )
+
+            # SQLite permits REFERENCES parent_table without naming the target
+            # columns. Resolve that shorthand to the parent's ordered primary key.
+            target_columns = [part.get("to") for part in fk_parts]
+            if any(value in (None, "") for value in target_columns):
+                if not all(value in (None, "") for value in target_columns):
+                    raise ValueError(
+                        f"Foreign key {table_name} mixes implicit and explicit target columns."
+                    )
+                target_columns = primary_columns_by_table.get(target_table, [])
+            if len(target_columns) != len(fk_parts) or not target_columns:
+                raise ValueError(
+                    f"Foreign key {table_name} has an unresolved target primary key on {target_table}."
+                )
+            if any(column not in columns_by_table[target_table] for column in target_columns):
+                raise ValueError(
+                    f"Foreign key {table_name} references a missing column on {target_table}."
+                )
+            pending_fks.append((table_name, fk_parts, target_columns))
 
         for index in table.get("indexes", []):
             if index.get("origin") == "pk":
@@ -466,10 +498,10 @@ def generate_postgres_ddl(snapshot):
 
 
     # Add foreign keys after every table exists; this supports cyclic references.
-    for counter, (table_name, fk_parts) in enumerate(pending_fks, start=1):
+    for counter, (table_name, fk_parts, resolved_target_columns) in enumerate(pending_fks, start=1):
         target_table = fk_parts[0]["table"]
         source_cols = ", ".join(quote_ident(part["from"]) for part in fk_parts)
-        target_cols = ", ".join(quote_ident(part["to"]) for part in fk_parts)
+        target_cols = ", ".join(quote_ident(column) for column in resolved_target_columns)
         raw_constraint = f"fk_{table_name}_{fk_parts[0]['from']}_{counter}"
         constraint = quote_ident(short_identifier(raw_constraint))
         action = str(fk_parts[0].get("on_delete") or "NO ACTION").upper()
