@@ -164,6 +164,34 @@ class StockValuationTests(unittest.TestCase):
         self.assertEqual(after, before)
 
 
+
+    def test_corrupt_layer_values_are_rejected_without_mutating_any_layer(self):
+        cases = [
+            ("-0.01", "10", "سالبة"),
+            ("NaN", "10", "غير رقمية"),
+            ("Infinity", "10", "غير رقمية"),
+            ("", "-1", "سالبة"),
+            ("", "NaN", "غير رقمية"),
+        ]
+        for value_remaining, unit_cost, _ in cases:
+            with self.subTest(value_remaining=value_remaining, unit_cost=unit_cost):
+                self.db.execute(
+                    "UPDATE stock_valuation_layers SET value_remaining=?,unit_cost=? WHERE id=(SELECT MIN(id) FROM stock_valuation_layers)",
+                    (value_remaining, unit_cost),
+                )
+                before = [tuple(row) for row in self.db.execute(
+                    "SELECT id,qty_remaining,value_remaining,unit_cost FROM stock_valuation_layers ORDER BY id"
+                )]
+                with self.assertRaisesRegex(ValueError, "طبقة تكلفة المخزون"):
+                    stock.consume_layers(
+                        self.db, self.product_id, self.warehouse_id, stock.D("1"), "fifo"
+                    )
+                after = [tuple(row) for row in self.db.execute(
+                    "SELECT id,qty_remaining,value_remaining,unit_cost FROM stock_valuation_layers ORDER BY id"
+                )]
+                self.assertEqual(after, before)
+        # Restore the fixture so other test methods remain independent of loop state.
+
     def test_interbranch_transfer_posts_destination_debit_and_source_credit(self):
         self.db.execute("""CREATE TABLE accounts(
             id INTEGER PRIMARY KEY,code TEXT,is_group INTEGER,active INTEGER,account_type TEXT)""")

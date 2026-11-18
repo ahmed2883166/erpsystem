@@ -825,13 +825,30 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
     # share one deterministic serialization point on PostgreSQL.
     lock_stock_warehouses(c, warehouse_id)
     layers = available_layers(c, product_id, warehouse_id, lot_id, location_id)
-    available = sum((D(x["qty_remaining"]) for x in layers), D("0"))
+    # Treat valuation-layer corruption as a hard stop. Reconciliation reports the
+    # underlying issue, but an operational issue must never consume a negative,
+    # non-finite, or non-numeric carrying value and create a misleading GL cost.
+    normalized_layers = []
+    for layer in layers:
+        try:
+            layer_qty = D(str(layer["qty_remaining"]))
+            unit_cost = D(str(layer["unit_cost"]))
+            layer_value = (
+                D(str(layer["value_remaining"]))
+                if layer["value_remaining"] not in (None, "")
+                else layer_qty * unit_cost
+            )
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValueError("طبقة تكلفة المخزون تحتوي على كمية أو تكلفة غير رقمية؛ أوقف الصرف وراجع تقرير المطابقة.")
+        if (not layer_qty.is_finite() or layer_qty <= 0
+                or not unit_cost.is_finite() or unit_cost < 0
+                or not layer_value.is_finite() or layer_value < 0):
+            raise ValueError("طبقة تكلفة المخزون تحتوي على قيمة سالبة أو غير صالحة؛ أوقف الصرف وراجع تقرير المطابقة.")
+        normalized_layers.append((layer, layer_qty, unit_cost, layer_value))
+    available = sum((item[1] for item in normalized_layers), D("0"))
     if available < qty:
         raise ValueError(f"الرصيد غير كافٍ. المتاح {q4(available)} والمطلوب {q4(qty)}.")
-    total_value = sum((
-        D(x["value_remaining"]) if x["value_remaining"] not in (None, "") else
-        D(x["qty_remaining"]) * D(x["unit_cost"]) for x in layers
-    ), D("0"))
+    total_value = sum((item[3] for item in normalized_layers), D("0"))
     avg_cost = total_value / available if available else D("0")
     target_issue_cost = money(qty * avg_cost) if valuation_method == "average" else None
     remaining_value_after_issue = (total_value - target_issue_cost) if valuation_method == "average" else None
@@ -840,8 +857,7 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
     # is assigned there and the sum of layer values stays equal to the GL value.
     quantity_to_issue = qty
     remaining_quantities = []
-    for candidate in layers:
-        candidate_qty = D(candidate["qty_remaining"])
+    for candidate, candidate_qty, _, _ in normalized_layers:
         candidate_take = min(candidate_qty, quantity_to_issue) if quantity_to_issue > 0 else D("0")
         remaining_quantities.append(candidate_qty - candidate_take)
         quantity_to_issue -= candidate_take
@@ -850,13 +866,10 @@ def consume_layers(c, product_id, warehouse_id, qty, valuation_method, lot_id=No
          if remaining_quantities[index] > 0), None
     )
     remaining, cost_total, allocations, layer_details = qty, D("0"), [], []
-    for layer_index, layer in enumerate(layers):
+    for layer_index, (layer, layer_qty, _, layer_value) in enumerate(normalized_layers):
         if remaining <= 0 and valuation_method != "average":
             break
-        layer_qty = D(layer["qty_remaining"])
         take = min(layer_qty, remaining) if remaining > 0 else D("0")
-        layer_value = (D(layer["value_remaining"]) if layer["value_remaining"] not in (None, "")
-                       else layer_qty * D(layer["unit_cost"]))
         if valuation_method == "average":
             # Moving average applies to every issued unit, including a whole layer.
             # Allocate issue cost and rebase the remaining layer values to the
