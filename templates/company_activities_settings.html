@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}الأنشطة المتعددة | NEXUS ERP{% endblock %}
+{% block content %}
+<header class="page-heading"><div><h2>إدارة الأنشطة المتعددة</h2><p>جهّز النشاط أولًا، ثم اربط كل دور بحساب تفصيلي مناسب قبل التفعيل. لا يعاد إنشاء دليل الحسابات ولا تتغير الأرصدة الحالية.</p></div></header>
+<section class="panel">
+  <h3>تجهيز حزمة نشاط</h3>
+  <form method="post" class="form-grid">
+    <input type="hidden" name="action" value="prepare">
+    <label>النشاط<select name="activity_code" required>{% for x in activity_options %}<option value="{{x.activity_code}}">{{x.label}} ({{x.activity_code}})</option>{% endfor %}</select></label>
+    <label>ملف النشاط<select name="profile_code" required>{% for x in activity_options %}<option value="{{x.activity_code}}">{{x.label}} ({{x.activity_code}})</option>{% endfor %}</select></label>
+    <div class="actions"><button type="submit">تجهيز الحزمة</button></div>
+  </form>
+</section>
+<section class="panel">
+  <h3>الحزم المسجلة</h3>
+  <div class="table-wrap"><table><thead><tr><th>النشاط</th><th>ملف النشاط</th><th>الحالة</th><th>أساسي</th><th>إجراء</th></tr></thead><tbody>
+  {% for pack in activity_packs %}
+  <tr><td>{{pack.activity_code}}</td><td>{{pack.profile_code}}</td><td>{{'مفعّل' if pack.enabled else 'مجهّز — غير مفعّل'}}</td><td>{{'نعم' if pack.is_primary else 'لا'}}</td><td>
+    {% if pack.enabled %}
+    {% if not pack.is_primary %}<form method="post" style="display:inline"><input type="hidden" name="action" value="disable"><input type="hidden" name="activity_code" value="{{pack.activity_code}}"><button class="btn secondary" type="submit">تعطيل</button></form>{% else %}<span class="muted">النشاط الأساسي</span>{% endif %}
+    {% else %}
+    <form method="post" style="display:inline"><input type="hidden" name="action" value="enable"><input type="hidden" name="activity_code" value="{{pack.activity_code}}"><input type="hidden" name="profile_code" value="{{pack.profile_code}}"><label><input type="checkbox" name="is_primary" value="1"> جعله أساسيًا</label><button type="submit">تفعيل بعد فحص التعارضات</button></form>
+    {% endif %}
+  </td></tr>
+  {% else %}<tr><td colspan="5">لم يتم تجهيز أي حزمة نشاط بعد.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+<section class="panel">
+  <h3>ربط أدوار الحسابات</h3>
+  <p class="muted">يمكن حفظ الربط للحزمة المجهّزة قبل تفعيلها. استخدم حسابات تفصيلية نشطة ومن النوع المحاسبي الصحيح. سيمنع النظام التفعيل إذا بقي دور متعارض بلا ربط أو اشترك دوران مختلفان في الحساب نفسه.</p>
+  <form method="post" class="form-grid">
+    <input type="hidden" name="action" value="map">
+    <label>النشاط<select name="activity_code" required>{% for pack in activity_packs %}<option value="{{pack.activity_code}}">{{pack.activity_code}} — {{'مفعّل' if pack.enabled else 'غير مفعّل'}}</option>{% endfor %}</select></label>
+    <label>الدور<select name="role" required>{% for role,kind in role_types.items()|sort %}<option value="{{role}}">{{role}} — {{kind}}</option>{% endfor %}</select></label>
+    <label>الحساب التفصيلي<select name="account_code" required>{% for a in accounts %}<option value="{{a.code}}">{{a.code}} — {{a.name_ar}} ({{a.account_type}})</option>{% endfor %}</select></label>
+    <div class="actions"><button type="submit" {% if not activity_packs %}disabled{% endif %}>حفظ ربط الحساب</button></div>
+  </form>
+  <div class="table-wrap"><table><thead><tr><th>النشاط</th><th>الدور</th><th>الحساب</th><th>النوع</th></tr></thead><tbody>
+  {% for m in mappings %}<tr><td>{{m.activity_code}}</td><td>{{m.role}}</td><td>{{m.account_code}} — {{m.name_ar or 'حساب غير موجود'}}</td><td>{{m.account_type or '—'}}</td></tr>{% else %}<tr><td colspan="4">لا توجد خرائط حسابات محفوظة.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

@@ -1166,6 +1166,86 @@ def company_setup():
     return render_template("company_setup.html", settings=settings, currencies=currencies, activities=ACTIVITY_LABELS, has_entries=has_entries)
 
 
+@app.route("/settings/company-activities", methods=["GET", "POST"])
+@requires("users.manage")
+def company_activities_settings():
+    from chart_templates import ACTIVITY_LABELS
+    from company_activities import (
+        ACTIVITY_ROLE_TYPES,
+        disable_company_activity,
+        enable_company_activity,
+        list_company_activities,
+        prepare_company_activity,
+        set_activity_posting_account,
+    )
+
+    connection = db()
+    if request.method == "POST":
+        activity_code = request.form.get("activity_code", "").strip().lower()
+        action = request.form.get("action", "").strip()
+        try:
+            if action == "prepare":
+                prepare_company_activity(
+                    connection, activity_code, request.form.get("profile_code") or activity_code
+                )
+                connection.commit()
+                flash("تم تجهيز حزمة النشاط كغير مفعّلة. اربط أدوار الحسابات قبل تفعيلها.", "success")
+            elif action == "map":
+                set_activity_posting_account(
+                    connection, activity_code, request.form.get("role", ""),
+                    request.form.get("account_code", ""),
+                )
+                connection.commit()
+                flash("تم حفظ ربط حساب النشاط بعد التحقق من نوع الحساب.", "success")
+            elif action == "enable":
+                packs = list_company_activities(connection)
+                make_primary = request.form.get("is_primary") == "1" or not any(
+                    row["enabled"] and row["is_primary"] for row in packs
+                )
+                enable_company_activity(
+                    connection, activity_code, request.form.get("profile_code") or activity_code,
+                    primary=make_primary,
+                )
+                connection.commit()
+                flash("تم تفعيل النشاط. ستظهر اختياراته في مستندات المبيعات والمشتريات.", "success")
+            elif action == "disable":
+                disable_company_activity(connection, activity_code)
+                connection.commit()
+                flash("تم تعطيل النشاط دون حذف خرائط الحسابات أو المستندات السابقة.", "success")
+            else:
+                raise ValueError("العملية المطلوبة غير معروفة.")
+        except (ValueError, TypeError, *DB_INTEGRITY_ERROR) as exc:
+            connection.rollback()
+            flash(safe_error_message(exc, "تعذر حفظ إعداد النشاط؛ لم يتم اعتماد التغيير."), "error")
+        finally:
+            connection.close()
+        return redirect(url_for("company_activities_settings"))
+
+    activity_packs = list_company_activities(connection)
+    accounts = connection.execute(
+        "SELECT code,name_ar,account_type FROM accounts "
+        "WHERE is_group=0 AND active=1 ORDER BY code"
+    ).fetchall()
+    mappings = connection.execute(
+        "SELECT m.activity_code,m.role,m.account_code,a.name_ar,a.account_type "
+        "FROM company_activity_account_map m LEFT JOIN accounts a ON a.code=m.account_code "
+        "ORDER BY m.activity_code,m.role"
+    ).fetchall()
+    activity_options = [
+        {"activity_code": code, "label": label}
+        for code, label in ACTIVITY_LABELS.items()
+    ]
+    connection.close()
+    return render_template(
+        "company_activities_settings.html",
+        activity_packs=activity_packs,
+        activity_options=activity_options,
+        accounts=accounts,
+        mappings=mappings,
+        role_types=ACTIVITY_ROLE_TYPES,
+    )
+
+
 @app.route("/settings/activity-profiles", methods=["GET", "POST"])
 @requires("users.manage")
 def activity_profiles():
