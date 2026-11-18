@@ -65,6 +65,26 @@ def enable_company_activity(conn, activity_code, profile_code=None, primary=Fals
         raise ValueError("ملف النشاط غير موجود أو غير نشط.")
     if profile["base_activity"] != activity_code:
         raise ValueError("ملف النشاط لا يطابق النشاط المطلوب.")
+    # Never enable a second activity while starter-chart codes or posting roles
+    # collide. The registry can hold multiple packs only after a unified chart
+    # and explicit role mappings have made the combination safe.
+    existing = [
+        row["activity_code"] for row in execute_compat(
+            conn,
+            "SELECT activity_code FROM company_activity_packs WHERE enabled=1 AND activity_code<>?",
+            (activity_code,),
+        ).fetchall()
+    ]
+    if existing:
+        from industry_packs import analyze_activity_pack_compatibility
+
+        report = analyze_activity_pack_compatibility(existing + [activity_code])
+        if not report["compatible"]:
+            raise ValueError(
+                "لا يمكن تفعيل النشاط مع الأنشطة الحالية قبل إعداد خريطة الحسابات الموحدة "
+                f"(تعارضات دليل الحسابات: {report['chart_conflict_count']}، "
+                f"تعارضات أدوار الترحيل: {report['role_conflict_count']})."
+            )
     if primary:
         execute_compat(conn, "UPDATE company_activity_packs SET is_primary=0 WHERE is_primary=1")
     execute_compat(conn, """
