@@ -59,7 +59,7 @@ class CompanyActivityPackTests(unittest.TestCase):
     def test_document_context_resolves_activity_specific_posting(self):
         enable_company_activity(self.conn, "service", primary=True)
         set_activity_posting_account(self.conn, "service", "revenue", "4100")
-        self.assertEqual(resolve_activity_posting_account(self.conn, "service", "revenue"), "4100")
+        self.assertEqual(resolve_activity_posting_account(self.conn, "revenue", "service"), "4100")
         self.assertEqual(resolve_activity_profile(self.conn, "service")["base_activity"], "service")
 
     def test_invalid_mapping_type_is_rejected(self):

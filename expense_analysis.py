@@ -84,13 +84,13 @@ def build_expense_analysis(conn, date_from, date_to, dimensions=None):
             bucket["amount"]+=amount
 
     month_expr = month_key_expression(conn, "je.entry_date")
-    month_rows=execute_compat(conn, f"""SELECT {month_expr} month,
+    month_rows=execute_compat(conn, f"""SELECT {month_expr} AS month_key,
         {decimal_net_expression(conn, "jl.debit", "jl.credit")} amount
         FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
         JOIN accounts a ON a.id=jl.account_id
         WHERE {' AND '.join(conditions)}
-        GROUP BY {month_expr} ORDER BY month""",params).fetchall()
-    monthly=[{"month":r["month"],"amount":Decimal(str(r["amount"] or "0"))} for r in month_rows]
+        GROUP BY {month_expr} ORDER BY month_key""",params).fetchall()
+    monthly=[{"month":r["month_key"],"amount":Decimal(str(r["amount"] or "0"))} for r in month_rows]
     return {
         "detail_rows":detail_rows,
         "dimension_rows":sorted(dimension_totals.values(),key=lambda x:(x["dimension"],-x["amount"])),
