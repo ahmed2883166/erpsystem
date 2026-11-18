@@ -71,6 +71,39 @@ def build_initialized_schema(database_output=None, seed_representative_data=Fals
                         (entry.lastrowid, accounts[1]["id"], "0", "1234.56", "fixture credit"),
                     ],
                 )
+
+                # A receipt and its valuation layer exercise inventory quantity
+                # and exact value controls in the full-schema copy verifier.
+                product = connection.execute(
+                    """INSERT INTO stock_products
+                       (sku,name_ar,category,product_type,uom,track_lot,track_expiry,
+                        min_qty,purchase_price,sale_price)
+                       VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    ("MIGRATION-TEST-001", "صنف اختبار النقل", "اختبار", "goods",
+                     "قطعة", 0, 0, "0", "25.50", "40.00"),
+                )
+                warehouse = connection.execute(
+                    """INSERT INTO stock_warehouses(code,name_ar,branch)
+                       VALUES(?,?,?)""",
+                    ("MIGRATION-TEST-WH", "مخزن اختبار النقل", ""),
+                )
+                movement = connection.execute(
+                    """INSERT INTO stock_movements
+                       (movement_no,movement_type,product_id,target_warehouse_id,
+                        quantity,unit_cost,total_cost,movement_date,notes,created_by)
+                       VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    ("MIGRATION-TEST-MOVE-001", "receipt", product.lastrowid,
+                     warehouse.lastrowid, "10", "25.50", "255.00",
+                     "2026-01-15", "Disposable migration rehearsal receipt", admin["id"]),
+                )
+                connection.execute(
+                    """INSERT INTO stock_valuation_layers
+                       (product_id,warehouse_id,source_movement_id,qty_in,
+                        qty_remaining,unit_cost,value_remaining)
+                       VALUES(?,?,?,?,?,?,?)""",
+                    (product.lastrowid, warehouse.lastrowid, movement.lastrowid,
+                     "10", "10", "25.50", "255.00"),
+                )
                 connection.commit()
             finally:
                 connection.close()
