@@ -17,8 +17,8 @@ DEFAULT_TIMEOUT_SECONDS = 20
 
 
 def _close_app_context_connections(connections):
-    """Close every cached connection when its Flask app context is released."""
-    for connection in tuple(connections.values()):
+    """Close every connection tracked for the current Flask app context."""
+    for connection in tuple(connections):
         try:
             connection.close()
         except sqlite3.Error:
