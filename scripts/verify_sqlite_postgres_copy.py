@@ -256,6 +256,29 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
                               row_factory=dict_row)
         dst.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         dst.execute("SET LOCAL search_path TO " + _ident(schema))
+        marker_exists = dst.execute(
+            """SELECT 1 FROM information_schema.tables
+               WHERE table_schema = %s AND table_name = 'nexus_schema_installation'
+                 AND table_type = 'BASE TABLE'""",
+            (schema,),
+        ).fetchone()
+        if marker_exists is None:
+            raise ValueError(
+                "Target schema has no NEXUS baseline installation marker; "
+                "verification is blocked."
+            )
+        marker = dst.execute(
+            "SELECT baseline_sha256 FROM " + _ident(schema) +
+            "." + _ident("nexus_schema_installation") + " WHERE id = 1"
+        ).fetchone()
+        baseline_sha256 = marker["baseline_sha256"] if marker else None
+        if not isinstance(baseline_sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", baseline_sha256.strip()
+        ):
+            raise ValueError(
+                "Target schema baseline fingerprint is missing or invalid; "
+                "verification is blocked."
+            )
         target_tables = {
             row["table_name"] for row in dst.execute(
                 "SELECT table_name FROM information_schema.tables "
@@ -426,6 +449,7 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
             "source_integrity_ok": True,
             "source_foreign_keys_ok": True,
             "schema": schema,
+            "baseline_sha256": baseline_sha256.strip(),
             "source_table_count": len(source_tables),
             "matched_table_count": len(row_counts),
             "source_row_count": sum(item["sqlite"] for item in row_counts.values()),
