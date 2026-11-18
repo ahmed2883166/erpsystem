@@ -10,10 +10,8 @@ import unittest
 import uuid
 from pathlib import Path
 
-from postgres_baseline import install_postgres_baseline
 from postgres_database import connect_postgres
 from postgres_migrations import apply_migrations, load_migrations
-from scripts.build_postgres_baseline import build_baseline
 
 
 POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
@@ -31,7 +29,7 @@ class PostgreSQLUpgradeRehearsalTests(unittest.TestCase):
         finally:
             cleanup.close()
 
-    def test_versioned_migrations_apply_to_full_baseline_and_replay_safely(self):
+    def test_versioned_migrations_apply_to_clean_schema_and_replay_safely(self):
         # Exercise the migration path from an empty schema. The full generated
         # first-install baseline has its own preservation/overwrite test and
         # must not be layered with the initial migration a second time.
