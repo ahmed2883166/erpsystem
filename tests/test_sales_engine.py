@@ -34,7 +34,7 @@ class SalesIntegrationTests(unittest.TestCase):
                 return Cursor({"id": 55, "invoice_id": 44})
             raise AssertionError("Unexpected SQL: " + sql)
 
-        with patch("sales.database_dialect", return_value="postgresql"), \\
+        with patch("sales.database_dialect", return_value="postgresql"), \
              patch("sales.execute_compat", side_effect=fake_execute):
             invoice, note = sales._sales_credit_note_and_invoice_for_update(self.db, 55)
 
