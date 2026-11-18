@@ -47,7 +47,7 @@ def parse_statement_csv(payload, max_rows=5000):
     try:
         sample = payload[:4096]
         try:
-            dialect = csv.Sniffer().sniff(sample, delimiters=",;\\t")
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
         except csv.Error:
             dialect = csv.excel
         reader = csv.DictReader(io.StringIO(payload, newline=""), dialect=dialect)
@@ -76,13 +76,22 @@ def parse_statement_csv(payload, max_rows=5000):
             parsed_date = None
             for date_format in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
                 try:
-                    parsed_date = date.strptime(raw_date, date_format) if hasattr(date, "strptime") else datetime.strptime(raw_date, date_format).date()
+                    parsed_date = datetime.strptime(raw_date, date_format).date()
                     break
                 except ValueError:
                     continue
             if parsed_date is None:
                 raise ValueError(f"تاريخ غير صحيح في السطر {row_number}: {raw_date}")
-            raw_amount = str(row.get(amount_col) or "").strip().replace(",", "").replace(" ", "")
+            raw_amount = str(row.get(amount_col) or "").strip().replace(" ", "").replace("\u00a0", "")
+            if "," in raw_amount and "." not in raw_amount:
+                if raw_amount.count(",") == 1 and len(raw_amount.rsplit(",", 1)[1]) in (1, 2):
+                    raw_amount = raw_amount.replace(",", ".")
+                elif not all(len(group) == 3 for group in raw_amount.lstrip("+-").split(",")[1:]):
+                    raise ValueError(f"تنسيق مبلغ ملتبس في السطر {row_number}; استخدم فاصلة آلاف واضحة أو نقطة عشرية.")
+                else:
+                    raw_amount = raw_amount.replace(",", "")
+            else:
+                raw_amount = raw_amount.replace(",", "")
             try:
                 amount = Decimal(raw_amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             except InvalidOperation as exc:
