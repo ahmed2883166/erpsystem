@@ -946,6 +946,9 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
     invoice = _sales_invoice_for_update(conn, invoice_id, posted_only=True)
     if not invoice:
         raise ValueError("فاتورة البيع غير موجودة أو غير مرحلة.")
+    if invoice["warehouse_id"]:
+        # Serialize the returnable-lot and valuation reads with concurrent stock issues.
+        lock_stock_warehouses(conn, invoice["warehouse_id"])
     if credit_date < invoice["invoice_date"]:
         raise ValueError("لا يمكن إصدار إشعار دائن بتاريخ يسبق تاريخ فاتورة البيع.")
     dimensions = validate_journal_dimensions(conn, {
@@ -1166,7 +1169,6 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
             warehouse_id = invoice["warehouse_id"]
             if not warehouse_id:
                 raise ValueError("فاتورة الصنف المخزني لا تحتوي على مخزن صرف صالح.")
-            lock_stock_warehouses(conn, warehouse_id)
             default_location = execute_compat(conn, "SELECT location_id FROM stock_product_locations WHERE product_id=? AND warehouse_id=?",
                                             (product_id, warehouse_id)).fetchone()
             return_location_id = default_location["location_id"] if default_location else None
@@ -1341,9 +1343,7 @@ def cancel_credit_note(conn, credit_note_id, cancellation_date, reason, created_
     reason = str(reason or "").strip()
     if not reason or len(reason) > 500:
         raise ValueError("سبب إلغاء الإشعار مطلوب وبحد أقصى 500 حرف.")
-    note = execute_compat(conn, 
-        "SELECT * FROM sales_credit_notes WHERE id=? AND status='posted'", (credit_note_id,)
-    ).fetchone()
+    note = _sales_credit_note_for_update(conn, credit_note_id)
     if not note:
         raise ValueError("الإشعار الدائن غير موجود أو تم إلغاؤه بالفعل.")
     # Keep the lock order consistent with credit-note posting: invoice first,

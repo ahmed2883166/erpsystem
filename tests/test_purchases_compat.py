@@ -8,6 +8,7 @@ from purchases import (
     _purchase_order_lines_for_receipt_update,
     _supplier_bill_for_update,
     _supplier_bills_for_payment_update,
+    _supplier_credit_note_for_update,
 )
 
 
@@ -37,6 +38,27 @@ class SQLiteSupplierPostingLockTests(unittest.TestCase):
 
 
 class PostgreSQLSupplierPostingLockTests(unittest.TestCase):
+    def test_postgresql_credit_note_cancellation_locks_posted_note(self):
+        class Cursor:
+            def fetchone(self):
+                return {"id": 19, "status": "posted"}
+
+        class Connection:
+            __module__ = "psycopg.fake"
+
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, statement, params=()):
+                self.calls.append((statement, tuple(params)))
+                return Cursor()
+
+        connection = Connection()
+        note = _supplier_credit_note_for_update(connection, 19)
+        self.assertEqual(note["id"], 19)
+        self.assertIn("status='posted' FOR UPDATE", connection.calls[0][0])
+        self.assertEqual(connection.calls[0][1], (19,))
+
     def test_postgresql_supplier_bill_and_payment_queries_lock_rows(self):
         class Cursor:
             def __init__(self, row=None, rows=None):

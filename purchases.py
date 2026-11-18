@@ -39,6 +39,14 @@ def _supplier_bill_for_update(conn, bill_id):
     return execute_compat(conn, sql, (bill_id,)).fetchone()
 
 
+
+def _supplier_credit_note_for_update(conn, credit_note_id):
+    """Lock a posted supplier credit note before refund/cancellation mutations."""
+    sql = "SELECT * FROM supplier_credit_notes WHERE id=? AND status='posted'"
+    if database_dialect(conn) == "postgresql":
+        sql += " FOR UPDATE"
+    return execute_compat(conn, sql, (credit_note_id,)).fetchone()
+
 def _lock_supplier_receipts(conn, receipt_ids):
     """Serialize GRNI allocations for the same receipts in a stable order."""
     ids = sorted({int(value) for value in receipt_ids if value not in (None, 0, "")})
@@ -54,14 +62,6 @@ def _lock_supplier_receipts(conn, receipt_ids):
     if locked != set(ids):
         raise ValueError("أحد إيصالات GRNI غير موجود أثناء قفل التخصيص.")
     return rows
-
-
-def _supplier_bill_for_update(conn, bill_id):
-    """Serialize supplier-bill posting so concurrent requests cannot post twice."""
-    sql = "SELECT * FROM supplier_bills WHERE id=?"
-    if database_dialect(conn) == "postgresql":
-        sql += " FOR UPDATE"
-    return execute_compat(conn, sql, (bill_id,)).fetchone()
 
 
 def _supplier_bills_for_payment_update(conn, supplier_id):
@@ -2632,13 +2632,16 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
     reason=str(reason or "").strip()
     if not reason or len(reason)>500:
         raise ValueError("سبب إلغاء إشعار المورد مطلوب وبحد أقصى 500 حرف.")
-    note=execute_compat(conn, 
-        "SELECT * FROM supplier_credit_notes WHERE id=? AND status='posted'",(credit_note_id,)
-    ).fetchone()
+    note=_supplier_credit_note_for_update(conn, credit_note_id)
     if not note:
         raise ValueError("إشعار المورد غير موجود أو تم إلغاؤه بالفعل.")
     if str(cancellation_date)<str(note["credit_date"]):
         raise ValueError("تاريخ إلغاء إشعار المورد لا يمكن أن يسبق تاريخ الإشعار.")
+    # Lock the source bill before any warehouse/layer locks. Credit-note creation
+    # follows the same bill -> warehouse order, preventing double balance changes.
+    bill_row = _supplier_bill_for_update(conn, note["bill_id"])
+    if not bill_row:
+        raise ValueError("فاتورة المورد المرتبطة بالإشعار غير موجودة؛ لا يمكن إتمام الإلغاء بأمان.")
     allocations=execute_compat(conn, 
         """SELECT a.*,m.movement_no,m.movement_type,m.accounting_status,
                   m.product_id movement_product_id,m.source_warehouse_id movement_warehouse_id,
@@ -2717,19 +2720,18 @@ def cancel_supplier_credit_note(conn, credit_note_id, cancellation_date, reason,
         )
         # Keep the original issue immutable: the new receipt is its stock reversal.
     credited=Decimal(str(note["total_amount"] or "0"))
-    bill_row = _supplier_bill_for_update(conn, note["bill_id"])
-    bill = ({"credited_amount": bill_row["credited_amount"]} if bill_row else None)
-    if not bill:
-        raise ValueError("فاتورة المورد المرتبطة بالإشعار غير موجودة؛ لا يمكن إتمام الإلغاء بأمان.")
-    new_credited=Decimal(str(bill["credited_amount"] or "0"))-credited
+    new_credited=Decimal(str(bill_row["credited_amount"] or "0"))-credited
     if new_credited<0:
         raise ValueError("رصيد الإشعارات الدائنة على فاتورة المورد غير متسق؛ راجع البيانات قبل الإلغاء.")
     execute_compat(conn, "UPDATE supplier_bills SET credited_amount=? WHERE id=?",(str(money(new_credited)),note["bill_id"]))
-    execute_compat(conn, 
+    changed = execute_compat(conn,
         """UPDATE supplier_credit_notes SET status='cancelled',cancel_journal_entry_id=?,
-           cancelled_by=?,cancelled_at=CURRENT_TIMESTAMP,cancellation_reason=? WHERE id=?""",
+           cancelled_by=?,cancelled_at=CURRENT_TIMESTAMP,cancellation_reason=?
+           WHERE id=? AND status='posted'""",
         (reversal_id,created_by,reason,credit_note_id)
-    )
+    ).rowcount
+    if changed != 1:
+        raise ValueError("تغيرت حالة إشعار المورد أثناء الإلغاء؛ تم إيقاف العملية.")
     return {"reversal_journal_id":reversal_id}
 
 
@@ -2783,6 +2785,9 @@ def new_credit_note():
                 bill = None
             if not bill:
                 raise ValueError("فاتورة المورد غير موجودة أو لا تتبع المورد المحدد.")
+            # Match cancellation's bill -> warehouse lock order and serialize
+            # returnable-quantity checks with all other stock issues/returns.
+            lock_stock_warehouses(c, *sorted({int(value) for value in warehouse_ids}))
             dimensions = validate_journal_dimensions(c, {
                 "branch_id": bill["branch_id"], "cost_center_id": bill["cost_center_id"],
                 "project_id": bill["project_id"], "supplier_id": supplier,
