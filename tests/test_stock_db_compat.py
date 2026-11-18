@@ -133,15 +133,29 @@ class StockLocationTriggerDialectTests(unittest.TestCase):
         finally:
             conn.close()
 
-    def test_postgresql_skips_sqlite_raise_trigger_ddl(self):
+    def test_postgresql_installs_native_location_integrity_triggers(self):
         from stock import _install_stock_location_triggers
 
         class FakePostgresConnection:
             __module__ = "psycopg"
-            def execute(self, *args, **kwargs):
-                raise AssertionError("SQLite trigger SQL must not run on PostgreSQL")
 
-        _install_stock_location_triggers(FakePostgresConnection())
+            def __init__(self):
+                self.statements = []
+
+            def execute(self, statement, *args, **kwargs):
+                self.statements.append(statement)
+                return self
+
+        connection = FakePostgresConnection()
+        _install_stock_location_triggers(connection)
+        sql = "\\n".join(connection.statements)
+        self.assertIn("CREATE OR REPLACE FUNCTION nexus_validate_stock_product_location", sql)
+        self.assertIn("CREATE OR REPLACE FUNCTION nexus_prevent_stock_location_deactivation", sql)
+        self.assertIn("CREATE TRIGGER trg_stock_product_locations_same_wh_insert", sql)
+        self.assertIn("CREATE TRIGGER trg_stock_product_locations_same_wh_update", sql)
+        self.assertIn("CREATE TRIGGER trg_stock_locations_prevent_default_deactivation", sql)
+        self.assertIn("RAISE EXCEPTION", sql)
+        self.assertNotIn("RAISE(ABORT", sql)
 
 
 class StockWarehouseLockTests(unittest.TestCase):
