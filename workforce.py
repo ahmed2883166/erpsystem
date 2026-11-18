@@ -631,52 +631,52 @@ def _role(*roles, permission=None):
 
 def _audit(c, action, details):
     if table_exists(c, "audit_log"):
-        c.execute("INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
+        execute_compat(c, "INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
                   (session.get("user_id"), action, details))
 
 
 def _accounts(c):
-    return c.execute("SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
+    return execute_compat(c, "SELECT id,code,name_ar,account_type FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
 
 
 def _employee_advance_account(c, account_id):
-    account = c.execute("""SELECT id,account_type,is_group,active FROM accounts
+    account = execute_compat(c, """SELECT id,account_type,is_group,active FROM accounts
         WHERE id=?""", (account_id,)).fetchone()
     if not account or not account["active"] or account["is_group"] or account["account_type"] != "asset":
         raise ValueError("اختر حساب سلف موظفين تفصيليًا ونشطًا من الأصول.")
     if not table_exists(c, "cash_accounts"):
         raise ValueError("سجل الخزائن والبنوك غير مهيأ؛ لا يمكن التحقق من حساب السلف.")
-    if c.execute("SELECT 1 FROM cash_accounts WHERE account_id=?", (account_id,)).fetchone():
+    if execute_compat(c, "SELECT 1 FROM cash_accounts WHERE account_id=?", (account_id,)).fetchone():
         raise ValueError("حساب سلف الموظفين لا يجوز أن يكون حساب بنك أو صندوق.")
     return account["id"]
 
 
 def _cash_or_bank_account(c, account_id):
-    account = c.execute("""SELECT id,account_type,is_group,active FROM accounts
+    account = execute_compat(c, """SELECT id,account_type,is_group,active FROM accounts
         WHERE id=?""", (account_id,)).fetchone()
     if not account or not account["active"] or account["is_group"] or account["account_type"] != "asset":
         raise ValueError("اختر حساب بنك أو صندوق تفصيليًا ونشطًا.")
     if not table_exists(c, "cash_accounts"):
         raise ValueError("سجل الخزائن والبنوك غير مهيأ؛ لا يمكن التحقق من حساب الصرف.")
-    if not c.execute("SELECT 1 FROM cash_accounts WHERE account_id=? AND active=1", (account_id,)).fetchone():
+    if not execute_compat(c, "SELECT 1 FROM cash_accounts WHERE account_id=? AND active=1", (account_id,)).fetchone():
         raise ValueError("الحساب المختار غير مسجل كخزينة أو بنك نشط.")
     return account["id"]
 
 
 def _employee_salary_basis(c, employee_id, as_of_date=None):
     """Use the latest posted payroll snapshot, unless a newer approved salary decision supersedes it."""
-    employee = c.execute("SELECT basic_salary,insured_wage FROM employees WHERE id=?",
+    employee = execute_compat(c, "SELECT basic_salary,insured_wage FROM employees WHERE id=?",
                           (employee_id,)).fetchone()
     if not employee:
         raise ValueError("الموظف غير موجود عند تحديد أساس الأجر.")
     effective_date = as_of_date or date.today().isoformat()
-    payroll = c.execute("""
+    payroll = execute_compat(c, """
         SELECT l.basic_salary,l.insured_wage,COALESCE(r.posted_at,r.created_at,'') AS source_timestamp
         FROM payroll_lines l JOIN payroll_runs r ON r.id=l.run_id
         WHERE l.employee_id=? AND r.status='posted' AND r.period<=?
         ORDER BY r.period DESC,COALESCE(r.posted_at,r.created_at) DESC,r.id DESC LIMIT 1
     """,(employee_id,effective_date[:7])).fetchone()
-    history = c.execute("""
+    history = execute_compat(c, """
         SELECT h.new_basic_salary,b.created_at
         FROM employee_salary_history h JOIN salary_change_batches b ON b.id=h.batch_id
         WHERE h.employee_id=? AND h.effective_date<=?
@@ -697,7 +697,7 @@ def _employee_salary_basis(c, employee_id, as_of_date=None):
 def _dimension_options(c):
     tables = table_names(c)
     return {
-        key: c.execute(f"SELECT id,code,name_ar FROM {table} WHERE active=1 ORDER BY code").fetchall()
+        key: execute_compat(c, f"SELECT id,code,name_ar FROM {table} WHERE active=1 ORDER BY code").fetchall()
         if table in tables else []
         for key, table in (("branches","branches"),("cost_centers","cost_centers"),("projects","projects"))
     }
@@ -712,7 +712,7 @@ def _validate_employee_dimensions(c, values):
             continue
         if not table_exists(c, table):
             raise ValueError("جدول " + label + " غير مهيأ.")
-        if not c.execute(f"SELECT 1 FROM {table} WHERE id=? AND active=1", (value,)).fetchone():
+        if not execute_compat(c, f"SELECT 1 FROM {table} WHERE id=? AND active=1", (value,)).fetchone():
             raise ValueError("اختر " + label + " نشطًا وصحيحًا.")
 
 
@@ -849,7 +849,7 @@ def _salary_change_preview(c, form, allow_future=False):
         marks = ",".join("?" for _ in selected_scopes)
         where += " AND work_status IN (" + marks + ")"
         params.extend(selected_scopes)
-    employees = c.execute("SELECT id,employee_code,full_name,basic_salary,insured_wage,work_status FROM employees WHERE "
+    employees = execute_compat(c, "SELECT id,employee_code,full_name,basic_salary,insured_wage,work_status FROM employees WHERE "
                           + where + " ORDER BY employee_code", params).fetchall()
     if not employees:
         raise ValueError("لا يوجد موظفون نشطون ضمن الفئة المحددة.")
@@ -891,16 +891,16 @@ def salary_changes():
                 for item in preview["employees"]:
                     allowance_item_id = None
                     if preview["treatment"] == "basic":
-                        c.execute("UPDATE employees SET basic_salary=? WHERE id=?",
+                        execute_compat(c, "UPDATE employees SET basic_salary=? WHERE id=?",
                                   (str(item["new"]),item["id"]))
                         # Clear legacy one-off raise settings to prevent re-applying this increase in payroll.
-                        c.execute("""UPDATE employees SET raise_type='fixed',raise_value='0',
+                        execute_compat(c, """UPDATE employees SET raise_type='fixed',raise_value='0',
                             raise_mode='basic',raise_effective_date='' WHERE id=?""",(item["id"],))
                     else:
                         allowance_item_id = insert_and_get_id(c, """INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount,active)
                             VALUES(?,?,'allowance',?,1)""",
                             (item["id"],preview["title"]+" ("+preview["decision_no"]+")",str(item["amount"])))
-                    c.execute("""INSERT INTO employee_salary_history(batch_id,employee_id,effective_date,
+                    execute_compat(c, """INSERT INTO employee_salary_history(batch_id,employee_id,effective_date,
                         old_basic_salary,increase_amount,new_basic_salary,calculation_base_amount,treatment,allowance_item_id)
                         VALUES(?,?,?,?,?,?,?,?,?)""",
                         (batch_id,item["id"],preview["effective_date"],str(item["old"]),str(item["amount"]),
@@ -915,7 +915,7 @@ def salary_changes():
             c.rollback()
             error = str(exc) or "تعذر حفظ قرار الزيادة. تأكد من عدم تكرار رقم القرار."
             preview = None
-    batches = c.execute("""SELECT b.*,COUNT(h.id) employee_count
+    batches = execute_compat(c, """SELECT b.*,COUNT(h.id) employee_count
         FROM salary_change_batches b LEFT JOIN employee_salary_history h ON h.batch_id=b.id
         GROUP BY b.id ORDER BY b.effective_date DESC,b.id DESC LIMIT 100""").fetchall()
     c.close()
@@ -927,11 +927,11 @@ def salary_changes():
 def salary_history():
     c = _db()
     employee_id = request.args.get("employee_id",type=int)
-    employees = c.execute("SELECT id,employee_code,full_name FROM employees ORDER BY employee_code").fetchall()
+    employees = execute_compat(c, "SELECT id,employee_code,full_name FROM employees ORDER BY employee_code").fetchall()
     where, params = ("WHERE h.employee_id=?","") if employee_id else ("","")
     if employee_id:
         params = (employee_id,)
-    rows = c.execute("""SELECT h.*,e.employee_code,e.full_name,b.decision_no,b.title,b.calculation_type,
+    rows = execute_compat(c, """SELECT h.*,e.employee_code,e.full_name,b.decision_no,b.title,b.calculation_type,
         b.calculation_base,b.calculation_value,b.decision_date,b.notes
         FROM employee_salary_history h JOIN employees e ON e.id=h.employee_id
         JOIN salary_change_batches b ON b.id=h.batch_id """+where+
@@ -951,7 +951,7 @@ def _block_public_employee_photo_files():
 @_role("admin", "accountant", "viewer")
 def employee_photo(employee_id):
     c = _db()
-    employee = c.execute("SELECT photo_path FROM employees WHERE id=?", (employee_id,)).fetchone()
+    employee = execute_compat(c, "SELECT photo_path FROM employees WHERE id=?", (employee_id,)).fetchone()
     c.close()
     if not employee or not employee["photo_path"]:
         return "Not found", 404
@@ -1011,7 +1011,7 @@ def employees():
                 branch_id,cost_center_id,project_id,termination_date,friday_work_eligible,photo_path)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (*values, photo_path or ""))
-            c.execute("""INSERT INTO employee_employment_history
+            execute_compat(c, """INSERT INTO employee_employment_history
                 (employee_id,from_status,to_status,effective_date,reason,created_by)
                 VALUES(?,?,?,?,?,?)""",(employee_id,"",values[14],values[23] or values[4],"تسجيل الحالة عند إنشاء ملف الموظف",session.get("user_id")))
             _audit(c, "employee_created", values[0])
@@ -1038,7 +1038,7 @@ def employees():
 @_role("admin", "accountant")
 def edit_employee(employee_id):
     c = _db()
-    employee = c.execute("SELECT * FROM employees WHERE id=?", (employee_id,)).fetchone()
+    employee = execute_compat(c, "SELECT * FROM employees WHERE id=?", (employee_id,)).fetchone()
     if not employee:
         c.close()
         flash("الموظف غير موجود.", "error")
@@ -1061,13 +1061,13 @@ def edit_employee(employee_id):
             old_photo_path = employee["photo_path"]
             photo_path = new_photo_path
             if photo_path:
-                c.execute("""UPDATE employees SET employee_code=?,full_name=?,job_title=?,department=?,hire_date=?,
+                execute_compat(c, """UPDATE employees SET employee_code=?,full_name=?,job_title=?,department=?,hire_date=?,
                     basic_salary=?,standard_hours=?,variable_salary=?,legal_category=?,insurance_number=?,insured_wage=?,insurance_enabled=?,
                     address=?,national_id=?,work_status=?,raise_type=?,raise_value=?,raise_mode=?,
                     raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=?,termination_date=?,friday_work_eligible=?,photo_path=? WHERE id=?""",
                     (*values, photo_path, employee_id))
             else:
-                c.execute("""UPDATE employees SET employee_code=?,full_name=?,job_title=?,department=?,hire_date=?,
+                execute_compat(c, """UPDATE employees SET employee_code=?,full_name=?,job_title=?,department=?,hire_date=?,
                     basic_salary=?,standard_hours=?,variable_salary=?,legal_category=?,insurance_number=?,insured_wage=?,insurance_enabled=?,
                     address=?,national_id=?,work_status=?,raise_type=?,raise_value=?,raise_mode=?,
                     raise_effective_date=?,overtime_rate_percent=?,branch_id=?,cost_center_id=?,project_id=?,termination_date=?,friday_work_eligible=? WHERE id=?""",
@@ -1075,7 +1075,7 @@ def edit_employee(employee_id):
             if old_work_status != values[14] or old_termination_date != (values[23] or ""):
                 effective_date = values[23] or date.today().isoformat()
                 reason = request.form.get("employment_change_reason", "").strip() or "تعديل الحالة من ملف الموظف"
-                c.execute("""INSERT INTO employee_employment_history
+                execute_compat(c, """INSERT INTO employee_employment_history
                     (employee_id,from_status,to_status,effective_date,reason,created_by)
                     VALUES(?,?,?,?,?,?)""",(employee_id,old_work_status,values[14],effective_date,reason,session.get("user_id")))
             _audit(c, "employee_updated", values[0])
@@ -1098,7 +1098,7 @@ def edit_employee(employee_id):
 @_role("admin", "accountant")
 def employee_employment_history(employee_id):
     c = _db()
-    employee = c.execute("SELECT * FROM employees WHERE id=?", (employee_id,)).fetchone()
+    employee = execute_compat(c, "SELECT * FROM employees WHERE id=?", (employee_id,)).fetchone()
     if not employee:
         c.close()
         flash("الموظف غير موجود.", "error")
@@ -1113,20 +1113,20 @@ def employee_employment_history(employee_id):
                 raise ValueError("اختر حالة وظيفية صحيحة واكتب سبب التغيير.")
             termination_date = effective_date if status in {"resigned", "retired"} else ""
             begin_write_transaction(c)
-            current = c.execute("SELECT work_status,termination_date,hire_date FROM employees WHERE id=?", (employee_id,)).fetchone()
+            current = execute_compat(c, "SELECT work_status,termination_date,hire_date FROM employees WHERE id=?", (employee_id,)).fetchone()
             if not current:
                 raise ValueError("الموظف غير موجود.")
             if effective_date < (current["hire_date"] or effective_date):
                 raise ValueError("تاريخ التغيير لا يمكن أن يسبق تاريخ تعيين الموظف.")
-            latest = c.execute("""SELECT effective_date FROM employee_employment_history
+            latest = execute_compat(c, """SELECT effective_date FROM employee_employment_history
                 WHERE employee_id=? ORDER BY effective_date DESC,id DESC LIMIT 1""", (employee_id,)).fetchone()
             if latest and effective_date < latest["effective_date"]:
                 raise ValueError("تاريخ التغيير أقدم من آخر حركة وظيفية مسجلة؛ راجع السجل قبل الإضافة.")
             if current["work_status"] == status and (current["termination_date"] or "") == termination_date:
                 raise ValueError("الحالة المختارة مطابقة للحالة الحالية بالفعل.")
-            c.execute("UPDATE employees SET work_status=?,termination_date=? WHERE id=?",
+            execute_compat(c, "UPDATE employees SET work_status=?,termination_date=? WHERE id=?",
                       (status,termination_date,employee_id))
-            c.execute("""INSERT INTO employee_employment_history
+            execute_compat(c, """INSERT INTO employee_employment_history
                 (employee_id,from_status,to_status,effective_date,reason,created_by)
                 VALUES(?,?,?,?,?,?)""",(employee_id,current["work_status"],status,effective_date,reason,session.get("user_id")))
             _audit(c,"employee_employment_status_changed",str(employee["employee_code"])+": "+str(current["work_status"])+" -> "+status+"; "+effective_date)
@@ -1137,7 +1137,7 @@ def employee_employment_history(employee_id):
         except _DB_VALUE_TYPE_ERRORS as exc:
             c.rollback()
             flash(str(exc) or "تعذر تسجيل التغيير الوظيفي.", "error")
-    history = c.execute("""SELECT * FROM employee_employment_history
+    history = execute_compat(c, """SELECT * FROM employee_employment_history
         WHERE employee_id=? ORDER BY effective_date DESC,id DESC""", (employee_id,)).fetchall()
     c.close()
     return render_template("employee_employment_history.html", employee=employee, history=history,
@@ -1149,7 +1149,7 @@ def employee_employment_history(employee_id):
 def employee_form_2_salary(employee_id):
     """Keep old employee-specific links working by opening the matching group report."""
     c = _db()
-    employee = c.execute("SELECT work_status FROM employees WHERE id=?", (employee_id,)).fetchone()
+    employee = execute_compat(c, "SELECT work_status FROM employees WHERE id=?", (employee_id,)).fetchone()
     c.close()
     if not employee:
         flash("الموظف غير موجود.", "error")
@@ -1176,7 +1176,7 @@ def employee_form_2_salary_report():
     statuses = scope_statuses[scope]
     placeholders = ",".join("?" for _ in statuses)
     c = _db()
-    employee_rows = c.execute(
+    employee_rows = execute_compat(c, 
         f"""SELECT id,employee_code,full_name,national_id,insurance_number,hire_date,
                    basic_salary,variable_salary,insured_wage
             FROM employees WHERE work_status IN ({placeholders})
@@ -1187,7 +1187,7 @@ def employee_form_2_salary_report():
     for employee_row in employee_rows:
         item = dict(employee_row)
         basic, insured = _employee_salary_basis(c, item["id"], as_of_date)
-        latest_payroll = c.execute("""SELECT l.allowances FROM payroll_lines l
+        latest_payroll = execute_compat(c, """SELECT l.allowances FROM payroll_lines l
             JOIN payroll_runs r ON r.id=l.run_id
             WHERE l.employee_id=? AND r.status='posted' AND r.period<=?
             ORDER BY r.period DESC,COALESCE(r.posted_at,r.created_at) DESC,r.id DESC LIMIT 1""",
@@ -1225,7 +1225,7 @@ def export_employees_excel():
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
     c = _db()
-    rows = c.execute("""SELECT employee_code,full_name,address,national_id,insurance_number,
+    rows = execute_compat(c, """SELECT employee_code,full_name,address,national_id,insurance_number,
         work_status,active,termination_date,job_title,department,hire_date FROM employees ORDER BY employee_code""").fetchall()
     c.close()
     workbook = Workbook()
@@ -1302,7 +1302,7 @@ def add_incentive_rule():
         value = M(request.form.get("calculation_value", "0"))
         if not name or method not in {"fixed", "percentage_basic", "per_day"} or value <= 0:
             raise ValueError("أدخل اسم الحافز وطريقة حساب صحيحة وقيمة أكبر من صفر.")
-        c.execute("""INSERT INTO payroll_incentive_rules(name,calculation_method,calculation_value)
+        execute_compat(c, """INSERT INTO payroll_incentive_rules(name,calculation_method,calculation_value)
                      VALUES(?,?,?)""", (name, method, str(value)))
         _audit(c, "payroll_incentive_rule_created", name)
         c.commit()
@@ -1323,7 +1323,7 @@ def add_pay_item_catalog():
         item_type = request.form.get("item_type", "")
         if not name or len(name) > 120 or item_type not in {"allowance", "deduction"}:
             raise ValueError("اكتب اسم البند وحدد هل هو استحقاق أم استقطاع.")
-        c.execute("INSERT INTO employee_pay_item_catalog(name,item_type) VALUES(?,?)", (name,item_type))
+        execute_compat(c, "INSERT INTO employee_pay_item_catalog(name,item_type) VALUES(?,?)", (name,item_type))
         _audit(c, "employee_pay_item_catalog_created", name + " | " + item_type)
         c.commit()
         flash("تم حفظ اسم البند في قائمة البنود. يمكنك اختياره عند إسناده للموظفين.", "success")
@@ -1347,7 +1347,7 @@ def pay_items():
             employee_ids = sorted({int(x) for x in request.form.getlist("employee_ids")})
             catalog_id = request.form.get("item_catalog_id", "").strip()
             if catalog_id:
-                catalog_item = c.execute("SELECT name,item_type FROM employee_pay_item_catalog WHERE id=? AND active=1",
+                catalog_item = execute_compat(c, "SELECT name,item_type FROM employee_pay_item_catalog WHERE id=? AND active=1",
                                           (int(catalog_id),)).fetchone()
                 if not catalog_item:
                     raise ValueError("اختر اسم بند نشطًا من قائمة البنود.")
@@ -1359,26 +1359,26 @@ def pay_items():
             if item_type not in {"allowance", "deduction"} or not item_name or amount < 0 or not employee_ids:
                 raise ValueError("اختر اسم البند من القائمة وقيمته وحدد موظفًا واحدًا على الأقل.")
             placeholders = ",".join("?" for _ in employee_ids)
-            valid_ids = {int(x["id"]) for x in c.execute(
+            valid_ids = {int(x["id"]) for x in execute_compat(c, 
                 "SELECT id FROM employees WHERE active=1 AND id IN ("+placeholders+")", employee_ids).fetchall()}
             if valid_ids != set(employee_ids):
                 raise ValueError("بعض الموظفين المختارين غير نشطين أو غير موجودين.")
             begin_write_transaction(c)
             if not catalog_id:
-                c.execute("INSERT INTO employee_pay_item_catalog(name,item_type) VALUES(?,?) ON CONFLICT DO NOTHING",
+                execute_compat(c, "INSERT INTO employee_pay_item_catalog(name,item_type) VALUES(?,?) ON CONFLICT DO NOTHING",
                           (item_name,item_type))
             created_count = 0
             updated_count = 0
             for employee_id in employee_ids:
-                existing = c.execute("""SELECT id FROM employee_pay_items
+                existing = execute_compat(c, """SELECT id FROM employee_pay_items
                     WHERE employee_id=? AND item_name=? AND item_type=?
                     ORDER BY active DESC,id LIMIT 1""",(employee_id,item_name,item_type)).fetchone()
                 if existing:
-                    c.execute("UPDATE employee_pay_items SET amount=?,active=1 WHERE id=?",
+                    execute_compat(c, "UPDATE employee_pay_items SET amount=?,active=1 WHERE id=?",
                               (str(amount),existing["id"]))
                     updated_count += 1
                 else:
-                    c.execute("""INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount,active)
+                    execute_compat(c, """INSERT INTO employee_pay_items(employee_id,item_name,item_type,amount,active)
                         VALUES(?,?,?,?,1)""", (employee_id,item_name,item_type,str(amount)))
                     created_count += 1
             _audit(c,"employee_pay_item_group_created",
@@ -1390,11 +1390,11 @@ def pay_items():
             flash(str(exc) or "تعذر حفظ بند الاستحقاق/الاستقطاع.", "error")
         c.close()
         return redirect(url_for("workforce.pay_items"))
-    employees = c.execute("""SELECT id,employee_code,full_name,work_status,department FROM employees
+    employees = execute_compat(c, """SELECT id,employee_code,full_name,work_status,department FROM employees
         WHERE active=1 ORDER BY work_status,employee_code""").fetchall()
-    catalog_items = c.execute("""SELECT id,name,item_type FROM employee_pay_item_catalog
+    catalog_items = execute_compat(c, """SELECT id,name,item_type FROM employee_pay_item_catalog
         WHERE active=1 ORDER BY item_type,name""").fetchall()
-    assignments = c.execute("""SELECT p.*,e.employee_code,e.full_name,e.work_status FROM employee_pay_items p
+    assignments = execute_compat(c, """SELECT p.*,e.employee_code,e.full_name,e.work_status FROM employee_pay_items p
         JOIN employees e ON e.id=p.employee_id
         WHERE p.active=0 OR p.id=(SELECT MAX(p2.id) FROM employee_pay_items p2
             WHERE p2.employee_id=p.employee_id AND p2.item_name=p.item_name
@@ -1417,10 +1417,10 @@ def update_pay_item(item_id):
         amount = M(request.form.get("amount", "0"))
         if amount < 0:
             raise ValueError("لا يمكن أن تكون قيمة الاستحقاق أو الاستقطاع سالبة.")
-        item = c.execute("SELECT * FROM employee_pay_items WHERE id=?", (item_id,)).fetchone()
+        item = execute_compat(c, "SELECT * FROM employee_pay_items WHERE id=?", (item_id,)).fetchone()
         if not item:
             raise ValueError("البند غير موجود.")
-        c.execute("UPDATE employee_pay_items SET amount=? WHERE id=?", (str(amount),item_id))
+        execute_compat(c, "UPDATE employee_pay_items SET amount=? WHERE id=?", (str(amount),item_id))
         _audit(c,"employee_pay_item_amount_updated",
                item["item_name"]+" employee="+str(item["employee_id"])+" amount="+str(amount))
         c.commit()
@@ -1437,10 +1437,10 @@ def update_pay_item(item_id):
 def toggle_pay_item(item_id):
     c = _db()
     try:
-        item = c.execute("SELECT * FROM employee_pay_items WHERE id=?", (item_id,)).fetchone()
+        item = execute_compat(c, "SELECT * FROM employee_pay_items WHERE id=?", (item_id,)).fetchone()
         if not item:
             raise ValueError("البند غير موجود.")
-        c.execute("UPDATE employee_pay_items SET active=? WHERE id=?", (0 if item["active"] else 1,item_id))
+        execute_compat(c, "UPDATE employee_pay_items SET active=? WHERE id=?", (0 if item["active"] else 1,item_id))
         _audit(c,"employee_pay_item_toggled",item["item_name"]+" employee="+str(item["employee_id"]))
         c.commit()
         flash("تم تحديث حالة البند. لن يُحذف أي أثر سابق في كشوف المرتبات.", "success")
@@ -1482,7 +1482,7 @@ def payroll_reconciliation():
     if month_to:
         where.append("r.period<=?")
         params.append(month_to)
-    runs = c.execute("""
+    runs = execute_compat(c, """
         SELECT r.id,r.period,r.status,r.journal_entry_id,
                COUNT(l.id) AS employee_count,
                COALESCE(SUM(CAST(l.net_pay AS NUMERIC)),0) AS net_total
@@ -1495,7 +1495,7 @@ def payroll_reconciliation():
     reconciled = []
     for run in runs:
         run_issues = []
-        employee_duplicates = c.execute("""
+        employee_duplicates = execute_compat(c, """
             SELECT e.employee_code,e.full_name,COUNT(*) AS occurrences
             FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
             WHERE l.run_id=? GROUP BY l.employee_id
@@ -1509,7 +1509,7 @@ def payroll_reconciliation():
                 run_issues.append("كشف مرحّل بدون رقم قيد محاسبي.")
                 journal = None
             else:
-                journal = c.execute("""
+                journal = execute_compat(c, """
                     SELECT j.id,j.status,j.reference,
                            COALESCE(SUM(CAST(l.debit AS NUMERIC)),0) AS debit_total,
                            COALESCE(SUM(CAST(l.credit AS NUMERIC)),0) AS credit_total
@@ -1528,7 +1528,7 @@ def payroll_reconciliation():
                     credit_total = M(journal["credit_total"])
                     if debit_total != credit_total:
                         run_issues.append("القيد المحاسبي غير متوازن.")
-                    line_totals = c.execute("""
+                    line_totals = execute_compat(c, """
                         SELECT
                           COALESCE(SUM(CAST(gross_pay AS NUMERIC)),0) AS gross_total,
                           COALESCE(SUM(CAST(absence_deduction AS NUMERIC)),0) AS absence_total,
@@ -1560,7 +1560,7 @@ def payroll_reconciliation():
             journal = None
 
         # Audit actual cash/bank payroll payments separately from the accrual journal.
-        payment_rows = c.execute("""
+        payment_rows = execute_compat(c, """
             SELECT p.id,p.amount,p.payment_date,p.reference,p.journal_entry_id,
                    COALESCE(SUM(CAST(a.amount AS NUMERIC)),0) AS allocated_total,
                    COUNT(a.id) AS allocation_count
@@ -1568,7 +1568,7 @@ def payroll_reconciliation():
             LEFT JOIN payroll_payment_allocations a ON a.payment_id=p.id
             WHERE p.run_id=?
             GROUP BY p.id ORDER BY p.payment_date,p.id
-        """, (run["id"],)).fetchall() if table_exists(c, "payroll_payment_allocations") else c.execute("""
+        """, (run["id"],)).fetchall() if table_exists(c, "payroll_payment_allocations") else execute_compat(c, """
             SELECT p.id,p.amount,p.payment_date,p.reference,p.journal_entry_id,
                    0 AS allocated_total,0 AS allocation_count
             FROM payroll_payments p WHERE p.run_id=? ORDER BY p.payment_date,p.id
@@ -1581,7 +1581,7 @@ def payroll_reconciliation():
                 run_issues.append("دفعة المرتبات رقم " + str(payment["id"]) + " تحتوي مبلغًا غير موجب.")
             if run["status"] == "reversed":
                 run_issues.append("تم تسجيل دفعة صرف على كشف مرتبات معكوس: دفعة " + str(payment["id"]) + ".")
-            payment_journal = c.execute("""
+            payment_journal = execute_compat(c, """
                 SELECT j.id,j.status,j.reference,
                        COALESCE(SUM(CAST(l.debit AS NUMERIC)),0) AS debit_total,
                        COALESCE(SUM(CAST(l.credit AS NUMERIC)),0) AS credit_total
@@ -1621,7 +1621,7 @@ def payroll_reconciliation():
             )
 
         if table_exists(c, "payroll_payment_allocations"):
-            invalid_allocations = c.execute("""
+            invalid_allocations = execute_compat(c, """
                 SELECT a.id,a.payment_id,a.payroll_line_id,p.run_id AS payment_run_id,
                        pl.run_id AS line_run_id
                 FROM payroll_payment_allocations a
@@ -1631,7 +1631,7 @@ def payroll_reconciliation():
             """, (run["id"],)).fetchall()
             if invalid_allocations:
                 run_issues.append("توجد توزيعات صرف مرتبطة بموظفين من كشف مرتبات آخر.")
-            invalid_amount_allocations = c.execute("""
+            invalid_amount_allocations = execute_compat(c, """
                 SELECT a.id,a.amount FROM payroll_payment_allocations a
                 JOIN payroll_payments p ON p.id=a.payment_id
                 JOIN payroll_lines pl ON pl.id=a.payroll_line_id
@@ -1639,7 +1639,7 @@ def payroll_reconciliation():
             """, (run["id"],)).fetchall()
             if invalid_amount_allocations:
                 run_issues.append("توجد توزيعات صرف بمبالغ صفرية أو سالبة.")
-            over_allocated_lines = c.execute("""
+            over_allocated_lines = execute_compat(c, """
                 SELECT pl.id,e.employee_code,e.full_name,pl.net_pay,
                        SUM(CAST(a.amount AS NUMERIC)) AS allocated
                 FROM payroll_lines pl
@@ -1670,7 +1670,7 @@ def payroll_reconciliation():
             "issue_count":len(run_issues)
         })
 
-    duplicate_periods = c.execute(f"""
+    duplicate_periods = execute_compat(c, f"""
         SELECT period,COUNT(*) AS run_count,{_group_concat_expression(c, 'id')} AS run_ids
         FROM payroll_runs WHERE status='posted'
         """ + (" AND period>=?" if month_from else "") +
@@ -1681,7 +1681,7 @@ def payroll_reconciliation():
         issues.append({"period":duplicate["period"],"run_id":"—",
             "message":"أكثر من كشف مرتبات مرحّل لنفس الشهر: " + str(duplicate["run_ids"])})
 
-    duplicate_employees = c.execute(f"""
+    duplicate_employees = execute_compat(c, f"""
         SELECT r.period,e.employee_code,e.full_name,COUNT(*) AS occurrences,
                {_group_concat_expression(c, 'r.id')} AS run_ids
         FROM payroll_runs r
@@ -1698,7 +1698,7 @@ def payroll_reconciliation():
             "message":"تكرار صرف الموظف " + duplicate["employee_code"] + " - " +
             duplicate["full_name"] + " في كشوف مرحّلة للشهر نفسه."})
 
-    overlap_rows = c.execute("""
+    overlap_rows = execute_compat(c, """
         SELECT r.period,r.id AS run_id,e.employee_code,e.full_name,
                f.final_payroll_no,f.status AS final_status
         FROM payroll_runs r
@@ -1717,7 +1717,7 @@ def payroll_reconciliation():
             overlap["employee_code"] + " - " + overlap["full_name"] +
             " (كشف نهائي " + overlap["final_payroll_no"] + ")."})
 
-    duplicate_final = c.execute(f"""
+    duplicate_final = execute_compat(c, f"""
         SELECT period,e.employee_code,e.full_name,COUNT(*) AS occurrences,
                {_group_concat_expression(c, 'final_payroll_no')} AS final_numbers
         FROM employee_final_payrolls f JOIN employees e ON e.id=f.employee_id
@@ -1732,7 +1732,7 @@ def payroll_reconciliation():
             "message":"أكثر من كشف مرتب نهائي معتمد للموظف " + duplicate["employee_code"] +
             " - " + duplicate["full_name"] + ": " + duplicate["final_numbers"]})
 
-    journal_duplicates = c.execute(f"""
+    journal_duplicates = execute_compat(c, f"""
         SELECT reference,COUNT(*) AS occurrences,{_group_concat_expression(c, 'id')} AS journal_ids
         FROM journal_entries WHERE reference LIKE 'PAYROLL-%'
         GROUP BY reference HAVING COUNT(*)>1
@@ -1790,7 +1790,7 @@ def payroll_report():
     if employee_id:
         where.append("l.employee_id=?")
         params.append(employee_id)
-    rows = c.execute("""
+    rows = execute_compat(c, """
         SELECT r.id AS run_id,l.id AS payroll_line_id,r.period,e.id AS employee_id,e.employee_code,e.full_name,e.department,
                l.basic_salary,l.salary_raise,l.allowances,l.incentives,l.incentive_name,l.stamp_duty,
                l.overtime_hours,l.overtime_rate_percent,l.overtime_amount,l.gross_pay,
@@ -1804,7 +1804,7 @@ def payroll_report():
         WHERE """ + " AND ".join(where) + """
         ORDER BY r.period DESC,e.employee_code
     """, params).fetchall()
-    payment_rows = c.execute(
+    payment_rows = execute_compat(c, 
         "SELECT run_id,amount FROM payroll_payments ORDER BY run_id,id"
     ).fetchall()
     paid_by_run = {}
@@ -1815,14 +1815,14 @@ def payroll_report():
     run_net_pay = {}
     allocated_total_by_run = {}
     if table_exists(c, "payroll_payment_allocations"):
-        for allocation_row in c.execute("""SELECT l.run_id,a.amount FROM payroll_payment_allocations a
+        for allocation_row in execute_compat(c, """SELECT l.run_id,a.amount FROM payroll_payment_allocations a
             JOIN payroll_lines l ON l.id=a.payroll_line_id""").fetchall():
             run_key = allocation_row["run_id"]
             allocated_total_by_run[run_key] = allocated_total_by_run.get(run_key,Decimal("0")) + D(allocation_row["amount"])
     for row in rows:
         allocated = Decimal("0")
         if table_exists(c, "payroll_payment_allocations"):
-            allocated = sum((D(x["amount"]) for x in c.execute(
+            allocated = sum((D(x["amount"]) for x in execute_compat(c, 
                 "SELECT amount FROM payroll_payment_allocations WHERE payroll_line_id=?",
                 (row["payroll_line_id"],)).fetchall()),Decimal("0"))
         row["paid_amount"] = M(allocated)
@@ -1850,11 +1850,11 @@ def payroll_report():
     if employee_id:
         final_where.append("f.employee_id=?")
         final_params.append(employee_id)
-    final_rows = c.execute("""SELECT f.*,e.employee_code,e.full_name,e.department
+    final_rows = execute_compat(c, """SELECT f.*,e.employee_code,e.full_name,e.department
         FROM employee_final_payrolls f JOIN employees e ON e.id=f.employee_id
         WHERE """ + " AND ".join(final_where) + """
         ORDER BY f.period DESC,e.employee_code""", final_params).fetchall()
-    final_paid_rows = c.execute("""SELECT p.final_payroll_id,p.amount
+    final_paid_rows = execute_compat(c, """SELECT p.final_payroll_id,p.amount
         FROM employee_final_payroll_payments p JOIN employee_final_payrolls f ON f.id=p.final_payroll_id
         WHERE f.period>=? AND f.period<=?""",
         (month_from or "0000-01",month_to or "9999-12")).fetchall()
@@ -1863,7 +1863,7 @@ def payroll_report():
         key = int(payment_row["final_payroll_id"])
         final_paid_map[key] = M(final_paid_map.get(key,Decimal("0")) + D(payment_row["amount"]))
     if employee_id:
-        final_paid_rows = c.execute("""SELECT p.final_payroll_id,p.amount
+        final_paid_rows = execute_compat(c, """SELECT p.final_payroll_id,p.amount
             FROM employee_final_payroll_payments p JOIN employee_final_payrolls f ON f.id=p.final_payroll_id
             WHERE f.employee_id=?""", (employee_id,)).fetchall()
         final_paid_map = {}
@@ -1878,7 +1878,7 @@ def payroll_report():
                             for x in final_rows if x["status"] != "cancelled"),Decimal("0"))),
         "count": sum(1 for x in final_rows if x["status"] != "cancelled"),
     }
-    employee_options = c.execute(
+    employee_options = execute_compat(c, 
         "SELECT id,employee_code,full_name FROM employees ORDER BY employee_code"
     ).fetchall()
     fields = ("basic_salary","salary_raise","allowances","incentives","overtime_amount","gross_pay",
@@ -1913,7 +1913,7 @@ def final_payroll():
             next_month = date(period_start.year + (period_start.month == 12),
                               1 if period_start.month == 12 else period_start.month + 1, 1)
             period_end = next_month - date.resolution
-            employee = c.execute("SELECT * FROM employees WHERE id=?", (employee_id,)).fetchone()
+            employee = execute_compat(c, "SELECT * FROM employees WHERE id=?", (employee_id,)).fetchone()
             if not employee or employee["work_status"] not in ("resigned", "retired") or not employee["termination_date"]:
                 raise ValueError("الموظف غير مسجل كمنتهية خدمته.")
             termination = date.fromisoformat(employee["termination_date"])
@@ -1924,7 +1924,7 @@ def final_payroll():
             days_worked = (termination - period_start).days + 1
             if days_worked < 1 or days_worked > (period_end - period_start).days + 1:
                 raise ValueError("عدد أيام العمل غير صحيح.")
-            existing_monthly_line = c.execute("""SELECT r.id,r.status FROM payroll_runs r
+            existing_monthly_line = execute_compat(c, """SELECT r.id,r.status FROM payroll_runs r
                 JOIN payroll_lines l ON l.run_id=r.id
                 WHERE r.period=? AND l.employee_id=? LIMIT 1""", (period,employee_id)).fetchone()
             if existing_monthly_line:
@@ -1932,7 +1932,7 @@ def final_payroll():
             basic_monthly, _insured_monthly = _employee_salary_basis(c, employee_id, termination.isoformat())
             if basic_monthly <= 0:
                 raise ValueError("لا يوجد راتب أساسي معتمد لهذا الموظف. سجّل أول كشف مرتبات مرحّل أو راجع بيانات الأجر قبل إعداد المرتب النهائي.")
-            allowances_monthly = M(sum((D(x["amount"]) for x in c.execute("""
+            allowances_monthly = M(sum((D(x["amount"]) for x in execute_compat(c, """
                 SELECT p.amount FROM employee_pay_items p WHERE p.employee_id=? AND p.active=1
                   AND p.item_type='allowance'
                   AND p.id=(SELECT MAX(p2.id) FROM employee_pay_items p2
@@ -1952,7 +1952,7 @@ def final_payroll():
             net = M(gross - deductions)
             final_no = "FINAL-" + employee["employee_code"] + "-" + termination.strftime("%Y%m%d")
             begin_write_transaction(c)
-            c.execute("""INSERT INTO employee_final_payrolls
+            execute_compat(c, """INSERT INTO employee_final_payrolls
                 (final_payroll_no,employee_id,period,termination_date,days_worked,basic_salary_snapshot,
                  allowances_snapshot,gross_pay,tax_deduction,employee_insurance,employer_insurance,
                  stamp_duty,other_deductions,net_pay,notes,created_by)
@@ -1976,7 +1976,7 @@ def final_payroll():
         next_month = date(period_start.year + (period_start.month == 12),
                           1 if period_start.month == 12 else period_start.month + 1, 1)
         period_end = next_month - date.resolution
-        eligible_rows = c.execute("""SELECT e.* FROM employees e WHERE e.work_status IN ('resigned','retired')
+        eligible_rows = execute_compat(c, """SELECT e.* FROM employees e WHERE e.work_status IN ('resigned','retired')
             AND e.termination_date>=? AND e.termination_date<=?
             AND NOT EXISTS (SELECT 1 FROM employee_final_payrolls f
                 WHERE f.employee_id=e.id AND f.termination_date=e.termination_date)
@@ -1988,10 +1988,10 @@ def final_payroll():
             item = dict(eligible_row)
             item["basic_salary"] = str(_employee_salary_basis(c, item["id"], item["termination_date"])[0])
             eligible.append(item)
-        rows = [dict(x) for x in c.execute("""SELECT f.*,e.employee_code,e.full_name FROM employee_final_payrolls f
+        rows = [dict(x) for x in execute_compat(c, """SELECT f.*,e.employee_code,e.full_name FROM employee_final_payrolls f
             JOIN employees e ON e.id=f.employee_id WHERE f.period=? ORDER BY f.created_at DESC,f.id DESC""",
             (selected_period,)).fetchall()]
-        paid_rows = c.execute("""SELECT final_payroll_id,amount
+        paid_rows = execute_compat(c, """SELECT final_payroll_id,amount
             FROM employee_final_payroll_payments ORDER BY id""").fetchall()
         paid_map = {}
         for payment_row in paid_rows:
@@ -2000,11 +2000,11 @@ def final_payroll():
         for item in rows:
             item["paid_amount"] = paid_map.get(int(item["id"]), Decimal("0"))
             item["remaining_amount"] = M(max(Decimal("0"),D(item["net_pay"])-item["paid_amount"]))
-        payment_history = c.execute("""SELECT p.*,a.code AS account_code,a.name_ar AS account_name
+        payment_history = execute_compat(c, """SELECT p.*,a.code AS account_code,a.name_ar AS account_name
             FROM employee_final_payroll_payments p JOIN accounts a ON a.id=p.cash_account_id
             JOIN employee_final_payrolls f ON f.id=p.final_payroll_id
             WHERE f.period=? ORDER BY p.payment_date,p.id""", (selected_period,)).fetchall()
-        payment_accounts = c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
+        payment_accounts = execute_compat(c, """SELECT a.id,a.code,a.name_ar FROM accounts a
             JOIN cash_accounts ca ON ca.account_id=a.id
             WHERE a.active=1 AND a.is_group=0 AND a.account_type='asset' AND ca.active=1
             ORDER BY a.code""").fetchall()
@@ -2029,7 +2029,7 @@ def edit_final_payroll(final_id):
     try:
         if request.method == "POST":
             begin_write_transaction(c)
-            row = c.execute("SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
+            row = execute_compat(c, "SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
             if not row or row["status"] != "draft":
                 raise ValueError("التعديل متاح لمسودة المرتب النهائي فقط.")
             tax = M(request.form.get("tax_deduction", "0"))
@@ -2043,7 +2043,7 @@ def edit_final_payroll(final_id):
                 raise ValueError("راجع الاستقطاعات؛ يجب ألا تكون سالبة أو تتجاوز إجمالي المستحق.")
             net = M(gross - deductions)
             notes = request.form.get("notes", "").strip()[:500]
-            update_cursor = c.execute("""UPDATE employee_final_payrolls SET tax_deduction=?,employee_insurance=?,
+            update_cursor = execute_compat(c, """UPDATE employee_final_payrolls SET tax_deduction=?,employee_insurance=?,
                 employer_insurance=?,stamp_duty=?,other_deductions=?,net_pay=?,notes=?
                 WHERE id=? AND status='draft'""",
                 (str(tax),str(employee_ins),str(employer_ins),str(stamp),str(other),str(net),notes,final_id))
@@ -2054,7 +2054,7 @@ def edit_final_payroll(final_id):
             c.commit()
             flash("تم تحديث مسودة المرتب النهائي.", "success")
             return redirect(url_for("workforce.final_payroll", period=row["period"]))
-        row = c.execute("""SELECT f.*,e.employee_code,e.full_name FROM employee_final_payrolls f
+        row = execute_compat(c, """SELECT f.*,e.employee_code,e.full_name FROM employee_final_payrolls f
             JOIN employees e ON e.id=f.employee_id WHERE f.id=?""", (final_id,)).fetchone()
         if not row:
             flash("مسودة المرتب النهائي غير موجودة.", "error")
@@ -2077,10 +2077,10 @@ def cancel_final_payroll(final_id):
     c = _db()
     try:
         begin_write_transaction(c)
-        row = c.execute("SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
+        row = execute_compat(c, "SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
         if not row or row["status"] != "draft":
             raise ValueError("إلغاء المرتب النهائي متاح للمسودة فقط.")
-        update_cursor = c.execute("UPDATE employee_final_payrolls SET status='cancelled' WHERE id=? AND status='draft'",
+        update_cursor = execute_compat(c, "UPDATE employee_final_payrolls SET status='cancelled' WHERE id=? AND status='draft'",
                   (final_id,))
         if update_cursor.rowcount != 1:
             raise ValueError("لم يتم إلغاء المسودة؛ ربما تغيرت حالتها.")
@@ -2102,13 +2102,13 @@ def reopen_final_payroll(final_id):
     c = _db()
     try:
         begin_write_transaction(c)
-        row = c.execute("SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
+        row = execute_compat(c, "SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
         if not row or row["status"] != "cancelled" or row["journal_entry_id"]:
             raise ValueError("إعادة الفتح متاحة للمسودة الملغاة فقط بشرط عدم وجود قيد أو دفعات.")
-        if c.execute("SELECT 1 FROM employee_final_payroll_payments WHERE final_payroll_id=? LIMIT 1",
+        if execute_compat(c, "SELECT 1 FROM employee_final_payroll_payments WHERE final_payroll_id=? LIMIT 1",
                      (final_id,)).fetchone():
             raise ValueError("لا يمكن إعادة فتح كشف مرتبط بدفعات صرف.")
-        update_cursor = c.execute("UPDATE employee_final_payrolls SET status='draft' WHERE id=? AND status='cancelled'",
+        update_cursor = execute_compat(c, "UPDATE employee_final_payrolls SET status='draft' WHERE id=? AND status='cancelled'",
                   (final_id,))
         if update_cursor.rowcount != 1:
             raise ValueError("لم تتم إعادة فتح المسودة.")
@@ -2130,7 +2130,7 @@ def approve_final_payroll(final_id):
     c = _db()
     try:
         begin_write_transaction(c)
-        row = c.execute("""SELECT f.*,e.full_name,e.employee_code FROM employee_final_payrolls f
+        row = execute_compat(c, """SELECT f.*,e.full_name,e.employee_code FROM employee_final_payrolls f
             JOIN employees e ON e.id=f.employee_id WHERE f.id=?""", (final_id,)).fetchone()
         if not row or row["status"] != "draft" or row["journal_entry_id"] or row["approval_status"] != "pending":
             raise ValueError("لا يمكن اعتماد إلا مسودة مرتب نهائي بانتظار المراجعة وغير مرحلة.")
@@ -2148,11 +2148,11 @@ def approve_final_payroll(final_id):
             (insurance_payable, "liability"),
         ]
         for account_id, account_type in expected:
-            account = c.execute("""SELECT id,account_type,is_group,active FROM accounts
+            account = execute_compat(c, """SELECT id,account_type,is_group,active FROM accounts
                 WHERE id=?""", (account_id,)).fetchone()
             if not account or not account["active"] or account["is_group"] or account["account_type"] != account_type:
                 raise ValueError("راجع الحسابات المختارة؛ يجب أن تكون تفصيلية ونشطة وبطبيعة الحساب المطلوبة.")
-        other_row = c.execute("SELECT id,is_group,active FROM accounts WHERE id=?", (other_account,)).fetchone()
+        other_row = execute_compat(c, "SELECT id,is_group,active FROM accounts WHERE id=?", (other_account,)).fetchone()
         if not other_row or not other_row["active"] or other_row["is_group"]:
             raise ValueError("اختر حسابًا تفصيليًا ونشطًا مقابلًا للاستقطاعات الأخرى.")
         gross = M(row["gross_pay"])
@@ -2176,7 +2176,7 @@ def approve_final_payroll(final_id):
         reference = "FINAL-PAYROLL-POST-" + str(final_id)
         journal_id = post_journal(c, row["termination_date"], reference,
             "اعتماد المرتب النهائي للموظف " + row["full_name"], lines, session["user_id"])
-        update_cursor = c.execute("""UPDATE employee_final_payrolls SET status='approved',journal_entry_id=?,
+        update_cursor = execute_compat(c, """UPDATE employee_final_payrolls SET status='approved',journal_entry_id=?,
             approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_status='approved'
             WHERE id=? AND status='draft' AND journal_entry_id IS NULL AND approval_status='pending'""",
             (journal_id, session["user_id"], final_id))
@@ -2207,18 +2207,18 @@ def pay_final_payroll(final_id):
         cash_id = int(request.form["cash_account_id"])
         begin_write_transaction(c)
         _cash_or_bank_account(c, cash_id)
-        row = c.execute("SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
+        row = execute_compat(c, "SELECT * FROM employee_final_payrolls WHERE id=?", (final_id,)).fetchone()
         if not row or row["status"] not in ("approved", "paid") or not row["journal_entry_id"]:
             raise ValueError("يجب اعتماد المرتب النهائي وترحيل قيده قبل الصرف.")
         if row["approved_by"] is not None and row["approved_by"] == session["user_id"]:
             raise ValueError("يجب أن ينفذ الصرف مستخدم مختلف عن معتمد المرتب النهائي.")
-        paid = M(sum((D(x["amount"]) for x in c.execute(
+        paid = M(sum((D(x["amount"]) for x in execute_compat(c, 
             "SELECT amount FROM employee_final_payroll_payments WHERE final_payroll_id=?",
             (final_id,)).fetchall()), Decimal("0")))
         outstanding = M(max(Decimal("0"), D(row["net_pay"]) - paid))
         if amount > outstanding or outstanding <= 0:
             raise ValueError("مبلغ الصرف يتجاوز صافي المرتب النهائي المتبقي.")
-        payable = c.execute("""SELECT account_id FROM journal_lines
+        payable = execute_compat(c, """SELECT account_id FROM journal_lines
             WHERE entry_id=? AND memo='صافي المرتب النهائي المستحق' AND credit>0
             ORDER BY id LIMIT 1""", (row["journal_entry_id"],)).fetchone()
         if not payable:
@@ -2229,14 +2229,14 @@ def pay_final_payroll(final_id):
             [(int(payable["account_id"]), amount, 0, "تخفيض صافي المرتب النهائي المستحق"),
              (cash_id, 0, amount, "صرف المرتب النهائي من البنك/الصندوق")],
             session["user_id"])
-        c.execute("""INSERT INTO employee_final_payroll_payments
+        execute_compat(c, """INSERT INTO employee_final_payroll_payments
             (final_payroll_id,payment_date,amount,cash_account_id,journal_entry_id,reference,notes,created_by)
             VALUES(?,?,?,?,?,?,?,?)""",
             (final_id,payment_date,str(amount),cash_id,journal_id,reference,
              request.form.get("notes","").strip()[:250],session["user_id"]))
         new_paid = M(paid + amount)
         new_status = "paid" if new_paid >= D(row["net_pay"]) else "approved"
-        c.execute("UPDATE employee_final_payrolls SET status=? WHERE id=? AND status IN ('approved','paid')",
+        execute_compat(c, "UPDATE employee_final_payrolls SET status=? WHERE id=? AND status IN ('approved','paid')",
                   (new_status,final_id))
         _audit(c,"employee_final_payroll_payment",
                row["final_payroll_no"] + " amount=" + str(amount) + " journal=" + str(journal_id))
@@ -2253,7 +2253,7 @@ def pay_final_payroll(final_id):
 
 
 def _payroll_basic_salary_variance_limit(c):
-    row = c.execute(
+    row = execute_compat(c, 
         "SELECT setting_value FROM company_settings WHERE setting_key='payroll_basic_salary_variance_limit_percent'"
     ).fetchone()
     try:
@@ -2277,7 +2277,7 @@ def save_payroll_settings():
         limit = M(request.form.get("basic_salary_variance_limit_percent", "10"))
         if limit < 0 or limit > 100:
             raise ValueError("حد اختلاف الراتب يجب أن يكون بين صفر و100%.")
-        c.execute("""INSERT INTO company_settings(setting_key,setting_value)
+        execute_compat(c, """INSERT INTO company_settings(setting_key,setting_value)
             VALUES('payroll_basic_salary_variance_limit_percent',?)
             ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value""",
             (str(limit),))
@@ -2302,8 +2302,8 @@ def approve_payroll_basic_salary_change(run_id, line_id):
         return redirect(url_for("workforce.payroll_run", run_id=run_id))
     try:
         begin_write_transaction(c)
-        run = c.execute("SELECT status,created_by FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
-        line = c.execute("""SELECT l.*,e.full_name,e.employee_code
+        run = execute_compat(c, "SELECT status,created_by FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+        line = execute_compat(c, """SELECT l.*,e.full_name,e.employee_code
             FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
             WHERE l.id=? AND l.run_id=?""", (line_id, run_id)).fetchone()
         if not run or run["status"] != "draft" or not line:
@@ -2317,7 +2317,7 @@ def approve_payroll_basic_salary_change(run_id, line_id):
         approval_note = request.form.get("approval_note", "").strip()
         if not approval_note:
             raise ValueError("اكتب ملاحظة اعتماد المدير قبل الموافقة على تعديل الراتب.")
-        update_cursor = c.execute("""UPDATE payroll_lines
+        update_cursor = execute_compat(c, """UPDATE payroll_lines
             SET basic_salary_approved_by=?,basic_salary_approved_at=CURRENT_TIMESTAMP
             WHERE id=? AND run_id=? AND basic_salary_approval_required=1
               AND basic_salary_approved_by IS NULL""",
@@ -2355,7 +2355,7 @@ def payroll():
             period_end = month_end.isoformat()
             # Resigned/retired employees are excluded from ordinary payroll.
             # Their final-period salary is prepared separately in /hr/final-payroll.
-            employees = c.execute("""SELECT * FROM employees
+            employees = execute_compat(c, """SELECT * FROM employees
                 WHERE active=1 AND work_status IN ('comprehensive_bonus','permanent','temporary','unpaid_leave')
                 ORDER BY employee_code""").fetchall()
             if not employees:
@@ -2412,7 +2412,7 @@ def payroll():
                         raise ValueError("تاريخ انتهاء الخدمة لا يقع ضمن شهر المرتبات للموظف " + e["full_name"] + ".")
                 payroll_factor = Decimal(payroll_days) / Decimal("30")
                 employee_period_end = e["termination_date"] if e["work_status"] in {"resigned", "retired"} else period_end
-                fixed_items = c.execute("""SELECT p.id,p.item_name,p.item_type,p.amount FROM employee_pay_items p
+                fixed_items = execute_compat(c, """SELECT p.id,p.item_name,p.item_type,p.amount FROM employee_pay_items p
                     WHERE p.employee_id=? AND p.active=1
                       AND p.id=(SELECT MAX(p2.id) FROM employee_pay_items p2
                                 WHERE p2.employee_id=p.employee_id
@@ -2435,7 +2435,7 @@ def payroll():
                 overtime_hours = D(request.form.get("overtime_hours_" + str(e["id"]), "0"))
                 unpaid_days = Decimal("0")
                 if request.form.get("use_attendance_data") == "1":
-                    attendance_rows = c.execute("""SELECT status,absence_hours,approved_overtime_hours
+                    attendance_rows = execute_compat(c, """SELECT status,absence_hours,approved_overtime_hours
                         FROM attendance_records WHERE employee_id=? AND attendance_date>=? AND attendance_date<=?""",
                         (e["id"],period+"-01",employee_period_end)).fetchall()
                     # Count absence hours only on days explicitly marked absent.
@@ -2463,7 +2463,7 @@ def payroll():
                     absent_hours = attendance_absent_hours
                     next_month = date(start.year + (start.month==12), 1 if start.month==12 else start.month+1, 1)
                     month_end = (next_month-date.resolution).isoformat()
-                    unpaid_requests = c.execute("""SELECT r.start_date,r.end_date,r.days FROM employee_leave_requests r
+                    unpaid_requests = execute_compat(c, """SELECT r.start_date,r.end_date,r.days FROM employee_leave_requests r
                         JOIN leave_types t ON t.id=r.leave_type_id
                         WHERE r.employee_id=? AND r.status='approved' AND t.is_paid=0
                         AND r.start_date<=? AND r.end_date>=?""",(e["id"],employee_period_end,period+"-01")).fetchall()
@@ -2490,7 +2490,7 @@ def payroll():
                     allowances = M(allowances * payroll_factor)
                     raise_amount = M(raise_amount * payroll_factor)
                 manual_advance_deduction = Decimal("0")
-                due_installments = c.execute("""SELECT i.due_amount,i.paid_amount
+                due_installments = execute_compat(c, """SELECT i.due_amount,i.paid_amount
                     FROM employee_loan_installments i JOIN employee_loans l ON l.id=i.loan_id
                     WHERE l.employee_id=? AND l.status='active' AND i.due_period<=? AND i.status='pending'
                     ORDER BY l.id,i.id""", (e["id"], period)).fetchall()
@@ -2502,7 +2502,7 @@ def payroll():
                 penalty_rows = []
                 penalty_deduction = Decimal("0")
                 if table_exists(c, "employee_penalties"):
-                    penalty_rows = c.execute("""SELECT id,amount,duration_days,reason FROM employee_penalties
+                    penalty_rows = execute_compat(c, """SELECT id,amount,duration_days,reason FROM employee_penalties
                         WHERE employee_id=? AND effective_period=? AND status='approved' ORDER BY id""",
                         (e["id"],period)).fetchall()
                     for penalty in penalty_rows:
@@ -2592,7 +2592,7 @@ def payroll():
                     Decimal("0") if e["work_status"] == "unpaid_leave"
                     else (M(salary_reference * payroll_factor) if payroll_days < 30 else salary_reference)
                 )
-                c.execute("""UPDATE payroll_lines SET
+                execute_compat(c, """UPDATE payroll_lines SET
                     basic_salary_reference=?,basic_salary_variance_percent=?,
                     basic_salary_variance_limit_percent=?,basic_salary_change_reason=?,
                     basic_salary_approval_required=?
@@ -2609,12 +2609,12 @@ def payroll():
                            "% limit=" + str(salary_variance_limit) +
                            "% reason=" + salary_change_reason[:250])
                 if table_exists(c, "payroll_line_items"):
-                    c.execute("UPDATE payroll_lines SET penalty_deduction=? WHERE id=?",
+                    execute_compat(c, "UPDATE payroll_lines SET penalty_deduction=? WHERE id=?",
                               (str(penalty_deduction),payroll_line_id))
                     def snapshot_item(section, item_name, amount, source_type="payroll_input", source_id=None, sort_order=0):
                         value = M(amount)
                         if value:
-                            c.execute("""INSERT INTO payroll_line_items
+                            execute_compat(c, """INSERT INTO payroll_line_items
                                 (payroll_line_id,section,item_name,amount,source_type,source_id,sort_order)
                                 VALUES(?,?,?,?,?,?,?)""",
                                 (payroll_line_id,section,item_name,str(value),source_type,source_id,sort_order))
@@ -2660,7 +2660,7 @@ def payroll():
                 flash(safe_error_message(e, "تعذر إعداد المرتبات بسبب تعارض في البيانات. لم يتم حفظ كشف المرتبات."), "error")
     display_period = date.today().strftime("%Y-%m")
     # Final-period employees are handled on the separate final-payroll screen.
-    employee_rows = c.execute("""SELECT * FROM employees
+    employee_rows = execute_compat(c, """SELECT * FROM employees
         WHERE active=1 AND work_status IN ('comprehensive_bonus','permanent','temporary','unpaid_leave')
         ORDER BY employee_code""").fetchall()
     employees = []
@@ -2669,7 +2669,7 @@ def payroll():
         current_basic, current_insured = _employee_salary_basis(c, employee["id"], date.today().isoformat())
         employee["basic_salary"] = str(current_basic)
         employee["insured_wage"] = str(current_insured)
-        fixed_rows = c.execute("""SELECT item_name,item_type,amount FROM employee_pay_items
+        fixed_rows = execute_compat(c, """SELECT item_name,item_type,amount FROM employee_pay_items
             WHERE employee_id=? AND active=1 ORDER BY id""", (employee["id"],)).fetchall()
         employee["fixed_allowance_total"] = M(sum(
             (D(x["amount"]) for x in fixed_rows if x["item_type"] == "allowance"), Decimal("0")))
@@ -2698,30 +2698,30 @@ def payroll():
 @_role("admin", "accountant", "viewer")
 def payroll_run(run_id):
     c = _db()
-    run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+    run = execute_compat(c, "SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
     if not run:
         c.close()
         flash("بيانات المرتبات غير موجودة.", "error")
         return redirect(url_for("workforce.payroll"))
-    rows = c.execute("""SELECT l.*,e.employee_code,e.full_name,e.department FROM payroll_lines l
+    rows = execute_compat(c, """SELECT l.*,e.employee_code,e.full_name,e.department FROM payroll_lines l
                         JOIN employees e ON e.id=l.employee_id WHERE l.run_id=? ORDER BY e.employee_code""", (run_id,)).fetchall()
     accounts = _accounts(c)
-    payment_accounts = c.execute("""SELECT a.id,a.code,a.name_ar,a.account_type
+    payment_accounts = execute_compat(c, """SELECT a.id,a.code,a.name_ar,a.account_type
         FROM accounts a JOIN cash_accounts ca ON ca.account_id=a.id
         WHERE a.active=1 AND a.is_group=0 AND a.account_type='asset' AND ca.active=1
         ORDER BY a.code""").fetchall()
     allocation_count_expr = "(SELECT COUNT(*) FROM payroll_payment_allocations pa WHERE pa.payment_id=p.id)" if table_exists(c, "payroll_payment_allocations") else "0"
-    payments = c.execute("""SELECT p.*,a.code AS account_code,a.name_ar AS account_name,"""+
+    payments = execute_compat(c, """SELECT p.*,a.code AS account_code,a.name_ar AS account_name,"""+
         allocation_count_expr+""" AS allocation_count
         FROM payroll_payments p JOIN accounts a ON a.id=p.cash_account_id
         WHERE p.run_id=? ORDER BY p.payment_date,p.id""", (run_id,)).fetchall()
     line_paid = {}
     if table_exists(c, "payroll_payment_allocations"):
         for payroll_row in rows:
-            line_paid[payroll_row["id"]] = M(sum((D(x["amount"]) for x in c.execute(
+            line_paid[payroll_row["id"]] = M(sum((D(x["amount"]) for x in execute_compat(c, 
                 "SELECT amount FROM payroll_payment_allocations WHERE payroll_line_id=?",
                 (payroll_row["id"],)).fetchall()),Decimal("0")))
-    reversal = c.execute("""SELECT r.*,j.reference FROM payroll_reversals r
+    reversal = execute_compat(c, """SELECT r.*,j.reference FROM payroll_reversals r
         JOIN journal_entries j ON j.id=r.reversal_journal_entry_id WHERE r.run_id=?""",
         (run_id,)).fetchone()
     paid_amount = M(sum((D(p["amount"]) for p in payments), Decimal("0")))
@@ -2764,7 +2764,7 @@ def payroll_run(run_id):
 def payroll_employee_payslip(run_id, employee_id):
     """Printable employee payslip based exclusively on the saved payroll snapshot."""
     c = _db()
-    row = c.execute("""
+    row = execute_compat(c, """
         SELECT r.id AS run_id,r.period,r.status,
                e.id AS employee_id,e.employee_code,e.full_name,e.job_title,e.department,
                e.hire_date,e.insurance_number,
@@ -2800,11 +2800,11 @@ def payroll_employee_payslip(run_id, employee_id):
     data["gross_pay"] = M(data["gross_pay"])
     detail_items = []
     if table_exists(c, "payroll_line_items"):
-        detail_items = c.execute("""SELECT * FROM payroll_line_items WHERE payroll_line_id=?
+        detail_items = execute_compat(c, """SELECT * FROM payroll_line_items WHERE payroll_line_id=?
             ORDER BY section,sort_order,id""",(row["id"],)).fetchall()
     payments = []
     if table_exists(c, "payroll_payment_allocations"):
-        payments = c.execute("""SELECT a.amount,p.payment_date,p.reference,p.journal_entry_id
+        payments = execute_compat(c, """SELECT a.amount,p.payment_date,p.reference,p.journal_entry_id
             FROM payroll_payment_allocations a JOIN payroll_payments p ON p.id=a.payment_id
             WHERE a.payroll_line_id=? ORDER BY p.payment_date,p.id""",(row["id"],)).fetchall()
     data["paid_amount"] = M(sum((D(p["amount"]) for p in payments),Decimal("0")))
@@ -2817,12 +2817,12 @@ def payroll_employee_payslip(run_id, employee_id):
 @_role("admin", "accountant", "viewer")
 def print_payroll_run(run_id):
     c = _db()
-    run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+    run = execute_compat(c, "SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
     if not run:
         c.close()
         flash("بيانات المرتبات غير موجودة.", "error")
         return redirect(url_for("workforce.payroll"))
-    rows = c.execute("""SELECT l.*,e.employee_code,e.full_name,e.department
+    rows = execute_compat(c, """SELECT l.*,e.employee_code,e.full_name,e.department
         FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
         WHERE l.run_id=? ORDER BY e.employee_code""", (run_id,)).fetchall()
     if not rows:
@@ -2832,7 +2832,7 @@ def print_payroll_run(run_id):
     details = {}
     has_items = table_exists(c, "payroll_line_items")
     for row in rows:
-        details[row["id"]] = c.execute("""SELECT section,item_name,amount FROM payroll_line_items
+        details[row["id"]] = execute_compat(c, """SELECT section,item_name,amount FROM payroll_line_items
             WHERE payroll_line_id=? ORDER BY section,sort_order,id""", (row["id"],)).fetchall() if has_items else []
     fields = ("basic_salary","salary_raise","allowances","overtime_amount","gross_pay","insured_wage",
               "employer_insurance","total_entitlements","employee_insurance","taxable_income_tax",
@@ -2849,15 +2849,15 @@ def delete_payroll_run(run_id):
     c = _db()
     try:
         begin_write_transaction(c)
-        run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+        run = execute_compat(c, "SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         if not run or run["status"] != "draft" or run["journal_entry_id"]:
             raise ValueError("لا يمكن حذف كشف المرتبات بعد اعتماده أو إقفاله. الحذف متاح للمسودة فقط.")
-        if c.execute("SELECT 1 FROM payroll_payments WHERE run_id=? LIMIT 1", (run_id,)).fetchone():
+        if execute_compat(c, "SELECT 1 FROM payroll_payments WHERE run_id=? LIMIT 1", (run_id,)).fetchone():
             raise ValueError("لا يمكن حذف كشف مرتبات مرتبط بعملية صرف.")
-        line_ids=[int(x["id"]) for x in c.execute("SELECT id FROM payroll_lines WHERE run_id=?", (run_id,)).fetchall()]
+        line_ids=[int(x["id"]) for x in execute_compat(c, "SELECT id FROM payroll_lines WHERE run_id=?", (run_id,)).fetchall()]
         if line_ids:
             marks=",".join("?" for _ in line_ids)
-            allocations=c.execute("""SELECT a.amount,i.id AS installment_id,i.due_amount,
+            allocations=execute_compat(c, """SELECT a.amount,i.id AS installment_id,i.due_amount,
                     i.paid_amount,i.loan_id
                 FROM payroll_loan_allocations a
                 JOIN employee_loan_installments i ON i.id=a.installment_id
@@ -2865,26 +2865,26 @@ def delete_payroll_run(run_id):
             affected_loans=set()
             for allocation in allocations:
                 restored=max(Decimal("0"),D(allocation["paid_amount"])-D(allocation["amount"]))
-                c.execute("UPDATE employee_loan_installments SET paid_amount=?,status=? WHERE id=?",
+                execute_compat(c, "UPDATE employee_loan_installments SET paid_amount=?,status=? WHERE id=?",
                           (str(M(restored)),"paid" if restored>=D(allocation["due_amount"]) else "pending",
                            allocation["installment_id"]))
                 affected_loans.add(int(allocation["loan_id"]))
             for loan_id in affected_loans:
-                loan=c.execute("SELECT approved_amount FROM employee_loans WHERE id=?",(loan_id,)).fetchone()
+                loan=execute_compat(c, "SELECT approved_amount FROM employee_loans WHERE id=?",(loan_id,)).fetchone()
                 if loan:
-                    paid_total=M(sum((D(x["paid_amount"]) for x in c.execute(
+                    paid_total=M(sum((D(x["paid_amount"]) for x in execute_compat(c, 
                         "SELECT paid_amount FROM employee_loan_installments WHERE loan_id=?",(loan_id,)).fetchall()),
                         Decimal("0")))
                     balance=M(max(Decimal("0"),D(loan["approved_amount"])-paid_total))
-                    c.execute("UPDATE employee_loans SET remaining_balance=?,status=? WHERE id=?",
+                    execute_compat(c, "UPDATE employee_loans SET remaining_balance=?,status=? WHERE id=?",
                               (str(balance),"closed" if balance<=0 else "active",loan_id))
-            c.execute("DELETE FROM payroll_loan_allocations WHERE payroll_line_id IN ("+marks+")", line_ids)
+            execute_compat(c, "DELETE FROM payroll_loan_allocations WHERE payroll_line_id IN ("+marks+")", line_ids)
         for dependent_table in ("payroll_line_items","payroll_payment_allocations"):
             if table_exists(c, dependent_table):
-                c.execute("DELETE FROM "+dependent_table+" WHERE payroll_line_id IN ("+
+                execute_compat(c, "DELETE FROM "+dependent_table+" WHERE payroll_line_id IN ("+
                           (",".join("?" for _ in line_ids) if line_ids else "NULL")+")", line_ids)
-        c.execute("DELETE FROM payroll_lines WHERE run_id=?", (run_id,))
-        delete_cursor = c.execute("DELETE FROM payroll_runs WHERE id=? AND status='draft' AND journal_entry_id IS NULL", (run_id,))
+        execute_compat(c, "DELETE FROM payroll_lines WHERE run_id=?", (run_id,))
+        delete_cursor = execute_compat(c, "DELETE FROM payroll_runs WHERE id=? AND status='draft' AND journal_entry_id IS NULL", (run_id,))
         if delete_cursor.rowcount != 1:
             raise ValueError("لم يتم حذف كشف المرتبات؛ ربما تم اعتماده في عملية أخرى.")
         _audit(c, "payroll_draft_deleted", "run=" + str(run_id) + " period=" + run["period"])
@@ -2905,12 +2905,12 @@ def post_payroll(run_id):
         # Acquire the write lock before reading the run status. This prevents two
         # concurrent requests from both observing a draft and posting it twice.
         begin_write_transaction(c)
-        run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+        run = execute_compat(c, "SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         if not run or run["status"] != "draft" or run["approval_status"] != "pending":
             raise ValueError("كشف المرتبات غير موجود أو ليس بانتظار الاعتماد.")
         if run["created_by"] is None or run["created_by"] == session["user_id"]:
             raise ValueError("لا يجوز اعتماد وترحيل المرتبات بواسطة منشئ الكشف، أو دون بيانات منشئ موثقة.")
-        rows = c.execute("""SELECT l.*,e.branch_id,e.cost_center_id,e.project_id,e.full_name,e.employee_code
+        rows = execute_compat(c, """SELECT l.*,e.branch_id,e.cost_center_id,e.project_id,e.full_name,e.employee_code
             FROM payroll_lines l JOIN employees e ON e.id=l.employee_id WHERE l.run_id=?
             ORDER BY e.employee_code""", (run_id,)).fetchall()
         if not rows:
@@ -2945,7 +2945,7 @@ def post_payroll(run_id):
             (insurance_payable, "liability"),
         )
         for selected_id, expected_type in required_account_types:
-            selected_account = c.execute(
+            selected_account = execute_compat(c, 
                 "SELECT account_type,is_group,active FROM accounts WHERE id=?", (selected_id,)
             ).fetchone()
             if (not selected_account or not selected_account["active"] or selected_account["is_group"]
@@ -2954,7 +2954,7 @@ def post_payroll(run_id):
         if advance_deduction > 0:
             _employee_advance_account(c, advances_account)
         if total_loan_deduction > 0:
-            loan_installment_rows = c.execute("""SELECT DISTINCT l.loan_account_id,
+            loan_installment_rows = execute_compat(c, """SELECT DISTINCT l.loan_account_id,
                     i.due_amount,i.paid_amount
                 FROM employee_loans l
                 JOIN employee_loan_installments i ON i.loan_id=l.id
@@ -2999,7 +2999,7 @@ def post_payroll(run_id):
             left = D(payroll_line["loan_deduction"])
             if left <= 0:
                 continue
-            due_rows = c.execute("""SELECT i.id,i.due_amount,i.paid_amount
+            due_rows = execute_compat(c, """SELECT i.id,i.due_amount,i.paid_amount
                 FROM employee_loan_installments i JOIN employee_loans l ON l.id=i.loan_id
                 WHERE l.employee_id=(SELECT employee_id FROM payroll_lines WHERE id=?)
                   AND l.status='active' AND i.due_period<=? AND i.status='pending'
@@ -3009,29 +3009,29 @@ def post_payroll(run_id):
                 amount = min(left,outstanding)
                 if amount <= 0:
                     continue
-                c.execute("INSERT INTO payroll_loan_allocations(payroll_line_id,installment_id,amount) VALUES(?,?,?)",
+                execute_compat(c, "INSERT INTO payroll_loan_allocations(payroll_line_id,installment_id,amount) VALUES(?,?,?)",
                           (payroll_line["id"],item["id"],str(M(amount))))
                 paid = M(D(item["paid_amount"])+amount)
-                c.execute("UPDATE employee_loan_installments SET paid_amount=?,status=? WHERE id=?",
+                execute_compat(c, "UPDATE employee_loan_installments SET paid_amount=?,status=? WHERE id=?",
                           (str(paid),"paid" if paid>=D(item["due_amount"]) else "pending",item["id"]))
                 left = M(left-amount)
                 if left <= 0:
                     break
             if left > 0:
                 raise ValueError("تعذر توزيع خصم قسط السلفة على جدول الأقساط.")
-        for loan in c.execute("SELECT id,approved_amount FROM employee_loans WHERE status='active'").fetchall():
-            paid = M(sum((D(x["paid_amount"]) for x in c.execute(
+        for loan in execute_compat(c, "SELECT id,approved_amount FROM employee_loans WHERE status='active'").fetchall():
+            paid = M(sum((D(x["paid_amount"]) for x in execute_compat(c, 
                 "SELECT paid_amount FROM employee_loan_installments WHERE loan_id=?",(loan["id"],)).fetchall()),Decimal("0")))
             balance = M(max(Decimal("0"),D(loan["approved_amount"])-paid))
-            c.execute("UPDATE employee_loans SET remaining_balance=?,status=? WHERE id=?",
+            execute_compat(c, "UPDATE employee_loans SET remaining_balance=?,status=? WHERE id=?",
                       (str(balance),"closed" if balance<=0 else "active",loan["id"]))
         if table_exists(c, "employee_penalties"):
             for payroll_line in rows:
                 if "penalty_deduction" in payroll_line.keys() and D(payroll_line["penalty_deduction"]) > 0:
-                    c.execute("""UPDATE employee_penalties SET status='deducted',payroll_line_id=?,decided_by=COALESCE(decided_by,?)
+                    execute_compat(c, """UPDATE employee_penalties SET status='deducted',payroll_line_id=?,decided_by=COALESCE(decided_by,?)
                         WHERE employee_id=? AND effective_period=? AND status='approved'""",
                         (payroll_line["id"],session["user_id"],payroll_line["employee_id"],run["period"]))
-        update_cursor = c.execute("""UPDATE payroll_runs SET status='posted',journal_entry_id=?,
+        update_cursor = execute_compat(c, """UPDATE payroll_runs SET status='posted',journal_entry_id=?,
             approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_status='approved',
             posted_at=CURRENT_TIMESTAMP
             WHERE id=? AND status='draft' AND approval_status='pending'""",
@@ -3054,12 +3054,12 @@ def reverse_payroll(run_id):
     c = _db()
     try:
         begin_write_transaction(c)
-        run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+        run = execute_compat(c, "SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         if not run or run["status"] != "posted" or not run["journal_entry_id"]:
             raise ValueError("لا يمكن عكس قيد مرتبات غير مرحّل. لا يمكن عكس قيد مرتبات غير مرحّل أو سبق عكسه.")
-        if c.execute("SELECT 1 FROM payroll_reversals WHERE run_id=?", (run_id,)).fetchone():
+        if execute_compat(c, "SELECT 1 FROM payroll_reversals WHERE run_id=?", (run_id,)).fetchone():
             raise ValueError("تم عكس قيد المرتبات هذا من قبل.")
-        payments = c.execute("SELECT COUNT(*) FROM payroll_payments WHERE run_id=?", (run_id,)).fetchone()[0]
+        payments = execute_compat(c, "SELECT COUNT(*) FROM payroll_payments WHERE run_id=?", (run_id,)).fetchone()[0]
         if payments:
             raise ValueError("لا يمكن عكس قيد المرتبات مع وجود دفعات صرف مسجلة. لا يمكن عكس قيد المرتبات مع وجود دفعات صرف مسجلة؛ سوِّ الدفعات أولًا ثم راجع حسابات الموظفين.")
         reversal_date = date.fromisoformat(request.form.get("reversal_date") or date.today().isoformat()).isoformat()
@@ -3070,7 +3070,7 @@ def reverse_payroll(run_id):
         dimension_keys = ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id", "supplier_id")
         selected_dimensions = [key for key in dimension_keys if key in available_columns]
         select_columns = ["account_id", "debit", "credit", "memo"] + selected_dimensions
-        original_lines = c.execute(
+        original_lines = execute_compat(c, 
             "SELECT " + ",".join(select_columns) + " FROM journal_lines WHERE entry_id=? ORDER BY id",
             (run["journal_entry_id"],)
         ).fetchall()
@@ -3089,11 +3089,11 @@ def reverse_payroll(run_id):
             "عكس مرتبات شهر " + run["period"] + " — " + reason,
             reversal_lines, session["user_id"]
         )
-        c.execute("""INSERT INTO payroll_reversals(run_id,reversal_date,reason,
+        execute_compat(c, """INSERT INTO payroll_reversals(run_id,reversal_date,reason,
             reversal_journal_entry_id,created_by) VALUES(?,?,?,?,?)""",
             (run_id, reversal_date, reason, reversal_journal_id, session["user_id"]))
         # Restore loan installments allocated by this payroll because its salary deduction is now reversed.
-        allocations = c.execute("""SELECT a.installment_id,a.amount,i.loan_id,i.paid_amount,i.due_amount
+        allocations = execute_compat(c, """SELECT a.installment_id,a.amount,i.loan_id,i.paid_amount,i.due_amount
             FROM payroll_loan_allocations a
             JOIN payroll_lines pl ON pl.id=a.payroll_line_id
             JOIN employee_loan_installments i ON i.id=a.installment_id
@@ -3101,23 +3101,23 @@ def reverse_payroll(run_id):
         affected_loans = set()
         for allocation in allocations:
             restored_paid = max(Decimal("0"), D(allocation["paid_amount"]) - D(allocation["amount"]))
-            c.execute("UPDATE employee_loan_installments SET paid_amount=?,status='pending' WHERE id=?",
+            execute_compat(c, "UPDATE employee_loan_installments SET paid_amount=?,status='pending' WHERE id=?",
                       (str(M(restored_paid)), allocation["installment_id"]))
             affected_loans.add(int(allocation["loan_id"]))
         for loan_id in affected_loans:
-            loan = c.execute("SELECT approved_amount FROM employee_loans WHERE id=?", (loan_id,)).fetchone()
+            loan = execute_compat(c, "SELECT approved_amount FROM employee_loans WHERE id=?", (loan_id,)).fetchone()
             if not loan:
                 continue
-            total_paid = M(sum((D(item["paid_amount"]) for item in c.execute(
+            total_paid = M(sum((D(item["paid_amount"]) for item in execute_compat(c, 
                 "SELECT paid_amount FROM employee_loan_installments WHERE loan_id=?", (loan_id,)).fetchall()), Decimal("0")))
             remaining = M(max(Decimal("0"), D(loan["approved_amount"]) - total_paid))
-            c.execute("UPDATE employee_loans SET remaining_balance=?,status=? WHERE id=?",
+            execute_compat(c, "UPDATE employee_loans SET remaining_balance=?,status=? WHERE id=?",
                       (str(remaining), "closed" if remaining <= 0 else "active", loan_id))
         if table_exists(c, "employee_penalties"):
-            c.execute("""UPDATE employee_penalties SET status='approved',payroll_line_id=NULL
+            execute_compat(c, """UPDATE employee_penalties SET status='approved',payroll_line_id=NULL
                 WHERE payroll_line_id IN (SELECT id FROM payroll_lines WHERE run_id=?) AND status='deducted'""",
                 (run_id,))
-        c.execute("UPDATE payroll_runs SET status='reversed' WHERE id=?", (run_id,))
+        execute_compat(c, "UPDATE payroll_runs SET status='reversed' WHERE id=?", (run_id,))
         _audit(c, "payroll_run_reversed", reference + " reason=" + reason)
         c.commit()
         flash("تم إنشاء قيد عكسي مستقل للمرتبات. القيد الأصلي وتفاصيل المرتبات لم يتم حذفها أو تعديلها.", "success")
@@ -3133,14 +3133,14 @@ def reverse_payroll(run_id):
 def pay_payroll(run_id):
     c = _db()
     try:
-        run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+        run = execute_compat(c, "SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         if not run or run["status"] != "posted":
             raise ValueError("لا يمكن صرف المرتبات قبل ترحيلها.")
-        rows = c.execute("SELECT net_pay FROM payroll_lines WHERE run_id=?", (run_id,)).fetchall()
+        rows = execute_compat(c, "SELECT net_pay FROM payroll_lines WHERE run_id=?", (run_id,)).fetchall()
         if not rows:
             raise ValueError("لا توجد تفاصيل للمرتبات.")
         net_payable = M(sum((D(row["net_pay"]) for row in rows), Decimal("0")))
-        paid = M(sum((D(row["amount"]) for row in c.execute(
+        paid = M(sum((D(row["amount"]) for row in execute_compat(c, 
             "SELECT amount FROM payroll_payments WHERE run_id=?", (run_id,)).fetchall()), Decimal("0")))
         amount = M(request.form.get("amount"))
         if amount <= 0:
@@ -3154,23 +3154,23 @@ def pay_payroll(run_id):
         begin_write_transaction(c)
         # Re-read the payroll state after acquiring the write lock. A reversal may
         # have completed after the initial page read but before this payment began.
-        run = c.execute("SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+        run = execute_compat(c, "SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
         if not run or run["status"] != "posted" or not run["journal_entry_id"]:
             raise ValueError("لا يمكن صرف مرتبات تم عكسها أو لم تعد مرحّلة.")
         if run["approved_by"] is not None and run["approved_by"] == session["user_id"]:
             raise ValueError("يجب أن ينفذ صرف المرتبات مستخدم مختلف عن معتمد كشف المرتبات.")
-        rows = c.execute("SELECT net_pay FROM payroll_lines WHERE run_id=?", (run_id,)).fetchall()
+        rows = execute_compat(c, "SELECT net_pay FROM payroll_lines WHERE run_id=?", (run_id,)).fetchall()
         if not rows:
             raise ValueError("لا توجد تفاصيل للمرتبات.")
         net_payable = M(sum((D(row["net_pay"]) for row in rows), Decimal("0")))
         # Recheck outstanding value inside the write transaction to prevent concurrent overpayment.
-        paid_now = M(sum((D(row["amount"]) for row in c.execute(
+        paid_now = M(sum((D(row["amount"]) for row in execute_compat(c, 
             "SELECT amount FROM payroll_payments WHERE run_id=?", (run_id,)).fetchall()), Decimal("0")))
         if amount > net_payable - paid_now:
             raise ValueError("مبلغ الصرف يتجاوز صافي المرتبات المتبقي بعد احتساب الدفعات الأخرى.")
         journal_id = post_journal(c, payment_date, reference,
             "صرف مرتبات شهر " + run["period"],
-            [(int(c.execute("""SELECT jl.account_id FROM journal_lines jl
+            [(int(execute_compat(c, """SELECT jl.account_id FROM journal_lines jl
                 WHERE jl.entry_id=? AND jl.memo='صافي مستحقات الموظفين' AND jl.credit>0
                 ORDER BY jl.id LIMIT 1""", (run["journal_entry_id"],)).fetchone()[0]),
               amount, 0, "إقفال صافي مستحقات الموظفين"),
@@ -3181,12 +3181,12 @@ def pay_payroll(run_id):
             (run_id,payment_date,str(amount),cash_account_id,journal_id,reference,
              request.form.get("notes","").strip(),session["user_id"]))
         if request.form.get("allocation_mode") == "manual":
-            allocation_rows = c.execute("SELECT id,employee_id,net_pay FROM payroll_lines WHERE run_id=? ORDER BY id",(run_id,)).fetchall()
+            allocation_rows = execute_compat(c, "SELECT id,employee_id,net_pay FROM payroll_lines WHERE run_id=? ORDER BY id",(run_id,)).fetchall()
             allocation_total = Decimal("0")
             pending_allocations = []
             for line in allocation_rows:
                 allocation = M(request.form.get("allocation_" + str(line["id"]),"0"))
-                already = M(sum((D(x["amount"]) for x in c.execute(
+                already = M(sum((D(x["amount"]) for x in execute_compat(c, 
                     "SELECT amount FROM payroll_payment_allocations WHERE payroll_line_id=?",(line["id"],)).fetchall()),Decimal("0")))
                 if allocation < 0 or allocation > M(D(line["net_pay"])-already):
                     raise ValueError("توزيع الصرف على الموظف يتجاوز صافي مستحقه المتبقي.")
@@ -3196,7 +3196,7 @@ def pay_payroll(run_id):
             if M(allocation_total) != amount:
                 raise ValueError("يجب أن يساوي مجموع توزيعات الموظفين مبلغ دفعة الصرف بالضبط.")
             for allocation in pending_allocations:
-                c.execute("""INSERT INTO payroll_payment_allocations(payment_id,payroll_line_id,amount)
+                execute_compat(c, """INSERT INTO payroll_payment_allocations(payment_id,payroll_line_id,amount)
                     VALUES(?,?,?)""",allocation)
         _audit(c, "payroll_payment_posted", reference + " amount=" + str(amount))
         c.commit()
@@ -3219,10 +3219,10 @@ def employee_loans():
             count = int(request.form.get("installment_count", "0"))
             first = request.form.get("first_due_period", "")
             date.fromisoformat(first + "-01")
-            if not c.execute("SELECT 1 FROM employees WHERE id=? AND active=1", (employee_id,)).fetchone() or amount <= 0 or not 1 <= count <= 60:
+            if not execute_compat(c, "SELECT 1 FROM employees WHERE id=? AND active=1", (employee_id,)).fetchone() or amount <= 0 or not 1 <= count <= 60:
                 raise ValueError("راجع الموظف ومبلغ السلفة وعدد الأقساط من 1 إلى 60.")
             loan_no = "EMP-LOAN-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
-            c.execute("""INSERT INTO employee_loans(loan_no,employee_id,request_date,requested_amount,
+            execute_compat(c, """INSERT INTO employee_loans(loan_no,employee_id,request_date,requested_amount,
                 installment_count,first_due_period,notes,created_by) VALUES(?,?,?,?,?,?,?,?)""",
                 (loan_no,employee_id,date.today().isoformat(),str(amount),count,first,
                  request.form.get("notes","").strip(),session["user_id"]))
@@ -3234,14 +3234,14 @@ def employee_loans():
             flash(str(exc) or "تعذر تسجيل طلب السلفة.","error")
         c.close()
         return redirect(url_for("workforce.employee_loans"))
-    loans = c.execute("""SELECT l.*,e.employee_code,e.full_name FROM employee_loans l
+    loans = execute_compat(c, """SELECT l.*,e.employee_code,e.full_name FROM employee_loans l
         JOIN employees e ON e.id=l.employee_id ORDER BY l.id DESC""").fetchall()
-    employees = c.execute("SELECT id,employee_code,full_name FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
-    cash_accounts = c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
+    employees = execute_compat(c, "SELECT id,employee_code,full_name FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
+    cash_accounts = execute_compat(c, """SELECT a.id,a.code,a.name_ar FROM accounts a
         JOIN cash_accounts ca ON ca.account_id=a.id
         WHERE a.active=1 AND a.is_group=0 AND a.account_type='asset' AND ca.active=1
         ORDER BY a.code""").fetchall()
-    loan_accounts = c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
+    loan_accounts = execute_compat(c, """SELECT a.id,a.code,a.name_ar FROM accounts a
         WHERE a.active=1 AND a.is_group=0 AND a.account_type='asset'
           AND NOT EXISTS(SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id)
         ORDER BY a.code""").fetchall()
@@ -3256,7 +3256,7 @@ def approve_employee_loan(loan_id):
     c = _db()
     try:
         begin_write_transaction(c)
-        loan = c.execute("SELECT * FROM employee_loans WHERE id=?", (loan_id,)).fetchone()
+        loan = execute_compat(c, "SELECT * FROM employee_loans WHERE id=?", (loan_id,)).fetchone()
         if not loan or loan["status"] != "requested":
             raise ValueError("طلب السلفة غير موجود أو سبق اتخاذ قرار.")
         if loan["created_by"] is None or loan["created_by"] == session["user_id"]:
@@ -3267,7 +3267,7 @@ def approve_employee_loan(loan_id):
         date.fromisoformat(first + "-01")
         if amount <= 0 or amount > D(loan["requested_amount"]) or not 1 <= count <= 60:
             raise ValueError("المبلغ المعتمد لا يتجاوز المطلوب وعدد الأقساط من 1 إلى 60.")
-        update_cursor = c.execute("""UPDATE employee_loans SET approved_amount=?,installment_count=?,first_due_period=?,
+        update_cursor = execute_compat(c, """UPDATE employee_loans SET approved_amount=?,installment_count=?,first_due_period=?,
             status='approved',approved_by=?,approved_at=CURRENT_TIMESTAMP
             WHERE id=? AND status='requested'""",
             (str(amount),count,first,session["user_id"],loan_id))
@@ -3289,12 +3289,12 @@ def reject_employee_loan(loan_id):
     c = _db()
     try:
         begin_write_transaction(c)
-        loan = c.execute("SELECT * FROM employee_loans WHERE id=?", (loan_id,)).fetchone()
+        loan = execute_compat(c, "SELECT * FROM employee_loans WHERE id=?", (loan_id,)).fetchone()
         if not loan or loan["status"] != "requested":
             raise ValueError("لا يمكن رفض الطلب في حالته الحالية.")
         if loan["created_by"] is None or loan["created_by"] == session["user_id"]:
             raise ValueError("لا يجوز رفض طلب السلفة بواسطة منشئه، أو دون بيانات منشئ موثقة.")
-        update_cursor = c.execute("""UPDATE employee_loans SET status='rejected',approved_by=?,approved_at=CURRENT_TIMESTAMP
+        update_cursor = execute_compat(c, """UPDATE employee_loans SET status='rejected',approved_by=?,approved_at=CURRENT_TIMESTAMP
             WHERE id=? AND status='requested'""", (session["user_id"],loan_id))
         if update_cursor.rowcount != 1:
             raise ValueError("تم اتخاذ قرار على طلب السلفة بواسطة مستخدم آخر.")
@@ -3313,7 +3313,7 @@ def reject_employee_loan(loan_id):
 def disburse_employee_loan(loan_id):
     c = _db()
     try:
-        loan = c.execute("""SELECT l.*,e.full_name FROM employee_loans l
+        loan = execute_compat(c, """SELECT l.*,e.full_name FROM employee_loans l
             JOIN employees e ON e.id=l.employee_id WHERE l.id=?""",(loan_id,)).fetchone()
         if not loan or loan["status"] != "approved":
             raise ValueError("لا يمكن صرف إلا سلفة معتمدة لم تُصرف.")
@@ -3338,9 +3338,9 @@ def disburse_employee_loan(loan_id):
             month = first.year * 12 + first.month - 1 + idx
             period = f"{month//12:04d}-{month%12+1:02d}"
             due = Decimal(base + (1 if idx < rem else 0)) / 100
-            c.execute("INSERT INTO employee_loan_installments(loan_id,due_period,due_amount) VALUES(?,?,?)",
+            execute_compat(c, "INSERT INTO employee_loan_installments(loan_id,due_period,due_amount) VALUES(?,?,?)",
                       (loan_id,period,str(M(due))))
-        c.execute("""UPDATE employee_loans SET status='active',remaining_balance=?,loan_account_id=?,
+        execute_compat(c, """UPDATE employee_loans SET status='active',remaining_balance=?,loan_account_id=?,
             disbursement_account_id=?,disbursement_date=?,journal_entry_id=? WHERE id=?""",
             (str(amount),loan_account_id,cash_id,disb_date,journal,loan_id))
         _audit(c,"employee_loan_disbursed",loan["loan_no"]+" journal="+str(journal))
@@ -3359,14 +3359,14 @@ def defer_loan_installment(loan_id, installment_id):
     c = _db()
     try:
         begin_write_transaction(c)
-        installment = c.execute("""SELECT i.*,l.employee_id,l.status AS loan_status,l.loan_no
+        installment = execute_compat(c, """SELECT i.*,l.employee_id,l.status AS loan_status,l.loan_no
             FROM employee_loan_installments i JOIN employee_loans l ON l.id=i.loan_id
             WHERE i.id=? AND i.loan_id=?""",(installment_id,loan_id)).fetchone()
         if not installment or installment["loan_status"] != "active" or installment["status"] != "pending":
             raise ValueError("القسط غير موجود أو ليس قسطًا نشطًا قابلًا للتأجيل.")
         # Once the employee's payroll for this installment month is posted,
         # the installment has been used in an approved payroll and must not be changed.
-        locked_payroll = c.execute("""SELECT 1 FROM payroll_loan_allocations a
+        locked_payroll = execute_compat(c, """SELECT 1 FROM payroll_loan_allocations a
             JOIN payroll_lines pl ON pl.id=a.payroll_line_id
             JOIN payroll_runs r ON r.id=pl.run_id
             WHERE a.installment_id=? AND r.status='posted' LIMIT 1""",
@@ -3380,16 +3380,16 @@ def defer_loan_installment(loan_id, installment_id):
         old_period = date.fromisoformat(installment["due_period"]+"-01")
         next_month = old_period.year*12+old_period.month
         next_period = f"{next_month//12:04d}-{next_month%12+1:02d}"
-        target = c.execute("""SELECT id,due_amount,paid_amount FROM employee_loan_installments
+        target = execute_compat(c, """SELECT id,due_amount,paid_amount FROM employee_loan_installments
             WHERE loan_id=? AND due_period=?""",(loan_id,next_period)).fetchone()
         if target:
             new_due = M(D(target["due_amount"])+remaining)
-            c.execute("UPDATE employee_loan_installments SET due_amount=? WHERE id=?",(str(new_due),target["id"]))
+            execute_compat(c, "UPDATE employee_loan_installments SET due_amount=? WHERE id=?",(str(new_due),target["id"]))
         else:
-            c.execute("""INSERT INTO employee_loan_installments(loan_id,due_period,due_amount,paid_amount,status)
+            execute_compat(c, """INSERT INTO employee_loan_installments(loan_id,due_period,due_amount,paid_amount,status)
                 VALUES(?,?,?,'0','pending')""",(loan_id,next_period,str(remaining)))
         # Keep the original row for audit; its already-paid amount remains untouched.
-        c.execute("UPDATE employee_loan_installments SET due_amount=paid_amount WHERE id=?",(installment_id,))
+        execute_compat(c, "UPDATE employee_loan_installments SET due_amount=paid_amount WHERE id=?",(installment_id,))
         _audit(c,"employee_loan_installment_deferred",
                installment["loan_no"]+" "+installment["due_period"]+" -> "+next_period+" amount="+str(remaining))
         c.commit()
@@ -3405,14 +3405,14 @@ def defer_loan_installment(loan_id, installment_id):
 @_role("admin", "accountant", "viewer")
 def loan_schedule(loan_id):
     c = _db()
-    loan = c.execute("""SELECT l.*,e.employee_code,e.full_name FROM employee_loans l
+    loan = execute_compat(c, """SELECT l.*,e.employee_code,e.full_name FROM employee_loans l
         JOIN employees e ON e.id=l.employee_id WHERE l.id=?""",(loan_id,)).fetchone()
     if not loan:
         c.close()
         flash("السلفة غير موجودة.","error")
         return redirect(url_for("workforce.employee_loans"))
-    installments = c.execute("SELECT * FROM employee_loan_installments WHERE loan_id=? ORDER BY due_period",(loan_id,)).fetchall()
-    locked_installment_ids = {int(row["installment_id"]) for row in c.execute("""SELECT DISTINCT a.installment_id
+    installments = execute_compat(c, "SELECT * FROM employee_loan_installments WHERE loan_id=? ORDER BY due_period",(loan_id,)).fetchall()
+    locked_installment_ids = {int(row["installment_id"]) for row in execute_compat(c, """SELECT DISTINCT a.installment_id
         FROM payroll_loan_allocations a
         JOIN payroll_lines pl ON pl.id=a.payroll_line_id
         JOIN payroll_runs r ON r.id=pl.run_id
@@ -3426,8 +3426,8 @@ def loan_schedule(loan_id):
 @_role("admin", "accountant", "viewer")
 def employee_grants():
     c = _db()
-    grant_types = c.execute("SELECT * FROM employee_grant_types WHERE active=1 ORDER BY name").fetchall()
-    employee_rows = c.execute("""SELECT id,employee_code,full_name,basic_salary,work_status,department FROM employees
+    grant_types = execute_compat(c, "SELECT * FROM employee_grant_types WHERE active=1 ORDER BY name").fetchall()
+    employee_rows = execute_compat(c, """SELECT id,employee_code,full_name,basic_salary,work_status,department FROM employees
         WHERE active=1 AND work_status NOT IN ('unpaid_leave','resigned','retired') ORDER BY employee_code""").fetchall()
     employees = []
     for employee_row in employee_rows:
@@ -3435,18 +3435,18 @@ def employee_grants():
         item["basic_salary"] = str(_employee_salary_basis(c, item["id"], date.today().isoformat())[0])
         employees.append(item)
     accounts = _accounts(c)
-    grant_rows = c.execute("""SELECT g.*,t.name AS grant_type_name
+    grant_rows = execute_compat(c, """SELECT g.*,t.name AS grant_type_name
         FROM employee_grants g JOIN employee_grant_types t ON t.id=g.grant_type_id
         ORDER BY g.id DESC LIMIT 100""").fetchall()
     grants = []
     grant_lines = {}
     for row in grant_rows:
         grant = dict(row)
-        paid_total = M(sum((D(x["amount"]) for x in c.execute(
+        paid_total = M(sum((D(x["amount"]) for x in execute_compat(c, 
             "SELECT amount FROM employee_grant_payments WHERE grant_id=?", (grant["id"],)).fetchall()), Decimal("0")))
         grant["paid_total"] = str(paid_total)
         grant["outstanding_total"] = str(M(D(grant["total_amount"])-paid_total))
-        line_rows = c.execute("SELECT * FROM employee_grant_lines WHERE grant_id=? ORDER BY employee_code_snapshot",
+        line_rows = execute_compat(c, "SELECT * FROM employee_grant_lines WHERE grant_id=? ORDER BY employee_code_snapshot",
             (grant["id"],)).fetchall()
         grant_lines[grant["id"]] = []
         for line in line_rows:
@@ -3467,7 +3467,7 @@ def add_employee_grant_type():
         name = request.form.get("name","").strip()
         if not name or len(name)>120:
             raise ValueError("اكتب اسم المنحة بحد أقصى 120 حرفًا.")
-        c.execute("INSERT INTO employee_grant_types(name) VALUES(?)",(name,))
+        execute_compat(c, "INSERT INTO employee_grant_types(name) VALUES(?)",(name,))
         _audit(c,"employee_grant_type_created",name)
         c.commit()
         flash("تم حفظ اسم المنحة.", "success")
@@ -3484,7 +3484,7 @@ def create_employee_grant():
     c = _db()
     try:
         grant_type_id = int(request.form["grant_type_id"])
-        grant_type = c.execute("SELECT * FROM employee_grant_types WHERE id=? AND active=1",(grant_type_id,)).fetchone()
+        grant_type = execute_compat(c, "SELECT * FROM employee_grant_types WHERE id=? AND active=1",(grant_type_id,)).fetchone()
         if not grant_type: raise ValueError("اختر اسم منحة نشطًا.")
         method = request.form.get("calculation_method","")
         if method not in {"fixed","percentage_basic","per_day"}: raise ValueError("طريقة حساب المنحة غير صحيحة.")
@@ -3493,8 +3493,8 @@ def create_employee_grant():
         if (method!="per_day" and value<=0) or days_count<0 or (method=="per_day" and days_count<=0):
             raise ValueError("أدخل نسبة أو مبلغًا موجبًا، وحدد عدد الأيام عند اختيار طريقة الأيام.")
         expense_id=int(request.form["expense_account_id"]); payable_id=int(request.form["payable_account_id"])
-        expense=c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(expense_id,)).fetchone()
-        payable=c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(payable_id,)).fetchone()
+        expense=execute_compat(c, "SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(expense_id,)).fetchone()
+        payable=execute_compat(c, "SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(payable_id,)).fetchone()
         if not expense or not expense["active"] or expense["is_group"] or expense["account_type"]!="expense":
             raise ValueError("اختر حساب مصروف منح تفصيليًا ونشطًا.")
         if not payable or not payable["active"] or payable["is_group"] or payable["account_type"]!="liability" or expense_id==payable_id:
@@ -3517,13 +3517,13 @@ def create_employee_grant():
         ids=sorted({int(x) for x in request.form.getlist("employee_ids")})
         if request.form.get("all_employees")=="1" and not ids:
             marks=",".join("?" for _ in statuses)
-            employees=c.execute(f"""SELECT id,employee_code,full_name,basic_salary FROM employees
+            employees=execute_compat(c, f"""SELECT id,employee_code,full_name,basic_salary FROM employees
                 WHERE active=1 AND work_status IN ({marks}) ORDER BY employee_code""",statuses).fetchall()
         else:
             if not ids: raise ValueError("أضف جميع الموظفين المستحقين أو اختر موظفين محددين.")
             id_marks=",".join("?" for _ in ids)
             status_marks=",".join("?" for _ in statuses)
-            employees=c.execute(f"""SELECT id,employee_code,full_name,basic_salary FROM employees
+            employees=execute_compat(c, f"""SELECT id,employee_code,full_name,basic_salary FROM employees
                 WHERE id IN ({id_marks}) AND active=1 AND work_status IN ({status_marks})
                 ORDER BY employee_code""",(*ids,*statuses)).fetchall()
             if len(employees)!=len(ids):
@@ -3544,7 +3544,7 @@ def create_employee_grant():
             (grant_type_id,grant_type["name"],method,str(value),str(M(days_count)),expense_id,payable_id,
              grant_date,str(total),request.form.get("notes","").strip(),session["user_id"]))
         for emp,basic,amount in snapshots:
-            c.execute("""INSERT INTO employee_grant_lines(grant_id,employee_id,employee_code_snapshot,
+            execute_compat(c, """INSERT INTO employee_grant_lines(grant_id,employee_id,employee_code_snapshot,
                 employee_name_snapshot,basic_salary_snapshot,amount) VALUES(?,?,?,?,?,?)""",
                 (grant_id,emp["id"],emp["employee_code"],emp["full_name"],str(basic),str(amount)))
         _audit(c,"employee_grant_draft_created","grant="+str(grant_id)+" total="+str(total))
@@ -3562,13 +3562,13 @@ def delete_employee_grant(grant_id):
     c = _db()
     try:
         begin_write_transaction(c)
-        grant = c.execute("SELECT * FROM employee_grants WHERE id=?", (grant_id,)).fetchone()
+        grant = execute_compat(c, "SELECT * FROM employee_grants WHERE id=?", (grant_id,)).fetchone()
         if not grant or grant["status"] != "draft" or grant["journal_entry_id"]:
             raise ValueError("لا يمكن حذف الحافز بعد اعتماده أو إغلاقه. الحذف متاح للمسودة المفتوحة فقط.")
-        if c.execute("SELECT 1 FROM employee_grant_payments WHERE grant_id=? LIMIT 1", (grant_id,)).fetchone():
+        if execute_compat(c, "SELECT 1 FROM employee_grant_payments WHERE grant_id=? LIMIT 1", (grant_id,)).fetchone():
             raise ValueError("لا يمكن حذف حافز له أي عملية صرف مسجلة.")
-        c.execute("DELETE FROM employee_grant_lines WHERE grant_id=?", (grant_id,))
-        delete_cursor = c.execute("DELETE FROM employee_grants WHERE id=? AND status='draft' AND journal_entry_id IS NULL", (grant_id,))
+        execute_compat(c, "DELETE FROM employee_grant_lines WHERE grant_id=?", (grant_id,))
+        delete_cursor = execute_compat(c, "DELETE FROM employee_grants WHERE id=? AND status='draft' AND journal_entry_id IS NULL", (grant_id,))
         if delete_cursor.rowcount != 1:
             raise ValueError("لم يتم حذف الحافز؛ ربما تم إغلاقه في عملية أخرى.")
         _audit(c, "employee_grant_draft_deleted", "grant=" + str(grant_id))
@@ -3588,7 +3588,7 @@ def approve_employee_grant(grant_id):
     try:
         # Lock before reading draft state so concurrent approvals cannot post twice.
         begin_write_transaction(c)
-        grant=c.execute("SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
+        grant=execute_compat(c, "SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
         if not grant:
             raise ValueError("المنحة غير موجودة.")
         if grant["status"] == "approved" or grant["approval_status"] == "approved" or grant["journal_entry_id"]:
@@ -3597,14 +3597,14 @@ def approve_employee_grant(grant_id):
             raise ValueError("المنحة غير موجودة أو ليست بانتظار الاعتماد.")
         if grant["created_by"] is None or grant["created_by"] == session["user_id"]:
             raise ValueError("لا يجوز اعتماد المنحة بواسطة منشئها، أو دون بيانات منشئ موثقة.")
-        lines=c.execute("SELECT * FROM employee_grant_lines WHERE grant_id=? ORDER BY id",(grant_id,)).fetchall()
+        lines=execute_compat(c, "SELECT * FROM employee_grant_lines WHERE grant_id=? ORDER BY id",(grant_id,)).fetchall()
         total=M(sum((D(x["amount"]) for x in lines),Decimal("0")))
         if not lines or total<=0 or total!=M(grant["total_amount"]): raise ValueError("كشف المنحة غير مكتمل أو غير متوازن.")
         journal_id=post_journal(c,grant["grant_date"],"EMP-GRANT-"+str(grant_id),
             "إثبات استحقاق منحة: "+grant["grant_name_snapshot"],
             [(int(grant["expense_account_id"]),total,0,"مصروف المنح"),
              (int(grant["payable_account_id"]),0,total,"منح مستحقة للموظفين")],session["user_id"])
-        update_cursor = c.execute("""UPDATE employee_grants SET status='approved',journal_entry_id=?,
+        update_cursor = execute_compat(c, """UPDATE employee_grants SET status='approved',journal_entry_id=?,
             approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_status='approved'
             WHERE id=? AND status='draft' AND approval_status='pending'""",
             (journal_id,session["user_id"],grant_id))
@@ -3623,34 +3623,34 @@ def approve_employee_grant(grant_id):
 def pay_employee_grant(grant_id):
     c=_db()
     try:
-        grant=c.execute("SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
+        grant=execute_compat(c, "SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
         if not grant or grant["status"] not in {"approved","partially_paid"}: raise ValueError("اعتمد المنحة أولًا قبل الصرف.")
         if grant["approved_by"] is not None and grant["approved_by"] == session["user_id"]:
             raise ValueError("يجب أن ينفذ صرف المنحة مستخدم مختلف عن معتمدها.")
         amount=M(request.form.get("amount","0"))
         if amount<=0: raise ValueError("مبلغ الصرف يجب أن يكون أكبر من صفر.")
         cash_id=int(request.form["cash_account_id"])
-        cash=c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(cash_id,)).fetchone()
+        cash=execute_compat(c, "SELECT id,account_type,is_group,active FROM accounts WHERE id=?",(cash_id,)).fetchone()
         if not cash or not cash["active"] or cash["is_group"] or cash["account_type"]!="asset":
             raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
         payment_date=date.fromisoformat(request.form.get("payment_date") or date.today().isoformat()).isoformat()
         reference="EMP-GRANT-PAY-"+str(grant_id)+"-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
         begin_write_transaction(c)
-        grant=c.execute("SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
+        grant=execute_compat(c, "SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
         if not grant or grant["status"] not in {"approved","partially_paid"}:
             raise ValueError("المنحة لم تعد متاحة للصرف.")
         if grant["approved_by"] is not None and grant["approved_by"] == session["user_id"]:
             raise ValueError("يجب أن ينفذ صرف المنحة مستخدم مختلف عن معتمدها.")
-        paid=M(sum((D(x["amount"]) for x in c.execute("SELECT amount FROM employee_grant_payments WHERE grant_id=?",(grant_id,)).fetchall()),Decimal("0")))
+        paid=M(sum((D(x["amount"]) for x in execute_compat(c, "SELECT amount FROM employee_grant_payments WHERE grant_id=?",(grant_id,)).fetchall()),Decimal("0")))
         outstanding=M(D(grant["total_amount"])-paid)
         if amount>outstanding: raise ValueError("مبلغ الصرف أكبر من المتبقي.")
         journal_id=post_journal(c,payment_date,reference,"صرف منحة: "+grant["grant_name_snapshot"],
             [(int(grant["payable_account_id"]),amount,0,"تخفيض المنح المستحقة"),
              (cash_id,0,amount,"صرف المنحة من النقدية/البنك")],session["user_id"])
-        c.execute("""INSERT INTO employee_grant_payments(grant_id,payment_date,amount,cash_account_id,
+        execute_compat(c, """INSERT INTO employee_grant_payments(grant_id,payment_date,amount,cash_account_id,
             journal_entry_id,reference,notes,created_by) VALUES(?,?,?,?,?,?,?,?)""",
             (grant_id,payment_date,str(amount),cash_id,journal_id,reference,request.form.get("notes","").strip(),session["user_id"]))
-        lines=c.execute("SELECT id,amount,paid_amount FROM employee_grant_lines WHERE grant_id=? ORDER BY id",(grant_id,)).fetchall()
+        lines=execute_compat(c, "SELECT id,amount,paid_amount FROM employee_grant_lines WHERE grant_id=? ORDER BY id",(grant_id,)).fetchall()
         outstanding_by_line=[(line,M(D(line["amount"])-D(line["paid_amount"]))) for line in lines]
         total_outstanding=M(sum((due for _line,due in outstanding_by_line),Decimal("0")))
         total_cents=int(amount*100)
@@ -3672,10 +3672,10 @@ def pay_employee_grant(grant_id):
         for line,_due_cents,allocated in allocations:
             if allocated>0:
                 allocation=Decimal(allocated)/Decimal("100")
-                c.execute("UPDATE employee_grant_lines SET paid_amount=? WHERE id=?",
+                execute_compat(c, "UPDATE employee_grant_lines SET paid_amount=? WHERE id=?",
                     (str(M(D(line["paid_amount"])+allocation)),line["id"]))
         new_status="paid" if amount==outstanding else "partially_paid"
-        c.execute("UPDATE employee_grants SET status=? WHERE id=?",(new_status,grant_id))
+        execute_compat(c, "UPDATE employee_grants SET status=? WHERE id=?",(new_status,grant_id))
         _audit(c,"employee_grant_payment","grant="+str(grant_id)+" amount="+str(amount)+" journal="+str(journal_id))
         c.commit(); flash("تم تسجيل صرف المنحة وترحيل قيد السداد.","success")
     except _DB_VALUE_KEY_ERRORS as exc:
@@ -3688,8 +3688,8 @@ def pay_employee_grant(grant_id):
 @_role("admin", "accountant", "viewer")
 def print_employee_grant(grant_id):
     c=_db()
-    grant=c.execute("SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
-    lines=c.execute("SELECT * FROM employee_grant_lines WHERE grant_id=? ORDER BY employee_code_snapshot",(grant_id,)).fetchall() if grant else []
+    grant=execute_compat(c, "SELECT * FROM employee_grants WHERE id=?",(grant_id,)).fetchone()
+    lines=execute_compat(c, "SELECT * FROM employee_grant_lines WHERE grant_id=? ORDER BY employee_code_snapshot",(grant_id,)).fetchall() if grant else []
     c.close()
     if not grant:
         flash("المنحة غير موجودة.","error")
@@ -3712,9 +3712,9 @@ def friday_allowance():
                               1 if month_start.month == 12 else month_start.month + 1, 1)
             expense_account_id = int(request.form["expense_account_id"])
             payable_account_id = int(request.form["payable_account_id"])
-            expense_account = c.execute("""SELECT id,account_type,is_group,active FROM accounts WHERE id=?""",
+            expense_account = execute_compat(c, """SELECT id,account_type,is_group,active FROM accounts WHERE id=?""",
                                         (expense_account_id,)).fetchone()
-            payable_account = c.execute("""SELECT id,account_type,is_group,active FROM accounts WHERE id=?""",
+            payable_account = execute_compat(c, """SELECT id,account_type,is_group,active FROM accounts WHERE id=?""",
                                         (payable_account_id,)).fetchone()
             if (not expense_account or not expense_account["active"] or expense_account["is_group"]
                 or expense_account["account_type"] != "expense"):
@@ -3723,15 +3723,15 @@ def friday_allowance():
                 or payable_account["account_type"] != "liability"):
                 raise ValueError("اختر حساب أجور إضافية مستحقة تفصيليًا ونشطًا.")
             begin_write_transaction(c)
-            existing = c.execute("SELECT * FROM friday_allowance_batches WHERE period=?", (period,)).fetchone()
+            existing = execute_compat(c, "SELECT * FROM friday_allowance_batches WHERE period=?", (period,)).fetchone()
             if existing and existing["status"] == "posted":
                 raise ValueError("تم ترحيل بدل الجمعة لهذا الشهر بالفعل ولا يمكن إعادة تكوينه.")
             if existing and existing["approved_by"] is not None:
                 raise ValueError("لا يمكن تعديل كشف بدل الجمعة بعد اعتماده؛ أنشئ مراجعة جديدة وفق الإجراء المعتمد.")
             if existing:
                 batch_id = existing["id"]
-                c.execute("DELETE FROM friday_allowance_lines WHERE batch_id=?", (batch_id,))
-                c.execute("""UPDATE friday_allowance_batches SET expense_account_id=?,payable_account_id=?,
+                execute_compat(c, "DELETE FROM friday_allowance_lines WHERE batch_id=?", (batch_id,))
+                execute_compat(c, """UPDATE friday_allowance_batches SET expense_account_id=?,payable_account_id=?,
                     total_amount='0' WHERE id=? AND status='draft'""",
                     (expense_account_id,payable_account_id,batch_id))
             else:
@@ -3742,7 +3742,7 @@ def friday_allowance():
             if not selected_employee_ids:
                 raise ValueError("أضف موظفًا واحدًا على الأقل إلى جدول بدل الجمعة.")
             selected_marks = ",".join("?" for _ in selected_employee_ids)
-            eligible = c.execute(f"""SELECT e.id,e.employee_code,e.full_name,e.basic_salary,
+            eligible = execute_compat(c, f"""SELECT e.id,e.employee_code,e.full_name,e.basic_salary,
                     e.branch_id,e.cost_center_id,e.project_id,COUNT(a.id) AS attendance_days
                 FROM employees e JOIN attendance_records a ON a.employee_id=e.id
                 WHERE e.active=1 AND e.friday_work_eligible=1
@@ -3777,7 +3777,7 @@ def friday_allowance():
                 if amount <= 0:
                     continue
                 total += amount
-                c.execute("""INSERT INTO friday_allowance_lines(batch_id,employee_id,employee_code_snapshot,
+                execute_compat(c, """INSERT INTO friday_allowance_lines(batch_id,employee_id,employee_code_snapshot,
                     employee_name_snapshot,basic_salary_snapshot,attendance_days,amount,branch_id,cost_center_id,project_id)
                     VALUES(?,?,?,?,?,?,?,?,?,?)""",
                     (batch_id,employee["id"],employee["employee_code"],employee["full_name"],str(basic),
@@ -3785,7 +3785,7 @@ def friday_allowance():
             total = M(total)
             if total <= 0:
                 raise ValueError("إجمالي بدل الجمعة يساوي صفرًا؛ راجع الرواتب وأيام الحضور.")
-            c.execute("UPDATE friday_allowance_batches SET total_amount=? WHERE id=?",
+            execute_compat(c, "UPDATE friday_allowance_batches SET total_amount=? WHERE id=?",
                       (str(total),batch_id))
             _audit(c,"friday_allowance_prepared",period+" batch="+str(batch_id)+" total="+str(total))
             c.commit()
@@ -3805,7 +3805,7 @@ def friday_allowance():
         selected_period = selected_start.strftime("%Y-%m")
     next_month = date(selected_start.year + (1 if selected_start.month == 12 else 0),
                        1 if selected_start.month == 12 else selected_start.month + 1, 1)
-    eligible_rows = c.execute(f"""SELECT e.id,e.employee_code,e.full_name,e.basic_salary,e.work_status,e.department,
+    eligible_rows = execute_compat(c, f"""SELECT e.id,e.employee_code,e.full_name,e.basic_salary,e.work_status,e.department,
             COUNT(a.id) AS attendance_days
         FROM employees e JOIN attendance_records a ON a.employee_id=e.id
         WHERE e.active=1 AND e.friday_work_eligible=1
@@ -3821,17 +3821,17 @@ def friday_allowance():
         item = dict(eligible_row)
         item["basic_salary"] = str(_employee_salary_basis(c, item["id"], period_as_of)[0])
         eligible_employees.append(item)
-    batches = c.execute("""SELECT b.*,ea.code AS expense_code,ea.name_ar AS expense_name,
+    batches = execute_compat(c, """SELECT b.*,ea.code AS expense_code,ea.name_ar AS expense_name,
         pa.code AS payable_code,pa.name_ar AS payable_name
         FROM friday_allowance_batches b JOIN accounts ea ON ea.id=b.expense_account_id
         JOIN accounts pa ON pa.id=b.payable_account_id ORDER BY b.period DESC LIMIT 24""").fetchall()
     batch_lines = {}
     for batch in batches:
-        batch_lines[batch["id"]] = c.execute("""SELECT * FROM friday_allowance_lines
+        batch_lines[batch["id"]] = execute_compat(c, """SELECT * FROM friday_allowance_lines
             WHERE batch_id=? ORDER BY employee_code_snapshot""",(batch["id"],)).fetchall()
-    expense_accounts = c.execute("""SELECT id,code,name_ar FROM accounts
+    expense_accounts = execute_compat(c, """SELECT id,code,name_ar FROM accounts
         WHERE active=1 AND is_group=0 AND account_type='expense' ORDER BY code""").fetchall()
-    payable_accounts = c.execute("""SELECT id,code,name_ar FROM accounts
+    payable_accounts = execute_compat(c, """SELECT id,code,name_ar FROM accounts
         WHERE active=1 AND is_group=0 AND account_type='liability' ORDER BY code""").fetchall()
     c.close()
     return render_template("friday_allowance.html",batches=batches,batch_lines=batch_lines,
@@ -3845,7 +3845,7 @@ def approve_friday_allowance(batch_id):
     c = _db()
     try:
         begin_write_transaction(c)
-        batch = c.execute(
+        batch = execute_compat(c, 
             "SELECT * FROM friday_allowance_batches WHERE id=?", (batch_id,)
         ).fetchone()
         if not batch or batch["status"] != "draft" or batch["journal_entry_id"]:
@@ -3854,7 +3854,7 @@ def approve_friday_allowance(batch_id):
             raise ValueError("كشف بدل الجمعة ليس بانتظار الاعتماد.")
         if batch["created_by"] is None or batch["created_by"] == session["user_id"]:
             raise ValueError("لا يجوز اعتماد كشف بدل الجمعة بواسطة منشئه، أو دون بيانات منشئ موثقة.")
-        lines = c.execute(
+        lines = execute_compat(c, 
             "SELECT * FROM friday_allowance_lines WHERE batch_id=? ORDER BY employee_code_snapshot",
             (batch_id,),
         ).fetchall()
@@ -3865,14 +3865,14 @@ def approve_friday_allowance(batch_id):
             (batch["expense_account_id"], "expense", "مصروف الأجور الإضافية"),
             (batch["payable_account_id"], "liability", "الأجور الإضافية المستحقة"),
         ):
-            account = c.execute(
+            account = execute_compat(c, 
                 "SELECT account_type,is_group,active FROM accounts WHERE id=?",
                 (account_id,),
             ).fetchone()
             if not account or not account["active"] or account["is_group"] or account["account_type"] != expected:
                 raise ValueError("حساب " + label + " غير صالح.")
         reason = (request.form.get("reason") or "").strip()[:500]
-        changed = c.execute(
+        changed = execute_compat(c, 
             """UPDATE friday_allowance_batches
                SET approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_reason=?,approval_status='approved'
                WHERE id=? AND status='draft' AND approval_status='pending'
@@ -3899,11 +3899,11 @@ def delete_friday_allowance(batch_id):
     c = _db()
     try:
         begin_write_transaction(c)
-        batch = c.execute("SELECT * FROM friday_allowance_batches WHERE id=?", (batch_id,)).fetchone()
+        batch = execute_compat(c, "SELECT * FROM friday_allowance_batches WHERE id=?", (batch_id,)).fetchone()
         if not batch or batch["status"] != "draft" or batch["journal_entry_id"] or batch["approved_by"] is not None:
             raise ValueError("لا يمكن حذف بدل الجمعة بعد اعتماده أو ترحيله. الحذف متاح للمسودة غير المعتمدة فقط.")
-        c.execute("DELETE FROM friday_allowance_lines WHERE batch_id=?", (batch_id,))
-        delete_cursor = c.execute("DELETE FROM friday_allowance_batches WHERE id=? AND status='draft' AND journal_entry_id IS NULL", (batch_id,))
+        execute_compat(c, "DELETE FROM friday_allowance_lines WHERE batch_id=?", (batch_id,))
+        delete_cursor = execute_compat(c, "DELETE FROM friday_allowance_batches WHERE id=? AND status='draft' AND journal_entry_id IS NULL", (batch_id,))
         if delete_cursor.rowcount != 1:
             raise ValueError("لم يتم حذف الكشف؛ ربما تم إغلاقه في عملية أخرى.")
         _audit(c, "friday_allowance_draft_deleted", "batch=" + str(batch_id))
@@ -3922,21 +3922,21 @@ def post_friday_allowance(batch_id):
     c = _db()
     try:
         begin_write_transaction(c)
-        batch = c.execute("SELECT * FROM friday_allowance_batches WHERE id=?",(batch_id,)).fetchone()
+        batch = execute_compat(c, "SELECT * FROM friday_allowance_batches WHERE id=?",(batch_id,)).fetchone()
         if not batch or batch["status"] != "draft":
             raise ValueError("كشف بدل الجمعة غير موجود أو سبق ترحيله.")
         if batch["approved_by"] is None or batch["approval_status"] != "approved":
             raise ValueError("يجب اعتماد كشف بدل الجمعة بواسطة مستخدم آخر قبل الترحيل.")
         if batch["created_by"] is None or batch["created_by"] == session["user_id"]:
             raise ValueError("لا يجوز ترحيل كشف بدل الجمعة بواسطة منشئه، أو دون بيانات منشئ موثقة.")
-        lines = c.execute("""SELECT * FROM friday_allowance_lines WHERE batch_id=?
+        lines = execute_compat(c, """SELECT * FROM friday_allowance_lines WHERE batch_id=?
             ORDER BY employee_code_snapshot""",(batch_id,)).fetchall()
         total = M(sum((D(line["amount"]) for line in lines),Decimal("0")))
         if not lines or total <= 0 or total != M(batch["total_amount"]):
             raise ValueError("تفاصيل بدل الجمعة لا تطابق إجمالي الكشف. أعد تكوين الكشف قبل الترحيل.")
-        expense_account = c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",
+        expense_account = execute_compat(c, "SELECT id,account_type,is_group,active FROM accounts WHERE id=?",
                                      (batch["expense_account_id"],)).fetchone()
-        payable_account = c.execute("SELECT id,account_type,is_group,active FROM accounts WHERE id=?",
+        payable_account = execute_compat(c, "SELECT id,account_type,is_group,active FROM accounts WHERE id=?",
                                     (batch["payable_account_id"],)).fetchone()
         if (not expense_account or not expense_account["active"] or expense_account["is_group"]
             or expense_account["account_type"]!="expense"):
@@ -3957,10 +3957,10 @@ def post_friday_allowance(batch_id):
         reference = "FRIDAY-ALLOWANCE-"+batch["period"]
         journal_id = post_journal(c,accrual_date,reference,
             "استحقاق بدل العمل أيام الجمعة عن "+batch["period"],journal_lines,session["user_id"])
-        c.execute("UPDATE friday_allowance_batches SET status='posted',journal_entry_id=? WHERE id=? AND status='draft'",
+        execute_compat(c, "UPDATE friday_allowance_batches SET status='posted',journal_entry_id=? WHERE id=? AND status='draft'",
                   (journal_id,batch_id))
         _audit(c,"friday_allowance_posted",batch["period"]+" journal="+str(journal_id)+" total="+str(total))
-        currency_row = c.execute(
+        currency_row = execute_compat(c, 
             "SELECT setting_value FROM company_settings WHERE setting_key='base_currency'"
         ).fetchone()
         create_cash_commitment(
@@ -3997,7 +3997,7 @@ def attendance():
                               1 if month_start.month == 12 else month_start.month + 1, 1)
             days_count = (next_month-month_start).days
             allowed = {"present","absent","permission","holiday","annual_leave","sick_leave","unpaid_leave",""}
-            employee_ids = [int(x["id"]) for x in c.execute("SELECT id FROM employees WHERE active=1").fetchall()]
+            employee_ids = [int(x["id"]) for x in execute_compat(c, "SELECT id FROM employees WHERE active=1").fetchall()]
             begin_write_transaction(c)
             for employee_id in employee_ids:
                 for day_number in range(1,days_count+1):
@@ -4006,7 +4006,7 @@ def attendance():
                         raise ValueError("حالة حضور غير صحيحة.")
                     day_date = date(month_start.year,month_start.month,day_number).isoformat()
                     if not status:
-                        c.execute("DELETE FROM attendance_records WHERE employee_id=? AND attendance_date=?",
+                        execute_compat(c, "DELETE FROM attendance_records WHERE employee_id=? AND attendance_date=?",
                                   (employee_id,day_date))
                         continue
                     check_in = request.form.get(f"check_in_{employee_id}_{day_number}","").strip()
@@ -4021,7 +4021,7 @@ def attendance():
                         raise ValueError("ساعات الغياب أو الإضافي خارج النطاق.")
                     if status=="absent" and absence<=0: absence=Decimal("8")
                     if status!="absent": absence=Decimal("0")
-                    c.execute("""INSERT INTO attendance_records(employee_id,attendance_date,status,check_in,check_out,
+                    execute_compat(c, """INSERT INTO attendance_records(employee_id,attendance_date,status,check_in,check_out,
                         absence_hours,approved_overtime_hours,notes,recorded_by) VALUES(?,?,?,?,?,?,?,?,?)
                         ON CONFLICT(employee_id,attendance_date) DO UPDATE SET status=excluded.status,
                         check_in=excluded.check_in,check_out=excluded.check_out,absence_hours=excluded.absence_hours,
@@ -4058,9 +4058,9 @@ def attendance():
                 raise ValueError("حدد ساعات الغياب عند تسجيل يوم غياب.")
             if status!="absent" and absence_hours>0:
                 raise ValueError("ساعات الغياب تسجل فقط مع حالة غياب.")
-            if not c.execute("SELECT 1 FROM employees WHERE id=? AND active=1",(employee_id,)).fetchone():
+            if not execute_compat(c, "SELECT 1 FROM employees WHERE id=? AND active=1",(employee_id,)).fetchone():
                 raise ValueError("الموظف غير موجود أو غير نشط.")
-            c.execute("""INSERT INTO attendance_records(employee_id,attendance_date,status,check_in,check_out,
+            execute_compat(c, """INSERT INTO attendance_records(employee_id,attendance_date,status,check_in,check_out,
                 absence_hours,approved_overtime_hours,notes,recorded_by)
                 VALUES(?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(employee_id,attendance_date) DO UPDATE SET status=excluded.status,
@@ -4086,8 +4086,8 @@ def attendance():
     next_month = date(month_start.year + (1 if month_start.month == 12 else 0),
                       1 if month_start.month == 12 else month_start.month + 1, 1)
     days_count = (next_month-month_start).days
-    employees = c.execute("SELECT id,employee_code,full_name FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
-    month_records = c.execute("SELECT * FROM attendance_records WHERE attendance_date>=? AND attendance_date<? ORDER BY employee_id,attendance_date",
+    employees = execute_compat(c, "SELECT id,employee_code,full_name FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
+    month_records = execute_compat(c, "SELECT * FROM attendance_records WHERE attendance_date>=? AND attendance_date<? ORDER BY employee_id,attendance_date",
         (month_start.isoformat(),next_month.isoformat())).fetchall()
     by_employee = {}
     for record in month_records:
@@ -4121,14 +4121,14 @@ def attendance_report():
         c.close()
         flash(str(exc) or "حدد فترة صحيحة لتقرير الغياب.", "error")
         return redirect(url_for("workforce.attendance"))
-    employees = c.execute(
+    employees = execute_compat(c, 
         "SELECT id,employee_code,full_name FROM employees ORDER BY employee_code"
     ).fetchall()
     where_employee = " AND e.id=?" if employee_id else ""
     params = [start_date.isoformat(), end_date.isoformat()]
     if employee_id:
         params.append(employee_id)
-    rows = c.execute(f"""SELECT e.id AS employee_id,e.employee_code,e.full_name,e.department,
+    rows = execute_compat(c, f"""SELECT e.id AS employee_id,e.employee_code,e.full_name,e.department,
             COUNT(a.id) AS recorded_days,
             SUM(CASE WHEN a.status='absent' THEN 1 ELSE 0 END) AS absent_days,
             {decimal_sum_expression(c, "CASE WHEN a.status='absent' THEN a.absence_hours ELSE '0' END")} AS absent_hours,
@@ -4162,12 +4162,12 @@ def leaves():
             employee_id=int(request.form["employee_id"]); leave_type_id=int(request.form["leave_type_id"])
             start=date.fromisoformat(request.form["start_date"]); end=date.fromisoformat(request.form["end_date"])
             days=D(request.form.get("days","0"))
-            leave_type=c.execute("SELECT * FROM leave_types WHERE id=? AND active=1",(leave_type_id,)).fetchone()
+            leave_type=execute_compat(c, "SELECT * FROM leave_types WHERE id=? AND active=1",(leave_type_id,)).fetchone()
             if end<start or days<=0 or not leave_type:
                 raise ValueError("راجع نوع الإجازة والتواريخ وعدد الأيام.")
-            if not c.execute("SELECT 1 FROM employees WHERE id=? AND active=1",(employee_id,)).fetchone():
+            if not execute_compat(c, "SELECT 1 FROM employees WHERE id=? AND active=1",(employee_id,)).fetchone():
                 raise ValueError("الموظف غير موجود أو غير نشط.")
-            c.execute("""INSERT INTO employee_leave_requests(employee_id,leave_type_id,start_date,end_date,days,
+            execute_compat(c, """INSERT INTO employee_leave_requests(employee_id,leave_type_id,start_date,end_date,days,
                 reason,requested_by) VALUES(?,?,?,?,?,?,?)""",
                 (employee_id,leave_type_id,start.isoformat(),end.isoformat(),str(M(days)),
                  request.form.get("reason","").strip(),session["user_id"]))
@@ -4176,12 +4176,12 @@ def leaves():
         except _DB_VALUE_KEY_ERRORS as exc:
             c.rollback(); flash(str(exc) or "تعذر تسجيل طلب الإجازة.","error")
         c.close(); return redirect(url_for("workforce.leaves"))
-    employees=c.execute("SELECT id,employee_code,full_name FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
-    types=c.execute("SELECT * FROM leave_types WHERE active=1 ORDER BY id").fetchall()
-    balances=c.execute("""SELECT b.*,e.employee_code,e.full_name,t.name leave_name
+    employees=execute_compat(c, "SELECT id,employee_code,full_name FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
+    types=execute_compat(c, "SELECT * FROM leave_types WHERE active=1 ORDER BY id").fetchall()
+    balances=execute_compat(c, """SELECT b.*,e.employee_code,e.full_name,t.name leave_name
         FROM employee_leave_balances b JOIN employees e ON e.id=b.employee_id
         JOIN leave_types t ON t.id=b.leave_type_id ORDER BY e.employee_code,t.id""").fetchall()
-    requests=c.execute("""SELECT r.*,e.employee_code,e.full_name,t.name leave_name,t.is_paid,t.requires_balance
+    requests=execute_compat(c, """SELECT r.*,e.employee_code,e.full_name,t.name leave_name,t.is_paid,t.requires_balance
         FROM employee_leave_requests r JOIN employees e ON e.id=r.employee_id
         JOIN leave_types t ON t.id=r.leave_type_id ORDER BY r.id DESC""").fetchall()
     c.close()
@@ -4195,9 +4195,9 @@ def set_leave_balance():
     try:
         employee_id=int(request.form["employee_id"]); leave_type_id=int(request.form["leave_type_id"])
         days=M(request.form.get("balance_days","0"))
-        if days<0 or not c.execute("SELECT 1 FROM employees WHERE id=?",(employee_id,)).fetchone() or not c.execute("SELECT 1 FROM leave_types WHERE id=? AND requires_balance=1",(leave_type_id,)).fetchone():
+        if days<0 or not execute_compat(c, "SELECT 1 FROM employees WHERE id=?",(employee_id,)).fetchone() or not execute_compat(c, "SELECT 1 FROM leave_types WHERE id=? AND requires_balance=1",(leave_type_id,)).fetchone():
             raise ValueError("رصيد الإجازة غير صحيح.")
-        c.execute("""INSERT INTO employee_leave_balances(employee_id,leave_type_id,balance_days)
+        execute_compat(c, """INSERT INTO employee_leave_balances(employee_id,leave_type_id,balance_days)
             VALUES(?,?,?) ON CONFLICT(employee_id,leave_type_id) DO UPDATE SET
             balance_days=excluded.balance_days,updated_at=CURRENT_TIMESTAMP""",(employee_id,leave_type_id,str(days)))
         _audit(c,"leave_balance_adjusted",str(employee_id)+" type="+str(leave_type_id)+" balance="+str(days))
@@ -4213,21 +4213,21 @@ def decide_leave(request_id):
     c=_db()
     try:
         begin_write_transaction(c)
-        leave=c.execute("""SELECT r.*,t.is_paid,t.requires_balance,t.name leave_name
+        leave=execute_compat(c, """SELECT r.*,t.is_paid,t.requires_balance,t.name leave_name
             FROM employee_leave_requests r JOIN leave_types t ON t.id=r.leave_type_id WHERE r.id=?""",
             (request_id,)).fetchone()
         decision=request.form.get("decision")
         if not leave or leave["status"]!="requested" or decision not in {"approved","rejected"}:
             raise ValueError("طلب الإجازة غير موجود أو سبق اتخاذ قرار.")
         if decision=="approved" and leave["is_paid"] and leave["requires_balance"]:
-            balance=c.execute("SELECT balance_days FROM employee_leave_balances WHERE employee_id=? AND leave_type_id=?",
+            balance=execute_compat(c, "SELECT balance_days FROM employee_leave_balances WHERE employee_id=? AND leave_type_id=?",
                 (leave["employee_id"],leave["leave_type_id"])).fetchone()
             if not balance or D(balance["balance_days"])<D(leave["days"]):
                 raise ValueError("رصيد الإجازة السنوية غير كافٍ.")
             new_balance=M(D(balance["balance_days"])-D(leave["days"]))
-            c.execute("UPDATE employee_leave_balances SET balance_days=?,updated_at=CURRENT_TIMESTAMP WHERE employee_id=? AND leave_type_id=?",
+            execute_compat(c, "UPDATE employee_leave_balances SET balance_days=?,updated_at=CURRENT_TIMESTAMP WHERE employee_id=? AND leave_type_id=?",
                 (str(new_balance),leave["employee_id"],leave["leave_type_id"]))
-        c.execute("UPDATE employee_leave_requests SET status=?,decided_by=?,decided_at=CURRENT_TIMESTAMP WHERE id=?",
+        execute_compat(c, "UPDATE employee_leave_requests SET status=?,decided_by=?,decided_at=CURRENT_TIMESTAMP WHERE id=?",
             (decision,session["user_id"],request_id))
         _audit(c,"leave_"+decision,str(request_id)+" "+leave["leave_name"])
         c.commit(); flash("تم اعتماد الإجازة." if decision=="approved" else "تم رفض الإجازة.","success")
@@ -4253,7 +4253,7 @@ def custody():
             journal_id = post_journal(c, request.form.get("issue_date") or date.today().isoformat(), no,
                 "صرف عهدة موظف", [(custody_id, amount, 0, "عهدة موظف"),
                                   (cash_id, 0, amount, "صرف العهدة من الصندوق/البنك")], session["user_id"])
-            c.execute("""INSERT INTO employee_custodies(custody_no,employee_id,issue_date,amount,remaining_amount,
+            execute_compat(c, """INSERT INTO employee_custodies(custody_no,employee_id,issue_date,amount,remaining_amount,
                 description,custody_account_id,cash_account_id,journal_entry_id,created_by)
                 VALUES(?,?,?,?,?,?,?,?,?,?)""",
                 (no,employee_id,request.form.get("issue_date") or date.today().isoformat(),str(amount),str(amount),
@@ -4273,7 +4273,7 @@ def custody():
         page=request.args.get("custody_page",1,type=int),
         per_page=request.args.get("custody_per_page",50,type=int))
     rows = custody_page["rows"]
-    employees = c.execute("SELECT id,employee_code,full_name FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
+    employees = execute_compat(c, "SELECT id,employee_code,full_name FROM employees WHERE active=1 ORDER BY employee_code").fetchall()
     accounts = _accounts(c)
     c.close()
     return render_template("custody.html", rows=rows, custody_page=custody_page, employees=employees, accounts=accounts, today=date.today().isoformat())
@@ -4284,14 +4284,14 @@ def custody():
 def custody_expense(custody_id):
     c = _db()
     try:
-        row = c.execute("SELECT * FROM employee_custodies WHERE id=? AND status='open'", (custody_id,)).fetchone()
+        row = execute_compat(c, "SELECT * FROM employee_custodies WHERE id=? AND status='open'", (custody_id,)).fetchone()
         if not row:
             raise ValueError("العهدة غير موجودة أو مغلقة.")
         amount = M(request.form.get("amount"))
-        used = sum((D(x["amount"]) for x in c.execute("SELECT amount FROM custody_expenses WHERE custody_id=?", (custody_id,)).fetchall()), Decimal("0"))
+        used = sum((D(x["amount"]) for x in execute_compat(c, "SELECT amount FROM custody_expenses WHERE custody_id=?", (custody_id,)).fetchall()), Decimal("0"))
         if amount <= 0 or used + amount > D(row["amount"]):
             raise ValueError("قيمة المصروف تتجاوز المتاح في العهدة.")
-        c.execute("INSERT INTO custody_expenses(custody_id,expense_date,expense_account_id,amount,description,receipt_reference,created_by) VALUES(?,?,?,?,?,?,?)",
+        execute_compat(c, "INSERT INTO custody_expenses(custody_id,expense_date,expense_account_id,amount,description,receipt_reference,created_by) VALUES(?,?,?,?,?,?,?)",
             (custody_id,request.form.get("expense_date") or date.today().isoformat(),int(request.form["expense_account_id"]),
              str(amount),request.form.get("description","").strip(),request.form.get("receipt_reference","").strip(),session["user_id"]))
         _audit(c, "employee_custody_expense_added", str(custody_id) + " amount=" + str(amount))
@@ -4309,10 +4309,10 @@ def custody_expense(custody_id):
 def settle_custody(custody_id):
     c = _db()
     try:
-        row = c.execute("SELECT * FROM employee_custodies WHERE id=? AND status='open'", (custody_id,)).fetchone()
+        row = execute_compat(c, "SELECT * FROM employee_custodies WHERE id=? AND status='open'", (custody_id,)).fetchone()
         if not row:
             raise ValueError("العهدة غير موجودة أو تمت تسويتها.")
-        expenses = c.execute("SELECT * FROM custody_expenses WHERE custody_id=? ORDER BY id", (custody_id,)).fetchall()
+        expenses = execute_compat(c, "SELECT * FROM custody_expenses WHERE custody_id=? ORDER BY id", (custody_id,)).fetchall()
         expense_total = sum((D(x["amount"]) for x in expenses), Decimal("0"))
         returned = M(request.form.get("returned_amount"))
         total = M(row["amount"])
@@ -4325,7 +4325,7 @@ def settle_custody(custody_id):
         begin_write_transaction(c)
         journal_id = post_journal(c, request.form.get("settlement_date") or date.today().isoformat(),
             "CUST-SETTLE-" + row["custody_no"], "تسوية عهدة " + row["custody_no"], lines, session["user_id"])
-        c.execute("UPDATE employee_custodies SET remaining_amount='0',status='settled' WHERE id=?", (custody_id,))
+        execute_compat(c, "UPDATE employee_custodies SET remaining_amount='0',status='settled' WHERE id=?", (custody_id,))
         _audit(c, "employee_custody_settled", row["custody_no"] + " journal=" + str(journal_id))
         c.commit()
         flash("تمت تسوية العهدة بالكامل وترحيل القيد.", "success")
@@ -4352,7 +4352,7 @@ def end_of_service():
         if request.method == "POST":
             employee_id = int(request.form.get("employee_id", "0"))
             termination_date = date.fromisoformat(request.form.get("termination_date", ""))
-            employee = c.execute("SELECT * FROM employees WHERE id=?", (employee_id,)).fetchone()
+            employee = execute_compat(c, "SELECT * FROM employees WHERE id=?", (employee_id,)).fetchone()
             if not employee:
                 raise ValueError("الموظف المحدد غير موجود.")
             service_start = date.fromisoformat(employee["hire_date"])
@@ -4384,7 +4384,7 @@ def end_of_service():
             years = Decimal((termination_date - service_start).days) / Decimal("365.2425")
             settlement_no = "EOS-" + employee["employee_code"] + "-" + termination_date.strftime("%Y%m%d")
             begin_write_transaction(c)
-            c.execute("""INSERT INTO employee_end_of_service_settlements
+            execute_compat(c, """INSERT INTO employee_end_of_service_settlements
                 (settlement_no,employee_id,termination_date,reason,service_start_date,service_years,
                  gross_entitlement,deductions,net_payable,notes,created_by,basic_salary_snapshot,
                  service_months,service_days,retirement_age,stamp_duty)
@@ -4396,7 +4396,7 @@ def end_of_service():
             c.commit()
             flash("تم حفظ مسودة نهاية الخدمة. حُسبت مدة الخدمة من التواريخ المسجلة، أما قيمة المكافأة فهي وفق لائحة الشركة الداخلية بحد أقصى 20 شهرًا وليست معادلة قانونية عامة. لم يتم اعتمادها أو صرفها.", "success")
             return redirect(url_for("workforce.end_of_service"))
-        employee_rows = c.execute("""SELECT id,employee_code,full_name,hire_date,work_status,termination_date,basic_salary
+        employee_rows = execute_compat(c, """SELECT id,employee_code,full_name,hire_date,work_status,termination_date,basic_salary
             FROM employees WHERE work_status IN ('resigned','retired')
             ORDER BY termination_date DESC,employee_code""").fetchall()
         employees = []
@@ -4405,7 +4405,7 @@ def end_of_service():
             if item["termination_date"]:
                 item["basic_salary"] = str(_employee_salary_basis(c, item["id"], item["termination_date"])[0])
             employees.append(item)
-        settlement_rows = c.execute("""SELECT s.*,e.employee_code,e.full_name,
+        settlement_rows = execute_compat(c, """SELECT s.*,e.employee_code,e.full_name,
                 COALESCE((SELECT SUM(CAST(p.amount AS NUMERIC)) FROM employee_end_of_service_payments p
                           WHERE p.settlement_id=s.id),0) AS paid_amount
             FROM employee_end_of_service_settlements s JOIN employees e ON e.id=s.employee_id
@@ -4416,13 +4416,13 @@ def end_of_service():
             item["paid_amount"] = M(item["paid_amount"])
             item["remaining_amount"] = M(max(Decimal("0"),D(item["net_payable"])-item["paid_amount"]))
             settlements.append(item)
-        payment_history = c.execute("""SELECT p.*,a.code AS account_code,a.name_ar AS account_name,
+        payment_history = execute_compat(c, """SELECT p.*,a.code AS account_code,a.name_ar AS account_name,
                 s.settlement_no,e.employee_code,e.full_name
             FROM employee_end_of_service_payments p JOIN accounts a ON a.id=p.cash_account_id
             JOIN employee_end_of_service_settlements s ON s.id=p.settlement_id
             JOIN employees e ON e.id=s.employee_id
             ORDER BY p.payment_date DESC,p.id DESC LIMIT 100""").fetchall()
-        payment_accounts = c.execute("""SELECT a.id,a.code,a.name_ar FROM accounts a
+        payment_accounts = execute_compat(c, """SELECT a.id,a.code,a.name_ar FROM accounts a
             JOIN cash_accounts ca ON ca.account_id=a.id
             WHERE a.active=1 AND a.is_group=0 AND a.account_type='asset' AND ca.active=1
             ORDER BY a.code""").fetchall()
@@ -4445,12 +4445,12 @@ def delete_end_of_service_draft(settlement_id):
     c=_db()
     try:
         begin_write_transaction(c)
-        row=c.execute("SELECT * FROM employee_end_of_service_settlements WHERE id=?",(settlement_id,)).fetchone()
+        row=execute_compat(c, "SELECT * FROM employee_end_of_service_settlements WHERE id=?",(settlement_id,)).fetchone()
         if not row or row["status"]!="draft" or row["journal_entry_id"]:
             raise ValueError("حذف تسوية نهاية الخدمة متاح للمسودة غير المعتمدة فقط.")
-        if c.execute("SELECT 1 FROM employee_end_of_service_payments WHERE settlement_id=? LIMIT 1",(settlement_id,)).fetchone():
+        if execute_compat(c, "SELECT 1 FROM employee_end_of_service_payments WHERE settlement_id=? LIMIT 1",(settlement_id,)).fetchone():
             raise ValueError("لا يمكن حذف تسوية مرتبطة بدفعات صرف.")
-        delete_cursor = c.execute("DELETE FROM employee_end_of_service_settlements WHERE id=? AND status='draft'",(settlement_id,))
+        delete_cursor = execute_compat(c, "DELETE FROM employee_end_of_service_settlements WHERE id=? AND status='draft'",(settlement_id,))
         if delete_cursor.rowcount != 1: raise ValueError("لم يتم حذف المسودة؛ ربما تغيرت حالتها.")
         _audit(c,"employee_end_of_service_draft_deleted",row["settlement_no"])
         c.commit(); flash("تم حذف مسودة نهاية الخدمة فقط.","success")
@@ -4466,7 +4466,7 @@ def approve_end_of_service(settlement_id):
     c=_db()
     try:
         begin_write_transaction(c)
-        row=c.execute("""SELECT s.*,e.full_name,e.employee_code FROM employee_end_of_service_settlements s
+        row=execute_compat(c, """SELECT s.*,e.full_name,e.employee_code FROM employee_end_of_service_settlements s
             JOIN employees e ON e.id=s.employee_id WHERE s.id=?""",(settlement_id,)).fetchone()
         if not row or row["status"]!="draft" or row["journal_entry_id"] or row["approval_status"]!="pending":
             raise ValueError("لا يمكن اعتماد إلا مسودة نهاية خدمة بانتظار المراجعة وغير مرحلة.")
@@ -4477,7 +4477,7 @@ def approve_end_of_service(settlement_id):
         gross,stamp,net=M(row["gross_entitlement"]),M(row["stamp_duty"]),M(row["net_payable"])
         if gross<=0 or M(gross-stamp)!=net: raise ValueError("بيانات المكافأة أو الدمغة غير متطابقة.")
         for account_id,expected,label in ((expense_id,"expense","مصروف المكافأة"),(payable_id,"liability","المكافأة المستحقة")):
-            a=c.execute("SELECT account_type,is_group,active FROM accounts WHERE id=?",(account_id,)).fetchone()
+            a=execute_compat(c, "SELECT account_type,is_group,active FROM accounts WHERE id=?",(account_id,)).fetchone()
             if not a or not a["active"] or a["is_group"] or a["account_type"]!=expected:
                 raise ValueError("اختر حساب "+label+" تفصيليًا ونشطًا وبطبيعة صحيحة.")
         lines=[(expense_id,gross,0,"مصروف مكافأة نهاية الخدمة - "+row["employee_code"]),
@@ -4485,7 +4485,7 @@ def approve_end_of_service(settlement_id):
         if stamp>0:
             if not stamp_id_raw: raise ValueError("اختر حساب الدمغة المستحقة قبل اعتماد التسوية.")
             stamp_id=int(stamp_id_raw)
-            a=c.execute("SELECT account_type,is_group,active FROM accounts WHERE id=?",(stamp_id,)).fetchone()
+            a=execute_compat(c, "SELECT account_type,is_group,active FROM accounts WHERE id=?",(stamp_id,)).fetchone()
             if not a or not a["active"] or a["is_group"] or a["account_type"]!="liability":
                 raise ValueError("اختر حساب دمغة مستحقة تفصيليًا ونشطًا.")
             lines.append((stamp_id,0,stamp,"دمغة مستحقة على مكافأة نهاية الخدمة"))
@@ -4493,7 +4493,7 @@ def approve_end_of_service(settlement_id):
             raise ValueError("القيد المقترح غير متوازن؛ لم يتم اعتماد التسوية.")
         ref="EOS-POST-"+str(settlement_id)
         journal=post_journal(c,row["termination_date"],ref,"اعتماد مكافأة نهاية الخدمة للموظف "+row["full_name"],lines,session["user_id"])
-        update_cursor = c.execute("""UPDATE employee_end_of_service_settlements SET status='approved',journal_entry_id=?,
+        update_cursor = execute_compat(c, """UPDATE employee_end_of_service_settlements SET status='approved',journal_entry_id=?,
             approved_by=?,approved_at=CURRENT_TIMESTAMP,approval_status='approved'
             WHERE id=? AND status='draft' AND journal_entry_id IS NULL AND approval_status='pending'""",
             (journal,session["user_id"],settlement_id))
@@ -4516,16 +4516,16 @@ def pay_end_of_service(settlement_id):
         if amount<=0: raise ValueError("مبلغ الصرف يجب أن يكون أكبر من صفر.")
         cash_id=int(request.form["cash_account_id"])
         begin_write_transaction(c); _cash_or_bank_account(c,cash_id)
-        row=c.execute("SELECT * FROM employee_end_of_service_settlements WHERE id=?",(settlement_id,)).fetchone()
+        row=execute_compat(c, "SELECT * FROM employee_end_of_service_settlements WHERE id=?",(settlement_id,)).fetchone()
         if not row or row["status"]!="approved" or not row["journal_entry_id"]:
             raise ValueError("يجب اعتماد مكافأة نهاية الخدمة وترحيل قيدها قبل الصرف.")
         if row["approved_by"] is not None and row["approved_by"] == session["user_id"]:
             raise ValueError("يجب أن ينفذ صرف مكافأة نهاية الخدمة مستخدم مختلف عن معتمدها.")
-        paid=M(sum((D(x["amount"]) for x in c.execute(
+        paid=M(sum((D(x["amount"]) for x in execute_compat(c, 
             "SELECT amount FROM employee_end_of_service_payments WHERE settlement_id=?",(settlement_id,)).fetchall()),Decimal("0")))
         outstanding=M(max(Decimal("0"),D(row["net_payable"])-paid))
         if outstanding<=0 or amount>outstanding: raise ValueError("مبلغ الصرف يتجاوز صافي مكافأة نهاية الخدمة المتبقي.")
-        payable=c.execute("""SELECT account_id FROM journal_lines WHERE entry_id=?
+        payable=execute_compat(c, """SELECT account_id FROM journal_lines WHERE entry_id=?
             AND memo='صافي مكافأة نهاية الخدمة المستحقة' AND credit>0 ORDER BY id LIMIT 1""",
             (row["journal_entry_id"],)).fetchone()
         if not payable: raise ValueError("لم يتم العثور على حساب المكافأة المستحقة في القيد الأصلي.")
@@ -4533,12 +4533,12 @@ def pay_end_of_service(settlement_id):
         journal=post_journal(c,pay_date,reference,"صرف مكافأة نهاية الخدمة رقم "+row["settlement_no"],
             [(int(payable["account_id"]),amount,0,"تخفيض مكافأة نهاية الخدمة المستحقة"),
              (cash_id,0,amount,"صرف مكافأة نهاية الخدمة من البنك/الصندوق")],session["user_id"])
-        c.execute("""INSERT INTO employee_end_of_service_payments
+        execute_compat(c, """INSERT INTO employee_end_of_service_payments
             (settlement_id,payment_date,amount,cash_account_id,journal_entry_id,reference,notes,created_by)
             VALUES(?,?,?,?,?,?,?,?)""",
             (settlement_id,pay_date,str(amount),cash_id,journal,reference,request.form.get("notes","").strip()[:250],session["user_id"]))
         new_status="paid" if M(paid+amount)>=D(row["net_payable"]) else "approved"
-        c.execute("""UPDATE employee_end_of_service_settlements SET status=?,
+        execute_compat(c, """UPDATE employee_end_of_service_settlements SET status=?,
             paid_at=CASE WHEN ?='paid' THEN CURRENT_TIMESTAMP ELSE paid_at END
             WHERE id=? AND status='approved'""",(new_status,new_status,settlement_id))
         _audit(c,"employee_end_of_service_payment",row["settlement_no"]+" amount="+str(amount)+" journal="+str(journal))
@@ -4554,13 +4554,13 @@ def pay_end_of_service(settlement_id):
 @_role("admin", "accountant", "viewer")
 def print_end_of_service(settlement_id):
     c=_db()
-    settlement=c.execute("""SELECT s.*,e.employee_code,e.full_name,e.job_title,e.department
+    settlement=execute_compat(c, """SELECT s.*,e.employee_code,e.full_name,e.job_title,e.department
         FROM employee_end_of_service_settlements s JOIN employees e ON e.id=s.employee_id WHERE s.id=?""",
         (settlement_id,)).fetchone()
     if not settlement:
         c.close(); flash("تسوية نهاية الخدمة غير موجودة.","error")
         return redirect(url_for("workforce.end_of_service"))
-    payments=c.execute("""SELECT p.*,a.code AS account_code,a.name_ar AS account_name
+    payments=execute_compat(c, """SELECT p.*,a.code AS account_code,a.name_ar AS account_name
         FROM employee_end_of_service_payments p JOIN accounts a ON a.id=p.cash_account_id
         WHERE p.settlement_id=? ORDER BY p.payment_date,p.id""",(settlement_id,)).fetchall()
     c.close()
