@@ -95,10 +95,15 @@ class SQLiteSchemaInventoryTests(unittest.TestCase):
         completed = subprocess.run(
             [sys.executable, "scripts/export_initialized_sqlite_schema.py"],
             cwd=REPOSITORY_ROOT,
-            check=True,
+            check=False,
             capture_output=True,
             text=True,
             timeout=240,
+        )
+        self.assertEqual(
+            completed.returncode, 0,
+            msg="Schema export failed.\nstdout:\n" + completed.stdout +
+                "\nstderr:\n" + completed.stderr,
         )
         schema = json.loads(completed.stdout)
         table_names = {table["name"] for table in schema["tables"]}
