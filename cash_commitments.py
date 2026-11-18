@@ -6,7 +6,11 @@ from datetime import date
 import calendar
 
 from db_insert import insert_one_returning_id
-from db_compat import table_columns, begin_write_transaction, transaction_is_active, table_exists as db_table_exists
+from db_compat import (
+    table_columns, begin_write_transaction, transaction_is_active,
+    table_exists as db_table_exists, execute_script,
+)
+from db_sql import execute_compat
 from decimal import Decimal, InvalidOperation
 
 COMMITMENT_TYPES = {"tax", "recurring_expense", "friday_overtime"}
@@ -28,7 +32,7 @@ def _validate_payable_account(conn, account_id, required=False):
         if required:
             raise ValueError("اختر حساب الالتزام المستحق.")
         return None
-    row = conn.execute(
+    row = execute_compat(conn, 
         "SELECT account_type,is_group,active FROM accounts WHERE id=?",
         (int(account_id),),
     ).fetchone()
@@ -39,7 +43,7 @@ def _validate_payable_account(conn, account_id, required=False):
 
 def initialize_cash_commitments_schema(conn):
     """Idempotent additive migration; does not alter existing business tables."""
-    conn.executescript("""
+    execute_script(conn, """
         CREATE TABLE IF NOT EXISTS cash_commitments (
             id INTEGER PRIMARY KEY,
             commitment_type TEXT NOT NULL
@@ -109,11 +113,11 @@ def initialize_cash_commitments_schema(conn):
     """)
     payment_columns = table_columns(conn, "cash_commitment_payments")
     if "reversal_journal_entry_id" not in payment_columns:
-        conn.execute(
+        execute_compat(conn, 
             "ALTER TABLE cash_commitment_payments ADD COLUMN reversal_journal_entry_id "
             "INTEGER REFERENCES journal_entries(id) ON DELETE RESTRICT"
         )
-    conn.execute(
+    execute_compat(conn, 
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_commitment_payment_reversal "
         "ON cash_commitment_payments(reversal_journal_entry_id)"
     )
@@ -157,7 +161,7 @@ def _journal_entry_effect_is_active(conn, journal_entry_id, as_of=None):
         selected.append("description")
     if "entry_date" in columns:
         selected.append("entry_date")
-    entry = conn.execute(
+    entry = execute_compat(conn, 
         "SELECT " + ",".join(selected) + " FROM journal_entries WHERE id=?",
         (journal_entry_id,),
     ).fetchone()
@@ -182,7 +186,7 @@ def _journal_entry_effect_is_active(conn, journal_entry_id, as_of=None):
     date_filter = " AND entry_date<=?" if as_of and "entry_date" in columns else ""
     if date_filter:
         reversal_params.append(as_of)
-    reversal = conn.execute(
+    reversal = execute_compat(conn, 
         "SELECT id FROM journal_entries WHERE status='posted' AND ("
         + " OR ".join(reversal_conditions) + ")" + date_filter + " ORDER BY id LIMIT 1",
         tuple(reversal_params),
@@ -198,7 +202,7 @@ def _journal_entry_effect_is_active(conn, journal_entry_id, as_of=None):
         restored_params.append(f"قيد عكسي للقيد رقم {int(reversal[0])}:%")
     if date_filter:
         restored_params.append(as_of)
-    restored = conn.execute(
+    restored = execute_compat(conn, 
         "SELECT 1 FROM journal_entries WHERE status='posted' AND ("
         + " OR ".join(restored_conditions) + ")" + date_filter + " LIMIT 1",
         tuple(restored_params),
@@ -209,7 +213,7 @@ def _journal_entry_effect_is_active(conn, journal_entry_id, as_of=None):
 def _payment_effect_is_active(conn, payment, as_of=None):
     reversal_id = payment["reversal_journal_entry_id"]
     if reversal_id is not None:
-        reversal = conn.execute(
+        reversal = execute_compat(conn, 
             "SELECT status,entry_date FROM journal_entries WHERE id=?",
             (reversal_id,),
         ).fetchone()
@@ -220,7 +224,7 @@ def _payment_effect_is_active(conn, payment, as_of=None):
 
 
 def cash_commitment_payment_summary(conn, commitment_id):
-    commitment = conn.execute(
+    commitment = execute_compat(conn, 
         "SELECT amount,status FROM cash_commitments WHERE id=?", (commitment_id,)
     ).fetchone()
     if not commitment:
@@ -231,7 +235,7 @@ def cash_commitment_payment_summary(conn, commitment_id):
                           else "'' journal_reference")
     journal_fields.append("j.description journal_description" if "description" in journal_columns
                           else "'' journal_description")
-    payments = conn.execute(
+    payments = execute_compat(conn, 
         "SELECT p.*," + ",".join(journal_fields) +
         """ FROM cash_commitment_payments p
             LEFT JOIN journal_entries j ON j.id=p.journal_entry_id
@@ -264,12 +268,12 @@ def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
     amount = _amount(amount)
     begin_write_transaction(conn)
     try:
-        commitment = conn.execute(
+        commitment = execute_compat(conn, 
             "SELECT id,amount,status,payable_account_id FROM cash_commitments WHERE id=?", (commitment_id,)
         ).fetchone()
         if not commitment or commitment["status"] == "void":
             raise ValueError("الالتزام غير موجود أو ملغي.")
-        journal = conn.execute(
+        journal = execute_compat(conn, 
             "SELECT id FROM journal_entries WHERE id=? AND status='posted'",
             (journal_entry_id,),
         ).fetchone()
@@ -286,7 +290,7 @@ def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
                 and payable_account_id is not None
                 and int(commitment["payable_account_id"]) != int(payable_account_id)):
             raise ValueError("حساب الالتزام لا يطابق الحساب المحدد.")
-        journal_lines = conn.execute(
+        journal_lines = execute_compat(conn, 
             "SELECT account_id,debit,credit FROM journal_lines WHERE entry_id=?",
             (journal_entry_id,),
         ).fetchall()
@@ -302,7 +306,7 @@ def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
         if total_debit != amount or total_credit != amount:
             raise ValueError("يجب أن يكون قيد السداد مخصصًا لهذه الدفعة وحدها وبإجمالي مدين ودائن يساوي مبلغها.")
         if commitment["payable_account_id"] is None:
-            conn.execute(
+            execute_compat(conn, 
                 "UPDATE cash_commitments SET payable_account_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 (selected_payable_account,commitment_id),
             )
@@ -318,7 +322,7 @@ def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
              str(reference or "").strip(),str(notes or "").strip(),created_by),
         )
         status = "paid" if paid + amount == total else "partially_paid"
-        conn.execute(
+        execute_compat(conn, 
             "UPDATE cash_commitments SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
             (status,commitment_id),
         )
@@ -338,7 +342,7 @@ def reverse_cash_commitment_payment(conn, payment_id, reversal_date,
         raise ValueError("اكتب سببًا لعكس السداد (بحد أقصى 500 حرف).")
     begin_write_transaction(conn)
     try:
-        payment = conn.execute(
+        payment = execute_compat(conn, 
             """SELECT p.*,c.id commitment_id,c.amount commitment_amount,c.status commitment_status,
                       c.title commitment_title,c.payable_account_id,j.entry_date payment_journal_date
                FROM cash_commitment_payments p
@@ -357,7 +361,7 @@ def reverse_cash_commitment_payment(conn, payment_id, reversal_date,
             raise ValueError("تاريخ عكس السداد لا يجوز أن يسبق تاريخ السداد أو قيده المحاسبي.")
         if not _journal_entry_effect_is_active(conn, payment["journal_entry_id"]):
             raise ValueError("قيد السداد غير مرحّل أو سبق عكسه.")
-        lines = conn.execute(
+        lines = execute_compat(conn, 
             """SELECT account_id,debit,credit,memo FROM journal_lines
                WHERE entry_id=? ORDER BY id""",
             (payment["journal_entry_id"],),
@@ -390,13 +394,13 @@ def reverse_cash_commitment_payment(conn, payment_id, reversal_date,
             f"عكس سداد الالتزام {payment['commitment_title']} — السبب: {reason}",
             reverse_lines, created_by,
         )
-        conn.execute(
+        execute_compat(conn, 
             """UPDATE cash_commitment_payments
                SET reversal_journal_entry_id=? WHERE id=? AND reversal_journal_entry_id IS NULL""",
             (reversal_id, payment_id),
         )
         summary = cash_commitment_payment_summary(conn, payment["commitment_id"])
-        conn.execute(
+        execute_compat(conn, 
             """UPDATE cash_commitments SET status=?,updated_at=CURRENT_TIMESTAMP
                WHERE id=? AND status!='void'""",
             (summary["status"], payment["commitment_id"]),
@@ -411,7 +415,7 @@ def reverse_cash_commitment_payment(conn, payment_id, reversal_date,
 def void_cash_commitment(conn, commitment_id):
     begin_write_transaction(conn)
     try:
-        row = conn.execute(
+        row = execute_compat(conn, 
             "SELECT status FROM cash_commitments WHERE id=?", (commitment_id,)
         ).fetchone()
         if not row:
@@ -419,7 +423,7 @@ def void_cash_commitment(conn, commitment_id):
         summary = cash_commitment_payment_summary(conn, commitment_id)
         if summary["paid_total"] > 0 or row["status"] == "void":
             raise ValueError("لا يمكن إلغاء التزام عليه دفعات فعالة أو تم إلغاؤه بالفعل.")
-        conn.execute(
+        execute_compat(conn, 
             "UPDATE cash_commitments SET status='void',updated_at=CURRENT_TIMESTAMP WHERE id=?",
             (commitment_id,),
         )
@@ -433,7 +437,7 @@ def list_cash_commitments_forecast(conn, as_of, end_date):
     """Return unpaid commitment balances due within the forecast horizon."""
     if not db_table_exists(conn, "cash_commitments"):
         return []
-    rows = conn.execute(
+    rows = execute_compat(conn, 
         """SELECT c.* FROM cash_commitments c
            WHERE c.status!='void'
              AND c.due_date<=?
@@ -442,7 +446,7 @@ def list_cash_commitments_forecast(conn, as_of, end_date):
     ).fetchall()
     items = []
     for row in rows:
-        payment_rows = conn.execute(
+        payment_rows = execute_compat(conn, 
             """SELECT p.amount,p.journal_entry_id,p.reversal_journal_entry_id
                FROM cash_commitment_payments p
                WHERE p.commitment_id=? AND p.payment_date<=?""",
@@ -487,7 +491,7 @@ def sync_friday_allowance_commitments(conn, created_by=None):
     settings_columns = table_columns(conn, "company_settings") if table_exists("company_settings") else set()
     currency_code = ""
     if {"setting_key", "setting_value"}.issubset(settings_columns):
-        setting = conn.execute(
+        setting = execute_compat(conn, 
             "SELECT setting_value FROM company_settings WHERE setting_key='base_currency' LIMIT 1"
         ).fetchone()
         currency_code = str(setting["setting_value"] or "") if setting else ""
@@ -497,11 +501,11 @@ def sync_friday_allowance_commitments(conn, created_by=None):
     if owns_transaction:
         begin_write_transaction(conn)
     else:
-        conn.execute(f"SAVEPOINT {savepoint}")
+        execute_compat(conn, f"SAVEPOINT {savepoint}")
     imported = 0
     skipped = []
     try:
-        batches = conn.execute(
+        batches = execute_compat(conn, 
             """SELECT id,period,status,total_amount,payable_account_id,journal_entry_id
                FROM friday_allowance_batches
                WHERE status='posted' AND journal_entry_id IS NOT NULL
@@ -509,7 +513,7 @@ def sync_friday_allowance_commitments(conn, created_by=None):
         ).fetchall()
         for batch in batches:
             batch_id = int(batch["id"])
-            if conn.execute(
+            if execute_compat(conn, 
                 """SELECT 1 FROM cash_commitments
                    WHERE origin_type='friday_allowance_batch' AND origin_id=? LIMIT 1""",
                 (batch_id,),
@@ -518,20 +522,20 @@ def sync_friday_allowance_commitments(conn, created_by=None):
                 continue
 
             journal_id = int(batch["journal_entry_id"])
-            original = conn.execute(
+            original = execute_compat(conn, 
                 "SELECT id,status FROM journal_entries WHERE id=?", (journal_id,)
             ).fetchone()
             if not original or original["status"] != "posted":
                 skipped.append({"batch_id": batch_id, "reason": "قيد الاستحقاق غير موجود أو غير مرحّل"})
                 continue
 
-            reversal = conn.execute(
+            reversal = execute_compat(conn, 
                 """SELECT id FROM journal_entries
                    WHERE reference=? AND status='posted' ORDER BY id LIMIT 1""",
                 (f"REV-{journal_id}",),
             ).fetchone()
             if reversal:
-                restored = conn.execute(
+                restored = execute_compat(conn, 
                     """SELECT 1 FROM journal_entries
                        WHERE reference=? AND status='posted' LIMIT 1""",
                     (f"REV-{int(reversal['id'])}",),
@@ -555,7 +559,7 @@ def sync_friday_allowance_commitments(conn, created_by=None):
                 skipped.append({"batch_id": batch_id, "reason": str(exc)})
                 continue
 
-            conn.execute(
+            execute_compat(conn, 
                 """INSERT INTO cash_commitments
                    (commitment_type,title,period_label,amount,due_date,currency_code,
                     payable_account_id,origin_type,origin_id,notes,created_by)
@@ -568,14 +572,14 @@ def sync_friday_allowance_commitments(conn, created_by=None):
         if owns_transaction:
             conn.commit()
         else:
-            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            execute_compat(conn, f"RELEASE SAVEPOINT {savepoint}")
         return {"imported": imported, "skipped": skipped}
     except Exception:
         if owns_transaction:
             conn.rollback()
         else:
-            conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
-            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            execute_compat(conn, f"ROLLBACK TO SAVEPOINT {savepoint}")
+            execute_compat(conn, f"RELEASE SAVEPOINT {savepoint}")
         raise
 
 _FREQUENCY_MONTHS = {
@@ -628,7 +632,7 @@ def generate_recurring_schedule_occurrences(conn, schedule_id, through_date):
     through_date = date.fromisoformat(str(through_date)).isoformat()
     begin_write_transaction(conn)
     try:
-        schedule = conn.execute(
+        schedule = execute_compat(conn, 
             "SELECT * FROM cash_commitment_schedules WHERE id=?", (schedule_id,)
         ).fetchone()
         if not schedule:
@@ -637,7 +641,7 @@ def generate_recurring_schedule_occurrences(conn, schedule_id, through_date):
             raise ValueError("جدول المصروف الدوري متوقف.")
         next_due = schedule["next_due_date"]
         if schedule["end_date"] and next_due > schedule["end_date"]:
-            conn.execute(
+            execute_compat(conn, 
                 "UPDATE cash_commitment_schedules SET active=0,updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 (schedule_id,),
             )
@@ -647,7 +651,7 @@ def generate_recurring_schedule_occurrences(conn, schedule_id, through_date):
         while next_due <= through_date and (
             not schedule["end_date"] or next_due <= schedule["end_date"]
         ):
-            existing = conn.execute(
+            existing = execute_compat(conn, 
                 """SELECT id FROM cash_commitment_schedule_occurrences
                    WHERE schedule_id=? AND due_date=?""",
                 (schedule_id,next_due),
@@ -667,7 +671,7 @@ def generate_recurring_schedule_occurrences(conn, schedule_id, through_date):
                      schedule["currency_code"],schedule["payable_account_id"],
                      occurrence_id,schedule["notes"],schedule["created_by"]),
                 )
-                conn.execute(
+                execute_compat(conn, 
                     "UPDATE cash_commitment_schedule_occurrences SET commitment_id=? WHERE id=?",
                     (commitment_id,occurrence_id),
                 )
@@ -675,7 +679,7 @@ def generate_recurring_schedule_occurrences(conn, schedule_id, through_date):
             next_due = _advance_schedule_date(
                 next_due,schedule["interval_months"],schedule["anchor_day"]
             )
-        conn.execute(
+        execute_compat(conn, 
             """UPDATE cash_commitment_schedules
                SET next_due_date=?,active=CASE WHEN end_date IS NOT NULL AND ? > end_date
                     THEN 0 ELSE active END,updated_at=CURRENT_TIMESTAMP
@@ -690,7 +694,7 @@ def generate_recurring_schedule_occurrences(conn, schedule_id, through_date):
 
 
 def deactivate_recurring_schedule(conn, schedule_id):
-    cursor = conn.execute(
+    cursor = execute_compat(conn, 
         """UPDATE cash_commitment_schedules SET active=0,updated_at=CURRENT_TIMESTAMP
            WHERE id=? AND active=1""",
         (schedule_id,),
