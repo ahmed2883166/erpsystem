@@ -76,3 +76,74 @@ input:focus, select:focus, textarea:focus {
 @media (max-width: 850px) {
   nav details.nav-group .nav-links a { min-height: 44px; }
 }
+
+
+/* Dashboard landing page */
+.dashboard-page-header {
+  padding: 22px 26px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: linear-gradient(120deg, color-mix(in srgb, var(--accent) 12%, var(--surface)), var(--surface));
+  box-shadow: var(--shadow);
+}
+.dashboard-page-header p { margin: 5px 0 0; color: var(--muted); }
+.dashboard-kpis { gap: 14px; }
+.dashboard-kpis .kpi-card {
+  position: relative;
+  min-height: 158px;
+  padding: 20px 22px;
+  overflow: hidden;
+  border-radius: 15px;
+  border-top: 3px solid var(--accent);
+}
+.dashboard-kpis .kpi-card > span:not(.kpi-icon) {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+.dashboard-kpis .kpi-icon {
+  position: absolute;
+  left: 18px;
+  top: 17px;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 13%, var(--surface));
+  font-size: 20px;
+}
+.dashboard-kpis .kpi-card b {
+  margin: 13px 0 0;
+  font-size: clamp(23px, 2vw, 30px);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.dashboard-kpis .kpi-caption {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.dashboard-summary .dashboard-balance-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.dashboard-summary .dashboard-balance-row > div {
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface2);
+}
+.dashboard-summary .dashboard-balance-row span,
+.dashboard-summary .dashboard-balance-row strong { display: block; }
+.dashboard-summary .dashboard-balance-row span { color: var(--muted); font-size: 13px; }
+.dashboard-summary .dashboard-balance-row strong { margin-top: 5px; font-size: 19px; }
+@media(max-width: 560px) {
+  .dashboard-page-header { padding: 17px; }
+  .dashboard-kpis .kpi-card { min-height: 140px; }
+  .dashboard-summary .dashboard-balance-row { grid-template-columns: 1fr; }
+}
