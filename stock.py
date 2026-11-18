@@ -43,20 +43,23 @@ def _columns(conn, name):
     return table_columns(conn, name)
 
 
-def lock_stock_warehouses(conn, *warehouse_ids):
-    """Serialize stock mutations per warehouse on PostgreSQL; SQLite uses BEGIN IMMEDIATE."""
+def lock_stock_warehouses(conn, *warehouse_ids, allow_inactive=False):
+    """Validate warehouse existence and serialize mutations; historical reversals may opt into inactive warehouses."""
     ids = sorted({int(value) for value in warehouse_ids if value not in (None, 0, "")})
-    if not ids or database_dialect(conn) != "postgresql":
+    if not ids:
         return []
     placeholders = ",".join("?" for _ in ids)
-    rows = _execute(conn, f"SELECT id,active FROM stock_warehouses WHERE id IN ({placeholders}) ORDER BY id FOR UPDATE", ids).fetchall()
+    sql = f"SELECT id,active FROM stock_warehouses WHERE id IN ({placeholders}) ORDER BY id"
+    if database_dialect(conn) == "postgresql":
+        sql += " FOR UPDATE"
+    rows = _execute(conn, sql, ids).fetchall()
     locked = {int(row["id"]) for row in rows}
     missing = [warehouse_id for warehouse_id in ids if warehouse_id not in locked]
     if missing:
         raise ValueError("المخزن المحدد غير موجود أو لم يعد متاحًا.")
     inactive = [int(row["id"]) for row in rows if not bool(row["active"])]
-    if inactive:
-        raise ValueError("لا يمكن تنفيذ حركة على مخزن غير نشط. أعد تفعيل المخزن أولًا.")
+    if inactive and not allow_inactive:
+        raise ValueError("لا يمكن تنفيذ حركة جديدة على مخزن غير نشط. أعد تفعيل المخزن أولًا.")
     return rows
 
 
