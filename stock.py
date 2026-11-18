@@ -68,7 +68,10 @@ def lock_stock_warehouses(conn, *warehouse_ids, allow_inactive=False):
     inactive = [int(row["id"]) for row in rows if not bool(row["active"])]
     if inactive and not allow_inactive:
         raise ValueError("لا يمكن تنفيذ حركة جديدة على مخزن غير نشط. أعد تفعيل المخزن أولًا.")
-    return rows
+    # SQLite serializes writers with BEGIN IMMEDIATE, so it does not need
+    # row-lock results. Keep validation above, but preserve the historical
+    # empty-list contract used by SQLite callers.
+    return rows if dialect == "postgresql" else []
 
 
 def _stocktake_for_update(conn, stocktake_id):
