@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import app as nexus
+from database import connect_database
 import sales
 
 
@@ -46,9 +47,7 @@ class SalesDiscountApprovalRouteTests(unittest.TestCase):
         self.temp.cleanup()
 
     def _connect(self):
-        conn = sqlite3.connect(sales.DB_PATH)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return connect_database(sales.DB_PATH)
 
     def _add_request(self, request_type="invoice", created_by=10, sales_order_id=None):
         payload = {
