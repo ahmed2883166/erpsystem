@@ -7,6 +7,25 @@ from db_sql import execute_compat, executemany_compat, qmark_to_format
 from db_compat import execute_script
 
 
+class _FakePostgresConnection:
+    __module__ = "psycopg.fake"
+
+    def __init__(self):
+        self.executed = []
+        self.batches = []
+
+    def execute(self, statement, params=()):
+        self.executed.append((statement, tuple(params)))
+        return self
+
+    def cursor(self):
+        return self
+
+    def executemany(self, statement, rows):
+        self.batches.append((statement, list(rows)))
+        return self
+
+
 class QmarkTranslationTests(unittest.TestCase):
     def test_translates_only_unquoted_bind_markers(self):
         sql = (
@@ -48,6 +67,30 @@ class QmarkTranslationTests(unittest.TestCase):
             self.assertEqual(row, (37, "?"))
         finally:
             connection.close()
+
+    def test_postgresql_execute_compat_preserves_json_operator_and_binds_values(self):
+        connection = _FakePostgresConnection()
+        execute_compat(
+            connection,
+            "SELECT payload ?? 'key' FROM events WHERE id=?",
+            (19,),
+        )
+        self.assertEqual(
+            connection.executed,
+            [("SELECT payload ?? 'key' FROM events WHERE id=%s", (19,))],
+        )
+
+    def test_postgresql_executemany_uses_same_placeholder_adapter(self):
+        connection = _FakePostgresConnection()
+        executemany_compat(
+            connection,
+            "INSERT INTO events(payload) VALUES(?)",
+            [("{}",), ("[]",)],
+        )
+        self.assertEqual(
+            connection.batches,
+            [("INSERT INTO events(payload) VALUES(%s)", [("{}",), ("[]",)])],
+        )
 
     def test_sqlite_executemany_compat_preserves_qmark_parameters(self):
         connection = sqlite3.connect(":memory:")
