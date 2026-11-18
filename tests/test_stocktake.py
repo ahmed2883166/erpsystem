@@ -18,6 +18,13 @@ class StocktakeRouteTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.old_stock_path = stock.DB_PATH
+        self.old_get_db = stock.get_db
+        self.stock_connections = []
+        def tracked_get_db():
+            connection = self.old_get_db()
+            self.stock_connections.append(connection)
+            return connection
+        stock.get_db = tracked_get_db
         stock.DB_PATH = Path(self.temp.name) / "stocktake.db"
         stock.initialize_stock_schema()
         conn = stock.get_db()
@@ -52,6 +59,12 @@ class StocktakeRouteTests(unittest.TestCase):
         self.client = nexus.app.test_client()
 
     def tearDown(self):
+        for connection in self.stock_connections:
+            try:
+                connection.close()
+            except Exception:
+                pass
+        stock.get_db = self.old_get_db
         stock.DB_PATH = self.old_stock_path
         self.temp.cleanup()
 

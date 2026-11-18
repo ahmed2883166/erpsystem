@@ -12,8 +12,9 @@ class JournalReversalProtectionTests(unittest.TestCase):
     def setUp(self):
         nexus_app.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
         self.temp = tempfile.TemporaryDirectory()
+        self.connections = []
         self.db_path = Path(self.temp.name) / "reversals.db"
-        conn = connect_database(self.db_path)
+        conn = self._connect_database(self.db_path)
         conn.executescript("""
             CREATE TABLE users(id INTEGER PRIMARY KEY, username TEXT, role TEXT);
             CREATE TABLE audit_log(
@@ -67,7 +68,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
         conn.commit()
         conn.close()
         self.patches = [
-            patch.object(nexus_app, "db", side_effect=lambda: connect_database(self.db_path)),
+            patch.object(nexus_app, "db", side_effect=lambda: self._connect_database(self.db_path)),
             patch.object(nexus_app, "linked_operational_source", wraps=linked_operational_source),
             patch.object(nexus_app, "log_change", return_value=None),
         ]
@@ -77,7 +78,17 @@ class JournalReversalProtectionTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             session.update(user_id=1, role="admin", permissions=["journal.manage", "reports.view"])
 
+    def _connect_database(self, path):
+        connection = connect_database(path)
+        self.connections.append(connection)
+        return connection
+
     def tearDown(self):
+        for connection in self.connections:
+            try:
+                connection.close()
+            except Exception:
+                pass
         for item in reversed(self.patches):
             item.stop()
         self.temp.cleanup()
