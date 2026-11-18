@@ -225,6 +225,15 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
     credit = sum((x[2] for x in normalized), Decimal("0"))
     if debit <= 0 or debit != credit:
         raise ValueError(f"القيد غير متوازن: مدين {debit} مقابل دائن {credit}.")
+    # SQLite callers serialize journal writes with BEGIN IMMEDIATE. PostgreSQL
+    # needs a transaction-scoped per-reference lock so simultaneous retries see
+    # the first committed journal instead of creating duplicate posted entries.
+    if database_dialect(conn) == "postgresql" and reference not in (None, ""):
+        _execute(
+            conn,
+            "SELECT pg_advisory_xact_lock(?, hashtext(?))",
+            (0x4E455855, str(reference)),
+        )
     existing = _execute(conn, 
         "SELECT id,entry_date,description FROM journal_entries WHERE reference=? AND status='posted' ORDER BY id LIMIT 1",
         (reference,),
