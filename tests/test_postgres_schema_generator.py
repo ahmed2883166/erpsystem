@@ -323,7 +323,7 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         self.assertIn("ON DELETE CASCADE", ddl)
         self.assertIn("CREATE UNIQUE INDEX idx_child_expr ON child(lower(trim(amount)));", ddl)
         self.assertIn('CREATE UNIQUE INDEX "uq_parent_code_nocase" ON "parent" (lower("code"));', ddl)
-        self.assertEqual(review["table_count"], 5)
+        self.assertEqual(review["table_count"], 6)
         self.assertEqual(review["column_count"], 9)
         self.assertEqual(review["foreign_key_count"], 1)
         self.assertEqual(review["trigger_count"], 4)
@@ -397,7 +397,7 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
             hashlib.sha256(ddl.encode("utf-8")).hexdigest(),
         )
         self.assertEqual(review["installation_marker"], "nexus_schema_installation")
-        self.assertEqual(review["table_count"], 4)
+        self.assertEqual(review["table_count"], 5)
 
     def test_rejects_foreign_key_to_unknown_table(self):
         snapshot = {
