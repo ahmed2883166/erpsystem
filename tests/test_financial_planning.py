@@ -159,6 +159,21 @@ class FinancialPlanningTests(unittest.TestCase):
         snapshot=build_balance_sheet_snapshot(self.conn,"2027-01-31")
         self.assertEqual(snapshot["total_assets"],Decimal("100.00"))
 
+    def test_opening_review_listing_survives_missing_review_table(self):
+        initialize_planning_schema(self.conn)
+        year_id = create_financial_year(self.conn, "FY2027", "2027-01-01", "2027-12-31")
+        self.conn.execute("ALTER TABLE journal_entries ADD COLUMN reference TEXT")
+        self.conn.execute("ALTER TABLE journal_entries ADD COLUMN description TEXT")
+        self.conn.execute(
+            "INSERT INTO journal_entries(id,entry_date,status,reference,description) "
+            "VALUES(91,'2027-01-01','posted','OPEN-LEGACY','أرصدة افتتاح قديمة')"
+        )
+        self.conn.execute("DROP TABLE financial_year_opening_reviews")
+        self.conn.commit()
+
+        candidates = list_legacy_opening_candidates(self.conn, year_id)
+        self.assertEqual([row["id"] for row in candidates], [91])
+
     def test_financial_year_creation_and_overlap_protection(self):
         initialize_planning_schema(self.conn)
         year_id = create_financial_year(self.conn, "2026", "2026-01-01", "2026-12-31", 1)
