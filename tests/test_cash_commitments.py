@@ -458,7 +458,7 @@ class CashCommitmentsPostgreSQLSchemaTests(unittest.TestCase):
             ("tax", "اختبار مخطط PostgreSQL", "125.50", "2026-11-30"),
         )
         row = self.conn.execute(
-            "SELECT id,title FROM cash_commitments WHERE id=?",
+            "SELECT id,title FROM cash_commitments WHERE id=%s",
             (commitment_id,),
         ).fetchone()
         self.assertEqual(row["title"], "اختبار مخطط PostgreSQL")
