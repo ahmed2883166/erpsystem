@@ -287,9 +287,10 @@ def record_cash_commitment_payment(conn, commitment_id, payment_date, amount,
     amount = _amount(amount)
     begin_write_transaction(conn)
     try:
-        commitment = execute_compat(conn, 
-            "SELECT id,amount,status,payable_account_id FROM cash_commitments WHERE id=?", (commitment_id,)
-        ).fetchone()
+        commitment_sql = "SELECT id,amount,status,payable_account_id FROM cash_commitments WHERE id=?"
+        if database_dialect(conn) == "postgresql":
+            commitment_sql += " FOR UPDATE"
+        commitment = execute_compat(conn, commitment_sql, (commitment_id,)).fetchone()
         if not commitment or commitment["status"] == "void":
             raise ValueError("الالتزام غير موجود أو ملغي.")
         journal = execute_compat(conn, 
@@ -628,8 +629,8 @@ def create_recurring_schedule(conn, title, amount, first_due_date, frequency,
     schedule_id = insert_one_returning_id(conn,
         """INSERT INTO cash_commitment_schedules
            (title,amount,currency_code,frequency,interval_months,anchor_day,
-            next_due_date,end_date,payable_account_id,notes,created_by)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            next_due_date,end_date,payable_account_id,active,notes,created_by)
+           VALUES(?,?,?,?,?,?,?,?,?,TRUE,?,?)""",
         (title,str(amount),str(currency_code or "").strip(),str(frequency),
          interval_months,date.fromisoformat(first_due_date).day,first_due_date,
          normalized_end,payable_account_id,str(notes or "").strip(),created_by),
