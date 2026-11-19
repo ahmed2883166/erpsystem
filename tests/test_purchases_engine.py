@@ -524,6 +524,8 @@ class PurchasingAccountingTests(unittest.TestCase):
         app2 = Flask(__name__, template_folder=str(Path(purchases.__file__).resolve().parent / "templates"))
         app2.secret_key = "test"
         app2.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
+        for endpoint in ("change_password", "logout", "backup_settings", "create_backup"):
+            app2.add_url_rule(f"/__test_{endpoint}", endpoint=endpoint, view_func=lambda: "")
         app2.register_blueprint(purchases.purchase_bp)
         payment_client = app2.test_client()
         with payment_client.session_transaction() as session:
