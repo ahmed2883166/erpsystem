@@ -923,3 +923,14 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
   .account-tree-toolbar .table-actions{display:grid;grid-template-columns:1fr 1fr}
   .account-tree-toolbar input{grid-column:1/-1}
 }
+
+
+/* Customer credit limit emphasis on sales invoice entry */
+.credit-limit-panel{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap;padding:13px 17px;margin:16px 0;border:1px solid color-mix(in srgb,var(--accent) 38%,var(--line));border-right:4px solid var(--accent);border-radius:10px;background:color-mix(in srgb,var(--accent) 8%,var(--surface));color:var(--text)}
+.credit-limit-panel[hidden]{display:none}
+.credit-limit-heading{font-weight:800;color:var(--text)}
+.credit-limit-value{font-size:1.16rem;font-weight:900;letter-spacing:.2px;color:var(--accent);padding:2px 9px;border-radius:7px;background:color-mix(in srgb,var(--accent) 12%,var(--surface))}
+.credit-limit-balance{font-weight:700;color:var(--text)}
+.credit-limit-panel small{width:100%;color:var(--muted);font-size:12px}
+.credit-limit-panel.is-over{border-color:#d97706;border-right-color:#d97706;background:color-mix(in srgb,#d97706 9%,var(--surface))}
+.credit-limit-panel.is-over .credit-limit-value{color:#b45309;background:color-mix(in srgb,#d97706 14%,var(--surface))}
