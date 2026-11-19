@@ -43,22 +43,22 @@ def migrate_journal_line_amounts_to_text(connection):
 
     replacement_sql = str(original_sql)
     table_pattern = re.compile(
-        r'(?is)^(\\s*CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?)'
-        r'(?:"journal_lines"|\`journal_lines\`|\\[journal_lines\\]|journal_lines)(\\s*\\()'
+        r'(?is)^(\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?)'
+        r'(?:"journal_lines"|\[journal_lines\]|journal_lines)(\s*\()'
     )
     replacement_sql, table_count = table_pattern.subn(
-        r"\\g<1>journal_lines_decimal_new\\g<2>", replacement_sql, count=1
+        r"\g<1>journal_lines_decimal_new\g<2>", replacement_sql, count=1
     )
     if table_count != 1:
         raise RuntimeError("Cannot safely identify the journal_lines table name in its DDL.")
 
     for column_name in real_columns:
         column_pattern = re.compile(
-            r'(?i)((?:"' + re.escape(column_name) + r'"|\`' +
-            re.escape(column_name) + r'\`|\\[' + re.escape(column_name) +
-            r'\\]|' + re.escape(column_name) + r')\\s+)REAL\\b'
+            r'(?i)((?:"' + re.escape(column_name) + r'"|\[' +
+            re.escape(column_name) + r'\]|' + re.escape(column_name) +
+            r')\s+)REAL\b'
         )
-        replacement_sql, changed = column_pattern.subn(r"\\g<1>TEXT", replacement_sql, count=1)
+        replacement_sql, changed = column_pattern.subn(r"\g<1>TEXT", replacement_sql, count=1)
         if changed != 1:
             raise RuntimeError(
                 f"Cannot safely change {column_name}:REAL in the original journal_lines DDL."
