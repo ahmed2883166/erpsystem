@@ -72,25 +72,46 @@ def _rebuild_real_columns_as_text(connection, table_name, column_names):
     ).fetchall()
     index_sql = [_row_value(row, "sql", 0) for row in index_rows]
     trigger_sql = [_row_value(row, "sql", 0) for row in trigger_rows]
-    # Rebuilt amount columns have TEXT affinity. Preserve the numeric meaning
-    # of legacy trigger guards such as NEW.debit < 0 after the affinity change.
+    # Rebuilt amount columns have TEXT affinity. Keep every trigger comparison
+    # numeric, including column-to-column expressions and BETWEEN bounds.
+    real_column_names = {str(name).lower() for name in real_columns}
+    qualified_column = r'(?:NEW|OLD)\s*\.\s*"?[A-Za-z_][A-Za-z0-9_]*"?'
+    numeric_literal = r'-?(?:\d+(?:\.\d*)?|\.\d+)'
+    qualified_pattern = re.compile(
+        r'(?i)\b(NEW|OLD)\s*\.\s*"?([A-Za-z_][A-Za-z0-9_]*)"?'
+    )
+
+    def cast_real_columns(expression):
+        def cast(match):
+            column_name = match.group(2)
+            if column_name.lower() not in real_column_names:
+                return match.group(0)
+            return f'CAST({match.group(1)}."{column_name}" AS NUMERIC)'
+        return qualified_pattern.sub(cast, expression)
+
+    comparison_pattern = re.compile(
+        rf'(?i)({qualified_column})\s*(<=|>=|<>|!=|=|<|>)\s*({qualified_column}|{numeric_literal})'
+    )
+    between_pattern = re.compile(
+        rf'(?i)({qualified_column})\s+BETWEEN\s+({qualified_column}|{numeric_literal})'
+        rf'\s+AND\s+({qualified_column}|{numeric_literal})'
+    )
     for trigger_index, statement in enumerate(trigger_sql):
-        for column_name in real_columns:
-            quoted = re.escape(column_name)
-            left_comparison = re.compile(
-                r'(?i)\b(NEW|OLD)\s*\.\s*"?'+quoted+r'"?\s*(<=|>=|<>|!=|=|<|>)\s*(-?(?:\d+(?:\.\d*)?|\.\d+))'
-            )
-            statement = left_comparison.sub(
-                lambda match: f'CAST({match.group(1)}."{column_name}" AS NUMERIC) {match.group(2)} {match.group(3)}',
-                statement,
-            )
-            right_comparison = re.compile(
-                r'(?i)(-?(?:\d+(?:\.\d*)?|\.\d+))\s*(<=|>=|<>|!=|=|<|>)\s*(NEW|OLD)\s*\.\s*"?'+quoted+r'"?'
-            )
-            statement = right_comparison.sub(
-                lambda match: f'{match.group(1)} {match.group(2)} CAST({match.group(3)}."{column_name}" AS NUMERIC)',
-                statement,
-            )
+        statement = between_pattern.sub(
+            lambda match: (
+                cast_real_columns(match.group(1)) + " BETWEEN "
+                + cast_real_columns(match.group(2)) + " AND "
+                + cast_real_columns(match.group(3))
+            ),
+            statement,
+        )
+        statement = comparison_pattern.sub(
+            lambda match: (
+                cast_real_columns(match.group(1)) + " " + match.group(2) + " "
+                + cast_real_columns(match.group(3))
+            ),
+            statement,
+        )
         trigger_sql[trigger_index] = statement
 
     info_rows = connection.execute(
