@@ -3108,41 +3108,106 @@ def new_credit_note():
 @require("purchases.manage")
 def new_payment():
     c=db()
-    if request.method=="POST":
-        try:
-            supplier=int(request.form["supplier_id"]); amount=money(request.form["amount"]); cash=int(request.form["cash_account_id"])
-            if amount<=0: raise ValueError("قيمة السداد يجب أن تكون أكبر من صفر.")
-            cash_row=execute_compat(c, "SELECT code,name_ar,account_type,is_group,active FROM accounts WHERE id=?",(cash,)).fetchone()
-            cash_name=(cash_row["name_ar"] or "").lower() if cash_row else ""
-            cash_codes={"1000","1110","1120","1121","1122"}
-            cash_words=("صندوق","بنك","بنوك","مصرف","نقد","cash","bank")
-            if (not cash_row or cash_row["account_type"]!="asset" or cash_row["is_group"] or not cash_row["active"]
-                or (cash_row["code"] not in cash_codes and not any(word in cash_name for word in cash_words))):
-                raise ValueError("حساب السداد يجب أن يكون حساب صندوق أو بنك تفصيليًا ونشطًا، وليس حساب إيراد أو مصروف أو أصل آخر.")
-            ap=supplier_ap_account(c); begin_write_transaction(c)
-            dimensions = validate_journal_dimensions(c, {"supplier_id": supplier})
-            no="PAY-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
-            eid=create_journal(c,request.form["payment_date"],no,"سداد مورد",[(ap,amount,0,"تخفيض مديونية المورد"),(cash,0,amount,"سداد نقدي/بنكي")],session["user_id"],dimensions=dimensions)
-            payment_id=insert_and_get_id(c,"INSERT INTO supplier_payments(payment_no,supplier_id,payment_date,amount,cash_account_id,journal_entry_id,reference,created_by) VALUES(?,?,?,?,?,?,?,?)",
-              (no,supplier,request.form["payment_date"],str(amount),cash,eid,request.form.get("reference",""),session["user_id"]))
-            remaining=amount
-            bills=_supplier_bills_for_payment_update(c, supplier)
-            bills=[b for b in bills if Decimal(b["total_amount"])>Decimal(b["paid_amount"] or "0")+Decimal(b["credited_amount"] or "0")]
-            for b in bills:
-                due=money(Decimal(b["total_amount"])-Decimal(b["paid_amount"] or "0")-Decimal(b["credited_amount"] or "0")); alloc=min(due,remaining)
-                if alloc>0:
-                    execute_compat(c, "INSERT INTO supplier_payment_allocations(payment_id,bill_id,amount) VALUES(?,?,?)",(payment_id,b["id"],str(alloc)))
-                    execute_compat(c, "UPDATE supplier_bills SET paid_amount=? WHERE id=?",(str(money(Decimal(b["paid_amount"])+alloc)),b["id"]))
-                    remaining-=alloc
-                if remaining<=0: break
-            if remaining>0: raise ValueError("المبلغ أكبر من مديونية الفواتير المفتوحة؛ لا يتم تسجيل دفعة مقدمة تلقائيًا.")
-            c.commit(); g.audit_created_record = ("supplier_payments", payment_id, "supplier_payment_allocations", "payment_id"); flash(f"تم تسجيل السداد {no} وتوزيعه على أقدم الفواتير.","success"); return redirect(url_for("purchase.index"))
-        except (ValueError,InvalidOperation,KeyError,*DB_ERROR) as e: c.rollback(); flash(safe_error_message(e, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
-    su=execute_compat(c, "SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
-    cash=execute_compat(c, """SELECT * FROM accounts WHERE active=1 AND is_group=0 AND account_type='asset'
-      AND (lower(name_ar) LIKE '%صندوق%' OR lower(name_ar) LIKE '%بنك%' OR lower(name_ar) LIKE '%نقد%' OR lower(name_ar) LIKE '%نقاط البيع%'
-           OR code IN ('1000','1110','1120')) ORDER BY code""").fetchall()
-    c.close(); return render_template("purchase_payment_new.html",suppliers=su,cash_accounts=cash,today=date.today().isoformat())
+    try:
+        if request.method=="POST":
+            try:
+                supplier=int(request.form["supplier_id"])
+                amount=money(request.form["amount"])
+                cash=int(request.form["cash_account_id"])
+                allocation_mode=str(request.form.get("allocation_mode","manual") or "manual")
+                if allocation_mode not in {"manual","auto"}:
+                    raise ValueError("طريقة توزيع السداد غير صحيحة.")
+                if amount<=0:
+                    raise ValueError("قيمة السداد يجب أن تكون أكبر من صفر.")
+                cash_row=execute_compat(c, "SELECT code,name_ar,account_type,is_group,active FROM accounts WHERE id=?",(cash,)).fetchone()
+                cash_name=(cash_row["name_ar"] or "").lower() if cash_row else ""
+                cash_codes={"1000","1110","1120","1121","1122"}
+                cash_words=("صندوق","بنك","بنوك","مصرف","نقد","cash","bank")
+                if (not cash_row or cash_row["account_type"]!="asset" or cash_row["is_group"] or not cash_row["active"]
+                    or (cash_row["code"] not in cash_codes and not any(word in cash_name for word in cash_words))):
+                    raise ValueError("حساب السداد يجب أن يكون حساب صندوق أو بنك تفصيليًا ونشطًا، وليس حساب إيراد أو مصروف أو أصل آخر.")
+
+                begin_write_transaction(c)
+                bills=_supplier_bills_for_payment_update(c,supplier)
+                open_bills={}
+                for bill in bills:
+                    due=money(Decimal(bill["total_amount"] or "0")-Decimal(bill["paid_amount"] or "0")-Decimal(bill["credited_amount"] or "0"))
+                    if due>0:
+                        open_bills[int(bill["id"])]=(bill,due)
+                allocations=[]
+                if allocation_mode=="manual":
+                    selected_ids=request.form.getlist("bill_ids")
+                    if not selected_ids:
+                        raise ValueError("اختر فاتورة واحدة على الأقل لتخصيص مبلغ السداد.")
+                    seen=set()
+                    for raw_id in selected_ids:
+                        bill_id=int(raw_id)
+                        if bill_id in seen:
+                            raise ValueError("تم اختيار فاتورة مكررة.")
+                        seen.add(bill_id)
+                        if bill_id not in open_bills:
+                            raise ValueError("إحدى الفواتير المختارة لا تخص المورد أو لم تعد مستحقة للسداد.")
+                        raw_alloc=request.form.get("allocation_"+str(bill_id),"")
+                        alloc=money(raw_alloc)
+                        due=open_bills[bill_id][1]
+                        if alloc<=0 or alloc>due:
+                            raise ValueError("مبلغ التخصيص لكل فاتورة يجب أن يكون أكبر من صفر ولا يتجاوز المتبقي عليها.")
+                        allocations.append((bill_id,alloc))
+                    allocated_total=money(sum((value for _,value in allocations),Decimal("0")))
+                    if allocated_total!=amount:
+                        raise ValueError("إجمالي مبالغ الفواتير المختارة يجب أن يساوي مبلغ السداد تمامًا.")
+                else:
+                    remaining=amount
+                    for bill_id,(bill,due) in open_bills.items():
+                        alloc=min(due,remaining)
+                        if alloc>0:
+                            allocations.append((bill_id,alloc))
+                            remaining=money(remaining-alloc)
+                        if remaining<=0:
+                            break
+                    if remaining>0:
+                        raise ValueError("المبلغ أكبر من مديونية الفواتير المفتوحة؛ لا يتم تسجيل دفعة مقدمة تلقائيًا.")
+
+                ap=supplier_ap_account(c)
+                dimensions=validate_journal_dimensions(c,{"supplier_id":supplier})
+                no="PAY-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
+                eid=create_journal(c,request.form["payment_date"],no,"سداد مورد",
+                    [(ap,amount,0,"تخفيض مديونية المورد"),(cash,0,amount,"سداد نقدي/بنكي")],
+                    session["user_id"],dimensions=dimensions)
+                payment_id=insert_and_get_id(c,
+                    "INSERT INTO supplier_payments(payment_no,supplier_id,payment_date,amount,cash_account_id,journal_entry_id,reference,created_by) VALUES(?,?,?,?,?,?,?,?)",
+                    (no,supplier,request.form["payment_date"],str(amount),cash,eid,request.form.get("reference",""),session["user_id"]))
+                for bill_id,alloc in allocations:
+                    bill=open_bills[bill_id][0]
+                    execute_compat(c,"INSERT INTO supplier_payment_allocations(payment_id,bill_id,amount) VALUES(?,?,?)",
+                        (payment_id,bill_id,str(alloc)))
+                    new_paid=money(Decimal(bill["paid_amount"] or "0")+alloc)
+                    execute_compat(c,"UPDATE supplier_bills SET paid_amount=? WHERE id=?",(str(new_paid),bill_id))
+                c.commit()
+                g.audit_created_record=("supplier_payments",payment_id,"supplier_payment_allocations","payment_id")
+                flash(f"تم تسجيل السداد {no} وربطه بالفواتير المختارة.","success")
+                return redirect(url_for("purchase.index"))
+            except (ValueError,InvalidOperation,KeyError,*DB_ERROR) as e:
+                c.rollback()
+                flash(safe_error_message(e,"تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
+
+        su=execute_compat(c,"SELECT * FROM suppliers WHERE active=1 ORDER BY name").fetchall()
+        cash=execute_compat(c,"""SELECT * FROM accounts WHERE active=1 AND is_group=0 AND account_type='asset'
+          AND (lower(name_ar) LIKE '%صندوق%' OR lower(name_ar) LIKE '%بنك%' OR lower(name_ar) LIKE '%نقد%' OR lower(name_ar) LIKE '%نقاط البيع%'
+               OR code IN ('1000','1110','1120')) ORDER BY code""").fetchall()
+        bill_rows=execute_compat(c,"""SELECT b.id,b.bill_no,b.supplier_id,b.bill_date,b.due_date,b.total_amount,
+              b.paid_amount,b.credited_amount,s.name supplier_name
+            FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
+            WHERE b.status='posted' ORDER BY b.bill_date,b.id""").fetchall()
+        payment_bills=[]
+        for bill in bill_rows:
+            due=money(Decimal(bill["total_amount"] or "0")-Decimal(bill["paid_amount"] or "0")-Decimal(bill["credited_amount"] or "0"))
+            if due>0:
+                payment_bills.append(dict(bill,remaining_amount=str(due)))
+        return render_template("purchase_payment_new.html",suppliers=su,cash_accounts=cash,
+            payment_bills=payment_bills,today=date.today().isoformat())
+    finally:
+        c.close()
 
 
 @purchase_bp.route("/payments/<int:payment_id>/print")
