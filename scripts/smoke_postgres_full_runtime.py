@@ -940,7 +940,7 @@ def main() -> int:
                     expected_concurrency_entries = 150
                     concurrency_state = execute_compat(
                         connection,
-                        """SELECT COUNT(*) AS entries,
+                        """SELECT COUNT(DISTINCT je.id) AS entries,
                                   COUNT(jl.id) AS lines,
                                   SUM(CAST(jl.debit AS NUMERIC)) AS debit,
                                   SUM(CAST(jl.credit AS NUMERIC)) AS credit
