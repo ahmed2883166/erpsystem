@@ -38,9 +38,8 @@
             <td class="account-cell"><select name="account_id" aria-label="الحساب"><option value="">اختر الحساب</option>{% for a in accounts %}<option value="{{ a.id }}">{{ a.code }} — {{ a.name_ar }}</option>{% endfor %}</select></td>
             <td><input name="debit" type="number" min="0" step="0.01" inputmode="decimal" value="0" placeholder="0.00" aria-label="مدين"></td>
             <td><input name="credit" type="number" min="0" step="0.01" inputmode="decimal" value="0" placeholder="0.00" aria-label="دائن"></td>
-            <td><input name="memo" placeholder="اختياري" aria-label="بيان السطر"></td>
-            <td><button type="button" class="danger remove-line" aria-label="حذف السطر" title="حذف السطر">×</button></td>
-            <td class="line-options-cell" colspan="6">
+            <td>
+              <input name="memo" placeholder="اختياري" aria-label="بيان السطر">
               <details class="journal-line-extra">
                 <summary>تفاصيل السطر (اختياري)</summary>
                 <div class="journal-line-extra-grid">
@@ -51,6 +50,7 @@
                 </div>
               </details>
             </td>
+            <td><button type="button" class="danger remove-line" aria-label="حذف السطر" title="حذف السطر">×</button></td>
           </tr>
           {% endfor %}
         </tbody>
@@ -109,10 +109,9 @@
 .journal-input-table td:nth-child(3),.journal-input-table td:nth-child(4){width:125px}
 .journal-input-table td:nth-child(5){min-width:160px}
 .journal-input-table .remove-line{min-width:32px;padding:5px 9px}
-.line-options-cell{padding:0 8px 8px!important;border-bottom:1px solid var(--line)}
 .journal-line-extra{margin:0 0 5px;padding:3px 0}
 .journal-line-extra summary{font-size:.82rem;color:var(--muted)}
-.journal-line-extra-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:8px 0}
+.journal-line-extra-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:8px 0}
 .journal-line-extra-grid .journal-asset-field{display:none}
 .journal-line-row.is-fixed-asset .journal-asset-field{display:block}
 .journal-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:15px 0}
