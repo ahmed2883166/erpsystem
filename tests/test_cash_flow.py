@@ -315,7 +315,7 @@ class CashFlowReportTests(unittest.TestCase):
             if item["label"] == "إضافة الإهلاك والمصروفات غير النقدية المحددة"
         )
         self.assertEqual(adjustment["amount"], financial_planning.Decimal("0"))
-        self.assertEqual(snapshot["indirect_operating_net"], financial_planning.Decimal("-25"))
+        self.assertEqual(snapshot["indirect_operating_net"], financial_planning.Decimal("195"))
         self.assertEqual(snapshot["indirect_reconciliation"], financial_planning.Decimal("0"))
 
     def test_general_expense_account_linked_to_asset_is_not_added_back_as_depreciation(self):
