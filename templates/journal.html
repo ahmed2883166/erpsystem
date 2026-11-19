@@ -1,52 +1,71 @@
-{% extends 'base.html' %}{% block title %}القيود اليومية | NEXUS ERP{% endblock %}{% block content %}
-<header class="page-heading"><div><h2>القيود اليومية</h2><p class="muted">إنشاء القيود ومراجعة مصادرها وحالات ترحيلها.</p></div><span class="pill">قيد يدوي متعدد السطور</span></header>
+{% extends 'base.html' %}
+{% block title %}القيود اليومية | NEXUS ERP{% endblock %}
+{% block content %}
+<header class="page-heading">
+  <div><h2>القيود اليومية</h2><p class="muted">إدخال ومراجعة القيود المحاسبية.</p></div>
+</header>
+
 <section class="panel journal-entry-panel">
-<div class="journal-form-heading"><div><h3>إنشاء قيد يومية جديد</h3><p class="muted">أدخل الحساب والمبلغ والبيان، واستخدم Enter للانتقال بين البنود أو إضافة بند جديد.</p></div><span class="pill">قيد يدوي</span></div>
-<form method="post" id="journalForm" class="erp-journal-form" novalidate>
-<div class="journal-basic-grid">
-<label>التاريخ<input type="date" name="entry_date" value="{{ today }}" required></label>
-<label>المرجع<input name="reference" placeholder="تلقائي عند تركه فارغًا"></label>
-<label class="journal-description">البيان العام<input name="description" required maxlength="500" placeholder="مثال: إثبات مصروف إيجار شهر نوفمبر"></label>
-</div>
-<details class="journal-extra"><summary>تفاصيل إضافية للقيد</summary>
-<div class="journal-extra-grid">
-<label>سبب إنشاء القيد (اختياري)<input name="change_reason" maxlength="1000" placeholder="سبب أو مستند مؤيد للقيد"></label>
-<label>الفرع<select name="branch_id"><option value="">بدون تحديد</option>{% for x in dimension_options.branches %}<option value="{{ x.id }}">{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
-<label>مركز التكلفة<select name="cost_center_id"><option value="">بدون تحديد</option>{% for x in dimension_options.cost_centers %}<option value="{{ x.id }}">{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
-<label>المشروع<select name="project_id"><option value="">بدون تحديد</option>{% for x in dimension_options.projects %}<option value="{{ x.id }}">{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
-</div>
-<p class="muted">الأبعاد الاختيارية تُسجل على جميع سطور القيد، ويمكن استخدامها في لوحة الإدارة.</p>
-</details>
-<div class="journal-lines-heading"><div><h4>بنود القيد</h4><p class="muted">ابدأ بسطرين. لا تضف سطرًا إلا عند الحاجة.</p></div><button type="button" class="secondary" id="addLine">＋ إضافة سطر</button></div>
-<div id="lineBody" class="journal-line-list">
-{% for i in range(2) %}
-<div class="journal-line-card">
-<div class="journal-line-top"><strong class="journal-line-number">السطر {{ i + 1 }}</strong><button type="button" class="danger remove-line" aria-label="حذف السطر">حذف</button></div>
-<div class="journal-line-main">
-<label class="journal-account-field">الحساب<select name="account_id"><option value="">اختر الحساب</option>{% for a in accounts %}<option value="{{ a.id }}">{{ a.code }} — {{ a.name_ar }}</option>{% endfor %}</select></label>
-<label>مدين<input name="debit" type="number" min="0" step="0.01" inputmode="decimal" value="0" placeholder="0.00"></label>
-<label>دائن<input name="credit" type="number" min="0" step="0.01" inputmode="decimal" value="0" placeholder="0.00"></label>
-<label class="journal-memo-field">بيان السطر <input name="memo" placeholder="وصف مختصر (اختياري)"></label>
-</div>
-<details class="journal-line-extra"><summary>تفاصيل إضافية للسطر</summary>
-<div class="journal-line-extra-grid">
-<label>نوع السطر<select name="line_type"><option value="normal">سطر عادي</option><option value="fixed_asset">شراء أصل ثابت</option></select></label>
-<label class="journal-asset-field">اسم الأصل<input name="asset_name" placeholder="اسم الأصل"></label>
-<label class="journal-asset-field">فئة الأصل<input name="asset_category" placeholder="فئة الأصل"></label>
-<label class="journal-asset-field">تاريخ الجاهزية<input name="asset_ready_date" type="date" title="تاريخ الجاهزية للاستخدام"></label>
-</div>
-<p class="muted">عند شراء أصل ثابت، اختر نوع السطر واكتب اسم الأصل وتاريخ جاهزيته. سيظهر الأصل في سجل الأصول بعد الترحيل لاستكمال بيانات الإهلاك.</p>
-</details>
-</div>
-{% endfor %}
-</div>
-<div class="journal-totals">
-<div><span>إجمالي المدين</span><strong id="totalDebit">0.00</strong></div>
-<div><span>إجمالي الدائن</span><strong id="totalCredit">0.00</strong></div>
-<div class="journal-balance"><span>الفرق</span><strong id="difference">0.00</strong><small id="balanceStatus">أدخل البنود لمراجعة التوازن</small></div>
-</div>
-<div class="actions journal-form-actions"><button type="submit" id="postButton">ترحيل القيد</button></div>
-</form></section>
+  <form method="post" id="journalForm" class="erp-journal-form" novalidate>
+    <div class="journal-basic-grid">
+      <label>التاريخ<input type="date" name="entry_date" value="{{ today }}" required></label>
+      <label>المرجع<input name="reference" placeholder="اختياري"></label>
+      <label class="journal-description">البيان<input name="description" required maxlength="500" placeholder="اكتب وصف القيد باختصار"></label>
+    </div>
+
+    <details class="journal-extra">
+      <summary>بيانات إضافية (اختياري)</summary>
+      <div class="journal-extra-grid">
+        <label>سبب القيد<input name="change_reason" maxlength="1000" placeholder="سبب أو مستند مؤيد"></label>
+        <label>الفرع<select name="branch_id"><option value="">بدون تحديد</option>{% for x in dimension_options.branches %}<option value="{{ x.id }}">{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
+        <label>مركز التكلفة<select name="cost_center_id"><option value="">بدون تحديد</option>{% for x in dimension_options.cost_centers %}<option value="{{ x.id }}">{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
+        <label>المشروع<select name="project_id"><option value="">بدون تحديد</option>{% for x in dimension_options.projects %}<option value="{{ x.id }}">{{ x.code }} — {{ x.name_ar }}</option>{% endfor %}</select></label>
+      </div>
+    </details>
+
+    <div class="journal-lines-heading">
+      <h3>سطور القيد</h3>
+      <button type="button" class="secondary" id="addLine">＋ إضافة سطر</button>
+    </div>
+
+    <div class="journal-table-wrap">
+      <table class="journal-input-table">
+        <thead><tr><th>#</th><th>الحساب</th><th>مدين</th><th>دائن</th><th>البيان</th><th></th></tr></thead>
+        <tbody id="lineBody">
+          {% for i in range(2) %}
+          <tr class="journal-line-row">
+            <td class="line-number">{{ i + 1 }}</td>
+            <td class="account-cell"><select name="account_id" aria-label="الحساب"><option value="">اختر الحساب</option>{% for a in accounts %}<option value="{{ a.id }}">{{ a.code }} — {{ a.name_ar }}</option>{% endfor %}</select></td>
+            <td><input name="debit" type="number" min="0" step="0.01" inputmode="decimal" value="0" placeholder="0.00" aria-label="مدين"></td>
+            <td><input name="credit" type="number" min="0" step="0.01" inputmode="decimal" value="0" placeholder="0.00" aria-label="دائن"></td>
+            <td><input name="memo" placeholder="اختياري" aria-label="بيان السطر"></td>
+            <td><button type="button" class="danger remove-line" aria-label="حذف السطر" title="حذف السطر">×</button></td>
+            <td class="line-options-cell" colspan="6">
+              <details class="journal-line-extra">
+                <summary>تفاصيل السطر (اختياري)</summary>
+                <div class="journal-line-extra-grid">
+                  <label>نوع السطر<select name="line_type"><option value="normal">عادي</option><option value="fixed_asset">شراء أصل ثابت</option></select></label>
+                  <label class="journal-asset-field">اسم الأصل<input name="asset_name" placeholder="اسم الأصل"></label>
+                  <label class="journal-asset-field">فئة الأصل<input name="asset_category" placeholder="فئة الأصل"></label>
+                  <label class="journal-asset-field">تاريخ الجاهزية<input name="asset_ready_date" type="date"></label>
+                </div>
+              </details>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="journal-summary">
+      <div><span>إجمالي المدين</span><strong id="totalDebit">0.00</strong></div>
+      <div><span>إجمالي الدائن</span><strong id="totalCredit">0.00</strong></div>
+      <div class="journal-balance"><span>الفرق</span><strong id="difference">0.00</strong><small id="balanceStatus">القيد غير مكتمل</small></div>
+    </div>
+    <div class="journal-form-actions"><button type="submit" id="postButton">حفظ وترحيل القيد</button></div>
+  </form>
+</section>
+
 <section class="panel journal-register-panel"><h3>سجل القيود اليومية</h3><p class="muted">استخدم البحث والتصفية للوصول إلى القيود بسرعة دون تحميل السجل بالكامل.</p>
 <form method="get" class="report-filter">
 <label>بحث في الرقم أو المرجع أو البيان<input name="q" value="{{ search_query }}" maxlength="100" placeholder="رقم القيد أو المرجع أو البيان أو ملاحظة السطر أو الحساب"></label>
@@ -68,76 +87,111 @@
 {% if journal_page>1 %}<a class="button secondary" href="{{ url_for('journal',journal_page=journal_page-1,journal_per_page=journal_per_page,q=search_query,date_from=date_from,date_to=date_to,status=status_filter,entry_type=entry_type_filter,source=source_filter,sort_order=sort_order) }}">السابق</a>{% endif %}
 {% if journal_page<journal_pages %}<a class="button" href="{{ url_for('journal',journal_page=journal_page+1,journal_per_page=journal_per_page,q=search_query,date_from=date_from,date_to=date_to,status=status_filter,entry_type=entry_type_filter,source=source_filter,sort_order=sort_order) }}">التالي</a>{% endif %}</div>
 </section>{% endblock %}
-{% block scripts %}<style>
-.journal-form-heading,.journal-lines-heading,.journal-line-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.journal-form-heading h3,.journal-lines-heading h4{margin:0}
-.journal-form-heading p,.journal-lines-heading p{margin:5px 0 0}
-.journal-basic-grid{display:grid;grid-template-columns:minmax(150px, .7fr) minmax(180px,1fr);gap:12px;margin:16px 0}
-.journal-description{grid-column:1/-1}
-.journal-extra,.journal-line-extra{border:1px solid var(--border-color, #d1d5db);border-radius:10px;padding:10px 13px;margin:12px 0}
+{% endblock %}
+{% block scripts %}
+<style>
+.journal-entry-panel{padding:18px}
+.journal-basic-grid{display:grid;grid-template-columns:minmax(150px,.7fr) minmax(170px,.8fr) minmax(260px,2fr);gap:12px;margin-bottom:14px}
+.journal-basic-grid label,.journal-extra-grid label,.journal-line-extra-grid label{display:block;min-width:0}
+.journal-basic-grid input,.journal-basic-grid select,.journal-extra-grid input,.journal-extra-grid select,.journal-line-extra-grid input,.journal-line-extra-grid select{width:100%;box-sizing:border-box}
+.journal-extra{border:1px solid var(--line);border-radius:9px;padding:9px 12px;margin:8px 0 16px}
 .journal-extra summary,.journal-line-extra summary{cursor:pointer;font-weight:600}
-.journal-extra-grid,.journal-line-extra-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}
-.journal-lines-heading{margin:20px 0 10px}
-.journal-line-list{display:grid;gap:12px}
-.journal-line-card{border:1px solid var(--border-color, #d1d5db);border-radius:12px;padding:13px;background:var(--panel-bg, transparent)}
-.journal-line-top{margin-bottom:10px}
-.journal-line-number{font-size:1rem}
-.journal-line-main{display:grid;grid-template-columns:minmax(220px,2fr) minmax(110px,.8fr) minmax(110px,.8fr) minmax(180px,1.4fr);gap:10px;align-items:end}
-.journal-line-main label,.journal-line-extra-grid label,.journal-basic-grid label,.journal-extra-grid label{min-width:0}
-.journal-line-main input,.journal-line-main select,.journal-line-extra-grid input,.journal-line-extra-grid select,.journal-basic-grid input,.journal-extra-grid input,.journal-extra-grid select{width:100%;box-sizing:border-box}
-.journal-totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:16px 0}
-.journal-totals>div{border:1px solid var(--border-color, #d1d5db);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:5px}
-.journal-totals span,.journal-totals small{color:var(--muted, #6b7280);font-size:.88rem}
-.journal-totals strong{font-size:1.15rem;font-variant-numeric:tabular-nums}
+.journal-extra-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}
+.journal-lines-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:14px 0 8px}
+.journal-lines-heading h3{font-size:1.05rem;margin:0}
+.journal-table-wrap{overflow-x:auto}
+.journal-input-table{width:100%;min-width:760px;border-collapse:separate;border-spacing:0}
+.journal-input-table th{background:var(--surface2);font-weight:700;text-align:right;padding:9px 8px;white-space:nowrap}
+.journal-input-table td{padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
+.journal-input-table .line-number{width:34px;text-align:center;color:var(--muted);font-weight:700}
+.journal-input-table input,.journal-input-table select{width:100%;min-width:85px;box-sizing:border-box;min-height:37px;padding:6px 8px}
+.journal-input-table .account-cell{min-width:245px}
+.journal-input-table td:nth-child(3),.journal-input-table td:nth-child(4){width:125px}
+.journal-input-table td:nth-child(5){min-width:160px}
+.journal-input-table .remove-line{min-width:32px;padding:5px 9px}
+.line-options-cell{padding:0 8px 8px!important;border-bottom:1px solid var(--line)}
+.journal-line-extra{margin:0 0 5px;padding:3px 0}
+.journal-line-extra summary{font-size:.82rem;color:var(--muted)}
+.journal-line-extra-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:8px 0}
+.journal-line-extra-grid .journal-asset-field{display:none}
+.journal-line-row.is-fixed-asset .journal-asset-field{display:block}
+.journal-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:15px 0}
+.journal-summary>div{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface2)}
+.journal-summary span,.journal-summary small{font-size:.85rem;color:var(--muted)}
+.journal-summary strong{font-size:1.08rem;font-variant-numeric:tabular-nums}
 .journal-balance.is-balanced strong,.journal-balance.is-balanced small{color:#16a34a}
 .journal-balance.is-unbalanced strong,.journal-balance.is-unbalanced small{color:#dc2626}
-.journal-line-extra-grid .journal-asset-field{display:none}
-.journal-line-card.is-fixed-asset .journal-line-extra-grid .journal-asset-field{display:block}
-.journal-form-actions{justify-content:flex-start}
-@media(max-width:760px){.journal-basic-grid,.journal-extra-grid,.journal-line-extra-grid,.journal-totals{grid-template-columns:1fr 1fr}.journal-line-main{grid-template-columns:1fr 1fr}.journal-account-field,.journal-memo-field{grid-column:1/-1}}
-@media(max-width:440px){.journal-basic-grid,.journal-extra-grid,.journal-line-extra-grid,.journal-totals,.journal-line-main{grid-template-columns:1fr}.journal-description,.journal-account-field,.journal-memo-field{grid-column:auto}.journal-form-heading,.journal-lines-heading{align-items:flex-start;flex-direction:column}}
-.origin-action{margin-top:6px}
-.origin-action .btn{display:inline-block;font-size:.86em;padding:5px 9px;text-decoration:none}
-.origin-unavailable{font-size:.78em;margin-top:5px}
-
-/* Journal screen: prioritize the entry and hide secondary filters until requested. */
-.journal-entry-panel{padding:clamp(15px,2vw,24px)}
-.journal-form-heading{padding-bottom:10px;border-bottom:1px solid var(--line);margin-bottom:10px}
-.journal-form-heading .pill{font-size:.78rem}
-.journal-basic-grid{grid-template-columns:minmax(145px,.55fr) minmax(160px,.75fr) minmax(260px,2fr);gap:10px;margin:12px 0}
-.journal-description{grid-column:auto}
-.journal-line-list{gap:8px}
-.journal-line-card{padding:10px 12px;border-color:var(--line);background:var(--surface2)}
-.journal-line-top{margin-bottom:7px}
-.journal-line-number{font-size:.88rem;color:var(--muted)}
-.journal-line-main{grid-template-columns:minmax(230px,2fr) minmax(115px,.72fr) minmax(115px,.72fr) minmax(190px,1.25fr);gap:9px}
-.journal-line-main label{font-size:.9rem}
-.journal-line-main input,.journal-line-main select{min-height:38px;padding:7px 9px}
-.journal-line-extra{margin:7px 0 0;padding:7px 10px}
-.journal-totals{gap:8px;margin:12px 0}
-.journal-totals>div{padding:9px 12px;background:var(--surface2)}
-.journal-totals strong{font-size:1.05rem}
-.journal-filter-advanced{grid-column:1/-1;border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--surface2)}
-.journal-filter-advanced summary{cursor:pointer;font-weight:700;color:var(--accent)}
-.journal-filter-advanced-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:10px}
-.journal-register-panel .report-filter{align-items:end}
-.journal-register-panel .report-filter>label{min-width:0}
-@media(max-width:900px){.journal-basic-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.journal-description{grid-column:1/-1}.journal-line-main{grid-template-columns:repeat(2,minmax(0,1fr))}.journal-filter-advanced-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:560px){.journal-basic-grid,.journal-extra-grid,.journal-line-extra-grid,.journal-totals,.journal-line-main,.journal-filter-advanced-grid{grid-template-columns:1fr}.journal-description{grid-column:auto}.journal-form-heading{align-items:flex-start}.journal-totals>div{padding:8px 10px}}
-</style><script>
-(()=>{const form=document.getElementById('journalForm');const body=document.getElementById('lineBody');const add=document.getElementById('addLine');if(!form||!body||!add)return;
-const first=body.querySelector('.journal-line-card');const accountOptions=first.querySelector('[name=account_id]').innerHTML;
-function renumber(){body.querySelectorAll('.journal-line-card').forEach((r,i)=>{r.querySelector('.journal-line-number').textContent='السطر '+(i+1)})}
-function calc(){let d=0,c=0;body.querySelectorAll('.journal-line-card').forEach(r=>{d+=Number(r.querySelector('[name=debit]').value||0);c+=Number(r.querySelector('[name=credit]').value||0)});document.getElementById('totalDebit').textContent=d.toFixed(2);document.getElementById('totalCredit').textContent=c.toFixed(2);const diff=d-c;const difference=document.getElementById('difference');const status=document.getElementById('balanceStatus');const panel=difference.closest('.journal-balance');difference.textContent=diff.toFixed(2);panel.classList.remove('is-balanced','is-unbalanced');if(Math.abs(diff)<.005&&d>0){panel.classList.add('is-balanced');status.textContent='القيد متوازن'}else if(d>0||c>0){panel.classList.add('is-unbalanced');status.textContent='يوجد فرق بين المدين والدائن'}else{status.textContent='أدخل البنود لمراجعة التوازن'}} 
-function addRow(focus=true){const r=first.cloneNode(true);r.querySelectorAll('input').forEach(x=>{if(x.name==='debit'||x.name==='credit')x.value='0';else x.value=''});r.querySelector('[name=account_id]').innerHTML=accountOptions;r.querySelector('[name=account_id]').value='';r.querySelector('[name=line_type]').value='normal';r.querySelector('.journal-line-extra').open=false;r.classList.remove('is-fixed-asset');body.appendChild(r);renumber();calc();if(focus)r.querySelector('[name=account_id]').focus();return r}
-function setAssetVisibility(card){const fixed=card.querySelector('[name=line_type]').value==='fixed_asset';card.classList.toggle('is-fixed-asset',fixed)}
-add.addEventListener('click',()=>addRow());
-body.addEventListener('change',e=>{if(e.target.name==='line_type')setAssetVisibility(e.target.closest('.journal-line-card'));calc()});
-body.addEventListener('input',calc);
-body.addEventListener('click',e=>{if(e.target.classList.contains('remove-line')){const cards=body.querySelectorAll('.journal-line-card');if(cards.length>2){e.target.closest('.journal-line-card').remove();renumber();calc()}else{const card=e.target.closest('.journal-line-card');card.querySelectorAll('input').forEach(x=>{x.value=(x.name==='debit'||x.name==='credit')?'0':''});card.querySelectorAll('select').forEach(x=>x.selectedIndex=0);card.querySelector('.journal-line-extra').open=false;setAssetVisibility(card);calc()}}});
-body.addEventListener('keydown',e=>{if(e.key!=='Enter'||e.target.closest('button'))return;const card=e.target.closest('.journal-line-card');if(!card)return;const main=Array.from(card.querySelectorAll('.journal-line-main input,.journal-line-main select'));const index=main.indexOf(e.target);if(index<0)return;e.preventDefault();if(index<main.length-1){main[index+1].focus()}else{addRow(true)}});
-form.addEventListener('submit',e=>{calc();const d=Number(document.getElementById('totalDebit').textContent);const c=Number(document.getElementById('totalCredit').textContent);const description=form.querySelector('[name=description]');if(!description.value.trim()){e.preventDefault();description.focus();alert('اكتب البيان العام للقيد.');return}if(Math.abs(d-c)>=.005||d<=0){e.preventDefault();alert('القيد غير متوازن. راجع إجمالي المدين والدائن.');return}
-const cards=Array.from(body.querySelectorAll('.journal-line-card'));const meaningful=cards.filter(card=>{const account=card.querySelector('[name=account_id]').value;const debit=Number(card.querySelector('[name=debit]').value||0);const credit=Number(card.querySelector('[name=credit]').value||0);const memo=card.querySelector('[name=memo]').value.trim();const type=card.querySelector('[name=line_type]').value;const asset=card.querySelector('[name=asset_name]').value.trim();const category=card.querySelector('[name=asset_category]').value.trim();const ready=card.querySelector('[name=asset_ready_date]').value;return !!(account||debit||credit||memo||type==='fixed_asset'||asset||category||ready)});if(meaningful.length>=2)cards.filter(card=>!meaningful.includes(card)).forEach(card=>card.remove());renumber()});
-body.querySelectorAll('.journal-line-card').forEach(setAssetVisibility);renumber();calc();
+.journal-form-actions{display:flex;justify-content:flex-start}
+@media(max-width:850px){.journal-basic-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.journal-description{grid-column:1/-1}}
+@media(max-width:560px){.journal-basic-grid,.journal-extra-grid,.journal-line-extra-grid,.journal-summary{grid-template-columns:1fr}.journal-description{grid-column:auto}.journal-lines-heading{align-items:flex-start}}
+</style>
+<script>
+(()=> {
+ const form=document.getElementById('journalForm'),body=document.getElementById('lineBody'),add=document.getElementById('addLine');
+ if(!form||!body||!add)return;
+ const template=body.querySelector('.journal-line-row');
+ const accountOptions=template.querySelector('[name=account_id]').innerHTML;
+ function rows(){return [...body.querySelectorAll('.journal-line-row')]}
+ function renumber(){rows().forEach((r,i)=>r.querySelector('.line-number').textContent=i+1)}
+ function assetVisibility(row){row.classList.toggle('is-fixed-asset',row.querySelector('[name=line_type]').value==='fixed_asset')}
+ function totals(){
+   let debit=0,credit=0;
+   rows().forEach(r=>{debit+=Math.max(0,Number(r.querySelector('[name=debit]').value)||0);credit+=Math.max(0,Number(r.querySelector('[name=credit]').value)||0)});
+   document.getElementById('totalDebit').textContent=debit.toFixed(2);
+   document.getElementById('totalCredit').textContent=credit.toFixed(2);
+   const diff=debit-credit,panel=document.querySelector('.journal-balance');
+   document.getElementById('difference').textContent=diff.toFixed(2);
+   panel.classList.remove('is-balanced','is-unbalanced');
+   const status=document.getElementById('balanceStatus');
+   if(debit>0&&Math.abs(diff)<.005){panel.classList.add('is-balanced');status.textContent='القيد متوازن'}
+   else if(debit||credit){panel.classList.add('is-unbalanced');status.textContent='راجع الفرق بين الطرفين'}
+   else status.textContent='أدخل مبالغ القيد';
+   return {debit,credit,diff};
+ }
+ function addRow(focus=true){
+   const row=template.cloneNode(true);
+   row.querySelector('.line-number').textContent=rows().length+1;
+   row.querySelector('[name=account_id]').innerHTML=accountOptions;
+   row.querySelectorAll('input').forEach(x=>x.value=(x.name==='debit'||x.name==='credit')?'0':'');
+   row.querySelector('[name=line_type]').value='normal';
+   row.querySelector('.journal-line-extra').open=false;
+   body.appendChild(row);renumber();totals();
+   if(focus)row.querySelector('[name=account_id]').focus();
+ }
+ add.addEventListener('click',()=>addRow());
+ body.addEventListener('input',totals);
+ body.addEventListener('change',e=>{if(e.target.name==='line_type')assetVisibility(e.target.closest('.journal-line-row'));totals()});
+ body.addEventListener('click',e=>{
+   if(!e.target.classList.contains('remove-line'))return;
+   const row=e.target.closest('.journal-line-row');
+   if(rows().length>2){row.remove();renumber();totals()}
+   else {row.querySelector('[name=account_id]').value='';row.querySelector('[name=debit]').value='0';row.querySelector('[name=credit]').value='0';row.querySelector('[name=memo]').value='';row.querySelector('[name=line_type]').value='normal';row.querySelectorAll('.journal-asset-field input').forEach(x=>x.value='');row.querySelector('.journal-line-extra').open=false;assetVisibility(row);totals()}
+ });
+ body.addEventListener('keydown',e=>{
+   if(e.key!=='Enter'||e.target.closest('button'))return;
+   const row=e.target.closest('.journal-line-row');if(!row)return;
+   const fields=[...row.querySelectorAll('.account-cell select,td:nth-child(3) input,td:nth-child(4) input,td:nth-child(5) input')];
+   const i=fields.indexOf(e.target);if(i<0)return;
+   e.preventDefault();if(i<fields.length-1)fields[i+1].focus();else addRow(true);
+ });
+ form.addEventListener('submit',e=>{
+   const t=totals(),description=form.querySelector('[name=description]');
+   if(!description.value.trim()){e.preventDefault();description.focus();alert('اكتب بيان القيد.');return}
+   if(t.debit<=0||Math.abs(t.diff)>=.005){e.preventDefault();alert('لا يمكن ترحيل القيد قبل توازن إجمالي المدين والدائن.');return}
+   let invalid=false;
+   rows().forEach(row=>{
+     const d=Number(row.querySelector('[name=debit]').value)||0,c=Number(row.querySelector('[name=credit]').value)||0;
+     const hasValue=d>0||c>0;
+     if(hasValue&&!row.querySelector('[name=account_id]').value)invalid=true;
+     if(d>0&&c>0)invalid=true;
+     if(row.querySelector('[name=line_type]').value==='fixed_asset'&&(!row.querySelector('[name=asset_name]').value.trim()||!row.querySelector('[name=asset_category]').value.trim()||!row.querySelector('[name=asset_ready_date]').value))invalid=true;
+   });
+   if(invalid){e.preventDefault();alert('راجع الحسابات: كل سطر بمبلغ يحتاج حسابًا، ولا يجوز إدخال مدين ودائن في السطر نفسه.');return}
+   const active=rows().filter(row=>Number(row.querySelector('[name=debit]').value)||Number(row.querySelector('[name=credit]').value)||row.querySelector('[name=account_id]').value);
+   if(active.length>=2)rows().filter(row=>!active.includes(row)).forEach(row=>row.remove());
+   renumber();
+ });
+ rows().forEach(assetVisibility);renumber();totals();
 })();
-</script>{% endblock %}
+</script>
+{% endblock %}
