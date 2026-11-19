@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from management_dashboard import build_management_snapshot, load_management_account_roles, initialize_management_dashboard_schema, cash_forecast, unusual_journal_entries
 from chart_templates import ACTIVITY_ACCOUNT_ROLES
+from financial_planning import initialize_planning_schema
 
 
 class ManagementDashboardTests(unittest.TestCase):
@@ -26,6 +27,7 @@ class ManagementDashboardTests(unittest.TestCase):
                 (9,'6400','مصروفات إدارية','expense',0);
         """)
         initialize_management_dashboard_schema(self.conn, 'commercial')
+        initialize_planning_schema(self.conn)
         entries = [
             ("2026-10-01","posted",[(1,"1000","0"),(4,"500","0"),(6,"0","1500")]),
             ("2026-10-15","posted",[(3,"200","0"),(7,"0","200")]),
