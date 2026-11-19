@@ -2757,6 +2757,7 @@ def trial_balance():
         if copied_opening_ids:
             copied_marks = ",".join("?" for _ in copied_opening_ids)
             join_conditions.append(f"je.id NOT IN ({copied_marks})")
+            join_params.extend(copied_opening_ids)
         if not include_closing:
             join_conditions.append(closing_entries_exclusion_sql(connection))
         join_params = []
