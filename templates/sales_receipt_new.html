@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block title %}تحصيل عميل | NEXUS ERP{% endblock %}{% block content %}
 <header class="page-heading"><div><h2>تحصيل من عميل</h2><p>سجل تحصيلًا جزئيًا أو كاملًا، ووزّعه يدويًا على الفواتير أو تلقائيًا على أقدم المستحقات.</p></div></header>
-<section class="panel purchase-payment-page"><form method="post" id="batchReceiptForm">
+<section class="panel purchase-payment-page erp-entry-page"><form method="post" id="batchReceiptForm">
 <div class="form-grid">
 <label for="receiptCustomer">العميل<select name="customer_id" id="receiptCustomer" required><option value="">اختر العميل</option>{% for x in customers %}<option value="{{x.id}}">{{x.code}} - {{x.name}}</option>{% endfor %}</select></label>
 <label for="receiptDate">تاريخ التحصيل<input id="receiptDate" type="date" name="receipt_date" value="{{today}}" required></label>
@@ -17,7 +17,7 @@
 <p class="muted" id="manualHint">حدد فواتير العميل ثم وزّع المبلغ بينها.</p>
 </section>
 <section id="autoAllocationInfo" class="notice" hidden><strong>التوزيع التلقائي:</strong> أدخل مبلغ التحصيل، وسيتم تخصيصه على أقدم فواتير العميل المفتوحة أولًا. إذا تجاوز المبلغ إجمالي المستحق، سيرفض البرنامج العملية دون ترحيل.</section>
-<div class="form-actions"><button type="submit">تسجيل إيصال التحصيل وترحيله</button></div>
+<div class="form-actions erp-form-actions"><button type="submit">تسجيل إيصال التحصيل وترحيله</button></div>
 </form></section>
 <script>
 (function(){
