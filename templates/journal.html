@@ -143,6 +143,21 @@
  }
  function addRow(focus=true){
    const row=template.cloneNode(true);
+   // Keep labels and searchable controls independent across dynamically added rows.
+   row.querySelectorAll('[id]').forEach(element=>element.removeAttribute('id'));
+   row.querySelectorAll('[aria-controls],[aria-owns],[aria-labelledby]').forEach(element=>{
+     element.removeAttribute('aria-controls');
+     element.removeAttribute('aria-owns');
+     element.removeAttribute('aria-labelledby');
+   });
+   row.querySelectorAll('input').forEach(input=>{
+     if(input.type==='checkbox'||input.type==='radio')input.checked=false;
+     else input.value='';
+   });
+   row.querySelectorAll('select').forEach(select=>{
+     select.classList.remove('select2-hidden-accessible');
+     select.removeAttribute('aria-hidden');
+   });
    row.querySelector('.line-number').textContent=rows().length+1;
    row.querySelector('[name=account_id]').innerHTML=accountOptions;
    row.querySelectorAll('input').forEach(x=>x.value=(x.name==='debit'||x.name==='credit')?'0':'');
