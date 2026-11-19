@@ -28,33 +28,26 @@
       <button type="button" class="secondary" id="addLine">＋ إضافة سطر</button>
     </div>
 
-    <div class="journal-table-wrap">
-      <table class="journal-input-table">
-        <thead><tr><th>#</th><th>الحساب</th><th>مدين</th><th>دائن</th><th>البيان</th><th></th></tr></thead>
-        <tbody id="lineBody">
-          {% for i in range(2) %}
-          <tr class="journal-line-row">
-            <td class="line-number">{{ i + 1 }}</td>
-            <td class="account-cell"><select name="account_id" aria-label="الحساب"><option value="">اختر الحساب</option>{% for a in accounts %}<option value="{{ a.id }}">{{ a.code }} — {{ a.name_ar }}</option>{% endfor %}</select></td>
-            <td><input name="debit" type="number" min="0" step="0.01" inputmode="decimal" value="0" placeholder="0.00" aria-label="مدين"></td>
-            <td><input name="credit" type="number" min="0" step="0.01" inputmode="decimal" value="0" placeholder="0.00" aria-label="دائن"></td>
-            <td>
-              <input name="memo" placeholder="اختياري" aria-label="بيان السطر">
-              <details class="journal-line-extra">
-                <summary>تفاصيل السطر (اختياري)</summary>
-                <div class="journal-line-extra-grid">
-                  <label>نوع السطر<select name="line_type"><option value="normal">عادي</option><option value="fixed_asset">شراء أصل ثابت</option></select></label>
-                  <label class="journal-asset-field">اسم الأصل<input name="asset_name" placeholder="اسم الأصل"></label>
-                  <label class="journal-asset-field">فئة الأصل<input name="asset_category" placeholder="فئة الأصل"></label>
-                  <label class="journal-asset-field">تاريخ الجاهزية<input name="asset_ready_date" type="date"></label>
-                </div>
-              </details>
-            </td>
-            <td><button type="button" class="danger remove-line" aria-label="حذف السطر" title="حذف السطر">×</button></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+    <div class="journal-lines-list" id="lineBody">
+      {% for i in range(2) %}
+      <div class="journal-line-row">
+        <div class="line-number">{{ i + 1 }}</div>
+        <label class="account-cell">الحساب<select name="account_id" aria-label="الحساب"><option value="">اختر الحساب</option>{% for a in accounts %}<option value="{{ a.id }}">{{ a.code }} — {{ a.name_ar }}</option>{% endfor %}</select></label>
+        <label class="debit-cell">مدين<input name="debit" type="number" min="0" step="0.01" inputmode="decimal" value="0" placeholder="0.00" aria-label="مدين"></label>
+        <label class="credit-cell">دائن<input name="credit" type="number" min="0" step="0.01" inputmode="decimal" value="0" placeholder="0.00" aria-label="دائن"></label>
+        <label class="memo-cell">البيان<input name="memo" placeholder="بيان مختصر للسطر" aria-label="بيان السطر"></label>
+        <button type="button" class="danger remove-line" aria-label="حذف السطر" title="حذف السطر">×</button>
+        <details class="journal-line-extra">
+          <summary>تفاصيل الأصل (اختياري)</summary>
+          <div class="journal-line-extra-grid">
+            <label>نوع السطر<select name="line_type"><option value="normal">عادي</option><option value="fixed_asset">شراء أصل ثابت</option></select></label>
+            <label class="journal-asset-field">اسم الأصل<input name="asset_name" placeholder="اسم الأصل"></label>
+            <label class="journal-asset-field">فئة الأصل<input name="asset_category" placeholder="فئة الأصل"></label>
+            <label class="journal-asset-field">تاريخ الجاهزية<input name="asset_ready_date" type="date"></label>
+          </div>
+        </details>
+      </div>
+      {% endfor %}
     </div>
 
     <div class="journal-summary">
@@ -98,16 +91,17 @@
 .journal-extra-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}
 .journal-lines-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:14px 0 8px}
 .journal-lines-heading h3{font-size:1.05rem;margin:0}
-.journal-table-wrap{overflow-x:auto}
-.journal-input-table{width:100%;min-width:760px;border-collapse:separate;border-spacing:0}
-.journal-input-table th{background:var(--surface2);font-weight:700;text-align:right;padding:9px 8px;white-space:nowrap}
-.journal-input-table td{padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
-.journal-input-table .line-number{width:34px;text-align:center;color:var(--muted);font-weight:700}
-.journal-input-table input,.journal-input-table select{width:100%;min-width:85px;box-sizing:border-box;min-height:37px;padding:6px 8px}
-.journal-input-table .account-cell{min-width:245px}
-.journal-input-table td:nth-child(3),.journal-input-table td:nth-child(4){width:125px}
-.journal-input-table td:nth-child(5){min-width:160px}
-.journal-input-table .remove-line{min-width:32px;padding:5px 9px}
+.journal-lines-list{display:flex;flex-direction:column;gap:8px}
+.journal-line-row{display:grid;grid-template-columns:30px minmax(220px,2.2fr) minmax(105px,.8fr) minmax(105px,.8fr) minmax(150px,1.4fr) 34px;gap:9px;align-items:end;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}
+.journal-line-row>label{display:flex;flex-direction:column;gap:5px;min-width:0;font-size:.83rem;color:var(--muted);font-weight:600}
+.journal-line-row input,.journal-line-row select{width:100%;min-width:0;box-sizing:border-box;min-height:39px;padding:7px 9px}
+.journal-line-row .line-number{align-self:center;text-align:center;color:var(--muted);font-weight:700}
+.journal-line-row .remove-line{min-width:32px;min-height:37px;padding:4px 8px}
+.journal-line-extra{grid-column:2/-1;margin-top:0;padding-top:2px}
+.journal-line-extra summary{font-size:.8rem;color:var(--muted)}
+.journal-line-extra-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:8px 0}
+.journal-line-extra-grid .journal-asset-field{display:none}
+.journal-line-row.is-fixed-asset .journal-asset-field{display:block}
 .journal-line-extra{margin:0 0 5px;padding:3px 0}
 .journal-line-extra summary{font-size:.82rem;color:var(--muted)}
 .journal-line-extra-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:8px 0}
@@ -120,8 +114,8 @@
 .journal-balance.is-balanced strong,.journal-balance.is-balanced small{color:#16a34a}
 .journal-balance.is-unbalanced strong,.journal-balance.is-unbalanced small{color:#dc2626}
 .journal-form-actions{display:flex;justify-content:flex-start}
-@media(max-width:850px){.journal-basic-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.journal-description{grid-column:1/-1}}
-@media(max-width:560px){.journal-basic-grid,.journal-extra-grid,.journal-line-extra-grid,.journal-summary{grid-template-columns:1fr}.journal-description{grid-column:auto}.journal-lines-heading{align-items:flex-start}}
+@media(max-width:850px){.journal-basic-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.journal-description{grid-column:1/-1}.journal-line-row{grid-template-columns:28px minmax(180px,2fr) minmax(95px,1fr) minmax(95px,1fr) 34px}.journal-line-row .memo-cell{grid-column:2/5}.journal-line-row .remove-line{grid-column:5;grid-row:2}.journal-line-extra{grid-column:2/5}}
+@media(max-width:560px){.journal-basic-grid,.journal-extra-grid,.journal-line-extra-grid,.journal-summary{grid-template-columns:1fr}.journal-description{grid-column:auto}.journal-lines-heading{align-items:flex-start}.journal-line-row{grid-template-columns:26px minmax(0,1fr) minmax(0,1fr) 34px;gap:7px;padding:8px}.journal-line-row .account-cell{grid-column:2/4}.journal-line-row .debit-cell{grid-column:2}.journal-line-row .credit-cell{grid-column:3}.journal-line-row .memo-cell{grid-column:2/4}.journal-line-row .remove-line{grid-column:4;grid-row:2}.journal-line-extra{grid-column:2/5}.journal-line-extra-grid{grid-template-columns:1fr}}
 </style>
 <script>
 (()=> {
@@ -168,7 +162,7 @@
  body.addEventListener('keydown',e=>{
    if(e.key!=='Enter'||e.target.closest('button'))return;
    const row=e.target.closest('.journal-line-row');if(!row)return;
-   const fields=[...row.querySelectorAll('.account-cell select,td:nth-child(3) input,td:nth-child(4) input,td:nth-child(5) input')];
+   const fields=[...row.querySelectorAll('.account-cell select,.debit-cell input,.credit-cell input,.memo-cell input')];
    const i=fields.indexOf(e.target);if(i<0)return;
    e.preventDefault();if(i<fields.length-1)fields[i+1].focus();else addRow(true);
  });
