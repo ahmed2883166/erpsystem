@@ -49,7 +49,7 @@ def _db():
 
 
 @transactional_connection_initializer(_db)
-def initialize_payroll_compliance_schema(c):
+def initialize_payroll_compliance_schema(conn):
     execute_script(conn, """
     CREATE TABLE IF NOT EXISTS payroll_rule_sets(
       id INTEGER PRIMARY KEY,
