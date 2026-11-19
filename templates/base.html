@@ -25,6 +25,7 @@
 <summary><span>🚚 الموردون والمشتريات</span><small>الموردون والفواتير والاستلامات</small></summary>
 <div class="nav-links">
 <a href="{{ url_for('purchase.index') }}">المشتريات وفواتير الموردين</a>
+{% if 'purchases.manage' in permissions %}<a href="{{ url_for('purchase.new_payment') }}">سداد الموردين</a>{% endif %}
 <a href="{{ url_for('purchase.integrity_issues') }}">مراجعة سلامة المشتريات</a>
 {% if 'party.view' in permissions %}<a href="{{ url_for('party_reports.party_statement') }}">كشف حساب الموردين والعملاء</a>{% endif %}
 {% if 'aging.view' in permissions or 'purchases.view' in permissions %}<a href="{{ url_for('aging.index', kind='suppliers') }}">أعمار ديون الموردين</a>{% endif %}
@@ -35,7 +36,7 @@
 <details class="nav-group">
 <summary><span>👥 العملاء والمبيعات</span><small>العملاء والعروض والفواتير والتحصيل</small></summary>
 <div class="nav-links">
-<a href="{{ url_for('sales.index') }}">المبيعات وفواتير العملاء</a><a href="{{ url_for('sales.customer_advances') }}">دفعات العملاء المقدمة</a>
+<a href="{{ url_for('sales.index') }}">المبيعات وفواتير العملاء</a>{% if 'sales.manage' in permissions %}<a href="{{ url_for('sales.new_receipt') }}">تحصيل من عميل</a>{% endif %}<a href="{{ url_for('sales.customer_advances') }}">دفعات العملاء المقدمة</a>
 {% if 'quotes.view' in permissions %}<a href="{{ url_for('quotes.index') }}">عروض الأسعار والتسعير</a>{% endif %}
 <a href="{{ url_for('aging.index', kind='customers') }}">أعمار ديون العملاء</a>
 {% if 'party.view' in permissions %}<a href="{{ url_for('party_reports.party_statement') }}">كشوف حساب العملاء</a>{% endif %}
