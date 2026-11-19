@@ -378,6 +378,42 @@ def transactional_migration(function):
     return wrapped
 
 
+def transactional_connection_initializer(connection_factory):
+    """Wrap a no-argument schema initializer with an explicit owned connection transaction.
+
+    The initializer receives the connection as its first argument. Tests and
+    embedding callers may pass an existing connection explicitly; nested
+    transactions remain owned by the caller.
+    """
+    def decorate(function):
+        @wraps(function)
+        def wrapped(*args, **kwargs):
+            owns_connection = not (
+                args and hasattr(args[0], "execute") and hasattr(args[0], "commit")
+            )
+            if owns_connection:
+                connection = connection_factory()
+                call_args = (connection, *args)
+            else:
+                connection = args[0]
+                call_args = args
+            owns_transaction = begin_write_transaction(connection)
+            try:
+                result = function(*call_args, **kwargs)
+                if owns_transaction:
+                    connection.commit()
+                return result
+            except Exception:
+                if owns_transaction:
+                    connection.rollback()
+                raise
+            finally:
+                if owns_connection:
+                    connection.close()
+        return wrapped
+    return decorate
+
+
 def insert_and_get_id(connection, sql, params=()):
     """Insert one row and return its generated id across SQLite and PostgreSQL."""
     statement = str(sql).strip().rstrip(";")
