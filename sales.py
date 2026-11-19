@@ -1751,6 +1751,17 @@ def allocate_customer_advance(conn, advance_receipt_id, allocations, allocation_
         raise ValueError("إيصال مقدم العميل غير موجود أو العميل غير نشط.")
     if allocation_date < receipt["receipt_date"]:
         raise ValueError("لا يمكن تخصيص مقدم العميل بتاريخ يسبق تاريخ استلامه.")
+    allocations = list(allocations)
+    if database_dialect(conn) == "postgresql":
+        # Acquire invoice row locks in a stable order to avoid deadlocks when
+        # two users allocate advances across overlapping invoice sets.
+        invoice_ids = sorted({int(invoice_id) for invoice_id, _ in allocations})
+        for invoice_id in invoice_ids:
+            execute_compat(
+                conn,
+                "SELECT id FROM sales_invoices WHERE id=? AND customer_id=? AND status='posted' FOR UPDATE",
+                (invoice_id, receipt["customer_id"]),
+            ).fetchone()
     normalized, seen = [], set()
     total = Decimal("0")
     for invoice_id, raw_amount in allocations:
@@ -1758,10 +1769,11 @@ def allocate_customer_advance(conn, advance_receipt_id, allocations, allocation_
             raise ValueError("لا يمكن اختيار الفاتورة أكثر من مرة في نفس عملية التخصيص.")
         seen.add(invoice_id)
         amount = _validated_customer_advance_amount(raw_amount, "قيمة التخصيص")
-        invoice_sql = "SELECT * FROM sales_invoices WHERE id=? AND customer_id=? AND status='posted'"
-        if database_dialect(conn) == "postgresql":
-            invoice_sql += " FOR UPDATE"
-        invoice = execute_compat(conn, invoice_sql, (invoice_id, receipt["customer_id"])).fetchone()
+        invoice = execute_compat(
+            conn,
+            "SELECT * FROM sales_invoices WHERE id=? AND customer_id=? AND status='posted'",
+            (invoice_id, receipt["customer_id"]),
+        ).fetchone()
         if not invoice:
             raise ValueError("إحدى الفواتير لا تتبع نفس العميل أو غير مرحلة.")
         if allocation_date < date.fromisoformat(invoice["invoice_date"]).isoformat():
