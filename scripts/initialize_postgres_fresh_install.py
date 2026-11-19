@@ -139,11 +139,17 @@ def main(argv=None) -> int:
     os.environ.setdefault("NEXUS_DEMO_MODE", "0")
 
     import app as nexus_app
+    import database as database_module
 
-    # This bypass is scoped to this explicit one-time bootstrap process only.
-    # The normal runtime gate in database_backend.py is not modified or opened.
-    original_gate = nexus_app.require_supported_runtime_backend
-    nexus_app.require_supported_runtime_backend = lambda: "postgresql"
+    # The bootstrap bypass is process-local and scoped to this explicit
+    # fresh-install command. app.db() and connect_database() each hold their
+    # own imported reference to the runtime gate, so both references must be
+    # patched together. The canonical database_backend policy stays fail-closed.
+    original_app_gate = nexus_app.require_supported_runtime_backend
+    original_connection_gate = database_module.require_supported_runtime_backend
+    bootstrap_gate = lambda: "postgresql"
+    nexus_app.require_supported_runtime_backend = bootstrap_gate
+    database_module.require_supported_runtime_backend = bootstrap_gate
     try:
         nexus_app.initialize_database()
         with nexus_app.app.app_context():
@@ -154,7 +160,8 @@ def main(argv=None) -> int:
             finally:
                 connection.close()
     finally:
-        nexus_app.require_supported_runtime_backend = original_gate
+        nexus_app.require_supported_runtime_backend = original_app_gate
+        database_module.require_supported_runtime_backend = original_connection_gate
 
     print(json.dumps({
         "status": "initialized",
