@@ -7,7 +7,7 @@ explicitly when posting; legacy documents retain the old active-profile path.
 """
 import json
 
-from db_compat import execute_script
+from db_compat import execute_script, transactional_migration
 from db_sql import execute_compat
 from chart_templates import CHARTS
 from activity_profiles import (
@@ -34,6 +34,7 @@ TAX_ROLE_TYPES = {"output_vat": "liability", "input_vat": "asset"}
 ACTIVITY_ROLE_TYPES = {**ACCOUNT_ROLE_TYPES, **POSTING_ACCOUNT_TYPES, **TAX_ROLE_TYPES}
 
 
+@transactional_migration
 def initialize_company_activity_schema(conn):
     """Create additive company activity tables; never alter legacy ledgers."""
     initialize_activity_profiles_schema(conn)
