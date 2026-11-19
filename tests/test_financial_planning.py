@@ -80,12 +80,13 @@ class FinancialPlanningTests(unittest.TestCase):
             );
             CREATE TABLE financial_year_journal_history(
                 id INTEGER PRIMARY KEY, financial_year_id INTEGER, entry_kind TEXT,
-                action TEXT, entry_id INTEGER, related_entry_id INTEGER
+                action TEXT, entry_id INTEGER, related_entry_id INTEGER,
+                ledger_history_copied INTEGER
             );
             INSERT INTO financial_years VALUES(1,'2026','2026-01-01','2026-12-31','closed',NULL,NULL);
             INSERT INTO financial_years VALUES(2,'2027','2027-01-01','2027-12-31','open',2,NULL);
             INSERT INTO financial_year_journal_history
-                VALUES(1,2,'opening','created',2,NULL);
+                VALUES(1,2,'opening','created',2,NULL,1);
         """)
         self.conn.executemany(
             "INSERT INTO journal_entries(id,entry_date,status) VALUES(?,?,?)",
@@ -117,7 +118,7 @@ class FinancialPlanningTests(unittest.TestCase):
             );
             INSERT INTO financial_years VALUES(1,'2027','2027-01-01','2027-12-31','open',1,NULL);
             INSERT INTO financial_year_journal_history
-                VALUES(1,1,'opening','created',1,NULL);
+                VALUES(1,1,'opening','created',1,NULL,0);
         """)
         self.conn.execute(
             "INSERT INTO journal_entries(id,entry_date,status) VALUES(1,'2027-01-01','posted')"
@@ -827,14 +828,14 @@ class FinancialYearJournalTests(unittest.TestCase):
             CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT);
             CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit TEXT,credit TEXT);
             CREATE TABLE financial_years(id INTEGER PRIMARY KEY,year_name TEXT,start_date TEXT,end_date TEXT,status TEXT,opening_entry_id INTEGER);
-            CREATE TABLE financial_year_journal_history(id INTEGER PRIMARY KEY,financial_year_id INTEGER,entry_kind TEXT,action TEXT,entry_id INTEGER,related_entry_id INTEGER);
+            CREATE TABLE financial_year_journal_history(id INTEGER PRIMARY KEY,financial_year_id INTEGER,entry_kind TEXT,action TEXT,entry_id INTEGER,related_entry_id INTEGER,ledger_history_copied INTEGER);
             INSERT INTO accounts VALUES(1,'1110','النقدية','asset',0,1),(2,'3100','رأس المال','equity',0,1);
             INSERT INTO journal_entries VALUES(1,'2026-12-31','posted'),(2,'2027-01-01','posted');
             INSERT INTO journal_lines VALUES(1,1,1,'100.00','0'),(2,1,2,'0','100.00'),
               (3,2,1,'100.00','0'),(4,2,2,'0','100.00');
             INSERT INTO financial_years VALUES(1,'2027','2027-01-01','2027-12-31','open',2);
-            INSERT INTO financial_year_journal_history(financial_year_id,entry_kind,action,entry_id)
-              VALUES(1,'opening','created',2);
+            INSERT INTO financial_year_journal_history(financial_year_id,entry_kind,action,entry_id,ledger_history_copied)
+              VALUES(1,'opening','created',2,1);
         """)
         mismatches=_opening_balance_mismatches(conn,"2027-01-01",{1:Decimal("100"),2:Decimal("100")})
         conn.close()
