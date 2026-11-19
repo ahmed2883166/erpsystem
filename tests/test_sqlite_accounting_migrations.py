@@ -1,7 +1,8 @@
 import sqlite3
 import unittest
 
-from sqlite_accounting_migrations import (migrate_journal_line_amounts_to_text,\n                                         migrate_currency_rates_to_text)
+from sqlite_accounting_migrations import (migrate_journal_line_amounts_to_text,
+                                         migrate_currency_rates_to_text)
 
 
 class JournalLineAmountMigrationTests(unittest.TestCase):
