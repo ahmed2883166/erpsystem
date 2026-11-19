@@ -1057,3 +1057,66 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
 @media(prefers-reduced-motion:reduce){
  .erp-party-panel tbody tr,.erp-employee-panel tbody tr{transition:none}
 }
+
+
+/* Compact enterprise form sizing: consistent controls without stretching across the page. */
+.erp-master-form{
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  align-items:end;
+  gap:12px 16px;
+}
+.erp-master-form>.form-grid{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:12px 16px;
+  min-width:0;
+  grid-column:1/-1;
+}
+.erp-master-form>div:not(.form-grid):not(.notice){
+  display:flex;
+  flex-direction:column;
+  justify-content:flex-end;
+  gap:6px;
+  min-width:0;
+}
+.erp-master-form label,
+.erp-master-form>div:not(.form-grid):not(.notice)>label{
+  font-size:13px;
+  line-height:1.45;
+  font-weight:600;
+}
+.erp-master-form input:not([type=checkbox]):not([type=file]),
+.erp-master-form select,
+.erp-master-form textarea{
+  min-height:38px;
+  height:38px;
+  padding:7px 10px;
+  font-size:13.5px;
+  border-radius:8px;
+}
+.erp-master-form textarea{height:auto;min-height:76px;resize:vertical}
+.erp-master-form input[type=file]{
+  display:block;
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  font-size:12px;
+}
+.erp-master-form input[type=checkbox]{width:16px;height:16px;vertical-align:middle}
+.erp-master-form>button{
+  justify-self:start;
+  min-height:38px;
+  padding:8px 18px;
+  border-radius:8px;
+}
+.erp-master-form .notice{grid-column:1/-1}
+@media(min-width:1500px){
+  .erp-master-form,.erp-master-form>.form-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media(max-width:900px){
+  .erp-master-form,.erp-master-form>.form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:600px){
+  .erp-master-form,.erp-master-form>.form-grid{grid-template-columns:minmax(0,1fr)}
+  .erp-master-form>button,.erp-master-form .notice{grid-column:auto}
+}
