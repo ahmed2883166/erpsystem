@@ -87,7 +87,6 @@
 {% if journal_page>1 %}<a class="button secondary" href="{{ url_for('journal',journal_page=journal_page-1,journal_per_page=journal_per_page,q=search_query,date_from=date_from,date_to=date_to,status=status_filter,entry_type=entry_type_filter,source=source_filter,sort_order=sort_order) }}">السابق</a>{% endif %}
 {% if journal_page<journal_pages %}<a class="button" href="{{ url_for('journal',journal_page=journal_page+1,journal_per_page=journal_per_page,q=search_query,date_from=date_from,date_to=date_to,status=status_filter,entry_type=entry_type_filter,source=source_filter,sort_order=sort_order) }}">التالي</a>{% endif %}</div>
 </section>{% endblock %}
-{% endblock %}
 {% block scripts %}
 <style>
 .journal-entry-panel{padding:18px}
