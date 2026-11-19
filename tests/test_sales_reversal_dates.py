@@ -1,5 +1,7 @@
 import sqlite3
 import unittest
+from decimal import Decimal
+from unittest.mock import patch
 
 from sales import _reverse_posted_journal
 
@@ -31,7 +33,6 @@ class SalesReversalDateTests(unittest.TestCase):
         self.conn.close()
 
     def test_customer_advance_header_lock_uses_for_update_on_postgresql(self):
-        from unittest.mock import patch
         import sales
 
         class Row:
