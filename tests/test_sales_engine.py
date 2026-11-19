@@ -3013,6 +3013,7 @@ class SalesIntegrationTests(unittest.TestCase):
             "purchase_inventory": "1150",
         }):
             payment_response = purchase_client.post("/purchases/payments/new", data={
+                "allocation_mode": "auto",
                 "supplier_id": str(supplier_id),
                 "amount": "16",
                 "cash_account_id": str(self.db.execute(
