@@ -1131,6 +1131,132 @@ def main() -> int:
                         "rejected": rejected_count,
                         "paid_total": str(payment_summary["paid_total"]),
                     }
+
+                    # Race two refunds against one customer-advance receipt.
+                    # Both connections must serialize on the receipt row; only
+                    # one 60.00 refund may consume a 100.00 available balance.
+                    from activity_profiles import active_account_role_ids
+                    cash_role_ids = sorted(active_account_role_ids(connection).get("cash", set()))
+                    if not cash_role_ids:
+                        raise AssertionError("PostgreSQL smoke has no mapped cash account for customer advances.")
+                    advance_cash_account_id = int(cash_role_ids[0])
+                    refund_race_receipt = sales.post_customer_advance_receipt(
+                        connection, customer_id, today.isoformat(), "100.00",
+                        advance_cash_account_id, admin_id, "PG-ADV-REFUND-RACE",
+                    )
+                    connection.commit()
+                    refund_barrier = threading.Barrier(2)
+
+                    def attempt_customer_advance_refund(suffix):
+                        with nexus_app.app.app_context():
+                            refund_connection = nexus_app.db()
+                            try:
+                                refund_barrier.wait(timeout=20)
+                                refund = sales.post_customer_advance_refund(
+                                    refund_connection,
+                                    refund_race_receipt["advance_receipt_id"],
+                                    today.isoformat(), "60.00", advance_cash_account_id,
+                                    admin_id, "PG-ADV-REFUND-RACE-" + suffix,
+                                )
+                                refund_connection.commit()
+                                return ("posted", refund["refund_no"])
+                            except ValueError as exc:
+                                refund_connection.rollback()
+                                return ("rejected", str(exc))
+                            finally:
+                                refund_connection.close()
+
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        refund_outcomes = list(executor.map(
+                            attempt_customer_advance_refund, ("A", "B")
+                        ))
+                    connection.commit()
+                    refund_posted = sum(1 for outcome in refund_outcomes if outcome[0] == "posted")
+                    refund_rejected = sum(1 for outcome in refund_outcomes if outcome[0] == "rejected")
+                    refund_count = execute_compat(
+                        connection,
+                        "SELECT COUNT(*) AS n FROM customer_advance_refunds WHERE advance_receipt_id=?",
+                        (refund_race_receipt["advance_receipt_id"],),
+                    ).fetchone()["n"]
+                    refund_remaining = sales._customer_advance_available(
+                        connection, refund_race_receipt["advance_receipt_id"]
+                    )
+                    connection.commit()
+                    if (
+                        refund_posted != 1 or refund_rejected != 1
+                        or int(refund_count) != 1 or refund_remaining != Decimal("40.00")
+                    ):
+                        raise AssertionError(
+                            "Concurrent PostgreSQL customer-advance refunds were not serialized safely: "
+                            f"{refund_outcomes!r}, remaining={refund_remaining}, rows={refund_count}"
+                        )
+
+                    # Allocate a separate advance to the posted invoice, then race
+                    # two reversals of that same allocation. Exactly one reversal
+                    # may be recorded and the invoice paid balance must return to zero.
+                    allocation_race_receipt = sales.post_customer_advance_receipt(
+                        connection, customer_id, today.isoformat(), "40.00",
+                        advance_cash_account_id, admin_id, "PG-ADV-ALLOC-RACE",
+                    )
+                    connection.commit()
+                    allocation_race = sales.allocate_customer_advance(
+                        connection, allocation_race_receipt["advance_receipt_id"],
+                        [(invoice["invoice_id"], "40.00")], today.isoformat(), admin_id,
+                    )
+                    connection.commit()
+                    reversal_barrier = threading.Barrier(2)
+
+                    def attempt_customer_advance_reversal(_suffix):
+                        with nexus_app.app.app_context():
+                            reversal_connection = nexus_app.db()
+                            try:
+                                reversal_barrier.wait(timeout=20)
+                                reversal = sales.reverse_customer_advance_transaction(
+                                    reversal_connection, "allocation",
+                                    allocation_race["journal_entry_id"], today.isoformat(),
+                                    "اختبار تزامن عكس تخصيص مقدم العميل", admin_id,
+                                )
+                                reversal_connection.commit()
+                                return ("reversed", reversal["reversal_id"])
+                            except ValueError as exc:
+                                reversal_connection.rollback()
+                                return ("rejected", str(exc))
+                            finally:
+                                reversal_connection.close()
+
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        reversal_outcomes = list(executor.map(
+                            attempt_customer_advance_reversal, ("A", "B")
+                        ))
+                    connection.commit()
+                    reversal_successes = sum(1 for outcome in reversal_outcomes if outcome[0] == "reversed")
+                    reversal_rejections = sum(1 for outcome in reversal_outcomes if outcome[0] == "rejected")
+                    reversal_count = execute_compat(
+                        connection,
+                        """SELECT COUNT(*) AS n FROM customer_advance_reversals
+                           WHERE source_type='allocation' AND source_id=?""",
+                        (allocation_race["journal_entry_id"],),
+                    ).fetchone()["n"]
+                    invoice_paid_after_race = Decimal(str(execute_compat(
+                        connection, "SELECT paid_amount FROM sales_invoices WHERE id=?",
+                        (invoice["invoice_id"],),
+                    ).fetchone()["paid_amount"] or "0"))
+                    connection.commit()
+                    if (
+                        reversal_successes != 1 or reversal_rejections != 1
+                        or int(reversal_count) != 1
+                        or invoice_paid_after_race != Decimal("0.00")
+                    ):
+                        raise AssertionError(
+                            "Concurrent PostgreSQL customer-advance allocation reversals were not serialized safely: "
+                            f"{reversal_outcomes!r}, invoice_paid={invoice_paid_after_race}, rows={reversal_count}"
+                        )
+                    advance_concurrency_flow = {
+                        "refund_posted": refund_posted,
+                        "refund_rejected": refund_rejected,
+                        "allocation_reversal_posted": reversal_successes,
+                        "allocation_reversal_rejected": reversal_rejections,
+                    }
                 finally:
                     connection.close()
 
@@ -1265,7 +1391,11 @@ def main() -> int:
                 f"asset_depreciation={asset_flow['amount']} "
                 f"asset_journal={asset_flow['journal_entry_id']} "
                 f"commitment_payment_race={commitment_concurrency_flow['posted']}/"
-                f"{commitment_concurrency_flow['rejected']}"
+                f"{commitment_concurrency_flow['rejected']} "
+                f"advance_refund_race={advance_concurrency_flow['refund_posted']}/"
+                f"{advance_concurrency_flow['refund_rejected']} "
+                f"advance_allocation_reversal_race={advance_concurrency_flow['allocation_reversal_posted']}/"
+                f"{advance_concurrency_flow['allocation_reversal_rejected']}"
             )
             return 0
         finally:
