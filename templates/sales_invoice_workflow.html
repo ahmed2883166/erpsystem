@@ -46,6 +46,8 @@
       <label>سبب الرفض *</label><input name="reason" maxlength="500" required>
       <button type="submit" name="action" value="reject" class="secondary">رفض الفاتورة</button>
     </form>
+  {% elif workflow.status == 'pending_approval' and self_approval_blocked %}
+    <p class="notice">هذه الفاتورة أنشأتها أو أرسلتها للمراجعة. لا يمكن اعتمادها ذاتيًا بهذا الحساب؛ يلزم مدير النظام أو مدير لديه صلاحيتي إدارة واعتماد المبيعات.</p>
   {% elif workflow.status == 'approved' and 'sales.manage' in permissions %}
     <p class="success-text">تم الاعتماد. الفاتورة لم تُرحّل بعد.</p>
     <form method="post" action="{{ url_for('sales.post_invoice_workflow', workflow_id=workflow.id) }}">
