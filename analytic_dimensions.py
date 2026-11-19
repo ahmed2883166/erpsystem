@@ -3,7 +3,7 @@
 Legacy journal lines remain valid: all dimension references are nullable and
 are introduced through additive SQLite/PostgreSQL migrations.
 """
-from db_compat import database_dialect, execute_script, table_columns, table_exists
+from db_compat import database_dialect, execute_script, table_columns, table_exists, transactional_migration
 from db_sql import execute_compat
 
 
@@ -23,6 +23,7 @@ def _add_dimension_column(conn, columns, name, table):
         columns.add(name)
 
 
+@transactional_migration
 def initialize_analytic_dimensions_schema(conn):
     """Create dimension tables and add nullable journal references portably."""
     execute_script(conn, """
