@@ -2,7 +2,7 @@
 These are practical starting templates, not a substitute for a country-specific statutory chart.
 """
 
-from db_compat import table_columns
+from db_compat import table_columns, transactional_migration
 from db_insert import insert_one_returning_id
 from db_sql import execute_compat
 CHARTS = {
@@ -269,6 +269,7 @@ def _account_columns(conn):
     return table_columns(conn, "accounts")
 
 
+@transactional_migration
 def ensure_account_metadata(conn):
     """Add and refresh derived chart metadata; never touches journal lines or balances."""
     columns = _account_columns(conn)
@@ -403,6 +404,7 @@ def seed_activity_chart(conn, activity):
     return ids
 
 
+@transactional_migration
 def ensure_common_activity_accounts(conn):
     """Add missing standard branches without changing existing account IDs or balances."""
     existing = {row["code"]: row for row in execute_compat(conn, 
@@ -422,6 +424,7 @@ def ensure_common_activity_accounts(conn):
                           "account_type": account_type, "is_group": int(is_group)}
 
 
+@transactional_migration
 def migrate_legacy_duplicate_account_labels(conn, activity):
     """Rename only known legacy labels; preserve account IDs, balances and journal links."""
     if activity == "service":
@@ -433,6 +436,7 @@ def migrate_legacy_duplicate_account_labels(conn, activity):
         )
 
 
+@transactional_migration
 def ensure_activity_chart_accounts(conn, activity):
     """Append missing accounts from the selected chart without altering legacy accounts."""
     chart = CHARTS.get(activity, CHARTS["commercial"])
@@ -453,6 +457,7 @@ def ensure_activity_chart_accounts(conn, activity):
                           "account_type": account_type, "is_group": int(is_group)}
 
 
+@transactional_migration
 def migrate_vat_accounts(conn, activity):
     """Standardize output VAT at 2130 and deductible input VAT at 1165.
 
