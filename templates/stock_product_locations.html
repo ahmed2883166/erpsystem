@@ -11,11 +11,23 @@
 <input type="hidden" name="action" value="save_reorder">
 <label>الصنف<select name="product_id" required>{% for p in products %}<option value="{{p.id}}">{{p.sku}} - {{p.name_ar}}</option>{% endfor %}</select></label>
 <label>المخزن<select name="warehouse_id" required>{% for w in warehouses %}<option value="{{w.id}}">{{w.code}} - {{w.name_ar}}</option>{% endfor %}</select></label>
-<label>الحد الأدنى للمخزون<input name="min_qty" type="number" min="0" step="0.0001" value="0" required></label>
+<label>المستوى المستهدف بعد التوريد<input name="min_qty" type="number" min="0" step="0.0001" value="0" required></label>
 <label>نقطة إعادة الطلب<input name="reorder_point" type="number" min="0" step="0.0001" value="0" required></label>
-<label>كمية إعادة الطلب المقترحة<input name="reorder_qty" type="number" min="0" step="0.0001" value="0" required></label>
+<label>طريقة حساب كمية الطلب<select name="reorder_mode" id="reorderMode"><option value="auto" selected>تلقائي: الوصول للمستوى المستهدف</option><option value="manual">يدوي: أحدد الكمية بنفسي</option></select></label>
+<label>كمية الطلب اليدوية<input name="reorder_qty" id="manualReorderQty" type="number" min="0" step="0.0001" value="0"></label>
 <button type="submit">حفظ حدود هذا المخزن</button></form></section>
 </div>
+<section class="panel">
+<h3>تنبيهات إعادة الطلب</h3>
+{% if reorder_alerts %}
+<p>الأصناف التي وصل رصيدها إلى نقطة إعادة الطلب أو أقل:</p>
+<table><tr><th>الصنف</th><th>المخزن</th><th>الرصيد الحالي</th><th>نقطة الطلب</th><th>المستهدف</th><th>كمية الطلب المقترحة</th><th>طريقة الحساب</th></tr>
+{% for x in reorder_alerts %}<tr><td>{{x.sku}} - {{x.product_name}}</td><td>{{x.warehouse_code}} - {{x.warehouse_name}}</td><td>{{x.current_qty}}</td><td>{{x.reorder_point}}</td><td>{{x.min_qty}}</td><td>{{x.suggested_qty}}</td><td>{{'تلقائي' if x.reorder_mode == 'auto' else 'يدوي'}}</td></tr>{% endfor %}
+</table>
+{% else %}<p>لا توجد أصناف وصلت إلى نقطة إعادة الطلب حاليًا.</p>{% endif %}
+</section>
 <section class="panel"><h3>خريطة توزيع الأصناف</h3><table><tr><th>الصنف</th><th>المجموعة</th><th>المخزن</th><th>الموقع الافتراضي</th></tr>{% for x in rows %}<tr><td>{{x.sku}} - {{x.product_name}}</td><td>{{x.category_name or '—'}}</td><td>{{x.warehouse_code}}</td><td>{{x.location_code}} - {{x.location_name}}</td></tr>{% else %}<tr><td colspan="4">لم يتم تحديد مواقع افتراضية للأصناف.</td></tr>{% endfor %}</table></section>
-<section class="panel"><h3>إعدادات إعادة الطلب المحفوظة</h3><table><tr><th>الصنف</th><th>المخزن</th><th>الحد الأدنى</th><th>نقطة الطلب</th><th>كمية الطلب</th></tr>{% for x in reorder_settings %}<tr><td>{{x.sku}} - {{x.product_name}}</td><td>{{x.warehouse_code}} - {{x.warehouse_name}}</td><td>{{x.min_qty}}</td><td>{{x.reorder_point}}</td><td>{{x.reorder_qty}}</td></tr>{% else %}<tr><td colspan="5">لم تُحدد حدود إعادة طلب بعد.</td></tr>{% endfor %}</table></section>
-<script>const wh=document.getElementById('mappingWarehouse'),loc=document.getElementById('mappingLocation');function filterLoc(){for(const o of loc.options){o.hidden=o.dataset.warehouse!==wh.value;if(o.hidden&&o.selected)loc.value='';}}wh.addEventListener('change',filterLoc);filterLoc();</script>{% endblock %}
+<section class="panel"><h3>إعدادات إعادة الطلب المحفوظة</h3><table><tr><th>الصنف</th><th>المخزن</th><th>المستهدف بعد التوريد</th><th>نقطة الطلب</th><th>طريقة الحساب</th><th>الكمية اليدوية</th></tr>{% for x in reorder_settings %}<tr><td>{{x.sku}} - {{x.product_name}}</td><td>{{x.warehouse_code}} - {{x.warehouse_name}}</td><td>{{x.min_qty}}</td><td>{{x.reorder_point}}</td><td>{{'تلقائي' if x.reorder_mode == 'auto' else 'يدوي'}}</td><td>{{x.reorder_qty}}</td></tr>{% else %}<tr><td colspan="5">لم تُحدد حدود إعادة طلب بعد.</td></tr>{% endfor %}</table></section>
+<script>const wh=document.getElementById('mappingWarehouse'),loc=document.getElementById('mappingLocation');function filterLoc(){for(const o of loc.options){o.hidden=o.dataset.warehouse!==wh.value;if(o.hidden&&o.selected)loc.value='';}}wh.addEventListener('change',filterLoc);filterLoc();const reorderMode=document.getElementById('reorderMode'),manualQty=document.getElementById('manualReorderQty');
+function syncManualQty(){manualQty.disabled=reorderMode.value!=='manual';}
+reorderMode.addEventListener('change',syncManualQty);syncManualQty();</script>{% endblock %}
