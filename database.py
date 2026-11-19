@@ -14,7 +14,7 @@ from flask import g, has_app_context
 from report_request_control import current_report_deadline, make_sqlite_deadline_callback
 from db_sql import execute_compat
 from sqlite_maintenance import enable_sqlite_wal
-from database_backend import configured_database_backend
+from database_backend import require_supported_runtime_backend
 from sqlite_write_gate import SQLiteWriteGate
 
 
@@ -166,7 +166,7 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
     isolation_level=None maps to PostgreSQL autocommit=True; all other values
     retain explicit transaction mode (autocommit=False).
     """
-    if configured_database_backend() == "postgresql":
+    if require_supported_runtime_backend() == "postgresql":
         from postgres_database import connect_postgres
 
         raw_connection = connect_postgres(
