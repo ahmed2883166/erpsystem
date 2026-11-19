@@ -2952,7 +2952,7 @@ class SalesIntegrationTests(unittest.TestCase):
         )
         self.db.commit()
 
-        purchase_app = Flask(__name__)
+        purchase_app = Flask(__name__, template_folder=str(Path(purchases.__file__).resolve().parent / "templates"))
         purchase_app.secret_key = "test"
         purchase_app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
         purchase_app.register_blueprint(purchases.purchase_bp)
