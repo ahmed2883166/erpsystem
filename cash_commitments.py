@@ -233,8 +233,9 @@ def _payment_effect_is_active(conn, payment, as_of=None):
     return _journal_entry_effect_is_active(conn, payment["journal_entry_id"], as_of)
 
 
-def cash_commitment_payment_summary(conn, commitment_id):
-    commitment = execute_compat(conn, 
+def cash_commitment_payment_summary(conn, commitment_id, as_of=None):
+    """Summarize effective payments, optionally as they stood at a date."""
+    commitment = execute_compat(conn,
         "SELECT amount,status FROM cash_commitments WHERE id=?", (commitment_id,)
     ).fetchone()
     if not commitment:
@@ -245,23 +246,23 @@ def cash_commitment_payment_summary(conn, commitment_id):
                           else "'' journal_reference")
     journal_fields.append("j.description journal_description" if "description" in journal_columns
                           else "'' journal_description")
-    payments = execute_compat(conn, 
+    date_filter = " AND p.payment_date<=?" if as_of else ""
+    params = (commitment_id, as_of) if as_of else (commitment_id,)
+    payments = execute_compat(conn,
         "SELECT p.*," + ",".join(journal_fields) +
         """ FROM cash_commitment_payments p
             LEFT JOIN journal_entries j ON j.id=p.journal_entry_id
-            WHERE p.commitment_id=? ORDER BY p.payment_date,p.id""",
-        (commitment_id,),
+            WHERE p.commitment_id=?""" + date_filter +
+        " ORDER BY p.payment_date,p.id",
+        params,
     ).fetchall()
     effective = Decimal("0")
     details = []
     for payment in payments:
-        active = _payment_effect_is_active(conn, payment)
+        active = _payment_effect_is_active(conn, payment, as_of)
         if active:
             effective += Decimal(str(payment["amount"]))
-        details.append({
-            **dict(payment),
-            "effective": active,
-        })
+        details.append({**dict(payment), "effective": active})
     total = Decimal(str(commitment["amount"]))
     status = commitment["status"]
     if status != "void":
@@ -456,17 +457,9 @@ def list_cash_commitments_forecast(conn, as_of, end_date):
     ).fetchall()
     items = []
     for row in rows:
-        payment_rows = execute_compat(conn, 
-            """SELECT p.amount,p.journal_entry_id,p.reversal_journal_entry_id
-               FROM cash_commitment_payments p
-               WHERE p.commitment_id=? AND p.payment_date<=?""",
-            (row["id"],as_of),
-        ).fetchall()
-        paid = sum((
-            Decimal(str(payment["amount"]))
-            for payment in payment_rows
-            if _payment_effect_is_active(conn, payment, as_of)
-        ), Decimal("0"))
+        # Reuse the same reversal-aware payment calculation as the commitment
+        # register so forecast balances cannot diverge from the displayed paid total.
+        paid = cash_commitment_payment_summary(conn, row["id"], as_of)["paid_total"]
         remaining = Decimal(str(row["amount"])) - paid
         if remaining <= 0:
             continue
