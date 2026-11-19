@@ -44,6 +44,9 @@ class JournalLineAmountMigrationTests(unittest.TestCase):
             BEFORE UPDATE ON journal_lines
             WHEN NEW.debit < OLD.credit
               OR NEW.debit BETWEEN 1 AND 100
+              OR NEW.debit NOT BETWEEN 200 AND 300
+              OR NEW.debit IN (7, 8)
+              OR NEW.debit NOT IN (OLD.credit, 9)
               OR NEW.credit BETWEEN OLD.debit AND OLD.credit
               OR 0 < NEW.credit
             BEGIN SELECT RAISE(ABORT, 'numeric update guard'); END;
@@ -98,6 +101,18 @@ class JournalLineAmountMigrationTests(unittest.TestCase):
         ).fetchone()[0]
         self.assertIn('CAST(NEW."debit" AS NUMERIC) < CAST(OLD."credit" AS NUMERIC)', trigger_sql)
         self.assertIn('CAST(NEW."debit" AS NUMERIC) BETWEEN 1 AND 100', trigger_sql)
+        self.assertIn(
+            'CAST(NEW."debit" AS NUMERIC) NOT BETWEEN 200 AND 300',
+            trigger_sql,
+        )
+        self.assertIn(
+            'CAST(NEW."debit" AS NUMERIC) IN (7, 8)',
+            trigger_sql,
+        )
+        self.assertIn(
+            'CAST(NEW."debit" AS NUMERIC) NOT IN (CAST(OLD."credit" AS NUMERIC), 9)',
+            trigger_sql,
+        )
         self.assertIn(
             'CAST(NEW."credit" AS NUMERIC) BETWEEN CAST(OLD."debit" AS NUMERIC) AND CAST(OLD."credit" AS NUMERIC)',
             trigger_sql,
