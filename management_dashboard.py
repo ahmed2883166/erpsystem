@@ -395,6 +395,26 @@ def _top_accounts(balances, account_type, value_key, include_ids=None, exclude_i
     return rows
 
 
+def _management_cache_database_identity(conn):
+    """Return a stable database/tenant identity shared by request-scoped connections."""
+    dialect = database_dialect(conn)
+    if dialect == "sqlite":
+        rows = execute_compat(conn, "PRAGMA database_list").fetchall()
+        main = next((row for row in rows if row["name"] == "main"), None)
+        filename = str(main["file"] or "") if main else ""
+        # Independent in-memory databases must never share a cache entry.
+        return ("sqlite-file", filename) if filename else ("sqlite-memory", id(conn))
+    info = getattr(conn, "info", None)
+    server_identity = (
+        getattr(info, "host", None), getattr(info, "port", None),
+        getattr(info, "user", None), getattr(info, "dbname", None),
+    )
+    tenant = execute_compat(
+        conn, "SELECT current_database() AS database_name, current_schema() AS schema_name"
+    ).fetchone()
+    return ("postgresql", server_identity, tenant["database_name"], tenant["schema_name"])
+
+
 def cached_management_snapshot(conn, start, end, dimensions=None):
     """Return a cached Decimal-safe snapshot, invalidated by DB-level triggers."""
     dimensions = dimensions or {}
@@ -415,13 +435,12 @@ def cached_management_snapshot(conn, start, end, dimensions=None):
             for row in execute_compat(conn, "SELECT setting_key,setting_value FROM company_settings ORDER BY setting_key")
         ) if table_exists(conn, "company_settings") else ()
         dashboard_today = date.today()
-        # Connection identity is part of the cache key. Test databases and
-        # isolated tenant connections can legitimately share the same version,
-        # date range, roles and settings while containing different ledger rows.
-        # Retaining the connection object also prevents Python id reuse from
-        # aliasing a later in-memory database to an old cached snapshot.
+        # Use a stable database/tenant identity so request-scoped connections
+        # reuse production cache entries. In-memory SQLite remains isolated by
+        # connection identity because each connection owns a different database.
+        database_identity = _management_cache_database_identity(conn)
         key = (
-            conn, version, start.isoformat(), end.isoformat(), dashboard_today.isoformat(),
+            database_identity, version, start.isoformat(), end.isoformat(), dashboard_today.isoformat(),
             tuple(sorted((str(k), str(v)) for k, v in dimensions.items())),
             role_fingerprint, settings_fingerprint,
         )
