@@ -946,7 +946,7 @@ def main() -> int:
                                   SUM(CAST(jl.credit AS NUMERIC)) AS credit
                              FROM journal_entries je
                              JOIN journal_lines jl ON jl.entry_id=je.id
-                            WHERE je.reference LIKE 'PG-CONC-%'""",
+                            WHERE LEFT(je.reference, 8) = 'PG-CONC-'""",
                     ).fetchone()
                     if (
                         sum(completed_counts) != 600
