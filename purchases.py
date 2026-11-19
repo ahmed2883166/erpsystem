@@ -9,7 +9,7 @@ from functools import wraps
 from datetime import date, datetime, timedelta
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, money, safe_error_message, decimal_sum_expression
-from db_compat import table_columns, table_exists, table_indexes, begin_write_transaction, insert_and_get_id, execute_script, database_dialect, DB_ERROR, DB_INTEGRITY_ERROR
+from db_compat import table_columns, table_exists, table_indexes, begin_write_transaction, insert_and_get_id, execute_script, database_dialect, DB_ERROR, DB_INTEGRITY_ERROR, transactional_connection_initializer
 from db_sql import execute_compat
 from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options, product_uom_storage, lock_stock_warehouses
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
@@ -108,8 +108,8 @@ def _purchase_order_lines_for_receipt_update(conn, order_id, product_id):
     return execute_compat(conn, sql, (order_id, product_id)).fetchall()
 
 
-def init_purchase_schema():
-    c=db()
+@transactional_connection_initializer(db)
+def init_purchase_schema(c):
     initialize_analytic_dimensions_schema(c)
     execute_script(c, """
     CREATE TABLE IF NOT EXISTS suppliers(
@@ -368,8 +368,6 @@ def init_purchase_schema():
     if not duplicate_bills:
         execute_compat(c, """CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_bill_invoice_no
           ON supplier_bills(supplier_id, lower(trim(supplier_invoice_no)))""")
-    c.commit()
-    c.close()
 
 def require(permission):
     def deco(fn):
