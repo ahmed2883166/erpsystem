@@ -191,7 +191,7 @@ class PostgreSQLDirectConnectionTests(unittest.TestCase):
         self.assertEqual(kwargs["connect_timeout"], 8)
         self.assertEqual(kwargs["application_name"], "NEXUS direct test")
         self.assertEqual(kwargs["options"], "-c search_path=public")
-        sentinel.rollback.assert_called_once()
+        sentinel.rollback.assert_not_called()
         from postgres_database import hybrid_row_factory
         self.assertIs(kwargs["row_factory"], hybrid_row_factory)
 

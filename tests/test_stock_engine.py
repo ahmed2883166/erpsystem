@@ -106,6 +106,23 @@ class StockValuationTests(unittest.TestCase):
             stock.ensure_lot_not_expired({"expiry_date": "2026-06-30"}, "not-a-date")
 
 
+    def test_transfer_cost_details_preserve_receipt_lineage(self):
+        first_layer = self.db.execute(
+            "SELECT id FROM stock_valuation_layers ORDER BY id LIMIT 1"
+        ).fetchone()["id"]
+        self.db.execute(
+            "UPDATE stock_valuation_layers SET receipt_line_id=12345 WHERE id=?",
+            (first_layer,),
+        )
+        cost, allocations, details = stock.consume_layers(
+            self.db, self.product_id, self.warehouse_id, stock.D("5"), "fifo",
+            include_layer_details=True,
+        )
+        self.assertEqual(cost, stock.D("50.00"))
+        self.assertEqual(details[0]["receipt_line_id"], 12345)
+        self.assertEqual(details[0]["quantity"], stock.D("5"))
+        self.assertEqual(details[0]["layer_id"], first_layer)
+
     def test_fifo_cost(self):
         cost, allocations = stock.consume_layers(self.db,self.product_id,self.warehouse_id,stock.D("50"),"fifo")
         self.assertEqual(cost, stock.D("500.00"))
