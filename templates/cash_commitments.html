@@ -119,16 +119,16 @@
 {% if can_manage and duplicate_groups %}
 <section class="panel">
 <h3>مراجعة الالتزامات المكررة القديمة</h3>
-<p class="muted">لا يحذف النظام أي سجل. اختر الالتزام الصحيح وحدد النسخ غير المسددة لإلغائها. النسخ التي لها دفعات تحتاج إلى عكس الدفعات أولًا.</p>
+<p class="muted">لا يحذف النظام أي سجل. اختر الالتزام الصحيح وحدد النسخ غير المسددة لإلغائها. النسخ التي عليها دفعات فعّالة تحتاج إلى عكسها أولًا؛ الدفعات المعكوسة بالكامل لا تمنع التسوية.</p>
 {% for group in duplicate_groups %}
 <form method="post" class="panel">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="resolve_duplicates">
 <p><strong>المصدر:</strong> {{ group.origin_type }} — #{{ group.origin_id }}</p>
 <label>الالتزام الذي سيظل فعالًا<select name="kept_id" required>{% for item in group.items %}<option value="{{ item.id }}">#{{ item.id }} — {{ item.title }} — {{ item.amount|money }} — {{ item.status }}</option>{% endfor %}</select></label>
 <p>حدد كل النسخ التي ستلغى:</p>
-{% for item in group.items %}<label><input type="checkbox" name="voided_id" value="{{ item.id }}"> #{{ item.id }} — {{ item.title }} — {{ item.amount|money }} — {{ item.status }} — دفعات: {{ item.payment_count }}</label>{% endfor %}
+{% for item in group.items %}<label><input type="checkbox" name="voided_id" value="{{ item.id }}"> #{{ item.id }} — {{ item.title }} — {{ item.amount|money }} — {{ item.status }} — دفعات فعّالة: {{ item.effective_payment_count }} — إجمالي المدفوع الفعّال: {{ item.paid_total|money }}</label>{% endfor %}
 <label>سبب التسوية<input name="review_reason" minlength="5" maxlength="500" required></label>
-<button type="submit" onclick="return confirm('سيتم إلغاء المحدد فقط إذا لم تكن له دفعات. لن تحذف السجلات. متابعة؟')">اعتماد التسوية</button>
+<button type="submit" onclick="return confirm('سيتم إلغاء المحدد فقط إذا لم يتبقَّ عليه أي مدفوع فعّال. لن تحذف السجلات أو القيود. متابعة؟')">اعتماد التسوية</button>
 </form>{% endfor %}
 </section>
 {% endif %}
