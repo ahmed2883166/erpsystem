@@ -96,15 +96,28 @@ def _rebuild_real_columns_as_text(connection, table_name, column_names):
         rf'(?i)({numeric_literal})\s*(<=|>=|<>|!=|=|<|>)\s*({qualified_column})'
     )
     between_pattern = re.compile(
-        rf'(?i)({qualified_column})\s+BETWEEN\s+({qualified_column}|{numeric_literal})'
-        rf'\s+AND\s+({qualified_column}|{numeric_literal})'
+        rf'(?i)({qualified_column})\\s+(NOT\\s+)?BETWEEN\\s+'
+        rf'({qualified_column}|{numeric_literal})\\s+AND\\s+'
+        rf'({qualified_column}|{numeric_literal})'
+    )
+    in_pattern = re.compile(
+        rf'(?i)({qualified_column})\\s+(NOT\\s+)?IN\\s*\\(([^()]*)\\)'
     )
     for trigger_index, statement in enumerate(trigger_sql):
         statement = between_pattern.sub(
             lambda match: (
-                cast_real_columns(match.group(1)) + " BETWEEN "
-                + cast_real_columns(match.group(2)) + " AND "
-                + cast_real_columns(match.group(3))
+                cast_real_columns(match.group(1)) + " "
+                + ((match.group(2) + " ") if match.group(2) else "")
+                + "BETWEEN " + cast_real_columns(match.group(3))
+                + " AND " + cast_real_columns(match.group(4))
+            ),
+            statement,
+        )
+        statement = in_pattern.sub(
+            lambda match: (
+                cast_real_columns(match.group(1)) + " "
+                + ((match.group(2) + " ") if match.group(2) else "")
+                + "IN (" + cast_real_columns(match.group(3)) + ")"
             ),
             statement,
         )
