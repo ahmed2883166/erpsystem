@@ -30,6 +30,7 @@ MONEY = D("0.01")
 
 
 def get_db():
+    DB_PATH.parent.mkdir(exist_ok=True)
     return connect_database(DB_PATH, isolation_level=None)
 
 
