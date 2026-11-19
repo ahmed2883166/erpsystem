@@ -44,6 +44,7 @@ class JournalLineAmountMigrationTests(unittest.TestCase):
             INSERT INTO journal_lines(id,entry_id,account_id,debit,credit,memo,branch_id,cost_center_id)
                 VALUES(15,9,4,123.45,0,'legacy line',3,8);
         """)
+        self.connection.commit()
 
     def tearDown(self):
         self.connection.close()
