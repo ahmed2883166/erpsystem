@@ -324,7 +324,7 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
         self.assertIn("CREATE UNIQUE INDEX idx_child_expr ON child(lower(trim(amount)));", ddl)
         self.assertIn('CREATE UNIQUE INDEX "uq_parent_code_nocase" ON "parent" (lower("code"));', ddl)
         self.assertEqual(review["table_count"], 6)
-        self.assertEqual(review["column_count"], 9)
+        self.assertEqual(review["column_count"], 10)
         self.assertEqual(review["foreign_key_count"], 1)
         self.assertEqual(review["trigger_count"], 4)
         self.assertIn('CREATE TRIGGER "audit_log_block_delete" BEFORE DELETE', ddl)

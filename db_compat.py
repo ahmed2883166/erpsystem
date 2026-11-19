@@ -398,6 +398,11 @@ def transactional_connection_initializer(connection_factory):
                 connection = args[0]
                 call_args = args
             owns_transaction = begin_write_transaction(connection)
+            # A factory-created connection belongs entirely to this wrapper.
+            # The factory may have already opened a transaction (for example,
+            # while setting PostgreSQL search_path); still commit/rollback it.
+            if owns_connection:
+                owns_transaction = True
             try:
                 result = function(*call_args, **kwargs)
                 if owns_transaction:

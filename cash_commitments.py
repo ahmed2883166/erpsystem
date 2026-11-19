@@ -687,16 +687,17 @@ def generate_recurring_schedule_occurrences(conn, schedule_id, through_date):
         schedule = execute_compat(conn, schedule_sql, (schedule_id,)).fetchone()
         if not schedule:
             raise ValueError("جدول المصروف الدوري غير موجود.")
-        if not schedule["active"]:
-            raise ValueError("جدول المصروف الدوري متوقف.")
         next_due = schedule["next_due_date"]
         if schedule["end_date"] and next_due > schedule["end_date"]:
-            execute_compat(conn, 
-                "UPDATE cash_commitment_schedules SET active=0,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (schedule_id,),
-            )
-            conn.commit()
+            if schedule["active"]:
+                execute_compat(conn,
+                    "UPDATE cash_commitment_schedules SET active=0,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (schedule_id,),
+                )
+                conn.commit()
             return 0
+        if not schedule["active"]:
+            raise ValueError("جدول المصروف الدوري متوقف.")
         generated = 0
         while next_due <= through_date and (
             not schedule["end_date"] or next_due <= schedule["end_date"]

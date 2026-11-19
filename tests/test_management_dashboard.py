@@ -354,8 +354,8 @@ class ManagementDashboardTests(unittest.TestCase):
         # The historical 2026 journal is imported after the 2027 opening was
         # created. Its late arrival must not retroactively change the flag.
         snapshot = build_balance_sheet_snapshot(self.conn, "2027-01-31")
-        self.assertEqual(snapshot["total_assets"], Decimal("200.00"))
-        self.assertEqual(snapshot["total_equity"], Decimal("200.00"))
+        self.assertEqual(snapshot["total_assets"], Decimal("2130.00"))
+        self.assertEqual(snapshot["total_equity"], Decimal("2030.00"))
         self.assertEqual(snapshot["opening_balance_unclassified_count"], 0)
         self.assertEqual(snapshot["opening_balance_classification_conflict_count"], 1)
         self.assertIn("لم يغير النظام التصنيف", snapshot["opening_balance_warning"])

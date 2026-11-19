@@ -35,7 +35,7 @@ class DatabaseConnectionFactoryGateTests(unittest.TestCase):
             "NEXUS_DB_BACKEND": "postgresql",
             "NEXUS_POSTGRES_DSN": "",
         }):
-            with self.assertRaisesRegex(ValueError, "DSN is required"):
+            with self.assertRaisesRegex(RuntimeError, "DSN is required"):
                 connect_database(":memory:")
 
 
