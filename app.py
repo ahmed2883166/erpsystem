@@ -84,7 +84,9 @@ from cash_commitments import (initialize_cash_commitments_schema, create_cash_co
                               record_cash_commitment_payment, void_cash_commitment, create_recurring_schedule,
                               generate_recurring_schedule_occurrences, deactivate_recurring_schedule,
                               sync_friday_allowance_commitments, reverse_cash_commitment_payment,
-                              cash_commitment_payment_summary)
+                              cash_commitment_payment_summary,
+                              list_cash_commitment_duplicate_origins,
+                              resolve_cash_commitment_duplicate_origin)
 
 # Fail closed by default: demo bypass must be explicitly enabled for isolated development.
 # Customer deployments must leave NEXUS_DEMO_MODE unset (or set it to 0).
@@ -2930,6 +2932,16 @@ def cash_commitments_register():
                     if result["skipped"]:
                         message += f" تم تجاهل {len(result['skipped'])} كشف ({detail})."
                     flash(message, "success" if result["imported"] else "warning")
+                elif action == "resolve_duplicates":
+                    resolved=resolve_cash_commitment_duplicate_origin(
+                        connection,int(request.form.get("kept_id","0")),
+                        request.form.getlist("voided_id"),request.form.get("review_reason",""),
+                        session.get("user_id"))
+                    log_change("cash_commitment_duplicates_resolved","cash_commitment",
+                        int(request.form.get("kept_id","0")),None,{"voided_count":resolved},
+                        details="تسوية التزامات مكررة دون حذف السجلات",
+                        reason=request.form.get("review_reason","").strip())
+                    flash(f"تمت تسوية {resolved} التزامات مكررة مع الاحتفاظ بسجلاتها.","success")
                 elif action == "payment":
                     record_cash_commitment_payment(
                         connection,
@@ -3000,6 +3012,7 @@ def cash_commitments_register():
             item["paid_total"] = payment_summary["paid_total"]
             item["status"] = payment_summary["status"]
             item["payments"] = payment_summary["payments"]
+        duplicate_groups=list_cash_commitment_duplicate_origins(connection)
         schedules = execute_compat(connection, 
             """SELECT s.*,
                       (SELECT COUNT(*) FROM cash_commitment_schedule_occurrences o
@@ -3011,7 +3024,7 @@ def cash_commitments_register():
                WHERE active=1 AND is_group=0 AND account_type='liability' ORDER BY code"""
         ).fetchall()
         return render_template("cash_commitments.html", commitments=rows, schedules=schedules,
-                               payable_accounts=payable_accounts,
+                               payable_accounts=payable_accounts, duplicate_groups=duplicate_groups,
                                can_manage="cash_commitments.manage" in session.get("permissions", []))
     finally:
         connection.close()

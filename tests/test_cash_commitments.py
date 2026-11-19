@@ -4,6 +4,8 @@ from decimal import Decimal
 
 from cash_commitments import (
     initialize_cash_commitments_schema,
+    list_cash_commitment_duplicate_origins,
+    resolve_cash_commitment_duplicate_origin,
     create_cash_commitment,
     record_cash_commitment_payment,
     void_cash_commitment,
@@ -84,6 +86,34 @@ class CashCommitmentsTests(unittest.TestCase):
         self.assertIsNotNone(self.conn.execute(
             "SELECT 1 FROM sqlite_master WHERE name='cash_commitments'"
         ).fetchone())
+
+    def test_legacy_duplicate_origins_are_reviewable_without_blocking_startup(self):
+        self.conn.execute("""
+            INSERT INTO cash_commitments(commitment_type,title,amount,due_date,origin_type,origin_id)
+            VALUES('friday_overtime','أصل','50','2026-11-30','friday_allowance_batch',901),
+                  ('friday_overtime','مكرر','50','2026-11-30','friday_allowance_batch',901)
+        """)
+        self.conn.commit()
+        initialize_cash_commitments_schema(self.conn)
+        groups=list_cash_commitment_duplicate_origins(self.conn)
+        self.assertEqual(len(groups),1)
+        kept,duplicate=[x["id"] for x in groups[0]["items"]]
+        resolve_cash_commitment_duplicate_origin(self.conn,kept,[duplicate],"تمت مراجعة المصدر",7)
+        self.assertEqual(self.conn.execute("SELECT status FROM cash_commitments WHERE id=?",(duplicate,)).fetchone()[0],"void")
+        self.assertEqual(list_cash_commitment_duplicate_origins(self.conn),[])
+
+    def test_duplicate_with_payments_cannot_be_voided_automatically(self):
+        self.conn.execute("""
+            INSERT INTO cash_commitments(commitment_type,title,amount,due_date,origin_type,origin_id)
+            VALUES('friday_overtime','أصل','50','2026-11-30','friday_allowance_batch',902),
+                  ('friday_overtime','مكرر','50','2026-11-30','friday_allowance_batch',902)
+        """)
+        ids=[r[0] for r in self.conn.execute("SELECT id FROM cash_commitments WHERE origin_id=902 ORDER BY id")]
+        self.conn.execute("INSERT INTO cash_commitment_payments(commitment_id,payment_date,amount,journal_entry_id) VALUES(?,?,?,?)",
+                          (ids[1],"2026-11-10","10",1))
+        self.conn.commit()
+        with self.assertRaisesRegex(ValueError,"دفعات"):
+            resolve_cash_commitment_duplicate_origin(self.conn,ids[0],[ids[1]],"محاولة تسوية",7)
 
     def test_source_linked_commitments_reject_duplicate_origins(self):
         self.conn.execute(

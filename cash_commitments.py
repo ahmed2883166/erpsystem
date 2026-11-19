@@ -110,6 +110,14 @@ def initialize_cash_commitments_schema(conn):
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(schedule_id,due_date)
         );
+        CREATE TABLE IF NOT EXISTS cash_commitment_duplicate_reviews (
+            id INTEGER PRIMARY KEY, origin_type TEXT NOT NULL, origin_id INTEGER NOT NULL,
+            kept_commitment_id INTEGER NOT NULL REFERENCES cash_commitments(id),
+            voided_commitment_id INTEGER NOT NULL REFERENCES cash_commitments(id),
+            reason TEXT NOT NULL, reviewed_by INTEGER,
+            reviewed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(voided_commitment_id)
+        );
         CREATE INDEX IF NOT EXISTS idx_cash_commitment_schedules_active
             ON cash_commitment_schedules(active,next_due_date);
     """
@@ -143,16 +151,14 @@ def initialize_cash_commitments_schema(conn):
         GROUP BY origin_type,origin_id HAVING COUNT(*)>1
         LIMIT 10
     """).fetchall()
-    if duplicate_origins:
-        raise RuntimeError(
-            "توجد التزامات مكررة مرتبطة بمصادر تشغيلية؛ راجعها قبل إنشاء قيد منع التكرار."
-        )
-    execute_compat(conn, """
-        CREATE UNIQUE INDEX IF NOT EXISTS ux_cash_commitments_source_origin
-        ON cash_commitments(origin_type,origin_id)
-        WHERE origin_type IN ('friday_allowance_batch','recurring_schedule_occurrence')
-          AND origin_id IS NOT NULL
-    """)
+    # Legacy duplicates must not prevent startup; leave them visible for review.
+    if not duplicate_origins:
+        execute_compat(conn, """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_cash_commitments_source_origin
+            ON cash_commitments(origin_type,origin_id)
+            WHERE origin_type IN ('friday_allowance_batch','recurring_schedule_occurrence')
+              AND origin_id IS NOT NULL
+        """)
 
     payment_columns = table_columns(conn, "cash_commitment_payments")
     if "reversal_journal_entry_id" not in payment_columns:
@@ -169,6 +175,83 @@ def initialize_cash_commitments_schema(conn):
     conn.commit()
 
 
+def list_cash_commitment_duplicate_origins(conn):
+    groups=execute_compat(conn,"""
+        SELECT origin_type,origin_id,COUNT(*) AS duplicate_count
+        FROM cash_commitments
+        WHERE origin_type IN ('friday_allowance_batch','recurring_schedule_occurrence')
+          AND origin_id IS NOT NULL
+        GROUP BY origin_type,origin_id HAVING COUNT(*)>1 ORDER BY origin_type,origin_id
+    """).fetchall()
+    result=[]
+    for group in groups:
+        rows=execute_compat(conn,"""
+            SELECT c.id,c.commitment_type,c.title,c.amount,c.due_date,c.status,
+              (SELECT COUNT(*) FROM cash_commitment_payments p WHERE p.commitment_id=c.id) payment_count
+            FROM cash_commitments c WHERE c.origin_type=? AND c.origin_id=? ORDER BY c.id
+        """,(group["origin_type"],group["origin_id"])).fetchall()
+        result.append({"origin_type":group["origin_type"],"origin_id":group["origin_id"],
+                       "items":[dict(row) for row in rows]})
+    return result
+
+
+def resolve_cash_commitment_duplicate_origin(conn, kept_id, voided_ids, reason, reviewed_by=None):
+    reason=str(reason or "").strip()
+    if len(reason)<5:
+        raise ValueError("اكتب سبب التسوية بوضوح (5 أحرف على الأقل).")
+    kept_id=int(kept_id); voided_ids=sorted({int(v) for v in voided_ids})
+    if not voided_ids or kept_id in voided_ids:
+        raise ValueError("حدد الالتزام المحتفظ به والنسخ المكررة.")
+    begin_write_transaction(conn)
+    try:
+        lock=" FOR UPDATE" if database_dialect(conn)=="postgresql" else ""
+        ids=[kept_id,*voided_ids]; marks=",".join("?" for _ in ids)
+        rows=execute_compat(conn,f"SELECT * FROM cash_commitments WHERE id IN ({marks}) ORDER BY id{lock}",tuple(ids)).fetchall()
+        by_id={int(r["id"]):r for r in rows}
+        if len(by_id)!=len(ids): raise ValueError("أحد الالتزامات المحددة غير موجود.")
+        kept=by_id[kept_id]
+        if kept["origin_type"] not in {"friday_allowance_batch","recurring_schedule_occurrence"} or kept["origin_id"] is None:
+            raise ValueError("الالتزام المختار ليس مرتبطًا بمصدر تشغيلي.")
+        if any(r["origin_type"]!=kept["origin_type"] or r["origin_id"]!=kept["origin_id"] for r in rows):
+            raise ValueError("يجب أن تكون كل الالتزامات من نفس المصدر.")
+        group=execute_compat(conn,"SELECT id FROM cash_commitments WHERE origin_type=? AND origin_id=?",
+                             (kept["origin_type"],kept["origin_id"])).fetchall()
+        if {int(r["id"]) for r in group}!=set(ids):
+            raise ValueError("حدد كل سجلات المجموعة قبل اعتماد التسوية.")
+        for duplicate_id in voided_ids:
+            payments=execute_compat(conn,"SELECT COUNT(*) FROM cash_commitment_payments WHERE commitment_id=?",
+                                    (duplicate_id,)).fetchone()[0]
+            if payments:
+                raise ValueError(f"الالتزام #{duplicate_id} له دفعات مرتبطة؛ اعكس الدفعات أولًا.")
+            duplicate=by_id[duplicate_id]
+            if duplicate["status"]!="void":
+                execute_compat(conn,"""
+                    UPDATE cash_commitments SET status='void',
+                    notes=COALESCE(notes,'') || ?,updated_at=CURRENT_TIMESTAMP WHERE id=?
+                """,(f"\nتسوية تكرار مع الالتزام #{kept_id}: {reason}",duplicate_id))
+            execute_compat(conn,"""
+                INSERT INTO cash_commitment_duplicate_reviews
+                (origin_type,origin_id,kept_commitment_id,voided_commitment_id,reason,reviewed_by)
+                VALUES(?,?,?,?,?,?)
+            """,(kept["origin_type"],kept["origin_id"],kept_id,duplicate_id,reason,reviewed_by))
+        remaining=execute_compat(conn,"""
+            SELECT COUNT(*) FROM cash_commitments
+            WHERE origin_type=? AND origin_id=? AND status<>'void'
+        """,(kept["origin_type"],kept["origin_id"])).fetchone()[0]
+        if remaining<=1:
+            execute_compat(conn,"""
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_cash_commitments_source_origin
+                ON cash_commitments(origin_type,origin_id)
+                WHERE origin_type IN ('friday_allowance_batch','recurring_schedule_occurrence')
+                  AND origin_id IS NOT NULL
+            """)
+        conn.commit()
+        return len(voided_ids)
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def create_cash_commitment(conn, commitment_type, title, amount, due_date,
                            period_label="", currency_code="", payable_account_id=None,
                            origin_type="", origin_id=None, notes="", created_by=None):
@@ -183,6 +266,13 @@ def create_cash_commitment(conn, commitment_type, title, amount, due_date,
     origin_type = str(origin_type or "").strip()
     if bool(origin_type) != (origin_id is not None):
         raise ValueError("مرجع المصدر يجب أن يحتوي النوع والمعرف معًا.")
+    if origin_type and origin_id is not None:
+        duplicate=execute_compat(conn,"""
+            SELECT id FROM cash_commitments WHERE origin_type=? AND origin_id=? AND status<>'void'
+            ORDER BY id LIMIT 1
+        """,(origin_type,origin_id)).fetchone()
+        if duplicate:
+            raise ValueError(f"يوجد التزام مرتبط بالمصدر نفسه (#{duplicate['id']}). راجع التكرارات أولًا.")
     commitment_id = insert_one_returning_id(conn,
         """INSERT INTO cash_commitments
            (commitment_type,title,period_label,amount,due_date,currency_code,
