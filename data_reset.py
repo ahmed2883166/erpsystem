@@ -7,19 +7,39 @@ from db_compat import database_dialect, table_names, begin_write_transaction
 PRESERVED_TABLES = frozenset({
     "users", "accounts", "company_settings", "currencies", "tax_rates", "audit_log",
     "activity_profiles", "cash_flow_account_mappings", "management_account_roles",
+    "branches", "cash_accounts", "employee_pay_item_catalog",
+    "management_dashboard_data_version", "management_dashboard_meta",
+    "tax_document_reference_audit",
     "payroll_rule_sets", "payroll_tax_brackets", "payroll_tax_tier_brackets",
     "fx_exchange_rates", "licenses", "trial_devices",
     "nexus_schema_installation", "schema_migrations",
 })
 
 DELETE_TABLES = frozenset({
+    "supplier_credit_note_layer_allocations",
+    "supplier_credit_note_bill_line_allocations",
+    "supplier_bill_inventory_lines",
+    "sales_invoice_workflows",
+    "sales_discount_approval_requests",
+    "purchase_requests",
+    "employee_final_payrolls",
+    "employee_final_payroll_payments",
+    "employee_end_of_service_settlements",
+    "employee_end_of_service_payments",
+    "employee_employment_history",
+    "cash_commitments",
+    "cash_commitment_schedules",
+    "cash_commitment_schedule_occurrences",
+    "cash_commitment_payments",
+    "bank_statement_lines",
+    "bank_statement_balances",
+    "asset_depreciation_revisions",
     "accounting_periods",
     "asset_depreciations",
     "asset_disposals",
     "attendance_records",
     "attendance_records_rebuilt",
     "bank_transactions",
-    "branches",
     "budget_audit_log",
     "budget_lines",
     "budget_monthly_lines",
@@ -200,6 +220,11 @@ def _clear_company_data_postgresql(connection):
         connection.execute(
             f"TRUNCATE TABLE {quoted_tables} RESTART IDENTITY"
         )
+        if "management_dashboard_data_version" in tables:
+            connection.execute(
+                'UPDATE "management_dashboard_data_version" '
+                'SET version=version+1 WHERE id=1'
+            )
         connection.commit()
     except Exception:
         connection.rollback()
@@ -256,6 +281,11 @@ def clear_company_data(connection):
             deleted_tables.append(table_name)
             deleted_rows += int(count or 0)
 
+        if "management_dashboard_data_version" in tables:
+            connection.execute(
+                "UPDATE management_dashboard_data_version "
+                "SET version=version+1 WHERE id=1"
+            )
         violations = connection.execute("PRAGMA foreign_key_check").fetchmany(10)
         if violations:
             raise RuntimeError(

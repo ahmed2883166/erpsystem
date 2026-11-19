@@ -105,6 +105,97 @@ class CompanyDataResetTests(unittest.TestCase):
         self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
         connection.close()
 
+    def test_reset_classifies_new_operational_tables_and_preserves_company_setup(self):
+        connection = self.open_database()
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.executescript("""
+            CREATE TABLE branches(id INTEGER PRIMARY KEY, code TEXT);
+            CREATE TABLE cash_accounts(
+                id INTEGER PRIMARY KEY,
+                branch_id INTEGER REFERENCES branches(id),
+                account_id INTEGER REFERENCES accounts(id)
+            );
+            CREATE TABLE employee_pay_item_catalog(id INTEGER PRIMARY KEY, name TEXT);
+            CREATE TABLE management_dashboard_meta(meta_key TEXT PRIMARY KEY, meta_value TEXT);
+            CREATE TABLE management_dashboard_data_version(id INTEGER PRIMARY KEY, version INTEGER);
+            CREATE TABLE tax_document_reference_audit(id INTEGER PRIMARY KEY, action TEXT);
+            INSERT INTO branches VALUES(1,'MAIN');
+            INSERT INTO cash_accounts VALUES(1,1,1);
+            INSERT INTO employee_pay_item_catalog VALUES(1,'بدل ثابت');
+            INSERT INTO management_dashboard_meta VALUES('roles_customized','1');
+            INSERT INTO management_dashboard_data_version VALUES(1,5);
+            INSERT INTO tax_document_reference_audit VALUES(1,'reference_updated');
+
+            CREATE TABLE sales_discount_approval_requests(id INTEGER PRIMARY KEY);
+            CREATE TABLE sales_invoice_workflows(id INTEGER PRIMARY KEY);
+            CREATE TABLE purchase_requests(id INTEGER PRIMARY KEY);
+            CREATE TABLE supplier_bill_inventory_lines(id INTEGER PRIMARY KEY);
+            CREATE TABLE supplier_credit_note_bill_line_allocations(id INTEGER PRIMARY KEY);
+            CREATE TABLE supplier_credit_note_layer_allocations(id INTEGER PRIMARY KEY);
+            CREATE TABLE employee_employment_history(id INTEGER PRIMARY KEY);
+            CREATE TABLE employee_end_of_service_settlements(id INTEGER PRIMARY KEY);
+            CREATE TABLE employee_final_payrolls(id INTEGER PRIMARY KEY);
+            CREATE TABLE employee_final_payroll_payments(id INTEGER PRIMARY KEY);
+            CREATE TABLE employee_end_of_service_payments(id INTEGER PRIMARY KEY);
+            CREATE TABLE bank_statement_lines(id INTEGER PRIMARY KEY);
+            CREATE TABLE bank_statement_balances(id INTEGER PRIMARY KEY);
+            CREATE TABLE asset_depreciation_revisions(id INTEGER PRIMARY KEY);
+            CREATE TABLE cash_commitments(id INTEGER PRIMARY KEY);
+            CREATE TABLE cash_commitment_payments(id INTEGER PRIMARY KEY);
+            CREATE TABLE cash_commitment_schedules(id INTEGER PRIMARY KEY);
+            CREATE TABLE cash_commitment_schedule_occurrences(id INTEGER PRIMARY KEY);
+            INSERT INTO sales_discount_approval_requests VALUES(1);
+            INSERT INTO sales_invoice_workflows VALUES(1);
+            INSERT INTO purchase_requests VALUES(1);
+            INSERT INTO supplier_bill_inventory_lines VALUES(1);
+            INSERT INTO supplier_credit_note_bill_line_allocations VALUES(1);
+            INSERT INTO supplier_credit_note_layer_allocations VALUES(1);
+            INSERT INTO employee_employment_history VALUES(1);
+            INSERT INTO employee_end_of_service_settlements VALUES(1);
+            INSERT INTO employee_final_payrolls VALUES(1);
+            INSERT INTO employee_final_payroll_payments VALUES(1);
+            INSERT INTO employee_end_of_service_payments VALUES(1);
+            INSERT INTO bank_statement_lines VALUES(1);
+            INSERT INTO bank_statement_balances VALUES(1);
+            INSERT INTO asset_depreciation_revisions VALUES(1);
+            INSERT INTO cash_commitments VALUES(1);
+            INSERT INTO cash_commitment_payments VALUES(1);
+            INSERT INTO cash_commitment_schedules VALUES(1);
+            INSERT INTO cash_commitment_schedule_occurrences VALUES(1);
+        """)
+        result = clear_company_data(connection)
+        self.assertGreater(result["deleted_tables"], 0)
+        for table in (
+            "branches", "cash_accounts", "employee_pay_item_catalog",
+            "management_dashboard_meta", "tax_document_reference_audit",
+        ):
+            self.assertEqual(
+                connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 1
+            )
+        for table in (
+            "sales_discount_approval_requests", "sales_invoice_workflows",
+            "purchase_requests", "supplier_bill_inventory_lines",
+            "supplier_credit_note_bill_line_allocations",
+            "supplier_credit_note_layer_allocations", "employee_employment_history",
+            "employee_end_of_service_settlements", "employee_final_payrolls",
+            "employee_final_payroll_payments", "employee_end_of_service_payments",
+            "bank_statement_lines", "bank_statement_balances",
+            "asset_depreciation_revisions", "cash_commitments",
+            "cash_commitment_payments", "cash_commitment_schedules",
+            "cash_commitment_schedule_occurrences",
+        ):
+            self.assertEqual(
+                connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0
+            )
+        self.assertEqual(
+            connection.execute(
+                "SELECT version FROM management_dashboard_data_version WHERE id=1"
+            ).fetchone()[0],
+            6,
+        )
+        self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+        connection.close()
+
     def test_reset_refuses_unknown_tables_without_deleting_any_data(self):
         connection = self.open_database()
         connection.execute("CREATE TABLE future_feature_records(id INTEGER PRIMARY KEY, value TEXT)")
@@ -121,6 +212,11 @@ class CompanyDataResetTests(unittest.TestCase):
     def test_delete_allowlist_contains_known_operational_tables_only(self):
         self.assertIn("sales_invoices", DELETE_TABLES)
         self.assertIn("payroll_runs", DELETE_TABLES)
+        self.assertIn("cash_commitments", DELETE_TABLES)
+        self.assertIn("bank_statement_lines", DELETE_TABLES)
+        self.assertIn("asset_depreciation_revisions", DELETE_TABLES)
+        self.assertIn("branches", PRESERVED_TABLES)
+        self.assertIn("cash_accounts", PRESERVED_TABLES)
         self.assertNotIn("future_feature_records", DELETE_TABLES)
         self.assertTrue(PRESERVED_TABLES.isdisjoint(DELETE_TABLES))
 
