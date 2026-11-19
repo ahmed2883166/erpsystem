@@ -1,5 +1,5 @@
 """PostgreSQL audit-log schema and append-only protections."""
-from db_compat import database_dialect, table_columns
+from db_compat import database_dialect, table_columns, transactional_migration
 from db_sql import execute_compat
 
 
@@ -17,6 +17,7 @@ _AUDIT_COLUMNS = (
 )
 
 
+@transactional_migration
 def initialize_postgres_audit_schema(connection):
     """Idempotently add audit metadata and immutable-log triggers."""
     if database_dialect(connection) != "postgresql":
