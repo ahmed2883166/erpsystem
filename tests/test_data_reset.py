@@ -144,6 +144,8 @@ class CompanyDataResetTests(unittest.TestCase):
             CREATE TABLE cash_commitment_payments(id INTEGER PRIMARY KEY);
             CREATE TABLE cash_commitment_schedules(id INTEGER PRIMARY KEY);
             CREATE TABLE cash_commitment_schedule_occurrences(id INTEGER PRIMARY KEY);
+            CREATE TABLE cash_commitment_duplicate_reviews(id INTEGER PRIMARY KEY);
+            CREATE TABLE financial_year_opening_reviews(id INTEGER PRIMARY KEY);
             INSERT INTO sales_discount_approval_requests VALUES(1);
             INSERT INTO sales_invoice_workflows VALUES(1);
             INSERT INTO purchase_requests VALUES(1);
@@ -162,6 +164,8 @@ class CompanyDataResetTests(unittest.TestCase):
             INSERT INTO cash_commitment_payments VALUES(1);
             INSERT INTO cash_commitment_schedules VALUES(1);
             INSERT INTO cash_commitment_schedule_occurrences VALUES(1);
+            INSERT INTO cash_commitment_duplicate_reviews VALUES(1);
+            INSERT INTO financial_year_opening_reviews VALUES(1);
         """)
         result = clear_company_data(connection)
         self.assertGreater(result["deleted_tables"], 0)
@@ -182,7 +186,8 @@ class CompanyDataResetTests(unittest.TestCase):
             "bank_statement_lines", "bank_statement_balances",
             "asset_depreciation_revisions", "cash_commitments",
             "cash_commitment_payments", "cash_commitment_schedules",
-            "cash_commitment_schedule_occurrences",
+            "cash_commitment_schedule_occurrences", "cash_commitment_duplicate_reviews",
+            "financial_year_opening_reviews",
         ):
             self.assertEqual(
                 connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0
@@ -213,6 +218,8 @@ class CompanyDataResetTests(unittest.TestCase):
         self.assertIn("sales_invoices", DELETE_TABLES)
         self.assertIn("payroll_runs", DELETE_TABLES)
         self.assertIn("cash_commitments", DELETE_TABLES)
+        self.assertIn("cash_commitment_duplicate_reviews", DELETE_TABLES)
+        self.assertIn("financial_year_opening_reviews", DELETE_TABLES)
         self.assertIn("bank_statement_lines", DELETE_TABLES)
         self.assertIn("asset_depreciation_revisions", DELETE_TABLES)
         self.assertIn("branches", PRESERVED_TABLES)
