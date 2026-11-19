@@ -362,15 +362,15 @@ def reverse_cash_commitment_payment(conn, payment_id, reversal_date,
         raise ValueError("اكتب سببًا لعكس السداد (بحد أقصى 500 حرف).")
     begin_write_transaction(conn)
     try:
-        payment = execute_compat(conn, 
-            """SELECT p.*,c.id commitment_id,c.amount commitment_amount,c.status commitment_status,
+        payment_sql = """SELECT p.*,c.id commitment_id,c.amount commitment_amount,c.status commitment_status,
                       c.title commitment_title,c.payable_account_id,j.entry_date payment_journal_date
                FROM cash_commitment_payments p
                JOIN cash_commitments c ON c.id=p.commitment_id
                JOIN journal_entries j ON j.id=p.journal_entry_id
-               WHERE p.id=?""",
-            (payment_id,),
-        ).fetchone()
+               WHERE p.id=?"""
+        if database_dialect(conn) == "postgresql":
+            payment_sql += " FOR UPDATE OF p,c"
+        payment = execute_compat(conn, payment_sql, (payment_id,)).fetchone()
         if not payment:
             raise ValueError("دفعة الالتزام غير موجودة.")
         if payment["commitment_status"] == "void":
@@ -644,9 +644,10 @@ def generate_recurring_schedule_occurrences(conn, schedule_id, through_date):
     through_date = date.fromisoformat(str(through_date)).isoformat()
     begin_write_transaction(conn)
     try:
-        schedule = execute_compat(conn, 
-            "SELECT * FROM cash_commitment_schedules WHERE id=?", (schedule_id,)
-        ).fetchone()
+        schedule_sql = "SELECT * FROM cash_commitment_schedules WHERE id=?"
+        if database_dialect(conn) == "postgresql":
+            schedule_sql += " FOR UPDATE"
+        schedule = execute_compat(conn, schedule_sql, (schedule_id,)).fetchone()
         if not schedule:
             raise ValueError("جدول المصروف الدوري غير موجود.")
         if not schedule["active"]:
