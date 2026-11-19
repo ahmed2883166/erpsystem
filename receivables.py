@@ -1,6 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database
-from db_compat import table_columns, table_exists, transactional_migration
+from db_compat import table_columns, table_exists, begin_write_transaction
 from db_sql import execute_compat
 """Customer and supplier receivables/payables aging reports."""
 from datetime import date
