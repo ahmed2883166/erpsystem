@@ -85,6 +85,21 @@ class CashCommitmentsTests(unittest.TestCase):
             "SELECT 1 FROM sqlite_master WHERE name='cash_commitments'"
         ).fetchone())
 
+    def test_source_linked_commitments_reject_duplicate_origins(self):
+        self.conn.execute(
+            """INSERT INTO cash_commitments
+               (commitment_type,title,amount,due_date,origin_type,origin_id)
+               VALUES('friday_overtime','كشف بدل الجمعة','50','2026-11-30',
+                      'friday_allowance_batch',77)"""
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                """INSERT INTO cash_commitments
+                   (commitment_type,title,amount,due_date,origin_type,origin_id)
+                   VALUES('friday_overtime','تكرار كشف الجمعة','50','2026-11-30',
+                          'friday_allowance_batch',77)"""
+            )
+
     def test_partial_payments_and_forecast_as_of_date(self):
         commitment_id = self._commitment()
         record_cash_commitment_payment(
