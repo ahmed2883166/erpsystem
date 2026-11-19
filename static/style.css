@@ -1,3 +1,16 @@
+/* ============================================================
+   ملف التنسيقات الرئيسي لنظام NEXUS ERP
+   الغرض: تحديد ألوان الواجهة وتنسيق القوائم والنماذج والجداول
+   والتقارير ولوحات المعلومات والطباعة والتجاوب مع أحجام الشاشات.
+   ملاحظة: التعليقات للشرح فقط ولا تظهر للمستخدم داخل البرنامج.
+   ============================================================ */
+
+/* الأساسيات العامة: الألوان والخطوط والخلفيات وتنسيق عناصر الصفحة */
+
+/* عناصر التنقل: القائمة الجانبية والروابط وأدوات الإجراءات */
+
+/* النماذج والجداول والبطاقات: التنسيق الأساسي لعناصر الإدخال والعرض */
+
 500;600;700&display=swap');
 :root{color-scheme:light;--bg:#f3f5f9;--surface:#fff;--surface2:#f7f9fc;--text:#202b3c;--muted:#778398;--line:#e1e7ef;--accent:#0f9b8e;--accent-hover:#0b7f75;--nav:#111827;--nav-hover:#263449;--shadow:0 8px 28px rgba(15,23,42,.07)}
 :root[data-theme="dark"]{color-scheme:dark;--bg:#0b1220;--surface:#131e2e;--surface2:#1a293c;--text:#e6edf7;--muted:#a2b0c3;--line:#2b3b50;--accent:#35c6b4;--accent-hover:#20a895;--nav:#080e18;--nav-hover:#203149;--shadow:0 8px 28px rgba(0,0,0,.22)}
@@ -5,7 +18,7 @@
 @media(max-width:1050px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.report-filter{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:850px){aside{position:relative;width:100%;height:auto;max-height:none}main{margin-right:0;padding:22px}.grid{grid-template-columns:1fr}}@media(max-width:560px){.cards,.form-row,.currency-grid,.report-filter{grid-template-columns:1fr}main{padding:15px}header{display:block}.panel{padding:17px}.theme-toggle{left:12px;bottom:12px}}
 
 
-/* Account hierarchy */
+/* شجرة الحسابات: عرض الحسابات الرئيسية والفرعية والتمييز بينها */
 .account-legend{display:flex;gap:18px;align-items:center;flex-wrap:wrap;padding:12px 16px;margin:0 0 18px;background:var(--surface);border:1px solid var(--line);border-radius:11px}
 .account-legend span{display:inline-flex;align-items:center;gap:7px;font-size:13px}
 .legend-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
@@ -46,7 +59,7 @@
 }
 
 
-/* NEXUS ERP: clearer account hierarchy and accessible report actions */
+/* شجرة الحسابات: تحسين وضوح المستويات وتسهيل الوصول إلى إجراءات التقارير */
 .accounts-tree{font-size:15px}
 .accounts-tree th{font-size:14px;padding:15px 16px}
 .accounts-tree td{padding:15px 16px}
@@ -71,7 +84,7 @@
 @media(max-width:850px){.global-report-actions{position:static;margin:0 0 14px;text-align:left}}
 @media print{.global-report-actions{display:none!important}}
 
-/* NEXUS ERP visual document states and account drill-down */
+/* حالات المستندات: تمييز حالة الفاتورة أو المستند مع دعم الانتقال إلى تفاصيل الحساب */
 .status-row td{transition:background .15s ease}
 .status-paid td{background:color-mix(in srgb,#16a34a 8%,var(--surface))}
 .status-partial td{background:color-mix(in srgb,#d97706 10%,var(--surface))}
@@ -83,7 +96,7 @@
 .status-issued td{background:color-mix(in srgb,#d97706 7%,var(--surface))}
 .drill-hint{font-size:11px;color:var(--accent);font-weight:700}
 
-/* Accessible status legend and compact balance cards */
+/* دليل ألوان الحالات وبطاقات الأرصدة المختصرة */
 .status-legend{display:flex;gap:9px;flex-wrap:wrap;margin:0 0 14px;align-items:center}
 .legend-item{display:inline-flex;align-items:center;padding:4px 11px;border-radius:20px;border:1px solid var(--line);font-size:12px;font-weight:700;color:var(--text)}
 .state-pill{display:inline-flex;align-items:center;padding:3px 10px;border-radius:18px;font-size:12px;font-weight:800;white-space:nowrap}
@@ -100,7 +113,7 @@
 .status-legend .legend-item.status-cancelled{background:#e2e8f0;color:#475569;border-color:#cbd5e1}
 .status-legend .legend-item.status-transfer{background:#ede9fe;color:#5b21b6;border-color:#c4b5fd}
 
-/* Dashboard visuals and predictable nested scrolling */
+/* لوحة المعلومات: تنسيق الرسوم البيانية وتنظيم التمرير داخل العناصر */
 aside,.table-wrap,.dashboard-chart-legend{overscroll-behavior:contain;scrollbar-gutter:stable}
 aside{overscroll-behavior-y:contain;overscroll-behavior-x:none}
 main{overscroll-behavior-y:auto;min-width:0}
@@ -128,7 +141,7 @@ main{overscroll-behavior-y:auto;min-width:0}
 @media(max-width:620px){.permission-grid{grid-template-columns:1fr}}
 
 
-/* Financial planning, printable invoices and clearer chart groups */
+/* التخطيط المالي: تنسيق المستندات القابلة للطباعة وتجميع بنود التقارير */
 .print-document{max-width:1100px;margin:24px auto;padding:clamp(18px,3vw,36px)}
 .print-document header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid var(--line);padding-bottom:16px;margin-bottom:20px}
 .invoice-totals{max-width:360px;margin:20px 0 20px auto;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--surface2)}
@@ -143,15 +156,15 @@ main{overscroll-behavior-y:auto;min-width:0}
 .account-row.account-detail td{font-weight:400}
 
 
-/* Independent scroll ownership */
+/* إدارة التمرير: فصل تمرير القائمة الجانبية عن مساحة العمل والجداول */
 html,body{min-height:100%;overscroll-behavior-y:auto}
 aside{height:100vh;height:100dvh;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;touch-action:pan-y}
 main{min-width:0;overscroll-behavior:contain}
 .table-wrap{max-width:100%;overflow:auto;overscroll-behavior:contain;touch-action:pan-x pan-y}
 
 
-/* Final scroll layout: the main work area and the right navigation are
-   independent scroll panes. No document-level wheel redirection is used. */
+/* تخطيط التمرير النهائي: مساحة العمل والقائمة الجانبية لكل منهما تمرير مستقل.
+   لا يتم تحويل حركة عجلة الماوس برمجيًا بين أجزاء الصفحة. */
 @media(min-width:851px){
  html,body{height:100%;min-height:0;overflow:hidden}
  body{height:100dvh;overflow:hidden}
@@ -164,7 +177,7 @@ main{min-width:0;overscroll-behavior:contain}
  main{height:auto;min-height:0;overflow:visible}
 }
 
-/* Grouped ERP sidebar navigation */
+/* القائمة الجانبية: تجميع روابط النظام داخل أقسام قابلة للفتح والإغلاق */
 nav{display:flex;flex-direction:column;gap:10px}
 .nav-home{margin-bottom:3px}
 .nav-group{border:1px solid #344256;border-radius:12px;background:rgba(255,255,255,.035);overflow:hidden}
@@ -182,14 +195,14 @@ nav{display:flex;flex-direction:column;gap:10px}
 @media(max-width:560px){nav{grid-template-columns:1fr}}
 
 
-/* Persistent cross-screen search */
+/* البحث العام: إظهار حقل بحث مشترك للتنقل والبحث عبر الشاشات */
 .global-search{display:flex;align-items:center;gap:10px;margin:0 0 18px;padding:10px 12px;border:1px solid var(--border,#d5d9df);border-radius:12px;background:var(--panel,#fff)}
 .global-search input{flex:1;min-width:0;margin:0}
 .global-search button{white-space:nowrap}
 @media(max-width:640px){.global-search{gap:6px;padding:8px}.global-search button{padding-inline:10px}}
 
 
-/* Compact, zoom-tolerant workspace layout */
+/* مساحة العمل: الحفاظ على تناسق التخطيط عند تغيير مستوى تكبير المتصفح */
 body{font-size:clamp(13px,.9vw,14px);line-height:1.65}
 main{padding:clamp(14px,2vw,28px) clamp(14px,2.2vw,34px)}
 header{gap:12px;margin-bottom:18px;padding-bottom:12px;flex-wrap:wrap}
@@ -234,7 +247,7 @@ th,td{padding:8px 10px}
 }
 
 
-/* LAN/mobile usability refinements */
+/* تحسينات الاستخدام: دعم التشغيل على الشبكة المحلية والهواتف */
 @media(max-width:850px){
   aside{padding:16px 14px}
   aside h1{font-size:22px;margin-bottom:12px}
@@ -257,8 +270,8 @@ th,td{padding:8px 10px}
   .login{margin:6vh auto;padding:24px}
 }
 
-/* Final viewport contract: fixed outer navigation + independently scrolling workspace.
-   Keep this block last so older responsive rules cannot switch desktop back to page scrolling. */
+/* قواعد العرض النهائية: تثبيت القائمة الجانبية وجعل مساحة العمل قابلة للتمرير بشكل مستقل.
+   يجب إبقاء هذه القواعد في نهاية الملف حتى لا تلغيها قواعد الشاشات الأقدم. */
 @media (min-width:851px){
   html,body{width:100%;height:100%;min-height:0;overflow:hidden}
   body{height:100dvh;overflow:hidden}
@@ -280,7 +293,7 @@ th,td{padding:8px 10px}
 }
 
 
-/* Consistent, readable tables and feedback messages across all screens */
+/* الجداول ورسائل التنبيه: توحيد القراءة والألوان والمسافات في جميع الشاشات */
 main .panel{min-width:0;overflow-x:auto}
 main .panel>table{min-width:620px}
 main .table-wrap table{min-width:620px}
@@ -302,7 +315,7 @@ main .financial-performance-table td:not(:first-child){white-space:nowrap;font-v
 @media print{main .panel>table,main .table-wrap table{min-width:0!important}.flash{display:none!important}}
 
 
-/* NEXUS ERP unified readable tables across all modules */
+/* جداول النظام: توحيد شكل العناوين والصفوف والحدود في الوحدات المختلفة */
 :root{
   --table-head:color-mix(in srgb,var(--accent) 8%,var(--surface2));
   --table-stripe:color-mix(in srgb,var(--text) 2.2%,var(--surface));
@@ -377,7 +390,7 @@ td.numeric,th.numeric,.financial-summary-table td:last-child,
 }
 
 
-/* Executive financial statement: balance sheet screen and print */
+/* القوائم المالية: تنسيق شاشة الميزانية وتجهيزها للطباعة */
 .balance-report{--balance-ink:#1d2b3a;--balance-navy:#17365d;--balance-teal:#167d8d;max-width:1180px;margin:22px auto 34px;padding:30px 34px;background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);color:var(--text)}
 .balance-report-heading{display:grid;grid-template-columns:1fr 1.2fr 1fr;align-items:center;gap:20px;padding-bottom:24px;border-bottom:3px solid var(--balance-navy)}
 .balance-report-brand{display:flex;align-items:center;gap:12px}.balance-brand-mark{display:grid;place-items:center;width:48px;height:48px;border-radius:12px;background:var(--balance-navy);color:#fff;font-size:27px;font-weight:800}
@@ -410,10 +423,10 @@ td.numeric,th.numeric,.financial-summary-table td:last-child,
   .table-wrap{overflow:visible!important}
 }
 
-/* Persistent navigation context: highlight the current destination. */
+/* مؤشر التنقل: تمييز الشاشة الحالية داخل القائمة الجانبية */
 nav a.active{background:var(--nav-hover);border-color:#8aa6c5;color:#fff;box-shadow:inset -3px 0 0 var(--accent)}
 
-/* Consistent date entry: display DD/MM/YYYY while preserving ISO values for the backend. */
+/* إدخال التاريخ: عرض اليوم/الشهر/السنة مع الحفاظ على القيمة القياسية التي يستقبلها الخادم */
 .nexus-date-control{position:relative;display:block;width:100%;min-width:0}
 .nexus-date-display{display:block;width:100%;min-height:42px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--text);direction:ltr;text-align:right;font:inherit;line-height:1.7;pointer-events:none}
 .nexus-date-display.is-empty{color:var(--muted)}
@@ -422,7 +435,7 @@ nav a.active{background:var(--nav-hover);border-color:#8aa6c5;color:#fff;box-sha
 @media print{.nexus-date-display{background:#fff!important;color:#17212b!important;border:0!important;padding:0!important;min-height:0!important}}
 
 
-/* 2026 responsive workspace refinements */
+/* تحسينات تجاوب الواجهة لعام 2026: ضبط توزيع العناصر حسب حجم الشاشة */
 .global-report-actions{position:static!important;display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 0 auto;padding:0;border:0;box-shadow:none;background:transparent}
 .global-report-actions button{box-shadow:none}
 main>header.has-report-actions{align-items:center;flex-wrap:wrap}
@@ -470,7 +483,7 @@ nav a.active{background:#24445a;border-color:#4e7892;color:#fff}
 }
 
 
-/* NEXUS unified screen system: consistent headers, forms, tables and actions */
+/* نظام الشاشات الموحد: تنسيق العناوين والنماذج والجداول والأزرار */
 :root{
  --radius-card:14px;
  --radius-control:9px;
@@ -591,7 +604,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
 
 
-/* Executive dashboard and page shortcut strips */
+/* لوحة الإدارة: تنسيق لوحة المؤشرات وروابط الاختصارات السريعة */
 .dashboard-page-header>div{display:flex;flex-direction:column;gap:2px}
 .dashboard-page-header p{margin:0;color:var(--muted)}
 .dashboard-kpis article{display:flex;flex-direction:column;gap:4px;justify-content:center;min-height:112px}
@@ -611,7 +624,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  .dashboard-balance-row strong{text-align:right}
 }
 
-/* Consistent stock dashboard action strip */
+/* لوحة المخزون: توحيد شريط إجراءات واختصارات المخزون */
 .page-shortcuts{margin:0 0 16px;padding:16px 18px}
 .page-shortcuts>h3{margin:0 0 10px;font-size:14px;font-weight:800}
 .page-shortcuts>.actions{display:flex;flex-wrap:wrap;gap:8px;margin:0;align-items:center}
@@ -622,7 +635,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  .page-shortcuts .btn,.page-shortcuts .button,.page-shortcuts .button-link{width:100%;min-width:0;padding:8px 9px;text-align:center}
 }
 
-/* Journal workspace: clear hierarchy, readable entry lines and totals */
+/* شاشة قيود اليومية: توضيح بيانات القيد وتحسين قراءة السطور والإجماليات */
 .journal-entry-panel>h3,.journal-register-panel>h3{font-size:18px;font-weight:800}
 .journal-entry-panel>.journal-meta,.journal-entry-panel>.journal-dimensions{gap:12px 16px}
 .journal-lines-wrap{margin-top:14px}
@@ -644,7 +657,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  .journal-entry-panel .form-row{grid-template-columns:minmax(0,1fr)}
 }
 
-/* Account tree: full-width hierarchy with visible parent/child distinction */
+/* شجرة الحسابات: توسيع مساحة العرض وإظهار العلاقة بين الحساب الأب والفرعي */
 .accounts-layout{display:flex;flex-direction:column;gap:16px}
 .accounts-layout>.panel{width:100%;min-width:0}
 .accounts-layout>.panel:first-child{order:0}
@@ -664,7 +677,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  .accounts-tree{min-width:1050px}
 }
 
-/* Fixed assets and financial report page consistency */
+/* الأصول الثابتة والتقارير المالية: توحيد شكل الصفحات */
 .asset-register-panel table{min-width:1120px}
 .asset-create-panel .form-grid{align-items:start}
 .asset-depreciation-run-panel .form-row{align-items:end}
@@ -684,7 +697,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  .report-filter>label{flex-basis:100%}
 }
 
-/* Financial statements, ledger and ageing report consistency */
+/* القوائم المالية ودفتر الأستاذ وأعمار الديون: توحيد تنسيق التقارير */
 .income-filter-panel>h3,.ledger-filter-panel>h3,.aging-filter-panel>h3,.balance-filter>h3{margin:0 0 12px;font-size:17px;font-weight:800}
 .income-report-filter{align-items:end}
 .income-report-filter>div{flex:1 1 175px;min-width:155px}
@@ -707,7 +720,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  .ledger-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 
-/* Party, bank and inventory reporting workspaces */
+/* تقارير العملاء والموردين والبنوك والمخزون: تنظيم مساحة عرض التقارير */
 .cash-account-layout{display:flex;flex-direction:column;gap:16px}
 .cash-account-layout>.panel{width:100%;min-width:0}
 .cash-account-create form{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
@@ -729,7 +742,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  .bank-reconciliation-filter .form-grid{grid-template-columns:minmax(0,1fr)}
 }
 
-/* Unified sales and purchasing document print layout */
+/* الطباعة: توحيد شكل مستندات المبيعات والمشتريات عند الطباعة */
 .print-document{width:100%;max-width:100%;min-width:0}
 .print-document .table-wrap{margin:10px 0 14px}
 .print-document h2,.print-document h3{break-after:avoid}
@@ -749,7 +762,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  .print-document .muted{color:#475569!important}
 }
 
-/* Complete document-state palette shared by sales, purchasing and payroll */
+/* ألوان حالات المستندات: توحيد الحالات المستخدمة في المبيعات والمشتريات والمرتبات */
 .state-draft{background:#e0f2fe;color:#075985;border-color:#7dd3fc}
 .state-approved,.state-received{background:#dcfce7;color:#166534;border-color:#86efac}
 .state-issued,.state-pending{background:#fef3c7;color:#92400e;border-color:#fcd34d}
@@ -769,7 +782,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
  .payroll-print.print-document th,.payroll-print.print-document tfoot td{background:#e8eef5!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
 
-/* Management dashboard and shared printable company identity */
+/* لوحة الإدارة وهوية الشركة: توحيد بيانات الشركة المطبوعة في المستندات */
 .management-dashboard-heading{align-items:flex-start}
 .management-dashboard-heading .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .management-dashboard-filter{align-items:end}
@@ -789,7 +802,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
 }
 
 
-/* Final executive dashboard and mobile navigation refinements */
+/* اللمسات النهائية: تحسين لوحة المؤشرات والتنقل على الهواتف */
 .dashboard-kpis{grid-template-columns:repeat(4,minmax(0,1fr));align-items:stretch}
 .dashboard-kpis article{border-top:3px solid var(--accent);min-height:124px;padding:18px}
 .dashboard-kpis article>b{direction:ltr;text-align:right;font-variant-numeric:tabular-nums}
@@ -834,7 +847,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
 }
 
 
-/* ADMRAIL: consistent, high-contrast document status colors across modules */
+/* ألوان حالات المستندات: توحيد الألوان ورفع وضوح النصوص في مختلف الوحدات */
 .state-pill{border:1px solid transparent;font-weight:800}
 .state-pill.state-draft,.state-pill.state-unpaid,.state-pill.state-pending{
   background:#e0f2fe!important;color:#075985!important;border-color:#7dd3fc!important
@@ -865,7 +878,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
 :root[data-theme="dark"] .state-pill.state-transfer{background:#2e1065!important;color:#ddd6fe!important;border-color:#7c3aed!important}
 
 
-/* Payment clarity, inventory movement signals and application footer */
+/* المدفوعات وحركة المخزون: توضيح الحالات وإضافة تنسيق موحد لتذييل البرنامج */
 .payment-state-pill{font-size:12px;padding:5px 12px;box-shadow:0 1px 2px rgba(15,23,42,.10);border:1px solid currentColor}
 .status-row.status-paid td:first-child,.status-row.status-partial td:first-child,
 .status-row.status-unpaid td:first-child{border-right:4px solid transparent}
@@ -896,7 +909,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
 @media print{.app-footer{display:none!important}}
 
 
-/* Account directory: readable hierarchy and reliable horizontal scrolling on narrow screens. */
+/* دليل الحسابات: تحسين قراءة شجرة الحسابات والسماح بالتمرير الأفقي على الشاشات الصغيرة */
 .accounts-layout,.accounts-layout>.panel,.accounts-layout .table-wrap{min-width:0;max-width:100%}
 .accounts-layout .table-wrap{display:block;overflow-x:auto!important;overflow-y:visible;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
 .accounts-tree{font-size:14px;line-height:1.55;min-width:1050px}
@@ -925,7 +938,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
 }
 
 
-/* Customer credit limit emphasis on sales invoice entry */
+/* فاتورة المبيعات: إبراز حد ائتمان العميل والتنبيه عند تجاوزه */
 .credit-limit-panel{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap;padding:13px 17px;margin:16px 0;border:1px solid color-mix(in srgb,var(--accent) 38%,var(--line));border-right:4px solid var(--accent);border-radius:10px;background:color-mix(in srgb,var(--accent) 8%,var(--surface));color:var(--text)}
 .credit-limit-panel[hidden]{display:none}
 .credit-limit-heading{font-weight:800;color:var(--text)}
@@ -936,7 +949,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
 .credit-limit-panel.is-over .credit-limit-value{color:#b45309;background:color-mix(in srgb,#d97706 14%,var(--surface))}
 
 
-/* Shared, low-risk UX polish for sales and purchasing entry screens. */
+/* تحسينات واجهة آمنة: توحيد تنسيق شاشات إدخال المبيعات والمشتريات دون تغيير منطقها */
 .erp-entry-page {
   --erp-field-radius: 10px;
   min-width: 0;
@@ -1028,7 +1041,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
 }
 
 
-/* Calm, consistent master-data forms: customers, suppliers and employees. */
+/* النماذج الأساسية: تنسيق هادئ وموحد لبيانات العملاء والموردين والموظفين */
 .erp-party-panel,.erp-employee-panel{min-width:0}
 .erp-master-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));align-items:end;gap:14px 16px}
 .erp-master-form>label,.erp-master-form>div>label{display:flex;flex-direction:column;gap:6px;min-width:0;color:var(--text)}
@@ -1059,7 +1072,7 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
 }
 
 
-/* Compact enterprise form sizing: consistent controls without stretching across the page. */
+/* مقاسات النماذج المختصرة: توحيد أحجام الحقول والأزرار ومنع تمددها بشكل مبالغ فيه */
 .erp-master-form{
   grid-template-columns:repeat(3,minmax(0,1fr));
   align-items:end;
