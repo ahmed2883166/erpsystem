@@ -243,7 +243,7 @@ def resolve_cash_commitment_duplicate_origin(conn, kept_id, voided_ids, reason, 
                 CREATE UNIQUE INDEX IF NOT EXISTS ux_cash_commitments_source_origin
                 ON cash_commitments(origin_type,origin_id)
                 WHERE origin_type IN ('friday_allowance_batch','recurring_schedule_occurrence')
-                  AND origin_id IS NOT NULL
+                  AND status<>'void' AND origin_id IS NOT NULL
             """)
         conn.commit()
         return len(voided_ids)
