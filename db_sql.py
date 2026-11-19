@@ -34,8 +34,8 @@ def adapt_sql_for_postgresql(sql):
     # PostgreSQL requires the timestamp expression to be explicitly cast
     # when the declared column remains TEXT (as existing ERP modules expect).
     adapted = re.sub(
-        r"(\\b[A-Za-z_][A-Za-z0-9_]*\\s+TEXT\\b[^,\\n]*?\\bDEFAULT\\s+)CURRENT_TIMESTAMP\\b",
-        r"\\1(CURRENT_TIMESTAMP::text)",
+        r"(\b[A-Za-z_][A-Za-z0-9_]*\s+TEXT\b[^,\n]*?\bDEFAULT\s+)CURRENT_TIMESTAMP\b",
+        r"\1(CURRENT_TIMESTAMP::text)",
         adapted,
         flags=re.IGNORECASE,
     )
