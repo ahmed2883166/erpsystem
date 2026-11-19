@@ -3903,9 +3903,15 @@ def edit_user(user_id):
                     "active": user["active"],
                     "permissions": stored_user_permissions(user["permissions_json"], user["role"]),
                 }
+                updated_username = request.form.get("username", "").strip()
+                if not updated_username:
+                    raise ValueError("اسم المستخدم مطلوب ولا يمكن تركه فارغًا.")
+                updated_full_name = request.form.get("full_name", "").strip()
+                if not updated_full_name:
+                    raise ValueError("الاسم الكامل مطلوب ولا يمكن تركه فارغًا.")
                 after_values = {
-                    "username": request.form["username"].strip(),
-                    "full_name": request.form["full_name"].strip(), "role": role,
+                    "username": updated_username,
+                    "full_name": updated_full_name, "role": role,
                     "role_name": role_names.get(role, role),
                     "active": 1 if request.form.get("active") == "yes" else 0,
                     "permissions": selected,
