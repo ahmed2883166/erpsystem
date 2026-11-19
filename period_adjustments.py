@@ -8,7 +8,7 @@ from flask import Blueprint, abort, flash, redirect, render_template, request, s
 from app_paths import DB_PATH
 from database import connect_database
 from accounting_core import post_journal
-from db_compat import DB_ERROR, begin_write_transaction, execute_script, table_columns
+from db_compat import DB_ERROR, begin_write_transaction, execute_script, table_columns, transactional_migration
 from db_sql import execute_compat
 from db_insert import insert_one_returning_id
 from code_sequences import next_code
@@ -38,6 +38,7 @@ def _money(value):
     return result.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
+@transactional_migration
 def initialize_adjustments_schema(conn):
     execute_script(conn, """
     CREATE TABLE IF NOT EXISTS period_adjustments(
