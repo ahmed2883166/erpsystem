@@ -182,7 +182,7 @@
      const hasValue=d>0||c>0;
      if(hasValue&&!row.querySelector('[name=account_id]').value)invalid=true;
      if(d>0&&c>0)invalid=true;
-     if(row.querySelector('[name=line_type]').value==='fixed_asset'&&(!row.querySelector('[name=asset_name]').value.trim()||!row.querySelector('[name=asset_category]').value.trim()||!row.querySelector('[name=asset_ready_date]').value))invalid=true;
+     if(row.querySelector('[name=line_type]').value==='fixed_asset'&&!row.querySelector('[name=asset_name]').value.trim())invalid=true;
    });
    if(invalid){e.preventDefault();alert('راجع الحسابات: كل سطر بمبلغ يحتاج حسابًا، ولا يجوز إدخال مدين ودائن في السطر نفسه.');return}
    const active=rows().filter(row=>Number(row.querySelector('[name=debit]').value)||Number(row.querySelector('[name=credit]').value)||row.querySelector('[name=account_id]').value);
