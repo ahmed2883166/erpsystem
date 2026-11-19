@@ -169,25 +169,26 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
     if configured_database_backend() == "postgresql":
         from postgres_database import connect_postgres
 
-        connection = connect_postgres(
+        raw_connection = connect_postgres(
             autocommit=isolation_level is None,
             connect_timeout=max(1, min(int(timeout), 30)),
         )
         deadline = current_report_deadline()
         if deadline is not None:
             remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
-            original_autocommit = connection.autocommit
+            original_autocommit = raw_connection.autocommit
             try:
                 if not original_autocommit:
-                    connection.autocommit = True
-                connection.execute(
+                    raw_connection.autocommit = True
+                raw_connection.execute(
                     "SELECT set_config('statement_timeout', %s, false)",
                     (f"{remaining_ms}ms",),
                 )
             finally:
                 if not original_autocommit:
-                    connection.autocommit = False
-        return _track_connection(connection)
+                    raw_connection.autocommit = False
+        from postgres_compat import PostgresCompatConnection
+        return _track_connection(PostgresCompatConnection(raw_connection))
     # Track weak references only. A strong list here changes historical behavior:
     # it keeps otherwise-unreferenced connections alive until request teardown.
     # Weak tracking preserves prompt refcount/GC closure while still allowing

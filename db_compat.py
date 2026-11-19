@@ -29,6 +29,8 @@ def _identifier(value, label="identifier"):
 
 def database_dialect(connection):
     """Return the supported connection dialect without importing psycopg."""
+    if getattr(connection, "_nexus_postgres_connection", False):
+        return "postgresql"
     if isinstance(connection, sqlite3.Connection):
         return "sqlite"
     module = connection.__class__.__module__.split(".", 1)[0]
