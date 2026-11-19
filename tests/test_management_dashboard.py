@@ -651,6 +651,7 @@ class ManagementDashboardTests(unittest.TestCase):
         other = sqlite3.connect(":memory:")
         other.row_factory = sqlite3.Row
         try:
+            self.conn.commit()
             self.conn.backup(other)
             with _SNAPSHOT_CACHE_LOCK:
                 _SNAPSHOT_CACHE.clear()
