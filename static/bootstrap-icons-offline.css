@@ -1,4 +1,4 @@
-/* Offline icon fallback. Bootstrap Icons font is intentionally not fetched at runtime. */
+/* بدائل الأيقونات دون اتصال: رموز نصية بديلة حتى تعمل الواجهة دون تحميل خط الأيقونات من الإنترنت. */
 .bi{display:inline-block;font-style:normal;font-weight:600;line-height:1;vertical-align:-.125em;min-width:1em;text-align:center}
 .bi::before{content:"◆"}
 .bi-house::before,.bi-house-door::before{content:"⌂"}
