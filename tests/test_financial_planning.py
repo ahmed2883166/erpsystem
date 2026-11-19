@@ -114,7 +114,8 @@ class FinancialPlanningTests(unittest.TestCase):
             );
             CREATE TABLE financial_year_journal_history(
                 id INTEGER PRIMARY KEY, financial_year_id INTEGER, entry_kind TEXT,
-                action TEXT, entry_id INTEGER, related_entry_id INTEGER
+                action TEXT, entry_id INTEGER, related_entry_id INTEGER,
+                ledger_history_copied INTEGER
             );
             INSERT INTO financial_years VALUES(1,'2027','2027-01-01','2027-12-31','open',1,NULL);
             INSERT INTO financial_year_journal_history
