@@ -431,6 +431,17 @@ class CashCommitmentsPostgreSQLSchemaTests(unittest.TestCase):
         payment_columns = table_columns(self.conn, "cash_commitment_payments")
         self.assertIn("reversal_journal_entry_id", payment_columns)
 
+        # Every table with an INTEGER PRIMARY KEY must get a PostgreSQL identity
+        # default; otherwise the application's normal inserts cannot omit IDs.
+        identity_rows = self.conn.execute(
+            "SELECT table_name, is_identity FROM information_schema.columns "
+            "WHERE table_schema=current_schema() AND column_name='id' "
+            "AND table_name IN ('cash_commitments','cash_commitment_payments',"
+            "'cash_commitment_schedules','cash_commitment_schedule_occurrences')"
+        ).fetchall()
+        self.assertEqual(len(identity_rows), 4)
+        self.assertTrue(all(row["is_identity"] == "YES" for row in identity_rows))
+
         # Re-running the additive initializer must not duplicate or damage schema.
         initialize_cash_commitments_schema(self.conn)
         self.assertEqual(
