@@ -1515,6 +1515,7 @@ def build_balance_sheet_snapshot(conn, as_of):
     # historical import must not retroactively change prior balance sheets.
     excluded_opening_ids = set()
     unclassified_opening_count = 0
+    classification_conflict_count = 0
     if _table_exists_financial(conn, "financial_years") and _table_exists_financial(
         conn, "financial_year_journal_history"
     ):
@@ -1534,6 +1535,24 @@ def build_balance_sheet_snapshot(conn, as_of):
                 WHERE h.entry_kind='opening' AND h.action='created'
                   AND h.ledger_history_copied IS NULL AND fy.start_date<=?
             """, (as_of,)).fetchone()[0]
+            classification_conflict_count = _execute(conn, """
+                SELECT COUNT(*)
+                FROM financial_year_journal_history h
+                JOIN financial_years fy ON fy.id=h.financial_year_id
+                WHERE h.entry_kind='opening' AND h.action='created'
+                  AND h.ledger_history_copied IS NOT NULL AND fy.start_date<=?
+                  AND (
+                    (h.ledger_history_copied=0 AND EXISTS (
+                        SELECT 1 FROM journal_entries prior
+                        WHERE prior.status='posted' AND prior.entry_date<fy.start_date
+                    ))
+                    OR
+                    (h.ledger_history_copied=1 AND NOT EXISTS (
+                        SELECT 1 FROM journal_entries prior
+                        WHERE prior.status='posted' AND prior.entry_date<fy.start_date
+                    ))
+                  )
+            """, (as_of,)).fetchone()[0]
             excluded_opening_ids = {int(row["entry_id"]) for row in opening_rows}
             if excluded_opening_ids:
                 marks = ",".join("?" for _ in excluded_opening_ids)
@@ -1550,6 +1569,7 @@ def build_balance_sheet_snapshot(conn, as_of):
                 JOIN financial_years fy ON fy.id=h.financial_year_id
                 WHERE h.entry_kind='opening' AND h.action='created' AND fy.start_date<=?
             """, (as_of,)).fetchone()[0]
+            classification_conflict_count = 0
 
     exclusion_sql = ""
     exclusion_params = []
@@ -1633,10 +1653,12 @@ def build_balance_sheet_snapshot(conn, as_of):
             "balance_difference":assets-liabilities-total_equity,
             "balanced":assets==liabilities+total_equity,"as_of":as_of,
             "opening_balance_unclassified_count": int(unclassified_opening_count),
+            "opening_balance_classification_conflict_count": int(classification_conflict_count),
+            "opening_balance_review_count": int(unclassified_opening_count + classification_conflict_count),
             "opening_balance_warning": (
-                "توجد قيود افتتاحية تاريخية لم يُحفظ معها تصنيف يثبت هل هي أرصدة منقولة أم أرصدة أولية. "
-                "لم يستبعدها النظام تلقائيًا؛ راجعها قبل اعتماد المركز المالي."
-                if unclassified_opening_count else ""
+                "توجد قيود افتتاحية تحتاج مراجعة: قيود تاريخية بلا تصنيف محفوظ، أو تصنيف محفوظ لا يطابق "
+                "حركة الدفتر الحالية بعد ترحيل بيانات قديمة. لم يغير النظام التصنيف أو يستبعد الأرصدة تلقائيًا."
+                if unclassified_opening_count or classification_conflict_count else ""
             )}
 
 
