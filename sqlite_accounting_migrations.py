@@ -78,14 +78,14 @@ def _rebuild_real_columns_as_text(connection, table_name, column_names):
         for column_name in real_columns:
             quoted = re.escape(column_name)
             left_comparison = re.compile(
-                r'(?i)\b(NEW|OLD)\s*\.\s*"?'+quoted+r'"?\s*(<=|>=|<>|!=|=|<|>)\s*(-?(?:\.+(?:\.\.*)?|\.\.+))'
+                r'(?i)\b(NEW|OLD)\s*\.\s*"?'+quoted+r'"?\s*(<=|>=|<>|!=|=|<|>)\s*(-?(?:\d+(?:\.\d*)?|\.\d+))'
             )
             statement = left_comparison.sub(
                 lambda match: f'CAST({match.group(1)}."{column_name}" AS NUMERIC) {match.group(2)} {match.group(3)}',
                 statement,
             )
             right_comparison = re.compile(
-                r'(?i)(-?(?:\.+(?:\.\.*)?|\.\.+))\s*(<=|>=|<>|!=|=|<|>)\s*(NEW|OLD)\s*\.\s*"?'+quoted+r'"?'
+                r'(?i)(-?(?:\d+(?:\.\d*)?|\.\d+))\s*(<=|>=|<>|!=|=|<|>)\s*(NEW|OLD)\s*\.\s*"?'+quoted+r'"?'
             )
             statement = right_comparison.sub(
                 lambda match: f'{match.group(1)} {match.group(2)} CAST({match.group(3)}."{column_name}" AS NUMERIC)',
