@@ -121,6 +121,17 @@ def initialize_cash_commitments_schema(conn):
             schema_sql,
         )
     execute_script(conn, schema_sql)
+    commitment_columns = table_columns(conn, "cash_commitments")
+    if "origin_type" not in commitment_columns:
+        execute_compat(
+            conn,
+            "ALTER TABLE cash_commitments ADD COLUMN origin_type TEXT NOT NULL DEFAULT ''"
+        )
+    if "origin_id" not in commitment_columns:
+        execute_compat(
+            conn,
+            "ALTER TABLE cash_commitments ADD COLUMN origin_id INTEGER"
+        )
 
     # Protect imports/retries from duplicate source-linked obligations. The
     # index is added after table creation and existing duplicates fail closed.
