@@ -13,7 +13,7 @@ from flask import flash, redirect, render_template, request, session, url_for
 import workforce
 from backup_scheduler import create_backup_archive
 from workforce import workforce_bp, _db, _role, D, M, _audit
-from db_compat import DB_ERROR, execute_script, table_columns, begin_write_transaction
+from db_compat import DB_ERROR, execute_script, table_columns, begin_write_transaction, transactional_connection_initializer
 from db_sql import execute_compat
 from database_backend import configured_database_backend
 
@@ -45,8 +45,8 @@ def create_workforce_safety_backup():
     return str(archive)
 
 
-def initialize_workforce_extras_schema():
-    c = _db()
+@transactional_connection_initializer(_db)
+def initialize_workforce_extras_schema(c):
     execute_script(c, """
     CREATE TABLE IF NOT EXISTS employee_penalties(
       id INTEGER PRIMARY KEY,
@@ -126,8 +126,6 @@ def initialize_workforce_extras_schema():
         _execute(c, "INSERT INTO workforce_migrations(migration_key) VALUES(?)",(migration,))
     # PostgreSQL connections are transactional by default; persist the
     # additive schema and one-time legacy snapshots before closing.
-    c.commit()
-    c.close()
 
 
 @workforce_bp.route("/hr/penalties", methods=["GET","POST"])
