@@ -1,7 +1,7 @@
 import sqlite3
 import unittest
 
-from sqlite_accounting_migrations import migrate_journal_line_amounts_to_text
+from sqlite_accounting_migrations import (migrate_journal_line_amounts_to_text,\n                                         migrate_currency_rates_to_text)
 
 
 class JournalLineAmountMigrationTests(unittest.TestCase):
@@ -15,6 +15,13 @@ class JournalLineAmountMigrationTests(unittest.TestCase):
             CREATE TABLE journal_entries (
                 id INTEGER PRIMARY KEY, entry_date TEXT NOT NULL
             );
+            CREATE TABLE currencies(
+                code TEXT PRIMARY KEY, name_ar TEXT NOT NULL,
+                rate_to_base REAL NOT NULL DEFAULT 0, updated_at TEXT
+            );
+            CREATE INDEX idx_currencies_updated ON currencies(updated_at);
+            INSERT INTO currencies(code,name_ar,rate_to_base,updated_at)
+                VALUES('USD','دولار',30.125,'2026-01-01');
             CREATE TABLE journal_lines (
                 id INTEGER PRIMARY KEY,
                 entry_id INTEGER NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
@@ -73,6 +80,24 @@ class JournalLineAmountMigrationTests(unittest.TestCase):
         self.assertEqual(
             self.connection.execute("PRAGMA foreign_key_check").fetchall(), []
         )
+
+    def test_currency_rate_migration_preserves_values_columns_and_indexes(self):
+        self.assertTrue(migrate_currency_rates_to_text(self.connection))
+        row = self.connection.execute(
+            "SELECT code,name_ar,rate_to_base,updated_at FROM currencies WHERE code='USD'"
+        ).fetchone()
+        self.assertEqual(row, ("USD", "دولار", "30.125", "2026-01-01"))
+        columns = {
+            item[1]: item[2].upper()
+            for item in self.connection.execute("PRAGMA table_info(currencies)")
+        }
+        self.assertEqual(columns["rate_to_base"], "TEXT")
+        indexes = {
+            row[0] for row in self.connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='currencies'"
+            )
+        }
+        self.assertIn("idx_currencies_updated", indexes)
 
     def test_migration_is_noop_after_decimal_storage_is_established(self):
         migrate_journal_line_amounts_to_text(self.connection)
