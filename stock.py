@@ -282,11 +282,15 @@ def initialize_stock_schema():
       product_id INTEGER NOT NULL REFERENCES stock_products(id),
       warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
       min_qty TEXT NOT NULL DEFAULT '0', reorder_point TEXT NOT NULL DEFAULT '0',
-      reorder_qty TEXT NOT NULL DEFAULT '0', updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      reorder_qty TEXT NOT NULL DEFAULT '0', reorder_mode TEXT NOT NULL DEFAULT 'auto',
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY(product_id,warehouse_id)
     );
     CREATE INDEX IF NOT EXISTS idx_stock_wh_product_reorder ON stock_warehouse_product_settings(warehouse_id,reorder_point,product_id);
     """)
+    settings_columns = _columns(c, "stock_warehouse_product_settings")
+    if "reorder_mode" not in settings_columns:
+        _execute(c, "ALTER TABLE stock_warehouse_product_settings ADD COLUMN reorder_mode TEXT NOT NULL DEFAULT 'auto'")
     _install_stock_location_triggers(c)
     # Carry legacy product-level reorder thresholds forward as initial per-warehouse settings.
     _execute(c, f"""INSERT INTO stock_warehouse_product_settings
@@ -1391,17 +1395,21 @@ def product_locations():
             if request.form.get("action") == "save_reorder":
                 product_ok=_execute(c, "SELECT 1 FROM stock_products WHERE id=? AND active=1",(product_id,)).fetchone()
                 warehouse_ok=_execute(c, "SELECT 1 FROM stock_warehouses WHERE id=? AND active=1",(warehouse_id,)).fetchone()
-                minimum=q4(dec(request.form.get("min_qty","0"),"الحد الأدنى"))
+                target_qty=q4(dec(request.form.get("min_qty","0"),"المستوى المستهدف"))
                 point=q4(dec(request.form.get("reorder_point","0"),"نقطة إعادة الطلب"))
                 reorder=q4(dec(request.form.get("reorder_qty","0"),"كمية إعادة الطلب"))
+                reorder_mode=request.form.get("reorder_mode","auto").strip().lower()
                 if not product_ok or not warehouse_ok: raise ValueError("اختر صنفًا ومخزنًا نشطين.")
-                if min(minimum,point,reorder)<0: raise ValueError("حدود المخزون لا يمكن أن تكون سالبة.")
+                if min(target_qty,point,reorder)<0: raise ValueError("حدود المخزون لا يمكن أن تكون سالبة.")
+                if point > target_qty: raise ValueError("نقطة إعادة الطلب يجب ألا تتجاوز المستوى المستهدف بعد التوريد.")
+                if reorder_mode not in {"auto","manual"}: raise ValueError("طريقة حساب كمية الطلب غير صحيحة.")
                 _execute(c, """INSERT INTO stock_warehouse_product_settings
-                    (product_id,warehouse_id,min_qty,reorder_point,reorder_qty)
-                    VALUES(?,?,?,?,?) ON CONFLICT(product_id,warehouse_id) DO UPDATE SET
+                    (product_id,warehouse_id,min_qty,reorder_point,reorder_qty,reorder_mode)
+                    VALUES(?,?,?,?,?,?) ON CONFLICT(product_id,warehouse_id) DO UPDATE SET
                     min_qty=excluded.min_qty,reorder_point=excluded.reorder_point,
-                    reorder_qty=excluded.reorder_qty,updated_at=CURRENT_TIMESTAMP""",
-                    (product_id,warehouse_id,str(minimum),str(point),str(reorder)))
+                    reorder_qty=excluded.reorder_qty,reorder_mode=excluded.reorder_mode,
+                    updated_at=CURRENT_TIMESTAMP""",
+                    (product_id,warehouse_id,str(target_qty),str(point),str(reorder),reorder_mode))
                 c.commit()
                 flash("تم حفظ حدود إعادة الطلب للصنف في هذا المخزن فقط.","success")
                 return redirect(url_for("stock.product_locations"))
@@ -1443,9 +1451,32 @@ def product_locations():
     reorder_settings=_execute(c, """SELECT s.*,p.sku,p.name_ar product_name,w.code warehouse_code,w.name_ar warehouse_name
         FROM stock_warehouse_product_settings s JOIN stock_products p ON p.id=s.product_id
         JOIN stock_warehouses w ON w.id=s.warehouse_id ORDER BY w.code,p.sku""").fetchall()
+    # Sum exact quantity values in Python so SQLite TEXT quantities and PostgreSQL NUMERIC
+    # follow the same arithmetic without floating-point rounding.
+    stock_balances={}
+    for layer in _execute(c, """SELECT product_id,warehouse_id,qty_remaining
+        FROM stock_valuation_layers""").fetchall():
+        key=(int(layer["product_id"]),int(layer["warehouse_id"]))
+        stock_balances[key]=stock_balances.get(key,D("0"))+D(str(layer["qty_remaining"] or "0"))
+    reorder_alerts=[]
+    prepared_settings=[]
+    for setting in reorder_settings:
+        item=dict(setting)
+        current=stock_balances.get((int(item["product_id"]),int(item["warehouse_id"])),D("0"))
+        point=D(str(item["reorder_point"] or "0"))
+        target=D(str(item["min_qty"] or "0"))
+        mode=item.get("reorder_mode") or "auto"
+        suggested=max(D("0"),target-current) if mode=="auto" else D(str(item["reorder_qty"] or "0"))
+        item["current_qty"]=q4(current)
+        item["suggested_qty"]=q4(suggested)
+        item["needs_reorder"]=point > 0 and current <= point
+        prepared_settings.append(item)
+        if item["needs_reorder"]:
+            reorder_alerts.append(item)
     c.close()
     return render_template("stock_product_locations.html", products=products, warehouses=warehouses,
-                           locations=locations, rows=rows,reorder_settings=reorder_settings)
+                           locations=locations, rows=rows,reorder_settings=prepared_settings,
+                           reorder_alerts=reorder_alerts)
 
 
 @stock_bp.route("/products/<int:product_id>/edit", methods=["GET","POST"])
