@@ -18,6 +18,7 @@ from db_compat import (
     execute_script,
     table_column_info,
     table_indexes,
+    transactional_migration,
 )
 
 
@@ -33,6 +34,57 @@ class CrossDatabaseErrorTypeTests(unittest.TestCase):
 
         for error_type in DB_INTEGRITY_ERROR:
             self.assertTrue(issubclass(error_type, DB_ERROR))
+
+
+class TransactionalMigrationDecoratorTests(unittest.TestCase):
+    def setUp(self):
+        self.connection = sqlite3.connect(":memory:")
+        self.connection.execute("CREATE TABLE migration_probe(value TEXT NOT NULL)")
+
+    def tearDown(self):
+        self.connection.close()
+
+    def test_owned_migration_commits_and_rolls_back_atomically(self):
+        @transactional_migration
+        def successful(connection):
+            connection.execute(
+                "INSERT INTO migration_probe(value) VALUES('committed')"
+            )
+
+        @transactional_migration
+        def failing(connection):
+            connection.execute(
+                "INSERT INTO migration_probe(value) VALUES('rolled-back')"
+            )
+            raise RuntimeError("migration failure")
+
+        successful(self.connection)
+        self.assertFalse(self.connection.in_transaction)
+        with self.assertRaisesRegex(RuntimeError, "migration failure"):
+            failing(self.connection)
+        self.assertFalse(self.connection.in_transaction)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT value FROM migration_probe ORDER BY rowid"
+            ).fetchall(),
+            [("committed",)],
+        )
+
+    def test_nested_migration_does_not_commit_callers_transaction(self):
+        @transactional_migration
+        def nested(connection):
+            connection.execute(
+                "INSERT INTO migration_probe(value) VALUES('nested')"
+            )
+
+        self.connection.execute("BEGIN IMMEDIATE")
+        nested(self.connection)
+        self.assertTrue(self.connection.in_transaction)
+        self.connection.rollback()
+        self.assertEqual(
+            self.connection.execute("SELECT COUNT(*) FROM migration_probe").fetchone()[0],
+            0,
+        )
 
 
 class SQLPlaceholderTranslationTests(unittest.TestCase):
