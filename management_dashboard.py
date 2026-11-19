@@ -415,8 +415,13 @@ def cached_management_snapshot(conn, start, end, dimensions=None):
             for row in execute_compat(conn, "SELECT setting_key,setting_value FROM company_settings ORDER BY setting_key")
         ) if table_exists(conn, "company_settings") else ()
         dashboard_today = date.today()
+        # Connection identity is part of the cache key. Test databases and
+        # isolated tenant connections can legitimately share the same version,
+        # date range, roles and settings while containing different ledger rows.
+        # Retaining the connection object also prevents Python id reuse from
+        # aliasing a later in-memory database to an old cached snapshot.
         key = (
-            version, start.isoformat(), end.isoformat(), dashboard_today.isoformat(),
+            conn, version, start.isoformat(), end.isoformat(), dashboard_today.isoformat(),
             tuple(sorted((str(k), str(v)) for k, v in dimensions.items())),
             role_fingerprint, settings_fingerprint,
         )
