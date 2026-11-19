@@ -357,6 +357,8 @@ class ManagementDashboardTests(unittest.TestCase):
         self.assertEqual(snapshot["total_assets"], Decimal("200.00"))
         self.assertEqual(snapshot["total_equity"], Decimal("200.00"))
         self.assertEqual(snapshot["opening_balance_unclassified_count"], 0)
+        self.assertEqual(snapshot["opening_balance_classification_conflict_count"], 1)
+        self.assertIn("لم يغير النظام التصنيف", snapshot["opening_balance_warning"])
         self.assertTrue(snapshot["balanced"])
 
     def test_legacy_opening_entries_are_not_silently_excluded(self):
@@ -384,7 +386,7 @@ class ManagementDashboardTests(unittest.TestCase):
         """)
         snapshot = build_balance_sheet_snapshot(self.conn, "2027-01-31")
         self.assertEqual(snapshot["opening_balance_unclassified_count"], 1)
-        self.assertIn("لم يستبعدها النظام تلقائيًا", snapshot["opening_balance_warning"])
+        self.assertIn("لم يغير النظام التصنيف", snapshot["opening_balance_warning"])
 
     def test_prior_year_closing_entry_is_included_in_next_year_opening_balances(self):
         from management_dashboard import dashboard_period_balances
