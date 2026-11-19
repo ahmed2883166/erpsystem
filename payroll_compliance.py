@@ -6,7 +6,7 @@ onto payroll lines when a run is created.
 """
 from app_paths import DB_PATH
 from database import connect_database
-from db_compat import DB_ERROR, execute_script, table_columns, table_exists, begin_write_transaction, insert_and_get_id
+from db_compat import DB_ERROR, execute_script, table_columns, table_exists, begin_write_transaction, insert_and_get_id, transactional_connection_initializer
 from db_sql import execute_compat, executemany_compat
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -48,8 +48,8 @@ def _db():
     return connect_database(DB_PATH, timeout=20, isolation_level=None)
 
 
-def initialize_payroll_compliance_schema():
-    conn = _db()
+@transactional_connection_initializer(_db)
+def initialize_payroll_compliance_schema(c):
     execute_script(conn, """
     CREATE TABLE IF NOT EXISTS payroll_rule_sets(
       id INTEGER PRIMARY KEY,
@@ -140,8 +140,6 @@ def initialize_payroll_compliance_schema():
         ).fetchone()
         if not existing_egypt:
             seed_egypt_2026(conn)
-    conn.commit()
-    conn.close()
 
 
 def current_tax_country(conn):
