@@ -384,19 +384,38 @@ def _retained_earnings_account(conn):
 
 def list_legacy_opening_candidates(conn, year_id):
     """Find old opening-like journals on this year start that lack a saved decision."""
-    year=_financial_year_or_error(conn,year_id)
-    return _execute(conn,"""
-        SELECT je.id,je.entry_date,COALESCE(je.reference,'') reference,
-               COALESCE(je.description,'') description,COUNT(jl.id) line_count
+    year = _financial_year_or_error(conn, year_id)
+    entry_columns = table_columns(conn, "journal_entries")
+    reference_expr = "je.reference" if "reference" in entry_columns else "''"
+    description_expr = "je.description" if "description" in entry_columns else "''"
+    opening_terms = []
+    if "description" in entry_columns:
+        opening_terms.append("COALESCE(je.description,'') LIKE '%افتتاح%'")
+    if "reference" in entry_columns:
+        opening_terms.extend([
+            "UPPER(COALESCE(je.reference,'')) LIKE '%OPEN%'",
+            "COALESCE(je.reference,'') LIKE '%افتتاح%'",
+        ])
+    if not opening_terms:
+        return []
+    history_filter = (
+        " AND NOT EXISTS(SELECT 1 FROM financial_year_journal_history h WHERE h.entry_id=je.id)"
+        if _table_exists_financial(conn, "financial_year_journal_history") else ""
+    )
+    review_filter = (
+        " AND NOT EXISTS(SELECT 1 FROM financial_year_opening_reviews r WHERE r.entry_id=je.id)"
+        if _table_exists_financial(conn, "financial_year_opening_reviews") else ""
+    )
+    return _execute(conn, f"""
+        SELECT je.id,je.entry_date,COALESCE({reference_expr},'') reference,
+               COALESCE({description_expr},'') description,COUNT(jl.id) line_count
         FROM journal_entries je LEFT JOIN journal_lines jl ON jl.entry_id=je.id
         WHERE je.status='posted' AND je.entry_date=?
-          AND (COALESCE(je.description,'') LIKE '%افتتاح%'
-            OR UPPER(COALESCE(je.reference,'')) LIKE '%OPEN%'
-            OR COALESCE(je.reference,'') LIKE '%افتتاح%')
-          AND NOT EXISTS(SELECT 1 FROM financial_year_journal_history h WHERE h.entry_id=je.id)
-          AND NOT EXISTS(SELECT 1 FROM financial_year_opening_reviews r WHERE r.entry_id=je.id)
-        GROUP BY je.id,je.entry_date,je.reference,je.description ORDER BY je.id
-    """,(year["start_date"],)).fetchall()
+          AND ({' OR '.join(opening_terms)})
+          {history_filter}{review_filter}
+        GROUP BY je.id,je.entry_date,{reference_expr},{description_expr}
+        ORDER BY je.id
+    """, (year["start_date"],)).fetchall()
 
 
 def classify_legacy_opening_entry(conn,year_id,entry_id,classification,reason,reviewed_by=None):
@@ -1098,12 +1117,14 @@ def financial_year_opening_review(year_id):
             flash("تم حفظ تصنيف القيد القديم دون تعديل القيد أو سطوره.","success")
             return redirect(url_for("planning.financial_year_opening_review",year_id=year_id))
         candidates=list_legacy_opening_candidates(conn,year_id)
-        reviewed=_execute(conn,"""
-            SELECT r.*,je.entry_date,je.reference,je.description
-            FROM financial_year_opening_reviews r
-            JOIN journal_entries je ON je.id=r.entry_id
-            WHERE r.financial_year_id=? ORDER BY r.id DESC
-        """,(year_id,)).fetchall()
+        reviewed = []
+        if _table_exists_financial(conn, "financial_year_opening_reviews"):
+            reviewed = _execute(conn, """
+                SELECT r.*,je.entry_date,je.reference,je.description
+                FROM financial_year_opening_reviews r
+                JOIN journal_entries je ON je.id=r.entry_id
+                WHERE r.financial_year_id=? ORDER BY r.id DESC
+            """, (year_id,)).fetchall()
         return render_template("financial_year_opening_review.html",year=year,
                                candidates=candidates,reviewed=reviewed)
     except (ValueError,*DB_INTEGRITY_ERROR) as exc:
