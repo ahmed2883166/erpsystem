@@ -5,7 +5,7 @@ from database import connect_database
 from db_compat import (
     database_dialect, table_columns, table_exists, execute_script,
     begin_write_transaction, insert_and_get_id, transaction_is_active,
-    DB_INTEGRITY_ERROR, DB_ERROR,
+    DB_INTEGRITY_ERROR, DB_ERROR, transactional_migration,
 )
 from db_sql import execute_compat, executemany_compat
 
@@ -81,6 +81,7 @@ def _budget_audit(conn, budget_id, action, actor_id, details=""):
     )
 
 
+@transactional_migration
 def initialize_planning_schema(conn):
     execute_script(conn, """
     CREATE TABLE IF NOT EXISTS budget_plans(
