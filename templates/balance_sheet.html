@@ -30,6 +30,13 @@
     <div><span>إجمالي حقوق الملكية</span><strong>{{ '%.2f'|format(s.total_equity) }}</strong></div>
   </div>
 
+  {% if s.opening_balance_warning %}
+  <div class="balance-warning no-print">
+    <strong>تنبيه تصنيف الأرصدة الافتتاحية</strong>
+    <span>{{ s.opening_balance_warning }} عدد القيود غير المصنفة: {{ s.opening_balance_unclassified_count }}.</span>
+  </div>
+  {% endif %}
+
   {% if s.negative_asset_accounts %}
   <div class="balance-warning no-print"><strong>تنبيه مراجعة</strong><span>توجد أرصدة دائنة في حسابات مصنفة كأصول. راجع طبيعة الرصيد والتصنيف المحاسبي؛ لا يعيد النظام تصنيفها تلقائيًا.</span>
     <div class="table-wrap"><table><thead><tr><th>الكود</th><th>الحساب</th><th>الرصيد</th><th>الإجراء</th></tr></thead><tbody>
