@@ -374,7 +374,7 @@ def generate_postgres_ddl(snapshot):
             )
             source_type = (column.get("type") or "").strip().upper()
             target_type = pg_type(column, table_name)
-            if numeric_name_match and source_type in {"TEXT", "REAL"} and target_type != "NUMERIC":
+            if numeric_name_match and source_type in {"TEXT", "REAL"} and not target_type.startswith("NUMERIC"):
                 numeric_review_candidates.append({
                     "table": table_name,
                     "column": name,
