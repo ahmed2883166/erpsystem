@@ -1,6 +1,6 @@
 """Guarded company-data reset that preserves NEXUS system configuration and access."""
 
-from db_compat import database_dialect, table_names
+from db_compat import database_dialect, table_names, begin_write_transaction
 
 # Fail-closed policy: only these explicitly reviewed operational tables may be
 # cleared. Any table added by a future feature must be classified here first.
@@ -129,6 +129,7 @@ def _clear_company_data_postgresql(connection):
     tables and any foreign key from a preserved/unclassified table into a table
     that would be cleared. No CASCADE is used.
     """
+    begin_write_transaction(connection)
     tables = sorted(table_names(connection))
     unknown_tables = sorted(set(tables) - PRESERVED_TABLES - DELETE_TABLES)
     if unknown_tables:
