@@ -3609,6 +3609,9 @@ def users():
     role_permissions, role_names, custom_roles = role_permissions_catalog(connection)
     if request.method == "POST":
         try:
+            new_password = request.form.get("password", "")
+            if len(new_password) < 12:
+                raise ValueError("كلمة مرور المستخدم الجديد يجب ألا تقل عن 12 حرفًا.")
             role = request.form["role"]
             if role not in role_permissions:
                 raise ValueError("الدور المحدد غير صحيح أو غير نشط.")
@@ -3618,7 +3621,7 @@ def users():
             username = request.form["username"].strip()
             execute_compat(connection, 
                 "INSERT INTO users(username,full_name,password_hash,role,created_at,permissions_json) VALUES(?,?,?,?,?,?)",
-                (username, request.form["full_name"].strip(), password_hash(request.form["password"]),
+                (username, request.form["full_name"].strip(), password_hash(new_password),
                  role, now(), stored_permissions),
             )
             created_user_id = execute_compat(connection, 
