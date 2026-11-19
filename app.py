@@ -2747,6 +2747,7 @@ def trial_balance():
     sections = []
     for period in period_ranges:
         join_conditions = ["je.id=jl.entry_id", "je.status='posted'"]
+        join_params = []
         # Keep the trial balance aligned with the official balance sheet:
         # opening journals explicitly classified as copied history, together
         # with their reversals, must not be counted a second time.
@@ -2760,7 +2761,6 @@ def trial_balance():
             join_params.extend(copied_opening_ids)
         if not include_closing:
             join_conditions.append(closing_entries_exclusion_sql(connection))
-        join_params = []
         if period["date_from"]:
             join_conditions.append("je.entry_date >= ?"); join_params.append(period["date_from"])
         if period["date_to"]:
