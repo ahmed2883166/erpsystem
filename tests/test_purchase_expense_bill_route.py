@@ -130,6 +130,7 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         conn.close()
 
         response = self.client.post("/purchases/payments/new", data={
+            "allocation_mode": "auto",
             "supplier_id": str(self.supplier_id),
             "amount": "100.00",
             "cash_account_id": str(cash_id),
@@ -587,6 +588,7 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
             session["user_id"] = 1
             session["role"] = "accountant"
         payment_response = self.client.post("/purchases/payments/new", data={
+            "allocation_mode": "auto",
             "supplier_id": str(self.supplier_id),
             "payment_date": "2026-11-13",
             "amount": "100.00",
