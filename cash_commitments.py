@@ -157,7 +157,7 @@ def initialize_cash_commitments_schema(conn):
             CREATE UNIQUE INDEX IF NOT EXISTS ux_cash_commitments_source_origin
             ON cash_commitments(origin_type,origin_id)
             WHERE origin_type IN ('friday_allowance_batch','recurring_schedule_occurrence')
-              AND origin_id IS NOT NULL
+              AND status<>'void' AND origin_id IS NOT NULL
         """)
 
     payment_columns = table_columns(conn, "cash_commitment_payments")
@@ -180,7 +180,7 @@ def list_cash_commitment_duplicate_origins(conn):
         SELECT origin_type,origin_id,COUNT(*) AS duplicate_count
         FROM cash_commitments
         WHERE origin_type IN ('friday_allowance_batch','recurring_schedule_occurrence')
-          AND origin_id IS NOT NULL
+          AND status<>'void' AND origin_id IS NOT NULL
         GROUP BY origin_type,origin_id HAVING COUNT(*)>1 ORDER BY origin_type,origin_id
     """).fetchall()
     result=[]

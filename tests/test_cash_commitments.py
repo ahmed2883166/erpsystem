@@ -87,33 +87,52 @@ class CashCommitmentsTests(unittest.TestCase):
             "SELECT 1 FROM sqlite_master WHERE name='cash_commitments'"
         ).fetchone())
 
+    def _legacy_duplicate_connection(self):
+        conn=sqlite3.connect(":memory:")
+        conn.row_factory=sqlite3.Row
+        conn.execute("CREATE TABLE journal_entries(id INTEGER PRIMARY KEY)")
+        conn.execute("""CREATE TABLE cash_commitments(
+            id INTEGER PRIMARY KEY, commitment_type TEXT NOT NULL, title TEXT NOT NULL,
+            period_label TEXT NOT NULL DEFAULT '', amount TEXT NOT NULL, due_date TEXT NOT NULL,
+            currency_code TEXT NOT NULL DEFAULT '', payable_account_id INTEGER,
+            origin_type TEXT NOT NULL DEFAULT '', origin_id INTEGER,
+            status TEXT NOT NULL DEFAULT 'open', notes TEXT NOT NULL DEFAULT '',
+            created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+        return conn
+
     def test_legacy_duplicate_origins_are_reviewable_without_blocking_startup(self):
-        self.conn.execute("""
-            INSERT INTO cash_commitments(commitment_type,title,amount,due_date,origin_type,origin_id)
-            VALUES('friday_overtime','أصل','50','2026-11-30','friday_allowance_batch',901),
-                  ('friday_overtime','مكرر','50','2026-11-30','friday_allowance_batch',901)
-        """)
-        self.conn.commit()
-        initialize_cash_commitments_schema(self.conn)
-        groups=list_cash_commitment_duplicate_origins(self.conn)
-        self.assertEqual(len(groups),1)
-        kept,duplicate=[x["id"] for x in groups[0]["items"]]
-        resolve_cash_commitment_duplicate_origin(self.conn,kept,[duplicate],"تمت مراجعة المصدر",7)
-        self.assertEqual(self.conn.execute("SELECT status FROM cash_commitments WHERE id=?",(duplicate,)).fetchone()[0],"void")
-        self.assertEqual(list_cash_commitment_duplicate_origins(self.conn),[])
+        conn=self._legacy_duplicate_connection()
+        try:
+            initialize_cash_commitments_schema(conn)
+            conn.execute("""INSERT INTO cash_commitments(commitment_type,title,amount,due_date,origin_type,origin_id)
+                VALUES('friday_overtime','أصل','50','2026-11-30','friday_allowance_batch',901),
+                      ('friday_overtime','مكرر','50','2026-11-30','friday_allowance_batch',901)""")
+            conn.commit()
+            initialize_cash_commitments_schema(conn)
+            groups=list_cash_commitment_duplicate_origins(conn)
+            self.assertEqual(len(groups),1)
+            kept,duplicate=[x["id"] for x in groups[0]["items"]]
+            resolve_cash_commitment_duplicate_origin(conn,kept,[duplicate],"تمت مراجعة المصدر",7)
+            self.assertEqual(conn.execute("SELECT status FROM cash_commitments WHERE id=?",(duplicate,)).fetchone()[0],"void")
+            self.assertEqual(list_cash_commitment_duplicate_origins(conn),[])
+        finally: conn.close()
 
     def test_duplicate_with_payments_cannot_be_voided_automatically(self):
-        self.conn.execute("""
-            INSERT INTO cash_commitments(commitment_type,title,amount,due_date,origin_type,origin_id)
-            VALUES('friday_overtime','أصل','50','2026-11-30','friday_allowance_batch',902),
-                  ('friday_overtime','مكرر','50','2026-11-30','friday_allowance_batch',902)
-        """)
-        ids=[r[0] for r in self.conn.execute("SELECT id FROM cash_commitments WHERE origin_id=902 ORDER BY id")]
-        self.conn.execute("INSERT INTO cash_commitment_payments(commitment_id,payment_date,amount,journal_entry_id) VALUES(?,?,?,?)",
-                          (ids[1],"2026-11-10","10",1))
-        self.conn.commit()
-        with self.assertRaisesRegex(ValueError,"دفعات"):
-            resolve_cash_commitment_duplicate_origin(self.conn,ids[0],[ids[1]],"محاولة تسوية",7)
+        conn=self._legacy_duplicate_connection()
+        try:
+            initialize_cash_commitments_schema(conn)
+            conn.execute("""INSERT INTO cash_commitments(commitment_type,title,amount,due_date,origin_type,origin_id)
+                VALUES('friday_overtime','أصل','50','2026-11-30','friday_allowance_batch',902),
+                      ('friday_overtime','مكرر','50','2026-11-30','friday_allowance_batch',902)""")
+            ids=[r[0] for r in conn.execute("SELECT id FROM cash_commitments WHERE origin_id=902 ORDER BY id")]
+            conn.execute("INSERT INTO journal_entries(id) VALUES(1)")
+            conn.execute("INSERT INTO cash_commitment_payments(commitment_id,payment_date,amount,journal_entry_id) VALUES(?,?,?,?)",
+                         (ids[1],"2026-11-10","10",1))
+            conn.commit()
+            with self.assertRaisesRegex(ValueError,"دفعات"):
+                resolve_cash_commitment_duplicate_origin(conn,ids[0],[ids[1]],"محاولة تسوية",7)
+        finally: conn.close()
 
     def test_source_linked_commitments_reject_duplicate_origins(self):
         self.conn.execute(
