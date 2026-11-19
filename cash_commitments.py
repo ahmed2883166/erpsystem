@@ -178,8 +178,11 @@ def _journal_entry_effect_is_active(conn, journal_entry_id, as_of=None):
     if not entry or entry[0] != "posted":
         return False
     values = dict(zip(selected, tuple(entry)))
-    if as_of and values.get("entry_date") and values["entry_date"] > as_of:
-        return False
+    if as_of and values.get("entry_date"):
+        # psycopg may return DATE columns as datetime.date while callers pass
+        # ISO strings. Compare normalized ISO dates to keep both adapters aligned.
+        if str(values["entry_date"])[:10] > str(as_of)[:10]:
+            return False
     reference = str(values.get("reference") or "")
     description = str(values.get("description") or "")
     if reference.startswith("REV-") or description.startswith("قيد عكسي للقيد رقم "):
@@ -227,8 +230,9 @@ def _payment_effect_is_active(conn, payment, as_of=None):
             "SELECT status,entry_date FROM journal_entries WHERE id=?",
             (reversal_id,),
         ).fetchone()
+        reversal_date = str(reversal["entry_date"])[:10] if reversal and reversal["entry_date"] else ""
         if (reversal and reversal["status"] == "posted"
-                and (not as_of or not reversal["entry_date"] or reversal["entry_date"] <= as_of)):
+                and (not as_of or not reversal_date or reversal_date <= str(as_of)[:10])):
             return False
     return _journal_entry_effect_is_active(conn, payment["journal_entry_id"], as_of)
 
@@ -246,19 +250,21 @@ def cash_commitment_payment_summary(conn, commitment_id, as_of=None):
                           else "'' journal_reference")
     journal_fields.append("j.description journal_description" if "description" in journal_columns
                           else "'' journal_description")
-    date_filter = " AND p.payment_date<=?" if as_of else ""
-    params = (commitment_id, as_of) if as_of else (commitment_id,)
     payments = execute_compat(conn,
         "SELECT p.*," + ",".join(journal_fields) +
         """ FROM cash_commitment_payments p
             LEFT JOIN journal_entries j ON j.id=p.journal_entry_id
-            WHERE p.commitment_id=?""" + date_filter +
-        " ORDER BY p.payment_date,p.id",
-        params,
+            WHERE p.commitment_id=?
+            ORDER BY p.payment_date,p.id""",
+        (commitment_id,),
     ).fetchall()
     effective = Decimal("0")
     details = []
     for payment in payments:
+        # payment_date is TEXT in the commitment schema, but normalize anyway
+        # so PostgreSQL DATE/datetime adapters and SQLite strings behave alike.
+        if as_of and str(payment["payment_date"])[:10] > str(as_of)[:10]:
+            continue
         active = _payment_effect_is_active(conn, payment, as_of)
         if active:
             effective += Decimal(str(payment["amount"]))
