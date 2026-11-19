@@ -369,6 +369,14 @@ def main() -> int:
                         "SELECT status,journal_entry_id FROM supplier_bills WHERE id=?",
                         (purchase_flow["bill_id"],),
                     ).fetchone()
+                    asset_after_repeat = execute_compat(
+                        verification_connection,
+                        """SELECT d.amount,d.journal_entry_id,a.status
+                             FROM asset_depreciations d
+                             JOIN fixed_assets a ON a.id=d.asset_id
+                            WHERE d.asset_id=? AND d.period=?""",
+                        (asset_flow["asset_id"], today.strftime("%Y-%m")),
+                    ).fetchone()
                     if (
                         not invoice_after_repeat
                         or not invoice_after_repeat["journal_entry_id"]
@@ -376,11 +384,16 @@ def main() -> int:
                         or not bill_after_repeat
                         or bill_after_repeat["status"] != "posted"
                         or bill_after_repeat["journal_entry_id"] != purchase_flow["journal_entry_id"]
+                        or not asset_after_repeat
+                        or asset_after_repeat["status"] != "active"
+                        or asset_after_repeat["journal_entry_id"] != asset_flow["journal_entry_id"]
+                        or Decimal(str(asset_after_repeat["amount"])) != Decimal("100.00")
                     ):
                         raise AssertionError(
                             "Repeated PostgreSQL bootstrap changed or lost posted "
-                            "sales/purchase records."
+                            "sales, purchase, or fixed-asset records."
                         )
+                    verification_connection.commit()
                 finally:
                     verification_connection.close()
 
@@ -398,7 +411,9 @@ def main() -> int:
                 f"sales_invoice={sales_flow['invoice_id']} sales_total={sales_flow['total']} "
                 f"sales_cost={sales_flow['cost']} "
                 f"supplier_bill={purchase_flow['bill_id']} "
-                f"supplier_bill_total={purchase_flow['total']}"
+                f"supplier_bill_total={purchase_flow['total']} "
+                f"asset_depreciation={asset_flow['amount']} "
+                f"asset_journal={asset_flow['journal_entry_id']}"
             )
             return 0
         finally:
