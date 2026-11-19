@@ -10,8 +10,6 @@ from __future__ import annotations
 import threading
 from datetime import datetime, timedelta
 
-import psycopg
-
 from backup_scheduler import next_backup_datetime
 from postgres_backup import create_postgres_backup_archive
 
@@ -19,6 +17,17 @@ _ADVISORY_LOCK_KEY = 1313162836
 _scheduler_thread = None
 _scheduler_lock = threading.Lock()
 _scheduler_stop = threading.Event()
+
+
+def _connect_postgres(dsn):
+    """Import the optional PostgreSQL driver only when this scheduler is used."""
+    try:
+        import psycopg
+    except ImportError as exc:
+        raise RuntimeError(
+            "PostgreSQL backup scheduling is optional; install psycopg[binary,pool]>=3.2,<4.0."
+        ) from exc
+    return psycopg.connect(dsn)
 
 
 def _settings(connection):
@@ -45,7 +54,7 @@ def _write_settings(connection, values):
 
 def ensure_initial_postgres_backup(dsn, backup_dir):
     """Create one verified baseline archive for a fresh PostgreSQL company database."""
-    with psycopg.connect(dsn) as connection:
+    with _connect_postgres(dsn) as connection:
         connection.execute("SELECT pg_advisory_xact_lock(%s)", (_ADVISORY_LOCK_KEY,))
         row = connection.execute(
             "SELECT setting_value FROM company_settings WHERE setting_key=%s",
@@ -62,7 +71,7 @@ def ensure_initial_postgres_backup(dsn, backup_dir):
 
 def run_due_postgres_backup(dsn, backup_dir):
     """Claim and run one due PostgreSQL backup; return its archive or None."""
-    with psycopg.connect(dsn) as connection:
+    with _connect_postgres(dsn) as connection:
         connection.execute("SELECT pg_advisory_xact_lock(%s)", (_ADVISORY_LOCK_KEY,))
         settings = _settings(connection)
         if settings.get("backup_enabled", "0") != "1":
@@ -114,7 +123,7 @@ def run_due_postgres_backup(dsn, backup_dir):
         archive = None
         status, error, filename = "failed", str(exc)[:1000], ""
         retry_at = (datetime.now() + timedelta(minutes=5)).isoformat(timespec="seconds")
-        with psycopg.connect(dsn) as connection:
+        with _connect_postgres(dsn) as connection:
             connection.execute("SELECT pg_advisory_xact_lock(%s)", (_ADVISORY_LOCK_KEY,))
             _write_settings(connection, {"backup_next_run": retry_at})
 
@@ -125,7 +134,7 @@ def run_due_postgres_backup(dsn, backup_dir):
     }
     if status == "success":
         status_values["backup_last_file"] = filename
-    with psycopg.connect(dsn) as connection:
+    with _connect_postgres(dsn) as connection:
         connection.execute("SELECT pg_advisory_xact_lock(%s)", (_ADVISORY_LOCK_KEY,))
         _write_settings(connection, status_values)
     return archive

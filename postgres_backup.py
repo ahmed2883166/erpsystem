@@ -15,8 +15,6 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from psycopg.conninfo import conninfo_to_dict
-
 BACKUP_PREFIX = "nexus-postgres-backup-"
 DUMP_MEMBER = "nexus.dump"
 MANIFEST_MEMBER = "manifest.json"
@@ -28,6 +26,12 @@ _DATABASE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 
 def _pg_environment(dsn, *, database_override=None):
     """Build libpq environment variables so credentials never appear in argv."""
+    try:
+        from psycopg.conninfo import conninfo_to_dict
+    except ImportError as exc:
+        raise RuntimeError(
+            "PostgreSQL backup support is optional; install psycopg[binary,pool]>=3.2,<4.0."
+        ) from exc
     values = conninfo_to_dict(str(dsn or "").strip())
     if not values:
         raise ValueError("PostgreSQL connection information is required.")
