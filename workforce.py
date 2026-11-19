@@ -243,7 +243,8 @@ def initialize_workforce_schema():
       id INTEGER PRIMARY KEY, custody_id INTEGER NOT NULL REFERENCES employee_custodies(id),
       expense_date TEXT NOT NULL, expense_account_id INTEGER NOT NULL REFERENCES accounts(id),
       amount TEXT NOT NULL, description TEXT NOT NULL, receipt_reference TEXT NOT NULL DEFAULT '',
-      created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      journal_entry_id INTEGER UNIQUE
     );
     CREATE TABLE IF NOT EXISTS attendance_records(
       id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id),
@@ -578,6 +579,11 @@ def initialize_workforce_schema():
     }.items():
         if name not in payroll_cols:
             execute_compat(c,"ALTER TABLE payroll_lines ADD COLUMN " + name + " " + definition)
+    custody_expense_cols = table_columns(c, "custody_expenses")
+    if "journal_entry_id" not in custody_expense_cols:
+        execute_compat(c, "ALTER TABLE custody_expenses ADD COLUMN journal_entry_id INTEGER")
+    execute_compat(c, """CREATE UNIQUE INDEX IF NOT EXISTS uq_custody_expenses_journal
+        ON custody_expenses(journal_entry_id) WHERE journal_entry_id IS NOT NULL""")
     # Backfill legacy payroll runs without changing their original net amounts.
     migration_key = "backfill_payroll_totals_v1"
     already_migrated = execute_compat(c,
@@ -675,6 +681,7 @@ def _employee_salary_basis(c, employee_id, as_of_date=None):
         SELECT l.basic_salary,l.insured_wage,COALESCE(r.posted_at,r.created_at,'') AS source_timestamp
         FROM payroll_lines l JOIN payroll_runs r ON r.id=l.run_id
         WHERE l.employee_id=? AND r.status='posted' AND r.period<=?
+          AND CAST(l.basic_salary AS NUMERIC)>0
         ORDER BY r.period DESC,COALESCE(r.posted_at,r.created_at) DESC,r.id DESC LIMIT 1
     """,(employee_id,effective_date[:7])).fetchone()
     history = execute_compat(c, """
@@ -2391,7 +2398,16 @@ def payroll():
                 basic_salary = M(basic_raw) if basic_raw is not None and str(basic_raw).strip() else master_basic
                 raise_amount = Decimal("0")
                 salary_reference = master_basic
-                if e["raise_effective_date"] and e["raise_effective_date"] <= (period + "-01"):
+                raise_already_applied = False
+                if e["raise_mode"] == "basic" and e["raise_effective_date"]:
+                    raise_already_applied = bool(execute_compat(c, """SELECT 1
+                        FROM payroll_lines l JOIN payroll_runs r ON r.id=l.run_id
+                        WHERE l.employee_id=? AND r.status='posted' AND r.period>=?
+                          AND CAST(COALESCE(l.salary_raise,'0') AS NUMERIC)>0
+                        ORDER BY r.period DESC,r.id DESC LIMIT 1""",
+                        (e["id"], e["raise_effective_date"][:7])).fetchone())
+                if (e["raise_effective_date"] and e["raise_effective_date"] <= (period + "-01")
+                        and not raise_already_applied):
                     proposed_raise = (M(master_basic * D(e["raise_value"]) / Decimal("100"))
                                       if e["raise_type"] == "percentage" else M(e["raise_value"]))
                     expected_after_raise = M(master_basic + proposed_raise) if e["raise_mode"] == "basic" else master_basic
@@ -4306,19 +4322,36 @@ def custody():
 def custody_expense(custody_id):
     c = _db()
     try:
-        row = execute_compat(c, "SELECT * FROM employee_custodies WHERE id=? AND status='open'", (custody_id,)).fetchone()
+        begin_write_transaction(c)
+        lock_suffix = " FOR UPDATE" if database_dialect(c) == "postgresql" else ""
+        row = execute_compat(c, "SELECT * FROM employee_custodies WHERE id=? AND status='open'" + lock_suffix, (custody_id,)).fetchone()
         if not row:
             raise ValueError("العهدة غير موجودة أو مغلقة.")
         amount = M(request.form.get("amount"))
         used = sum((D(x["amount"]) for x in execute_compat(c, "SELECT amount FROM custody_expenses WHERE custody_id=?", (custody_id,)).fetchall()), Decimal("0"))
         if amount <= 0 or used + amount > D(row["amount"]):
             raise ValueError("قيمة المصروف تتجاوز المتاح في العهدة.")
-        execute_compat(c, "INSERT INTO custody_expenses(custody_id,expense_date,expense_account_id,amount,description,receipt_reference,created_by) VALUES(?,?,?,?,?,?,?)",
-            (custody_id,request.form.get("expense_date") or date.today().isoformat(),int(request.form["expense_account_id"]),
-             str(amount),request.form.get("description","").strip(),request.form.get("receipt_reference","").strip(),session["user_id"]))
-        _audit(c, "employee_custody_expense_added", str(custody_id) + " amount=" + str(amount))
+        expense_date = request.form.get("expense_date") or date.today().isoformat()
+        expense_id = insert_and_get_id(c, """INSERT INTO custody_expenses
+            (custody_id,expense_date,expense_account_id,amount,description,receipt_reference,created_by)
+            VALUES(?,?,?,?,?,?,?)""",
+            (custody_id,expense_date,int(request.form["expense_account_id"]),str(amount),
+             request.form.get("description","").strip(),request.form.get("receipt_reference","").strip(),session["user_id"]))
+        description = request.form.get("description","").strip() or "مصروف عهدة"
+        journal_id = post_journal(c, expense_date, "CUST-EXP-" + str(expense_id),
+            "مصروف عهدة " + row["custody_no"],
+            [(int(request.form["expense_account_id"]),amount,0,description),
+             (int(row["custody_account_id"]),0,amount,"مصروف من عهدة " + row["custody_no"])],
+            session["user_id"])
+        execute_compat(c, "UPDATE custody_expenses SET journal_entry_id=? WHERE id=?",
+            (journal_id,expense_id))
+        remaining = M(D(row["amount"]) - used - amount)
+        execute_compat(c, "UPDATE employee_custodies SET remaining_amount=? WHERE id=? AND status='open'",
+            (str(remaining),custody_id))
+        _audit(c, "employee_custody_expense_added",
+               str(custody_id) + " amount=" + str(amount) + " journal=" + str(journal_id))
         c.commit()
-        flash("تم تسجيل مصروف العهدة بانتظار التسوية والاعتماد.", "success")
+        flash("تم تسجيل مصروف العهدة وترحيل قيده فورًا.", "success")
     except _DB_VALUE_KEY_ERRORS as e:
         c.rollback()
         flash(str(e), "error")
@@ -4331,7 +4364,9 @@ def custody_expense(custody_id):
 def settle_custody(custody_id):
     c = _db()
     try:
-        row = execute_compat(c, "SELECT * FROM employee_custodies WHERE id=? AND status='open'", (custody_id,)).fetchone()
+        begin_write_transaction(c)
+        lock_suffix = " FOR UPDATE" if database_dialect(c) == "postgresql" else ""
+        row = execute_compat(c, "SELECT * FROM employee_custodies WHERE id=? AND status='open'" + lock_suffix, (custody_id,)).fetchone()
         if not row:
             raise ValueError("العهدة غير موجودة أو تمت تسويتها.")
         expenses = execute_compat(c, "SELECT * FROM custody_expenses WHERE custody_id=? ORDER BY id", (custody_id,)).fetchall()
@@ -4340,17 +4375,31 @@ def settle_custody(custody_id):
         total = M(row["amount"])
         if returned < 0 or expense_total + returned != total:
             raise ValueError("لا بد أن يساوي مجموع المصروفات والمبلغ المرتد قيمة العهدة بالكامل.")
-        lines = [(int(x["expense_account_id"]), M(x["amount"]), 0, x["description"] or "مصروف عهدة") for x in expenses]
+        settlement_date = request.form.get("settlement_date") or date.today().isoformat()
+        # Old expense rows created before per-expense posting are journaled once here.
+        for expense in expenses:
+            if expense["journal_entry_id"]:
+                continue
+            expense_amount = M(expense["amount"])
+            legacy_journal_id = post_journal(c, expense["expense_date"],
+                "CUST-EXP-" + str(expense["id"]), "مصروف عهدة " + row["custody_no"],
+                [(int(expense["expense_account_id"]),expense_amount,0,expense["description"] or "مصروف عهدة"),
+                 (int(row["custody_account_id"]),0,expense_amount,"مصروف من عهدة " + row["custody_no"])],
+                session["user_id"])
+            execute_compat(c, "UPDATE custody_expenses SET journal_entry_id=? WHERE id=?",
+                (legacy_journal_id,expense["id"]))
+        journal_id = None
         if returned:
-            lines.append((int(row["cash_account_id"]), returned, 0, "رد المتبقي من العهدة"))
-        lines.append((int(row["custody_account_id"]), 0, total, "تسوية عهدة الموظف"))
-        begin_write_transaction(c)
-        journal_id = post_journal(c, request.form.get("settlement_date") or date.today().isoformat(),
-            "CUST-SETTLE-" + row["custody_no"], "تسوية عهدة " + row["custody_no"], lines, session["user_id"])
+            journal_id = post_journal(c, settlement_date, "CUST-RETURN-" + row["custody_no"],
+                "رد متبقي عهدة " + row["custody_no"],
+                [(int(row["cash_account_id"]),returned,0,"رد المتبقي من العهدة"),
+                 (int(row["custody_account_id"]),0,returned,"تسوية رصيد عهدة الموظف")],
+                session["user_id"])
         execute_compat(c, "UPDATE employee_custodies SET remaining_amount='0',status='settled' WHERE id=?", (custody_id,))
-        _audit(c, "employee_custody_settled", row["custody_no"] + " journal=" + str(journal_id))
+        _audit(c, "employee_custody_settled",
+               row["custody_no"] + " return_journal=" + str(journal_id or "none"))
         c.commit()
-        flash("تمت تسوية العهدة بالكامل وترحيل القيد.", "success")
+        flash("تمت تسوية العهدة بالكامل دون تكرار قيود المصروفات.", "success")
     except _DB_VALUE_KEY_ERRORS as e:
         c.rollback()
         flash(str(e), "error")

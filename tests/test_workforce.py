@@ -749,6 +749,16 @@ class WorkforceTests(unittest.TestCase):
             "amount": "2000", "description": "مستلزمات", "receipt_reference": "R-1"
         })
         self.assertEqual(response.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        expense_journal = conn.execute("SELECT journal_entry_id FROM custody_expenses WHERE id=1").fetchone()[0]
+        expense_debit = conn.execute("SELECT SUM(CAST(debit AS REAL)) FROM journal_lines WHERE entry_id=? AND account_id=3",
+                                     (expense_journal,)).fetchone()[0]
+        entries_before_settlement = conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
+        conn.close()
+        self.assertIsNotNone(expense_journal)
+        self.assertAlmostEqual(expense_debit, 2000.0, places=2)
+        self.assertEqual(entries_before_settlement, 2)
+
         response = self.client.post("/hr/custody/1/settle", data={
             "settlement_date": "2026-11-10", "returned_amount": "3000"
         })
@@ -759,6 +769,10 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         self.assertEqual(state, ("settled", "0"))
         self.assertAlmostEqual(debit, credit, places=2)
+        conn = sqlite3.connect(self.db_path)
+        expense_debit = conn.execute("SELECT SUM(CAST(debit AS REAL)) FROM journal_lines WHERE account_id=3").fetchone()[0]
+        conn.close()
+        self.assertAlmostEqual(expense_debit, 2000.0, places=2)
 
     def test_custody_cannot_settle_with_unreconciled_difference(self):
         self.add_employee()
@@ -1265,6 +1279,27 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(run_count, 1)
         self.assertEqual(lines, [(1, "0", "0", "0", "0")])
 
+    def test_unpaid_leave_zero_snapshot_preserves_next_month_salary_basis(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""INSERT INTO employees(employee_code,full_name,hire_date,basic_salary,standard_hours,work_status)
+                        VALUES('E004','On Leave','2026-01-01','5000','200','unpaid_leave')""")
+        conn.commit()
+        conn.close()
+        first = self.client.post("/hr/payroll", data={"period":"2026-11"})
+        self.assertEqual(first.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("UPDATE payroll_runs SET status='posted' WHERE period='2026-11'")
+        conn.execute("UPDATE employees SET work_status='permanent' WHERE employee_code='E004'")
+        conn.commit()
+        conn.close()
+        second = self.client.post("/hr/payroll", data={"period":"2026-12"})
+        self.assertEqual(second.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        row = conn.execute("""SELECT l.basic_salary,l.gross_pay FROM payroll_lines l
+            JOIN payroll_runs r ON r.id=l.run_id WHERE r.period='2026-12'""").fetchone()
+        conn.close()
+        self.assertEqual(row, ("5000.00","5000.00"))
+
     def test_optional_automatic_statutory_calculation_snapshots_rules(self):
         self.add_employee()
         response = self.client.post("/hr/payroll", data={
@@ -1327,6 +1362,30 @@ class WorkforceTests(unittest.TestCase):
         lines = conn.execute("SELECT period,basic_salary,gross_pay FROM payroll_lines l JOIN payroll_runs r ON r.id=l.run_id ORDER BY r.period").fetchall()
         conn.close()
         self.assertEqual(lines,[("2026-11","11000.00","12000.00"),("2026-12","11000.00","12000.00")])
+
+    def test_individual_basic_raise_is_not_reapplied_in_later_months(self):
+        self.add_employee()
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""UPDATE employees SET raise_type='percentage',raise_value='10',
+            raise_mode='basic',raise_effective_date='2026-11-01' WHERE id=1""")
+        conn.commit()
+        conn.close()
+        first = self.client.post("/hr/payroll", data={"period":"2026-11","basic_1":"11000",
+            "basic_override_reason_1":"اعتماد الزيادة الفردية"})
+        self.assertEqual(first.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        first_line = conn.execute("SELECT basic_salary,salary_raise FROM payroll_lines WHERE run_id=1").fetchone()
+        conn.execute("UPDATE payroll_runs SET status='posted' WHERE period='2026-11'")
+        conn.commit()
+        conn.close()
+        second = self.client.post("/hr/payroll", data={"period":"2026-12"})
+        self.assertEqual(second.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        second_line = conn.execute("""SELECT l.basic_salary,l.salary_raise FROM payroll_lines l
+            JOIN payroll_runs r ON r.id=l.run_id WHERE r.period='2026-12'""").fetchone()
+        conn.close()
+        self.assertEqual(first_line, ("11000.00","1000.00"))
+        self.assertEqual(second_line, ("11000.00","0"))
 
     def test_recurring_allowance_raise_does_not_change_basic_and_is_paid_once(self):
         self.add_employee()
