@@ -2577,9 +2577,24 @@ def invoice_workflow(workflow_id):
         flash("بيانات مسودة الفاتورة غير سليمة؛ لم يتم تنفيذ أي إجراء.", "error")
         return redirect(url_for("sales.index"))
     c.close()
+    permissions = set(session.get("permissions", ()))
+    privileged_approver = (
+        session.get("role") == "admin"
+        or {"sales.manage", "sales.approve"}.issubset(permissions)
+    )
+    is_own_workflow = (
+        row["created_by"] == session.get("user_id")
+        or row["submitted_by"] == session.get("user_id")
+    )
+    can_approve = (
+        row["status"] == "pending_approval"
+        and "sales.approve" in permissions
+        and (not is_own_workflow or privileged_approver)
+    )
     return render_template("sales_invoice_workflow.html", workflow=row, payload=payload,
-                           can_approve=("sales.approve" in set(session.get("permissions", ()))
-                                        or session.get("role") == "admin"))
+                           can_approve=can_approve,
+                           self_approval_blocked=(row["status"] == "pending_approval"
+                               and is_own_workflow and not privileged_approver))
 
 
 @sales_bp.route("/invoices/workflow/<int:workflow_id>/edit", methods=["GET", "POST"])
@@ -2736,9 +2751,15 @@ def decide_invoice_workflow(workflow_id):
             raise ValueError("الفاتورة ليست في انتظار الاعتماد أو سبق اتخاذ قرار عليها.")
         if row["created_by"] is None or row["submitted_by"] is None:
             raise ValueError("بيانات منشئ أو مرسل الفاتورة غير مكتملة؛ لا يمكن اعتمادها قبل مراجعة سجلها.")
-        if (row["created_by"] == session.get("user_id")
-                or row["submitted_by"] == session.get("user_id")):
-            raise ValueError("لا يجوز اعتماد أو رفض فاتورة أنشأتها أو أرسلتها للمراجعة بنفسك.")
+        permissions = set(session.get("permissions", ()))
+        privileged_approver = (
+            session.get("role") == "admin"
+            or {"sales.manage", "sales.approve"}.issubset(permissions)
+        )
+        if ((row["created_by"] == session.get("user_id")
+             or row["submitted_by"] == session.get("user_id"))
+                and not privileged_approver):
+            raise ValueError("اعتماد الفاتورة الذاتية متاح لمدير النظام أو المدير المفوض بصلاحيات إدارة واعتماد المبيعات فقط.")
         action = request.form.get("action")
         reason = str(request.form.get("reason") or "").strip()
         if action == "reject":
