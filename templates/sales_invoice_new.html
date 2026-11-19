@@ -25,14 +25,27 @@ invoiceBody.addEventListener('keydown',function(event){
  else{
   next=row.cloneNode(true);
   next.hidden=false;
-  next.querySelector('[name="product_id"]').value='';
+  // Cloned controls must not retain duplicate DOM IDs or stale search widgets.
+  next.querySelectorAll('[id]').forEach(element=>element.removeAttribute('id'));
+  next.querySelectorAll('input').forEach(input=>{
+    if(input.type==='checkbox'||input.type==='radio')input.checked=false;
+    else input.value='';
+    input.removeAttribute('aria-controls');
+    input.removeAttribute('aria-expanded');
+  });
+  const product=next.querySelector('[name="product_id"]');
+  product.value='';
   next.querySelector('[name="description"]').value='';
   next.querySelector('[name="quantity"]').value='1';
   const uom=next.querySelector('[name="uom_id"]');uom.selectedIndex=0;
   next.querySelector('[name="unit_price"]').value='0';
   next.querySelector('[name="line_tax_treatment"]').value='standard';
   next.querySelector('[name="line_tax_rate"]').value='{{ settings.get("default_vat_rate","14") }}';
-  uom.querySelectorAll('option').forEach(option=>option.hidden=false);
+  next.querySelectorAll('select option').forEach(option=>option.hidden=false);
+  next.querySelectorAll('select').forEach(select=>{
+    select.removeAttribute('aria-hidden');
+    select.classList.remove('select2-hidden-accessible');
+  });
   invoiceBody.appendChild(next);
   setupInvoiceProductRow(next);
  }
