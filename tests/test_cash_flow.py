@@ -296,7 +296,7 @@ class CashFlowReportTests(unittest.TestCase):
         self.assertNotIn("2130", {row["code"] for row in indirect["unmapped_accounts"]})
         self.assertNotIn("2190", {row["code"] for row in indirect["unmapped_accounts"]})
 
-    def test_fixed_asset_depreciation_account_is_added_back_in_indirect_method(self):
+    def test_general_expense_account_linked_to_asset_is_not_added_back_as_depreciation(self):
         conn = financial_planning._connect()
         conn.execute("CREATE TABLE fixed_assets(id INTEGER PRIMARY KEY, expense_account_id INTEGER)")
         conn.execute("INSERT INTO fixed_assets(id,expense_account_id) VALUES(1,4)")
@@ -305,8 +305,8 @@ class CashFlowReportTests(unittest.TestCase):
             journal_entry_id INTEGER
         )""")
         conn.execute("INSERT INTO asset_depreciations VALUES(1,1,'2026-11','80',3)")
-        # A separate depreciation posting to the same expense account must not
-        # disappear merely because another asset depreciation is linked there.
+        # This asset points at a general operating expense account. Its unrelated
+        # administrative posting must not be classified as depreciation.
         conn.execute("INSERT INTO journal_entries VALUES(6,'2026-11-22','posted')")
         conn.executemany(
             "INSERT INTO journal_lines VALUES(?,?,?,?,?)",
@@ -320,7 +320,7 @@ class CashFlowReportTests(unittest.TestCase):
             item for item in snapshot["indirect_items"]
             if item["label"] == "إضافة الإهلاك والمصروفات غير النقدية المحددة"
         )
-        self.assertEqual(adjustment["amount"], financial_planning.Decimal("105"))
+        self.assertEqual(adjustment["amount"], financial_planning.Decimal("80"))
 
     def test_year_end_closing_entry_is_not_added_back_as_depreciation(self):
         conn = financial_planning._connect()
