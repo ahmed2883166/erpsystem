@@ -2100,11 +2100,14 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     # already represented by asset_depreciations.amount. Excluding an entire
     # account would hide separate/manual depreciation postings to that account.
     depreciation_candidate_ids=set(depreciation_account_ids)
+    # Account-code prefixes are not evidence of depreciation: chart templates
+    # may place administration, maintenance and other operating costs under 64/65.
+    # Only explicit depreciation labels (or asset_depreciations subledger rows)
+    # may be added back as non-cash expenses.
     depreciation_candidate_ids.update(
         row["account_id"] for row in period_rows
         if row["account_type"]=="expense"
-        and (str(row["code"]).startswith(("64","65"))
-             or "إهلاك" in str(row["name_ar"])
+        and ("إهلاك" in str(row["name_ar"])
              or "depreciation" in str(row["name_ar"]).lower())
     )
     other_depreciation=Decimal("0")
