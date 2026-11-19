@@ -223,6 +223,37 @@ class JournalAndLedgerFilterTests(unittest.TestCase):
         self.assertIn("-130.00", html)  # Revenue account net credit.
         self.assertNotIn("999.00", html)  # Draft journal line must not enter the report.
 
+    def test_trial_balance_excludes_copied_opening_and_its_full_reversal(self):
+        conn = connect_database(self.db_path)
+        conn.executescript("""
+            CREATE TABLE financial_year_journal_history(
+                id INTEGER PRIMARY KEY, financial_year_id INTEGER,
+                entry_kind TEXT, action TEXT, entry_id INTEGER,
+                related_entry_id INTEGER, ledger_history_copied INTEGER
+            );
+            INSERT INTO financial_year_journal_history
+                (financial_year_id,entry_kind,action,entry_id,ledger_history_copied)
+                VALUES(1,'opening','created',1,1);
+            INSERT INTO journal_entries VALUES
+                (5,'2026-01-05','OPEN-REV-1','Reverse copied opening','posted','general',1,'2026-01-05');
+            INSERT INTO journal_lines VALUES
+                (8,5,1,'0','100.00','Reverse opening cash'),
+                (9,5,2,'100.00','0','Reverse opening revenue');
+            INSERT INTO financial_year_journal_history
+                (financial_year_id,entry_kind,action,entry_id,related_entry_id)
+                VALUES(1,'opening','reversed',5,1);
+        """)
+        conn.commit()
+        conn.close()
+
+        response = self.client.get(
+            "/reports/trial-balance?date_from=2026-01-01&date_to=2026-01-31"
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertNotIn("100.00", html)
+        self.assertIn("30.00", html)
+
 
 if __name__ == "__main__":
     unittest.main()
