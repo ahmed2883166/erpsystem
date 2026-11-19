@@ -52,12 +52,12 @@ jobs:
           #!/usr/bin/env bash
           set -euo pipefail
           tool="$(basename "$0")"
-          exec docker run --rm --network host \
-            -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE \
-            -e PGSSLMODE -e PGSSLROOTCERT -e PGSSLCERT -e PGSSLKEY \
-            -e PGCONNECT_TIMEOUT -e PGAPPNAME -e PGOPTIONS \
-            -v /tmp:/tmp \
-            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+          exec docker run --rm --network host \\
+            -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE \\
+            -e PGSSLMODE -e PGSSLROOTCERT -e PGSSLCERT -e PGSSLKEY \\
+            -e PGCONNECT_TIMEOUT -e PGAPPNAME -e PGOPTIONS \\
+            -v /tmp:/tmp \\
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \\
             -w "$GITHUB_WORKSPACE" postgres:16 "$tool" "$@"
           EOF
             chmod +x "$tool_dir/$tool"
@@ -74,6 +74,10 @@ jobs:
         run: ruff check app.py postgres_backup.py postgres_backup_scheduler.py accounting_core.py stock.py sales.py purchases.py party_reports.py report_exports.py license_server.py financial_planning.py tests --select F401,F841 --output-format=github
       - name: Run unit and integration tests on supported SQLite runtime
         run: python run_tests.py
+      - name: Build isolated full PostgreSQL baseline
+        run: python scripts/build_postgres_baseline.py --output-dir "$RUNNER_TEMP/nexus-postgres-baseline"
+      - name: Exercise full Flask initialization and real PostgreSQL workflows
+        run: python scripts/smoke_postgres_full_runtime.py --baseline "$RUNNER_TEMP/nexus-postgres-baseline/nexus_full_schema.sql"
   windows-smoke:
     name: Windows local runtime and backup/restore smoke tests
     runs-on: windows-latest
