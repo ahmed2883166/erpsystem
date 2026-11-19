@@ -177,7 +177,9 @@ def _journal_entry_effect_is_active(conn, journal_entry_id, as_of=None):
     ).fetchone()
     if not entry or entry[0] != "posted":
         return False
-    values = dict(zip(selected, tuple(entry)))
+    # Mapping-style PostgreSQL rows iterate over column names, not values.
+    # Read by key explicitly so date/reversal checks see the actual journal fields.
+    values = {column: entry[column] for column in selected}
     if as_of and values.get("entry_date"):
         # psycopg may return DATE columns as datetime.date while callers pass
         # ISO strings. Compare normalized ISO dates to keep both adapters aligned.
