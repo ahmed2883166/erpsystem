@@ -32,5 +32,6 @@
 <section class="panel"><h3>سجل الجزاءات</h3><div class="table-wrap"><table><tr><th>التاريخ</th><th>شهر الخصم</th><th>السبب</th><th>المبلغ</th><th>الحالة</th></tr>
 {% for p in penalties %}<tr><td>{{p.penalty_date}}</td><td>{{p.effective_period}}</td><td>{{p.reason}}</td><td>{{p.amount}}</td><td>{{p.status}}</td></tr>{% else %}<tr><td colspan="5">لا توجد جزاءات خلال الفترة.</td></tr>{% endfor %}</table></div></section>
 {% if unallocated %}<section class="panel"><h3>دفعات قديمة غير موزعة على موظف بعينه</h3><p class="muted">هذه دفعات سُجلت قبل تفعيل التوزيع الفردي. لا ننسبها تلقائيًا للموظف حتى لا نعرض معلومة غير مؤكدة.</p><div class="table-wrap"><table><tr><th>الشهر</th><th>التاريخ</th><th>المبلغ الإجمالي للمسير</th><th>المرجع</th></tr>{% for p in unallocated %}<tr><td>{{p.period}}</td><td>{{p.payment_date}}</td><td>{{p.amount}}</td><td>{{p.reference}}</td></tr>{% endfor %}</table></div></section>{% endif %}
-<style>@media print{aside,.global-search,.global-report-actions,.theme-toggle,.no-print{display:none!important}main{margin:0!important;padding:0!important}.panel{break-inside:avoid}body{background:#fff!important;color:#000!important}}</style>
+<style>
+/* تنسيقات كشف حساب الموظف وحركة المستحقات والاستقطاعات. */@media print{aside,.global-search,.global-report-actions,.theme-toggle,.no-print{display:none!important}main{margin:0!important;padding:0!important}.panel{break-inside:avoid}body{background:#fff!important;color:#000!important}}</style>
 {% endblock %}
