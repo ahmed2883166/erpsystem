@@ -81,6 +81,24 @@ class UserPermissionRouteTests(unittest.TestCase):
         self.assertEqual(audit[2], "failure")
         self.assertIn("edit_user", audit[3])
 
+    def test_new_user_creation_rejects_password_shorter_than_twelve_characters(self):
+        with self.client.session_transaction() as session:
+            session.update(user_id=1, username="admin", full_name="مدير",
+                           role="admin", permissions=["users.manage"])
+        response = self.client.post("/users", data={
+            "username": "short.password", "full_name": "مستخدم",
+            "password": "short", "role": "viewer",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("12 حرفًا", response.get_data(as_text=True))
+        conn = sqlite3.connect(nexus.DB_PATH)
+        try:
+            self.assertIsNone(conn.execute(
+                "SELECT id FROM users WHERE username='short.password'"
+            ).fetchone())
+        finally:
+            conn.close()
+
     def test_admin_can_create_custom_role_and_new_user_inherits_role_permissions(self):
         with self.client.session_transaction() as session:
             session.update(user_id=1, username="admin", full_name="مدير",
