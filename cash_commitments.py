@@ -190,8 +190,18 @@ def list_cash_commitment_duplicate_origins(conn):
               (SELECT COUNT(*) FROM cash_commitment_payments p WHERE p.commitment_id=c.id) payment_count
             FROM cash_commitments c WHERE c.origin_type=? AND c.origin_id=? AND c.status<>'void' ORDER BY c.id
         """,(group["origin_type"],group["origin_id"])).fetchall()
+        items=[]
+        for row in rows:
+            item=dict(row)
+            item["paid_total"]=Decimal("0")
+            item["effective_payment_count"]=0
+            if item["payment_count"]:
+                summary=cash_commitment_payment_summary(conn,item["id"])
+                item["paid_total"]=summary["paid_total"]
+                item["effective_payment_count"]=sum(1 for p in summary["payments"] if p["effective"])
+            items.append(item)
         result.append({"origin_type":group["origin_type"],"origin_id":group["origin_id"],
-                       "items":[dict(row) for row in rows]})
+                       "items":items})
     return result
 
 
@@ -219,10 +229,11 @@ def resolve_cash_commitment_duplicate_origin(conn, kept_id, voided_ids, reason, 
         if {int(r["id"]) for r in group}!=set(ids):
             raise ValueError("حدد كل سجلات المجموعة قبل اعتماد التسوية.")
         for duplicate_id in voided_ids:
-            payments=execute_compat(conn,"SELECT COUNT(*) FROM cash_commitment_payments WHERE commitment_id=?",
-                                    (duplicate_id,)).fetchone()[0]
-            if payments:
-                raise ValueError(f"الالتزام #{duplicate_id} له دفعات مرتبطة؛ اعكس الدفعات أولًا.")
+            payment_summary=cash_commitment_payment_summary(conn,duplicate_id)
+            if payment_summary["paid_total"] > 0:
+                raise ValueError(
+                    f"الالتزام #{duplicate_id} عليه دفعات فعّالة؛ اعكس الدفعات أولًا."
+                )
             duplicate=by_id[duplicate_id]
             if duplicate["status"]!="void":
                 execute_compat(conn,"""
