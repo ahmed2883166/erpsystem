@@ -33,7 +33,7 @@
   {% if s.opening_balance_warning %}
   <div class="balance-warning no-print">
     <strong>تنبيه تصنيف الأرصدة الافتتاحية</strong>
-    <span>{{ s.opening_balance_warning }} عدد القيود غير المصنفة: {{ s.opening_balance_unclassified_count }}.</span>
+    <span>{{ s.opening_balance_warning }} عدد الحالات المطلوب مراجعتها: {{ s.opening_balance_review_count }}؛ قيود بلا تصنيف: {{ s.opening_balance_unclassified_count }}؛ تعارضات مع حركة الدفتر الحالية: {{ s.opening_balance_classification_conflict_count }}.</span>
   </div>
   {% endif %}
 
