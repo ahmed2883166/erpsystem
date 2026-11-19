@@ -143,6 +143,14 @@ def initialize_planning_schema(conn):
     CREATE INDEX IF NOT EXISTS idx_financial_year_journal_history
       ON financial_year_journal_history(financial_year_id,entry_kind,id);
     """)
+    # Freeze whether a later-year opening entry duplicates already-posted
+    # historical ledger activity. A future backfill must never flip this flag.
+    history_columns = table_columns(conn, "financial_year_journal_history")
+    if "ledger_history_copied" not in history_columns:
+        _execute(
+            conn,
+            "ALTER TABLE financial_year_journal_history ADD COLUMN ledger_history_copied INTEGER"
+        )
     if database_dialect(conn) == "sqlite":
         execute_script(conn, """
         CREATE TRIGGER IF NOT EXISTS budget_audit_no_update
@@ -454,9 +462,16 @@ def create_opening_entry(conn, year_id, balances, created_by=None):
             lines, created_by,
         )
         _execute(conn, "UPDATE financial_years SET opening_entry_id=? WHERE id=?", (entry_id, year_id))
-        _execute(conn, """INSERT INTO financial_year_journal_history
-            (financial_year_id,entry_kind,action,entry_id,created_by)
-            VALUES(?,'opening','created',?,?)""", (year_id, entry_id, created_by))
+        history_columns = table_columns(conn, "financial_year_journal_history")
+        if "ledger_history_copied" in history_columns:
+            _execute(conn, """INSERT INTO financial_year_journal_history
+                (financial_year_id,entry_kind,action,entry_id,created_by,ledger_history_copied)
+                VALUES(?,'opening','created',?,?,?)""",
+                (year_id, entry_id, created_by, int(prior_posted > 0)))
+        else:
+            _execute(conn, """INSERT INTO financial_year_journal_history
+                (financial_year_id,entry_kind,action,entry_id,created_by)
+                VALUES(?,'opening','created',?,?)""", (year_id, entry_id, created_by))
         conn.commit()
         return entry_id
     except Exception:
@@ -1494,35 +1509,46 @@ def build_balance_sheet_snapshot(conn, as_of):
     section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
     subtype_expr = "a.account_subtype" if "account_subtype" in account_columns else "NULL"
 
-    # Opening journals for a later year are a reconciliation copy of balances
-    # already present in the historical ledger. Including both the historical
-    # movements and that opening copy doubles the balance sheet. Keep genuine
-    # first-year opening balances, but omit copied opening entries (and their
-    # reversal journals) whenever posted ledger history predates that year.
+    # Exclude only opening entries explicitly classified as copies when
+    # they were created. Never infer this from today's ledger contents: a late
+    # historical import must not retroactively change prior balance sheets.
     excluded_opening_ids = set()
+    unclassified_opening_count = 0
     if _table_exists_financial(conn, "financial_years") and _table_exists_financial(
         conn, "financial_year_journal_history"
     ):
-        opening_rows = _execute(conn, """
-            SELECT h.entry_id,fy.start_date
-            FROM financial_year_journal_history h
-            JOIN financial_years fy ON fy.id=h.financial_year_id
-            WHERE h.entry_kind='opening' AND h.action='created'
-              AND fy.start_date<=?
-              AND EXISTS (
-                  SELECT 1 FROM journal_entries prior
-                  WHERE prior.status='posted' AND prior.entry_date<fy.start_date
-              )
-        """, (as_of,)).fetchall()
-        excluded_opening_ids = {int(row["entry_id"]) for row in opening_rows}
-        if excluded_opening_ids:
-            marks = ",".join("?" for _ in excluded_opening_ids)
-            reversal_rows = _execute(conn, f"""
-                SELECT entry_id FROM financial_year_journal_history
-                WHERE entry_kind='opening' AND action='reversed'
-                  AND related_entry_id IN ({marks})
-            """, tuple(sorted(excluded_opening_ids))).fetchall()
-            excluded_opening_ids.update(int(row["entry_id"]) for row in reversal_rows)
+        history_columns = table_columns(conn, "financial_year_journal_history")
+        if "ledger_history_copied" in history_columns:
+            opening_rows = _execute(conn, """
+                SELECT h.entry_id
+                FROM financial_year_journal_history h
+                JOIN financial_years fy ON fy.id=h.financial_year_id
+                WHERE h.entry_kind='opening' AND h.action='created'
+                  AND h.ledger_history_copied=1 AND fy.start_date<=?
+            """, (as_of,)).fetchall()
+            unclassified_opening_count = _execute(conn, """
+                SELECT COUNT(*)
+                FROM financial_year_journal_history h
+                JOIN financial_years fy ON fy.id=h.financial_year_id
+                WHERE h.entry_kind='opening' AND h.action='created'
+                  AND h.ledger_history_copied IS NULL AND fy.start_date<=?
+            """, (as_of,)).fetchone()[0]
+            excluded_opening_ids = {int(row["entry_id"]) for row in opening_rows}
+            if excluded_opening_ids:
+                marks = ",".join("?" for _ in excluded_opening_ids)
+                reversal_rows = _execute(conn, f"""
+                    SELECT entry_id FROM financial_year_journal_history
+                    WHERE entry_kind='opening' AND action='reversed'
+                      AND related_entry_id IN ({marks})
+                """, tuple(sorted(excluded_opening_ids))).fetchall()
+                excluded_opening_ids.update(int(row["entry_id"]) for row in reversal_rows)
+        else:
+            unclassified_opening_count = _execute(conn, """
+                SELECT COUNT(*)
+                FROM financial_year_journal_history h
+                JOIN financial_years fy ON fy.id=h.financial_year_id
+                WHERE h.entry_kind='opening' AND h.action='created' AND fy.start_date<=?
+            """, (as_of,)).fetchone()[0]
 
     exclusion_sql = ""
     exclusion_params = []
@@ -1604,7 +1630,13 @@ def build_balance_sheet_snapshot(conn, as_of):
             "equity_before_profit":equity,"net_profit":net_profit,"total_equity":total_equity,
             "negative_asset_accounts":negative_asset_accounts,
             "balance_difference":assets-liabilities-total_equity,
-            "balanced":assets==liabilities+total_equity,"as_of":as_of}
+            "balanced":assets==liabilities+total_equity,"as_of":as_of,
+            "opening_balance_unclassified_count": int(unclassified_opening_count),
+            "opening_balance_warning": (
+                "توجد قيود افتتاحية تاريخية لم يُحفظ معها تصنيف يثبت هل هي أرصدة منقولة أم أرصدة أولية. "
+                "لم يستبعدها النظام تلقائيًا؛ راجعها قبل اعتماد المركز المالي."
+                if unclassified_opening_count else ""
+            )}
 
 
 @planning_bp.route("/reports/balance-sheet")
