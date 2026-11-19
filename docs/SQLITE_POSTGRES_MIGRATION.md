@@ -8,7 +8,7 @@ startup. This runbook describes a controlled rehearsal, not a production cutover
 
 ## Safety requirements
 
-- Work only on branch `feature/company-setup-currency-tax-activity`.
+- Development and rehearsal changes for this phase are restricted to branch `work/phase7-bootstrap-ux`; do not use `main` or merge without explicit approval.
 - Keep an untouched backup of the SQLite database before any rehearsal.
 - Use a dedicated, disposable PostgreSQL schema. The copy utility rejects
   `public`, missing/extra tables, missing/extra columns, and non-empty target
@@ -76,3 +76,37 @@ The verifier is a reconciliation gate, not a migration or cutover tool. It does
 not yet prove every operational workflow, tax report, opening/closing balance,
 or bank statement reconciliation. It does not switch Flask to PostgreSQL.
 Do not treat matching row counts and control totals as approval to cut over.
+
+## Production cutover is not yet authorized
+
+The rehearsal test suite creates representative data in temporary databases. It
+does not replace a rehearsal against a current, customer-approved backup, and it
+does not authorize changing the application's runtime backend.
+
+Before a real cutover, all of the following are mandatory:
+
+- Close the latest Linux and Windows CI runs on the exact branch HEAD; retain
+  their run URLs and job conclusions.
+- Complete PostgreSQL workflow acceptance against the full application schema
+  for payroll posting, bank statement reconciliation, Egypt/Saudi tax
+  preparation, inventory movements, and all critical accounting reports.
+  Helper-level tests alone are not sufficient.
+- Run a read-only preflight against a customer-created backup, then copy only
+  into a separately provisioned rehearsal database. Preserve the source file.
+- Require a clean post-copy verifier report: zero missing/extra tables or
+  columns, zero row-count mismatches, zero skipped required financial or
+  inventory controls, zero unbalanced journal groups, and exact matching
+  monetary and stock valuation controls.
+- Compare trial balance, general ledger, balance sheet, income statement,
+  customer/supplier balances, bank balances, VAT summaries, and inventory
+  valuation before and after migration. Investigate every difference.
+- Complete a real PostgreSQL backup/restore round-trip and verify the restored
+  database independently.
+- Obtain explicit owner approval for a maintenance window and a rollback
+  plan. Keep the original SQLite database untouched and recoverable.
+- Only after approval, implement and test a controlled runtime switch. Keep
+  SQLite as the rollback source until post-cutover acceptance is signed off.
+
+Never run the rehearsal commands against the live company database or point
+them at the production PostgreSQL schema. No customer data is required for
+ordinary CI tests.
