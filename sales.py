@@ -1741,11 +1741,12 @@ def allocate_customer_advance(conn, advance_receipt_id, allocations, allocation_
                                created_by=None):
     """Apply one advance to one or more posted invoices belonging to the same customer."""
     allocation_date = _validate_customer_advance_date(allocation_date)
-    receipt = execute_compat(conn, 
-        """SELECT r.*,c.name customer_name FROM customer_advance_receipts r
-           JOIN customers c ON c.id=r.customer_id WHERE r.id=? AND c.active=1""",
-        (advance_receipt_id,),
-    ).fetchone()
+    begin_write_transaction(conn)
+    receipt_sql = """SELECT r.*,c.name customer_name FROM customer_advance_receipts r
+           JOIN customers c ON c.id=r.customer_id WHERE r.id=? AND c.active=1"""
+    if database_dialect(conn) == "postgresql":
+        receipt_sql += " FOR UPDATE OF r"
+    receipt = execute_compat(conn, receipt_sql, (advance_receipt_id,)).fetchone()
     if not receipt:
         raise ValueError("إيصال مقدم العميل غير موجود أو العميل غير نشط.")
     if allocation_date < receipt["receipt_date"]:
@@ -1757,10 +1758,10 @@ def allocate_customer_advance(conn, advance_receipt_id, allocations, allocation_
             raise ValueError("لا يمكن اختيار الفاتورة أكثر من مرة في نفس عملية التخصيص.")
         seen.add(invoice_id)
         amount = _validated_customer_advance_amount(raw_amount, "قيمة التخصيص")
-        invoice = execute_compat(conn, 
-            "SELECT * FROM sales_invoices WHERE id=? AND customer_id=? AND status='posted'",
-            (invoice_id, receipt["customer_id"]),
-        ).fetchone()
+        invoice_sql = "SELECT * FROM sales_invoices WHERE id=? AND customer_id=? AND status='posted'"
+        if database_dialect(conn) == "postgresql":
+            invoice_sql += " FOR UPDATE"
+        invoice = execute_compat(conn, invoice_sql, (invoice_id, receipt["customer_id"])).fetchone()
         if not invoice:
             raise ValueError("إحدى الفواتير لا تتبع نفس العميل أو غير مرحلة.")
         if allocation_date < date.fromisoformat(invoice["invoice_date"]).isoformat():
