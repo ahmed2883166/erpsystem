@@ -50,7 +50,8 @@ from database import connect_database, enable_wal, fetch_page, register_sqlite_c
 from database_backend import require_supported_runtime_backend, configured_database_backend
 from core_schema import initialize_core_schema, ensure_legacy_core_columns
 from company_defaults import seed_company_defaults
-from sqlite_accounting_migrations import (migrate_journal_line_amounts_to_text,\n                                         migrate_currency_rates_to_text)
+from sqlite_accounting_migrations import (migrate_journal_line_amounts_to_text,
+                                         migrate_currency_rates_to_text)
 from sqlite_audit_schema import initialize_sqlite_audit_schema
 from postgres_audit_schema import initialize_postgres_audit_schema
 from db_sql import execute_compat, executemany_compat
