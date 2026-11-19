@@ -6,7 +6,7 @@ inherit a supported base activity and can be selected independently.
 """
 import json
 import re
-from db_compat import execute_script, insert_and_get_id, table_columns, table_exists
+from db_compat import execute_script, insert_and_get_id, table_columns, table_exists, transactional_migration
 from db_sql import execute_compat
 
 from chart_templates import (
@@ -32,6 +32,7 @@ SPECIALIZED_ACTIVITY_PRESETS = {
 }
 
 
+@transactional_migration
 def initialize_activity_profiles_schema(conn):
     execute_script(conn, """
     CREATE TABLE IF NOT EXISTS activity_profiles (
