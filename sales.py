@@ -13,7 +13,7 @@ from functools import wraps
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, safe_error_message, decimal_sum_expression
-from db_compat import table_columns, table_exists, insert_and_get_id, begin_write_transaction, execute_script, database_dialect, DB_ERROR, DB_INTEGRITY_ERROR
+from db_compat import table_columns, table_exists, insert_and_get_id, begin_write_transaction, execute_script, database_dialect, DB_ERROR, DB_INTEGRITY_ERROR, transactional_connection_initializer
 from db_sql import execute_compat
 from database import connect_database, fetch_page
 from stock import consume_layers, product_uom_factor, product_uom_options, product_uom_storage, lock_stock_warehouses
@@ -95,8 +95,8 @@ def _sales_credit_note_and_invoice_for_update(conn, credit_note_id):
 
 
 
-def init_sales_schema():
-    c = db()
+@transactional_connection_initializer(db)
+def init_sales_schema(c):
     initialize_analytic_dimensions_schema(c)
     execute_script(c, """
     CREATE TABLE IF NOT EXISTS salespersons(
@@ -374,8 +374,6 @@ def init_sales_schema():
             execute_compat(c, f"ALTER TABLE sales_invoices ADD COLUMN {name} {definition}")
     # Re-run after creating customers and salespersons so their journal dimensions exist.
     initialize_analytic_dimensions_schema(c)
-    c.commit()
-    c.close()
 
 def require(permission):
     def deco(fn):
