@@ -521,7 +521,7 @@ class PurchasingAccountingTests(unittest.TestCase):
         self.assertEqual(bill_totals["2190"], (Decimal("112.00"), Decimal("0.00")))
         self.assertEqual(bill_totals["2110"], (Decimal("0.00"), Decimal("112.00")))
 
-        app2 = Flask(__name__)
+        app2 = Flask(__name__, template_folder=str(Path(purchases.__file__).resolve().parent / "templates"))
         app2.secret_key = "test"
         app2.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
         app2.register_blueprint(purchases.purchase_bp)
