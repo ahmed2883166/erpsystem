@@ -65,7 +65,6 @@ def main() -> int:
 
         import app as nexus_app
         import database as database_module
-        from flask_wtf.csrf import generate_csrf
 
         # Keep the production gate fail-closed. The isolated smoke process
         # temporarily permits PostgreSQL only in these already-imported module
@@ -600,7 +599,14 @@ def main() -> int:
                     client = nexus_app.app.test_client()
                     def set_session_user(user_id):
                         with client.session_transaction() as session_data:
+                            # Change only the authenticated identity. Flask-WTF's
+                            # session-bound CSRF secret must survive role switches,
+                            # exactly as it does when a browser logs in/out without
+                            # discarding the whole cookie session.
+                            csrf_secret = session_data.get("csrf_token")
                             session_data.clear()
+                            if csrf_secret:
+                                session_data["csrf_token"] = csrf_secret
                             session_data["user_id"] = int(user_id)
                             session_data["role"] = "admin"
 
@@ -621,19 +627,17 @@ def main() -> int:
                             raise AssertionError(
                                 "Payroll page did not render the CSRF token required for POST."
                             )
-                        # Explicitly seed the session-side CSRF secret inside the
-                        # test client's persisted session. The HTML after-request hook
-                        # renders a signed token, but this smoke test switches identities
-                        # by clearing the session; generating again here guarantees the
-                        # submitted token and persisted session secret belong together.
+                        # Rendering the form creates Flask-WTF's session secret and
+                        # signed token. Submit that exact token; do not call
+                        # generate_csrf() outside a request context, which would bind
+                        # it to a different context/session than the test client's cookie.
                         with client.session_transaction() as session_data:
-                            csrf_token = generate_csrf()
                             if not session_data.get("csrf_token"):
                                 raise AssertionError(
-                                    "CSRF token generation did not persist its session secret."
+                                    "Rendered payroll CSRF token has no persisted session secret."
                                 )
                         payload = dict(data)
-                        payload["csrf_token"] = csrf_token
+                        payload["csrf_token"] = csrf_match.group(1)
                         return client.post(
                             path, data=payload, follow_redirects=follow_redirects
                         )
