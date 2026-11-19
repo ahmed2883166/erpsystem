@@ -92,6 +92,9 @@ def _rebuild_real_columns_as_text(connection, table_name, column_names):
     comparison_pattern = re.compile(
         rf'(?i)({qualified_column})\s*(<=|>=|<>|!=|=|<|>)\s*({qualified_column}|{numeric_literal})'
     )
+    reverse_comparison_pattern = re.compile(
+        rf'(?i)({numeric_literal})\s*(<=|>=|<>|!=|=|<|>)\s*({qualified_column})'
+    )
     between_pattern = re.compile(
         rf'(?i)({qualified_column})\s+BETWEEN\s+({qualified_column}|{numeric_literal})'
         rf'\s+AND\s+({qualified_column}|{numeric_literal})'
@@ -108,6 +111,13 @@ def _rebuild_real_columns_as_text(connection, table_name, column_names):
         statement = comparison_pattern.sub(
             lambda match: (
                 cast_real_columns(match.group(1)) + " " + match.group(2) + " "
+                + cast_real_columns(match.group(3))
+            ),
+            statement,
+        )
+        statement = reverse_comparison_pattern.sub(
+            lambda match: (
+                match.group(1) + " " + match.group(2) + " "
                 + cast_real_columns(match.group(3))
             ),
             statement,
