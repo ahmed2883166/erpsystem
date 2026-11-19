@@ -345,6 +345,204 @@ def main() -> int:
                         "journal_entry_id": depreciation_journal_id,
                         "amount": str(depreciation_amount),
                     }
+
+                    # Exercise the real bank statement matching helpers against the
+                    # full PostgreSQL application schema. The fixture uses a dedicated
+                    # asset account and a disposable journal entry.
+                    import banking
+                    from accounting_core import post_journal
+
+                    bank_account = execute_compat(
+                        connection,
+                        """SELECT a.id FROM accounts a
+                             WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
+                               AND NOT EXISTS (
+                                   SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id
+                               )
+                             ORDER BY a.code LIMIT 1""",
+                    ).fetchone()
+                    if not bank_account:
+                        raise AssertionError("PostgreSQL chart has no unused asset account for bank reconciliation smoke.")
+                    base_currency_row = execute_compat(
+                        connection,
+                        "SELECT setting_value FROM company_settings WHERE setting_key='base_currency'",
+                    ).fetchone()
+                    base_currency = base_currency_row["setting_value"] if base_currency_row else "EGP"
+                    bank_account_id = int(bank_account["id"])
+                    insert_and_get_id(
+                        connection,
+                        """INSERT INTO cash_accounts(
+                               kind,name_ar,account_id,currency_code,bank_name,opening_date,created_by
+                           ) VALUES('bank',?,?,?,?,?,?)""",
+                        ("بنك اختبار PostgreSQL", bank_account_id, base_currency,
+                         "PG Smoke Bank", today.isoformat(), admin_id),
+                    )
+                    bank_journal_id = post_journal(
+                        connection, today.isoformat(), "PG-SMOKE-BANK-RECON",
+                        "اختبار مطابقة كشف بنك PostgreSQL",
+                        [
+                            (bank_account_id, Decimal("75.00"), Decimal("0"), "إيداع اختبار"),
+                            (int(expense_account["id"]), Decimal("0"), Decimal("75.00"), "مقابل إيداع اختبار"),
+                        ],
+                        admin_id,
+                    )
+                    bank_transaction_id = insert_and_get_id(
+                        connection,
+                        """INSERT INTO bank_transactions(
+                               transaction_no,transaction_date,bank_account_id,transaction_type,
+                               amount,counter_account_id,description,bank_reference,journal_entry_id,
+                               reconciled,created_by
+                           ) VALUES(?,?,?,'deposit',?,?,?,?,?,0,?)""",
+                        ("PG-SMOKE-BANK-TX", today.isoformat(), bank_account_id, "75.00",
+                         int(expense_account["id"]), "إيداع اختبار", "PG-SMOKE-REF",
+                         bank_journal_id, admin_id),
+                    )
+                    bank_journal_line = execute_compat(
+                        connection,
+                        """SELECT id FROM journal_lines
+                             WHERE entry_id=? AND account_id=? AND debit='75.00'
+                             ORDER BY id LIMIT 1""",
+                        (bank_journal_id, bank_account_id),
+                    ).fetchone()
+                    if not bank_journal_line:
+                        # PostgreSQL numeric columns may be returned in a normalized
+                        # representation; compare numerically instead of relying on text.
+                        bank_journal_line = execute_compat(
+                            connection,
+                            """SELECT id FROM journal_lines
+                                 WHERE entry_id=? AND account_id=? AND CAST(debit AS NUMERIC)=75
+                                 ORDER BY id LIMIT 1""",
+                            (bank_journal_id, bank_account_id),
+                        ).fetchone()
+                    if not bank_journal_line:
+                        raise AssertionError("Bank reconciliation smoke journal has no bank-side journal line.")
+                    bank_statement_line_id = insert_and_get_id(
+                        connection,
+                        """INSERT INTO bank_statement_lines(
+                               bank_account_id,statement_date,signed_amount,description,
+                               bank_reference,created_by
+                           ) VALUES(?,?,?,?,?,?)""",
+                        (bank_account_id, today.isoformat(), "75.00",
+                         "إيداع اختبار", "PG-SMOKE-REF", admin_id),
+                    )
+                    banking.save_statement_line_match(
+                        connection, bank_statement_line_id, bank_journal_line["id"],
+                        today.isoformat(), admin_id,
+                    )
+                    if not banking.refresh_bank_transaction_reconciled(connection, bank_journal_id):
+                        raise AssertionError("PostgreSQL bank reconciliation did not refresh the transaction.")
+                    reconciled_bank = execute_compat(
+                        connection, "SELECT reconciled FROM bank_transactions WHERE id=?",
+                        (bank_transaction_id,),
+                    ).fetchone()
+                    if not reconciled_bank or int(reconciled_bank["reconciled"]) != 1:
+                        raise AssertionError("A fully matched PostgreSQL bank transaction was not marked reconciled.")
+                    duplicate_match_rejected = False
+                    try:
+                        banking.save_statement_line_match(
+                            connection, bank_statement_line_id, bank_journal_line["id"],
+                            today.isoformat(), admin_id,
+                        )
+                    except ValueError:
+                        duplicate_match_rejected = True
+                    if not duplicate_match_rejected:
+                        raise AssertionError("PostgreSQL bank reconciliation allowed a duplicate statement match.")
+                    bank_flow = {
+                        "transaction_id": bank_transaction_id,
+                        "journal_entry_id": bank_journal_id,
+                        "statement_line_id": bank_statement_line_id,
+                    }
+
+                    # Exercise Egypt and Saudi VAT preparation against the same
+                    # full-app PostgreSQL schema. These tax values belong only to
+                    # this disposable smoke database; no production document is touched.
+                    import tax_center
+                    previous_tax_country = execute_compat(
+                        connection,
+                        "SELECT setting_value FROM company_settings WHERE setting_key='tax_country'",
+                    ).fetchone()
+                    previous_tax_number = execute_compat(
+                        connection,
+                        "SELECT setting_value FROM company_settings WHERE setting_key='tax_number'",
+                    ).fetchone()
+                    execute_compat(
+                        connection,
+                        """INSERT INTO company_settings(setting_key,setting_value)
+                             VALUES('tax_country','EG')
+                             ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value""",
+                    )
+                    execute_compat(
+                        connection,
+                        """INSERT INTO company_settings(setting_key,setting_value)
+                             VALUES('tax_number','123456789')
+                             ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value""",
+                    )
+                    execute_compat(
+                        connection,
+                        """UPDATE sales_invoices
+                              SET subtotal='40.00',tax_rate='14',tax_amount='5.60',
+                                  total_amount='45.60',tax_reference='PG-SMOKE-SALE'
+                            WHERE id=?""",
+                        (invoice["invoice_id"],),
+                    )
+                    execute_compat(
+                        connection,
+                        """UPDATE supplier_bills
+                              SET subtotal='25.50',tax_rate='14',tax_amount='3.57',
+                                  total_amount='29.07',tax_reference='PG-SMOKE-PURCHASE',
+                                  input_vat_deductible_percent='50'
+                            WHERE id=?""",
+                        (bill_id,),
+                    )
+                    egypt_tax_snapshot = tax_center.build_tax_report_snapshot(
+                        connection, today.strftime("%Y-%m")
+                    )
+                    egypt_tax = egypt_tax_snapshot["summary"]
+                    if (
+                        egypt_tax_snapshot["tax_profile"]["country_code"] != "EG"
+                        or Decimal(str(egypt_tax_snapshot["tax_profile"]["standard_rate"])) != Decimal("14")
+                        or Decimal(str(egypt_tax["output_vat"])) != Decimal("5.60")
+                        or Decimal(str(egypt_tax["input_vat"])) != Decimal("1.79")
+                        or Decimal(str(egypt_tax["net_vat"])) != Decimal("3.81")
+                    ):
+                        raise AssertionError(
+                            "Egypt PostgreSQL VAT snapshot did not reconcile output/input VAT and deductible percentage."
+                        )
+                    execute_compat(
+                        connection,
+                        """UPDATE company_settings SET setting_value='SA'
+                             WHERE setting_key='tax_country'""",
+                    )
+                    saudi_tax_snapshot = tax_center.build_tax_report_snapshot(
+                        connection, today.strftime("%Y-%m")
+                    )
+                    saudi_preparation = saudi_tax_snapshot.get("saudi_preparation")
+                    if (
+                        saudi_tax_snapshot["tax_profile"]["country_code"] != "SA"
+                        or Decimal(str(saudi_tax_snapshot["tax_profile"]["standard_rate"])) != Decimal("15")
+                        or saudi_preparation is None
+                        or saudi_preparation.get("zakat_or_income_tax") is not None
+                    ):
+                        raise AssertionError(
+                            "Saudi PostgreSQL tax workpaper did not expose the 15% VAT profile and accounting-only preparation."
+                        )
+                    if previous_tax_country:
+                        execute_compat(
+                            connection,
+                            "UPDATE company_settings SET setting_value=? WHERE setting_key='tax_country'",
+                            (previous_tax_country["setting_value"],),
+                        )
+                    if previous_tax_number:
+                        execute_compat(
+                            connection,
+                            "UPDATE company_settings SET setting_value=? WHERE setting_key='tax_number'",
+                            (previous_tax_number["setting_value"],),
+                        )
+                    tax_flow = {
+                        "egypt_output_vat": str(egypt_tax["output_vat"]),
+                        "egypt_deductible_input_vat": str(egypt_tax["input_vat"]),
+                        "saudi_standard_rate": str(saudi_tax_snapshot["tax_profile"]["standard_rate"]),
+                    }
                 finally:
                     connection.close()
 
