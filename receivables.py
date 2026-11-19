@@ -1,6 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database
-from db_compat import table_columns, table_exists
+from db_compat import table_columns, table_exists, transactional_migration
 from db_sql import execute_compat
 """Customer and supplier receivables/payables aging reports."""
 from datetime import date
@@ -13,6 +13,7 @@ aging_bp=Blueprint("aging",__name__,url_prefix="/reports/aging")
 def db():
  return connect_database(DB_PATH)
 
+@transactional_migration
 def initialize_aging_schema():
  c=db()
  for table, source_date in (("sales_invoices","invoice_date"),("supplier_bills","bill_date")):
