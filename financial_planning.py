@@ -1911,16 +1911,11 @@ def build_cash_flow_indirect_snapshot(conn, start, end):
     expenses = sum((Decimal(str(r["debit"]))-Decimal(str(r["credit"]))
                     for r in period_rows if r["account_type"]=="expense"), Decimal("0"))
     net_profit = revenue-expenses
+    # Do not infer depreciation from fixed_assets.expense_account_id: older and
+    # user-configured asset records may point at a general/admin expense account.
+    # Only posted asset_depreciations rows and clearly identified depreciation
+    # accounts are eligible for the non-cash add-back below.
     depreciation_account_ids=set()
-    fixed_assets_exists=table_exists(conn, "fixed_assets")
-    if fixed_assets_exists:
-        fixed_asset_columns=table_columns(conn, "fixed_assets")
-        if "expense_account_id" in fixed_asset_columns:
-            depreciation_account_ids={
-                row["expense_account_id"] for row in _execute(conn, 
-                    "SELECT DISTINCT expense_account_id FROM fixed_assets"
-                ).fetchall()
-            }
     asset_depreciation_total=Decimal("0")
     depreciation_entry_ids=set()
     asset_depreciation_exists=table_exists(conn, "asset_depreciations")
