@@ -603,6 +603,14 @@ def main() -> int:
                         "SELECT id,status,created_by,approval_status FROM payroll_runs WHERE period=?",
                         (payroll_period,),
                     ).fetchone()
+                    with client.session_transaction() as session_data:
+                        payroll_flashes = list(session_data.get("_flashes", []))
+                    payroll_observed = {
+                        "http_status": create_response.status_code,
+                        "location": create_response.headers.get("Location"),
+                        "run": dict(payroll_run) if payroll_run else None,
+                        "flashes": payroll_flashes,
+                    }
                     if (
                         create_response.status_code not in (302, 303)
                         or not payroll_run
@@ -610,7 +618,10 @@ def main() -> int:
                         or int(payroll_run["created_by"]) != int(admin_id)
                         or payroll_run["approval_status"] != "pending"
                     ):
-                        raise AssertionError("PostgreSQL payroll draft creation did not preserve maker/pending approval state.")
+                        raise AssertionError(
+                            "PostgreSQL payroll draft creation did not preserve "
+                            f"maker/pending approval state. Observed={payroll_observed!r}"
+                        )
                     payroll_run_id = int(payroll_run["id"])
                     payroll_line = execute_compat(
                         connection,
