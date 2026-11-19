@@ -234,11 +234,15 @@ def resolve_cash_commitment_duplicate_origin(conn, kept_id, voided_ids, reason, 
                 (origin_type,origin_id,kept_commitment_id,voided_commitment_id,reason,reviewed_by)
                 VALUES(?,?,?,?,?,?)
             """,(kept["origin_type"],kept["origin_id"],kept_id,duplicate_id,reason,reviewed_by))
-        remaining=execute_compat(conn,"""
-            SELECT COUNT(*) FROM cash_commitments
-            WHERE origin_type=? AND origin_id=? AND status<>'void'
-        """,(kept["origin_type"],kept["origin_id"])).fetchone()[0]
-        if remaining<=1:
+        unresolved_groups=execute_compat(conn,"""
+            SELECT COUNT(*) FROM (
+                SELECT origin_type,origin_id FROM cash_commitments
+                WHERE origin_type IN ('friday_allowance_batch','recurring_schedule_occurrence')
+                  AND status<>'void' AND origin_id IS NOT NULL
+                GROUP BY origin_type,origin_id HAVING COUNT(*)>1
+            ) unresolved
+        """).fetchone()[0]
+        if unresolved_groups==0:
             execute_compat(conn,"""
                 CREATE UNIQUE INDEX IF NOT EXISTS ux_cash_commitments_source_origin
                 ON cash_commitments(origin_type,origin_id)

@@ -106,14 +106,20 @@ class CashCommitmentsTests(unittest.TestCase):
         try:
             conn.execute("""INSERT INTO cash_commitments(commitment_type,title,amount,due_date,origin_type,origin_id)
                 VALUES('friday_overtime','أصل','50','2026-11-30','friday_allowance_batch',901),
-                      ('friday_overtime','مكرر','50','2026-11-30','friday_allowance_batch',901)""")
+                      ('friday_overtime','مكرر','50','2026-11-30','friday_allowance_batch',901),
+                      ('friday_overtime','أصل آخر','60','2026-12-30','friday_allowance_batch',903),
+                      ('friday_overtime','مكرر آخر','60','2026-12-30','friday_allowance_batch',903)""")
             conn.commit()
             initialize_cash_commitments_schema(conn)
             groups=list_cash_commitment_duplicate_origins(conn)
-            self.assertEqual(len(groups),1)
+            self.assertEqual(len(groups),2)
             kept,duplicate=[x["id"] for x in groups[0]["items"]]
-            resolve_cash_commitment_duplicate_origin(conn,kept,[duplicate],"تمت مراجعة المصدر",7)
+            resolve_cash_commitment_duplicate_origin(conn,kept,[duplicate],"تمت مراجعة المصدر الأول",7)
+            self.assertEqual(len(list_cash_commitment_duplicate_origins(conn)),1)
             self.assertEqual(conn.execute("SELECT status FROM cash_commitments WHERE id=?",(duplicate,)).fetchone()[0],"void")
+            remaining_group=list_cash_commitment_duplicate_origins(conn)[0]
+            kept2,duplicate2=[x["id"] for x in remaining_group["items"]]
+            resolve_cash_commitment_duplicate_origin(conn,kept2,[duplicate2],"تمت مراجعة المصدر الثاني",7)
             self.assertEqual(list_cash_commitment_duplicate_origins(conn),[])
         finally: conn.close()
 
