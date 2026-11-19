@@ -5,12 +5,12 @@
 <a class="button" href="{{url_for('workforce.employee_form_2_salary_report')}}">تقرير استمارة 2 لجميع الموظفين</a>
 <a class="button secondary" href="{{url_for('workforce.employee_grants')}}">المنح والمكافآت المستقلة</a>
 <a class="button secondary" href="{{url_for('workforce.download_employee_template')}}">تحميل نموذج Excel</a></div></div><span class="pill">ملف الموظف</span></header>
-<section class="panel employee-import-panel"><h3>استيراد بيانات الموظفين من Excel</h3>
+<section class="panel employee-import-panel erp-employee-panel"><h3>استيراد بيانات الموظفين من Excel</h3>
 <p class="muted">ارفع ملف XLSX بنفس أعمدة النموذج. كود الموظف هو مفتاح المطابقة: الكود الموجود سيتم تحديث بياناته، والجديد سيتم إضافته. العملية كلها تتم أو تُلغى بالكامل عند وجود خطأ.</p>
 <form method="post" action="{{ url_for('workforce.import_employees_excel') }}" enctype="multipart/form-data" class="form-grid"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <label>ملف الموظفين Excel (.xlsx)<input type="file" name="file" accept=".xlsx" required></label>
 <button type="submit">استيراد الموظفين</button></form></section>
-<section class="panel employee-create-panel"><h3>إضافة موظف جديد</h3><form method="post" enctype="multipart/form-data" class="form-grid"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<section class="panel employee-create-panel erp-employee-panel"><h3>إضافة موظف جديد</h3><form method="post" enctype="multipart/form-data" class="form-grid erp-master-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <label>اسم الموظف<input name="full_name" required></label>
 <label>صورة الموظف (اختياري)<input type="file" name="photo" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"></label>
 <label>الرقم القومي<input name="national_id" maxlength="20"></label><label>رقم التأمين الاجتماعي<input name="insurance_number"></label>
@@ -35,16 +35,16 @@
 <style>
 .employee-table-wrap{overflow-x:auto;border:1px solid var(--border-color,#d8dee8);border-radius:12px}
 .employee-data-table{width:100%;min-width:1250px;border-collapse:separate;border-spacing:0;background:var(--surface,#fff)}
-.employee-data-table th{position:sticky;top:0;background:#edf2f8;color:#23364d;font-weight:700;white-space:nowrap;padding:12px 10px;border-bottom:2px solid #cbd5e1;text-align:center}
+.employee-data-table th{position:sticky;top:0;background:var(--surface-alt,var(--surface,#f7f8fa));color:var(--text,#263445);font-weight:700;white-space:nowrap;padding:12px 10px;border-bottom:1px solid var(--line,#dfe4ea);text-align:center}
 .employee-data-table td{padding:11px 10px;border-bottom:1px solid #e7ebf0;text-align:center;vertical-align:middle;white-space:nowrap}
-.employee-data-table tbody tr:nth-child(even){background:#f8fafc}
-.employee-data-table tbody tr:hover{background:#eef6ff}
+.employee-data-table tbody tr:nth-child(even){background:color-mix(in srgb,var(--surface-alt,#f7f8fa) 55%,var(--surface,#fff))}
+.employee-data-table tbody tr:hover{background:color-mix(in srgb,var(--accent,#64748b) 5%,var(--surface,#fff))}
 .employee-data-table td:nth-child(3){font-weight:700;text-align:right;min-width:180px}
 .employee-data-table .employee-actions{white-space:normal;min-width:190px}
-.employee-data-table .employee-actions a{display:inline-block;margin:3px;padding:5px 8px;border-radius:7px;background:#edf3fa;text-decoration:none}
+.employee-data-table .employee-actions a{display:inline-block;margin:3px;padding:5px 8px;border:1px solid var(--line,#dfe4ea);border-radius:7px;background:var(--surface,#fff);color:var(--text,#263445);text-decoration:none}
 @media print{.employee-data-table th{position:static}}
 </style>
-<section class="panel employee-list-panel"><h3>سجل الموظفين</h3><div class="employee-table-wrap"><table class="employee-data-table"><tr><th>الصورة</th><th>الكود</th><th>الاسم</th><th>الرقم القومي</th><th>رقم التأمين</th><th>العنوان</th><th>الموقف</th><th>الوظيفة</th><th>الإدارة</th><th>الأجر الأساسي</th><th>تاريخ التعيين</th><th>الفرع</th><th>إجراء</th></tr>
+<section class="panel employee-list-panel erp-employee-panel"><h3>سجل الموظفين</h3><div class="employee-table-wrap"><table class="employee-data-table"><tr><th>الصورة</th><th>الكود</th><th>الاسم</th><th>الرقم القومي</th><th>رقم التأمين</th><th>العنوان</th><th>الموقف</th><th>الوظيفة</th><th>الإدارة</th><th>الأجر الأساسي</th><th>تاريخ التعيين</th><th>الفرع</th><th>إجراء</th></tr>
 {% for e in employees %}<tr><td>{% if e.photo_path %}<img src="{{url_for('workforce.employee_photo',employee_id=e.id)}}" alt="صورة {{e.full_name}}" style="width:48px;height:48px;object-fit:cover;border-radius:50%">{% else %}-{% endif %}</td><td>{{e.employee_code}}</td><td>{{e.full_name}}</td><td>{{e.national_id or '-'}}</td><td>{{e.insurance_number or '-'}}</td><td>{{e.address or '-'}}</td>
 <td>{{{'comprehensive_bonus':'مكافأة شاملة','permanent':'مثبت','temporary':'مؤقت','unpaid_leave':'إجازة بدون مرتب','resigned':'استقالة','retired':'معاش'}.get(e.work_status,'مثبت')}}</td>
 <td>{{e.job_title}}</td><td>{{e.department}}</td><td>{{e.current_basic_salary|money}}</td><td>{{e.hire_date}}</td><td>{{e.branch_id or '-'}}</td><td class="employee-actions"><a href="{{url_for('workforce.edit_employee',employee_id=e.id)}}">تعديل الملف</a><a href="{{url_for('workforce.employee_employment_history',employee_id=e.id)}}">السجل الوظيفي</a><a href="{{url_for('workforce.employee_financial_statement',employee_id=e.id)}}">كشف حساب الموظف</a></td></tr>
