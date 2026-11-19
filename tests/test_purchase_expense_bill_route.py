@@ -57,7 +57,7 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         self.conn.commit()
         self.conn.close()
 
-        self.app = Flask(__name__)
+        self.app = Flask(__name__, template_folder=str(Path(purchases.__file__).resolve().parent / "templates"))
         self.app.add_url_rule("/__test_global_search", endpoint="global_search", view_func=lambda: "")
         self.app.secret_key = "test-secret"
         self.app.register_blueprint(purchases.purchase_bp)
