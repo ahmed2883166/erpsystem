@@ -283,6 +283,59 @@ def main() -> int:
                         "total": "25.50",
                     }
 
+                    # Regression coverage for the two PostgreSQL report failures:
+                    # entry_date is stored as text in the generated baseline and
+                    # accounts.is_group is an integer flag, not a PostgreSQL boolean.
+                    from expense_analysis import build_expense_analysis
+                    from financial_planning import build_budget_monthly_comparison
+
+                    month_start = today.replace(day=1).isoformat()
+                    expense_report = build_expense_analysis(
+                        connection, month_start, today.isoformat()
+                    )
+                    if (
+                        not expense_report["detail_rows"]
+                        or expense_report["total"] < Decimal("25.50")
+                    ):
+                        raise AssertionError(
+                            "PostgreSQL expense analysis did not include the posted supplier bill."
+                        )
+
+                    budget_id = insert_and_get_id(
+                        connection,
+                        """INSERT INTO budget_plans(name,date_from,date_to,status)
+                           VALUES(?,?,?,'approved')""",
+                        ("PG-SMOKE-BUDGET", month_start, today.isoformat()),
+                    )
+                    period_key = today.strftime("%Y-%m")
+                    execute_compat(
+                        connection,
+                        """INSERT INTO budget_monthly_lines
+                           (budget_id,account_id,period,amount)
+                           VALUES(?,?,?,?)""",
+                        (budget_id, expense_account["id"], period_key, "100.00"),
+                    )
+                    connection.commit()
+                    _, monthly_budget_rows = build_budget_monthly_comparison(
+                        connection, budget_id
+                    )
+                    matching_budget = [
+                        row for row in monthly_budget_rows
+                        if row["account_id"] == expense_account["id"]
+                        and row["period"] == period_key
+                    ]
+                    if (
+                        not matching_budget
+                        or matching_budget[0]["actual"] < Decimal("25.50")
+                    ):
+                        raise AssertionError(
+                            "PostgreSQL monthly budget comparison did not read posted expense activity."
+                        )
+                    report_flow = {
+                        "expense_total": str(expense_report["total"]),
+                        "budget_actual": str(matching_budget[0]["actual"]),
+                    }
+
                     # Exercise the real fixed-asset depreciation posting helper
                     # on the same initialized PostgreSQL application schema.
                     import fixed_assets
@@ -1039,6 +1092,8 @@ def main() -> int:
                 f"sales_cost={sales_flow['cost']} "
                 f"supplier_bill={purchase_flow['bill_id']} "
                 f"supplier_bill_total={purchase_flow['total']} "
+                f"expense_report_total={report_flow['expense_total']} "
+                f"budget_actual={report_flow['budget_actual']} "
                 f"asset_depreciation={asset_flow['amount']} "
                 f"asset_journal={asset_flow['journal_entry_id']}"
             )
