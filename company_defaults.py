@@ -1,5 +1,6 @@
 """Idempotent company defaults shared by database initialization."""
 from db_sql import executemany_compat, execute_compat
+from db_compat import transactional_migration
 
 
 CURRENCY_SEED = (
@@ -25,6 +26,7 @@ COMPANY_DEFAULTS = {
 }
 
 
+@transactional_migration
 def seed_company_defaults(connection):
     """Insert missing currency and company-setting defaults without overwrites."""
     executemany_compat(
