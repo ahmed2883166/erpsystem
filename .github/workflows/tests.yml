@@ -44,11 +44,26 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies and PostgreSQL client tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client-16
-          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
-          pg_dump --version
-          pg_restore --version
+          tool_dir="$RUNNER_TEMP/postgres16-tools"
+          mkdir -p "$tool_dir"
+          for tool in pg_dump pg_restore; do
+            cat > "$tool_dir/$tool" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          tool="$(basename "$0")"
+          exec docker run --rm --network host \
+            -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE \
+            -e PGSSLMODE -e PGSSLROOTCERT -e PGSSLCERT -e PGSSLKEY \
+            -e PGCONNECT_TIMEOUT -e PGAPPNAME -e PGOPTIONS \
+            -v /tmp:/tmp \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            -w "$GITHUB_WORKSPACE" postgres:16 "$tool" "$@"
+          EOF
+            chmod +x "$tool_dir/$tool"
+          done
+          echo "$tool_dir" >> "$GITHUB_PATH"
+          "$tool_dir/pg_dump" --version
+          "$tool_dir/pg_restore" --version
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install ruff
