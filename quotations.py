@@ -9,7 +9,7 @@ from flask import Blueprint,flash,g,redirect,render_template,request,session,url
 from sales import post_invoice
 from analytic_dimensions import validate_journal_dimensions, active_dimension_options
 from stock import consume_layers, post_issue_journal, ensure_stock_date_open
-from db_compat import table_columns, table_exists, execute_script, begin_write_transaction, insert_and_get_id, DB_ERROR
+from db_compat import table_columns, table_exists, execute_script, begin_write_transaction, insert_and_get_id, DB_ERROR, transactional_connection_initializer
 from db_sql import execute_compat, executemany_compat
 
 quotes_bp=Blueprint("quotes",__name__,url_prefix="/sales/quotations")
@@ -20,8 +20,9 @@ QUOTATION_ERRORS=(ValueError,KeyError,InvalidOperation)+DB_ERROR
 def db():
  return connect_database(DB_PATH, isolation_level=None)
 
-def initialize_quotes_schema():
- c=db(); execute_script(c, """
+@transactional_connection_initializer(db)
+def initialize_quotes_schema(c):
+"""
  CREATE TABLE IF NOT EXISTS customer_price_rules(
   id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(id),
   product_id INTEGER NOT NULL REFERENCES stock_products(id), unit_price TEXT NOT NULL,
@@ -122,7 +123,6 @@ def initialize_quotes_schema():
  lcols=table_columns(c, "delivery_note_line_lots")
  if "invoiced_qty" not in lcols: execute_compat(c,"ALTER TABLE delivery_note_line_lots ADD COLUMN invoiced_qty TEXT NOT NULL DEFAULT '0'")
  if "invoiced_cost" not in lcols: execute_compat(c,"ALTER TABLE delivery_note_line_lots ADD COLUMN invoiced_cost TEXT NOT NULL DEFAULT '0'")
- c.close()
 
 def sales_permission(permission, fallback_roles):
  def deco(fn):
