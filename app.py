@@ -570,6 +570,11 @@ def initialize_database():
     else:
         initialize_sqlite_audit_schema(connection)
     ensure_legacy_core_columns(connection)
+    if backend == "sqlite":
+        # The legacy decimal rebuild toggles SQLite foreign_keys outside a
+        # transaction. Run it before seeding/migration writes begin.
+        migrate_journal_line_amounts_to_text(connection)
+        migrate_currency_rates_to_text(connection)
     initialize_roles_schema(connection)
     seed_company_defaults(connection)
     admin = execute_compat(connection, 
@@ -599,9 +604,6 @@ def initialize_database():
     ensure_activity_chart_accounts(connection, selected_activity)
     migrate_legacy_duplicate_account_labels(connection, selected_activity)
     ensure_account_metadata(connection)
-    if backend == "sqlite":
-        migrate_journal_line_amounts_to_text(connection)
-        migrate_currency_rates_to_text(connection)
     execute_compat(connection, "CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry ON journal_lines(account_id,entry_id)")
     execute_compat(connection, "CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_account ON journal_lines(entry_id,account_id)")
     execute_compat(connection, "CREATE INDEX IF NOT EXISTS idx_journal_entries_entry_date ON journal_entries(entry_date,id)")
