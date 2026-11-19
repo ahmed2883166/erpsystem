@@ -1,5 +1,8 @@
-/* NEXUS ERP — Bootstrap 5.3 RTL integration layer.
-   Keep legacy selectors intact while progressively migrating screens. */
+/* ============================================================
+   ملف تنسيقات ربط إطار العمل مع واجهة نيكسس
+   يضبط توافق مكونات إطار العمل مع تصميم النظام العربي.
+   يشمل لوحة المعلومات والأزرار والنماذج والجداول والتجاوب.
+   ============================================================ */
 :root {
   --bs-primary: #0f9b8e;
   --bs-primary-rgb: 15, 155, 142;
@@ -78,7 +81,7 @@ input:focus, select:focus, textarea:focus {
 }
 
 
-/* Dashboard landing page */
+/* الصفحة الرئيسية: تنسيق عنوان لوحة المعلومات ومؤشرات الأداء والأرصدة */
 .dashboard-page-header {
   padding: 22px 26px;
   border: 1px solid var(--line);
@@ -149,7 +152,7 @@ input:focus, select:focus, textarea:focus {
 }
 
 
-/* Lively, polished button micro-interactions */
+/* تفاعلات الأزرار: تحسين الحركة عند المرور والضغط والتركيز */
 :root {
   --nexus-motion-fast: 150ms;
   --nexus-motion: 220ms;
@@ -260,7 +263,7 @@ nav details.nav-group > summary:hover { background: rgba(255,255,255,.06); }
 }
 
 
-/* Consistent data tables and forms across legacy screens */
+/* الجداول والنماذج: توحيد التنسيق في الشاشات القديمة والجديدة */
 main .panel, main .grid, main .cards { min-width: 0; }
 main table:not(.table) { border-collapse: separate; border-spacing: 0; }
 main table.table, main table.erp-table {
@@ -331,7 +334,7 @@ main .form-row > * { min-width: 0; }
 }
 
 
-/* Focused layout improvements for inventory maintenance screens. */
+/* شاشات المخزون: تحسين توزيع حقول إضافة الأصناف وتعديلها */
 main form.erp-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -365,7 +368,7 @@ main form.erp-form-grid > button { justify-self: start; min-width: 150px; }
 }
 
 
-/* Responsive movement-entry layout. */
+/* حركات المخزون: ضبط توزيع حقول الإدخال حسب حجم الشاشة */
 main form .form-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
@@ -376,7 +379,7 @@ main form .form-row > div { min-width: 0; }
 main form .form-row small { display: block; margin-top: .35rem; color: var(--muted); }
 
 
-/* Responsive forms for accounting, journals and party directories. */
+/* النماذج المحاسبية: تنظيم حقول القيود والحسابات والعملاء والموردين */
 main form.erp-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -441,7 +444,7 @@ main .report-filter { grid-template-columns: repeat(auto-fit, minmax(min(100%, 1
 }
 
 
-/* NEXUS shared screen system — consistent headings, action groups and dense workflows. */
+/* نظام الشاشات الموحد: تنسيق العناوين ومجموعات الأزرار وسير العمل */
 main > header.page-heading,
 main > header:not(.dashboard-page-header) {
   align-items: flex-start;
@@ -650,7 +653,7 @@ main details > summary:focus-visible {
 }
 
 
-/* Apply the same readable table rhythm to legacy and newer screens alike. */
+/* الجداول: توحيد المسافات ووضوح الصفوف في جميع الشاشات */
 main .table-wrap > table,
 main .table-wrap table:not(.table) {
   width: 100%;
@@ -721,7 +724,7 @@ main .table-wrap > table td small {
   }
 }
 
-/* NEXUS shared screen finishing layer — presentation only, all modules. */
+/* اللمسات العامة للواجهة: تحسين العرض في جميع الوحدات دون تغيير منطق العمل */
 main {
   min-width: 0;
 }
@@ -821,7 +824,7 @@ main .btn {
   }
 }
 
-/* NEXUS button system: consistent sizing with semantic action colors. */
+/* نظام الأزرار: توحيد المقاسات واستخدام ألوان واضحة حسب وظيفة الزر */
 main button, main .btn, main a.button, main .button-link,
 main input[type="submit"], main input[type="button"] {
   min-height: 40px;
@@ -879,8 +882,8 @@ main input[type="submit"]:disabled, main input[type="button"]:disabled {
 }
 
 
-/* NEXUS light theme refinement: calm surfaces, stronger contrast and consistent
-   Bootstrap + legacy controls. Theme tokens remain shared with dark mode. */
+/* المظهر الفاتح: خلفيات هادئة وتباين أوضح وتنسيق موحد لعناصر الواجهة.
+   تظل متغيرات الألوان متوافقة مع المظهر الداكن. */
 :root {
   color-scheme: light;
   --bg: #f3f6fa;
