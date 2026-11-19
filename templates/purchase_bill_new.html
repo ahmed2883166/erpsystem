@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% block title %}فاتورة مورد | NEXUS ERP{% endblock %}{% block content %}<main class="purchase-bill-page">
+{% extends "base.html" %}{% block title %}فاتورة مورد | NEXUS ERP{% endblock %}{% block content %}<main class="purchase-bill-page erp-entry-page">
 <style>
 .purchase-bill-page{max-width:1500px;margin:auto}
 .purchase-bill-page .page-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
@@ -158,4 +158,4 @@ document.getElementById('asset-lines').addEventListener('click',event=>{
 });
 toggleBillKind();
 updateAssetTotal();
-</script><div class="actions"><button type="submit">{{ "حفظ التعديلات كمسودة" if edit_mode else "حفظ مسودة الفاتورة" }}</button><a class="btn secondary" href="{{ url_for('purchase.index') }}">إلغاء</a></div></form></section></main>{% endblock %}
+</script><div class="actions erp-form-actions"><button type="submit">{{ "حفظ التعديلات كمسودة" if edit_mode else "حفظ مسودة الفاتورة" }}</button><a class="btn secondary" href="{{ url_for('purchase.index') }}">إلغاء</a></div></form></section></main>{% endblock %}
