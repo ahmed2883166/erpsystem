@@ -45,6 +45,7 @@ class JournalLineAmountMigrationTests(unittest.TestCase):
             WHEN NEW.debit < OLD.credit
               OR NEW.debit BETWEEN 1 AND 100
               OR NEW.credit BETWEEN OLD.debit AND OLD.credit
+              OR 0 < NEW.credit
             BEGIN SELECT RAISE(ABORT, 'numeric update guard'); END;
             INSERT INTO accounts(id,code) VALUES(4,'1000');
             INSERT INTO journal_entries(id,entry_date) VALUES(9,'2026-01-01');
@@ -101,6 +102,7 @@ class JournalLineAmountMigrationTests(unittest.TestCase):
             'CAST(NEW."credit" AS NUMERIC) BETWEEN CAST(OLD."debit" AS NUMERIC) AND CAST(OLD."credit" AS NUMERIC)',
             trigger_sql,
         )
+        self.assertIn('0 < CAST(NEW."credit" AS NUMERIC)', trigger_sql)
 
     def test_currency_rate_migration_preserves_values_columns_and_indexes(self):
         self.assertTrue(migrate_currency_rates_to_text(self.connection))
