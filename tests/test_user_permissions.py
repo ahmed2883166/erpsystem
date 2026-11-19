@@ -99,6 +99,24 @@ class UserPermissionRouteTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_user_creation_rejects_blank_username(self):
+        with self.client.session_transaction() as session:
+            session.update(user_id=1, username="admin", full_name="مدير",
+                           role="admin", permissions=["users.manage"])
+        response = self.client.post("/users", data={
+            "username": "   ", "full_name": "مستخدم",
+            "password": "long-password-123", "role": "viewer",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("اسم المستخدم مطلوب", response.get_data(as_text=True))
+        conn = sqlite3.connect(nexus.DB_PATH)
+        try:
+            self.assertEqual(conn.execute(
+                "SELECT COUNT(*) FROM users WHERE trim(username)=''"
+            ).fetchone()[0], 0)
+        finally:
+            conn.close()
+
     def test_admin_can_create_custom_role_and_new_user_inherits_role_permissions(self):
         with self.client.session_transaction() as session:
             session.update(user_id=1, username="admin", full_name="مدير",
@@ -125,13 +143,23 @@ class UserPermissionRouteTests(unittest.TestCase):
         })
         self.assertEqual(response.status_code, 200)
         conn = sqlite3.connect(nexus.DB_PATH)
-        saved_role, saved_permissions = conn.execute(
-            "SELECT role,permissions_json FROM users WHERE username='sales.manager'"
+        saved_role, saved_permissions, must_change_password = conn.execute(
+            "SELECT role,permissions_json,must_change_password FROM users WHERE username='sales.manager'"
         ).fetchone()
+        created_user_id = conn.execute(
+            "SELECT id FROM users WHERE username='sales.manager'"
+        ).fetchone()[0]
         conn.close()
         self.assertEqual(saved_role, role_key)
         self.assertIsNone(saved_permissions)
+        self.assertEqual(must_change_password, 1)
         self.assertEqual(nexus.stored_user_permissions(saved_permissions, saved_role), role_permissions)
+        with self.client.session_transaction() as session:
+            session.update(user_id=created_user_id, username="sales.manager",
+                           role=role_key, permissions=role_permissions)
+        forced_change = self.client.get("/users")
+        self.assertEqual(forced_change.status_code, 302)
+        self.assertTrue(forced_change.headers["Location"].endswith("/profile/password"))
 
     def test_custom_role_updates_are_audited_and_assigned_roles_cannot_be_disabled(self):
         with self.client.session_transaction() as session:

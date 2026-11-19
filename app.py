@@ -1004,6 +1004,9 @@ def about():
 def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip()[:150]
+        if not username:
+            flash("اسم المستخدم مطلوب.", "error")
+            return render_template("login.html"), 400
         remote_addr = request.remote_addr or "unknown"
         connection = db()
         cutoff = datetime.now().timestamp() - 900
@@ -3689,9 +3692,11 @@ def users():
             selected = normalize_user_permissions(request.form.getlist("permissions"))
             assert_user_management_scope(requested_role=role, requested_permissions=selected)
             stored_permissions = user_permissions_storage(selected, role, role_permissions)
-            username = request.form["username"].strip()
+            username = request.form.get("username", "").strip()
+            if not username:
+                raise ValueError("اسم المستخدم مطلوب ولا يمكن تركه فارغًا.")
             execute_compat(connection, 
-                "INSERT INTO users(username,full_name,password_hash,role,created_at,permissions_json) VALUES(?,?,?,?,?,?)",
+                "INSERT INTO users(username,full_name,password_hash,role,created_at,permissions_json,must_change_password) VALUES(?,?,?,?,?,?,1)",
                 (username, request.form["full_name"].strip(), password_hash(new_password),
                  role, now(), stored_permissions),
             )
