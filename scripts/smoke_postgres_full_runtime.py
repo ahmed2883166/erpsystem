@@ -591,9 +591,32 @@ def main() -> int:
                             session_data["user_id"] = int(user_id)
                             session_data["role"] = "admin"
 
+                    def post_with_csrf(path, *, data, follow_redirects=False):
+                        # Exercise the same session-bound CSRF flow as a real browser:
+                        # fetch a rendered form, then submit its injected token.
+                        csrf_page = client.get("/hr/payroll")
+                        if csrf_page.status_code != 200:
+                            raise AssertionError(
+                                "Could not load payroll form before PostgreSQL smoke POST: "
+                                f"HTTP {csrf_page.status_code}."
+                            )
+                        csrf_match = re.search(
+                            r'<input type="hidden" name="csrf_token" value="([^"]+)"',
+                            csrf_page.get_data(as_text=True),
+                        )
+                        if not csrf_match:
+                            raise AssertionError(
+                                "Payroll page did not render the CSRF token required for POST."
+                            )
+                        payload = dict(data)
+                        payload["csrf_token"] = csrf_match.group(1)
+                        return client.post(
+                            path, data=payload, follow_redirects=follow_redirects
+                        )
+
                     payroll_period = today.strftime("%Y-%m")
                     set_session_user(admin_id)
-                    create_response = client.post(
+                    create_response = post_with_csrf(
                         "/hr/payroll",
                         data={"period": payroll_period},
                         follow_redirects=False,
@@ -645,7 +668,7 @@ def main() -> int:
                         "advances_account": liability_account_id,
                     }
                     set_session_user(admin_id)
-                    client.post(
+                    post_with_csrf(
                         f"/hr/payroll/{payroll_run_id}/post",
                         data=payroll_accounts,
                         follow_redirects=False,
@@ -658,7 +681,7 @@ def main() -> int:
                         raise AssertionError("PostgreSQL payroll allowed its creator to approve/post the same run.")
 
                     set_session_user(approver_id)
-                    approve_response = client.post(
+                    approve_response = post_with_csrf(
                         f"/hr/payroll/{payroll_run_id}/post",
                         data=payroll_accounts,
                         follow_redirects=False,
@@ -691,7 +714,7 @@ def main() -> int:
                         raise AssertionError("PostgreSQL payroll journal is not balanced at the expected 1200.00.")
 
                     # Duplicate posting must leave the original journal untouched.
-                    duplicate_post_response = client.post(
+                    duplicate_post_response = post_with_csrf(
                         f"/hr/payroll/{payroll_run_id}/post",
                         data=payroll_accounts,
                         follow_redirects=False,
@@ -713,7 +736,7 @@ def main() -> int:
 
                     net_payable = Decimal(str(payroll_line["net_pay"]))
                     set_session_user(approver_id)
-                    client.post(
+                    post_with_csrf(
                         f"/hr/payroll/{payroll_run_id}/payment",
                         data={"amount": str(net_payable), "payment_date": today.isoformat(),
                               "cash_account_id": str(bank_account_id)},
@@ -726,7 +749,7 @@ def main() -> int:
                         raise AssertionError("PostgreSQL payroll allowed the approver to pay the same payroll run.")
 
                     set_session_user(admin_id)
-                    payment_response = client.post(
+                    payment_response = post_with_csrf(
                         f"/hr/payroll/{payroll_run_id}/payment",
                         data={"amount": str(net_payable), "payment_date": today.isoformat(),
                               "cash_account_id": str(bank_account_id)},
@@ -755,7 +778,7 @@ def main() -> int:
                         or Decimal(str(payment_journal_totals["credit"])) != net_payable
                     ):
                         raise AssertionError("PostgreSQL payroll payment journal is not balanced.")
-                    client.post(
+                    post_with_csrf(
                         f"/hr/payroll/{payroll_run_id}/payment",
                         data={"amount": "0.01", "payment_date": today.isoformat(),
                               "cash_account_id": str(bank_account_id)},
