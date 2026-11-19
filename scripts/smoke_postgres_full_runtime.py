@@ -262,6 +262,84 @@ def main() -> int:
                         "journal_entry_id": purchase_journal_id,
                         "total": "25.50",
                     }
+
+                    # Exercise the real fixed-asset depreciation posting helper
+                    # on the same initialized PostgreSQL application schema.
+                    import fixed_assets
+
+                    asset_accounts = execute_compat(
+                        connection,
+                        """SELECT id FROM accounts
+                             WHERE account_type='asset' AND is_group=0 AND active=1
+                             ORDER BY code LIMIT 2""",
+                    ).fetchall()
+                    if len(asset_accounts) < 2:
+                        raise AssertionError(
+                            "PostgreSQL chart has fewer than two active detail asset accounts."
+                        )
+                    asset_expense_account = execute_compat(
+                        connection,
+                        """SELECT id FROM accounts
+                             WHERE account_type='expense' AND is_group=0 AND active=1
+                             ORDER BY code LIMIT 1""",
+                    ).fetchone()
+                    if not asset_expense_account:
+                        raise AssertionError(
+                            "PostgreSQL chart has no active detail expense account for depreciation."
+                        )
+                    asset_ready_date = today.replace(day=1).isoformat()
+                    asset_id = insert_and_get_id(
+                        connection,
+                        """INSERT INTO fixed_assets(
+                               asset_code,asset_name,category,purchase_date,ready_date,
+                               cost,residual_value,useful_life_months,depreciation_method,
+                               annual_rate,asset_account_id,accum_account_id,
+                               expense_account_id,status,created_by
+                           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?)""",
+                        (
+                            "PG-SMOKE-AST", "أصل اختبار PostgreSQL", "اختبار",
+                            asset_ready_date, asset_ready_date, "1200", "0", 12,
+                            "straight_line", "0", asset_accounts[0]["id"],
+                            asset_accounts[1]["id"], asset_expense_account["id"], admin_id,
+                        ),
+                    )
+                    asset = execute_compat(
+                        connection, "SELECT * FROM fixed_assets WHERE id=?", (asset_id,)
+                    ).fetchone()
+                    depreciation_amount, depreciation_journal_id = (
+                        fixed_assets._post_asset_depreciation(
+                            connection, asset, today.strftime("%Y-%m"), admin_id
+                        )
+                    )
+                    connection.commit()
+                    depreciation_totals = execute_compat(
+                        connection,
+                        """SELECT SUM(CAST(debit AS NUMERIC)) AS debit,
+                                  SUM(CAST(credit AS NUMERIC)) AS credit
+                             FROM journal_lines WHERE entry_id=?""",
+                        (depreciation_journal_id,),
+                    ).fetchone()
+                    depreciation_record = execute_compat(
+                        connection,
+                        "SELECT amount,journal_entry_id FROM asset_depreciations WHERE asset_id=? AND period=?",
+                        (asset_id, today.strftime("%Y-%m")),
+                    ).fetchone()
+                    if (
+                        Decimal(str(depreciation_amount)) != Decimal("100.00")
+                        or not depreciation_record
+                        or depreciation_record["journal_entry_id"] != depreciation_journal_id
+                        or Decimal(str(depreciation_totals["debit"])) != Decimal("100.00")
+                        or Decimal(str(depreciation_totals["credit"])) != Decimal("100.00")
+                    ):
+                        raise AssertionError(
+                            "PostgreSQL fixed-asset depreciation did not create the expected "
+                            "asset schedule and balanced journal."
+                        )
+                    asset_flow = {
+                        "asset_id": asset_id,
+                        "journal_entry_id": depreciation_journal_id,
+                        "amount": str(depreciation_amount),
+                    }
                 finally:
                     connection.close()
 
