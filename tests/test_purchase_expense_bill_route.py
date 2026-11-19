@@ -62,6 +62,8 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
         for endpoint in ("change_password", "logout", "backup_settings", "create_backup"):
             self.app.add_url_rule(f"/__test_{endpoint}", endpoint=endpoint, view_func=lambda: "")
         self.app.secret_key = "test-secret"
+        # The standalone purchase test app does not register NEXUS global context processors.
+        self.app.context_processor(lambda: {"license_info": {"status": "none"}})
         self.app.register_blueprint(purchases.purchase_bp)
         self.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
         CSRFProtect(self.app)
