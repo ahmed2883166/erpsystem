@@ -142,6 +142,7 @@ def _clear_company_data_postgresql(connection):
     target_tables = sorted(set(tables) & DELETE_TABLES)
     target_set = set(target_tables)
     if not target_tables:
+        connection.commit()
         return {
             "deleted_tables": 0,
             "deleted_rows": 0,
@@ -217,7 +218,11 @@ def clear_company_data(connection):
     The caller must create a verified backup and authenticate the super-admin.
     """
     if database_dialect(connection) == "postgresql":
-        return _clear_company_data_postgresql(connection)
+        try:
+            return _clear_company_data_postgresql(connection)
+        except Exception:
+            connection.rollback()
+            raise
 
     connection.commit()
     connection.execute("PRAGMA foreign_keys=OFF")
