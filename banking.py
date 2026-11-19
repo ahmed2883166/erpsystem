@@ -9,7 +9,7 @@ from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, decimal_net_expression
 from chart_templates import ensure_account_metadata
-from db_compat import table_columns, table_exists, begin_write_transaction, execute_script, DB_ERROR
+from db_compat import table_columns, table_exists, begin_write_transaction, execute_script, DB_ERROR, transactional_connection_initializer
 from db_sql import execute_compat
 from db_insert import insert_one_returning_id
 
@@ -184,8 +184,8 @@ def save_statement_line_match(c, line_id, journal_line_id, matched_at, matched_b
         raise ValueError("سطر كشف البنك تمت مطابقته بالفعل أو لم يعد متاحًا للمطابقة.")
 
 
-def init_bank_schema():
-    c = db()
+@transactional_connection_initializer(db)
+def init_bank_schema(c):
     execute_script(c, """
     CREATE TABLE IF NOT EXISTS bank_transactions(
       id INTEGER PRIMARY KEY, transaction_no TEXT NOT NULL UNIQUE,
@@ -257,8 +257,6 @@ def init_bank_schema():
     execute_compat(c, """CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_statement_journal_line
         ON bank_statement_lines(matched_journal_line_id)
         WHERE matched_journal_line_id IS NOT NULL""")
-    c.commit()
-    c.close()
 
 def require(permission="manage"):
     def deco(fn):
