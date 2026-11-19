@@ -64,16 +64,16 @@ def main() -> int:
             )
 
         import app as nexus_app
-        import database as database_module
+        from database_backend import require_supported_runtime_backend
 
-        # Keep the production gate fail-closed. The isolated smoke process
-        # temporarily permits PostgreSQL only in these already-imported module
-        # references; no environment/runtime setting or canonical policy changes.
-        original_app_gate = nexus_app.require_supported_runtime_backend
-        original_connection_gate = database_module.require_supported_runtime_backend
-        smoke_gate = lambda: "postgresql"
-        nexus_app.require_supported_runtime_backend = smoke_gate
-        database_module.require_supported_runtime_backend = smoke_gate
+        # Exercise the real backend selector and connection factory. The
+        # fresh-install command has already scoped NEXUS_POSTGRES_DSN to this
+        # disposable schema and selected NEXUS_DB_BACKEND=postgresql.
+        selected_backend = require_supported_runtime_backend()
+        if selected_backend != "postgresql":
+            raise AssertionError(
+                f"Runtime selector chose {selected_backend!r}, not PostgreSQL."
+            )
         try:
             with nexus_app.app.app_context():
                 connection = nexus_app.db()
@@ -1044,8 +1044,6 @@ def main() -> int:
             )
             return 0
         finally:
-            nexus_app.require_supported_runtime_backend = original_app_gate
-            database_module.require_supported_runtime_backend = original_connection_gate
             # All application connections are request/app-context scoped and
             # must be closed before removing this isolated test schema.
             with psycopg.connect(dsn, autocommit=True) as connection:
