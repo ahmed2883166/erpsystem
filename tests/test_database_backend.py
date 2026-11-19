@@ -21,7 +21,10 @@ class DatabaseBackendSelectionTests(unittest.TestCase):
 
     def test_postgresql_runtime_remains_blocked_until_acceptance_gates_pass(self):
         with self.assertRaisesRegex(RuntimeError, "temporarily disabled"):
-            require_supported_runtime_backend({"NEXUS_DB_BACKEND": "postgresql"})
+            require_supported_runtime_backend({
+                "NEXUS_DB_BACKEND": "postgresql",
+                "NEXUS_POSTGRES_DSN": "postgresql://test-only",
+            })
 
 
 class DatabaseConnectionFactoryGateTests(unittest.TestCase):

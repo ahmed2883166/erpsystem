@@ -137,17 +137,27 @@ class FinancialPlanningTests(unittest.TestCase):
         year_id=create_financial_year(self.conn,"FY2027","2027-01-01","2027-12-31")
         self.conn.execute("ALTER TABLE journal_entries ADD COLUMN reference TEXT")
         self.conn.execute("ALTER TABLE journal_entries ADD COLUMN description TEXT")
+        self.conn.executemany(
+            "INSERT INTO accounts(id,code,name_ar,account_type,parent_id,is_group,active) VALUES(?,?,?,?,NULL,0,1)",
+            [(1,"1110","النقدية","asset"),(2,"3100","رأس المال","equity")],
+        )
         self.conn.execute("""
             INSERT INTO journal_entries(id,entry_date,status,reference,description)
-            VALUES(91,'2027-01-01','posted','OPEN-LEGACY','أرصدة افتتاح قديمة')
+            VALUES(90,'2026-12-31','posted','GEN-90','حركة تاريخية'),
+                  (91,'2027-01-01','posted','OPEN-LEGACY','أرصدة افتتاح قديمة')
         """)
-        self.conn.execute("INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(91,1,'100','0')")
+        self.conn.executemany(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(?,?,?,?)",
+            [(90,1,"100","0"),(90,2,"0","100"),(91,1,"100","0"),(91,2,"0","100")],
+        )
         self.conn.commit()
         self.assertEqual([r["id"] for r in list_legacy_opening_candidates(self.conn,year_id)],[91])
         classify_legacy_opening_entry(self.conn,year_id,91,"copied_history","مطابقة مع دفتر السنة السابقة",4)
         self.assertEqual(list_legacy_opening_candidates(self.conn,year_id),[])
         row=self.conn.execute("SELECT classification,reviewed_by FROM financial_year_opening_reviews WHERE entry_id=91").fetchone()
         self.assertEqual(tuple(row),("copied_history",4))
+        snapshot=build_balance_sheet_snapshot(self.conn,"2027-01-31")
+        self.assertEqual(snapshot["total_assets"],Decimal("100.00"))
 
     def test_financial_year_creation_and_overlap_protection(self):
         initialize_planning_schema(self.conn)
