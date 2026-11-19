@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from db_compat import execute_script
+from db_compat import execute_script, begin_write_transaction
 
 _MIGRATION_FILE = re.compile(r"^(\d{4,})_([a-z0-9][a-z0-9_]*)\.sql$")
 _SCHEMA_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -105,6 +105,7 @@ def apply_migrations(connection, migrations, *, schema="nexus") -> list[int]:
             raise ValueError(f"Migration {item.name!r} checksum does not match its SQL.")
 
     applied = []
+    begin_write_transaction(connection)
     try:
         connection.execute(
             "SELECT pg_advisory_xact_lock(%s, %s)",
