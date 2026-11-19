@@ -64,6 +64,7 @@ def main() -> int:
             )
 
         import app as nexus_app
+        import database as nexus_database
         from database_backend import configured_database_backend
 
         # Verify the explicit backend selection, then bypass only the
@@ -76,6 +77,9 @@ def main() -> int:
                 f"Runtime selector chose {selected_backend!r}, not PostgreSQL."
             )
         nexus_app.require_supported_runtime_backend = lambda: "postgresql"
+        # database.py imported the guard function directly, so replace its
+        # module-local reference as well for this test process only.
+        nexus_database.require_supported_runtime_backend = lambda: "postgresql"
         try:
             with nexus_app.app.app_context():
                 connection = nexus_app.db()
