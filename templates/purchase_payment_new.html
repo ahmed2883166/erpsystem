@@ -1,1 +1,125 @@
-{% extends "base.html" %}{% block title %}سداد مورد | NEXUS ERP{% endblock %}{% block content %}<header class="page-heading"><div><h2>سداد الموردين</h2><p>يُوزع السداد آليًا على أقدم فواتير المورد المفتوحة. لا تُسجل دفعة مقدمة تلقائيًا.</p></div></header><section class="panel"><form method="post"><div class="form-grid"><div><label>المورد</label><select name="supplier_id" required>{% for s in suppliers %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select></div><div><label>حساب الصندوق/البنك</label><select name="cash_account_id" required>{% for a in cash_accounts %}<option value="{{ a.id }}">{{ a.code }} - {{ a.name_ar }}</option>{% endfor %}</select></div><div><label>تاريخ السداد</label><input name="payment_date" type="date" value="{{ today }}" required></div><div><label>المبلغ</label><input name="amount" type="number" min="0.01" step="0.01" required></div><div><label>مرجع التحويل/الشيك</label><input name="reference"></div></div><button>ترحيل السداد</button></form></section>{% endblock %}
+{% extends "base.html" %}
+{% block title %}سداد مورد | NEXUS ERP{% endblock %}
+{% block content %}
+<header class="page-heading">
+  <div><h2>سداد الموردين</h2><p>اختر الفواتير التي تريد سدادها وحدد المبلغ المخصص لكل فاتورة، أو استخدم التوزيع التلقائي على أقدم الفواتير.</p></div>
+</header>
+<section class="panel purchase-payment-page">
+<form method="post" id="supplierPaymentForm">
+  <div class="form-grid">
+    <div><label for="supplier_id">المورد</label>
+      <select id="supplier_id" name="supplier_id" required>
+        <option value="">اختر المورد</option>
+        {% for s in suppliers %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div><label for="cash_account_id">حساب الصندوق/البنك</label>
+      <select id="cash_account_id" name="cash_account_id" required>
+        <option value="">اختر الحساب</option>
+        {% for a in cash_accounts %}<option value="{{ a.id }}">{{ a.code }} - {{ a.name_ar }}</option>{% endfor %}
+      </select>
+    </div>
+    <div><label for="payment_date">تاريخ السداد</label><input id="payment_date" name="payment_date" type="date" value="{{ today }}" required></div>
+    <div><label for="allocation_mode">طريقة تخصيص السداد</label>
+      <select id="allocation_mode" name="allocation_mode">
+        <option value="manual" selected>اختيار الفواتير يدويًا</option>
+        <option value="auto">توزيع تلقائي على أقدم الفواتير</option>
+      </select>
+    </div>
+    <div><label for="amount">إجمالي مبلغ السداد</label><input id="amount" name="amount" type="number" min="0.01" step="0.01" required></div>
+    <div><label for="reference">مرجع التحويل/الشيك</label><input id="reference" name="reference"></div>
+  </div>
+
+  <section id="manualAllocationSection">
+    <h3>الفواتير المستحقة للمورد</h3>
+    <p class="muted">حدد فاتورة أو أكثر، ثم أدخل المبلغ الذي تريد تخصيصه لكل فاتورة. لا يمكن تجاوز المتبقي عليها.</p>
+    <div class="table-responsive">
+      <table class="data-table">
+        <thead><tr><th>اختيار</th><th>رقم الفاتورة</th><th>تاريخ الفاتورة</th><th>تاريخ الاستحقاق</th><th>قيمة الفاتورة</th><th>مدفوع</th><th>إشعارات دائنة</th><th>المتبقي</th><th>السداد الآن</th></tr></thead>
+        <tbody id="paymentBillsBody">
+        {% for b in payment_bills %}
+          <tr data-supplier="{{ b.supplier_id }}">
+            <td><input class="bill-check" type="checkbox" name="bill_ids" value="{{ b.id }}" aria-label="اختيار الفاتورة {{ b.bill_no }}"></td>
+            <td>{{ b.bill_no }}</td><td>{{ b.bill_date }}</td><td>{{ b.due_date or '—' }}</td>
+            <td>{{ '%.2f'|format(b.total_amount|float) }}</td>
+            <td>{{ '%.2f'|format(b.paid_amount|float) }}</td>
+            <td>{{ '%.2f'|format(b.credited_amount|float) }}</td>
+            <td class="bill-due" data-due="{{ b.remaining_amount }}">{{ '%.2f'|format(b.remaining_amount|float) }}</td>
+            <td><input class="bill-allocation" type="number" name="allocation_{{ b.id }}" min="0.01" max="{{ b.remaining_amount }}" step="0.01" value="" disabled aria-label="مبلغ السداد للفاتورة {{ b.bill_no }}"></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="9">لا توجد فواتير مستحقة حاليًا.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p id="allocationSummary" aria-live="polite">إجمالي المبالغ المخصصة: 0.00</p>
+  </section>
+  <div class="form-actions"><button type="submit">ترحيل السداد</button></div>
+</form>
+</section>
+<script>
+(function () {
+  const supplier = document.getElementById('supplier_id');
+  const mode = document.getElementById('allocation_mode');
+  const amount = document.getElementById('amount');
+  const section = document.getElementById('manualAllocationSection');
+  const rows = Array.from(document.querySelectorAll('#paymentBillsBody tr[data-supplier]'));
+  const summary = document.getElementById('allocationSummary');
+  const form = document.getElementById('supplierPaymentForm');
+
+  function updateRows() {
+    rows.forEach(row => {
+      const visible = supplier.value && row.dataset.supplier === supplier.value;
+      row.hidden = !visible;
+      const check = row.querySelector('.bill-check');
+      const allocation = row.querySelector('.bill-allocation');
+      if (!visible) {
+        check.checked = false;
+        allocation.value = '';
+      }
+      allocation.disabled = !visible || !check.checked || mode.value !== 'manual';
+    });
+    section.hidden = mode.value !== 'manual';
+    amount.readOnly = mode.value === 'manual';
+    if (mode.value === 'auto') amount.value = '';
+    updateTotal();
+  }
+
+  function updateTotal() {
+    let total = 0;
+    rows.forEach(row => {
+      const check = row.querySelector('.bill-check');
+      const allocation = row.querySelector('.bill-allocation');
+      if (check.checked && !row.hidden && allocation.value) total += Number(allocation.value) || 0;
+    });
+    if (mode.value === 'manual') amount.value = total ? total.toFixed(2) : '';
+    summary.textContent = 'إجمالي المبالغ المخصصة: ' + total.toFixed(2);
+  }
+
+  rows.forEach(row => {
+    const check = row.querySelector('.bill-check');
+    const allocation = row.querySelector('.bill-allocation');
+    check.addEventListener('change', () => {
+      allocation.disabled = !check.checked || row.hidden;
+      if (check.checked && !allocation.value) allocation.value = row.querySelector('.bill-due').dataset.due;
+      if (!check.checked) allocation.value = '';
+      updateTotal();
+    });
+    allocation.addEventListener('input', updateTotal);
+  });
+  supplier.addEventListener('change', updateRows);
+  mode.addEventListener('change', updateRows);
+  form.addEventListener('submit', event => {
+    if (mode.value === 'manual') {
+      const selected = rows.filter(row => !row.hidden && row.querySelector('.bill-check').checked);
+      if (!selected.length || selected.some(row => !(Number(row.querySelector('.bill-allocation').value) > 0))) {
+        event.preventDefault();
+        window.alert('اختر فاتورة واحدة على الأقل وأدخل مبلغ السداد لكل فاتورة.');
+      }
+    }
+  });
+  updateRows();
+})();
+</script>
+{% endblock %}
