@@ -3,7 +3,7 @@
 The append-only triggers use SQLite syntax. PostgreSQL needs its own reviewed
 trigger function and migration, so this helper fails closed on other dialects.
 """
-from db_compat import database_dialect, table_columns, execute_script
+from db_compat import database_dialect, table_columns, execute_script, transactional_migration
 
 
 _AUDIT_COLUMNS = (
@@ -20,6 +20,7 @@ _AUDIT_COLUMNS = (
 )
 
 
+@transactional_migration
 def initialize_sqlite_audit_schema(connection):
     """Add audit metadata and append-only protections without replacing rows."""
     if database_dialect(connection) != "sqlite":
