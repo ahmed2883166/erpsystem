@@ -88,8 +88,13 @@ def extract_validated_backup(archive_path, candidate_path,
         connection = sqlite3.connect(str(candidate_path))
         try:
             integrity = sqlite_integrity_check(connection)
+            foreign_key_issues = connection.execute("PRAGMA foreign_key_check").fetchall()
             tables = sqlite_table_names(connection)
-            if integrity != "ok" or not REQUIRED_TABLES.issubset(tables):
+            if integrity != "ok" or foreign_key_issues or not REQUIRED_TABLES.issubset(tables):
+                if foreign_key_issues:
+                    raise ValueError(
+                        "قاعدة البيانات تحتوي على مخالفات علاقات بين الجداول؛ تم رفض الاستعادة."
+                    )
                 raise ValueError("قاعدة البيانات غير سليمة أو لا تطابق هيكل NEXUS ERP.")
         finally:
             connection.close()

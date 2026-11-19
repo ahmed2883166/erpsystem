@@ -83,6 +83,8 @@ class PostgreSQLPoolLifecycleTests(unittest.TestCase):
         self.assertFalse(raw_pool.kwargs["open"])
         self.assertEqual(raw_pool.kwargs["kwargs"]["connect_timeout"], 9)
         self.assertEqual(raw_pool.kwargs["kwargs"]["application_name"], "NEXUS test")
+        self.assertEqual(raw_pool.kwargs["kwargs"]["options"], "-c search_path=public")
+        self.assertTrue(callable(raw_pool.kwargs["configure"]))
         self.assertIsNotNone(raw_pool.kwargs["kwargs"]["row_factory"])
         self.assertFalse(pool.closed)
         pool.close()
@@ -163,7 +165,13 @@ class PostgreSQLDirectConnectionTests(unittest.TestCase):
         from postgres_database import connect_postgres
         psycopg_module = ModuleType("psycopg")
         psycopg_module.__path__ = []
-        sentinel = object()
+        sentinel = SimpleNamespace(
+            execute=unittest.mock.Mock(return_value=SimpleNamespace(
+                fetchone=lambda: {"schema_name": "public"}
+            )),
+            rollback=unittest.mock.Mock(),
+            close=unittest.mock.Mock(),
+        )
         psycopg_module.connect = unittest.mock.Mock(return_value=sentinel)
         rows_module = ModuleType("psycopg.rows")
         rows_module.dict_row = object()
@@ -182,6 +190,8 @@ class PostgreSQLDirectConnectionTests(unittest.TestCase):
         self.assertTrue(kwargs["autocommit"])
         self.assertEqual(kwargs["connect_timeout"], 8)
         self.assertEqual(kwargs["application_name"], "NEXUS direct test")
+        self.assertEqual(kwargs["options"], "-c search_path=public")
+        sentinel.rollback.assert_called_once()
         from postgres_database import hybrid_row_factory
         self.assertIs(kwargs["row_factory"], hybrid_row_factory)
 
@@ -193,6 +203,7 @@ class PostgreSQLDirectConnectionTests(unittest.TestCase):
             {"connect_timeout": 1.5},
             {"connect_timeout": True},
             {"application_name": ""},
+            {"schema": "bad-name"},
             {"autocommit": "yes"},
         ):
             with self.subTest(kwargs=kwargs):

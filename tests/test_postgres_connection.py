@@ -5,6 +5,7 @@ It never reads or writes the NEXUS company database.
 """
 import os
 import unittest
+import uuid
 from decimal import Decimal
 
 from postgres_database import connect_postgres
@@ -40,6 +41,28 @@ class PostgreSQLConnectionPrototypeTests(unittest.TestCase):
         finally:
             connection.rollback()
             connection.close()
+
+    def test_connection_uses_configured_schema_and_rejects_missing_schema(self):
+        admin = connect_postgres(POSTGRES_DSN, autocommit=True, schema="public")
+        schema = "nexus_path_" + uuid.uuid4().hex[:12]
+        connection = None
+        try:
+            admin.execute(f'CREATE SCHEMA "{schema}"')
+            connection = connect_postgres(POSTGRES_DSN, schema=schema)
+            row = connection.execute(
+                "SELECT current_schema() AS schema_name, current_setting('search_path') AS search_path"
+            ).fetchone()
+            self.assertEqual(row["schema_name"], schema)
+            self.assertEqual(row["search_path"], schema)
+            connection.rollback()
+            self.assertEqual(connection.info.transaction_status.name, "IDLE")
+            with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                connect_postgres(POSTGRES_DSN, schema=schema + "_missing")
+        finally:
+            if connection is not None:
+                connection.close()
+            admin.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            admin.close()
 
     def test_default_transaction_rolls_back_without_committing(self):
         connection = connect_postgres(POSTGRES_DSN)
@@ -118,6 +141,10 @@ class PostgreSQLConnectionConfigurationTests(unittest.TestCase):
     def test_invalid_application_name_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "application_name"):
             connect_postgres("postgresql://unused", application_name="x" * 64)
+
+    def test_invalid_schema_is_rejected_before_connecting(self):
+        with self.assertRaisesRegex(ValueError, "schema"):
+            connect_postgres("postgresql://unused", schema="bad-name; DROP SCHEMA public")
 
 
 if __name__ == "__main__":

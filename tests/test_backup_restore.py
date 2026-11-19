@@ -76,6 +76,32 @@ class BackupRestoreTests(unittest.TestCase):
 
             self.assertFalse(candidate.exists())
 
+    def test_rejects_backup_with_foreign_key_violations(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            invalid = root / "fk-invalid.db"
+            connection = sqlite3.connect(invalid)
+            connection.execute("PRAGMA foreign_keys=OFF")
+            connection.executescript("""
+                CREATE TABLE users(id INTEGER PRIMARY KEY, username TEXT);
+                CREATE TABLE accounts(id INTEGER PRIMARY KEY, code TEXT);
+                CREATE TABLE journal_entries(id INTEGER PRIMARY KEY);
+                CREATE TABLE journal_lines(
+                    id INTEGER PRIMARY KEY,
+                    entry_id INTEGER NOT NULL REFERENCES journal_entries(id)
+                );
+                INSERT INTO journal_lines(id,entry_id) VALUES(1,999);
+            """)
+            connection.commit()
+            connection.close()
+            archive_path = root / "fk-invalid.zip"
+            candidate = root / "candidate.db"
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.write(invalid, "nexus.db")
+            with self.assertRaisesRegex(ValueError, "مخالفات علاقات"):
+                extract_validated_backup(archive_path, candidate)
+            self.assertFalse(candidate.exists())
+
     def test_extracts_and_validates_nexus_backup(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

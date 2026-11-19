@@ -1152,6 +1152,11 @@ def financial_year_opening(year_id):
         if request.method == "POST":
             balances = {str(account["id"]): request.form.get("balance_" + str(account["id"]), "0")
                         for account in accounts}
+            # psycopg opens an implicit transaction for the read-only preflight
+            # SELECTs above. Discard only this route-owned read transaction before
+            # create_opening_entry starts its atomic write transaction.
+            if database_dialect(conn) == "postgresql" and transaction_is_active(conn):
+                conn.rollback()
             entry_id = create_opening_entry(conn, year_id, balances, session.get("user_id"))
             flash(f"تم ترحيل قيد الافتتاح رقم {entry_id} بتاريخ {year['start_date']}.", "success")
             return redirect(url_for("planning.financial_years"))

@@ -7,11 +7,13 @@ backup/restore behavior have been migrated and verified.
 from contextlib import contextmanager
 import math
 import os
+import re
 
 
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 5
 MAX_CONNECT_TIMEOUT_SECONDS = 30
 DEFAULT_APPLICATION_NAME = "NEXUS ERP"
+DEFAULT_POSTGRES_SCHEMA = "public"
 DEFAULT_POOL_MIN_SIZE = 1
 DEFAULT_POOL_MAX_SIZE = 10
 DEFAULT_POOL_TIMEOUT_SECONDS = 5.0
@@ -23,6 +25,7 @@ def _connection_settings(
     autocommit=False,
     connect_timeout=DEFAULT_CONNECT_TIMEOUT_SECONDS,
     application_name=DEFAULT_APPLICATION_NAME,
+    schema=None,
 ):
     """Validate shared PostgreSQL connection settings before opening anything."""
     resolved_dsn = str(dsn or os.environ.get("NEXUS_POSTGRES_DSN") or "").strip()
@@ -48,7 +51,10 @@ def _connection_settings(
     )
     if not application_name or len(application_name) > 63:
         raise ValueError("application_name must contain between 1 and 63 characters.")
-    return resolved_dsn, autocommit, connect_timeout, application_name
+    schema = str(schema or os.environ.get("NEXUS_POSTGRES_SCHEMA") or DEFAULT_POSTGRES_SCHEMA).strip()
+    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", schema):
+        raise ValueError("schema must be a lowercase PostgreSQL identifier.")
+    return resolved_dsn, autocommit, connect_timeout, application_name, schema
 
 
 class HybridRow(dict):
@@ -94,6 +100,7 @@ def connect_postgres(
     row_factory=None,
     connect_timeout=DEFAULT_CONNECT_TIMEOUT_SECONDS,
     application_name=DEFAULT_APPLICATION_NAME,
+    schema=None,
 ):
     """Open one standalone PostgreSQL connection.
 
@@ -101,11 +108,12 @@ def connect_postgres(
     sqlite3. Its default row shape is compatible with sqlite3.Row named and
     positional indexing; SQL and lifecycle contracts still require migration.
     """
-    dsn, autocommit, connect_timeout, application_name = _connection_settings(
+    dsn, autocommit, connect_timeout, application_name, schema = _connection_settings(
         dsn,
         autocommit=autocommit,
         connect_timeout=connect_timeout,
         application_name=application_name,
+        schema=schema,
     )
     try:
         import psycopg
@@ -114,13 +122,28 @@ def connect_postgres(
             "PostgreSQL support is optional; install psycopg[binary,pool]>=3.2,<4.0."
         ) from exc
 
-    return psycopg.connect(
+    connection = psycopg.connect(
         dsn,
         autocommit=autocommit,
         row_factory=_load_driver_row_factory(row_factory),
         connect_timeout=connect_timeout,
         application_name=application_name,
+        options=f"-c search_path={schema}",
     )
+    try:
+        row = connection.execute("SELECT current_schema() AS schema_name").fetchone()
+        actual_schema = row["schema_name"] if isinstance(row, dict) else row[0]
+        if actual_schema != schema:
+            raise RuntimeError(
+                f"Configured PostgreSQL schema {schema!r} is unavailable; "
+                f"current_schema() resolved to {actual_schema!r}."
+            )
+        if not autocommit:
+            connection.rollback()
+        return connection
+    except Exception:
+        connection.close()
+        raise
 
 
 class PostgresConnectionPool:
@@ -204,6 +227,7 @@ def create_postgres_pool(
     row_factory=None,
     connect_timeout=DEFAULT_CONNECT_TIMEOUT_SECONDS,
     application_name=DEFAULT_APPLICATION_NAME,
+    schema=None,
 ):
     """Create and open a bounded PostgreSQL pool without selecting it at runtime.
 
@@ -211,11 +235,12 @@ def create_postgres_pool(
     separate settings. The returned wrapper requires context-managed leases;
     it does not expose raw getconn()/putconn() operations.
     """
-    dsn, autocommit, connect_timeout, application_name = _connection_settings(
+    dsn, autocommit, connect_timeout, application_name, schema = _connection_settings(
         dsn,
         autocommit=autocommit,
         connect_timeout=connect_timeout,
         application_name=application_name,
+        schema=schema,
     )
     if isinstance(min_size, bool) or not isinstance(min_size, int) or min_size < 1:
         raise ValueError("min_size must be a positive integer.")
@@ -230,6 +255,17 @@ def create_postgres_pool(
             "PostgreSQL pooling is optional; install psycopg[binary,pool]>=3.2,<4.0."
         ) from exc
 
+    def configure_connection(connection):
+        row = connection.execute("SELECT current_schema() AS schema_name").fetchone()
+        actual_schema = row["schema_name"] if isinstance(row, dict) else row[0]
+        if actual_schema != schema:
+            raise RuntimeError(
+                f"Configured PostgreSQL schema {schema!r} is unavailable; "
+                f"current_schema() resolved to {actual_schema!r}."
+            )
+        if not autocommit:
+            connection.rollback()
+
     pool = ConnectionPool(
         conninfo=dsn,
         min_size=min_size,
@@ -240,7 +276,9 @@ def create_postgres_pool(
             "row_factory": _load_driver_row_factory(row_factory),
             "connect_timeout": connect_timeout,
             "application_name": application_name,
+            "options": f"-c search_path={schema}",
         },
+        configure=configure_connection,
         open=False,
     )
     try:
