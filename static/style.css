@@ -934,3 +934,95 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
 .credit-limit-panel small{width:100%;color:var(--muted);font-size:12px}
 .credit-limit-panel.is-over{border-color:#d97706;border-right-color:#d97706;background:color-mix(in srgb,#d97706 9%,var(--surface))}
 .credit-limit-panel.is-over .credit-limit-value{color:#b45309;background:color-mix(in srgb,#d97706 14%,var(--surface))}
+
+
+/* Shared, low-risk UX polish for sales and purchasing entry screens. */
+.erp-entry-page {
+  --erp-field-radius: 10px;
+  min-width: 0;
+}
+.erp-entry-page .form-grid,
+.erp-entry-page .form-row {
+  align-items: end;
+  gap: 14px;
+}
+.erp-entry-page label {
+  display: block;
+  min-width: 0;
+  font-weight: 600;
+}
+.erp-entry-page input:not([type="checkbox"]):not([type="radio"]),
+.erp-entry-page select,
+.erp-entry-page textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  border-radius: var(--erp-field-radius);
+}
+.erp-entry-page input:focus-visible,
+.erp-entry-page select:focus-visible,
+.erp-entry-page textarea:focus-visible,
+.erp-entry-page button:focus-visible,
+.erp-entry-page a:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent, #2563eb) 35%, transparent);
+  outline-offset: 2px;
+}
+.erp-entry-page .table-wrap,
+.erp-entry-page .table-responsive {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  border: 1px solid var(--border, #dce2ea);
+  border-radius: 11px;
+}
+.erp-entry-page table {
+  font-variant-numeric: tabular-nums;
+}
+.erp-entry-page thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  white-space: nowrap;
+}
+.erp-entry-page tbody tr:hover {
+  background: var(--surface-alt, rgba(120, 130, 150, .06));
+}
+.erp-entry-page .muted,
+.erp-entry-page small {
+  line-height: 1.65;
+}
+.erp-entry-page .erp-form-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0 5px;
+  margin-top: 16px;
+  background: var(--surface, #fff);
+  border-top: 1px solid var(--border, #dce2ea);
+}
+.erp-entry-page .erp-form-actions > * {
+  min-height: 40px;
+}
+.erp-entry-page [hidden] {
+  display: none !important;
+}
+@media (max-width: 700px) {
+  .erp-entry-page .erp-form-actions {
+    position: static;
+  }
+  .erp-entry-page .form-grid,
+  .erp-entry-page .form-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .erp-entry-page input,
+  .erp-entry-page select,
+  .erp-entry-page button {
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+}
