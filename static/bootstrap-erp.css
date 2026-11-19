@@ -1078,3 +1078,35 @@ main .border { border-color: var(--line) !important; }
     box-shadow: 0 8px 24px rgba(24, 39, 58, .09);
   }
 }
+
+
+/* Search input paired with the original native select. */
+main .nexus-search-select {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  width: 100%;
+}
+main .nexus-select-search {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface2);
+  font-size: .88rem;
+}
+main .nexus-select-search:focus {
+  outline: 0;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 .18rem color-mix(in srgb, var(--accent) 16%, transparent);
+}
+main .nexus-select-search-count {
+  min-height: 0;
+  color: var(--muted);
+  font-size: .76rem;
+  line-height: 1.2;
+}
+main .nexus-select-search-count:empty { display: none; }
