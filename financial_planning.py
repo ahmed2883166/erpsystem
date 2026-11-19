@@ -1506,6 +1506,7 @@ def budget_export(budget_id, fmt):
 
 
 def build_balance_sheet_snapshot(conn, as_of):
+    register_decimal_aggregates(conn)
     account_columns = table_columns(conn, "accounts")
     section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
     subtype_expr = "a.account_subtype" if "account_subtype" in account_columns else "NULL"

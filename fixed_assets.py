@@ -47,7 +47,7 @@ def require(write=False):
         return wrapped
     return deco
 
-@transactional_connection_initializer(db)
+@transactional_connection_initializer(lambda: db())
 def initialize_assets_schema(c):
     execute_script(c, """
     CREATE TABLE IF NOT EXISTS fixed_assets(

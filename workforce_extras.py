@@ -45,7 +45,7 @@ def create_workforce_safety_backup():
     return str(archive)
 
 
-@transactional_connection_initializer(_db)
+@transactional_connection_initializer(lambda: _db())
 def initialize_workforce_extras_schema(c):
     execute_script(c, """
     CREATE TABLE IF NOT EXISTS employee_penalties(

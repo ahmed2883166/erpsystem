@@ -28,7 +28,7 @@ def _columns(conn, name):
     return table_columns(conn, name)
 
 
-@transactional_connection_initializer(_db)
+@transactional_connection_initializer(lambda: _db())
 def initialize_tax_schema(conn):
     """Additive migration; never rewrites existing invoice values."""
     for table in ("sales_invoices", "supplier_bills", "sales_credit_notes", "supplier_credit_notes"):

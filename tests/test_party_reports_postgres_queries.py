@@ -37,7 +37,7 @@ class PartyReportsPostgreSQLQueryTests(unittest.TestCase):
                 """CREATE TABLE financial_year_journal_history (
                     id BIGINT PRIMARY KEY, financial_year_id BIGINT,
                     entry_kind TEXT, action TEXT, entry_id BIGINT,
-                    related_entry_id BIGINT
+                    related_entry_id BIGINT, ledger_history_copied BIGINT
                 )""",
             )
             for statement in statements:
@@ -52,8 +52,8 @@ class PartyReportsPostgreSQLQueryTests(unittest.TestCase):
             )
             connection.execute(
                 """INSERT INTO financial_year_journal_history
-                   VALUES (1, 1, 'opening', 'created', 2, NULL),
-                          (2, 1, 'opening', 'reversed', 3, 2)"""
+                   VALUES (1, 1, 'opening', 'created', 2, NULL, 1),
+                          (2, 1, 'opening', 'reversed', 3, 2, NULL)"""
             )
             self.assertEqual(
                 _copied_opening_entry_ids(connection, "2027-02-01"), {2, 3}

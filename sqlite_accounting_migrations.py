@@ -72,6 +72,26 @@ def _rebuild_real_columns_as_text(connection, table_name, column_names):
     ).fetchall()
     index_sql = [_row_value(row, "sql", 0) for row in index_rows]
     trigger_sql = [_row_value(row, "sql", 0) for row in trigger_rows]
+    # Rebuilt amount columns have TEXT affinity. Preserve the numeric meaning
+    # of legacy trigger guards such as NEW.debit < 0 after the affinity change.
+    for trigger_index, statement in enumerate(trigger_sql):
+        for column_name in real_columns:
+            quoted = re.escape(column_name)
+            left_comparison = re.compile(
+                r'(?i)\\b(NEW|OLD)\\s*\\.\\s*"?'+quoted+r'"?\\s*(<=|>=|<>|!=|=|<|>)\\s*(-?(?:\\d+(?:\\.\\d*)?|\\.\\d+))'
+            )
+            statement = left_comparison.sub(
+                lambda match: f'CAST({match.group(1)}."{column_name}" AS NUMERIC) {match.group(2)} {match.group(3)}',
+                statement,
+            )
+            right_comparison = re.compile(
+                r'(?i)(-?(?:\\d+(?:\\.\\d*)?|\\.\\d+))\\s*(<=|>=|<>|!=|=|<|>)\\s*(NEW|OLD)\\s*\\.\\s*"?'+quoted+r'"?'
+            )
+            statement = right_comparison.sub(
+                lambda match: f'{match.group(1)} {match.group(2)} CAST({match.group(3)}."{column_name}" AS NUMERIC)',
+                statement,
+            )
+        trigger_sql[trigger_index] = statement
 
     info_rows = connection.execute(
         f'PRAGMA table_xinfo("{table_name}")'

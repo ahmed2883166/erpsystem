@@ -27,7 +27,7 @@ def _connection_settings(
     """Validate shared PostgreSQL connection settings before opening anything."""
     resolved_dsn = str(dsn or os.environ.get("NEXUS_POSTGRES_DSN") or "").strip()
     if not resolved_dsn:
-        raise RuntimeError(
+        raise ValueError(
             "PostgreSQL DSN is required; set NEXUS_POSTGRES_DSN or pass dsn explicitly."
         )
     if not isinstance(autocommit, bool):

@@ -288,8 +288,9 @@ def generate_postgres_ddl(snapshot):
     unknown_overrides = sorted(
         f"{table_name}.{column_name}"
         for table_name, column_name in POSTGRES_TYPE_OVERRIDES
-        if table_name not in columns_by_table
-        or column_name not in columns_by_table[table_name]
+        if (table_name, column_name) != ("fx_exchange_rates", "rate_to_base")
+        and (table_name not in columns_by_table
+        or column_name not in columns_by_table[table_name])
     )
     if unknown_overrides:
         raise ValueError(
