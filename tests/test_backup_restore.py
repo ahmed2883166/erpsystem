@@ -7,6 +7,7 @@ from pathlib import Path
 
 from backup_restore import (
     create_database_safety_copy,
+    create_extraction_target,
     extract_validated_backup,
     restore_database_with_rollback,
 )
@@ -27,6 +28,19 @@ def make_database(path, value):
 
 
 class BackupRestoreTests(unittest.TestCase):
+
+    def test_reserved_extraction_target_is_absent_and_can_be_extracted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            database = root / "source.db"
+            archive_path = root / "backup.zip"
+            make_database(database, "backup-data")
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.write(database, "nexus.db")
+            target = create_extraction_target(root)
+            self.assertFalse(target.exists())
+            extract_validated_backup(archive_path, target)
+            self.assertTrue(target.is_file())
 
     def test_does_not_overwrite_existing_candidate_file(self):
         with tempfile.TemporaryDirectory() as folder:
