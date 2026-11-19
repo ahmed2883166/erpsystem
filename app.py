@@ -54,7 +54,7 @@ from sqlite_accounting_migrations import (migrate_journal_line_amounts_to_text,\
 from sqlite_audit_schema import initialize_sqlite_audit_schema
 from postgres_audit_schema import initialize_postgres_audit_schema
 from db_sql import execute_compat, executemany_compat
-from db_compat import (begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names, table_column_info, database_dialect, DB_ERROR, DB_INTEGRITY_ERROR)
+from db_compat import (begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names, table_column_info, database_dialect, DB_ERROR, DB_INTEGRITY_ERROR, transactional_migration)
 from report_request_control import (ReportRequestGate, bounded_env_int,
                                     is_expensive_report_request,
                                     set_current_report_deadline,
@@ -347,6 +347,7 @@ def stored_user_permissions(raw, role):
 ROLE_SYSTEM_NAMES = {"admin": "مدير النظام", "accountant": "محاسب", "viewer": "مشاهد"}
 
 
+@transactional_migration
 def initialize_roles_schema(connection):
     execute_compat(connection, """
         CREATE TABLE IF NOT EXISTS roles (
