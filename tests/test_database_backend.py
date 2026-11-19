@@ -24,5 +24,15 @@ class DatabaseBackendSelectionTests(unittest.TestCase):
             require_supported_runtime_backend({"NEXUS_DB_BACKEND": "postgresql"})
 
 
+class DatabaseConnectionFactoryGateTests(unittest.TestCase):
+    def test_direct_connection_factory_cannot_bypass_postgresql_runtime_gate(self):
+        from unittest.mock import patch
+        from database import connect_database
+
+        with patch.dict("os.environ", {"NEXUS_DB_BACKEND": "postgresql"}):
+            with self.assertRaisesRegex(RuntimeError, "PostgreSQL runtime is not enabled yet"):
+                connect_database(":memory:")
+
+
 if __name__ == "__main__":
     unittest.main()
