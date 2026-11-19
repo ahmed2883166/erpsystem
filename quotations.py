@@ -22,7 +22,7 @@ def db():
 
 @transactional_connection_initializer(db)
 def initialize_quotes_schema(c):
-"""
+ execute_script(c, """
  CREATE TABLE IF NOT EXISTS customer_price_rules(
   id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(id),
   product_id INTEGER NOT NULL REFERENCES stock_products(id), unit_price TEXT NOT NULL,
