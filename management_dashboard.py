@@ -119,17 +119,18 @@ def _closing_entry_condition(conn):
 
 
 def _copied_opening_entry_ids(conn, as_of):
-    """Return later-year opening copies (and their reversals) already represented by prior ledger history."""
+    """Return only opening entries explicitly marked as copied at creation time."""
     if not all(table_exists(conn, table) for table in (
         "financial_years", "financial_year_journal_history"
     )):
         return set()
+    if "ledger_history_copied" not in table_columns(conn, "financial_year_journal_history"):
+        return set()
     rows = execute_compat(conn, """
         SELECT h.entry_id FROM financial_year_journal_history h
         JOIN financial_years fy ON fy.id=h.financial_year_id
-        WHERE h.entry_kind='opening' AND h.action='created' AND fy.start_date<=?
-          AND EXISTS (SELECT 1 FROM journal_entries prior
-                      WHERE prior.status='posted' AND prior.entry_date<fy.start_date)
+        WHERE h.entry_kind='opening' AND h.action='created'
+          AND h.ledger_history_copied=1 AND fy.start_date<=?
     """, (as_of,)).fetchall()
     excluded = {int(row["entry_id"]) for row in rows}
     if excluded:
