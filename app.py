@@ -22,6 +22,7 @@ import uuid
 
 from flask import Flask, abort, Response, flash, redirect, render_template, request, send_file, session, url_for, has_request_context, g
 from flask.sessions import SecureCookieSessionInterface
+from werkzeug.middleware.proxy_fix import ProxyFix
 from chart_templates import (CHARTS, ACTIVITY_LABELS, OPERATIONAL_ACCOUNT_CODES, seed_activity_chart, ensure_activity_chart_accounts, migrate_vat_accounts, ensure_account_metadata, migrate_legacy_duplicate_account_labels)
 from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
@@ -206,6 +207,23 @@ app.config.update(
     SESSION_COOKIE_SECURE=os.environ.get("NEXUS_COOKIE_SECURE", "").strip().lower() in {"1", "true", "yes", "on"},
     PERMANENT_SESSION_LIFETIME=1800,
 )
+
+# Trust forwarded headers only when the operator explicitly declares the exact
+# number of reverse-proxy hops. Never enable ProxyFix with a guessed default.
+try:
+    _trusted_proxy_hops = int(os.environ.get("NEXUS_TRUSTED_PROXY_HOPS", "0"))
+except ValueError as exc:
+    raise RuntimeError("NEXUS_TRUSTED_PROXY_HOPS must be an integer from 0 to 5.") from exc
+if not 0 <= _trusted_proxy_hops <= 5:
+    raise RuntimeError("NEXUS_TRUSTED_PROXY_HOPS must be an integer from 0 to 5.")
+if _trusted_proxy_hops:
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app,
+        x_for=_trusted_proxy_hops,
+        x_proto=_trusted_proxy_hops,
+        x_host=_trusted_proxy_hops,
+        x_port=_trusted_proxy_hops,
+    )
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 csrf = CSRFProtect(app)
 
