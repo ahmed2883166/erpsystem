@@ -93,6 +93,42 @@ def main() -> int:
                             f"accounts, and company settings: users={user_count}, "
                             f"accounts={account_count}, settings={settings_count}"
                         )
+                    expected_numeric_columns = {
+                        ("currencies", "rate_to_base"): (24, 10),
+                        ("fx_exchange_rates", "rate_to_base"): (24, 10),
+                        ("tax_rates", "rate"): (9, 6),
+                        ("journal_lines", "debit"): (24, 6),
+                        ("journal_lines", "credit"): (24, 6),
+                    }
+                    for (table_name, column_name), (precision, scale) in expected_numeric_columns.items():
+                        column_type = connection.execute(
+                            """SELECT data_type,numeric_precision,numeric_scale
+                               FROM information_schema.columns
+                               WHERE table_schema=current_schema()
+                                 AND table_name=%s AND column_name=%s""",
+                            (table_name, column_name),
+                        ).fetchone()
+                        if (
+                            not column_type
+                            or column_type["data_type"] != "numeric"
+                            or int(column_type["numeric_precision"]) != precision
+                            or int(column_type["numeric_scale"]) != scale
+                        ):
+                            raise AssertionError(
+                                f"PostgreSQL decimal schema mismatch for {table_name}.{column_name}: "
+                                f"{column_type!r}"
+                            )
+                    history_columns = connection.execute(
+                        """SELECT 1 FROM information_schema.columns
+                           WHERE table_schema=current_schema()
+                             AND table_name='financial_year_journal_history'
+                             AND column_name='ledger_history_copied'"""
+                    ).fetchone()
+                    if not history_columns:
+                        raise AssertionError(
+                            "PostgreSQL planning schema did not persist opening-entry classification."
+                        )
+
                     # The three bootstrap verification SELECTs above open a
                     # psycopg transaction (unlike SQLite's default SELECT
                     # behavior). End that caller-owned read transaction before
