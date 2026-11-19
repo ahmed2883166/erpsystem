@@ -35,6 +35,12 @@ def _with_required_numeric_override_tables(snapshot):
             "foreign_keys": [],
             "indexes": [],
         },
+        {
+            "name": "fx_exchange_rates",
+            "columns": [{"name": "rate_to_base", "type": "TEXT", "pk": 0}],
+            "foreign_keys": [],
+            "indexes": [],
+        },
     ])
     return snapshot
 
@@ -51,19 +57,23 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
     def test_uses_only_explicit_numeric_overrides(self):
         self.assertEqual(
             pg_type({"name": "debit", "type": "TEXT"}, "journal_lines"),
-            "NUMERIC",
+            "NUMERIC(24, 6)",
         )
         self.assertEqual(
             pg_type({"name": "credit", "type": "TEXT"}, "journal_lines"),
-            "NUMERIC",
+            "NUMERIC(24, 6)",
         )
         self.assertEqual(
             pg_type({"name": "rate_to_base", "type": "REAL"}, "currencies"),
-            "NUMERIC",
+            "NUMERIC(24, 10)",
         )
         self.assertEqual(
             pg_type({"name": "rate", "type": "REAL"}, "tax_rates"),
-            "NUMERIC",
+            "NUMERIC(9, 6)",
+        )
+        self.assertEqual(
+            pg_type({"name": "rate_to_base", "type": "TEXT"}, "fx_exchange_rates"),
+            "NUMERIC(24, 10)",
         )
         # Similar-looking identifiers and metadata must not be coerced.
         self.assertEqual(
@@ -85,6 +95,7 @@ class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
                 ("journal_lines", "credit"),
                 ("currencies", "rate_to_base"),
                 ("tax_rates", "rate"),
+                ("fx_exchange_rates", "rate_to_base"),
             },
         )
 
