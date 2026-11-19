@@ -42,7 +42,7 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
     def test_repository_core_migration_is_loadable_and_splits_function_body_safely(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
         statements = _split_sql_statements(migrations[0].sql)
         audit_function = next(
             item for item in statements
@@ -295,7 +295,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
     def test_party_and_banking_schema_supports_independent_ledgers(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         schema = quote_schema_name(self.schema)
         # Trigger functions intentionally resolve their tables through the
@@ -340,7 +340,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
     def test_purchasing_schema_creates_order_receipt_and_bill_links(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         schema = quote_schema_name(self.schema)
         user_id = self.connection.execute(
@@ -404,7 +404,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
     def test_sales_schema_links_invoice_lines_receipts_and_credit_notes(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         schema = quote_schema_name(self.schema)
         user_id = self.connection.execute(
@@ -460,7 +460,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
     def test_inventory_schema_uses_exact_quantities_and_enforces_location_scope(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [])
         schema = quote_schema_name(self.schema)
         # PostgreSQL trigger functions resolve tenant tables using search_path.
@@ -571,7 +571,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         ).fetchone()["id"]
         self.connection.commit()
 
-        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [8, 9, 10])
+        self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema), [8, 9, 10, 11])
         preserved = self.connection.execute(
             f"SELECT entered_uom_id FROM {schema}.stock_movements WHERE id=%s",
             (legacy_movement_id,),
@@ -592,7 +592,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
         self.assertEqual(apply_migrations(self.connection, migrations, schema=self.schema),
-                         [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+                         [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
         columns = self.connection.execute(
             "SELECT column_name FROM information_schema.columns "
             "WHERE table_schema=%s AND table_name=%s",
