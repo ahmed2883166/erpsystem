@@ -84,6 +84,7 @@
 (() => {
   "use strict";
   const MIN_OPTIONS = 12;
+  let searchId = 0;
   const normalize = value => String(value || "")
     .normalize("NFD")
     .replace(/[\\u0300-\\u036f]/g, "")
@@ -109,7 +110,8 @@
     search.autocomplete = "off";
     search.placeholder = "ابحث بالكود أو الاسم...";
     search.setAttribute("aria-label", "بحث داخل القائمة");
-    search.setAttribute("aria-controls", select.id || "");
+    search.id = "nexus-select-search-" + (++searchId);
+    search.setAttribute("aria-controls", select.id || search.id);
     search.setAttribute("dir", "auto");
     const status = document.createElement("span");
     status.className = "nexus-select-search-count";
@@ -129,22 +131,18 @@
           const groupMatches = normalize(child.label).includes(query);
           let groupVisible = 0;
           groupOptions.forEach(option => {
-            const match = !query || groupMatches || normalize(option.textContent).includes(query);
+            const match = !query || option.selected || groupMatches || normalize(option.textContent).includes(query);
             option.hidden = !match;
             if (match) { visible++; groupVisible++; }
           });
           child.hidden = !!query && groupVisible === 0;
         } else if (child.tagName === "OPTION") {
-          const match = !query || normalize(child.textContent).includes(query);
+          const match = !query || child.selected || normalize(child.textContent).includes(query);
           child.hidden = !match;
           if (match) visible++;
         }
       });
       status.textContent = query ? (visible ? visible + " نتيجة" : "لا توجد نتائج") : "";
-      if (select.selectedOptions.length && select.selectedOptions[0].hidden) {
-        // Keep the selected value intact; filtering must never silently change it.
-        status.textContent += status.textContent ? " · الاختيار الحالي محفوظ" : "الاختيار الحالي محفوظ";
-      }
     };
 
     search.addEventListener("input", refresh);
