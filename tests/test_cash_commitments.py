@@ -385,8 +385,6 @@ class CashCommitmentsTests(unittest.TestCase):
 
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 # اختبارات PostgreSQL الفعلية تُشغّل داخل schema مؤقت ولا تلمس بيانات الشركات.
@@ -455,3 +453,7 @@ class CashCommitmentsPostgreSQLSchemaTests(unittest.TestCase):
         self.assertEqual(row["title"], "اختبار مخطط PostgreSQL")
         self.assertGreater(commitment_id, 0)
         self.conn.rollback()
+
+
+if __name__ == "__main__":
+    unittest.main()
