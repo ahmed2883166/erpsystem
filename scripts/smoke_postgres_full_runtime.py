@@ -163,6 +163,18 @@ def main() -> int:
                     admin_id = connection.execute(
                         "SELECT id FROM users WHERE username='admin'"
                     ).fetchone()["id"]
+                    # The installer intentionally marks its first admin for a forced
+                    # password change. This smoke test injects an authenticated session
+                    # directly (it does not test the login/password-change flow), so mark
+                    # that disposable CI admin as already onboarded before exercising
+                    # protected workforce routes. This update is confined to the
+                    # temporary PostgreSQL schema created above.
+                    execute_compat(
+                        connection,
+                        "UPDATE users SET must_change_password=0 WHERE id=?",
+                        (admin_id,),
+                    )
+                    connection.commit()
                     invoice = sales.post_invoice(
                         connection,
                         customer_id,
