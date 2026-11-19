@@ -59,7 +59,7 @@ class JournalReversalProtectionTests(unittest.TestCase):
                 (2,'2026-01-02','REV-1','قيد عكسي للقيد رقم 1','posted',1,'2026-01-02'),
                 (3,'2026-01-03','JRN-3','قيد تم عكسه','posted',1,'2026-01-03'),
                 (4,'2026-01-04','REV-3','قيد عكسي للقيد رقم 3','posted',1,'2026-01-04');
-            INSERT INTO journal_lines VALUES
+            INSERT INTO journal_lines(id,entry_id,account_id,debit,credit,memo) VALUES
                 (1,1,1,'100.00','0','أصل'),
                 (2,1,2,'0','100.00','مقابل'),
                 (3,2,1,'0','100.00','عكس الأصل'),
