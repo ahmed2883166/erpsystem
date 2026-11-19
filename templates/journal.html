@@ -123,6 +123,7 @@
  const form=document.getElementById('journalForm'),body=document.getElementById('lineBody'),add=document.getElementById('addLine');
  if(!form||!body||!add)return;
  const template=body.querySelector('.journal-line-row');
+ let cloneSequence=0;
  const accountOptions=template.querySelector('[name=account_id]').innerHTML;
  function rows(){return [...body.querySelectorAll('.journal-line-row')]}
  function renumber(){rows().forEach((r,i)=>r.querySelector('.line-number').textContent=i+1)}
@@ -143,12 +144,20 @@
  }
  function addRow(focus=true){
    const row=template.cloneNode(true);
-   // Keep labels and searchable controls independent across dynamically added rows.
-   row.querySelectorAll('[id]').forEach(element=>element.removeAttribute('id'));
+   // Give every cloned control a unique ID and keep label associations intact.
+   const idMap=new Map(), suffix='-journal-row-'+(++cloneSequence);
+   row.querySelectorAll('[id]').forEach(element=>{
+     const oldId=element.id, newId=oldId+suffix;
+     idMap.set(oldId,newId); element.id=newId;
+   });
+   row.querySelectorAll('label[for]').forEach(label=>{
+     const mapped=idMap.get(label.htmlFor); if(mapped)label.htmlFor=mapped;
+   });
    row.querySelectorAll('[aria-controls],[aria-owns],[aria-labelledby]').forEach(element=>{
-     element.removeAttribute('aria-controls');
-     element.removeAttribute('aria-owns');
-     element.removeAttribute('aria-labelledby');
+     ['aria-controls','aria-owns','aria-labelledby'].forEach(attribute=>{
+       const value=element.getAttribute(attribute);
+       if(value)element.setAttribute(attribute,value.split(/\\s+/).map(id=>idMap.get(id)||id).join(' '));
+     });
    });
    row.querySelectorAll('input').forEach(input=>{
      if(input.type==='checkbox'||input.type==='radio')input.checked=false;
