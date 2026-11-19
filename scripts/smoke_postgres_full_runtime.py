@@ -13,7 +13,10 @@ import os
 import re
 import sys
 import tempfile
+import threading
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import psycopg
@@ -542,6 +545,340 @@ def main() -> int:
                         "egypt_output_vat": str(egypt_tax["output_vat"]),
                         "egypt_deductible_input_vat": str(egypt_tax["input_vat"]),
                         "saudi_standard_rate": str(saudi_tax_snapshot["tax_profile"]["standard_rate"]),
+                    }
+
+                    # Run a complete maker-checker payroll lifecycle through the real
+                    # Flask routes. All records remain inside this disposable PostgreSQL
+                    # schema and use manual statutory inputs (zero deductions).
+                    liability_account = execute_compat(
+                        connection,
+                        """SELECT id FROM accounts
+                             WHERE account_type='liability' AND is_group=0 AND active=1
+                             ORDER BY code LIMIT 1""",
+                    ).fetchone()
+                    if not liability_account:
+                        raise AssertionError("PostgreSQL chart has no active detail liability account for payroll.")
+                    liability_account_id = int(liability_account["id"])
+                    approver_row = execute_compat(
+                        connection,
+                        """INSERT INTO users(
+                               username,full_name,password_hash,role,created_at,must_change_password
+                           )
+                           SELECT 'pg-smoke-approver','مستخدم اعتماد اختبار',password_hash,
+                                  'admin',CURRENT_TIMESTAMP,0
+                             FROM users WHERE id=?
+                           RETURNING id""",
+                        (admin_id,),
+                    ).fetchone()
+                    if not approver_row:
+                        raise AssertionError("Could not create the isolated PostgreSQL payroll approver.")
+                    approver_id = int(approver_row["id"])
+                    employee_id = insert_and_get_id(
+                        connection,
+                        """INSERT INTO employees(
+                               employee_code,full_name,hire_date,basic_salary,insured_wage,
+                               active,work_status
+                           ) VALUES(?,?,?,?,?,1,'permanent')""",
+                        ("PG-SMOKE-EMP", "موظف اختبار المرتبات PostgreSQL",
+                         today.isoformat(), "1200.00", "1200.00"),
+                    )
+                    connection.commit()
+
+                    client = nexus_app.app.test_client()
+                    def set_session_user(user_id):
+                        with client.session_transaction() as session_data:
+                            session_data.clear()
+                            session_data["user_id"] = int(user_id)
+                            session_data["role"] = "admin"
+
+                    payroll_period = today.strftime("%Y-%m")
+                    set_session_user(admin_id)
+                    create_response = client.post(
+                        "/hr/payroll",
+                        data={"period": payroll_period},
+                        follow_redirects=False,
+                    )
+                    payroll_run = execute_compat(
+                        connection,
+                        "SELECT id,status,created_by,approval_status FROM payroll_runs WHERE period=?",
+                        (payroll_period,),
+                    ).fetchone()
+                    if (
+                        create_response.status_code not in (302, 303)
+                        or not payroll_run
+                        or payroll_run["status"] != "draft"
+                        or int(payroll_run["created_by"]) != int(admin_id)
+                        or payroll_run["approval_status"] != "pending"
+                    ):
+                        raise AssertionError("PostgreSQL payroll draft creation did not preserve maker/pending approval state.")
+                    payroll_run_id = int(payroll_run["id"])
+                    payroll_line = execute_compat(
+                        connection,
+                        "SELECT id,net_pay,gross_pay FROM payroll_lines WHERE run_id=? AND employee_id=?",
+                        (payroll_run_id, employee_id),
+                    ).fetchone()
+                    if (
+                        not payroll_line
+                        or Decimal(str(payroll_line["gross_pay"])) != Decimal("1200.00")
+                        or Decimal(str(payroll_line["net_pay"])) != Decimal("1200.00")
+                    ):
+                        raise AssertionError("PostgreSQL payroll draft did not calculate the expected manual-input net pay.")
+
+                    payroll_accounts = {
+                        "salary_expense_account": int(expense_account["id"]),
+                        "employer_ins_expense_account": int(expense_account["id"]),
+                        "salaries_payable_account": liability_account_id,
+                        "tax_payable_account": liability_account_id,
+                        "insurance_payable_account": liability_account_id,
+                        "other_deductions_account": liability_account_id,
+                        "advances_account": liability_account_id,
+                    }
+                    set_session_user(admin_id)
+                    client.post(
+                        f"/hr/payroll/{payroll_run_id}/post",
+                        data=payroll_accounts,
+                        follow_redirects=False,
+                    )
+                    creator_post_state = execute_compat(
+                        connection, "SELECT status,journal_entry_id FROM payroll_runs WHERE id=?",
+                        (payroll_run_id,),
+                    ).fetchone()
+                    if not creator_post_state or creator_post_state["status"] != "draft" or creator_post_state["journal_entry_id"] is not None:
+                        raise AssertionError("PostgreSQL payroll allowed its creator to approve/post the same run.")
+
+                    set_session_user(approver_id)
+                    approve_response = client.post(
+                        f"/hr/payroll/{payroll_run_id}/post",
+                        data=payroll_accounts,
+                        follow_redirects=False,
+                    )
+                    posted_payroll = execute_compat(
+                        connection,
+                        "SELECT status,journal_entry_id,approved_by FROM payroll_runs WHERE id=?",
+                        (payroll_run_id,),
+                    ).fetchone()
+                    if (
+                        approve_response.status_code not in (302, 303)
+                        or not posted_payroll
+                        or posted_payroll["status"] != "posted"
+                        or int(posted_payroll["approved_by"]) != approver_id
+                        or not posted_payroll["journal_entry_id"]
+                    ):
+                        raise AssertionError("PostgreSQL payroll maker-checker approval did not post under the separate approver.")
+                    payroll_journal_id = int(posted_payroll["journal_entry_id"])
+                    payroll_journal_totals = execute_compat(
+                        connection,
+                        """SELECT SUM(CAST(debit AS NUMERIC)) AS debit,
+                                  SUM(CAST(credit AS NUMERIC)) AS credit
+                             FROM journal_lines WHERE entry_id=?""",
+                        (payroll_journal_id,),
+                    ).fetchone()
+                    if (
+                        Decimal(str(payroll_journal_totals["debit"])) != Decimal("1200.00")
+                        or Decimal(str(payroll_journal_totals["credit"])) != Decimal("1200.00")
+                    ):
+                        raise AssertionError("PostgreSQL payroll journal is not balanced at the expected 1200.00.")
+
+                    # Duplicate posting must leave the original journal untouched.
+                    duplicate_post_response = client.post(
+                        f"/hr/payroll/{payroll_run_id}/post",
+                        data=payroll_accounts,
+                        follow_redirects=False,
+                    )
+                    duplicate_post_state = execute_compat(
+                        connection, "SELECT status,journal_entry_id FROM payroll_runs WHERE id=?",
+                        (payroll_run_id,),
+                    ).fetchone()
+                    if (
+                        duplicate_post_response.status_code not in (302, 303)
+                        or duplicate_post_state["status"] != "posted"
+                        or int(duplicate_post_state["journal_entry_id"]) != payroll_journal_id
+                        or execute_compat(
+                            connection, "SELECT COUNT(*) AS n FROM journal_entries WHERE reference LIKE ?",
+                            ("PAYROLL-" + payroll_period + "-RUN-" + str(payroll_run_id),),
+                        ).fetchone()["n"] != 1
+                    ):
+                        raise AssertionError("PostgreSQL payroll duplicate posting created or changed a journal.")
+
+                    net_payable = Decimal(str(payroll_line["net_pay"]))
+                    set_session_user(approver_id)
+                    client.post(
+                        f"/hr/payroll/{payroll_run_id}/payment",
+                        data={"amount": str(net_payable), "payment_date": today.isoformat(),
+                              "cash_account_id": str(bank_account_id)},
+                        follow_redirects=False,
+                    )
+                    if execute_compat(
+                        connection, "SELECT COUNT(*) AS n FROM payroll_payments WHERE run_id=?",
+                        (payroll_run_id,),
+                    ).fetchone()["n"] != 0:
+                        raise AssertionError("PostgreSQL payroll allowed the approver to pay the same payroll run.")
+
+                    set_session_user(admin_id)
+                    payment_response = client.post(
+                        f"/hr/payroll/{payroll_run_id}/payment",
+                        data={"amount": str(net_payable), "payment_date": today.isoformat(),
+                              "cash_account_id": str(bank_account_id)},
+                        follow_redirects=False,
+                    )
+                    payment_row = execute_compat(
+                        connection,
+                        "SELECT amount,journal_entry_id FROM payroll_payments WHERE run_id=?",
+                        (payroll_run_id,),
+                    ).fetchone()
+                    if (
+                        payment_response.status_code not in (302, 303)
+                        or not payment_row
+                        or Decimal(str(payment_row["amount"])) != net_payable
+                    ):
+                        raise AssertionError("PostgreSQL payroll payment by the original creator did not complete.")
+                    payment_journal_totals = execute_compat(
+                        connection,
+                        """SELECT SUM(CAST(debit AS NUMERIC)) AS debit,
+                                  SUM(CAST(credit AS NUMERIC)) AS credit
+                             FROM journal_lines WHERE entry_id=?""",
+                        (payment_row["journal_entry_id"],),
+                    ).fetchone()
+                    if (
+                        Decimal(str(payment_journal_totals["debit"])) != net_payable
+                        or Decimal(str(payment_journal_totals["credit"])) != net_payable
+                    ):
+                        raise AssertionError("PostgreSQL payroll payment journal is not balanced.")
+                    client.post(
+                        f"/hr/payroll/{payroll_run_id}/payment",
+                        data={"amount": "0.01", "payment_date": today.isoformat(),
+                              "cash_account_id": str(bank_account_id)},
+                        follow_redirects=False,
+                    )
+                    final_payment_state = execute_compat(
+                        connection,
+                        "SELECT COUNT(*) AS n,COALESCE(SUM(CAST(amount AS NUMERIC)),0) AS total FROM payroll_payments WHERE run_id=?",
+                        (payroll_run_id,),
+                    ).fetchone()
+                    if (
+                        final_payment_state["n"] != 1
+                        or Decimal(str(final_payment_state["total"])) != net_payable
+                    ):
+                        raise AssertionError("PostgreSQL payroll accepted an overpayment or duplicated a payment.")
+                    connection.commit()
+                    payroll_flow = {
+                        "run_id": payroll_run_id,
+                        "journal_entry_id": payroll_journal_id,
+                        "payment_journal_id": int(payment_row["journal_entry_id"]),
+                        "net_payable": str(net_payable),
+                    }
+
+                    # Exercise 30 real PostgreSQL connections at once: 15 independent
+                    # journal writers and 15 report readers. This is a database-client
+                    # concurrency acceptance test, not an HTTP-session simulation.
+                    from db_compat import begin_write_transaction
+                    start_barrier = threading.Barrier(30)
+                    write_latencies = []
+                    read_latencies = []
+
+                    def pg_writer(writer_number):
+                        with nexus_app.app.app_context():
+                            worker_connection = nexus_app.db()
+                            try:
+                                start_barrier.wait(timeout=30)
+                                durations = []
+                                for sequence in range(10):
+                                    started = time.perf_counter()
+                                    begin_write_transaction(worker_connection)
+                                    try:
+                                        post_journal(
+                                            worker_connection,
+                                            today.isoformat(),
+                                            f"PG-CONC-{writer_number:02d}-{sequence:03d}",
+                                            "اختبار تزامن PostgreSQL",
+                                            [
+                                                (int(expense_account["id"]), Decimal("1.00"), Decimal("0"), "مدين اختبار التزامن"),
+                                                (liability_account_id, Decimal("0"), Decimal("1.00"), "دائن اختبار التزامن"),
+                                            ],
+                                            admin_id,
+                                        )
+                                        worker_connection.commit()
+                                    except Exception:
+                                        worker_connection.rollback()
+                                        raise
+                                    durations.append(time.perf_counter() - started)
+                                write_latencies.extend(durations)
+                                return len(durations)
+                            finally:
+                                worker_connection.close()
+
+                    def pg_reader(reader_number):
+                        with nexus_app.app.app_context():
+                            worker_connection = nexus_app.db()
+                            try:
+                                start_barrier.wait(timeout=30)
+                                durations = []
+                                for _ in range(30):
+                                    started = time.perf_counter()
+                                    totals = execute_compat(
+                                        worker_connection,
+                                        """SELECT COUNT(*) AS entries,
+                                                  COALESCE(SUM((SELECT COUNT(*) FROM journal_lines jl
+                                                      WHERE jl.entry_id=je.id)),0) AS lines
+                                             FROM journal_entries je""",
+                                    ).fetchone()
+                                    account_totals = execute_compat(
+                                        worker_connection,
+                                        """SELECT account_id,
+                                                  SUM(CAST(debit AS NUMERIC)) AS debit,
+                                                  SUM(CAST(credit AS NUMERIC)) AS credit
+                                             FROM journal_lines
+                                            WHERE account_id IN (?,?)
+                                            GROUP BY account_id""",
+                                        (int(expense_account["id"]), liability_account_id),
+                                    ).fetchall()
+                                    if totals["entries"] < 1 or totals["lines"] < 2 or not account_totals:
+                                        raise AssertionError(f"PostgreSQL report reader {reader_number} observed incomplete ledger data.")
+                                    worker_connection.commit()
+                                    durations.append(time.perf_counter() - started)
+                                read_latencies.extend(durations)
+                                return len(durations)
+                            finally:
+                                worker_connection.close()
+
+                    started = time.perf_counter()
+                    with ThreadPoolExecutor(max_workers=30) as pool:
+                        futures = [
+                            pool.submit(pg_writer, number) for number in range(1, 16)
+                        ] + [
+                            pool.submit(pg_reader, number) for number in range(1, 16)
+                        ]
+                        completed_counts = [future.result(timeout=180) for future in futures]
+                    concurrency_elapsed = time.perf_counter() - started
+                    expected_concurrency_entries = 150
+                    concurrency_state = execute_compat(
+                        connection,
+                        """SELECT COUNT(*) AS entries,
+                                  COUNT(jl.id) AS lines,
+                                  SUM(CAST(jl.debit AS NUMERIC)) AS debit,
+                                  SUM(CAST(jl.credit AS NUMERIC)) AS credit
+                             FROM journal_entries je
+                             JOIN journal_lines jl ON jl.entry_id=je.id
+                            WHERE je.reference LIKE 'PG-CONC-%'""",
+                    ).fetchone()
+                    if (
+                        sum(completed_counts) != 600
+                        or len(write_latencies) != 150
+                        or len(read_latencies) != 450
+                        or int(concurrency_state["entries"]) != expected_concurrency_entries
+                        or int(concurrency_state["lines"]) != expected_concurrency_entries * 2
+                        or Decimal(str(concurrency_state["debit"])) != Decimal("150.00")
+                        or Decimal(str(concurrency_state["credit"])) != Decimal("150.00")
+                    ):
+                        raise AssertionError("PostgreSQL 30-client concurrency workload lost, duplicated, or unbalanced ledger activity.")
+                    write_p95 = sorted(write_latencies)[int(len(write_latencies) * 0.95) - 1]
+                    read_p95 = sorted(read_latencies)[int(len(read_latencies) * 0.95) - 1]
+                    concurrency_flow = {
+                        "entries": expected_concurrency_entries,
+                        "read_queries": len(read_latencies),
+                        "elapsed_seconds": round(concurrency_elapsed, 3),
+                        "write_p95_seconds": round(write_p95, 4),
+                        "read_p95_seconds": round(read_p95, 4),
                     }
                 finally:
                     connection.close()
