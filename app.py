@@ -3538,13 +3538,28 @@ def reverse_journal(entry_id):
         connection.close()
         flash(f"تم إنشاء القيد العكسي مسبقًا: رقم {existing['id']}.", "warning")
         return redirect(url_for("journal_detail", entry_id=entry_id))
-    original_lines = execute_compat(connection, "SELECT account_id,debit,credit,memo FROM journal_lines WHERE entry_id=? ORDER BY id",
-                                        (entry_id,)).fetchall()
+    dimension_keys = (
+        "branch_id", "cost_center_id", "project_id", "customer_id",
+        "salesperson_id", "supplier_id", "stock_product_id", "stock_warehouse_id",
+    )
+    available_dimensions = table_columns(connection, "journal_lines")
+    selected_dimensions = [key for key in dimension_keys if key in available_dimensions]
+    selected_columns = ["account_id", "debit", "credit", "memo", *selected_dimensions]
+    original_lines = execute_compat(
+        connection,
+        "SELECT " + ",".join(selected_columns) +
+        " FROM journal_lines WHERE entry_id=? ORDER BY id",
+        (entry_id,),
+    ).fetchall()
     if len(original_lines) < 2:
         connection.close()
         flash("القيد الأصلي لا يحتوي على سطور كافية للعكس.", "error")
         return redirect(url_for("journal_detail", entry_id=entry_id))
-    reverse_lines = [(r["account_id"], r["credit"], r["debit"], f"عكس: {r['memo'] or ''}") for r in original_lines]
+    reverse_lines = [
+        (r["account_id"], r["credit"], r["debit"], f"عكس: {r['memo'] or ''}",
+         {key: r[key] for key in selected_dimensions})
+        for r in original_lines
+    ]
     reversal_date_text = request.form.get("reversal_date", "").strip()
     reversal_reason = request.form.get("reversal_reason", "").strip()
     try:
