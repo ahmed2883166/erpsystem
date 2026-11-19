@@ -33,10 +33,11 @@ def short_identifier(value, limit=63):
 # affinity mapping; NUMERIC without a typmod avoids silently rounding legacy
 # decimal strings while preserving PostgreSQL arithmetic semantics.
 POSTGRES_TYPE_OVERRIDES = {
-    ("journal_lines", "debit"): "NUMERIC",
-    ("journal_lines", "credit"): "NUMERIC",
-    ("currencies", "rate_to_base"): "NUMERIC",
-    ("tax_rates", "rate"): "NUMERIC",
+    ("journal_lines", "debit"): "NUMERIC(24, 6)",
+    ("journal_lines", "credit"): "NUMERIC(24, 6)",
+    ("currencies", "rate_to_base"): "NUMERIC(24, 10)",
+    ("tax_rates", "rate"): "NUMERIC(9, 6)",
+    ("fx_exchange_rates", "rate_to_base"): "NUMERIC(24, 10)",
 }
 
 
