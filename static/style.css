@@ -1026,3 +1026,34 @@ nav .nav-links a.active{background:#24445a;border-color:#4e7892}
     transition: border-color .15s ease, box-shadow .15s ease;
   }
 }
+
+
+/* Calm, consistent master-data forms: customers, suppliers and employees. */
+.erp-party-panel,.erp-employee-panel{min-width:0}
+.erp-master-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));align-items:end;gap:14px 16px}
+.erp-master-form>label,.erp-master-form>div>label{display:flex;flex-direction:column;gap:6px;min-width:0;color:var(--text)}
+.erp-master-form label small{display:block;color:var(--muted);font-size:12px;line-height:1.55;font-weight:400}
+.erp-master-form input:not([type=checkbox]):not([type=file]),.erp-master-form select,.erp-master-form textarea{
+ width:100%;min-width:0;min-height:41px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;
+ background:var(--surface);color:var(--text);box-shadow:none
+}
+.erp-master-form input[readonly]{background:var(--surface-alt,var(--surface));color:var(--muted);cursor:default}
+.erp-master-form input:focus-visible,.erp-master-form select:focus-visible,.erp-master-form textarea:focus-visible{
+ outline:2px solid color-mix(in srgb,var(--accent) 28%,transparent);outline-offset:2px;border-color:var(--accent)
+}
+.erp-master-form>button,.erp-master-form>.notice{grid-column:1/-1}
+.erp-party-panel,.erp-employee-panel{border:1px solid var(--line);border-radius:13px}
+.erp-party-panel h3,.erp-employee-panel h3{margin-top:0;margin-bottom:14px}
+.erp-party-panel .table-wrap{border-radius:10px;overscroll-behavior-x:contain}
+.erp-party-panel table,.erp-employee-panel table{font-variant-numeric:tabular-nums}
+.erp-party-panel tbody tr,.erp-employee-panel tbody tr{transition:background-color .14s ease}
+.erp-party-panel .table-actions,.erp-employee-panel .employee-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.erp-party-panel .table-actions form{margin:0}
+@media(max-width:700px){
+ .erp-master-form{grid-template-columns:minmax(0,1fr);gap:12px}
+ .erp-master-form>button,.erp-master-form>.notice{grid-column:auto}
+ .erp-party-panel .pagination{align-items:stretch;gap:10px}
+}
+@media(prefers-reduced-motion:reduce){
+ .erp-party-panel tbody tr,.erp-employee-panel tbody tr{transition:none}
+}
