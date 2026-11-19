@@ -76,3 +76,117 @@
     ripple.addEventListener("animationend", () => ripple.remove(), { once: true });
   }, { passive: true });
 })();
+
+
+/* Searchable native selects: retain the original select as the sole form value.
+   Long lists (accounts, customers, suppliers, products, dimensions) get an
+   accessible filter field without changing names, option values or submission. */
+(() => {
+  "use strict";
+  const MIN_OPTIONS = 12;
+  const normalize = value => String(value || "")
+    .normalize("NFD")
+    .replace(/[\\u0300-\\u036f]/g, "")
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .toLocaleLowerCase("ar")
+    .trim();
+
+  const searchable = select => {
+    if (select.multiple || select.dataset.nexusSearchReady === "1") return;
+    const options = [...select.options];
+    if (options.length < MIN_OPTIONS) return;
+    if (select.closest(".no-search-select,[data-no-search]")) return;
+    if (select.disabled) return;
+
+    select.dataset.nexusSearchReady = "1";
+    const wrapper = document.createElement("div");
+    wrapper.className = "nexus-search-select";
+    const search = document.createElement("input");
+    search.type = "search";
+    search.className = "nexus-select-search";
+    search.autocomplete = "off";
+    search.placeholder = "ابحث بالكود أو الاسم...";
+    search.setAttribute("aria-label", "بحث داخل القائمة");
+    search.setAttribute("aria-controls", select.id || "");
+    search.setAttribute("dir", "auto");
+    const status = document.createElement("span");
+    status.className = "nexus-select-search-count";
+    status.setAttribute("aria-live", "polite");
+
+    select.parentNode.insertBefore(wrapper, select);
+    wrapper.append(search, status, select);
+    select.classList.add("nexus-searchable-native");
+
+    const refresh = () => {
+      const query = normalize(search.value);
+      let visible = 0;
+      const groups = new Map();
+      [...select.children].forEach(child => {
+        if (child.tagName === "OPTGROUP") {
+          const groupOptions = [...child.children];
+          const groupMatches = normalize(child.label).includes(query);
+          let groupVisible = 0;
+          groupOptions.forEach(option => {
+            const match = !query || groupMatches || normalize(option.textContent).includes(query);
+            option.hidden = !match;
+            if (match) { visible++; groupVisible++; }
+          });
+          child.hidden = !!query && groupVisible === 0;
+        } else if (child.tagName === "OPTION") {
+          const match = !query || normalize(child.textContent).includes(query);
+          child.hidden = !match;
+          if (match) visible++;
+        }
+      });
+      status.textContent = query ? (visible ? visible + " نتيجة" : "لا توجد نتائج") : "";
+      if (select.selectedOptions.length && select.selectedOptions[0].hidden) {
+        // Keep the selected value intact; filtering must never silently change it.
+        status.textContent += status.textContent ? " · الاختيار الحالي محفوظ" : "الاختيار الحالي محفوظ";
+      }
+    };
+
+    search.addEventListener("input", refresh);
+    search.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        select.focus();
+        select.click();
+      } else if (event.key === "Escape") {
+        search.value = "";
+        refresh();
+        select.focus();
+      }
+    });
+    select.addEventListener("change", () => {
+      // Keep the filter visible while the user makes successive selections.
+      select.dispatchEvent(new Event("nexus:search-selection", { bubbles: true }));
+    });
+    refresh();
+
+    // Options may be appended later by invoice-line and dialog scripts.
+    if (typeof MutationObserver !== "undefined") {
+      const observer = new MutationObserver(refresh);
+      observer.observe(select, { childList: true, subtree: true, characterData: true });
+    }
+  };
+
+  const scan = root => {
+    if (!root || !root.querySelectorAll) return;
+    if (root.matches?.("main select")) searchable(root);
+    root.querySelectorAll("main select").forEach(searchable);
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => scan(document), { once: true });
+  } else scan(document);
+
+  if (typeof MutationObserver !== "undefined") {
+    const observer = new MutationObserver(records => {
+      records.forEach(record => record.addedNodes.forEach(node => {
+        if (node.nodeType === 1) scan(node);
+      }));
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  }
+})();
