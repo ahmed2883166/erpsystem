@@ -3,6 +3,7 @@ import unittest
 
 from sqlite_accounting_migrations import (migrate_journal_line_amounts_to_text,
                                          migrate_currency_rates_to_text)
+from db_compat import execute_script, transactional_migration
 
 
 class JournalLineAmountMigrationTests(unittest.TestCase):
@@ -108,6 +109,42 @@ class JournalLineAmountMigrationTests(unittest.TestCase):
             self.connection.execute("SELECT COUNT(*) FROM journal_lines").fetchone()[0],
             1,
         )
+
+    def test_interrupted_legacy_scratch_table_is_not_reused_or_duplicated(self):
+        self.connection.execute("""
+            CREATE TABLE journal_lines_decimal_new (
+                id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
+                debit TEXT, credit TEXT, memo TEXT, branch_id INTEGER,
+                cost_center_id INTEGER
+            )
+        """)
+        self.connection.execute("""
+            INSERT INTO journal_lines_decimal_new
+            VALUES(15,9,4,'123.45','0','stale copied row',3,8)
+        """)
+        self.connection.commit()
+        self.assertTrue(migrate_journal_line_amounts_to_text(self.connection))
+        rows = self.connection.execute(
+            "SELECT id,memo FROM journal_lines ORDER BY id"
+        ).fetchall()
+        self.assertEqual(rows, [(15, "legacy line")])
+
+    def test_execute_script_failure_rolls_back_every_statement_in_migration(self):
+        @transactional_migration
+        def broken_migration(connection):
+            execute_script(connection, """
+                CREATE TABLE migration_first (id INTEGER PRIMARY KEY);
+                CREATE TABLE migration_second (id INTEGER PRIMARY KEY);
+                THIS IS NOT VALID SQL;
+            """)
+
+        with self.assertRaises(sqlite3.OperationalError):
+            broken_migration(self.connection)
+        remaining = self.connection.execute("""
+            SELECT name FROM sqlite_master
+            WHERE type='table' AND name IN ('migration_first','migration_second')
+        """).fetchall()
+        self.assertEqual(remaining, [])
 
 
 if __name__ == "__main__":

@@ -116,6 +116,9 @@ def _rebuild_real_columns_as_text(connection, table_name, column_names):
     try:
         connection.execute(f"SAVEPOINT {savepoint}")
         try:
+            # Never reuse an interrupted run's reserved scratch table: doing so
+            # can append the source rows a second time during a later retry.
+            connection.execute(f'DROP TABLE IF EXISTS "{temp_table}"')
             connection.execute(replacement_sql)
             connection.execute(
                 f'INSERT INTO "{temp_table}" ({quoted_columns}) '

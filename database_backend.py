@@ -7,7 +7,7 @@ Production cutover still requires the separate owner acceptance gates.
 import os
 
 
-SUPPORTED_RUNTIME_BACKENDS = frozenset({"sqlite", "postgresql"})
+SUPPORTED_RUNTIME_BACKENDS = frozenset({"sqlite"})
 
 
 def configured_database_backend(environ=None):
@@ -24,9 +24,14 @@ def configured_database_backend(environ=None):
 def require_supported_runtime_backend(environ=None):
     """Resolve the explicitly selected backend; never silently fall back."""
     backend = configured_database_backend(environ)
+    if backend == "postgresql":
+        raise RuntimeError(
+            "PostgreSQL runtime is temporarily disabled until SQL dialect, "
+            "financial-year, transaction, concurrency, and restore acceptance tests pass. "
+            "Use the existing SQLite runtime; no automatic fallback is performed."
+        )
     if backend not in SUPPORTED_RUNTIME_BACKENDS:
         raise RuntimeError(
-            f"Unsupported NEXUS runtime backend: {backend!r}. "
-            "Choose 'sqlite' or 'postgresql'."
+            f"Unsupported NEXUS runtime backend: {backend!r}. Choose 'sqlite'."
         )
     return backend

@@ -19,11 +19,9 @@ class DatabaseBackendSelectionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "NEXUS_DB_BACKEND"):
             configured_database_backend({"NEXUS_DB_BACKEND": "mysql"})
 
-    def test_accepts_explicit_postgresql_runtime_selection(self):
-        self.assertEqual(
-            require_supported_runtime_backend({"NEXUS_DB_BACKEND": "postgresql"}),
-            "postgresql",
-        )
+    def test_postgresql_runtime_remains_blocked_until_acceptance_gates_pass(self):
+        with self.assertRaisesRegex(RuntimeError, "temporarily disabled"):
+            require_supported_runtime_backend({"NEXUS_DB_BACKEND": "postgresql"})
 
 
 class DatabaseConnectionFactoryGateTests(unittest.TestCase):

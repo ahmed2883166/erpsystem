@@ -4777,6 +4777,10 @@ def restore_backup():
             restored = restore_postgres_backup_to_new_database(
                 archive_path, admin_dsn
             )
+            # Revoke cookies issued before a successful PostgreSQL restore,
+            # matching the SQLite restore security behavior.
+            rotate_session_epoch(SESSION_EPOCH_PATH)
+            session.clear()
             log("postgres_backup_restored_to_new_database", restored["database_name"])
             flash(
                 "تم استرجاع النسخة والتحقق منها في قاعدة PostgreSQL مستقلة باسم "

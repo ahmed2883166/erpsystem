@@ -327,9 +327,25 @@ def _split_sql_statements(script):
 
 
 def execute_script(connection, script):
-    """Execute a multi-statement DDL script without SQLite-only executescript API."""
+    """Execute a multi-statement script without escaping the caller's transaction."""
     if database_dialect(connection) == "sqlite":
-        connection.executescript(script)
+        # executescript() commits a pending transaction. Execute complete
+        # statements individually so a surrounding migration can roll back.
+        pending = []
+        for character in str(script):
+            pending.append(character)
+            if character == ";":
+                candidate = "".join(pending)
+                if sqlite3.complete_statement(candidate):
+                    statement = candidate.strip()
+                    if statement:
+                        connection.execute(statement)
+                    pending.clear()
+        tail = "".join(pending).strip()
+        if tail:
+            if not sqlite3.complete_statement(tail):
+                raise ValueError("Incomplete SQL statement at the end of migration script.")
+            connection.execute(tail)
         return
     from db_sql import adapt_sql_for_postgresql
     for statement in _split_sql_statements(str(script)):

@@ -2241,7 +2241,7 @@ def pay_final_payroll(final_id):
         if amount > outstanding or outstanding <= 0:
             raise ValueError("مبلغ الصرف يتجاوز صافي المرتب النهائي المتبقي.")
         payable = execute_compat(c, """SELECT account_id FROM journal_lines
-            WHERE entry_id=? AND memo='صافي المرتب النهائي المستحق' AND credit>0
+            WHERE entry_id=? AND memo='صافي المرتب النهائي المستحق' AND CAST(credit AS NUMERIC)>0
             ORDER BY id LIMIT 1""", (row["journal_entry_id"],)).fetchone()
         if not payable:
             raise ValueError("لم يتم العثور على حساب صافي المرتب المستحق في القيد الأصلي.")
@@ -3193,7 +3193,7 @@ def pay_payroll(run_id):
         journal_id = post_journal(c, payment_date, reference,
             "صرف مرتبات شهر " + run["period"],
             [(int(execute_compat(c, """SELECT jl.account_id FROM journal_lines jl
-                WHERE jl.entry_id=? AND jl.memo='صافي مستحقات الموظفين' AND jl.credit>0
+                WHERE jl.entry_id=? AND jl.memo='صافي مستحقات الموظفين' AND jl.CAST(credit AS NUMERIC)>0
                 ORDER BY jl.id LIMIT 1""", (run["journal_entry_id"],)).fetchone()[0]),
               amount, 0, "إقفال صافي مستحقات الموظفين"),
              (cash_account_id, 0, amount, "صرف صافي المرتبات من البنك/الصندوق")],
@@ -4548,7 +4548,7 @@ def pay_end_of_service(settlement_id):
         outstanding=M(max(Decimal("0"),D(row["net_payable"])-paid))
         if outstanding<=0 or amount>outstanding: raise ValueError("مبلغ الصرف يتجاوز صافي مكافأة نهاية الخدمة المتبقي.")
         payable=execute_compat(c, """SELECT account_id FROM journal_lines WHERE entry_id=?
-            AND memo='صافي مكافأة نهاية الخدمة المستحقة' AND credit>0 ORDER BY id LIMIT 1""",
+            AND memo='صافي مكافأة نهاية الخدمة المستحقة' AND CAST(credit AS NUMERIC)>0 ORDER BY id LIMIT 1""",
             (row["journal_entry_id"],)).fetchone()
         if not payable: raise ValueError("لم يتم العثور على حساب المكافأة المستحقة في القيد الأصلي.")
         reference="EOS-PAY-"+str(settlement_id)+"-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
