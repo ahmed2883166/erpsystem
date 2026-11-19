@@ -642,6 +642,44 @@ class ManagementDashboardTests(unittest.TestCase):
             self.assertEqual(unusual.call_count, 2)
             self.assertIn("cash_forecast", refreshed)
 
+    def test_cached_dashboard_does_not_leak_between_connections_with_same_version(self):
+        from unittest.mock import patch
+        from management_dashboard import (
+            cached_management_snapshot, _SNAPSHOT_CACHE, _SNAPSHOT_CACHE_LOCK,
+        )
+
+        other = sqlite3.connect(":memory:")
+        other.row_factory = sqlite3.Row
+        try:
+            self.conn.backup(other)
+            with _SNAPSHOT_CACHE_LOCK:
+                _SNAPSHOT_CACHE.clear()
+            with patch("management_dashboard.cash_forecast", return_value={"weeks": []}), patch(
+                "management_dashboard.unusual_journal_entries", return_value=[]
+            ):
+                first = cached_management_snapshot(
+                    self.conn, date(2026, 11, 1), date(2026, 11, 30)
+                )
+                shared_version = self.conn.execute(
+                    "SELECT version FROM management_dashboard_data_version WHERE id=1"
+                ).fetchone()["version"]
+                other.execute(
+                    "UPDATE journal_lines SET credit='900' WHERE account_id=7 AND credit<>'0'"
+                )
+                other.execute(
+                    "UPDATE management_dashboard_data_version SET version=? WHERE id=1",
+                    (shared_version,),
+                )
+                other.commit()
+                second = cached_management_snapshot(
+                    other, date(2026, 11, 1), date(2026, 11, 30)
+                )
+                self.assertNotEqual(
+                    first["current"]["revenue"], second["current"]["revenue"]
+                )
+        finally:
+            other.close()
+
     def test_cached_snapshot_is_invalidated_by_new_journal_lines(self):
         from management_dashboard import cached_management_snapshot
         first = cached_management_snapshot(self.conn, date(2026,11,1), date(2026,11,30))
