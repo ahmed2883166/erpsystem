@@ -14,7 +14,7 @@ class ManagementDashboardTests(unittest.TestCase):
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript("""
             CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,account_type TEXT,is_group INTEGER DEFAULT 0,active INTEGER DEFAULT 1);
-            CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT,entry_type TEXT NOT NULL DEFAULT 'general');
+            CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT,entry_type TEXT NOT NULL DEFAULT 'general',description TEXT,reference TEXT);
             CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit TEXT,credit TEXT);
             CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT);
             INSERT INTO company_settings VALUES('activity','commercial');
