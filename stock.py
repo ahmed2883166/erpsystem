@@ -1,6 +1,6 @@
 from app_paths import DB_PATH
 from database import connect_database, fetch_page, register_database_connection_teardown
-from db_compat import (table_columns, table_exists, database_dialect, begin_write_transaction, insert_and_get_id, execute_script, DB_ERROR, DB_INTEGRITY_ERROR)
+from db_compat import (table_columns, table_exists, database_dialect, begin_write_transaction, insert_and_get_id, execute_script, DB_ERROR, DB_INTEGRITY_ERROR, transactional_connection_initializer)
 from db_sql import execute_compat
 """NEXUS ERP inventory foundation (v0.2).
 
@@ -170,9 +170,9 @@ def _install_stock_location_triggers(conn):
     """)
 
 
-def initialize_stock_schema():
+@transactional_connection_initializer(get_db)
+def initialize_stock_schema(c):
     DB_PATH.parent.mkdir(exist_ok=True)
-    c = get_db()
     initialize_analytic_dimensions_schema(c)
     execute_script(c,"""
     CREATE TABLE IF NOT EXISTS stock_products(
@@ -504,8 +504,6 @@ def initialize_stock_schema():
             # A profile/account mapping that cannot be resolved is not grounds
             # to guess; the balance remains explicitly unallocated in the report.
             pass
-    c.commit()
-    c.close()
 
 def product_uom_factor(c, product_id, uom_id, purpose=None):
     """Return the exact multiplier converting one selected product unit to base stock units."""
