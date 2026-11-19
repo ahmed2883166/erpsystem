@@ -133,6 +133,13 @@ def _copied_opening_entry_ids(conn, as_of):
           AND h.ledger_history_copied=1 AND fy.start_date<=?
     """, (as_of,)).fetchall()
     excluded = {int(row["entry_id"]) for row in rows}
+    if table_exists(conn, "financial_year_opening_reviews"):
+        reviewed=execute_compat(conn,"""
+            SELECT r.entry_id FROM financial_year_opening_reviews r
+            JOIN financial_years fy ON fy.id=r.financial_year_id
+            WHERE r.classification='copied_history' AND fy.start_date<=?
+        """,(as_of,)).fetchall()
+        excluded.update(int(row["entry_id"]) for row in reviewed)
     if excluded:
         marks = ",".join("?" for _ in excluded)
         reversals = execute_compat(

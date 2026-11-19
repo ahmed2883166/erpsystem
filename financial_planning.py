@@ -143,6 +143,16 @@ def initialize_planning_schema(conn):
     );
     CREATE INDEX IF NOT EXISTS idx_financial_year_journal_history
       ON financial_year_journal_history(financial_year_id,entry_kind,id);
+    CREATE TABLE IF NOT EXISTS financial_year_opening_reviews(
+      id INTEGER PRIMARY KEY,
+      financial_year_id INTEGER NOT NULL REFERENCES financial_years(id),
+      entry_id INTEGER NOT NULL UNIQUE REFERENCES journal_entries(id),
+      classification TEXT NOT NULL CHECK(classification IN ('copied_history','new_opening')),
+      reason TEXT NOT NULL, reviewed_by INTEGER,
+      reviewed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_financial_year_opening_reviews
+      ON financial_year_opening_reviews(financial_year_id,classification,entry_id);
     """)
     # Freeze whether a later-year opening entry duplicates already-posted
     # historical ledger activity. A future backfill must never flip this flag.
@@ -370,6 +380,55 @@ def _retained_earnings_account(conn):
         if account:
             return account
     raise ValueError(f"لم يتم العثور على حساب تفصيلي نشط لدور الأرباح المحتجزة للنشاط ({activity}).")
+
+
+def list_legacy_opening_candidates(conn, year_id):
+    """Find old opening-like journals on this year start that lack a saved decision."""
+    year=_financial_year_or_error(conn,year_id)
+    return _execute(conn,"""
+        SELECT je.id,je.entry_date,COALESCE(je.reference,'') reference,
+               COALESCE(je.description,'') description,COUNT(jl.id) line_count
+        FROM journal_entries je LEFT JOIN journal_lines jl ON jl.entry_id=je.id
+        WHERE je.status='posted' AND je.entry_date=?
+          AND (COALESCE(je.description,'') LIKE '%افتتاح%'
+            OR UPPER(COALESCE(je.reference,'')) LIKE '%OPEN%'
+            OR COALESCE(je.reference,'') LIKE '%افتتاح%')
+          AND NOT EXISTS(SELECT 1 FROM financial_year_journal_history h WHERE h.entry_id=je.id)
+          AND NOT EXISTS(SELECT 1 FROM financial_year_opening_reviews r WHERE r.entry_id=je.id)
+        GROUP BY je.id,je.entry_date,je.reference,je.description ORDER BY je.id
+    """,(year["start_date"],)).fetchall()
+
+
+def classify_legacy_opening_entry(conn,year_id,entry_id,classification,reason,reviewed_by=None):
+    if classification not in {"copied_history","new_opening"}:
+        raise ValueError("اختيار تصنيف القيد الافتتاحي غير صحيح.")
+    reason=str(reason or "").strip()
+    if len(reason)<5: raise ValueError("اكتب سبب المراجعة بوضوح (5 أحرف على الأقل).")
+    begin_write_transaction(conn)
+    try:
+        year=_financial_year_or_error(conn,year_id)
+        entry=_execute(conn,"""
+            SELECT id,entry_date,status,COALESCE(reference,'') reference,
+                   COALESCE(description,'') description
+            FROM journal_entries WHERE id=?
+        """,(int(entry_id),)).fetchone()
+        if not entry or entry["status"]!="posted" or str(entry["entry_date"])[:10]!=year["start_date"]:
+            raise ValueError("القيد غير موجود أو ليس قيدًا مرحلًا بتاريخ بداية السنة المحددة.")
+        if _execute(conn,"SELECT 1 FROM financial_year_journal_history WHERE entry_id=?",(int(entry_id),)).fetchone():
+            raise ValueError("القيد مرتبط بالفعل بسجل السنوات المالية.")
+        if not ("افتتاح" in str(entry["description"] or "") or "افتتاح" in str(entry["reference"] or "")
+                or "OPEN" in str(entry["reference"] or "").upper()):
+            raise ValueError("القيد لا يحمل وصفًا أو مرجعًا يدل على أنه قيد افتتاح.")
+        _execute(conn,"""
+            INSERT INTO financial_year_opening_reviews
+              (financial_year_id,entry_id,classification,reason,reviewed_by)
+            VALUES(?,?,?,?,?)
+        """,(year_id,int(entry_id),classification,reason,reviewed_by))
+        conn.commit()
+        return int(entry_id)
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def create_opening_entry(conn, year_id, balances, created_by=None):
@@ -1025,6 +1084,35 @@ def financial_year_preclose(year_id):
         conn.close()
 
 
+@planning_bp.route("/financial-years/<int:year_id>/opening-review", methods=["GET","POST"])
+@_require("journal.manage")
+def financial_year_opening_review(year_id):
+    conn=_connect()
+    try:
+        year=_financial_year_or_error(conn,year_id)
+        if request.method=="POST":
+            classify_legacy_opening_entry(
+                conn,year_id,int(request.form.get("entry_id","0")),
+                request.form.get("classification",""),request.form.get("reason",""),
+                session.get("user_id"))
+            flash("تم حفظ تصنيف القيد القديم دون تعديل القيد أو سطوره.","success")
+            return redirect(url_for("planning.financial_year_opening_review",year_id=year_id))
+        candidates=list_legacy_opening_candidates(conn,year_id)
+        reviewed=_execute(conn,"""
+            SELECT r.*,je.entry_date,je.reference,je.description
+            FROM financial_year_opening_reviews r
+            JOIN journal_entries je ON je.id=r.entry_id
+            WHERE r.financial_year_id=? ORDER BY r.id DESC
+        """,(year_id,)).fetchall()
+        return render_template("financial_year_opening_review.html",year=year,
+                               candidates=candidates,reviewed=reviewed)
+    except (ValueError,*DB_INTEGRITY_ERROR) as exc:
+        flash(str(exc) or "تعذرت مراجعة القيود الافتتاحية القديمة.","error")
+        return redirect(url_for("planning.financial_years"))
+    finally:
+        conn.close()
+
+
 @planning_bp.route("/financial-years/<int:year_id>/opening", methods=["GET", "POST"])
 @_require("journal.manage")
 def financial_year_opening(year_id):
@@ -1536,6 +1624,16 @@ def build_balance_sheet_snapshot(conn, as_of):
                 WHERE h.entry_kind='opening' AND h.action='created'
                   AND h.ledger_history_copied IS NULL AND fy.start_date<=?
             """, (as_of,)).fetchone()[0]
+            unclassified_opening_count += _execute(conn, """
+                SELECT COUNT(*) FROM journal_entries je
+                JOIN financial_years fy ON fy.start_date=je.entry_date
+                WHERE je.status='posted' AND fy.start_date<=?
+                  AND (COALESCE(je.description,'') LIKE '%افتتاح%'
+                    OR UPPER(COALESCE(je.reference,'')) LIKE '%OPEN%'
+                    OR COALESCE(je.reference,'') LIKE '%افتتاح%')
+                  AND NOT EXISTS(SELECT 1 FROM financial_year_journal_history h WHERE h.entry_id=je.id)
+                  AND NOT EXISTS(SELECT 1 FROM financial_year_opening_reviews r WHERE r.entry_id=je.id)
+            """,(as_of,)).fetchone()[0]
             classification_conflict_count = _execute(conn, """
                 SELECT COUNT(*)
                 FROM financial_year_journal_history h
@@ -1555,6 +1653,13 @@ def build_balance_sheet_snapshot(conn, as_of):
                   )
             """, (as_of,)).fetchone()[0]
             excluded_opening_ids = {int(row["entry_id"]) for row in opening_rows}
+            if _table_exists_financial(conn,"financial_year_opening_reviews"):
+                reviewed=_execute(conn,"""
+                    SELECT r.entry_id FROM financial_year_opening_reviews r
+                    JOIN financial_years fy ON fy.id=r.financial_year_id
+                    WHERE r.classification='copied_history' AND fy.start_date<=?
+                """,(as_of,)).fetchall()
+                excluded_opening_ids.update(int(row["entry_id"]) for row in reviewed)
             if excluded_opening_ids:
                 marks = ",".join("?" for _ in excluded_opening_ids)
                 reversal_rows = _execute(conn, f"""
@@ -2243,4 +2348,4 @@ def cash_flow():
     return render_template("cash_flow.html", **snapshot)
 
 
-__all__=["planning_bp","initialize_planning_schema","create_financial_year","list_financial_years","create_opening_entry","close_financial_year","reverse_financial_year_entry","build_balance_sheet_snapshot","build_cash_flow_snapshot","build_cash_flow_indirect_snapshot","cash_flow_mapping"]
+__all__=["planning_bp","initialize_planning_schema","create_financial_year","list_financial_years","create_opening_entry","list_legacy_opening_candidates","classify_legacy_opening_entry","close_financial_year","reverse_financial_year_entry","build_balance_sheet_snapshot","build_cash_flow_snapshot","build_cash_flow_indirect_snapshot","cash_flow_mapping"]
