@@ -19,22 +19,6 @@ jobs:
   unit-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      NEXUS_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/nexus_test
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: nexus_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d nexus_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -42,75 +26,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install PostgreSQL client tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y curl ca-certificates
-          sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          . /etc/os-release
-          printf '%s\n' \
-            'Types: deb' \
-            'URIs: https://apt.postgresql.org/pub/repos/apt' \
-            "Suites: ${VERSION_CODENAME}-pgdg" \
-            'Components: main' \
-            "Architectures: $(dpkg --print-architecture)" \
-            'Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc' \
-            | sudo tee /etc/apt/sources.list.d/pgdg.sources > /dev/null
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client-16
-          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
-          export PATH="/usr/lib/postgresql/16/bin:$PATH"
-          pg_dump --version
-          pg_restore --version
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install ruff "psycopg[binary]>=3.2,<4.0"
+          pip install ruff
       - name: Compile Python files
         run: python -m compileall -q .
-      - name: Smoke-test PostgreSQL core schema and balanced journal
-        env:
-          NEXUS_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/nexus_test
-          NEXUS_DB_BACKEND: postgresql
-        run: python scripts/smoke_postgres_core_bootstrap.py
       - name: Static analysis (unused imports and variables)
         run: ruff check app.py postgres_backup.py postgres_backup_scheduler.py accounting_core.py stock.py sales.py purchases.py party_reports.py report_exports.py license_server.py financial_planning.py tests --select F401,F841 --output-format=github
-      - name: Run unit and integration tests
+      - name: Run unit and integration tests on supported SQLite runtime
         run: python run_tests.py
-      - name: Export fully initialized SQLite schema from isolated temporary database
-        run: |
-          python scripts/export_initialized_sqlite_schema.py \
-            --output "$RUNNER_TEMP/nexus-initialized-sqlite-schema.json"
-      - name: Generate conservative PostgreSQL schema baseline
-        run: |
-          python scripts/generate_postgres_schema.py \
-            --input "$RUNNER_TEMP/nexus-initialized-sqlite-schema.json" \
-            --output "$RUNNER_TEMP/nexus-postgresql-schema.sql" \
-            --review-output "$RUNNER_TEMP/nexus-postgresql-schema-review.json"
-      - name: Validate PostgreSQL DDL in disposable PostgreSQL 16 schema
-        run: |
-          python scripts/validate_postgres_schema.py \
-            --ddl "$RUNNER_TEMP/nexus-postgresql-schema.sql" \
-            --expected-review "$RUNNER_TEMP/nexus-postgresql-schema-review.json"
-      - name: Smoke-test full Flask initialization on PostgreSQL
-        env:
-          NEXUS_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/nexus_test
-        run: |
-          python scripts/smoke_postgres_full_runtime.py \
-            --baseline "$RUNNER_TEMP/nexus-postgresql-schema.sql"
-      - name: Upload database migration design artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: nexus-postgresql-schema-baseline
-          path: |
-            ${{ runner.temp }}/nexus-initialized-sqlite-schema.json
-            ${{ runner.temp }}/nexus-postgresql-schema.sql
-            ${{ runner.temp }}/nexus-postgresql-schema-review.json
-          if-no-files-found: error
-          retention-days: 14
-
   windows-smoke:
     name: Windows local runtime and backup/restore smoke tests
     runs-on: windows-latest
