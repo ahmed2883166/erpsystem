@@ -65,6 +65,7 @@ from backup_scheduler import (create_backup_archive, ensure_initial_backup,
 from system_health import health_bp
 from backup_restore import (extract_validated_backup, restore_database_with_rollback,
                              create_extraction_target)
+from session_revocation import current_session_epoch, rotate_session_epoch
 from postgres_backup import (
     create_postgres_backup_archive, restore_postgres_backup_to_new_database,
 )
@@ -97,6 +98,7 @@ from security_controls import login_attempts_exceeded, linked_operational_source
 
 app = Flask(__name__)
 register_sqlite_connection_teardown(app)
+SESSION_EPOCH_PATH = DATA_DIR / ".nexus_session_epoch"
 
 
 def _configure_http_500_file_logging():
@@ -808,6 +810,20 @@ def _operational_audit_snapshot(endpoint, view_args, created_record=None):
 
 
 @app.before_request
+def invalidate_sessions_after_restore():
+    """Reject every cookie issued before the latest in-place database restore."""
+    if not session.get("user_id"):
+        return None
+    expected_epoch = current_session_epoch(SESSION_EPOCH_PATH)
+    supplied_epoch = str(session.get("session_epoch", ""))
+    if not supplied_epoch or not secrets.compare_digest(supplied_epoch, expected_epoch):
+        session.clear()
+        flash("تم إنهاء الجلسة بعد استعادة نسخة احتياطية. سجّل الدخول مرة أخرى.", "warning")
+        return redirect(url_for("login"))
+    return None
+
+
+@app.before_request
 def capture_operational_audit_before():
     endpoint = request.endpoint or ""
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and session.get("user_id"):
@@ -1006,7 +1022,8 @@ def login():
             session.permanent = True
             session.update(user_id=user["id"], username=user["username"], full_name=user["full_name"],
                            role=user["role"], must_change_password=bool(user["must_change_password"]),
-                           permissions=stored_user_permissions(user["permissions_json"], user["role"]))
+                           permissions=stored_user_permissions(user["permissions_json"], user["role"]),
+                           session_epoch=current_session_epoch(SESSION_EPOCH_PATH))
             log("login", "تسجيل دخول", entity_type="auth", outcome="success")
             if user["must_change_password"]:
                 flash("يجب تغيير كلمة مرور المدير الافتراضية قبل استخدام النظام.", "warning")
@@ -4763,7 +4780,10 @@ def restore_backup():
         restore_database_with_rollback(candidate_path, DB_PATH, safety_path, initialize_database)
 
         log("backup_restored", upload.filename)
-        flash("تم استرجاع النسخة بنجاح بعد فحصها، مع الاحتفاظ بنسخة أمان من البيانات السابقة.", "success")
+        rotate_session_epoch(SESSION_EPOCH_PATH)
+        session.clear()
+        flash("تم استرجاع النسخة بنجاح بعد فحصها، وتم إنهاء جميع الجلسات القديمة. سجّل الدخول مرة أخرى.", "success")
+        return redirect(url_for("login"))
     except (zipfile.BadZipFile, ValueError, *DB_ERROR, OSError, RuntimeError, subprocess.SubprocessError) as exc:
         flash(f"تعذرت الاستعادة: {exc}", "error")
     finally:
