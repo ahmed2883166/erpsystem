@@ -44,6 +44,7 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies and PostgreSQL client tools
         run: |
+          docker info >/dev/null
           tool_dir="$RUNNER_TEMP/postgres16-tools"
           mkdir -p "$tool_dir"
           for tool in pg_dump pg_restore; do
