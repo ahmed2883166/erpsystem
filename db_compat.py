@@ -6,6 +6,7 @@ SQL or select the database used by the Flask application.
 """
 import re
 import sqlite3
+from functools import wraps
 
 try:
     import psycopg
@@ -354,6 +355,27 @@ def begin_write_transaction(connection):
         connection.execute("BEGIN")
         return True
     return False
+
+
+def transactional_migration(function):
+    """Give a schema/data migration an explicit transaction when it owns one.
+
+    Nested calls reuse the caller's transaction and never commit it. On failure,
+    an owned transaction is rolled back before the exception is propagated.
+    """
+    @wraps(function)
+    def wrapped(connection, *args, **kwargs):
+        owns_transaction = begin_write_transaction(connection)
+        try:
+            result = function(connection, *args, **kwargs)
+            if owns_transaction:
+                connection.commit()
+            return result
+        except Exception:
+            if owns_transaction:
+                connection.rollback()
+            raise
+    return wrapped
 
 
 def insert_and_get_id(connection, sql, params=()):
