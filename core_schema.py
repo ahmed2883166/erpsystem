@@ -4,7 +4,7 @@ This first extraction preserves the existing SQLite DDL and adds the
 PostgreSQL identity behavior required by generated integer primary keys.
 It covers only the ten foundational tables, not the complete ERP schema.
 """
-from db_compat import database_dialect, execute_script, table_columns
+from db_compat import database_dialect, execute_script, table_columns, transactional_migration
 from db_sql import execute_compat
 
 
@@ -56,6 +56,7 @@ CORE_SCHEMA_SQL = """
 """
 
 
+@transactional_migration
 def initialize_core_schema(connection):
     """Create the core tables idempotently on the supplied connection.
 
@@ -77,6 +78,7 @@ def initialize_core_schema(connection):
     return True
 
 
+@transactional_migration
 def ensure_legacy_core_columns(connection):
     """Add backward-compatible columns missing from older company databases.
 
