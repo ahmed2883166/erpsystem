@@ -1,7 +1,9 @@
 """Safe validation and rollback helpers for restoring NEXUS SQLite backups."""
 import hashlib
 import json
+import os
 import sqlite3
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -12,6 +14,15 @@ from sqlite_maintenance import (
 
 MAX_RESTORE_DATABASE_BYTES = 2 * 1024 * 1024 * 1024
 REQUIRED_TABLES = {"users", "accounts", "journal_entries", "journal_lines"}
+
+
+def create_extraction_target(directory, prefix="restore-candidate-", suffix=".db"):
+    """Reserve a unique temporary path, then remove the placeholder for exclusive extraction."""
+    descriptor, name = tempfile.mkstemp(prefix=prefix, suffix=suffix, dir=directory)
+    os.close(descriptor)
+    target = Path(name)
+    target.unlink()
+    return target
 
 
 def extract_validated_backup(archive_path, candidate_path,
