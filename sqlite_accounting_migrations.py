@@ -85,31 +85,42 @@ def _rebuild_real_columns_as_text(connection, table_name, column_names):
         raise RuntimeError(f"Cannot safely rebuild {table_name} without stored columns.")
     quoted_columns = ", ".join('"' + str(name).replace('"', '""') + '"' for name in copy_columns)
 
-    savepoint = "nexus_" + table_name + "_decimal_migration"
-    connection.execute(f"SAVEPOINT {savepoint}")
-    try:
-        connection.execute(replacement_sql)
-        connection.execute(
-            f'INSERT INTO "{temp_table}" ({quoted_columns}) '
-            f'SELECT {quoted_columns} FROM "{table_name}"'
+    if connection.in_transaction:
+        raise RuntimeError(
+            f"{table_name} decimal migration must start outside an existing SQLite transaction."
         )
-        connection.execute(f'DROP TABLE "{table_name}"')
-        connection.execute(f'ALTER TABLE "{temp_table}" RENAME TO "{table_name}"')
-        for statement in index_sql:
-            connection.execute(statement)
-        for statement in trigger_sql:
-            connection.execute(statement)
-        violations = connection.execute("PRAGMA foreign_key_check").fetchmany(10)
-        if violations:
-            raise RuntimeError(
-                f"{table_name} migration produced foreign-key violations; changes were rolled back."
+    foreign_keys_enabled = bool(connection.execute("PRAGMA foreign_keys").fetchone()[0])
+    if foreign_keys_enabled:
+        connection.execute("PRAGMA foreign_keys=OFF")
+    savepoint = "nexus_" + table_name + "_decimal_migration"
+    try:
+        connection.execute(f"SAVEPOINT {savepoint}")
+        try:
+            connection.execute(replacement_sql)
+            connection.execute(
+                f'INSERT INTO "{temp_table}" ({quoted_columns}) '
+                f'SELECT {quoted_columns} FROM "{table_name}"'
             )
-        connection.execute(f"RELEASE SAVEPOINT {savepoint}")
-        return True
-    except Exception:
-        connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
-        connection.execute(f"RELEASE SAVEPOINT {savepoint}")
-        raise
+            connection.execute(f'DROP TABLE "{table_name}"')
+            connection.execute(f'ALTER TABLE "{temp_table}" RENAME TO "{table_name}"')
+            for statement in index_sql:
+                connection.execute(statement)
+            for statement in trigger_sql:
+                connection.execute(statement)
+            violations = connection.execute("PRAGMA foreign_key_check").fetchmany(10)
+            if violations:
+                raise RuntimeError(
+                    f"{table_name} migration produced foreign-key violations; changes were rolled back."
+                )
+            connection.execute(f"RELEASE SAVEPOINT {savepoint}")
+            return True
+        except Exception:
+            connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            connection.execute(f"RELEASE SAVEPOINT {savepoint}")
+            raise
+    finally:
+        if foreign_keys_enabled:
+            connection.execute("PRAGMA foreign_keys=ON")
 
 
 def migrate_journal_line_amounts_to_text(connection):
