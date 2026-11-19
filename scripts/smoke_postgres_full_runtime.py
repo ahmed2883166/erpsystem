@@ -704,6 +704,11 @@ def main() -> int:
                                 session_data["csrf_token"] = csrf_secret
                             session_data["user_id"] = int(user_id)
                             session_data["role"] = "admin"
+                            # The app's restore-revocation guard rejects
+                            # sessions without the current epoch outside TESTING.
+                            session_data["session_epoch"] = nexus_app.current_session_epoch(
+                                nexus_app.SESSION_EPOCH_PATH
+                            )
 
                     def post_with_csrf(path, *, data, follow_redirects=False):
                         # Exercise the same session-bound CSRF flow as a real browser:
