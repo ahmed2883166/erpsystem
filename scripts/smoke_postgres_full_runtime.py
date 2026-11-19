@@ -708,6 +708,7 @@ def main() -> int:
                     payroll_approval_observed = {
                         "http_status": approve_response.status_code,
                         "location": approve_response.headers.get("Location"),
+                        "response_body": approve_response.get_data(as_text=True)[:3000],
                         "run": dict(posted_payroll) if posted_payroll else None,
                         "flashes": approval_flashes,
                     }
