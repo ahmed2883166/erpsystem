@@ -10,7 +10,7 @@ from accounting_core import post_journal, safe_error_message, decimal_sum_expres
 from code_sequences import next_code
 from db_insert import insert_one_returning_id
 from db_sql import execute_compat
-from db_compat import table_columns, table_exists, execute_script, begin_write_transaction, DB_ERROR
+from db_compat import table_columns, table_exists, execute_script, begin_write_transaction, DB_ERROR, transactional_connection_initializer
 
 assets_bp = Blueprint("assets", __name__, url_prefix="/assets")
 
@@ -47,8 +47,8 @@ def require(write=False):
         return wrapped
     return deco
 
-def initialize_assets_schema():
-    c=db()
+@transactional_connection_initializer(db)
+def initialize_assets_schema(c):
     execute_script(c, """
     CREATE TABLE IF NOT EXISTS fixed_assets(
       id INTEGER PRIMARY KEY, asset_code TEXT NOT NULL UNIQUE, asset_name TEXT NOT NULL,
@@ -117,8 +117,6 @@ def initialize_assets_schema():
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )""")
     execute_compat(c, "CREATE INDEX IF NOT EXISTS idx_fixed_asset_journal_pending ON fixed_asset_journal_lines(status,entry_id)")
-    c.commit()
-    c.close()
 
 def register_assets_from_journal_lines(conn, entry_id, line_details, actor_id):
     """Stage fixed assets from posted debit journal lines; never posts a second purchase entry."""
