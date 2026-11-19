@@ -135,6 +135,8 @@ class FinancialPlanningTests(unittest.TestCase):
     def test_legacy_opening_review_classification_is_explicit_and_audited(self):
         initialize_planning_schema(self.conn)
         year_id=create_financial_year(self.conn,"FY2027","2027-01-01","2027-12-31")
+        self.conn.execute("ALTER TABLE journal_entries ADD COLUMN reference TEXT")
+        self.conn.execute("ALTER TABLE journal_entries ADD COLUMN description TEXT")
         self.conn.execute("""
             INSERT INTO journal_entries(id,entry_date,status,reference,description)
             VALUES(91,'2027-01-01','posted','OPEN-LEGACY','أرصدة افتتاح قديمة')
