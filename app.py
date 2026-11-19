@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import time
 import zipfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from decimal_settings import parse_decimal_setting
@@ -2641,13 +2641,13 @@ def activity_monitor():
                 WHERE {where}""",
             params, page=request.args.get("page", 1, type=int), per_page=50,
         )
-        since = datetime.now().astimezone().date().isoformat()
-        metrics = execute_compat(connection, 
+        since = (datetime.now().astimezone().date() - timedelta(days=6)).isoformat()
+        metrics = execute_compat(connection,
             """SELECT
                  SUM(CASE WHEN action='login' AND outcome='success' THEN 1 ELSE 0 END) successful_logins,
                  SUM(CASE WHEN action IN ('login_failed','login_blocked') OR (entity_type='auth' AND outcome='failure') THEN 1 ELSE 0 END) failed_logins,
                  SUM(CASE WHEN before_values IS NOT NULL OR after_values IS NOT NULL THEN 1 ELSE 0 END) sensitive_changes
-               FROM audit_log WHERE substr(created_at,1,10)>=date(?, '-6 days')""",
+               FROM audit_log WHERE substr(created_at,1,10)>=?""",
             (since,),
         ).fetchone()
     finally:

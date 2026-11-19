@@ -61,7 +61,7 @@ def _events(c, kind, party_id):
                 events.append(dict(r))
         if _table_exists(c, "customer_advance_allocations"):
             for r in _execute(c, """SELECT a.allocation_date event_date,
-                'CADVA-' || a.id reference,'تخصيص مقدم عميل على فاتورة ' || i.invoice_no description,
+                'CADVA-' || CAST(a.id AS TEXT) reference,'تخصيص مقدم عميل على فاتورة ' || i.invoice_no description,
                 0 debit,a.amount credit,2 priority
                 FROM customer_advance_allocations a
                 JOIN sales_invoices i ON i.id=a.invoice_id
@@ -69,7 +69,7 @@ def _events(c, kind, party_id):
                 events.append(dict(r))
         if _table_exists(c, "customer_advance_reversals"):
             for r in _execute(c, """SELECT x.reversal_date event_date,
-                'CADVA-REV-' || x.id reference,
+                'CADVA-REV-' || CAST(x.id AS TEXT) reference,
                 'عكس تخصيص مقدم عميل على فاتورة ' || i.invoice_no description,
                 a.amount debit,0 credit,3 priority
                 FROM customer_advance_reversals x
@@ -274,12 +274,12 @@ def _all_party_events(c, kind):
                 FROM customer_receipt_batches""", ()))
         if _table_exists(c, "customer_advance_allocations"):
             queries.append(( """SELECT i.customer_id party_id,a.allocation_date event_date,
-                'CADVA-' || a.id reference,'تخصيص مقدم عميل على فاتورة ' || i.invoice_no description,
+                'CADVA-' || CAST(a.id AS TEXT) reference,'تخصيص مقدم عميل على فاتورة ' || i.invoice_no description,
                 0 debit,a.amount credit,2 priority FROM customer_advance_allocations a
                 JOIN sales_invoices i ON i.id=a.invoice_id""", ()))
         if _table_exists(c, "customer_advance_reversals"):
             queries.append(( """SELECT i.customer_id party_id,x.reversal_date event_date,
-                'CADVA-REV-' || x.id reference,
+                'CADVA-REV-' || CAST(x.id AS TEXT) reference,
                 'عكس تخصيص مقدم عميل على فاتورة ' || i.invoice_no description,
                 a.amount debit,0 credit,3 priority
                 FROM customer_advance_reversals x

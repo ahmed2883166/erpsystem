@@ -2262,8 +2262,8 @@ def index():
            FROM customer_receipt_batches b JOIN customers cu ON cu.id=b.customer_id
            LEFT JOIN customer_receipt_allocations a ON a.batch_id=b.id
            LEFT JOIN sales_invoices i ON i.id=a.invoice_id
-           GROUP BY b.id ORDER BY b.id DESC""".format(
-               _group_concat_expression(c, "i.invoice_no || ' (' || a.amount || ')'")
+           GROUP BY b.id,cu.name ORDER BY b.id DESC""".format(
+               _group_concat_expression(c, "i.invoice_no || ' (' || CAST(a.amount AS TEXT) || ')'")
            ),
         "SELECT COUNT(*) FROM customer_receipt_batches",
         page=request.args.get("batch_receipts_page",1,type=int),

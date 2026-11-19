@@ -1527,7 +1527,7 @@ def payroll_reconciliation():
         employee_duplicates = execute_compat(c, """
             SELECT e.employee_code,e.full_name,COUNT(*) AS occurrences
             FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
-            WHERE l.run_id=? GROUP BY l.employee_id
+            WHERE l.run_id=? GROUP BY l.employee_id,e.employee_code,e.full_name
             HAVING COUNT(*)>1
         """, (run["id"],)).fetchall()
         for duplicate in employee_duplicates:
@@ -1676,7 +1676,7 @@ def payroll_reconciliation():
                 JOIN payroll_payment_allocations a ON a.payroll_line_id=pl.id
                 JOIN payroll_payments p ON p.id=a.payment_id
                 WHERE pl.run_id=?
-                GROUP BY pl.id
+                GROUP BY pl.id,e.employee_code,e.full_name,pl.net_pay
                 HAVING SUM(CAST(a.amount AS NUMERIC))>CAST(pl.net_pay AS NUMERIC)
             """, (run["id"],)).fetchall()
             for allocation in over_allocated_lines:
@@ -1719,7 +1719,7 @@ def payroll_reconciliation():
         WHERE r.status='posted'
         """ + (" AND r.period>=?" if month_from else "") +
         (" AND r.period<=?" if month_to else "") + """
-        GROUP BY r.period,l.employee_id HAVING COUNT(*)>1
+        GROUP BY r.period,l.employee_id,e.employee_code,e.full_name HAVING COUNT(*)>1
         ORDER BY r.period DESC,e.employee_code
     """, ([month_from] if month_from else []) + ([month_to] if month_to else [])).fetchall()
     for duplicate in duplicate_employees:
@@ -1753,7 +1753,7 @@ def payroll_reconciliation():
         WHERE f.status IN ('approved','paid')
         """ + (" AND period>=?" if month_from else "") +
         (" AND period<=?" if month_to else "") + """
-        GROUP BY period,employee_id HAVING COUNT(*)>1
+        GROUP BY period,employee_id,e.employee_code,e.full_name HAVING COUNT(*)>1
         ORDER BY period DESC,e.employee_code
     """, ([month_from] if month_from else []) + ([month_to] if month_to else [])).fetchall()
     for duplicate in duplicate_final:
