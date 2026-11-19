@@ -184,7 +184,7 @@ def save_statement_line_match(c, line_id, journal_line_id, matched_at, matched_b
         raise ValueError("سطر كشف البنك تمت مطابقته بالفعل أو لم يعد متاحًا للمطابقة.")
 
 
-@transactional_connection_initializer(db)
+@transactional_connection_initializer(lambda: db())
 def init_bank_schema(c):
     execute_script(c, """
     CREATE TABLE IF NOT EXISTS bank_transactions(
