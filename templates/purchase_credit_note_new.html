@@ -32,8 +32,18 @@
 (() => {
  const supplier=document.getElementById('creditSupplier'), bill=document.getElementById('creditBill'), lines=document.getElementById('creditLines');
  const allBills=[...bill.options].slice(1);
- supplier.addEventListener('change',()=>{bill.value='';allBills.forEach(o=>o.hidden=!!supplier.value&&o.dataset.supplier!==supplier.value);});
- function filterUnits(row){const product=row.querySelector('.credit-product').value, unit=row.querySelector('.credit-uom');unit.value='';[...unit.options].forEach(o=>{if(!o.dataset.product){o.hidden=!!product;}else{o.hidden=o.dataset.product!==product;}});const first=[...unit.options].find(o=>o.dataset.product===product);if(first)unit.value=first.value;}
+ function filterSupplierBills(){
+   const supplierId=supplier.value;
+   bill.value='';
+   allBills.forEach(option=>{
+     // Disabled options are consistently excluded by native and searchable selects;
+     // the hidden attribute can conflict with custom option-search renderers.
+     option.disabled=!!supplierId&&option.dataset.supplier!==supplierId;
+   });
+ }
+ supplier.addEventListener('change',filterSupplierBills);
+ filterSupplierBills();
+ function filterUnits(row){const product=row.querySelector('.credit-product').value, unit=row.querySelector('.credit-uom');unit.value='';[...unit.options].forEach(o=>{const allowed=o.dataset.product?o.dataset.product===product:!product;o.disabled=!allowed;});const first=[...unit.options].find(o=>!o.disabled);if(first)unit.value=first.value;}
  lines.addEventListener('change',e=>{if(e.target.classList.contains('credit-product'))filterUnits(e.target.closest('.credit-line'));});
  document.getElementById('addCreditLine').addEventListener('click',()=>lines.append(document.getElementById('creditLineTemplate').content.cloneNode(true)));
  lines.addEventListener('click',e=>{if(e.target.classList.contains('remove-credit-line')){const rows=lines.querySelectorAll('.credit-line');if(rows.length>1)e.target.closest('.credit-line').remove();}});
