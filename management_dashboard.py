@@ -6,7 +6,7 @@ from copy import deepcopy
 from threading import RLock
 from accounting_core import register_decimal_aggregates, decimal_sum_expression
 from income_statement import build_income_statement
-from db_compat import table_exists, table_columns, database_dialect, transaction_is_active
+from db_compat import table_exists, table_columns, database_dialect, transaction_is_active, transactional_migration
 from db_sql import execute_compat
 
 CENT = Decimal("0.01")
@@ -259,6 +259,7 @@ MANAGEMENT_ROLES = {
 }
 
 
+@transactional_migration
 def initialize_management_dashboard_schema(conn, activity):
     """Create dashboard support schema and seed defaults once during app initialization."""
     execute_compat(conn, "CREATE INDEX IF NOT EXISTS idx_journal_entries_status_date ON journal_entries(status,entry_date,id)")
