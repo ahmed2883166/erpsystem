@@ -19,18 +19,23 @@ class DatabaseBackendSelectionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "NEXUS_DB_BACKEND"):
             configured_database_backend({"NEXUS_DB_BACKEND": "mysql"})
 
-    def test_postgresql_request_fails_closed_instead_of_using_sqlite(self):
-        with self.assertRaisesRegex(RuntimeError, "PostgreSQL runtime is not enabled yet"):
-            require_supported_runtime_backend({"NEXUS_DB_BACKEND": "postgresql"})
+    def test_accepts_explicit_postgresql_runtime_selection(self):
+        self.assertEqual(
+            require_supported_runtime_backend({"NEXUS_DB_BACKEND": "postgresql"}),
+            "postgresql",
+        )
 
 
 class DatabaseConnectionFactoryGateTests(unittest.TestCase):
-    def test_direct_connection_factory_cannot_bypass_postgresql_runtime_gate(self):
+    def test_postgresql_connection_factory_never_falls_back_to_sqlite(self):
         from unittest.mock import patch
         from database import connect_database
 
-        with patch.dict("os.environ", {"NEXUS_DB_BACKEND": "postgresql"}):
-            with self.assertRaisesRegex(RuntimeError, "PostgreSQL runtime is not enabled yet"):
+        with patch.dict("os.environ", {
+            "NEXUS_DB_BACKEND": "postgresql",
+            "NEXUS_POSTGRES_DSN": "",
+        }):
+            with self.assertRaisesRegex(ValueError, "DSN is required"):
                 connect_database(":memory:")
 
 
