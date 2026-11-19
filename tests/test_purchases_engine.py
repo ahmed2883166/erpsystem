@@ -954,6 +954,9 @@ class PurchasingAccountingTests(unittest.TestCase):
                VALUES(?,501,'10','36','360')""",
             (receipt_id,),
         )
+        receipt_line_id = self.db.execute(
+            "SELECT id FROM goods_receipt_lines WHERE receipt_id=?", (receipt_id,)
+        ).fetchone()["id"]
         self.db.execute(
             """INSERT INTO stock_movements(
                  movement_no,movement_type,product_id,target_warehouse_id,quantity,unit_cost,
@@ -967,10 +970,29 @@ class PurchasingAccountingTests(unittest.TestCase):
         ).fetchone()["id"]
         self.db.execute(
             """INSERT INTO stock_valuation_layers(
-                 product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost)
-               VALUES(501,?,?,'10','5','36')""",
-            (warehouse_id, movement_id),
+                 product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost,
+                 value_remaining,receipt_line_id)
+               VALUES(501,?,?,'10','0','36','0',?)""",
+            (warehouse_id, movement_id, receipt_line_id),
         )
+        self.db.execute("INSERT INTO stock_warehouses(code,name_ar) VALUES('W-PRICE-DST','مخزن وجهة الخصم')")
+        destination_warehouse_id = self.db.execute(
+            "SELECT id FROM stock_warehouses WHERE code='W-PRICE-DST'"
+        ).fetchone()["id"]
+        self.db.execute("""INSERT INTO stock_movements(
+            movement_no,movement_type,product_id,source_warehouse_id,target_warehouse_id,
+            quantity,unit_cost,total_cost,movement_date,notes,accounting_status)
+            VALUES('TR-GR-PRICE','transfer',501,?,?,'5','36','180','2026-11-11',
+                   'تحويل بعد الاستلام','not_required')""",
+            (warehouse_id,destination_warehouse_id))
+        transfer_id = self.db.execute(
+            "SELECT id FROM stock_movements WHERE movement_no='TR-GR-PRICE'"
+        ).fetchone()["id"]
+        self.db.execute("""INSERT INTO stock_valuation_layers(
+            product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,
+            unit_cost,value_remaining,receipt_line_id)
+            VALUES(501,?,?,'5','5','36','180',?)""",
+            (destination_warehouse_id,transfer_id,receipt_line_id))
         self.db.execute(
             """INSERT INTO supplier_bills(
                  bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,subtotal,
@@ -1004,7 +1026,9 @@ class PurchasingAccountingTests(unittest.TestCase):
              patch("purchases.create_journal", return_value=777) as journal:
             entry_id = purchases.post_supplier_bill(self.db, bill_id, 2)
 
-        warehouse_lock.assert_called_once_with(self.db, warehouse_id)
+        warehouse_lock.assert_called_once_with(
+            self.db, warehouse_id, destination_warehouse_id, allow_inactive=True
+        )
         self.assertEqual(entry_id, 777)
         journal_lines = journal.call_args.args[4]
         self.assertEqual(
@@ -1019,15 +1043,20 @@ class PurchasingAccountingTests(unittest.TestCase):
                  Decimal("0"), Decimal("10.00")),
             ],
         )
-        layer = self.db.execute(
-            "SELECT qty_remaining,unit_cost,value_remaining FROM stock_valuation_layers WHERE source_movement_id=?",
+        source_layer = self.db.execute(
+            "SELECT qty_remaining FROM stock_valuation_layers WHERE source_movement_id=?",
             (movement_id,),
         ).fetchone()
-        self.assertEqual(Decimal(layer["qty_remaining"]), Decimal("5"))
-        self.assertEqual(Decimal(layer["unit_cost"]), Decimal("34"))
-        # The remaining five units must carry the discounted IAS 2 value,
-        # not the pre-discount value left behind in value_remaining.
-        self.assertEqual(Decimal(layer["value_remaining"]), Decimal("170.00"))
+        self.assertEqual(Decimal(source_layer["qty_remaining"]), Decimal("0"))
+        destination_layer = self.db.execute(
+            """SELECT qty_remaining,unit_cost,value_remaining FROM stock_valuation_layers
+               WHERE source_movement_id=? AND warehouse_id=?""",
+            (transfer_id,destination_warehouse_id),
+        ).fetchone()
+        self.assertEqual(Decimal(destination_layer["qty_remaining"]), Decimal("5"))
+        self.assertEqual(Decimal(destination_layer["unit_cost"]), Decimal("34"))
+        self.assertEqual(Decimal(destination_layer["value_remaining"]), Decimal("170.00"))
+        self.assertEqual(journal_lines[2][4]["stock_warehouse_id"], destination_warehouse_id)
         movement = self.db.execute(
             "SELECT unit_cost,total_cost FROM stock_movements WHERE id=?", (movement_id,)
         ).fetchone()

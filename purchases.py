@@ -1740,7 +1740,7 @@ def _validate_saved_supplier_bill_inventory_lines(c, bill):
 
 
 def _supplier_grni_price_variance_lines(c, receipt_rows, discount_amount, matched_total):
-    """Reduce inventory/COGS for a supplier discount against fully settled GRNI."""
+    """Reduce inventory/COGS for a supplier discount across receipt-line descendants."""
     if discount_amount <= 0:
         return []
     from activity_profiles import resolve_product_account_code
@@ -1748,61 +1748,122 @@ def _supplier_grni_price_variance_lines(c, receipt_rows, discount_amount, matche
     posting = _activity_posting_accounts(c)
     default_inventory = posting.get("purchase_inventory")
     default_cogs = posting.get("cogs")
-    # Price-discount posting rewrites remaining valuation layers. Lock every
-    # affected warehouse in a stable order before reading any layer so it
-    # serializes with issues, transfers, receipts and stocktakes on PostgreSQL.
-    receipt_headers = [
-        execute_compat(c, "SELECT receipt_no,warehouse_id FROM goods_receipts WHERE id=?",
-                       (receipt["receipt_id"],)).fetchone()
-        for receipt in receipt_rows
-    ]
-    if any(header is None for header in receipt_headers):
-        raise ValueError("إيصال GRNI غير موجود أثناء تسوية فرق السعر.")
-    lock_stock_warehouses(c, *(header["warehouse_id"] for header in receipt_headers))
-    source_lines = []
-    for receipt, header in zip(receipt_rows, receipt_headers):
-        if not header:
+
+    # Resolve receipt lines first, then lock all warehouses carrying the affected
+    # products. A transfer locks its source warehouse, so locking this set prevents
+    # a concurrent transfer from moving stock outside the valuation adjustment.
+    receipt_context = []
+    product_ids = set()
+    warehouse_ids = set()
+    for receipt in receipt_rows:
+        header = execute_compat(
+            c, "SELECT receipt_no,warehouse_id,receipt_date FROM goods_receipts WHERE id=?",
+            (receipt["receipt_id"],),
+        ).fetchone()
+        if header is None:
             raise ValueError("إيصال GRNI غير موجود أثناء تسوية فرق السعر.")
-        receipt_lines = execute_compat(c, 
-            "SELECT * FROM goods_receipt_lines WHERE receipt_id=? ORDER BY id",
+        lines = execute_compat(
+            c, "SELECT * FROM goods_receipt_lines WHERE receipt_id=? ORDER BY id",
             (receipt["receipt_id"],),
         ).fetchall()
-        if not receipt_lines:
+        if not lines:
             raise ValueError("إيصال GRNI لا يحتوي على تفاصيل أصناف يمكن تسوية تكلفتها.")
+        receipt_context.append((receipt, header, lines))
+        warehouse_ids.add(int(header["warehouse_id"]))
+        product_ids.update(int(line["product_id"]) for line in lines)
+
+    if product_ids:
+        marks = ",".join("?" for _ in product_ids)
+        rows = execute_compat(
+            c, f"SELECT DISTINCT warehouse_id FROM stock_valuation_layers WHERE product_id IN ({marks})",
+            tuple(sorted(product_ids)),
+        ).fetchall()
+        warehouse_ids.update(int(row["warehouse_id"]) for row in rows if row["warehouse_id"] is not None)
+    lock_stock_warehouses(c, *sorted(warehouse_ids), allow_inactive=True)
+
+    source_lines = []
+    for _receipt, header, receipt_lines in receipt_context:
         for line in receipt_lines:
-            movement_rows = execute_compat(c, 
-                """SELECT * FROM stock_movements
-                   WHERE movement_type='receipt' AND product_id=?
-                     AND target_warehouse_id=? AND notes=?
-                   ORDER BY id""",
-                (line["product_id"], header["warehouse_id"],
-                 "استلام مشتريات " + header["receipt_no"]),
-            ).fetchall()
+            movement_rows = execute_compat(c, """
+                SELECT * FROM stock_movements
+                WHERE movement_type='receipt' AND product_id=?
+                  AND target_warehouse_id=? AND notes=?
+                ORDER BY id
+            """, (
+                line["product_id"], header["warehouse_id"],
+                "استلام مشتريات " + header["receipt_no"],
+            )).fetchall()
             if len(movement_rows) != 1:
                 raise ValueError(
                     "تعذر تحديد حركة استلام واحدة مؤكدة للصنف داخل إيصال GRNI؛ "
                     "لم يتم ترحيل خصم المورد حتى لا تختلف تكلفة المخزون عن الدفاتر."
                 )
             movement = movement_rows[0]
-            layers = execute_compat(c, 
-                """SELECT id,qty_in,qty_remaining,unit_cost,value_remaining
-                   FROM stock_valuation_layers WHERE source_movement_id=? ORDER BY id""",
-                (movement["id"],),
-            ).fetchall()
-            if not layers:
+            source_layers = execute_compat(c, """
+                SELECT id,product_id,warehouse_id,source_movement_id,receipt_line_id,
+                       qty_in,qty_remaining,unit_cost,value_remaining
+                FROM stock_valuation_layers WHERE source_movement_id=? ORDER BY id
+            """, (movement["id"],)).fetchall()
+            if not source_layers:
                 raise ValueError("لا توجد طبقة تقييم مرتبطة بإيصال GRNI؛ راجع مطابقة المخزون قبل ترحيل الخصم.")
-            qty_in = sum((Decimal(str(row["qty_in"])) for row in layers), Decimal("0"))
-            qty_remaining = sum((Decimal(str(row["qty_remaining"])) for row in layers), Decimal("0"))
+
+            # Legacy transfer layers have no reliable receipt-line ancestry.
+            # Refuse to guess rather than treating moved stock as sold stock.
+            legacy_transfer = execute_compat(c, """
+                SELECT l.id FROM stock_valuation_layers l
+                JOIN stock_movements m ON m.id=l.source_movement_id
+                WHERE l.product_id=? AND l.receipt_line_id IS NULL
+                  AND m.movement_type IN ('transfer','relocate')
+                  AND m.movement_date>=?
+                LIMIT 1
+            """, (line["product_id"], header["receipt_date"])).fetchone()
+            if legacy_transfer:
+                raise ValueError(
+                    "توجد طبقات تحويل مخزون قديمة بلا ربط بسطر الاستلام؛ "
+                    "راجع تتبع تكلفة التحويل قبل اعتماد خصم المورد."
+                )
+
             line_qty = Decimal(str(line["quantity"]))
-            if qty_in != line_qty or qty_remaining < 0 or qty_remaining > qty_in:
-                raise ValueError("كمية طبقات التقييم لا تطابق كمية إيصال GRNI؛ لم يتم ترحيل فرق السعر.")
+            source_qty = sum((Decimal(str(row["qty_in"])) for row in source_layers), Decimal("0"))
+            if line_qty <= 0 or source_qty != line_qty:
+                raise ValueError("كمية طبقة الاستلام لا تطابق كمية سطر GRNI؛ لم يتم ترحيل فرق السعر.")
+
+            linked_layers = execute_compat(c, """
+                SELECT id,product_id,warehouse_id,source_movement_id,receipt_line_id,
+                       qty_in,qty_remaining,unit_cost,value_remaining
+                FROM stock_valuation_layers WHERE receipt_line_id=? ORDER BY id
+            """, (line["id"],)).fetchall()
+            by_id = {int(row["id"]): row for row in source_layers}
+            by_id.update({int(row["id"]): row for row in linked_layers})
+            layers = list(by_id.values())
+
+            qty_remaining = Decimal("0")
+            for layer in layers:
+                try:
+                    qty_in_layer = Decimal(str(layer["qty_in"]))
+                    qty_left = Decimal(str(layer["qty_remaining"]))
+                    unit_cost = Decimal(str(layer["unit_cost"]))
+                    value_left = (
+                        Decimal(str(layer["value_remaining"]))
+                        if layer["value_remaining"] not in (None, "")
+                        else qty_left * unit_cost
+                    )
+                except (InvalidOperation, TypeError, ValueError) as exc:
+                    raise ValueError("توجد طبقة تكلفة غير رقمية مرتبطة بإيصال GRNI.") from exc
+                if (not all(value.is_finite() for value in (qty_in_layer, qty_left, unit_cost, value_left))
+                        or qty_in_layer < 0 or qty_left < 0 or qty_left > qty_in_layer
+                        or unit_cost < 0 or value_left < 0):
+                    raise ValueError("توجد طبقة تكلفة غير صالحة مرتبطة بإيصال GRNI.")
+                qty_remaining += qty_left
+            if qty_remaining > line_qty:
+                raise ValueError("كمية المخزون المرتبطة بسطر GRNI تتجاوز كمية الاستلام الأصلية.")
+
             gross = money(line["total_cost"])
             if gross <= 0:
                 raise ValueError("تكلفة سطر إيصال GRNI غير صالحة لتسوية الخصم.")
             source_lines.append({
                 "line": line, "movement": movement, "layers": layers,
-                "qty_in": qty_in, "qty_remaining": qty_remaining,
-                "gross": gross, "warehouse_id": header["warehouse_id"],
+                "qty_in": line_qty, "qty_remaining": qty_remaining, "gross": gross,
             })
 
     source_total = money(sum((item["gross"] for item in source_lines), Decimal("0")))
@@ -1822,85 +1883,86 @@ def _supplier_grni_price_variance_lines(c, receipt_rows, discount_amount, matche
             remaining_discount = money(remaining_discount - line_discount)
         if line_discount <= 0:
             continue
+
         net_line_cost = money(item["gross"] - line_discount)
         new_unit_cost = q4(net_line_cost / item["qty_in"])
         consumed_qty = item["qty_in"] - item["qty_remaining"]
         consumed_discount = money(line_discount * consumed_qty / item["qty_in"])
         remaining_value_discount = money(line_discount - consumed_discount)
         product_id = int(item["line"]["product_id"])
-        warehouse_id = int(item["warehouse_id"])
-        inventory_code = resolve_product_account_code(
-            c, product_id, "inventory", default_inventory
-        )
-        cogs_code = resolve_product_account_code(
-            c, product_id, "cogs", default_cogs
-        )
+        inventory_code = resolve_product_account_code(c, product_id, "inventory", default_inventory)
+        cogs_code = resolve_product_account_code(c, product_id, "cogs", default_cogs)
         inventory_id = account(c, inventory_code, "asset")
         cogs_id = account(c, cogs_code, "expense")
-        if remaining_value_discount > 0:
-            journal_lines.append((
-                inventory_id, 0, remaining_value_discount,
-                "خصم سعر شراء يخفض قيمة المخزون",
-                {"stock_product_id": product_id, "stock_warehouse_id": warehouse_id},
-            ))
-        if consumed_discount > 0:
-            journal_lines.append((
-                cogs_id, 0, consumed_discount,
-                "خصم سعر شراء يخفض تكلفة الأصناف المصروفة",
-            ))
-        # Keep the authoritative remaining layer value in sync with the
-        # IAS 2 discount allocation.  Distribute the remaining-stock portion
-        # by remaining quantity and put any cent-rounding residual on the last
-        # valuation layer so the layers reconcile exactly to the journal.
-        layer_rows = item["layers"]
+
+        # Credit inventory where the descendant layers currently reside.
         remaining_layers = [
-            layer for layer in layer_rows
+            layer for layer in item["layers"]
             if Decimal(str(layer["qty_remaining"])) > 0
         ]
-        layer_discount_left = remaining_value_discount
         remaining_layer_qty = sum(
             (Decimal(str(layer["qty_remaining"])) for layer in remaining_layers),
             Decimal("0"),
         )
-        remaining_layer_ids = {int(layer["id"]) for layer in remaining_layers}
-        for layer in layer_rows:
+        layer_discount_left = remaining_value_discount
+        inventory_by_warehouse = {}
+        last_remaining_id = int(remaining_layers[-1]["id"]) if remaining_layers else None
+        for layer in item["layers"]:
             layer_qty = Decimal(str(layer["qty_remaining"]))
             old_value = (
                 Decimal(str(layer["value_remaining"]))
                 if layer["value_remaining"] not in (None, "")
                 else layer_qty * Decimal(str(layer["unit_cost"]))
             )
-            if int(layer["id"]) not in remaining_layer_ids:
+            if layer_qty <= 0:
                 layer_discount = money("0")
-            elif layer["id"] == remaining_layers[-1]["id"]:
+            elif int(layer["id"]) == last_remaining_id:
                 layer_discount = layer_discount_left
                 layer_discount_left = money("0")
             else:
                 layer_discount = money(remaining_value_discount * layer_qty / remaining_layer_qty)
                 layer_discount_left = money(layer_discount_left - layer_discount)
+
             new_layer_value = money(old_value - layer_discount)
             if new_layer_value < 0:
                 raise ValueError("توزيع خصم المورد تجاوز قيمة إحدى طبقات المخزون.")
-            execute_compat(c, 
-                """UPDATE stock_valuation_layers
-                   SET unit_cost=?,value_remaining=? WHERE id=?""",
-                (str(new_unit_cost), str(new_layer_value), layer["id"]),
-            )
+            layer_unit_cost = q4(new_layer_value / layer_qty) if layer_qty > 0 else new_unit_cost
+            execute_compat(c, """
+                UPDATE stock_valuation_layers SET unit_cost=?,value_remaining=? WHERE id=?
+            """, (str(layer_unit_cost), str(new_layer_value), layer["id"]))
+            if layer_discount > 0:
+                warehouse_id = int(layer["warehouse_id"])
+                inventory_by_warehouse[warehouse_id] = money(
+                    inventory_by_warehouse.get(warehouse_id, Decimal("0")) + layer_discount
+                )
+
         if layer_discount_left != 0:
             raise ValueError("تعذر توزيع خصم المورد بالكامل على طبقات المخزون المتبقية.")
-        execute_compat(c, 
-            "UPDATE stock_movements SET unit_cost=?,total_cost=? WHERE id=?",
-            (str(new_unit_cost), str(net_line_cost), item["movement"]["id"]),
-        )
-        execute_compat(c, 
-            "UPDATE goods_receipt_lines SET unit_cost=?,total_cost=? WHERE id=?",
-            (str(new_unit_cost), str(net_line_cost), item["line"]["id"]),
-        )
+        for warehouse_id, warehouse_discount in sorted(inventory_by_warehouse.items()):
+            if warehouse_discount:
+                journal_lines.append((
+                    inventory_id, 0, warehouse_discount,
+                    "خصم سعر شراء يخفض قيمة المخزون",
+                    {"stock_product_id": product_id, "stock_warehouse_id": warehouse_id},
+                ))
+        if consumed_discount > 0:
+            journal_lines.append((
+                cogs_id, 0, consumed_discount,
+                "خصم سعر شراء يخفض تكلفة الأصناف المصروفة",
+            ))
+
+        # Keep the supplier receipt value authoritative. Transfer movements
+        # remain historical; their current carrying values live in the layers.
+        execute_compat(c, """
+            UPDATE stock_movements SET unit_cost=?,total_cost=? WHERE id=?
+        """, (str(new_unit_cost), str(net_line_cost), item["movement"]["id"]))
+        execute_compat(c, """
+            UPDATE goods_receipt_lines SET unit_cost=?,total_cost=? WHERE id=?
+        """, (str(new_unit_cost), str(net_line_cost), item["line"]["id"]))
+
     if remaining_discount != 0:
         raise ValueError("تعذر توزيع خصم المورد بالكامل على تفاصيل إيصالات GRNI.")
     return journal_lines
-
-
 def _available_supplier_receipts(c, supplier_id, exclude_bill_id=None):
     if supplier_id is None:
         rows = execute_compat(c, """SELECT r.*,s.name supplier_name FROM goods_receipts r

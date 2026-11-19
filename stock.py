@@ -278,6 +278,9 @@ def initialize_stock_schema(c):
     if "receipt_line_id" not in layer_columns:
         # Purchases schema initializes immediately after stock schema in app startup.
         _execute(c, "ALTER TABLE stock_valuation_layers ADD COLUMN receipt_line_id INTEGER")
+    _execute(c, """CREATE INDEX IF NOT EXISTS idx_stock_layers_receipt_line
+        ON stock_valuation_layers(receipt_line_id,warehouse_id,id)
+        WHERE receipt_line_id IS NOT NULL""")
     execute_script(c,"""
     CREATE TABLE IF NOT EXISTS stock_warehouse_product_settings(
       product_id INTEGER NOT NULL REFERENCES stock_products(id),
@@ -1672,7 +1675,14 @@ def movements():
                 method = method_row["setting_value"] if method_row else "average"
                 if kind in {"issue","scrap","relocate","transfer"} and source_location_id and not _execute(c, "SELECT 1 FROM stock_locations WHERE id=? AND warehouse_id=? AND active=1",(source_location_id,src)).fetchone():
                     raise ValueError("موقع المصدر لا يتبع المخزن المحدد.")
-                total,allocations=consume_layers(c,product["id"],src,qty,method,lot_id,source_location_id)
+                if kind in {"transfer","relocate"}:
+                    total,allocations,layer_details=consume_layers(
+                        c,product["id"],src,qty,method,lot_id,source_location_id,
+                        include_layer_details=True
+                    )
+                else:
+                    total,allocations=consume_layers(c,product["id"],src,qty,method,lot_id,source_location_id)
+                    layer_details=[]
                 unit_cost=(total/qty).quantize(MONEY,rounding=ROUND_HALF_UP)
             movement_no=f"STK-{date.today().strftime('%Y%m%d')}-{uuid.uuid4().hex[:12].upper()}"
             issue_purpose=request.form.get("issue_purpose") if kind=="issue" else None
@@ -1685,9 +1695,15 @@ def movements():
                 _execute(c, """INSERT INTO stock_valuation_layers(product_id,warehouse_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost)
                   VALUES(?,?,?,?,?,?,?)""",(product["id"],dst,lot_id,mid,str(qty),str(qty),str(unit_cost)))
             elif kind in {"transfer","relocate"}:
-                for allocated_lot,allocated_qty,allocated_cost,allocated_total in allocations:
-                    _execute(c, """INSERT INTO stock_valuation_layers(product_id,warehouse_id,location_id,lot_id,source_movement_id,qty_in,qty_remaining,unit_cost,value_remaining)
-                      VALUES(?,?,?,?,?,?,?,?,?)""",(product["id"],dst,target_location_id,allocated_lot,mid,str(allocated_qty),str(allocated_qty),str(allocated_cost),str(allocated_total)))
+                for allocation in layer_details:
+                    _execute(c, """INSERT INTO stock_valuation_layers(
+                        product_id,warehouse_id,location_id,lot_id,source_movement_id,
+                        qty_in,qty_remaining,unit_cost,value_remaining,receipt_line_id)
+                      VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                      (product["id"],dst,target_location_id,allocation["lot_id"],mid,
+                       str(allocation["quantity"]),str(allocation["quantity"]),
+                       str(allocation["unit_cost"]),str(allocation["total_cost"]),
+                       allocation["receipt_line_id"]))
             if kind=="scrap":
                 post_scrap_journal(c,mid,movement_no,product,movement_date,total,session.get("user_id"))
             elif kind in {"transfer","relocate"}:
