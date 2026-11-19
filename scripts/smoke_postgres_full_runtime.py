@@ -1020,6 +1020,81 @@ def main() -> int:
                         "write_p95_seconds": round(write_p95, 4),
                         "read_p95_seconds": round(read_p95, 4),
                     }
+
+                    # Two simultaneous payments against one commitment must
+                    # serialize on the commitment row. Only one 60.00 payment
+                    # may succeed against a 100.00 obligation.
+                    payable_row = connection.execute(
+                        """SELECT id FROM accounts
+                           WHERE account_type='liability' AND is_group=0 AND active=1
+                           ORDER BY code LIMIT 1"""
+                    ).fetchone()
+                    cash_row = connection.execute(
+                        """SELECT id FROM accounts
+                           WHERE account_type='asset' AND is_group=0 AND active=1
+                             AND code LIKE '11%'
+                           ORDER BY code LIMIT 1"""
+                    ).fetchone()
+                    if not payable_row or not cash_row:
+                        raise AssertionError("PostgreSQL concurrency smoke could not find payable and cash accounts.")
+                    commitment_id = nexus_app.create_cash_commitment(
+                        connection, "tax", "PG concurrent payment probe", "100.00",
+                        today.isoformat(), payable_account_id=payable_row["id"],
+                    )
+                    payment_journals = []
+                    for suffix in ("A", "B"):
+                        journal_id = nexus_app.post_journal(
+                            connection, today.isoformat(), f"PG-COMMIT-{suffix}",
+                            "PostgreSQL concurrent commitment payment probe",
+                            [
+                                (payable_row["id"], "60.00", "0", "سداد التزام"),
+                                (cash_row["id"], "0", "60.00", "نقدية"),
+                            ],
+                            created_by=1,
+                        )
+                        connection.commit()
+                        payment_journals.append(journal_id)
+                    connection.commit()
+                    payment_barrier = threading.Barrier(2)
+
+                    def attempt_commitment_payment(journal_id):
+                        with nexus_app.app.app_context():
+                            payment_connection = nexus_app.db()
+                            try:
+                                payment_barrier.wait(timeout=20)
+                                payment_id = nexus_app.record_cash_commitment_payment(
+                                    payment_connection, commitment_id, today.isoformat(),
+                                    "60.00", journal_id, reference="PG-RACE-" + str(journal_id),
+                                )
+                                return ("posted", payment_id)
+                            except ValueError as exc:
+                                return ("rejected", str(exc))
+                            finally:
+                                payment_connection.close()
+
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        payment_outcomes = list(executor.map(
+                            attempt_commitment_payment, payment_journals
+                        ))
+                    payment_summary = nexus_app.cash_commitment_payment_summary(
+                        connection, commitment_id
+                    )
+                    posted_count = sum(1 for outcome in payment_outcomes if outcome[0] == "posted")
+                    rejected_count = sum(1 for outcome in payment_outcomes if outcome[0] == "rejected")
+                    if (
+                        posted_count != 1 or rejected_count != 1
+                        or payment_summary["paid_total"] != Decimal("60.00")
+                        or len(payment_summary["payments"]) != 1
+                    ):
+                        raise AssertionError(
+                            "Concurrent PostgreSQL commitment payments were not serialized safely: "
+                            f"{payment_outcomes!r}"
+                        )
+                    commitment_concurrency_flow = {
+                        "posted": posted_count,
+                        "rejected": rejected_count,
+                        "paid_total": str(payment_summary["paid_total"]),
+                    }
                 finally:
                     connection.close()
 
@@ -1135,7 +1210,9 @@ def main() -> int:
                 f"expense_report_total={report_flow['expense_total']} "
                 f"budget_actual={report_flow['budget_actual']} "
                 f"asset_depreciation={asset_flow['amount']} "
-                f"asset_journal={asset_flow['journal_entry_id']}"
+                f"asset_journal={asset_flow['journal_entry_id']} "
+                f"commitment_payment_race={commitment_concurrency_flow['posted']}/"
+                f"{commitment_concurrency_flow['rejected']}"
             )
             return 0
         finally:
