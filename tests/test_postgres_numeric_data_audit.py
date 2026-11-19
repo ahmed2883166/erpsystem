@@ -25,6 +25,7 @@ def _snapshot(columns):
         ("journal_lines", "credit"),
         ("currencies", "rate_to_base"),
         ("tax_rates", "rate"),
+        ("fx_exchange_rates", "rate_to_base"),
     ):
         existing = next((item for item in tables if item["name"] == table_name), None)
         if existing is None:
