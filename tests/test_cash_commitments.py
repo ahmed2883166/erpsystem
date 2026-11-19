@@ -104,7 +104,6 @@ class CashCommitmentsTests(unittest.TestCase):
     def test_legacy_duplicate_origins_are_reviewable_without_blocking_startup(self):
         conn=self._legacy_duplicate_connection()
         try:
-            initialize_cash_commitments_schema(conn)
             conn.execute("""INSERT INTO cash_commitments(commitment_type,title,amount,due_date,origin_type,origin_id)
                 VALUES('friday_overtime','أصل','50','2026-11-30','friday_allowance_batch',901),
                       ('friday_overtime','مكرر','50','2026-11-30','friday_allowance_batch',901)""")
@@ -121,10 +120,11 @@ class CashCommitmentsTests(unittest.TestCase):
     def test_duplicate_with_payments_cannot_be_voided_automatically(self):
         conn=self._legacy_duplicate_connection()
         try:
-            initialize_cash_commitments_schema(conn)
             conn.execute("""INSERT INTO cash_commitments(commitment_type,title,amount,due_date,origin_type,origin_id)
                 VALUES('friday_overtime','أصل','50','2026-11-30','friday_allowance_batch',902),
                       ('friday_overtime','مكرر','50','2026-11-30','friday_allowance_batch',902)""")
+            conn.commit()
+            initialize_cash_commitments_schema(conn)
             ids=[r[0] for r in conn.execute("SELECT id FROM cash_commitments WHERE origin_id=902 ORDER BY id")]
             conn.execute("INSERT INTO journal_entries(id) VALUES(1)")
             conn.execute("INSERT INTO cash_commitment_payments(commitment_id,payment_date,amount,journal_entry_id) VALUES(?,?,?,?)",
