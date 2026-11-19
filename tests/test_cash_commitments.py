@@ -90,7 +90,7 @@ class CashCommitmentsTests(unittest.TestCase):
     def _legacy_duplicate_connection(self):
         conn=sqlite3.connect(":memory:")
         conn.row_factory=sqlite3.Row
-        conn.execute("CREATE TABLE journal_entries(id INTEGER PRIMARY KEY)")
+        conn.execute("""CREATE TABLE journal_entries(id INTEGER PRIMARY KEY, status TEXT NOT NULL DEFAULT 'posted', reference TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', entry_date TEXT NOT NULL DEFAULT '2026-11-10')""")
         conn.execute("""CREATE TABLE cash_commitments(
             id INTEGER PRIMARY KEY, commitment_type TEXT NOT NULL, title TEXT NOT NULL,
             period_label TEXT NOT NULL DEFAULT '', amount TEXT NOT NULL, due_date TEXT NOT NULL,
@@ -136,8 +136,39 @@ class CashCommitmentsTests(unittest.TestCase):
             conn.execute("INSERT INTO cash_commitment_payments(commitment_id,payment_date,amount,journal_entry_id) VALUES(?,?,?,?)",
                          (ids[1],"2026-11-10","10",1))
             conn.commit()
-            with self.assertRaisesRegex(ValueError,"دفعات"):
+            with self.assertRaisesRegex(ValueError,"دفعات فعّالة"):
                 resolve_cash_commitment_duplicate_origin(conn,ids[0],[ids[1]],"محاولة تسوية",7)
+        finally: conn.close()
+
+    def test_duplicate_with_fully_reversed_payment_can_be_resolved(self):
+        conn=self._legacy_duplicate_connection()
+        try:
+            conn.execute("""INSERT INTO cash_commitments(commitment_type,title,amount,due_date,origin_type,origin_id)
+                VALUES('friday_overtime','أصل','50','2026-11-30','friday_allowance_batch',904),
+                      ('friday_overtime','مكرر','50','2026-11-30','friday_allowance_batch',904)""")
+            conn.executemany(
+                "INSERT INTO journal_entries(id,status,reference,description,entry_date) VALUES(?,?,?,?,?)",
+                [(1,"posted","PAY-1","سداد الالتزام","2026-11-10"),
+                 (2,"posted","REV-1","عكس السداد","2026-11-11")],
+            )
+            conn.commit()
+            initialize_cash_commitments_schema(conn)
+            ids=[r[0] for r in conn.execute("SELECT id FROM cash_commitments WHERE origin_id=904 ORDER BY id")]
+            conn.execute("""INSERT INTO cash_commitment_payments
+                (commitment_id,payment_date,amount,journal_entry_id,reversal_journal_entry_id)
+                VALUES(?,?,?,?,?)""",(ids[1],"2026-11-10","50",1,2))
+            conn.commit()
+            group=list_cash_commitment_duplicate_origins(conn)[0]
+            duplicate=next(item for item in group["items"] if item["id"]==ids[1])
+            self.assertEqual(duplicate["payment_count"],1)
+            self.assertEqual(duplicate["effective_payment_count"],0)
+            self.assertEqual(duplicate["paid_total"],Decimal("0"))
+            resolved=resolve_cash_commitment_duplicate_origin(conn,ids[0],[ids[1]],"دفعة معكوسة بالكامل",7)
+            self.assertEqual(resolved,1)
+            self.assertEqual(conn.execute("SELECT status FROM cash_commitments WHERE id=?",(ids[1],)).fetchone()[0],"void")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM cash_commitment_payments WHERE commitment_id=?",(ids[1],)).fetchone()[0],1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0],2)
+            self.assertEqual(conn.execute("SELECT reversal_journal_entry_id FROM cash_commitment_payments WHERE commitment_id=?",(ids[1],)).fetchone()[0],2)
         finally: conn.close()
 
     def test_source_linked_commitments_reject_duplicate_origins(self):
