@@ -45,6 +45,8 @@ def _db():
 
 def initialize_currency_schema():
     c = _db()
+    if database_dialect(c) == "postgresql":
+        begin_write_transaction(c)
     schema_sql = """
     CREATE TABLE IF NOT EXISTS fx_exchange_rates(
       id INTEGER PRIMARY KEY, currency_code TEXT NOT NULL, rate_date TEXT NOT NULL,
@@ -81,9 +83,14 @@ def initialize_currency_schema():
             "rate_to_base TEXT NOT NULL",
             "rate_to_base NUMERIC(24, 10) NOT NULL",
         )
-    execute_script(c, schema_sql)
-    c.commit()
-    c.close()
+    try:
+        execute_script(c, schema_sql)
+        c.commit()
+    except Exception:
+        c.rollback()
+        raise
+    finally:
+        c.close()
 
 def _role(fn):
     @wraps(fn)
