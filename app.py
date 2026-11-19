@@ -4632,9 +4632,11 @@ def reset_company_data():
 
         # A verified backup must exist before the first destructive statement.
         if configured_database_backend() == "postgresql":
-            flash("تصفير بيانات PostgreSQL سيُتاح بعد اكتمال اختبارات إعادة ضبط البيانات الخاصة به. لم يتم حذف أي بيانات.", "warning")
-            return redirect(url_for("backup_settings"))
-        safety_archive = create_backup_archive(DB_PATH, BACKUP_DIR, keep_count)
+            safety_archive = create_postgres_backup_archive(
+                os.environ.get("NEXUS_POSTGRES_DSN"), BACKUP_DIR, keep_count
+            )
+        else:
+            safety_archive = create_backup_archive(DB_PATH, BACKUP_DIR, keep_count)
         reset_connection = db()
         try:
             summary = clear_company_data(reset_connection)
