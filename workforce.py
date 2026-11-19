@@ -3105,7 +3105,10 @@ def reverse_payroll(run_id):
         if not reason:
             raise ValueError("سبب عكس قيد المرتبات مطلوب ويجب توثيقه.")
         available_columns = table_columns(c, "journal_lines")
-        dimension_keys = ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id", "supplier_id")
+        dimension_keys = (
+            "branch_id", "cost_center_id", "project_id", "customer_id",
+            "salesperson_id", "supplier_id", "stock_product_id", "stock_warehouse_id",
+        )
         selected_dimensions = [key for key in dimension_keys if key in available_columns]
         select_columns = ["account_id", "debit", "credit", "memo"] + selected_dimensions
         original_lines = execute_compat(c, 
