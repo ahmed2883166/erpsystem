@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from functools import wraps
 
-from db_compat import table_columns, table_exists, DB_ERROR, begin_write_transaction
+from db_compat import table_columns, table_exists, DB_ERROR, begin_write_transaction, transactional_connection_initializer
 from db_sql import execute_compat
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
@@ -28,9 +28,9 @@ def _columns(conn, name):
     return table_columns(conn, name)
 
 
-def initialize_tax_schema():
+@transactional_connection_initializer(_db)
+def initialize_tax_schema(c):
     """Additive migration; never rewrites existing invoice values."""
-    conn = _db()
     for table in ("sales_invoices", "supplier_bills", "sales_credit_notes", "supplier_credit_notes"):
         cols = _columns(conn, table)
         if not cols:
@@ -61,8 +61,6 @@ def initialize_tax_schema():
     )""")
     execute_compat(conn, """CREATE INDEX IF NOT EXISTS idx_tax_document_audit_document
         ON tax_document_reference_audit(document_kind,document_id,created_at,id)""")
-    conn.commit()
-    conn.close()
 
 
 def _authorized(fn):
