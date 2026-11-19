@@ -1624,7 +1624,11 @@ def build_balance_sheet_snapshot(conn, as_of):
                 WHERE h.entry_kind='opening' AND h.action='created'
                   AND h.ledger_history_copied IS NULL AND fy.start_date<=?
             """, (as_of,)).fetchone()[0]
-            unclassified_opening_count += _execute(conn, """
+            opening_review_filter = (
+                " AND NOT EXISTS(SELECT 1 FROM financial_year_opening_reviews r WHERE r.entry_id=je.id)"
+                if _table_exists_financial(conn, "financial_year_opening_reviews") else ""
+            )
+            unclassified_opening_count += _execute(conn, f"""
                 SELECT COUNT(*) FROM journal_entries je
                 JOIN financial_years fy ON fy.start_date=je.entry_date
                 WHERE je.status='posted' AND fy.start_date<=?
@@ -1632,7 +1636,7 @@ def build_balance_sheet_snapshot(conn, as_of):
                     OR UPPER(COALESCE(je.reference,'')) LIKE '%OPEN%'
                     OR COALESCE(je.reference,'') LIKE '%افتتاح%')
                   AND NOT EXISTS(SELECT 1 FROM financial_year_journal_history h WHERE h.entry_id=je.id)
-                  AND NOT EXISTS(SELECT 1 FROM financial_year_opening_reviews r WHERE r.entry_id=je.id)
+                  {opening_review_filter}
             """,(as_of,)).fetchone()[0]
             classification_conflict_count = _execute(conn, """
                 SELECT COUNT(*)

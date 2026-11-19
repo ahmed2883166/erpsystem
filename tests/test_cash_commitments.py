@@ -377,7 +377,7 @@ class CashCommitmentsTests(unittest.TestCase):
             self.conn, "friday_overtime", "بدل جمعة", "150", "2026-11-30", payable_account_id=10,
             origin_type="friday_allowance_batch", origin_id=22,
         )
-        with self.assertRaises(sqlite3.IntegrityError):
+        with self.assertRaisesRegex(ValueError, "مرتبط بالمصدر نفسه"):
             create_cash_commitment(
                 self.conn, "friday_overtime", "بدل جمعة", "150", "2026-11-30", payable_account_id=10,
                 origin_type="friday_allowance_batch", origin_id=22,

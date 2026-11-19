@@ -19,7 +19,7 @@ class UserPermissionRouteTests(unittest.TestCase):
         conn = sqlite3.connect(nexus.DB_PATH)
         conn.execute("""CREATE TABLE users(
             id INTEGER PRIMARY KEY, username TEXT, full_name TEXT, role TEXT,
-            active INTEGER, permissions_json TEXT, password_hash TEXT, created_at TEXT,
+            active INTEGER NOT NULL DEFAULT 1, permissions_json TEXT, password_hash TEXT, created_at TEXT,
             must_change_password INTEGER NOT NULL DEFAULT 0
         )""")
         conn.execute("""INSERT INTO users

@@ -288,22 +288,17 @@ class ManagementDashboardTests(unittest.TestCase):
             "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(81,?,?,?)",
             [(20, "200.00", "0"), (21, "0", "200.00")],
         )
-        self.conn.executescript("""
-            CREATE TABLE financial_years(
-                id INTEGER PRIMARY KEY, year_name TEXT, start_date TEXT, end_date TEXT,
-                status TEXT, opening_entry_id INTEGER
-            );
-            CREATE TABLE financial_year_journal_history(
-                id INTEGER PRIMARY KEY, financial_year_id INTEGER, entry_kind TEXT,
-                action TEXT, entry_id INTEGER, related_entry_id INTEGER,
-                ledger_history_copied INTEGER
-            );
-            INSERT INTO financial_years
-                VALUES(1,'2027','2027-01-01','2027-12-31','open',81);
-            INSERT INTO financial_year_journal_history
-                (financial_year_id,entry_kind,action,entry_id,ledger_history_copied)
-                VALUES(1,'opening','created',81,1);
-        """)
+        year_id = self.conn.execute(
+            """INSERT INTO financial_years
+               (year_name,start_date,end_date,status,opening_entry_id)
+               VALUES('FY2027','2027-01-01','2027-12-31','open',81)"""
+        ).lastrowid
+        self.conn.execute(
+            """INSERT INTO financial_year_journal_history
+               (financial_year_id,entry_kind,action,entry_id,ledger_history_copied)
+               VALUES(?,'opening','created',81,1)""",
+            (year_id,),
+        )
         dashboard = build_management_snapshot(
             self.conn, date(2027,1,1), date(2027,1,31)
         )
@@ -337,22 +332,17 @@ class ManagementDashboardTests(unittest.TestCase):
             "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(81,?,?,?)",
             [(20, "200.00", "0"), (21, "0", "200.00")],
         )
-        self.conn.executescript("""
-            CREATE TABLE financial_years(
-                id INTEGER PRIMARY KEY, year_name TEXT, start_date TEXT, end_date TEXT,
-                status TEXT, opening_entry_id INTEGER
-            );
-            CREATE TABLE financial_year_journal_history(
-                id INTEGER PRIMARY KEY, financial_year_id INTEGER, entry_kind TEXT,
-                action TEXT, entry_id INTEGER, related_entry_id INTEGER,
-                ledger_history_copied INTEGER
-            );
-            INSERT INTO financial_years
-                VALUES(1,'2027','2027-01-01','2027-12-31','open',81);
-            INSERT INTO financial_year_journal_history
-                (financial_year_id,entry_kind,action,entry_id,ledger_history_copied)
-                VALUES(1,'opening','created',81,0);
-        """)
+        year_id = self.conn.execute(
+            """INSERT INTO financial_years
+               (year_name,start_date,end_date,status,opening_entry_id)
+               VALUES('FY2027-LATE','2027-01-01','2027-12-31','open',81)"""
+        ).lastrowid
+        self.conn.execute(
+            """INSERT INTO financial_year_journal_history
+               (financial_year_id,entry_kind,action,entry_id,ledger_history_copied)
+               VALUES(?,'opening','created',81,0)""",
+            (year_id,),
+        )
         # The historical 2026 journal is imported after the 2027 opening was
         # created. Its late arrival must not retroactively change the flag.
         snapshot = build_balance_sheet_snapshot(self.conn, "2027-01-31")
@@ -367,25 +357,23 @@ class ManagementDashboardTests(unittest.TestCase):
         from financial_planning import build_balance_sheet_snapshot
 
         self.conn.execute("ALTER TABLE accounts ADD COLUMN parent_id INTEGER")
-        self.conn.executescript("""
-            CREATE TABLE financial_years(
-                id INTEGER PRIMARY KEY, year_name TEXT, start_date TEXT, end_date TEXT,
-                status TEXT, opening_entry_id INTEGER
-            );
-            CREATE TABLE financial_year_journal_history(
-                id INTEGER PRIMARY KEY, financial_year_id INTEGER, entry_kind TEXT,
-                action TEXT, entry_id INTEGER, related_entry_id INTEGER,
-                ledger_history_copied INTEGER
-            );
-            INSERT INTO financial_years
-                VALUES(1,'2027','2027-01-01','2027-12-31','open',NULL);
-            INSERT INTO journal_entries(id,entry_date,status) VALUES(81,'2027-01-01','posted');
-            INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES
-                (81,1,'100','0');
-            INSERT INTO financial_year_journal_history
-                (financial_year_id,entry_kind,action,entry_id,ledger_history_copied)
-                VALUES(1,'opening','created',81,NULL);
-        """)
+        self.conn.execute(
+            """INSERT INTO financial_years(year_name,start_date,end_date,status,opening_entry_id)
+               VALUES('FY2027-LEGACY','2027-01-01','2027-12-31','open',NULL)"""
+        )
+        year_id = self.conn.execute(
+            "SELECT id FROM financial_years WHERE year_name='FY2027-LEGACY'"
+        ).fetchone()[0]
+        self.conn.execute("INSERT INTO journal_entries(id,entry_date,status) VALUES(81,'2027-01-01','posted')")
+        self.conn.execute(
+            "INSERT INTO journal_lines(entry_id,account_id,debit,credit) VALUES(81,1,'100','0')"
+        )
+        self.conn.execute(
+            """INSERT INTO financial_year_journal_history
+               (financial_year_id,entry_kind,action,entry_id,ledger_history_copied)
+               VALUES(?,'opening','created',81,NULL)""",
+            (year_id,),
+        )
         snapshot = build_balance_sheet_snapshot(self.conn, "2027-01-31")
         self.assertEqual(snapshot["opening_balance_unclassified_count"], 1)
         self.assertIn("لم يغير النظام التصنيف", snapshot["opening_balance_warning"])

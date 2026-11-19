@@ -23,7 +23,8 @@ def configured_database_backend(environ=None):
 
 def require_supported_runtime_backend(environ=None):
     """Resolve the explicitly selected backend; never silently fall back."""
-    backend = configured_database_backend(environ)
+    source = os.environ if environ is None else environ
+    backend = configured_database_backend(source)
     if backend == "postgresql":
         dsn = str(source.get("NEXUS_POSTGRES_DSN", "") or "").strip()
         if not dsn:

@@ -1895,7 +1895,7 @@ def reverse_customer_advance_transaction(
         if len(receipt_ids) != 1:
             raise ValueError("عملية التخصيص مرتبطة بأكثر من إيصال مقدم؛ يلزم فحصها قبل العكس.")
         _lock_customer_advance_receipt(conn, receipt_ids[0])
-        _lock_customer_advance_invoices(row["invoice_id"] for row in allocations)
+        _lock_customer_advance_invoices(conn, (row["invoice_id"] for row in allocations))
         # Re-read after locks so every balance check uses the latest committed state.
         allocation_sql = """SELECT a.*,i.invoice_no,i.paid_amount,i.customer_id
             FROM customer_advance_allocations a
