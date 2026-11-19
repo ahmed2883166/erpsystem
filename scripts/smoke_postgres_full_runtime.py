@@ -698,11 +698,19 @@ def main() -> int:
                         data=payroll_accounts,
                         follow_redirects=False,
                     )
+                    with client.session_transaction() as session_data:
+                        approval_flashes = list(session_data.get("_flashes", []))
                     posted_payroll = execute_compat(
                         connection,
-                        "SELECT status,journal_entry_id,approved_by FROM payroll_runs WHERE id=?",
+                        "SELECT status,journal_entry_id,approved_by,approval_status FROM payroll_runs WHERE id=?",
                         (payroll_run_id,),
                     ).fetchone()
+                    payroll_approval_observed = {
+                        "http_status": approve_response.status_code,
+                        "location": approve_response.headers.get("Location"),
+                        "run": dict(posted_payroll) if posted_payroll else None,
+                        "flashes": approval_flashes,
+                    }
                     if (
                         approve_response.status_code not in (302, 303)
                         or not posted_payroll
@@ -710,7 +718,10 @@ def main() -> int:
                         or int(posted_payroll["approved_by"]) != approver_id
                         or not posted_payroll["journal_entry_id"]
                     ):
-                        raise AssertionError("PostgreSQL payroll maker-checker approval did not post under the separate approver.")
+                        raise AssertionError(
+                            "PostgreSQL payroll maker-checker approval did not post under "
+                            f"the separate approver. Observed={payroll_approval_observed!r}"
+                        )
                     payroll_journal_id = int(posted_payroll["journal_entry_id"])
                     payroll_journal_totals = execute_compat(
                         connection,
