@@ -534,6 +534,7 @@ class PurchasingAccountingTests(unittest.TestCase):
             "purchase_inventory": "1150",
         }):
             payment_response = payment_client.post("/purchases/payments/new", data={
+                "allocation_mode": "auto",
                 "supplier_id": str(supplier_id),
                 "amount": "50",
                 "cash_account_id": str(self.db.execute(
