@@ -9,6 +9,7 @@ PRESERVED_TABLES = frozenset({
     "activity_profiles", "cash_flow_account_mappings", "management_account_roles",
     "payroll_rule_sets", "payroll_tax_brackets", "payroll_tax_tier_brackets",
     "fx_exchange_rates", "licenses", "trial_devices",
+    "nexus_schema_installation", "schema_migrations",
 })
 
 DELETE_TABLES = frozenset({
