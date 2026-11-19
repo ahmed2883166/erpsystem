@@ -8,7 +8,7 @@ import re
 
 from db_insert import insert_one_returning_id
 from db_compat import (
-    table_columns, begin_write_transaction, transaction_is_active,
+    table_columns, begin_write_transaction, transaction_is_active, transactional_migration,
     table_exists as db_table_exists, execute_script, database_dialect,
 )
 from db_sql import execute_compat
@@ -42,6 +42,7 @@ def _validate_payable_account(conn, account_id, required=False):
     return int(account_id)
 
 
+@transactional_migration
 def initialize_cash_commitments_schema(conn):
     """Idempotent additive migration; does not alter existing business tables."""
     schema_sql = """
