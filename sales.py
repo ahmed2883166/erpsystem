@@ -3132,25 +3132,61 @@ def new_receipt():
     if request.method == "POST":
         try:
             begin_write_transaction(c)
-            selected_ids = request.form.getlist("invoice_ids")
-            if selected_ids:
-                customer_id = int(request.form["customer_id"])
-                allocations = []
+            customer_id = int(request.form["customer_id"])
+            allocation_mode = str(request.form.get("allocation_mode", "manual") or "manual")
+            if allocation_mode not in {"manual", "auto"}:
+                raise ValueError("طريقة توزيع التحصيل غير صحيحة.")
+            allocations = []
+            if allocation_mode == "manual":
+                selected_ids = request.form.getlist("invoice_ids")
+                if not selected_ids:
+                    raise ValueError("حدد فاتورة واحدة على الأقل للتحصيل.")
                 for raw_id in selected_ids:
                     invoice_id = int(raw_id)
                     amount = request.form.get("allocation_amount_" + raw_id, "").strip()
                     allocations.append((invoice_id, amount))
-                result = post_customer_receipt_batch(
-                    c, customer_id, request.form["receipt_date"], allocations,
-                    int(request.form["cash_account_id"]), session["user_id"],
-                    request.form.get("reference", "").strip()
-                )
-                c.commit()
-                flash("تم تسجيل إيصال التحصيل المجمع " + result["receipt_no"] +
-                      " وتوزيع " + str(result["total_amount"]) + " على " +
-                      str(result["invoice_count"]) + " فاتورة.", "success")
             else:
-                raise ValueError("حدد الفواتير التي تريد تحصيلها.")
+                requested_amount = _validated_customer_advance_amount(
+                    request.form.get("amount", ""), "إجمالي مبلغ التحصيل"
+                )
+                if requested_amount <= 0:
+                    raise ValueError("قيمة التحصيل يجب أن تكون أكبر من صفر.")
+                # Lock invoice rows in stable ID order, then allocate oldest-first.
+                invoice_ids = [int(row["id"]) for row in execute_compat(
+                    c, """SELECT id FROM sales_invoices
+                         WHERE customer_id=? AND status='posted'
+                         ORDER BY id""", (customer_id,)
+                ).fetchall()]
+                locked = []
+                for invoice_id in invoice_ids:
+                    invoice = _sales_invoice_for_update(c, invoice_id, posted_only=True)
+                    if invoice and int(invoice["customer_id"]) == customer_id:
+                        due = (Decimal(invoice["total_amount"]) -
+                               Decimal(invoice["paid_amount"] or "0") -
+                               Decimal(invoice["credited_amount"] or "0") +
+                               _refund_total(c, invoice_id))
+                        if due > 0:
+                            locked.append((invoice, due))
+                locked.sort(key=lambda item: (item[0]["invoice_date"], int(item[0]["id"])))
+                remaining = requested_amount
+                for invoice, due in locked:
+                    allocation = min(due, remaining)
+                    if allocation > 0:
+                        allocations.append((int(invoice["id"]), str(allocation)))
+                        remaining -= allocation
+                    if remaining <= 0:
+                        break
+                if remaining > 0:
+                    raise ValueError("مبلغ التحصيل أكبر من إجمالي مديونية العميل على الفواتير المفتوحة.")
+            result = post_customer_receipt_batch(
+                c, customer_id, request.form["receipt_date"], allocations,
+                int(request.form["cash_account_id"]), session["user_id"],
+                request.form.get("reference", "").strip()
+            )
+            c.commit()
+            flash("تم تسجيل إيصال التحصيل المجمع " + result["receipt_no"] +
+                  " وتوزيع " + str(result["total_amount"]) + " على " +
+                  str(result["invoice_count"]) + " فاتورة.", "success")
             return redirect(url_for("sales.index"))
         except (ValueError, InvalidOperation, KeyError, *DB_ERROR) as exc:
             c.rollback()
