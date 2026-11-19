@@ -147,7 +147,7 @@ def initialize_cash_commitments_schema(conn):
         SELECT origin_type,origin_id,COUNT(*) AS n
         FROM cash_commitments
         WHERE origin_type IN ('friday_allowance_batch','recurring_schedule_occurrence')
-          AND origin_id IS NOT NULL
+          AND status<>'void' AND origin_id IS NOT NULL
         GROUP BY origin_type,origin_id HAVING COUNT(*)>1
         LIMIT 10
     """).fetchall()
@@ -188,7 +188,7 @@ def list_cash_commitment_duplicate_origins(conn):
         rows=execute_compat(conn,"""
             SELECT c.id,c.commitment_type,c.title,c.amount,c.due_date,c.status,
               (SELECT COUNT(*) FROM cash_commitment_payments p WHERE p.commitment_id=c.id) payment_count
-            FROM cash_commitments c WHERE c.origin_type=? AND c.origin_id=? ORDER BY c.id
+            FROM cash_commitments c WHERE c.origin_type=? AND c.origin_id=? AND c.status<>'void' ORDER BY c.id
         """,(group["origin_type"],group["origin_id"])).fetchall()
         result.append({"origin_type":group["origin_type"],"origin_id":group["origin_id"],
                        "items":[dict(row) for row in rows]})
@@ -214,7 +214,7 @@ def resolve_cash_commitment_duplicate_origin(conn, kept_id, voided_ids, reason, 
             raise ValueError("الالتزام المختار ليس مرتبطًا بمصدر تشغيلي.")
         if any(r["origin_type"]!=kept["origin_type"] or r["origin_id"]!=kept["origin_id"] for r in rows):
             raise ValueError("يجب أن تكون كل الالتزامات من نفس المصدر.")
-        group=execute_compat(conn,"SELECT id FROM cash_commitments WHERE origin_type=? AND origin_id=?",
+        group=execute_compat(conn,"SELECT id FROM cash_commitments WHERE origin_type=? AND origin_id=? AND status<>'void'",
                              (kept["origin_type"],kept["origin_id"])).fetchall()
         if {int(r["id"]) for r in group}!=set(ids):
             raise ValueError("حدد كل سجلات المجموعة قبل اعتماد التسوية.")

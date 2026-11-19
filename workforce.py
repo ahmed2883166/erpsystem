@@ -3193,7 +3193,7 @@ def pay_payroll(run_id):
         journal_id = post_journal(c, payment_date, reference,
             "صرف مرتبات شهر " + run["period"],
             [(int(execute_compat(c, """SELECT jl.account_id FROM journal_lines jl
-                WHERE jl.entry_id=? AND jl.memo='صافي مستحقات الموظفين' AND jl.CAST(credit AS NUMERIC)>0
+                WHERE jl.entry_id=? AND jl.memo='صافي مستحقات الموظفين' AND CAST(jl.credit AS NUMERIC)>0
                 ORDER BY jl.id LIMIT 1""", (run["journal_entry_id"],)).fetchone()[0]),
               amount, 0, "إقفال صافي مستحقات الموظفين"),
              (cash_account_id, 0, amount, "صرف صافي المرتبات من البنك/الصندوق")],

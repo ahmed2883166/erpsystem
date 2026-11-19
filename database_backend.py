@@ -25,6 +25,9 @@ def require_supported_runtime_backend(environ=None):
     """Resolve the explicitly selected backend; never silently fall back."""
     backend = configured_database_backend(environ)
     if backend == "postgresql":
+        dsn = str(source.get("NEXUS_POSTGRES_DSN", "") or "").strip()
+        if not dsn:
+            raise RuntimeError("NEXUS_POSTGRES_DSN is required when PostgreSQL is selected.")
         raise RuntimeError(
             "PostgreSQL runtime is temporarily disabled until SQL dialect, "
             "financial-year, transaction, concurrency, and restore acceptance tests pass. "
