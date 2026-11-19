@@ -37,7 +37,7 @@ def month_key_expression(connection, date_expression):
     """Return YYYY-MM from a DATE/TEXT column on either supported database."""
     if database_dialect(connection) == "sqlite":
         return f"substr({date_expression}, 1, 7)"
-    return f"TO_CHAR({date_expression}, 'YYYY-MM')"
+    return f"TO_CHAR(CAST({date_expression} AS DATE), 'YYYY-MM')"
 
 
 def decimal_layer_value_sum_expression(connection, value_remaining, quantity, unit_cost):
