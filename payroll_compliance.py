@@ -48,7 +48,7 @@ def _db():
     return connect_database(DB_PATH, timeout=20, isolation_level=None)
 
 
-@transactional_connection_initializer(_db)
+@transactional_connection_initializer(lambda: _db())
 def initialize_payroll_compliance_schema(conn):
     execute_script(conn, """
     CREATE TABLE IF NOT EXISTS payroll_rule_sets(

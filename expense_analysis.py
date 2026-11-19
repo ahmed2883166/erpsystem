@@ -13,7 +13,7 @@ def build_expense_analysis(conn, date_from, date_to, dimensions=None):
     conditions = [
         "je.status='posted'", "je.entry_date>=?", "je.entry_date<=?",
         closing_entries_exclusion_sql(conn), "a.account_type='expense'",
-        "a.is_group=0", "a.active=1",
+        "a.is_group IS FALSE", "a.active IS TRUE",
     ]
     params = [date_from, date_to]
     for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id", "supplier_id"):
