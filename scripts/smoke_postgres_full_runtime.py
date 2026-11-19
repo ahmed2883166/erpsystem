@@ -61,11 +61,16 @@ def main() -> int:
             )
 
         import app as nexus_app
+        import database as database_module
 
-        # The production gate is restored by the installer. This isolated smoke
-        # process keeps a local bypass only while exercising PostgreSQL routes
-        # and operational helpers; no runtime flag or source policy is changed.
-        nexus_app.require_supported_runtime_backend = lambda: None
+        # Keep the production gate fail-closed. The isolated smoke process
+        # temporarily permits PostgreSQL only in these already-imported module
+        # references; no environment/runtime setting or canonical policy changes.
+        original_app_gate = nexus_app.require_supported_runtime_backend
+        original_connection_gate = database_module.require_supported_runtime_backend
+        smoke_gate = lambda: "postgresql"
+        nexus_app.require_supported_runtime_backend = smoke_gate
+        database_module.require_supported_runtime_backend = smoke_gate
         try:
             with nexus_app.app.app_context():
                 connection = nexus_app.db()
@@ -417,6 +422,8 @@ def main() -> int:
             )
             return 0
         finally:
+            nexus_app.require_supported_runtime_backend = original_app_gate
+            database_module.require_supported_runtime_backend = original_connection_gate
             # All application connections are request/app-context scoped and
             # must be closed before removing this isolated test schema.
             with psycopg.connect(dsn, autocommit=True) as connection:
