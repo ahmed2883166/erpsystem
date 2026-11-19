@@ -296,6 +296,28 @@ class CashFlowReportTests(unittest.TestCase):
         self.assertNotIn("2130", {row["code"] for row in indirect["unmapped_accounts"]})
         self.assertNotIn("2190", {row["code"] for row in indirect["unmapped_accounts"]})
 
+    def test_account_code_64_or_65_does_not_classify_maintenance_as_depreciation(self):
+        conn = financial_planning._connect()
+        conn.execute(
+            "INSERT INTO accounts(id,code,name_ar,account_type,is_group) VALUES(7,'6401','مصروف صيانة وإدارية','expense',0)"
+        )
+        conn.execute("INSERT INTO journal_entries VALUES(6,'2026-11-22','posted')")
+        conn.executemany(
+            "INSERT INTO journal_lines VALUES(?,?,?,?,?)",
+            [(11,6,7,"25","0"), (12,6,1,"0","25")],
+        )
+        snapshot = financial_planning.build_cash_flow_indirect_snapshot(
+            conn, "2026-11-01", "2026-11-30"
+        )
+        conn.close()
+        adjustment = next(
+            item for item in snapshot["indirect_items"]
+            if item["label"] == "إضافة الإهلاك والمصروفات غير النقدية المحددة"
+        )
+        self.assertEqual(adjustment["amount"], financial_planning.Decimal("0"))
+        self.assertEqual(snapshot["indirect_operating_net"], financial_planning.Decimal("-25"))
+        self.assertEqual(snapshot["indirect_reconciliation"], financial_planning.Decimal("0"))
+
     def test_general_expense_account_linked_to_asset_is_not_added_back_as_depreciation(self):
         conn = financial_planning._connect()
         conn.execute("CREATE TABLE fixed_assets(id INTEGER PRIMARY KEY, expense_account_id INTEGER)")
