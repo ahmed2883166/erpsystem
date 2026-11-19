@@ -118,5 +118,79 @@ class BankingMetadataPostgreSQLTests(unittest.TestCase):
             connection.close()
 
 
+    def test_postgresql_transfer_reconciliation_waits_for_both_bank_accounts(self):
+        from postgres_database import connect_postgres
+
+        connection = connect_postgres(POSTGRES_DSN)
+        try:
+            connection.execute("""
+                CREATE TEMP TABLE bank_transactions (
+                    id BIGINT PRIMARY KEY,
+                    bank_account_id BIGINT NOT NULL,
+                    destination_bank_account_id BIGINT,
+                    journal_entry_id BIGINT NOT NULL UNIQUE,
+                    reconciled INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+            connection.execute("""
+                CREATE TEMP TABLE journal_lines (
+                    id BIGINT PRIMARY KEY,
+                    entry_id BIGINT NOT NULL,
+                    account_id BIGINT NOT NULL
+                )
+            """)
+            connection.execute("""
+                CREATE TEMP TABLE bank_statement_lines (
+                    id BIGINT PRIMARY KEY,
+                    matched_journal_line_id BIGINT,
+                    matched_transaction_id BIGINT,
+                    matched_at TEXT,
+                    matched_by BIGINT
+                )
+            """)
+            connection.execute(
+                "INSERT INTO bank_transactions"
+                "(id,bank_account_id,destination_bank_account_id,journal_entry_id) "
+                "VALUES(2,101,202,502)"
+            )
+            connection.execute(
+                "INSERT INTO journal_lines(id,entry_id,account_id) "
+                "VALUES(702,502,101),(703,502,202)"
+            )
+            connection.execute(
+                "INSERT INTO bank_statement_lines(id) VALUES(802),(803)"
+            )
+
+            self.assertTrue(refresh_bank_transaction_reconciled(connection, 502))
+            state = connection.execute(
+                "SELECT reconciled FROM bank_transactions WHERE id=2"
+            ).fetchone()["reconciled"]
+            self.assertEqual(state, 0)
+
+            save_statement_line_match(
+                connection, 802, 702, "2026-11-19T10:00:00", 9
+            )
+            self.assertTrue(refresh_bank_transaction_reconciled(connection, 502))
+            state = connection.execute(
+                "SELECT reconciled FROM bank_transactions WHERE id=2"
+            ).fetchone()["reconciled"]
+            self.assertEqual(
+                state, 0,
+                "a transfer must remain unreconciled while the destination bank side is unmatched",
+            )
+
+            save_statement_line_match(
+                connection, 803, 703, "2026-11-19T10:01:00", 9
+            )
+            self.assertTrue(refresh_bank_transaction_reconciled(connection, 502))
+            state = connection.execute(
+                "SELECT reconciled FROM bank_transactions WHERE id=2"
+            ).fetchone()["reconciled"]
+            self.assertEqual(state, 1)
+        finally:
+            connection.rollback()
+            connection.close()
+
+
 if __name__ == "__main__":
     unittest.main()
