@@ -65,6 +65,7 @@ def main() -> int:
 
         import app as nexus_app
         import database as database_module
+        from flask_wtf.csrf import generate_csrf
 
         # Keep the production gate fail-closed. The isolated smoke process
         # temporarily permits PostgreSQL only in these already-imported module
@@ -620,8 +621,19 @@ def main() -> int:
                             raise AssertionError(
                                 "Payroll page did not render the CSRF token required for POST."
                             )
+                        # Explicitly seed the session-side CSRF secret inside the
+                        # test client's persisted session. The HTML after-request hook
+                        # renders a signed token, but this smoke test switches identities
+                        # by clearing the session; generating again here guarantees the
+                        # submitted token and persisted session secret belong together.
+                        with client.session_transaction() as session_data:
+                            csrf_token = generate_csrf()
+                            if not session_data.get("csrf_token"):
+                                raise AssertionError(
+                                    "CSRF token generation did not persist its session secret."
+                                )
                         payload = dict(data)
-                        payload["csrf_token"] = csrf_match.group(1)
+                        payload["csrf_token"] = csrf_token
                         return client.post(
                             path, data=payload, follow_redirects=follow_redirects
                         )
@@ -680,17 +692,30 @@ def main() -> int:
                         "advances_account": liability_account_id,
                     }
                     set_session_user(admin_id)
-                    post_with_csrf(
+                    creator_post_response = post_with_csrf(
                         f"/hr/payroll/{payroll_run_id}/post",
                         data=payroll_accounts,
                         follow_redirects=False,
                     )
+                    with client.session_transaction() as session_data:
+                        creator_post_flashes = list(session_data.get("_flashes", []))
                     creator_post_state = execute_compat(
                         connection, "SELECT status,journal_entry_id FROM payroll_runs WHERE id=?",
                         (payroll_run_id,),
                     ).fetchone()
-                    if not creator_post_state or creator_post_state["status"] != "draft" or creator_post_state["journal_entry_id"] is not None:
-                        raise AssertionError("PostgreSQL payroll allowed its creator to approve/post the same run.")
+                    if (
+                        creator_post_response.status_code not in (302, 303)
+                        or not creator_post_state
+                        or creator_post_state["status"] != "draft"
+                        or creator_post_state["journal_entry_id"] is not None
+                        or not any("لا يجوز" in str(message) for _, message in creator_post_flashes)
+                    ):
+                        raise AssertionError(
+                            "PostgreSQL payroll did not reject creator self-approval. "
+                            f"Observed={{'http_status': creator_post_response.status_code, "
+                            f"'run': dict(creator_post_state) if creator_post_state else None, "
+                            f"'flashes': creator_post_flashes!r}}"
+                        )
 
                     set_session_user(approver_id)
                     approve_response = post_with_csrf(
