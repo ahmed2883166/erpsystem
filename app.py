@@ -62,7 +62,8 @@ from app_paths import DATA_DIR, DB_PATH, BACKUP_DIR, ensure_data_directory
 from backup_scheduler import (create_backup_archive, ensure_initial_backup,
                               next_backup_datetime, start_backup_scheduler)
 from system_health import health_bp
-from backup_restore import extract_validated_backup, restore_database_with_rollback
+from backup_restore import (extract_validated_backup, restore_database_with_rollback,
+                             create_extraction_target)
 from postgres_backup import (
     create_postgres_backup_archive, restore_postgres_backup_to_new_database,
 )
@@ -4724,9 +4725,7 @@ def restore_backup():
             )
             return redirect(url_for("backup_settings"))
 
-        candidate_fd, candidate_name = tempfile.mkstemp(prefix="restore-candidate-", suffix=".db", dir=BACKUP_DIR)
-        os.close(candidate_fd)
-        candidate_path = Path(candidate_name)
+        candidate_path = create_extraction_target(BACKUP_DIR, prefix="restore-candidate-")
         temp_paths.append(candidate_path)
         extract_validated_backup(archive_path, candidate_path)
 
@@ -4737,9 +4736,7 @@ def restore_backup():
         keep_count = int(keep_row["setting_value"]) if keep_row else 30
         settings_connection.close()
         safety_archive = create_backup_archive(DB_PATH, BACKUP_DIR, keep_count)
-        safety_fd, safety_name = tempfile.mkstemp(prefix="before-restore-", suffix=".db", dir=BACKUP_DIR)
-        os.close(safety_fd)
-        safety_path = Path(safety_name)
+        safety_path = create_extraction_target(BACKUP_DIR, prefix="before-restore-")
         temp_paths.append(safety_path)
         extract_validated_backup(safety_archive, safety_path)
         restore_database_with_rollback(candidate_path, DB_PATH, safety_path, initialize_database)
