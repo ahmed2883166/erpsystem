@@ -35,7 +35,7 @@ jobs:
           python-version: "3.12"
       - name: Install Python dependencies and PostgreSQL 16 client tools
         run: |
-tool_dir="$RUNNER_TEMP/postgres16-tools"
+          tool_dir="$RUNNER_TEMP/postgres16-tools"
           mkdir -p "$tool_dir"
           for tool in pg_dump pg_restore; do
             cat > "$tool_dir/$tool" <<'EOF'
