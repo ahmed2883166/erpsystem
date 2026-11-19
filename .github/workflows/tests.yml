@@ -52,12 +52,12 @@ jobs:
           #!/usr/bin/env bash
           set -euo pipefail
           tool="$(basename "$0")"
-          exec docker run --rm --network host \\
-            -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE \\
-            -e PGSSLMODE -e PGSSLROOTCERT -e PGSSLCERT -e PGSSLKEY \\
-            -e PGCONNECT_TIMEOUT -e PGAPPNAME -e PGOPTIONS \\
-            -v /tmp:/tmp \\
-            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \\
+          exec docker run --rm --network host \
+            -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE \
+            -e PGSSLMODE -e PGSSLROOTCERT -e PGSSLCERT -e PGSSLKEY \
+            -e PGCONNECT_TIMEOUT -e PGAPPNAME -e PGOPTIONS \
+            -v /tmp:/tmp \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             -w "$GITHUB_WORKSPACE" postgres:16 "$tool" "$@"
           EOF
             chmod +x "$tool_dir/$tool"
