@@ -40,6 +40,12 @@ class JournalLineAmountMigrationTests(unittest.TestCase):
             BEFORE INSERT ON journal_lines
             WHEN NEW.debit < 0
             BEGIN SELECT RAISE(ABORT, 'negative debit'); END;
+            CREATE TRIGGER journal_lines_guard_update
+            BEFORE UPDATE ON journal_lines
+            WHEN NEW.debit < OLD.credit
+              OR NEW.debit BETWEEN 1 AND 100
+              OR NEW.credit BETWEEN OLD.debit AND OLD.credit
+            BEGIN SELECT RAISE(ABORT, 'numeric update guard'); END;
             INSERT INTO accounts(id,code) VALUES(4,'1000');
             INSERT INTO journal_entries(id,entry_date) VALUES(9,'2026-01-01');
             INSERT INTO journal_lines(id,entry_id,account_id,debit,credit,memo,branch_id,cost_center_id)
@@ -82,6 +88,18 @@ class JournalLineAmountMigrationTests(unittest.TestCase):
             )
         self.assertEqual(
             self.connection.execute("PRAGMA foreign_key_check").fetchall(), []
+        )
+
+    def test_rebuilt_triggers_cast_column_comparisons_and_between_bounds(self):
+        self.assertTrue(migrate_journal_line_amounts_to_text(self.connection))
+        trigger_sql = self.connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='journal_lines_guard_update'"
+        ).fetchone()[0]
+        self.assertIn('CAST(NEW."debit" AS NUMERIC) < CAST(OLD."credit" AS NUMERIC)', trigger_sql)
+        self.assertIn('CAST(NEW."debit" AS NUMERIC) BETWEEN 1 AND 100', trigger_sql)
+        self.assertIn(
+            'CAST(NEW."credit" AS NUMERIC) BETWEEN CAST(OLD."debit" AS NUMERIC) AND CAST(OLD."credit" AS NUMERIC)',
+            trigger_sql,
         )
 
     def test_currency_rate_migration_preserves_values_columns_and_indexes(self):
