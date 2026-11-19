@@ -273,12 +273,28 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
                 actual_lines != expected_lines):
             raise ValueError("رقم مرجع القيد مستخدم بالفعل في قيد مختلف. راجع المستند ورقم المرجع قبل الترحيل.")
         return existing["id"]
+    # A database-enforced idempotency key is the final guard against duplicate
+    # posting. Legacy journals remain untouched; the existing reference lookup
+    # still handles retries for historical entries.
+    if reference not in (None, "") and not _table_exists(conn, "journal_posting_keys"):
+        _execute(conn, """
+            CREATE TABLE IF NOT EXISTS journal_posting_keys (
+                idempotency_key TEXT PRIMARY KEY,
+                journal_entry_id INTEGER NOT NULL UNIQUE REFERENCES journal_entries(id),
+                created_at TEXT NOT NULL
+            )
+        """)
     entry_id = insert_one_returning_id(
         conn,
         "INSERT INTO journal_entries(entry_date,reference,description,status,created_by,created_at) "
         "VALUES(?,?,?,'posted',?,?)",
         (entry_date, reference, description, created_by, datetime.now().isoformat(timespec="seconds")),
     )
+    if reference not in (None, ""):
+        _execute(conn, """
+            INSERT INTO journal_posting_keys(idempotency_key,journal_entry_id,created_at)
+            VALUES(?,?,?)
+        """, (str(reference), entry_id, datetime.now().isoformat(timespec="seconds")))
     if available_dimension_keys:
         columns = ("entry_id", "account_id", "debit", "credit", "memo", *available_dimension_keys)
         placeholders = ",".join("?" for _ in columns)

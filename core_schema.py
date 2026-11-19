@@ -29,6 +29,11 @@ CORE_SCHEMA_SQL = """
         account_id INTEGER NOT NULL REFERENCES accounts(id), debit TEXT NOT NULL DEFAULT '0',
         credit TEXT NOT NULL DEFAULT '0', memo TEXT
     );
+    CREATE TABLE IF NOT EXISTS journal_posting_keys (
+        idempotency_key TEXT PRIMARY KEY,
+        journal_entry_id INTEGER NOT NULL UNIQUE REFERENCES journal_entries(id),
+        created_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS audit_log (
         id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), action TEXT NOT NULL,
         details TEXT, created_at TEXT NOT NULL

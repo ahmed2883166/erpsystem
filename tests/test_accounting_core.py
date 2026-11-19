@@ -77,6 +77,15 @@ class SharedAccountingCoreTests(unittest.TestCase):
                            [(1, 50, 0, "نقدية"), (2, 0, 50, "إيراد")], 7)
         self.assertEqual(one, two)
         self.assertEqual(self.db.execute("SELECT COUNT(*) n FROM journal_entries WHERE reference='INV-2'").fetchone()["n"], 1)
+        key = self.db.execute(
+            "SELECT idempotency_key,journal_entry_id FROM journal_posting_keys WHERE idempotency_key='INV-2'"
+        ).fetchone()
+        self.assertEqual((key["idempotency_key"], key["journal_entry_id"]), ("INV-2", one))
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(
+                "INSERT INTO journal_posting_keys(idempotency_key,journal_entry_id,created_at) VALUES(?,?,?)",
+                ("INV-2", one, "duplicate"),
+            )
 
     def test_reused_reference_with_different_payload_is_rejected(self):
         post_journal(self.db, "2026-11-09", "INV-DUP", "بيع",
