@@ -282,7 +282,7 @@ def initialize_stock_schema():
       product_id INTEGER NOT NULL REFERENCES stock_products(id),
       warehouse_id INTEGER NOT NULL REFERENCES stock_warehouses(id),
       min_qty TEXT NOT NULL DEFAULT '0', reorder_point TEXT NOT NULL DEFAULT '0',
-      reorder_qty TEXT NOT NULL DEFAULT '0', reorder_mode TEXT NOT NULL DEFAULT 'auto',
+      reorder_qty TEXT NOT NULL DEFAULT '0', reorder_mode TEXT NOT NULL DEFAULT 'manual',
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY(product_id,warehouse_id)
     );
@@ -290,7 +290,7 @@ def initialize_stock_schema():
     """)
     settings_columns = _columns(c, "stock_warehouse_product_settings")
     if "reorder_mode" not in settings_columns:
-        _execute(c, "ALTER TABLE stock_warehouse_product_settings ADD COLUMN reorder_mode TEXT NOT NULL DEFAULT 'auto'")
+        _execute(c, "ALTER TABLE stock_warehouse_product_settings ADD COLUMN reorder_mode TEXT NOT NULL DEFAULT 'manual'")
     _install_stock_location_triggers(c)
     # Carry legacy product-level reorder thresholds forward as initial per-warehouse settings.
     _execute(c, f"""INSERT INTO stock_warehouse_product_settings
