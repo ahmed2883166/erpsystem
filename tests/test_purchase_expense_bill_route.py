@@ -874,6 +874,7 @@ class PurchaseExpenseBillRouteTests(unittest.TestCase):
             session["user_id"] = 4
             session["role"] = "accountant"
         payment_response = self.client.post("/purchases/payments/new", data={
+            "allocation_mode": "auto",
             "supplier_id": str(self.supplier_id),
             "payment_date": "2026-11-14",
             "amount": "100.00",
