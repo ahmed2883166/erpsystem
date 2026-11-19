@@ -1,13 +1,13 @@
-"""Explicit runtime database selection for the staged PostgreSQL migration.
+"""Explicit runtime database selection for NEXUS ERP.
 
-The application is still SQLite-only: PostgreSQL support in postgres_database.py
-is a tested connection prototype, not yet a drop-in runtime backend. Refuse an
-explicit PostgreSQL runtime request rather than silently opening nexus.db.
+SQLite remains the default for existing installations. PostgreSQL is an
+explicitly selected runtime backend and never falls back to the SQLite file.
+Production cutover still requires the separate owner acceptance gates.
 """
 import os
 
 
-SUPPORTED_RUNTIME_BACKENDS = frozenset({"sqlite"})
+SUPPORTED_RUNTIME_BACKENDS = frozenset({"sqlite", "postgresql"})
 
 
 def configured_database_backend(environ=None):
@@ -22,13 +22,11 @@ def configured_database_backend(environ=None):
 
 
 def require_supported_runtime_backend(environ=None):
-    """Fail closed until all application modules support the selected backend."""
+    """Resolve the explicitly selected backend; never silently fall back."""
     backend = configured_database_backend(environ)
     if backend not in SUPPORTED_RUNTIME_BACKENDS:
         raise RuntimeError(
-            "PostgreSQL runtime is not enabled yet: application schema initialization "
-            "and remaining SQLite-specific SQL must be migrated and verified first. "
-            "PostgreSQL backup/restore support is available but does not enable runtime by itself. "
-            "SQLite remains the active supported runtime."
+            f"Unsupported NEXUS runtime backend: {backend!r}. "
+            "Choose 'sqlite' or 'postgresql'."
         )
     return backend
