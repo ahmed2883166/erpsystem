@@ -1300,9 +1300,10 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
 
 
 def _reverse_posted_journal(conn, entry_id, reversal_date, reference, description, created_by):
-    original = execute_compat(conn, 
-        "SELECT status,entry_date FROM journal_entries WHERE id=?", (entry_id,)
-    ).fetchone()
+    original_sql = "SELECT status,entry_date FROM journal_entries WHERE id=?"
+    if database_dialect(conn) == "postgresql":
+        original_sql += " FOR UPDATE"
+    original = execute_compat(conn, original_sql, (entry_id,)).fetchone()
     if not original or original["status"] != "posted":
         raise ValueError("لا يمكن عكس قيد غير موجود أو غير مرحل.")
     try:
@@ -1314,7 +1315,7 @@ def _reverse_posted_journal(conn, entry_id, reversal_date, reference, descriptio
         raise ValueError("لا يمكن عكس القيد بتاريخ يسبق تاريخ القيد الأصلي.")
     dimension_keys = (
         "branch_id", "cost_center_id", "project_id", "customer_id",
-        "salesperson_id", "supplier_id",
+        "salesperson_id", "supplier_id", "stock_product_id", "stock_warehouse_id",
     )
     available_dimensions = {
         row for row in _columns(conn, "journal_lines")
@@ -1673,6 +1674,30 @@ def _validate_customer_advance_date(value):
         raise ValueError("تاريخ العملية غير صحيح.")
 
 
+def _lock_customer_advance_receipt(conn, advance_receipt_id):
+    """Serialize all balance-changing operations against one advance receipt."""
+    sql = "SELECT id FROM customer_advance_receipts WHERE id=?"
+    if database_dialect(conn) == "postgresql":
+        sql += " FOR UPDATE"
+    row = execute_compat(conn, sql, (advance_receipt_id,)).fetchone()
+    if not row:
+        raise ValueError("إيصال مقدم العميل غير موجود.")
+    return row
+
+
+def _lock_customer_advance_invoices(conn, invoice_ids):
+    """Lock invoice balances in a stable order before reversing an allocation."""
+    if database_dialect(conn) != "postgresql":
+        return
+    for invoice_id in sorted({int(value) for value in invoice_ids}):
+        row = execute_compat(
+            conn, "SELECT id FROM sales_invoices WHERE id=? FOR UPDATE",
+            (invoice_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError("إحدى فواتير تخصيص المقدم لم تعد موجودة.")
+
+
 def _customer_advance_available(conn, advance_receipt_id):
     receipt = execute_compat(conn, 
         """SELECT r.amount FROM customer_advance_receipts r
@@ -1840,14 +1865,12 @@ def reverse_customer_advance_transaction(
     reason = str(reason or "").strip()
     if len(reason) < 5 or len(reason) > 500:
         raise ValueError("سبب العكس مطلوب من 5 إلى 500 حرف.")
-    if execute_compat(conn, 
-        """SELECT 1 FROM customer_advance_reversals
-           WHERE source_type=? AND source_id=?""",
-        (source_type, source_id),
-    ).fetchone():
-        raise ValueError("تم عكس هذه العملية من قبل.")
+    # Lock the advance header first. Every refund, allocation and reversal for
+    # this receipt takes the same lock, preventing concurrent over-use/reversal.
+    allocations = []
     if source_type == "receipt":
-        source = execute_compat(conn, 
+        _lock_customer_advance_receipt(conn, source_id)
+        source = execute_compat(conn,
             "SELECT * FROM customer_advance_receipts WHERE id=?", (source_id,)
         ).fetchone()
         if not source:
@@ -1859,7 +1882,7 @@ def reverse_customer_advance_transaction(
             raise ValueError("لا يمكن عكس إيصال المقدم قبل عكس كل التخصيصات والردود المرتبطة به.")
     elif source_type == "allocation":
         original_journal_id = int(source_id)
-        allocations = execute_compat(conn, 
+        allocations = execute_compat(conn,
             """SELECT a.*,i.invoice_no,i.paid_amount,i.customer_id
                FROM customer_advance_allocations a
                JOIN sales_invoices i ON i.id=a.invoice_id
@@ -1868,18 +1891,42 @@ def reverse_customer_advance_transaction(
         ).fetchall()
         if not allocations:
             raise ValueError("عملية تخصيص المقدم غير موجودة.")
+        receipt_ids = sorted({int(row["advance_receipt_id"]) for row in allocations})
+        if len(receipt_ids) != 1:
+            raise ValueError("عملية التخصيص مرتبطة بأكثر من إيصال مقدم؛ يلزم فحصها قبل العكس.")
+        _lock_customer_advance_receipt(conn, receipt_ids[0])
+        _lock_customer_advance_invoices(row["invoice_id"] for row in allocations)
+        # Re-read after locks so every balance check uses the latest committed state.
+        allocation_sql = """SELECT a.*,i.invoice_no,i.paid_amount,i.customer_id
+            FROM customer_advance_allocations a
+            JOIN sales_invoices i ON i.id=a.invoice_id
+            WHERE a.journal_entry_id=? ORDER BY a.id"""
+        if database_dialect(conn) == "postgresql":
+            allocation_sql += " FOR UPDATE OF a,i"
+        allocations = execute_compat(conn, allocation_sql, (original_journal_id,)).fetchall()
         original_date = max(row["allocation_date"] for row in allocations)
         for row in allocations:
             if Decimal(str(row["paid_amount"] or "0")) < Decimal(str(row["amount"])):
                 raise ValueError("رصيد الفاتورة لا يسمح بعكس قيمة التخصيص بأمان.")
     else:
-        source = execute_compat(conn, 
+        source = execute_compat(conn,
             "SELECT * FROM customer_advance_refunds WHERE id=?", (source_id,)
         ).fetchone()
         if not source:
             raise ValueError("عملية رد المقدم غير موجودة.")
+        _lock_customer_advance_receipt(conn, source["advance_receipt_id"])
+        refund_sql = "SELECT * FROM customer_advance_refunds WHERE id=?"
+        if database_dialect(conn) == "postgresql":
+            refund_sql += " FOR UPDATE"
+        source = execute_compat(conn, refund_sql, (source_id,)).fetchone()
         original_journal_id = source["journal_entry_id"]
         original_date = source["refund_date"]
+    if execute_compat(conn,
+        """SELECT 1 FROM customer_advance_reversals
+           WHERE source_type=? AND source_id=?""",
+        (source_type, source_id),
+    ).fetchone():
+        raise ValueError("تم عكس هذه العملية من قبل.")
     if reversal_date < original_date:
         raise ValueError("تاريخ العكس لا يجوز أن يسبق تاريخ العملية الأصلية.")
     reversal_no = "CADV-REV-" + _document_stamp()
@@ -1915,7 +1962,8 @@ def post_customer_advance_refund(conn, advance_receipt_id, refund_date, amount,
     """Refund only the unallocated portion of a customer advance."""
     refund_date = _validate_customer_advance_date(refund_date)
     amount = _validated_customer_advance_amount(amount, "قيمة رد مقدم العميل")
-    receipt = execute_compat(conn, 
+    _lock_customer_advance_receipt(conn, advance_receipt_id)
+    receipt = execute_compat(conn,
         """SELECT r.*,c.name customer_name FROM customer_advance_receipts r
            JOIN customers c ON c.id=r.customer_id WHERE r.id=? AND c.active=1""",
         (advance_receipt_id,),
