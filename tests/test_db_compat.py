@@ -275,6 +275,25 @@ class PortableScriptExecutionTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_sqlite_migration_script_rolls_back_all_ddl_on_failure(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            @transactional_migration
+            def migration(conn):
+                execute_script(conn, """
+                    CREATE TABLE migration_first (id INTEGER PRIMARY KEY);
+                    CREATE TABLE migration_second (id INTEGER PRIMARY KEY);
+                """)
+                conn.execute("INSERT INTO missing_migration_table VALUES (1)")
+
+            with self.assertRaises(sqlite3.OperationalError):
+                migration(connection)
+            self.assertFalse(connection.in_transaction)
+            self.assertFalse(table_exists(connection, "migration_first"))
+            self.assertFalse(table_exists(connection, "migration_second"))
+        finally:
+            connection.close()
+
     def test_postgresql_script_splits_only_statement_delimiters(self):
         connection = _FakePsycopgConnection("IDLE")
         execute_script(connection, """
