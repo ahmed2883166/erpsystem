@@ -34,7 +34,10 @@ class JournalReversalProtectionTests(unittest.TestCase):
             );
             CREATE TABLE journal_lines(
                 id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
-                debit TEXT DEFAULT '0', credit TEXT DEFAULT '0', memo TEXT DEFAULT ''
+                debit TEXT DEFAULT '0', credit TEXT DEFAULT '0', memo TEXT DEFAULT '',
+                branch_id INTEGER, cost_center_id INTEGER, project_id INTEGER,
+                customer_id INTEGER, salesperson_id INTEGER, supplier_id INTEGER,
+                stock_product_id INTEGER, stock_warehouse_id INTEGER
             );
             CREATE TABLE financial_years(
                 id INTEGER PRIMARY KEY, year_name TEXT, opening_entry_id INTEGER,
@@ -196,6 +199,33 @@ class JournalReversalProtectionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         with self._database() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 4)
+
+    def test_generic_reversal_preserves_each_journal_line_dimension(self):
+        with self._database() as conn:
+            conn.execute(
+                "INSERT INTO journal_entries VALUES(5,'2026-01-05','JRN-DIM','قيد بأبعاد','posted',1,'2026-01-05')"
+            )
+            conn.execute(
+                """INSERT INTO journal_lines
+                   (id,entry_id,account_id,debit,credit,memo,branch_id,project_id)
+                   VALUES(9,5,1,'25.00','0','مصروف الفرع',3,8),
+                         (10,5,2,'0','25.00','مقابل الفرع',3,8)"""
+            )
+            conn.commit()
+        response = self.client.post(
+            "/journal/5/reverse",
+            data={"reversal_date": "2026-01-06", "reversal_reason": "اختبار حفظ الأبعاد"},
+        )
+        self.assertEqual(response.status_code, 302)
+        with self._database() as conn:
+            reversal_id = conn.execute(
+                "SELECT id FROM journal_entries WHERE reference='REV-5'"
+            ).fetchone()["id"]
+            rows = conn.execute(
+                "SELECT branch_id,project_id FROM journal_lines WHERE entry_id=? ORDER BY id",
+                (reversal_id,),
+            ).fetchall()
+        self.assertEqual([(row["branch_id"], row["project_id"]) for row in rows], [(3, 8), (3, 8)])
 
     def test_original_journal_cannot_be_reversed_twice(self):
         response = self.client.post(
