@@ -256,10 +256,12 @@ class StockValuationTests(unittest.TestCase):
         self.assertEqual(lines[1][0],2)
         self.assertEqual(lines[1][1:3],(0,Decimal("100.00")))
         self.assertEqual(lines[1][4],{"stock_product_id":self.product_id,"stock_warehouse_id":self.warehouse_id,"branch_id":source_branch})
+        # 1185 is an asset receivable: source branch debits its due-from
+        # balance; destination branch carries the matching credit balance.
         self.assertEqual(lines[2][1:3],(Decimal("100.00"),0))
-        self.assertEqual(lines[2][4],{"branch_id":target_branch})
+        self.assertEqual(lines[2][4],{"branch_id":source_branch})
         self.assertEqual(lines[3][1:3],(0,Decimal("100.00")))
-        self.assertEqual(lines[3][4],{"branch_id":source_branch})
+        self.assertEqual(lines[3][4],{"branch_id":target_branch})
         saved=self.db.execute(
             "SELECT journal_entry_id,accounting_status,accounting_note FROM stock_movements WHERE id=?",
             (movement_id,)
