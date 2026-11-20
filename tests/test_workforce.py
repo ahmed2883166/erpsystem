@@ -852,6 +852,51 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(state, ("open", "500.00"))
         self.assertEqual(returned, "2500.00")
 
+    def test_custody_expense_after_partial_return_uses_net_remaining_balance(self):
+        self.add_employee()
+        self.client.post("/hr/custody", data={
+            "employee_id": "1", "issue_date": "2026-11-10", "amount": "2000",
+            "custody_account_id": "2", "cash_account_id": "1", "description": "عهدة"
+        })
+        self.client.post("/hr/custody/1/expense", data={
+            "expense_date": "2026-11-10", "expense_account_id": "3",
+            "amount": "1300", "description": "مصروف أول"
+        })
+        self.client.post("/hr/custody/1/settle", data={
+            "settlement_date": "2026-11-10", "returned_amount": "100"
+        })
+
+        self.client.post("/hr/custody/1/expense", data={
+            "expense_date": "2026-11-11", "expense_account_id": "3",
+            "amount": "500", "description": "مصروف بعد الرد"
+        })
+        conn = sqlite3.connect(self.db_path)
+        state = conn.execute(
+            "SELECT status,remaining_amount FROM employee_custodies WHERE id=1"
+        ).fetchone()
+        expense_count = conn.execute(
+            "SELECT COUNT(*) FROM custody_expenses WHERE custody_id=1"
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(state, ("open", "100.00"))
+        self.assertEqual(expense_count, 2)
+
+        self.client.post("/hr/custody/1/expense", data={
+            "expense_date": "2026-11-12", "expense_account_id": "3",
+            "amount": "101", "description": "مصروف يتجاوز المتبقي"
+        })
+        conn = sqlite3.connect(self.db_path)
+        state_after_rejection = conn.execute(
+            "SELECT status,remaining_amount FROM employee_custodies WHERE id=1"
+        ).fetchone()
+        expense_count_after_rejection = conn.execute(
+            "SELECT COUNT(*) FROM custody_expenses WHERE custody_id=1"
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(state_after_rejection, ("open", "100.00"))
+        self.assertEqual(expense_count_after_rejection, 2)
+
+
     def test_custody_return_cannot_exceed_remaining_balance(self):
         self.add_employee()
         self.client.post("/hr/custody", data={
