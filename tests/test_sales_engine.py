@@ -2851,6 +2851,11 @@ class SalesIntegrationTests(unittest.TestCase):
 
 
     def test_partial_sales_returns_use_original_fifo_lot_costs_across_multiple_notes(self):
+        # This scenario asserts source FIFO layers, so override the suite default
+        # (weighted average) explicitly rather than testing a different costing policy.
+        self.db.execute(
+            "UPDATE company_settings SET setting_value='fifo' WHERE setting_key='inventory_cost_method'"
+        )
         extra_move = self.db.execute(
             """INSERT INTO stock_movements(
                  movement_no,movement_type,product_id,target_warehouse_id,quantity,
