@@ -225,29 +225,41 @@ class StockValuationTests(unittest.TestCase):
     def test_interbranch_transfer_posts_destination_debit_and_source_credit(self):
         self.db.execute("""CREATE TABLE accounts(
             id INTEGER PRIMARY KEY,code TEXT,is_group INTEGER,active INTEGER,account_type TEXT)""")
-        self.db.execute("INSERT INTO accounts VALUES(1,'1185',0,1,'asset')")
+        self.db.execute("INSERT INTO accounts VALUES(1,'1185',0,1,'asset'),(2,'1140',0,1,'asset')")
         source_branch=self.db.execute(
             "INSERT INTO branches(code,name_ar) VALUES('BR-A','فرع أ')"
         ).lastrowid
         target_branch=self.db.execute(
             "INSERT INTO branches(code,name_ar) VALUES('BR-B','فرع ب')"
         ).lastrowid
+        target_wh=self.db.execute(
+            "INSERT INTO stock_warehouses(code,name_ar) VALUES('W2','مخزن وجهة')"
+        ).lastrowid
         movement_id=self.db.execute("""INSERT INTO stock_movements(
             movement_no,movement_type,product_id,source_warehouse_id,target_warehouse_id,
             quantity,unit_cost,total_cost,movement_date)
             VALUES('TR-BR-1','transfer',?,?,?,'4','25','100','2026-11-14')""",
-            (self.product_id,self.warehouse_id,self.warehouse_id)).lastrowid
-        with patch("stock.post_journal",return_value=991) as post:
+            (self.product_id,self.warehouse_id,target_wh)).lastrowid
+        with patch("stock.post_journal",return_value=991) as post, \
+             patch("activity_profiles.active_posting_accounts",return_value={"inventory":"1140"}), \
+             patch("activity_profiles.resolve_product_account_code",return_value="1140"):
             result=stock.post_interbranch_transfer_journal(
-                self.db,movement_id,"TR-BR-1",{"name_ar":"صنف اختبار"},
+                self.db,movement_id,"TR-BR-1",{"id":self.product_id,"name_ar":"صنف اختبار"},
                 "2026-11-14",Decimal("100"),7,source_branch,target_branch
             )
         self.assertEqual(result,991)
         lines=post.call_args.args[4]
+        self.assertEqual(len(lines),4)
+        self.assertEqual(lines[0][0],2)
         self.assertEqual(lines[0][1:3],(Decimal("100.00"),0))
-        self.assertEqual(lines[0][4],{"branch_id":target_branch})
+        self.assertEqual(lines[0][4],{"stock_product_id":self.product_id,"stock_warehouse_id":target_wh})
+        self.assertEqual(lines[1][0],2)
         self.assertEqual(lines[1][1:3],(0,Decimal("100.00")))
-        self.assertEqual(lines[1][4],{"branch_id":source_branch})
+        self.assertEqual(lines[1][4],{"stock_product_id":self.product_id,"stock_warehouse_id":self.warehouse_id})
+        self.assertEqual(lines[2][1:3],(Decimal("100.00"),0))
+        self.assertEqual(lines[2][4],{"branch_id":target_branch})
+        self.assertEqual(lines[3][1:3],(0,Decimal("100.00")))
+        self.assertEqual(lines[3][4],{"branch_id":source_branch})
         saved=self.db.execute(
             "SELECT journal_entry_id,accounting_status,accounting_note FROM stock_movements WHERE id=?",
             (movement_id,)
@@ -255,22 +267,33 @@ class StockValuationTests(unittest.TestCase):
         self.assertEqual(saved["journal_entry_id"],991)
         self.assertEqual(saved["accounting_status"],"posted")
 
-    def test_same_branch_transfer_remains_non_posting(self):
+    def test_same_branch_transfer_reclasses_inventory_between_warehouses(self):
+        self.db.execute("""CREATE TABLE accounts(
+            id INTEGER PRIMARY KEY,code TEXT,is_group INTEGER,active INTEGER,account_type TEXT)""")
+        self.db.execute("INSERT INTO accounts VALUES(1,'1140',0,1,'asset')")
+        target_wh=self.db.execute(
+            "INSERT INTO stock_warehouses(code,name_ar) VALUES('W-SAME-BRANCH','مخزن ثاني')"
+        ).lastrowid
         movement_id=self.db.execute("""INSERT INTO stock_movements(
             movement_no,movement_type,product_id,source_warehouse_id,target_warehouse_id,
             quantity,unit_cost,total_cost,movement_date)
-            VALUES('TR-SAME','transfer',?,?,?,'1','10','10','2026-11-14')""",
-            (self.product_id,self.warehouse_id,self.warehouse_id)).lastrowid
-        with patch("stock.post_journal") as post:
+            VALUES('TR-SAME', 'transfer',?,?,?,'1','10','10','2026-11-14')""",
+            (self.product_id,self.warehouse_id,target_wh)).lastrowid
+        with patch("stock.post_journal",return_value=992) as post, \
+             patch("activity_profiles.active_posting_accounts",return_value={"inventory":"1140"}), \
+             patch("activity_profiles.resolve_product_account_code",return_value="1140"):
             result=stock.post_interbranch_transfer_journal(
-                self.db,movement_id,"TR-SAME",{"name_ar":"صنف اختبار"},
+                self.db,movement_id,"TR-SAME",{"id":self.product_id,"name_ar":"صنف اختبار"},
                 "2026-11-14",Decimal("10"),7,3,3
             )
-        self.assertIsNone(result)
-        post.assert_not_called()
+        self.assertEqual(result,992)
+        lines=post.call_args.args[4]
+        self.assertEqual(len(lines),2)
+        self.assertEqual(lines[0][4],{"stock_product_id":self.product_id,"stock_warehouse_id":target_wh})
+        self.assertEqual(lines[1][4],{"stock_product_id":self.product_id,"stock_warehouse_id":self.warehouse_id})
         self.assertEqual(self.db.execute(
             "SELECT accounting_status FROM stock_movements WHERE id=?",(movement_id,)
-        ).fetchone()["accounting_status"],"not_required")
+        ).fetchone()["accounting_status"],"posted")
 
     def test_reorder_alerts_are_scoped_to_each_warehouse(self):
         second_wh=self.db.execute(

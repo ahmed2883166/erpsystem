@@ -598,51 +598,87 @@ def _movement_activity_code(c, movement_id):
 
 def post_interbranch_transfer_journal(c, movement_id, movement_no, product, movement_date,
                                       total_cost, created_by, source_branch_id, target_branch_id):
-    """Post branch-tagged inventory transfer clearing lines without changing consolidated stock value."""
-    if source_branch_id is None and target_branch_id is None:
-        _execute(c, "UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
-        set_stock_accounting_note(c,movement_id,None)
-        return None
-    if source_branch_id is None or target_branch_id is None:
+    """Reclassify inventory by warehouse and, when needed, record branch clearing."""
+    existing = _execute(c, "SELECT journal_entry_id FROM stock_movements WHERE id=?", (movement_id,)).fetchone()
+    if existing and existing["journal_entry_id"]:
+        return existing["journal_entry_id"]
+    if (source_branch_id is None) != (target_branch_id is None):
         raise ValueError(
             "لا يمكن اعتماد التحويل قبل ربط مخزني المصدر والوجهة بفرعيهما؛ "
             "تحديد فرع واحد فقط لا يكفي لتسجيل قيد التحويل البيني."
         )
-    if source_branch_id == target_branch_id:
-        _execute(c, "UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
-        set_stock_accounting_note(c,movement_id,None)
-        return None
-    existing = _execute(c, "SELECT journal_entry_id FROM stock_movements WHERE id=?", (movement_id,)).fetchone()
-    if existing and existing["journal_entry_id"]:
-        return existing["journal_entry_id"]
-    activity_code = _movement_activity_code(c, movement_id)
-    clearing_code = "1185"
-    if activity_code:
-        from company_activities import resolve_activity_profile
-        clearing_code = resolve_activity_profile(c, activity_code).get("posting_accounts", {}).get("interbranch_transfer") or clearing_code
-    clearing = _execute(c,
-        "SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (clearing_code,)
-    ).fetchone()
-    if not clearing or clearing["is_group"] or not clearing["active"] or clearing["account_type"] != "asset":
-        raise ValueError(f"لا يمكن ترحيل التحويل بين الفروع قبل تفعيل الحساب التفصيلي {clearing_code} (تحويلات مخزون بين الفروع) من نوع أصل.")
     amount = money(D(str(total_cost)))
     if amount <= 0:
         _execute(c, "UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (movement_id,))
+        set_stock_accounting_note(c,movement_id,None)
         return None
-    entry_id = post_journal(
-        c, movement_date, movement_no,
-        f"قيد تحويل مخزون بين الفروع - {product['name_ar']}",
-        [
+
+    movement = _execute(c, """
+        SELECT product_id,source_warehouse_id,target_warehouse_id
+        FROM stock_movements WHERE id=?
+    """, (movement_id,)).fetchone()
+    if (not movement or not movement["source_warehouse_id"] or not movement["target_warehouse_id"]
+            or int(movement["source_warehouse_id"]) == int(movement["target_warehouse_id"])):
+        raise ValueError("تعذر تحديد مخزني المصدر والوجهة لإعادة توزيع قيمة التحويل.")
+
+    activity_code = _movement_activity_code(c, movement_id)
+    if activity_code:
+        from company_activities import resolve_activity_profile
+        posting_accounts = resolve_activity_profile(c, activity_code).get("posting_accounts", {})
+    else:
+        from activity_profiles import active_posting_accounts
+        posting_accounts = active_posting_accounts(c)
+    from activity_profiles import resolve_product_account_code
+    inventory_code = resolve_product_account_code(
+        c, int(movement["product_id"]), "inventory",
+        posting_accounts.get("inventory") or posting_accounts.get("purchase_inventory")
+    )
+    inventory = _execute(c,
+        "SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (inventory_code,)
+    ).fetchone()
+    if (not inventory or inventory["is_group"] or not inventory["active"]
+            or inventory["account_type"] != "asset"):
+        raise ValueError(
+            f"لا يمكن ترحيل التحويل قبل ضبط حساب المخزون {inventory_code or 'غير محدد'} "
+            "كحساب أصول تفصيلي نشط."
+        )
+
+    source_warehouse_id = int(movement["source_warehouse_id"])
+    target_warehouse_id = int(movement["target_warehouse_id"])
+    product_id = int(movement["product_id"])
+    lines = [
+        (inventory["id"], amount, 0, "إثبات قيمة المخزون في المخزن الوجهة",
+         {"stock_product_id": product_id, "stock_warehouse_id": target_warehouse_id}),
+        (inventory["id"], 0, amount, "إخراج قيمة المخزون من المخزن المصدر",
+         {"stock_product_id": product_id, "stock_warehouse_id": source_warehouse_id}),
+    ]
+
+    if source_branch_id != target_branch_id:
+        clearing_code = posting_accounts.get("interbranch_transfer") or "1185"
+        clearing = _execute(c,
+            "SELECT id,is_group,active,account_type FROM accounts WHERE code=?", (clearing_code,)
+        ).fetchone()
+        if (not clearing or clearing["is_group"] or not clearing["active"]
+                or clearing["account_type"] != "asset"):
+            raise ValueError(
+                f"لا يمكن ترحيل التحويل بين الفروع قبل تفعيل الحساب التفصيلي {clearing_code} "
+                "(تحويلات مخزون بين الفروع) من نوع أصل."
+            )
+        lines.extend([
             (clearing["id"], amount, 0, "مدين - مخزون مستلم بالفرع الوجهة",
              {"branch_id": target_branch_id}),
             (clearing["id"], 0, amount, "دائن - مخزون محول من الفرع المصدر",
              {"branch_id": source_branch_id}),
-        ], created_by,
+        ])
+
+    entry_id = post_journal(
+        c, movement_date, movement_no,
+        f"قيد تحويل مخزون - {product['name_ar']}", lines, created_by,
     )
     _execute(c, "UPDATE stock_movements SET journal_entry_id=?,accounting_status='posted' WHERE id=?",
               (entry_id, movement_id))
+    set_stock_accounting_note(c,movement_id,None)
     return entry_id
-
 
 def set_stock_accounting_note(c, movement_id, note):
     """Write a pending reason when the additive note column exists (legacy unit schemas may omit it)."""
