@@ -97,7 +97,7 @@ class PostgreSQLPayrollComplianceTests(unittest.TestCase):
                     country_code,category_code,effective_from,effective_to,status,
                     personal_exemption_annual,taxable_rounding_unit,insurance_floor,
                     insurance_ceiling,employee_insurance_rate,employer_insurance_rate,enabled
-                ) VALUES('EG','local',?,NULL,'approved','24000','1','1000','10000','10','15',1)
+                ) VALUES('EG','local',%s,NULL,'approved','24000','1','1000','10000','10','15',1)
                 RETURNING id
             """, (effective_from,)).fetchone()
             rule_ids.append(row["id"])
