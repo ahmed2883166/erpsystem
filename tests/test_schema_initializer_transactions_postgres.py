@@ -2,6 +2,7 @@
 import os
 import unittest
 import uuid
+from unittest.mock import patch
 
 import banking
 import currency_center
@@ -175,6 +176,63 @@ class SchemaInitializerCommitTests(unittest.TestCase):
             admin.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
             admin.commit()
             admin.close()
+
+
+    def _assert_schema_initializer_rolls_back(self, module, factory_name, initializer, prefix):
+        from postgres_database import connect_postgres
+
+        schema = prefix + uuid.uuid4().hex
+        admin = connect_postgres(POSTGRES_DSN, schema="public")
+        original_factory = getattr(module, factory_name)
+        try:
+            admin.execute(f'CREATE SCHEMA "{schema}"')
+            admin.commit()
+            setattr(module, factory_name, lambda: self._open_connection(schema))
+
+            def fail_after_partial_ddl(connection, _schema_sql):
+                connection.execute(
+                    "CREATE TABLE initializer_partial_probe (id BIGINT PRIMARY KEY)"
+                )
+                raise RuntimeError("forced schema initializer rollback test")
+
+            with patch.object(module, "execute_script", side_effect=fail_after_partial_ddl):
+                with self.assertRaisesRegex(
+                    RuntimeError, "forced schema initializer rollback test"
+                ):
+                    initializer()
+
+            check = self._open_connection(schema)
+            try:
+                partial_table = check.execute(
+                    """SELECT 1 FROM information_schema.tables
+                       WHERE table_schema=%s AND table_name=%s""",
+                    (schema, "initializer_partial_probe"),
+                ).fetchone()
+                self.assertIsNone(partial_table)
+            finally:
+                check.close()
+        finally:
+            setattr(module, factory_name, original_factory)
+            admin.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            admin.commit()
+            admin.close()
+
+    def test_currency_schema_failure_rolls_back_partial_ddl(self):
+        self._assert_schema_initializer_rolls_back(
+            currency_center, "_db", currency_center.initialize_currency_schema,
+            "nexus_currency_rollback_",
+        )
+
+    def test_banking_schema_failure_rolls_back_partial_ddl(self):
+        self._assert_schema_initializer_rolls_back(
+            banking, "db", banking.init_bank_schema, "nexus_banking_rollback_",
+        )
+
+    def test_fixed_asset_schema_failure_rolls_back_partial_ddl(self):
+        self._assert_schema_initializer_rolls_back(
+            fixed_assets, "db", fixed_assets.initialize_assets_schema,
+            "nexus_assets_rollback_",
+        )
 
 
 if __name__ == "__main__":
