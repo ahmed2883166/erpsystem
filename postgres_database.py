@@ -287,3 +287,96 @@ def create_postgres_pool(
         pool.close()
         raise
     return PostgresConnectionPool(pool, timeout=pool_timeout)
+
+
+# One bounded pool per worker process. Runtime selection remains guarded in
+# database_backend.py; this registry only supplies lifecycle-safe primitives.
+import atexit
+import os
+import threading
+
+_PROCESS_POOL = None
+_PROCESS_POOL_PID = None
+_PROCESS_POOL_CONFIG = None
+_PROCESS_POOL_LOCK = threading.RLock()
+
+
+def _pool_env_int(name, default, minimum, maximum):
+    raw = os.environ.get(name)
+    try:
+        value = int(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+def _pool_env_timeout(name, default, minimum=0.1, maximum=60.0):
+    raw = os.environ.get(name)
+    try:
+        value = float(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        value = default
+    if not math.isfinite(value):
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+def get_process_postgres_pool(dsn=None, **overrides):
+    """Return the single bounded PostgreSQL pool owned by this worker process.
+
+    A child process never reuses a parent's pool after fork. Pool configuration
+    is immutable for the life of a process to prevent requests from silently
+    switching databases or pool limits midway through operation.
+    """
+    global _PROCESS_POOL, _PROCESS_POOL_PID, _PROCESS_POOL_CONFIG
+    resolved_dsn = str(dsn or os.environ.get("NEXUS_POSTGRES_DSN") or "").strip()
+    if not resolved_dsn:
+        raise RuntimeError("PostgreSQL DSN is required to initialize the process pool.")
+    min_size = overrides.pop("min_size", _pool_env_int(
+        "NEXUS_PG_POOL_MIN_SIZE", DEFAULT_POOL_MIN_SIZE, 1, 10
+    ))
+    max_size = overrides.pop("max_size", _pool_env_int(
+        "NEXUS_PG_POOL_MAX_SIZE", DEFAULT_POOL_MAX_SIZE, 1, 20
+    ))
+    timeout = overrides.pop("timeout", _pool_env_timeout(
+        "NEXUS_PG_POOL_TIMEOUT_SECONDS", DEFAULT_POOL_TIMEOUT_SECONDS
+    ))
+    if max_size < min_size:
+        raise ValueError("NEXUS_PG_POOL_MAX_SIZE must be greater than or equal to the minimum.")
+    if overrides:
+        raise TypeError("Unsupported process pool options: " + ", ".join(sorted(overrides)))
+    config = (resolved_dsn, min_size, max_size, timeout)
+    pid = os.getpid()
+    with _PROCESS_POOL_LOCK:
+        if _PROCESS_POOL is not None and _PROCESS_POOL_PID == pid:
+            if _PROCESS_POOL_CONFIG != config:
+                raise RuntimeError(
+                    "PostgreSQL pool settings changed after initialization; restart the worker."
+                )
+            if _PROCESS_POOL.closed:
+                raise RuntimeError("The process PostgreSQL pool was closed; restart the worker.")
+            return _PROCESS_POOL
+        # After fork, do not call close() on an inherited pool: its worker
+        # threads do not exist in the child. The child creates its own pool.
+        _PROCESS_POOL = create_postgres_pool(
+            resolved_dsn, min_size=min_size, max_size=max_size, timeout=timeout,
+            autocommit=False,
+        )
+        _PROCESS_POOL_PID = pid
+        _PROCESS_POOL_CONFIG = config
+        return _PROCESS_POOL
+
+
+def close_process_postgres_pool():
+    """Close the current process pool during orderly worker shutdown."""
+    global _PROCESS_POOL, _PROCESS_POOL_PID, _PROCESS_POOL_CONFIG
+    pid = os.getpid()
+    with _PROCESS_POOL_LOCK:
+        if _PROCESS_POOL is not None and _PROCESS_POOL_PID == pid:
+            _PROCESS_POOL.close()
+        _PROCESS_POOL = None
+        _PROCESS_POOL_PID = None
+        _PROCESS_POOL_CONFIG = None
+
+
+atexit.register(close_process_postgres_pool)
