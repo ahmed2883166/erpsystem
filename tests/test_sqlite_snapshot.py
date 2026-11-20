@@ -90,9 +90,19 @@ class SQLiteSnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="admrail-snapshot-manifest-") as folder:
             snapshot = self._source(folder)
             with self.assertRaisesRegex(
-                FileNotFoundError, "pass --snapshot-manifest explicitly"
+                FileNotFoundError, "pass --manifest with an existing manifest path"
             ):
                 verify_sqlite_snapshot(snapshot)
+
+    def test_missing_explicit_manifest_reports_the_supplied_path(self):
+        with tempfile.TemporaryDirectory(prefix="admrail-explicit-manifest-") as folder:
+            source = self._source(folder)
+            result = create_sqlite_snapshot(source, Path(folder) / "backups")
+            missing = Path(folder) / "missing.manifest.json"
+            with self.assertRaisesRegex(
+                FileNotFoundError, "Specified SQLite snapshot manifest does not exist"
+            ):
+                verify_sqlite_snapshot(result["snapshot"], missing)
 
     def test_snapshot_refuses_missing_source_without_creating_database(self):
         with tempfile.TemporaryDirectory(prefix="admrail-snapshot-missing-") as folder:
