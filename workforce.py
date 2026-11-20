@@ -4348,8 +4348,17 @@ def custody_expense(custody_id):
         if not row:
             raise ValueError("العهدة غير موجودة أو مغلقة.")
         amount = M(request.form.get("amount"))
-        used = sum((D(x["amount"]) for x in execute_compat(c, "SELECT amount FROM custody_expenses WHERE custody_id=?", (custody_id,)).fetchall()), Decimal("0"))
-        if amount <= 0 or used + amount > D(row["amount"]):
+        used = sum((D(x["amount"]) for x in execute_compat(
+            c, "SELECT amount FROM custody_expenses WHERE custody_id=?", (custody_id,)
+        ).fetchall()), Decimal("0"))
+        returned = sum((D(x["amount"]) for x in execute_compat(
+            c, "SELECT amount FROM custody_returns WHERE custody_id=?", (custody_id,)
+        ).fetchall()), Decimal("0"))
+        expected_remaining = M(D(row["amount"]) - used - returned)
+        recorded_remaining = M(row["remaining_amount"])
+        if expected_remaining < 0 or expected_remaining != recorded_remaining:
+            raise ValueError("رصيد العهدة لا يطابق إجمالي المصروفات والمرتجعات المسجلة؛ راجع الحركة قبل إضافة مصروف.")
+        if amount <= 0 or amount > expected_remaining:
             raise ValueError("قيمة المصروف تتجاوز المتاح في العهدة.")
         expense_date = request.form.get("expense_date") or date.today().isoformat()
         expense_id = insert_and_get_id(c, """INSERT INTO custody_expenses
@@ -4365,7 +4374,7 @@ def custody_expense(custody_id):
             session["user_id"])
         execute_compat(c, "UPDATE custody_expenses SET journal_entry_id=? WHERE id=?",
             (journal_id,expense_id))
-        remaining = M(D(row["amount"]) - used - amount)
+        remaining = M(expected_remaining - amount)
         execute_compat(c, "UPDATE employee_custodies SET remaining_amount=? WHERE id=? AND status='open'",
             (str(remaining),custody_id))
         _audit(c, "employee_custody_expense_added",
