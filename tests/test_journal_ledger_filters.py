@@ -68,6 +68,40 @@ class JournalAndLedgerFilterTests(unittest.TestCase):
             item.stop()
         self.temp.cleanup()
 
+    def test_manual_journal_double_submit_is_idempotent(self):
+        payload = {
+            "entry_date": "2026-01-05",
+            "description": "اختبار منع تكرار القيد اليدوي",
+            "reference": "",
+            "submission_token": "a" * 32,
+            "account_id": ["1", "2"],
+            "debit": ["100", "0"],
+            "credit": ["0", "100"],
+            "memo": ["مدين", "دائن"],
+            "line_type": ["normal", "normal"],
+            "asset_name": ["", ""],
+            "asset_category": ["", ""],
+            "asset_ready_date": ["", ""],
+        }
+        with patch.object(nexus_app, "log_change"):
+            first = self.client.post("/journal", data=payload)
+            second = self.client.post("/journal", data=payload)
+        self.assertEqual(first.status_code, 302)
+        self.assertEqual(second.status_code, 302)
+        connection = connect_database(self.db_path)
+        reference = "MAN-" + "a" * 32
+        self.assertEqual(connection.execute(
+            "SELECT COUNT(*) FROM journal_entries WHERE reference=?", (reference,)
+        ).fetchone()[0], 1)
+        self.assertEqual(connection.execute(
+            "SELECT COUNT(*) FROM journal_lines WHERE entry_id=(SELECT id FROM journal_entries WHERE reference=?)",
+            (reference,),
+        ).fetchone()[0], 2)
+        self.assertEqual(connection.execute(
+            "SELECT COUNT(*) FROM journal_posting_keys WHERE idempotency_key=?", (reference,)
+        ).fetchone()[0], 1)
+        connection.close()
+
     def test_journal_search_and_status_date_filters(self):
         response = self.client.get(
             "/journal?q=INV&status=posted&date_from=2026-01-01&date_to=2026-01-03"

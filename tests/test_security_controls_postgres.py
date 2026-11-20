@@ -13,13 +13,13 @@ class PostgreSQLSecurityControlTests(unittest.TestCase):
         from security_controls import linked_operational_source
 
         schema = "nexus_security_links_" + uuid.uuid4().hex[:16]
-        setup = connect_postgres(POSTGRES_DSN, autocommit=True)
+        setup = connect_postgres(POSTGRES_DSN, autocommit=True, schema="public")
         try:
             setup.execute(f'CREATE SCHEMA "{schema}"')
         finally:
             setup.close()
 
-        connection = connect_postgres(POSTGRES_DSN)
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
         try:
             connection.execute(f'SET search_path TO "{schema}"')
             connection.execute("""
@@ -50,7 +50,7 @@ class PostgreSQLSecurityControlTests(unittest.TestCase):
         finally:
             connection.rollback()
             connection.close()
-            cleanup = connect_postgres(POSTGRES_DSN, autocommit=True)
+            cleanup = connect_postgres(POSTGRES_DSN, autocommit=True, schema="public")
             try:
                 cleanup.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
             finally:

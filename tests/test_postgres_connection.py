@@ -9,6 +9,7 @@ import uuid
 from decimal import Decimal
 
 from postgres_database import connect_postgres
+from postgres_database import _connection_settings
 
 
 POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
@@ -18,7 +19,7 @@ POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
 class PostgreSQLConnectionPrototypeTests(unittest.TestCase):
     def test_connection_preserves_named_and_positional_rows_and_decimal(self):
         connection = connect_postgres(
-            POSTGRES_DSN, application_name="NEXUS ERP adapter test"
+            POSTGRES_DSN, application_name="NEXUS ERP adapter test", schema="public"
         )
         try:
             connection.execute(
@@ -65,7 +66,7 @@ class PostgreSQLConnectionPrototypeTests(unittest.TestCase):
             admin.close()
 
     def test_default_transaction_rolls_back_without_committing(self):
-        connection = connect_postgres(POSTGRES_DSN)
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
         try:
             self.assertFalse(connection.autocommit)
             connection.execute(
@@ -89,7 +90,7 @@ class PostgreSQLConnectionPrototypeTests(unittest.TestCase):
     def test_transaction_status_adapter_tracks_postgresql_connection_state(self):
         from db_compat import transaction_is_active
 
-        connection = connect_postgres(POSTGRES_DSN)
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
         try:
             self.assertFalse(transaction_is_active(connection))
             connection.execute("SELECT 1")
@@ -101,7 +102,7 @@ class PostgreSQLConnectionPrototypeTests(unittest.TestCase):
             connection.close()
 
     def test_autocommit_is_explicit_when_requested(self):
-        connection = connect_postgres(POSTGRES_DSN, autocommit=True)
+        connection = connect_postgres(POSTGRES_DSN, autocommit=True, schema="public")
         try:
             self.assertTrue(connection.autocommit)
             row = connection.execute("SELECT 1 AS ready").fetchone()
@@ -130,6 +131,11 @@ class HybridPostgreSQLRowTests(unittest.TestCase):
 
 
 class PostgreSQLConnectionConfigurationTests(unittest.TestCase):
+    def test_default_company_schema_is_dedicated_nexus_not_public(self):
+        settings = _connection_settings("postgresql://example.invalid/nexus")
+        self.assertEqual(settings[-1], "nexus")
+
+
     def test_missing_dsn_fails_closed_without_sqlite_fallback(self):
         with self.assertRaisesRegex(RuntimeError, "DSN is required"):
             connect_postgres("")

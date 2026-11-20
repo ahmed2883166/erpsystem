@@ -18,6 +18,7 @@ class PostgreSQLBackupTests(unittest.TestCase):
             "application": "NEXUS ERP",
             "backup_format": "postgresql-custom",
             "database_name": "nexus",
+            "schema_name": "nexus",
             "dump_sha256": hashlib.sha256(payload).hexdigest(),
         }
         with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -91,6 +92,16 @@ class PostgreSQLBackupTests(unittest.TestCase):
                     )
                 run.assert_not_called()
 
+    def test_backup_schema_is_resolved_from_dsn_options_or_explicit_environment(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(postgres_backup._schema_name({"options": "-csearch_path=nexus"}), "nexus")
+            self.assertEqual(postgres_backup._schema_name({"options": ""}), "public")
+        with patch.dict(os.environ, {"NEXUS_POSTGRES_SCHEMA": "company_erp"}):
+            self.assertEqual(postgres_backup._schema_name({"options": "-csearch_path=public"}), "company_erp")
+        with patch.dict(os.environ, {"NEXUS_POSTGRES_SCHEMA": "bad-schema"}):
+            with self.assertRaisesRegex(ValueError, "schema name"):
+                postgres_backup._schema_name({"options": ""})
+
     def test_pg_environment_keeps_credentials_out_of_command_arguments(self):
         env, values = postgres_backup._pg_environment(
             "host=localhost dbname=nexus user=erp password=secret"
@@ -158,8 +169,10 @@ class PostgreSQLBackupRoundTripIntegrationTests(unittest.TestCase):
                 with psycopg.connect(admin_dsn, autocommit=True) as admin:
                     admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(source_db)))
 
-                source_dsn = make_conninfo(admin_dsn, dbname=source_db)
+                source_dsn = make_conninfo(admin_dsn, dbname=source_db, options="-csearch_path=nexus")
                 with psycopg.connect(source_dsn) as source:
+                    source.execute("CREATE SCHEMA nexus")
+                    source.execute("SET search_path TO nexus")
                     source.execute("CREATE TABLE users(id BIGINT PRIMARY KEY)")
                     source.execute("CREATE TABLE accounts(id BIGINT PRIMARY KEY)")
                     source.execute("CREATE TABLE journal_entries(id BIGINT PRIMARY KEY)")
@@ -178,13 +191,14 @@ class PostgreSQLBackupRoundTripIntegrationTests(unittest.TestCase):
                 self.assertTrue(archive.is_file())
                 checked = postgres_backup.validate_postgres_backup_archive(archive)
                 self.assertEqual(checked["database_name"], source_db)
+                self.assertEqual(checked["schema_name"], "nexus")
 
                 restored = postgres_backup.restore_postgres_backup_to_new_database(
                     archive, admin_dsn, database_name=restored_db
                 )
                 self.assertTrue(restored["restored"])
                 self.assertEqual(restored["source_database_name"], source_db)
-                restored_dsn = make_conninfo(admin_dsn, dbname=restored_db)
+                restored_dsn = make_conninfo(admin_dsn, dbname=restored_db, options="-csearch_path=nexus")
                 with psycopg.connect(restored_dsn) as restored_connection:
                     row = restored_connection.execute(
                         "SELECT id,payload FROM backup_probe"
@@ -192,7 +206,7 @@ class PostgreSQLBackupRoundTripIntegrationTests(unittest.TestCase):
                     self.assertEqual(row, (1, "NEXUS PostgreSQL round-trip"))
                     restored_tables = {
                         item[0] for item in restored_connection.execute(
-                            "SELECT tablename FROM pg_tables WHERE schemaname='public'"
+                            "SELECT tablename FROM pg_tables WHERE schemaname='nexus'"
                         ).fetchall()
                     }
                     self.assertTrue(

@@ -15,7 +15,7 @@ POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
 class PostgreSQLPayrollComplianceTests(unittest.TestCase):
     def setUp(self):
         self.schema = "nexus_payroll_rules_" + uuid.uuid4().hex[:12]
-        self.conn = connect_postgres(POSTGRES_DSN)
+        self.conn = connect_postgres(POSTGRES_DSN, schema="public")
         self.conn.execute(f'CREATE SCHEMA "{self.schema}"')
         self.conn.execute(f'SET search_path TO "{self.schema}"')
         self.conn.execute("""

@@ -17,7 +17,7 @@ class SchemaInitializerCommitTests(unittest.TestCase):
         from postgres_database import connect_postgres
 
         connection = connect_postgres(
-            POSTGRES_DSN, application_name="NEXUS schema initializer transaction test"
+            POSTGRES_DSN, application_name="NEXUS schema initializer transaction test", schema="public"
         )
         connection.execute(f'SET search_path TO "{schema}"')
         return connection
@@ -26,7 +26,7 @@ class SchemaInitializerCommitTests(unittest.TestCase):
         from postgres_database import connect_postgres
 
         schema = "nexus_currency_init_" + uuid.uuid4().hex
-        admin = connect_postgres(POSTGRES_DSN)
+        admin = connect_postgres(POSTGRES_DSN, schema="public")
         original_db = currency_center._db
         try:
             admin.execute(f'CREATE SCHEMA "{schema}"')
@@ -70,7 +70,7 @@ class SchemaInitializerCommitTests(unittest.TestCase):
         from postgres_database import connect_postgres
 
         schema = "nexus_banking_init_" + uuid.uuid4().hex
-        admin = connect_postgres(POSTGRES_DSN)
+        admin = connect_postgres(POSTGRES_DSN, schema="public")
         original_db = banking.db
         try:
             admin.execute(f'CREATE SCHEMA "{schema}"')
@@ -131,7 +131,7 @@ class SchemaInitializerCommitTests(unittest.TestCase):
         from postgres_database import connect_postgres
 
         schema = "nexus_assets_init_" + uuid.uuid4().hex
-        admin = connect_postgres(POSTGRES_DSN)
+        admin = connect_postgres(POSTGRES_DSN, schema="public")
         original_db = fixed_assets.db
         try:
             admin.execute(f'CREATE SCHEMA "{schema}"')

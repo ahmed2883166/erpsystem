@@ -108,6 +108,12 @@ class PostgreSQLNumberSequenceTests(unittest.TestCase):
                 next_code(connection, "large_customer", "CUS", "customers", "code"),
                 "CUS-3000000001",
             )
+            sequence_type = connection.execute("""
+                SELECT data_type FROM information_schema.columns
+                WHERE table_schema=current_schema() AND table_name='document_sequences'
+                  AND column_name='next_value'
+            """).fetchone()["data_type"]
+            self.assertEqual(sequence_type, "bigint")
             connection.rollback()
         finally:
             connection.close()

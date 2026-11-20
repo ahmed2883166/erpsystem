@@ -22,7 +22,7 @@ POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
 class SQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
     def setUp(self):
         self.schema = "nexus_copy_rehearsal_" + uuid.uuid4().hex[:12]
-        self.pg = connect_postgres(POSTGRES_DSN, autocommit=True)
+        self.pg = connect_postgres(POSTGRES_DSN, autocommit=True, schema="public")
         self.pg.execute(f'CREATE SCHEMA "{self.schema}"')
         self.pg.execute(f'''
             CREATE TABLE "{self.schema}".accounts (

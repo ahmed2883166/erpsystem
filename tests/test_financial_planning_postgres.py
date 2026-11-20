@@ -17,7 +17,7 @@ class FinancialPlanningPostgreSQLSchemaTests(unittest.TestCase):
 
         schema = "nexus_financial_planning_" + uuid.uuid4().hex
         admin = connect_postgres(
-            POSTGRES_DSN, application_name="NEXUS financial planning schema test"
+            POSTGRES_DSN, application_name="NEXUS financial planning schema test", schema="public"
         )
         try:
             admin.execute(f'CREATE SCHEMA "{schema}"')

@@ -52,6 +52,18 @@ def _pg_environment(dsn, *, database_override=None):
     return env, values
 
 
+def _schema_name(connection_values):
+    """Resolve the dedicated company schema recorded in a backup manifest."""
+    schema = os.environ.get("NEXUS_POSTGRES_SCHEMA", "").strip()
+    if not schema:
+        options = str(connection_values.get("options", ""))
+        match = re.search(r"search_path\s*=\s*['\"]?([a-z][a-z0-9_]*)", options, re.IGNORECASE)
+        schema = match.group(1) if match else "public"
+    if not _DATABASE_NAME.fullmatch(schema):
+        raise ValueError("PostgreSQL backup schema name is invalid.")
+    return schema
+
+
 def _run(command, *, env, timeout):
     return subprocess.run(
         command, env=env, check=True, capture_output=True,
@@ -94,6 +106,7 @@ def create_postgres_backup_archive(
             "backup_format": "postgresql-custom",
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "database_name": database_name,
+            "schema_name": _schema_name(connection),
             "dump_sha256": hasher.hexdigest(),
         }
         temporary_archive = archive_path.with_suffix(".zip.tmp")
@@ -151,6 +164,9 @@ def validate_postgres_backup_archive(
         source_name = manifest.get("database_name")
         if not isinstance(source_name, str) or not source_name.strip() or len(source_name) > 63:
             raise ValueError("PostgreSQL backup database name is invalid.")
+        schema_name = manifest.get("schema_name", "public")
+        if not isinstance(schema_name, str) or not _DATABASE_NAME.fullmatch(schema_name):
+            raise ValueError("PostgreSQL backup schema name is invalid.")
         expected_digest = manifest.get("dump_sha256")
         if (not isinstance(expected_digest, str) or len(expected_digest) != 64
                 or any(character not in "0123456789abcdef" for character in expected_digest.lower())):
@@ -174,17 +190,19 @@ def validate_postgres_backup_archive(
     return manifest
 
 
-def _verify_restored_erp_database(dsn, expected_database_name):
+def _verify_restored_erp_database(dsn, expected_database_name, schema_name="public"):
     """Confirm the restored target is reachable and contains the ERP core tables."""
     import psycopg
 
+    if not isinstance(schema_name, str) or not _DATABASE_NAME.fullmatch(schema_name):
+        raise ValueError("PostgreSQL restore schema name is invalid.")
     with psycopg.connect(dsn) as connection:
         actual_name = connection.execute("SELECT current_database()").fetchone()[0]
         if actual_name != expected_database_name:
             raise RuntimeError("PostgreSQL restore connected to an unexpected database.")
         missing = []
         for table in REQUIRED_ERP_TABLES:
-            exists = connection.execute("SELECT to_regclass(%s)", (table,)).fetchone()[0]
+            exists = connection.execute("SELECT to_regclass(%s)", (schema_name + "." + table,)).fetchone()[0]
             if exists is None:
                 missing.append(table)
         if missing:
@@ -192,7 +210,11 @@ def _verify_restored_erp_database(dsn, expected_database_name):
                 "Restored database is missing required ERP tables: " + ", ".join(missing)
             )
         invalid_constraints = connection.execute(
-            "SELECT COUNT(*) FROM pg_constraint WHERE contype='f' AND NOT convalidated"
+            """SELECT COUNT(*) FROM pg_constraint c
+               JOIN pg_class t ON t.oid=c.conrelid
+               JOIN pg_namespace n ON n.oid=t.relnamespace
+               WHERE c.contype='f' AND NOT c.convalidated AND n.nspname=%s""",
+            (schema_name,),
         ).fetchone()[0]
         if invalid_constraints:
             raise RuntimeError(
@@ -267,7 +289,7 @@ def restore_postgres_backup_to_new_database(
             ], env=restore_env, timeout=timeout)
             from psycopg.conninfo import make_conninfo
             restored_dsn = make_conninfo(admin_dsn, dbname=target_name)
-            _verify_restored_erp_database(restored_dsn, target_name)
+            _verify_restored_erp_database(restored_dsn, target_name, manifest.get("schema_name", "public"))
         except Exception as restore_error:
             with psycopg.connect(admin_dsn, autocommit=True) as admin:
                 admin.execute(

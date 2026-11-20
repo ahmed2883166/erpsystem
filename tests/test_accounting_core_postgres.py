@@ -17,7 +17,7 @@ class PostgreSQLAccountingCoreTests(unittest.TestCase):
         from postgres_database import connect_postgres
         from accounting_core import post_journal, reconciliation_snapshot
 
-        connection = connect_postgres(POSTGRES_DSN)
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
         schema = "nexus_accounting_core_" + uuid.uuid4().hex
         try:
             connection.execute(f'CREATE SCHEMA "{schema}"')
@@ -110,7 +110,7 @@ class PostgreSQLAccountingCoreTests(unittest.TestCase):
         from accounting_core import post_journal
 
         schema = "nexus_accounting_race_" + uuid.uuid4().hex[:16]
-        setup = connect_postgres(POSTGRES_DSN, autocommit=True)
+        setup = connect_postgres(POSTGRES_DSN, autocommit=True, schema="public")
         try:
             setup.execute(f'CREATE SCHEMA "{schema}"')
             setup.execute(f'SET search_path TO "{schema}"')
@@ -157,7 +157,7 @@ class PostgreSQLAccountingCoreTests(unittest.TestCase):
         ]
 
         def post_from_client(client_number):
-            connection = connect_postgres(POSTGRES_DSN)
+            connection = connect_postgres(POSTGRES_DSN, schema="public")
             try:
                 connection.execute(f'SET search_path TO "{schema}"')
                 start.wait(timeout=20)
@@ -174,7 +174,7 @@ class PostgreSQLAccountingCoreTests(unittest.TestCase):
             finally:
                 connection.close()
 
-        cleanup = connect_postgres(POSTGRES_DSN, autocommit=True)
+        cleanup = connect_postgres(POSTGRES_DSN, autocommit=True, schema="public")
         try:
             with ThreadPoolExecutor(max_workers=clients) as pool:
                 entry_ids = list(pool.map(post_from_client, range(1, clients + 1)))

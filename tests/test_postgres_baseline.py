@@ -53,7 +53,7 @@ class PostgreSQLBaselineUnitTests(unittest.TestCase):
 class PostgreSQLBaselineIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.schema = "nexus_baseline_" + uuid.uuid4().hex[:12]
-        self.connection = connect_postgres(POSTGRES_DSN, autocommit=True)
+        self.connection = connect_postgres(POSTGRES_DSN, autocommit=True, schema="public")
 
     def tearDown(self):
         try:

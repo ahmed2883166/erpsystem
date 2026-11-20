@@ -154,7 +154,7 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
 @unittest.skipUnless(POSTGRES_DSN, "NEXUS_TEST_POSTGRES_DSN is not configured")
 class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
     def setUp(self):
-        self.connection = connect_postgres(POSTGRES_DSN)
+        self.connection = connect_postgres(POSTGRES_DSN, schema="public")
         self.schema = "nexus_mig_" + uuid.uuid4().hex[:12]
 
     def tearDown(self):

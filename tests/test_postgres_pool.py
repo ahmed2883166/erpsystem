@@ -83,7 +83,7 @@ class PostgreSQLPoolLifecycleTests(unittest.TestCase):
         self.assertFalse(raw_pool.kwargs["open"])
         self.assertEqual(raw_pool.kwargs["kwargs"]["connect_timeout"], 9)
         self.assertEqual(raw_pool.kwargs["kwargs"]["application_name"], "NEXUS test")
-        self.assertEqual(raw_pool.kwargs["kwargs"]["options"], "-c search_path=public")
+        self.assertEqual(raw_pool.kwargs["kwargs"]["options"], "-c search_path=nexus")
         self.assertTrue(callable(raw_pool.kwargs["configure"]))
         self.assertIsNotNone(raw_pool.kwargs["kwargs"]["row_factory"])
         self.assertFalse(pool.closed)
@@ -181,6 +181,7 @@ class PostgreSQLDirectConnectionTests(unittest.TestCase):
             connection = connect_postgres(
                 "postgresql://example.invalid/nexus",
                 autocommit=True,
+                schema="public",
                 connect_timeout=8,
                 application_name="NEXUS direct test",
             )
@@ -233,7 +234,7 @@ class PostgreSQLPoolIntegrationTests(unittest.TestCase):
 
         table = "pool_probe_" + uuid.uuid4().hex
         pool = create_postgres_pool(
-            POSTGRES_DSN, min_size=1, max_size=1, timeout=10
+            POSTGRES_DSN, min_size=1, max_size=1, timeout=10, schema="public"
         )
         try:
             with pool.connection() as connection:
@@ -269,7 +270,7 @@ class PostgreSQLPoolIntegrationTests(unittest.TestCase):
         from postgres_database import create_postgres_pool
 
         pool = create_postgres_pool(
-            POSTGRES_DSN, min_size=1, max_size=2, timeout=10
+            POSTGRES_DSN, min_size=1, max_size=2, timeout=10, schema="public"
         )
         try:
             stats = pool.get_stats()

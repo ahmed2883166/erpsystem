@@ -53,9 +53,20 @@ def next_code(connection, sequence_key, prefix, table, column, width=6):
     execute_compat(connection, """
         CREATE TABLE IF NOT EXISTS document_sequences (
             sequence_key TEXT PRIMARY KEY,
-            next_value INTEGER NOT NULL CHECK(next_value > 0)
+            next_value BIGINT NOT NULL CHECK(next_value > 0)
         )
     """)
+
+    if dialect == "postgresql":
+        sequence_column = execute_compat(connection, """
+            SELECT data_type FROM information_schema.columns
+            WHERE table_schema=current_schema() AND table_name='document_sequences'
+              AND column_name='next_value'
+        """).fetchone()
+        if sequence_column and sequence_column["data_type"] != "bigint":
+            # Upgrade legacy INTEGER sequence counters without changing their values.
+            execute_compat(connection, """ALTER TABLE document_sequences
+                ALTER COLUMN next_value TYPE BIGINT USING next_value::BIGINT""")
 
     lock_clause = " FOR UPDATE" if dialect == "postgresql" else ""
     row = execute_compat(

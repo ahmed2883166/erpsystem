@@ -14,6 +14,12 @@ from income_statement import build_income_statement
 
 
 class WorkforceTests(unittest.TestCase):
+    def test_payroll_mutations_use_postgresql_row_locks(self):
+        with patch.object(workforce, "database_dialect", return_value="postgresql"):
+            self.assertEqual(workforce._row_lock_clause(object()), " FOR UPDATE")
+        with patch.object(workforce, "database_dialect", return_value="sqlite"):
+            self.assertEqual(workforce._row_lock_clause(object()), "")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp.name) / "nexus.db"

@@ -26,7 +26,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 class FullNEXUSSQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
     def setUp(self):
         self.schema = "nexus_full_copy_" + uuid.uuid4().hex[:12]
-        self.pg = connect_postgres(POSTGRES_DSN, autocommit=True)
+        self.pg = connect_postgres(POSTGRES_DSN, autocommit=True, schema="public")
         self.pg.execute(f'CREATE SCHEMA "{self.schema}"')
         self.temp_dir = tempfile.TemporaryDirectory(prefix="nexus-full-copy-rehearsal-")
         self.root = Path(self.temp_dir.name)

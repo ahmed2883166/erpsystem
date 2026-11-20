@@ -7,6 +7,7 @@
 
 <section class="panel journal-entry-panel">
   <form method="post" id="journalForm" class="erp-journal-form" novalidate>
+    <input type="hidden" name="submission_token" value="{{ submission_token }}">
     <div class="journal-basic-grid">
       <label>التاريخ<input type="date" name="entry_date" value="{{ today }}" required></label>
       <label>المرجع<input name="reference" placeholder="اختياري"></label>

@@ -16,13 +16,13 @@ class TaxPostgreSQLSchemaInitializationTests(unittest.TestCase):
 
         schema = "nexus_tax_schema_" + uuid.uuid4().hex
         admin = connect_postgres(
-            POSTGRES_DSN, application_name="NEXUS tax schema integration test"
+            POSTGRES_DSN, application_name="NEXUS tax schema integration test", schema="public"
         )
         original_db = tax_center._db
 
         def open_schema_connection():
             connection = connect_postgres(
-                POSTGRES_DSN, application_name="NEXUS tax schema integration test"
+                POSTGRES_DSN, application_name="NEXUS tax schema integration test", schema="public"
             )
             connection.execute(f'SET search_path TO "{schema}"')
             return connection

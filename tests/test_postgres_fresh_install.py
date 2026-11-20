@@ -21,7 +21,7 @@ POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
 class PostgreSQLFreshInstallAcceptanceTests(unittest.TestCase):
     def setUp(self):
         self.schema = "nexus_fresh_install_" + uuid.uuid4().hex[:12]
-        self.connection = connect_postgres(POSTGRES_DSN, autocommit=True)
+        self.connection = connect_postgres(POSTGRES_DSN, autocommit=True, schema="public")
 
     def tearDown(self):
         try:

@@ -23,7 +23,7 @@ class PostgreSQLUpgradeRehearsalTests(unittest.TestCase):
         self.schema = "nexus_upgrade_rehearsal_" + uuid.uuid4().hex[:12]
 
     def tearDown(self):
-        cleanup = connect_postgres(POSTGRES_DSN, autocommit=True)
+        cleanup = connect_postgres(POSTGRES_DSN, autocommit=True, schema="public")
         try:
             cleanup.execute(f'DROP SCHEMA IF EXISTS "{self.schema}" CASCADE')
         finally:
@@ -35,7 +35,7 @@ class PostgreSQLUpgradeRehearsalTests(unittest.TestCase):
         # must not be layered with the initial migration a second time.
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        connection = connect_postgres(POSTGRES_DSN)
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
         try:
             applied = apply_migrations(connection, migrations, schema=self.schema)
             self.assertEqual(applied, [item.version for item in migrations])

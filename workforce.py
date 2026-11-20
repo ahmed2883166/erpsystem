@@ -65,6 +65,11 @@ def M(value):
     return D(value).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
+def _row_lock_clause(connection):
+    """Use row locks for PostgreSQL; SQLite write transactions serialize writers."""
+    return " FOR UPDATE" if database_dialect(connection) == "postgresql" else ""
+
+
 def _db():
     return connect_database(DB_PATH, isolation_level=None)
 
@@ -2943,7 +2948,7 @@ def post_payroll(run_id):
         # Acquire the write lock before reading the run status. This prevents two
         # concurrent requests from both observing a draft and posting it twice.
         begin_write_transaction(c)
-        run = execute_compat(c, "SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+        run = execute_compat(c, "SELECT * FROM payroll_runs WHERE id=?" + _row_lock_clause(c), (run_id,)).fetchone()
         if not run or run["status"] != "draft" or run["approval_status"] != "pending":
             raise ValueError("كشف المرتبات غير موجود أو ليس بانتظار الاعتماد.")
         if run["created_by"] is None or run["created_by"] == session["user_id"]:
@@ -3195,7 +3200,7 @@ def pay_payroll(run_id):
         begin_write_transaction(c)
         # Re-read the payroll state after acquiring the write lock. A reversal may
         # have completed after the initial page read but before this payment began.
-        run = execute_compat(c, "SELECT * FROM payroll_runs WHERE id=?", (run_id,)).fetchone()
+        run = execute_compat(c, "SELECT * FROM payroll_runs WHERE id=?" + _row_lock_clause(c), (run_id,)).fetchone()
         if not run or run["status"] != "posted" or not run["journal_entry_id"]:
             raise ValueError("لا يمكن صرف مرتبات تم عكسها أو لم تعد مرحّلة.")
         if run["approved_by"] is not None and run["approved_by"] == session["user_id"]:

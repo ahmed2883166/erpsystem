@@ -1847,14 +1847,25 @@ def journal():
             total_credit = sum((x[2] for x in lines), Decimal("0"))
             if len(lines) < 2 or total_debit <= 0 or total_debit != total_credit:
                 raise ValueError("يجب إدخال سطرين على الأقل وأن يتساوى إجمالي المدين والدائن.")
-            reference = request.form.get("reference", "").strip() or "MAN-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+            submission_token = request.form.get("submission_token", "").strip().lower()
+            if not re.fullmatch(r"[a-f0-9]{32}", submission_token):
+                raise ValueError("انتهت صلاحية نموذج القيد؛ حدّث الصفحة وحاول مرة أخرى.")
+            reference = request.form.get("reference", "").strip() or "MAN-" + submission_token
             if len(reference) > 100:
                 raise ValueError("المرجع لا يجب أن يتجاوز 100 حرف.")
             dimensions = validate_journal_dimensions(connection, {key: request.form.get(key) for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id", "supplier_id")})
+            begin_write_transaction(connection)
+            existing_reference = execute_compat(connection,
+                "SELECT id FROM journal_entries WHERE reference=? AND status='posted' ORDER BY id LIMIT 1",
+                (reference,),
+            ).fetchone()
             entry_id = post_journal(connection, entry_date, reference, description, lines, session["user_id"], dimensions)
-            if any(line_asset_details):
+            if any(line_asset_details) and not existing_reference:
                 register_assets_from_journal_lines(connection, entry_id, line_asset_details, session["user_id"])
             connection.commit()
+            if existing_reference:
+                flash("تم استلام نفس القيد من قبل؛ لم يتم إنشاء قيد أو أصول مكررة.", "info")
+                return redirect(url_for("journal"))
             posted_entry = execute_compat(connection, 
                 "SELECT id,entry_date,reference,description,status FROM journal_entries WHERE id=?",
                 (entry_id,),
@@ -2098,7 +2109,8 @@ def journal():
         entries.append(item)
     connection.close()
     return render_template("journal.html", accounts=accounts_list, entries=entries,
-        today=datetime.now().date().isoformat(), dimension_options=dimension_options,
+        today=datetime.now().date().isoformat(), submission_token=uuid.uuid4().hex,
+        dimension_options=dimension_options,
         journal_page=journal_page, journal_pages=journal_pages,
         journal_per_page=journal_per_page, journal_total=journal_total,
         date_from=date_from, date_to=date_to, status_filter=status_filter,

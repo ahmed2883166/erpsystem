@@ -1,8 +1,9 @@
 import sqlite3
 import unittest
+from unittest.mock import patch
 from decimal import Decimal
 
-from payroll_compliance import (calculate_payroll_deductions, seed_egypt_2026, _payroll_obligations, ensure_default_payroll_rules)
+from payroll_compliance import (calculate_payroll_deductions, seed_egypt_2026, _payroll_obligations, ensure_default_payroll_rules, _lock_posted_payroll_period)
 
 
 class PayrollComplianceTests(unittest.TestCase):
@@ -183,6 +184,13 @@ class PayrollComplianceTests(unittest.TestCase):
         self.assertEqual(result["employer_insurance"], Decimal("0.00"))
         self.assertEqual(result["taxable_annual"], Decimal("96000.00"))
 
+
+    def test_statutory_payment_locks_posted_payroll_period_on_postgresql(self):
+        with patch("payroll_compliance.database_dialect", return_value="postgresql"), \
+             patch("payroll_compliance._execute") as execute:
+            _lock_posted_payroll_period(object(), "2026-11")
+        self.assertIn("FOR UPDATE", execute.call_args.args[1])
+        self.assertEqual(execute.call_args.args[2], ("2026-11",))
 
     def test_payroll_obligations_subtract_recorded_payments(self):
         self.conn.executescript("""

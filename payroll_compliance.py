@@ -6,7 +6,7 @@ onto payroll lines when a run is created.
 """
 from app_paths import DB_PATH
 from database import connect_database
-from db_compat import DB_ERROR, execute_script, table_columns, table_exists, begin_write_transaction, insert_and_get_id, transactional_connection_initializer
+from db_compat import DB_ERROR, execute_script, table_columns, table_exists, begin_write_transaction, insert_and_get_id, transactional_connection_initializer, database_dialect
 from db_sql import execute_compat, executemany_compat
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -471,6 +471,13 @@ def report():
     )
 
 
+def _lock_posted_payroll_period(conn, period):
+    """Serialize statutory payments against every posted run in the period."""
+    lock_clause = " FOR UPDATE" if database_dialect(conn) == "postgresql" else ""
+    _execute(conn, "SELECT id FROM payroll_runs WHERE period=? AND status='posted' "
+             "ORDER BY id" + lock_clause, (period,)).fetchall()
+
+
 def _payroll_obligations(conn, period):
     rows = _execute(conn, """
         SELECT l.taxable_income_tax,l.employee_insurance,l.employer_insurance
@@ -531,6 +538,7 @@ def payments():
                 or (cash["code"] not in cash_codes and not any(word in cash_name for word in cash_words))):
                 raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
             begin_write_transaction(conn)
+            _lock_posted_payroll_period(conn, period)
             obligation = _payroll_obligations(conn, period)[payment_type]
             if amount > obligation["remaining"]:
                 raise ValueError("قيمة السداد تتجاوز الرصيد المستحق للمسير. المتبقي: " + str(obligation["remaining"]))
