@@ -344,8 +344,12 @@ def init_sales_schema(c):
     execute_compat(c, """CREATE TABLE IF NOT EXISTS sales_credit_note_line_lots(
       id INTEGER PRIMARY KEY, credit_note_line_id INTEGER NOT NULL REFERENCES sales_credit_note_lines(id),
       lot_id INTEGER REFERENCES stock_lots(id), quantity TEXT NOT NULL,
-      stock_movement_id INTEGER REFERENCES stock_movements(id)
+      stock_movement_id INTEGER REFERENCES stock_movements(id),
+      source_invoice_lot_id INTEGER REFERENCES sales_invoice_line_lots(id)
     )""")
+    credit_lot_columns = _columns(c, "sales_credit_note_line_lots")
+    if "source_invoice_lot_id" not in credit_lot_columns:
+        execute_compat(c, "ALTER TABLE sales_credit_note_line_lots ADD COLUMN source_invoice_lot_id INTEGER REFERENCES sales_invoice_line_lots(id)")
     invoice_columns = _columns(c, "sales_invoices")
     if "due_date" not in invoice_columns:
         execute_compat(c, "ALTER TABLE sales_invoices ADD COLUMN due_date TEXT")
@@ -780,7 +784,8 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
                 lot_id, allocated_qty, allocated_unit_cost, allocated_cost = allocation
             else:
                 lot_id, allocated_qty, allocated_cost = allocation
-            execute_compat(conn, 
+            insert_and_get_id(
+                conn,
                 "INSERT INTO sales_invoice_line_lots(invoice_line_id,lot_id,quantity,cost_total) VALUES(?,?,?,?)",
                 (invoice_line_id, lot_id, str(allocated_qty), str(allocated_cost))
             )
@@ -1091,7 +1096,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         subtotal += line_value
         tax_total += line_tax
         original_allocations = execute_compat(conn, 
-            "SELECT lot_id,quantity,cost_total FROM sales_invoice_line_lots WHERE invoice_line_id=? ORDER BY id",
+            "SELECT id,lot_id,quantity,cost_total FROM sales_invoice_line_lots WHERE invoice_line_id=? ORDER BY id",
             (line_id,),
         ).fetchall()
         has_original_lot_cost_trace = bool(original_allocations)
@@ -1104,37 +1109,57 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
                     "الفاتورة قديمة ولا تحتوي على سجل التشغيلة الأصلية. لا يمكن إرجاعها إلى مخزون عام؛ "
                     "راجع حركة الصرف وحدد التشغيلة قبل إصدار المرتجع."
                 )
-            original_allocations = [{"lot_id": None, "quantity": original["quantity"],
+            original_allocations = [{"id": None, "lot_id": None, "quantity": original["quantity"],
                                      "cost_total": original["cost_total"] or "0"}]
         returned_rows = execute_compat(conn, 
-            """SELECT rl.lot_id,rl.quantity,sm.total_cost
+            """SELECT rl.source_invoice_lot_id,rl.lot_id,rl.quantity,sm.total_cost
                FROM sales_credit_note_line_lots rl
                JOIN sales_credit_note_lines cl ON cl.id=rl.credit_note_line_id
                JOIN sales_credit_notes cn ON cn.id=cl.credit_note_id
                LEFT JOIN stock_movements sm ON sm.id=rl.stock_movement_id
                WHERE cl.invoice_line_id=? AND cn.status='posted'""", (line_id,)
         ).fetchall()
-        returned_by_lot = {}
-        returned_cost_by_lot = {}
+        returned_by_allocation = {}
+        returned_cost_by_allocation = {}
+        legacy_returned_by_lot = {}
+        legacy_returned_cost_by_lot = {}
         for returned_row in returned_rows:
-            key = returned_row["lot_id"]
-            returned_by_lot[key] = returned_by_lot.get(key, Decimal("0")) + Decimal(returned_row["quantity"])
-            returned_cost_by_lot[key] = returned_cost_by_lot.get(key, Decimal("0")) + Decimal(
-                returned_row["total_cost"] or "0"
+            if returned_row["source_invoice_lot_id"] is not None:
+                key = returned_row["source_invoice_lot_id"]
+                returned_by_allocation[key] = returned_by_allocation.get(key, Decimal("0")) + Decimal(returned_row["quantity"])
+                returned_cost_by_allocation[key] = returned_cost_by_allocation.get(key, Decimal("0")) + Decimal(
+                    returned_row["total_cost"] or "0"
+                )
+            else:
+                key = returned_row["lot_id"]
+                legacy_returned_by_lot[key] = legacy_returned_by_lot.get(key, Decimal("0")) + Decimal(returned_row["quantity"])
+                legacy_returned_cost_by_lot[key] = legacy_returned_cost_by_lot.get(key, Decimal("0")) + Decimal(
+                    returned_row["total_cost"] or "0"
+                )
+        lot_id_counts = {}
+        for allocation in original_allocations:
+            lot_id_counts[allocation["lot_id"]] = lot_id_counts.get(allocation["lot_id"], 0) + 1
+        if any(lot_id_counts.get(lot_id, 0) > 1 for lot_id in legacy_returned_by_lot):
+            raise ValueError(
+                "توجد مرتجعات قديمة غير مرتبطة بطبقة FIFO الأصلية بشكل فريد. يلزم مراجعة يدوية قبل إصدار مرتجع إضافي."
             )
         lot_remaining = []
         for allocation in original_allocations:
             allocated_qty = Decimal(allocation["quantity"])
             original_lot_cost = Decimal(allocation["cost_total"])
-            already_returned_qty = returned_by_lot.get(allocation["lot_id"], Decimal("0"))
+            allocation_id = allocation.get("id")
+            already_returned_qty = returned_by_allocation.get(allocation_id, Decimal("0"))
+            already_returned_cost = returned_cost_by_allocation.get(allocation_id, Decimal("0"))
+            if allocation["lot_id"] in legacy_returned_by_lot:
+                already_returned_qty += legacy_returned_by_lot[allocation["lot_id"]]
+                already_returned_cost += legacy_returned_cost_by_lot[allocation["lot_id"]]
             available_lot_qty = allocated_qty - already_returned_qty
             if available_lot_qty > 0:
                 lot_remaining.append({
-                    "lot_id": allocation["lot_id"], "available": available_lot_qty,
+                    "lot_id": allocation["lot_id"], "source_invoice_lot_id": allocation.get("id"),
+                    "available": available_lot_qty,
                     "original_qty": allocated_qty, "original_cost": original_lot_cost,
-                    "remaining_cost": original_lot_cost - returned_cost_by_lot.get(
-                        allocation["lot_id"], Decimal("0")
-                    ),
+                    "remaining_cost": original_lot_cost - already_returned_cost,
                 })
         to_allocate = qty
         lot_allocations = []
@@ -1150,7 +1175,10 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
                 lot_cost = (
                     lot["original_cost"] * take / lot["original_qty"]
                 ).quantize(CENT, rounding=ROUND_HALF_UP)
-            lot_allocations.append({"lot_id": lot["lot_id"], "quantity": take, "cost_total": lot_cost})
+            lot_allocations.append({
+                "lot_id": lot["lot_id"], "source_invoice_lot_id": lot["source_invoice_lot_id"],
+                "quantity": take, "cost_total": lot_cost
+            })
             to_allocate -= take
         if to_allocate > 0:
             raise ValueError("تعذر تحديد التشغيلة الأصلية للكمية المرتجعة. راجع تتبع مخزون الفاتورة.")
@@ -1263,9 +1291,11 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
                      str(part_qty), str(unit_cost), str(part_cost)),
                 )
                 execute_compat(conn, 
-                    """INSERT INTO sales_credit_note_line_lots(credit_note_line_id,lot_id,quantity,stock_movement_id)
-                       VALUES(?,?,?,?)""",
-                    (credit_line_id, lot_part["lot_id"], str(part_qty), movement_id),
+                    """INSERT INTO sales_credit_note_line_lots(
+                         credit_note_line_id,lot_id,quantity,stock_movement_id,source_invoice_lot_id
+                       ) VALUES(?,?,?,?,?)""",
+                    (credit_line_id, lot_part["lot_id"], str(part_qty), movement_id,
+                     lot_part.get("source_invoice_lot_id")),
                 )
                 if not execute_compat(conn, "SELECT stock_movement_id FROM sales_credit_note_lines WHERE id=?",
                                     (credit_line_id,)).fetchone()["stock_movement_id"]:
