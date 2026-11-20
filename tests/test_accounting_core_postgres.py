@@ -136,7 +136,8 @@ class PostgreSQLAccountingCoreTests(unittest.TestCase):
 
     def test_concurrent_same_reference_posts_only_one_journal(self):
         from postgres_database import connect_postgres
-        from accounting_core import post_journal
+        from accounting_core import post_journal, lock_journal_reference
+        from db_compat import begin_write_transaction
 
         schema = "nexus_accounting_race_" + uuid.uuid4().hex[:16]
         setup = connect_postgres(POSTGRES_DSN, autocommit=True, schema="public")
@@ -171,6 +172,13 @@ class PostgreSQLAccountingCoreTests(unittest.TestCase):
                     created_at TEXT NOT NULL
                 )
             """)
+            setup.execute("""
+                CREATE TABLE fixed_asset_journal_lines(
+                    journal_line_id BIGINT PRIMARY KEY,
+                    entry_id BIGINT NOT NULL,
+                    asset_name TEXT NOT NULL
+                )
+            """)
             setup.execute(
                 "INSERT INTO accounts(id,code,name_ar,account_type) VALUES"
                 "(1,'1110','الصندوق','asset'),(2,'4100','الإيرادات','revenue')"
@@ -190,11 +198,27 @@ class PostgreSQLAccountingCoreTests(unittest.TestCase):
             try:
                 connection.execute(f'SET search_path TO "{schema}"')
                 start.wait(timeout=20)
+                begin_write_transaction(connection)
+                reference = "PG-CONCURRENT-SAME-REF"
+                lock_journal_reference(connection, reference)
+                existing_reference = connection.execute(
+                    "SELECT id FROM journal_entries WHERE reference=? AND status='posted' ORDER BY id LIMIT 1",
+                    (reference,),
+                ).fetchone()
                 entry_id = post_journal(
-                    connection, "2026-11-18", "PG-CONCURRENT-SAME-REF",
+                    connection, "2026-11-18", reference,
                     "اختبار منع تكرار القيد المتزامن", lines,
                     created_by=client_number,
                 )
+                if not existing_reference:
+                    journal_line_id = connection.execute(
+                        "SELECT id FROM journal_lines WHERE entry_id=? ORDER BY id LIMIT 1",
+                        (entry_id,),
+                    ).fetchone()["id"]
+                    connection.execute(
+                        "INSERT INTO fixed_asset_journal_lines(journal_line_id,entry_id,asset_name) VALUES(?,?,?)",
+                        (journal_line_id, entry_id, "أصل اختبار متزامن"),
+                    )
                 connection.commit()
                 return entry_id
             except Exception:
@@ -219,6 +243,10 @@ class PostgreSQLAccountingCoreTests(unittest.TestCase):
             )
             self.assertEqual(
                 cleanup.execute("SELECT COUNT(*) FROM journal_posting_keys").fetchone()[0],
+                1,
+            )
+            self.assertEqual(
+                cleanup.execute("SELECT COUNT(*) FROM fixed_asset_journal_lines").fetchone()[0],
                 1,
             )
         finally:
