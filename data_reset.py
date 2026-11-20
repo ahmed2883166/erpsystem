@@ -87,6 +87,7 @@ DELETE_TABLES = frozenset({
     "goods_receipt_lines",
     "goods_receipts",
     "journal_entries",
+    "journal_posting_keys",
     "journal_lines",
     "journal_lines_decimal_new",
     "leave_types",
