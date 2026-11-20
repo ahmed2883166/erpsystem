@@ -7,15 +7,18 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
+
+# Make direct script execution independent of cwd/PYTHONPATH.
 import sys
 from pathlib import Path
 
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPOSITORY_ROOT))
+
 
 def build_baseline():
-    repository_root = Path(__file__).resolve().parents[1]
-    if str(repository_root) not in sys.path:
-        sys.path.insert(0, str(repository_root))
-
     from scripts.export_initialized_sqlite_schema import build_initialized_schema
     from scripts.generate_postgres_schema import generate_postgres_ddl
 
