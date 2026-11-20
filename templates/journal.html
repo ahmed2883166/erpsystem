@@ -145,6 +145,12 @@
  }
  function addRow(focus=true){
    const row=template.cloneNode(true);
+   // Remove cloned search UI: cloneNode does not copy its event listeners.
+   // The global observer will initialize one fresh searchable wrapper after insertion.
+   row.querySelectorAll('.nexus-search-select').forEach(wrapper=>{
+     const select=wrapper.querySelector('select');
+     if(select)wrapper.replaceWith(select);
+   });
    // Give every cloned control a unique ID and keep label associations intact.
    const idMap=new Map(), suffix='-journal-row-'+(++cloneSequence);
    row.querySelectorAll('[id]').forEach(element=>{
