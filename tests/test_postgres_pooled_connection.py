@@ -48,10 +48,29 @@ class PooledPostgresCompatConnectionTests(unittest.TestCase):
         self.lease = FakeLease(self.raw)
         self.connection = PooledPostgresCompatConnection(self.lease)
 
+    def test_statement_timeout_is_applied_before_restoring_requested_autocommit(self):
+        connection = PooledPostgresCompatConnection(
+            self.lease, autocommit=True, statement_timeout_ms=2500
+        )
+        self.assertEqual(
+            self.raw.calls,
+            [("execute", "SELECT set_config('statement_timeout', %s, false)", ("2500ms",))],
+        )
+        self.assertTrue(self.raw.autocommit)
+        connection.close()
+        self.assertFalse(self.raw.autocommit)
+
+    def test_statement_timeout_is_clamped_to_at_least_one_millisecond(self):
+        connection = PooledPostgresCompatConnection(self.lease, statement_timeout_ms=0)
+        self.assertEqual(
+            self.raw.calls[0],
+            ("execute", "SELECT set_config('statement_timeout', %s, false)", ("1ms",)),
+        )
+        connection.close()
+
     def test_close_rolls_back_and_returns_lease_without_closing_socket(self):
         self.connection.execute("SELECT ? AS value", (7,))
         self.connection.close()
-
         self.assertEqual(
             self.raw.calls,
             [
@@ -67,14 +86,12 @@ class PooledPostgresCompatConnectionTests(unittest.TestCase):
     def test_close_is_idempotent_and_does_not_return_lease_twice(self):
         self.connection.close()
         self.connection.close()
-
         self.assertEqual(self.raw.calls, [("rollback",), ("execute", "RESET statement_timeout", None)])
         self.assertEqual(len(self.lease.exit_calls), 1)
 
     def test_explicit_commit_is_preserved_then_close_releases_clean_lease(self):
         self.connection.commit()
         self.connection.close()
-
         self.assertEqual(self.raw.calls, [("commit",), ("rollback",), ("execute", "RESET statement_timeout", None)])
         self.assertEqual(len(self.lease.exit_calls), 1)
 
@@ -102,14 +119,11 @@ class PooledPostgresCompatConnectionTests(unittest.TestCase):
 
     def test_rollback_failure_is_forwarded_to_lease_exit(self):
         error = RuntimeError("rollback failed")
-
         def fail_rollback():
             raise error
-
         self.raw.rollback = fail_rollback
         with self.assertRaisesRegex(RuntimeError, "rollback failed"):
             self.connection.close()
-
         self.assertEqual(len(self.lease.exit_calls), 1)
         self.assertIs(self.lease.exit_calls[0][1], error)
         self.assertTrue(self.connection.closed)
