@@ -2850,6 +2850,73 @@ class SalesIntegrationTests(unittest.TestCase):
         self.db.rollback()
 
 
+    def test_partial_sales_returns_use_original_fifo_lot_costs_across_multiple_notes(self):
+        extra_move = self.db.execute(
+            """INSERT INTO stock_movements(
+                 movement_no,movement_type,product_id,target_warehouse_id,quantity,
+                 unit_cost,total_cost,movement_date)
+               VALUES('OPEN-LOT-PARTIAL','receipt',?,?, '5','20','100','2026-11-10')""",
+            (self.product_id, self.warehouse_id),
+        ).lastrowid
+        self.db.execute(
+            """INSERT INTO stock_valuation_layers(
+                 product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost)
+               VALUES(?,?,?,'5','5','20')""",
+            (self.product_id, self.warehouse_id, extra_move),
+        )
+        self.db.commit()
+
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "6", "unit_price": "30"}],
+            "0", 1,
+        )
+        line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?", (invoice["invoice_id"],)
+        ).fetchone()["id"]
+        source_lots = self.db.execute(
+            "SELECT lot_id,quantity,cost_total FROM sales_invoice_line_lots WHERE invoice_line_id=? ORDER BY id",
+            (line_id,),
+        ).fetchall()
+        self.assertEqual([Decimal(row["quantity"]) for row in source_lots],
+                         [Decimal("5"), Decimal("1")])
+        self.assertEqual([Decimal(row["cost_total"]) for row in source_lots],
+                         [Decimal("50"), Decimal("20")])
+
+        first = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-11", "مرتجع جزئي أول",
+            [{"invoice_line_id": line_id, "quantity": "3"}], 1,
+        )
+        self.assertEqual(first["total_cost"], Decimal("30.00"))
+        first_lots = self.db.execute(
+            """SELECT lot_id,quantity FROM sales_credit_note_line_lots
+               WHERE credit_note_line_id=(SELECT id FROM sales_credit_note_lines WHERE credit_note_id=?)
+               ORDER BY id""",
+            (first["credit_note_id"],),
+        ).fetchall()
+        self.assertEqual([(row["lot_id"], Decimal(row["quantity"])) for row in first_lots],
+                         [(source_lots[0]["lot_id"], Decimal("3"))])
+
+        second = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-12", "مرتجع جزئي ثان",
+            [{"invoice_line_id": line_id, "quantity": "3"}], 1,
+        )
+        self.assertEqual(second["total_cost"], Decimal("40.00"))
+        second_lots = self.db.execute(
+            """SELECT lot_id,quantity FROM sales_credit_note_line_lots
+               WHERE credit_note_line_id=(SELECT id FROM sales_credit_note_lines WHERE credit_note_id=?)
+               ORDER BY id""",
+            (second["credit_note_id"],),
+        ).fetchall()
+        self.assertEqual(
+            [(row["lot_id"], Decimal(row["quantity"])) for row in second_lots],
+            [(source_lots[0]["lot_id"], Decimal("2")),
+             (source_lots[1]["lot_id"], Decimal("1"))],
+        )
+        self.assertEqual(first["total_cost"] + second["total_cost"], Decimal("70.00"))
+        self.db.commit()
+
     def test_sales_return_restores_original_quantities_across_multiple_lots(self):
         extra_move = self.db.execute(
             """INSERT INTO stock_movements(
