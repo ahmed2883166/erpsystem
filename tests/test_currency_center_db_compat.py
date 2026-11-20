@@ -1,7 +1,10 @@
 """Currency center database-neutral metadata helper tests."""
 import os
 import sqlite3
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 import currency_center
 
@@ -54,6 +57,37 @@ class CurrencyMetadataPostgreSQLTests(unittest.TestCase):
                 self.assertEqual(str(exc), "rollback disposable schema")
         finally:
             conn.close()
+
+
+class CurrencySchemaAtomicityTests(unittest.TestCase):
+    def test_schema_initialization_rolls_back_partial_ddl_on_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "currency-schema.db"
+
+            def fail_after_first_ddl(connection, _script):
+                connection.execute(
+                    "CREATE TABLE fx_partial_probe (id INTEGER PRIMARY KEY)"
+                )
+                raise RuntimeError("forced schema initialization failure")
+
+            with patch.object(currency_center, "DB_PATH", database_path):
+                with patch.object(
+                    currency_center, "execute_script", side_effect=fail_after_first_ddl
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError, "forced schema initialization failure"
+                    ):
+                        currency_center.initialize_currency_schema()
+
+            verification = sqlite3.connect(database_path)
+            try:
+                remaining = verification.execute(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE type='table' AND name='fx_partial_probe'"
+                ).fetchone()
+                self.assertIsNone(remaining)
+            finally:
+                verification.close()
 
 
 if __name__ == "__main__":
