@@ -202,7 +202,7 @@ class PostgreSQLAccountingCoreTests(unittest.TestCase):
                 reference = "PG-CONCURRENT-SAME-REF"
                 lock_journal_reference(connection, reference)
                 existing_reference = connection.execute(
-                    "SELECT id FROM journal_entries WHERE reference=? AND status='posted' ORDER BY id LIMIT 1",
+                    "SELECT id FROM journal_entries WHERE reference=%s AND status='posted' ORDER BY id LIMIT 1",
                     (reference,),
                 ).fetchone()
                 entry_id = post_journal(
@@ -212,11 +212,11 @@ class PostgreSQLAccountingCoreTests(unittest.TestCase):
                 )
                 if not existing_reference:
                     journal_line_id = connection.execute(
-                        "SELECT id FROM journal_lines WHERE entry_id=? ORDER BY id LIMIT 1",
+                        "SELECT id FROM journal_lines WHERE entry_id=%s ORDER BY id LIMIT 1",
                         (entry_id,),
                     ).fetchone()["id"]
                     connection.execute(
-                        "INSERT INTO fixed_asset_journal_lines(journal_line_id,entry_id,asset_name) VALUES(?,?,?)",
+                        "INSERT INTO fixed_asset_journal_lines(journal_line_id,entry_id,asset_name) VALUES(%s,%s,%s)",
                         (journal_line_id, entry_id, "أصل اختبار متزامن"),
                     )
                 connection.commit()
