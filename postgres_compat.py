@@ -115,6 +115,17 @@ class PooledPostgresCompatConnection:
         self._closed = True
         self._lease.__exit__(None, None, None)
 
+    def __enter__(self):
+        self._ensure_open()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        """Match DB-API context semantics and release the pool lease."""
+        if not self._closed:
+            self._closed = True
+            return self._lease.__exit__(exc_type, exc_value, traceback)
+        return False
+
     def __getattr__(self, name):
         self._ensure_open()
         return getattr(self._connection, name)
