@@ -207,7 +207,7 @@ def account_metadata_for(account_type, code, name_ar):
     else:
         statement_section = "unclassified"
 
-    if any(term in name for term in ("صندوق", "بنك", "نقدية", "نقاط البيع")):
+    if account_type == "asset" and any(term in name for term in ("صندوق", "بنك", "نقدية", "نقاط البيع")):
         account_subtype = "cash"
     elif code in {"1191", "1192"}:
         account_subtype = "contract_asset_or_retention"
