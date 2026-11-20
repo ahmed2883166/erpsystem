@@ -10,6 +10,7 @@ from scripts.verify_sqlite_postgres_copy import (
     _missing_control_columns,
     _journal_entry_key,
     _inventory_valuation_required,
+    _sqlite_legacy_unlinked_transfer_layer_count,
     _sqlite_foreign_key_map,
     _foreign_key_differences,
     _sqlite_grouped_sum,
@@ -137,6 +138,26 @@ class SQLitePostgresCopyPlanningTests(unittest.TestCase):
 
 
 class SQLitePostgresVerifierUnitTests(unittest.TestCase):
+    def test_legacy_unlinked_transfer_layer_count_flags_only_missing_transfer_ancestry(self):
+        import sqlite3
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.executescript("""
+                CREATE TABLE stock_movements(id INTEGER PRIMARY KEY,movement_type TEXT);
+                CREATE TABLE stock_valuation_layers(
+                    id INTEGER PRIMARY KEY,source_movement_id INTEGER,receipt_line_id INTEGER
+                );
+                INSERT INTO stock_movements VALUES
+                    (1,'receipt'),(2,'transfer'),(3,'relocate'),(4,'issue');
+                INSERT INTO stock_valuation_layers VALUES
+                    (1,1,NULL),(2,2,NULL),(3,3,77),(4,4,NULL);
+            """)
+            self.assertEqual(_sqlite_legacy_unlinked_transfer_layer_count(conn), 1)
+            conn.execute("UPDATE stock_valuation_layers SET receipt_line_id=88 WHERE id=2")
+            self.assertEqual(_sqlite_legacy_unlinked_transfer_layer_count(conn), 0)
+        finally:
+            conn.close()
+
     def test_content_fingerprint_detects_changed_rows_when_totals_still_match(self):
         columns = ["id", "debit", "credit"]
         types = {"id": "integer", "debit": "numeric", "credit": "numeric"}
