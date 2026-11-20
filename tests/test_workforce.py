@@ -773,7 +773,7 @@ class WorkforceTests(unittest.TestCase):
         state = conn.execute("SELECT status,remaining_amount FROM employee_custodies WHERE id=1").fetchone()
         debit, credit = conn.execute("SELECT SUM(debit),SUM(credit) FROM journal_lines").fetchone()
         conn.close()
-        self.assertEqual(state, ("settled", "0"))
+        self.assertEqual(state, ("settled", "0.00"))
         self.assertAlmostEqual(debit, credit, places=2)
         conn = sqlite3.connect(self.db_path)
         expense_debit = conn.execute("SELECT SUM(CAST(debit AS REAL)) FROM journal_lines WHERE account_id=3").fetchone()[0]
