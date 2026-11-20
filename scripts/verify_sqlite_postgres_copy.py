@@ -779,6 +779,8 @@ def verify_copy(
             "source_foreign_keys_ok": True,
             "schema": schema,
             "baseline_sha256": baseline_sha256.strip(),
+            "snapshot_sha256": snapshot_result["sha256"],
+            "snapshot_manifest": snapshot_result["manifest"],
             "source_table_count": len(source_tables),
             "matched_table_count": len(row_counts),
             "source_row_count": sum(item["sqlite"] for item in row_counts.values()),
