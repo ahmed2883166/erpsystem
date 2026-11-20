@@ -251,6 +251,14 @@ def initialize_workforce_schema():
       created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       journal_entry_id INTEGER UNIQUE
     );
+    CREATE TABLE IF NOT EXISTS custody_returns(
+      id INTEGER PRIMARY KEY, custody_id INTEGER NOT NULL REFERENCES employee_custodies(id),
+      return_date TEXT NOT NULL, amount TEXT NOT NULL,
+      journal_entry_id INTEGER NOT NULL UNIQUE REFERENCES journal_entries(id),
+      created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_custody_returns_custody_date
+      ON custody_returns(custody_id,return_date,id);
     CREATE TABLE IF NOT EXISTS attendance_records(
       id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id),
       attendance_date TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('present','absent','permission','holiday','annual_leave','sick_leave','unpaid_leave')),
@@ -4378,11 +4386,19 @@ def settle_custody(custody_id):
         if not row:
             raise ValueError("العهدة غير موجودة أو تمت تسويتها.")
         expenses = execute_compat(c, "SELECT * FROM custody_expenses WHERE custody_id=? ORDER BY id", (custody_id,)).fetchall()
-        expense_total = sum((D(x["amount"]) for x in expenses), Decimal("0"))
-        returned = M(request.form.get("returned_amount"))
+        expense_total = M(sum((D(x["amount"]) for x in expenses), Decimal("0")))
+        previous_returns = M(sum((D(x["amount"]) for x in execute_compat(
+            c, "SELECT amount FROM custody_returns WHERE custody_id=? ORDER BY id", (custody_id,)
+        ).fetchall()), Decimal("0")))
         total = M(row["amount"])
-        if returned < 0 or expense_total + returned != total:
-            raise ValueError("لا بد أن يساوي مجموع المصروفات والمبلغ المرتد قيمة العهدة بالكامل.")
+        expected_remaining = M(total - expense_total - previous_returns)
+        recorded_remaining = M(row["remaining_amount"])
+        if expected_remaining < 0 or expected_remaining != recorded_remaining:
+            raise ValueError("رصيد العهدة لا يطابق إجمالي المصروفات والمرتجعات المسجلة؛ راجع الحركة قبل التسوية.")
+        returned = M(request.form.get("returned_amount"))
+        if returned < 0 or returned > expected_remaining:
+            raise ValueError("المبلغ المرتد يجب ألا يتجاوز الرصيد المتبقي من العهدة.")
+        remaining_after_return = M(expected_remaining - returned)
         settlement_date = request.form.get("settlement_date") or date.today().isoformat()
         # Old expense rows created before per-expense posting are journaled once here.
         for expense in expenses:
@@ -4398,16 +4414,27 @@ def settle_custody(custody_id):
                 (legacy_journal_id,expense["id"]))
         journal_id = None
         if returned:
-            journal_id = post_journal(c, settlement_date, "CUST-RETURN-" + row["custody_no"],
-                "رد متبقي عهدة " + row["custody_no"],
-                [(int(row["cash_account_id"]),returned,0,"رد المتبقي من العهدة"),
-                 (int(row["custody_account_id"]),0,returned,"تسوية رصيد عهدة الموظف")],
+            return_no = "CUST-RETURN-" + row["custody_no"] + "-" + uuid.uuid4().hex[:12].upper()
+            journal_id = post_journal(c, settlement_date, return_no,
+                "رد جزء من متبقي عهدة " + row["custody_no"],
+                [(int(row["cash_account_id"]),returned,0,"رد مبلغ من العهدة"),
+                 (int(row["custody_account_id"]),0,returned,"تخفيض رصيد عهدة الموظف")],
                 session["user_id"])
-        execute_compat(c, "UPDATE employee_custodies SET remaining_amount='0',status='settled' WHERE id=?", (custody_id,))
-        _audit(c, "employee_custody_settled",
-               row["custody_no"] + " return_journal=" + str(journal_id or "none"))
+            execute_compat(c, """INSERT INTO custody_returns
+                (custody_id,return_date,amount,journal_entry_id,created_by)
+                VALUES(?,?,?,?,?)""",
+                (custody_id,settlement_date,str(returned),journal_id,session["user_id"]))
+        new_status = "settled" if remaining_after_return == 0 else "open"
+        execute_compat(c, "UPDATE employee_custodies SET remaining_amount=?,status=? WHERE id=?",
+            (str(remaining_after_return),new_status,custody_id))
+        _audit(c, "employee_custody_return_recorded",
+               row["custody_no"] + " returned=" + str(returned) +
+               " remaining=" + str(remaining_after_return) + " journal=" + str(journal_id or "none"))
         c.commit()
-        flash("تمت تسوية العهدة بالكامل دون تكرار قيود المصروفات.", "success")
+        if new_status == "settled":
+            flash("تمت تسوية العهدة بالكامل دون تكرار قيود المصروفات.", "success")
+        else:
+            flash("تم تسجيل الرد الجزئي، وبقي رصيد العهدة مفتوحًا للمتابعة.", "success")
     except _DB_VALUE_KEY_ERRORS as e:
         c.rollback()
         flash(str(e), "error")
