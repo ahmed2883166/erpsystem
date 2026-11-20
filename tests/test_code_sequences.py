@@ -32,6 +32,23 @@ class NumberSequenceTests(unittest.TestCase):
         self.db.rollback()
         self.assertEqual(next_code(self.db, "customer", "CUS", "customers", "code"), code)
 
+    def test_malformed_legacy_suffixes_are_ignored_consistently(self):
+        self.db.executemany(
+            "INSERT INTO customers(code) VALUES(?)",
+            [("CUS-OLD",), ("CUS-",), ("CUS-12X",), ("CUS-000012",)],
+        )
+        self.assertEqual(
+            next_code(self.db, "customer", "CUS", "customers", "code"),
+            "CUS-000013",
+        )
+
+    def test_existing_sequence_catches_up_to_later_legacy_imports(self):
+        self.assertEqual(next_code(self.db, "customer", "CUS", "customers", "code"), "CUS-000010")
+        self.db.commit()
+        self.db.execute("INSERT INTO customers(code) VALUES(?)", ("CUS-000025",))
+        self.db.commit()
+        self.assertEqual(next_code(self.db, "customer", "CUS", "customers", "code"), "CUS-000026")
+
 
 class PostgreSQLNumberSequenceTests(unittest.TestCase):
     @classmethod
@@ -114,6 +131,40 @@ class PostgreSQLNumberSequenceTests(unittest.TestCase):
                   AND column_name='next_value'
             """).fetchone()["data_type"]
             self.assertEqual(sequence_type, "bigint")
+            connection.rollback()
+        finally:
+            connection.close()
+
+    def test_malformed_legacy_suffixes_do_not_break_postgresql_reservations(self):
+        connection = self.connect_postgres(self.dsn, schema="public")
+        try:
+            connection.execute(f'SET search_path TO "{self.schema}"')
+            connection.execute(
+                "INSERT INTO customers(code) VALUES(%s),(%s),(%s)",
+                ("CUS-OLD", "CUS-12X", "CUS-000012"),
+            )
+            code = next_code(connection, "customer_malformed", "CUS", "customers", "code")
+            self.assertEqual(code, "CUS-000013")
+            connection.rollback()
+        finally:
+            connection.close()
+
+    def test_existing_sequence_catches_up_to_later_postgresql_imports(self):
+        connection = self.connect_postgres(self.dsn, schema="public")
+        try:
+            connection.execute(f'SET search_path TO "{self.schema}"')
+            first = next_code(connection, "customer_import", "CUS", "customers", "code")
+            self.assertEqual(first, "CUS-000010")
+            connection.commit()
+            connection.execute(
+                "INSERT INTO customers(code) VALUES(%s)",
+                ("CUS-000025",),
+            )
+            connection.commit()
+            self.assertEqual(
+                next_code(connection, "customer_import", "CUS", "customers", "code"),
+                "CUS-000026",
+            )
             connection.rollback()
         finally:
             connection.close()
