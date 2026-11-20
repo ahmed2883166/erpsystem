@@ -133,6 +133,8 @@ def main(argv=None) -> int:
     # Importing app must not trigger an implicit second initialization.
     os.environ["NEXUS_DB_BACKEND"] = "postgresql"
     os.environ["NEXUS_POSTGRES_DSN"] = scoped_dsn
+    # connect_postgres sets its own libpq search_path; pass the dedicated company schema explicitly.
+    os.environ["NEXUS_POSTGRES_SCHEMA"] = args.schema
     os.environ["NEXUS_DATA_DIR"] = str(data_dir)
     os.environ["NEXUS_BACKUP_DIR"] = str(backup_dir)
     os.environ["NEXUS_SKIP_DB_INIT"] = "1"
