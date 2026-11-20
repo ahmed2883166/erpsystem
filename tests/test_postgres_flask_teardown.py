@@ -14,9 +14,15 @@ from postgres_compat import PooledPostgresCompatConnection
 class FakeRawConnection:
     def __init__(self):
         self.rollback_calls = 0
+        self.autocommit = False
+        self.executed = []
 
     def rollback(self):
         self.rollback_calls += 1
+
+    def execute(self, statement, params=None):
+        self.executed.append((statement, params))
+        return self
 
 
 class FakeLease:
@@ -50,6 +56,8 @@ class FlaskPooledConnectionTeardownTests(unittest.TestCase):
         self.assertEqual(self.raw.rollback_calls, 1)
         self.assertEqual(len(self.lease.exit_calls), 1)
         self.assertIsNone(self.lease.exit_calls[0][0])
+        self.assertIn(("RESET statement_timeout", None), self.raw.executed)
+        self.assertFalse(self.raw.autocommit)
 
     def test_repeated_teardown_registration_does_not_duplicate_hook(self):
         register_database_connection_teardown(self.app)
