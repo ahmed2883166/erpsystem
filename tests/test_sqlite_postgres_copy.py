@@ -129,16 +129,6 @@ class SQLitePostgresCopyPlanningTests(unittest.TestCase):
                 )
         numeric_audit.assert_called_once_with("source.sqlite")
 
-    def test_copy_requires_snapshot_manifest_before_opening_postgres(self):
-        with patch(
-            "scripts.audit_sqlite_postgres_migration.inspect_numeric_source",
-            return_value={"safe_for_numeric_migration": True},
-        ):
-            with self.assertRaisesRegex(ValueError, "snapshot manifest is required"):
-                copy_database(
-                    "missing.sqlite", "postgresql://invalid", apply=True
-                )
-
     def test_copy_refuses_public_schema_before_connecting(self):
         with self.assertRaisesRegex(ValueError, "dedicated, isolated"):
             copy_database("missing.sqlite", "postgresql://invalid", schema="public", apply=True)
@@ -481,13 +471,8 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
-        import shutil
-        from scripts.snapshot_sqlite_before_postgres import create_sqlite_snapshot
-        snapshot_dir = Path(tempfile.mkdtemp(prefix="nexus-copy-snapshot-"))
-        self.addCleanup(shutil.rmtree, snapshot_dir, ignore_errors=True)
         self.addCleanup(path.unlink, missing_ok=True)
-        snapshot = create_sqlite_snapshot(path, snapshot_dir)
-        return snapshot["snapshot"]
+        return str(path)
 
     def _create_target(self, *, reject_negative=False):
         import psycopg

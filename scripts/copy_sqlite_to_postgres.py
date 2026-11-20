@@ -286,6 +286,14 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
     else:
         from audit_sqlite_postgres_migration import inspect_numeric_source
 
+    numeric_audit = inspect_numeric_source(sqlite_path)
+    if not numeric_audit.get("safe_for_numeric_migration"):
+        counts = numeric_audit.get("status_counts", {})
+        raise ValueError(
+            "Numeric migration audit did not pass; copy blocked. "
+            + json.dumps(counts, ensure_ascii=False, sort_keys=True)
+        )
+
     if not snapshot_manifest:
         raise ValueError(
             "A verified SQLite snapshot manifest is required; copy from a frozen snapshot, "
@@ -298,14 +306,6 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
     snapshot_result = verify_sqlite_snapshot(sqlite_path, snapshot_manifest)
     if not snapshot_result.get("verified"):
         raise ValueError("SQLite snapshot verification did not pass; copy blocked.")
-
-    numeric_audit = inspect_numeric_source(sqlite_path)
-    if not numeric_audit.get("safe_for_numeric_migration"):
-        counts = numeric_audit.get("status_counts", {})
-        raise ValueError(
-            "Numeric migration audit did not pass; copy blocked. "
-            + json.dumps(counts, ensure_ascii=False, sort_keys=True)
-        )
 
     try:
         import psycopg
