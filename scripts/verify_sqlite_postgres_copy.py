@@ -379,6 +379,20 @@ def verify_copy(
             )]
             for table in source_tables
         }
+        source_identity_columns = []
+        for table in source_tables:
+            metadata = src.execute(
+                'PRAGMA table_info("' + table.replace('"', '""') + '")'
+            ).fetchall()
+            primary = [row for row in metadata if int(row["pk"] or 0)]
+            if (
+                len(primary) == 1
+                and (primary[0]["type"] or "").strip().upper() == "INTEGER"
+            ):
+                source_identity_columns.append(
+                    table + "." + primary[0]["name"]
+                )
+        source_identity_columns.sort()
         dst = psycopg.connect(postgres_dsn, connect_timeout=10, autocommit=False,
                               row_factory=dict_row)
         dst.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
@@ -426,6 +440,73 @@ def verify_copy(
             if row["table_name"] != "nexus_schema_installation"
         }
         issues = []
+        target_identity_columns = [
+            row["table_name"] + "." + row["column_name"]
+            for row in dst.execute(
+                """SELECT table_name, column_name
+                   FROM information_schema.columns
+                   WHERE table_schema = %s AND is_identity = 'YES'
+                   ORDER BY table_name, column_name""",
+                (schema,),
+            ).fetchall()
+        ]
+        if source_identity_columns != target_identity_columns:
+            issues.append({
+                "control": "identity_column_coverage",
+                "sqlite": source_identity_columns,
+                "postgres": target_identity_columns,
+            })
+        # Every identity column must own a real sequence whose next value will
+        # not collide with an explicitly copied primary key.
+        from psycopg import sql as pg_sql
+        for identity in source_identity_columns:
+            table, column = identity.split(".", 1)
+            sequence_name_row = dst.execute(
+                "SELECT pg_get_serial_sequence(%s, %s) AS sequence_name",
+                (schema + "." + table, column),
+            ).fetchone()
+            sequence_name = sequence_name_row["sequence_name"] if sequence_name_row else None
+            if not sequence_name:
+                issues.append({
+                    "control": "identity_sequence_missing",
+                    "table": table, "column": column,
+                })
+                continue
+            sequence_object = dst.execute(
+                """SELECT n.nspname AS schema_name, c.relname AS sequence_name
+                   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE c.oid = to_regclass(%s) AND c.relkind = 'S'""",
+                (sequence_name,),
+            ).fetchone()
+            if not sequence_object:
+                issues.append({
+                    "control": "identity_sequence_missing",
+                    "table": table, "column": column,
+                    "sequence": sequence_name,
+                })
+                continue
+            sequence_state = dst.execute(
+                pg_sql.SQL("SELECT last_value, is_called FROM {}.{}").format(
+                    pg_sql.Identifier(sequence_object["schema_name"]),
+                    pg_sql.Identifier(sequence_object["sequence_name"]),
+                )
+            ).fetchone()
+            maximum_id = dst.execute(
+                "SELECT MAX(" + _ident(column) + ") AS max_id FROM "
+                + _ident(schema) + "." + _ident(table)
+            ).fetchone()["max_id"]
+            last_value = int(sequence_state["last_value"])
+            is_called = bool(sequence_state["is_called"])
+            if maximum_id is not None and (
+                last_value < int(maximum_id)
+                or (last_value == int(maximum_id) and not is_called)
+            ):
+                issues.append({
+                    "control": "identity_sequence_behind_data",
+                    "table": table, "column": column,
+                    "max_id": int(maximum_id),
+                    "last_value": last_value, "is_called": is_called,
+                })
         missing = sorted(set(source_tables) - target_tables)
         extra = sorted(target_tables - set(source_tables))
         if missing or extra:
