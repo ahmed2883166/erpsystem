@@ -47,11 +47,31 @@ def inspect_sqlite(path: str) -> dict:
             count = conn.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()[0]
             tables[name] = {"columns": columns, "row_count": count}
         foreign_keys = _sqlite_foreign_key_map(conn, list(tables))
+        duplicate_supplier_invoice_numbers = []
+        supplier_bill_columns = set(tables.get("supplier_bills", {}).get("columns", []))
+        if {"supplier_id", "supplier_invoice_no"}.issubset(supplier_bill_columns):
+            duplicate_supplier_invoice_numbers = [
+                {
+                    "supplier_id": row["supplier_id"],
+                    "normalized_invoice_no": row["normalized_invoice_no"],
+                    "count": int(row["duplicate_count"]),
+                }
+                for row in conn.execute(
+                    """SELECT supplier_id,
+                              lower(trim(supplier_invoice_no)) AS normalized_invoice_no,
+                              COUNT(*) AS duplicate_count
+                       FROM supplier_bills
+                       GROUP BY supplier_id, lower(trim(supplier_invoice_no))
+                       HAVING COUNT(*) > 1
+                       ORDER BY supplier_id, normalized_invoice_no"""
+                ).fetchall()
+            ]
         return {
             "path": str(source),
             "integrity_check": integrity,
             "foreign_key_violations": fk_issues,
             "foreign_keys": foreign_keys,
+            "duplicate_supplier_invoice_numbers": duplicate_supplier_invoice_numbers,
             "tables": tables,
         }
     finally:
@@ -160,9 +180,13 @@ def build_report(sqlite_info: dict, postgres_info: dict, numeric_audit: dict) ->
     source_ok = sqlite_info["integrity_check"] == ["ok"]
     fk_ok = not sqlite_info["foreign_key_violations"]
     numeric_ok = bool(numeric_audit.get("safe_for_numeric_migration"))
+    duplicate_supplier_invoice_numbers = sqlite_info.get(
+        "duplicate_supplier_invoice_numbers", []
+    )
     ready = (source_ok and fk_ok and numeric_ok and not missing_tables and not extra_tables
              and not column_issues and not count_differences
-             and not missing_foreign_keys and not extra_foreign_keys)
+             and not missing_foreign_keys and not extra_foreign_keys
+             and not duplicate_supplier_invoice_numbers)
     return {
         "read_only": True,
         "source_integrity_ok": source_ok,
@@ -173,6 +197,7 @@ def build_report(sqlite_info: dict, postgres_info: dict, numeric_audit: dict) ->
         "extra_postgres_tables": extra_tables,
         "column_differences": column_issues,
         "foreign_key_differences": foreign_key_differences,
+        "duplicate_supplier_invoice_numbers": duplicate_supplier_invoice_numbers,
         "nonempty_postgres_tables": count_differences,
         "source_table_count": len(source),
         "source_row_count": sum(t["row_count"] for t in source.values()),

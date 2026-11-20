@@ -76,6 +76,36 @@ class SQLitePostgresMigrationPreflightTests(unittest.TestCase):
         self.assertFalse(report["numeric_audit_passed"])
         self.assertEqual(report["numeric_audit"]["status_counts"]["invalid_values"], 1)
 
+    def test_preflight_blocks_duplicate_supplier_invoice_numbers(self):
+        source = {
+            "integrity_check": ["ok"],
+            "foreign_key_violations": [],
+            "tables": {
+                "supplier_bills": {
+                    "columns": ["id", "supplier_id", "supplier_invoice_no"],
+                    "row_count": 3,
+                },
+            },
+            "duplicate_supplier_invoice_numbers": [{
+                "supplier_id": 7,
+                "normalized_invoice_no": "inv-2026-01",
+                "count": 2,
+            }],
+        }
+        target = {
+            "tables": {
+                "supplier_bills": {
+                    "columns": ["id", "supplier_id", "supplier_invoice_no"],
+                    "row_count": 0,
+                },
+            }
+        }
+        report = build_report(source, target, {"safe_for_numeric_migration": True})
+        self.assertFalse(report["preflight_passed"])
+        self.assertEqual(
+            report["duplicate_supplier_invoice_numbers"][0]["count"], 2
+        )
+
     def test_preflight_blocks_source_integrity_and_foreign_key_issues(self):
         source = {
             "integrity_check": ["database disk image is malformed"],
