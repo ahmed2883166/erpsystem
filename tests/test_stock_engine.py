@@ -289,8 +289,8 @@ class StockValuationTests(unittest.TestCase):
         self.assertEqual(result,992)
         lines=post.call_args.args[4]
         self.assertEqual(len(lines),2)
-        self.assertEqual(lines[0][4],{"stock_product_id":self.product_id,"stock_warehouse_id":target_wh})
-        self.assertEqual(lines[1][4],{"stock_product_id":self.product_id,"stock_warehouse_id":self.warehouse_id})
+        self.assertEqual(lines[0][4],{"stock_product_id":self.product_id,"stock_warehouse_id":target_wh,"branch_id":3})
+        self.assertEqual(lines[1][4],{"stock_product_id":self.product_id,"stock_warehouse_id":self.warehouse_id,"branch_id":3})
         self.assertEqual(self.db.execute(
             "SELECT accounting_status FROM stock_movements WHERE id=?",(movement_id,)
         ).fetchone()["accounting_status"],"posted")
