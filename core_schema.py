@@ -34,6 +34,10 @@ CORE_SCHEMA_SQL = """
         journal_entry_id INTEGER NOT NULL UNIQUE REFERENCES journal_entries(id),
         created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS document_sequences (
+        sequence_key TEXT PRIMARY KEY,
+        next_value BIGINT NOT NULL CHECK(next_value > 0)
+    );
     CREATE TABLE IF NOT EXISTS opening_balance_import_refs (
         id INTEGER PRIMARY KEY,
         record_type TEXT NOT NULL,

@@ -2922,6 +2922,87 @@ class SalesIntegrationTests(unittest.TestCase):
         self.assertEqual(first["total_cost"] + second["total_cost"], Decimal("70.00"))
         self.db.commit()
 
+    def test_fifo_partial_return_restores_last_issued_lot_cost_and_keeps_net_cogs(self):
+        self.db.execute(
+            "UPDATE company_settings SET setting_value='fifo' WHERE setting_key='inventory_cost_method'"
+        )
+        extra_layers = [
+            ("OPEN-LOT-MIDDLE-7", "7", "170"),
+            ("OPEN-LOT-LAST-3", "3", "120"),
+        ]
+        for movement_no, quantity, unit_cost in extra_layers:
+            movement_id = self.db.execute(
+                """INSERT INTO stock_movements(
+                     movement_no,movement_type,product_id,target_warehouse_id,quantity,
+                     unit_cost,total_cost,movement_date)
+                   VALUES(?,'receipt',?,?,?,?,?, '2026-11-10')""",
+                (movement_no, self.product_id, self.warehouse_id, quantity, unit_cost,
+                 str(Decimal(quantity) * Decimal(unit_cost))),
+            ).lastrowid
+            self.db.execute(
+                """INSERT INTO stock_valuation_layers(
+                     product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost)
+                   VALUES(?,?,?,?,?,?)""",
+                (self.product_id, self.warehouse_id, movement_id, quantity, quantity, unit_cost),
+            )
+        self.db.commit()
+
+        self.db.execute("BEGIN IMMEDIATE")
+        invoice = sales.post_invoice(
+            self.db, self.customer_id, "2026-11-10", self.warehouse_id,
+            [{"product_id": self.product_id, "quantity": "15", "unit_price": "200"}],
+            "0", 1,
+        )
+        line_id = self.db.execute(
+            "SELECT id FROM sales_invoice_lines WHERE invoice_id=?", (invoice["invoice_id"],)
+        ).fetchone()["id"]
+        source_lots = self.db.execute(
+            "SELECT lot_id,quantity,cost_total FROM sales_invoice_line_lots "
+            "WHERE invoice_line_id=? ORDER BY id",
+            (line_id,),
+        ).fetchall()
+        self.assertEqual([Decimal(row["quantity"]) for row in source_lots],
+                         [Decimal("5"), Decimal("7"), Decimal("3")])
+        self.assertEqual([Decimal(row["cost_total"]) for row in source_lots],
+                         [Decimal("50"), Decimal("1190"), Decimal("360")])
+        invoice_cost = self.db.execute(
+            "SELECT cost_total FROM sales_invoice_lines WHERE id=?", (line_id,)
+        ).fetchone()["cost_total"]
+        self.assertEqual(Decimal(invoice_cost), Decimal("1600.00"))
+
+        credit = sales.post_credit_note(
+            self.db, invoice["invoice_id"], "2026-11-11", "مرتجع آخر طبقة FIFO",
+            [{"invoice_line_id": line_id, "quantity": "3"}], 1,
+        )
+        self.assertEqual(credit["total_cost"], Decimal("360.00"))
+        returned_lots = self.db.execute(
+            """SELECT lot_id,quantity FROM sales_credit_note_line_lots
+               WHERE credit_note_line_id=(
+                   SELECT id FROM sales_credit_note_lines WHERE credit_note_id=?
+               ) ORDER BY id""",
+            (credit["credit_note_id"],),
+        ).fetchall()
+        self.assertEqual(
+            [(row["lot_id"], Decimal(row["quantity"])) for row in returned_lots],
+            [(source_lots[-1]["lot_id"], Decimal("3"))],
+        )
+        remaining_sold_qty = self.db.execute(
+            """SELECT CAST(il.quantity AS NUMERIC) - COALESCE(SUM(CAST(cl.quantity AS NUMERIC)),0)
+               FROM sales_invoice_lines il
+               LEFT JOIN sales_credit_note_lines cl ON cl.invoice_line_id=il.id
+               LEFT JOIN sales_credit_notes cn ON cn.id=cl.credit_note_id AND cn.status='posted'
+               WHERE il.id=? GROUP BY il.id""",
+            (line_id,),
+        ).fetchone()[0]
+        self.assertEqual(Decimal(str(remaining_sold_qty)), Decimal("12"))
+        net_cogs = self.db.execute(
+            """SELECT COALESCE(SUM(CAST(jl.debit AS NUMERIC)-CAST(jl.credit AS NUMERIC)),0)
+               FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+               WHERE a.code='5100'"""
+        ).fetchone()[0]
+        self.assertEqual(Decimal(str(net_cogs)), Decimal("1240"))
+        self.db.commit()
+
     def test_sales_return_restores_original_quantities_across_multiple_lots(self):
         extra_move = self.db.execute(
             """INSERT INTO stock_movements(

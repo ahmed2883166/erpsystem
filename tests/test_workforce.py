@@ -860,42 +860,66 @@ class WorkforceTests(unittest.TestCase):
         })
         self.client.post("/hr/custody/1/expense", data={
             "expense_date": "2026-11-10", "expense_account_id": "3",
-            "amount": "1300", "description": "مصروف أول"
+            "amount": "800", "description": "مصروف أول"
         })
         self.client.post("/hr/custody/1/settle", data={
-            "settlement_date": "2026-11-10", "returned_amount": "100"
+            "settlement_date": "2026-11-10", "returned_amount": "500"
         })
 
-        self.client.post("/hr/custody/1/expense", data={
+        conn = sqlite3.connect(self.db_path)
+        before_rejection = conn.execute(
+            "SELECT status,remaining_amount FROM employee_custodies WHERE id=1"
+        ).fetchone()
+        expense_count_before = conn.execute(
+            "SELECT COUNT(*) FROM custody_expenses WHERE custody_id=1"
+        ).fetchone()[0]
+        journal_count_before = conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
+        conn.close()
+        self.assertEqual(before_rejection, ("open", "700.00"))
+        self.assertEqual(expense_count_before, 1)
+
+        rejected = self.client.post("/hr/custody/1/expense", data={
             "expense_date": "2026-11-11", "expense_account_id": "3",
-            "amount": "500", "description": "مصروف بعد الرد"
+            "amount": "800", "description": "مصروف يتجاوز المتبقي"
         })
+        self.assertEqual(rejected.status_code, 302)
+        with self.client.session_transaction() as session:
+            flashes = session.get("_flashes", [])
+        self.assertTrue(any("تتجاوز المتاح" in message for _, message in flashes))
+
         conn = sqlite3.connect(self.db_path)
-        state = conn.execute(
+        after_rejection = conn.execute(
             "SELECT status,remaining_amount FROM employee_custodies WHERE id=1"
         ).fetchone()
-        expense_count = conn.execute(
+        expense_count_after = conn.execute(
             "SELECT COUNT(*) FROM custody_expenses WHERE custody_id=1"
         ).fetchone()[0]
+        journal_count_after = conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0]
         conn.close()
-        self.assertEqual(state, ("open", "100.00"))
-        self.assertEqual(expense_count, 2)
+        self.assertEqual(after_rejection, ("open", "700.00"))
+        self.assertEqual(expense_count_after, expense_count_before)
+        self.assertEqual(journal_count_after, journal_count_before)
 
-        self.client.post("/hr/custody/1/expense", data={
+        accepted = self.client.post("/hr/custody/1/expense", data={
             "expense_date": "2026-11-12", "expense_account_id": "3",
-            "amount": "101", "description": "مصروف يتجاوز المتبقي"
+            "amount": "100", "description": "مصروف بعد الرد"
         })
+        self.assertEqual(accepted.status_code, 302)
         conn = sqlite3.connect(self.db_path)
-        state_after_rejection = conn.execute(
+        final_state = conn.execute(
             "SELECT status,remaining_amount FROM employee_custodies WHERE id=1"
         ).fetchone()
-        expense_count_after_rejection = conn.execute(
+        expense_count_final = conn.execute(
             "SELECT COUNT(*) FROM custody_expenses WHERE custody_id=1"
         ).fetchone()[0]
+        returned_total = conn.execute(
+            "SELECT COALESCE(SUM(CAST(amount AS NUMERIC)),0) "
+            "FROM custody_returns WHERE custody_id=1"
+        ).fetchone()[0]
         conn.close()
-        self.assertEqual(state_after_rejection, ("open", "100.00"))
-        self.assertEqual(expense_count_after_rejection, 2)
-
+        self.assertEqual(final_state, ("open", "600.00"))
+        self.assertEqual(expense_count_final, 2)
+        self.assertEqual(Decimal(str(returned_total)), Decimal("500"))
 
     def test_custody_return_cannot_exceed_remaining_balance(self):
         self.add_employee()

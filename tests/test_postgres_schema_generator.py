@@ -48,6 +48,7 @@ def _with_required_numeric_override_tables(snapshot):
 class PostgreSQLSchemaGeneratorTests(unittest.TestCase):
     def test_maps_sqlite_types_conservatively(self):
         self.assertEqual(pg_type({"type": "INTEGER"}), "BIGINT")
+        self.assertEqual(pg_type({"type": "BIGINT"}), "BIGINT")
         self.assertEqual(pg_type({"type": "REAL"}), "DOUBLE PRECISION")
         self.assertEqual(pg_type({"type": "TEXT"}), "TEXT")
         self.assertEqual(pg_type({"type": ""}), "TEXT")

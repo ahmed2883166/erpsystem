@@ -47,7 +47,7 @@ def pg_type(column, table_name=None):
     if override:
         return override
     declared = (column.get("type") or "").strip().upper()
-    if declared == "INTEGER":
+    if declared in ("INTEGER", "BIGINT"):
         return "BIGINT"
     if declared == "REAL":
         return "DOUBLE PRECISION"
