@@ -316,7 +316,7 @@ def seed_egypt_2026(conn):
                     ("400000",None,"25")]),
         ("900000", [("0","200000","20"),("200000","400000","22.5"),("400000",None,"25")]),
         ("1200000", [("0","400000","22.5"),("400000",None,"25")]),
-        (None, [("0",None,"27.5")]),
+        (None, [("0","1200000","25"),("1200000",None,"27.5")]),
     ]
     _executemany(conn, """
         INSERT INTO payroll_tax_tier_brackets(rule_set_id,income_max,lower_bound,upper_bound,rate)
