@@ -10,13 +10,27 @@ _PREFIX = re.compile(r"[A-Z][A-Z0-9]*\Z")
 
 
 def _next_legacy_number(connection, table, column, prefix):
-    row = execute_compat(
+    """Return the next numeric suffix, ignoring malformed legacy codes.
+
+    SQLite silently casts non-numeric suffixes to zero, while PostgreSQL raises
+    an invalid-text-representation error. Parse candidate suffixes in Python
+    so both engines make the same decision without lossy SQL casts.
+    """
+    rows = execute_compat(
         connection,
-        f"SELECT MAX(CAST(SUBSTR({column}, ?) AS BIGINT)) AS last_no "
-        f"FROM {table} WHERE {column} LIKE ?",
-        (len(prefix) + 2, prefix + "-%"),
-    ).fetchone()
-    return int(row["last_no"] or 0) + 1
+        f"SELECT {column} FROM {table} WHERE {column} LIKE ?",
+        (prefix + "-%",),
+    ).fetchall()
+    last_number = 0
+    marker = prefix + "-"
+    for row in rows:
+        value = row[column]
+        if not isinstance(value, str) or not value.startswith(marker):
+            continue
+        suffix = value[len(marker):]
+        if suffix.isascii() and suffix.isdigit():
+            last_number = max(last_number, int(suffix))
+    return last_number + 1
 
 
 def next_code(connection, sequence_key, prefix, table, column, width=6):
@@ -103,7 +117,11 @@ def next_code(connection, sequence_key, prefix, table, column, width=6):
             return f"{prefix}-{number:0{width}d}"
 
     else:
-        number = int(row["next_value"])
+        # Keep the reservation ahead of codes inserted by older import paths
+        # or administrators before the sequence row was introduced.
+        number = max(int(row["next_value"]), _next_legacy_number(
+            connection, table, column, prefix
+        ))
 
     execute_compat(
         connection,
