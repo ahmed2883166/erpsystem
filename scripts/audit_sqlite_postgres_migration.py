@@ -21,6 +21,7 @@ from scripts.verify_sqlite_postgres_copy import (
 )
 from scripts.audit_postgres_numeric_data import audit_numeric_candidates
 from scripts.inspect_sqlite_schema import inspect_database
+from scripts.generate_postgres_schema import pg_type
 
 
 def inspect_sqlite(path: str) -> dict:
@@ -42,11 +43,16 @@ def inspect_sqlite(path: str) -> dict:
         for item in names:
             name = item["name"]
             quoted = '"' + name.replace('"', '""') + '"'
-            columns = [row["name"] for row in conn.execute(
-                f"PRAGMA table_info({quoted})"
-            )]
+            column_rows = conn.execute(f"PRAGMA table_info({quoted})").fetchall()
+            columns = [row["name"] for row in column_rows]
+            column_types = {
+                row["name"]: (row["type"] or "").strip().upper()
+                for row in column_rows
+            }
             count = conn.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()[0]
-            tables[name] = {"columns": columns, "row_count": count}
+            tables[name] = {
+                "columns": columns, "column_types": column_types, "row_count": count
+            }
         foreign_keys = _sqlite_foreign_key_map(conn, list(tables))
         duplicate_supplier_invoice_numbers = []
         supplier_bill_columns = set(tables.get("supplier_bills", {}).get("columns", []))
@@ -73,6 +79,9 @@ def inspect_sqlite(path: str) -> dict:
             "foreign_key_violations": fk_issues,
             "foreign_keys": foreign_keys,
             "duplicate_supplier_invoice_numbers": duplicate_supplier_invoice_numbers,
+            "stale_rebuild_tables": sorted(
+                name for name in tables if name.endswith("_rebuilt")
+            ),
             "tables": tables,
         }
     finally:
@@ -108,7 +117,7 @@ def inspect_postgres(dsn: str, schema: str) -> dict:
     try:
         conn.execute("SET TRANSACTION READ ONLY")
         rows = conn.execute(
-            """SELECT table_name, column_name
+            """SELECT table_name, column_name, data_type
                FROM information_schema.columns
                WHERE table_schema = %s
                ORDER BY table_name, ordinal_position""",
@@ -116,8 +125,12 @@ def inspect_postgres(dsn: str, schema: str) -> dict:
         ).fetchall()
         tables: dict[str, dict] = {}
         for row in rows:
-            tables.setdefault(row["table_name"], {"columns": [], "row_count": None})
+            tables.setdefault(
+                row["table_name"],
+                {"columns": [], "column_types": {}, "row_count": None},
+            )
             tables[row["table_name"]]["columns"].append(row["column_name"])
+            tables[row["table_name"]]["column_types"][row["column_name"]] = row["data_type"]
         foreign_keys = _pg_foreign_key_map(conn, schema)
         marker_present = "nexus_schema_installation" in tables
         baseline_sha256 = None
@@ -165,6 +178,7 @@ def build_report(
     missing_tables = sorted(set(source) - set(target))
     extra_tables = sorted(set(target) - set(source))
     column_issues = []
+    type_issues = []
     count_differences = []
     missing_foreign_keys, extra_foreign_keys = _foreign_key_differences(
         sqlite_info.get("foreign_keys", []), postgres_info.get("foreign_keys", [])
@@ -192,6 +206,33 @@ def build_report(
                 "missing_in_postgres": missing,
                 "extra_in_postgres": extra,
             })
+        source_types = details.get("column_types")
+        target_types = target[table].get("column_types")
+        if source_types is not None and target_types is not None:
+            mismatches = []
+            for column, source_type in source_types.items():
+                if column not in target_types:
+                    continue
+                expected = pg_type(
+                    {"name": column, "type": source_type}, table
+                ).strip().lower()
+                expected_family = (
+                    "numeric" if expected.startswith("numeric")
+                    else "double precision" if expected == "double precision"
+                    else "bigint" if expected == "bigint"
+                    else "bytea" if expected == "bytea"
+                    else "text"
+                )
+                actual_family = str(target_types[column] or "").strip().lower()
+                if actual_family != expected_family:
+                    mismatches.append({
+                        "column": column,
+                        "sqlite_declared_type": source_type,
+                        "expected_postgres_type": expected_family,
+                        "actual_postgres_type": actual_family,
+                    })
+            if mismatches:
+                type_issues.append({"table": table, "columns": mismatches})
         if target[table]["row_count"] != 0:
             count_differences.append({
                 "table": table,
@@ -212,11 +253,13 @@ def build_report(
     duplicate_supplier_invoice_numbers = sqlite_info.get(
         "duplicate_supplier_invoice_numbers", []
     )
+    stale_rebuild_tables = sqlite_info.get("stale_rebuild_tables", [])
     ready = (source_ok and fk_ok and numeric_ok and marker_ok and dashboard_version_ok
              and not missing_tables and not extra_tables
              and not column_issues and not count_differences
              and not missing_foreign_keys and not extra_foreign_keys
-             and not duplicate_supplier_invoice_numbers)
+             and not duplicate_supplier_invoice_numbers and not stale_rebuild_tables
+             and not type_issues)
     return {
         "read_only": True,
         "source_integrity_ok": source_ok,
@@ -229,8 +272,10 @@ def build_report(
         "missing_postgres_tables": missing_tables,
         "extra_postgres_tables": extra_tables,
         "column_differences": column_issues,
+        "type_differences": type_issues,
         "foreign_key_differences": foreign_key_differences,
         "duplicate_supplier_invoice_numbers": duplicate_supplier_invoice_numbers,
+        "stale_rebuild_tables": stale_rebuild_tables,
         "nonempty_postgres_tables": count_differences,
         "source_table_count": len(source),
         "source_row_count": sum(t["row_count"] for t in source.values()),
