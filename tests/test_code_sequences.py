@@ -135,6 +135,20 @@ class PostgreSQLNumberSequenceTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_idle_managed_connection_can_reserve_first_code(self):
+        connection = self.connect_postgres(self.dsn, schema="public")
+        try:
+            connection.execute(f'SET search_path TO "{self.schema}"')
+            connection.commit()
+            code = next_code(
+                connection, "idle_first_statement", "CUS", "customers", "code"
+            )
+            self.assertEqual(code, "CUS-000010")
+            self.assertEqual(connection.info.transaction_status.name, "INTRANS")
+            connection.rollback()
+        finally:
+            connection.close()
+
     def test_sequence_continues_after_legacy_codes_and_rolls_back(self):
         from code_sequences import next_code
 

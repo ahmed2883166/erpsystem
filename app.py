@@ -44,6 +44,7 @@ from analytic_dimensions import initialize_analytic_dimensions_schema, active_di
 from financial_planning import planning_bp, initialize_planning_schema
 from period_adjustments import adjustments_bp, initialize_adjustments_schema
 from activity_profiles import (initialize_activity_profiles_schema, list_activity_profiles, create_activity_profile, create_specialized_activity_profile, SPECIALIZED_ACTIVITY_PRESETS, set_activity_profile_active, validate_activity_profile, update_custom_activity_profile, get_active_activity_profile)
+from company_activities import initialize_company_activity_schema
 from report_exports import register_report_exports
 from licensing import get_license_status, activate_license
 from database import connect_database, enable_wal, fetch_page, register_sqlite_connection_teardown
@@ -631,7 +632,9 @@ def initialize_database():
     initialize_analytic_dimensions_schema(dashboard_connection)
     initialize_planning_schema(dashboard_connection)
     initialize_adjustments_schema(dashboard_connection)
-    initialize_activity_profiles_schema(dashboard_connection)
+    # Initialize the complete activity-pack schema during clean startup;
+    # the initializer also ensures the shared activity_profiles registry.
+    initialize_company_activity_schema(dashboard_connection)
     dashboard_connection.close()
 
 

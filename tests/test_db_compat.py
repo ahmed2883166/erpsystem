@@ -208,11 +208,22 @@ class _FakePsycopgConnection:
         )
         self.autocommit = autocommit
         self.statements = []
+        self.commits = 0
+        self.rollbacks = 0
 
     def execute(self, statement):
         self.statements.append(statement)
         if self.autocommit is False or statement.strip().upper() == "BEGIN":
             self.info.transaction_status = SimpleNamespace(name="INTRANS")
+        return self
+
+    def commit(self):
+        self.commits += 1
+        self.info.transaction_status = SimpleNamespace(name="IDLE")
+
+    def rollback(self):
+        self.rollbacks += 1
+        self.info.transaction_status = SimpleNamespace(name="IDLE")
 
 
 class PortableIndexInspectionTests(unittest.TestCase):
@@ -348,16 +359,36 @@ class PortableScriptExecutionTests(unittest.TestCase):
 
 
 class PortableTransactionStateTests(unittest.TestCase):
-    def test_postgresql_managed_transaction_uses_psycopg_lazy_begin(self):
+    def test_postgresql_managed_transaction_establishes_owned_transaction(self):
         connection = _FakePsycopgConnection("IDLE", autocommit=False)
         self.assertFalse(transaction_is_active(connection))
         self.assertTrue(begin_write_transaction(connection))
-        # psycopg opens the transaction on the first real statement; issuing
-        # SQL BEGIN here would create a nested-transaction warning.
-        self.assertEqual(connection.statements, [])
-        self.assertFalse(transaction_is_active(connection))
-        connection.execute("INSERT INTO probe VALUES (1)")
+        # A harmless statement forces psycopg's lazy transaction to begin
+        # before ownership is returned to the migration wrapper.
+        self.assertEqual(connection.statements, ["SELECT 1"])
         self.assertTrue(transaction_is_active(connection))
+
+    def test_nested_postgresql_migrations_share_one_owned_transaction(self):
+        connection = _FakePsycopgConnection("IDLE", autocommit=False)
+
+        @transactional_migration
+        def inner(conn):
+            conn.execute("INSERT INTO probe VALUES (1)")
+
+        @transactional_migration
+        def outer(conn):
+            inner(conn)
+            self.assertTrue(transaction_is_active(conn))
+            conn.execute("INSERT INTO probe VALUES (2)")
+
+        outer(connection)
+        self.assertEqual(connection.commits, 1)
+        self.assertEqual(connection.rollbacks, 0)
+        self.assertEqual(connection.statements[0], "SELECT 1")
+        self.assertEqual(
+            [item for item in connection.statements if item != "SELECT 1"],
+            ["INSERT INTO probe VALUES (1)", "INSERT INTO probe VALUES (2)"],
+        )
 
     def test_postgresql_autocommit_connection_uses_explicit_begin(self):
         connection = _FakePsycopgConnection("IDLE", autocommit=True)
