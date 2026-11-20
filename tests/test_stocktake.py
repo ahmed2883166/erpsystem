@@ -314,8 +314,10 @@ class StocktakeRouteTests(unittest.TestCase):
         branch_net = {source_branch:Decimal("0"),target_branch:Decimal("0")}
         for line in clearing_lines:
             branch_net[line["branch_id"]] += Decimal(line["debit"])-Decimal(line["credit"])
-        self.assertEqual(branch_net[target_branch],Decimal("20"))
-        self.assertEqual(branch_net[source_branch],Decimal("-20"))
+        # The source branch's asset clearing receivable offsets its inventory
+        # reduction; the destination branch carries the matching credit balance.
+        self.assertEqual(branch_net[source_branch],Decimal("20"))
+        self.assertEqual(branch_net[target_branch],Decimal("-20"))
         self.assertEqual(sum(branch_net.values()),Decimal("0"))
 
         # Reverse the same quantity: branch balances return to zero and stock returns.
