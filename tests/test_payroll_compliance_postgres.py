@@ -2,10 +2,14 @@
 import os
 import unittest
 import uuid
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 
 from postgres_database import connect_postgres
-from payroll_compliance import ensure_default_payroll_rules, calculate_payroll_deductions
+from payroll_compliance import (
+    ensure_default_payroll_rules, calculate_payroll_deductions, activate_payroll_rule,
+)
 
 
 POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
@@ -84,6 +88,45 @@ class PostgreSQLPayrollComplianceTests(unittest.TestCase):
         self.assertEqual(result["employee_insurance"], Decimal("1650.00"))
         self.assertEqual(result["employer_insurance"], Decimal("2812.50"))
         self.assertEqual(result["tax"], Decimal("1482.50"))
+
+    def test_concurrent_activation_serializes_overlapping_country_category_rules(self):
+        rule_ids = []
+        for effective_from in ("2026-01-01", "2026-06-01"):
+            row = self.conn.execute("""
+                INSERT INTO payroll_rule_sets(
+                    country_code,category_code,effective_from,effective_to,status,
+                    personal_exemption_annual,taxable_rounding_unit,insurance_floor,
+                    insurance_ceiling,employee_insurance_rate,employer_insurance_rate,enabled
+                ) VALUES('EG','local',?,NULL,'approved','24000','1','1000','10000','10','15',1)
+                RETURNING id
+            """, (effective_from,)).fetchone()
+            rule_ids.append(row["id"])
+        self.conn.commit()
+
+        barrier = threading.Barrier(2)
+
+        def activate(rule_id):
+            connection = connect_postgres(POSTGRES_DSN, schema=self.schema)
+            try:
+                barrier.wait(timeout=15)
+                activate_payroll_rule(connection, rule_id)
+                connection.commit()
+                return "active"
+            except ValueError:
+                connection.rollback()
+                return "rejected"
+            finally:
+                connection.close()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(activate, rule_ids))
+
+        self.assertEqual(sorted(results), ["active", "rejected"])
+        states = self.conn.execute(
+            "SELECT status FROM payroll_rule_sets WHERE id=ANY(%s) ORDER BY id",
+            (rule_ids,),
+        ).fetchall()
+        self.assertEqual(sorted(row["status"] for row in states), ["active", "approved"])
 
     def test_default_seed_never_overwrites_reviewed_rule_values(self):
         ensure_default_payroll_rules(self.conn)
