@@ -75,3 +75,58 @@ class PostgresCompatConnection:
 
     def __exit__(self, exc_type, exc_value, traceback):
         return self._connection.__exit__(exc_type, exc_value, traceback)
+
+
+class PooledPostgresCompatConnection:
+    """DB-API adapter that returns a pool lease instead of closing its socket.
+
+    Flask's existing teardown calls connection.close(). For SQLite that drops
+    the request connection and rolls back any uncommitted work. This adapter
+    preserves that contract while returning the borrowed PostgreSQL connection
+    to psycopg_pool for reuse.
+    """
+
+    _nexus_postgres_connection = True
+
+    def __init__(self, lease):
+        self._lease = lease
+        self._closed = False
+        raw_connection = lease.__enter__()
+        self._connection = PostgresCompatConnection(raw_connection)
+
+    @property
+    def closed(self):
+        return self._closed
+
+    def _ensure_open(self):
+        if self._closed:
+            raise RuntimeError("PostgreSQL pool lease is already returned.")
+
+    def close(self):
+        """Roll back unfinished work and return the lease exactly once."""
+        if self._closed:
+            return
+        try:
+            self._connection.rollback()
+        except BaseException as exc:
+            self._closed = True
+            self._lease.__exit__(type(exc), exc, exc.__traceback__)
+            raise
+        self._closed = True
+        self._lease.__exit__(None, None, None)
+
+    def __getattr__(self, name):
+        self._ensure_open()
+        return getattr(self._connection, name)
+
+    def execute(self, query, params=None):
+        self._ensure_open()
+        return self._connection.execute(query, params)
+
+    def executemany(self, query, params_seq):
+        self._ensure_open()
+        return self._connection.executemany(query, params_seq)
+
+    def cursor(self, *args, **kwargs):
+        self._ensure_open()
+        return self._connection.cursor(*args, **kwargs)
