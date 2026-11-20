@@ -2270,11 +2270,24 @@ def valuation_reconciliation():
             row["status"] = "matched" if row["difference"].quantize(D("0.01")) == D("0.00") else "review"
         matched_account_count = sum(1 for row in rows if row["status"] == "matched")
         difference_account_count = len(rows)-matched_account_count
-        reconciliation_status = "matched" if (total_difference.quantize(D("0.01")) == D("0.00") and layer_integrity_issue_count == 0) else "review"
         detail_matched_count = sum(1 for row in detail_rows if row["status"] == "matched")
         detail_difference_count = len(detail_rows) - detail_matched_count
         unallocated_rows = [{"code": code, "name": accounts[code]["name_ar"],
             "ledger": value} for code, value in sorted(unallocated_by_account.items()) if value != 0]
+        # A zero net difference is not sufficient: opposing product/warehouse
+        # variances or unallocated legacy GL lines can cancel each other out.
+        # Mark the report matched only when account totals, every tagged detail,
+        # unallocated balances, and valuation-layer integrity all reconcile.
+        has_unallocated_balance = any(
+            value.quantize(D("0.01")) != D("0.00")
+            for value in unallocated_by_account.values()
+        )
+        reconciliation_status = "matched" if (
+            total_difference.quantize(D("0.01")) == D("0.00")
+            and layer_integrity_issue_count == 0
+            and detail_difference_count == 0
+            and not has_unallocated_balance
+        ) else "review"
         return render_template("stock_reconciliation.html", rows=rows, warehouse_rows=warehouse_rows,
             warehouse_product_rows=warehouse_product_rows, detail_rows=detail_rows,
             unallocated_rows=unallocated_rows, unallocated_total=unallocated_total,

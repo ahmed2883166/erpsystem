@@ -145,7 +145,9 @@ class StockReconciliationReportTests(unittest.TestCase):
 
         report = self.run_report()
 
-        self.assertEqual(report["reconciliation_status"], "matched")
+        # Net GL and valuation totals cancel, but the unallocated 20 EGP
+        # must prevent a false "matched" status.
+        self.assertEqual(report["reconciliation_status"], "review")
         self.assertEqual(report["total_valuation"], Decimal("100"))
         self.assertEqual(report["total_ledger"], Decimal("100"))
         self.assertEqual(report["total_difference"], Decimal("0"))
