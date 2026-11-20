@@ -7,7 +7,8 @@ from functools import wraps
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from accounting_core import post_journal
-from db_compat import begin_write_transaction, database_dialect, table_exists, execute_script, DB_ERROR
+from db_compat import (begin_write_transaction, database_dialect, table_exists,
+                       execute_script, DB_ERROR, transactional_connection_initializer)
 from db_sql import execute_compat
 
 
@@ -43,10 +44,8 @@ def _db():
     return connect_database(DB_PATH, isolation_level=None)
 
 
-def initialize_currency_schema():
-    c = _db()
-    if database_dialect(c) == "postgresql":
-        begin_write_transaction(c)
+@transactional_connection_initializer(_db)
+def initialize_currency_schema(c):
     schema_sql = """
     CREATE TABLE IF NOT EXISTS fx_exchange_rates(
       id INTEGER PRIMARY KEY, currency_code TEXT NOT NULL, rate_date TEXT NOT NULL,
@@ -83,14 +82,7 @@ def initialize_currency_schema():
             "rate_to_base TEXT NOT NULL",
             "rate_to_base NUMERIC(24, 10) NOT NULL",
         )
-    try:
-        execute_script(c, schema_sql)
-        c.commit()
-    except Exception:
-        c.rollback()
-        raise
-    finally:
-        c.close()
+    execute_script(c, schema_sql)
 
 def _role(fn):
     @wraps(fn)
