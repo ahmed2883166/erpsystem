@@ -331,9 +331,14 @@ def generate_postgres_ddl(snapshot, *, require_all_numeric_overrides=True):
         for column in columns:
             name = column["name"]
             qname = quote_ident(name)
+            is_fixed_dashboard_singleton_pk = (
+                table_name == "management_dashboard_data_version"
+                and name == "id"
+            )
             is_single_integer_pk = (
                 len(primary) == 1 and primary[0]["name"] == name
                 and (column.get("type") or "").strip().upper() == "INTEGER"
+                and not is_fixed_dashboard_singleton_pk
             )
             definition = f"    {qname} {pg_type(column, table_name)}"
             if is_single_integer_pk:
