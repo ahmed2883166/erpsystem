@@ -277,6 +277,19 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
         raise ValueError("Copy requires a dedicated, isolated PostgreSQL schema; public is blocked.")
     if batch_size < 1 or batch_size > 10000:
         raise ValueError("batch_size must be between 1 and 10000.")
+    # Enforce the same exact-Decimal safety audit used by preflight even
+    # when an operator invokes this copy utility directly. The source audit is
+    # read-only and runs before opening a PostgreSQL connection.
+    from scripts.audit_sqlite_postgres_migration import inspect_numeric_source
+
+    numeric_audit = inspect_numeric_source(sqlite_path)
+    if not numeric_audit.get("safe_for_numeric_migration"):
+        counts = numeric_audit.get("status_counts", {})
+        raise ValueError(
+            "Numeric migration audit did not pass; copy blocked. "
+            + json.dumps(counts, ensure_ascii=False, sort_keys=True)
+        )
+
     try:
         import psycopg
         from psycopg.rows import dict_row
