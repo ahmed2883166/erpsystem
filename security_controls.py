@@ -29,7 +29,7 @@ def linked_operational_source(connection, entry_id):
     """
     for table_name in sorted(table_names(connection)):
         if table_name.startswith("sqlite_") or table_name in {
-            "journal_entries", "journal_lines"
+            "journal_entries", "journal_lines", "journal_posting_keys"
         }:
             continue
         columns = table_columns(connection, table_name)
