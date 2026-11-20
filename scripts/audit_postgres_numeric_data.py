@@ -55,7 +55,7 @@ def _audit_explicit_numeric_override(connection, table, column, target_type, exp
             "expected_source_type": expected_source_type,
         }
 
-    match = re.fullmatch(r"NUMERIC\\((\\d+),\\s*(\\d+)\\)", target_type.upper())
+    match = re.fullmatch(r"NUMERIC\((\d+),\s*(\d+)\)", target_type.upper())
     if not match:
         return {
             "table": table, "column": column, "target_type": target_type,
