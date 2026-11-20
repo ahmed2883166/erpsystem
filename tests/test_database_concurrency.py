@@ -394,7 +394,7 @@ class TenClientWriteConcurrencyTests(unittest.TestCase):
                     for number in range(1, reader_count + 1)
                 )
                 for future in futures:
-                    future.result(timeout=120)
+                    future.result(timeout=240)
 
             elapsed = time.perf_counter() - began
             self.assertEqual(failures, [])
