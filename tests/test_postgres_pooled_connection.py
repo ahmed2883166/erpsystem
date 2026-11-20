@@ -76,6 +76,23 @@ class PooledPostgresCompatConnectionTests(unittest.TestCase):
         self.assertEqual(self.raw.calls, [("commit",), ("rollback",)])
         self.assertEqual(len(self.lease.exit_calls), 1)
 
+    def test_context_manager_returns_lease_and_preserves_success_semantics(self):
+        with self.connection as connection:
+            self.assertIs(connection, self.connection)
+            connection.execute("SELECT 1")
+        self.assertTrue(self.connection.closed)
+        self.assertEqual(len(self.lease.exit_calls), 1)
+        self.assertIsNone(self.lease.exit_calls[0][0])
+
+    def test_context_manager_forwards_exception_to_pool_lease(self):
+        error = RuntimeError("request failed")
+        with self.assertRaisesRegex(RuntimeError, "request failed"):
+            with self.connection:
+                raise error
+        self.assertTrue(self.connection.closed)
+        self.assertEqual(len(self.lease.exit_calls), 1)
+        self.assertIs(self.lease.exit_calls[0][1], error)
+
     def test_use_after_close_is_rejected(self):
         self.connection.close()
         with self.assertRaisesRegex(RuntimeError, "lease is already returned"):
