@@ -178,7 +178,7 @@ def verify_sqlite_snapshot(
             )
         raise FileNotFoundError(
             f"No adjacent SQLite snapshot manifest was found for {snapshot}; "
-            "pass --manifest with an existing manifest path."
+            "provide an existing manifest path explicitly."
         )
     manifest = manifest.resolve(strict=True)
     payload = json.loads(manifest.read_text(encoding="utf-8"))
