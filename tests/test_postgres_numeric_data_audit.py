@@ -173,10 +173,15 @@ class PostgreSQLNumericDataAuditTests(unittest.TestCase):
                 CREATE TABLE fx_exchange_rates(rate_to_base TEXT);
                 INSERT INTO fx_exchange_rates VALUES('1.12345678901');
             """)
-            report = audit_numeric_candidates(
-                connection,
-                _snapshot([("amount", "TEXT")]),
-            )
+            snapshot = _snapshot([("amount", "TEXT")])
+            for table in snapshot["tables"]:
+                if table["name"] in {"currencies", "tax_rates"}:
+                    for column in table["columns"]:
+                        if (table["name"], column["name"]) in {
+                            ("currencies", "rate_to_base"), ("tax_rates", "rate")
+                        }:
+                            column["type"] = "REAL"
+            report = audit_numeric_candidates(connection, snapshot)
             self.assertFalse(report["safe_for_numeric_migration"])
             overrides = {
                 (item["table"], item["column"]): item
