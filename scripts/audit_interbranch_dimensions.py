@@ -61,7 +61,7 @@ def audit_interbranch_dimensions(database_path):
                              json.dumps(schema_gaps, ensure_ascii=False))
 
         rows = conn.execute("""
-            SELECT m.id, m.movement_no, m.movement_date, m.journal_entry_id,
+            SELECT m.id, m.movement_no, m.movement_date, m.product_id, m.journal_entry_id,
                    m.accounting_status, m.source_warehouse_id, m.target_warehouse_id,
                    sw.code AS source_code, sw.name_ar AS source_name,
                    sw.branch_id AS source_branch_id,
@@ -107,21 +107,38 @@ def audit_interbranch_dimensions(database_path):
             }
             inventory_lines = [
                 line for line in lines
-                if line["stock_warehouse_id"] in expected_by_warehouse
+                if (line["stock_product_id"] is not None
+                    and int(line["stock_product_id"]) == int(movement["product_id"]))
+                or line["stock_warehouse_id"] in expected_by_warehouse
             ]
             if entry_id and not inventory_lines:
-                issues.append("journal_has_no_stock_warehouse_dimensions")
+                issues.append("journal_has_no_stock_product_or_warehouse_dimensions")
 
+            seen_warehouses = set()
             for line in inventory_lines:
-                expected_branch = expected_by_warehouse[line["stock_warehouse_id"]]
                 if line["stock_product_id"] is None:
                     issues.append("inventory_line_missing_product_dimension")
+                if line["stock_warehouse_id"] is None:
+                    issues.append("inventory_line_missing_warehouse_dimension")
+                    continue
+                warehouse_id = int(line["stock_warehouse_id"])
+                if warehouse_id not in expected_by_warehouse:
+                    issues.append("inventory_line_warehouse_not_in_transfer")
+                    continue
+                seen_warehouses.add(warehouse_id)
+                expected_branch = expected_by_warehouse[warehouse_id]
                 if line["branch_id"] is None:
                     issues.append("inventory_line_missing_branch_dimension")
                 elif expected_branch is not None and int(line["branch_id"]) != int(expected_branch):
                     issues.append("inventory_line_branch_differs_from_current_warehouse_mapping")
                 elif expected_branch is None and line["branch_id"] is not None:
                     issues.append("warehouse_has_no_current_branch_but_journal_line_is_tagged")
+
+            if entry_id:
+                if movement["source_warehouse_id"] not in seen_warehouses:
+                    issues.append("source_warehouse_inventory_line_missing")
+                if movement["target_warehouse_id"] not in seen_warehouses:
+                    issues.append("target_warehouse_inventory_line_missing")
 
             if movement["source_branch_id"] is None or movement["target_branch_id"] is None:
                 issues.append("warehouse_missing_current_branch_mapping")
