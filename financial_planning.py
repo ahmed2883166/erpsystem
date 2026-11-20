@@ -588,7 +588,7 @@ def build_financial_year_preclose_report(conn, year_id):
     add("unbalanced_entries", "قيود مرحلة غير متوازنة", "danger" if unbalanced else "success",
         unbalanced, "راجع القيود وصححها بقيود تسوية معتمدة.", unbalanced > 0)
 
-    empty = _execute(conn, """SELECT COUNT(*) FROM journal_entries je
+    empty = _execute(conn, """SELECT COUNT(*) AS count FROM journal_entries je
         WHERE je.status='posted' AND je.entry_date>=? AND je.entry_date<=?
           AND NOT EXISTS (SELECT 1 FROM journal_lines jl WHERE jl.entry_id=je.id)""",
         (start, end)).fetchone()[0]
@@ -1644,12 +1644,12 @@ def build_balance_sheet_snapshot(conn, as_of):
                   AND h.ledger_history_copied=1 AND fy.start_date<=?
             """, (as_of,)).fetchall()
             unclassified_opening_count = _execute(conn, """
-                SELECT COUNT(*)
+                SELECT COUNT(*) AS count
                 FROM financial_year_journal_history h
                 JOIN financial_years fy ON fy.id=h.financial_year_id
                 WHERE h.entry_kind='opening' AND h.action='created'
                   AND h.ledger_history_copied IS NULL AND fy.start_date<=?
-            """, (as_of,)).fetchone()[0]
+            """, (as_of,)).fetchone()["count"]
             journal_entry_columns = table_columns(conn, "journal_entries")
             legacy_opening_terms = []
             if "description" in journal_entry_columns:
@@ -1665,15 +1665,15 @@ def build_balance_sheet_snapshot(conn, as_of):
                     if _table_exists_financial(conn, "financial_year_opening_reviews") else ""
                 )
                 unclassified_opening_count += _execute(conn, f"""
-                    SELECT COUNT(*) FROM journal_entries je
+                    SELECT COUNT(*) AS count FROM journal_entries je
                     JOIN financial_years fy ON fy.start_date=je.entry_date
                     WHERE je.status='posted' AND fy.start_date<=?
                       AND ({' OR '.join(legacy_opening_terms)})
                       AND NOT EXISTS(SELECT 1 FROM financial_year_journal_history h WHERE h.entry_id=je.id)
                       {opening_review_filter}
-                """,(as_of,)).fetchone()[0]
+                """,(as_of,)).fetchone()["count"]
             classification_conflict_count = _execute(conn, """
-                SELECT COUNT(*)
+                SELECT COUNT(*) AS count
                 FROM financial_year_journal_history h
                 JOIN financial_years fy ON fy.id=h.financial_year_id
                 WHERE h.entry_kind='opening' AND h.action='created'
@@ -1689,7 +1689,7 @@ def build_balance_sheet_snapshot(conn, as_of):
                         WHERE prior.status='posted' AND prior.entry_date<fy.start_date
                     ))
                   )
-            """, (as_of,)).fetchone()[0]
+            """, (as_of,)).fetchone()["count"]
             excluded_opening_ids = {int(row["entry_id"]) for row in opening_rows}
             if _table_exists_financial(conn,"financial_year_opening_reviews"):
                 reviewed=_execute(conn,"""
@@ -1708,11 +1708,11 @@ def build_balance_sheet_snapshot(conn, as_of):
                 excluded_opening_ids.update(int(row["entry_id"]) for row in reversal_rows)
         else:
             unclassified_opening_count = _execute(conn, """
-                SELECT COUNT(*)
+                SELECT COUNT(*) AS count
                 FROM financial_year_journal_history h
                 JOIN financial_years fy ON fy.id=h.financial_year_id
                 WHERE h.entry_kind='opening' AND h.action='created' AND fy.start_date<=?
-            """, (as_of,)).fetchone()[0]
+            """, (as_of,)).fetchone()["count"]
             classification_conflict_count = 0
 
     exclusion_sql = ""
