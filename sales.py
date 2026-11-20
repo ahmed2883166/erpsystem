@@ -1082,21 +1082,19 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         if qty == available_qty:
             line_value = remaining_net.quantize(CENT, rounding=ROUND_HALF_UP)
             line_tax = remaining_tax.quantize(CENT, rounding=ROUND_HALF_UP)
-            line_cost = remaining_cost.quantize(CENT, rounding=ROUND_HALF_UP)
         else:
             line_value = (remaining_net * qty / available_qty).quantize(CENT, rounding=ROUND_HALF_UP)
             line_tax = (remaining_tax * qty / available_qty).quantize(CENT, rounding=ROUND_HALF_UP)
-            line_cost = (remaining_cost * qty / available_qty).quantize(CENT, rounding=ROUND_HALF_UP)
         unit_price = Decimal(original["unit_price"])
         tax_rate = Decimal(original["tax_rate"] or "0")
         treatment = original["tax_treatment"] or "standard"
         subtotal += line_value
         tax_total += line_tax
-        cost_total += line_cost
         original_allocations = execute_compat(conn, 
             "SELECT lot_id,quantity,cost_total FROM sales_invoice_line_lots WHERE invoice_line_id=? ORDER BY id",
             (line_id,),
         ).fetchall()
+        has_original_lot_cost_trace = bool(original_allocations)
         if not original_allocations:
             product_tracking = execute_compat(conn, 
                 "SELECT track_lot,track_expiry FROM stock_products WHERE id=?", (original["product_id"],)
@@ -1109,23 +1107,34 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
             original_allocations = [{"lot_id": None, "quantity": original["quantity"],
                                      "cost_total": original["cost_total"] or "0"}]
         returned_rows = execute_compat(conn, 
-            """SELECT rl.lot_id,rl.quantity FROM sales_credit_note_line_lots rl
+            """SELECT rl.lot_id,rl.quantity,sm.total_cost
+               FROM sales_credit_note_line_lots rl
                JOIN sales_credit_note_lines cl ON cl.id=rl.credit_note_line_id
                JOIN sales_credit_notes cn ON cn.id=cl.credit_note_id
+               LEFT JOIN stock_movements sm ON sm.id=rl.stock_movement_id
                WHERE cl.invoice_line_id=? AND cn.status='posted'""", (line_id,)
         ).fetchall()
         returned_by_lot = {}
+        returned_cost_by_lot = {}
         for returned_row in returned_rows:
             key = returned_row["lot_id"]
             returned_by_lot[key] = returned_by_lot.get(key, Decimal("0")) + Decimal(returned_row["quantity"])
+            returned_cost_by_lot[key] = returned_cost_by_lot.get(key, Decimal("0")) + Decimal(
+                returned_row["total_cost"] or "0"
+            )
         lot_remaining = []
         for allocation in original_allocations:
             allocated_qty = Decimal(allocation["quantity"])
-            available_lot_qty = allocated_qty - returned_by_lot.get(allocation["lot_id"], Decimal("0"))
+            original_lot_cost = Decimal(allocation["cost_total"])
+            already_returned_qty = returned_by_lot.get(allocation["lot_id"], Decimal("0"))
+            available_lot_qty = allocated_qty - already_returned_qty
             if available_lot_qty > 0:
                 lot_remaining.append({
                     "lot_id": allocation["lot_id"], "available": available_lot_qty,
-                    "original_qty": allocated_qty, "original_cost": Decimal(allocation["cost_total"]),
+                    "original_qty": allocated_qty, "original_cost": original_lot_cost,
+                    "remaining_cost": original_lot_cost - returned_cost_by_lot.get(
+                        allocation["lot_id"], Decimal("0")
+                    ),
                 })
         to_allocate = qty
         lot_allocations = []
@@ -1133,15 +1142,33 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
             if to_allocate <= 0:
                 break
             take = min(to_allocate, lot["available"])
-            lot_cost = (lot["original_cost"] * take / lot["original_qty"]).quantize(CENT, rounding=ROUND_HALF_UP)
+            if take == lot["available"]:
+                # The final return from a source lot takes its exact unreturned
+                # value, absorbing any cent rounding from earlier partial returns.
+                lot_cost = lot["remaining_cost"]
+            else:
+                lot_cost = (
+                    lot["original_cost"] * take / lot["original_qty"]
+                ).quantize(CENT, rounding=ROUND_HALF_UP)
             lot_allocations.append({"lot_id": lot["lot_id"], "quantity": take, "cost_total": lot_cost})
             to_allocate -= take
         if to_allocate > 0:
             raise ValueError("تعذر تحديد التشغيلة الأصلية للكمية المرتجعة. راجع تتبع مخزون الفاتورة.")
-        if lot_allocations:
-            lot_allocations[-1]["cost_total"] += line_cost - sum(
-                (part["cost_total"] for part in lot_allocations), Decimal("0")
-            )
+        if has_original_lot_cost_trace:
+            # FIFO source-lot costs are authoritative; never rebalance them to
+            # a quantity-proportional invoice-line estimate.
+            line_cost = sum(
+                (part["cost_total"] for part in lot_allocations), Decimal("0.00")
+            ).quantize(CENT, rounding=ROUND_HALF_UP)
+        else:
+            # Legacy/untracked lines have no source-lot cost detail to replay.
+            line_cost = (remaining_cost if qty == available_qty else
+                         (remaining_cost * qty / available_qty)).quantize(CENT, rounding=ROUND_HALF_UP)
+            if lot_allocations:
+                lot_allocations[-1]["cost_total"] += line_cost - sum(
+                    (part["cost_total"] for part in lot_allocations), Decimal("0")
+                )
+        cost_total += line_cost
         from activity_profiles import resolve_product_account_code
         product_id = original["product_id"]
         inventory_code = resolve_product_account_code(
