@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
-from scripts.generate_postgres_schema import generate_postgres_ddl
+from scripts.generate_postgres_schema import generate_postgres_ddl, POSTGRES_TYPE_OVERRIDES
 
 
 _DECIMAL_INPUT = re.compile(r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$")
@@ -36,6 +36,92 @@ def _decimal_shape(value):
     scale = max(0, -parts.exponent)
     integer_digits = max(0, digits + parts.exponent)
     return integer_digits, scale
+
+
+
+def _audit_explicit_numeric_override(connection, table, column, target_type, expected_source_type, *, max_examples):
+    """Check that every source value fits its reviewed PostgreSQL NUMERIC(p,s) exactly."""
+    qtable, qcolumn = _quote_identifier(table), _quote_identifier(column)
+    actual_columns = {}
+    for row in connection.execute(f"PRAGMA table_info({qtable})").fetchall():
+        name = row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        declared_type = row["type"] if isinstance(row, sqlite3.Row) else row[2]
+        actual_columns[name] = (declared_type or "").strip().upper()
+    actual_type = actual_columns.get(column)
+    if actual_type is None or actual_type != expected_source_type:
+        return {
+            "table": table, "column": column, "target_type": target_type,
+            "status": "schema_mismatch", "actual_type": actual_type,
+            "expected_source_type": expected_source_type,
+        }
+
+    match = re.fullmatch(r"NUMERIC\\((\\d+),\\s*(\\d+)\\)", target_type.upper())
+    if not match:
+        return {
+            "table": table, "column": column, "target_type": target_type,
+            "status": "unbounded_or_unreviewed_target_type",
+        }
+    precision, scale = int(match.group(1)), int(match.group(2))
+    non_null_count = empty_count = valid_count = invalid_count = 0
+    min_value = max_value = None
+    max_integer_digits = max_fractional_digits = 0
+    invalid_sample_positions = []
+    cursor = connection.execute(
+        f"SELECT {qcolumn} FROM {qtable} WHERE {qcolumn} IS NOT NULL"
+    )
+    for row in cursor:
+        raw = row[0]
+        non_null_count += 1
+        text_value = repr(raw) if actual_type == "REAL" else str(raw).strip()
+        if not text_value:
+            empty_count += 1
+            continue
+        try:
+            if not _DECIMAL_INPUT.fullmatch(text_value):
+                raise InvalidOperation
+            number = Decimal(text_value)
+            if not number.is_finite():
+                raise InvalidOperation
+        except (InvalidOperation, ValueError):
+            invalid_count += 1
+            if len(invalid_sample_positions) < max_examples:
+                invalid_sample_positions.append(non_null_count)
+            continue
+        valid_count += 1
+        shape_value = number.normalize() if number else Decimal("0")
+        integer_digits, fractional_digits = _decimal_shape(shape_value)
+        max_integer_digits = max(max_integer_digits, integer_digits)
+        max_fractional_digits = max(max_fractional_digits, fractional_digits)
+        if min_value is None or number < min_value:
+            min_value = number
+        if max_value is None or number > max_value:
+            max_value = number
+
+    if invalid_count:
+        status = "invalid_values"
+    elif empty_count:
+        status = "empty_values_require_policy"
+    elif non_null_count == 0:
+        status = "no_source_data"
+    elif max_integer_digits > precision - scale or max_fractional_digits > scale:
+        status = "precision_exceeds_target"
+    elif actual_type == "REAL":
+        status = "source_binary_float_requires_policy"
+    else:
+        status = "fits_declared_precision"
+
+    return {
+        "table": table, "column": column, "target_type": target_type,
+        "precision": precision, "scale": scale, "status": status,
+        "actual_type": actual_type, "non_null_count": non_null_count,
+        "valid_count": valid_count, "empty_count": empty_count,
+        "invalid_count": invalid_count,
+        "min_value": str(min_value) if min_value is not None else None,
+        "max_value": str(max_value) if max_value is not None else None,
+        "max_integer_digits": max_integer_digits,
+        "max_fractional_digits": max_fractional_digits,
+        "invalid_sample_positions": invalid_sample_positions,
+    }
 
 
 def audit_numeric_candidates(connection, snapshot, *, max_examples=10):
@@ -148,14 +234,31 @@ def audit_numeric_candidates(connection, snapshot, *, max_examples=10):
             "invalid_sample_positions": invalid_sample_positions,
         })
 
+    snapshot_columns = {
+        (table["name"], column["name"]): (column.get("type") or "").strip().upper()
+        for table in snapshot.get("tables", [])
+        for column in table.get("columns", [])
+    }
+    override_columns = [
+        _audit_explicit_numeric_override(
+            connection, table, column, target_type,
+            snapshot_columns.get((table, column), ""),
+            max_examples=max_examples,
+        )
+        for (table, column), target_type in sorted(POSTGRES_TYPE_OVERRIDES.items())
+    ]
     counts = {}
     for item in result_columns:
         counts[item["status"]] = counts.get(item["status"], 0) + 1
+    override_counts = {}
+    for item in override_columns:
+        override_counts[item["status"]] = override_counts.get(item["status"], 0) + 1
     safe = (
-        bool(result_columns)
+        bool(result_columns or override_columns)
         and integrity_check == ["ok"]
         and not foreign_key_violations
         and all(item["status"] == "convertible_exact_decimal" for item in result_columns)
+        and all(item["status"] == "fits_declared_precision" for item in override_columns)
     )
     return {
         "source_read_only": True,
@@ -164,14 +267,19 @@ def audit_numeric_candidates(connection, snapshot, *, max_examples=10):
         "foreign_key_violations": foreign_key_violations[:max_examples],
         "candidate_count": len(candidates),
         "audited_column_count": len(result_columns),
+        "override_audited_column_count": len(override_columns),
+        "total_audited_column_count": len(result_columns) + len(override_columns),
         "safe_for_numeric_migration": safe,
         "status_counts": counts,
+        "override_status_counts": override_counts,
         "columns": result_columns,
+        "explicit_numeric_overrides": override_columns,
         "policy": (
-            "No rounding or float conversion is performed. Empty strings, invalid values, "
-            "schema drift, no source rows, and PostgreSQL NUMERIC digit-limit overflow "
-            "block automatic approval. Invalid values are identified by sample position, "
-            "not copied into the report."
+            "TEXT candidates are parsed as exact Decimal values. Explicit NUMERIC(p,s) "
+            "overrides are separately checked against their declared precision and scale. "
+            "No rounding is approved; REAL source columns remain blocked until a documented "
+            "binary-float conversion policy is accepted. Empty, invalid, missing, and "
+            "out-of-range values block automatic approval."
         ),
     }
 

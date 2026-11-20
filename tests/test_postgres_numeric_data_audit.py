@@ -158,5 +158,39 @@ class PostgreSQLNumericDataAuditTests(unittest.TestCase):
             read_only.close()
 
 
+    def test_explicit_numeric_overrides_are_checked_for_scale_precision_and_real_sources(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.executescript("""
+                CREATE TABLE sample(amount TEXT);
+                INSERT INTO sample VALUES('1.00');
+                CREATE TABLE journal_lines(debit TEXT, credit TEXT);
+                INSERT INTO journal_lines VALUES('1.1234567','999999999999999999.99');
+                CREATE TABLE currencies(rate_to_base REAL);
+                INSERT INTO currencies VALUES(0.75);
+                CREATE TABLE tax_rates(rate REAL);
+                INSERT INTO tax_rates VALUES(14.0);
+                CREATE TABLE fx_exchange_rates(rate_to_base TEXT);
+                INSERT INTO fx_exchange_rates VALUES('1.12345678901');
+            """)
+            report = audit_numeric_candidates(
+                connection,
+                _snapshot([("amount", "TEXT")]),
+            )
+            self.assertFalse(report["safe_for_numeric_migration"])
+            overrides = {
+                (item["table"], item["column"]): item
+                for item in report["explicit_numeric_overrides"]
+            }
+            self.assertEqual(overrides[("journal_lines", "debit")]["status"], "precision_exceeds_target")
+            self.assertEqual(overrides[("journal_lines", "credit")]["status"], "fits_declared_precision")
+            self.assertEqual(overrides[("currencies", "rate_to_base")]["status"], "source_binary_float_requires_policy")
+            self.assertEqual(overrides[("tax_rates", "rate")]["status"], "source_binary_float_requires_policy")
+            self.assertEqual(overrides[("fx_exchange_rates", "rate_to_base")]["status"], "precision_exceeds_target")
+            self.assertEqual(report["override_audited_column_count"], 5)
+        finally:
+            connection.close()
+
+
 if __name__ == "__main__":
     unittest.main()
