@@ -15,7 +15,7 @@ class PayrollComplianceTests(unittest.TestCase):
             INSERT INTO company_settings VALUES('tax_country','EG');
             CREATE TABLE payroll_rule_sets(
                 id INTEGER PRIMARY KEY, country_code TEXT, category_code TEXT, effective_from TEXT,
-                personal_exemption_annual TEXT, taxable_rounding_unit TEXT DEFAULT '1',
+                effective_to TEXT, status TEXT DEFAULT 'active', personal_exemption_annual TEXT, taxable_rounding_unit TEXT DEFAULT '1',
                 insurance_floor TEXT, insurance_ceiling TEXT,
                 employee_insurance_rate TEXT, employer_insurance_rate TEXT,
                 enabled INTEGER DEFAULT 1, notes TEXT DEFAULT ''

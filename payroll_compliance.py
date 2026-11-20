@@ -56,6 +56,8 @@ def initialize_payroll_compliance_schema(conn):
       country_code TEXT NOT NULL,
       category_code TEXT NOT NULL,
       effective_from TEXT NOT NULL,
+      effective_to TEXT,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('draft','approved','active','expired')),
       personal_exemption_annual TEXT NOT NULL DEFAULT '0',
       taxable_rounding_unit TEXT NOT NULL DEFAULT '1',
       insurance_floor TEXT NOT NULL DEFAULT '0',
@@ -102,6 +104,10 @@ def initialize_payroll_compliance_schema(conn):
       ON payroll_statutory_payments(period,payment_type);
     """)
     rule_cols = table_columns(conn, "payroll_rule_sets")
+    if "effective_to" not in rule_cols:
+        _execute(conn, "ALTER TABLE payroll_rule_sets ADD COLUMN effective_to TEXT")
+    if "status" not in rule_cols:
+        _execute(conn, "ALTER TABLE payroll_rule_sets ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
     if "taxable_rounding_unit" not in rule_cols:
         _execute(conn, "ALTER TABLE payroll_rule_sets ADD COLUMN taxable_rounding_unit TEXT NOT NULL DEFAULT '1'")
     employee_cols = table_columns(conn, "employees")
@@ -153,9 +159,57 @@ def _active_rule(conn, country_code, category_code, period):
     period_date = date.fromisoformat(period + "-01").isoformat()
     return _execute(conn, """
         SELECT * FROM payroll_rule_sets
-        WHERE country_code=? AND category_code=? AND enabled=1 AND effective_from<=?
+        WHERE country_code=? AND category_code=? AND enabled=1
+          AND status='active' AND effective_from<=?
+          AND (effective_to IS NULL OR effective_to>=?)
         ORDER BY effective_from DESC,id DESC LIMIT 1
-    """, (country_code, category_code, period_date)).fetchone()
+    """, (country_code, category_code, period_date, period_date)).fetchone()
+
+
+def _validate_rule_period(effective_from, effective_to):
+    start = date.fromisoformat(effective_from).isoformat()
+    end = date.fromisoformat(effective_to).isoformat() if effective_to else None
+    if end and end < start:
+        raise ValueError("تاريخ نهاية السريان يجب ألا يسبق تاريخ البداية.")
+    return start, end
+
+
+def activate_payroll_rule(conn, rule_id):
+    """Activate an approved rule only when its effective period does not overlap another active version."""
+    rule = _execute(conn, "SELECT * FROM payroll_rule_sets WHERE id=?", (rule_id,)).fetchone()
+    if not rule:
+        raise ValueError("مجموعة القواعد غير موجودة.")
+    if rule["status"] not in {"approved", "active"}:
+        raise ValueError("يجب اعتماد مجموعة القواعد أولًا قبل تفعيلها.")
+    start, end = _validate_rule_period(rule["effective_from"], rule["effective_to"])
+    overlap = _execute(conn, """
+        SELECT id FROM payroll_rule_sets
+        WHERE country_code=? AND category_code=? AND enabled=1 AND status='active' AND id<>?
+          AND effective_from<=COALESCE(?, '9999-12-31')
+          AND COALESCE(effective_to,'9999-12-31')>=?
+        LIMIT 1
+    """, (rule["country_code"], rule["category_code"], rule_id, end, start)).fetchone()
+    if overlap:
+        raise ValueError("فترة السريان تتداخل مع إصدار نشط آخر. حدد نهاية الإصدار السابق أو عدّل تاريخ الإصدار الجديد.")
+    _execute(conn, "UPDATE payroll_rule_sets SET status='active',enabled=1 WHERE id=?", (rule_id,))
+
+
+def approve_payroll_rule(conn, rule_id):
+    rule = _execute(conn, "SELECT * FROM payroll_rule_sets WHERE id=?", (rule_id,)).fetchone()
+    if not rule:
+        raise ValueError("مجموعة القواعد غير موجودة.")
+    if rule["status"] == "active":
+        raise ValueError("مجموعة القواعد نشطة بالفعل.")
+    if rule["status"] not in {"draft", "approved"}:
+        raise ValueError("لا يمكن اعتماد هذه الحالة.")
+    _validate_rule_period(rule["effective_from"], rule["effective_to"])
+    has_brackets = _execute(conn, """
+        SELECT 1 FROM payroll_tax_brackets WHERE rule_set_id=?
+        UNION ALL SELECT 1 FROM payroll_tax_tier_brackets WHERE rule_set_id=? LIMIT 1
+    """, (rule_id, rule_id)).fetchone()
+    if not has_brackets:
+        raise ValueError("لا يمكن اعتماد القواعد قبل إضافة شرائح ضريبة الدخل.")
+    _execute(conn, "UPDATE payroll_rule_sets SET status='approved' WHERE id=?", (rule_id,))
 
 
 def ensure_default_payroll_rules(conn):
@@ -179,9 +233,11 @@ def missing_payroll_rule_categories(conn, employees, period):
         category = (employee["legal_category"] or "local").strip().lower()
         rule = _execute(conn, """
             SELECT 1 FROM payroll_rule_sets
-            WHERE country_code=? AND category_code=? AND enabled=1 AND effective_from<=?
+            WHERE country_code=? AND category_code=? AND enabled=1
+              AND status='active' AND effective_from<=?
+              AND (effective_to IS NULL OR effective_to>=?)
             ORDER BY effective_from DESC,id DESC LIMIT 1
-        """, (country, category, period_start)).fetchone()
+        """, (country, category, period_start, period_start)).fetchone()
         if not rule:
             missing.add(category)
     return sorted(missing)
@@ -531,10 +587,26 @@ def rules():
                 else:
                     conn.rollback()
                     flash("لم يتم تغيير أي بيانات: الإعداد غير موجود أو يحتوي على تعديلات مخصصة تحتاج مراجعة يدوية.", "warning")
+            elif action == "approve_rule":
+                if session.get("role") != "admin":
+                    raise ValueError("اعتماد قواعد الضرائب والتأمينات متاح لمدير النظام فقط.")
+                rule_id = int(request.form.get("rule_set_id"))
+                approve_payroll_rule(conn, rule_id)
+                _audit(conn, "payroll_rule_approved", "id=" + str(rule_id))
+                conn.commit()
+                flash("تم اعتماد مجموعة القواعد. يلزم تفعيلها لتطبيقها على المرتبات الجديدة.", "success")
+            elif action == "activate_rule":
+                if session.get("role") != "admin":
+                    raise ValueError("تفعيل قواعد الضرائب والتأمينات متاح لمدير النظام فقط.")
+                rule_id = int(request.form.get("rule_set_id"))
+                activate_payroll_rule(conn, rule_id)
+                _audit(conn, "payroll_rule_activated", "id=" + str(rule_id))
+                conn.commit()
+                flash("تم تفعيل إصدار القواعد دون تعديل أي مسيرات مرحلة.", "success")
             elif action == "create_rule":
                 country = request.form.get("country_code", "").strip().upper()
                 category = request.form.get("category_code", "").strip().lower()
-                effective = date.fromisoformat(request.form.get("effective_from", "")).isoformat()
+                effective, effective_to = _validate_rule_period(request.form.get("effective_from", ""), request.form.get("effective_to", "").strip() or None)
                 exemption = _m(request.form.get("personal_exemption_annual"))
                 rounding_unit = _m(request.form.get("taxable_rounding_unit", "1"))
                 floor = _m(request.form.get("insurance_floor"))
@@ -548,17 +620,20 @@ def rules():
                 if ceiling and ceiling < floor:
                     raise ValueError("الحد الأقصى لأجر التأمين يجب ألا يقل عن الحد الأدنى.")
                 rule_id = insert_and_get_id(conn, """
-                    INSERT INTO payroll_rule_sets(country_code,category_code,effective_from,
+                    INSERT INTO payroll_rule_sets(country_code,category_code,effective_from,effective_to,status,
                       personal_exemption_annual,taxable_rounding_unit,insurance_floor,insurance_ceiling,
                       employee_insurance_rate,employer_insurance_rate,notes)
-                    VALUES(?,?,?,?,?,?,?,?,?,?)
-                """, (country,category,effective,str(exemption),str(rounding_unit),str(floor),str(ceiling),
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (country,category,effective,effective_to,"draft",str(exemption),str(rounding_unit),str(floor),str(ceiling),
                       str(employee_rate),str(employer_rate),request.form.get("notes","").strip()))
                 _audit(conn, "payroll_rule_created", country + "/" + category + " id=" + str(rule_id))
                 conn.commit()
                 flash("تم إنشاء مجموعة القواعد. أضف شرائح ضريبة الدخل السنوية لها.", "success")
             elif action == "add_bracket":
                 rule_id = int(request.form.get("rule_set_id"))
+                editable = _execute(conn, "SELECT status FROM payroll_rule_sets WHERE id=?", (rule_id,)).fetchone()
+                if not editable or editable["status"] != "draft":
+                    raise ValueError("لا يمكن تعديل الشرائح إلا لمجموعة قواعد في حالة مسودة. أنشئ إصدارًا جديدًا للتعديلات.")
                 lower = _m(request.form.get("lower_bound"))
                 upper_raw = request.form.get("upper_bound", "").strip()
                 upper = _m(upper_raw) if upper_raw else None
