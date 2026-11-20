@@ -160,7 +160,7 @@ class BalanceSheetPostgreSQLParityTests(unittest.TestCase):
                     _normalized_balance_sheet(pg_snapshot),
                     _normalized_balance_sheet(sqlite_snapshot),
                 )
-                self.assertEqual(pg_snapshot["total_assets"], Decimal("515597.40"))
+                self.assertEqual(pg_snapshot["total_assets"], Decimal("515617.40"))
                 self.assertEqual(pg_snapshot["total_liabilities"], Decimal("20"))
                 self.assertEqual(pg_snapshot["equity_before_profit"], Decimal("515517.40"))
                 self.assertEqual(pg_snapshot["net_profit"], Decimal("80"))
