@@ -23,52 +23,76 @@ startup. This runbook describes a controlled rehearsal, not a production cutover
 
 ## Rehearsal sequence
 
-1. Create a separate PostgreSQL database/schema from a reviewed, complete
-   PostgreSQL schema baseline. The generated baseline is conservative and its
-   review report must be examined before use; do not assume it is production
-   ready merely because PostgreSQL accepts the DDL.
-2. Run the read-only audit:
+0. Create a frozen SQLite snapshot and its SHA-256 manifest. Do not use a live
+   company database path as the copy source:
+
+   ```bash
+   python scripts/snapshot_sqlite_before_postgres.py \
+     --source /path/to/company-backup.sqlite \
+     --backup-dir /path/to/rehearsal-snapshots
+   ```
+
+   Retain the returned `snapshot` and `manifest` paths. Use those exact files
+   in every following step. The source is opened read-only.
+
+1. Create a separate PostgreSQL database/schema from the exact reviewed
+   PostgreSQL schema baseline. Retain the generated SQL file (for example,
+   `/path/to/reviewed/nexus_full_schema.sql`) and review report. The generated
+   baseline is conservative; do not assume it is production-ready merely
+   because PostgreSQL accepts the DDL.
+
+2. Run the read-only audit against the frozen snapshot and reviewed baseline:
 
    ```bash
    python scripts/audit_sqlite_postgres_migration.py \
-     --sqlite /path/to/company-backup.sqlite \
+     --sqlite /path/to/rehearsal-snapshots/admrail-sqlite-TIMESTAMP.sqlite3 \
      --postgres-dsn "$NEXUS_POSTGRES_DSN" \
-     --schema nexus_rehearsal
+     --schema nexus_rehearsal \
+     --baseline-sql /path/to/reviewed/nexus_full_schema.sql
    ```
 
 3. Continue only if the report says `preflight_passed: true`. Resolve every
-   missing/extra table, column mismatch, source integrity error, foreign-key
-   violation, or non-empty target before proceeding.
-4. Run the explicit copy against that same disposable schema:
+   missing/extra table, column or type mismatch, source integrity error,
+   foreign-key violation, duplicate supplier invoice number, stale rebuild
+   table, or numeric-audit issue before proceeding.
+
+4. Run the explicit copy from the exact same frozen snapshot and manifest:
 
    ```bash
    python scripts/copy_sqlite_to_postgres.py \
-     --sqlite /path/to/company-backup.sqlite \
+     --sqlite /path/to/rehearsal-snapshots/admrail-sqlite-TIMESTAMP.sqlite3 \
+     --snapshot-manifest /path/to/rehearsal-snapshots/admrail-sqlite-TIMESTAMP.manifest.json \
+     --baseline-sql /path/to/reviewed/nexus_full_schema.sql \
      --postgres-dsn "$NEXUS_POSTGRES_DSN" \
      --schema nexus_rehearsal \
      --batch-size 500 \
      --apply
    ```
 
-5. Run the independent, read-only post-copy verification against the same
-   source backup and isolated target:
+5. Run the independent, read-only post-copy verification against that same
+   snapshot, manifest, baseline, and isolated target:
 
    ```bash
    python scripts/verify_sqlite_postgres_copy.py \
-     --sqlite /path/to/company-backup.sqlite \
+     --sqlite /path/to/rehearsal-snapshots/admrail-sqlite-TIMESTAMP.sqlite3 \
+     --snapshot-manifest /path/to/rehearsal-snapshots/admrail-sqlite-TIMESTAMP.manifest.json \
+     --baseline-sql /path/to/reviewed/nexus_full_schema.sql \
      --postgres-dsn "$NEXUS_POSTGRES_DSN" \
      --schema nexus_rehearsal
    ```
 
-6. Retain both JSON reports. The verifier checks table/column coverage and row
-   counts, exact-decimal journal debit/credit totals, customer/supplier debit
-   and credit totals by party ID when those columns exist, and inventory
-   valuation-layer quantity/value totals overall and by product/warehouse.
-   Controls whose required table or columns are unavailable are listed
-   separately as skipped. A skipped financial/inventory control now makes
-   the verifier return `passed: false` and `requires_review: true`; resolve
-   every skip and rerun verification before approval. Any mismatch also blocks
-   approval.
+6. Retain the snapshot, manifest, copy JSON report, and verification JSON
+   report together. The reports identify the snapshot SHA-256 and manifest
+   used. The verifier checks table/column coverage and row counts, content
+   fingerprints, identity-column and sequence coverage, foreign keys,
+   indexes, triggers, check constraints, defaults, exact-decimal journal
+   debit/credit totals, customer/supplier debit and credit totals by party ID,
+   and inventory valuation-layer quantity/value totals overall and by
+   product/warehouse. Controls whose required table or columns are unavailable
+   are listed separately as skipped. A skipped financial/inventory control
+   makes the verifier return `passed: false` and `requires_review: true`;
+   resolve every skip and rerun verification before approval. Any mismatch
+   also blocks approval.
 
 ## Important limitations
 
