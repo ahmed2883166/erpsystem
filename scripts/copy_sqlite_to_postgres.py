@@ -453,6 +453,17 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                 self_fk_rows = self_foreign_keys[table]
                 copied = 0
                 if self_fk_rows:
+                    # Check the memory bound before fetching any rows. The old
+                    # order loaded the complete table first, then rejected it
+                    # above 250k rows, defeating the safety limit.
+                    self_reference_count = src.execute(
+                        "SELECT COUNT(*) FROM " + quote_ident(table)
+                    ).fetchone()[0]
+                    if self_reference_count > 250000:
+                        raise ValueError(
+                            f"Self-referencing table {table} has {self_reference_count} rows; "
+                            "the safe in-memory ordering limit is 250000. Copy blocked before fetch."
+                        )
                     ordered_rows = order_self_referencing_rows(
                         cursor.fetchall(), self_fk_rows, table
                     )
