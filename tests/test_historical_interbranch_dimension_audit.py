@@ -46,7 +46,7 @@ class HistoricalInterbranchDimensionAuditTests(unittest.TestCase):
         conn.executescript("""
             INSERT INTO journal_entries VALUES(100,'posted');
             INSERT INTO stock_movements VALUES(
-                5,'TR-5','transfer','2025-01-01',10,20,100,'posted'
+                5,'TR-5','transfer','2025-01-01',7,10,20,100,'posted'
             );
             INSERT INTO journal_lines VALUES(1,100,1,'50','0',1,7,20);
             INSERT INTO journal_lines VALUES(2,100,1,'0','50',NULL,7,10);
@@ -72,7 +72,7 @@ class HistoricalInterbranchDimensionAuditTests(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         conn.execute("""
             INSERT INTO stock_movements VALUES(
-                6,'TR-6','transfer','2025-01-02',10,20,NULL,'pending_setup'
+                6,'TR-6','transfer','2025-01-02',7,10,20,NULL,'pending_setup'
             )
         """)
         conn.commit()
