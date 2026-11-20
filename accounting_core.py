@@ -152,6 +152,14 @@ def register_decimal_aggregates(conn):
         conn.create_window_function("DECIMAL_RUNNING_NET", 2, _DecimalRunningNet)
 
 
+def lock_journal_reference(conn, reference):
+    """Serialize reference checks and linked side effects for one journal submission."""
+    if reference in (None, "") or database_dialect(conn) != "postgresql":
+        return
+    _execute(conn, "SELECT pg_advisory_xact_lock(?, hashtext(?))",
+              (0x4E455855, str(reference)))
+
+
 def post_journal(conn, entry_date, reference, description, lines, created_by=None, dimensions=None):
     """Idempotently post a balanced journal inside the caller's DB transaction."""
     try:
@@ -228,12 +236,7 @@ def post_journal(conn, entry_date, reference, description, lines, created_by=Non
     # SQLite callers serialize journal writes with BEGIN IMMEDIATE. PostgreSQL
     # needs a transaction-scoped per-reference lock so simultaneous retries see
     # the first committed journal instead of creating duplicate posted entries.
-    if database_dialect(conn) == "postgresql" and reference not in (None, ""):
-        _execute(
-            conn,
-            "SELECT pg_advisory_xact_lock(?, hashtext(?))",
-            (0x4E455855, str(reference)),
-        )
+    lock_journal_reference(conn, reference)
     existing = _execute(conn, 
         "SELECT id,entry_date,description FROM journal_entries WHERE reference=? AND status='posted' ORDER BY id LIMIT 1",
         (reference,),
