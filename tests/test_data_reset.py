@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import app as nexus_app
-from data_reset import DELETE_TABLES, PRESERVED_TABLES, clear_company_data
+from data_reset import DELETE_TABLES, PRESERVED_TABLES, clear_company_data, _count_from_row
 
 
 class CompanyDataResetTests(unittest.TestCase):
@@ -73,6 +73,12 @@ class CompanyDataResetTests(unittest.TestCase):
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
         return connection
+
+
+    def test_postgresql_count_row_supports_mapping_and_tuple_factories(self):
+        self.assertEqual(_count_from_row({"row_count": 7}), 7)
+        self.assertEqual(_count_from_row((9,)), 9)
+        self.assertEqual(_count_from_row(None), 0)
 
     def test_reset_clears_business_data_and_preserves_system_configuration(self):
         connection = self.open_database()

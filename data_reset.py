@@ -2,6 +2,17 @@
 
 from db_compat import database_dialect, table_names, begin_write_transaction
 
+
+def _count_from_row(row):
+    """Read COUNT(*) across tuple and mapping-based PostgreSQL row factories."""
+    if row is None:
+        return 0
+    try:
+        value = row["row_count"]
+    except (KeyError, TypeError, IndexError):
+        value = row[0]
+    return int(value or 0)
+
 # Fail-closed policy: only these explicitly reviewed operational tables may be
 # cleared. Any table added by a future feature must be classified here first.
 PRESERVED_TABLES = frozenset({
@@ -213,9 +224,9 @@ def _clear_company_data_postgresql(connection):
         for table_name in target_tables:
             quoted = '"' + table_name.replace('"', '""') + '"'
             count = connection.execute(
-                f"SELECT COUNT(*) FROM {quoted}"
-            ).fetchone()[0]
-            deleted_rows += int(count or 0)
+                f"SELECT COUNT(*) AS row_count FROM {quoted}"
+            ).fetchone()
+            deleted_rows += _count_from_row(count)
 
         quoted_tables = ", ".join(
             '"' + name.replace('"', '""') + '"' for name in target_tables
