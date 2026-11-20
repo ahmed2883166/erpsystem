@@ -7,6 +7,7 @@ from postgres_compat import PooledPostgresCompatConnection
 class FakeRawConnection:
     def __init__(self):
         self.calls = []
+        self.autocommit = False
 
     def execute(self, query, params=None):
         self.calls.append(("execute", query, params))
@@ -56,6 +57,7 @@ class PooledPostgresCompatConnectionTests(unittest.TestCase):
             [
                 ("execute", "SELECT %s AS value", (7,)),
                 ("rollback",),
+                ("execute", "RESET statement_timeout", None),
             ],
         )
         self.assertEqual(len(self.lease.exit_calls), 1)
@@ -66,14 +68,14 @@ class PooledPostgresCompatConnectionTests(unittest.TestCase):
         self.connection.close()
         self.connection.close()
 
-        self.assertEqual(self.raw.calls, [("rollback",)])
+        self.assertEqual(self.raw.calls, [("rollback",), ("execute", "RESET statement_timeout", None)])
         self.assertEqual(len(self.lease.exit_calls), 1)
 
     def test_explicit_commit_is_preserved_then_close_releases_clean_lease(self):
         self.connection.commit()
         self.connection.close()
 
-        self.assertEqual(self.raw.calls, [("commit",), ("rollback",)])
+        self.assertEqual(self.raw.calls, [("commit",), ("rollback",), ("execute", "RESET statement_timeout", None)])
         self.assertEqual(len(self.lease.exit_calls), 1)
 
     def test_context_manager_returns_lease_and_preserves_success_semantics(self):
