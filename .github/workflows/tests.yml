@@ -74,6 +74,10 @@ jobs:
           container_id="$(docker ps --filter "ancestor=postgres:16" --format '{{.ID}}' | head -n 1)"
           test -n "$container_id"
           docker exec "$container_id" psql -U nexus_test -d nexus_test -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET log_min_error_statement = 'warning'"
+          # CI-only SQL tracing makes any non-fatal transaction warning attributable
+          # to the exact PostgreSQL backend process and preceding statement sequence.
+          docker exec "$container_id" psql -U nexus_test -d nexus_test -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET log_statement = 'all'"
+          docker exec "$container_id" psql -U nexus_test -d nexus_test -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET log_line_prefix = '%m [%p] %a %u@%d '"
           docker exec "$container_id" psql -U nexus_test -d nexus_test -v ON_ERROR_STOP=1 -c "SELECT pg_reload_conf()"
       - name: Compile Python files
         run: python -m compileall -q .
@@ -90,7 +94,19 @@ jobs:
         run: |
           container_id="$(docker ps -a --filter "ancestor=postgres:16" --format '{{.ID}}' | head -n 1)"
           if [ -n "$container_id" ]; then
-            docker logs "$container_id" 2>&1 | grep -E 'WARNING:|STATEMENT:' | tail -n 300 || true
+            logs="$(docker logs "$container_id" 2>&1)"
+            warning_pids="$(printf '%s\\n' "$logs" | sed -nE 's/.*\\[([0-9]+)\\] WARNING:  there is already a transaction in progress.*/\\1/p' | sort -u)"
+            if [ -n "$warning_pids" ]; then
+              while IFS= read -r pid; do
+                [ -n "$pid" ] || continue
+                echo "PostgreSQL transaction-warning backend PID: $pid"
+                printf '%s\\n' "$logs" | grep -F "[$pid]" | tail -n 250 || true
+              done <<EOF
+            $warning_pids
+            EOF
+            else
+              printf '%s\\n' "$logs" | grep -E 'WARNING:|STATEMENT:' | tail -n 300 || true
+            fi
           fi
   windows-smoke:
     name: Windows local runtime and backup/restore smoke tests
