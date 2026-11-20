@@ -572,7 +572,7 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
 
     def _snapshot(self, source_path):
         return create_sqlite_snapshot(
-            source_path, Path(source_path).parent / "verified-snapshots"
+            source_path, Path(source_path).parent / (Path(source_path).stem + "-verified-snapshots")
         )
 
     def test_real_postgres_copy_preserves_ids_relationships_decimals_and_sequences(self):
