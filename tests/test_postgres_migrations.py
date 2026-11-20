@@ -245,6 +245,56 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.assertEqual(apply_migrations(self.connection, migrations[:1], schema=self.schema), [1])
 
         schema = quote_schema_name(self.schema)
+
+        # Verify parity with the SQLite analytic-dimensions initializer and
+        # opening-balance import table, not merely that the tables exist.
+        journal_columns = {
+            row["column_name"]: row
+            for row in self.connection.execute(
+                "SELECT column_name,is_nullable,data_type FROM information_schema.columns "
+                "WHERE table_schema=%s AND table_name='journal_lines'",
+                (self.schema,),
+            ).fetchall()
+        }
+        expected_dimensions = {
+            "branch_id", "cost_center_id", "project_id", "stock_product_id",
+            "stock_warehouse_id", "customer_id", "salesperson_id", "supplier_id",
+        }
+        self.assertTrue(expected_dimensions.issubset(journal_columns))
+        for column in expected_dimensions:
+            self.assertEqual(journal_columns[column]["is_nullable"], "YES", column)
+
+        branch_columns = {
+            row["column_name"] for row in self.connection.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema=%s AND table_name='branches'",
+                (self.schema,),
+            ).fetchall()
+        }
+        self.assertTrue({"address", "phone", "email", "tax_number"}.issubset(branch_columns))
+
+        import_columns = {
+            row["column_name"]: row
+            for row in self.connection.execute(
+                "SELECT column_name,is_nullable,data_type FROM information_schema.columns "
+                "WHERE table_schema=%s AND table_name='opening_balance_import_refs'",
+                (self.schema,),
+            ).fetchall()
+        }
+        self.assertTrue({
+            "id", "record_type", "reference", "entity_key",
+            "journal_entry_id", "source_file", "created_at",
+        }.issubset(import_columns))
+        self.assertEqual(import_columns["source_file"]["is_nullable"], "NO")
+        import_constraints = self.connection.execute(
+            "SELECT contype,COUNT(*) AS count FROM pg_constraint "
+            "WHERE conrelid=to_regclass(%s) GROUP BY contype",
+            (self.schema + ".opening_balance_import_refs",),
+        ).fetchall()
+        constraint_counts = {row["contype"]: row["count"] for row in import_constraints}
+        self.assertGreaterEqual(constraint_counts.get("f", 0), 1)
+        self.assertGreaterEqual(constraint_counts.get("u", 0), 1)
+
         user_id = self.connection.execute(
             f"INSERT INTO {schema}.users(username,full_name,password_hash,role,created_at) "
             "VALUES (%s,%s,%s,%s,%s) RETURNING id",
