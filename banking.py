@@ -9,7 +9,7 @@ from functools import wraps
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for, g
 from accounting_core import post_journal, decimal_net_expression
 from chart_templates import ensure_account_metadata
-from db_compat import table_columns, table_exists, begin_write_transaction, execute_script, DB_ERROR, transactional_connection_initializer
+from db_compat import database_dialect, table_columns, table_exists, begin_write_transaction, execute_script, DB_ERROR, transactional_connection_initializer
 from db_sql import execute_compat
 from db_insert import insert_one_returning_id
 
@@ -33,6 +33,14 @@ def _columns(conn, name):
 def signed_ledger_amount(debit, credit):
     """Convert a posted bank-ledger line to statement direction: debit positive, credit negative."""
     return (Decimal(str(debit or "0"))-Decimal(str(credit or "0"))).quantize(Decimal("0.01"))
+
+
+def _bank_statement_reference_expression(connection):
+    """Build the fallback journal reference with PostgreSQL-safe text casting."""
+    journal_id = "mje.id"
+    if database_dialect(connection) == "postgresql":
+        journal_id = f"CAST({journal_id} AS TEXT)"
+    return f"COALESCE(t.transaction_no, 'قيد #'||{journal_id})"
 
 
 def parse_statement_csv(payload, max_rows=5000):
@@ -595,7 +603,7 @@ def statement_reconciliation():
         period_start=request.args.get("start_date",today.replace(day=1).isoformat())
         period_end=request.args.get("end_date",today.isoformat())
         if account_id:
-            lines=execute_compat(c, """SELECT l.*,COALESCE(t.transaction_no,'قيد #'||mje.id) transaction_no
+            lines=execute_compat(c, f"""SELECT l.*,{_bank_statement_reference_expression(c)} transaction_no
                 FROM bank_statement_lines l
                 LEFT JOIN bank_transactions t ON t.id=l.matched_transaction_id
                 LEFT JOIN journal_lines mjl ON mjl.id=l.matched_journal_line_id
