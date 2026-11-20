@@ -19,7 +19,7 @@ class SQLitePostgresMigrationPreflightTests(unittest.TestCase):
                 "journal_entries": {"columns": ["id"], "row_count": 0},
             }
         }
-        report = build_report(source, target)
+        report = build_report(source, target, {"safe_for_numeric_migration": True})
         self.assertTrue(report["preflight_passed"])
         self.assertEqual(report["source_row_count"], 5)
 
@@ -58,6 +58,23 @@ class SQLitePostgresMigrationPreflightTests(unittest.TestCase):
         report = build_report(source, target)
         self.assertFalse(report["preflight_passed"])
         self.assertEqual(report["extra_postgres_tables"], ["unexpected"])
+
+    def test_preflight_blocks_when_numeric_audit_is_not_safe(self):
+        source = {
+            "integrity_check": ["ok"],
+            "foreign_key_violations": [],
+            "tables": {"journal_lines": {"columns": ["id", "debit"], "row_count": 1}},
+        }
+        target = {
+            "tables": {"journal_lines": {"columns": ["id", "debit"], "row_count": 0}}
+        }
+        report = build_report(
+            source, target,
+            {"safe_for_numeric_migration": False, "status_counts": {"invalid_values": 1}},
+        )
+        self.assertFalse(report["preflight_passed"])
+        self.assertFalse(report["numeric_audit_passed"])
+        self.assertEqual(report["numeric_audit"]["status_counts"]["invalid_values"], 1)
 
     def test_preflight_blocks_source_integrity_and_foreign_key_issues(self):
         source = {
