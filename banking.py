@@ -43,6 +43,19 @@ def _bank_statement_reference_expression(connection):
     return f"COALESCE(t.transaction_no, 'قيد #'||{journal_id})"
 
 
+def is_cash_or_bank_account(connection, account):
+    """Classify cash/bank accounts by registry, or legacy asset-account naming only."""
+    account_id = account["id"]
+    if execute_compat(
+        connection, "SELECT 1 FROM cash_accounts WHERE account_id=? LIMIT 1", (account_id,)
+    ).fetchone():
+        return True
+    if account["account_type"] != "asset":
+        return False
+    name = account["name_ar"] or ""
+    return any(term in name for term in ("صندوق", "بنك", "بنوك", "مصرف", "نقدية", "نقاط البيع"))
+
+
 def parse_statement_csv(payload, max_rows=5000):
     """Parse a bank CSV export without writing anything to the database."""
     if isinstance(payload, bytes):
@@ -325,11 +338,9 @@ def index():
                        (bank_id,0,amount,"تحويل صادر من حساب النقدية/البنك",source_dimensions)]
             else:
                 if not counter_id: raise ValueError("حدد الحساب المقابل للحركة.")
-                counter=execute_compat(c, "SELECT id,code,name_ar,is_group,active FROM accounts WHERE id=?",(counter_id,)).fetchone()
+                counter=execute_compat(c, "SELECT id,code,name_ar,account_type,is_group,active FROM accounts WHERE id=?",(counter_id,)).fetchone()
                 if not counter or counter["is_group"] or not counter["active"]: raise ValueError("الحساب المقابل يجب أن يكون تفصيليًا ونشطًا.")
-                if execute_compat(c, "SELECT 1 FROM cash_accounts WHERE account_id=?",(counter_id,)).fetchone() or any(
-                    term in (counter["name_ar"] or "") for term in ("صندوق","بنك","بنوك","مصرف")
-                ):
+                if is_cash_or_bank_account(c, counter):
                     raise ValueError("الحساب المقابل خزنة أو بنك؛ استخدم نوع الحركة تحويل بين الخزائن والبنوك حتى يظهر الطرفان في دفترهما دون تكرار.")
                 registry=execute_compat(c, "SELECT branch_id FROM cash_accounts WHERE account_id=? AND active=1",(bank_id,)).fetchone()
                 branch_dimensions={"branch_id":registry["branch_id"]} if registry and registry["branch_id"] else {}
