@@ -7,6 +7,7 @@ from scripts.audit_postgres_numeric_data import (
     _open_read_only_database,
     audit_numeric_candidates,
 )
+from scripts.audit_sqlite_postgres_migration import inspect_numeric_source
 
 
 def _snapshot(columns):
@@ -195,6 +196,30 @@ class PostgreSQLNumericDataAuditTests(unittest.TestCase):
             )
         finally:
             connection.close()
+
+    def test_integer_storage_audit_handles_integer_primary_key_rowid_alias(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "integer-primary-key.sqlite"
+            connection = sqlite3.connect(path)
+            try:
+                connection.executescript("""
+                    CREATE TABLE sample(id INTEGER PRIMARY KEY, quantity INTEGER);
+                    INSERT INTO sample(quantity) VALUES('not-an-integer');
+                """)
+                connection.commit()
+            finally:
+                connection.close()
+
+            report = inspect_numeric_source(str(path))
+            self.assertFalse(report["safe_for_numeric_migration"])
+            sample = next(
+                item for item in report["integer_storage_class_audit"]
+                if item["table"] == "sample" and item["column"] == "quantity"
+            )
+            self.assertEqual(sample["status"], "non_integer_storage_class")
+            self.assertEqual(sample["invalid_samples"][0]["rowid"], 1)
+            self.assertEqual(sample["invalid_samples"][0]["storage_class"], "text")
+            self.assertEqual(sample["invalid_samples"][0]["value"], "not-an-integer")
 
     def test_database_connection_is_read_only(self):
         with tempfile.TemporaryDirectory() as temp_dir:
