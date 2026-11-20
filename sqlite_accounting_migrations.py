@@ -107,7 +107,7 @@ def _rebuild_real_columns_as_text(connection, table_name, column_names):
         statement = between_pattern.sub(
             lambda match: (
                 cast_real_columns(match.group(1)) + " "
-                + ((match.group(2) + " ") if match.group(2) else "")
+                + ((match.group(2).strip() + " ") if match.group(2) else "")
                 + "BETWEEN " + cast_real_columns(match.group(3))
                 + " AND " + cast_real_columns(match.group(4))
             ),
@@ -116,7 +116,7 @@ def _rebuild_real_columns_as_text(connection, table_name, column_names):
         statement = in_pattern.sub(
             lambda match: (
                 cast_real_columns(match.group(1)) + " "
-                + ((match.group(2) + " ") if match.group(2) else "")
+                + ((match.group(2).strip() + " ") if match.group(2) else "")
                 + "IN (" + cast_real_columns(match.group(3)) + ")"
             ),
             statement,
