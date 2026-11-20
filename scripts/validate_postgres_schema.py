@@ -79,6 +79,58 @@ def validate(ddl_path, dsn, expected_review_path=None):
                 "index_count": index_count,
                 "trigger_count": trigger_count,
             }
+            actual_index_names = [
+                row[0] for row in connection.execute(
+                    """SELECT index_class.relname
+                       FROM pg_index index_info
+                       JOIN pg_class table_class ON table_class.oid = index_info.indrelid
+                       JOIN pg_namespace table_ns ON table_ns.oid = table_class.relnamespace
+                       JOIN pg_class index_class ON index_class.oid = index_info.indexrelid
+                       LEFT JOIN pg_constraint constraint_info
+                         ON constraint_info.conindid = index_info.indexrelid
+                        AND constraint_info.contype IN ('p', 'u')
+                       WHERE table_ns.nspname = %s
+                         AND constraint_info.oid IS NULL
+                       ORDER BY index_class.relname""",
+                    (schema_name,),
+                ).fetchall()
+            ]
+            actual_trigger_names = [
+                row[0] for row in connection.execute(
+                    """SELECT t.tgname FROM pg_trigger t
+                       JOIN pg_class c ON c.oid = t.tgrelid
+                       JOIN pg_namespace n ON n.oid = c.relnamespace
+                       WHERE n.nspname = %s AND NOT t.tgisinternal
+                       ORDER BY t.tgname""",
+                    (schema_name,),
+                ).fetchall()
+            ]
+            actual_check_constraint_count = connection.execute(
+                """SELECT COUNT(*) FROM pg_constraint con
+                   JOIN pg_class c ON c.oid = con.conrelid
+                   JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE n.nspname = %s AND con.contype = 'c'""",
+                (schema_name,),
+            ).fetchone()[0]
+            actual_default_columns = [
+                row[0] + "." + row[1] for row in connection.execute(
+                    """SELECT table_name, column_name
+                       FROM information_schema.columns
+                       WHERE table_schema = %s AND column_default IS NOT NULL
+                       ORDER BY table_name, column_name""",
+                    (schema_name,),
+                ).fetchall()
+            ]
+            actual_identity_columns = [
+                row[0] + "." + row[1] for row in connection.execute(
+                    """SELECT table_name, column_name
+                       FROM information_schema.columns
+                       WHERE table_schema = %s AND is_identity = 'YES'
+                       ORDER BY table_name, column_name""",
+                    (schema_name,),
+                ).fetchall()
+            ]
+
             actual_foreign_keys = connection.execute(
                 """
                 SELECT src.relname,
@@ -158,6 +210,33 @@ def validate(ddl_path, dsn, expected_review_path=None):
                             "actual": actual_fk_manifest[:200],
                         }, ensure_ascii=False, sort_keys=True)
                     )
+                inventory_expected = {
+                    "index_names": sorted(expected_review.get("index_names", [])),
+                    "trigger_names": sorted(expected_review.get("trigger_names", [])),
+                    "check_constraint_count": expected_review.get("check_constraint_count"),
+                    "default_columns": sorted(expected_review.get("default_columns", [])),
+                    "identity_columns": sorted(expected_review.get("identity_columns", [])),
+                }
+                inventory_actual = {
+                    "index_names": sorted(actual_index_names),
+                    "trigger_names": sorted(actual_trigger_names),
+                    "check_constraint_count": actual_check_constraint_count,
+                    "default_columns": sorted(actual_default_columns),
+                    "identity_columns": sorted(actual_identity_columns),
+                }
+                inventory_mismatches = {
+                    key: {"expected": inventory_expected[key], "actual": inventory_actual[key]}
+                    for key in inventory_expected
+                    if inventory_expected[key] is None
+                    or inventory_expected[key] != inventory_actual[key]
+                }
+                if inventory_mismatches:
+                    raise AssertionError(
+                        "PostgreSQL indexes, triggers, CHECK constraints, defaults, or identity "
+                        "columns differ from the source review: "
+                        + json.dumps(inventory_mismatches, ensure_ascii=False, sort_keys=True)
+                    )
+
             return {
                 "schema": schema_name,
                 **actual_counts,

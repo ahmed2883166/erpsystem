@@ -303,6 +303,9 @@ def generate_postgres_ddl(snapshot, *, require_all_numeric_overrides=True):
     numeric_candidates = []
     numeric_review_candidates = []
     identity_columns = []
+    generated_index_names = []
+    default_columns = []
+    check_constraint_count = 0
 
     for table in tables:
         table_name = table["name"]
@@ -343,6 +346,7 @@ def generate_postgres_ddl(snapshot, *, require_all_numeric_overrides=True):
             default = default_sql(column.get("dflt_value"), pg_type(column, table_name))
             if default is not None:
                 definition += f" DEFAULT {default}"
+                default_columns.append(f"{table_name}.{name}")
             definitions.append(definition)
 
             col_name = name.lower()
@@ -394,7 +398,9 @@ def generate_postgres_ddl(snapshot, *, require_all_numeric_overrides=True):
             pk_cols = ", ".join(quote_ident(c["name"]) for c in primary)
             definitions.append(f"    PRIMARY KEY ({pk_cols})")
 
-        for check in extract_check_constraints(table.get("sql")):
+        table_checks = extract_check_constraints(table.get("sql"))
+        check_constraint_count += len(table_checks)
+        for check in table_checks:
             definitions.append(f"    CHECK ({check})")
 
         lines.append(f"CREATE TABLE {qtable} (")
@@ -473,12 +479,15 @@ def generate_postgres_ddl(snapshot, *, require_all_numeric_overrides=True):
             if ";" in original_sql.rstrip().rstrip(";") or "--" in original_sql or "/*" in original_sql:
                 raise ValueError(f"Unsafe expression-index SQL for {name}.")
             lines.append(original_sql.strip().rstrip(";") + ";")
+            generated_index_names.append(name)
             continue
         if not cols:
             raise ValueError(f"Index {name} has no columns.")
         unique = "UNIQUE " if index.get("unique") else ""
         if index.get("unique") and len(cols) == 1 and cols[0] in nocase_unique_columns.get(table_name, set()):
-            index_name = quote_ident(short_identifier("uq_" + table_name + "_" + cols[0] + "_nocase"))
+            nocase_name = short_identifier("uq_" + table_name + "_" + cols[0] + "_nocase")
+            index_name = quote_ident(nocase_name)
+            generated_index_names.append(nocase_name)
             lines.append(
                 f"CREATE UNIQUE INDEX {index_name} ON {quote_ident(table_name)} "
                 f"(lower({quote_ident(cols[0])}));"
@@ -497,6 +506,7 @@ def generate_postgres_ddl(snapshot, *, require_all_numeric_overrides=True):
             f"CREATE {unique}INDEX {qindex} ON {quote_ident(table_name)} "
             f"({columns_sql}){where_clause};"
         )
+        generated_index_names.append(name)
 
 
     # Add foreign keys after every table exists; this supports cyclic references.
@@ -583,7 +593,13 @@ def generate_postgres_ddl(snapshot, *, require_all_numeric_overrides=True):
         "foreign_key_count": len(pending_fks),
         "index_count": len(pending_indexes),
         "trigger_count": len(snapshot.get("triggers", [])),
-        "identity_columns": identity_columns,
+        "identity_columns": sorted(identity_columns),
+        "index_names": sorted(generated_index_names),
+        "trigger_names": sorted(
+            trigger["name"] for trigger in snapshot.get("triggers", [])
+        ),
+        "check_constraint_count": check_constraint_count,
+        "default_columns": sorted(default_columns),
         "text_numeric_candidates": sorted(set(numeric_candidates)),
         "notes": [
             "Only explicitly reviewed accounting/rate columns use PostgreSQL NUMERIC; other TEXT fields remain TEXT.",
