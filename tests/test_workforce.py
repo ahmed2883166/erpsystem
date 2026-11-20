@@ -780,6 +780,54 @@ class WorkforceTests(unittest.TestCase):
         conn.close()
         self.assertAlmostEqual(expense_debit, 2000.0, places=2)
 
+    def test_custody_partial_returns_keep_balance_open_until_fully_returned(self):
+        self.add_employee()
+        self.client.post("/hr/custody", data={
+            "employee_id": "1", "issue_date": "2026-11-10", "amount": "5000",
+            "custody_account_id": "2", "cash_account_id": "1", "description": "عهدة مرحلية"
+        })
+        self.client.post("/hr/custody/1/expense", data={
+            "expense_date": "2026-11-10", "expense_account_id": "3",
+            "amount": "2000", "description": "مصروف أول"
+        })
+
+        first = self.client.post("/hr/custody/1/settle", data={
+            "settlement_date": "2026-11-10", "returned_amount": "1000"
+        })
+        self.assertEqual(first.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        state = conn.execute(
+            "SELECT status,remaining_amount FROM employee_custodies WHERE id=1"
+        ).fetchone()
+        returns = conn.execute(
+            "SELECT amount,journal_entry_id FROM custody_returns WHERE custody_id=1 ORDER BY id"
+        ).fetchall()
+        conn.close()
+        self.assertEqual(state, ("open", "2000.00"))
+        self.assertEqual(len(returns), 1)
+        self.assertEqual(returns[0][0], "1000.00")
+        self.assertIsNotNone(returns[0][1])
+
+        second = self.client.post("/hr/custody/1/settle", data={
+            "settlement_date": "2026-11-12", "returned_amount": "2000"
+        })
+        self.assertEqual(second.status_code, 302)
+        conn = sqlite3.connect(self.db_path)
+        state = conn.execute(
+            "SELECT status,remaining_amount FROM employee_custodies WHERE id=1"
+        ).fetchone()
+        returns = conn.execute(
+            "SELECT amount,journal_entry_id FROM custody_returns WHERE custody_id=1 ORDER BY id"
+        ).fetchall()
+        debit, credit = conn.execute(
+            "SELECT SUM(CAST(debit AS REAL)),SUM(CAST(credit AS REAL)) FROM journal_lines"
+        ).fetchone()
+        conn.close()
+        self.assertEqual(state, ("settled", "0.00"))
+        self.assertEqual([row[0] for row in returns], ["1000.00", "2000.00"])
+        self.assertTrue(all(row[1] for row in returns))
+        self.assertAlmostEqual(debit, credit, places=2)
+
     def test_custody_cannot_settle_with_unreconciled_difference(self):
         self.add_employee()
         self.client.post("/hr/custody", data={
