@@ -167,28 +167,23 @@ def connect_database(path, *, timeout=DEFAULT_TIMEOUT_SECONDS, isolation_level="
     retain explicit transaction mode (autocommit=False).
     """
     if require_supported_runtime_backend() == "postgresql":
-        from postgres_database import connect_postgres
+        # This branch is intentionally unreachable until the fail-closed
+        # migration gate in database_backend.py is explicitly lifted.
+        from postgres_database import get_process_postgres_pool
+        from postgres_compat import PooledPostgresCompatConnection
 
-        raw_connection = connect_postgres(
-            autocommit=isolation_level is None,
-            connect_timeout=max(1, min(int(timeout), 30)),
+        pool = get_process_postgres_pool(
+            connect_timeout=max(1, min(int(timeout), 30))
         )
         deadline = current_report_deadline()
+        remaining_ms = None
         if deadline is not None:
             remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
-            original_autocommit = raw_connection.autocommit
-            try:
-                if not original_autocommit:
-                    raw_connection.autocommit = True
-                raw_connection.execute(
-                    "SELECT set_config('statement_timeout', %s, false)",
-                    (f"{remaining_ms}ms",),
-                )
-            finally:
-                if not original_autocommit:
-                    raw_connection.autocommit = False
-        from postgres_compat import PostgresCompatConnection
-        return _track_connection(PostgresCompatConnection(raw_connection))
+        connection = PooledPostgresCompatConnection(
+            pool.connection(), autocommit=isolation_level is None,
+            statement_timeout_ms=remaining_ms,
+        )
+        return _track_connection(connection)
     # Track weak references only. A strong list here changes historical behavior:
     # it keeps otherwise-unreferenced connections alive until request teardown.
     # Weak tracking preserves prompt refcount/GC closure while still allowing
