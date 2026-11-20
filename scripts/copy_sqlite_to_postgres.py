@@ -563,7 +563,7 @@ def main(argv=None) -> int:
         parser.error("Provide --postgres-dsn or set NEXUS_POSTGRES_DSN.")
     try:
         expected_baseline_sha256 = hashlib.sha256(
-            Path(args.baseline_sql).expanduser().read_bytes()
+            Path(args.baseline_sql).expanduser().read_text(encoding="utf-8").encode("utf-8")
         ).hexdigest()
         result = copy_database(
             args.sqlite, args.postgres_dsn, args.schema, args.batch_size,

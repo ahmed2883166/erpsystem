@@ -805,7 +805,7 @@ def main(argv=None):
     if not args.postgres_dsn:
         parser.error("Provide --postgres-dsn or set NEXUS_POSTGRES_DSN.")
     expected_baseline_sha256 = hashlib.sha256(
-        Path(args.baseline_sql).expanduser().read_bytes()
+        Path(args.baseline_sql).expanduser().read_text(encoding="utf-8").encode("utf-8")
     ).hexdigest()
     result = verify_copy(
         args.sqlite, args.postgres_dsn, args.schema, args.snapshot_manifest,

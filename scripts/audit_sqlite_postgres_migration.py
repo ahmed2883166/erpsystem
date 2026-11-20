@@ -261,7 +261,7 @@ def main(argv=None) -> int:
         numeric_audit = inspect_numeric_source(args.sqlite)
         postgres_info = inspect_postgres(args.postgres_dsn, args.schema)
         expected_baseline_sha256 = hashlib.sha256(
-            Path(args.baseline_sql).expanduser().read_bytes()
+            Path(args.baseline_sql).expanduser().read_text(encoding="utf-8").encode("utf-8")
         ).hexdigest()
         report = build_report(
             sqlite_info, postgres_info, numeric_audit, expected_baseline_sha256
