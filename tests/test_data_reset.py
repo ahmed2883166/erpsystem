@@ -23,6 +23,7 @@ class CompanyDataResetTests(unittest.TestCase):
             CREATE TABLE currencies(code TEXT PRIMARY KEY, name TEXT);
             CREATE TABLE tax_rates(id INTEGER PRIMARY KEY, code TEXT);
             CREATE TABLE audit_log(id INTEGER PRIMARY KEY, action TEXT);
+            CREATE TABLE journal_posting_keys(idempotency_key TEXT PRIMARY KEY, journal_entry_id INTEGER, created_at TEXT);
             CREATE TABLE login_attempts(id INTEGER PRIMARY KEY, username TEXT, remote_addr TEXT, attempted_at TEXT);
             CREATE TABLE activity_profiles(id INTEGER PRIMARY KEY, name TEXT);
             CREATE TABLE cash_flow_account_mappings(id INTEGER PRIMARY KEY, account_id INTEGER);
@@ -48,6 +49,7 @@ class CompanyDataResetTests(unittest.TestCase):
             INSERT INTO currencies VALUES('EGP', 'Egyptian Pound');
             INSERT INTO tax_rates VALUES(1, 'VAT14');
             INSERT INTO audit_log VALUES(1, 'before_reset');
+            INSERT INTO journal_posting_keys VALUES('old-entry-key', 1, '2026-01-01');
             INSERT INTO activity_profiles VALUES(1, 'commercial');
             INSERT INTO cash_flow_account_mappings VALUES(1, 1);
             INSERT INTO management_account_roles VALUES(1, 1);
@@ -76,9 +78,12 @@ class CompanyDataResetTests(unittest.TestCase):
         connection = self.open_database()
         result = clear_company_data(connection)
         self.assertGreater(result["deleted_tables"], 0)
-        self.assertEqual(result["deleted_rows"], 5)
+        self.assertEqual(result["deleted_rows"], 6)
         self.assertEqual(
             connection.execute("SELECT COUNT(*) FROM sales_invoices").fetchone()[0], 0
+        )
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM journal_posting_keys").fetchone()[0], 0
         )
         self.assertEqual(
             connection.execute("SELECT COUNT(*) FROM customers").fetchone()[0], 0
@@ -216,6 +221,7 @@ class CompanyDataResetTests(unittest.TestCase):
 
     def test_delete_allowlist_contains_known_operational_tables_only(self):
         self.assertIn("sales_invoices", DELETE_TABLES)
+        self.assertIn("journal_posting_keys", DELETE_TABLES)
         self.assertIn("payroll_runs", DELETE_TABLES)
         self.assertIn("cash_commitments", DELETE_TABLES)
         self.assertIn("cash_commitment_duplicate_reviews", DELETE_TABLES)
