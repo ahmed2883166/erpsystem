@@ -28,7 +28,7 @@ from stock import stock_bp, initialize_stock_schema
 from purchases import purchase_bp, init_purchase_schema
 from sales import sales_bp, init_sales_schema
 from accounting_core import (post_journal, reconciliation_snapshot, safe_error_message,
-                              decimal_sum_expression, decimal_net_expression)
+                              decimal_sum_expression, decimal_net_expression, lock_journal_reference)
 from banking import bank_bp, init_bank_schema
 from fixed_assets import assets_bp, initialize_assets_schema, register_assets_from_journal_lines
 from receivables import aging_bp, initialize_aging_schema
@@ -1855,6 +1855,10 @@ def journal():
                 raise ValueError("المرجع لا يجب أن يتجاوز 100 حرف.")
             dimensions = validate_journal_dimensions(connection, {key: request.form.get(key) for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id", "supplier_id")})
             begin_write_transaction(connection)
+            # Serialize the duplicate check with post_journal and linked asset
+            # registration; otherwise two retries can both observe no entry,
+            # then the second can attempt to register the same asset lines.
+            lock_journal_reference(connection, reference)
             existing_reference = execute_compat(connection,
                 "SELECT id FROM journal_entries WHERE reference=? AND status='posted' ORDER BY id LIMIT 1",
                 (reference,),
