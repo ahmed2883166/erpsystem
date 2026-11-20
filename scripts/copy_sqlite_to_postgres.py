@@ -14,6 +14,8 @@ import json
 import os
 import re
 import sqlite3
+import sys
+import time
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import quote
@@ -444,7 +446,9 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
             suspended_indexes = suspend_secondary_indexes(dst, schema)
             suspended_dashboard_triggers = suspend_dashboard_version_triggers(dst, schema)
             counts = {}
+            copy_started_at = time.monotonic()
             for table in order:
+                table_started_at = time.monotonic()
                 columns = source_columns[table]
                 qcols = ", ".join(quote_ident(c) for c in columns)
                 qname = qschema + "." + quote_ident(table)
@@ -493,7 +497,14 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                         f"Row count mismatch for {table}: copied={copied}, target={target_count}"
                     )
                 counts[table] = copied
+                print(
+                    f"[NEXUS copy] {table}: {copied} rows in "
+                    f"{time.monotonic() - table_started_at:.2f}s "
+                    f"({len(counts)}/{len(order)} tables)",
+                    file=sys.stderr, flush=True,
+                )
 
+            total_elapsed_seconds = time.monotonic() - copy_started_at
             # Rebuild every secondary index before the copy can be accepted.
             # Any duplicate/data incompatibility fails the transaction and
             # restores the original target indexes on rollback.
@@ -537,6 +548,7 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                 "secondary_indexes_rebuilt": restored_indexes,
                 "dashboard_triggers_rebuilt": restored_dashboard_triggers,
                 "dashboard_version_after_copy": dashboard_version,
+                "elapsed_seconds": round(total_elapsed_seconds, 3),
             }
         except Exception:
             dst.rollback()
