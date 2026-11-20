@@ -1744,14 +1744,12 @@ def movements():
                 post_scrap_journal(c,mid,movement_no,product,movement_date,total,session.get("user_id"))
             elif kind in {"transfer","relocate"}:
                 if kind == "transfer":
-                    if source_branch_id and target_branch_id and source_branch_id != target_branch_id:
-                        post_interbranch_transfer_journal(
-                            c, mid, movement_no, product, movement_date, total,
-                            session.get("user_id"), source_branch_id, target_branch_id
-                        )
-                    else:
-                        _execute(c, "UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (mid,))
-                        set_stock_accounting_note(c,mid,None)
+                    # Every warehouse transfer must move the inventory GL dimensions,
+                    # even when both warehouses belong to the same branch.
+                    post_interbranch_transfer_journal(
+                        c, mid, movement_no, product, movement_date, total,
+                        session.get("user_id"), source_branch_id, target_branch_id
+                    )
                 else:
                     # Bin relocation inside the same warehouse never changes GL.
                     _execute(c, "UPDATE stock_movements SET accounting_status='not_required' WHERE id=?", (mid,))
