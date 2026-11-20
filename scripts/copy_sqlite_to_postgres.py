@@ -280,7 +280,10 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
     # Enforce the same exact-Decimal safety audit used by preflight even
     # when an operator invokes this copy utility directly. The source audit is
     # read-only and runs before opening a PostgreSQL connection.
-    from scripts.audit_sqlite_postgres_migration import inspect_numeric_source
+    if __package__:
+        from .audit_sqlite_postgres_migration import inspect_numeric_source
+    else:
+        from audit_sqlite_postgres_migration import inspect_numeric_source
 
     numeric_audit = inspect_numeric_source(sqlite_path)
     if not numeric_audit.get("safe_for_numeric_migration"):
