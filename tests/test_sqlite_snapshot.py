@@ -65,6 +65,7 @@ class SQLiteSnapshotTests(unittest.TestCase):
             verified = verify_sqlite_snapshot(result["snapshot"], result["manifest"])
             self.assertTrue(verified["verified"])
             self.assertEqual(verified["sha256"], result["sha256"])
+            self.assertEqual(verified["manifest"], result["manifest"])
 
     def test_snapshot_refuses_to_overwrite_existing_backup(self):
         with tempfile.TemporaryDirectory(prefix="admrail-snapshot-overwrite-") as folder:
@@ -84,6 +85,14 @@ class SQLiteSnapshotTests(unittest.TestCase):
                 handle.write(b"tampered")
             with self.assertRaisesRegex(ValueError, "SHA-256"):
                 verify_sqlite_snapshot(snapshot, result["manifest"])
+
+    def test_missing_adjacent_manifest_has_actionable_error_for_db_extension(self):
+        with tempfile.TemporaryDirectory(prefix="admrail-snapshot-manifest-") as folder:
+            snapshot = self._source(folder)
+            with self.assertRaisesRegex(
+                FileNotFoundError, "pass --snapshot-manifest explicitly"
+            ):
+                verify_sqlite_snapshot(snapshot)
 
     def test_snapshot_refuses_missing_source_without_creating_database(self):
         with tempfile.TemporaryDirectory(prefix="admrail-snapshot-missing-") as folder:
