@@ -26,6 +26,7 @@ jobs:
           POSTGRES_USER: nexus_test
           POSTGRES_PASSWORD: nexus_test
           POSTGRES_DB: nexus_test
+        command: ["postgres", "-c", "log_min_error_statement=warning"]
         ports:
           - 5432:5432
         options: >-
@@ -33,7 +34,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
-          --log-min-error-statement=warning
+
     env:
       NEXUS_TEST_POSTGRES_DSN: postgresql://nexus_test:nexus_test@localhost:5432/nexus_test
     steps:
