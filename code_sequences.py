@@ -1,7 +1,7 @@
 """Atomic, per-entity human-readable number sequences for NEXUS ERP."""
 import re
 
-from db_compat import database_dialect
+from db_compat import begin_write_transaction, database_dialect
 from db_sql import execute_compat
 
 
@@ -58,11 +58,17 @@ def next_code(connection, sequence_key, prefix, table, column, width=6):
     if dialect == "sqlite":
         if not connection.in_transaction:
             connection.execute("BEGIN IMMEDIATE")
-    elif connection.autocommit:
-        raise RuntimeError(
-            "PostgreSQL code sequences require an explicit transaction; "
-            "connect with autocommit=False."
-        )
+    elif dialect == "postgresql":
+        # Flask blueprint connections may use autocommit=True. That setting
+        # does not mean a transaction is active; explicitly begin one when
+        # the connection is idle, and reuse a caller-owned transaction.
+        begin_write_transaction(connection)
+        transaction_status = getattr(connection.info, "transaction_status", None)
+        status_name = getattr(transaction_status, "name", str(transaction_status))
+        if status_name != "INTRANS":
+            raise RuntimeError(
+                "PostgreSQL code sequences require an active, usable transaction."
+            )
 
     execute_compat(connection, """
         CREATE TABLE IF NOT EXISTS document_sequences (
