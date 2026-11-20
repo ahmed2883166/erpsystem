@@ -157,7 +157,7 @@
    row.querySelectorAll('[aria-controls],[aria-owns],[aria-labelledby]').forEach(element=>{
      ['aria-controls','aria-owns','aria-labelledby'].forEach(attribute=>{
        const value=element.getAttribute(attribute);
-       if(value)element.setAttribute(attribute,value.split(/\\s+/).map(id=>idMap.get(id)||id).join(' '));
+       if(value)element.setAttribute(attribute,value.split(/\s+/).map(id=>idMap.get(id)||id).join(' '));
      });
    });
    row.querySelectorAll('input').forEach(input=>{
@@ -165,6 +165,7 @@
      else input.value='';
    });
    row.querySelectorAll('select').forEach(select=>{
+     select.removeAttribute('data-nexus-search-ready');
      select.classList.remove('select2-hidden-accessible');
      select.removeAttribute('aria-hidden');
    });

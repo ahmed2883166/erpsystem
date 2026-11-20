@@ -113,14 +113,14 @@ class PostgreSQLAccountingCoreTests(unittest.TestCase):
         try:
             connection.execute("""
                 CREATE TEMP TABLE stock_layer_expression_probe(
-                    value_remaining NUMERIC,
+                    value_remaining TEXT,
                     quantity NUMERIC,
                     unit_cost NUMERIC
                 )
             """)
             connection.execute(
                 "INSERT INTO stock_layer_expression_probe VALUES "
-                "(NULL, 2, 3.25), (5.75, 10, 1)"
+                "('', 2, 3.25), ('5.75', 10, 1)"
             )
             expression = decimal_layer_value_sum_expression(
                 connection, "value_remaining", "quantity", "unit_cost"

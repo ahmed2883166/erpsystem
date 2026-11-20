@@ -48,8 +48,8 @@ def decimal_layer_value_sum_expression(connection, value_remaining, quantity, un
         )
     return (
         "COALESCE(SUM(CASE "
-        f"WHEN {value_remaining} IS NOT NULL "
-        f"THEN CAST({value_remaining} AS NUMERIC) "
+        f"WHEN NULLIF({value_remaining}, '') IS NOT NULL "
+        f"THEN CAST(NULLIF({value_remaining}, '') AS NUMERIC) "
         f"ELSE CAST({quantity} AS NUMERIC)*CAST({unit_cost} AS NUMERIC) END), 0)"
     )
 
