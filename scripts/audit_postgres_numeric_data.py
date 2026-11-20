@@ -176,12 +176,12 @@ def audit_integer_storage_classes(connection, snapshot, *, max_examples=10):
             if invalid:
                 samples = [
                     {
-                        "rowid": row["rowid"] if isinstance(row, sqlite3.Row) else row[0],
+                        "rowid": row["sample_rowid"] if isinstance(row, sqlite3.Row) else row[0],
                         "storage_class": row["storage_class"] if isinstance(row, sqlite3.Row) else row[1],
                         "value": str(row["value"] if isinstance(row, sqlite3.Row) else row[2])[:80],
                     }
                     for row in connection.execute(
-                        f"SELECT rowid, typeof({qcolumn}) AS storage_class, "
+                        f"SELECT rowid AS sample_rowid, typeof({qcolumn}) AS storage_class, "
                         f"{qcolumn} AS value FROM {qtable} "
                         f"WHERE {qcolumn} IS NOT NULL AND typeof({qcolumn}) <> 'integer' "
                         f"LIMIT ?", (max_examples,)
