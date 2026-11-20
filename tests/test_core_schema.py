@@ -20,7 +20,7 @@ class CoreSchemaTests(unittest.TestCase):
         expected = {
             "users", "accounts", "journal_entries", "journal_lines",
             "audit_log", "company_settings", "currencies", "tax_rates",
-            "login_attempts", "accounting_periods",
+            "login_attempts", "accounting_periods", "opening_balance_import_refs",
         }
         self.assertTrue(expected.issubset(table_names(self.connection)))
         self.assertTrue({"username", "password_hash", "must_change_password"}.issubset(
@@ -29,6 +29,10 @@ class CoreSchemaTests(unittest.TestCase):
         self.assertTrue({"entry_id", "account_id", "debit", "credit"}.issubset(
             table_columns(self.connection, "journal_lines")
         ))
+        self.assertTrue({
+            "record_type", "reference", "entity_key", "journal_entry_id",
+            "source_file", "created_at",
+        }.issubset(table_columns(self.connection, "opening_balance_import_refs")))
 
     def test_initialization_is_idempotent_and_preserves_existing_rows(self):
         initialize_core_schema(self.connection)
