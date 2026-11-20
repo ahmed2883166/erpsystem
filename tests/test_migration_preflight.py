@@ -37,7 +37,7 @@ class SQLitePostgresMigrationPreflightTests(unittest.TestCase):
                 "accounts": {"columns": ["id", "code"], "row_count": 1},
             }
         }
-        report = build_report(source, target)
+        report = build_report(source, target, {"safe_for_numeric_migration": True})
         self.assertFalse(report["preflight_passed"])
         self.assertEqual(report["missing_postgres_tables"], ["journal_entries"])
         self.assertEqual(report["column_differences"][0]["missing_in_postgres"], ["active"])
@@ -55,7 +55,7 @@ class SQLitePostgresMigrationPreflightTests(unittest.TestCase):
                 "unexpected": {"columns": ["id"], "row_count": 0},
             }
         }
-        report = build_report(source, target)
+        report = build_report(source, target, {"safe_for_numeric_migration": True})
         self.assertFalse(report["preflight_passed"])
         self.assertEqual(report["extra_postgres_tables"], ["unexpected"])
 
@@ -85,7 +85,7 @@ class SQLitePostgresMigrationPreflightTests(unittest.TestCase):
         target = {
             "tables": {"journal_lines": {"columns": ["id"], "row_count": 0}}
         }
-        report = build_report(source, target)
+        report = build_report(source, target, {"safe_for_numeric_migration": True})
         self.assertFalse(report["preflight_passed"])
         self.assertFalse(report["source_integrity_ok"])
         self.assertFalse(report["source_foreign_keys_ok"])
