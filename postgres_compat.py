@@ -78,21 +78,34 @@ class PostgresCompatConnection:
 
 
 class PooledPostgresCompatConnection:
-    """DB-API adapter that returns a pool lease instead of closing its socket.
+    """DB-API adapter that returns a clean lease to the process-wide pool.
 
-    Flask's existing teardown calls connection.close(). For SQLite that drops
-    the request connection and rolls back any uncommitted work. This adapter
-    preserves that contract while returning the borrowed PostgreSQL connection
-    to psycopg_pool for reuse.
+    Pool connections use autocommit=False as their baseline. A request may
+    temporarily request SQLite-compatible autocommit=True; close always resets
+    statement_timeout and restores the pool baseline before returning the lease.
     """
 
     _nexus_postgres_connection = True
 
-    def __init__(self, lease):
+    def __init__(self, lease, *, autocommit=False, statement_timeout_ms=None):
         self._lease = lease
         self._closed = False
-        raw_connection = lease.__enter__()
-        self._connection = PostgresCompatConnection(raw_connection)
+        self._desired_autocommit = bool(autocommit)
+        self._connection = None
+        try:
+            raw_connection = lease.__enter__()
+            self._connection = PostgresCompatConnection(raw_connection)
+            raw_connection.autocommit = True
+            if statement_timeout_ms is not None:
+                raw_connection.execute(
+                    "SELECT set_config('statement_timeout', %s, false)",
+                    (f"{max(1, int(statement_timeout_ms))}ms",),
+                )
+            raw_connection.autocommit = self._desired_autocommit
+        except Exception as exc:
+            self._closed = True
+            lease.__exit__(type(exc), exc, exc.__traceback__)
+            raise
 
     @property
     def closed(self):
@@ -102,28 +115,50 @@ class PooledPostgresCompatConnection:
         if self._closed:
             raise RuntimeError("PostgreSQL pool lease is already returned.")
 
+    def _reset_session(self):
+        raw = self._connection._connection
+        if not raw.autocommit:
+            raw.rollback()
+        raw.autocommit = True
+        raw.execute("RESET statement_timeout")
+        raw.autocommit = False
+
     def close(self):
-        """Roll back unfinished work and return the lease exactly once."""
+        """Roll back unfinished work, reset session state, and return once."""
         if self._closed:
             return
+        error = None
         try:
-            self._connection.rollback()
-        except BaseException as exc:
-            self._closed = True
-            self._lease.__exit__(type(exc), exc, exc.__traceback__)
-            raise
+            self._reset_session()
+        except Exception as exc:
+            error = exc
         self._closed = True
-        self._lease.__exit__(None, None, None)
+        if error is None:
+            self._lease.__exit__(None, None, None)
+        else:
+            self._lease.__exit__(type(error), error, error.__traceback__)
+            raise error
 
     def __enter__(self):
         self._ensure_open()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        """Match DB-API context semantics and release the pool lease."""
-        if not self._closed:
+        if self._closed:
+            return False
+        raw = self._connection._connection
+        try:
+            if exc_type is not None:
+                raw.rollback()
+            elif not raw.autocommit:
+                raw.commit()
+            self._reset_session()
+        except Exception as reset_error:
             self._closed = True
-            return self._lease.__exit__(exc_type, exc_value, traceback)
+            self._lease.__exit__(type(reset_error), reset_error, reset_error.__traceback__)
+            raise
+        self._closed = True
+        self._lease.__exit__(None, None, None)
         return False
 
     def __getattr__(self, name):
