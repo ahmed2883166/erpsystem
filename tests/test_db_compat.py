@@ -202,10 +202,11 @@ class SQLiteSchemaCompatibilityTests(unittest.TestCase):
 class _FakePsycopgConnection:
     __module__ = "psycopg.fake"
 
-    def __init__(self, status_name):
+    def __init__(self, status_name, *, autocommit=False):
         self.info = SimpleNamespace(
             transaction_status=SimpleNamespace(name=status_name)
         )
+        self.autocommit = autocommit
         self.statements = []
 
     def execute(self, statement):
@@ -347,9 +348,19 @@ class PortableScriptExecutionTests(unittest.TestCase):
 
 
 class PortableTransactionStateTests(unittest.TestCase):
-    def test_postgresql_idle_connection_starts_one_transaction(self):
-        connection = _FakePsycopgConnection("IDLE")
+    def test_postgresql_managed_transaction_uses_psycopg_lazy_begin(self):
+        connection = _FakePsycopgConnection("IDLE", autocommit=False)
         self.assertFalse(transaction_is_active(connection))
+        self.assertTrue(begin_write_transaction(connection))
+        # psycopg opens the transaction on the first real statement; issuing
+        # SQL BEGIN here would create a nested-transaction warning.
+        self.assertEqual(connection.statements, [])
+        self.assertFalse(transaction_is_active(connection))
+        connection.execute("INSERT INTO probe VALUES (1)")
+        self.assertTrue(transaction_is_active(connection))
+
+    def test_postgresql_autocommit_connection_uses_explicit_begin(self):
+        connection = _FakePsycopgConnection("IDLE", autocommit=True)
         self.assertTrue(begin_write_transaction(connection))
         self.assertEqual(connection.statements, ["BEGIN"])
         self.assertTrue(transaction_is_active(connection))
