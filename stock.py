@@ -2322,6 +2322,7 @@ def valuation_reconciliation():
         reconciliation_status = "matched" if (
             total_difference.quantize(D("0.01")) == D("0.00")
             and layer_integrity_issue_count == 0
+            and difference_account_count == 0
             and detail_difference_count == 0
             and not has_unallocated_balance
         ) else "review"
