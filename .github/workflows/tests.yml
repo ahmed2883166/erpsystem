@@ -33,6 +33,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
+          --log-min-error-statement=warning
     env:
       NEXUS_TEST_POSTGRES_DSN: postgresql://nexus_test:nexus_test@localhost:5432/nexus_test
     steps:
