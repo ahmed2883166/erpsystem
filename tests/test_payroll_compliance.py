@@ -179,5 +179,42 @@ class PayrollComplianceTests(unittest.TestCase):
             calculate_payroll_deductions(self.conn, self.employee, 10000, "2026-11")
 
 
+    def test_egypt_highest_income_tier_applies_25_percent_to_first_1_2m_and_27_5_above(self):
+        rule_id = seed_egypt_2026(self.conn)
+        self.conn.execute("""
+            UPDATE payroll_rule_sets
+               SET personal_exemption_annual='0',
+                   insurance_floor='0',insurance_ceiling='0',
+                   employee_insurance_rate='0',employer_insurance_rate='0'
+             WHERE id=?
+        """, (rule_id,))
+        self.conn.execute(
+            "DELETE FROM payroll_tax_tier_brackets WHERE rule_set_id=? AND income_max IS NULL",
+            (rule_id,),
+        )
+        self.conn.executemany("""
+            INSERT INTO payroll_tax_tier_brackets(rule_set_id,income_max,lower_bound,upper_bound,rate)
+            VALUES(?,?,?,?,?)
+        """, [
+            (rule_id, None, "0", "1200000", "25"),
+            (rule_id, None, "1200000", None, "27.5"),
+        ])
+        self.employee["insurance_enabled"] = 0
+
+        cases = [
+            ("100000", Decimal("1200000.00"), Decimal("24166.67")),
+            ("100000.08", Decimal("1200000.00"), Decimal("24166.67")),
+            ("100000.84", Decimal("1200010.00"), Decimal("25000.23")),
+            ("166666.67", Decimal("2000000.00"), Decimal("43333.33")),
+        ]
+        for monthly_gross, expected_base, expected_monthly_tax in cases:
+            with self.subTest(monthly_gross=monthly_gross):
+                result = calculate_payroll_deductions(
+                    self.conn, self.employee, monthly_gross, "2026-11"
+                )
+                self.assertEqual(result["taxable_annual"], expected_base)
+                self.assertEqual(result["tax"], expected_monthly_tax)
+
+
 if __name__ == "__main__":
     unittest.main()
