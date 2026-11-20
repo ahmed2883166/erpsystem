@@ -6,6 +6,7 @@ coverage, target emptiness, and SQLite integrity before a separate copy run.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -93,6 +94,8 @@ def inspect_numeric_source(path: str) -> dict:
 
 
 def inspect_postgres(dsn: str, schema: str) -> dict:
+    if str(schema).lower() == "public":
+        raise ValueError("PostgreSQL migration preflight refuses the shared public schema.")
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", schema):
         raise ValueError("PostgreSQL schema must be a simple identifier.")
     try:
@@ -116,6 +119,17 @@ def inspect_postgres(dsn: str, schema: str) -> dict:
             tables.setdefault(row["table_name"], {"columns": [], "row_count": None})
             tables[row["table_name"]]["columns"].append(row["column_name"])
         foreign_keys = _pg_foreign_key_map(conn, schema)
+        marker_present = "nexus_schema_installation" in tables
+        baseline_sha256 = None
+        if marker_present:
+            marker_columns = set(tables["nexus_schema_installation"]["columns"])
+            if {"id", "baseline_sha256"}.issubset(marker_columns):
+                marker_row = conn.execute(
+                    'SELECT baseline_sha256 FROM "' + schema +
+                    '".nexus_schema_installation WHERE id = 1'
+                ).fetchone()
+                baseline_sha256 = marker_row["baseline_sha256"] if marker_row else None
+        dashboard_version_present = "management_dashboard_data_version" in tables
         for name in tables:
             # Identifiers are quoted after validation against information_schema.
             quoted_schema = '"' + schema + '"'
@@ -124,7 +138,12 @@ def inspect_postgres(dsn: str, schema: str) -> dict:
                 f"SELECT COUNT(*) FROM {quoted_schema}.{quoted_table}"
             ).fetchone()[0]
         conn.rollback()
-        return {"schema": schema, "tables": tables, "foreign_keys": foreign_keys}
+        return {
+            "schema": schema, "tables": tables, "foreign_keys": foreign_keys,
+            "baseline_marker_present": marker_present,
+            "baseline_sha256": baseline_sha256,
+            "dashboard_version_table_present": dashboard_version_present,
+        }
     except Exception:
         conn.rollback()
         raise
@@ -132,7 +151,10 @@ def inspect_postgres(dsn: str, schema: str) -> dict:
         conn.close()
 
 
-def build_report(sqlite_info: dict, postgres_info: dict, numeric_audit: dict) -> dict:
+def build_report(
+    sqlite_info: dict, postgres_info: dict, numeric_audit: dict,
+    expected_baseline_sha256: str | None = None,
+) -> dict:
     source = sqlite_info["tables"]
     # The PostgreSQL baseline installer owns this metadata table; it is not
     # application data and must not block a SQLite-to-PostgreSQL preflight.
@@ -180,10 +202,18 @@ def build_report(sqlite_info: dict, postgres_info: dict, numeric_audit: dict) ->
     source_ok = sqlite_info["integrity_check"] == ["ok"]
     fk_ok = not sqlite_info["foreign_key_violations"]
     numeric_ok = bool(numeric_audit.get("safe_for_numeric_migration"))
+    marker_ok = postgres_info.get("baseline_marker_present", True)
+    marker_hash = str(postgres_info.get("baseline_sha256") or "").strip()
+    if expected_baseline_sha256 is not None:
+        marker_ok = marker_ok and marker_hash == expected_baseline_sha256
+    elif "baseline_marker_present" in postgres_info:
+        marker_ok = marker_ok and bool(re.fullmatch(r"[0-9a-f]{64}", marker_hash))
+    dashboard_version_ok = postgres_info.get("dashboard_version_table_present", True)
     duplicate_supplier_invoice_numbers = sqlite_info.get(
         "duplicate_supplier_invoice_numbers", []
     )
-    ready = (source_ok and fk_ok and numeric_ok and not missing_tables and not extra_tables
+    ready = (source_ok and fk_ok and numeric_ok and marker_ok and dashboard_version_ok
+             and not missing_tables and not extra_tables
              and not column_issues and not count_differences
              and not missing_foreign_keys and not extra_foreign_keys
              and not duplicate_supplier_invoice_numbers)
@@ -192,6 +222,9 @@ def build_report(sqlite_info: dict, postgres_info: dict, numeric_audit: dict) ->
         "source_integrity_ok": source_ok,
         "source_foreign_keys_ok": fk_ok,
         "numeric_audit_passed": numeric_ok,
+        "baseline_marker_valid": marker_ok,
+        "baseline_sha256": marker_hash or None,
+        "dashboard_version_table_present": dashboard_version_ok,
         "numeric_audit": numeric_audit,
         "missing_postgres_tables": missing_tables,
         "extra_postgres_tables": extra_tables,
@@ -218,6 +251,8 @@ def main(argv=None) -> int:
     parser.add_argument("--postgres-dsn", default=os.environ.get("NEXUS_POSTGRES_DSN"),
                         help="PostgreSQL DSN (or NEXUS_POSTGRES_DSN)")
     parser.add_argument("--schema", default="nexus", help="Target PostgreSQL schema")
+    parser.add_argument("--baseline-sql", required=True,
+                        help="Exact generated baseline SQL used to install the target schema")
     args = parser.parse_args(argv)
     if not args.postgres_dsn:
         parser.error("Provide --postgres-dsn or set NEXUS_POSTGRES_DSN.")
@@ -225,7 +260,12 @@ def main(argv=None) -> int:
         sqlite_info = inspect_sqlite(args.sqlite)
         numeric_audit = inspect_numeric_source(args.sqlite)
         postgres_info = inspect_postgres(args.postgres_dsn, args.schema)
-        report = build_report(sqlite_info, postgres_info, numeric_audit)
+        expected_baseline_sha256 = hashlib.sha256(
+            Path(args.baseline_sql).expanduser().read_bytes()
+        ).hexdigest()
+        report = build_report(
+            sqlite_info, postgres_info, numeric_audit, expected_baseline_sha256
+        )
     except (OSError, sqlite3.Error, ValueError, RuntimeError) as exc:
         parser.error(str(exc))
     print(json.dumps(report, ensure_ascii=False, indent=2))
