@@ -42,7 +42,7 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
     def test_repository_core_migration_is_loadable_and_splits_function_body_safely(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
         self.assertTrue(any(
             "CREATE TABLE IF NOT EXISTS journal_posting_keys" in statement
             for statement in _split_sql_statements(migrations[11].sql)
@@ -93,6 +93,14 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
                             for item in supplier_return_statements))
         self.assertTrue(any("CREATE TABLE IF NOT EXISTS supplier_credit_note_bill_line_allocations" in item
                             for item in supplier_return_statements))
+        dimension_statements = _split_sql_statements(migrations[12].sql)
+        self.assertTrue(any("CREATE TABLE IF NOT EXISTS branches" in item
+                            for item in dimension_statements))
+        self.assertTrue(any("ADD COLUMN IF NOT EXISTS branch_id" in item
+                            and "cost_center_id" in item and "project_id" in item
+                            for item in dimension_statements))
+        self.assertTrue(any("CREATE TABLE IF NOT EXISTS opening_balance_import_refs" in item
+                            for item in dimension_statements))
 
     def test_rejects_invalid_or_empty_migration_files(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -614,6 +622,81 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
             (self.schema + ".supplier_credit_note_bill_line_allocations",),
         ).fetchone()
         self.assertEqual(constraints["count"], 2)
+
+
+    def test_accounting_dimensions_and_opening_import_refs_are_present_and_linked(self):
+        migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
+        migrations = load_migrations(migration_dir)
+        self.assertEqual(
+            apply_migrations(self.connection, migrations, schema=self.schema),
+            list(range(1, 14)),
+        )
+        schema = quote_schema_name(self.schema)
+        user_id = self.connection.execute(
+            f"INSERT INTO {schema}.users(username,full_name,password_hash,role,created_at) "
+            "VALUES (%s,%s,%s,%s,%s) RETURNING id",
+            ("dimension_test", "Dimension Test", "hash", "admin", "2026-01-01"),
+        ).fetchone()["id"]
+        account_id = self.connection.execute(
+            f"INSERT INTO {schema}.accounts(code,name_ar,account_type) "
+            "VALUES (%s,%s,%s) RETURNING id",
+            ("1900", "Dimension test account", "asset"),
+        ).fetchone()["id"]
+        entry_id = self.connection.execute(
+            f"INSERT INTO {schema}.journal_entries(entry_date,description,created_by,created_at) "
+            "VALUES (%s,%s,%s,%s) RETURNING id",
+            ("2026-01-01", "Dimension test entry", user_id, "2026-01-01"),
+        ).fetchone()["id"]
+        branch_id = self.connection.execute(
+            f"INSERT INTO {schema}.branches(code,name_ar) VALUES (%s,%s) RETURNING id",
+            ("BR-PG-1", "Main branch"),
+        ).fetchone()["id"]
+        center_id = self.connection.execute(
+            f"INSERT INTO {schema}.cost_centers(code,name_ar) VALUES (%s,%s) RETURNING id",
+            ("CC-PG-1", "Main cost center"),
+        ).fetchone()["id"]
+        project_id = self.connection.execute(
+            f"INSERT INTO {schema}.projects(code,name_ar) VALUES (%s,%s) RETURNING id",
+            ("PR-PG-1", "Main project"),
+        ).fetchone()["id"]
+        self.connection.execute(
+            f"INSERT INTO {schema}.journal_lines(entry_id,account_id,debit,credit,"
+            "branch_id,cost_center_id,project_id) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (entry_id, account_id, "125.50", "0", branch_id, center_id, project_id),
+        )
+        import_id = self.connection.execute(
+            f"INSERT INTO {schema}.opening_balance_import_refs"
+            "(record_type,reference,entity_key,journal_entry_id,source_file) "
+            "VALUES (%s,%s,%s,%s,%s) RETURNING id",
+            ("customer", "OPEN-001", "CUST-001", entry_id, "opening.xlsx"),
+        ).fetchone()["id"]
+        self.assertGreater(import_id, 0)
+        stored = self.connection.execute(
+            f"SELECT branch_id,cost_center_id,project_id,debit "
+            f"FROM {schema}.journal_lines WHERE entry_id=%s",
+            (entry_id,),
+        ).fetchone()
+        self.assertEqual(stored["branch_id"], branch_id)
+        self.assertEqual(stored["cost_center_id"], center_id)
+        self.assertEqual(stored["project_id"], project_id)
+        self.assertEqual(Decimal(str(stored["debit"])), Decimal("125.500000"))
+        with self.assertRaises(Exception):
+            self.connection.execute(
+                f"INSERT INTO {schema}.opening_balance_import_refs"
+                "(record_type,reference,entity_key,journal_entry_id) "
+                "VALUES (%s,%s,%s,%s)",
+                ("customer", "OPEN-001", "CUST-001", entry_id),
+            )
+        self.connection.rollback()
+        tax_rate = self.connection.execute(
+            "SELECT data_type,numeric_precision,numeric_scale "
+            "FROM information_schema.columns "
+            "WHERE table_schema=%s AND table_name='tax_rates' AND column_name='rate'",
+            (self.schema,),
+        ).fetchone()
+        self.assertEqual(tax_rate["data_type"], "numeric")
+        self.assertEqual(tax_rate["numeric_precision"], 9)
+        self.assertEqual(tax_rate["numeric_scale"], 6)
 
     def test_failed_batch_rolls_back_schema_and_migration_records(self):
         migrations = [
