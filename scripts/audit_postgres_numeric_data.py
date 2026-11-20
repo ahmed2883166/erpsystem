@@ -4,6 +4,14 @@ This tool validates source values before a later migration changes column types.
 It never modifies the SQLite source database or PostgreSQL.
 """
 import argparse
+
+# Make direct script execution independent of cwd/PYTHONPATH.
+import sys
+from pathlib import Path
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPOSITORY_ROOT))
 from decimal import Decimal, InvalidOperation
 import json
 import re
