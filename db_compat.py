@@ -368,7 +368,14 @@ def begin_write_transaction(connection):
     transaction_status = getattr(connection.info, "transaction_status", None)
     status_name = getattr(transaction_status, "name", str(transaction_status))
     if status_name == "IDLE":
-        connection.execute("BEGIN")
+        # Psycopg with autocommit=False starts its transaction lazily on the
+        # first statement. Sending SQL BEGIN through that mode makes psycopg
+        # implicitly open a transaction first, so PostgreSQL reports a nested
+        # BEGIN warning. Keep the ownership signal, but let the first real
+        # statement open the transaction. Explicit BEGIN is only needed when
+        # the connection is in autocommit mode.
+        if getattr(connection, "autocommit", False):
+            connection.execute("BEGIN")
         return True
     return False
 
