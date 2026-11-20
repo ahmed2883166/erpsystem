@@ -13,8 +13,13 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import sys
 import uuid
 from urllib.parse import quote
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from app_paths import BACKUP_DIR, DB_PATH
 
@@ -178,7 +183,7 @@ def verify_sqlite_snapshot(
             )
         raise FileNotFoundError(
             f"No adjacent SQLite snapshot manifest was found for {snapshot}; "
-            "provide an existing manifest path explicitly."
+            "pass --manifest with an existing manifest path."
         )
     manifest = manifest.resolve(strict=True)
     payload = json.loads(manifest.read_text(encoding="utf-8"))
